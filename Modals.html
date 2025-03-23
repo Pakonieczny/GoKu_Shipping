@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <title>Modals</title>
-  <!-- Materialize CSS -->
+  <!-- Materialize CSS (ensure this matches your project's version) -->
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/materialize/1.0.0/css/materialize.min.css">
   <style>
     /* Optional: Custom modal styling */
@@ -14,6 +14,10 @@
     }
     table.striped input {
       width: 80px;
+    }
+    /* Style for the inner Button Config button */
+    #innerButtonConfig {
+      margin-bottom: 1rem;
     }
   </style>
 </head>
@@ -47,6 +51,8 @@
   <div id="buttonConfigModalNew" class="modal">
     <div class="modal-content">
       <h4>Configure UI Elements</h4>
+      <!-- Inner Button Config: This button itself is configurable -->
+      <button id="innerButtonConfig" class="btn waves-effect waves-light configurable">Button Config</button>
       <p>Adjust the Left (px) and Top (px) positions for each UI element:</p>
       <table id="uiConfigTable" class="striped">
         <thead>
@@ -66,7 +72,7 @@
     </div>
   </div>
 
-  <!-- Include jQuery and Materialize JS -->
+  <!-- Include jQuery and Materialize JS for modal functionality -->
   <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/materialize/1.0.0/js/materialize.min.js"></script>
   <script>
@@ -74,29 +80,24 @@
       // Initialize Materialize components
       M.AutoInit();
 
-      // Populate the UI Config Table each time the modal opens
+      // Populate the UI Config Table each time the modal is opened
       var configModalElem = document.getElementById("buttonConfigModalNew");
-      var configModalInstance = M.Modal.getInstance(configModalElem);
-
-      // When the modal is opened, generate the table of configurable items
-      configModalElem.addEventListener('open', populateUIConfigTable);
-      // Materialize doesn't automatically fire an "open" event, so we can override open() if needed.
-      // For this example, we call the function when the modal is opened via our button.
-
+      // Since Materialize doesn't provide a native "open" event,
+      // we call our populate function before opening the modal.
       function populateUIConfigTable() {
         var tbody = document.querySelector("#uiConfigTable tbody");
         tbody.innerHTML = ""; // Clear any existing rows
 
-        // Select all UI elements that are configurable
+        // Select all UI elements with the 'configurable' class
         var configurableElements = document.querySelectorAll('.configurable');
         configurableElements.forEach(function(el) {
           var id = el.id || "no-id";
-          // Get computed styles for left and top
+          // Get computed styles for left and top positions
           var computedStyle = window.getComputedStyle(el);
           var currentLeft = parseInt(computedStyle.left) || 0;
           var currentTop = parseInt(computedStyle.top) || 0;
           
-          // Create a table row with input fields
+          // Create a table row with input fields for position adjustment
           var row = document.createElement("tr");
           row.innerHTML = `
             <td>${id}</td>
@@ -107,9 +108,17 @@
         });
       }
 
-      // Attach click handler to the Save Config button
+      // When the modal is triggered (e.g., via a button), populate the table first
+      document.getElementById("buttonConfigBtn").addEventListener("click", function () {
+        populateUIConfigTable();
+        var elem = document.getElementById("buttonConfigModalNew");
+        var instance = M.Modal.getInstance(elem);
+        instance.open();
+      });
+
+      // Attach click handler to the Save Config button inside the modal
       document.getElementById("saveUIConfigBtn").addEventListener("click", function() {
-        // For each row in the table, update the corresponding element's style
+        // Iterate over each row and update the element's position
         document.querySelectorAll("#uiConfigTable tbody tr").forEach(function(row) {
           var id = row.cells[0].textContent;
           var leftVal = row.querySelector(".left-input").value;
@@ -122,8 +131,11 @@
         });
       });
       
-      // For demonstration, if you want the modal to populate when a button is clicked, call populateUIConfigTable() here.
-      // Alternatively, you can call it every time before opening the modal.
+      // Optional: Add behavior for the inner Button Config if needed
+      document.getElementById("innerButtonConfig").addEventListener("click", function() {
+        console.log("Inner Button Config clicked!");
+        // You can add additional functionality here (like refreshing the config table)
+      });
     });
   </script>
 </body>
