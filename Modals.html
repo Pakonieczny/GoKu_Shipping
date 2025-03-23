@@ -8,9 +8,13 @@
   <!-- Material Icons -->
   <link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet">
   <style>
-    /* Modal styling */
-    .modal { max-height: 90vh; }
-    .modal .modal-content { overflow-y: auto; }
+    /* Increase the vertical size of the modal if needed */
+    .modal {
+      max-height: 90vh;
+    }
+    .modal .modal-content {
+      overflow-y: auto;
+    }
     table.striped td, table.striped th {
       padding: 8px 12px;
       text-align: center;
@@ -40,7 +44,7 @@
           </tr>
         </thead>
         <tbody>
-          <!-- Table rows will be generated dynamically -->
+          <!-- Rows will be generated dynamically -->
         </tbody>
       </table>
     </div>
@@ -56,26 +60,26 @@
     document.addEventListener("DOMContentLoaded", function() {
       M.AutoInit();
       
-      // Function to populate the configuration table and attach live update event listeners
+      // Function to populate the configuration table
       function populateUIConfigTable() {
         var tbody = document.querySelector("#uiConfigTable tbody");
         tbody.innerHTML = ""; // Clear any existing rows
         console.log("Populating UI configuration table...");
         
-        // Select all elements with the "configurable" class
+        // Select all elements with the 'configurable' class
         var configurableElements = document.querySelectorAll('.configurable');
         if (configurableElements.length === 0) {
           console.warn("No configurable elements found!");
         }
         configurableElements.forEach(function(el) {
           var id = el.id || "no-id";
-          // Retrieve current positions from computed styles
+          // Retrieve current left and top values from computed styles
           var computedStyle = window.getComputedStyle(el);
           var currentLeft = parseInt(computedStyle.left) || 0;
           var currentTop = parseInt(computedStyle.top) || 0;
           console.log("Found element:", id, "Left:", currentLeft, "Top:", currentTop);
           
-          // Create a table row with arrow buttons for adjustment
+          // Create a table row with arrow buttons
           var row = document.createElement("tr");
           row.innerHTML = `
             <td>${id}</td>
@@ -128,13 +132,13 @@
         });
       }
       
-      // Attach click handler to the Save Config button (finalizes the positions)
+      // Attach click handler to the Save Config button
       document.getElementById("saveUIConfigBtn").addEventListener("click", function() {
         console.log("Final configuration saved.");
-        // Additional logic to persist settings can be added here if needed.
+        // Additional logic for persistence can be added here if needed.
       });
       
-      // Expose the function globally so it can be called from index.html
+      // Expose the populate function globally
       window.populateUIConfigTable = populateUIConfigTable;
     });
   </script>

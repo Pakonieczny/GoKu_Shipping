@@ -12,13 +12,13 @@
       height: 100vh;
       margin: 0;
     }
-    /* Center the Dummy button using explicit pixel values */
+    /* Dummy button with explicit positioning */
     #dummyButton {
       position: absolute;
-      left: 200px;  /* Adjusted to pixel value for testing */
-      top: 200px;   /* Adjusted to pixel value for testing */
+      left: 200px; /* explicit pixel value */
+      top: 200px;  /* explicit pixel value */
     }
-    /* Place the Button Config trigger at the bottom-right */
+    /* Button Config trigger also must have explicit positioning */
     #buttonConfigBtn {
       position: fixed;
       bottom: 20px;
@@ -27,7 +27,7 @@
   </style>
 </head>
 <body>
-  <!-- Dummy button in the center -->
+  <!-- Dummy button in the center-ish of the screen -->
   <button id="dummyButton" class="configurable btn waves-effect waves-light">
     Dummy
   </button>
@@ -50,7 +50,6 @@
         .then(response => response.text())
         .then(html => {
           document.getElementById('modalsContainer').innerHTML = html;
-          // Initialize Materialize components (including modals)
           M.AutoInit();
         })
         .catch(err => console.error('Error loading modals:', err));
