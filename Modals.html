@@ -2,13 +2,12 @@
 <html>
 <head>
   <meta charset="UTF-8">
-  <title>Modals</title>
-  <!-- Materialize CSS -->
+  <title>Configuration Modal</title>
+  <!-- Materialize CSS and Material Icons -->
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/materialize/1.0.0/css/materialize.min.css">
-  <!-- Material Icons -->
   <link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet">
   <style>
-    /* Double modal height and scrollable */
+    /* Increase modal height and allow scrolling */
     .modal {
       max-height: 180vh;
       overflow-y: auto;
@@ -19,18 +18,18 @@
     table.striped {
       width: 100%;
     }
-    table.striped td, table.striped th {
+    table.striped th, table.striped td {
       padding: 8px;
       text-align: center;
     }
     input[type="number"] {
-      width: 60px;
+      width: 70px;
     }
   </style>
 </head>
 <body>
-  <!-- Configure UI Elements Modal -->
-  <div id="buttonConfigModal" class="modal">
+  <!-- Configuration Modal -->
+  <div id="configModal" class="modal">
     <div class="modal-content">
       <h4>Configure UI Elements</h4>
       <p>Adjust the Left (px) and Top (px) offsets for each UI element:</p>
@@ -43,7 +42,7 @@
           </tr>
         </thead>
         <tbody>
-          <!-- Rows will be generated dynamically -->
+          <!-- Rows will be inserted here dynamically -->
         </tbody>
       </table>
     </div>
@@ -56,67 +55,57 @@
   <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/materialize/1.0.0/js/materialize.min.js"></script>
   <script>
-    document.addEventListener("DOMContentLoaded", function() {
-      M.AutoInit();
+    // Define a function to populate the configuration table by scanning the global configurableElements array
+    window.populateConfigTable = function() {
+      var tbody = document.getElementById("configTable").querySelector("tbody");
+      tbody.innerHTML = ""; // Clear previous rows
       
-      // Populate the configuration table by scanning the DOM for ".configurable" elements
-      function populateUIConfigTable() {
-        var tbody = document.getElementById("configTable").querySelector("tbody");
-        tbody.innerHTML = ""; // Clear existing rows
-        console.log("Populating configuration table...");
-        
-        // Freshly query all configurable elements
-        var elements = document.querySelectorAll('.configurable');
-        if (elements.length === 0) {
-          console.warn("No configurable elements found!");
-        }
-        elements.forEach(function(el) {
-          var id = el.id || "no-id";
-          // Retrieve current computed left and top; if "auto", default to 0
-          var computedStyle = window.getComputedStyle(el);
-          var leftStr = computedStyle.left;
-          var topStr = computedStyle.top;
-          var leftVal = leftStr === "auto" ? 0 : parseInt(leftStr);
-          var topVal = topStr === "auto" ? 0 : parseInt(topStr);
-          console.log("Element:", id, "Left:", leftVal, "Top:", topVal);
-          
-          // Create a table row for this element
-          var row = document.createElement("tr");
-          row.innerHTML = `
-            <td>${id}</td>
-            <td><input type="number" value="${leftVal}" data-id="${id}" class="left-input"></td>
-            <td><input type="number" value="${topVal}" data-id="${id}" class="top-input"></td>
-          `;
-          tbody.appendChild(row);
-          
-          // Attach live update event listeners for left and top input fields
-          row.querySelector(".left-input").addEventListener("input", function() {
-            var newVal = this.value;
-            var target = document.getElementById(this.getAttribute("data-id"));
-            if (target) {
-              target.style.left = newVal + "px";
-              console.log(id, "updated left to", newVal);
-            }
-          });
-          row.querySelector(".top-input").addEventListener("input", function() {
-            var newVal = this.value;
-            var target = document.getElementById(this.getAttribute("data-id"));
-            if (target) {
-              target.style.top = newVal + "px";
-              console.log(id, "updated top to", newVal);
-            }
-          });
-        });
+      if (!window.configurableElements || window.configurableElements.length === 0) {
+        console.warn("No configurable elements found.");
+        return;
       }
       
-      // Expose the function globally so index.html can call it
-      window.populateUIConfigTable = populateUIConfigTable;
-      
-      // Save Config button handler
-      document.getElementById("saveConfigBtn").addEventListener("click", function() {
-        console.log("Configuration saved.");
-        // Additional persistence logic can be added here
+      window.configurableElements.forEach(function(el) {
+        var id = el.id || "no-id";
+        // Get computed style values; if left/top is "auto", default to 0
+        var style = window.getComputedStyle(el);
+        var leftVal = (style.left === "auto") ? 0 : parseInt(style.left);
+        var topVal = (style.top === "auto") ? 0 : parseInt(style.top);
+        console.log("Element:", id, "Left:", leftVal, "Top:", topVal);
+        
+        // Create a table row with number inputs for left and top offsets
+        var row = document.createElement("tr");
+        row.innerHTML = `
+          <td>${id}</td>
+          <td><input type="number" value="${leftVal}" data-id="${id}" class="config-left"></td>
+          <td><input type="number" value="${topVal}" data-id="${id}" class="config-top"></td>
+        `;
+        tbody.appendChild(row);
+        
+        // Add live update event listeners
+        row.querySelector(".config-left").addEventListener("input", function() {
+          var newVal = this.value;
+          var target = document.getElementById(this.getAttribute("data-id"));
+          if (target) {
+            target.style.left = newVal + "px";
+            console.log(id, "updated left to", newVal);
+          }
+        });
+        row.querySelector(".config-top").addEventListener("input", function() {
+          var newVal = this.value;
+          var target = document.getElementById(this.getAttribute("data-id"));
+          if (target) {
+            target.style.top = newVal + "px";
+            console.log(id, "updated top to", newVal);
+          }
+        });
       });
+    };
+    
+    // Save Config button handler (currently logs a message)
+    document.getElementById("saveConfigBtn").addEventListener("click", function() {
+      console.log("Configuration saved.");
+      // Additional logic for persistence can be added here if needed.
     });
   </script>
 </body>
