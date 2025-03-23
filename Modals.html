@@ -1,83 +1,116 @@
-<div id="configModal" class="modal">
-  <div class="modal-content">
-    <h4>Configure UI Elements</h4>
-    <p>Available Button ID (from Dummy button):</p>
-    <!-- Text area that will display the dummy button's ID -->
-    <textarea id="availableButtonsList" readonly></textarea>
-    <p>Adjust Left and Top offsets for Dummy button:</p>
-    <table class="striped" id="configTable">
-      <thead>
-        <tr>
-          <th>Element ID</th>
-          <th>Left (px)</th>
-          <th>Top (px)</th>
-        </tr>
-      </thead>
-      <tbody>
-        <!-- A row will be inserted dynamically -->
-      </tbody>
-    </table>
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>Configuration Modal</title>
+  <!-- Materialize CSS and Material Icons -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/materialize/1.0.0/css/materialize.min.css">
+  <link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet">
+  <style>
+    /* Position modal in the top right corner and shrink its overall size */
+    .modal {
+      position: fixed; 
+      top: 0; 
+      right: 0;
+      height: 120vh !important;       /* Reduce vertical size by 33% from 180vh to 120vh */
+      max-height: 120vh !important;
+      width: 67% !important;          /* Shrink overall width by 33% (i.e. to 67% of full width) */
+      overflow-y: scroll !important;
+    }
+    .modal .modal-content {
+      overflow-y: auto;
+    }
+    table.striped {
+      width: 100%;
+    }
+    table.striped th,
+    table.striped td {
+      padding: 8px;
+      text-align: center;
+    }
+    input[type="number"] {
+      width: 70px;
+    }
+  </style>
+</head>
+<body>
+  <!-- Configuration Modal -->
+  <div id="configModal" class="modal">
+    <div class="modal-content">
+      <h4>Configure UI Elements</h4>
+      <p>Adjust the Left (px) and Top (px) offsets for each UI element:</p>
+      <table class="striped" id="configTable">
+        <thead>
+          <tr>
+            <th>Element ID / Name</th>
+            <th>Left (px)</th>
+            <th>Top (px)</th>
+          </tr>
+        </thead>
+        <tbody>
+          <!-- Rows will be inserted dynamically -->
+        </tbody>
+      </table>
+    </div>
+    <div class="modal-footer">
+      <a href="#!" id="saveConfigBtn" class="modal-close waves-effect waves-green btn">Save Config</a>
+    </div>
   </div>
-  <div class="modal-footer">
-    <a href="#!" id="saveConfigBtn" class="modal-close waves-effect waves-green btn">Save Config</a>
-  </div>
-</div>
-
-<!-- jQuery and Materialize JS (included here again so that modals.html is self-contained) -->
-<script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/materialize/1.0.0/js/materialize.min.js"></script>
-<script>
-  document.addEventListener("DOMContentLoaded", function() {
-    M.AutoInit();
-    
-    // Global function to populate the configuration table
-    window.populateConfigTable = function() {
-      var tbody = document.getElementById("configTable").querySelector("tbody");
-      tbody.innerHTML = ""; // Clear any existing rows
-      console.log("Populating configuration table...");
+  
+  <!-- jQuery and Materialize JS -->
+  <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/materialize/1.0.0/js/materialize.min.js"></script>
+  <script>
+    document.addEventListener("DOMContentLoaded", function() {
+      M.AutoInit();
       
-      // For this simple example, we only configure the Dummy button.
-      var dummy = document.getElementById("dummyButton");
-      if (dummy) {
-        var id = dummy.id || "no-id";
-        // Get computed style values for left and top; if not set, default to 0.
-        var computedStyle = window.getComputedStyle(dummy);
-        var leftVal = (computedStyle.left === "auto") ? 0 : parseInt(computedStyle.left);
-        var topVal = (computedStyle.top === "auto") ? 0 : parseInt(computedStyle.top);
-        console.log("Dummy button:", id, "Left:", leftVal, "Top:", topVal);
+      // Global function to populate the configuration table.
+      // This example assumes that the configuration table is filled dynamically.
+      window.populateConfigTable = function() {
+        var tbody = document.getElementById("configTable").querySelector("tbody");
+        tbody.innerHTML = ""; // Clear any existing rows
+        console.log("Populating configuration table...");
         
-        // Create a table row for the Dummy button
+        // Example: In your project, you might populate rows from a global registry.
+        // For demonstration, we'll assume there's at least one element we want to configure.
+        // (Your index.html should ensure the elements exist; this file focuses solely on the modal layout.)
+        
+        // Here we add a dummy row as an example.
+        var dummyId = "dummyButton"; // Change as needed.
+        var dummyLeft = 200;  // Example value.
+        var dummyTop = 200;   // Example value.
         var row = document.createElement("tr");
         row.innerHTML = `
-          <td>${id}</td>
-          <td><input type="number" value="${leftVal}" data-id="${id}" class="left-input"></td>
-          <td><input type="number" value="${topVal}" data-id="${id}" class="top-input"></td>
+          <td>${dummyId}</td>
+          <td><input type="number" value="${dummyLeft}" data-id="${dummyId}" class="left-input"></td>
+          <td><input type="number" value="${dummyTop}" data-id="${dummyId}" class="top-input"></td>
         `;
         tbody.appendChild(row);
         
-        // Update the text area to forcefully show the dummy button's ID.
-        document.getElementById("availableButtonsList").value = id;
-        
-        // Attach live update event listeners so that changes update the dummy button's style immediately.
+        // Attach live update listeners
         row.querySelector(".left-input").addEventListener("input", function() {
           var newVal = this.value;
-          dummy.style.left = newVal + "px";
-          console.log(id, "updated left to", newVal);
+          var target = document.getElementById(this.getAttribute("data-id"));
+          if (target) {
+            target.style.left = newVal + "px";
+            console.log(dummyId, "updated left to", newVal);
+          }
         });
         row.querySelector(".top-input").addEventListener("input", function() {
           var newVal = this.value;
-          dummy.style.top = newVal + "px";
-          console.log(id, "updated top to", newVal);
+          var target = document.getElementById(this.getAttribute("data-id"));
+          if (target) {
+            target.style.top = newVal + "px";
+            console.log(dummyId, "updated top to", newVal);
+          }
         });
-      } else {
-        console.warn("Dummy button not found.");
-        document.getElementById("availableButtonsList").value = "Dummy button not found";
-      }
-    };
-    
-    // Save Config button handler (for now, just logs a message)
-    document.getElementById("saveConfigBtn").addEventListener("click", function() {
-      console.log("Configuration saved.");
+      };
+      
+      // Save Config button handler (currently logs a message)
+      document.getElementById("saveConfigBtn").addEventListener("click", function() {
+        console.log("Configuration saved.");
+      });
     });
-  });
-</script>
+  </script>
+</body>
+</html>
