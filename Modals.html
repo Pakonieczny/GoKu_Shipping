@@ -9,6 +9,10 @@
     /* Optional: Custom modal styling */
     .modal { max-height: 90%; }
     .modal .modal-content { overflow-y: auto; }
+    /* Style for the inner "Button Config" button */
+    #innerButtonConfigBtn {
+      margin-bottom: 1rem;
+    }
   </style>
 </head>
 <body>
@@ -41,6 +45,8 @@
   <div id="buttonConfigModalNew" class="modal">
     <div class="modal-content">
       <h4>Configure UI Elements</h4>
+      <!-- Additional Button Config button inside the modal -->
+      <button id="innerButtonConfigBtn" class="btn waves-effect waves-light">Button Config</button>
       <div id="uiConfigContainer">
         <!-- Dynamically generated UI configuration inputs go here -->
       </div>
@@ -51,12 +57,21 @@
     </div>
   </div>
 
-  <!-- Initialize Materialize Components -->
+  <!-- Optionally, add more modals here -->
+
+  <!-- Include jQuery and Materialize JS for modal functionality -->
   <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/materialize/1.0.0/js/materialize.min.js"></script>
   <script>
     document.addEventListener("DOMContentLoaded", function() {
+      // Initialize all Materialize components (including modals)
       M.AutoInit();
+      
+      // Example: Attach a click listener for the inner Button Config button
+      document.getElementById("innerButtonConfigBtn").addEventListener("click", function() {
+        console.log("Inner Button Config clicked!");
+        // Add your custom behavior here (e.g., refreshing the UI configuration inputs)
+      });
     });
   </script>
 </body>
