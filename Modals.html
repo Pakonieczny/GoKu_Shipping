@@ -7,7 +7,7 @@
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/materialize/1.0.0/css/materialize.min.css">
   <link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet">
   <style>
-    /* Force the modal to be 180vh tall and always scrollable */
+    /* Force the modal to be 180vh tall and scrollable */
     .modal {
       height: 180vh !important;
       max-height: 180vh !important;
@@ -53,9 +53,9 @@
           <!-- Rows will be inserted dynamically -->
         </tbody>
       </table>
-      <p>Available Buttons:</p>
-      <!-- Pre-populated text area with "Hello Words" -->
-      <textarea id="availableButtonsList" readonly>Hello Words</textarea>
+      <p>Available Buttons (showing Dummy button name):</p>
+      <!-- The text area will be updated to show the "Dummy" button name -->
+      <textarea id="availableButtonsList" readonly></textarea>
     </div>
     <div class="modal-footer">
       <a href="#!" id="saveConfigBtn" class="modal-close waves-effect waves-green btn">Save Config</a>
@@ -69,28 +69,25 @@
     document.addEventListener("DOMContentLoaded", function() {
       M.AutoInit();
       
-      // Global function to populate the configuration table and update available buttons text area.
+      // Global function to populate the configuration table
       window.populateConfigTable = function() {
         var tbody = document.getElementById("configTable").querySelector("tbody");
         tbody.innerHTML = ""; // Clear existing rows
         console.log("Populating configuration table...");
         
-        // Use a broad query to get all buttons with the class "configurable"
-        var elements = document.querySelectorAll("button.configurable");
-        var buttonIDs = [];
-        
+        // Get all elements with class "configurable"
+        var elements = document.querySelectorAll('.configurable');
         elements.forEach(function(el) {
-          // Use id if available; otherwise, fallback to text content.
+          // Use the element's id if available; otherwise, use its trimmed text content.
           var id = (el.id && el.id.trim() !== "") ? el.id : el.textContent.trim();
-          buttonIDs.push(id);
           
-          // Get computed style values for left and top; default to 0 if auto
+          // Get computed style values for left and top; if "auto", default to 0
           var computedStyle = window.getComputedStyle(el);
           var leftVal = (computedStyle.left === "auto") ? 0 : parseInt(computedStyle.left);
           var topVal = (computedStyle.top === "auto") ? 0 : parseInt(computedStyle.top);
           console.log("Element:", id, "Left:", leftVal, "Top:", topVal);
           
-          // Create a table row for the element
+          // Create a table row for this element
           var row = document.createElement("tr");
           row.innerHTML = `
             <td>${id}</td>
@@ -104,7 +101,7 @@
             var newVal = this.value;
             var target = document.getElementById(this.getAttribute("data-id"));
             if (!target) {
-              target = Array.from(document.querySelectorAll("button.configurable"))
+              target = Array.from(document.querySelectorAll(".configurable"))
                 .find(btn => btn.textContent.trim() === this.getAttribute("data-id"));
             }
             if (target) {
@@ -116,7 +113,7 @@
             var newVal = this.value;
             var target = document.getElementById(this.getAttribute("data-id"));
             if (!target) {
-              target = Array.from(document.querySelectorAll("button.configurable"))
+              target = Array.from(document.querySelectorAll(".configurable"))
                 .find(btn => btn.textContent.trim() === this.getAttribute("data-id"));
             }
             if (target) {
@@ -126,10 +123,16 @@
           });
         });
         
-        // Update the available buttons text area with a comma-separated list of IDs/names.
+        // Force the available buttons text area to display the Dummy button name.
+        var dummyButton = document.getElementById("dummyButton");
         var availableButtonsTextArea = document.getElementById("availableButtonsList");
-        availableButtonsTextArea.value = buttonIDs.join(", ");
-        console.log("Available Buttons:", availableButtonsTextArea.value);
+        if (dummyButton) {
+          availableButtonsTextArea.value = dummyButton.textContent.trim();
+          console.log("Available Buttons (Dummy):", availableButtonsTextArea.value);
+        } else {
+          availableButtonsTextArea.value = "Dummy button not found";
+          console.warn("Dummy button not found.");
+        }
       };
       
       // Save Config button handler (currently logs a message)
