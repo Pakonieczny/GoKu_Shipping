@@ -8,7 +8,7 @@
   <!-- Material Icons -->
   <link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet">
   <style>
-    /* Doubling the modal's height and making it scrollable */
+    /* Double modal height and scrollable */
     .modal {
       max-height: 180vh;
       overflow-y: auto;
@@ -43,7 +43,7 @@
           </tr>
         </thead>
         <tbody>
-          <!-- Rows will be generated from the global registry -->
+          <!-- Rows will be generated dynamically -->
         </tbody>
       </table>
     </div>
@@ -59,30 +59,37 @@
     document.addEventListener("DOMContentLoaded", function() {
       M.AutoInit();
       
-      // Alternate approach: use a global registry to populate the configuration table
+      // Populate the configuration table by scanning the DOM for ".configurable" elements
       function populateUIConfigTable() {
         var tbody = document.getElementById("configTable").querySelector("tbody");
         tbody.innerHTML = ""; // Clear existing rows
-        console.log("Populating configuration table from registry...");
+        console.log("Populating configuration table...");
         
-        var registry = window.configurableRegistry || {};
-        Object.entries(registry).forEach(function([id, el]) {
-          // Get computed left and top values
-          var computed = window.getComputedStyle(el);
-          var left = parseInt(computed.left) || 0;
-          var top = parseInt(computed.top) || 0;
-          console.log("Registering element:", id, "Left:", left, "Top:", top);
+        // Freshly query all configurable elements
+        var elements = document.querySelectorAll('.configurable');
+        if (elements.length === 0) {
+          console.warn("No configurable elements found!");
+        }
+        elements.forEach(function(el) {
+          var id = el.id || "no-id";
+          // Retrieve current computed left and top; if "auto", default to 0
+          var computedStyle = window.getComputedStyle(el);
+          var leftStr = computedStyle.left;
+          var topStr = computedStyle.top;
+          var leftVal = leftStr === "auto" ? 0 : parseInt(leftStr);
+          var topVal = topStr === "auto" ? 0 : parseInt(topStr);
+          console.log("Element:", id, "Left:", leftVal, "Top:", topVal);
           
-          // Create table row for this element
+          // Create a table row for this element
           var row = document.createElement("tr");
           row.innerHTML = `
             <td>${id}</td>
-            <td><input type="number" value="${left}" data-id="${id}" class="left-input"></td>
-            <td><input type="number" value="${top}" data-id="${id}" class="top-input"></td>
+            <td><input type="number" value="${leftVal}" data-id="${id}" class="left-input"></td>
+            <td><input type="number" value="${topVal}" data-id="${id}" class="top-input"></td>
           `;
           tbody.appendChild(row);
           
-          // Attach live update event listeners to update positions in real time
+          // Attach live update event listeners for left and top input fields
           row.querySelector(".left-input").addEventListener("input", function() {
             var newVal = this.value;
             var target = document.getElementById(this.getAttribute("data-id"));
@@ -102,12 +109,13 @@
         });
       }
       
-      // Expose the populate function globally so index.html can call it
+      // Expose the function globally so index.html can call it
       window.populateUIConfigTable = populateUIConfigTable;
       
-      // Save Config button handler (currently logs a message)
+      // Save Config button handler
       document.getElementById("saveConfigBtn").addEventListener("click", function() {
         console.log("Configuration saved.");
+        // Additional persistence logic can be added here
       });
     });
   </script>
