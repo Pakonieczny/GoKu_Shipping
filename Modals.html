@@ -15,10 +15,6 @@
     table.striped input {
       width: 80px;
     }
-    /* Style for the inner Button Config button */
-    #innerButtonConfig {
-      margin-bottom: 1rem;
-    }
   </style>
 </head>
 <body>
@@ -51,8 +47,6 @@
   <div id="buttonConfigModalNew" class="modal">
     <div class="modal-content">
       <h4>Configure UI Elements</h4>
-      <!-- Inner Button Config: This button is also configurable -->
-      <button id="innerButtonConfig" class="btn waves-effect waves-light configurable">Button Config</button>
       <p>Adjust the Left (px) and Top (px) positions for each UI element:</p>
       <table id="uiConfigTable" class="striped">
         <thead>
@@ -63,7 +57,7 @@
           </tr>
         </thead>
         <tbody>
-          <!-- This table will be populated dynamically -->
+          <!-- The table rows will be populated dynamically -->
         </tbody>
       </table>
     </div>
@@ -83,18 +77,18 @@
       // Function to populate the UI Config Table and attach real-time event listeners
       function populateUIConfigTable() {
         var tbody = document.querySelector("#uiConfigTable tbody");
-        tbody.innerHTML = ""; // Clear previous rows
+        tbody.innerHTML = ""; // Clear any existing rows
 
-        // Select all UI elements with the 'configurable' class
+        // Select all UI elements that are configurable
         var configurableElements = document.querySelectorAll('.configurable');
         configurableElements.forEach(function(el) {
           var id = el.id || "no-id";
-          // Get current left and top positions from computed styles
+          // Get computed styles for left and top positions
           var computedStyle = window.getComputedStyle(el);
           var currentLeft = parseInt(computedStyle.left) || 0;
           var currentTop = parseInt(computedStyle.top) || 0;
           
-          // Create a new table row with input fields
+          // Create a table row with input fields for position adjustment
           var row = document.createElement("tr");
           row.innerHTML = `
             <td>${id}</td>
@@ -103,7 +97,7 @@
           `;
           tbody.appendChild(row);
 
-          // Attach real-time update event listeners on both inputs
+          // Attach real-time update event listeners to the inputs
           var leftInput = row.querySelector(".left-input");
           var topInput = row.querySelector(".top-input");
 
@@ -111,7 +105,7 @@
             var targetId = this.getAttribute("data-element-id");
             var targetEl = document.getElementById(targetId);
             if (targetEl) {
-              // Read both current input values
+              // Update the element's style in real time
               var newLeft = row.querySelector(".left-input").value;
               var newTop = row.querySelector(".top-input").value;
               targetEl.style.left = newLeft + "px";
@@ -124,7 +118,7 @@
         });
       }
 
-      // Attach click handler to the Save Config button (applies final values)
+      // Attach click handler to the Save Config button (finalizes the positions)
       document.getElementById("saveUIConfigBtn").addEventListener("click", function() {
         document.querySelectorAll("#uiConfigTable tbody tr").forEach(function(row) {
           var id = row.cells[0].textContent;
@@ -137,21 +131,9 @@
           }
         });
       });
-      
-      // For opening the modal and populating the table,
-      // assume there's a "Button Config" button in your main index.
-      document.getElementById("buttonConfigBtn").addEventListener("click", function () {
-        populateUIConfigTable();
-        var elem = document.getElementById("buttonConfigModalNew");
-        var instance = M.Modal.getInstance(elem);
-        instance.open();
-      });
 
-      // Optional: inner Button Config click event (for additional functionality)
-      document.getElementById("innerButtonConfig").addEventListener("click", function() {
-        console.log("Inner Button Config clicked!");
-        // For real-time adjustment, its changes will be reflected via the table as well.
-      });
+      // Expose the populate function so that it can be called before opening the modal.
+      window.populateUIConfigTable = populateUIConfigTable;
     });
   </script>
 </body>
