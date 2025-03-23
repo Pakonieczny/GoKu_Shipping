@@ -5,15 +5,23 @@
   <title>Modals</title>
   <!-- Materialize CSS -->
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/materialize/1.0.0/css/materialize.min.css">
+  <!-- Material Icons -->
+  <link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet">
   <style>
     /* Optional: Custom modal styling */
     .modal { max-height: 90%; }
     .modal .modal-content { overflow-y: auto; }
     table.striped td, table.striped th {
       padding: 8px 12px;
+      text-align: center;
     }
-    table.striped input {
-      width: 80px;
+    table.striped button {
+      min-width: 30px;
+      padding: 0;
+    }
+    table.striped span {
+      display: inline-block;
+      width: 40px;
     }
   </style>
 </head>
@@ -47,7 +55,7 @@
   <div id="buttonConfigModalNew" class="modal">
     <div class="modal-content">
       <h4>Configure UI Elements</h4>
-      <p>Adjust the Left (px) and Top (px) positions for each UI element:</p>
+      <p>Adjust the Left (px) and Top (px) offsets for each UI element:</p>
       <table id="uiConfigTable" class="striped">
         <thead>
           <tr>
@@ -57,7 +65,7 @@
           </tr>
         </thead>
         <tbody>
-          <!-- The table rows will be populated dynamically -->
+          <!-- Table rows will be generated dynamically -->
         </tbody>
       </table>
     </div>
@@ -71,68 +79,79 @@
   <script src="https://cdnjs.cloudflare.com/ajax/libs/materialize/1.0.0/js/materialize.min.js"></script>
   <script>
     document.addEventListener("DOMContentLoaded", function() {
-      // Initialize Materialize components
+      // Initialize Materialize components (modals, etc.)
       M.AutoInit();
 
-      // Function to populate the UI Config Table and attach real-time event listeners
+      // Function to populate the UI Configuration Table
       function populateUIConfigTable() {
         var tbody = document.querySelector("#uiConfigTable tbody");
-        tbody.innerHTML = ""; // Clear any existing rows
+        tbody.innerHTML = ""; // Clear existing rows
 
-        // Select all UI elements that are configurable
+        // Get all elements with the "configurable" class
         var configurableElements = document.querySelectorAll('.configurable');
         configurableElements.forEach(function(el) {
           var id = el.id || "no-id";
-          // Get computed styles for left and top positions
+          // Retrieve current positions from computed styles
           var computedStyle = window.getComputedStyle(el);
           var currentLeft = parseInt(computedStyle.left) || 0;
           var currentTop = parseInt(computedStyle.top) || 0;
-          
-          // Create a table row with input fields for position adjustment
+
+          // Create a table row with controls for left and top offsets
           var row = document.createElement("tr");
           row.innerHTML = `
             <td>${id}</td>
-            <td><input type="number" data-element-id="${id}" class="left-input" value="${currentLeft}"></td>
-            <td><input type="number" data-element-id="${id}" class="top-input" value="${currentTop}"></td>
+            <td>
+              <button class="decrease-left btn-small"><i class="material-icons">arrow_left</i></button>
+              <span class="left-value">${currentLeft}</span>
+              <button class="increase-left btn-small"><i class="material-icons">arrow_right</i></button>
+            </td>
+            <td>
+              <button class="decrease-top btn-small"><i class="material-icons">arrow_drop_up</i></button>
+              <span class="top-value">${currentTop}</span>
+              <button class="increase-top btn-small"><i class="material-icons">arrow_drop_down</i></button>
+            </td>
           `;
           tbody.appendChild(row);
 
-          // Attach real-time update event listeners to the inputs
-          var leftInput = row.querySelector(".left-input");
-          var topInput = row.querySelector(".top-input");
+          // Get control elements
+          var decLeftBtn = row.querySelector(".decrease-left");
+          var incLeftBtn = row.querySelector(".increase-left");
+          var leftValueSpan = row.querySelector(".left-value");
+          var decTopBtn = row.querySelector(".decrease-top");
+          var incTopBtn = row.querySelector(".increase-top");
+          var topValueSpan = row.querySelector(".top-value");
 
-          function updatePosition() {
-            var targetId = this.getAttribute("data-element-id");
-            var targetEl = document.getElementById(targetId);
-            if (targetEl) {
-              // Update the element's style in real time
-              var newLeft = row.querySelector(".left-input").value;
-              var newTop = row.querySelector(".top-input").value;
-              targetEl.style.left = newLeft + "px";
-              targetEl.style.top = newTop + "px";
-            }
-          }
-
-          leftInput.addEventListener("input", updatePosition);
-          topInput.addEventListener("input", updatePosition);
+          // Define update functions that change the value and update the element's style
+          decLeftBtn.addEventListener("click", function() {
+            var newVal = parseInt(leftValueSpan.textContent) - 1;
+            leftValueSpan.textContent = newVal;
+            el.style.left = newVal + "px";
+          });
+          incLeftBtn.addEventListener("click", function() {
+            var newVal = parseInt(leftValueSpan.textContent) + 1;
+            leftValueSpan.textContent = newVal;
+            el.style.left = newVal + "px";
+          });
+          decTopBtn.addEventListener("click", function() {
+            var newVal = parseInt(topValueSpan.textContent) - 1;
+            topValueSpan.textContent = newVal;
+            el.style.top = newVal + "px";
+          });
+          incTopBtn.addEventListener("click", function() {
+            var newVal = parseInt(topValueSpan.textContent) + 1;
+            topValueSpan.textContent = newVal;
+            el.style.top = newVal + "px";
+          });
         });
       }
 
-      // Attach click handler to the Save Config button (finalizes the positions)
+      // Attach the Save Config button click handler
       document.getElementById("saveUIConfigBtn").addEventListener("click", function() {
-        document.querySelectorAll("#uiConfigTable tbody tr").forEach(function(row) {
-          var id = row.cells[0].textContent;
-          var leftVal = row.querySelector(".left-input").value;
-          var topVal = row.querySelector(".top-input").value;
-          var el = document.getElementById(id);
-          if (el) {
-            el.style.left = leftVal + "px";
-            el.style.top = topVal + "px";
-          }
-        });
+        // Optionally, you could persist these settings; live updates are already in effect.
+        console.log("UI configuration saved.");
       });
 
-      // Expose the populate function so that it can be called before opening the modal.
+      // Expose the populate function so it can be called before opening the modal.
       window.populateUIConfigTable = populateUIConfigTable;
     });
   </script>
