@@ -2,16 +2,16 @@ const fetch = require("node-fetch");
 
 exports.handler = async function(event, context) {
   try {
-    // Retrieve query parameters from Netlify (passed via event.queryStringParameters)
+    // Retrieve query parameters passed via event.queryStringParameters
     const code = event.queryStringParameters.code;
     const codeVerifier = event.queryStringParameters.code_verifier;
 
-    // Retrieve environment variables for Etsy OAuth
+    // Retrieve environment variables for OAuth
     const CLIENT_ID = process.env.CLIENT_ID;
     const CLIENT_SECRET = process.env.CLIENT_SECRET;
     const REDIRECT_URI = process.env.REDIRECT_URI;
 
-    // Build the request parameters for the Etsy token exchange
+    // Build request parameters for token exchange
     const params = new URLSearchParams({
       grant_type: "authorization_code",
       client_id: CLIENT_ID,
@@ -21,6 +21,7 @@ exports.handler = async function(event, context) {
       code_verifier: codeVerifier
     });
 
+    // Perform the token exchange with the OAuth provider
     const response = await fetch("https://api.etsy.com/v3/public/oauth/token", {
       method: "POST",
       headers: {
