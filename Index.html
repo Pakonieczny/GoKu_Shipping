@@ -32,7 +32,7 @@
     Dummy
   </button>
   
-  <!-- Config trigger -->
+  <!-- Button Config trigger -->
   <button id="openConfigBtn" class="configurable btn waves-effect waves-light">
     Button Config
   </button>
@@ -45,7 +45,7 @@
   <script src="https://cdnjs.cloudflare.com/ajax/libs/materialize/1.0.0/js/materialize.min.js"></script>
   <script>
     document.addEventListener("DOMContentLoaded", function() {
-      // Dynamically load modals.html into modalsContainer
+      // Dynamically load modals.html into the modalsContainer
       fetch('modals.html')
         .then(response => response.text())
         .then(html => {
@@ -54,10 +54,12 @@
         })
         .catch(err => console.error('Error loading modals:', err));
       
-      // When the config trigger is clicked, populate the modal and open it.
+      // When the Button Config trigger is clicked, repopulate the modal and open it.
       document.getElementById("openConfigBtn").addEventListener("click", function () {
         if (window.populateConfigTable) {
           window.populateConfigTable();
+        } else {
+          console.error("populateConfigTable is not defined.");
         }
         var modalElem = document.getElementById("configModal");
         var instance = M.Modal.getInstance(modalElem);
