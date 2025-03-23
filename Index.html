@@ -54,12 +54,10 @@
         })
         .catch(err => console.error('Error loading modals:', err));
       
-      // When the Button Config trigger is clicked, repopulate the modal and open it.
+      // When the Button Config trigger is clicked, call populateConfigTable() then open the modal.
       document.getElementById("openConfigBtn").addEventListener("click", function () {
         if (window.populateConfigTable) {
           window.populateConfigTable();
-        } else {
-          console.error("populateConfigTable is not defined.");
         }
         var modalElem = document.getElementById("configModal");
         var instance = M.Modal.getInstance(modalElem);
