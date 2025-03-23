@@ -8,13 +8,12 @@
   <!-- Material Icons -->
   <link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet">
   <style>
-    /* Set a doubled max-height and make the modal scrollable */
+    /* Doubling the modal's height and making it scrollable */
     .modal {
       max-height: 180vh;
       overflow-y: auto;
     }
     .modal .modal-content {
-      max-height: 170vh; /* slightly less than the modal max-height */
       overflow-y: auto;
     }
     table.striped {
@@ -53,14 +52,14 @@
     </div>
   </div>
   
-  <!-- Include jQuery and Materialize JS -->
+  <!-- jQuery and Materialize JS -->
   <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/materialize/1.0.0/js/materialize.min.js"></script>
   <script>
     document.addEventListener("DOMContentLoaded", function() {
       M.AutoInit();
       
-      // Function to populate the configuration table using the global registry
+      // Alternate approach: use a global registry to populate the configuration table
       function populateUIConfigTable() {
         var tbody = document.getElementById("configTable").querySelector("tbody");
         tbody.innerHTML = ""; // Clear existing rows
@@ -83,7 +82,7 @@
           `;
           tbody.appendChild(row);
           
-          // Attach live update event listeners
+          // Attach live update event listeners to update positions in real time
           row.querySelector(".left-input").addEventListener("input", function() {
             var newVal = this.value;
             var target = document.getElementById(this.getAttribute("data-id"));
@@ -103,7 +102,7 @@
         });
       }
       
-      // Expose the function globally so index.html can call it
+      // Expose the populate function globally so index.html can call it
       window.populateUIConfigTable = populateUIConfigTable;
       
       // Save Config button handler (currently logs a message)

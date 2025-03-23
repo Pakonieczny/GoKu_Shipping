@@ -45,7 +45,7 @@
   <script src="https://cdnjs.cloudflare.com/ajax/libs/materialize/1.0.0/js/materialize.min.js"></script>
   <script>
     document.addEventListener("DOMContentLoaded", function() {
-      // Create a global registry of configurable elements
+      // Create a global registry for configurable elements
       window.configurableRegistry = {};
       document.querySelectorAll('.configurable').forEach(function(el) {
         var id = el.id;
@@ -53,8 +53,9 @@
           window.configurableRegistry[id] = el;
         }
       });
+      console.log("Global registry populated:", window.configurableRegistry);
       
-      // Load modals from modals.html dynamically
+      // Load modals from modals.html dynamically into the modalsContainer
       fetch('modals.html')
         .then(response => response.text())
         .then(html => {
@@ -63,7 +64,7 @@
         })
         .catch(err => console.error('Error loading modals:', err));
       
-      // When "Button Config" is clicked, call the registry-based populate function then open the modal
+      // When the Button Config trigger is clicked:
       document.getElementById("buttonConfigBtn").addEventListener("click", function () {
         if (window.populateUIConfigTable) {
           window.populateUIConfigTable();
