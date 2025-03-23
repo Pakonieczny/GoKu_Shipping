@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>Your Custom Chat & API Dashboard</title>
+  <!-- Favicon -->
+  <link rel="icon" type="image/png" href="assets/favicon.png">
+  <!-- Materialize CSS & Google Icons -->
+  <link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/materialize/1.0.0/css/materialize.min.css">
+  <!-- Your custom styles can go here -->
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <!-- Header -->
+  <header>
+    <h1>My Custom Chat & API Dashboard</h1>
+  </header>
+
+  <!-- Main Content -->
+  <div class="container">
+    <!-- Dashboard/Control Panel -->
+    <button id="connectEtsyBtn" class="btn waves-effect waves-light">Connect to Etsy</button>
+    <button id="updateInfoBtn" class="btn waves-effect waves-light">Update Listing Info</button>
+    <!-- ... Other UI elements ... -->
+
+    <!-- Example: A simple form element -->
+    <input id="listingInput" type="text" placeholder="Enter listing ID">
+  </div>
+
+  <!-- Modals will be loaded here dynamically -->
+  <div id="modalsContainer"></div>
+
+  <!-- Include jQuery and Materialize JS -->
+  <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/materialize/1.0.0/js/materialize.min.js"></script>
+  <!-- Load utility functions -->
+  <script src="js/utils.js"></script>
+  <!-- Main UI-specific JavaScript -->
+  <script>
+    // Load modals from modals.html dynamically
+    fetch('modals.html')
+      .then(response => response.text())
+      .then(html => {
+        document.getElementById('modalsContainer').innerHTML = html;
+        // Initialize Materialize modals after loading
+        M.AutoInit();
+      })
+      .catch(err => console.error('Error loading modals:', err));
+
+    // Example: Event handler for "Connect to Etsy" button
+    document.getElementById("connectEtsyBtn").addEventListener("click", function () {
+      // Call your dedicated API endpoint (e.g., exchangeToken.js) via your backend route.
+      // For demonstration, we simply log to the console.
+      console.log("Connect to Etsy button clicked!");
+      // You can perform further actions here, like redirecting to OAuth, etc.
+    });
+
+    // More event listeners and UI logic can remain here.
+  </script>
+</body>
+</html>
