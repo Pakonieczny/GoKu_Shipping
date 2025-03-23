@@ -68,28 +68,27 @@
     document.addEventListener("DOMContentLoaded", function() {
       M.AutoInit();
       
-      // Global function to populate the configuration table.
-      // Here, we restrict the query to direct children of <body> that are buttons with class "configurable"
+      // Global function to populate the configuration table
       window.populateConfigTable = function() {
         var tbody = document.getElementById("configTable").querySelector("tbody");
-        tbody.innerHTML = ""; // Clear existing rows
+        tbody.innerHTML = ""; // Clear any existing rows
         console.log("Populating configuration table...");
         
-        // Query only buttons that are direct children of body
-        var elements = document.querySelectorAll("body > button.configurable");
+        // Use a broad query to get all buttons with the class "configurable"
+        var elements = document.querySelectorAll("button.configurable");
         var buttonIDs = [];
         
         elements.forEach(function(el) {
           var id = el.id || "no-id";
           buttonIDs.push(id);
           
-          // Get computed style values; if "auto", default to 0.
+          // Get computed style values for left and top; default to 0 if "auto"
           var computedStyle = window.getComputedStyle(el);
           var leftVal = (computedStyle.left === "auto") ? 0 : parseInt(computedStyle.left);
           var topVal = (computedStyle.top === "auto") ? 0 : parseInt(computedStyle.top);
           console.log("Element:", id, "Left:", leftVal, "Top:", topVal);
           
-          // Create a table row for the element.
+          // Create a table row for the element
           var row = document.createElement("tr");
           row.innerHTML = `
             <td>${id}</td>
@@ -98,7 +97,7 @@
           `;
           tbody.appendChild(row);
           
-          // Attach live update event listeners for the left and top input fields.
+          // Attach live update event listeners
           row.querySelector(".left-input").addEventListener("input", function() {
             var newVal = this.value;
             var target = document.getElementById(this.getAttribute("data-id"));
@@ -117,13 +116,13 @@
           });
         });
         
-        // Update the available buttons text area with a comma-separated list of button IDs.
+        // Update the available buttons text area with a comma-separated list of IDs
         var availableButtonsTextArea = document.getElementById("availableButtonsList");
         availableButtonsTextArea.value = buttonIDs.join(", ");
         console.log("Available Buttons:", availableButtonsTextArea.value);
       };
       
-      // Save Config button handler.
+      // Save Config button handler (currently logs a message)
       document.getElementById("saveConfigBtn").addEventListener("click", function() {
         console.log("Configuration saved.");
       });

@@ -28,9 +28,14 @@
 </head>
 <body>
   <!-- Dummy button -->
-  <button id="dummyButton" class="configurable btn waves-effect waves-light">Dummy</button>
-  <!-- Button Config trigger -->
-  <button id="openConfigBtn" class="configurable btn waves-effect waves-light">Button Config</button>
+  <button id="dummyButton" class="configurable btn waves-effect waves-light">
+    Dummy
+  </button>
+  
+  <!-- Config trigger -->
+  <button id="openConfigBtn" class="configurable btn waves-effect waves-light">
+    Button Config
+  </button>
   
   <!-- Container for loading the modal -->
   <div id="modalsContainer"></div>
@@ -49,7 +54,7 @@
         })
         .catch(err => console.error('Error loading modals:', err));
       
-      // When "Button Config" is clicked, populate the modal and open it.
+      // When the config trigger is clicked, populate the modal and open it
       document.getElementById("openConfigBtn").addEventListener("click", function () {
         if (window.populateConfigTable) {
           window.populateConfigTable();
