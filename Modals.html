@@ -42,7 +42,7 @@
           </tr>
         </thead>
         <tbody>
-          <!-- Rows will be generated dynamically -->
+          <!-- Rows will be generated from the global registry -->
         </tbody>
       </table>
     </div>
@@ -51,62 +51,63 @@
     </div>
   </div>
   
-  <!-- Include jQuery and Materialize JS -->
+  <!-- jQuery and Materialize JS -->
   <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/materialize/1.0.0/js/materialize.min.js"></script>
   <script>
     document.addEventListener("DOMContentLoaded", function() {
       M.AutoInit();
-    });
-    
-    // Function to populate the configuration table with all "configurable" elements
-    function populateUIConfigTable(){
-      var tbody = document.getElementById("configTable").querySelector("tbody");
-      tbody.innerHTML = ""; // Clear existing rows
       
-      // Select all elements with the "configurable" class
-      var elements = document.querySelectorAll(".configurable");
-      if(elements.length === 0){
-        console.warn("No configurable elements found!");
+      // Alternate approach: use the global registry to populate the configuration table
+      function populateUIConfigTable() {
+        var tbody = document.getElementById("configTable").querySelector("tbody");
+        tbody.innerHTML = ""; // Clear existing rows
+        console.log("Populating configuration table from registry...");
+        
+        var registry = window.configurableRegistry || {};
+        Object.entries(registry).forEach(function([id, el]) {
+          // Get computed left and top values
+          var computed = window.getComputedStyle(el);
+          var left = parseInt(computed.left) || 0;
+          var top = parseInt(computed.top) || 0;
+          console.log("Registering element:", id, "Left:", left, "Top:", top);
+          
+          // Create table row for this element
+          var row = document.createElement("tr");
+          row.innerHTML = `
+            <td>${id}</td>
+            <td><input type="number" value="${left}" data-id="${id}" class="left-input"></td>
+            <td><input type="number" value="${top}" data-id="${id}" class="top-input"></td>
+          `;
+          tbody.appendChild(row);
+          
+          // Attach live update event listeners
+          row.querySelector(".left-input").addEventListener("input", function() {
+            var newVal = this.value;
+            var target = document.getElementById(this.getAttribute("data-id"));
+            if (target) {
+              target.style.left = newVal + "px";
+              console.log(id, "updated left to", newVal);
+            }
+          });
+          row.querySelector(".top-input").addEventListener("input", function() {
+            var newVal = this.value;
+            var target = document.getElementById(this.getAttribute("data-id"));
+            if (target) {
+              target.style.top = newVal + "px";
+              console.log(id, "updated top to", newVal);
+            }
+          });
+        });
       }
       
-      elements.forEach(function(el){
-        var id = el.id || "no-id";
-        // Get current left and top values (ensure elements have explicit positioning)
-        var computed = window.getComputedStyle(el);
-        var left = parseInt(computed.left) || 0;
-        var top = parseInt(computed.top) || 0;
-        
-        // Create a new table row
-        var row = document.createElement("tr");
-        row.innerHTML = `
-          <td>${id}</td>
-          <td><input type="number" value="${left}" data-id="${id}" class="left-input"></td>
-          <td><input type="number" value="${top}" data-id="${id}" class="top-input"></td>
-        `;
-        tbody.appendChild(row);
-        
-        // Attach event listeners to update positions in real time
-        row.querySelector(".left-input").addEventListener("input", function(){
-          var newVal = this.value;
-          var target = document.getElementById(this.getAttribute("data-id"));
-          if(target) target.style.left = newVal + "px";
-        });
-        row.querySelector(".top-input").addEventListener("input", function(){
-          var newVal = this.value;
-          var target = document.getElementById(this.getAttribute("data-id"));
-          if(target) target.style.top = newVal + "px";
-        });
+      // Expose the function globally so index.html can call it
+      window.populateUIConfigTable = populateUIConfigTable;
+      
+      // Save Config button handler (for now, just log a message)
+      document.getElementById("saveConfigBtn").addEventListener("click", function() {
+        console.log("Configuration saved.");
       });
-    }
-    
-    // Expose the function globally so index.html can call it
-    window.populateUIConfigTable = populateUIConfigTable;
-    
-    // Save Config button handler (currently just logs to console)
-    document.getElementById("saveConfigBtn").addEventListener("click", function(){
-      console.log("Configuration saved.");
-      // Additional persistence logic can be added here if needed.
     });
   </script>
 </body>
