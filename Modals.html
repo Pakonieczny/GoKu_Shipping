@@ -7,7 +7,7 @@
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/materialize/1.0.0/css/materialize.min.css">
   <link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet">
   <style>
-    /* Force the modal to be 180vh tall and always scrollable */
+    /* Force the modal to be 180vh tall and scrollable */
     .modal {
       height: 180vh !important;
       max-height: 180vh !important;
@@ -26,7 +26,7 @@
     input[type="number"] {
       width: 70px;
     }
-    /* Style for the available buttons text area */
+    /* Style the available buttons text area */
     #availableButtonsList {
       width: 100%;
       height: 80px;
@@ -68,30 +68,28 @@
     document.addEventListener("DOMContentLoaded", function() {
       M.AutoInit();
       
-      // Global function to populate the configuration table and available buttons text area
+      // Global function to populate the configuration table.
+      // Here, we restrict the query to direct children of <body> that are buttons with class "configurable"
       window.populateConfigTable = function() {
         var tbody = document.getElementById("configTable").querySelector("tbody");
-        tbody.innerHTML = ""; // Clear previous rows
+        tbody.innerHTML = ""; // Clear existing rows
         console.log("Populating configuration table...");
         
-        // Use a fresh query for all elements with class "configurable"
-        var elements = document.querySelectorAll('.configurable');
+        // Query only buttons that are direct children of body
+        var elements = document.querySelectorAll("body > button.configurable");
         var buttonIDs = [];
         
         elements.forEach(function(el) {
           var id = el.id || "no-id";
-          // If the element is a BUTTON, add its ID to the buttonIDs array
-          if (el.tagName.toUpperCase() === "BUTTON") {
-            buttonIDs.push(id);
-          }
+          buttonIDs.push(id);
           
-          // Get computed left and top; if "auto", default to 0
+          // Get computed style values; if "auto", default to 0.
           var computedStyle = window.getComputedStyle(el);
           var leftVal = (computedStyle.left === "auto") ? 0 : parseInt(computedStyle.left);
           var topVal = (computedStyle.top === "auto") ? 0 : parseInt(computedStyle.top);
           console.log("Element:", id, "Left:", leftVal, "Top:", topVal);
           
-          // Create a table row for the element
+          // Create a table row for the element.
           var row = document.createElement("tr");
           row.innerHTML = `
             <td>${id}</td>
@@ -100,7 +98,7 @@
           `;
           tbody.appendChild(row);
           
-          // Attach live update event listeners
+          // Attach live update event listeners for the left and top input fields.
           row.querySelector(".left-input").addEventListener("input", function() {
             var newVal = this.value;
             var target = document.getElementById(this.getAttribute("data-id"));
@@ -119,13 +117,13 @@
           });
         });
         
-        // Update the available buttons text area
+        // Update the available buttons text area with a comma-separated list of button IDs.
         var availableButtonsTextArea = document.getElementById("availableButtonsList");
         availableButtonsTextArea.value = buttonIDs.join(", ");
         console.log("Available Buttons:", availableButtonsTextArea.value);
       };
       
-      // Save Config button handler (currently logs a message)
+      // Save Config button handler.
       document.getElementById("saveConfigBtn").addEventListener("click", function() {
         console.log("Configuration saved.");
       });
