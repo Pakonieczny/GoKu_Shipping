@@ -8,34 +8,32 @@
   <!-- Material Icons -->
   <link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet">
   <style>
-    /* Increase the vertical size of the modal if needed */
+    /* Increase modal height if needed */
     .modal {
       max-height: 90vh;
     }
     .modal .modal-content {
       overflow-y: auto;
     }
+    table.striped {
+      width: 100%;
+    }
     table.striped td, table.striped th {
-      padding: 8px 12px;
+      padding: 8px;
       text-align: center;
     }
-    table.striped button {
-      min-width: 30px;
-      padding: 0;
-    }
-    table.striped span {
-      display: inline-block;
-      width: 40px;
+    input[type="number"] {
+      width: 60px;
     }
   </style>
 </head>
 <body>
   <!-- Configure UI Elements Modal -->
-  <div id="buttonConfigModalNew" class="modal">
+  <div id="buttonConfigModal" class="modal">
     <div class="modal-content">
       <h4>Configure UI Elements</h4>
       <p>Adjust the Left (px) and Top (px) offsets for each UI element:</p>
-      <table id="uiConfigTable" class="striped">
+      <table class="striped" id="configTable">
         <thead>
           <tr>
             <th>Element ID</th>
@@ -49,7 +47,7 @@
       </table>
     </div>
     <div class="modal-footer">
-      <a href="#!" id="saveUIConfigBtn" class="modal-close waves-effect waves-green btn">Save Config</a>
+      <a href="#!" id="saveConfigBtn" class="modal-close waves-effect waves-green btn">Save Config</a>
     </div>
   </div>
   
@@ -59,87 +57,56 @@
   <script>
     document.addEventListener("DOMContentLoaded", function() {
       M.AutoInit();
+    });
+    
+    // Function to populate the configuration table with all "configurable" elements
+    function populateUIConfigTable(){
+      var tbody = document.getElementById("configTable").querySelector("tbody");
+      tbody.innerHTML = ""; // Clear existing rows
       
-      // Function to populate the configuration table
-      function populateUIConfigTable() {
-        var tbody = document.querySelector("#uiConfigTable tbody");
-        tbody.innerHTML = ""; // Clear any existing rows
-        console.log("Populating UI configuration table...");
-        
-        // Select all elements with the 'configurable' class
-        var configurableElements = document.querySelectorAll('.configurable');
-        if (configurableElements.length === 0) {
-          console.warn("No configurable elements found!");
-        }
-        configurableElements.forEach(function(el) {
-          var id = el.id || "no-id";
-          // Retrieve current left and top values from computed styles
-          var computedStyle = window.getComputedStyle(el);
-          var currentLeft = parseInt(computedStyle.left) || 0;
-          var currentTop = parseInt(computedStyle.top) || 0;
-          console.log("Found element:", id, "Left:", currentLeft, "Top:", currentTop);
-          
-          // Create a table row with arrow buttons
-          var row = document.createElement("tr");
-          row.innerHTML = `
-            <td>${id}</td>
-            <td>
-              <button class="decrease-left btn-small"><i class="material-icons">arrow_left</i></button>
-              <span class="left-value">${currentLeft}</span>
-              <button class="increase-left btn-small"><i class="material-icons">arrow_right</i></button>
-            </td>
-            <td>
-              <button class="decrease-top btn-small"><i class="material-icons">arrow_drop_up</i></button>
-              <span class="top-value">${currentTop}</span>
-              <button class="increase-top btn-small"><i class="material-icons">arrow_drop_down</i></button>
-            </td>
-          `;
-          tbody.appendChild(row);
-          
-          // Get control elements
-          var decLeftBtn = row.querySelector(".decrease-left");
-          var incLeftBtn = row.querySelector(".increase-left");
-          var leftValueSpan = row.querySelector(".left-value");
-          var decTopBtn = row.querySelector(".decrease-top");
-          var incTopBtn = row.querySelector(".increase-top");
-          var topValueSpan = row.querySelector(".top-value");
-          
-          // Attach event listeners for live updates
-          decLeftBtn.addEventListener("click", function() {
-            var newVal = parseInt(leftValueSpan.textContent) - 1;
-            leftValueSpan.textContent = newVal;
-            el.style.left = newVal + "px";
-            console.log(id, "updated Left to", newVal);
-          });
-          incLeftBtn.addEventListener("click", function() {
-            var newVal = parseInt(leftValueSpan.textContent) + 1;
-            leftValueSpan.textContent = newVal;
-            el.style.left = newVal + "px";
-            console.log(id, "updated Left to", newVal);
-          });
-          decTopBtn.addEventListener("click", function() {
-            var newVal = parseInt(topValueSpan.textContent) - 1;
-            topValueSpan.textContent = newVal;
-            el.style.top = newVal + "px";
-            console.log(id, "updated Top to", newVal);
-          });
-          incTopBtn.addEventListener("click", function() {
-            var newVal = parseInt(topValueSpan.textContent) + 1;
-            topValueSpan.textContent = newVal;
-            el.style.top = newVal + "px";
-            console.log(id, "updated Top to", newVal);
-          });
-        });
+      // Select all elements with the "configurable" class
+      var elements = document.querySelectorAll(".configurable");
+      if(elements.length === 0){
+        console.warn("No configurable elements found!");
       }
       
-      // Attach click handler to the Save Config button
-      document.getElementById("saveUIConfigBtn").addEventListener("click", function() {
-        console.log("Final configuration saved.");
-        // Additional logic for persistence can be added here if needed.
+      elements.forEach(function(el){
+        var id = el.id || "no-id";
+        // Get current left and top values (ensure elements have explicit positioning)
+        var computed = window.getComputedStyle(el);
+        var left = parseInt(computed.left) || 0;
+        var top = parseInt(computed.top) || 0;
+        
+        // Create a new table row
+        var row = document.createElement("tr");
+        row.innerHTML = `
+          <td>${id}</td>
+          <td><input type="number" value="${left}" data-id="${id}" class="left-input"></td>
+          <td><input type="number" value="${top}" data-id="${id}" class="top-input"></td>
+        `;
+        tbody.appendChild(row);
+        
+        // Attach event listeners to update positions in real time
+        row.querySelector(".left-input").addEventListener("input", function(){
+          var newVal = this.value;
+          var target = document.getElementById(this.getAttribute("data-id"));
+          if(target) target.style.left = newVal + "px";
+        });
+        row.querySelector(".top-input").addEventListener("input", function(){
+          var newVal = this.value;
+          var target = document.getElementById(this.getAttribute("data-id"));
+          if(target) target.style.top = newVal + "px";
+        });
       });
-      
-      // Expose the populate function globally
-      window.populateUIConfigTable = populateUIConfigTable;
+    }
+    
+    // Expose the function globally so index.html can call it
+    window.populateUIConfigTable = populateUIConfigTable;
+    
+    // Save Config button handler (currently just logs to console)
+    document.getElementById("saveConfigBtn").addEventListener("click", function(){
+      console.log("Configuration saved.");
+      // Additional persistence logic can be added here if needed.
     });
   </script>
 </body>

@@ -15,10 +15,10 @@
     /* Dummy button with explicit positioning */
     #dummyButton {
       position: absolute;
-      left: 200px; /* explicit pixel value */
-      top: 200px;  /* explicit pixel value */
+      left: 200px;
+      top: 200px;
     }
-    /* Button Config trigger also must have explicit positioning */
+    /* Button Config trigger positioned at the bottom-right */
     #buttonConfigBtn {
       position: fixed;
       bottom: 20px;
@@ -27,7 +27,7 @@
   </style>
 </head>
 <body>
-  <!-- Dummy button in the center-ish of the screen -->
+  <!-- Dummy button in the center-ish -->
   <button id="dummyButton" class="configurable btn waves-effect waves-light">
     Dummy
   </button>
@@ -45,7 +45,7 @@
   <script src="https://cdnjs.cloudflare.com/ajax/libs/materialize/1.0.0/js/materialize.min.js"></script>
   <script>
     document.addEventListener("DOMContentLoaded", function() {
-      // Load modals from modals.html dynamically
+      // Dynamically load modals.html into the modalsContainer
       fetch('modals.html')
         .then(response => response.text())
         .then(html => {
@@ -54,12 +54,12 @@
         })
         .catch(err => console.error('Error loading modals:', err));
       
-      // When "Button Config" is clicked, populate the configuration table and open the modal
+      // When "Button Config" is clicked, call populateUIConfigTable() then open the modal
       document.getElementById("buttonConfigBtn").addEventListener("click", function () {
         if (window.populateUIConfigTable) {
           window.populateUIConfigTable();
         }
-        var modalElem = document.getElementById("buttonConfigModalNew");
+        var modalElem = document.getElementById("buttonConfigModal");
         var instance = M.Modal.getInstance(modalElem);
         instance.open();
       });
