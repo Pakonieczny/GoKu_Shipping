@@ -33,7 +33,7 @@
   <!-- Config trigger -->
   <button id="openConfigBtn" class="configurable btn waves-effect waves-light">Button Config</button>
   
-  <!-- Container to load the modal -->
+  <!-- Container for loading the modal -->
   <div id="modalsContainer"></div>
   
   <!-- jQuery and Materialize JS -->
@@ -50,8 +50,12 @@
         })
         .catch(err => console.error('Error loading modals:', err));
       
-      // When the config trigger is clicked, repopulate the modal and open it.
+      // When the config trigger is clicked, re-scan for configurable elements, then populate the modal and open it.
       document.getElementById("openConfigBtn").addEventListener("click", function () {
+        // This query scans the entire document for all elements with class "configurable"
+        window.configurableElements = Array.from(document.querySelectorAll('.configurable'));
+        console.log("Found configurable elements:", window.configurableElements.map(el => el.id));
+        
         if (window.populateConfigTable) {
           window.populateConfigTable();
         }
