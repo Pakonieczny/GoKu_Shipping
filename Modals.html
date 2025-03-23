@@ -7,7 +7,7 @@
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/materialize/1.0.0/css/materialize.min.css">
   <link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet">
   <style>
-    /* Force the modal to be 180vh tall and scrollable */
+    /* Force the modal to be 180vh tall and always scrollable */
     .modal {
       height: 180vh !important;
       max-height: 180vh !important;
@@ -53,8 +53,8 @@
           <!-- Rows will be inserted dynamically -->
         </tbody>
       </table>
-      <p>Available Buttons (showing Dummy button name):</p>
-      <!-- The text area will be updated to show the "Dummy" button name -->
+      <p>Available Button IDs:</p>
+      <!-- This text area will be populated with the button IDs -->
       <textarea id="availableButtonsList" readonly></textarea>
     </div>
     <div class="modal-footer">
@@ -69,17 +69,20 @@
     document.addEventListener("DOMContentLoaded", function() {
       M.AutoInit();
       
-      // Global function to populate the configuration table
+      // Global function to populate the configuration table and update the available buttons list.
       window.populateConfigTable = function() {
         var tbody = document.getElementById("configTable").querySelector("tbody");
         tbody.innerHTML = ""; // Clear existing rows
         console.log("Populating configuration table...");
+
+        // Query for all buttons with the "configurable" class (using a broad selector)
+        var elements = document.querySelectorAll("button.configurable");
+        var buttonIDs = [];
         
-        // Get all elements with class "configurable"
-        var elements = document.querySelectorAll('.configurable');
         elements.forEach(function(el) {
-          // Use the element's id if available; otherwise, use its trimmed text content.
-          var id = (el.id && el.id.trim() !== "") ? el.id : el.textContent.trim();
+          // Use the element's id if available; if not, use "no-id"
+          var id = el.id && el.id.trim() !== "" ? el.id : "no-id";
+          buttonIDs.push(id);
           
           // Get computed style values for left and top; if "auto", default to 0
           var computedStyle = window.getComputedStyle(el);
@@ -87,7 +90,7 @@
           var topVal = (computedStyle.top === "auto") ? 0 : parseInt(computedStyle.top);
           console.log("Element:", id, "Left:", leftVal, "Top:", topVal);
           
-          // Create a table row for this element
+          // Create a table row for the element
           var row = document.createElement("tr");
           row.innerHTML = `
             <td>${id}</td>
@@ -96,14 +99,10 @@
           `;
           tbody.appendChild(row);
           
-          // Attach live update event listeners
+          // Attach live update event listeners for the left and top inputs.
           row.querySelector(".left-input").addEventListener("input", function() {
             var newVal = this.value;
             var target = document.getElementById(this.getAttribute("data-id"));
-            if (!target) {
-              target = Array.from(document.querySelectorAll(".configurable"))
-                .find(btn => btn.textContent.trim() === this.getAttribute("data-id"));
-            }
             if (target) {
               target.style.left = newVal + "px";
               console.log(id, "updated left to", newVal);
@@ -112,10 +111,6 @@
           row.querySelector(".top-input").addEventListener("input", function() {
             var newVal = this.value;
             var target = document.getElementById(this.getAttribute("data-id"));
-            if (!target) {
-              target = Array.from(document.querySelectorAll(".configurable"))
-                .find(btn => btn.textContent.trim() === this.getAttribute("data-id"));
-            }
             if (target) {
               target.style.top = newVal + "px";
               console.log(id, "updated top to", newVal);
@@ -123,16 +118,10 @@
           });
         });
         
-        // Force the available buttons text area to display the Dummy button name.
-        var dummyButton = document.getElementById("dummyButton");
+        // Update the available buttons text area with a comma-separated list of IDs.
         var availableButtonsTextArea = document.getElementById("availableButtonsList");
-        if (dummyButton) {
-          availableButtonsTextArea.value = dummyButton.textContent.trim();
-          console.log("Available Buttons (Dummy):", availableButtonsTextArea.value);
-        } else {
-          availableButtonsTextArea.value = "Dummy button not found";
-          console.warn("Dummy button not found.");
-        }
+        availableButtonsTextArea.value = buttonIDs.join(", ");
+        console.log("Available Button IDs:", availableButtonsTextArea.value);
       };
       
       // Save Config button handler (currently logs a message)
