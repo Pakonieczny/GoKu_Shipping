@@ -9,10 +9,10 @@
   <link rel="stylesheet" href="css/style.css">
 </head>
 <body style="background-color: white;">
-  <!-- Blank page with no additional UI elements -->
-
-  <!-- Button Config: Triggers the new Configure UI Elements modal -->
-  <button id="buttonConfigBtn" class="btn waves-effect waves-light" style="position: fixed; top: 20px; right: 20px;">Button Config</button>
+  <!-- Main page is blank except for the "Button Config" button -->
+  <button id="buttonConfigBtn" class="configurable btn waves-effect waves-light" style="position: fixed; top: 20px; right: 20px;">
+    Button Config
+  </button>
 
   <!-- Container for dynamically loaded modals -->
   <div id="modalsContainer"></div>
@@ -20,9 +20,6 @@
   <!-- jQuery and Materialize JS -->
   <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/materialize/1.0.0/js/materialize.min.js"></script>
-  <!-- Utility functions (if any) -->
-  <script src="js/utils.js"></script>
-  <!-- Main UI Script -->
   <script>
     document.addEventListener("DOMContentLoaded", function() {
       // Load modals from modals.html dynamically
@@ -30,15 +27,18 @@
         .then(response => response.text())
         .then(html => {
           document.getElementById('modalsContainer').innerHTML = html;
-          // Initialize Materialize components (e.g., modals)
+          // Initialize Materialize components (including modals)
           M.AutoInit();
         })
         .catch(err => console.error('Error loading modals:', err));
 
-      // Attach event listener for the "Button Config" button
+      // When "Button Config" is clicked, populate the UI config table and open the modal
       document.getElementById("buttonConfigBtn").addEventListener("click", function () {
-        var elem = document.getElementById("buttonConfigModalNew");
-        var instance = M.Modal.getInstance(elem);
+        if (window.populateUIConfigTable) {
+          window.populateUIConfigTable();
+        }
+        var modalElem = document.getElementById("buttonConfigModalNew");
+        var instance = M.Modal.getInstance(modalElem);
         instance.open();
       });
     });

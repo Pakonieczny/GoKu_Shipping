@@ -8,7 +8,7 @@
   <!-- Material Icons -->
   <link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet">
   <style>
-    /* Optional: Custom modal styling */
+    /* Custom modal styling */
     .modal { max-height: 90%; }
     .modal .modal-content { overflow-y: auto; }
     table.striped td, table.striped th {
@@ -79,24 +79,29 @@
   <script src="https://cdnjs.cloudflare.com/ajax/libs/materialize/1.0.0/js/materialize.min.js"></script>
   <script>
     document.addEventListener("DOMContentLoaded", function() {
-      // Initialize Materialize components (modals, etc.)
+      // Initialize Materialize components
       M.AutoInit();
 
-      // Function to populate the UI Configuration Table
+      // Function to populate the UI Configuration Table and attach live update event listeners
       function populateUIConfigTable() {
         var tbody = document.querySelector("#uiConfigTable tbody");
-        tbody.innerHTML = ""; // Clear existing rows
+        tbody.innerHTML = ""; // Clear any existing rows
+        console.log("Populating UI Configuration Table...");
 
-        // Get all elements with the "configurable" class
+        // Select all elements with the 'configurable' class
         var configurableElements = document.querySelectorAll('.configurable');
+        if (configurableElements.length === 0) {
+          console.warn("No configurable elements found!");
+        }
         configurableElements.forEach(function(el) {
           var id = el.id || "no-id";
           // Retrieve current positions from computed styles
           var computedStyle = window.getComputedStyle(el);
           var currentLeft = parseInt(computedStyle.left) || 0;
           var currentTop = parseInt(computedStyle.top) || 0;
+          console.log("Element found:", id, "Left:", currentLeft, "Top:", currentTop);
 
-          // Create a table row with controls for left and top offsets
+          // Create a table row with arrow buttons for adjustment
           var row = document.createElement("tr");
           row.innerHTML = `
             <td>${id}</td>
@@ -121,37 +126,41 @@
           var incTopBtn = row.querySelector(".increase-top");
           var topValueSpan = row.querySelector(".top-value");
 
-          // Define update functions that change the value and update the element's style
+          // Attach event listeners for live updates
           decLeftBtn.addEventListener("click", function() {
             var newVal = parseInt(leftValueSpan.textContent) - 1;
             leftValueSpan.textContent = newVal;
             el.style.left = newVal + "px";
+            console.log(id, "updated Left to", newVal);
           });
           incLeftBtn.addEventListener("click", function() {
             var newVal = parseInt(leftValueSpan.textContent) + 1;
             leftValueSpan.textContent = newVal;
             el.style.left = newVal + "px";
+            console.log(id, "updated Left to", newVal);
           });
           decTopBtn.addEventListener("click", function() {
             var newVal = parseInt(topValueSpan.textContent) - 1;
             topValueSpan.textContent = newVal;
             el.style.top = newVal + "px";
+            console.log(id, "updated Top to", newVal);
           });
           incTopBtn.addEventListener("click", function() {
             var newVal = parseInt(topValueSpan.textContent) + 1;
             topValueSpan.textContent = newVal;
             el.style.top = newVal + "px";
+            console.log(id, "updated Top to", newVal);
           });
         });
       }
 
-      // Attach the Save Config button click handler
+      // Attach click handler to the Save Config button (finalizes the positions)
       document.getElementById("saveUIConfigBtn").addEventListener("click", function() {
-        // Optionally, you could persist these settings; live updates are already in effect.
-        console.log("UI configuration saved.");
+        console.log("Final configuration saved.");
+        // Further persistence logic can be added here if needed.
       });
 
-      // Expose the populate function so it can be called before opening the modal.
+      // Expose the function to the global scope so it can be called from index.html
       window.populateUIConfigTable = populateUIConfigTable;
     });
   </script>
