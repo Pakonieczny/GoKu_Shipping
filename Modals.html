@@ -7,7 +7,7 @@
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/materialize/1.0.0/css/materialize.min.css">
   <link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet">
   <style>
-    /* Increase modal height and allow scrolling */
+    /* Double the modal's max height and enable scrolling */
     .modal {
       max-height: 180vh;
       overflow-y: auto;
@@ -42,7 +42,7 @@
           </tr>
         </thead>
         <tbody>
-          <!-- Rows will be inserted here dynamically -->
+          <!-- Rows will be inserted dynamically -->
         </tbody>
       </table>
     </div>
@@ -55,35 +55,40 @@
   <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/materialize/1.0.0/js/materialize.min.js"></script>
   <script>
-    // Define a function to populate the configuration table by scanning the global configurableElements array
+    document.addEventListener("DOMContentLoaded", function() {
+      M.AutoInit();
+    });
+    
+    // Global function to populate the configuration table by scanning the current DOM
     window.populateConfigTable = function() {
       var tbody = document.getElementById("configTable").querySelector("tbody");
-      tbody.innerHTML = ""; // Clear previous rows
+      tbody.innerHTML = ""; // Clear existing rows
+      console.log("Populating configuration table...");
       
-      if (!window.configurableElements || window.configurableElements.length === 0) {
-        console.warn("No configurable elements found.");
-        return;
+      // Use the global array populated in index.html
+      var elements = window.configurableElements || [];
+      if (elements.length === 0) {
+        console.warn("No configurable elements found!");
       }
-      
-      window.configurableElements.forEach(function(el) {
+      elements.forEach(function(el) {
         var id = el.id || "no-id";
-        // Get computed style values; if left/top is "auto", default to 0
+        // Get computed left and top; if they return "auto", default to 0
         var style = window.getComputedStyle(el);
         var leftVal = (style.left === "auto") ? 0 : parseInt(style.left);
         var topVal = (style.top === "auto") ? 0 : parseInt(style.top);
         console.log("Element:", id, "Left:", leftVal, "Top:", topVal);
         
-        // Create a table row with number inputs for left and top offsets
+        // Create a row with two number inputs
         var row = document.createElement("tr");
         row.innerHTML = `
           <td>${id}</td>
-          <td><input type="number" value="${leftVal}" data-id="${id}" class="config-left"></td>
-          <td><input type="number" value="${topVal}" data-id="${id}" class="config-top"></td>
+          <td><input type="number" value="${leftVal}" data-id="${id}" class="left-input"></td>
+          <td><input type="number" value="${topVal}" data-id="${id}" class="top-input"></td>
         `;
         tbody.appendChild(row);
         
-        // Add live update event listeners
-        row.querySelector(".config-left").addEventListener("input", function() {
+        // Attach live update event listeners
+        row.querySelector(".left-input").addEventListener("input", function() {
           var newVal = this.value;
           var target = document.getElementById(this.getAttribute("data-id"));
           if (target) {
@@ -91,7 +96,7 @@
             console.log(id, "updated left to", newVal);
           }
         });
-        row.querySelector(".config-top").addEventListener("input", function() {
+        row.querySelector(".top-input").addEventListener("input", function() {
           var newVal = this.value;
           var target = document.getElementById(this.getAttribute("data-id"));
           if (target) {
@@ -100,12 +105,11 @@
           }
         });
       });
-    };
+    }
     
-    // Save Config button handler (currently logs a message)
+    // Save Config button handler (for now, just log a message)
     document.getElementById("saveConfigBtn").addEventListener("click", function() {
       console.log("Configuration saved.");
-      // Additional logic for persistence can be added here if needed.
     });
   </script>
 </body>

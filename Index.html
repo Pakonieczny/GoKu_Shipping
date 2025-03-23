@@ -2,24 +2,24 @@
 <html>
 <head>
   <meta charset="UTF-8">
-  <title>Test App - Dummy Button</title>
+  <title>Configurable UI Test</title>
   <!-- Materialize CSS -->
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/materialize/1.0.0/css/materialize.min.css">
   <style>
     body {
       background-color: white;
-      position: relative;
-      height: 100vh;
       margin: 0;
+      height: 100vh;
+      position: relative;
     }
-    /* Dummy button with explicit positioning */
+    /* Dummy button: explicitly positioned */
     #dummyButton {
       position: absolute;
       left: 200px;
       top: 200px;
     }
-    /* Button Config trigger positioned at the bottom-right */
-    #buttonConfigBtn {
+    /* Config trigger at bottom-right */
+    #openConfigBtn {
       position: fixed;
       bottom: 20px;
       right: 20px;
@@ -28,16 +28,11 @@
 </head>
 <body>
   <!-- Dummy button -->
-  <button id="dummyButton" class="configurable btn waves-effect waves-light">
-    Dummy
-  </button>
+  <button id="dummyButton" class="configurable btn waves-effect waves-light">Dummy</button>
+  <!-- Config trigger -->
+  <button id="openConfigBtn" class="configurable btn waves-effect waves-light">Button Config</button>
   
-  <!-- Button Config trigger -->
-  <button id="buttonConfigBtn" class="configurable btn waves-effect waves-light">
-    Button Config
-  </button>
-  
-  <!-- Container for dynamically loaded modals -->
+  <!-- Container to load the modal -->
   <div id="modalsContainer"></div>
   
   <!-- jQuery and Materialize JS -->
@@ -45,7 +40,7 @@
   <script src="https://cdnjs.cloudflare.com/ajax/libs/materialize/1.0.0/js/materialize.min.js"></script>
   <script>
     document.addEventListener("DOMContentLoaded", function() {
-      // Dynamically load modals.html into the modalsContainer
+      // Dynamically load modals.html into the container
       fetch('modals.html')
         .then(response => response.text())
         .then(html => {
@@ -54,12 +49,19 @@
         })
         .catch(err => console.error('Error loading modals:', err));
       
-      // When "Button Config" is clicked, repopulate the modal and open it
-      document.getElementById("buttonConfigBtn").addEventListener("click", function () {
-        if (window.populateUIConfigTable) {
-          window.populateUIConfigTable();
+      // When the config button is clicked, scan the DOM and open the modal
+      document.getElementById("openConfigBtn").addEventListener("click", function () {
+        // Grab all elements with class "configurable" (should be 2: dummyButton and openConfigBtn)
+        window.configurableElements = Array.from(document.querySelectorAll('.configurable'));
+        console.log("Found configurable elements:", window.configurableElements.map(el => el.id));
+        
+        // Call the global function to populate the modal's table
+        if (window.populateConfigTable) {
+          window.populateConfigTable();
         }
-        var modalElem = document.getElementById("buttonConfigModal");
+        
+        // Open the modal
+        var modalElem = document.getElementById("configModal");
         var instance = M.Modal.getInstance(modalElem);
         instance.open();
       });
