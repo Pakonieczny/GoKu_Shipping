@@ -7,12 +7,14 @@
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/materialize/1.0.0/css/materialize.min.css">
   <link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet">
   <style>
-    /* Double the modal's max height and enable scrolling */
+    /* Force the modal to be 180vh tall and always scrollable */
     .modal {
-      max-height: 180vh;
-      overflow-y: auto;
+      height: 180vh !important;
+      max-height: 180vh !important;
+      overflow-y: scroll !important;
     }
     .modal .modal-content {
+      height: 170vh; /* Reserve some space for the footer */
       overflow-y: auto;
     }
     table.striped {
@@ -57,59 +59,59 @@
   <script>
     document.addEventListener("DOMContentLoaded", function() {
       M.AutoInit();
-    });
-    
-    // Global function to populate the configuration table by scanning the current DOM
-    window.populateConfigTable = function() {
-      var tbody = document.getElementById("configTable").querySelector("tbody");
-      tbody.innerHTML = ""; // Clear existing rows
-      console.log("Populating configuration table...");
       
-      // Use the global array populated in index.html
-      var elements = window.configurableElements || [];
-      if (elements.length === 0) {
-        console.warn("No configurable elements found!");
-      }
-      elements.forEach(function(el) {
-        var id = el.id || "no-id";
-        // Get computed left and top; if they return "auto", default to 0
-        var style = window.getComputedStyle(el);
-        var leftVal = (style.left === "auto") ? 0 : parseInt(style.left);
-        var topVal = (style.top === "auto") ? 0 : parseInt(style.top);
-        console.log("Element:", id, "Left:", leftVal, "Top:", topVal);
-        
-        // Create a row with two number inputs
-        var row = document.createElement("tr");
-        row.innerHTML = `
-          <td>${id}</td>
-          <td><input type="number" value="${leftVal}" data-id="${id}" class="left-input"></td>
-          <td><input type="number" value="${topVal}" data-id="${id}" class="top-input"></td>
-        `;
-        tbody.appendChild(row);
-        
-        // Attach live update event listeners
-        row.querySelector(".left-input").addEventListener("input", function() {
-          var newVal = this.value;
-          var target = document.getElementById(this.getAttribute("data-id"));
-          if (target) {
-            target.style.left = newVal + "px";
-            console.log(id, "updated left to", newVal);
-          }
+      // Global function to populate the configuration table by scanning all ".configurable" elements
+      window.populateConfigTable = function() {
+        var tbody = document.getElementById("configTable").querySelector("tbody");
+        tbody.innerHTML = ""; // Clear existing rows
+        console.log("Populating configuration table...");
+
+        // Use a fresh querySelectorAll to ensure we get all configurable elements
+        var elements = document.querySelectorAll('.configurable');
+        if (elements.length === 0) {
+          console.warn("No configurable elements found!");
+        }
+        elements.forEach(function(el) {
+          var id = el.id || "no-id";
+          // Get computed left and top values; if "auto", default to 0
+          var computedStyle = window.getComputedStyle(el);
+          var leftVal = (computedStyle.left === "auto") ? 0 : parseInt(computedStyle.left);
+          var topVal = (computedStyle.top === "auto") ? 0 : parseInt(computedStyle.top);
+          console.log("Element:", id, "Left:", leftVal, "Top:", topVal);
+          
+          // Create a row with two number inputs for left and top offsets
+          var row = document.createElement("tr");
+          row.innerHTML = `
+            <td>${id}</td>
+            <td><input type="number" value="${leftVal}" data-id="${id}" class="left-input"></td>
+            <td><input type="number" value="${topVal}" data-id="${id}" class="top-input"></td>
+          `;
+          tbody.appendChild(row);
+          
+          // Attach event listeners for live updates
+          row.querySelector(".left-input").addEventListener("input", function() {
+            var newVal = this.value;
+            var target = document.getElementById(this.getAttribute("data-id"));
+            if (target) {
+              target.style.left = newVal + "px";
+              console.log(id, "updated left to", newVal);
+            }
+          });
+          row.querySelector(".top-input").addEventListener("input", function() {
+            var newVal = this.value;
+            var target = document.getElementById(this.getAttribute("data-id"));
+            if (target) {
+              target.style.top = newVal + "px";
+              console.log(id, "updated top to", newVal);
+            }
+          });
         });
-        row.querySelector(".top-input").addEventListener("input", function() {
-          var newVal = this.value;
-          var target = document.getElementById(this.getAttribute("data-id"));
-          if (target) {
-            target.style.top = newVal + "px";
-            console.log(id, "updated top to", newVal);
-          }
-        });
+      };
+      
+      // Save Config button handler
+      document.getElementById("saveConfigBtn").addEventListener("click", function() {
+        console.log("Configuration saved.");
       });
-    }
-    
-    // Save Config button handler (for now, just log a message)
-    document.getElementById("saveConfigBtn").addEventListener("click", function() {
-      console.log("Configuration saved.");
     });
   </script>
 </body>
