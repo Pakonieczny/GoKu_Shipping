@@ -18,20 +18,24 @@
       left: 200px;
       top: 200px;
     }
-    /* Config trigger at bottom-right */
+    /* Primary config trigger at bottom-right */
     #openConfigBtn {
       position: fixed;
       bottom: 20px;
       right: 20px;
     }
-    /* Modal styling: force vertical size to 120vh, overall width to 67%, and position top-right */
+    /* Updated Modal styling: 
+       - Height reduced to 60vh (50% of previous 120vh)
+       - Width reduced to 33.5% (50% of previous 67%)
+       - Positioned in the top right corner
+    */
     .modal {
       position: fixed;
       top: 0;
       right: 0;
-      height: 120vh !important;      /* Vertical size reduced */
-      max-height: 120vh !important;
-      width: 67% !important;         /* Overall width reduced */
+      height: 110vh !important;
+      max-height: 110vh !important;
+      width: 33.5% !important;
       overflow-y: scroll !important;
     }
     .modal .modal-content {
@@ -40,7 +44,8 @@
     table.striped {
       width: 100%;
     }
-    table.striped th, table.striped td {
+    table.striped th,
+    table.striped td {
       padding: 8px;
       text-align: center;
     }
@@ -55,7 +60,7 @@
     Dummy
   </button>
   
-  <!-- Config trigger -->
+  <!-- Primary Button Config trigger -->
   <button id="openConfigBtn" class="configurable btn waves-effect waves-light">
     Button Config
   </button>
@@ -64,15 +69,11 @@
   <div id="configModal" class="modal">
     <div class="modal-content">
       <h4>Configure UI Elements</h4>
-      <!-- Additional Button Config inside the modal -->
-      <button id="modalConfigBtn" class="configurable btn waves-effect waves-light">
-        Button Config
-      </button>
       <p>Adjust the Left (px) and Top (px) offsets for each UI element:</p>
       <table class="striped" id="configTable">
         <thead>
           <tr>
-            <th>Element ID / Name</th>
+            <th>Element ID</th>
             <th>Left (px)</th>
             <th>Top (px)</th>
           </tr>
@@ -95,25 +96,24 @@
       // Initialize Materialize components
       M.AutoInit();
       
-      // Function to populate the configuration table.
-      // In this example, we'll configure two elements: the dummy button and the modal's Button Config.
+      // Function to populate the configuration table for the dummy button and primary config button.
       function populateConfigTable() {
         var tbody = document.getElementById("configTable").querySelector("tbody");
-        tbody.innerHTML = ""; // Clear previous rows
+        tbody.innerHTML = ""; // Clear any existing rows
         
-        // Array of elements to configure (dummy button and modal config button)
+        // Array of elements to configure: dummy button and primary config button.
         var elementsToConfigure = [
           document.getElementById("dummyButton"),
-          document.getElementById("modalConfigBtn")
+          document.getElementById("openConfigBtn")
         ];
         
         elementsToConfigure.forEach(function(el) {
-          if (!el) return;  // Skip if not found
-          var id = el.id || el.textContent.trim() || "no-id";
-          // Get computed styles; default to 0 if "auto"
-          var computedStyle = window.getComputedStyle(el);
-          var leftVal = (computedStyle.left === "auto") ? 0 : parseInt(computedStyle.left);
-          var topVal = (computedStyle.top === "auto") ? 0 : parseInt(computedStyle.top);
+          if (!el) return;
+          var id = el.id || "no-id";
+          // Get computed styles; if left or top is "auto", default to 0.
+          var cs = window.getComputedStyle(el);
+          var leftVal = cs.left === "auto" ? 0 : parseInt(cs.left);
+          var topVal = cs.top === "auto" ? 0 : parseInt(cs.top);
           console.log("Configuring element:", id, "Left:", leftVal, "Top:", topVal);
           
           // Create table row
@@ -125,7 +125,7 @@
           `;
           tbody.appendChild(row);
           
-          // Add live update event listeners
+          // Attach live update event listeners
           row.querySelector(".left-input").addEventListener("input", function() {
             var newVal = this.value;
             var target = document.getElementById(this.getAttribute("data-id"));
@@ -145,7 +145,7 @@
         });
       }
       
-      // When the "Button Config" trigger is clicked, populate and open the modal.
+      // When the primary config trigger is clicked, populate the modal and open it.
       document.getElementById("openConfigBtn").addEventListener("click", function() {
         populateConfigTable();
         var modalElem = document.getElementById("configModal");
@@ -153,7 +153,7 @@
         instance.open();
       });
       
-      // Save Config button logs a message.
+      // Save Config button handler (currently logs a message)
       document.getElementById("saveConfigBtn").addEventListener("click", function() {
         console.log("Configuration saved.");
       });
