@@ -8,7 +8,7 @@
   <!-- Material Icons -->
   <link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet">
   <style>
-    /* Custom modal styling */
+    /* Modal styling */
     .modal { max-height: 90%; }
     .modal .modal-content { overflow-y: auto; }
     table.striped td, table.striped th {
@@ -26,31 +26,6 @@
   </style>
 </head>
 <body>
-  <!-- Metadata Modal -->
-  <div id="metadataModal" class="modal">
-    <div class="modal-content">
-      <h4>Photo Metadata</h4>
-      <textarea id="metadataTextarea" readonly style="width:100%; height:300px;"></textarea>
-    </div>
-    <div class="modal-footer">
-      <a href="#!" class="modal-close waves-effect waves-green btn">Close</a>
-    </div>
-  </div>
-
-  <!-- Crop Modal -->
-  <div id="cropModal" class="modal">
-    <div class="modal-content">
-      <h4>Crop Image</h4>
-      <div class="img-preview-container" style="text-align: center;">
-        <img id="cropImage" src="" alt="Image to crop" style="max-width:100%;">
-      </div>
-    </div>
-    <div class="modal-footer">
-      <a href="#!" id="saveCropBtn" class="modal-close waves-effect waves-green btn">Save Crop</a>
-      <a href="#!" id="cancelCropBtn" class="modal-close waves-effect waves-red btn">Cancel</a>
-    </div>
-  </div>
-
   <!-- Configure UI Elements Modal -->
   <div id="buttonConfigModalNew" class="modal">
     <div class="modal-content">
@@ -65,7 +40,7 @@
           </tr>
         </thead>
         <tbody>
-          <!-- Table rows will be generated dynamically -->
+          <!-- Rows will be generated dynamically -->
         </tbody>
       </table>
     </div>
@@ -73,35 +48,34 @@
       <a href="#!" id="saveUIConfigBtn" class="modal-close waves-effect waves-green btn">Save Config</a>
     </div>
   </div>
-
+  
   <!-- Include jQuery and Materialize JS -->
   <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/materialize/1.0.0/js/materialize.min.js"></script>
   <script>
     document.addEventListener("DOMContentLoaded", function() {
-      // Initialize Materialize components
       M.AutoInit();
-
-      // Function to populate the UI Configuration Table and attach live update event listeners
+      
+      // Function to populate the configuration table with all elements having the "configurable" class
       function populateUIConfigTable() {
         var tbody = document.querySelector("#uiConfigTable tbody");
-        tbody.innerHTML = ""; // Clear any existing rows
-        console.log("Populating UI Configuration Table...");
-
-        // Select all elements with the 'configurable' class
+        tbody.innerHTML = ""; // Clear existing rows
+        console.log("Populating UI configuration table...");
+        
+        // Get all configurable elements
         var configurableElements = document.querySelectorAll('.configurable');
         if (configurableElements.length === 0) {
           console.warn("No configurable elements found!");
         }
         configurableElements.forEach(function(el) {
           var id = el.id || "no-id";
-          // Retrieve current positions from computed styles
+          // Get current computed left and top values
           var computedStyle = window.getComputedStyle(el);
           var currentLeft = parseInt(computedStyle.left) || 0;
           var currentTop = parseInt(computedStyle.top) || 0;
-          console.log("Element found:", id, "Left:", currentLeft, "Top:", currentTop);
-
-          // Create a table row with arrow buttons for adjustment
+          console.log("Found element:", id, "Left:", currentLeft, "Top:", currentTop);
+          
+          // Create a row with arrow buttons and a live offset display
           var row = document.createElement("tr");
           row.innerHTML = `
             <td>${id}</td>
@@ -117,15 +91,15 @@
             </td>
           `;
           tbody.appendChild(row);
-
-          // Get control elements
+          
+          // Get the arrow buttons and value spans
           var decLeftBtn = row.querySelector(".decrease-left");
           var incLeftBtn = row.querySelector(".increase-left");
           var leftValueSpan = row.querySelector(".left-value");
           var decTopBtn = row.querySelector(".decrease-top");
           var incTopBtn = row.querySelector(".increase-top");
           var topValueSpan = row.querySelector(".top-value");
-
+          
           // Attach event listeners for live updates
           decLeftBtn.addEventListener("click", function() {
             var newVal = parseInt(leftValueSpan.textContent) - 1;
@@ -153,14 +127,14 @@
           });
         });
       }
-
-      // Attach click handler to the Save Config button (finalizes the positions)
+      
+      // Attach click handler for the Save Config button
       document.getElementById("saveUIConfigBtn").addEventListener("click", function() {
         console.log("Final configuration saved.");
-        // Further persistence logic can be added here if needed.
+        // Additional logic to persist settings can be added here
       });
-
-      // Expose the function to the global scope so it can be called from index.html
+      
+      // Expose the function globally so index.html can call it
       window.populateUIConfigTable = populateUIConfigTable;
     });
   </script>
