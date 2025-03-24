@@ -6,56 +6,45 @@
   <!-- Materialize CSS -->
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/materialize/1.0.0/css/materialize.min.css">
   <style>
+    /* Initially hide the page to prevent visible sliding */
     body {
       background-color: white;
       margin: 0;
       height: 100vh;
       position: relative;
+      opacity: 0;
+      transition: opacity 0s;
     }
-    /* Dummy button with explicit positioning */
-    #dummyButton {
-      position: absolute;
-      left: 200px;
-      top: 200px;
-    }
-    /* Primary Button Config trigger at bottom-right */
+    /* Only one UI element now: the primary Button Config trigger */
     #openConfigBtn {
-      position: fixed;
-      bottom: 20px;
-      right: 20px;
+      position: absolute;
+      left: 50px;
+      top: 50px;
+      transition: none !important;
     }
-    /* Modal styling:
-       - Force the modal to the top right corner with fixed positioning
-       - Modal height is 60vh
-       - Modal width is reduced by 15% (set here to 26.8%)
-       - Ensure scrollability
-    */
+    /* Modal styling: forced to the top right with a 150px offset from the top,
+       a height of 60vh, width of 26.8%, and scrollable. */
     .modal {
       position: fixed !important;
-      top: 0 !important;
+      top: 150px !important;
       right: 0 !important;
       left: auto !important;
       transform: none !important;
       height: 60vh !important;
       max-height: 60vh !important;
-      width: 26.8% !important; /* Reduced width */
+      width: 26.8% !important;
       overflow-y: scroll !important;
     }
     .modal .modal-content {
       overflow-y: auto;
-      font-size: 0.8em; /* Base text size for modal content */
+      font-size: 0.9em;  /* Base modal text size */
     }
-    /* Fix the modal footer so it remains fixed at bottom right of the modal, 50px lower than the bottom of the content */
+    /* Use default modal footer behavior */
     .modal .modal-footer {
-      position: fixed !important;
-      bottom: 50px !important; /* 50px lower */
-      right: 0 !important;
-      width: 26.8% !important; /* Same as modal width */
-      background: white;
       text-align: right;
-      font-size: 0.8em;
       padding: 10px;
-      box-shadow: 0 -2px 5px rgba(0,0,0,0.2);
+      background: white;
+      font-size: 0.9em;
     }
     table.striped {
       width: 100%;
@@ -65,19 +54,14 @@
       padding: 8px;
       text-align: center;
     }
-    /* Shrink the font size of the number inputs by one additional font size */
+    /* Shrink the font size of number inputs further */
     input[type="number"] {
       width: 70px;
-      font-size: 0.7em;
+      font-size: 0.8em;
     }
   </style>
 </head>
 <body>
-  <!-- Dummy button -->
-  <button id="dummyButton" class="configurable btn waves-effect waves-light">
-    Dummy
-  </button>
-  
   <!-- Primary Button Config trigger -->
   <button id="openConfigBtn" class="configurable btn waves-effect waves-light">
     Button Config
@@ -86,17 +70,19 @@
   <!-- Inline Modal -->
   <div id="configModal" class="modal">
     <div class="modal-content">
-      <!-- (Title removed as per requirement) -->
+      <!-- No title as requested -->
       <table class="striped" id="configTable">
         <thead>
           <tr>
             <th>Button Name</th>
             <th>Left (px)</th>
             <th>Top (px)</th>
+            <th>Width (px)</th>
+            <th>Height (px)</th>
           </tr>
         </thead>
         <tbody>
-          <!-- Rows will be inserted dynamically -->
+          <!-- Rows inserted dynamically -->
         </tbody>
       </table>
     </div>
@@ -109,61 +95,102 @@
   <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/materialize/1.0.0/js/materialize.min.js"></script>
   <script>
+    // Load saved positions and dimensions from localStorage and apply them.
+    function loadPositions() {
+      var id = "openConfigBtn";
+      var el = document.getElementById(id);
+      if (el) {
+        var savedLeft = localStorage.getItem("pos-" + id + "-left");
+        var savedTop = localStorage.getItem("pos-" + id + "-top");
+        var savedWidth = localStorage.getItem("pos-" + id + "-width");
+        var savedHeight = localStorage.getItem("pos-" + id + "-height");
+        if (savedLeft !== null) {
+          el.style.left = savedLeft + "px";
+        }
+        if (savedTop !== null) {
+          el.style.top = savedTop + "px";
+        }
+        if (savedWidth !== null) {
+          el.style.width = savedWidth + "px";
+        }
+        if (savedHeight !== null) {
+          el.style.height = savedHeight + "px";
+        }
+      }
+    }
+    
+    // Populate the configuration table for the Button Config trigger.
+    function populateConfigTable() {
+      var tbody = document.getElementById("configTable").querySelector("tbody");
+      tbody.innerHTML = ""; // Clear previous rows
+      
+      var el = document.getElementById("openConfigBtn");
+      if (el) {
+        var buttonName = el.textContent.trim() || "no-name";
+        var id = el.id || "no-id";
+        var cs = window.getComputedStyle(el);
+        var leftVal = (cs.left === "auto") ? 0 : parseInt(cs.left);
+        var topVal = (cs.top === "auto") ? 0 : parseInt(cs.top);
+        var widthVal = (cs.width === "auto") ? 0 : parseInt(cs.width);
+        var heightVal = (cs.height === "auto") ? 0 : parseInt(cs.height);
+        console.log("Configuring:", buttonName, "ID:", id, "Left:", leftVal, "Top:", topVal, "Width:", widthVal, "Height:", heightVal);
+        
+        var row = document.createElement("tr");
+        row.innerHTML = `
+          <td>${buttonName}</td>
+          <td><input type="number" value="${leftVal}" data-id="${id}" class="left-input"></td>
+          <td><input type="number" value="${topVal}" data-id="${id}" class="top-input"></td>
+          <td><input type="number" value="${widthVal}" data-id="${id}" class="width-input"></td>
+          <td><input type="number" value="${heightVal}" data-id="${id}" class="height-input"></td>
+        `;
+        tbody.appendChild(row);
+        
+        row.querySelector(".left-input").addEventListener("input", function() {
+          var newVal = this.value;
+          var target = document.getElementById(this.getAttribute("data-id"));
+          if (target) {
+            target.style.left = newVal + "px";
+            console.log(buttonName, "updated left to", newVal);
+          }
+        });
+        row.querySelector(".top-input").addEventListener("input", function() {
+          var newVal = this.value;
+          var target = document.getElementById(this.getAttribute("data-id"));
+          if (target) {
+            target.style.top = newVal + "px";
+            console.log(buttonName, "updated top to", newVal);
+          }
+        });
+        row.querySelector(".width-input").addEventListener("input", function() {
+          var newVal = this.value;
+          var target = document.getElementById(this.getAttribute("data-id"));
+          if (target) {
+            target.style.width = newVal + "px";
+            console.log(buttonName, "updated width to", newVal);
+          }
+        });
+        row.querySelector(".height-input").addEventListener("input", function() {
+          var newVal = this.value;
+          var target = document.getElementById(this.getAttribute("data-id"));
+          if (target) {
+            target.style.height = newVal + "px";
+            console.log(buttonName, "updated height to", newVal);
+          }
+        });
+      }
+    }
+    
     document.addEventListener("DOMContentLoaded", function() {
       M.AutoInit();
       
-      // Function to populate the configuration table using actual button text.
-      function populateConfigTable() {
-        var tbody = document.getElementById("configTable").querySelector("tbody");
-        tbody.innerHTML = ""; // Clear previous rows
-        
-        // Define the elements to configure: dummy button and primary config trigger.
-        var elementsToConfigure = [
-          document.getElementById("dummyButton"),
-          document.getElementById("openConfigBtn")
-        ];
-        
-        elementsToConfigure.forEach(function(el) {
-          if (!el) return;
-          // Use the actual button text for display.
-          var buttonName = el.textContent.trim() || "no-name";
-          var id = el.id || "no-id";
-          // Get computed style values; if left or top is "auto", default to 0.
-          var cs = window.getComputedStyle(el);
-          var leftVal = (cs.left === "auto") ? 0 : parseInt(cs.left);
-          var topVal = (cs.top === "auto") ? 0 : parseInt(cs.top);
-          console.log("Configuring:", buttonName, "ID:", id, "Left:", leftVal, "Top:", topVal);
-          
-          // Create a table row for the element.
-          var row = document.createElement("tr");
-          row.innerHTML = `
-            <td>${buttonName}</td>
-            <td><input type="number" value="${leftVal}" data-id="${id}" class="left-input"></td>
-            <td><input type="number" value="${topVal}" data-id="${id}" class="top-input"></td>
-          `;
-          tbody.appendChild(row);
-          
-          // Attach live update event listeners
-          row.querySelector(".left-input").addEventListener("input", function() {
-            var newVal = this.value;
-            var target = document.getElementById(this.getAttribute("data-id"));
-            if (target) {
-              target.style.left = newVal + "px";
-              console.log(buttonName, "updated left to", newVal);
-            }
-          });
-          row.querySelector(".top-input").addEventListener("input", function() {
-            var newVal = this.value;
-            var target = document.getElementById(this.getAttribute("data-id"));
-            if (target) {
-              target.style.top = newVal + "px";
-              console.log(buttonName, "updated top to", newVal);
-            }
-          });
-        });
-      }
+      // Initially hide the page so the sliding effect is not visible.
+      document.body.style.opacity = 0;
+      setTimeout(function() {
+        loadPositions();
+        document.body.style.opacity = 1;
+      }, 250);
       
-      // When the primary config trigger is clicked, populate the modal and open it.
+      // When the Button Config trigger is clicked, populate the modal and open it.
       document.getElementById("openConfigBtn").addEventListener("click", function() {
         populateConfigTable();
         var modalElem = document.getElementById("configModal");
@@ -171,8 +198,21 @@
         instance.open();
       });
       
-      // Save Config button handler (currently logs a message)
+      // Save Config button handler: save current positions, widths, and heights to localStorage.
       document.getElementById("saveConfigBtn").addEventListener("click", function() {
+        var id = "openConfigBtn";
+        var el = document.getElementById(id);
+        if (el) {
+          var leftVal = parseInt(window.getComputedStyle(el).left) || 0;
+          var topVal = parseInt(window.getComputedStyle(el).top) || 0;
+          var widthVal = parseInt(window.getComputedStyle(el).width) || 0;
+          var heightVal = parseInt(window.getComputedStyle(el).height) || 0;
+          localStorage.setItem("pos-" + id + "-left", leftVal);
+          localStorage.setItem("pos-" + id + "-top", topVal);
+          localStorage.setItem("pos-" + id + "-width", widthVal);
+          localStorage.setItem("pos-" + id + "-height", heightVal);
+          console.log("Saved", id, "Left:", leftVal, "Top:", topVal, "Width:", widthVal, "Height:", heightVal);
+        }
         console.log("Configuration saved.");
       });
     });
