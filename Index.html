@@ -54,7 +54,7 @@
     }
     /* --- Configuration Modal --- */
     .modal {
-      /* Force modal to appear at the top right with a 150px offset */
+      /* Force the modal to appear at the top right with a 150px offset */
       position: fixed !important;
       top: 150px !important;
       right: 0 !important;
@@ -100,7 +100,7 @@
     Open Config
   </button>
   
-  <!-- Etsy Order UI Components -->
+  <!-- Etsy Order UI -->
   <input type="text" id="etsyOrderNumber" placeholder="Etsy Order Number" />
   <br />
   <textarea id="orderInformation" placeholder="Order Information" readonly></textarea>
@@ -108,7 +108,7 @@
   <!-- Configuration Modal -->
   <div id="configModal" class="modal">
     <div class="modal-content">
-      <!-- Configuration table (no title as requested) -->
+      <!-- No title as per requirements -->
       <table class="striped" id="configTable">
         <thead>
           <tr>
@@ -134,22 +134,19 @@
   <script src="https://cdnjs.cloudflare.com/ajax/libs/materialize/1.0.0/js/materialize.min.js"></script>
   <script>
     /********** Check for Access Token on Redirect **********/
-    // When Etsy redirects back to your app, it should include the access token (or code) in the URL.
-    // Here we check for an "access_token" parameter. If found, we store it in localStorage and show a toast.
     (function() {
       const urlParams = new URLSearchParams(window.location.search);
       const accessToken = urlParams.get("access_token");
       if (accessToken) {
         localStorage.setItem("access_token", accessToken);
-        // Remove the token from the URL (optional)
+        // Optionally clear the token from the URL
         window.history.replaceState({}, document.title, window.location.pathname);
         M.toast({ html: "Connection Successful!" });
       }
     })();
     
     /********** Etsy OAuth: Connect to Etsy **********/
-    // When the Connect to Etsy button is clicked, redirect to your existing OAuth flow.
-    // This uses your exchangeToken.js function (which reads credentials from environment variables on the server).
+    // When the Connect to Etsy button is clicked, redirect to your existing OAuth flow endpoint.
     document.getElementById("connectEtsyBtn").addEventListener("click", function() {
       window.location.href = "/.netlify/functions/exchangeToken";
     });
@@ -275,12 +272,12 @@
         loadPositions();
         document.body.style.opacity = 1;
         
-        // Check for access token in URL query parameters and show a toast if present.
+        // Check for access token in URL query parameters and display toast if found.
         const urlParams = new URLSearchParams(window.location.search);
         const accessToken = urlParams.get("access_token");
         if (accessToken) {
           localStorage.setItem("access_token", accessToken);
-          // Optionally clear the query string.
+          // Optionally clear the URL query string.
           window.history.replaceState({}, document.title, window.location.pathname);
           M.toast({ html: "Connection Successful!" });
         }
@@ -299,7 +296,7 @@
         saveConfiguration();
       });
       
-      // Etsy Order Number input: on pressing Enter, fetch order details.
+      // Etsy Order Number input handler: on pressing Enter, fetch order details.
       var etsyOrderInput = document.getElementById("etsyOrderNumber");
       etsyOrderInput.addEventListener("keydown", function(e) {
         if (e.key === "Enter") {
