@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+<!<!DOCTYPE html>
 <html>
 <head>
   <meta charset="UTF-8">
@@ -18,40 +18,45 @@
       left: 200px;
       top: 200px;
     }
-    /* Primary config trigger at bottom-right of the page */
+    /* Primary Button Config trigger at bottom-right */
     #openConfigBtn {
       position: fixed;
       bottom: 20px;
       right: 20px;
     }
-    /* Modal styling: positioned at top right, reduced overall size, scrollable */
+    /* Modal styling:
+       - Force position in the top-right corner
+       - Set height to 60vh and width to 33.5%
+       - Ensure it is scrollable
+       - Reduce text size to 0.8em (1 font size smaller)
+    */
     .modal {
       position: fixed;
       top: 0;
       right: 0;
-      height: 60vh !important;       /* Reduced vertical size */
+      height: 60vh !important;
       max-height: 60vh !important;
-      width: 33.5% !important;       /* Reduced width */
+      width: 33.5% !important;
       overflow-y: scroll !important;
     }
     .modal .modal-content {
-      font-size: 0.9em;             /* Shrink modal text size by 1 font size */
       overflow-y: auto;
+      font-size: 0.8em; /* Reduce text size */
     }
-    /* Force the modal footer to align content to the right */
     .modal .modal-footer {
       text-align: right;
+      font-size: 0.8em;
     }
     table.striped {
       width: 100%;
     }
-    table.striped th,
-    table.striped td {
+    table.striped th, table.striped td {
       padding: 8px;
       text-align: center;
     }
     input[type="number"] {
       width: 70px;
+      font-size: 0.8em;
     }
   </style>
 </head>
@@ -95,12 +100,12 @@
     document.addEventListener("DOMContentLoaded", function() {
       M.AutoInit();
       
-      // Function to populate the configuration table using the actual button text.
+      // Function to populate the configuration table using actual button text.
       function populateConfigTable() {
         var tbody = document.getElementById("configTable").querySelector("tbody");
         tbody.innerHTML = ""; // Clear previous rows
         
-        // Define an array of elements to configure: dummy button and primary config trigger.
+        // Configure two elements: dummy button and primary config trigger.
         var elementsToConfigure = [
           document.getElementById("dummyButton"),
           document.getElementById("openConfigBtn")
@@ -108,26 +113,24 @@
         
         elementsToConfigure.forEach(function(el) {
           if (!el) return;
-          // Use the actual text inside the button as the "button name"
+          // Use the actual text inside the button as its name.
           var buttonName = el.textContent.trim() || "no-name";
-          // Also, use the element's ID for reference if needed
-          var id = el.id || "no-id";
-          // Get computed left and top values; default to 0 if "auto"
+          // Get the computed style for left and top; default to 0 if "auto"
           var cs = window.getComputedStyle(el);
-          var leftVal = (cs.left === "auto") ? 0 : parseInt(cs.left);
-          var topVal = (cs.top === "auto") ? 0 : parseInt(cs.top);
-          console.log("Configuring element:", buttonName, "ID:", id, "Left:", leftVal, "Top:", topVal);
+          var leftVal = cs.left === "auto" ? 0 : parseInt(cs.left);
+          var topVal = cs.top === "auto" ? 0 : parseInt(cs.top);
+          console.log("Configuring:", buttonName, "Left:", leftVal, "Top:", topVal);
           
-          // Create a table row for this element
+          // Create a table row for the element.
           var row = document.createElement("tr");
           row.innerHTML = `
             <td>${buttonName}</td>
-            <td><input type="number" value="${leftVal}" data-id="${id}" class="left-input"></td>
-            <td><input type="number" value="${topVal}" data-id="${id}" class="top-input"></td>
+            <td><input type="number" value="${leftVal}" data-id="${el.id}" class="left-input"></td>
+            <td><input type="number" value="${topVal}" data-id="${el.id}" class="top-input"></td>
           `;
           tbody.appendChild(row);
           
-          // Attach live update event listeners for left and top inputs
+          // Live update event listeners
           row.querySelector(".left-input").addEventListener("input", function() {
             var newVal = this.value;
             var target = document.getElementById(this.getAttribute("data-id"));
@@ -147,7 +150,7 @@
         });
       }
       
-      // When the primary Button Config trigger is clicked, populate and open the modal.
+      // When the primary config trigger is clicked, populate and open the modal.
       document.getElementById("openConfigBtn").addEventListener("click", function() {
         populateConfigTable();
         var modalElem = document.getElementById("configModal");
