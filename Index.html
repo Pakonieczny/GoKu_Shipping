@@ -6,7 +6,7 @@
   <!-- Materialize CSS -->
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/materialize/1.0.0/css/materialize.min.css">
   <style>
-    /* Hide page initially */
+    /* Hide the page initially to prevent visible sliding */
     body {
       background-color: white;
       margin: 0;
@@ -16,18 +16,21 @@
       transition: opacity 0s;
     }
     /* --- Main UI Components --- */
+    /* Connect to Etsy Button – triggers OAuth flow */
     #connectEtsyBtn {
       position: absolute;
       left: 50px;
       top: 20px;
       transition: none !important;
     }
+    /* Open Config Button – opens the configuration modal */
     #openConfigBtn {
       position: absolute;
       left: 50px;
       top: 80px;
       transition: none !important;
     }
+    /* Etsy Order Number input */
     #etsyOrderNumber {
       position: absolute;
       left: 50px;
@@ -37,6 +40,7 @@
       width: 250px;
       transition: none !important;
     }
+    /* Order Information text area (300px by 300px) */
     #orderInformation {
       position: absolute;
       left: 50px;
@@ -50,6 +54,7 @@
     }
     /* --- Configuration Modal --- */
     .modal {
+      /* Force modal to appear at the top right with a 150px offset */
       position: fixed !important;
       top: 150px !important;
       right: 0 !important;
@@ -62,7 +67,7 @@
     }
     .modal .modal-content {
       overflow-y: auto;
-      font-size: 0.9em;
+      font-size: 0.9em;  /* Base modal text size */
     }
     .modal .modal-footer {
       text-align: right;
@@ -103,6 +108,7 @@
   <!-- Configuration Modal -->
   <div id="configModal" class="modal">
     <div class="modal-content">
+      <!-- Configuration table (no title) -->
       <table class="striped" id="configTable">
         <thead>
           <tr>
@@ -127,21 +133,80 @@
   <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/materialize/1.0.0/js/materialize.min.js"></script>
   <script>
-    /********** Check for Access Token on Redirect **********/
-    (function() {
-      const urlParams = new URLSearchParams(window.location.search);
-      const accessToken = urlParams.get("access_token");
-      if (accessToken) {
-        localStorage.setItem("access_token", accessToken);
-        window.history.replaceState({}, document.title, window.location.pathname);
-        M.toast({ html: "Connection Successful!" });
+    /********** Utility Functions for OAuth **********/
+    function generateRandomString(length) {
+      const possible = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+      let text = "";
+      for (let i = 0; i < length; i++) {
+        text += possible.charAt(Math.floor(Math.random() * possible.length));
       }
-    })();
+      return text;
+    }
+    
+    async function generateCodeChallenge(codeVerifier) {
+      const encoder = new TextEncoder();
+      const data = encoder.encode(codeVerifier);
+      const digest = await crypto.subtle.digest("SHA-256", data);
+      return btoa(String.fromCharCode(...new Uint8Array(digest)))
+              .replace(/\+/g, "-")
+              .replace(/\//g, "_")
+              .replace(/=+$/, "");
+    }
     
     /********** Etsy OAuth: Connect to Etsy **********/
-    // When the Connect to Etsy button is clicked, redirect to your exchangeToken.js endpoint.
-    document.getElementById("connectEtsyBtn").addEventListener("click", function() {
-      window.location.href = "/.netlify/functions/exchangeToken";
+    // On clicking Connect, generate code verifier/challenge and redirect to Etsy's authorization page.
+    document.getElementById("connectEtsyBtn").addEventListener("click", async function() {
+      const codeVerifier = generateRandomString(64);
+      localStorage.setItem("etsy_code_verifier", codeVerifier);
+      const codeChallenge = await generateCodeChallenge(codeVerifier);
+      const state = "randomState123"; // Replace with secure random state in production.
+      const scope = "listings_w listings_r"; // Adjust scope as needed.
+      // Use your public CLIENT_ID (it’s safe to expose)
+      const CLIENT_ID = "k75zdspz4r99txpqdji7i2em";
+      // Redirect URI must be your main site since Etsy doesn't allow your serverless endpoint.
+      const redirectUri = "https://gokushipping.netlify.app";
+      const etsyAuthUrl = `https://www.etsy.com/oauth/connect?response_type=code&client_id=${CLIENT_ID}` +
+                          `&redirect_uri=${encodeURIComponent(redirectUri)}` +
+                          `&scope=${encodeURIComponent(scope)}` +
+                          `&state=${state}` +
+                          `&code_challenge=${encodeURIComponent(codeChallenge)}` +
+                          `&code_challenge_method=S256`;
+      console.log("Redirecting to Etsy OAuth URL:", etsyAuthUrl);
+      window.location.href = etsyAuthUrl;
+    });
+    
+    /********** Check for Authorization Code and Exchange Token **********/
+    // When the page loads, if there's a "code" in the URL, call the token exchange endpoint.
+    document.addEventListener("DOMContentLoaded", function() {
+      const urlParams = new URLSearchParams(window.location.search);
+      const authCode = urlParams.get("code");
+      if (authCode) {
+        // Retrieve the stored code verifier.
+        const storedCodeVerifier = localStorage.getItem("etsy_code_verifier");
+        if (!storedCodeVerifier) {
+          console.error("No code verifier found in localStorage.");
+        } else {
+          // Call the exchangeToken endpoint via fetch.
+          fetch("/.netlify/functions/exchangeToken?code=" + encodeURIComponent(authCode) + "&code_verifier=" + encodeURIComponent(storedCodeVerifier))
+            .then(response => response.json())
+            .then(data => {
+              if (data.access_token) {
+                localStorage.setItem("access_token", data.access_token);
+                // Clear the URL parameters.
+                window.history.replaceState({}, document.title, window.location.pathname);
+                M.toast({ html: "Connection Successful!" });
+                console.log("Access token received:", data.access_token);
+              } else {
+                console.error("Token exchange failed:", data);
+                M.toast({ html: "Token exchange failed." });
+              }
+            })
+            .catch(err => {
+              console.error("Error during token exchange:", err);
+              M.toast({ html: "Error during token exchange." });
+            });
+        }
+      }
     });
     
     /********** UI Configuration Functions **********/
@@ -264,15 +329,6 @@
       setTimeout(function() {
         loadPositions();
         document.body.style.opacity = 1;
-        
-        // Check for access token in URL query parameters and display a toast if found.
-        const urlParams = new URLSearchParams(window.location.search);
-        const accessToken = urlParams.get("access_token");
-        if (accessToken) {
-          localStorage.setItem("access_token", accessToken);
-          window.history.replaceState({}, document.title, window.location.pathname);
-          M.toast({ html: "Connection Successful!" });
-        }
       }, 250);
       
       // When the Open Config button is clicked, populate and open the configuration modal.
