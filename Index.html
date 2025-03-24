@@ -2,7 +2,7 @@
 <html>
 <head>
   <meta charset="UTF-8">
-  <title>Configurable UI Test</title>
+  <title>Etsy Order & OAuth Integration</title>
   <!-- Materialize CSS -->
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/materialize/1.0.0/css/materialize.min.css">
   <style>
@@ -15,29 +15,36 @@
       opacity: 0;
       transition: opacity 0s;
     }
-    /* Primary UI components */
-    /* Primary Button Config trigger (absolute so its position can be modified) */
+    /* --- Main UI Components --- */
+    /* Connect to Etsy Button – triggers OAuth via your existing exchangeToken.js function */
+    #connectEtsyBtn {
+      position: absolute;
+      left: 50px;
+      top: 20px;
+      transition: none !important;
+    }
+    /* Open Config Button – opens the configuration modal */
     #openConfigBtn {
       position: absolute;
       left: 50px;
-      top: 50px;
+      top: 80px;
       transition: none !important;
     }
     /* Etsy Order Number input */
     #etsyOrderNumber {
       position: absolute;
       left: 50px;
-      top: 120px;
+      top: 140px;
       font-size: 1em;
       padding: 8px;
       width: 250px;
       transition: none !important;
     }
-    /* Order Information text area */
+    /* Order Information text area (300px by 300px) */
     #orderInformation {
       position: absolute;
       left: 50px;
-      top: 170px;
+      top: 190px;
       width: 300px;
       height: 300px;
       font-size: 1em;
@@ -45,10 +52,9 @@
       resize: none;
       transition: none !important;
     }
-    /* Modal styling: forced to the top right with a top offset of 150px,
-       a height of 60vh and a width of 26.8%, scrollable.
-    */
+    /* --- Configuration Modal --- */
     .modal {
+      /* Force modal to top right with a 150px offset from the top */
       position: fixed !important;
       top: 150px !important;
       right: 0 !important;
@@ -61,7 +67,7 @@
     }
     .modal .modal-content {
       overflow-y: auto;
-      font-size: 0.9em; /* Base modal text size reduced by 1 unit */
+      font-size: 0.9em;  /* Base modal text size */
     }
     .modal .modal-footer {
       text-align: right;
@@ -77,30 +83,32 @@
       padding: 8px;
       text-align: center;
     }
-    /* Further shrink the number input font size */
     input[type="number"] {
       width: 70px;
-      font-size: 0.8em;
+      font-size: 0.8em;  /* Slightly smaller font for numbers */
     }
   </style>
 </head>
 <body>
-  <!-- Primary Button Config trigger -->
-  <button id="openConfigBtn" class="configurable btn waves-effect waves-light">
-    Button Config
+  <!-- Connect to Etsy Button -->
+  <button id="connectEtsyBtn" class="configurable btn waves-effect waves-light">
+    Connect to Etsy
   </button>
   
-  <!-- Etsy Order Container -->
-  <div id="etsyContainer">
-    <input type="text" id="etsyOrderNumber" placeholder="Etsy Order Number" />
-    <br />
-    <textarea id="orderInformation" placeholder="Order Information" readonly></textarea>
-  </div>
+  <!-- Open Config Button -->
+  <button id="openConfigBtn" class="configurable btn waves-effect waves-light">
+    Open Config
+  </button>
   
-  <!-- Inline Modal for UI configuration -->
+  <!-- Etsy Order UI: Order Number input and Order Information text area -->
+  <input type="text" id="etsyOrderNumber" placeholder="Etsy Order Number" />
+  <br />
+  <textarea id="orderInformation" placeholder="Order Information" readonly></textarea>
+  
+  <!-- Configuration Modal -->
   <div id="configModal" class="modal">
     <div class="modal-content">
-      <!-- No title -->
+      <!-- No title per requirements -->
       <table class="striped" id="configTable">
         <thead>
           <tr>
@@ -112,7 +120,7 @@
           </tr>
         </thead>
         <tbody>
-          <!-- Rows will be inserted dynamically -->
+          <!-- Rows inserted dynamically -->
         </tbody>
       </table>
     </div>
@@ -125,10 +133,19 @@
   <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/materialize/1.0.0/js/materialize.min.js"></script>
   <script>
-    // List of component IDs to configure
-    var configComponentIDs = ["openConfigBtn", "etsyOrderNumber", "orderInformation"];
+    /********** Etsy OAuth: Connect to Etsy **********/
+    // When the Connect to Etsy button is clicked, redirect to your existing OAuth flow.
+    // This uses your existing serverless function (exchangeToken.js) without exposing your credentials.
+    document.getElementById("connectEtsyBtn").addEventListener("click", function() {
+      // Redirect to your OAuth flow endpoint.
+      window.location.href = "/.netlify/functions/exchangeToken";
+    });
     
-    // Function to load saved positions and dimensions from localStorage and apply them.
+    /********** UI Configuration Functions **********/
+    // List of component IDs to configure.
+    var configComponentIDs = ["connectEtsyBtn", "openConfigBtn", "etsyOrderNumber", "orderInformation"];
+    
+    // Load saved positions/dimensions from localStorage and apply them.
     function loadPositions() {
       configComponentIDs.forEach(function(id) {
         var el = document.getElementById(id);
@@ -145,15 +162,13 @@
       });
     }
     
-    // Function to populate the configuration table.
+    // Populate the configuration modal's table with current UI component properties.
     function populateConfigTable() {
       var tbody = document.getElementById("configTable").querySelector("tbody");
-      tbody.innerHTML = ""; // Clear existing rows
-      
+      tbody.innerHTML = "";
       configComponentIDs.forEach(function(id) {
         var el = document.getElementById(id);
         if (!el) return;
-        // Use the element's inner text as its display name.
         var compName = el.textContent.trim() || id;
         var cs = window.getComputedStyle(el);
         var leftVal = (cs.left === "auto") ? 0 : parseInt(cs.left);
@@ -207,7 +222,7 @@
       });
     }
     
-    // Function to save current positions and dimensions to localStorage.
+    // Save current UI component configuration to localStorage.
     function saveConfiguration() {
       configComponentIDs.forEach(function(id) {
         var el = document.getElementById(id);
@@ -226,7 +241,8 @@
       console.log("Configuration saved.");
     }
     
-    // Function to simulate an Etsy API pull (replace with your actual API call).
+    /********** Etsy Order Pull **********/
+    // Pull Etsy order details using your existing Netlify function (etsyOrderProxy.js).
     function pullEtsyOrderDetails(orderNumber) {
       console.log("Pulling Etsy order details for order number:", orderNumber);
       return fetch('/.netlify/functions/etsyOrderProxy?orderId=' + encodeURIComponent(orderNumber))
@@ -244,14 +260,14 @@
     document.addEventListener("DOMContentLoaded", function() {
       M.AutoInit();
       
-      // Delay showing the page by 250ms to allow saved positions to be applied.
+      // Delay showing the page by 250ms to ensure saved positions are applied.
       document.body.style.opacity = 0;
       setTimeout(function() {
         loadPositions();
         document.body.style.opacity = 1;
       }, 250);
       
-      // When the Button Config trigger is clicked, populate and open the modal.
+      // When the Open Config button is clicked, populate and open the configuration modal.
       document.getElementById("openConfigBtn").addEventListener("click", function() {
         populateConfigTable();
         var modalElem = document.getElementById("configModal");
@@ -259,12 +275,12 @@
         instance.open();
       });
       
-      // Save Config button: save current positions and dimensions.
+      // Save Config button handler.
       document.getElementById("saveConfigBtn").addEventListener("click", function() {
         saveConfiguration();
       });
       
-      // Etsy Order Number input handler: on pressing Enter, pull order details and display them.
+      // Etsy Order Number input: on pressing Enter, pull order details.
       var etsyOrderInput = document.getElementById("etsyOrderNumber");
       etsyOrderInput.addEventListener("keydown", function(e) {
         if (e.key === "Enter") {
