@@ -15,15 +15,39 @@
       opacity: 0;
       transition: opacity 0s;
     }
-    /* Only one UI element now: the primary Button Config trigger */
+    /* Primary UI components */
+    /* Primary Button Config trigger (absolute so its position can be modified) */
     #openConfigBtn {
       position: absolute;
       left: 50px;
       top: 50px;
       transition: none !important;
     }
-    /* Modal styling: forced to the top right with a 150px offset from the top,
-       a height of 60vh, width of 26.8%, and scrollable. */
+    /* Etsy Order Number input */
+    #etsyOrderNumber {
+      position: absolute;
+      left: 50px;
+      top: 120px;
+      font-size: 1em;
+      padding: 8px;
+      width: 250px;
+      transition: none !important;
+    }
+    /* Order Information text area */
+    #orderInformation {
+      position: absolute;
+      left: 50px;
+      top: 170px;
+      width: 300px;
+      height: 300px;
+      font-size: 1em;
+      padding: 8px;
+      resize: none;
+      transition: none !important;
+    }
+    /* Modal styling: forced to the top right with a top offset of 150px,
+       a height of 60vh and a width of 26.8%, scrollable.
+    */
     .modal {
       position: fixed !important;
       top: 150px !important;
@@ -37,9 +61,8 @@
     }
     .modal .modal-content {
       overflow-y: auto;
-      font-size: 0.9em;  /* Base modal text size */
+      font-size: 0.9em; /* Base modal text size reduced by 1 unit */
     }
-    /* Use default modal footer behavior */
     .modal .modal-footer {
       text-align: right;
       padding: 10px;
@@ -54,7 +77,7 @@
       padding: 8px;
       text-align: center;
     }
-    /* Shrink the font size of number inputs further */
+    /* Further shrink the number input font size */
     input[type="number"] {
       width: 70px;
       font-size: 0.8em;
@@ -67,14 +90,21 @@
     Button Config
   </button>
   
-  <!-- Inline Modal -->
+  <!-- Etsy Order Container -->
+  <div id="etsyContainer">
+    <input type="text" id="etsyOrderNumber" placeholder="Etsy Order Number" />
+    <br />
+    <textarea id="orderInformation" placeholder="Order Information" readonly></textarea>
+  </div>
+  
+  <!-- Inline Modal for UI configuration -->
   <div id="configModal" class="modal">
     <div class="modal-content">
-      <!-- No title as requested -->
+      <!-- No title -->
       <table class="striped" id="configTable">
         <thead>
           <tr>
-            <th>Button Name</th>
+            <th>Component Name</th>
             <th>Left (px)</th>
             <th>Top (px)</th>
             <th>Width (px)</th>
@@ -82,7 +112,7 @@
           </tr>
         </thead>
         <tbody>
-          <!-- Rows inserted dynamically -->
+          <!-- Rows will be inserted dynamically -->
         </tbody>
       </table>
     </div>
@@ -95,49 +125,46 @@
   <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/materialize/1.0.0/js/materialize.min.js"></script>
   <script>
-    // Load saved positions and dimensions from localStorage and apply them.
+    // List of component IDs to configure
+    var configComponentIDs = ["openConfigBtn", "etsyOrderNumber", "orderInformation"];
+    
+    // Function to load saved positions and dimensions from localStorage and apply them.
     function loadPositions() {
-      var id = "openConfigBtn";
-      var el = document.getElementById(id);
-      if (el) {
-        var savedLeft = localStorage.getItem("pos-" + id + "-left");
-        var savedTop = localStorage.getItem("pos-" + id + "-top");
-        var savedWidth = localStorage.getItem("pos-" + id + "-width");
-        var savedHeight = localStorage.getItem("pos-" + id + "-height");
-        if (savedLeft !== null) {
-          el.style.left = savedLeft + "px";
+      configComponentIDs.forEach(function(id) {
+        var el = document.getElementById(id);
+        if (el) {
+          var savedLeft = localStorage.getItem("pos-" + id + "-left");
+          var savedTop = localStorage.getItem("pos-" + id + "-top");
+          var savedWidth = localStorage.getItem("pos-" + id + "-width");
+          var savedHeight = localStorage.getItem("pos-" + id + "-height");
+          if (savedLeft !== null) { el.style.left = savedLeft + "px"; }
+          if (savedTop !== null) { el.style.top = savedTop + "px"; }
+          if (savedWidth !== null) { el.style.width = savedWidth + "px"; }
+          if (savedHeight !== null) { el.style.height = savedHeight + "px"; }
         }
-        if (savedTop !== null) {
-          el.style.top = savedTop + "px";
-        }
-        if (savedWidth !== null) {
-          el.style.width = savedWidth + "px";
-        }
-        if (savedHeight !== null) {
-          el.style.height = savedHeight + "px";
-        }
-      }
+      });
     }
     
-    // Populate the configuration table for the Button Config trigger.
+    // Function to populate the configuration table.
     function populateConfigTable() {
       var tbody = document.getElementById("configTable").querySelector("tbody");
-      tbody.innerHTML = ""; // Clear previous rows
+      tbody.innerHTML = ""; // Clear existing rows
       
-      var el = document.getElementById("openConfigBtn");
-      if (el) {
-        var buttonName = el.textContent.trim() || "no-name";
-        var id = el.id || "no-id";
+      configComponentIDs.forEach(function(id) {
+        var el = document.getElementById(id);
+        if (!el) return;
+        // Use the element's inner text as its display name.
+        var compName = el.textContent.trim() || id;
         var cs = window.getComputedStyle(el);
         var leftVal = (cs.left === "auto") ? 0 : parseInt(cs.left);
         var topVal = (cs.top === "auto") ? 0 : parseInt(cs.top);
         var widthVal = (cs.width === "auto") ? 0 : parseInt(cs.width);
         var heightVal = (cs.height === "auto") ? 0 : parseInt(cs.height);
-        console.log("Configuring:", buttonName, "ID:", id, "Left:", leftVal, "Top:", topVal, "Width:", widthVal, "Height:", heightVal);
+        console.log("Configuring:", compName, "ID:", id, "Left:", leftVal, "Top:", topVal, "Width:", widthVal, "Height:", heightVal);
         
         var row = document.createElement("tr");
         row.innerHTML = `
-          <td>${buttonName}</td>
+          <td>${compName}</td>
           <td><input type="number" value="${leftVal}" data-id="${id}" class="left-input"></td>
           <td><input type="number" value="${topVal}" data-id="${id}" class="top-input"></td>
           <td><input type="number" value="${widthVal}" data-id="${id}" class="width-input"></td>
@@ -150,7 +177,7 @@
           var target = document.getElementById(this.getAttribute("data-id"));
           if (target) {
             target.style.left = newVal + "px";
-            console.log(buttonName, "updated left to", newVal);
+            console.log(compName, "updated left to", newVal);
           }
         });
         row.querySelector(".top-input").addEventListener("input", function() {
@@ -158,7 +185,7 @@
           var target = document.getElementById(this.getAttribute("data-id"));
           if (target) {
             target.style.top = newVal + "px";
-            console.log(buttonName, "updated top to", newVal);
+            console.log(compName, "updated top to", newVal);
           }
         });
         row.querySelector(".width-input").addEventListener("input", function() {
@@ -166,7 +193,7 @@
           var target = document.getElementById(this.getAttribute("data-id"));
           if (target) {
             target.style.width = newVal + "px";
-            console.log(buttonName, "updated width to", newVal);
+            console.log(compName, "updated width to", newVal);
           }
         });
         row.querySelector(".height-input").addEventListener("input", function() {
@@ -174,33 +201,15 @@
           var target = document.getElementById(this.getAttribute("data-id"));
           if (target) {
             target.style.height = newVal + "px";
-            console.log(buttonName, "updated height to", newVal);
+            console.log(compName, "updated height to", newVal);
           }
         });
-      }
+      });
     }
     
-    document.addEventListener("DOMContentLoaded", function() {
-      M.AutoInit();
-      
-      // Initially hide the page so the sliding effect is not visible.
-      document.body.style.opacity = 0;
-      setTimeout(function() {
-        loadPositions();
-        document.body.style.opacity = 1;
-      }, 250);
-      
-      // When the Button Config trigger is clicked, populate the modal and open it.
-      document.getElementById("openConfigBtn").addEventListener("click", function() {
-        populateConfigTable();
-        var modalElem = document.getElementById("configModal");
-        var instance = M.Modal.getInstance(modalElem);
-        instance.open();
-      });
-      
-      // Save Config button handler: save current positions, widths, and heights to localStorage.
-      document.getElementById("saveConfigBtn").addEventListener("click", function() {
-        var id = "openConfigBtn";
+    // Function to save current positions and dimensions to localStorage.
+    function saveConfiguration() {
+      configComponentIDs.forEach(function(id) {
         var el = document.getElementById(id);
         if (el) {
           var leftVal = parseInt(window.getComputedStyle(el).left) || 0;
@@ -213,7 +222,60 @@
           localStorage.setItem("pos-" + id + "-height", heightVal);
           console.log("Saved", id, "Left:", leftVal, "Top:", topVal, "Width:", widthVal, "Height:", heightVal);
         }
-        console.log("Configuration saved.");
+      });
+      console.log("Configuration saved.");
+    }
+    
+    // Function to simulate an Etsy API pull (replace with your actual API call).
+    function pullEtsyOrderDetails(orderNumber) {
+      console.log("Pulling Etsy order details for order number:", orderNumber);
+      return fetch('/.netlify/functions/etsyOrderProxy?orderId=' + encodeURIComponent(orderNumber))
+        .then(response => response.json())
+        .then(data => {
+          console.log("Etsy Order Data:", data);
+          return JSON.stringify(data, null, 2);
+        })
+        .catch(error => {
+          console.error("Error fetching Etsy order details:", error);
+          return "Error fetching order details.";
+        });
+    }
+    
+    document.addEventListener("DOMContentLoaded", function() {
+      M.AutoInit();
+      
+      // Delay showing the page by 250ms to allow saved positions to be applied.
+      document.body.style.opacity = 0;
+      setTimeout(function() {
+        loadPositions();
+        document.body.style.opacity = 1;
+      }, 250);
+      
+      // When the Button Config trigger is clicked, populate and open the modal.
+      document.getElementById("openConfigBtn").addEventListener("click", function() {
+        populateConfigTable();
+        var modalElem = document.getElementById("configModal");
+        var instance = M.Modal.getInstance(modalElem);
+        instance.open();
+      });
+      
+      // Save Config button: save current positions and dimensions.
+      document.getElementById("saveConfigBtn").addEventListener("click", function() {
+        saveConfiguration();
+      });
+      
+      // Etsy Order Number input handler: on pressing Enter, pull order details and display them.
+      var etsyOrderInput = document.getElementById("etsyOrderNumber");
+      etsyOrderInput.addEventListener("keydown", function(e) {
+        if (e.key === "Enter") {
+          var orderNumber = etsyOrderInput.value.trim();
+          if (orderNumber !== "") {
+            pullEtsyOrderDetails(orderNumber).then(function(orderInfo) {
+              document.getElementById("orderInformation").value = orderInfo;
+              console.log("Order information retrieved.");
+            });
+          }
+        }
       });
     });
   </script>
