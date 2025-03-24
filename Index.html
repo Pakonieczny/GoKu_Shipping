@@ -1,4 +1,4 @@
-<!D<!DOCTYPE html>
+<!DOCTYPE html>
 <html>
 <head>
   <meta charset="UTF-8">
@@ -112,7 +112,7 @@
   <br />
   <textarea id="orderInformation" placeholder="Order Information" readonly></textarea>
   
-  <!-- Image Grid Container: The grid will be loaded here from imageGrid.html -->
+  <!-- Image Grid Container -->
   <div id="imageGridContainer"></div>
   
   <!-- Configuration Modal -->
@@ -145,7 +145,7 @@
     /********** Check for Access Token or Code on Redirect **********/
     (function() {
       const urlParams = new URLSearchParams(window.location.search);
-      // First, check for an access token.
+      // Check for an access token in the URL.
       const accessToken = urlParams.get("access_token");
       if (accessToken) {
         localStorage.setItem("access_token", accessToken);
@@ -158,7 +158,6 @@
         if (authCode) {
           const storedCodeVerifier = localStorage.getItem("etsy_code_verifier");
           if (storedCodeVerifier) {
-            // Redirect to exchangeToken.js to perform token exchange.
             window.location.href = "/.netlify/functions/exchangeToken?code=" + encodeURIComponent(authCode) +
                                      "&code_verifier=" + encodeURIComponent(storedCodeVerifier);
           } else {
@@ -194,10 +193,8 @@
       const codeChallenge = await generateCodeChallenge(codeVerifier);
       const state = "randomState123"; // Replace with a secure random state in production.
       const scope = "listings_w listings_r transactions_r transactions_w"; // Adjust scope as needed.
-      // Your public CLIENT_ID (safe to expose)
-      const CLIENT_ID = "k75zdspz4r99txpqdji7i2em";
-      // Redirect URI must match your Etsy app settings (set to your main site URL).
-      const redirectUri = "https://gokushipping.netlify.app";
+      const CLIENT_ID = "k75zdspz4r99txpqdji7i2em"; // Your public CLIENT_ID
+      const redirectUri = "https://gokushipping.netlify.app"; // Must match your Etsy app settings.
       const etsyAuthUrl = `https://www.etsy.com/oauth/connect?response_type=code&client_id=${CLIENT_ID}` +
                           `&redirect_uri=${encodeURIComponent(redirectUri)}` +
                           `&scope=${encodeURIComponent(scope)}` +
@@ -305,6 +302,30 @@
       console.log("Configuration saved.");
     }
     
+    /********** Update Image Grid with Purchased Items **********/
+    function updateImageGrid(data) {
+      // Assume that order data contains an array of purchased items under data.results.
+      // Each item should have a property "listing_image_id".
+      if (!data || !data.results || !Array.isArray(data.results)) {
+        console.error("Order data does not contain a valid 'results' array.");
+        return;
+      }
+      const items = data.results;
+      for (let i = 0; i < 8; i++) {
+        const cell = document.getElementById("previewCell" + i);
+        if (cell) {
+          if (i < items.length) {
+            // For demonstration, we'll assume a URL pattern for the image.
+            // Adjust this URL pattern based on Etsy's documentation if necessary.
+            const listingImageId = items[i].listing_image_id;
+            cell.innerHTML = `<img src="https://img.etsy.com/il/${listingImageId}/0/il_fullxfull.jpg" alt="Listing Image ${i}">`;
+          } else {
+            cell.innerHTML = "Empty";
+          }
+        }
+      }
+    }
+    
     /********** Etsy Order Pull **********/
     function pullEtsyOrderDetails(orderNumber) {
       console.log("Pulling Etsy order details for order number:", orderNumber);
@@ -315,19 +336,18 @@
         .then(response => response.json())
         .then(data => {
           console.log("Etsy Order Data:", data);
-          return JSON.stringify(data, null, 2);
+          return data; // Return the data object for further processing.
         })
         .catch(error => {
           console.error("Error fetching Etsy order details:", error);
-          return "Error fetching order details.";
+          return null;
         });
     }
     
     document.addEventListener("DOMContentLoaded", function() {
       M.AutoInit();
       
-      // *** Insert Image Grid Load Here ***
-      // Place this immediately after M.AutoInit() inside the DOMContentLoaded event.
+      // *** Load the image grid immediately after Materialize is initialized ***
       $("#imageGridContainer").load("imageGrid.html", function(response, status, xhr) {
         if (status === "error") {
           console.error("Error loading image grid:", xhr.status, xhr.statusText);
@@ -362,9 +382,14 @@
         if (e.key === "Enter") {
           var orderNumber = etsyOrderInput.value.trim();
           if (orderNumber !== "") {
-            pullEtsyOrderDetails(orderNumber).then(function(orderInfo) {
-              document.getElementById("orderInformation").value = orderInfo;
-              console.log("Order information retrieved.");
+            pullEtsyOrderDetails(orderNumber).then(function(orderData) {
+              if (orderData) {
+                // Update the order information textarea with the JSON output.
+                document.getElementById("orderInformation").value = JSON.stringify(orderData, null, 2);
+                // Update the image grid with the listing_image_id of each purchased item.
+                updateImageGrid(orderData);
+                console.log("Order information retrieved and image grid updated.");
+              }
             });
           }
         }
