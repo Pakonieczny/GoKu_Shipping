@@ -183,7 +183,7 @@
       localStorage.setItem("etsy_code_verifier", codeVerifier);
       const codeChallenge = await generateCodeChallenge(codeVerifier);
       const state = "randomState123"; // Replace with a secure random state in production.
-      const scope = "listings_w listings_r transactions_r"; // Adjust scope as needed.
+      const scope = "listings_w listings_r transactions_r transactions_w"; // Adjust scope as needed.
       // Your public CLIENT_ID (safe to expose)
       const CLIENT_ID = "k75zdspz4r99txpqdji7i2em";
       // Redirect URI must match your Etsy app settings (set to your main site URL).
