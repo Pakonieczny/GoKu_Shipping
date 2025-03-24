@@ -24,25 +24,27 @@
       bottom: 20px;
       right: 20px;
     }
-    /* Force the modal to the top right and override centering defaults */
+  
     .modal {
       position: fixed !important;
       top: 0 !important;
       right: 0 !important;
       left: auto !important;
       transform: none !important;
-      height: 60vh !important;  /* Reduced vertical size */
+      height: 60vh !important;
       max-height: 60vh !important;
-      width: 33.5% !important;  /* Reduced overall width */
+      width: 26.8% !important;
       overflow-y: scroll !important;
     }
     .modal .modal-content {
+      font-size: 0.8em;
       overflow-y: auto;
-      font-size: 0.8em; /* Reduce modal text size */
     }
+    /* Force the modal footer (and the Save Config button) to be at the bottom right, and push it down by 50px */
     .modal .modal-footer {
       text-align: right;
       font-size: 0.8em;
+      margin-top: 50px;
     }
     table.striped {
       width: 100%;
@@ -103,7 +105,7 @@
         var tbody = document.getElementById("configTable").querySelector("tbody");
         tbody.innerHTML = ""; // Clear previous rows
         
-        // Define the array of elements to configure: dummy button and primary config trigger.
+        // Define the elements to configure: dummy button and primary config trigger.
         var elementsToConfigure = [
           document.getElementById("dummyButton"),
           document.getElementById("openConfigBtn")
@@ -111,16 +113,16 @@
         
         elementsToConfigure.forEach(function(el) {
           if (!el) return;
-          // Use the button's text content as its name.
+          // Use the actual button text for display.
           var buttonName = el.textContent.trim() || "no-name";
           var id = el.id || "no-id";
-          // Get computed style values; default to 0 if "auto"
+          // Get computed style values; if "auto", default to 0.
           var cs = window.getComputedStyle(el);
           var leftVal = (cs.left === "auto") ? 0 : parseInt(cs.left);
           var topVal = (cs.top === "auto") ? 0 : parseInt(cs.top);
           console.log("Configuring:", buttonName, "ID:", id, "Left:", leftVal, "Top:", topVal);
           
-          // Create a table row
+          // Create table row for the element.
           var row = document.createElement("tr");
           row.innerHTML = `
             <td>${buttonName}</td>
@@ -129,7 +131,7 @@
           `;
           tbody.appendChild(row);
           
-          // Attach live update event listeners
+          // Attach live update event listeners.
           row.querySelector(".left-input").addEventListener("input", function() {
             var newVal = this.value;
             var target = document.getElementById(this.getAttribute("data-id"));
@@ -157,7 +159,7 @@
         instance.open();
       });
       
-      // Save Config button handler (currently logs a message)
+      // Save Config button handler (logs a message).
       document.getElementById("saveConfigBtn").addEventListener("click", function() {
         console.log("Configuration saved.");
       });
