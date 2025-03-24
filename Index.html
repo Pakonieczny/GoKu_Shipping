@@ -16,21 +16,18 @@
       transition: opacity 0s;
     }
     /* --- Main UI Components --- */
-    /* Connect to Etsy Button – triggers OAuth flow */
     #connectEtsyBtn {
       position: absolute;
       left: 50px;
       top: 20px;
       transition: none !important;
     }
-    /* Open Config Button – opens the configuration modal */
     #openConfigBtn {
       position: absolute;
       left: 50px;
       top: 80px;
       transition: none !important;
     }
-    /* Etsy Order Number input */
     #etsyOrderNumber {
       position: absolute;
       left: 50px;
@@ -40,7 +37,6 @@
       width: 250px;
       transition: none !important;
     }
-    /* Order Information text area (300px by 300px) */
     #orderInformation {
       position: absolute;
       left: 50px;
@@ -73,7 +69,7 @@
     }
     .modal .modal-content {
       overflow-y: auto;
-      font-size: 0.9em;
+      font-size: 0.9em;  /* Base modal text size */
     }
     .modal .modal-footer {
       text-align: right;
@@ -111,7 +107,7 @@
   <br />
   <textarea id="orderInformation" placeholder="Order Information" readonly></textarea>
   
-  <!-- Image Grid Container: External grid will be loaded here -->
+  <!-- Image Grid Container -->
   <div id="imageGridContainer"></div>
   
   <!-- Configuration Modal -->
@@ -301,7 +297,7 @@
     
     /********** Update Image Grid with Purchased Items **********/
     function updateImageGrid(data) {
-      // Try multiple approaches to get the purchased items array.
+      // Attempt to determine the purchased items array.
       let items = [];
       if (Array.isArray(data)) {
         items = data;
@@ -309,11 +305,19 @@
         items = data.results;
       } else if (data.orders && Array.isArray(data.orders)) {
         items = data.orders;
-      } else if (typeof data === 'object' && data !== null && data.listing_image_id) {
-        // If data is a single object representing one purchased item.
-        items = [data];
-      } else {
-        console.error("Order data does not contain a valid array of purchased items.");
+      } else if (typeof data === 'object' && data !== null) {
+        // Fallback: iterate over keys to see if any value is an array.
+        for (const key in data) {
+          if (Array.isArray(data[key])) {
+            items = data[key];
+            console.log("Found purchased items array under key:", key);
+            break;
+          }
+        }
+      }
+      
+      if (!items.length) {
+        console.error("Order data does not contain a valid array of purchased items.", data);
         return;
       }
       
@@ -323,7 +327,7 @@
         if (cell) {
           if (i < items.length) {
             const listingImageId = items[i].listing_image_id;
-            // Construct the image URL (adjust pattern as needed).
+            // Construct the image URL (adjust as needed based on your API).
             cell.innerHTML = `<img src="https://img.etsystatic.com/${listingImageId}/il_fullxfull.jpg" alt="Listing Image ${i}">`;
           } else {
             cell.innerHTML = "Empty";
@@ -342,7 +346,7 @@
         .then(response => response.json())
         .then(data => {
           console.log("Etsy Order Data:", data);
-          return data; // Return data object for further processing.
+          return data;
         })
         .catch(error => {
           console.error("Error fetching Etsy order details:", error);
