@@ -6,7 +6,7 @@
   <!-- Materialize CSS -->
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/materialize/1.0.0/css/materialize.min.css">
   <style>
-    /* Initially hide the page to prevent visible sliding */
+    /* Hide page initially so saved positions are applied before display */
     body {
       background-color: white;
       margin: 0;
@@ -16,7 +16,7 @@
       transition: opacity 0s;
     }
     /* --- Main UI Components --- */
-    /* Connect to Etsy Button – triggers OAuth via your existing exchangeToken.js function */
+    /* Connect to Etsy Button – triggers OAuth flow */
     #connectEtsyBtn {
       position: absolute;
       left: 50px;
@@ -54,7 +54,7 @@
     }
     /* --- Configuration Modal --- */
     .modal {
-      /* Force modal to top right with a 150px offset from the top */
+      /* Force modal to the top right corner with a 150px offset */
       position: fixed !important;
       top: 150px !important;
       right: 0 !important;
@@ -67,7 +67,7 @@
     }
     .modal .modal-content {
       overflow-y: auto;
-      font-size: 0.9em;  /* Base modal text size */
+      font-size: 0.9em; /* Base modal text size */
     }
     .modal .modal-footer {
       text-align: right;
@@ -85,7 +85,7 @@
     }
     input[type="number"] {
       width: 70px;
-      font-size: 0.8em;  /* Slightly smaller font for numbers */
+      font-size: 0.8em;
     }
   </style>
 </head>
@@ -100,7 +100,7 @@
     Open Config
   </button>
   
-  <!-- Etsy Order UI: Order Number input and Order Information text area -->
+  <!-- Etsy Order UI Components -->
   <input type="text" id="etsyOrderNumber" placeholder="Etsy Order Number" />
   <br />
   <textarea id="orderInformation" placeholder="Order Information" readonly></textarea>
@@ -120,7 +120,7 @@
           </tr>
         </thead>
         <tbody>
-          <!-- Rows inserted dynamically -->
+          <!-- Rows will be inserted dynamically -->
         </tbody>
       </table>
     </div>
@@ -134,18 +134,55 @@
   <script src="https://cdnjs.cloudflare.com/ajax/libs/materialize/1.0.0/js/materialize.min.js"></script>
   <script>
     /********** Etsy OAuth: Connect to Etsy **********/
-    // When the Connect to Etsy button is clicked, redirect to your existing OAuth flow.
-    // This uses your existing serverless function (exchangeToken.js) without exposing your credentials.
-    document.getElementById("connectEtsyBtn").addEventListener("click", function() {
-      // Redirect to your OAuth flow endpoint.
-      window.location.href = "/.netlify/functions/exchangeToken";
+    // When the Connect to Etsy button is clicked, initiate the OAuth flow.
+    // This uses your existing exchangeToken.js function on the server.
+    // IMPORTANT: Ensure that your Netlify environment variables (CLIENT_ID, CLIENT_SECRET, REDIRECT_URI)
+    // are properly set in your Netlify dashboard.
+    document.getElementById("connectEtsyBtn").addEventListener("click", async function() {
+      // Generate a random code verifier.
+      const codeVerifier = generateRandomString(64);
+      localStorage.setItem("etsy_code_verifier", codeVerifier);
+      // Generate the corresponding code challenge.
+      const codeChallenge = await generateCodeChallenge(codeVerifier);
+      // Define state and scope parameters.
+      const state = "randomState123"; // Replace with a proper state in production.
+      const scope = "listings_w listings_r"; // Adjust scope as needed.
+      // Construct the Etsy OAuth URL.
+      const etsyAuthUrl = `https://www.etsy.com/oauth/connect?response_type=code&client_id=${process.env.CLIENT_ID || "YOUR_ETSY_CLIENT_ID"}` +
+                            `&redirect_uri=${encodeURIComponent(process.env.REDIRECT_URI || "YOUR_REDIRECT_URI")}` +
+                            `&scope=${encodeURIComponent(scope)}` +
+                            `&state=${state}` +
+                            `&code_challenge=${encodeURIComponent(codeChallenge)}` +
+                            `&code_challenge_method=S256`;
+      // Redirect the browser to Etsy's OAuth page.
+      window.location.href = etsyAuthUrl;
     });
+    
+    // Utility functions for OAuth:
+    function generateRandomString(length) {
+      const possible = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+      let text = "";
+      for (let i = 0; i < length; i++) {
+        text += possible.charAt(Math.floor(Math.random() * possible.length));
+      }
+      return text;
+    }
+    
+    async function generateCodeChallenge(codeVerifier) {
+      const encoder = new TextEncoder();
+      const data = encoder.encode(codeVerifier);
+      const digest = await crypto.subtle.digest("SHA-256", data);
+      return btoa(String.fromCharCode(...new Uint8Array(digest)))
+              .replace(/\+/g, "-")
+              .replace(/\//g, "_")
+              .replace(/=+$/, "");
+    }
     
     /********** UI Configuration Functions **********/
     // List of component IDs to configure.
     var configComponentIDs = ["connectEtsyBtn", "openConfigBtn", "etsyOrderNumber", "orderInformation"];
     
-    // Load saved positions/dimensions from localStorage and apply them.
+    // Load saved positions/dimensions from localStorage.
     function loadPositions() {
       configComponentIDs.forEach(function(id) {
         var el = document.getElementById(id);
@@ -162,10 +199,11 @@
       });
     }
     
-    // Populate the configuration modal's table with current UI component properties.
+    // Populate the configuration modal's table.
     function populateConfigTable() {
       var tbody = document.getElementById("configTable").querySelector("tbody");
       tbody.innerHTML = "";
+      
       configComponentIDs.forEach(function(id) {
         var el = document.getElementById(id);
         if (!el) return;
@@ -222,7 +260,7 @@
       });
     }
     
-    // Save current UI component configuration to localStorage.
+    // Save current configuration to localStorage.
     function saveConfiguration() {
       configComponentIDs.forEach(function(id) {
         var el = document.getElementById(id);
@@ -242,7 +280,7 @@
     }
     
     /********** Etsy Order Pull **********/
-    // Pull Etsy order details using your existing Netlify function (etsyOrderProxy.js).
+    // Use your existing Netlify function (etsyOrderProxy.js) to pull Etsy order details.
     function pullEtsyOrderDetails(orderNumber) {
       console.log("Pulling Etsy order details for order number:", orderNumber);
       return fetch('/.netlify/functions/etsyOrderProxy?orderId=' + encodeURIComponent(orderNumber))
@@ -260,7 +298,7 @@
     document.addEventListener("DOMContentLoaded", function() {
       M.AutoInit();
       
-      // Delay showing the page by 250ms to ensure saved positions are applied.
+      // Delay showing the page by 250ms so saved positions are applied.
       document.body.style.opacity = 0;
       setTimeout(function() {
         loadPositions();
@@ -280,7 +318,7 @@
         saveConfiguration();
       });
       
-      // Etsy Order Number input: on pressing Enter, pull order details.
+      // Etsy Order Number input handler: on pressing Enter, fetch order details.
       var etsyOrderInput = document.getElementById("etsyOrderNumber");
       etsyOrderInput.addEventListener("keydown", function(e) {
         if (e.key === "Enter") {
