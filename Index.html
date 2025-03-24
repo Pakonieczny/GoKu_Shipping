@@ -54,7 +54,7 @@
     }
     /* --- Configuration Modal --- */
     .modal {
-      /* Force the modal to appear at the top right with a 150px offset */
+      /* Force modal to the top right with a 150px offset */
       position: fixed !important;
       top: 150px !important;
       right: 0 !important;
@@ -100,7 +100,7 @@
     Open Config
   </button>
   
-  <!-- Etsy Order UI -->
+  <!-- Etsy Order UI Components -->
   <input type="text" id="etsyOrderNumber" placeholder="Etsy Order Number" />
   <br />
   <textarea id="orderInformation" placeholder="Order Information" readonly></textarea>
@@ -108,7 +108,7 @@
   <!-- Configuration Modal -->
   <div id="configModal" class="modal">
     <div class="modal-content">
-      <!-- No title as per requirements -->
+      <!-- Configuration table (no title) -->
       <table class="striped" id="configTable">
         <thead>
           <tr>
@@ -139,7 +139,7 @@
       const accessToken = urlParams.get("access_token");
       if (accessToken) {
         localStorage.setItem("access_token", accessToken);
-        // Optionally clear the token from the URL
+        // Clear the token from the URL.
         window.history.replaceState({}, document.title, window.location.pathname);
         M.toast({ html: "Connection Successful!" });
       }
@@ -272,12 +272,11 @@
         loadPositions();
         document.body.style.opacity = 1;
         
-        // Check for access token in URL query parameters and display toast if found.
+        // Check for access token in URL query parameters and show a toast if found.
         const urlParams = new URLSearchParams(window.location.search);
         const accessToken = urlParams.get("access_token");
         if (accessToken) {
           localStorage.setItem("access_token", accessToken);
-          // Optionally clear the URL query string.
           window.history.replaceState({}, document.title, window.location.pathname);
           M.toast({ html: "Connection Successful!" });
         }
@@ -296,7 +295,7 @@
         saveConfiguration();
       });
       
-      // Etsy Order Number input handler: on pressing Enter, fetch order details.
+      // Etsy Order Number input: on pressing Enter, fetch order details.
       var etsyOrderInput = document.getElementById("etsyOrderNumber");
       etsyOrderInput.addEventListener("keydown", function(e) {
         if (e.key === "Enter") {
