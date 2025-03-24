@@ -6,7 +6,7 @@
   <!-- Materialize CSS -->
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/materialize/1.0.0/css/materialize.min.css">
   <style>
-    /* Hide the page initially so saved positions are applied without visible sliding */
+    /* Hide the page initially to avoid visible sliding */
     body {
       background-color: white;
       margin: 0;
@@ -54,7 +54,6 @@
     }
     /* --- Configuration Modal --- */
     .modal {
-      /* Force modal to appear at the top right with a 150px offset */
       position: fixed !important;
       top: 150px !important;
       right: 0 !important;
@@ -108,7 +107,6 @@
   <!-- Configuration Modal -->
   <div id="configModal" class="modal">
     <div class="modal-content">
-      <!-- Configuration table (no title as per requirements) -->
       <table class="striped" id="configTable">
         <thead>
           <tr>
@@ -133,21 +131,71 @@
   <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/materialize/1.0.0/js/materialize.min.js"></script>
   <script>
-    /********** Check for Access Token on Redirect **********/
+    /********** Check for Access Token or Code on Redirect **********/
     (function() {
       const urlParams = new URLSearchParams(window.location.search);
+      // First, check for an access token.
       const accessToken = urlParams.get("access_token");
       if (accessToken) {
         localStorage.setItem("access_token", accessToken);
         window.history.replaceState({}, document.title, window.location.pathname);
         M.toast({ html: "Connection Successful!" });
+        console.log("Access token received:", accessToken);
+      } else {
+        // If no access token but a code is present, exchange the code.
+        const authCode = urlParams.get("code");
+        if (authCode) {
+          const storedCodeVerifier = localStorage.getItem("etsy_code_verifier");
+          if (storedCodeVerifier) {
+            // Redirect to exchangeToken.js to perform token exchange.
+            window.location.href = "/.netlify/functions/exchangeToken?code=" + encodeURIComponent(authCode) +
+                                     "&code_verifier=" + encodeURIComponent(storedCodeVerifier);
+          } else {
+            console.error("No code verifier found in localStorage.");
+          }
+        }
       }
     })();
     
     /********** Etsy OAuth: Connect to Etsy **********/
-    // When the Connect to Etsy button is clicked, redirect to your exchangeToken.js endpoint.
-    document.getElementById("connectEtsyBtn").addEventListener("click", function() {
-      window.location.href = "/.netlify/functions/exchangeToken";
+    // When the Connect to Etsy button is clicked, generate a new code verifier/challenge and redirect to Etsy.
+    function generateRandomString(length) {
+      const possible = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+      let text = "";
+      for (let i = 0; i < length; i++) {
+        text += possible.charAt(Math.floor(Math.random() * possible.length));
+      }
+      return text;
+    }
+    
+    async function generateCodeChallenge(codeVerifier) {
+      const encoder = new TextEncoder();
+      const data = encoder.encode(codeVerifier);
+      const digest = await crypto.subtle.digest("SHA-256", data);
+      return btoa(String.fromCharCode(...new Uint8Array(digest)))
+              .replace(/\+/g, "-")
+              .replace(/\//g, "_")
+              .replace(/=+$/, "");
+    }
+    
+    document.getElementById("connectEtsyBtn").addEventListener("click", async function() {
+      const codeVerifier = generateRandomString(64);
+      localStorage.setItem("etsy_code_verifier", codeVerifier);
+      const codeChallenge = await generateCodeChallenge(codeVerifier);
+      const state = "randomState123"; // Replace with a secure random state in production.
+      const scope = "listings_w listings_r"; // Adjust scope as needed.
+      // Your public CLIENT_ID (safe to expose)
+      const CLIENT_ID = "k75zdspz4r99txpqdji7i2em";
+      // Redirect URI must match your Etsy app settings (set to your main site URL).
+      const redirectUri = "https://gokushipping.netlify.app";
+      const etsyAuthUrl = `https://www.etsy.com/oauth/connect?response_type=code&client_id=${CLIENT_ID}` +
+                          `&redirect_uri=${encodeURIComponent(redirectUri)}` +
+                          `&scope=${encodeURIComponent(scope)}` +
+                          `&state=${state}` +
+                          `&code_challenge=${encodeURIComponent(codeChallenge)}` +
+                          `&code_challenge_method=S256`;
+      console.log("Redirecting to Etsy OAuth URL:", etsyAuthUrl);
+      window.location.href = etsyAuthUrl;
     });
     
     /********** UI Configuration Functions **********/
@@ -250,7 +298,6 @@
     /********** Etsy Order Pull **********/
     function pullEtsyOrderDetails(orderNumber) {
       console.log("Pulling Etsy order details for order number:", orderNumber);
-      // Get the access token from localStorage
       const token = localStorage.getItem("access_token");
       return fetch('/.netlify/functions/etsyOrderProxy?orderId=' + encodeURIComponent(orderNumber), {
         headers: { "access-token": token }
@@ -274,15 +321,6 @@
       setTimeout(function() {
         loadPositions();
         document.body.style.opacity = 1;
-        
-        // Check for access token in URL query parameters and display a toast if found.
-        const urlParams = new URLSearchParams(window.location.search);
-        const accessToken = urlParams.get("access_token");
-        if (accessToken) {
-          localStorage.setItem("access_token", accessToken);
-          window.history.replaceState({}, document.title, window.location.pathname);
-          M.toast({ html: "Connection Successful!" });
-        }
       }, 250);
       
       // When the Open Config button is clicked, populate and open the configuration modal.
