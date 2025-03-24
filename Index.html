@@ -18,33 +18,41 @@
       left: 200px;
       top: 200px;
     }
-    /* Primary Button Config trigger at bottom-right */
+    /* Primary Button Config trigger at bottom-right of the page */
     #openConfigBtn {
       position: fixed;
       bottom: 20px;
       right: 20px;
     }
-  
+    /* Force the modal to be at the top right corner with a smaller overall size */
     .modal {
       position: fixed !important;
       top: 0 !important;
       right: 0 !important;
       left: auto !important;
       transform: none !important;
-      height: 60vh !important;
+      height: 60vh !important;      /* Reduced vertical size */
       max-height: 60vh !important;
-      width: 26.8% !important;
+      width: 28.5% !important;      /* Reduced width (another 15% shrink from previous size) */
       overflow-y: scroll !important;
     }
     .modal .modal-content {
-      font-size: 0.8em;
+      font-size: 0.8em;             /* Base text size reduced by 1 unit */
       overflow-y: auto;
     }
-    /* Force the modal footer (and the Save Config button) to be at the bottom right, and push it down by 50px */
+    /* Make the title in the modal smaller by 2 font sizes */
+    .modal .modal-content h4 {
+      font-size: 0.6em;
+    }
+    /* Fix the modal footer so it stays at the bottom right of the modal */
     .modal .modal-footer {
+      position: sticky;
+      bottom: 0;
+      right: 0;
+      background: white;
       text-align: right;
       font-size: 0.8em;
-      margin-top: 50px;
+      padding: 10px;
     }
     table.striped {
       width: 100%;
@@ -56,7 +64,7 @@
     }
     input[type="number"] {
       width: 70px;
-      font-size: 0.8em;
+      font-size: 0.7em;  /* Position offset numbers are smaller by an extra font size */
     }
   </style>
 </head>
@@ -116,13 +124,13 @@
           // Use the actual button text for display.
           var buttonName = el.textContent.trim() || "no-name";
           var id = el.id || "no-id";
-          // Get computed style values; if "auto", default to 0.
+          // Get computed style values; if left or top is "auto", default to 0.
           var cs = window.getComputedStyle(el);
           var leftVal = (cs.left === "auto") ? 0 : parseInt(cs.left);
           var topVal = (cs.top === "auto") ? 0 : parseInt(cs.top);
           console.log("Configuring:", buttonName, "ID:", id, "Left:", leftVal, "Top:", topVal);
           
-          // Create table row for the element.
+          // Create a table row for the element.
           var row = document.createElement("tr");
           row.innerHTML = `
             <td>${buttonName}</td>
@@ -131,7 +139,7 @@
           `;
           tbody.appendChild(row);
           
-          // Attach live update event listeners.
+          // Attach live update event listeners
           row.querySelector(".left-input").addEventListener("input", function() {
             var newVal = this.value;
             var target = document.getElementById(this.getAttribute("data-id"));
@@ -151,7 +159,7 @@
         });
       }
       
-      // When the primary config trigger is clicked, populate and open the modal.
+      // When the primary config trigger is clicked, populate the modal and open it.
       document.getElementById("openConfigBtn").addEventListener("click", function() {
         populateConfigTable();
         var modalElem = document.getElementById("configModal");
@@ -159,7 +167,7 @@
         instance.open();
       });
       
-      // Save Config button handler (logs a message).
+      // Save Config button handler (currently logs a message)
       document.getElementById("saveConfigBtn").addEventListener("click", function() {
         console.log("Configuration saved.");
       });
