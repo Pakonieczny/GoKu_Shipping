@@ -6,7 +6,7 @@
   <!-- Materialize CSS -->
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/materialize/1.0.0/css/materialize.min.css">
   <style>
-    /* Hide the page initially to prevent visible sliding */
+    /* Hide the page initially so saved positions are applied without visible sliding */
     body {
       background-color: white;
       margin: 0;
@@ -100,7 +100,7 @@
     Open Config
   </button>
   
-  <!-- Etsy Order UI -->
+  <!-- Etsy Order UI Components -->
   <input type="text" id="etsyOrderNumber" placeholder="Etsy Order Number" />
   <br />
   <textarea id="orderInformation" placeholder="Order Information" readonly></textarea>
@@ -120,7 +120,7 @@
           </tr>
         </thead>
         <tbody>
-          <!-- Rows inserted dynamically -->
+          <!-- Rows will be inserted dynamically -->
         </tbody>
       </table>
     </div>
@@ -153,17 +153,17 @@
               .replace(/=+$/, "");
     }
     
-    /********** Etsy OAuth: Connect to Etsy **********/
-    // On clicking Connect, generate code verifier/challenge and redirect to Etsy's authorization page.
+    /********** Etsy OAuth Flow **********/
+    // When the Connect to Etsy button is clicked, generate a code verifier/challenge and redirect to Etsy.
     document.getElementById("connectEtsyBtn").addEventListener("click", async function() {
       const codeVerifier = generateRandomString(64);
       localStorage.setItem("etsy_code_verifier", codeVerifier);
       const codeChallenge = await generateCodeChallenge(codeVerifier);
-      const state = "randomState123"; // Replace with secure random state in production.
+      const state = "randomState123"; // Replace with a secure random state in production.
       const scope = "listings_w listings_r"; // Adjust scope as needed.
-      // Use your public CLIENT_ID (it’s safe to expose)
+      // Use your public CLIENT_ID (it's safe to expose)
       const CLIENT_ID = "k75zdspz4r99txpqdji7i2em";
-      // Redirect URI must be your main site since Etsy doesn't allow your serverless endpoint.
+      // Redirect URI must be set to your main site URL per Etsy app settings.
       const redirectUri = "https://gokushipping.netlify.app";
       const etsyAuthUrl = `https://www.etsy.com/oauth/connect?response_type=code&client_id=${CLIENT_ID}` +
                           `&redirect_uri=${encodeURIComponent(redirectUri)}` +
@@ -175,37 +175,36 @@
       window.location.href = etsyAuthUrl;
     });
     
-    /********** Check for Authorization Code and Exchange Token **********/
-    // When the page loads, if there's a "code" in the URL, call the token exchange endpoint.
+    /********** Check for OAuth Code and Exchange for Token **********/
     document.addEventListener("DOMContentLoaded", function() {
+      // Delay showing the page by 250ms so saved positions are applied.
+      document.body.style.opacity = 0;
+      setTimeout(function() {
+        loadPositions();
+        document.body.style.opacity = 1;
+      }, 250);
+      
+      // Check URL for an OAuth "code" parameter.
       const urlParams = new URLSearchParams(window.location.search);
       const authCode = urlParams.get("code");
       if (authCode) {
-        // Retrieve the stored code verifier.
         const storedCodeVerifier = localStorage.getItem("etsy_code_verifier");
-        if (!storedCodeVerifier) {
-          console.error("No code verifier found in localStorage.");
+        if (storedCodeVerifier) {
+          // Instead of using fetch (which may return HTML), redirect the browser
+          // to your exchangeToken.js endpoint with the code and code_verifier.
+          window.location.href = "/.netlify/functions/exchangeToken?code=" + encodeURIComponent(authCode) +
+                                   "&code_verifier=" + encodeURIComponent(storedCodeVerifier);
         } else {
-          // Call the exchangeToken endpoint via fetch.
-          fetch("/.netlify/functions/exchangeToken?code=" + encodeURIComponent(authCode) + "&code_verifier=" + encodeURIComponent(storedCodeVerifier))
-            .then(response => response.json())
-            .then(data => {
-              if (data.access_token) {
-                localStorage.setItem("access_token", data.access_token);
-                // Clear the URL parameters.
-                window.history.replaceState({}, document.title, window.location.pathname);
-                M.toast({ html: "Connection Successful!" });
-                console.log("Access token received:", data.access_token);
-              } else {
-                console.error("Token exchange failed:", data);
-                M.toast({ html: "Token exchange failed." });
-              }
-            })
-            .catch(err => {
-              console.error("Error during token exchange:", err);
-              M.toast({ html: "Error during token exchange." });
-            });
+          console.error("No code verifier found in localStorage.");
         }
+      }
+      
+      // Check for access token in URL (if exchangeToken.js redirects back with it)
+      const accessToken = urlParams.get("access_token");
+      if (accessToken) {
+        localStorage.setItem("access_token", accessToken);
+        window.history.replaceState({}, document.title, window.location.pathname);
+        M.toast({ html: "Connection Successful!" });
       }
     });
     
