@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+<<!DOCTYPE html>
 <html>
 <head>
   <meta charset="UTF-8">
@@ -6,7 +6,7 @@
   <!-- Materialize CSS -->
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/materialize/1.0.0/css/materialize.min.css">
   <style>
-    /* Initially hide the page so saved positions are applied without visible sliding */
+    /* Hide the page initially so saved positions are applied without visible sliding */
     body {
       background-color: white;
       margin: 0;
@@ -108,7 +108,7 @@
   <!-- Configuration Modal -->
   <div id="configModal" class="modal">
     <div class="modal-content">
-      <!-- Configuration table (no title) -->
+      <!-- No title as per requirements -->
       <table class="striped" id="configTable">
         <thead>
           <tr>
@@ -120,7 +120,7 @@
           </tr>
         </thead>
         <tbody>
-          <!-- Rows inserted dynamically -->
+          <!-- Rows will be inserted dynamically -->
         </tbody>
       </table>
     </div>
@@ -134,64 +134,10 @@
   <script src="https://cdnjs.cloudflare.com/ajax/libs/materialize/1.0.0/js/materialize.min.js"></script>
   <script>
     /********** Etsy OAuth: Connect to Etsy **********/
-    async function initEtsyOAuth() {
-      // Fetch Etsy credentials from the serverless function.
-      try {
-        const response = await fetch('/.netlify/functions/getEtsyCredentials');
-        if (!response.ok) {
-          throw new Error("Failed to fetch Etsy credentials");
-        }
-        const creds = await response.json();
-        window.CLIENT_ID = creds.CLIENT_ID;
-        window.REDIRECT_URI = creds.REDIRECT_URI;
-      } catch (error) {
-        console.error("Error retrieving Etsy credentials:", error);
-        return;
-      }
-    }
-    
-    // Utility functions for OAuth.
-    function generateRandomString(length) {
-      const possible = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
-      let text = "";
-      for (let i = 0; i < length; i++) {
-        text += possible.charAt(Math.floor(Math.random() * possible.length));
-      }
-      return text;
-    }
-    
-    async function generateCodeChallenge(codeVerifier) {
-      const encoder = new TextEncoder();
-      const data = encoder.encode(codeVerifier);
-      const digest = await crypto.subtle.digest("SHA-256", data);
-      return btoa(String.fromCharCode(...new Uint8Array(digest)))
-              .replace(/\+/g, "-")
-              .replace(/\//g, "_")
-              .replace(/=+$/, "");
-    }
-    
-    // When the Connect to Etsy button is clicked, initiate the OAuth flow.
-    document.getElementById("connectEtsyBtn").addEventListener("click", async function() {
-      await initEtsyOAuth();
-      // Generate a new code verifier and store it.
-      const codeVerifier = generateRandomString(64);
-      localStorage.setItem("etsy_code_verifier", codeVerifier);
-      // Generate the corresponding code challenge.
-      const codeChallenge = await generateCodeChallenge(codeVerifier);
-      // Define state and scope.
-      const state = "randomState123"; // Replace with a proper state in production.
-      const scope = "listings_w listings_r"; // Adjust scope as needed.
-      
-      // Construct the Etsy OAuth URL.
-      const etsyAuthUrl = `https://www.etsy.com/oauth/connect?response_type=code&client_id=${window.CLIENT_ID}` +
-                            `&redirect_uri=${encodeURIComponent(window.REDIRECT_URI)}` +
-                            `&scope=${encodeURIComponent(scope)}` +
-                            `&state=${state}` +
-                            `&code_challenge=${encodeURIComponent(codeChallenge)}` +
-                            `&code_challenge_method=S256`;
-      
-      console.log("Redirecting to Etsy OAuth URL:", etsyAuthUrl);
-      window.location.href = etsyAuthUrl;
+    // When the Connect to Etsy button is clicked, redirect to your existing OAuth flow.
+    // Your exchangeToken.js function (using environment variables) will handle the token exchange.
+    document.getElementById("connectEtsyBtn").addEventListener("click", function() {
+      window.location.href = "/.netlify/functions/exchangeToken";
     });
     
     /********** UI Configuration Functions **********/
@@ -292,7 +238,6 @@
     }
     
     /********** Etsy Order Pull **********/
-    // Pull Etsy order details using your existing Netlify function (etsyOrderProxy.js).
     function pullEtsyOrderDetails(orderNumber) {
       console.log("Pulling Etsy order details for order number:", orderNumber);
       return fetch('/.netlify/functions/etsyOrderProxy?orderId=' + encodeURIComponent(orderNumber))
@@ -315,6 +260,11 @@
       setTimeout(function() {
         loadPositions();
         document.body.style.opacity = 1;
+        
+        // Check if access token is present and display a toast.
+        if (localStorage.getItem("access_token")) {
+          M.toast({html: "Connection Successful!"});
+        }
       }, 250);
       
       // When the Open Config button is clicked, populate and open the configuration modal.
@@ -330,7 +280,7 @@
         saveConfiguration();
       });
       
-      // Etsy Order Number input: on pressing Enter, fetch order details.
+      // Etsy Order Number input handler: on pressing Enter, fetch order details.
       var etsyOrderInput = document.getElementById("etsyOrderNumber");
       etsyOrderInput.addEventListener("keydown", function(e) {
         if (e.key === "Enter") {
