@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+<!D<!DOCTYPE html>
 <html>
 <head>
   <meta charset="UTF-8">
@@ -52,6 +52,14 @@
       resize: none;
       transition: none !important;
     }
+    /* --- Image Grid Container --- */
+    /* This container will be filled with the external imageGrid.html file */
+    #imageGridContainer {
+      position: absolute;
+      left: 400px;  /* Adjust as needed */
+      top: 140px;   /* Adjust as needed */
+      width: 400px; /* Adjust as needed */
+    }
     /* --- Configuration Modal --- */
     .modal {
       position: fixed !important;
@@ -103,6 +111,9 @@
   <input type="text" id="etsyOrderNumber" placeholder="Etsy Order Number" />
   <br />
   <textarea id="orderInformation" placeholder="Order Information" readonly></textarea>
+  
+  <!-- Image Grid Container: The grid will be loaded here from imageGrid.html -->
+  <div id="imageGridContainer"></div>
   
   <!-- Configuration Modal -->
   <div id="configModal" class="modal">
@@ -158,7 +169,6 @@
     })();
     
     /********** Etsy OAuth: Connect to Etsy **********/
-    // When the Connect to Etsy button is clicked, generate a new code verifier/challenge and redirect to Etsy.
     function generateRandomString(length) {
       const possible = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
       let text = "";
@@ -315,6 +325,16 @@
     
     document.addEventListener("DOMContentLoaded", function() {
       M.AutoInit();
+      
+      // *** Insert Image Grid Load Here ***
+      // Place this immediately after M.AutoInit() inside the DOMContentLoaded event.
+      $("#imageGridContainer").load("imageGrid.html", function(response, status, xhr) {
+        if (status === "error") {
+          console.error("Error loading image grid:", xhr.status, xhr.statusText);
+        } else {
+          console.log("Image grid loaded successfully.");
+        }
+      });
       
       // Delay showing the page by 250ms so saved positions are applied.
       document.body.style.opacity = 0;
