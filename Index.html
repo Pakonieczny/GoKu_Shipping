@@ -6,7 +6,7 @@
   <!-- Materialize CSS -->
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/materialize/1.0.0/css/materialize.min.css">
   <style>
-    /* Hide the page initially so saved positions are applied without visible sliding */
+    /* Hide page initially */
     body {
       background-color: white;
       margin: 0;
@@ -16,21 +16,18 @@
       transition: opacity 0s;
     }
     /* --- Main UI Components --- */
-    /* Connect to Etsy Button – triggers OAuth flow */
     #connectEtsyBtn {
       position: absolute;
       left: 50px;
       top: 20px;
       transition: none !important;
     }
-    /* Open Config Button – opens the configuration modal */
     #openConfigBtn {
       position: absolute;
       left: 50px;
       top: 80px;
       transition: none !important;
     }
-    /* Etsy Order Number input */
     #etsyOrderNumber {
       position: absolute;
       left: 50px;
@@ -40,7 +37,6 @@
       width: 250px;
       transition: none !important;
     }
-    /* Order Information text area (300px by 300px) */
     #orderInformation {
       position: absolute;
       left: 50px;
@@ -54,7 +50,6 @@
     }
     /* --- Configuration Modal --- */
     .modal {
-      /* Force modal to the top right with a 150px offset */
       position: fixed !important;
       top: 150px !important;
       right: 0 !important;
@@ -67,7 +62,7 @@
     }
     .modal .modal-content {
       overflow-y: auto;
-      font-size: 0.9em;  /* Base modal text size */
+      font-size: 0.9em;
     }
     .modal .modal-footer {
       text-align: right;
@@ -100,7 +95,7 @@
     Open Config
   </button>
   
-  <!-- Etsy Order UI Components -->
+  <!-- Etsy Order UI -->
   <input type="text" id="etsyOrderNumber" placeholder="Etsy Order Number" />
   <br />
   <textarea id="orderInformation" placeholder="Order Information" readonly></textarea>
@@ -108,7 +103,6 @@
   <!-- Configuration Modal -->
   <div id="configModal" class="modal">
     <div class="modal-content">
-      <!-- Configuration table (no title) -->
       <table class="striped" id="configTable">
         <thead>
           <tr>
@@ -120,7 +114,7 @@
           </tr>
         </thead>
         <tbody>
-          <!-- Rows will be inserted dynamically -->
+          <!-- Rows inserted dynamically -->
         </tbody>
       </table>
     </div>
@@ -139,14 +133,13 @@
       const accessToken = urlParams.get("access_token");
       if (accessToken) {
         localStorage.setItem("access_token", accessToken);
-        // Clear the token from the URL.
         window.history.replaceState({}, document.title, window.location.pathname);
         M.toast({ html: "Connection Successful!" });
       }
     })();
     
     /********** Etsy OAuth: Connect to Etsy **********/
-    // When the Connect to Etsy button is clicked, redirect to your existing OAuth flow endpoint.
+    // When the Connect to Etsy button is clicked, redirect to your exchangeToken.js endpoint.
     document.getElementById("connectEtsyBtn").addEventListener("click", function() {
       window.location.href = "/.netlify/functions/exchangeToken";
     });
@@ -272,7 +265,7 @@
         loadPositions();
         document.body.style.opacity = 1;
         
-        // Check for access token in URL query parameters and show a toast if found.
+        // Check for access token in URL query parameters and display a toast if found.
         const urlParams = new URLSearchParams(window.location.search);
         const accessToken = urlParams.get("access_token");
         if (accessToken) {
