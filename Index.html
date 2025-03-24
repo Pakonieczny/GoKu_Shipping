@@ -1,4 +1,4 @@
-<!<!DOCTYPE html>
+<!DOCTYPE html>
 <html>
 <head>
   <meta charset="UTF-8">
@@ -24,24 +24,21 @@
       bottom: 20px;
       right: 20px;
     }
-    /* Modal styling:
-       - Force position in the top-right corner
-       - Set height to 60vh and width to 33.5%
-       - Ensure it is scrollable
-       - Reduce text size to 0.8em (1 font size smaller)
-    */
+    /* Force the modal to the top right and override centering defaults */
     .modal {
-      position: fixed;
-      top: 0;
-      right: 0;
-      height: 60vh !important;
+      position: fixed !important;
+      top: 0 !important;
+      right: 0 !important;
+      left: auto !important;
+      transform: none !important;
+      height: 60vh !important;  /* Reduced vertical size */
       max-height: 60vh !important;
-      width: 33.5% !important;
+      width: 33.5% !important;  /* Reduced overall width */
       overflow-y: scroll !important;
     }
     .modal .modal-content {
       overflow-y: auto;
-      font-size: 0.8em; /* Reduce text size */
+      font-size: 0.8em; /* Reduce modal text size */
     }
     .modal .modal-footer {
       text-align: right;
@@ -50,7 +47,8 @@
     table.striped {
       width: 100%;
     }
-    table.striped th, table.striped td {
+    table.striped th,
+    table.striped td {
       padding: 8px;
       text-align: center;
     }
@@ -105,7 +103,7 @@
         var tbody = document.getElementById("configTable").querySelector("tbody");
         tbody.innerHTML = ""; // Clear previous rows
         
-        // Configure two elements: dummy button and primary config trigger.
+        // Define the array of elements to configure: dummy button and primary config trigger.
         var elementsToConfigure = [
           document.getElementById("dummyButton"),
           document.getElementById("openConfigBtn")
@@ -113,24 +111,25 @@
         
         elementsToConfigure.forEach(function(el) {
           if (!el) return;
-          // Use the actual text inside the button as its name.
+          // Use the button's text content as its name.
           var buttonName = el.textContent.trim() || "no-name";
-          // Get the computed style for left and top; default to 0 if "auto"
+          var id = el.id || "no-id";
+          // Get computed style values; default to 0 if "auto"
           var cs = window.getComputedStyle(el);
-          var leftVal = cs.left === "auto" ? 0 : parseInt(cs.left);
-          var topVal = cs.top === "auto" ? 0 : parseInt(cs.top);
-          console.log("Configuring:", buttonName, "Left:", leftVal, "Top:", topVal);
+          var leftVal = (cs.left === "auto") ? 0 : parseInt(cs.left);
+          var topVal = (cs.top === "auto") ? 0 : parseInt(cs.top);
+          console.log("Configuring:", buttonName, "ID:", id, "Left:", leftVal, "Top:", topVal);
           
-          // Create a table row for the element.
+          // Create a table row
           var row = document.createElement("tr");
           row.innerHTML = `
             <td>${buttonName}</td>
-            <td><input type="number" value="${leftVal}" data-id="${el.id}" class="left-input"></td>
-            <td><input type="number" value="${topVal}" data-id="${el.id}" class="top-input"></td>
+            <td><input type="number" value="${leftVal}" data-id="${id}" class="left-input"></td>
+            <td><input type="number" value="${topVal}" data-id="${id}" class="top-input"></td>
           `;
           tbody.appendChild(row);
           
-          // Live update event listeners
+          // Attach live update event listeners
           row.querySelector(".left-input").addEventListener("input", function() {
             var newVal = this.value;
             var target = document.getElementById(this.getAttribute("data-id"));
