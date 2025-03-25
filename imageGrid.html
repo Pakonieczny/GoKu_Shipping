@@ -1,45 +1,62 @@
 <!-- imageGrid.html -->
-<!DOCTYPE html>
-<html>
-<head>
-  <meta charset="UTF-8">
-  <title>Image Grid</title>
-  <style>
-    /* Preview box styling */
-    .preview-box {
-      border: 1px solid #ccc;
-      margin-bottom: 10px;
-      min-height: 100px;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      background: #f9f9f9;
-      overflow: hidden; /* Clipping any overflow from zoomed image */
-    }
-    /* Image styling: auto-zoom to 50% (scale 1.5) with object-fit cover */
-    .preview-box img {
-      width: 100%;
-      height: 100%;
-      object-fit: cover;
-      transform: scale(1.5);
-      transform-origin: center center;
-      transition: transform 0.3s ease;
-    }
-  </style>
-</head>
-<body>
-  <!-- Grid of 8 preview boxes: 2 rows, 4 columns each -->
-  <div class="row">
-    <div class="col s3 preview-box" id="previewCell0">Empty</div>
-    <div class="col s3 preview-box" id="previewCell1">Empty</div>
-    <div class="col s3 preview-box" id="previewCell2">Empty</div>
-    <div class="col s3 preview-box" id="previewCell3">Empty</div>
-  </div>
-  <div class="row">
-    <div class="col s3 preview-box" id="previewCell4">Empty</div>
-    <div class="col s3 preview-box" id="previewCell5">Empty</div>
-    <div class="col s3 preview-box" id="previewCell6">Empty</div>
-    <div class="col s3 preview-box" id="previewCell7">Empty</div>
-  </div>
-</body>
-</html>
+<style>
+  /* Preview box styling: keep images within bounds */
+  .preview-box {
+    border: 1px solid #ccc;
+    margin-bottom: 10px;
+    min-height: 100px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: #f9f9f9;
+    overflow: hidden;
+    position: relative;
+  }
+  /* Image styling: default scale 1 (no zoom) with object-fit cover */
+  .preview-box img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    transform: scale(1);
+    transform-origin: center center;
+    transition: transform 0.2s ease;
+  }
+</style>
+
+<div class="row">
+  <div class="col s3 preview-box" id="previewCell0">Empty</div>
+  <div class="col s3 preview-box" id="previewCell1">Empty</div>
+  <div class="col s3 preview-box" id="previewCell2">Empty</div>
+  <div class="col s3 preview-box" id="previewCell3">Empty</div>
+</div>
+<div class="row">
+  <div class="col s3 preview-box" id="previewCell4">Empty</div>
+  <div class="col s3 preview-box" id="previewCell5">Empty</div>
+  <div class="col s3 preview-box" id="previewCell6">Empty</div>
+  <div class="col s3 preview-box" id="previewCell7">Empty</div>
+</div>
+
+<script>
+  // Attach a wheel event listener to each preview box to enable manual zooming.
+  document.querySelectorAll('.preview-box').forEach(function(box) {
+    box.addEventListener('wheel', function(e) {
+      e.preventDefault();
+      // Find the image inside this preview box.
+      const img = box.querySelector('img');
+      if (!img) return;
+      // Get the current scale from a data attribute; default is 1.
+      let currentScale = parseFloat(img.dataset.scale) || 1;
+      // Adjust scale: scroll up (deltaY negative) zooms in; scroll down zooms out.
+      if (e.deltaY < 0) {
+        currentScale *= 1.1;
+      } else {
+        currentScale /= 1.1;
+      }
+      // Clamp the scale between 1 and 3.
+      currentScale = Math.max(1, Math.min(3, currentScale));
+      // Save the current scale and update the CSS transform.
+      img.dataset.scale = currentScale;
+      img.style.transform = `scale(${currentScale})`;
+    });
+  });
+</script>
