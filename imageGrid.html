@@ -1,17 +1,17 @@
 <!-- imageGrid.html -->
 <style>
-  /* Container using CSS grid to enforce 2 rows, 4 columns */
+  /* Container using CSS grid to enforce 2 rows and 4 columns */
   #photoGridContainer {
     display: grid;
     grid-template-columns: repeat(4, 1fr);
     grid-template-rows: repeat(2, 1fr);
-    gap: 5px; /* 5px gap between boxes */
+    /* Increase vertical gap to 25px (5px + 20px extra) and keep horizontal gap at 5px */
+    gap: 25px 5px;
   }
-  /* Each preview box always shows its full border */
+  /* Preview box styling: 1px black border, fixed height, and always visible border */
   .preview-box {
     border: 1px solid black;
     background: #f9f9f9;
-    /* Set a fixed size so the border is always visible even when empty */
     height: 150px;
     display: flex;
     align-items: center;
@@ -19,12 +19,12 @@
     overflow: hidden;
     position: relative;
   }
-  /* Image styling: fill the box, cover without distortion, default scale 1 */
+  /* Image styling: fills the box using object-fit: cover */
   .preview-box img {
     width: 100%;
     height: 100%;
     object-fit: cover;
-    transform: scale(1);
+    transform: scale(1); /* Default no zoom */
     transform-origin: center center;
     transition: transform 0.2s ease;
   }
@@ -42,15 +42,14 @@
 </div>
 
 <script>
-  // Attach a wheel event listener to each preview box for manual zooming.
-  // When the mouse wheel is used over an image, its scale is adjusted.
+  // Attach wheel event listener to each preview box for manual zooming.
   document.querySelectorAll('.preview-box').forEach(function(box) {
     box.addEventListener('wheel', function(e) {
       e.preventDefault();
       const img = box.querySelector('img');
       if (!img) return;
       let currentScale = parseFloat(img.dataset.scale) || 1;
-      // Scroll up zooms in; scroll down zooms out.
+      // Scroll up to zoom in; scroll down to zoom out.
       if (e.deltaY < 0) {
         currentScale *= 1.1;
       } else {
