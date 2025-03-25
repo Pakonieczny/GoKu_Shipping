@@ -1,56 +1,62 @@
 <!-- imageGrid.html -->
 <style>
-  /* Updated preview box styling */
+  /* Container using CSS grid to enforce 2 rows, 4 columns */
+  #photoGridContainer {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    grid-template-rows: repeat(2, 1fr);
+    gap: 5px; /* 5px gap between boxes */
+  }
+  /* Each preview box always shows its full border */
   .preview-box {
-    border: 1px solid black;  /* Black border, 1px thick */
-    margin: 5px;              /* 5px space between boxes */
-    min-height: 100px;
+    border: 1px solid black;
+    background: #f9f9f9;
+    /* Set a fixed size so the border is always visible even when empty */
+    height: 150px;
     display: flex;
     align-items: center;
     justify-content: center;
-    background: #f9f9f9;
-    overflow: hidden;         /* Ensures image stays within bounds */
+    overflow: hidden;
     position: relative;
   }
-  /* Image styling remains similar; adjust as needed */
+  /* Image styling: fill the box, cover without distortion, default scale 1 */
   .preview-box img {
     width: 100%;
     height: 100%;
-    object-fit: cover;        /* Ensures image covers the box without distortion */
-    transform: scale(1);      /* Default zoom level: 100% */
+    object-fit: cover;
+    transform: scale(1);
     transform-origin: center center;
     transition: transform 0.2s ease;
   }
 </style>
 
-<div class="row">
-  <div class="col s3 preview-box" id="previewCell0">Empty</div>
-  <div class="col s3 preview-box" id="previewCell1">Empty</div>
-  <div class="col s3 preview-box" id="previewCell2">Empty</div>
-  <div class="col s3 preview-box" id="previewCell3">Empty</div>
-</div>
-<div class="row">
-  <div class="col s3 preview-box" id="previewCell4">Empty</div>
-  <div class="col s3 preview-box" id="previewCell5">Empty</div>
-  <div class="col s3 preview-box" id="previewCell6">Empty</div>
-  <div class="col s3 preview-box" id="previewCell7">Empty</div>
+<div id="photoGridContainer">
+  <div class="preview-box" id="previewCell0">Empty</div>
+  <div class="preview-box" id="previewCell1">Empty</div>
+  <div class="preview-box" id="previewCell2">Empty</div>
+  <div class="preview-box" id="previewCell3">Empty</div>
+  <div class="preview-box" id="previewCell4">Empty</div>
+  <div class="preview-box" id="previewCell5">Empty</div>
+  <div class="preview-box" id="previewCell6">Empty</div>
+  <div class="preview-box" id="previewCell7">Empty</div>
 </div>
 
 <script>
-  // Attach wheel event listener to each preview box for manual zooming.
+  // Attach a wheel event listener to each preview box for manual zooming.
+  // When the mouse wheel is used over an image, its scale is adjusted.
   document.querySelectorAll('.preview-box').forEach(function(box) {
     box.addEventListener('wheel', function(e) {
       e.preventDefault();
       const img = box.querySelector('img');
       if (!img) return;
       let currentScale = parseFloat(img.dataset.scale) || 1;
-      // Scroll up (deltaY negative) zooms in; scroll down zooms out.
+      // Scroll up zooms in; scroll down zooms out.
       if (e.deltaY < 0) {
         currentScale *= 1.1;
       } else {
         currentScale /= 1.1;
       }
-      // Clamp scale between 1 and 3.
+      // Clamp the scale between 1 and 3.
       currentScale = Math.max(1, Math.min(3, currentScale));
       img.dataset.scale = currentScale;
       img.style.transform = `scale(${currentScale})`;
