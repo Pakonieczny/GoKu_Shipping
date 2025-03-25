@@ -298,7 +298,8 @@
     /********** Update Image Grid with Purchased Items **********/
     function updateImageGrid(data) {
   let items = [];
-  // Try known properties for the purchased items array.
+  
+  // Try to determine the purchased items array.
   if (data.shipments && Array.isArray(data.shipments) && data.shipments.length > 0) {
     items = data.shipments;
     console.log("Using 'shipments' as the purchased items array.");
@@ -309,7 +310,7 @@
   } else if (data.orders && Array.isArray(data.orders) && data.orders.length > 0) {
     items = data.orders;
   } else if (typeof data === 'object' && data !== null) {
-    // Fallback: iterate over keys to see if any value is a non-empty array.
+    // Fallback: iterate over keys to see if any non-empty array exists.
     for (const key in data) {
       if (Array.isArray(data[key]) && data[key].length > 0) {
         items = data[key];
@@ -330,15 +331,16 @@
     if (cell) {
       if (i < items.length) {
         const item = items[i];
+        const listingImageId = item.listing_image_id;
         let imageUrl = null;
-        // First, try to use Etsy's provided full image URL.
+        // Use Etsy provided URLs if available.
         if (item.url_fullxfull) {
           imageUrl = item.url_fullxfull;
         } else if (item.url_570xN) {
           imageUrl = item.url_570xN;
-        } else if (item.listing_image_id) {
-          // Fallback: construct a URL using a common pattern.
-          imageUrl = `https://i.etsystatic.com/${item.listing_image_id}/il_fullxfull.jpg`;
+        } else if (listingImageId) {
+          // Fallback: construct a URL using a basic pattern.
+          imageUrl = `https://i.etsystatic.com/${listingImageId}/il_fullxfull.jpg`;
         }
         if (imageUrl) {
           cell.innerHTML = `<img src="${imageUrl}" alt="Listing Image ${i}">`;
