@@ -298,79 +298,71 @@
     }
     
     /********** Listing Images: Fetch via Proxy **********/
-    async function updateImageGrid(data) {
-  let items = [];
-  if (data.shipments && Array.isArray(data.shipments) && data.shipments.length > 0) {
-    items = data.shipments;
-    console.log("Using 'shipments' as the purchased items array.");
-  } else if (Array.isArray(data) && data.length > 0) {
-    items = data;
-  } else if (data.results && Array.isArray(data.results) && data.results.length > 0) {
-    items = data.results;
-  } else if (data.orders && Array.isArray(data.orders) && data.orders.length > 0) {
-    items = data.orders;
-  } else if (typeof data === 'object' && data !== null) {
-    for (const key in data) {
-      if (Array.isArray(data[key]) && data[key].length > 0) {
-        items = data[key];
-        console.log("Found purchased items array under key:", key);
-        break;
+    async function fetchListingImages(listingId) {
+      const response = await fetch(`/.netlify/functions/etsyImages?listingId=${listingId}`, {
+        headers: {
+          "access-token": localStorage.getItem("access_token")
+        }
+      });
+      if (!response.ok) {
+        throw new Error(`Error fetching images for listing ${listingId}: ${response.statusText}`);
       }
+      const data = await response.json();
+      return data.results; // Expected to be an array of image objects.
     }
-  }
-  
-  if (!items.length) {
-    console.error("Order data does not contain a valid array of purchased items.", data);
-    return;
-  }
-  
-  // Loop through 8 preview boxes.
-  for (let i = 0; i < 8; i++) {
-    const cell = document.getElementById("previewCell" + i);
-    if (cell) {
-      if (i < items.length) {
-        const item = items[i];
-        const listingId = item.listing_id;
-        try {
-          const images = await fetchListingImages(listingId);
-          if (images && images.length > 0) {
-            const imageUrl = images[0].url_fullxfull;
-            // Set default scale to 1.5 (50% zoom)
-            cell.innerHTML = `<img src="${imageUrl}" alt="Listing Image ${i}" style="transform: scale(1.5); transform-origin: center center;">`;
-            // Attach wheel event listener for manual zoom.
-            const img = cell.querySelector("img");
-            if (img) {
-              if (!img.dataset.scale) {
-                img.dataset.scale = 1.5;
+    
+    /********** Update Image Grid with Purchased Items **********/
+    async function updateImageGrid(data) {
+      let items = [];
+      if (data.shipments && Array.isArray(data.shipments) && data.shipments.length > 0) {
+        items = data.shipments;
+        console.log("Using 'shipments' as the purchased items array.");
+      } else if (Array.isArray(data) && data.length > 0) {
+        items = data;
+      } else if (data.results && Array.isArray(data.results) && data.results.length > 0) {
+        items = data.results;
+      } else if (data.orders && Array.isArray(data.orders) && data.orders.length > 0) {
+        items = data.orders;
+      } else if (typeof data === 'object' && data !== null) {
+        for (const key in data) {
+          if (Array.isArray(data[key]) && data[key].length > 0) {
+            items = data[key];
+            console.log("Found purchased items array under key:", key);
+            break;
+          }
+        }
+      }
+      
+      if (!items.length) {
+        console.error("Order data does not contain a valid array of purchased items.", data);
+        return;
+      }
+      
+      // Loop through 8 preview boxes.
+      for (let i = 0; i < 8; i++) {
+        const cell = document.getElementById("previewCell" + i);
+        if (cell) {
+          if (i < items.length) {
+            const item = items[i];
+            const listingId = item.listing_id;
+            try {
+              const images = await fetchListingImages(listingId);
+              if (images && images.length > 0) {
+                const imageUrl = images[0].url_fullxfull;
+                cell.innerHTML = `<img src="${imageUrl}" alt="Listing Image ${i}">`;
+              } else {
+                cell.innerHTML = "No images found";
               }
-              img.addEventListener("wheel", function(e) {
-                e.preventDefault();
-                let currentScale = parseFloat(img.dataset.scale);
-                // Increase or decrease scale based on scroll direction.
-                if (e.deltaY < 0) {
-                  currentScale += 0.1;
-                } else {
-                  currentScale -= 0.1;
-                }
-                // Clamp the scale between 1 and 3.
-                currentScale = Math.max(1, Math.min(3, currentScale));
-                img.dataset.scale = currentScale;
-                img.style.transform = `scale(${currentScale})`;
-              });
+            } catch (error) {
+              console.error(`Error fetching images for listing ${listingId}:`, error);
+              cell.innerHTML = "Error loading image";
             }
           } else {
-            cell.innerHTML = "No images found";
+            cell.innerHTML = "Empty";
           }
-        } catch (error) {
-          console.error(`Error fetching images for listing ${listingId}:`, error);
-          cell.innerHTML = "Error loading image";
         }
-      } else {
-        cell.innerHTML = "Empty";
       }
     }
-  }
-}
     
     /********** Etsy Order Pull **********/
     function pullEtsyOrderDetails(orderNumber) {
