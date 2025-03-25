@@ -48,40 +48,12 @@
       resize: none;
       transition: none !important;
     }
-    /* Photo Grid Container (Photo_Grid) */
+    /* --- Photo Grid Container --- */
     #Photo_Grid {
       position: absolute;
       left: 400px;  /* Adjust as needed */
       top: 140px;   /* Adjust as needed */
       width: 532px; /* Increased by 33% from 400px */
-    }
-    /* New Text Boxes Container */
-    #newTextBoxContainer {
-      position: absolute;
-      left: 50px;
-      top: 520px;  /* Adjust position as needed */
-      display: flex;
-      flex-direction: column;
-      gap: 5px;
-    }
-    /* Each new text box is wrapped in its own container */
-    .new-text-box-container {
-      border: 1px solid #ccc;
-      width: 50px;
-      height: 5px;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      box-sizing: border-box;
-    }
-    /* New text boxes styling */
-    .new-text-box {
-      width: 100%;
-      height: 100%;
-      border: none;
-      text-align: center;
-      font-size: 0.8em;
-      background: transparent;
     }
     /* --- Configuration Modal --- */
     .modal {
@@ -137,19 +109,6 @@
   
   <!-- Photo Grid Container -->
   <div id="Photo_Grid"></div>
-  
-  <!-- New Text Boxes Container -->
-  <div id="newTextBoxContainer">
-    <div class="new-text-box-container">
-      <input type="text" id="newTextBox1" class="new-text-box" value="Box 1" readonly>
-    </div>
-    <div class="new-text-box-container">
-      <input type="text" id="newTextBox2" class="new-text-box" value="Box 2" readonly>
-    </div>
-    <div class="new-text-box-container">
-      <input type="text" id="newTextBox3" class="new-text-box" value="Box 3" readonly>
-    </div>
-  </div>
   
   <!-- Configuration Modal -->
   <div id="configModal" class="modal">
@@ -240,8 +199,7 @@
     });
     
     /********** UI Configuration Functions **********/
-    // Include new text boxes and Photo_Grid in the configurable components.
-    var configComponentIDs = ["connectEtsyBtn", "openConfigBtn", "etsyOrderNumber", "orderInformation", "Photo_Grid", "newTextBox1", "newTextBox2", "newTextBox3"];
+    var configComponentIDs = ["connectEtsyBtn", "openConfigBtn", "etsyOrderNumber", "orderInformation", "Photo_Grid"];
     
     function loadPositions() {
       configComponentIDs.forEach(function(id) {
