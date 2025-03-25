@@ -298,8 +298,7 @@
     /********** Update Image Grid with Purchased Items **********/
     function updateImageGrid(data) {
   let items = [];
-  
-  // Try to determine the purchased items array.
+  // Determine the purchased items array from known keys.
   if (data.shipments && Array.isArray(data.shipments) && data.shipments.length > 0) {
     items = data.shipments;
     console.log("Using 'shipments' as the purchased items array.");
@@ -310,7 +309,6 @@
   } else if (data.orders && Array.isArray(data.orders) && data.orders.length > 0) {
     items = data.orders;
   } else if (typeof data === 'object' && data !== null) {
-    // Fallback: iterate over keys to see if any non-empty array exists.
     for (const key in data) {
       if (Array.isArray(data[key]) && data[key].length > 0) {
         items = data[key];
@@ -331,22 +329,17 @@
     if (cell) {
       if (i < items.length) {
         const item = items[i];
-        const listingImageId = item.listing_image_id;
         let imageUrl = null;
-        // Use Etsy provided URLs if available.
+        // Use Etsy provided image URL properties if available.
         if (item.url_fullxfull) {
           imageUrl = item.url_fullxfull;
         } else if (item.url_570xN) {
           imageUrl = item.url_570xN;
-        } else if (listingImageId) {
-          // Fallback: construct a URL using a basic pattern.
-          imageUrl = `https://i.etsystatic.com/${listingImageId}/il_fullxfull.jpg`;
-        }
-        if (imageUrl) {
-          cell.innerHTML = `<img src="${imageUrl}" alt="Listing Image ${i}">`;
         } else {
-          cell.innerHTML = "No image available";
+          // Fallback: since listing_image_id alone isn’t enough, use a placeholder.
+          imageUrl = "placeholder.jpg";  // Replace with a valid placeholder image URL.
         }
+        cell.innerHTML = `<img src="${imageUrl}" alt="Listing Image ${i}">`;
       } else {
         cell.innerHTML = "Empty";
       }
