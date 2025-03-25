@@ -69,7 +69,7 @@
     }
     .modal .modal-content {
       overflow-y: auto;
-      font-size: 0.9em;  /* Base modal text size */
+      font-size: 0.9em;
     }
     .modal .modal-footer {
       text-align: right;
@@ -295,57 +295,75 @@
       console.log("Configuration saved.");
     }
     
-    /********** Update Image Grid with Purchased Items **********/
-    function updateImageGrid(data) {
-  let items = [];
-  // Determine the purchased items array from known keys.
-  if (data.shipments && Array.isArray(data.shipments) && data.shipments.length > 0) {
-    items = data.shipments;
-    console.log("Using 'shipments' as the purchased items array.");
-  } else if (Array.isArray(data) && data.length > 0) {
-    items = data;
-  } else if (data.results && Array.isArray(data.results) && data.results.length > 0) {
-    items = data.results;
-  } else if (data.orders && Array.isArray(data.orders) && data.orders.length > 0) {
-    items = data.orders;
-  } else if (typeof data === 'object' && data !== null) {
-    for (const key in data) {
-      if (Array.isArray(data[key]) && data[key].length > 0) {
-        items = data[key];
-        console.log("Found purchased items array under key:", key);
-        break;
-      }
-    }
-  }
-  
-  if (!items.length) {
-    console.error("Order data does not contain a valid array of purchased items.", data);
-    return;
-  }
-  
-  // Loop through 8 preview boxes.
-  for (let i = 0; i < 8; i++) {
-    const cell = document.getElementById("previewCell" + i);
-    if (cell) {
-      if (i < items.length) {
-        const item = items[i];
-        let imageUrl = null;
-        // Use Etsy provided image URL properties if available.
-        if (item.url_fullxfull) {
-          imageUrl = item.url_fullxfull;
-        } else if (item.url_570xN) {
-          imageUrl = item.url_570xN;
-        } else {
-          // Fallback: since listing_image_id alone isn’t enough, use a placeholder.
-          imageUrl = "placeholder.jpg";  // Replace with a valid placeholder image URL.
+    /********** Listing Images: Fetch from Etsy API **********/
+    async function fetchListingImages(listingId) {
+      // Make sure to replace 'YOUR_ETSY_API_KEY' with your actual API key.
+      const response = await fetch(`https://api.etsy.com/v3/application/listings/${listingId}/images`, {
+        headers: {
+          'x-api-key': 'YOUR_ETSY_API_KEY',
+          'Authorization': 'Bearer ' + localStorage.getItem("access_token")
         }
-        cell.innerHTML = `<img src="${imageUrl}" alt="Listing Image ${i}">`;
-      } else {
-        cell.innerHTML = "Empty";
+      });
+      if (!response.ok) {
+        throw new Error(`Error fetching images for listing ${listingId}: ${response.statusText}`);
+      }
+      const data = await response.json();
+      return data.results; // Array of image objects
+    }
+    
+    /********** Update Image Grid with Purchased Items **********/
+    async function updateImageGrid(data) {
+      let items = [];
+      if (data.shipments && Array.isArray(data.shipments) && data.shipments.length > 0) {
+        items = data.shipments;
+        console.log("Using 'shipments' as the purchased items array.");
+      } else if (Array.isArray(data) && data.length > 0) {
+        items = data;
+      } else if (data.results && Array.isArray(data.results) && data.results.length > 0) {
+        items = data.results;
+      } else if (data.orders && Array.isArray(data.orders) && data.orders.length > 0) {
+        items = data.orders;
+      } else if (typeof data === 'object' && data !== null) {
+        for (const key in data) {
+          if (Array.isArray(data[key]) && data[key].length > 0) {
+            items = data[key];
+            console.log("Found purchased items array under key:", key);
+            break;
+          }
+        }
+      }
+      
+      if (!items.length) {
+        console.error("Order data does not contain a valid array of purchased items.", data);
+        return;
+      }
+      
+      // Loop through 8 preview boxes.
+      for (let i = 0; i < 8; i++) {
+        const cell = document.getElementById("previewCell" + i);
+        if (cell) {
+          if (i < items.length) {
+            const item = items[i];
+            // Assume each purchased item has a property "listing_id" which is used to fetch images.
+            const listingId = item.listing_id;
+            try {
+              const images = await fetchListingImages(listingId);
+              if (images && images.length > 0) {
+                const imageUrl = images[0].url_fullxfull; // Use the full-size image URL
+                cell.innerHTML = `<img src="${imageUrl}" alt="Listing Image ${i}">`;
+              } else {
+                cell.innerHTML = "No images found";
+              }
+            } catch (error) {
+              console.error(`Error fetching images for listing ${listingId}:`, error);
+              cell.innerHTML = "Error loading image";
+            }
+          } else {
+            cell.innerHTML = "Empty";
+          }
+        }
       }
     }
-  }
-}
     
     /********** Etsy Order Pull **********/
     function pullEtsyOrderDetails(orderNumber) {
@@ -369,7 +387,6 @@
       M.AutoInit();
       
       // *** Insert Image Grid Load Here ***
-      // Place this immediately after M.AutoInit() inside the DOMContentLoaded event.
       $("#imageGridContainer").load("imageGrid.html", function(response, status, xhr) {
         if (status === "error") {
           console.error("Error loading image grid:", xhr.status, xhr.statusText);
@@ -378,14 +395,12 @@
         }
       });
       
-      // Delay showing the page by 250ms so saved positions are applied.
       document.body.style.opacity = 0;
       setTimeout(function() {
         loadPositions();
         document.body.style.opacity = 1;
       }, 250);
       
-      // When the Open Config button is clicked, populate and open the configuration modal.
       document.getElementById("openConfigBtn").addEventListener("click", function() {
         populateConfigTable();
         var modalElem = document.getElementById("configModal");
@@ -393,24 +408,21 @@
         instance.open();
       });
       
-      // Save Config button handler.
       document.getElementById("saveConfigBtn").addEventListener("click", function() {
         saveConfiguration();
       });
       
-      // Etsy Order Number input: on pressing Enter, fetch order details.
       var etsyOrderInput = document.getElementById("etsyOrderNumber");
-      etsyOrderInput.addEventListener("keydown", function(e) {
+      etsyOrderInput.addEventListener("keydown", async function(e) {
         if (e.key === "Enter") {
           var orderNumber = etsyOrderInput.value.trim();
           if (orderNumber !== "") {
-            pullEtsyOrderDetails(orderNumber).then(function(orderData) {
-              if (orderData) {
-                document.getElementById("orderInformation").value = JSON.stringify(orderData, null, 2);
-                updateImageGrid(orderData);
-                console.log("Order information retrieved and image grid updated.");
-              }
-            });
+            const orderData = await pullEtsyOrderDetails(orderNumber);
+            if (orderData) {
+              document.getElementById("orderInformation").value = JSON.stringify(orderData, null, 2);
+              await updateImageGrid(orderData);
+              console.log("Order information retrieved and image grid updated.");
+            }
           }
         }
       });
