@@ -6,7 +6,7 @@
   <!-- Materialize CSS -->
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/materialize/1.0.0/css/materialize.min.css">
   <style>
-    /* Hide the page initially to avoid visible sliding */
+    /* Hide the page initially */
     body {
       background-color: white;
       margin: 0;
@@ -48,13 +48,28 @@
       resize: none;
       transition: none !important;
     }
-    /* --- Photo Grid Container --- */
-    /* Renamed from imageGridContainer to Photo_Grid and increased size by 33% (width from 400px to 532px) */
+    /* Photo grid container renamed from imageGridContainer to Photo_Grid and increased in size */
     #Photo_Grid {
       position: absolute;
-      left: 400px;  /* Adjust as needed */
-      top: 140px;   /* Adjust as needed */
-      width: 532px; /* Increased by 33% */
+      left: 400px;
+      top: 140px;
+      width: 532px; /* Increased by 33% from 400px */
+    }
+    /* New text boxes container (positioned below Photo_Grid) */
+    #newTextBoxContainer {
+      position: absolute;
+      left: 50px;
+      top: 500px;
+    }
+    /* New text boxes: 50px wide and 5px tall */
+    .new-text-box {
+      width: 50px;
+      height: 5px;
+      margin-bottom: 5px;
+      border: 1px solid #ccc;
+      font-size: 0.8em;
+      padding: 0;
+      box-sizing: border-box;
     }
     /* --- Configuration Modal --- */
     .modal {
@@ -108,8 +123,15 @@
   <br />
   <textarea id="orderInformation" placeholder="Order Information" readonly></textarea>
   
-  <!-- Photo Grid Container: This will load the grid of 8 photos -->
+  <!-- Photo Grid Container -->
   <div id="Photo_Grid"></div>
+  
+  <!-- New Text Boxes Container -->
+  <div id="newTextBoxContainer">
+    <input type="text" id="newTextBox1" class="new-text-box" value="Box 1">
+    <input type="text" id="newTextBox2" class="new-text-box" value="Box 2">
+    <input type="text" id="newTextBox3" class="new-text-box" value="Box 3">
+  </div>
   
   <!-- Configuration Modal -->
   <div id="configModal" class="modal">
@@ -200,8 +222,8 @@
     });
     
     /********** UI Configuration Functions **********/
-    // Added "Photo_Grid" to the list so you can adjust its position/size in the modal.
-    var configComponentIDs = ["connectEtsyBtn", "openConfigBtn", "etsyOrderNumber", "orderInformation", "Photo_Grid"];
+    // Add new text boxes ("newTextBox1", "newTextBox2", "newTextBox3") and Photo_Grid to the configurable list.
+    var configComponentIDs = ["connectEtsyBtn", "openConfigBtn", "etsyOrderNumber", "orderInformation", "Photo_Grid", "newTextBox1", "newTextBox2", "newTextBox3"];
     
     function loadPositions() {
       configComponentIDs.forEach(function(id) {
@@ -313,65 +335,61 @@
     
     /********** Update Image Grid with Purchased Items **********/
     async function updateImageGrid(data) {
-  let items = [];
-  // Check for "transactions" first since that's where our items are in your sample data.
-  if (data.transactions && Array.isArray(data.transactions) && data.transactions.length > 0) {
-    items = data.transactions;
-    console.log("Using 'transactions' as the purchased items array.");
-  } else if (data.shipments && Array.isArray(data.shipments) && data.shipments.length > 0) {
-    items = data.shipments;
-    console.log("Using 'shipments' as the purchased items array.");
-  } else if (Array.isArray(data) && data.length > 0) {
-    items = data;
-  } else if (data.results && Array.isArray(data.results) && data.results.length > 0) {
-    items = data.results;
-  } else if (data.orders && Array.isArray(data.orders) && data.orders.length > 0) {
-    items = data.orders;
-  } else if (typeof data === 'object' && data !== null) {
-    for (const key in data) {
-      if (Array.isArray(data[key]) && data[key].length > 0) {
-        items = data[key];
-        console.log("Found purchased items array under key:", key);
-        break;
-      }
-    }
-  }
-  
-  if (!items.length) {
-    console.error("Order data does not contain a valid array of purchased items.", data);
-    return;
-  }
-  
-  // Loop through 8 preview boxes.
-  for (let i = 0; i < 8; i++) {
-    const cell = document.getElementById("previewCell" + i);
-    const qtyBox = document.getElementById("quantityCell" + i);
-    if (cell && qtyBox) {
-      if (i < items.length) {
-        const item = items[i];
-        const listingId = item.listing_id;
-        try {
-          const images = await fetchListingImages(listingId);
-          if (images && images.length > 0) {
-            const imageUrl = images[0].url_fullxfull;
-            cell.innerHTML = `<img src="${imageUrl}" alt="Listing Image ${i}">`;
-          } else {
-            cell.innerHTML = "No images found";
+      let items = [];
+      if (data.shipments && Array.isArray(data.shipments) && data.shipments.length > 0) {
+        items = data.shipments;
+        console.log("Using 'shipments' as the purchased items array.");
+      } else if (Array.isArray(data) && data.length > 0) {
+        items = data;
+      } else if (data.results && Array.isArray(data.results) && data.results.length > 0) {
+        items = data.results;
+      } else if (data.orders && Array.isArray(data.orders) && data.orders.length > 0) {
+        items = data.orders;
+      } else if (typeof data === 'object' && data !== null) {
+        for (const key in data) {
+          if (Array.isArray(data[key]) && data[key].length > 0) {
+            items = data[key];
+            console.log("Found purchased items array under key:", key);
+            break;
           }
-          // Set the quantity from the transaction.
-          qtyBox.value = item.quantity !== undefined ? item.quantity : "";
-        } catch (error) {
-          console.error(`Error fetching images for listing ${listingId}:`, error);
-          cell.innerHTML = "Error loading image";
-          qtyBox.value = "";
         }
-      } else {
-        cell.innerHTML = "Empty";
-        qtyBox.value = "";
+      }
+      
+      if (!items.length) {
+        console.error("Order data does not contain a valid array of purchased items.", data);
+        return;
+      }
+      
+      // Loop through 8 grid cells.
+      for (let i = 0; i < 8; i++) {
+        const cell = document.getElementById("previewCell" + i);
+        const qtyBox = document.getElementById("quantityCell" + i);
+        if (cell && qtyBox) {
+          if (i < items.length) {
+            const item = items[i];
+            const listingId = item.listing_id;
+            try {
+              const images = await fetchListingImages(listingId);
+              if (images && images.length > 0) {
+                const imageUrl = images[0].url_fullxfull;
+                cell.innerHTML = `<img src="${imageUrl}" alt="Listing Image ${i}">`;
+              } else {
+                cell.innerHTML = "No images found";
+              }
+              // Set the quantity text box with "Quantity: " plus the quantity value.
+              qtyBox.value = "Quantity: " + (item.quantity !== undefined ? item.quantity : "");
+            } catch (error) {
+              console.error(`Error fetching images for listing ${listingId}:`, error);
+              cell.innerHTML = "Error loading image";
+              qtyBox.value = "";
+            }
+          } else {
+            cell.innerHTML = "Empty";
+            qtyBox.value = "";
+          }
+        }
       }
     }
-  }
-}
     
     /********** Etsy Order Pull **********/
     function pullEtsyOrderDetails(orderNumber) {
@@ -394,7 +412,7 @@
     document.addEventListener("DOMContentLoaded", function() {
       M.AutoInit();
       
-      // *** Insert Image Grid Load Here ***
+      // *** Load Photo Grid (with 8 grid cells and quantity boxes) ***
       $("#Photo_Grid").load("imageGrid.html", function(response, status, xhr) {
         if (status === "error") {
           console.error("Error loading image grid:", xhr.status, xhr.statusText);
