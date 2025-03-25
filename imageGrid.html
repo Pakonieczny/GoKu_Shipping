@@ -1,32 +1,42 @@
 <!-- imageGrid.html -->
 <style>
-  /* Container using CSS grid to enforce 2 rows and 4 columns */
+  /* Container: CSS Grid with 4 columns and 2 rows, with a 5px horizontal gap and a 25px vertical gap */
   #photoGridContainer {
     display: grid;
     grid-template-columns: repeat(4, 1fr);
     grid-template-rows: repeat(2, 1fr);
-    /* Increase vertical gap to 25px (5px + 20px extra) and keep horizontal gap at 5px */
     gap: 25px 5px;
   }
-  /* Preview box styling: 1px black border, fixed height, and always visible border */
+  /* Preview box: fixed size with a 1px black border; overflow is hidden so images stay within the box */
   .preview-box {
     border: 1px solid black;
     background: #f9f9f9;
-    height: 150px;
+    height: 150px; /* fixed height so the border is always visible */
     display: flex;
     align-items: center;
     justify-content: center;
     overflow: hidden;
     position: relative;
   }
-  /* Image styling: fills the box using object-fit: cover */
+  /* Image styling: fill the box with object-fit: cover; default scale of 1 (no zoom) */
   .preview-box img {
     width: 100%;
     height: 100%;
     object-fit: cover;
-    transform: scale(1); /* Default no zoom */
+    transform: scale(1);
     transform-origin: center center;
     transition: transform 0.2s ease;
+  }
+  /* Quantity overlay: appears in the bottom-right corner inside each preview box */
+  .quantity-overlay {
+    position: absolute;
+    bottom: 5px;
+    right: 5px;
+    background: rgba(0, 0, 0, 0.7);
+    color: #fff;
+    padding: 2px 4px;
+    font-size: 0.8em;
+    border-radius: 3px;
   }
 </style>
 
@@ -42,14 +52,15 @@
 </div>
 
 <script>
-  // Attach wheel event listener to each preview box for manual zooming.
+  // Attach wheel event listener to each preview box to enable manual zooming.
   document.querySelectorAll('.preview-box').forEach(function(box) {
     box.addEventListener('wheel', function(e) {
       e.preventDefault();
+      // Find the image inside this preview box.
       const img = box.querySelector('img');
       if (!img) return;
       let currentScale = parseFloat(img.dataset.scale) || 1;
-      // Scroll up to zoom in; scroll down to zoom out.
+      // Scroll up (negative deltaY) zooms in; scroll down zooms out.
       if (e.deltaY < 0) {
         currentScale *= 1.1;
       } else {
