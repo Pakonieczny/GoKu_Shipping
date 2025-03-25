@@ -48,28 +48,40 @@
       resize: none;
       transition: none !important;
     }
-    /* Photo grid container renamed from imageGridContainer to Photo_Grid and increased in size */
+    /* Photo Grid Container (Photo_Grid) */
     #Photo_Grid {
       position: absolute;
-      left: 400px;
-      top: 140px;
+      left: 400px;  /* Adjust as needed */
+      top: 140px;   /* Adjust as needed */
       width: 532px; /* Increased by 33% from 400px */
     }
-    /* New text boxes container (positioned below Photo_Grid) */
+    /* New Text Boxes Container */
     #newTextBoxContainer {
       position: absolute;
       left: 50px;
-      top: 500px;
+      top: 520px;  /* Adjust position as needed */
+      display: flex;
+      flex-direction: column;
+      gap: 5px;
     }
-    /* New text boxes: 50px wide and 5px tall */
-    .new-text-box {
+    /* Each new text box is wrapped in its own container */
+    .new-text-box-container {
+      border: 1px solid #ccc;
       width: 50px;
       height: 5px;
-      margin-bottom: 5px;
-      border: 1px solid #ccc;
-      font-size: 0.8em;
-      padding: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
       box-sizing: border-box;
+    }
+    /* New text boxes styling */
+    .new-text-box {
+      width: 100%;
+      height: 100%;
+      border: none;
+      text-align: center;
+      font-size: 0.8em;
+      background: transparent;
     }
     /* --- Configuration Modal --- */
     .modal {
@@ -128,9 +140,15 @@
   
   <!-- New Text Boxes Container -->
   <div id="newTextBoxContainer">
-    <input type="text" id="newTextBox1" class="new-text-box" value="Box 1">
-    <input type="text" id="newTextBox2" class="new-text-box" value="Box 2">
-    <input type="text" id="newTextBox3" class="new-text-box" value="Box 3">
+    <div class="new-text-box-container">
+      <input type="text" id="newTextBox1" class="new-text-box" value="Box 1" readonly>
+    </div>
+    <div class="new-text-box-container">
+      <input type="text" id="newTextBox2" class="new-text-box" value="Box 2" readonly>
+    </div>
+    <div class="new-text-box-container">
+      <input type="text" id="newTextBox3" class="new-text-box" value="Box 3" readonly>
+    </div>
   </div>
   
   <!-- Configuration Modal -->
@@ -222,7 +240,7 @@
     });
     
     /********** UI Configuration Functions **********/
-    // Add new text boxes ("newTextBox1", "newTextBox2", "newTextBox3") and Photo_Grid to the configurable list.
+    // Include new text boxes and Photo_Grid in the configurable components.
     var configComponentIDs = ["connectEtsyBtn", "openConfigBtn", "etsyOrderNumber", "orderInformation", "Photo_Grid", "newTextBox1", "newTextBox2", "newTextBox3"];
     
     function loadPositions() {
@@ -330,13 +348,16 @@
         throw new Error(`Error fetching images for listing ${listingId}: ${response.statusText}`);
       }
       const data = await response.json();
-      return data.results; // Expected to be an array of image objects.
+      return data.results;
     }
     
     /********** Update Image Grid with Purchased Items **********/
     async function updateImageGrid(data) {
       let items = [];
-      if (data.shipments && Array.isArray(data.shipments) && data.shipments.length > 0) {
+      if (data.transactions && Array.isArray(data.transactions) && data.transactions.length > 0) {
+        items = data.transactions;
+        console.log("Using 'transactions' as the purchased items array.");
+      } else if (data.shipments && Array.isArray(data.shipments) && data.shipments.length > 0) {
         items = data.shipments;
         console.log("Using 'shipments' as the purchased items array.");
       } else if (Array.isArray(data) && data.length > 0) {
@@ -376,7 +397,6 @@
               } else {
                 cell.innerHTML = "No images found";
               }
-              // Set the quantity text box with "Quantity: " plus the quantity value.
               qtyBox.value = "Quantity: " + (item.quantity !== undefined ? item.quantity : "");
             } catch (error) {
               console.error(`Error fetching images for listing ${listingId}:`, error);
@@ -412,7 +432,7 @@
     document.addEventListener("DOMContentLoaded", function() {
       M.AutoInit();
       
-      // *** Load Photo Grid (with 8 grid cells and quantity boxes) ***
+      // Load the photo grid from imageGrid.html into the container with ID Photo_Grid.
       $("#Photo_Grid").load("imageGrid.html", function(response, status, xhr) {
         if (status === "error") {
           console.error("Error loading image grid:", xhr.status, xhr.statusText);
