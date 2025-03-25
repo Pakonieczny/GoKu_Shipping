@@ -297,7 +297,7 @@
     
     /********** Listing Images: Fetch via Proxy **********/
     async function fetchListingImages(listingId) {
-      const response = await fetch(`/.netlify/functions/etsy_listing_images?listingId=${listingId}`, {
+      const response = await fetch(`/.netlify/functions/etsyImages?listingId=${listingId}`, {
         headers: {
           "access-token": localStorage.getItem("access_token")
         }

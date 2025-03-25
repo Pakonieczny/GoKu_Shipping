@@ -33,7 +33,7 @@ exports.handler = async function(event, context) {
       body: JSON.stringify(data)
     };
   } catch (error) {
-    console.error("Error in etsy_listing_images:", error);
+    console.error("Error in etsyImages:", error);
     return { statusCode: 500, body: JSON.stringify({ error: error.message }) };
   }
 };
