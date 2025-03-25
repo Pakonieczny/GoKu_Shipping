@@ -1,25 +1,27 @@
 <!-- imageGrid.html -->
 <style>
-  /* Styling for the preview boxes */
+  /* Style the preview boxes and ensure overflow is hidden */
   .preview-box {
     border: 1px solid #ccc;
-    padding: 4px;
+    padding: 0; 
     margin-bottom: 10px;
     min-height: 100px;
     display: flex;
     align-items: center;
     justify-content: center;
     background: #f9f9f9;
+    overflow: hidden; /* Ensures image stays within bounds */
   }
   .preview-box img {
-    max-width: 100%;
-    max-height: 100%;
-    /* Auto zoom 33% */
-    transform: scale(1.33);
+    width: 100%;
+    height: 100%;
+    object-fit: cover; /* Maintain aspect ratio while covering the container */
+    transform: scale(1.5); /* 50% zoom */
     transform-origin: center center;
     transition: transform 0.3s ease;
   }
 </style>
+
 <div class="row">
   <div class="col s3 preview-box" id="previewCell0">Empty</div>
   <div class="col s3 preview-box" id="previewCell1">Empty</div>
