@@ -295,10 +295,9 @@
       console.log("Configuration saved.");
     }
     
-    /********** Listing Images: Fetch from Serverless Proxy **********/
+    /********** Listing Images: Fetch via Proxy **********/
     async function fetchListingImages(listingId) {
-      // Call our serverless function which proxies the Etsy API request.
-      const response = await fetch(`/.netlify/functions/etsyListingImages?listingId=${listingId}`, {
+      const response = await fetch(`/.netlify/functions/etsy_listing_images?listingId=${listingId}`, {
         headers: {
           "access-token": localStorage.getItem("access_token")
         }
@@ -343,12 +342,11 @@
         if (cell) {
           if (i < items.length) {
             const item = items[i];
-            // We assume each purchased item has a property "listing_id"
             const listingId = item.listing_id;
             try {
               const images = await fetchListingImages(listingId);
               if (images && images.length > 0) {
-                const imageUrl = images[0].url_fullxfull; // Use the full-size image URL provided by Etsy.
+                const imageUrl = images[0].url_fullxfull;
                 cell.innerHTML = `<img src="${imageUrl}" alt="Listing Image ${i}">`;
               } else {
                 cell.innerHTML = "No images found";

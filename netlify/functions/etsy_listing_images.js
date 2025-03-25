@@ -13,7 +13,7 @@ exports.handler = async function(event, context) {
     if (!accessToken) {
       return { statusCode: 400, body: JSON.stringify({ error: "Missing access token" }) };
     }
-    // Retrieve your CLIENT_ID (which also serves as your API key).
+    // Retrieve your CLIENT_ID (which also serves as your API key) from environment variables.
     const CLIENT_ID = process.env.CLIENT_ID;
     // Construct the Etsy API URL.
     const etsyUrl = `https://api.etsy.com/v3/application/listings/${listingId}/images`;
