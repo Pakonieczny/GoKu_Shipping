@@ -4,17 +4,16 @@
   #photoGridContainer {
     display: grid;
     grid-template-columns: repeat(4, 1fr);
-    grid-template-rows: repeat(2, 1fr);
-    /* Vertical gap 0px, horizontal gap 5px */
-    gap: 0px 5px;
+    grid-template-rows: repeat(2, auto);
+    gap: 25px 5px; /* Vertical gap 25px, horizontal gap 5px */
   }
-  /* Each grid-cell contains the preview box and quantity text box */
+  /* Each grid-cell holds the preview box and the two quantity boxes */
   .grid-cell {
     display: flex;
     flex-direction: column;
     align-items: center;
   }
-  /* Preview box: fixed height, 1px solid black border, always visible even if empty */
+  /* Preview box styling: fixed height, 1px solid black border, always visible */
   .preview-box {
     border: 1px solid black;
     background: #f9f9f9;
@@ -26,7 +25,6 @@
     overflow: hidden;
     position: relative;
   }
-  /* Image styling: fill the box with object-fit: cover, default scale 1 */
   .preview-box img {
     width: 100%;
     height: 100%;
@@ -35,13 +33,13 @@
     transform-origin: center center;
     transition: transform 0.2s ease;
   }
-  /* Quantity text box: fixed size 100px wide, 10px tall (reduced from 15px) */
+  /* Quantity text box styling: 50px wide, 5px tall, 1px solid black, left-aligned text */
   .quantity-box {
     margin-top: 5px;
-    width: 100px;
-    height: 10px;
+    width: 50px;
+    height: 5px;
     border: 1px solid black;
-    text-align: center;
+    text-align: left;
     font-size: 0.8em;
     padding: 0;
     box-sizing: border-box;
@@ -49,37 +47,53 @@
 </style>
 
 <div id="photoGridContainer">
+  <!-- Grid cell 0 -->
   <div class="grid-cell">
     <div class="preview-box" id="previewCell0">Empty</div>
     <input type="text" class="quantity-box" id="quantityCell0" readonly value="">
+    <input type="text" class="quantity-box" id="quantityCell0_dup" readonly value="">
   </div>
+  <!-- Grid cell 1 -->
   <div class="grid-cell">
     <div class="preview-box" id="previewCell1">Empty</div>
     <input type="text" class="quantity-box" id="quantityCell1" readonly value="">
+    <input type="text" class="quantity-box" id="quantityCell1_dup" readonly value="">
   </div>
+  <!-- Grid cell 2 -->
   <div class="grid-cell">
     <div class="preview-box" id="previewCell2">Empty</div>
     <input type="text" class="quantity-box" id="quantityCell2" readonly value="">
+    <input type="text" class="quantity-box" id="quantityCell2_dup" readonly value="">
   </div>
+  <!-- Grid cell 3 -->
   <div class="grid-cell">
     <div class="preview-box" id="previewCell3">Empty</div>
     <input type="text" class="quantity-box" id="quantityCell3" readonly value="">
+    <input type="text" class="quantity-box" id="quantityCell3_dup" readonly value="">
   </div>
+  <!-- Grid cell 4 -->
   <div class="grid-cell">
     <div class="preview-box" id="previewCell4">Empty</div>
     <input type="text" class="quantity-box" id="quantityCell4" readonly value="">
+    <input type="text" class="quantity-box" id="quantityCell4_dup" readonly value="">
   </div>
+  <!-- Grid cell 5 -->
   <div class="grid-cell">
     <div class="preview-box" id="previewCell5">Empty</div>
     <input type="text" class="quantity-box" id="quantityCell5" readonly value="">
+    <input type="text" class="quantity-box" id="quantityCell5_dup" readonly value="">
   </div>
+  <!-- Grid cell 6 -->
   <div class="grid-cell">
     <div class="preview-box" id="previewCell6">Empty</div>
     <input type="text" class="quantity-box" id="quantityCell6" readonly value="">
+    <input type="text" class="quantity-box" id="quantityCell6_dup" readonly value="">
   </div>
+  <!-- Grid cell 7 -->
   <div class="grid-cell">
     <div class="preview-box" id="previewCell7">Empty</div>
     <input type="text" class="quantity-box" id="quantityCell7" readonly value="">
+    <input type="text" class="quantity-box" id="quantityCell7_dup" readonly value="">
   </div>
 </div>
 
