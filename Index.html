@@ -15,6 +15,7 @@
       opacity: 0;
       transition: opacity 0s;
     }
+
     /* --- Main UI Components --- */
     #connectEtsyBtn {
       position: absolute;
@@ -48,6 +49,7 @@
       resize: none;
       transition: none !important;
     }
+
     /* --- Photo Grid Container --- */
     #Photo_Grid {
       position: absolute;
@@ -55,6 +57,7 @@
       top: 140px;   /* Adjust as needed */
       width: 532px; /* Increased by 33% from 400px */
     }
+
     /* --- Configuration Modal --- */
     .modal {
       position: fixed !important;
@@ -62,9 +65,11 @@
       right: 0 !important;
       left: auto !important;
       transform: none !important;
-      height: 60vh !important;
-      max-height: 60vh !important;
-      width: 26.8% !important;
+      /* You can let it auto-size or set a max-height/width */
+      height: auto !important; 
+      max-height: 70vh !important;
+      width: auto !important;
+      max-width: 650px !important;
       overflow-y: scroll !important;
     }
     .modal .modal-content {
@@ -77,6 +82,7 @@
       background: white;
       font-size: 0.9em;
     }
+
     table.striped {
       width: 100%;
     }
@@ -199,18 +205,14 @@
     });
     
     /********** UI Configuration Functions **********/
+    // 1) Start with the components you already configure
     var configComponentIDs = [
-  "connectEtsyBtn",
-  "openConfigBtn",
-  "etsyOrderNumber",
-  "orderInformation",
-  "Photo_Grid",
-  // Add your new text boxes here:
-  "quantityCell0", "quantityCell1", "quantityCell2", "quantityCell3",
-  "quantityCell4", "quantityCell5", "quantityCell6", "quantityCell7",
-  "metalCell0", "metalCell1", "metalCell2", "metalCell3",
-  "metalCell4", "metalCell5", "metalCell6", "metalCell7"
-];
+      "connectEtsyBtn",
+      "openConfigBtn",
+      "etsyOrderNumber",
+      "orderInformation",
+      "Photo_Grid"
+    ];
     
     function loadPositions() {
       configComponentIDs.forEach(function(id) {
@@ -234,14 +236,14 @@
       
       configComponentIDs.forEach(function(id) {
         var el = document.getElementById(id);
-        if (!el) return;
+        if (!el) return; // If the element isn't found, skip
+        
         var compName = el.textContent.trim() || id;
         var cs = window.getComputedStyle(el);
         var leftVal = (cs.left === "auto") ? 0 : parseInt(cs.left);
         var topVal = (cs.top === "auto") ? 0 : parseInt(cs.top);
         var widthVal = (cs.width === "auto") ? 0 : parseInt(cs.width);
         var heightVal = (cs.height === "auto") ? 0 : parseInt(cs.height);
-        console.log("Configuring:", compName, "ID:", id, "Left:", leftVal, "Top:", topVal, "Width:", widthVal, "Height:", heightVal);
         
         var row = document.createElement("tr");
         row.innerHTML = `
@@ -253,12 +255,12 @@
         `;
         tbody.appendChild(row);
         
+        // Add event listeners to instantly update positions/sizes
         row.querySelector(".left-input").addEventListener("input", function() {
           var newVal = this.value;
           var target = document.getElementById(this.getAttribute("data-id"));
           if (target) {
             target.style.left = newVal + "px";
-            console.log(compName, "updated left to", newVal);
           }
         });
         row.querySelector(".top-input").addEventListener("input", function() {
@@ -266,7 +268,6 @@
           var target = document.getElementById(this.getAttribute("data-id"));
           if (target) {
             target.style.top = newVal + "px";
-            console.log(compName, "updated top to", newVal);
           }
         });
         row.querySelector(".width-input").addEventListener("input", function() {
@@ -274,7 +275,6 @@
           var target = document.getElementById(this.getAttribute("data-id"));
           if (target) {
             target.style.width = newVal + "px";
-            console.log(compName, "updated width to", newVal);
           }
         });
         row.querySelector(".height-input").addEventListener("input", function() {
@@ -282,7 +282,6 @@
           var target = document.getElementById(this.getAttribute("data-id"));
           if (target) {
             target.style.height = newVal + "px";
-            console.log(compName, "updated height to", newVal);
           }
         });
       });
@@ -401,12 +400,19 @@
     document.addEventListener("DOMContentLoaded", function() {
       M.AutoInit();
       
-      // Load the photo grid from imageGrid.html into the container with ID Photo_Grid.
+      // Load the photo grid from imageGrid.html into the container with ID #Photo_Grid
       $("#Photo_Grid").load("imageGrid.html", function(response, status, xhr) {
         if (status === "error") {
           console.error("Error loading image grid:", xhr.status, xhr.statusText);
         } else {
           console.log("Image grid loaded successfully.");
+          
+          // 2) Now that imageGrid.html is in the DOM, 
+          // add each quantityCell# and metalCell# to configComponentIDs
+          for (let i = 0; i < 8; i++) {
+            configComponentIDs.push(`quantityCell${i}`);
+            configComponentIDs.push(`metalCell${i}`);
+          }
         }
       });
       
@@ -417,6 +423,8 @@
       }, 250);
       
       document.getElementById("openConfigBtn").addEventListener("click", function() {
+        // 3) This repopulates the table, which should now include
+        // all 16 text boxes (quantityCell0..7, metalCell0..7)
         populateConfigTable();
         var modalElem = document.getElementById("configModal");
         var instance = M.Modal.getInstance(modalElem);
