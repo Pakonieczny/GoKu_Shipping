@@ -8,13 +8,7 @@
     /* Vertical gap 0px, horizontal gap 5px */
     gap: 0px 5px;
   }
-  /* Each grid-cell contains the preview box and quantity text box */
-  .grid-cell {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-  }
-  /* Preview box: fixed height, 1px solid black border, always visible even if empty */
+  /* Each preview box has a fixed size, border, and clipping */
   .preview-box {
     border: 1px solid black;
     background: #f9f9f9;
@@ -26,7 +20,6 @@
     overflow: hidden;
     position: relative;
   }
-  /* Image styling: fill the box with object-fit: cover, default scale 1 */
   .preview-box img {
     width: 100%;
     height: 100%;
@@ -35,51 +28,61 @@
     transform-origin: center center;
     transition: transform 0.2s ease;
   }
-  /* Quantity text box: fixed size 100px wide, 10px tall (reduced from 15px) */
-  .quantity-box {
-    margin-top: 5px;
-    width: 100px;
-    height: 10px;
-    border: 1px solid black;
+  /* New Text Boxes Container for individual text boxes */
+  #newTextBoxContainer {
+    position: absolute;
+    left: 50px;
+    top: 520px;  /* Adjust position as needed */
+    display: flex;
+    flex-direction: column;
+    gap: 0; /* No gap between the containers */
+  }
+  /* Each new text box container: exactly 50px by 5px, with border included */
+  .new-text-box-container {
+    width: 50px;
+    height: 5px;
+    border: 1px solid #ccc;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+  }
+  /* New text box fills its container */
+  .new-text-box {
+    width: 100%;
+    height: 100%;
+    border: none;
     text-align: center;
     font-size: 0.8em;
+    background: transparent;
+    margin: 0;
     padding: 0;
     box-sizing: border-box;
   }
 </style>
 
 <div id="photoGridContainer">
-  <div class="grid-cell">
-    <div class="preview-box" id="previewCell0">Empty</div>
-    <input type="text" class="quantity-box" id="quantityCell0" readonly value="">
+  <div class="preview-box" id="previewCell0">Empty</div>
+  <div class="preview-box" id="previewCell1">Empty</div>
+  <div class="preview-box" id="previewCell2">Empty</div>
+  <div class="preview-box" id="previewCell3">Empty</div>
+  <div class="preview-box" id="previewCell4">Empty</div>
+  <div class="preview-box" id="previewCell5">Empty</div>
+  <div class="preview-box" id="previewCell6">Empty</div>
+  <div class="preview-box" id="previewCell7">Empty</div>
+</div>
+
+<div id="newTextBoxContainer">
+  <div class="new-text-box-container">
+    <input type="text" id="newTextBox1" class="new-text-box" value="Box 1" readonly>
   </div>
-  <div class="grid-cell">
-    <div class="preview-box" id="previewCell1">Empty</div>
-    <input type="text" class="quantity-box" id="quantityCell1" readonly value="">
+  <div class="new-text-box-container">
+    <input type="text" id="newTextBox2" class="new-text-box" value="Box 2" readonly>
   </div>
-  <div class="grid-cell">
-    <div class="preview-box" id="previewCell2">Empty</div>
-    <input type="text" class="quantity-box" id="quantityCell2" readonly value="">
-  </div>
-  <div class="grid-cell">
-    <div class="preview-box" id="previewCell3">Empty</div>
-    <input type="text" class="quantity-box" id="quantityCell3" readonly value="">
-  </div>
-  <div class="grid-cell">
-    <div class="preview-box" id="previewCell4">Empty</div>
-    <input type="text" class="quantity-box" id="quantityCell4" readonly value="">
-  </div>
-  <div class="grid-cell">
-    <div class="preview-box" id="previewCell5">Empty</div>
-    <input type="text" class="quantity-box" id="quantityCell5" readonly value="">
-  </div>
-  <div class="grid-cell">
-    <div class="preview-box" id="previewCell6">Empty</div>
-    <input type="text" class="quantity-box" id="quantityCell6" readonly value="">
-  </div>
-  <div class="grid-cell">
-    <div class="preview-box" id="previewCell7">Empty</div>
-    <input type="text" class="quantity-box" id="quantityCell7" readonly value="">
+  <div class="new-text-box-container">
+    <input type="text" id="newTextBox3" class="new-text-box" value="Box 3" readonly>
   </div>
 </div>
 
