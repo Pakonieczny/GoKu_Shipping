@@ -6,7 +6,6 @@
   <!-- Materialize CSS -->
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/materialize/1.0.0/css/materialize.min.css">
   <style>
-    /* Hide the page initially */
     body {
       background-color: white;
       margin: 0;
@@ -16,7 +15,7 @@
       transition: opacity 0s;
     }
 
-    /* --- Main UI Components --- */
+    /* Existing items for your main UI */
     #connectEtsyBtn {
       position: absolute;
       left: 50px;
@@ -50,23 +49,35 @@
       transition: none !important;
     }
 
-    /* --- Photo Grid Container --- */
+    /* The container for your loaded imageGrid.html */
     #Photo_Grid {
       position: absolute;
-      left: 400px;  /* Adjust as needed */
-      top: 140px;   /* Adjust as needed */
-      width: 532px; /* Increased by 33% from 400px */
+      left: 400px;
+      top: 140px;
+      width: 532px;
+      transition: none !important;
     }
 
-    /* --- Configuration Modal --- */
+    /* Now define the text box style: these are absolutely positioned so they move independently. */
+    .text-box-absolute {
+      position: absolute;
+      width: 50px;    /* You can tweak the default width as you like */
+      height: 20px;   /* Something more comfortable than '5px' so you can see them easily */
+      border: 1px solid black;
+      font-size: 0.8em;
+      text-align: left;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    /* Configuration Modal styling */
     .modal {
       position: fixed !important;
       top: 150px !important;
       right: 0 !important;
       left: auto !important;
       transform: none !important;
-      /* You can let it auto-size or set a max-height/width */
-      height: auto !important; 
+      height: auto !important;
       max-height: 70vh !important;
       width: auto !important;
       max-width: 650px !important;
@@ -98,24 +109,35 @@
   </style>
 </head>
 <body>
-  <!-- Connect to Etsy Button -->
-  <button id="connectEtsyBtn" class="configurable btn waves-effect waves-light">
-    Connect to Etsy
-  </button>
-  
-  <!-- Open Config Button -->
-  <button id="openConfigBtn" class="configurable btn waves-effect waves-light">
-    Open Config
-  </button>
-  
-  <!-- Etsy Order UI Components -->
+  <!-- Buttons and fields -->
+  <button id="connectEtsyBtn" class="configurable btn waves-effect waves-light">Connect to Etsy</button>
+  <button id="openConfigBtn" class="configurable btn waves-effect waves-light">Open Config</button>
   <input type="text" id="etsyOrderNumber" placeholder="Etsy Order Number" />
-  <br />
   <textarea id="orderInformation" placeholder="Order Information" readonly></textarea>
   
-  <!-- Photo Grid Container -->
+  <!-- The container that loads imageGrid.html -->
   <div id="Photo_Grid"></div>
-  
+
+  <!-- 16 Absolutely Positioned Text Boxes -->
+  <!-- quantityCell0..7 and metalCell0..7 -->
+  <input type="text" id="quantityCell0" class="text-box-absolute" readonly value="" />
+  <input type="text" id="quantityCell1" class="text-box-absolute" readonly value="" />
+  <input type="text" id="quantityCell2" class="text-box-absolute" readonly value="" />
+  <input type="text" id="quantityCell3" class="text-box-absolute" readonly value="" />
+  <input type="text" id="quantityCell4" class="text-box-absolute" readonly value="" />
+  <input type="text" id="quantityCell5" class="text-box-absolute" readonly value="" />
+  <input type="text" id="quantityCell6" class="text-box-absolute" readonly value="" />
+  <input type="text" id="quantityCell7" class="text-box-absolute" readonly value="" />
+
+  <input type="text" id="metalCell0" class="text-box-absolute" readonly value="" />
+  <input type="text" id="metalCell1" class="text-box-absolute" readonly value="" />
+  <input type="text" id="metalCell2" class="text-box-absolute" readonly value="" />
+  <input type="text" id="metalCell3" class="text-box-absolute" readonly value="" />
+  <input type="text" id="metalCell4" class="text-box-absolute" readonly value="" />
+  <input type="text" id="metalCell5" class="text-box-absolute" readonly value="" />
+  <input type="text" id="metalCell6" class="text-box-absolute" readonly value="" />
+  <input type="text" id="metalCell7" class="text-box-absolute" readonly value="" />
+
   <!-- Configuration Modal -->
   <div id="configModal" class="modal">
     <div class="modal-content">
@@ -129,9 +151,7 @@
             <th>Height (px)</th>
           </tr>
         </thead>
-        <tbody>
-          <!-- Rows inserted dynamically -->
-        </tbody>
+        <tbody></tbody>
       </table>
     </div>
     <div class="modal-footer">
@@ -205,15 +225,18 @@
     });
     
     /********** UI Configuration Functions **********/
-    // 1) Start with the components you already configure
     var configComponentIDs = [
+      // Existing buttons/fields
       "connectEtsyBtn",
       "openConfigBtn",
       "etsyOrderNumber",
       "orderInformation",
-      "Photo_Grid"
+      "Photo_Grid",
+      // Now, add each text box individually
+      "quantityCell0","quantityCell1","quantityCell2","quantityCell3","quantityCell4","quantityCell5","quantityCell6","quantityCell7",
+      "metalCell0","metalCell1","metalCell2","metalCell3","metalCell4","metalCell5","metalCell6","metalCell7"
     ];
-    
+
     function loadPositions() {
       configComponentIDs.forEach(function(id) {
         var el = document.getElementById(id);
@@ -222,10 +245,10 @@
           var savedTop = localStorage.getItem("pos-" + id + "-top");
           var savedWidth = localStorage.getItem("pos-" + id + "-width");
           var savedHeight = localStorage.getItem("pos-" + id + "-height");
-          if (savedLeft !== null) { el.style.left = savedLeft + "px"; }
-          if (savedTop !== null) { el.style.top = savedTop + "px"; }
-          if (savedWidth !== null) { el.style.width = savedWidth + "px"; }
-          if (savedHeight !== null) { el.style.height = savedHeight + "px"; }
+          if (savedLeft !== null) el.style.left = savedLeft + "px";
+          if (savedTop !== null) el.style.top = savedTop + "px";
+          if (savedWidth !== null) el.style.width = savedWidth + "px";
+          if (savedHeight !== null) el.style.height = savedHeight + "px";
         }
       });
     }
@@ -236,8 +259,7 @@
       
       configComponentIDs.forEach(function(id) {
         var el = document.getElementById(id);
-        if (!el) return; // If the element isn't found, skip
-        
+        if (!el) return;
         var compName = el.textContent.trim() || id;
         var cs = window.getComputedStyle(el);
         var leftVal = (cs.left === "auto") ? 0 : parseInt(cs.left);
@@ -255,34 +277,22 @@
         `;
         tbody.appendChild(row);
         
-        // Add event listeners to instantly update positions/sizes
+        // Live updates as you type
         row.querySelector(".left-input").addEventListener("input", function() {
-          var newVal = this.value;
           var target = document.getElementById(this.getAttribute("data-id"));
-          if (target) {
-            target.style.left = newVal + "px";
-          }
+          if (target) target.style.left = parseInt(this.value) + "px";
         });
         row.querySelector(".top-input").addEventListener("input", function() {
-          var newVal = this.value;
           var target = document.getElementById(this.getAttribute("data-id"));
-          if (target) {
-            target.style.top = newVal + "px";
-          }
+          if (target) target.style.top = parseInt(this.value) + "px";
         });
         row.querySelector(".width-input").addEventListener("input", function() {
-          var newVal = this.value;
           var target = document.getElementById(this.getAttribute("data-id"));
-          if (target) {
-            target.style.width = newVal + "px";
-          }
+          if (target) target.style.width = parseInt(this.value) + "px";
         });
         row.querySelector(".height-input").addEventListener("input", function() {
-          var newVal = this.value;
           var target = document.getElementById(this.getAttribute("data-id"));
-          if (target) {
-            target.style.height = newVal + "px";
-          }
+          if (target) target.style.height = parseInt(this.value) + "px";
         });
       });
     }
@@ -299,13 +309,12 @@
           localStorage.setItem("pos-" + id + "-top", topVal);
           localStorage.setItem("pos-" + id + "-width", widthVal);
           localStorage.setItem("pos-" + id + "-height", heightVal);
-          console.log("Saved", id, "Left:", leftVal, "Top:", topVal, "Width:", widthVal, "Height:", heightVal);
         }
       });
       console.log("Configuration saved.");
     }
     
-    /********** Listing Images: Fetch via Proxy **********/
+    /********** Listing Images + “Update Image Grid” **********/
     async function fetchListingImages(listingId) {
       const response = await fetch(`/.netlify/functions/etsyImages?listingId=${listingId}`, {
         headers: {
@@ -319,37 +328,28 @@
       return data.results;
     }
     
-    /********** Update Image Grid with Purchased Items **********/
     async function updateImageGrid(data) {
       let items = [];
-      if (data.transactions && Array.isArray(data.transactions) && data.transactions.length > 0) {
+      if (data.transactions && Array.isArray(data.transactions)) {
         items = data.transactions;
-        console.log("Using 'transactions' as the purchased items array.");
-      } else if (data.shipments && Array.isArray(data.shipments) && data.shipments.length > 0) {
+      } else if (data.shipments && Array.isArray(data.shipments)) {
         items = data.shipments;
-        console.log("Using 'shipments' as the purchased items array.");
-      } else if (Array.isArray(data) && data.length > 0) {
+      } else if (Array.isArray(data)) {
         items = data;
-      } else if (data.results && Array.isArray(data.results) && data.results.length > 0) {
+      } else if (data.results && Array.isArray(data.results)) {
         items = data.results;
-      } else if (data.orders && Array.isArray(data.orders) && data.orders.length > 0) {
+      } else if (data.orders && Array.isArray(data.orders)) {
         items = data.orders;
       } else if (typeof data === 'object' && data !== null) {
         for (const key in data) {
-          if (Array.isArray(data[key]) && data[key].length > 0) {
+          if (Array.isArray(data[key])) {
             items = data[key];
-            console.log("Found purchased items array under key:", key);
             break;
           }
         }
       }
       
-      if (!items.length) {
-        console.error("Order data does not contain a valid array of purchased items.", data);
-        return;
-      }
-      
-      // Loop through 8 grid cells.
+      // We'll show images in the 8 previewCells if the items array is valid
       for (let i = 0; i < 8; i++) {
         const cell = document.getElementById("previewCell" + i);
         const qtyBox = document.getElementById("quantityCell" + i);
@@ -365,7 +365,7 @@
               } else {
                 cell.innerHTML = "No images found";
               }
-              qtyBox.value = "Quantity: " + (item.quantity !== undefined ? item.quantity : "");
+              qtyBox.value = "Q: " + (item.quantity || 0);
             } catch (error) {
               console.error(`Error fetching images for listing ${listingId}:`, error);
               cell.innerHTML = "Error loading image";
@@ -378,8 +378,8 @@
         }
       }
     }
-    
-    /********** Etsy Order Pull **********/
+
+    /********** Etsy Order Fetch **********/
     function pullEtsyOrderDetails(orderNumber) {
       console.log("Pulling Etsy order details for order number:", orderNumber);
       const token = localStorage.getItem("access_token");
@@ -397,44 +397,40 @@
         });
     }
     
+    /********** DOMContentLoaded **********/
     document.addEventListener("DOMContentLoaded", function() {
       M.AutoInit();
       
-      // Load the photo grid from imageGrid.html into the container with ID #Photo_Grid
+      // Load the photo grid from imageGrid.html
       $("#Photo_Grid").load("imageGrid.html", function(response, status, xhr) {
         if (status === "error") {
           console.error("Error loading image grid:", xhr.status, xhr.statusText);
         } else {
           console.log("Image grid loaded successfully.");
-          
-          // 2) Now that imageGrid.html is in the DOM, 
-          // add each quantityCell# and metalCell# to configComponentIDs
-          for (let i = 0; i < 8; i++) {
-            configComponentIDs.push(`quantityCell${i}`);
-            configComponentIDs.push(`metalCell${i}`);
-          }
         }
       });
       
+      // Reveal the body after a short delay
       document.body.style.opacity = 0;
       setTimeout(function() {
         loadPositions();
         document.body.style.opacity = 1;
       }, 250);
       
+      // Open the config modal
       document.getElementById("openConfigBtn").addEventListener("click", function() {
-        // 3) This repopulates the table, which should now include
-        // all 16 text boxes (quantityCell0..7, metalCell0..7)
         populateConfigTable();
         var modalElem = document.getElementById("configModal");
         var instance = M.Modal.getInstance(modalElem);
         instance.open();
       });
       
+      // Save the config
       document.getElementById("saveConfigBtn").addEventListener("click", function() {
         saveConfiguration();
       });
       
+      // Enter key => fetch order
       var etsyOrderInput = document.getElementById("etsyOrderNumber");
       etsyOrderInput.addEventListener("keydown", async function(e) {
         if (e.key === "Enter") {
@@ -444,7 +440,7 @@
             if (orderData) {
               document.getElementById("orderInformation").value = JSON.stringify(orderData, null, 2);
               await updateImageGrid(orderData);
-              console.log("Order information retrieved and image grid updated.");
+              console.log("Order info retrieved and image grid updated.");
             }
           }
         }
