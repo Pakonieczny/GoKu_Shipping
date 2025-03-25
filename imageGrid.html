@@ -1,59 +1,104 @@
-async function updateImageGrid(data) {
-  let items = [];
-  if (data.transactions && Array.isArray(data.transactions) && data.transactions.length > 0) {
-    items = data.transactions;
-    console.log("Using 'transactions' as the purchased items array.");
-  } else if (data.shipments && Array.isArray(data.shipments) && data.shipments.length > 0) {
-    items = data.shipments;
-    console.log("Using 'shipments' as the purchased items array.");
-  } else if (Array.isArray(data) && data.length > 0) {
-    items = data;
-  } else if (data.results && Array.isArray(data.results) && data.results.length > 0) {
-    items = data.results;
-  } else if (data.orders && Array.isArray(data.orders) && data.orders.length > 0) {
-    items = data.orders;
-  } else if (typeof data === 'object' && data !== null) {
-    for (const key in data) {
-      if (Array.isArray(data[key]) && data[key].length > 0) {
-        items = data[key];
-        console.log("Found purchased items array under key:", key);
-        break;
-      }
-    }
+<!-- imageGrid.html -->
+<style>
+  /* Container using CSS Grid for 2 rows and 4 columns */
+  #photoGridContainer {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    grid-template-rows: repeat(2, 1fr);
+    /* Vertical gap 0px, horizontal gap 5px */
+    gap: 0px 5px;
   }
-  
-  if (!items.length) {
-    console.error("Order data does not contain a valid array of purchased items.", data);
-    return;
+  /* Each grid-cell contains the preview box and quantity text box */
+  .grid-cell {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
   }
-  
-  // Loop through 8 preview boxes.
-  for (let i = 0; i < 8; i++) {
-    const cell = document.getElementById("previewCell" + i);
-    const qtyBox = document.getElementById("quantityCell" + i);
-    if (cell && qtyBox) {
-      if (i < items.length) {
-        const item = items[i];
-        const listingId = item.listing_id;
-        try {
-          const images = await fetchListingImages(listingId);
-          if (images && images.length > 0) {
-            const imageUrl = images[0].url_fullxfull;
-            cell.innerHTML = `<img src="${imageUrl}" alt="Listing Image ${i}">`;
-          } else {
-            cell.innerHTML = "No images found";
-          }
-          // Set the quantity text box with "Quantity: " followed by the quantity
-          qtyBox.value = "Quantity: " + (item.quantity !== undefined ? item.quantity : "");
-        } catch (error) {
-          console.error(`Error fetching images for listing ${listingId}:`, error);
-          cell.innerHTML = "Error loading image";
-          qtyBox.value = "";
-        }
+  /* Preview box: fixed height, 1px solid black border, always visible even if empty */
+  .preview-box {
+    border: 1px solid black;
+    background: #f9f9f9;
+    width: 100%;
+    height: 150px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+    position: relative;
+  }
+  /* Image styling: fill the box with object-fit: cover, default scale 1 */
+  .preview-box img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    transform: scale(1);
+    transform-origin: center center;
+    transition: transform 0.2s ease;
+  }
+  /* Quantity text box: fixed size 100px wide, 10px tall (reduced from 15px) */
+  .quantity-box {
+    margin-top: 5px;
+    width: 100px;
+    height: 10px;
+    border: 1px solid black;
+    text-align: center;
+    font-size: 0.8em;
+    padding: 0;
+    box-sizing: border-box;
+  }
+</style>
+
+<div id="photoGridContainer">
+  <div class="grid-cell">
+    <div class="preview-box" id="previewCell0">Empty</div>
+    <input type="text" class="quantity-box" id="quantityCell0" readonly value="">
+  </div>
+  <div class="grid-cell">
+    <div class="preview-box" id="previewCell1">Empty</div>
+    <input type="text" class="quantity-box" id="quantityCell1" readonly value="">
+  </div>
+  <div class="grid-cell">
+    <div class="preview-box" id="previewCell2">Empty</div>
+    <input type="text" class="quantity-box" id="quantityCell2" readonly value="">
+  </div>
+  <div class="grid-cell">
+    <div class="preview-box" id="previewCell3">Empty</div>
+    <input type="text" class="quantity-box" id="quantityCell3" readonly value="">
+  </div>
+  <div class="grid-cell">
+    <div class="preview-box" id="previewCell4">Empty</div>
+    <input type="text" class="quantity-box" id="quantityCell4" readonly value="">
+  </div>
+  <div class="grid-cell">
+    <div class="preview-box" id="previewCell5">Empty</div>
+    <input type="text" class="quantity-box" id="quantityCell5" readonly value="">
+  </div>
+  <div class="grid-cell">
+    <div class="preview-box" id="previewCell6">Empty</div>
+    <input type="text" class="quantity-box" id="quantityCell6" readonly value="">
+  </div>
+  <div class="grid-cell">
+    <div class="preview-box" id="previewCell7">Empty</div>
+    <input type="text" class="quantity-box" id="quantityCell7" readonly value="">
+  </div>
+</div>
+
+<script>
+  // Attach a wheel event listener to each preview box for manual zooming.
+  document.querySelectorAll('.preview-box').forEach(function(box) {
+    box.addEventListener('wheel', function(e) {
+      e.preventDefault();
+      const img = box.querySelector('img');
+      if (!img) return;
+      let currentScale = parseFloat(img.dataset.scale) || 1;
+      if (e.deltaY < 0) {
+        currentScale *= 1.1;
       } else {
-        cell.innerHTML = "Empty";
-        qtyBox.value = "";
+        currentScale /= 1.1;
       }
-    }
-  }
-}
+      currentScale = Math.max(1, Math.min(3, currentScale));
+      img.dataset.scale = currentScale;
+      img.style.transform = `scale(${currentScale})`;
+    });
+  });
+</script>
