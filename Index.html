@@ -48,9 +48,9 @@
       resize: none;
       transition: none !important;
     }
-    /* --- Image Grid Container --- */
-    /* Increased width by 33% (400px -> ~532px) */
-    #imageGridContainer {
+    /* --- Photo Grid Container --- */
+    /* Renamed from imageGridContainer to Photo_Grid and increased size by 33% (width from 400px to 532px) */
+    #Photo_Grid {
       position: absolute;
       left: 400px;  /* Adjust as needed */
       top: 140px;   /* Adjust as needed */
@@ -108,8 +108,8 @@
   <br />
   <textarea id="orderInformation" placeholder="Order Information" readonly></textarea>
   
-  <!-- Image Grid Container (will be loaded from imageGrid.html) -->
-  <div id="imageGridContainer"></div>
+  <!-- Photo Grid Container: This will load the grid of 8 photos -->
+  <div id="Photo_Grid"></div>
   
   <!-- Configuration Modal -->
   <div id="configModal" class="modal">
@@ -200,8 +200,8 @@
     });
     
     /********** UI Configuration Functions **********/
-    // Added "imageGridContainer" to the list so you can adjust its position/size via the modal.
-    var configComponentIDs = ["connectEtsyBtn", "openConfigBtn", "etsyOrderNumber", "orderInformation", "imageGridContainer"];
+    // Added "Photo_Grid" to the list so you can adjust its position/size in the modal.
+    var configComponentIDs = ["connectEtsyBtn", "openConfigBtn", "etsyOrderNumber", "orderInformation", "Photo_Grid"];
     
     function loadPositions() {
       configComponentIDs.forEach(function(id) {
@@ -386,7 +386,7 @@
       M.AutoInit();
       
       // *** Insert Image Grid Load Here ***
-      $("#imageGridContainer").load("imageGrid.html", function(response, status, xhr) {
+      $("#Photo_Grid").load("imageGrid.html", function(response, status, xhr) {
         if (status === "error") {
           console.error("Error loading image grid:", xhr.status, xhr.statusText);
         } else {
