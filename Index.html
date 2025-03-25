@@ -49,11 +49,12 @@
       transition: none !important;
     }
     /* --- Image Grid Container --- */
+    /* Increased width by 33% (400px -> ~532px) */
     #imageGridContainer {
       position: absolute;
       left: 400px;  /* Adjust as needed */
       top: 140px;   /* Adjust as needed */
-      width: 400px; /* Adjust as needed */
+      width: 532px; /* Increased by 33% */
     }
     /* --- Configuration Modal --- */
     .modal {
@@ -107,7 +108,7 @@
   <br />
   <textarea id="orderInformation" placeholder="Order Information" readonly></textarea>
   
-  <!-- Image Grid Container -->
+  <!-- Image Grid Container (will be loaded from imageGrid.html) -->
   <div id="imageGridContainer"></div>
   
   <!-- Configuration Modal -->
@@ -199,7 +200,8 @@
     });
     
     /********** UI Configuration Functions **********/
-    var configComponentIDs = ["connectEtsyBtn", "openConfigBtn", "etsyOrderNumber", "orderInformation"];
+    // Added "imageGridContainer" to the list so you can adjust its position/size via the modal.
+    var configComponentIDs = ["connectEtsyBtn", "openConfigBtn", "etsyOrderNumber", "orderInformation", "imageGridContainer"];
     
     function loadPositions() {
       configComponentIDs.forEach(function(id) {
