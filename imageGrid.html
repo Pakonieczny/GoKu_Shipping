@@ -4,10 +4,9 @@
   #photoGridContainer {
     display: grid;
     grid-template-columns: repeat(4, 1fr);
-    /* Use auto for rows so that each grid-cell can size itself */
-    grid-auto-rows: auto;
-    /* 5px horizontal gap, 25px vertical gap */
-    gap: 25px 5px;
+    grid-template-rows: repeat(2, 1fr);
+    /* Vertical gap 0px, horizontal gap 5px */
+    gap: 0px 5px;
   }
   /* Each grid-cell contains the preview box and quantity text box */
   .grid-cell {
@@ -15,7 +14,7 @@
     flex-direction: column;
     align-items: center;
   }
-  /* Preview box: fixed height for the image, always show a 1px black border */
+  /* Preview box: fixed height, 1px solid black border, always visible even if empty */
   .preview-box {
     border: 1px solid black;
     background: #f9f9f9;
@@ -27,7 +26,7 @@
     overflow: hidden;
     position: relative;
   }
-  /* Image styling: fill the box using object-fit cover, default scale 1 */
+  /* Image styling: fill the box with object-fit: cover, default scale 1 */
   .preview-box img {
     width: 100%;
     height: 100%;
@@ -36,11 +35,11 @@
     transform-origin: center center;
     transition: transform 0.2s ease;
   }
-  /* Quantity text box styling: fixed size (15px tall, 100px wide), with a 1px solid black border */
+  /* Quantity text box: fixed size 100px wide, 10px tall (reduced from 15px) */
   .quantity-box {
     margin-top: 5px;
     width: 100px;
-    height: 15px;
+    height: 10px;
     border: 1px solid black;
     text-align: center;
     font-size: 0.8em;
@@ -92,13 +91,11 @@
       const img = box.querySelector('img');
       if (!img) return;
       let currentScale = parseFloat(img.dataset.scale) || 1;
-      // Scroll up (negative deltaY) zooms in; scroll down zooms out.
       if (e.deltaY < 0) {
         currentScale *= 1.1;
       } else {
         currentScale /= 1.1;
       }
-      // Clamp scale between 1 and 3.
       currentScale = Math.max(1, Math.min(3, currentScale));
       img.dataset.scale = currentScale;
       img.style.transform = `scale(${currentScale})`;
