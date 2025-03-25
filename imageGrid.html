@@ -1,23 +1,23 @@
 <!-- imageGrid.html -->
 <style>
-  /* Preview box styling: 2px border, clipping overflow */
+  /* Updated preview box styling */
   .preview-box {
-    border: 2px solid #ccc;
-    margin-bottom: 10px;
+    border: 1px solid black;  /* Black border, 1px thick */
+    margin: 5px;              /* 5px space between boxes */
     min-height: 100px;
     display: flex;
     align-items: center;
     justify-content: center;
     background: #f9f9f9;
-    overflow: hidden;
+    overflow: hidden;         /* Ensures image stays within bounds */
     position: relative;
   }
-  /* Image styling: default scale 1 (no zoom), object-fit cover */
+  /* Image styling remains similar; adjust as needed */
   .preview-box img {
     width: 100%;
     height: 100%;
-    object-fit: cover;
-    transform: scale(1);
+    object-fit: cover;        /* Ensures image covers the box without distortion */
+    transform: scale(1);      /* Default zoom level: 100% */
     transform-origin: center center;
     transition: transform 0.2s ease;
   }
@@ -37,24 +37,21 @@
 </div>
 
 <script>
-  // Attach a wheel event listener to each preview box for manual zooming.
+  // Attach wheel event listener to each preview box for manual zooming.
   document.querySelectorAll('.preview-box').forEach(function(box) {
     box.addEventListener('wheel', function(e) {
       e.preventDefault();
-      // Find the image inside this preview box.
       const img = box.querySelector('img');
       if (!img) return;
-      // Get the current scale from a data attribute; default is 1.
       let currentScale = parseFloat(img.dataset.scale) || 1;
-      // Adjust scale: scroll up (deltaY negative) zooms in; scroll down zooms out.
+      // Scroll up (deltaY negative) zooms in; scroll down zooms out.
       if (e.deltaY < 0) {
         currentScale *= 1.1;
       } else {
         currentScale /= 1.1;
       }
-      // Clamp the scale between 1 and 3.
+      // Clamp scale between 1 and 3.
       currentScale = Math.max(1, Math.min(3, currentScale));
-      // Save the current scale and update the CSS transform.
       img.dataset.scale = currentScale;
       img.style.transform = `scale(${currentScale})`;
     });
