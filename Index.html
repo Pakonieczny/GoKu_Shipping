@@ -4,7 +4,8 @@
   <meta charset="UTF-8">
   <title>Etsy Order & OAuth Integration</title>
   <!-- Materialize CSS -->
-  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/materialize/1.0.0/css/materialize.min.css">
+  <link rel="stylesheet" 
+        href="https://cdnjs.cloudflare.com/ajax/libs/materialize/1.0.0/css/materialize.min.css">
   <style>
     body {
       background-color: white;
@@ -49,7 +50,7 @@
       transition: none !important;
     }
 
-    /* The container for your loaded imageGrid.html */
+    /* The container that loads imageGrid.html (for 8 image boxes only) */
     #Photo_Grid {
       position: absolute;
       left: 400px;
@@ -58,16 +59,21 @@
       transition: none !important;
     }
 
-    /* Now define the text box style: these are absolutely positioned so they move independently. */
+    /* 
+       Absolutely positioned text boxes for Quantity & Metal.
+       We approximate "bottom alignment" by using padding-bottom. 
+    */
     .text-box-absolute {
       position: absolute;
-      width: 50px;    /* You can tweak the default width as you like */
-      height: 10px;   /* Something more comfortable than '5px' so you can see them easily */
       border: 1px solid black;
-      font-size: 0.7em;
+      width: 60px;        /* Adjust as you wish */
+      height: 20px;       /* Adjust as you wish */
+      font-size: 0.7em;   /* (2) Shrunk to 0.7em */
       text-align: left;
-      padding: 0;
+      line-height: 1.0;   /* Keep line-height normal */
+      padding: 0 2px 2px 2px;  /* Bottom padding to push text lower */
       box-sizing: border-box;
+      /* You can also tweak top padding if you want the text even lower/higher. */
     }
 
     /* Configuration Modal styling */
@@ -115,28 +121,27 @@
   <input type="text" id="etsyOrderNumber" placeholder="Etsy Order Number" />
   <textarea id="orderInformation" placeholder="Order Information" readonly></textarea>
   
-  <!-- The container that loads imageGrid.html -->
+  <!-- The container that loads imageGrid.html (which has only the 8 previewCell# boxes) -->
   <div id="Photo_Grid"></div>
 
-  <!-- 16 Absolutely Positioned Text Boxes -->
-  <!-- quantityCell0..7 and metalCell0..7 -->
-  <input type="text" id="quantityCell0" class="text-box-absolute" readonly value="" />
-  <input type="text" id="quantityCell1" class="text-box-absolute" readonly value="" />
-  <input type="text" id="quantityCell2" class="text-box-absolute" readonly value="" />
-  <input type="text" id="quantityCell3" class="text-box-absolute" readonly value="" />
-  <input type="text" id="quantityCell4" class="text-box-absolute" readonly value="" />
-  <input type="text" id="quantityCell5" class="text-box-absolute" readonly value="" />
-  <input type="text" id="quantityCell6" class="text-box-absolute" readonly value="" />
-  <input type="text" id="quantityCell7" class="text-box-absolute" readonly value="" />
-
-  <input type="text" id="metalCell0" class="text-box-absolute" readonly value="" />
-  <input type="text" id="metalCell1" class="text-box-absolute" readonly value="" />
-  <input type="text" id="metalCell2" class="text-box-absolute" readonly value="" />
-  <input type="text" id="metalCell3" class="text-box-absolute" readonly value="" />
-  <input type="text" id="metalCell4" class="text-box-absolute" readonly value="" />
-  <input type="text" id="metalCell5" class="text-box-absolute" readonly value="" />
-  <input type="text" id="metalCell6" class="text-box-absolute" readonly value="" />
-  <input type="text" id="metalCell7" class="text-box-absolute" readonly value="" />
+  <!-- 16 Absolutely Positioned Text Boxes: quantityCell# and metalCell# -->
+  <input type="text" id="quantityCell0" class="text-box-absolute" readonly />
+  <input type="text" id="quantityCell1" class="text-box-absolute" readonly />
+  <input type="text" id="quantityCell2" class="text-box-absolute" readonly />
+  <input type="text" id="quantityCell3" class="text-box-absolute" readonly />
+  <input type="text" id="quantityCell4" class="text-box-absolute" readonly />
+  <input type="text" id="quantityCell5" class="text-box-absolute" readonly />
+  <input type="text" id="quantityCell6" class="text-box-absolute" readonly />
+  <input type="text" id="quantityCell7" class="text-box-absolute" readonly />
+  
+  <input type="text" id="metalCell0" class="text-box-absolute" readonly />
+  <input type="text" id="metalCell1" class="text-box-absolute" readonly />
+  <input type="text" id="metalCell2" class="text-box-absolute" readonly />
+  <input type="text" id="metalCell3" class="text-box-absolute" readonly />
+  <input type="text" id="metalCell4" class="text-box-absolute" readonly />
+  <input type="text" id="metalCell5" class="text-box-absolute" readonly />
+  <input type="text" id="metalCell6" class="text-box-absolute" readonly />
+  <input type="text" id="metalCell7" class="text-box-absolute" readonly />
 
   <!-- Configuration Modal -->
   <div id="configModal" class="modal">
@@ -177,8 +182,10 @@
         if (authCode) {
           const storedCodeVerifier = localStorage.getItem("etsy_code_verifier");
           if (storedCodeVerifier) {
-            window.location.href = "/.netlify/functions/exchangeToken?code=" + encodeURIComponent(authCode) +
-                                     "&code_verifier=" + encodeURIComponent(storedCodeVerifier);
+            window.location.href = "/.netlify/functions/exchangeToken?code=" 
+                                   + encodeURIComponent(authCode)
+                                   + "&code_verifier=" 
+                                   + encodeURIComponent(storedCodeVerifier);
           } else {
             console.error("No code verifier found in localStorage.");
           }
@@ -210,31 +217,33 @@
       const codeVerifier = generateRandomString(64);
       localStorage.setItem("etsy_code_verifier", codeVerifier);
       const codeChallenge = await generateCodeChallenge(codeVerifier);
-      const state = "randomState123"; // Replace with a secure random state in production.
-      const scope = "listings_w listings_r transactions_r transactions_w"; // Adjust scope as needed.
-      const CLIENT_ID = "k75zdspz4r99txpqdji7i2em"; // Your public CLIENT_ID
-      const redirectUri = "https://gokushipping.netlify.app"; // Must match your Etsy app settings.
-      const etsyAuthUrl = `https://www.etsy.com/oauth/connect?response_type=code&client_id=${CLIENT_ID}` +
-                          `&redirect_uri=${encodeURIComponent(redirectUri)}` +
-                          `&scope=${encodeURIComponent(scope)}` +
-                          `&state=${state}` +
-                          `&code_challenge=${encodeURIComponent(codeChallenge)}` +
-                          `&code_challenge_method=S256`;
+      const state = "randomState123"; // Replace with a secure random state
+      const scope = "listings_w listings_r transactions_r transactions_w"; // Adjust scope
+      const CLIENT_ID = "k75zdspz4r99txpqdji7i2em"; // Your Etsy app's public client_id
+      const redirectUri = "https://gokushipping.netlify.app"; // Must match your Etsy app settings
+      const etsyAuthUrl = `https://www.etsy.com/oauth/connect?response_type=code&client_id=${CLIENT_ID}`
+                          + `&redirect_uri=${encodeURIComponent(redirectUri)}`
+                          + `&scope=${encodeURIComponent(scope)}`
+                          + `&state=${state}`
+                          + `&code_challenge=${encodeURIComponent(codeChallenge)}`
+                          + `&code_challenge_method=S256`;
       console.log("Redirecting to Etsy OAuth URL:", etsyAuthUrl);
       window.location.href = etsyAuthUrl;
     });
     
     /********** UI Configuration Functions **********/
     var configComponentIDs = [
-      // Existing buttons/fields
+      // Existing UI
       "connectEtsyBtn",
       "openConfigBtn",
       "etsyOrderNumber",
       "orderInformation",
       "Photo_Grid",
-      // Now, add each text box individually
-      "quantityCell0","quantityCell1","quantityCell2","quantityCell3","quantityCell4","quantityCell5","quantityCell6","quantityCell7",
-      "metalCell0","metalCell1","metalCell2","metalCell3","metalCell4","metalCell5","metalCell6","metalCell7"
+      // 16 text boxes
+      "quantityCell0","quantityCell1","quantityCell2","quantityCell3",
+      "quantityCell4","quantityCell5","quantityCell6","quantityCell7",
+      "metalCell0","metalCell1","metalCell2","metalCell3",
+      "metalCell4","metalCell5","metalCell6","metalCell7"
     ];
 
     function loadPositions() {
@@ -277,7 +286,7 @@
         `;
         tbody.appendChild(row);
         
-        // Live updates as you type
+        // Live updates
         row.querySelector(".left-input").addEventListener("input", function() {
           var target = document.getElementById(this.getAttribute("data-id"));
           if (target) target.style.left = parseInt(this.value) + "px";
@@ -349,32 +358,37 @@
         }
       }
       
-      // We'll show images in the 8 previewCells if the items array is valid
+      // We have 8 previewCell# plus the 8 quantityCell# + 8 metalCell# if desired
       for (let i = 0; i < 8; i++) {
         const cell = document.getElementById("previewCell" + i);
         const qtyBox = document.getElementById("quantityCell" + i);
-        if (cell && qtyBox) {
-          if (i < items.length) {
-            const item = items[i];
-            const listingId = item.listing_id;
-            try {
-              const images = await fetchListingImages(listingId);
-              if (images && images.length > 0) {
-                const imageUrl = images[0].url_fullxfull;
-                cell.innerHTML = `<img src="${imageUrl}" alt="Listing Image ${i}">`;
-              } else {
-                cell.innerHTML = "No images found";
-              }
-              qtyBox.value = "Q: " + (item.quantity || 0);
-            } catch (error) {
-              console.error(`Error fetching images for listing ${listingId}:`, error);
-              cell.innerHTML = "Error loading image";
-              qtyBox.value = "";
+        const metalBox = document.getElementById("metalCell" + i);
+        
+        // (3) Use "Quantity:" instead of "Q."
+        if (qtyBox) qtyBox.value = "Quantity:";
+        // (4) For the metal text boxes, add "Metal:"
+        if (metalBox) metalBox.value = "Metal:";
+        
+        if (cell && i < items.length) {
+          const item = items[i];
+          const listingId = item.listing_id;
+          try {
+            const images = await fetchListingImages(listingId);
+            if (images && images.length > 0) {
+              const imageUrl = images[0].url_fullxfull;
+              cell.innerHTML = `<img src="${imageUrl}" alt="Listing Image ${i}">`;
+            } else {
+              cell.innerHTML = "No images found";
             }
-          } else {
-            cell.innerHTML = "Empty";
-            qtyBox.value = "";
+            // If you also want to append the actual quantity number:
+            // qtyBox.value = "Quantity: " + (item.quantity || 0);
+          } catch (error) {
+            console.error(`Error fetching images for listing ${listingId}:`, error);
+            cell.innerHTML = "Error loading image";
           }
+        } else if (cell) {
+          // If no matching item, clear it
+          cell.innerHTML = "Empty";
         }
       }
     }
@@ -401,7 +415,7 @@
     document.addEventListener("DOMContentLoaded", function() {
       M.AutoInit();
       
-      // Load the photo grid from imageGrid.html
+      // Load the photo grid from imageGrid.html (which only has 8 previewCell#)
       $("#Photo_Grid").load("imageGrid.html", function(response, status, xhr) {
         if (status === "error") {
           console.error("Error loading image grid:", xhr.status, xhr.statusText);
