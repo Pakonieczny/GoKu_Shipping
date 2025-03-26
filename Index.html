@@ -447,26 +447,58 @@
             }
 
             // Build the multiline "Order Details" string
-            if (item.variations && Array.isArray(item.variations)) {
-              item.variations.forEach(v => {
-                if (v.formatted_name && v.formatted_value) {
-                  const nameLower = v.formatted_name.trim().toLowerCase();
+if (item.variations && Array.isArray(item.variations)) {
+  item.variations.forEach(v => {
+    if (v.formatted_name && v.formatted_value) {
+      const nameLower = v.formatted_name.trim().toLowerCase();
+      
+      // Arrays for recognized metal and length variations
+      const acceptedMetalNames = [
+        "metal",
+        "metal choice",
+        "metal - engraving",
+        "metal colour",
+        "color"
+      ];
+      const acceptedLengthNames = [
+        "length",
+        "necklace length",
+        "metal/necklace length",
+        "metal choice / necklace length",
+        "necklace length in inches"
+      ];
 
-                  // If it's a recognized metal variation
-                  if (acceptedMetalNames.includes(nameLower)) {
-                    variationsText += `Metal Choice: ${v.formatted_value}\n`;
+      // 1) If recognized metal
+      if (acceptedMetalNames.includes(nameLower)) {
+        variationsText += `Metal Choice: ${v.formatted_value}\n`;
 
-                  // If it's a recognized length variation
-                  } else if (acceptedLengthNames.includes(nameLower)) {
-                    variationsText += `Item Length: ${v.formatted_value}\n`;
+      // 2) If recognized length
+      } else if (acceptedLengthNames.includes(nameLower)) {
 
-                  // Otherwise show the standard "Name: Value"
-                  } else {
-                    variationsText += `${v.formatted_name}: ${v.formatted_value}\n`;
-                  }
-                }
-              });
-            }
+        // A) Create a simple map from "14&quot;" => "14 Inches", etc.
+        const lengthMapping = {
+          '14&quot;': '14 Inches',
+          '16&quot;': '16 Inches',
+          '18&quot;': '18 Inches',
+          '20&quot;': '20 Inches'
+        };
+
+        // B) See if we need to swap
+        let lengthValue = v.formatted_value.trim();
+        if (lengthMapping[lengthValue]) {
+          lengthValue = lengthMapping[lengthValue];
+        }
+
+        // C) Display final text
+        variationsText += `Item Length: ${lengthValue}\n`;
+
+      // 3) Otherwise normal text
+      } else {
+        variationsText += `${v.formatted_name}: ${v.formatted_value}\n`;
+      }
+    }
+  });
+}
 
           } catch (error) {
             console.error(`Error fetching images for listing ${item.listing_id}:`, error);
