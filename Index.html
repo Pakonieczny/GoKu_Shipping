@@ -387,6 +387,15 @@
         }
       }
 
+      // Expand your acceptedMetalNames array to include "color"
+      const acceptedMetalNames = [
+        "metal",
+        "metal choice",
+        "metal - engraving",
+        "metal colour",
+        "color"
+      ];
+
       // We'll compile every variation into a multiline string
       let variationsText = "Order Details:\n";
 
@@ -402,6 +411,7 @@
           const item = items[i];
 
           try {
+            // Fetch listing images...
             const images = await fetchListingImages(item.listing_id);
             if (images && images.length > 0) {
               cell.innerHTML = `<img src="${images[0].url_fullxfull}" alt="Listing Image ${i}">`;
@@ -409,20 +419,15 @@
               cell.innerHTML = "No images found";
             }
 
+            // Set quantity
             if (qtyBox) {
               const actualQty = (item.quantity != null) ? item.quantity : 0;
               qtyBox.value = "Quantity: " + actualQty;
             }
 
+            // Identify metal variation for the metalBox
             if (metalBox) {
-              const acceptedMetalNames = [
-                "metal", 
-                "metal choice", 
-                "metal - engraving",
-                "metal colour"
-              ];
               let metalSelection = "";
-
               if (item.variations && Array.isArray(item.variations)) {
                 const metalVar = item.variations.find(v =>
                   v.formatted_name &&
@@ -435,11 +440,17 @@
               metalBox.value = "Metal: " + metalSelection;
             }
 
-            // For each variation, append "formatted_name: formatted_value" on its own line
+            // Build the multiline "Order Details" string
             if (item.variations && Array.isArray(item.variations)) {
               item.variations.forEach(v => {
                 if (v.formatted_name && v.formatted_value) {
-                  variationsText += `${v.formatted_name}: ${v.formatted_value}\n`;
+                  // If this variation’s name is in acceptedMetalNames, display only "Metal Choice"
+                  if (acceptedMetalNames.includes(v.formatted_name.toLowerCase())) {
+                    variationsText += `Metal Choice\n`;
+                  } else {
+                    // Otherwise, display the normal "Name: Value"
+                    variationsText += `${v.formatted_name}: ${v.formatted_value}\n`;
+                  }
                 }
               });
             }
