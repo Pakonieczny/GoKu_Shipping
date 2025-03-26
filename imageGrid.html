@@ -1,18 +1,22 @@
 <!-- imageGrid.html -->
 <style>
-  /* Container for 2 rows and 4 columns */
+  /* Container for 2 rows × 4 columns */
   #photoGridContainer {
-  display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  grid-template-rows: repeat(2, auto);
-  gap: 60px 5px; 
-}
-  /* Each grid-cell just has the preview box now */
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    grid-template-rows: repeat(2, auto);
+
+    /* (1) Increase the vertical gap to 60px, horizontal gap remains 5px */
+    gap: 60px 5px;
+  }
+
+  /* Each grid-cell just holds a preview box */
   .grid-cell {
     display: flex;
     flex-direction: column;
     align-items: center;
   }
+
   .preview-box {
     border: 1px solid black;
     background: #f9f9f9;
@@ -24,6 +28,7 @@
     overflow: hidden;
     position: relative;
   }
+
   .preview-box img {
     width: 100%;
     height: 100%;
@@ -70,7 +75,7 @@
 </div>
 
 <script>
-  // Optional: wheel-based zoom for each preview box
+  // Optional wheel-based zoom for each preview box
   document.querySelectorAll('.preview-box').forEach(function(box) {
     box.addEventListener('wheel', function(e) {
       e.preventDefault();
