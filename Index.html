@@ -73,7 +73,7 @@
       -moz-appearance: none;
       appearance: none;
 
-      /* 0.7em font size, per your base file (#95) */
+      /* 0.7em font size, from your base file (#95) */
       font-size: 0.7em !important;
 
       width: 60px;
@@ -85,7 +85,7 @@
     }
 
     /*
-     * Use a TEXTAREA for the Order Details box
+     * Use TEXTAREA for the "Order Details" box
      * so multiline variations appear on separate lines.
      */
     #orderDetails {
@@ -97,9 +97,9 @@
       outline: none !important;
       background: transparent;
       font-size: 0.7em !important;
-      resize: none;        /* so user can't manually resize via corner drag */
-      text-align: left;    /* left-justify multiline text */
-      overflow-y: auto;    /* allow scrolling if text is too tall */
+      resize: none;        
+      text-align: left;    
+      overflow-y: auto;    
     }
 
     /* Configuration Modal styling */
@@ -171,7 +171,7 @@
   <input type="text" id="metalCell6" class="text-box-absolute" readonly />
   <input type="text" id="metalCell7" class="text-box-absolute" readonly />
 
-  <!-- Use TEXTAREA for multiline "Order Details" -->
+  <!-- Multiline "Order Details" box -->
   <textarea id="orderDetails">Order Details:</textarea>
 
   <!-- Configuration Modal -->
@@ -269,8 +269,10 @@
       "etsyOrderNumber",
       "orderInformation",
       "Photo_Grid",
-      "quantityCell0","quantityCell1","quantityCell2","quantityCell3","quantityCell4","quantityCell5","quantityCell6","quantityCell7",
-      "metalCell0","metalCell1","metalCell2","metalCell3","metalCell4","metalCell5","metalCell6","metalCell7",
+      "quantityCell0","quantityCell1","quantityCell2","quantityCell3",
+      "quantityCell4","quantityCell5","quantityCell6","quantityCell7",
+      "metalCell0","metalCell1","metalCell2","metalCell3",
+      "metalCell4","metalCell5","metalCell6","metalCell7",
       "orderDetails"
     ];
 
@@ -297,7 +299,8 @@
       configComponentIDs.forEach(function(id) {
         const el = document.getElementById(id);
         if (!el) return;
-        const compName = el.textContent.trim() || el.value.trim() || id; // For textareas, use .value
+        // For textareas, prefer .value if .textContent is empty
+        const compName = el.textContent.trim() || el.value.trim() || id; 
         const cs = window.getComputedStyle(el);
         const leftVal = (cs.left === "auto") ? 0 : parseInt(cs.left);
         const topVal = (cs.top === "auto") ? 0 : parseInt(cs.top);
@@ -366,6 +369,7 @@
     }
     
     async function updateImageGrid(data) {
+      // Collate items from whichever field is present
       let items = [];
       if (data.transactions && Array.isArray(data.transactions)) {
         items = data.transactions;
@@ -386,9 +390,9 @@
         }
       }
 
-      // We'll compile every variation into a multiline string
       let variationsText = "Order Details:\n";
 
+      // Loop up to 8 items for your preview cells
       for (let i = 0; i < 8; i++) {
         const cell     = document.getElementById("previewCell" + i);
         const qtyBox   = document.getElementById("quantityCell" + i);
@@ -401,6 +405,7 @@
           const item = items[i];
 
           try {
+            // Fetch listing images
             const images = await fetchListingImages(item.listing_id);
             if (images && images.length > 0) {
               cell.innerHTML = `<img src="${images[0].url_fullxfull}" alt="Listing Image ${i}">`;
@@ -408,13 +413,15 @@
               cell.innerHTML = "No images found";
             }
 
+            // Show quantity
             if (qtyBox) {
               const actualQty = (item.quantity != null) ? item.quantity : 0;
               qtyBox.value = "Quantity: " + actualQty;
             }
 
+            // Show “Metal” from variations
             if (metalBox) {
-              // Accepted property names for the "Metal" text box
+              // All accepted metal property names, including new ones
               const acceptedMetalNames = [
                 "metal", 
                 "metal choice", 
@@ -440,7 +447,7 @@
               metalBox.value = "Metal: " + metalSelection;
             }
 
-            // For each variation, append "formatted_name: formatted_value" on its own line
+            // Gather all variations for the multiline summary
             if (item.variations && Array.isArray(item.variations)) {
               item.variations.forEach(v => {
                 if (v.formatted_name && v.formatted_value) {
@@ -448,7 +455,6 @@
                 }
               });
             }
-
           } catch (error) {
             console.error(`Error fetching images for listing ${item.listing_id}:`, error);
             cell.innerHTML = "Error loading image";
@@ -458,7 +464,7 @@
         }
       }
 
-      // Place all variation details into the multiline textarea
+      // Place variations text into your multiline textarea
       const detailsBox = document.getElementById("orderDetails");
       if (detailsBox) {
         detailsBox.value = variationsText;
@@ -487,7 +493,7 @@
     document.addEventListener("DOMContentLoaded", function() {
       M.AutoInit();
 
-      // Load imageGrid.html, which has the 8 previewCell# placeholders
+      // Load imageGrid.html (8 preview cells)
       $("#Photo_Grid").load("imageGrid.html", function(response, status, xhr) {
         if (status === "error") {
           console.error("Error loading image grid:", xhr.status, xhr.statusText);
@@ -496,6 +502,7 @@
         }
       });
       
+      // Fade in after loading
       document.body.style.opacity = 0;
       setTimeout(function() {
         loadPositions();
@@ -510,7 +517,7 @@
         instance.open();
       });
 
-      // Save the config
+      // Save config
       document.getElementById("saveConfigBtn").addEventListener("click", function() {
         saveConfiguration();
       });
