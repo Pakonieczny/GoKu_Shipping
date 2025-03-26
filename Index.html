@@ -61,17 +61,18 @@
 
     /* Absolutely positioned text boxes for Quantity & Metal */
     .text-box-absolute {
-      position: absolute;
-      border: 1px solid black;
-      width: 60px;
-      height: 20px;
-      font-size: 0.7em; /* Font shrink */
-      text-align: left; /* Left-justify horizontally */
-      line-height: 1.0;
-      /* Approximate bottom alignment by adjusting padding */
-      padding: 0 2px 2px 2px;
-      box-sizing: border-box;
-    }
+    position: absolute;
+    border: none;
+    text-decoration: none;
+    width: 60px;
+    height: 20px;
+    font-size: 0.7em;
+    text-align: left;
+    line-height: 1.0;
+    padding: 0 2px 2px 2px;
+    box-sizing: border-box;
+    outline: none; /* Also remove the focus outline if you prefer */
+  }
 
     /* Configuration Modal styling */
     .modal {
