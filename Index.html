@@ -60,12 +60,11 @@
       transition: none !important;
     }
 
-    /*
-      Absolutely positioned text boxes for Quantity & Metal.
-      (2) No lines, and font shrunk to 0.4em
-    */
+    /* Absolutely positioned text boxes for Quantity & Metal. */
     .text-box-absolute {
       position: absolute;
+
+      /* No lines, borders, outlines, underscores */
       border: none !important;
       outline: none !important;
       text-decoration: none !important;
@@ -74,7 +73,10 @@
       -webkit-appearance: none;
       -moz-appearance: none;
       appearance: none;
-      font-size: 0.7em !important;
+
+      /* 0.4em font size */
+      font-size: 0.4em !important;
+
       width: 60px;
       height: 20px;
       text-align: left;
@@ -399,8 +401,8 @@
               const acceptedMetalNames = [
                 "metal", 
                 "metal choice", 
-                "metal - engraving"
-                "metal colour"
+                "metal - engraving",
+                "metal colour"  // newly added
               ];
               let metalSelection = "";
 
