@@ -446,10 +446,9 @@
                 if (v.formatted_name && v.formatted_value) {
                   // If this variation’s name is in acceptedMetalNames, display only "Metal Choice"
                   if (acceptedMetalNames.includes(v.formatted_name.toLowerCase())) {
-                    variationsText += `Metal Choice\n`;
+                  variationsText += `Metal Choice: ${v.formatted_value}\n`;
                   } else {
-                    // Otherwise, display the normal "Name: Value"
-                    variationsText += `${v.formatted_name}: ${v.formatted_value}\n`;
+                  variationsText += `${v.formatted_name}: ${v.formatted_value}\n`;
                   }
                 }
               });
