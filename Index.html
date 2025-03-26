@@ -6,6 +6,7 @@
   <!-- Materialize CSS -->
   <link rel="stylesheet" 
         href="https://cdnjs.cloudflare.com/ajax/libs/materialize/1.0.0/css/materialize.min.css">
+
   <style>
     /* Hide the page initially */
     body {
@@ -85,6 +86,16 @@
       box-sizing: border-box;
     }
 
+    /* 1) Keep text-box-absolute for everything 
+       2) Then specifically override customBox to add a full border and size
+    */
+    #customBox {
+      border: 1px solid black !important;
+      width: 250px !important;
+      height: 350px !important;
+      box-sizing: border-box !important; /* Ensure the border doesn't reduce content space */
+    }
+
     /* Configuration Modal styling */
     .modal {
       position: fixed !important;
@@ -154,7 +165,7 @@
   <input type="text" id="metalCell6" class="text-box-absolute" readonly />
   <input type="text" id="metalCell7" class="text-box-absolute" readonly />
 
-  <!-- (NEW) Additional text box so you can move/resize in Config -->
+  <!-- The new custom box with a 1px border, 250px wide, 350px tall -->
   <input type="text" id="customBox" class="text-box-absolute" value="Extra Box" readonly />
 
   <!-- Configuration Modal -->
@@ -254,7 +265,6 @@
       "Photo_Grid",
       "quantityCell0","quantityCell1","quantityCell2","quantityCell3","quantityCell4","quantityCell5","quantityCell6","quantityCell7",
       "metalCell0","metalCell1","metalCell2","metalCell3","metalCell4","metalCell5","metalCell6","metalCell7",
-      /* Our new text box: */
       "customBox"
     ];
 
@@ -350,7 +360,6 @@
     }
     
     async function updateImageGrid(data) {
-      /***** THIS IS YOUR FULL updateImageGrid LOGIC FROM THE BASE FILE #95 *****/
       let items = [];
       if (data.transactions && Array.isArray(data.transactions)) {
         items = data.transactions;
@@ -381,12 +390,10 @@
         if (qtyBox)   qtyBox.value   = "Quantity:";
         if (metalBox) metalBox.value = "Metal:";
 
-        // If we have an item
         if (cell && i < items.length) {
           const item = items[i];
 
           try {
-            // 1) Show listing image
             const images = await fetchListingImages(item.listing_id);
             if (images && images.length > 0) {
               cell.innerHTML = `<img src="${images[0].url_fullxfull}" alt="Listing Image ${i}">`;
@@ -394,15 +401,12 @@
               cell.innerHTML = "No images found";
             }
 
-            // 2) Show quantity
             if (qtyBox) {
               const actualQty = (item.quantity != null) ? item.quantity : 0;
               qtyBox.value = "Quantity: " + actualQty;
             }
 
-            // 3) Show “Metal” from variations
             if (metalBox) {
-              // We accept multiple possible formatted_name for metal
               const acceptedMetalNames = [
                 "metal", 
                 "metal choice", 
@@ -412,20 +416,16 @@
               let metalSelection = "";
 
               if (item.variations && Array.isArray(item.variations)) {
-                // Find a variation whose formatted_name matches any in acceptedMetalNames
                 const metalVar = item.variations.find(v =>
                   v.formatted_name &&
                   acceptedMetalNames.includes(v.formatted_name.toLowerCase())
                 );
-                // If found, we grab .formatted_value
                 if (metalVar) {
                   metalSelection = metalVar.formatted_value || "";
                 }
               }
-              // Insert it into the metal box
               metalBox.value = "Metal: " + metalSelection;
             }
-            
           } catch (error) {
             console.error(`Error fetching images for listing ${item.listing_id}:`, error);
             cell.innerHTML = "Error loading image";
@@ -495,8 +495,8 @@
           if (orderNumber !== "") {
             const orderData = await pullEtsyOrderDetails(orderNumber);
             if (orderData) {
-              document.getElementById("orderInformation").value = JSON.stringify(orderData, null, 2);
-              // Then call updateImageGrid(orderData) to populate images, quantity, metal, etc.
+              document.getElementById("orderInformation").value =
+                JSON.stringify(orderData, null, 2);
               await updateImageGrid(orderData);
             }
           }
