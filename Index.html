@@ -414,15 +414,15 @@
             }
 
             if (metalBox) {
-              // Accept "metal", "metal choice", "metal - engraving", "metal colour", "color"
-              // And also "Engraving? (Double sided=both sides engraved)"
+              // The array with newly added "Metal Choice · Engraving Options?" line
               const acceptedMetalNames = [
                 "metal", 
                 "metal choice", 
                 "metal - engraving",
                 "metal colour",
                 "color",
-                "engraving? (double sided=both sides engraved)" // newly added
+                "engraving? (double sided=both sides engraved)",
+                "metal choice · engraving options? " // <--- newly added
               ];
               let metalSelection = "";
 
@@ -467,7 +467,7 @@
     function pullEtsyOrderDetails(orderNumber) {
       console.log("Pulling Etsy order details for order number:", orderNumber);
       const token = localStorage.getItem("access_token");
-      return fetch('/.netlify/functions/etsyOrderProxy?orderId=' + encodeURIComponent(orderNumber), {
+      return fetch('/.netlify.functions/etsyOrderProxy?orderId=' + encodeURIComponent(orderNumber), {
         headers: { "access-token": token }
       })
         .then(response => response.json())
