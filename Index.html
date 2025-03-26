@@ -86,14 +86,16 @@
       box-sizing: border-box;
     }
 
-    /* 1) Keep text-box-absolute for everything 
-       2) Then specifically override customBox to add a full border and size
-    */
-    #customBox {
+    /* The “Order Details” box retains the 1px border, 250×350 sizing from the previous step */
+    #orderDetails {
+      position: absolute;
+      font-size: 0.7em !important;
       border: 1px solid black !important;
       width: 250px !important;
       height: 350px !important;
-      box-sizing: border-box !important; /* Ensure the border doesn't reduce content space */
+      box-sizing: border-box !important;
+      outline: none !important;
+      background: transparent;
     }
 
     /* Configuration Modal styling */
@@ -165,8 +167,8 @@
   <input type="text" id="metalCell6" class="text-box-absolute" readonly />
   <input type="text" id="metalCell7" class="text-box-absolute" readonly />
 
-  <!-- The new custom box with a 1px border, 250px wide, 350px tall -->
-  <input type="text" id="customBox" class="text-box-absolute" value="Extra Box" readonly />
+  <!-- (RENAMED) “Order Details” text box to show all variations found -->
+  <input type="text" id="orderDetails" value="Order Details:" />
 
   <!-- Configuration Modal -->
   <div id="configModal" class="modal">
@@ -265,7 +267,8 @@
       "Photo_Grid",
       "quantityCell0","quantityCell1","quantityCell2","quantityCell3","quantityCell4","quantityCell5","quantityCell6","quantityCell7",
       "metalCell0","metalCell1","metalCell2","metalCell3","metalCell4","metalCell5","metalCell6","metalCell7",
-      "customBox"
+      /* Renamed box: */
+      "orderDetails"
     ];
 
     function loadPositions() {
@@ -360,6 +363,7 @@
     }
     
     async function updateImageGrid(data) {
+      // Gather items from whichever array is found
       let items = [];
       if (data.transactions && Array.isArray(data.transactions)) {
         items = data.transactions;
@@ -380,7 +384,10 @@
         }
       }
 
-      // We handle up to 8 items
+      // We'll compile every variation into a single string to place in #orderDetails
+      let variationsText = "Order Details:\n";
+
+      // We handle up to 8 items for the image/quantity/metal boxes
       for (let i = 0; i < 8; i++) {
         const cell     = document.getElementById("previewCell" + i);
         const qtyBox   = document.getElementById("quantityCell" + i);
@@ -394,6 +401,7 @@
           const item = items[i];
 
           try {
+            // (1) Show listing image
             const images = await fetchListingImages(item.listing_id);
             if (images && images.length > 0) {
               cell.innerHTML = `<img src="${images[0].url_fullxfull}" alt="Listing Image ${i}">`;
@@ -401,11 +409,13 @@
               cell.innerHTML = "No images found";
             }
 
+            // (2) Show quantity
             if (qtyBox) {
               const actualQty = (item.quantity != null) ? item.quantity : 0;
               qtyBox.value = "Quantity: " + actualQty;
             }
 
+            // (3) Show “Metal” from variations, if any
             if (metalBox) {
               const acceptedMetalNames = [
                 "metal", 
@@ -426,6 +436,17 @@
               }
               metalBox.value = "Metal: " + metalSelection;
             }
+
+            // (4) Gather *all* variations for this item, appending to `variationsText`
+            if (item.variations && Array.isArray(item.variations)) {
+              // For each variation, add "formatted_name: formatted_value" to the text
+              item.variations.forEach(v => {
+                if (v.formatted_name && v.formatted_value) {
+                  variationsText += `${v.formatted_name}: ${v.formatted_value}\n`;
+                }
+              });
+            }
+
           } catch (error) {
             console.error(`Error fetching images for listing ${item.listing_id}:`, error);
             cell.innerHTML = "Error loading image";
@@ -433,6 +454,12 @@
         } else if (cell) {
           cell.innerHTML = "Empty";
         }
+      }
+
+      // (5) Finally, place all variation details into #orderDetails
+      const detailsBox = document.getElementById("orderDetails");
+      if (detailsBox) {
+        detailsBox.value = variationsText; 
       }
     }
 
@@ -495,8 +522,7 @@
           if (orderNumber !== "") {
             const orderData = await pullEtsyOrderDetails(orderNumber);
             if (orderData) {
-              document.getElementById("orderInformation").value =
-                JSON.stringify(orderData, null, 2);
+              document.getElementById("orderInformation").value = JSON.stringify(orderData, null, 2);
               await updateImageGrid(orderData);
             }
           }
