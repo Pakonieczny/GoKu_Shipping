@@ -73,7 +73,7 @@
       -moz-appearance: none;
       appearance: none;
 
-      /* 0.7em font size, per your base file (#95) */
+      /* 0.7em font size */
       font-size: 0.7em !important;
 
       width: 60px;
@@ -447,63 +447,45 @@
             }
 
             // Build the multiline "Order Details" string
-if (item.variations && Array.isArray(item.variations)) {
-  item.variations.forEach(v => {
-    if (v.formatted_name && v.formatted_value) {
-      const nameLower = v.formatted_name.trim().toLowerCase();
-      
-      // Arrays for recognized metal and length variations
-      const acceptedMetalNames = [
-        "metal",
-        "metal choice",
-        "metal - engraving",
-        "metal colour",
-        "color"
-      ];
-      const acceptedLengthNames = [
-        "length",
-        "necklace length",
-        "metal/necklace length",
-        "metal choice / necklace length",
-        "necklace length in inches"
-      ];
+            if (item.variations && Array.isArray(item.variations)) {
+              item.variations.forEach(v => {
+                if (v.formatted_name && v.formatted_value) {
+                  const nameLower = v.formatted_name.trim().toLowerCase();
+                  let value = v.formatted_value.trim();
 
-      // 1) If recognized metal
-      if (acceptedMetalNames.includes(nameLower)) {
-        variationsText += `Metal Choice: ${v.formatted_value}\n`;
+                  // 1) Personalization replacement
+                  if (nameLower === "personalization" && value === "Not requested on this item.") {
+                    value = "Not Requested";
+                    variationsText += `Personalization: ${value}\n`;
 
-      // 2) If recognized length
-      } else if (acceptedLengthNames.includes(nameLower)) {
+                  // 2) Metal Variation
+                  } else if (acceptedMetalNames.includes(nameLower)) {
+                    variationsText += `Metal Choice: ${value}\n`;
 
-        // A) Create a simple map from "14&quot;" => "14 Inches", etc.
-        const lengthMapping = {
-          '14&quot;': '14 Inches',
-          '16&quot;': '16 Inches',
-          '18&quot;': '18 Inches',
-          '20&quot;': '20 Inches',
-          '14""': '14 Inches',
-          '16""': '16 Inches',
-          '18""': '18 Inches',
-          '20""': '20 Inches'
-        };
+                  // 3) Length Variation
+                  } else if (acceptedLengthNames.includes(nameLower)) {
+                    const lengthMapping = {
+                      '14&quot;': '14 Inches',
+                      '16&quot;': '16 Inches',
+                      '18&quot;': '18 Inches',
+                      '20&quot;': '20 Inches',
+                      '14""': '14 Inches',
+                      '16""': '16 Inches',
+                      '18""': '18 Inches',
+                      '20""': '20 Inches'
+                    };
+                    if (lengthMapping[value]) {
+                      value = lengthMapping[value];
+                    }
+                    variationsText += `Item Length: ${value}\n`;
 
-        // B) See if we need to swap
-        let lengthValue = v.formatted_value.trim();
-        if (lengthMapping[lengthValue]) {
-          lengthValue = lengthMapping[lengthValue];
-        }
-
-        // C) Display final text
-        variationsText += `Item Length: ${lengthValue}\n`;
-
-      // 3) Otherwise normal text
-      } else {
-        variationsText += `${v.formatted_name}: ${v.formatted_value}\n`;
-      }
-    }
-  });
-}
-
+                  // 4) Otherwise standard "Name: Value"
+                  } else {
+                    variationsText += `${v.formatted_name}: ${v.formatted_value}\n`;
+                  }
+                }
+              });
+            }
           } catch (error) {
             console.error(`Error fetching images for listing ${item.listing_id}:`, error);
             cell.innerHTML = "Error loading image";
