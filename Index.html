@@ -171,7 +171,7 @@
   <input type="text" id="metalCell6" class="text-box-absolute" readonly />
   <input type="text" id="metalCell7" class="text-box-absolute" readonly />
 
-  <!-- Use TEXTAREA for multiline "Order Details" -->
+  <!-- Use TEXTAREA for multiline, named "orderDetails" -->
   <textarea id="orderDetails">Order Details:</textarea>
 
   <!-- Configuration Modal -->
@@ -271,7 +271,7 @@
       "Photo_Grid",
       "quantityCell0","quantityCell1","quantityCell2","quantityCell3","quantityCell4","quantityCell5","quantityCell6","quantityCell7",
       "metalCell0","metalCell1","metalCell2","metalCell3","metalCell4","metalCell5","metalCell6","metalCell7",
-      "orderDetails"
+      "orderDetails" /* Now a textarea, but still recognized in config table. */
     ];
 
     function loadPositions() {
@@ -297,7 +297,8 @@
       configComponentIDs.forEach(function(id) {
         const el = document.getElementById(id);
         if (!el) return;
-        const compName = el.textContent.trim() || el.value.trim() || id; // For textareas, use .value
+        /* For a textarea, .textContent is empty, so default to id if there's no text content. */
+        const compName = el.textContent.trim() || el.value.trim() || id;
         const cs = window.getComputedStyle(el);
         const leftVal = (cs.left === "auto") ? 0 : parseInt(cs.left);
         const topVal = (cs.top === "auto") ? 0 : parseInt(cs.top);
@@ -414,17 +415,11 @@
             }
 
             if (metalBox) {
-              // Accepted property names for the "Metal" text box
               const acceptedMetalNames = [
                 "metal", 
                 "metal choice", 
                 "metal - engraving",
-                "metal colour",
-                "color",
-                "engraving? (double sided=both sides engraved)",
-                "finish",
-                "metal choice · engraving options? ",
-                ""
+                "metal colour"
               ];
               let metalSelection = "";
 
@@ -469,7 +464,7 @@
     function pullEtsyOrderDetails(orderNumber) {
       console.log("Pulling Etsy order details for order number:", orderNumber);
       const token = localStorage.getItem("access_token");
-      return fetch('/.netlify.functions/etsyOrderProxy?orderId=' + encodeURIComponent(orderNumber), {
+      return fetch('/.netlify/functions/etsyOrderProxy?orderId=' + encodeURIComponent(orderNumber), {
         headers: { "access-token": token }
       })
         .then(response => response.json())
