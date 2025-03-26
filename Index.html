@@ -403,10 +403,8 @@
       ];
 
       // We'll compile every variation into a multiline string
-      // Start with "Order Details:\n" ...
       let variationsText = "Order Details:\n";
 
-      // Iterate over each item
       for (let i = 0; i < 8; i++) {
         const cell     = document.getElementById("previewCell" + i);
         const qtyBox   = document.getElementById("quantityCell" + i);
@@ -419,11 +417,10 @@
           const item = items[i];
 
           try {
-            // If item.title exists, show first 4 words
+            // If item.title exists, show first 4 words with "Title:"
             if (item.title) {
-              // Take the first four words from the item.title
               const firstFourWords = item.title.trim().split(" ").slice(0, 4).join(" ");
-              variationsText += firstFourWords + "\n";
+              variationsText += "Title: " + firstFourWords + "\n";
             }
 
             // Fetch listing images...
@@ -495,6 +492,7 @@
                 }
               });
             }
+
           } catch (error) {
             console.error(`Error fetching images for listing ${item.listing_id}:`, error);
             cell.innerHTML = "Error loading image";
