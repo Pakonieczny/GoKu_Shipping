@@ -339,61 +339,88 @@
     }
     
     async function updateImageGrid(data) {
-      // We gather purchased items from whichever array is found in `data`
-      let items = [];
-      if (data.transactions && Array.isArray(data.transactions)) {
-        items = data.transactions;
-      } else if (data.shipments && Array.isArray(data.shipments)) {
-        items = data.shipments;
-      } else if (Array.isArray(data)) {
-        items = data;
-      } else if (data.results && Array.isArray(data.results)) {
-        items = data.results;
-      } else if (data.orders && Array.isArray(data.orders)) {
-        items = data.orders;
-      } else if (typeof data === 'object' && data !== null) {
-        for (const key in data) {
-          if (Array.isArray(data[key])) {
-            items = data[key];
-            break;
-          }
-        }
-      }
-
-      // We'll show up to 8 items in previewCell#, plus update quantity/metals
-      for (let i = 0; i < 8; i++) {
-        const cell = document.getElementById("previewCell" + i);
-        const qtyBox = document.getElementById("quantityCell" + i);
-        const metalBox = document.getElementById("metalCell" + i);
-
-        if (qtyBox) qtyBox.value = "Quantity:";
-        if (metalBox) metalBox.value = "Metal:";
-
-        if (cell && i < items.length) {
-          const item = items[i];
-          try {
-            // Display the listing image
-            const images = await fetchListingImages(item.listing_id);
-            if (images && images.length > 0) {
-              cell.innerHTML = `<img src="${images[0].url_fullxfull}" alt="Listing Image ${i}">`;
-            } else {
-              cell.innerHTML = "No images found";
-            }
-
-            // (IMPORTANT) Combine "Quantity:" + the actual item quantity
-            if (qtyBox) {
-              const actualQty = (item.quantity != null) ? item.quantity : 0;
-              qtyBox.value = "Quantity: " + actualQty;
-            }
-          } catch (error) {
-            console.error(`Error fetching images for listing ${item.listing_id}:`, error);
-            cell.innerHTML = "Error loading image";
-          }
-        } else if (cell) {
-          cell.innerHTML = "Empty";
-        }
+  // Gather purchased items from whichever array is found
+  let items = [];
+  if (data.transactions && Array.isArray(data.transactions)) {
+    items = data.transactions;
+  } else if (data.shipments && Array.isArray(data.shipments)) {
+    items = data.shipments;
+  } else if (Array.isArray(data)) {
+    items = data;
+  } else if (data.results && Array.isArray(data.results)) {
+    items = data.results;
+  } else if (data.orders && Array.isArray(data.orders)) {
+    items = data.orders;
+  } else if (typeof data === 'object' && data !== null) {
+    for (const key in data) {
+      if (Array.isArray(data[key])) {
+        items = data[key];
+        break;
       }
     }
+  }
+
+  // Loop through 8 possible items
+  for (let i = 0; i < 8; i++) {
+    const cell      = document.getElementById("previewCell" + i);
+    const qtyBox    = document.getElementById("quantityCell" + i);
+    const metalBox  = document.getElementById("metalCell" + i);
+
+    // Default them in case there's no corresponding item
+    if (qtyBox)   qtyBox.value   = "Quantity:";
+    if (metalBox) metalBox.value = "Metal:";
+
+    // If we have an item in this index
+    if (cell && i < items.length) {
+      const item = items[i];
+
+      try {
+        // 1) Display listing image
+        const images = await fetchListingImages(item.listing_id);
+        if (images && images.length > 0) {
+          cell.innerHTML = `<img src="${images[0].url_fullxfull}" alt="Listing Image ${i}">`;
+        } else {
+          cell.innerHTML = "No images found";
+        }
+
+        // 2) Show "Quantity" + item’s quantity
+        if (qtyBox) {
+          const actualQty = (item.quantity != null) ? item.quantity : 0;
+          qtyBox.value = "Quantity: " + actualQty;
+        }
+
+        // 3) Show "Metal" from variations
+        if (metalBox) {
+          let materialValue = "";
+          
+          // Check if this item has a variations array
+          if (item.variations && Array.isArray(item.variations)) {
+            // Find a variation whose property_name is "Material"
+            const matVariation = item.variations.find(
+              v => v.property_name && v.property_name.toLowerCase() === "material"
+            );
+            if (matVariation) {
+              // Etsy often has .value or .formatted_value for the actual text
+              materialValue = matVariation.value 
+                              || matVariation.formatted_value 
+                              || "";
+            }
+          }
+
+          // Insert "Metal: <the material>" into the text box
+          metalBox.value = "Metal: " + materialValue;
+        }
+        
+      } catch (error) {
+        console.error(`Error fetching images for listing ${item.listing_id}:`, error);
+        cell.innerHTML = "Error loading image";
+      }
+    } else if (cell) {
+      // If there's no item for this index, show "Empty"
+      cell.innerHTML = "Empty";
+    }
+  }
+}
 
     /********** Etsy Order Fetch **********/
     function pullEtsyOrderDetails(orderNumber) {
