@@ -64,8 +64,6 @@
     /* Absolutely positioned text boxes for Quantity & Metal. */
     .text-box-absolute {
       position: absolute;
-
-      /* No lines, borders, outlines, underscores */
       border: none !important;
       outline: none !important;
       text-decoration: none !important;
@@ -86,16 +84,22 @@
       box-sizing: border-box;
     }
 
-    /* The “Order Details” box retains the 1px border, 250×350 sizing from the previous step */
+    /*
+     * Use a TEXTAREA for the Order Details box
+     * so multiline variations appear on separate lines.
+     */
     #orderDetails {
       position: absolute;
-      font-size: 0.7em !important;
       border: 1px solid black !important;
       width: 250px !important;
       height: 350px !important;
       box-sizing: border-box !important;
       outline: none !important;
       background: transparent;
+      font-size: 0.7em !important;
+      resize: none;        /* so user can't manually resize via corner drag */
+      text-align: left;    /* left-justify multiline text */
+      overflow-y: auto;    /* allow scrolling if text is too tall */
     }
 
     /* Configuration Modal styling */
@@ -167,8 +171,8 @@
   <input type="text" id="metalCell6" class="text-box-absolute" readonly />
   <input type="text" id="metalCell7" class="text-box-absolute" readonly />
 
-  <!-- (RENAMED) “Order Details” text box to show all variations found -->
-  <input type="text" id="orderDetails" value="Order Details:" />
+  <!-- Use TEXTAREA for multiline, named "orderDetails" -->
+  <textarea id="orderDetails">Order Details:</textarea>
 
   <!-- Configuration Modal -->
   <div id="configModal" class="modal">
@@ -267,8 +271,7 @@
       "Photo_Grid",
       "quantityCell0","quantityCell1","quantityCell2","quantityCell3","quantityCell4","quantityCell5","quantityCell6","quantityCell7",
       "metalCell0","metalCell1","metalCell2","metalCell3","metalCell4","metalCell5","metalCell6","metalCell7",
-      /* Renamed box: */
-      "orderDetails"
+      "orderDetails" /* Now a textarea, but still recognized in config table. */
     ];
 
     function loadPositions() {
@@ -294,7 +297,8 @@
       configComponentIDs.forEach(function(id) {
         const el = document.getElementById(id);
         if (!el) return;
-        const compName = el.textContent.trim() || id;
+        /* For a textarea, .textContent is empty, so default to id if there's no text content. */
+        const compName = el.textContent.trim() || el.value.trim() || id;
         const cs = window.getComputedStyle(el);
         const leftVal = (cs.left === "auto") ? 0 : parseInt(cs.left);
         const topVal = (cs.top === "auto") ? 0 : parseInt(cs.top);
@@ -363,7 +367,6 @@
     }
     
     async function updateImageGrid(data) {
-      // Gather items from whichever array is found
       let items = [];
       if (data.transactions && Array.isArray(data.transactions)) {
         items = data.transactions;
@@ -384,16 +387,14 @@
         }
       }
 
-      // We'll compile every variation into a single string to place in #orderDetails
+      // We'll compile every variation into a multiline string
       let variationsText = "Order Details:\n";
 
-      // We handle up to 8 items for the image/quantity/metal boxes
       for (let i = 0; i < 8; i++) {
         const cell     = document.getElementById("previewCell" + i);
         const qtyBox   = document.getElementById("quantityCell" + i);
         const metalBox = document.getElementById("metalCell" + i);
 
-        // Default text if no item for this index
         if (qtyBox)   qtyBox.value   = "Quantity:";
         if (metalBox) metalBox.value = "Metal:";
 
@@ -401,7 +402,6 @@
           const item = items[i];
 
           try {
-            // (1) Show listing image
             const images = await fetchListingImages(item.listing_id);
             if (images && images.length > 0) {
               cell.innerHTML = `<img src="${images[0].url_fullxfull}" alt="Listing Image ${i}">`;
@@ -409,13 +409,11 @@
               cell.innerHTML = "No images found";
             }
 
-            // (2) Show quantity
             if (qtyBox) {
               const actualQty = (item.quantity != null) ? item.quantity : 0;
               qtyBox.value = "Quantity: " + actualQty;
             }
 
-            // (3) Show “Metal” from variations, if any
             if (metalBox) {
               const acceptedMetalNames = [
                 "metal", 
@@ -437,9 +435,8 @@
               metalBox.value = "Metal: " + metalSelection;
             }
 
-            // (4) Gather *all* variations for this item, appending to `variationsText`
+            // For each variation, append "formatted_name: formatted_value" on its own line
             if (item.variations && Array.isArray(item.variations)) {
-              // For each variation, add "formatted_name: formatted_value" to the text
               item.variations.forEach(v => {
                 if (v.formatted_name && v.formatted_value) {
                   variationsText += `${v.formatted_name}: ${v.formatted_value}\n`;
@@ -456,10 +453,10 @@
         }
       }
 
-      // (5) Finally, place all variation details into #orderDetails
+      // Place all variation details into the multiline textarea
       const detailsBox = document.getElementById("orderDetails");
       if (detailsBox) {
-        detailsBox.value = variationsText; 
+        detailsBox.value = variationsText;
       }
     }
 
@@ -494,7 +491,6 @@
         }
       });
       
-      // Reveal the body after a short delay
       document.body.style.opacity = 0;
       setTimeout(function() {
         loadPositions();
