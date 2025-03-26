@@ -62,24 +62,21 @@
     /* Absolutely positioned text boxes for Quantity & Metal */
     .text-box-absolute {
   position: absolute;
-  
-  /* Remove all border, underline, and outlines */
+  font-size: 0.6em !important;
   border: none !important;
   outline: none !important;
   text-decoration: none !important;
   box-shadow: none !important;
-  background: transparent; /* optional if you want to remove the input background */
-  font-size: 0.2em;
-  width: 50px;
-  height: 10px;
+  background: transparent;
+  -webkit-appearance: none;
+  -moz-appearance: none;
+  appearance: none;
+  width: 60px;
+  height: 20px;
   text-align: left;
   line-height: 1.0;
   padding: 0 2px 2px 2px;
   box-sizing: border-box;
-  /* If you still see lines in certain browsers, you can add: -webkit-appearance: none; */
-  -webkit-appearance: none;
-  -moz-appearance: none; 
-  appearance: none;
 }
 
     /* Configuration Modal styling */
