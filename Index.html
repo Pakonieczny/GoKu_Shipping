@@ -50,7 +50,7 @@
       transition: none !important;
     }
 
-    /* The container that loads imageGrid.html (for 8 image boxes only) */
+    /* The container that loads imageGrid.html */
     #Photo_Grid {
       position: absolute;
       left: 400px;
@@ -59,21 +59,18 @@
       transition: none !important;
     }
 
-    /* 
-       Absolutely positioned text boxes for Quantity & Metal.
-       We approximate "bottom alignment" by using padding-bottom. 
-    */
+    /* Absolutely positioned text boxes for Quantity & Metal */
     .text-box-absolute {
       position: absolute;
       border: 1px solid black;
-      width: 60px;        /* Adjust as you wish */
-      height: 20px;       /* Adjust as you wish */
-      font-size: 0.7em;   /* (2) Shrunk to 0.7em */
-      text-align: left;
-      line-height: 1.0;   /* Keep line-height normal */
-      padding: 0 2px 2px 2px;  /* Bottom padding to push text lower */
+      width: 60px;
+      height: 20px;
+      font-size: 0.7em; /* Font shrink */
+      text-align: left; /* Left-justify horizontally */
+      line-height: 1.0;
+      /* Approximate bottom alignment by adjusting padding */
+      padding: 0 2px 2px 2px;
       box-sizing: border-box;
-      /* You can also tweak top padding if you want the text even lower/higher. */
     }
 
     /* Configuration Modal styling */
@@ -115,16 +112,18 @@
   </style>
 </head>
 <body>
-  <!-- Buttons and fields -->
+  <!-- Main UI Buttons -->
   <button id="connectEtsyBtn" class="configurable btn waves-effect waves-light">Connect to Etsy</button>
   <button id="openConfigBtn" class="configurable btn waves-effect waves-light">Open Config</button>
+
+  <!-- Etsy Order Fields -->
   <input type="text" id="etsyOrderNumber" placeholder="Etsy Order Number" />
   <textarea id="orderInformation" placeholder="Order Information" readonly></textarea>
-  
-  <!-- The container that loads imageGrid.html (which has only the 8 previewCell# boxes) -->
-  <div id="Photo_Grid"></div>
 
-  <!-- 16 Absolutely Positioned Text Boxes: quantityCell# and metalCell# -->
+  <!-- Image Grid (8 preview cells only) -->
+  <div id="Photo_Grid"></div>
+  
+  <!-- 16 Absolutely Positioned Text Boxes -->
   <input type="text" id="quantityCell0" class="text-box-absolute" readonly />
   <input type="text" id="quantityCell1" class="text-box-absolute" readonly />
   <input type="text" id="quantityCell2" class="text-box-absolute" readonly />
@@ -133,7 +132,7 @@
   <input type="text" id="quantityCell5" class="text-box-absolute" readonly />
   <input type="text" id="quantityCell6" class="text-box-absolute" readonly />
   <input type="text" id="quantityCell7" class="text-box-absolute" readonly />
-  
+
   <input type="text" id="metalCell0" class="text-box-absolute" readonly />
   <input type="text" id="metalCell1" class="text-box-absolute" readonly />
   <input type="text" id="metalCell2" class="text-box-absolute" readonly />
@@ -143,7 +142,7 @@
   <input type="text" id="metalCell6" class="text-box-absolute" readonly />
   <input type="text" id="metalCell7" class="text-box-absolute" readonly />
 
-  <!-- Configuration Modal -->
+  <!-- Config Modal -->
   <div id="configModal" class="modal">
     <div class="modal-content">
       <table class="striped" id="configTable">
@@ -164,11 +163,11 @@
     </div>
   </div>
   
-  <!-- jQuery and Materialize JS -->
+  <!-- jQuery & Materialize -->
   <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/materialize/1.0.0/js/materialize.min.js"></script>
   <script>
-    /********** Check for Access Token or Code on Redirect **********/
+    /********** Check for Access Token / Code **********/
     (function() {
       const urlParams = new URLSearchParams(window.location.search);
       const accessToken = urlParams.get("access_token");
@@ -217,10 +216,10 @@
       const codeVerifier = generateRandomString(64);
       localStorage.setItem("etsy_code_verifier", codeVerifier);
       const codeChallenge = await generateCodeChallenge(codeVerifier);
-      const state = "randomState123"; // Replace with a secure random state
-      const scope = "listings_w listings_r transactions_r transactions_w"; // Adjust scope
-      const CLIENT_ID = "k75zdspz4r99txpqdji7i2em"; // Your Etsy app's public client_id
-      const redirectUri = "https://gokushipping.netlify.app"; // Must match your Etsy app settings
+      const state = "randomState123";
+      const scope = "listings_w listings_r transactions_r transactions_w";
+      const CLIENT_ID = "k75zdspz4r99txpqdji7i2em"; 
+      const redirectUri = "https://gokushipping.netlify.app"; 
       const etsyAuthUrl = `https://www.etsy.com/oauth/connect?response_type=code&client_id=${CLIENT_ID}`
                           + `&redirect_uri=${encodeURIComponent(redirectUri)}`
                           + `&scope=${encodeURIComponent(scope)}`
@@ -231,29 +230,25 @@
       window.location.href = etsyAuthUrl;
     });
     
-    /********** UI Configuration Functions **********/
+    /********** UI Configuration **********/
     var configComponentIDs = [
-      // Existing UI
       "connectEtsyBtn",
       "openConfigBtn",
       "etsyOrderNumber",
       "orderInformation",
       "Photo_Grid",
-      // 16 text boxes
-      "quantityCell0","quantityCell1","quantityCell2","quantityCell3",
-      "quantityCell4","quantityCell5","quantityCell6","quantityCell7",
-      "metalCell0","metalCell1","metalCell2","metalCell3",
-      "metalCell4","metalCell5","metalCell6","metalCell7"
+      "quantityCell0","quantityCell1","quantityCell2","quantityCell3","quantityCell4","quantityCell5","quantityCell6","quantityCell7",
+      "metalCell0","metalCell1","metalCell2","metalCell3","metalCell4","metalCell5","metalCell6","metalCell7"
     ];
 
     function loadPositions() {
       configComponentIDs.forEach(function(id) {
-        var el = document.getElementById(id);
+        const el = document.getElementById(id);
         if (el) {
-          var savedLeft = localStorage.getItem("pos-" + id + "-left");
-          var savedTop = localStorage.getItem("pos-" + id + "-top");
-          var savedWidth = localStorage.getItem("pos-" + id + "-width");
-          var savedHeight = localStorage.getItem("pos-" + id + "-height");
+          const savedLeft = localStorage.getItem("pos-" + id + "-left");
+          const savedTop = localStorage.getItem("pos-" + id + "-top");
+          const savedWidth = localStorage.getItem("pos-" + id + "-width");
+          const savedHeight = localStorage.getItem("pos-" + id + "-height");
           if (savedLeft !== null) el.style.left = savedLeft + "px";
           if (savedTop !== null) el.style.top = savedTop + "px";
           if (savedWidth !== null) el.style.width = savedWidth + "px";
@@ -263,20 +258,20 @@
     }
     
     function populateConfigTable() {
-      var tbody = document.getElementById("configTable").querySelector("tbody");
+      const tbody = document.getElementById("configTable").querySelector("tbody");
       tbody.innerHTML = "";
       
       configComponentIDs.forEach(function(id) {
-        var el = document.getElementById(id);
+        const el = document.getElementById(id);
         if (!el) return;
-        var compName = el.textContent.trim() || id;
-        var cs = window.getComputedStyle(el);
-        var leftVal = (cs.left === "auto") ? 0 : parseInt(cs.left);
-        var topVal = (cs.top === "auto") ? 0 : parseInt(cs.top);
-        var widthVal = (cs.width === "auto") ? 0 : parseInt(cs.width);
-        var heightVal = (cs.height === "auto") ? 0 : parseInt(cs.height);
+        const compName = el.textContent.trim() || id;
+        const cs = window.getComputedStyle(el);
+        const leftVal = (cs.left === "auto") ? 0 : parseInt(cs.left);
+        const topVal = (cs.top === "auto") ? 0 : parseInt(cs.top);
+        const widthVal = (cs.width === "auto") ? 0 : parseInt(cs.width);
+        const heightVal = (cs.height === "auto") ? 0 : parseInt(cs.height);
         
-        var row = document.createElement("tr");
+        const row = document.createElement("tr");
         row.innerHTML = `
           <td>${compName}</td>
           <td><input type="number" value="${leftVal}" data-id="${id}" class="left-input"></td>
@@ -288,19 +283,19 @@
         
         // Live updates
         row.querySelector(".left-input").addEventListener("input", function() {
-          var target = document.getElementById(this.getAttribute("data-id"));
+          const target = document.getElementById(this.getAttribute("data-id"));
           if (target) target.style.left = parseInt(this.value) + "px";
         });
         row.querySelector(".top-input").addEventListener("input", function() {
-          var target = document.getElementById(this.getAttribute("data-id"));
+          const target = document.getElementById(this.getAttribute("data-id"));
           if (target) target.style.top = parseInt(this.value) + "px";
         });
         row.querySelector(".width-input").addEventListener("input", function() {
-          var target = document.getElementById(this.getAttribute("data-id"));
+          const target = document.getElementById(this.getAttribute("data-id"));
           if (target) target.style.width = parseInt(this.value) + "px";
         });
         row.querySelector(".height-input").addEventListener("input", function() {
-          var target = document.getElementById(this.getAttribute("data-id"));
+          const target = document.getElementById(this.getAttribute("data-id"));
           if (target) target.style.height = parseInt(this.value) + "px";
         });
       });
@@ -308,12 +303,12 @@
     
     function saveConfiguration() {
       configComponentIDs.forEach(function(id) {
-        var el = document.getElementById(id);
+        const el = document.getElementById(id);
         if (el) {
-          var leftVal = parseInt(window.getComputedStyle(el).left) || 0;
-          var topVal = parseInt(window.getComputedStyle(el).top) || 0;
-          var widthVal = parseInt(window.getComputedStyle(el).width) || 0;
-          var heightVal = parseInt(window.getComputedStyle(el).height) || 0;
+          const leftVal = parseInt(window.getComputedStyle(el).left) || 0;
+          const topVal = parseInt(window.getComputedStyle(el).top) || 0;
+          const widthVal = parseInt(window.getComputedStyle(el).width) || 0;
+          const heightVal = parseInt(window.getComputedStyle(el).height) || 0;
           localStorage.setItem("pos-" + id + "-left", leftVal);
           localStorage.setItem("pos-" + id + "-top", topVal);
           localStorage.setItem("pos-" + id + "-width", widthVal);
@@ -338,6 +333,7 @@
     }
     
     async function updateImageGrid(data) {
+      // We gather purchased items from whichever array is found in `data`
       let items = [];
       if (data.transactions && Array.isArray(data.transactions)) {
         items = data.transactions;
@@ -357,37 +353,37 @@
           }
         }
       }
-      
-      // We have 8 previewCell# plus the 8 quantityCell# + 8 metalCell# if desired
+
+      // We'll show up to 8 items in previewCell#, plus update quantity/metals
       for (let i = 0; i < 8; i++) {
         const cell = document.getElementById("previewCell" + i);
         const qtyBox = document.getElementById("quantityCell" + i);
         const metalBox = document.getElementById("metalCell" + i);
-        
-        // (3) Use "Quantity:" instead of "Q."
+
         if (qtyBox) qtyBox.value = "Quantity:";
-        // (4) For the metal text boxes, add "Metal:"
         if (metalBox) metalBox.value = "Metal:";
-        
+
         if (cell && i < items.length) {
           const item = items[i];
-          const listingId = item.listing_id;
           try {
-            const images = await fetchListingImages(listingId);
+            // Display the listing image
+            const images = await fetchListingImages(item.listing_id);
             if (images && images.length > 0) {
-              const imageUrl = images[0].url_fullxfull;
-              cell.innerHTML = `<img src="${imageUrl}" alt="Listing Image ${i}">`;
+              cell.innerHTML = `<img src="${images[0].url_fullxfull}" alt="Listing Image ${i}">`;
             } else {
               cell.innerHTML = "No images found";
             }
-            // If you also want to append the actual quantity number:
-            // qtyBox.value = "Quantity: " + (item.quantity || 0);
+
+            // (IMPORTANT) Combine "Quantity:" + the actual item quantity
+            if (qtyBox) {
+              const actualQty = (item.quantity != null) ? item.quantity : 0;
+              qtyBox.value = "Quantity: " + actualQty;
+            }
           } catch (error) {
-            console.error(`Error fetching images for listing ${listingId}:`, error);
+            console.error(`Error fetching images for listing ${item.listing_id}:`, error);
             cell.innerHTML = "Error loading image";
           }
         } else if (cell) {
-          // If no matching item, clear it
           cell.innerHTML = "Empty";
         }
       }
@@ -414,8 +410,8 @@
     /********** DOMContentLoaded **********/
     document.addEventListener("DOMContentLoaded", function() {
       M.AutoInit();
-      
-      // Load the photo grid from imageGrid.html (which only has 8 previewCell#)
+
+      // Load the 8 preview cells from imageGrid.html
       $("#Photo_Grid").load("imageGrid.html", function(response, status, xhr) {
         if (status === "error") {
           console.error("Error loading image grid:", xhr.status, xhr.statusText);
@@ -430,25 +426,25 @@
         loadPositions();
         document.body.style.opacity = 1;
       }, 250);
-      
+
       // Open the config modal
       document.getElementById("openConfigBtn").addEventListener("click", function() {
         populateConfigTable();
-        var modalElem = document.getElementById("configModal");
-        var instance = M.Modal.getInstance(modalElem);
+        const modalElem = document.getElementById("configModal");
+        const instance = M.Modal.getInstance(modalElem);
         instance.open();
       });
-      
+
       // Save the config
       document.getElementById("saveConfigBtn").addEventListener("click", function() {
         saveConfiguration();
       });
-      
-      // Enter key => fetch order
-      var etsyOrderInput = document.getElementById("etsyOrderNumber");
+
+      // Press Enter => fetch order from Etsy
+      const etsyOrderInput = document.getElementById("etsyOrderNumber");
       etsyOrderInput.addEventListener("keydown", async function(e) {
         if (e.key === "Enter") {
-          var orderNumber = etsyOrderInput.value.trim();
+          const orderNumber = etsyOrderInput.value.trim();
           if (orderNumber !== "") {
             const orderData = await pullEtsyOrderDetails(orderNumber);
             if (orderData) {
