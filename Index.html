@@ -339,7 +339,7 @@
     }
     
     async function updateImageGrid(data) {
-  // Gather purchased items from whichever array is found
+  // Gather items from whichever array is found
   let items = [];
   if (data.transactions && Array.isArray(data.transactions)) {
     items = data.transactions;
@@ -360,22 +360,22 @@
     }
   }
 
-  // Loop through 8 possible items
+  // Loop through up to 8 items
   for (let i = 0; i < 8; i++) {
-    const cell      = document.getElementById("previewCell" + i);
-    const qtyBox    = document.getElementById("quantityCell" + i);
-    const metalBox  = document.getElementById("metalCell" + i);
+    const cell     = document.getElementById("previewCell" + i);
+    const qtyBox   = document.getElementById("quantityCell" + i);
+    const metalBox = document.getElementById("metalCell" + i);
 
-    // Default them in case there's no corresponding item
+    // Default text if no item for this slot
     if (qtyBox)   qtyBox.value   = "Quantity:";
     if (metalBox) metalBox.value = "Metal:";
 
-    // If we have an item in this index
+    // Do we have an item for this slot?
     if (cell && i < items.length) {
       const item = items[i];
 
       try {
-        // 1) Display listing image
+        // 1) Fetch and show listing image
         const images = await fetchListingImages(item.listing_id);
         if (images && images.length > 0) {
           cell.innerHTML = `<img src="${images[0].url_fullxfull}" alt="Listing Image ${i}">`;
@@ -383,40 +383,48 @@
           cell.innerHTML = "No images found";
         }
 
-        // 2) Show "Quantity" + item’s quantity
+        // 2) Show quantity
         if (qtyBox) {
           const actualQty = (item.quantity != null) ? item.quantity : 0;
           qtyBox.value = "Quantity: " + actualQty;
         }
 
-        // 3) Show "Metal" from variations
+        // 3) Show “Metal” from variations
         if (metalBox) {
-          let materialValue = "";
-          
-          // Check if this item has a variations array
+          // The data you showed has something like:
+          // "variations": [
+          //   {
+          //     "formatted_name": "Metal Choice",
+          //     "formatted_value": "Gold Filled"
+          //   }
+          // ]
+          let metalSelection = "";
           if (item.variations && Array.isArray(item.variations)) {
-            // Find a variation whose property_name is "Material"
-            const matVariation = item.variations.find(
-              v => v.property_name && v.property_name.toLowerCase() === "material"
+            // Look for variation whose formatted_name is "Metal Choice"
+            const metalVar = item.variations.find(v => 
+              v.formatted_name &&
+              v.formatted_name.toLowerCase() === "metal choice"
             );
-            if (matVariation) {
-              // Etsy often has .value or .formatted_value for the actual text
-              materialValue = matVariation.value 
-                              || matVariation.formatted_value 
-                              || "";
+            // If found, we’ll grab the "formatted_value" e.g. "Gold Filled"
+            if (metalVar) {
+              metalSelection = metalVar.formatted_value || "";
             }
           }
 
-          // Insert "Metal: <the material>" into the text box
-          metalBox.value = "Metal: " + materialValue;
+          // Alternatively, if you prefer to read from product_data:
+          // if (!metalSelection && item.product_data) {
+          //   // check for property_name "Custom Property" or something else
+          // }
+
+          metalBox.value = "Metal: " + metalSelection;
         }
-        
+
       } catch (error) {
         console.error(`Error fetching images for listing ${item.listing_id}:`, error);
         cell.innerHTML = "Error loading image";
       }
     } else if (cell) {
-      // If there's no item for this index, show "Empty"
+      // If no item in this index
       cell.innerHTML = "Empty";
     }
   }
