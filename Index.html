@@ -73,7 +73,7 @@
       -moz-appearance: none;
       appearance: none;
 
-      /* 0.7em font size, per your base file */
+      /* 0.7em font size, per your base file (#95) */
       font-size: 0.7em !important;
 
       width: 60px;
@@ -396,10 +396,10 @@
       ];
       const acceptedLengthNames = [
         "length",
-        "Necklace Length in inches",
         "necklace length",
         "metal/necklace length",
-        "metal choice / necklace length"
+        "metal choice / necklace length",
+        "necklace length in inches"
       ];
 
       // We'll compile every variation into a multiline string
@@ -437,7 +437,7 @@
               if (item.variations && Array.isArray(item.variations)) {
                 const metalVar = item.variations.find(v =>
                   v.formatted_name &&
-                  acceptedMetalNames.includes(v.formatted_name.toLowerCase())
+                  acceptedMetalNames.includes(v.formatted_name.trim().toLowerCase())
                 );
                 if (metalVar) {
                   metalSelection = metalVar.formatted_value || "";
@@ -450,7 +450,7 @@
             if (item.variations && Array.isArray(item.variations)) {
               item.variations.forEach(v => {
                 if (v.formatted_name && v.formatted_value) {
-                  const nameLower = v.formatted_name.toLowerCase();
+                  const nameLower = v.formatted_name.trim().toLowerCase();
 
                   // If it's a recognized metal variation
                   if (acceptedMetalNames.includes(nameLower)) {
