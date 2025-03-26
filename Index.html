@@ -403,8 +403,10 @@
       ];
 
       // We'll compile every variation into a multiline string
+      // Start with "Order Details:\n" ...
       let variationsText = "Order Details:\n";
 
+      // Iterate over each item
       for (let i = 0; i < 8; i++) {
         const cell     = document.getElementById("previewCell" + i);
         const qtyBox   = document.getElementById("quantityCell" + i);
@@ -417,6 +419,13 @@
           const item = items[i];
 
           try {
+            // If item.title exists, show first 4 words
+            if (item.title) {
+              // Take the first four words from the item.title
+              const firstFourWords = item.title.trim().split(" ").slice(0, 4).join(" ");
+              variationsText += firstFourWords + "\n";
+            }
+
             // Fetch listing images...
             const images = await fetchListingImages(item.listing_id);
             if (images && images.length > 0) {
@@ -453,16 +462,16 @@
                   const nameLower = v.formatted_name.trim().toLowerCase();
                   let value = v.formatted_value.trim();
 
-                  // 1) Personalization replacement
+                  // Personalization replacement
                   if (nameLower === "personalization" && value === "Not requested on this item.") {
                     value = "Not Requested";
                     variationsText += `Personalization: ${value}\n`;
 
-                  // 2) Metal Variation
+                  // Metal Variation
                   } else if (acceptedMetalNames.includes(nameLower)) {
                     variationsText += `Metal Choice: ${value}\n`;
 
-                  // 3) Length Variation
+                  // Length Variation
                   } else if (acceptedLengthNames.includes(nameLower)) {
                     const lengthMapping = {
                       '14&quot;': '14 Inches',
@@ -479,7 +488,7 @@
                     }
                     variationsText += `Item Length: ${value}\n`;
 
-                  // 4) Otherwise standard "Name: Value"
+                  // Otherwise standard "Name: Value"
                   } else {
                     variationsText += `${v.formatted_name}: ${v.formatted_value}\n`;
                   }
