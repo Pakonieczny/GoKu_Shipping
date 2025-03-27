@@ -30,7 +30,7 @@
     }
 
     /*
-     * #etsyOrderNumber => NO leading space 
+     * #etsyOrderNumber => NO leading space
      */
     #etsyOrderNumber {
       position: absolute;
@@ -42,7 +42,7 @@
     }
 
     /*
-     * #orderInformation => add 1 leading space in the placeholder
+     * #orderInformation => 1 leading space in placeholder
      */
     #orderInformation {
       position: absolute;
@@ -67,9 +67,9 @@
 
     /*
      * 16 text-box-absolute for quantity & metal
-     *  - 0.7em font
-     *  - no border/outline
-     *  - leading space in value is set in JS
+     *   - 0.7em font
+     *   - no border/outline
+     *   - leading space in JS
      */
     .text-box-absolute {
       position: absolute;
@@ -87,10 +87,9 @@
       box-sizing: border-box;
     }
 
-    /*
-     * Order Details box:
-     *  - line-height: 1.5
-     *  - We'll prefix each line with a space in JS
+    /* 
+     * Increase the Order Details text box font size from 0.8em to 0.9em 
+     * line-height: 1.5
      */
     #orderDetails {
       position: absolute;
@@ -100,7 +99,7 @@
       box-sizing: border-box;
       outline: none;
       background: transparent;
-      font-size: 0.8em;
+      font-size: 0.9em; /* was 0.8em, now 0.9em */
       line-height: 1.5;
       resize: none;
       text-align: left;
@@ -108,7 +107,8 @@
     }
 
     /*
-     * Single-Line text boxes for Date/Ship => bigger & bold, plus leading space in JS
+     * Single-Line text boxes for DateOrdered, ShipDate => bigger, bold,
+     * plus leading space in JS
      */
     #dateOrdered,
     #shipDate {
@@ -121,6 +121,20 @@
       background: transparent;
       font-size: 0.9em;
       font-weight: bold;
+    }
+
+    /* 
+     * Title text (labels) for "Order Date:" & "Ship By:"
+     * in 0.7em font, absolutely positioned so you can place them
+     * via the config table
+     */
+    #titleOrderDate,
+    #titleShipDate {
+      position: absolute;
+      font-size: 0.7em;
+      font-weight: normal;
+      margin: 0;
+      padding: 0;
     }
 
     /* Configuration Modal styling */
@@ -146,7 +160,6 @@
       background: white;
       font-size: 0.9em;
     }
-
     table.striped {
       width: 100%;
     }
@@ -171,7 +184,7 @@
   <input 
     type="text" 
     id="etsyOrderNumber" 
-    placeholder="Etsy Order Number"  
+    placeholder="Etsy Order Number"
   />
 
   <textarea 
@@ -204,6 +217,10 @@
 
   <!-- Order Details -->
   <textarea id="orderDetails"></textarea>
+
+  <!-- Title labels for Order/Ship date (0.7em) -->
+  <div id="titleOrderDate">Order Date:</div>
+  <div id="titleShipDate">Ship By:</div>
 
   <!-- Date/Ship Date boxes -->
   <input type="text" id="dateOrdered" placeholder="" />
@@ -238,16 +255,15 @@
 
   <script>
     /***********************************************************************
-     * Now we also have is_shipped => orderIsShipped
-     *   - If is_shipped is false => "Not Shipped"
-     *   - If is_shipped is true  => "Shipped!"
-     * We'll place that line right below "Status:"
-     * Then 1 blank line => "ORDER DETAILS:"
+     * We now rename:
+     *   "Status:" => "Payment Status:"
+     *   "is_shipped:" => "Shipping Status:"
+     * And we have the newly added labels #titleOrderDate & #titleShipDate
      ***********************************************************************/
     window.orderName       = ""; 
     window.orderStatus     = "";
     window.orderIsShipped  = "";
-    window.cachedOrderItems = [];
+    window.cachedOrderItems= [];
 
     /********** Check for Access Token / Code **********/
     (function() {
@@ -324,7 +340,9 @@
       "metalCell0","metalCell1","metalCell2","metalCell3","metalCell4","metalCell5","metalCell6","metalCell7",
       "orderDetails",
       "dateOrdered",
-      "shipDate"
+      "shipDate",
+      "titleOrderDate",
+      "titleShipDate"
     ];
 
     function loadPositions(){
@@ -405,9 +423,9 @@
     /***********************************************************************
      * showItemDetails(index):
      *  - " ORDER FROM: [name]"
-     *  - " Status: [status]"
-     *  - " is_shipped: ... (Shipped!/Not Shipped)"
-     *  - (blank line)
+     *  - " Payment Status: [status]"
+     *  - " Shipping Status: Shipped!/Not Shipped"
+     *  - blank line
      *  - " ORDER DETAILS:"
      ***********************************************************************/
     function showItemDetails(index){
@@ -419,26 +437,24 @@
 
       let details="";
 
-      // 1) "ORDER FROM: [name]" if we have name
+      // 1) "ORDER FROM: [name]"
       if(window.orderName){
         details += " ORDER FROM: " + window.orderName + "\n";
       }
 
-      // 2) "Status: [someValue]" if we have orderStatus
+      // 2) "Status:" => "Payment Status:"
       if(window.orderStatus){
-        details += " Status: " + window.orderStatus + "\n";
+        details += " Payment Status: " + window.orderStatus + "\n";
       }
 
-      // 3) "is_shipped" => " Shipped!" or " Not Shipped"
+      // 3) "is_shipped:" => "Shipping Status:"
       if(window.orderIsShipped){
-        details += " is_shipped: " + window.orderIsShipped + "\n\n"; 
-        // => 1 line space before "ORDER DETAILS:"
+        details += " Shipping Status: " + window.orderIsShipped + "\n\n";
       } else {
-        // If empty => do nothing
-        details += "\n"; // If you want a line even if is_shipped is missing
+        details += "\n"; 
       }
 
-      // 4) "ORDER DETAILS:"
+      // 4) " ORDER DETAILS:"
       details += " ORDER DETAILS:\n\n"; 
 
       // Title
@@ -612,10 +628,7 @@
           window.orderStatus="";
         }
 
-        // is_shipped => window.orderIsShipped
-        // if false => "Not Shipped"
-        // if true  => "Shipped!"
-        // if neither => ""
+        // is_shipped => window.orderIsShipped => Shipped!/Not Shipped
         if(data.is_shipped===true){
           window.orderIsShipped="Shipped!";
         } else if(data.is_shipped===false){
