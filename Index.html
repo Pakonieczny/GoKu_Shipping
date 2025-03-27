@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <title>Etsy Order & OAuth Integration</title>
   <!-- Materialize CSS -->
-  <link rel="stylesheet" 
+  <link rel="stylesheet"
         href="https://cdnjs.cloudflare.com/ajax/libs/materialize/1.0.0/css/materialize.min.css">
 
   <style>
@@ -61,7 +61,7 @@
       transition: none !important;
     }
 
-    /* Absolutely positioned text boxes for Quantity & Metal, etc. */
+    /* Absolutely positioned text boxes for Quantity & Metal. */
     .text-box-absolute {
       position: absolute;
       border: none !important;
@@ -94,12 +94,12 @@
       outline: none !important;
       background: transparent;
       font-size: 0.7em !important;
-      resize: none;        
-      text-align: left;    
-      overflow-y: auto;    
+      resize: none;
+      text-align: left;
+      overflow-y: auto;
     }
 
-    /* New single-line text boxes for Date Ordered & Ship Date */
+    /* Single-line text boxes for Date Ordered & Ship Date */
     #dateOrdered, #shipDate {
       position: absolute;
       border: 1px solid black !important; /* 1px border like Order Details box */
@@ -161,7 +161,7 @@
   <!-- Image Grid (loaded from imageGrid.html) -->
   <div id="Photo_Grid"></div>
 
-  <!-- 16 Absolutely Positioned Text Boxes for quantity/metal cells -->
+  <!-- 16 Absolutely Positioned Text Boxes -->
   <input type="text" id="quantityCell0" class="text-box-absolute" readonly />
   <input type="text" id="quantityCell1" class="text-box-absolute" readonly />
   <input type="text" id="quantityCell2" class="text-box-absolute" readonly />
@@ -183,7 +183,7 @@
   <!-- Use TEXTAREA for multiline, named "orderDetails" -->
   <textarea id="orderDetails">Order Details:</textarea>
 
-  <!-- 2 New Single-Line Text Boxes with 1px border around them -->
+  <!-- 2 Single-Line Text Boxes w/ border for dates -->
   <input type="text" id="dateOrdered" placeholder="Date Ordered" />
   <input type="text" id="shipDate" placeholder="Ship Date" />
 
@@ -285,8 +285,8 @@
       "quantityCell0","quantityCell1","quantityCell2","quantityCell3","quantityCell4","quantityCell5","quantityCell6","quantityCell7",
       "metalCell0","metalCell1","metalCell2","metalCell3","metalCell4","metalCell5","metalCell6","metalCell7",
       "orderDetails",
-      "dateOrdered",   // NEW
-      "shipDate"       // NEW
+      "dateOrdered",   // For "Date Ordered"
+      "shipDate"       // For "Ship Date"
     ];
 
     function loadPositions() {
@@ -528,12 +528,34 @@
     function pullEtsyOrderDetails(orderNumber) {
       console.log("Pulling Etsy order details for order number:", orderNumber);
       const token = localStorage.getItem("access_token");
+
       return fetch('/.netlify/functions/etsyOrderProxy?orderId=' + encodeURIComponent(orderNumber), {
         headers: { "access-token": token }
       })
         .then(response => response.json())
         .then(data => {
           console.log("Etsy Order Data:", data);
+
+          // 1) Put the raw response in #orderInformation
+          document.getElementById("orderInformation").value = JSON.stringify(data, null, 2);
+
+          // 2) Convert "created_timestamp" into Day/Month/Year
+          if (data && data.created_timestamp) {
+            // Etsy's timestamp is often in seconds, so multiply by 1000
+            const dateObj = new Date(data.created_timestamp * 1000);
+
+            const day = String(dateObj.getDate()).padStart(2, '0');
+            const month = String(dateObj.getMonth() + 1).padStart(2, '0'); 
+            const year = dateObj.getFullYear();
+
+            // Example format: DD/MM/YYYY
+            const dateStr = `${day}/${month}/${year}`;
+            document.getElementById("dateOrdered").value = dateStr;
+          } else {
+            // If not found, clear or set a placeholder
+            document.getElementById("dateOrdered").value = "";
+          }
+
           return data;
         })
         .catch(error => {
@@ -541,7 +563,7 @@
           return null;
         });
     }
-    
+
     /********** DOMContentLoaded **********/
     document.addEventListener("DOMContentLoaded", function() {
       M.AutoInit();
@@ -574,7 +596,7 @@
         saveConfiguration();
       });
 
-      // Press Enter => fetch order from Etsy
+      // Press Enter => fetch order from Etsy & update UI
       const etsyOrderInput = document.getElementById("etsyOrderNumber");
       etsyOrderInput.addEventListener("keydown", async function(e) {
         if (e.key === "Enter") {
@@ -582,7 +604,6 @@
           if (orderNumber !== "") {
             const orderData = await pullEtsyOrderDetails(orderNumber);
             if (orderData) {
-              document.getElementById("orderInformation").value = JSON.stringify(orderData, null, 2);
               await updateImageGrid(orderData);
             }
           }
