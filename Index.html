@@ -82,25 +82,32 @@
     }
 
     /*
-     * Use a TEXTAREA for the Order Details box
-     * so multiline variations appear on separate lines.
+     * Order Details textarea: 
+     *  - Font size increased from 0.7em to 0.8em
+     *  - Bold “Order Details:” is approximated by uppercase + an extra blank line
+     *  - line-height = 0.5 for lines; 
+     *    extra blank line after ORDER DETAILS: => ~1.0 spacing
+     *  - Height is now 175px (50% smaller than 350px)
+     *  - Width enlarged by 50px => from 250px to 300px
      */
     #orderDetails {
       position: absolute;
       border: 1px solid black !important;
-      width: 250px !important;
-      height: 350px !important;
+      width: 300px !important;     /* +50px wider */
+      height: 175px !important;    /* 50% vertical shrink (was 350px) */
       box-sizing: border-box !important;
       outline: none !important;
       background: transparent;
-      font-size: 0.7em !important;
+      font-size: 0.8em !important; /* 1 step bigger than 0.7em */
+      line-height: 0.5 !important; /* 0.5 line spacing */
       resize: none;
       text-align: left;
       overflow-y: auto;
     }
 
-    /* Single-line text boxes for Date Ordered & Ship Date */
-    #dateOrdered, #shipDate {
+    /* Increase font size of Date Ordered & Ship Date by 1 step => 0.8em */
+    #dateOrdered, 
+    #shipDate {
       position: absolute;
       border: 1px solid black !important;
       width: 200px;
@@ -108,7 +115,7 @@
       box-sizing: border-box !important;
       outline: none !important;
       background: transparent;
-      font-size: 0.7em !important;
+      font-size: 0.8em !important; /* up from 0.7em */
     }
 
     /* Configuration Modal styling */
@@ -180,10 +187,12 @@
   <input type="text" id="metalCell6" class="text-box-absolute" readonly />
   <input type="text" id="metalCell7" class="text-box-absolute" readonly />
 
-  <!-- Use TEXTAREA for multiline, named "orderDetails" -->
-  <textarea id="orderDetails">Order Details:</textarea>
+  <!-- "Order Details" Textarea (styling above) -->
+  <textarea id="orderDetails">ORDER DETAILS:
 
-  <!-- 2 Single-Line Text Boxes w/ border for dates -->
+</textarea>
+
+  <!-- 2 Single-Line Text Boxes (styling above) -->
   <input type="text" id="dateOrdered" placeholder="Date Ordered" />
   <input type="text" id="shipDate" placeholder="Ship Date" />
 
@@ -207,7 +216,7 @@
       <a href="#!" id="saveConfigBtn" class="modal-close waves-effect waves-green btn">Save Config</a>
     </div>
   </div>
-  
+
   <!-- jQuery & Materialize -->
   <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/materialize/1.0.0/js/materialize.min.js"></script>
@@ -263,8 +272,8 @@
       const codeChallenge = await generateCodeChallenge(codeVerifier);
       const state = "randomState123";
       const scope = "listings_w listings_r transactions_r transactions_w";
-      const CLIENT_ID = "k75zdspz4r99txpqdji7i2em"; 
-      const redirectUri = "https://gokushipping.netlify.app"; 
+      const CLIENT_ID = "k75zdspz4r99txpqdji7i2em";
+      const redirectUri = "https://gokushipping.netlify.app";
       const etsyAuthUrl = `https://www.etsy.com/oauth/connect?response_type=code&client_id=${CLIENT_ID}`
                           + `&redirect_uri=${encodeURIComponent(redirectUri)}`
                           + `&scope=${encodeURIComponent(scope)}`
@@ -419,7 +428,9 @@
         "necklace length in inches"
       ];
 
-      let variationsText = "Order Details:\n";
+      // Notice we start with "ORDER DETAILS:\n\n" so there's an extra blank line
+      // to produce ~1.0 line spacing after the "ORDER DETAILS:" line
+      let variationsText = "ORDER DETAILS:\n\n";
 
       for (let i = 0; i < 8; i++) {
         const cell     = document.getElementById("previewCell" + i);
@@ -439,7 +450,7 @@
               variationsText += "Title: " + firstFourWords + "\n";
             }
 
-            // **Add the SKU line** (below Title:)
+            // Add the SKU line (below Title:)
             if (item.sku) {
               variationsText += "SKU: " + item.sku + "\n";
             }
