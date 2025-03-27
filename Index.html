@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <title>Etsy Order & OAuth Integration</title>
   <!-- Materialize CSS -->
-  <link rel="stylesheet" 
+  <link rel="stylesheet"
         href="https://cdnjs.cloudflare.com/ajax/libs/materialize/1.0.0/css/materialize.min.css">
   <style>
     /* Hide the page initially */
@@ -29,9 +29,7 @@
       top: 80px;
     }
 
-    /*
-     * #etsyOrderNumber => NO leading space
-     */
+    /* #etsyOrderNumber => no leading space */
     #etsyOrderNumber {
       position: absolute;
       left: 50px;
@@ -41,9 +39,7 @@
       width: 250px;
     }
 
-    /*
-     * #orderInformation => 1 leading space in placeholder
-     */
+    /* #orderInformation => leading space in placeholder */
     #orderInformation {
       position: absolute;
       left: 50px;
@@ -55,9 +51,7 @@
       resize: none;
     }
 
-    /*
-     * The Photo Grid (8 preview cells) – loaded from imageGrid.html
-     */
+    /* The Photo Grid (8 preview cells) */
     #Photo_Grid {
       position: absolute;
       left: 400px;
@@ -67,9 +61,9 @@
 
     /*
      * 16 text-box-absolute for quantity & metal
-     *   - 0.7em font
-     *   - no border/outline
-     *   - leading space in JS
+     *  - 0.7em font
+     *  - borderless
+     *  - leading space in JS
      */
     .text-box-absolute {
       position: absolute;
@@ -87,9 +81,8 @@
       box-sizing: border-box;
     }
 
-    /* 
-     * Increase the Order Details text box font size from 0.8em to 0.9em 
-     * line-height: 1.5
+    /*
+     * Increase the Order Details text size by 1 step 
      */
     #orderDetails {
       position: absolute;
@@ -99,7 +92,7 @@
       box-sizing: border-box;
       outline: none;
       background: transparent;
-      font-size: 0.9em; /* was 0.8em, now 0.9em */
+      font-size: 0.9em; /* bigger than before */
       line-height: 1.5;
       resize: none;
       text-align: left;
@@ -107,8 +100,7 @@
     }
 
     /*
-     * Single-Line text boxes for DateOrdered, ShipDate => bigger, bold,
-     * plus leading space in JS
+     * Single-Line text boxes for DateOrdered, ShipDate => bigger & bold 
      */
     #dateOrdered,
     #shipDate {
@@ -123,16 +115,13 @@
       font-weight: bold;
     }
 
-    /* 
-     * Title text (labels) for "Order Date:" & "Ship By:"
-     * in 0.7em font, absolutely positioned so you can place them
-     * via the config table
+    /*
+     * Title texts (labels) for Order Date & Ship Date (0.7em)
      */
     #titleOrderDate,
     #titleShipDate {
       position: absolute;
       font-size: 0.7em;
-      font-weight: normal;
       margin: 0;
       padding: 0;
     }
@@ -160,6 +149,7 @@
       background: white;
       font-size: 0.9em;
     }
+
     table.striped {
       width: 100%;
     }
@@ -176,7 +166,7 @@
 </head>
 
 <body>
-  <!-- Buttons -->
+  <!-- Main UI Buttons -->
   <button id="connectEtsyBtn" class="configurable btn waves-effect waves-light">Connect to Etsy</button>
   <button id="openConfigBtn" class="configurable btn waves-effect waves-light">Open Config</button>
 
@@ -186,7 +176,6 @@
     id="etsyOrderNumber" 
     placeholder="Etsy Order Number"
   />
-
   <textarea 
     id="orderInformation" 
     placeholder=" Order Information" 
@@ -218,7 +207,7 @@
   <!-- Order Details -->
   <textarea id="orderDetails"></textarea>
 
-  <!-- Title labels for Order/Ship date (0.7em) -->
+  <!-- Title labels for Order/Ship Date (0.7em) -->
   <div id="titleOrderDate">Order Date:</div>
   <div id="titleShipDate">Ship By:</div>
 
@@ -254,16 +243,19 @@
   ></script>
 
   <script>
-    /***********************************************************************
-     * We now rename:
-     *   "Status:" => "Payment Status:"
-     *   "is_shipped:" => "Shipping Status:"
-     * And we have the newly added labels #titleOrderDate & #titleShipDate
-     ***********************************************************************/
-    window.orderName       = ""; 
-    window.orderStatus     = "";
-    window.orderIsShipped  = "";
-    window.cachedOrderItems= [];
+    /*
+     * This code now sets #shipDate color as follows:
+     *    1) If the date is exactly today => #FFDAB9 (light orange)
+     *    2) If the date is AFTER today:
+     *         - if shipping status is "Shipped!" => #90EE90 (light green)
+     *         - else => #FFB6C1 (light red)
+     *    3) If the date is before or equal to yesterday => default (no color)
+     */
+
+    window.orderName      = "";
+    window.orderStatus    = "";
+    window.orderIsShipped = "";
+    window.cachedOrderItems = [];
 
     /********** Check for Access Token / Code **********/
     (function() {
@@ -349,10 +341,10 @@
       configComponentIDs.forEach(id=>{
         const el=document.getElementById(id);
         if(el){
-          const left=localStorage.getItem("pos-"+id+"-left");
-          const top=localStorage.getItem("pos-"+id+"-top");
-          const width=localStorage.getItem("pos-"+id+"-width");
-          const height=localStorage.getItem("pos-"+id+"-height");
+          const left=localStorage.getItem(`pos-${id}-left`);
+          const top=localStorage.getItem(`pos-${id}-top`);
+          const width=localStorage.getItem(`pos-${id}-width`);
+          const height=localStorage.getItem(`pos-${id}-height`);
           if(left!==null)   el.style.left=left+"px";
           if(top!==null)    el.style.top=top+"px";
           if(width!==null)  el.style.width=width+"px";
@@ -411,10 +403,10 @@
           const topVal=parseInt(cs.top)||0;
           const widthVal=parseInt(cs.width)||0;
           const heightVal=parseInt(cs.height)||0;
-          localStorage.setItem("pos-"+id+"-left",  leftVal);
-          localStorage.setItem("pos-"+id+"-top",   topVal);
-          localStorage.setItem("pos-"+id+"-width", widthVal);
-          localStorage.setItem("pos-"+id+"-height",heightVal);
+          localStorage.setItem(`pos-${id}-left`,  leftVal);
+          localStorage.setItem(`pos-${id}-top`,   topVal);
+          localStorage.setItem(`pos-${id}-width`, widthVal);
+          localStorage.setItem(`pos-${id}-height`,heightVal);
         }
       });
       console.log("Configuration saved.");
@@ -422,11 +414,11 @@
 
     /***********************************************************************
      * showItemDetails(index):
-     *  - " ORDER FROM: [name]"
-     *  - " Payment Status: [status]"
-     *  - " Shipping Status: Shipped!/Not Shipped"
-     *  - blank line
-     *  - " ORDER DETAILS:"
+     *   " ORDER FROM: [name]"
+     *   " Payment Status: [status]"
+     *   " Shipping Status: [Shipped!/Not Shipped]"
+     *   blank line
+     *   " ORDER DETAILS:"
      ***********************************************************************/
     function showItemDetails(index){
       if(!window.cachedOrderItems||!window.cachedOrderItems[index]){
@@ -437,24 +429,24 @@
 
       let details="";
 
-      // 1) "ORDER FROM: [name]"
+      // " ORDER FROM: [name]"
       if(window.orderName){
         details += " ORDER FROM: " + window.orderName + "\n";
       }
 
-      // 2) "Status:" => "Payment Status:"
+      // " Payment Status: [someValue]"
       if(window.orderStatus){
         details += " Payment Status: " + window.orderStatus + "\n";
       }
 
-      // 3) "is_shipped:" => "Shipping Status:"
+      // " Shipping Status: [Shipped!/Not Shipped]" + blank line
       if(window.orderIsShipped){
         details += " Shipping Status: " + window.orderIsShipped + "\n\n";
       } else {
         details += "\n"; 
       }
 
-      // 4) " ORDER DETAILS:"
+      // " ORDER DETAILS:"
       details += " ORDER DETAILS:\n\n"; 
 
       // Title
@@ -628,7 +620,7 @@
           window.orderStatus="";
         }
 
-        // is_shipped => window.orderIsShipped => Shipped!/Not Shipped
+        // is_shipped => "Shipped!" or "Not Shipped" or ""
         if(data.is_shipped===true){
           window.orderIsShipped="Shipped!";
         } else if(data.is_shipped===false){
@@ -637,11 +629,12 @@
           window.orderIsShipped="";
         }
 
+        // Check if there's a transaction => set date fields from first
         if(data.transactions && data.transactions.length>0){
           const firstTrans=data.transactions[0];
           const monthNames=["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
 
-          // Date Ordered => leading space
+          // created_timestamp => dateOrdered
           if(firstTrans.created_timestamp){
             const d=new Date(firstTrans.created_timestamp*1000);
             const day=String(d.getDate()).padStart(2,'0');
@@ -652,19 +645,50 @@
             document.getElementById("dateOrdered").value="";
           }
 
-          // Ship Date => leading space
+          // expected_ship_date => shipDate
+          const shipDateField=document.getElementById("shipDate");
+          shipDateField.style.color=""; // reset color to default
+
           if(firstTrans.expected_ship_date){
             const s=new Date(firstTrans.expected_ship_date*1000);
             const sDay=String(s.getDate()).padStart(2,'0');
             const sMonth=monthNames[s.getMonth()];
             const sYear=s.getFullYear();
-            document.getElementById("shipDate").value=" "+sDay+" "+sMonth+" "+sYear;
+            shipDateField.value=" "+sDay+" "+sMonth+" "+sYear;
+
+            // Compare ignoring time => see if it's "today", "after", or "past"
+            const today=new Date();
+            const todayMid=new Date(today.getFullYear(), today.getMonth(), today.getDate());
+            const shipMid=new Date(s.getFullYear(), s.getMonth(), s.getDate());
+
+            // 1) if same day => #FFDAB9
+            if(shipMid.getTime()===todayMid.getTime()){
+              shipDateField.style.color="#FFDAB9"; // orange
+            }
+            // 2) if AFTER today => shipMid > todayMid
+            else if(shipMid>todayMid){
+              // if shipping status is "Shipped!" => green
+              if(window.orderIsShipped==="Shipped!"){
+                shipDateField.style.color="#90EE90"; // light green
+              } else {
+                // else => red
+                shipDateField.style.color="#FFB6C1"; // light red
+              }
+            }
+            // 3) otherwise => it's before or equal to yesterday => default color
+            else {
+              shipDateField.style.color="";
+            }
+
           } else {
-            document.getElementById("shipDate").value="";
+            shipDateField.value="";
           }
+
         } else {
           document.getElementById("dateOrdered").value="";
-          document.getElementById("shipDate").value="";
+          const shipDateField=document.getElementById("shipDate");
+          shipDateField.value="";
+          shipDateField.style.color="";
         }
         return data;
       })
