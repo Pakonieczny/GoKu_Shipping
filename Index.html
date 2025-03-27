@@ -3,11 +3,13 @@
 <head>
   <meta charset="UTF-8">
   <title>Etsy Order & OAuth Integration</title>
+
   <!-- Materialize CSS -->
-  <link 
+  <link
     rel="stylesheet"
     href="https://cdnjs.cloudflare.com/ajax/libs/materialize/1.0.0/css/materialize.min.css"
   >
+
   <style>
     /* Hide the page initially for a fade-in effect */
     body {
@@ -32,12 +34,12 @@
     }
 
     /*
-     * The "Order Link" button (#orderLinkBtn)
-     *   - uses a smaller (14×14) globe icon
+     * "Order Link" button (#orderLinkBtn)
+     *   - smaller globe icon (14×14)
      */
     #orderLinkBtn {
       position: absolute;
-      left: 120px; 
+      left: 120px;
       top: 20px;
       background: transparent;
       border: none;
@@ -46,14 +48,14 @@
       outline: none;
     }
     #orderLinkBtn img {
-      width: 14px;   
-      height: 14px;  
+      width: 14px;
+      height: 14px;
       display: block;
     }
 
     /*
-     * Etsy Order Number text box
-     *   - no extra spacing below typed text => underline is right beneath
+     * Etsy Order Number text box:
+     *   - no extra space below typed text => underline is right beneath
      *   - fully left-justified
      */
     #etsyOrderNumber {
@@ -73,7 +75,7 @@
     }
 
     /*
-     * A text area for storing "Order Information" in JSON format, read-only
+     * "Order Information" => read-only JSON
      */
     #orderInformation {
       position: absolute;
@@ -87,9 +89,8 @@
     }
 
     /*
-     * The Photo Grid => scaled to 1.35, 
-     * and the vertical gap between rows is 35px (shrunk by 10px from previous 45px).
-     * NOTE: If you're loading imageGrid.html separately, ensure it has row gap = 35px.
+     * The Photo Grid (8 images) => scaled to 1.35
+     * We embed the grid markup in #Photo_Grid
      */
     #Photo_Grid {
       position: absolute;
@@ -100,8 +101,46 @@
     }
 
     /*
-     * The 16 text boxes for quantity/metal => 0.9em
-     * (matching #orderDetails font size)
+     * Our 2×4 grid container => row gap is 10px less than before
+     * If your old gap was 45px, it's now 35px
+     */
+    #photoGridContainer {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      grid-template-rows: repeat(2, auto);
+      /* 35px vertical gap, 5px horizontal gap */
+      gap: 35px 5px;
+    }
+
+    .grid-cell {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+    }
+
+    .preview-box {
+      /* Force border thickness to 1px */
+      border: 1px solid black !important;
+      background: #f9f9f9;
+      width: 100%;
+      height: 150px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      overflow: hidden;
+      position: relative;
+    }
+    .preview-box img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      transform: scale(1);
+      transform-origin: center center;
+      transition: transform 0.2s ease;
+    }
+
+    /*
+     * 16 text-box-absolute => 0.9em (matching #orderDetails size)
      */
     .text-box-absolute {
       position: absolute;
@@ -110,7 +149,7 @@
       background: transparent !important;
       text-decoration: none !important;
       box-shadow: none !important;
-      font-size: 0.9em !important; 
+      font-size: 0.9em !important;
       width: 60px;
       height: 20px;
       text-align: left;
@@ -119,9 +158,7 @@
       box-sizing: border-box;
     }
 
-    /*
-     * The read-only Order Details box => 0.9em
-     */
+    /* read-only #orderDetails => 0.9em */
     #orderDetails {
       position: absolute;
       border: 1px solid black;
@@ -137,9 +174,7 @@
       overflow-y: auto;
     }
 
-    /*
-     * The "Customer Message History" => read/write, 0.9em
-     */
+    /* read/write #customerMessageHistory => 0.9em */
     #customerMessageHistory {
       position: absolute;
       border: 1px solid black;
@@ -171,9 +206,7 @@
       font-weight: bold;
     }
 
-    /*
-     * Title texts => we removed "Message History:"
-     */
+    /* Title texts (no "Message History:") */
     #titleOrderDate,
     #titleShipDate,
     #titleOrderDetails,
@@ -186,7 +219,7 @@
       padding: 0;
     }
 
-    /* The Configuration Modal styling */
+    /* Configuration Modal styling */
     .modal {
       position: fixed !important;
       top: 150px !important;
@@ -239,10 +272,45 @@
   <input type="text" id="etsyOrderNumber" placeholder="Etsy Order Number" />
   <textarea id="orderInformation" placeholder=" Order Information" readonly></textarea>
 
-  <!-- Photo Grid (scaled 1.35) => row gap is now 35px, col gap 5px, border 1px -->
-  <div id="Photo_Grid"></div>
+  <!-- Inline Photo Grid (2 rows × 4 columns) => row gap is 35px, col gap 5px, border=1px -->
+  <div id="Photo_Grid">
+    <div id="photoGridContainer">
+      <!-- row 1, col 1 -->
+      <div class="grid-cell">
+        <div class="preview-box" id="previewCell0">Empty</div>
+      </div>
+      <!-- row 1, col 2 -->
+      <div class="grid-cell">
+        <div class="preview-box" id="previewCell1">Empty</div>
+      </div>
+      <!-- row 1, col 3 -->
+      <div class="grid-cell">
+        <div class="preview-box" id="previewCell2">Empty</div>
+      </div>
+      <!-- row 1, col 4 -->
+      <div class="grid-cell">
+        <div class="preview-box" id="previewCell3">Empty</div>
+      </div>
+      <!-- row 2, col 1 -->
+      <div class="grid-cell">
+        <div class="preview-box" id="previewCell4">Empty</div>
+      </div>
+      <!-- row 2, col 2 -->
+      <div class="grid-cell">
+        <div class="preview-box" id="previewCell5">Empty</div>
+      </div>
+      <!-- row 2, col 3 -->
+      <div class="grid-cell">
+        <div class="preview-box" id="previewCell6">Empty</div>
+      </div>
+      <!-- row 2, col 4 -->
+      <div class="grid-cell">
+        <div class="preview-box" id="previewCell7">Empty</div>
+      </div>
+    </div>
+  </div>
 
-  <!-- 16 text-box-absolute => 0.9em (matching #orderDetails) -->
+  <!-- 16 text-box-absolute => 0.9em matching orderDetails -->
   <input type="text" id="quantityCell0" class="text-box-absolute" readonly />
   <input type="text" id="quantityCell1" class="text-box-absolute" readonly />
   <input type="text" id="quantityCell2" class="text-box-absolute" readonly />
@@ -267,7 +335,7 @@
   <!-- Customer Message History => read/write, 0.9em -->
   <textarea id="customerMessageHistory"></textarea>
 
-  <!-- Titles (no "Message History:") -->
+  <!-- Titles (no "Message History:"), Payment Status -> "Order Status:" is handled in code -->
   <div id="titleOrderDate">Order Date:</div>
   <div id="titleShipDate">Ship By:</div>
   <div id="titleOrderDetails">Order Details:</div>
@@ -275,7 +343,7 @@
   <div id="titlePurchasedItems">Purchased Items:</div>
   <div id="titleOrderNumber">Order Number</div>
 
-  <!-- Date/Ship Date => bigger & bold, read-only -->
+  <!-- Single-line text boxes => bigger & bold, read-only -->
   <input type="text" id="dateOrdered" readonly />
   <input type="text" id="shipDate"    readonly />
 
@@ -302,7 +370,7 @@
     </div>
   </div>
 
-  <!-- jQuery & Materialize -->
+  <!-- jQuery & Materialize JS -->
   <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
   <script
     src="https://cdnjs.cloudflare.com/ajax/libs/materialize/1.0.0/js/materialize.min.js"
@@ -310,15 +378,17 @@
 
   <script>
     /*
-     * A full final version:
-     *  - Grid scaled to 1.35 (down from 1.5)
-     *  - The row gap in imageGrid.html => 35px (10px less than previous 45px)
-     *  - 1px border for previews
-     *  - .text-box-absolute => 0.9em
-     *  - "Message History:" title removed
-     *  - #customerMessageHistory => read/write
-     *  - Payment Status => Order Status
+     * COMPLETE final code:
+     * 1) The vertical space between the 2 rows of 4 photos is 10px less,
+     *    specifically 35px row gap in #photoGridContainer (embedded).
+     * 2) The border thickness on all 8 image preview boxes is forcibly 1px 
+     *    via .preview-box { border: 1px solid black !important; }
+     * 3) #Photo_Grid is scaled 1.35 => 15% smaller than 1.5
+     * 4) .text-box-absolute => 0.9em, matching #orderDetails
+     * 5) "Message History:" title removed, #customerMessageHistory => read/write
+     * 6) Payment Status => "Order Status:" (done in showItemDetails)
      */
+
     window.orderName="";
     window.orderStatus="";
     window.orderIsShipped="";
@@ -333,7 +403,7 @@
         window.history.replaceState({},document.title,window.location.pathname);
         M.toast({html:"Connection Successful!"});
         console.log("Access token received:",accessToken);
-      } else{
+      }else{
         const authCode=urlParams.get("code");
         if(authCode){
           const storedCodeVerifier=localStorage.getItem("etsy_code_verifier");
@@ -342,13 +412,14 @@
                                  +encodeURIComponent(authCode)
                                  +"&code_verifier="
                                  +encodeURIComponent(storedCodeVerifier);
-          } else{
+          }else{
             console.error("No code verifier found in localStorage.");
           }
         }
       }
     })();
 
+    /* Functions for Etsy OAuth, config, etc. */
     function generateRandomString(length){
       const chars="ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
       let text="";
@@ -385,7 +456,7 @@
       window.location.href=etsyAuthUrl;
     });
 
-    /* Configuration stuff */
+    /* Config system */
     const configComponentIDs=[
       "connectEtsyBtn","openConfigBtn","orderLinkBtn","etsyOrderNumber","orderInformation",
       "Photo_Grid",
@@ -433,21 +504,22 @@
         `;
         tbody.appendChild(row);
 
+        // Live updates
         row.querySelector(".left-input").addEventListener("input",function(){
-          const tgt=document.getElementById(this.getAttribute("data-id"));
-          if(tgt)tgt.style.left=parseInt(this.value)+"px";
+          const target=document.getElementById(this.getAttribute("data-id"));
+          if(target)target.style.left=parseInt(this.value)+"px";
         });
         row.querySelector(".top-input").addEventListener("input",function(){
-          const tgt=document.getElementById(this.getAttribute("data-id"));
-          if(tgt)tgt.style.top=parseInt(this.value)+"px";
+          const target=document.getElementById(this.getAttribute("data-id"));
+          if(target)target.style.top=parseInt(this.value)+"px";
         });
         row.querySelector(".width-input").addEventListener("input",function(){
-          const tgt=document.getElementById(this.getAttribute("data-id"));
-          if(tgt)tgt.style.width=parseInt(this.value)+"px";
+          const target=document.getElementById(this.getAttribute("data-id"));
+          if(target)target.style.width=parseInt(this.value)+"px";
         });
         row.querySelector(".height-input").addEventListener("input",function(){
-          const tgt=document.getElementById(this.getAttribute("data-id"));
-          if(tgt)tgt.style.height=parseInt(this.value)+"px";
+          const target=document.getElementById(this.getAttribute("data-id"));
+          if(target)target.style.height=parseInt(this.value)+"px";
         });
       });
     }
@@ -486,7 +558,7 @@
       }
       if(window.orderIsShipped){
         details+=" Shipping Status: "+window.orderIsShipped+"\n\n";
-      } else {
+      }else{
         details+="\n";
       }
       details+=" ORDER DETAILS:\n\n";
@@ -535,7 +607,6 @@
       document.getElementById("orderDetails").value=details;
     }
 
-    /********** fetchListingImages => unchanged **********/
     async function fetchListingImages(listingId){
       const response=await fetch(`/.netlify/functions/etsyImages?listingId=${listingId}`,{
         headers:{"access-token":localStorage.getItem("access_token")}
@@ -546,8 +617,6 @@
       const data=await response.json();
       return data.results;
     }
-
-    /********** updateImageGrid => unchanged **********/
     async function updateImageGrid(data){
       let items=[];
       if(data.transactions && Array.isArray(data.transactions)){
@@ -627,8 +696,6 @@
           " ORDER DETAILS:\n\nNo items found.";
       }
     }
-
-    /********** pullEtsyOrderDetails => "CUSTOMER MESSAGE HISTORY:" removed **********/
     function pullEtsyOrderDetails(orderNumber){
       console.log("Pulling Etsy order details for order number:",orderNumber);
       const token=localStorage.getItem("access_token");
@@ -710,15 +777,7 @@
     document.addEventListener("DOMContentLoaded",()=>{
       M.AutoInit();
 
-      // Load imageGrid.html => row gap=35px, col gap=5px, border=1px
-      $("#Photo_Grid").load("imageGrid.html",(resp,status,xhr)=>{
-        if(status==="error"){
-          console.error("Error loading image grid:",xhr.status,xhr.statusText);
-        }else{
-          console.log("Image grid loaded successfully.");
-        }
-      });
-
+      // We no longer load separate "imageGrid.html" because it's inlined:
       // fade-in effect
       document.body.style.opacity=0;
       setTimeout(()=>{
@@ -736,7 +795,6 @@
         saveConfiguration();
       });
 
-      // Press Enter => fetch Etsy order => update grid
       const etsyOrderInput=document.getElementById("etsyOrderNumber");
       etsyOrderInput.addEventListener("keydown",async e=>{
         if(e.key==="Enter"){
@@ -750,7 +808,7 @@
         }
       });
 
-      // "Order Link" button => open new tab with the custom link
+      // "Order Link" => open new tab with custom link
       const orderLinkBtn=document.getElementById("orderLinkBtn");
       orderLinkBtn.addEventListener("click",()=>{
         const baseUrl="https://www.etsy.com/your/orders/sold?ref=seller-platform-mcnav&order_id=0000000000";
@@ -759,7 +817,6 @@
           console.log("No order number entered.");
           return;
         }
-        // replace 0000000000 with the actual order number
         const customLink=baseUrl.replace("0000000000",currentOrder);
         window.open(customLink,"_blank");
       });
