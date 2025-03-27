@@ -18,19 +18,19 @@
       transition: opacity 0s;
     }
 
-    /* Existing items for your main UI */
+    /* Buttons */
     #connectEtsyBtn {
       position: absolute;
       left: 50px;
       top: 20px;
-      transition: none !important;
     }
     #openConfigBtn {
       position: absolute;
       left: 50px;
       top: 80px;
-      transition: none !important;
     }
+
+    /* Etsy Order Input, Info */
     #etsyOrderNumber {
       position: absolute;
       left: 50px;
@@ -38,7 +38,6 @@
       font-size: 1em;
       padding: 8px;
       width: 250px;
-      transition: none !important;
     }
     #orderInformation {
       position: absolute;
@@ -49,30 +48,23 @@
       font-size: 1em;
       padding: 8px;
       resize: none;
-      transition: none !important;
     }
 
-    /* The container that loads imageGrid.html (2 rows × 4 columns) */
+    /* Photo Grid (8 preview cells), loaded from imageGrid.html */
     #Photo_Grid {
       position: absolute;
       left: 400px;
       top: 140px;
       width: 532px;
-      transition: none !important;
     }
 
-    /* Absolutely positioned text boxes for Quantity & Metal, etc. */
+    /* Absolutely positioned text boxes for quantity & metal */
     .text-box-absolute {
       position: absolute;
-      border: none !important;
-      outline: none !important;
-      text-decoration: none !important;
-      box-shadow: none !important;
+      border: none;
+      outline: none;
       background: transparent;
-      -webkit-appearance: none;
-      -moz-appearance: none;
-      appearance: none;
-      font-size: 0.7em !important;
+      font-size: 0.7em;
       width: 60px;
       height: 20px;
       text-align: left;
@@ -81,40 +73,37 @@
       box-sizing: border-box;
     }
 
-    /*
-     * Order Details textarea
-     * line-height, height, etc. from previous customizations
-     */
+    /* The multiline Order Details box */
     #orderDetails {
       position: absolute;
-      border: 1px solid black !important;
-      width: 300px !important;
-      height: 175px !important;
-      box-sizing: border-box !important;
-      outline: none !important;
+      border: 1px solid black;
+      width: 300px;
+      height: 175px;
+      box-sizing: border-box;
+      outline: none;
       background: transparent;
-      font-size: 0.8em !important; 
-      line-height: 1.5 !important;
+      font-size: 0.8em;
+      line-height: 1.5;
       resize: none;
       text-align: left;
       overflow-y: auto;
     }
 
-    /* Increase font size / bold for Date Ordered & Ship Date from previous customizations */
+    /* Single-Line text boxes for Date/Ship, bigger & bold */
     #dateOrdered,
     #shipDate {
       position: absolute;
-      border: 1px solid black !important;
+      border: 1px solid black;
       width: 200px;
       height: 20px;
-      box-sizing: border-box !important;
-      outline: none !important;
+      box-sizing: border-box;
+      outline: none;
       background: transparent;
-      font-size: 0.9em !important;
-      font-weight: bold !important;
+      font-size: 0.9em;
+      font-weight: bold;
     }
 
-    /* Configuration Modal styling */
+    /* Config Modal */
     .modal {
       position: fixed !important;
       top: 150px !important;
@@ -137,12 +126,10 @@
       background: white;
       font-size: 0.9em;
     }
-
     table.striped {
       width: 100%;
     }
-    table.striped th,
-    table.striped td {
+    table.striped th, table.striped td {
       padding: 8px;
       text-align: center;
     }
@@ -153,7 +140,7 @@
   </style>
 </head>
 <body>
-  <!-- Main UI Buttons -->
+  <!-- Buttons -->
   <button id="connectEtsyBtn" class="configurable btn waves-effect waves-light">Connect to Etsy</button>
   <button id="openConfigBtn" class="configurable btn waves-effect waves-light">Open Config</button>
 
@@ -161,10 +148,10 @@
   <input type="text" id="etsyOrderNumber" placeholder="Etsy Order Number" />
   <textarea id="orderInformation" placeholder="Order Information" readonly></textarea>
 
-  <!-- Image Grid (loaded from imageGrid.html) -->
+  <!-- Photo Grid -->
   <div id="Photo_Grid"></div>
 
-  <!-- 16 Absolutely Positioned Text Boxes -->
+  <!-- 16 text-box-absolute for quantity/metal -->
   <input type="text" id="quantityCell0" class="text-box-absolute" readonly />
   <input type="text" id="quantityCell1" class="text-box-absolute" readonly />
   <input type="text" id="quantityCell2" class="text-box-absolute" readonly />
@@ -183,12 +170,12 @@
   <input type="text" id="metalCell6" class="text-box-absolute" readonly />
   <input type="text" id="metalCell7" class="text-box-absolute" readonly />
 
-  <!-- Order Details Textarea -->
+  <!-- Order Details -->
   <textarea id="orderDetails">ORDER DETAILS:
 
 </textarea>
 
-  <!-- Single-Line Text Boxes for Dates -->
+  <!-- Date/Ship Date boxes -->
   <input type="text" id="dateOrdered" placeholder="Date Ordered" />
   <input type="text" id="shipDate" placeholder="Ship Date" />
 
@@ -212,15 +199,12 @@
       <a href="#!" id="saveConfigBtn" class="modal-close waves-effect waves-green btn">Save Config</a>
     </div>
   </div>
-  
+
   <!-- jQuery & Materialize -->
   <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/materialize/1.0.0/js/materialize.min.js"></script>
   <script>
-    /***********************************************************************
-     * Global array to store the order items, so we can let the user click
-     * an image preview & display that item’s details in #orderDetails.
-     ***********************************************************************/
+    // Keep track of items so we can handle image clicks
     window.cachedOrderItems = [];
 
     /********** Check for Access Token / Code **********/
@@ -287,7 +271,7 @@
     });
 
     /********** UI Configuration **********/
-    var configComponentIDs = [
+    const configComponentIDs = [
       "connectEtsyBtn",
       "openConfigBtn",
       "etsyOrderNumber",
@@ -301,17 +285,17 @@
     ];
 
     function loadPositions() {
-      configComponentIDs.forEach(function(id) {
+      configComponentIDs.forEach(id => {
         const el = document.getElementById(id);
         if (el) {
           const savedLeft = localStorage.getItem("pos-" + id + "-left");
-          const savedTop = localStorage.getItem("pos-" + id + "-top");
-          const savedWidth = localStorage.getItem("pos-" + id + "-width");
-          const savedHeight = localStorage.getItem("pos-" + id + "-height");
-          if (savedLeft !== null) el.style.left = savedLeft + "px";
-          if (savedTop !== null) el.style.top = savedTop + "px";
-          if (savedWidth !== null) el.style.width = savedWidth + "px";
-          if (savedHeight !== null) el.style.height = savedHeight + "px";
+          const savedTop  = localStorage.getItem("pos-" + id + "-top");
+          const savedWidth= localStorage.getItem("pos-" + id + "-width");
+          const savedHeight=localStorage.getItem("pos-" + id + "-height");
+          if (savedLeft  !== null) el.style.left   = savedLeft + "px";
+          if (savedTop   !== null) el.style.top    = savedTop + "px";
+          if (savedWidth !== null) el.style.width  = savedWidth + "px";
+          if (savedHeight!== null) el.style.height = savedHeight + "px";
         }
       });
     }
@@ -319,23 +303,23 @@
     function populateConfigTable() {
       const tbody = document.getElementById("configTable").querySelector("tbody");
       tbody.innerHTML = "";
-      
-      configComponentIDs.forEach(function(id) {
+
+      configComponentIDs.forEach(id => {
         const el = document.getElementById(id);
         if (!el) return;
         const compName = el.textContent.trim() || el.value?.trim() || id;
         const cs = window.getComputedStyle(el);
-        const leftVal = (cs.left === "auto") ? 0 : parseInt(cs.left);
-        const topVal = (cs.top === "auto") ? 0 : parseInt(cs.top);
-        const widthVal = (cs.width === "auto") ? 0 : parseInt(cs.width);
-        const heightVal = (cs.height === "auto") ? 0 : parseInt(cs.height);
-        
+        const leftVal   = (cs.left==="auto")?0:parseInt(cs.left);
+        const topVal    = (cs.top ==="auto")?0:parseInt(cs.top);
+        const widthVal  = (cs.width==="auto")?0:parseInt(cs.width);
+        const heightVal = (cs.height==="auto")?0:parseInt(cs.height);
+
         const row = document.createElement("tr");
         row.innerHTML = `
           <td>${compName}</td>
-          <td><input type="number" value="${leftVal}" data-id="${id}" class="left-input"></td>
-          <td><input type="number" value="${topVal}" data-id="${id}" class="top-input"></td>
-          <td><input type="number" value="${widthVal}" data-id="${id}" class="width-input"></td>
+          <td><input type="number" value="${leftVal}"   data-id="${id}" class="left-input"></td>
+          <td><input type="number" value="${topVal}"    data-id="${id}" class="top-input"></td>
+          <td><input type="number" value="${widthVal}"  data-id="${id}" class="width-input"></td>
           <td><input type="number" value="${heightVal}" data-id="${id}" class="height-input"></td>
         `;
         tbody.appendChild(row);
@@ -347,30 +331,30 @@
         });
         row.querySelector(".top-input").addEventListener("input", function() {
           const target = document.getElementById(this.getAttribute("data-id"));
-          if (target) target.style.top = parseInt(this.value) + "px";
+          if (target) target.style.top  = parseInt(this.value) + "px";
         });
         row.querySelector(".width-input").addEventListener("input", function() {
           const target = document.getElementById(this.getAttribute("data-id"));
-          if (target) target.style.width = parseInt(this.value) + "px";
+          if (target) target.style.width= parseInt(this.value) + "px";
         });
         row.querySelector(".height-input").addEventListener("input", function() {
           const target = document.getElementById(this.getAttribute("data-id"));
-          if (target) target.style.height = parseInt(this.value) + "px";
+          if (target) target.style.height= parseInt(this.value) + "px";
         });
       });
     }
     
     function saveConfiguration() {
-      configComponentIDs.forEach(function(id) {
+      configComponentIDs.forEach(id => {
         const el = document.getElementById(id);
         if (el) {
-          const leftVal = parseInt(window.getComputedStyle(el).left) || 0;
-          const topVal = parseInt(window.getComputedStyle(el).top) || 0;
-          const widthVal = parseInt(window.getComputedStyle(el).width) || 0;
+          const leftVal   = parseInt(window.getComputedStyle(el).left)   || 0;
+          const topVal    = parseInt(window.getComputedStyle(el).top)    || 0;
+          const widthVal  = parseInt(window.getComputedStyle(el).width)  || 0;
           const heightVal = parseInt(window.getComputedStyle(el).height) || 0;
-          localStorage.setItem("pos-" + id + "-left", leftVal);
-          localStorage.setItem("pos-" + id + "-top", topVal);
-          localStorage.setItem("pos-" + id + "-width", widthVal);
+          localStorage.setItem("pos-" + id + "-left",   leftVal);
+          localStorage.setItem("pos-" + id + "-top",    topVal);
+          localStorage.setItem("pos-" + id + "-width",  widthVal);
           localStorage.setItem("pos-" + id + "-height", heightVal);
         }
       });
@@ -379,17 +363,14 @@
 
     /***********************************************************************
      * showItemDetails(index):
-     * Build the multiline text for items[index] & place into #orderDetails
+     * Rebuild multiline text for items[index] & place into #orderDetails
      ***********************************************************************/
     function showItemDetails(index) {
-      // Only proceed if cachedOrderItems is set & index is valid
       if (!window.cachedOrderItems || !window.cachedOrderItems[index]) {
-        console.warn("No cached item at index:", index);
+        console.warn("No item at index:", index);
         return;
       }
       const item = window.cachedOrderItems[index];
-
-      // We'll compile text for just this one item
       let details = "ORDER DETAILS:\n\n";
 
       // Title
@@ -403,7 +384,7 @@
         details += "SKU: " + item.sku + "\n";
       }
 
-      // Build lines for variations
+      // Variation logic
       if (item.variations && Array.isArray(item.variations)) {
         const acceptedMetalNames = [
           "metal",
@@ -427,44 +408,44 @@
             let value = v.formatted_value.trim();
 
             // Personalization
-            if (nameLower === "personalization" && value === "Not requested on this item.") {
+            if (nameLower === "personalization" && value==="Not requested on this item.") {
               value = "Not Requested";
-              details += `Personalization: ${value}\n`;
+              details += "Personalization: " + value + "\n";
 
             // Metal Variation
             } else if (acceptedMetalNames.includes(nameLower)) {
-              details += `Metal Choice: ${value}\n`;
+              details += "Metal Choice: " + value + "\n";
 
             // Length Variation
             } else if (acceptedLengthNames.includes(nameLower)) {
               const lengthMapping = {
-                '14&quot;': '14 Inches',
-                '16&quot;': '16 Inches',
-                '18&quot;': '18 Inches',
-                '20&quot;': '20 Inches',
-                '14""': '14 Inches',
-                '16""': '16 Inches',
-                '18""': '18 Inches',
-                '20""': '20 Inches'
+                '14&quot;':'14 Inches',
+                '16&quot;':'16 Inches',
+                '18&quot;':'18 Inches',
+                '20&quot;':'20 Inches',
+                '14""':'14 Inches',
+                '16""':'16 Inches',
+                '18""':'18 Inches',
+                '20""':'20 Inches'
               };
               if (lengthMapping[value]) {
                 value = lengthMapping[value];
               }
-              details += `Item Length: ${value}\n`;
+              details += "Item Length: " + value + "\n";
 
-            // Otherwise normal
+            // default
             } else {
-              details += `${v.formatted_name}: ${v.formatted_value}\n`;
+              details += v.formatted_name + ": " + v.formatted_value + "\n";
             }
           }
         });
       }
 
-      // Put final text in #orderDetails
+      // Put text in #orderDetails
       document.getElementById("orderDetails").value = details;
     }
 
-    /********** Listing Images + “Update Image Grid” **********/
+    /********** fetchListingImages **********/
     async function fetchListingImages(listingId) {
       const response = await fetch(`/.netlify/functions/etsyImages?listingId=${listingId}`, {
         headers: {
@@ -478,9 +459,10 @@
       return data.results;
     }
     
+    /********** updateImageGrid **********/
     async function updateImageGrid(data) {
+      // Identify the array of items
       let items = [];
-
       if (data.transactions && Array.isArray(data.transactions)) {
         items = data.transactions;
       } else if (data.shipments && Array.isArray(data.shipments)) {
@@ -499,146 +481,172 @@
           }
         }
       }
+      window.cachedOrderItems = items;
 
-      // Store them in a global var so we can reference them in click events
-      window.cachedOrderItems = items || [];
-
-      // Render up to 8 images, attach click events
-      for (let i = 0; i < 8; i++) {
-        const cell = document.getElementById("previewCell" + i);
+      // Populate up to 8 images
+      for (let i=0; i<8; i++) {
+        const cell = document.getElementById("previewCell"+i);
+        const qtyBox   = document.getElementById("quantityCell"+i);
+        const metalBox = document.getElementById("metalCell"+i);
 
         if (cell) {
           if (i < items.length) {
             const item = items[i];
+
+            // fetch first image
             try {
-              // fetch the listing's 1st image
               const images = await fetchListingImages(item.listing_id);
-              if (images && images.length > 0) {
+              if (images && images.length>0) {
                 cell.innerHTML = `<img src="${images[0].url_fullxfull}" alt="Listing Image ${i}">`;
               } else {
                 cell.innerHTML = "No images found";
               }
-
-              // Make the cell clickable to show that item’s details
-              cell.style.cursor = "pointer";
-              cell.onclick = function() {
-                showItemDetails(i);
-              };
             } catch (error) {
-              console.error(`Error fetching images for listing ${item.listing_id}:`, error);
+              console.error(`Error fetching listing ${item.listing_id}:`, error);
               cell.innerHTML = "Error loading image";
             }
+
+            // Make cell clickable
+            cell.style.cursor = "pointer";
+            cell.onclick = function() {
+              showItemDetails(i);
+            };
+
+            // Set quantity text
+            if (qtyBox) {
+              const actualQty = (item.quantity != null) ? item.quantity : 0;
+              qtyBox.value = "Quantity: " + actualQty;
+            }
+            // Set metal text
+            if (metalBox) {
+              let metalSelection = "";
+              if (item.variations && Array.isArray(item.variations)) {
+                const acceptedMetalNames = [
+                  "metal",
+                  "metal choice",
+                  "metal - engraving",
+                  "metal colour",
+                  "color",
+                  "metal choice / engraving option"
+                ];
+                const metalVar = item.variations.find(v =>
+                  v.formatted_name &&
+                  acceptedMetalNames.includes(v.formatted_name.trim().toLowerCase())
+                );
+                if (metalVar) {
+                  metalSelection = metalVar.formatted_value || "";
+                }
+              }
+              metalBox.value = "Metal: " + metalSelection;
+            }
           } else {
+            // No item => "Empty"
             cell.innerHTML = "Empty";
             cell.style.cursor = "default";
             cell.onclick = null;
+            if (qtyBox)   qtyBox.value   = "";
+            if (metalBox) metalBox.value = "";
           }
         }
       }
 
-      // By default, only show the details for the FIRST item (index 0)
-      if (items.length > 0) {
+      // By default, only show details for item 0
+      if (items.length>0) {
         showItemDetails(0);
       } else {
-        // No items => clear
         document.getElementById("orderDetails").value = "ORDER DETAILS:\n\nNo items found.";
       }
     }
 
-    /********** Etsy Order Fetch **********/
+    /********** pullEtsyOrderDetails **********/
     function pullEtsyOrderDetails(orderNumber) {
       console.log("Pulling Etsy order details for order number:", orderNumber);
       const token = localStorage.getItem("access_token");
-
-      return fetch('/.netlify/functions/etsyOrderProxy?orderId=' + encodeURIComponent(orderNumber), {
+      return fetch('/.netlify/functions/etsyOrderProxy?orderId='+encodeURIComponent(orderNumber), {
         headers: { "access-token": token }
       })
-        .then(response => response.json())
-        .then(data => {
-          console.log("Etsy Order Data:", data);
-          document.getElementById("orderInformation").value = JSON.stringify(data, null, 2);
+      .then(r=>r.json())
+      .then(data=>{
+        console.log("Etsy Order Data:", data);
+        document.getElementById("orderInformation").value=JSON.stringify(data,null,2);
 
-          // If there's at least one transaction, set date fields from the first
-          if (data.transactions && data.transactions.length > 0) {
-            const firstTrans = data.transactions[0];
+        // If there's at least one transaction => set date fields from first
+        if (data.transactions && data.transactions.length>0) {
+          const firstTrans = data.transactions[0];
+          // numeric month => written month
+          const monthNames = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
 
-            // Convert numeric month => written month
-            const monthNames = [ "Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec" ];
-
-            // Date Ordered
-            if (firstTrans.created_timestamp) {
-              const dateObj = new Date(firstTrans.created_timestamp * 1000);
-              const day = String(dateObj.getDate()).padStart(2, '0');
-              const monthStr = monthNames[dateObj.getMonth()];
-              const year = dateObj.getFullYear();
-              document.getElementById("dateOrdered").value = `${day} ${monthStr} ${year}`;
-            } else {
-              document.getElementById("dateOrdered").value = "";
-            }
-
-            // Ship Date
-            if (firstTrans.expected_ship_date) {
-              const shipObj = new Date(firstTrans.expected_ship_date * 1000);
-              const sDay = String(shipObj.getDate()).padStart(2, '0');
-              const sMonthStr = monthNames[shipObj.getMonth()];
-              const sYear = shipObj.getFullYear();
-              document.getElementById("shipDate").value = `${sDay} ${sMonthStr} ${sYear}`;
-            } else {
-              document.getElementById("shipDate").value = "";
-            }
+          // Date Ordered
+          if (firstTrans.created_timestamp) {
+            const dateObj = new Date(firstTrans.created_timestamp*1000);
+            const day = String(dateObj.getDate()).padStart(2,"0");
+            const monthStr = monthNames[dateObj.getMonth()];
+            const year = dateObj.getFullYear();
+            document.getElementById("dateOrdered").value = `${day} ${monthStr} ${year}`;
           } else {
-            document.getElementById("dateOrdered").value = "";
-            document.getElementById("shipDate").value = "";
+            document.getElementById("dateOrdered").value="";
           }
 
-          return data;
-        })
-        .catch(error => {
-          console.error("Error fetching Etsy order details:", error);
-          return null;
-        });
+          // Ship Date
+          if (firstTrans.expected_ship_date) {
+            const shipObj = new Date(firstTrans.expected_ship_date*1000);
+            const sDay = String(shipObj.getDate()).padStart(2,"0");
+            const sMonthStr = monthNames[shipObj.getMonth()];
+            const sYear = shipObj.getFullYear();
+            document.getElementById("shipDate").value = `${sDay} ${sMonthStr} ${sYear}`;
+          } else {
+            document.getElementById("shipDate").value="";
+          }
+        } else {
+          document.getElementById("dateOrdered").value="";
+          document.getElementById("shipDate").value="";
+        }
+        return data;
+      })
+      .catch(err=>{
+        console.error("Error fetching Etsy order details:", err);
+        return null;
+      });
     }
 
     /********** DOMContentLoaded **********/
-    document.addEventListener("DOMContentLoaded", function() {
+    document.addEventListener("DOMContentLoaded",function(){
       M.AutoInit();
-
-      // Load imageGrid.html, which has the 8 previewCell# placeholders
-      $("#Photo_Grid").load("imageGrid.html", function(response, status, xhr) {
-        if (status === "error") {
-          console.error("Error loading image grid:", xhr.status, xhr.statusText);
-        } else {
+      // Load imageGrid
+      $("#Photo_Grid").load("imageGrid.html",(resp,status,xhr)=>{
+        if(status==="error"){
+          console.error("Error loading image grid:",xhr.status,xhr.statusText);
+        }else{
           console.log("Image grid loaded successfully.");
         }
       });
-      
-      document.body.style.opacity = 0;
-      setTimeout(function() {
+      document.body.style.opacity=0;
+      setTimeout(()=>{
         loadPositions();
-        document.body.style.opacity = 1;
-      }, 250);
+        document.body.style.opacity=1;
+      },250);
 
-      // Open the config modal
-      document.getElementById("openConfigBtn").addEventListener("click", function() {
+      // Open config
+      document.getElementById("openConfigBtn").addEventListener("click",function(){
         populateConfigTable();
-        const modalElem = document.getElementById("configModal");
-        const instance = M.Modal.getInstance(modalElem);
+        const modalElem=document.getElementById("configModal");
+        const instance=M.Modal.getInstance(modalElem);
         instance.open();
       });
 
-      // Save the config
-      document.getElementById("saveConfigBtn").addEventListener("click", function() {
+      // Save config
+      document.getElementById("saveConfigBtn").addEventListener("click",()=>{
         saveConfiguration();
       });
 
-      // Press Enter => fetch order from Etsy & update the UI
-      const etsyOrderInput = document.getElementById("etsyOrderNumber");
-      etsyOrderInput.addEventListener("keydown", async function(e) {
-        if (e.key === "Enter") {
-          const orderNumber = etsyOrderInput.value.trim();
-          if (orderNumber !== "") {
-            const orderData = await pullEtsyOrderDetails(orderNumber);
-            if (orderData) {
+      // Press Enter => fetch order => update grid
+      const etsyOrderInput=document.getElementById("etsyOrderNumber");
+      etsyOrderInput.addEventListener("keydown",async function(e){
+        if(e.key==="Enter"){
+          const orderNumber=etsyOrderInput.value.trim();
+          if(orderNumber!==""){
+            const orderData=await pullEtsyOrderDetails(orderNumber);
+            if(orderData){
               await updateImageGrid(orderData);
             }
           }
