@@ -83,27 +83,27 @@
 
     /*
      * Order Details textarea:
-     *  - line-height: 1.5 for all lines
-     *  - We'll insert partial line above 'ORDER DETAILS:' by using spaces plus \n
-     *  - We'll insert exactly 1 newline after 'ORDER DETAILS:' for 1.0 line gap
-     *  - The rest remains the same (height 175px, width 300px, font-size 0.8em)
+     *  - Remove extra space above "ORDER DETAILS:"
+     *  - Add EXACTLY 1 blank line after "ORDER DETAILS:"
+     *  - Keep line-height: 1.5 for all text
+     *  - Height is 175px, width is 300px, font-size is 0.8em
      */
     #orderDetails {
       position: absolute;
       border: 1px solid black !important;
-      width: 300px !important;     
-      height: 175px !important;    
+      width: 300px !important;
+      height: 175px !important;
       box-sizing: border-box !important;
       outline: none !important;
       background: transparent;
       font-size: 0.8em !important; 
-      line-height: 1.5 !important; /* Uniform spacing of 1.5 */
+      line-height: 1.5 !important; 
       resize: none;
       text-align: left;
       overflow-y: auto;
     }
 
-    /* Increase font size of Date Ordered & Ship Date by 1 step => 0.8em */
+    /* Increase font size by 1 & bold for Date Ordered & Ship Date */
     #dateOrdered,
     #shipDate {
       position: absolute;
@@ -113,7 +113,8 @@
       box-sizing: border-box !important;
       outline: none !important;
       background: transparent;
-      font-size: 0.8em !important; 
+      font-size: 0.9em !important; /* one step larger than previous */
+      font-weight: bold !important;
     }
 
     /* Configuration Modal styling */
@@ -186,17 +187,12 @@
   <input type="text" id="metalCell7" class="text-box-absolute" readonly />
 
   <!-- Order Details Textarea 
-       Attempting:
-         - ~0.5 line above ORDER DETAILS:
-         - 1 line after ORDER DETAILS:
-         - Then the rest of the lines at line-height: 1.5
-  -->
-  <textarea id="orderDetails"> 
- ORDER DETAILS:
+       EXACT 0 lines above, 1 blank line below "ORDER DETAILS:" -->
+  <textarea id="orderDetails">ORDER DETAILS:
 
 </textarea>
 
-  <!-- Single-Line Text Boxes for Dates -->
+  <!-- Single-Line Text Boxes for Dates (font size +1, bold) -->
   <input type="text" id="dateOrdered" placeholder="Date Ordered" />
   <input type="text" id="shipDate" placeholder="Ship Date" />
 
@@ -220,7 +216,7 @@
       <a href="#!" id="saveConfigBtn" class="modal-close waves-effect waves-green btn">Save Config</a>
     </div>
   </div>
-
+  
   <!-- jQuery & Materialize -->
   <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/materialize/1.0.0/js/materialize.min.js"></script>
@@ -431,11 +427,8 @@
         "necklace length in inches"
       ];
 
-      // We'll reuse the partial-line approach:
-      // " ' ' plus newline => ~0.5 line 
-      // 'ORDER DETAILS:' => line 
-      // then 1 newline => ~1 line after
-      let variationsText = ` \nORDER DETAILS:\n`;
+      // Single blank line after "ORDER DETAILS:"
+      let variationsText = "ORDER DETAILS:\n\n";
 
       for (let i = 0; i < 8; i++) {
         const cell     = document.getElementById("previewCell" + i);
@@ -460,7 +453,7 @@
               variationsText += "SKU: " + item.sku + "\n";
             }
 
-            // Fetch listing images...
+            // Fetch listing images
             const images = await fetchListingImages(item.listing_id);
             if (images && images.length > 0) {
               cell.innerHTML = `<img src="${images[0].url_fullxfull}" alt="Listing Image ${i}">`;
@@ -540,10 +533,7 @@
       }
 
       // Place all variation details into the multiline textarea
-      const detailsBox = document.getElementById("orderDetails");
-      if (detailsBox) {
-        detailsBox.value = variationsText;
-      }
+      document.getElementById("orderDetails").value = variationsText;
     }
 
     /********** Etsy Order Fetch **********/
@@ -558,31 +548,37 @@
         .then(data => {
           console.log("Etsy Order Data:", data);
 
-          // Show raw JSON in #orderInformation
+          // Show raw JSON
           document.getElementById("orderInformation").value = JSON.stringify(data, null, 2);
 
-          // If there's at least one transaction, set date fields from the first
+          // If there's at least one transaction, set date fields
           if (data.transactions && data.transactions.length > 0) {
             const firstTrans = data.transactions[0];
-            
-            // Date Ordered
+
+            // Convert numeric month => written month
+            const monthNames = [
+              "Jan","Feb","Mar","Apr","May","Jun",
+              "Jul","Aug","Sep","Oct","Nov","Dec"
+            ];
+
+            // ========== Date Ordered ==========
             if (firstTrans.created_timestamp) {
-              const dateObj = new Date(firstTrans.created_timestamp * 1000); 
+              const dateObj = new Date(firstTrans.created_timestamp * 1000);
               const day = String(dateObj.getDate()).padStart(2, '0');
-              const month = String(dateObj.getMonth() + 1).padStart(2, '0');
+              const monthStr = monthNames[dateObj.getMonth()]; // e.g. "Jan"
               const year = dateObj.getFullYear();
-              document.getElementById("dateOrdered").value = `${day}/${month}/${year}`;
+              document.getElementById("dateOrdered").value = `${day} ${monthStr} ${year}`;
             } else {
               document.getElementById("dateOrdered").value = "";
             }
 
-            // Ship Date
+            // ========== Ship Date ==========
             if (firstTrans.expected_ship_date) {
               const shipObj = new Date(firstTrans.expected_ship_date * 1000);
               const sDay = String(shipObj.getDate()).padStart(2, '0');
-              const sMonth = String(shipObj.getMonth() + 1).padStart(2, '0');
+              const sMonthStr = monthNames[shipObj.getMonth()];
               const sYear = shipObj.getFullYear();
-              document.getElementById("shipDate").value = `${sDay}/${sMonth}/${sYear}`;
+              document.getElementById("shipDate").value = `${sDay} ${sMonthStr} ${sYear}`;
             } else {
               document.getElementById("shipDate").value = "";
             }
