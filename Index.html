@@ -61,7 +61,7 @@
       transition: none !important;
     }
 
-    /* Absolutely positioned text boxes for Quantity & Metal. */
+    /* Absolutely positioned text boxes for Quantity & Metal, etc. */
     .text-box-absolute {
       position: absolute;
       border: none !important;
@@ -102,7 +102,7 @@
     /* Single-line text boxes for Date Ordered & Ship Date */
     #dateOrdered, #shipDate {
       position: absolute;
-      border: 1px solid black !important; /* 1px border, same style */
+      border: 1px solid black !important;
       width: 200px;
       height: 20px;
       box-sizing: border-box !important;
@@ -180,10 +180,10 @@
   <input type="text" id="metalCell6" class="text-box-absolute" readonly />
   <input type="text" id="metalCell7" class="text-box-absolute" readonly />
 
-  <!-- Use TEXTAREA for multiline "Order Details" -->
+  <!-- Use TEXTAREA for multiline, named "orderDetails" -->
   <textarea id="orderDetails">Order Details:</textarea>
 
-  <!-- Date Ordered & Ship Date text boxes -->
+  <!-- 2 Single-Line Text Boxes w/ border for dates -->
   <input type="text" id="dateOrdered" placeholder="Date Ordered" />
   <input type="text" id="shipDate" placeholder="Ship Date" />
 
@@ -384,7 +384,6 @@
       let items = [];
 
       // The receipt data might hold an array called "transactions"
-      // So let's get that array if it exists.
       if (data.transactions && Array.isArray(data.transactions)) {
         items = data.transactions;
       } else if (data.shipments && Array.isArray(data.shipments)) {
@@ -404,7 +403,6 @@
         }
       }
 
-      // Arrays for recognized metal and length variations
       const acceptedMetalNames = [
         "metal",
         "metal choice",
@@ -421,7 +419,6 @@
         "necklace length in inches"
       ];
 
-      // We'll compile every variation into a multiline string
       let variationsText = "Order Details:\n";
 
       for (let i = 0; i < 8; i++) {
@@ -440,6 +437,11 @@
             if (item.title) {
               const firstFourWords = item.title.trim().split(" ").slice(0, 4).join(" ");
               variationsText += "Title: " + firstFourWords + "\n";
+            }
+
+            // **Add the SKU line** (below Title:)
+            if (item.sku) {
+              variationsText += "SKU: " + item.sku + "\n";
             }
 
             // Fetch listing images...
@@ -543,11 +545,11 @@
           // Show raw JSON in #orderInformation
           document.getElementById("orderInformation").value = JSON.stringify(data, null, 2);
 
-          // We expect data.transactions[0] to hold created_timestamp & expected_ship_date
+          // If there's at least one transaction, set date fields from the first
           if (data.transactions && data.transactions.length > 0) {
             const firstTrans = data.transactions[0];
             
-            // 1) Date Ordered
+            // Date Ordered
             if (firstTrans.created_timestamp) {
               const dateObj = new Date(firstTrans.created_timestamp * 1000); 
               const day = String(dateObj.getDate()).padStart(2, '0');
@@ -558,7 +560,7 @@
               document.getElementById("dateOrdered").value = "";
             }
 
-            // 2) Ship Date
+            // Ship Date
             if (firstTrans.expected_ship_date) {
               const shipObj = new Date(firstTrans.expected_ship_date * 1000);
               const sDay = String(shipObj.getDate()).padStart(2, '0');
@@ -570,7 +572,7 @@
             }
 
           } else {
-            // If we have no transactions or an empty array
+            // No transactions
             document.getElementById("dateOrdered").value = "";
             document.getElementById("shipDate").value = "";
           }
