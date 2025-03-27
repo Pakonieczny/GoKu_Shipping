@@ -97,9 +97,9 @@
       outline: none !important;
       background: transparent;
       font-size: 0.7em !important;
-      resize: none;        /* so user can't manually resize via corner drag */
-      text-align: left;    /* left-justify multiline text */
-      overflow-y: auto;    /* allow scrolling if text is too tall */
+      resize: none;        
+      text-align: left;    
+      overflow-y: auto;    
     }
 
     /* Configuration Modal styling */
@@ -392,7 +392,8 @@
         "metal choice",
         "metal - engraving",
         "metal colour",
-        "color"
+        "color",
+        "metal choice / engraving option"  // <-- ADDED HERE
       ];
       const acceptedLengthNames = [
         "length",
@@ -492,7 +493,6 @@
                 }
               });
             }
-
           } catch (error) {
             console.error(`Error fetching images for listing ${item.listing_id}:`, error);
             cell.innerHTML = "Error loading image";
@@ -575,5 +575,7 @@
       });
     });
   </script>
+</body>
+</html>
 </body>
 </html>
