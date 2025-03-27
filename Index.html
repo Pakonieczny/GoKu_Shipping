@@ -33,8 +33,7 @@
     }
 
     /*
-     * "Order Link" button (#orderLinkBtn)
-     *   - smaller globe icon (14×14)
+     * "Order Link" button => smaller globe icon (14×14)
      */
     #orderLinkBtn {
       position: absolute;
@@ -55,7 +54,7 @@
     /*
      * Etsy Order Number text box
      *   - no extra space => underline right beneath
-     *   - fully left-justified
+     *   - left-justified
      */
     #etsyOrderNumber {
       position: absolute;
@@ -194,10 +193,10 @@
     }
 
     /*
-     * Title texts => we have #titleOrderDate2 for shipped_timestamp
+     * Title texts
      */
     #titleOrderDate,
-    #titleOrderDate2, /* will display shipped_timestamp if shipped, in bold */
+    #titleOrderDate2,
     #titleShipDate,
     #titleOrderDetails,
     #titleBritesMessages,
@@ -207,9 +206,6 @@
       font-size: 0.7em;
       margin: 0;
       padding: 0;
-    }
-    #titleOrderDate2 {
-      font-weight: bold;
     }
 
     /* Configuration Modal styling */
@@ -320,9 +316,9 @@
   <!-- Customer Message History => read/write, 0.9em -->
   <textarea id="customerMessageHistory"></textarea>
 
-  <!-- Title texts, #titleOrderDate2 => bold, used for shipped_timestamp -->
+  <!-- Title texts -->
   <div id="titleOrderDate">Order Date:</div>
-  <div id="titleOrderDate2" style="font-weight:bold;"></div>
+  <div id="titleOrderDate2"></div> <!-- Not used for shipping time anymore -->
   <div id="titleShipDate">Ship By:</div>
   <div id="titleOrderDetails">Order Details:</div>
   <div id="titleBritesMessages">Brites Messages</div>
@@ -364,17 +360,16 @@
 
   <script>
     /*
-     * COMPLETELY updated code:
-     * - #titleOrderDate2 now displays shipped_timestamp in bold 
-     *   if is_shipped===true => "Shipped On: DD Mmm YYYY"
-     * - If not shipped => #titleOrderDate2 is empty.
+     * We have removed:
+     *   - Any reference to "shipped_timestamp" in the Order Details text box
+     *   - The "Shipped!" text in the Order Details text box
+     * Everything else remains intact: wheel-based zoom, partial config, etc.
      */
 
     window.orderName="";
     window.orderStatus="";
     window.orderIsShipped="";
     window.cachedOrderItems=[];
-    window.orderShippedTimestamp=null;
 
     /********** Check for Access Token / Code **********/
     (function(){
@@ -439,7 +434,6 @@
 
     /*
      * Configuration system
-     *   includes #titleOrderDate2 so you can position it if desired
      */
     const configComponentIDs=[
       "connectEtsyBtn","openConfigBtn","orderLinkBtn","etsyOrderNumber","orderInformation",
@@ -525,14 +519,10 @@
       console.log("Configuration saved.");
     }
 
-    /************************************************************************
-     * showItemDetails(index):
-     *   " ORDER FROM: [name]"
-     *   " Order Status: [status]"
-     *   " Shipping Status: [Shipped! + shipped_timestamp if available]"
-     *   blank line
-     *   " ORDER DETAILS:"
-     ************************************************************************/
+    /*
+     * showItemDetails => we remove references to "shipped_timestamp" & "Shipped!" in the Order Details text box
+     *   We also skip displaying them entirely
+     */
     function showItemDetails(index){
       if(!window.cachedOrderItems||!window.cachedOrderItems[index]){
         console.warn("No item at index:",index);
@@ -552,27 +542,10 @@
         details+=" Order Status: "+window.orderStatus+"\n";
       }
 
-      // SHIPPING STATUS => if "Shipped!", also date => "Shipping Status: Shipped! 24 Mar 2023"
-      if(window.orderIsShipped==="Shipped!"){
-        let shippedDateString="";
-        if(window.orderShippedTimestamp){
-          const d=new Date(window.orderShippedTimestamp*1000);
-          const monthNames=["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
-          const day=("0"+d.getDate()).slice(-2);
-          const mStr=monthNames[d.getMonth()];
-          const y=d.getFullYear();
-          shippedDateString=" "+day+" "+mStr+" "+y; 
-        }
-        details+=" Shipping Status: Shipped!"+shippedDateString+"\n\n";
-      }
-      else if(window.orderIsShipped){
-        details+=" Shipping Status: "+window.orderIsShipped+"\n\n";
-      }
-      else {
-        details+="\n";
-      }
+      // We NO LONGER show "Shipped!" or "shipped_timestamp" in the Order Details text box
+      // so we skip shipping status lines entirely
 
-      details+=" ORDER DETAILS:\n\n";
+      details+="\n ORDER DETAILS:\n\n";
 
       // Title => first 4 words
       if(item.title){
@@ -703,7 +676,7 @@
     }
 
     /*
-     * pullEtsyOrderDetails => We'll also update #titleOrderDate2 if shipped
+     * pullEtsyOrderDetails => we won't integrate shipped_timestamp or "Shipped!" in the text box
      */
     function pullEtsyOrderDetails(orderNumber){
       console.log("Pulling Etsy order details for order number:",orderNumber);
@@ -716,53 +689,21 @@
         console.log("Etsy Order Data:",data);
         document.getElementById("orderInformation").value=" "+JSON.stringify(data,null,2);
 
-        // default => clear #titleOrderDate2
-        const titleDate2=document.getElementById("titleOrderDate2");
-        titleDate2.textContent=""; 
-
+        // We'll still capture name/status but we won't show "Shipped!" or the timestamp in the details
         if(data.name){
           window.orderName=data.name;
-        } else {
+        } else{
           window.orderName="";
         }
         if(data.status){
           window.orderStatus=data.status;
-        } else {
+        } else{
           window.orderStatus="";
         }
 
-        if(data.is_shipped===true){
-          window.orderIsShipped="Shipped!";
-        } else if(data.is_shipped===false){
-          window.orderIsShipped="Not Shipped";
-        } else {
-          window.orderIsShipped="";
-        }
+        // We won't store or use any shipped_timestamp references for the text box
 
-        // Check top-level shipped_timestamp or first transaction shipped_timestamp
-        let foundStamp=null;
-        if(data.shipped_timestamp && data.is_shipped===true){
-          foundStamp=data.shipped_timestamp;
-        } 
-        else if(data.transactions 
-                && Array.isArray(data.transactions) 
-                && data.transactions.length>0
-                && data.transactions[0].shipped_timestamp 
-                && data.is_shipped===true){
-          foundStamp=data.transactions[0].shipped_timestamp;
-        }
-        window.orderShippedTimestamp=foundStamp;
-
-        // If shipped => display in #titleOrderDate2 => "Shipped On: DD Mmm YYYY"
-        if(window.orderIsShipped==="Shipped!" && window.orderShippedTimestamp){
-          const d=new Date(window.orderShippedTimestamp*1000);
-          const monthNames=["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
-          const day=("0"+d.getDate()).slice(-2);
-          const mStr=monthNames[d.getMonth()];
-          const y=d.getFullYear();
-          titleDate2.textContent = `Shipped On: ${day} ${mStr} ${y}`; 
-        }
-
+        // If there's a message_from_buyer => show in #customerMessageHistory
         const msgBox=document.getElementById("customerMessageHistory");
         if(data.message_from_buyer){
           msgBox.value=data.message_from_buyer+"\n";
@@ -770,9 +711,12 @@
           msgBox.value="";
         }
 
+        // If there's at least one transaction => set #dateOrdered, #shipDate
         if(data.transactions && data.transactions.length>0){
           const firstTrans=data.transactions[0];
           const monthNames=["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+
+          // created_timestamp => #dateOrdered
           if(firstTrans.created_timestamp){
             const d=new Date(firstTrans.created_timestamp*1000);
             const day=("0"+d.getDate()).slice(-2);
@@ -782,6 +726,8 @@
           } else {
             document.getElementById("dateOrdered").value="";
           }
+
+          // expected_ship_date => #shipDate => we keep for the top-level UI, color changes remain
           const shipEl=document.getElementById("shipDate");
           shipEl.style.color="";
           if(firstTrans.expected_ship_date){
@@ -790,7 +736,9 @@
             const sMonth=monthNames[s.getMonth()];
             const sYear=s.getFullYear();
             shipEl.value=" "+sDay+" "+sMonth+" "+sYear;
-            if(window.orderIsShipped==="Shipped!"){
+            // We keep or remove the color logic? The user didn't specify removing color from #shipDate
+            // We'll leave it as is for now
+            if(data.is_shipped===true){
               shipEl.style.color="#006400";
             } else{
               shipEl.style.color="";
