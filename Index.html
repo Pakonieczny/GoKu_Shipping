@@ -61,7 +61,7 @@
       transition: none !important;
     }
 
-    /* Absolutely positioned text boxes for Quantity & Metal. */
+    /* Absolutely positioned text boxes for Quantity & Metal, etc. */
     .text-box-absolute {
       position: absolute;
       border: none !important;
@@ -72,10 +72,7 @@
       -webkit-appearance: none;
       -moz-appearance: none;
       appearance: none;
-
-      /* 0.7em font size */
       font-size: 0.7em !important;
-
       width: 60px;
       height: 20px;
       text-align: left;
@@ -100,6 +97,18 @@
       resize: none;        
       text-align: left;    
       overflow-y: auto;    
+    }
+
+    /* New single-line text boxes for Date Ordered & Ship Date */
+    #dateOrdered, #shipDate {
+      position: absolute;
+      border: 1px solid black !important; /* 1px border like Order Details box */
+      width: 200px;
+      height: 20px;
+      box-sizing: border-box !important;
+      outline: none !important;
+      background: transparent;
+      font-size: 0.7em !important;
     }
 
     /* Configuration Modal styling */
@@ -148,11 +157,11 @@
   <!-- Etsy Order Fields -->
   <input type="text" id="etsyOrderNumber" placeholder="Etsy Order Number" />
   <textarea id="orderInformation" placeholder="Order Information" readonly></textarea>
-  
+
   <!-- Image Grid (loaded from imageGrid.html) -->
   <div id="Photo_Grid"></div>
 
-  <!-- 16 Absolutely Positioned Text Boxes -->
+  <!-- 16 Absolutely Positioned Text Boxes for quantity/metal cells -->
   <input type="text" id="quantityCell0" class="text-box-absolute" readonly />
   <input type="text" id="quantityCell1" class="text-box-absolute" readonly />
   <input type="text" id="quantityCell2" class="text-box-absolute" readonly />
@@ -173,6 +182,10 @@
 
   <!-- Use TEXTAREA for multiline, named "orderDetails" -->
   <textarea id="orderDetails">Order Details:</textarea>
+
+  <!-- 2 New Single-Line Text Boxes with 1px border around them -->
+  <input type="text" id="dateOrdered" placeholder="Date Ordered" />
+  <input type="text" id="shipDate" placeholder="Ship Date" />
 
   <!-- Configuration Modal -->
   <div id="configModal" class="modal">
@@ -271,7 +284,9 @@
       "Photo_Grid",
       "quantityCell0","quantityCell1","quantityCell2","quantityCell3","quantityCell4","quantityCell5","quantityCell6","quantityCell7",
       "metalCell0","metalCell1","metalCell2","metalCell3","metalCell4","metalCell5","metalCell6","metalCell7",
-      "orderDetails"
+      "orderDetails",
+      "dateOrdered",   // NEW
+      "shipDate"       // NEW
     ];
 
     function loadPositions() {
@@ -297,7 +312,7 @@
       configComponentIDs.forEach(function(id) {
         const el = document.getElementById(id);
         if (!el) return;
-        const compName = el.textContent.trim() || el.value.trim() || id;
+        const compName = el.textContent.trim() || el.value?.trim() || id;
         const cs = window.getComputedStyle(el);
         const leftVal = (cs.left === "auto") ? 0 : parseInt(cs.left);
         const topVal = (cs.top === "auto") ? 0 : parseInt(cs.top);
@@ -393,7 +408,7 @@
         "metal - engraving",
         "metal colour",
         "color",
-        "metal choice / engraving option"  // <-- ADDED HERE
+        "metal choice / engraving option"
       ];
       const acceptedLengthNames = [
         "length",
