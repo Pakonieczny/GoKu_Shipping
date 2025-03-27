@@ -213,17 +213,10 @@
 
   <script>
     /***********************************************************************
-     * The JavaScript logic to:
-     * - handle Etsy OAuth
-     * - fetch order details
-     * - show date in month name form
-     * - populate the 8 images
-     * - display quantity & metal in quantityCell#/metalCell#
-     * - only show full multiline "Order Details" for item 0 by default
-     * - let you click an image cell to show that item’s details
+     *  Global variable: store the name from the top-level data (data.name)
+     *  so we can display "ORDER FROM: [name]" above "ORDER DETAILS:" 
      ***********************************************************************/
-
-    // Keep track of items for the click events
+    window.orderName = ""; 
     window.cachedOrderItems = [];
 
     /********** Check for Access Token / Code **********/
@@ -270,7 +263,7 @@
               .replace(/\//g, "_")
               .replace(/=+$/, "");
     }
-    
+
     document.getElementById("connectEtsyBtn").addEventListener("click", async () => {
       const codeVerifier = generateRandomString(64);
       localStorage.setItem("etsy_code_verifier", codeVerifier);
@@ -354,7 +347,7 @@
         });
         row.querySelector(".width-input").addEventListener("input", function() {
           const target = document.getElementById(this.getAttribute("data-id"));
-          if (target) target.style.width = parseInt(this.value) + "px";
+          if (target) target.style.width= parseInt(this.value) + "px";
         });
         row.querySelector(".height-input").addEventListener("input", function() {
           const target = document.getElementById(this.getAttribute("data-id"));
@@ -384,6 +377,7 @@
     /***********************************************************************
      * showItemDetails(index):
      * Build multiline text for item at `index` => #orderDetails
+     * Now includes "ORDER FROM: [name]" above "ORDER DETAILS:" 
      ***********************************************************************/
     function showItemDetails(index) {
       if (!window.cachedOrderItems || !window.cachedOrderItems[index]) {
@@ -391,7 +385,14 @@
         return;
       }
       const item = window.cachedOrderItems[index];
-      let details = "ORDER DETAILS:\n\n";
+
+      // Insert "ORDER FROM: [name]" if we have name
+      let details = "";
+      if (window.orderName) {
+        details += "ORDER FROM: " + window.orderName + "\n\n";
+      }
+
+      details += "ORDER DETAILS:\n\n";
 
       // Title
       if (item.title) {
@@ -428,8 +429,8 @@
             let value = v.formatted_value.trim();
 
             // Personalization
-            if (nameLower === "personalization" && value==="Not requested on this item.") {
-              value = "Not Requested";
+            if (nameLower==="personalization" && value==="Not requested on this item.") {
+              value="Not Requested";
               details += "Personalization: " + value + "\n";
 
             // Metal Variation
@@ -449,7 +450,7 @@
                 '20""':'20 Inches'
               };
               if (lengthMapping[value]) {
-                value=lengthMapping[value];
+                value = lengthMapping[value];
               }
               details += "Item Length: " + value + "\n";
 
@@ -461,7 +462,6 @@
         });
       }
 
-      // Put text in #orderDetails
       document.getElementById("orderDetails").value = details;
     }
 
@@ -518,15 +518,13 @@
               }else{
                 cell.innerHTML="No images found";
               }
-            } catch(err){
+            }catch(err){
               console.error(`Error fetching listing ${item.listing_id}:`,err);
               cell.innerHTML="Error loading image";
             }
             // Make cell clickable => showItemDetails(i)
             cell.style.cursor="pointer";
-            cell.onclick=function(){
-              showItemDetails(i);
-            };
+            cell.onclick=()=>{ showItemDetails(i); };
 
             // Set quantity
             if(qtyBox){
@@ -538,14 +536,18 @@
               let metalSelection="";
               if(item.variations && Array.isArray(item.variations)){
                 const acceptedMetalNames=[
-                  "metal","metal choice","metal - engraving",
-                  "metal colour","color","metal choice / engraving option"
+                  "metal",
+                  "metal choice",
+                  "metal - engraving",
+                  "metal colour",
+                  "color",
+                  "metal choice / engraving option"
                 ];
                 const metalVar=item.variations.find(v=>
-                  v.formatted_name&&
+                  v.formatted_name &&
                   acceptedMetalNames.includes(v.formatted_name.trim().toLowerCase())
                 );
-                if(metalVar) {
+                if(metalVar){
                   metalSelection=metalVar.formatted_value||"";
                 }
               }
@@ -562,7 +564,7 @@
         }
       }
 
-      // By default, only show item 0 in #orderDetails
+      // By default, show item 0 in #orderDetails
       if(items.length>0){
         showItemDetails(0);
       } else {
@@ -582,7 +584,14 @@
         console.log("Etsy Order Data:",data);
         document.getElementById("orderInformation").value=JSON.stringify(data,null,2);
 
-        // If there's at least one transaction => set date fields
+        // If data.name is present, store it in global => so we can do "ORDER FROM: name"
+        if(data.name){
+          window.orderName = data.name;
+        } else {
+          window.orderName = ""; 
+        }
+
+        // If there's at least one transaction => set date fields from first
         if(data.transactions && data.transactions.length>0){
           const firstTrans=data.transactions[0];
           const monthNames=["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
@@ -608,7 +617,7 @@
           } else {
             document.getElementById("shipDate").value="";
           }
-        }else{
+        } else {
           document.getElementById("dateOrdered").value="";
           document.getElementById("shipDate").value="";
         }
