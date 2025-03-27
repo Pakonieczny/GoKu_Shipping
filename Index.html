@@ -90,7 +90,7 @@
 
     /*
      * The Photo Grid (8 images) => scaled to 1.35
-     * We embed the grid markup in #Photo_Grid
+     * We embed the markup in #Photo_Grid
      */
     #Photo_Grid {
       position: absolute;
@@ -100,27 +100,26 @@
       transform-origin: top left;
     }
 
-    /*
-     * Our 2×4 grid container => row gap is 10px less than before
-     * If your old gap was 45px, it's now 35px
-     */
+    /* 2×4 grid container => row gap is 35px, col gap is 5px */
     #photoGridContainer {
       display: grid;
       grid-template-columns: repeat(4, 1fr);
       grid-template-rows: repeat(2, auto);
-      /* 35px vertical gap, 5px horizontal gap */
+      /* now 35px vertical gap */
       gap: 35px 5px;
     }
-
     .grid-cell {
       display: flex;
       flex-direction: column;
       align-items: center;
     }
 
+    /*
+     * Each .preview-box => 1px border EXACTLY, matching Order Details box
+     * plus wheel-based zoom code in script
+     */
     .preview-box {
-      /* Force border thickness to 1px */
-      border: 1px solid black !important;
+      border: 1px solid black !important; /* Force 1px perimeter line */
       background: #f9f9f9;
       width: 100%;
       height: 150px;
@@ -149,7 +148,7 @@
       background: transparent !important;
       text-decoration: none !important;
       box-shadow: none !important;
-      font-size: 0.8em !important;
+      font-size: 0.9em !important;
       width: 60px;
       height: 20px;
       text-align: left;
@@ -206,7 +205,7 @@
       font-weight: bold;
     }
 
-    /* Title texts (no "Message History:") */
+    /* Title texts => no "Message History:" */
     #titleOrderDate,
     #titleShipDate,
     #titleOrderDetails,
@@ -263,7 +262,7 @@
   <button id="connectEtsyBtn" class="configurable btn waves-effect waves-light">Connect to Etsy</button>
   <button id="openConfigBtn" class="configurable btn waves-effect waves-light">Open Config</button>
 
-  <!-- "Order Link" button => smaller 14×14 icon -->
+  <!-- "Order Link" button => smaller globe icon -->
   <button id="orderLinkBtn" name="Order Link">
     <img src="assets/Globe.png" alt="Order Link Icon" />
   </button>
@@ -272,45 +271,37 @@
   <input type="text" id="etsyOrderNumber" placeholder="Etsy Order Number" />
   <textarea id="orderInformation" placeholder=" Order Information" readonly></textarea>
 
-  <!-- Inline Photo Grid (2 rows × 4 columns) => row gap is 35px, col gap 5px, border=1px -->
+  <!-- Photo Grid => 2 rows × 4 columns, 35px row gap, 5px col gap, 1px border, scaled 1.35 -->
   <div id="Photo_Grid">
     <div id="photoGridContainer">
-      <!-- row 1, col 1 -->
       <div class="grid-cell">
         <div class="preview-box" id="previewCell0">Empty</div>
       </div>
-      <!-- row 1, col 2 -->
       <div class="grid-cell">
         <div class="preview-box" id="previewCell1">Empty</div>
       </div>
-      <!-- row 1, col 3 -->
       <div class="grid-cell">
         <div class="preview-box" id="previewCell2">Empty</div>
       </div>
-      <!-- row 1, col 4 -->
       <div class="grid-cell">
         <div class="preview-box" id="previewCell3">Empty</div>
       </div>
-      <!-- row 2, col 1 -->
       <div class="grid-cell">
         <div class="preview-box" id="previewCell4">Empty</div>
       </div>
-      <!-- row 2, col 2 -->
       <div class="grid-cell">
         <div class="preview-box" id="previewCell5">Empty</div>
       </div>
-      <!-- row 2, col 3 -->
       <div class="grid-cell">
         <div class="preview-box" id="previewCell6">Empty</div>
       </div>
-      <!-- row 2, col 4 -->
       <div class="grid-cell">
         <div class="preview-box" id="previewCell7">Empty</div>
       </div>
     </div>
   </div>
 
-  <!-- 16 text-box-absolute => 0.9em matching orderDetails -->
+  <!-- 16 text-box-absolute => 0.9em -->
   <input type="text" id="quantityCell0" class="text-box-absolute" readonly />
   <input type="text" id="quantityCell1" class="text-box-absolute" readonly />
   <input type="text" id="quantityCell2" class="text-box-absolute" readonly />
@@ -335,7 +326,7 @@
   <!-- Customer Message History => read/write, 0.9em -->
   <textarea id="customerMessageHistory"></textarea>
 
-  <!-- Titles (no "Message History:"), Payment Status -> "Order Status:" is handled in code -->
+  <!-- Title texts (no "Message History:") -->
   <div id="titleOrderDate">Order Date:</div>
   <div id="titleShipDate">Ship By:</div>
   <div id="titleOrderDetails">Order Details:</div>
@@ -347,7 +338,7 @@
   <input type="text" id="dateOrdered" readonly />
   <input type="text" id="shipDate"    readonly />
 
-  <!-- Configuration Modal -->
+  <!-- Config Modal -->
   <div id="configModal" class="modal">
     <div class="modal-content">
       <table class="striped" id="configTable">
@@ -370,7 +361,7 @@
     </div>
   </div>
 
-  <!-- jQuery & Materialize JS -->
+  <!-- jQuery & Materialize -->
   <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
   <script
     src="https://cdnjs.cloudflare.com/ajax/libs/materialize/1.0.0/js/materialize.min.js"
@@ -379,14 +370,12 @@
   <script>
     /*
      * COMPLETE final code:
-     * 1) The vertical space between the 2 rows of 4 photos is 10px less,
-     *    specifically 35px row gap in #photoGridContainer (embedded).
-     * 2) The border thickness on all 8 image preview boxes is forcibly 1px 
-     *    via .preview-box { border: 1px solid black !important; }
-     * 3) #Photo_Grid is scaled 1.35 => 15% smaller than 1.5
-     * 4) .text-box-absolute => 0.9em, matching #orderDetails
+     * 1) Perimeter line on each preview box => 1px EXACT, matching Order Details
+     * 2) Wheel-based zoom restored so user can scroll/zoom each image
+     * 3) Vertical gap between the 2 rows => 35px
+     * 4) .text-box-absolute => 0.9em
      * 5) "Message History:" title removed, #customerMessageHistory => read/write
-     * 6) Payment Status => "Order Status:" (done in showItemDetails)
+     * 6) Payment Status => "Order Status:" (in showItemDetails)
      */
 
     window.orderName="";
@@ -456,7 +445,7 @@
       window.location.href=etsyAuthUrl;
     });
 
-    /* Config system */
+    /* Configuration system */
     const configComponentIDs=[
       "connectEtsyBtn","openConfigBtn","orderLinkBtn","etsyOrderNumber","orderInformation",
       "Photo_Grid",
@@ -504,22 +493,21 @@
         `;
         tbody.appendChild(row);
 
-        // Live updates
         row.querySelector(".left-input").addEventListener("input",function(){
-          const target=document.getElementById(this.getAttribute("data-id"));
-          if(target)target.style.left=parseInt(this.value)+"px";
+          const tgt=document.getElementById(this.getAttribute("data-id"));
+          if(tgt)tgt.style.left=parseInt(this.value)+"px";
         });
         row.querySelector(".top-input").addEventListener("input",function(){
-          const target=document.getElementById(this.getAttribute("data-id"));
-          if(target)target.style.top=parseInt(this.value)+"px";
+          const tgt=document.getElementById(this.getAttribute("data-id"));
+          if(tgt)tgt.style.top=parseInt(this.value)+"px";
         });
         row.querySelector(".width-input").addEventListener("input",function(){
-          const target=document.getElementById(this.getAttribute("data-id"));
-          if(target)target.style.width=parseInt(this.value)+"px";
+          const tgt=document.getElementById(this.getAttribute("data-id"));
+          if(tgt)tgt.style.width=parseInt(this.value)+"px";
         });
         row.querySelector(".height-input").addEventListener("input",function(){
-          const target=document.getElementById(this.getAttribute("data-id"));
-          if(target)target.style.height=parseInt(this.value)+"px";
+          const tgt=document.getElementById(this.getAttribute("data-id"));
+          if(tgt)tgt.style.height=parseInt(this.value)+"px";
         });
       });
     }
@@ -607,6 +595,9 @@
       document.getElementById("orderDetails").value=details;
     }
 
+    /*
+     * fetchListingImages => unchanged
+     */
     async function fetchListingImages(listingId){
       const response=await fetch(`/.netlify/functions/etsyImages?listingId=${listingId}`,{
         headers:{"access-token":localStorage.getItem("access_token")}
@@ -617,6 +608,10 @@
       const data=await response.json();
       return data.results;
     }
+
+    /*
+     * updateImageGrid => unchanged, except inlined
+     */
     async function updateImageGrid(data){
       let items=[];
       if(data.transactions && Array.isArray(data.transactions)){
@@ -696,6 +691,10 @@
           " ORDER DETAILS:\n\nNo items found.";
       }
     }
+
+    /*
+     * pullEtsyOrderDetails => "CUSTOMER MESSAGE HISTORY:" removed, shipping color logic => #006400 if shipped
+     */
     function pullEtsyOrderDetails(orderNumber){
       console.log("Pulling Etsy order details for order number:",orderNumber);
       const token=localStorage.getItem("access_token");
@@ -777,7 +776,6 @@
     document.addEventListener("DOMContentLoaded",()=>{
       M.AutoInit();
 
-      // We no longer load separate "imageGrid.html" because it's inlined:
       // fade-in effect
       document.body.style.opacity=0;
       setTimeout(()=>{
@@ -785,6 +783,7 @@
         document.body.style.opacity=1;
       },250);
 
+      // Open config modal
       document.getElementById("openConfigBtn").addEventListener("click",()=>{
         populateConfigTable();
         const modalElem=document.getElementById("configModal");
@@ -795,6 +794,7 @@
         saveConfiguration();
       });
 
+      // Press Enter => fetch Etsy order => update grid
       const etsyOrderInput=document.getElementById("etsyOrderNumber");
       etsyOrderInput.addEventListener("keydown",async e=>{
         if(e.key==="Enter"){
@@ -819,6 +819,26 @@
         }
         const customLink=baseUrl.replace("0000000000",currentOrder);
         window.open(customLink,"_blank");
+      });
+
+      /********** WHEEL-BASED ZOOM FOR EACH PREVIEW BOX **********/
+      document.querySelectorAll('.preview-box').forEach(function(box) {
+        box.addEventListener('wheel', function(e) {
+          e.preventDefault();
+          const img = box.querySelector('img');
+          if (!img) return;
+          let currentScale = parseFloat(img.dataset.scale) || 1;
+          // if the user scrolls up => zoom in; scrolls down => zoom out
+          if (e.deltaY < 0) {
+            currentScale *= 1.1;
+          } else {
+            currentScale /= 1.1;
+          }
+          // clamp scale between 1 and 3
+          currentScale = Math.max(1, Math.min(3, currentScale));
+          img.dataset.scale = currentScale;
+          img.style.transform = `scale(${currentScale})`;
+        });
       });
     });
   </script>
