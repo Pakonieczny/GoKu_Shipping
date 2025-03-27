@@ -89,7 +89,7 @@
     }
 
     /*
-     * The Photo Grid (8 images) => scaled to 1.35
+     * The Photo Grid => scaled to 1.35, 2×4, 35px row gap, 5px column gap
      */
     #Photo_Grid {
       position: absolute;
@@ -99,11 +99,11 @@
       transform-origin: top left;
     }
 
-    /* 2×4 grid => 35px row gap, 5px column gap */
     #photoGridContainer {
       display: grid;
       grid-template-columns: repeat(4, 1fr);
       grid-template-rows: repeat(2, auto);
+      /* 35px row gap, 5px column gap => 10px less than previous 45px */
       gap: 35px 5px;
     }
     .grid-cell {
@@ -111,12 +111,8 @@
       flex-direction: column;
       align-items: center;
     }
-    /*
-     * preview-box => 1px border EXACT, matching Order Details
-     * plus wheel-based zoom restored
-     */
     .preview-box {
-      border: 1px solid black !important;
+      border: 1px solid black !important; /* matching Order Details border thickness */
       background: #f9f9f9;
       width: 100%;
       height: 150px;
@@ -365,17 +361,17 @@
   <script>
     /*
      * COMPLETE final code:
-     * - 1) 1px border => matched to Order Details box
-     * - 2) wheel-based zoom restored for each .preview-box
-     * - 3) If Shipping Status is "Shipped!", we append shipped_timestamp (Day Mmm YYYY) to the right side
-     *   e.g. "Shipping Status: Shipped! 24 Mar 2023"
+     * 1) Only show the shipped_timestamp if Shipping Status is "Shipped!"
+     * 2) Format date exactly like Order Date => e.g. "DD MMM YYYY"
+     * 3) Place it to the right side => "Shipping Status: Shipped! 24 Mar 2023"
      */
 
     window.orderName="";
     window.orderStatus="";
     window.orderIsShipped="";
     window.cachedOrderItems=[];
-    window.orderShippedTimestamp=null; /* We'll store top-level shipped_timestamp if present */
+    /* We'll store the shipped_timestamp from top-level or transaction so we can show it. */
+    window.orderShippedTimestamp=null;
 
     /********** Check for Access Token / Code **********/
     (function(){
@@ -402,7 +398,6 @@
       }
     })();
 
-    /* Functions for Etsy OAuth, config, etc. */
     function generateRandomString(length){
       const chars="ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
       let text="";
@@ -553,7 +548,7 @@
 
       // SHIPPING STATUS => if "Shipped!", also append shipped_timestamp date
       if(window.orderIsShipped==="Shipped!"){
-        // if we have a top-level shipped_timestamp, parse it
+        // if we have a top-level orderShippedTimestamp => parse it
         let shippedDateString="";
         if(window.orderShippedTimestamp){
           const d=new Date(window.orderShippedTimestamp*1000);
@@ -757,13 +752,22 @@
           window.orderIsShipped="";
         }
 
-        // If there's a top-level shipped_timestamp => store it
-        // so we can format it in showItemDetails
+        /*
+         * We'll see if there's a top-level "shipped_timestamp" 
+         * or maybe in the first transaction. Whichever we find first.
+         */
+        let foundStamp=null;
         if(data.shipped_timestamp && data.is_shipped===true){
-          window.orderShippedTimestamp=data.shipped_timestamp;
-        } else {
-          window.orderShippedTimestamp=null;
+          foundStamp=data.shipped_timestamp;
+        } 
+        else if(data.transactions 
+                && Array.isArray(data.transactions) 
+                && data.transactions.length>0
+                && data.transactions[0].shipped_timestamp
+                && data.is_shipped===true){
+          foundStamp=data.transactions[0].shipped_timestamp;
         }
+        window.orderShippedTimestamp=foundStamp;
 
         // Customer Message History
         const msgBox=document.getElementById("customerMessageHistory");
@@ -777,6 +781,8 @@
         if(data.transactions && data.transactions.length>0){
           const firstTrans=data.transactions[0];
           const monthNames=["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+
+          // created_timestamp => dateOrdered
           if(firstTrans.created_timestamp){
             const d=new Date(firstTrans.created_timestamp*1000);
             const day=("0"+d.getDate()).slice(-2);
@@ -788,6 +794,7 @@
             document.getElementById("dateOrdered").value="";
           }
 
+          // expected_ship_date => #shipDate
           const shipEl=document.getElementById("shipDate");
           shipEl.style.color="";
           if(firstTrans.expected_ship_date){
