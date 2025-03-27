@@ -30,14 +30,27 @@
       top: 80px;
     }
 
-    /* #etsyOrderNumber => user-editable */
+    /*
+     * "Etsy Order Number" text box:
+     *   - no extra spacing below text => underline directly beneath
+     *   - fully left-justified
+     *   - line-height=1.0
+     *   - bottom border for underline
+     */
     #etsyOrderNumber {
       position: absolute;
       left: 50px;
       top: 140px;
-      font-size: 1em;
-      padding: 8px;
+      margin: 0;
+      padding: 0;
+      line-height: 1.0;
+      border: none;
+      border-bottom: 1px solid #000;
+      background: transparent !important;
+      text-align: left;
       width: 250px;
+      font-size: 1em;
+      outline: none;
     }
 
     /* #orderInformation => leading space in placeholder */
@@ -136,12 +149,8 @@
 
     /*
      * Title texts (labels) for existing "Order Date" & "Ship By"
-     * plus the 5 new ones:
-     *   #titleOrderDetails => "Order Details:"
-     *   #titleMessageHistory => "Message History:"
-     *   #titleBritesMessages => "Brites Messages"
-     *   #titlePurchasedItems => "Purchased Items:"
-     *   #titleOrderNumber => "Order Number"
+     * plus new ones: "Order Details:", "Message History:", "Brites Messages",
+     * "Purchased Items:", "Order Number"
      */
     #titleOrderDate,
     #titleShipDate,
@@ -245,7 +254,7 @@
 
   <!-- Date/Ship Date boxes -->
   <input type="text" id="dateOrdered" readonly />
-  <input type="text" id="shipDate"    readonly />
+  <input type="text" id="shipDate" readonly />
 
   <!-- Configuration Modal -->
   <div id="configModal" class="modal">
@@ -276,12 +285,15 @@
 
   <script>
     /*
-     * Changes:
-     *   1) "Payment Status:" => "Order Status:" in showItemDetails()
-     *   2) 5 new title text objects (#titleOrderDetails, #titleMessageHistory, #titleBritesMessages, 
-     *      #titlePurchasedItems, #titleOrderNumber)
-     *   3) Remove "CUSTOMER MESSAGE HISTORY:" from #customerMessageHistory
-     *      => now we only show data.message_from_buyer if present
+     * This merges all your recent changes:
+     *  - "Payment Status:" -> "Order Status:" in showItemDetails()
+     *  - 5 new title objects
+     *  - remove "CUSTOMER MESSAGE HISTORY:" from message box
+     *  - #etsyOrderNumber has no extra spacing under text, 
+     *    underline directly beneath, fully left-justified
+     *  - read-only text boxes for dateOrdered, shipDate, orderDetails, 
+     *    customerMessageHistory
+     *  - shipping color logic => if shipped => #006400, else default
      */
 
     window.orderName      = "";
@@ -399,10 +411,10 @@
         if (!el) return;
         const compName = el.textContent.trim() || el.value?.trim() || id;
         const cs = window.getComputedStyle(el);
-        const leftVal   = (cs.left   === "auto")?0:parseInt(cs.left);
-        const topVal    = (cs.top   === "auto")?0:parseInt(cs.top);
-        const widthVal  = (cs.width === "auto")?0:parseInt(cs.width);
-        const heightVal = (cs.height=== "auto")?0:parseInt(cs.height);
+        const leftVal   = (cs.left === "auto") ? 0 : parseInt(cs.left);
+        const topVal    = (cs.top === "auto") ? 0 : parseInt(cs.top);
+        const widthVal  = (cs.width === "auto") ? 0 : parseInt(cs.width);
+        const heightVal = (cs.height=== "auto")? 0 : parseInt(cs.height);
 
         const row = document.createElement("tr");
         row.innerHTML = `
@@ -455,7 +467,7 @@
     /************************************************************************
      * showItemDetails(index):
      *   " ORDER FROM: [name]"
-     *   " Order Status: [status]" <-- changed from "Payment Status:"
+     *   " Order Status: [status]" (was Payment Status)
      *   " Shipping Status: [Shipped!/Not Shipped]"
      *   blank line
      *   " ORDER DETAILS:"
@@ -471,7 +483,7 @@
       if(window.orderName){
         details+=" ORDER FROM: "+window.orderName+"\n";
       }
-      // rename "Payment Status:" -> "Order Status:"
+      // Payment => Order
       if(window.orderStatus){
         details+=" Order Status: "+window.orderStatus+"\n";
       }
@@ -482,7 +494,6 @@
       }
       details+=" ORDER DETAILS:\n\n";
 
-      // Title, SKU, Variation logic remain the same
       if(item.title){
         const firstFourWords=item.title.trim().split(" ").slice(0,4).join(" ");
         details+=" Title: "+firstFourWords+"\n";
@@ -528,7 +539,7 @@
       document.getElementById("orderDetails").value=details;
     }
 
-    /********** fetchListingImages => unchanged **********/
+    /********** fetchListingImages => no changes **********/
     async function fetchListingImages(listingId){
       const response=await fetch(`/.netlify/functions/etsyImages?listingId=${listingId}`,{
         headers:{"access-token":localStorage.getItem("access_token")}
@@ -540,7 +551,7 @@
       return data.results;
     }
 
-    /********** updateImageGrid => unchanged **********/
+    /********** updateImageGrid => no changes **********/
     async function updateImageGrid(data){
       let items=[];
       if(data.transactions && Array.isArray(data.transactions)){
@@ -622,9 +633,9 @@
       }
     }
 
-    /********** pullEtsyOrderDetails => just removing "CUSTOMER MESSAGE HISTORY:" from the text, and no other changes **********/
+    /********** pullEtsyOrderDetails => removing "CUSTOMER MESSAGE HISTORY:" + shipping color logic => "Shipped!" => #006400, else default **********/
     function pullEtsyOrderDetails(orderNumber){
-      console.log("Pulling Etsy order details for order number:",orderNumber);
+      console.log("Pulling Etsy order details:",orderNumber);
       const token=localStorage.getItem("access_token");
       return fetch('/.netlify/functions/etsyOrderProxy?orderId='+encodeURIComponent(orderNumber),{
         headers:{"access-token":token}
@@ -639,19 +650,18 @@
         // name => window.orderName
         if(data.name){
           window.orderName=data.name;
-        } else {
+        }else{
           window.orderName="";
         }
 
-        // status => window.orderStatus
-        // (User wants "Order Status" label, done in showItemDetails)
+        // status => window.orderStatus => "Order Status:"
         if(data.status){
           window.orderStatus=data.status;
-        } else {
+        }else{
           window.orderStatus="";
         }
 
-        // is_shipped => "Shipped!" or "Not Shipped" or ""
+        // is_shipped => "Shipped!" or "Not Shipped"
         if(data.is_shipped===true){
           window.orderIsShipped="Shipped!";
         } else if(data.is_shipped===false){
@@ -660,7 +670,7 @@
           window.orderIsShipped="";
         }
 
-        // Customer Message History => no "CUSTOMER MESSAGE HISTORY:" text, just message
+        // "customerMessageHistory" => no "CUSTOMER MESSAGE HISTORY:" text
         const msgHistoryBox=document.getElementById("customerMessageHistory");
         if(data.message_from_buyer){
           msgHistoryBox.value=data.message_from_buyer+"\n";
@@ -668,7 +678,6 @@
           msgHistoryBox.value="";
         }
 
-        // If there's at least one transaction => set date fields
         if(data.transactions && data.transactions.length>0){
           const firstTrans=data.transactions[0];
           const monthNames=["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
@@ -684,7 +693,7 @@
             document.getElementById("dateOrdered").value="";
           }
 
-          // expected_ship_date => #shipDate color logic remains
+          // expected_ship_date => #shipDate => if shipped => #006400, else default
           const shipEl=document.getElementById("shipDate");
           shipEl.style.color="";
           if(firstTrans.expected_ship_date){
@@ -693,10 +702,8 @@
             const sMonth=monthNames[s.getMonth()];
             const sYear=s.getFullYear();
             shipEl.value=" "+sDay+" "+sMonth+" "+sYear;
-
-            // The last user logic => if shipping status=Shipped => #006400 else no color
             if(window.orderIsShipped==="Shipped!"){
-              shipEl.style.color="#006400"; // darker green
+              shipEl.style.color="#006400"; // dark green
             } else{
               shipEl.style.color="";
             }
@@ -717,15 +724,13 @@
       });
     }
 
-    /********** DOMContentLoaded **********/
+    /********** DOMContentLoaded => unchanged **********/
     document.addEventListener("DOMContentLoaded",()=>{
       M.AutoInit();
-
-      // Load imageGrid
       $("#Photo_Grid").load("imageGrid.html",(resp,status,xhr)=>{
         if(status==="error"){
           console.error("Error loading image grid:",xhr.status,xhr.statusText);
-        } else {
+        }else{
           console.log("Image grid loaded successfully.");
         }
       });
@@ -735,14 +740,12 @@
         document.body.style.opacity=1;
       },250);
 
-      // open config
       document.getElementById("openConfigBtn").addEventListener("click",()=>{
         populateConfigTable();
         const modalElem=document.getElementById("configModal");
         const instance=M.Modal.getInstance(modalElem);
         instance.open();
       });
-      // save config
       document.getElementById("saveConfigBtn").addEventListener("click",()=>{
         saveConfiguration();
       });
