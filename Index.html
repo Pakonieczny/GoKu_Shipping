@@ -83,30 +83,31 @@
 
     /*
      * Order Details textarea: 
-     *  - Font size increased from 0.7em to 0.8em
-     *  - Bold “Order Details:” is approximated by uppercase + an extra blank line
-     *  - line-height = 0.5 for lines; 
-     *    extra blank line after ORDER DETAILS: => ~1.0 spacing
-     *  - Height is now 175px (50% smaller than 350px)
-     *  - Width enlarged by 50px => from 250px to 300px
+     *  - line-height: 1.5 to get 1.5× spacing between each line
+     *  - The initial text has a blank line before "ORDER DETAILS:"
+     *    and two blank lines after, giving ~1.0 line spacing above
+     *    and ~2.0 line spacing below that line. 
+     *  - Height is 175px (50% of the old 350px).
+     *  - Width is 300px (50px wider than the original 250px).
+     *  - Font size is 0.8em (1 step bigger than previous 0.7em).
      */
     #orderDetails {
       position: absolute;
       border: 1px solid black !important;
-      width: 300px !important;     /* +50px wider */
-      height: 175px !important;    /* 50% vertical shrink (was 350px) */
+      width: 300px !important;     
+      height: 175px !important;    
       box-sizing: border-box !important;
       outline: none !important;
       background: transparent;
-      font-size: 0.8em !important; /* 1 step bigger than 0.7em */
-      line-height: 0.5 !important; /* 0.5 line spacing */
+      font-size: 0.8em !important;
+      line-height: 1.5 !important;  /* 1.5 line spacing for all lines */
       resize: none;
       text-align: left;
       overflow-y: auto;
     }
 
     /* Increase font size of Date Ordered & Ship Date by 1 step => 0.8em */
-    #dateOrdered, 
+    #dateOrdered,
     #shipDate {
       position: absolute;
       border: 1px solid black !important;
@@ -115,7 +116,7 @@
       box-sizing: border-box !important;
       outline: none !important;
       background: transparent;
-      font-size: 0.8em !important; /* up from 0.7em */
+      font-size: 0.8em !important; 
     }
 
     /* Configuration Modal styling */
@@ -187,12 +188,17 @@
   <input type="text" id="metalCell6" class="text-box-absolute" readonly />
   <input type="text" id="metalCell7" class="text-box-absolute" readonly />
 
-  <!-- "Order Details" Textarea (styling above) -->
-  <textarea id="orderDetails">ORDER DETAILS:
+  <!-- Order Details Textarea 
+       Using extra blank lines to mimic 1.0 line spacing before 
+       "ORDER DETAILS:" and 2.0 line spacing after it -->
+  <textarea id="orderDetails">
+  
+ORDER DETAILS:
+
 
 </textarea>
 
-  <!-- 2 Single-Line Text Boxes (styling above) -->
+  <!-- Single-Line Text Boxes for Dates -->
   <input type="text" id="dateOrdered" placeholder="Date Ordered" />
   <input type="text" id="shipDate" placeholder="Ship Date" />
 
@@ -428,9 +434,8 @@
         "necklace length in inches"
       ];
 
-      // Notice we start with "ORDER DETAILS:\n\n" so there's an extra blank line
-      // to produce ~1.0 line spacing after the "ORDER DETAILS:" line
-      let variationsText = "ORDER DETAILS:\n\n";
+      // Start with 1 blank line, then "ORDER DETAILS:", then 2 blank lines
+      let variationsText = `\nORDER DETAILS:\n\n\n`; 
 
       for (let i = 0; i < 8; i++) {
         const cell     = document.getElementById("previewCell" + i);
