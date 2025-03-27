@@ -82,11 +82,8 @@
     }
 
     /*
-     * Order Details textarea:
-     *  - Remove extra space above "ORDER DETAILS:"
-     *  - Add EXACTLY 1 blank line after "ORDER DETAILS:"
-     *  - Keep line-height: 1.5 for all text
-     *  - Height is 175px, width is 300px, font-size is 0.8em
+     * Order Details textarea
+     * line-height, height, etc. from previous customizations
      */
     #orderDetails {
       position: absolute;
@@ -97,13 +94,13 @@
       outline: none !important;
       background: transparent;
       font-size: 0.8em !important; 
-      line-height: 1.5 !important; 
+      line-height: 1.5 !important;
       resize: none;
       text-align: left;
       overflow-y: auto;
     }
 
-    /* Increase font size by 1 & bold for Date Ordered & Ship Date */
+    /* Increase font size / bold for Date Ordered & Ship Date from previous customizations */
     #dateOrdered,
     #shipDate {
       position: absolute;
@@ -113,7 +110,7 @@
       box-sizing: border-box !important;
       outline: none !important;
       background: transparent;
-      font-size: 0.9em !important; /* one step larger than previous */
+      font-size: 0.9em !important;
       font-weight: bold !important;
     }
 
@@ -186,13 +183,12 @@
   <input type="text" id="metalCell6" class="text-box-absolute" readonly />
   <input type="text" id="metalCell7" class="text-box-absolute" readonly />
 
-  <!-- Order Details Textarea 
-       EXACT 0 lines above, 1 blank line below "ORDER DETAILS:" -->
+  <!-- Order Details Textarea -->
   <textarea id="orderDetails">ORDER DETAILS:
 
 </textarea>
 
-  <!-- Single-Line Text Boxes for Dates (font size +1, bold) -->
+  <!-- Single-Line Text Boxes for Dates -->
   <input type="text" id="dateOrdered" placeholder="Date Ordered" />
   <input type="text" id="shipDate" placeholder="Ship Date" />
 
@@ -221,6 +217,12 @@
   <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/materialize/1.0.0/js/materialize.min.js"></script>
   <script>
+    /***********************************************************************
+     * Global array to store the order items, so we can let the user click
+     * an image preview & display that item’s details in #orderDetails.
+     ***********************************************************************/
+    window.cachedOrderItems = [];
+
     /********** Check for Access Token / Code **********/
     (function() {
       const urlParams = new URLSearchParams(window.location.search);
@@ -375,6 +377,93 @@
       console.log("Configuration saved.");
     }
 
+    /***********************************************************************
+     * showItemDetails(index):
+     * Build the multiline text for items[index] & place into #orderDetails
+     ***********************************************************************/
+    function showItemDetails(index) {
+      // Only proceed if cachedOrderItems is set & index is valid
+      if (!window.cachedOrderItems || !window.cachedOrderItems[index]) {
+        console.warn("No cached item at index:", index);
+        return;
+      }
+      const item = window.cachedOrderItems[index];
+
+      // We'll compile text for just this one item
+      let details = "ORDER DETAILS:\n\n";
+
+      // Title
+      if (item.title) {
+        const firstFourWords = item.title.trim().split(" ").slice(0, 4).join(" ");
+        details += "Title: " + firstFourWords + "\n";
+      }
+
+      // SKU
+      if (item.sku) {
+        details += "SKU: " + item.sku + "\n";
+      }
+
+      // Build lines for variations
+      if (item.variations && Array.isArray(item.variations)) {
+        const acceptedMetalNames = [
+          "metal",
+          "metal choice",
+          "metal - engraving",
+          "metal colour",
+          "color",
+          "metal choice / engraving option"
+        ];
+        const acceptedLengthNames = [
+          "length",
+          "necklace length",
+          "metal/necklace length",
+          "metal choice / necklace length",
+          "necklace length in inches"
+        ];
+
+        item.variations.forEach(v => {
+          if (v.formatted_name && v.formatted_value) {
+            const nameLower = v.formatted_name.trim().toLowerCase();
+            let value = v.formatted_value.trim();
+
+            // Personalization
+            if (nameLower === "personalization" && value === "Not requested on this item.") {
+              value = "Not Requested";
+              details += `Personalization: ${value}\n`;
+
+            // Metal Variation
+            } else if (acceptedMetalNames.includes(nameLower)) {
+              details += `Metal Choice: ${value}\n`;
+
+            // Length Variation
+            } else if (acceptedLengthNames.includes(nameLower)) {
+              const lengthMapping = {
+                '14&quot;': '14 Inches',
+                '16&quot;': '16 Inches',
+                '18&quot;': '18 Inches',
+                '20&quot;': '20 Inches',
+                '14""': '14 Inches',
+                '16""': '16 Inches',
+                '18""': '18 Inches',
+                '20""': '20 Inches'
+              };
+              if (lengthMapping[value]) {
+                value = lengthMapping[value];
+              }
+              details += `Item Length: ${value}\n`;
+
+            // Otherwise normal
+            } else {
+              details += `${v.formatted_name}: ${v.formatted_value}\n`;
+            }
+          }
+        });
+      }
+
+      // Put final text in #orderDetails
+      document.getElementById("orderDetails").value = details;
+    }
+
     /********** Listing Images + “Update Image Grid” **********/
     async function fetchListingImages(listingId) {
       const response = await fetch(`/.netlify/functions/etsyImages?listingId=${listingId}`, {
@@ -411,129 +500,49 @@
         }
       }
 
-      const acceptedMetalNames = [
-        "metal",
-        "metal choice",
-        "metal - engraving",
-        "metal colour",
-        "color",
-        "metal choice / engraving option"
-      ];
-      const acceptedLengthNames = [
-        "length",
-        "necklace length",
-        "metal/necklace length",
-        "metal choice / necklace length",
-        "necklace length in inches"
-      ];
+      // Store them in a global var so we can reference them in click events
+      window.cachedOrderItems = items || [];
 
-      // Single blank line after "ORDER DETAILS:"
-      let variationsText = "ORDER DETAILS:\n\n";
-
+      // Render up to 8 images, attach click events
       for (let i = 0; i < 8; i++) {
-        const cell     = document.getElementById("previewCell" + i);
-        const qtyBox   = document.getElementById("quantityCell" + i);
-        const metalBox = document.getElementById("metalCell" + i);
+        const cell = document.getElementById("previewCell" + i);
 
-        if (qtyBox)   qtyBox.value   = "Quantity:";
-        if (metalBox) metalBox.value = "Metal:";
-
-        if (cell && i < items.length) {
-          const item = items[i];
-
-          try {
-            // If item.title exists, show first 4 words with "Title:"
-            if (item.title) {
-              const firstFourWords = item.title.trim().split(" ").slice(0, 4).join(" ");
-              variationsText += "Title: " + firstFourWords + "\n";
-            }
-
-            // Add the SKU line (below Title:)
-            if (item.sku) {
-              variationsText += "SKU: " + item.sku + "\n";
-            }
-
-            // Fetch listing images
-            const images = await fetchListingImages(item.listing_id);
-            if (images && images.length > 0) {
-              cell.innerHTML = `<img src="${images[0].url_fullxfull}" alt="Listing Image ${i}">`;
-            } else {
-              cell.innerHTML = "No images found";
-            }
-
-            // Set quantity
-            if (qtyBox) {
-              const actualQty = (item.quantity != null) ? item.quantity : 0;
-              qtyBox.value = "Quantity: " + actualQty;
-            }
-
-            // Identify metal variation for the metalBox
-            if (metalBox) {
-              let metalSelection = "";
-              if (item.variations && Array.isArray(item.variations)) {
-                const metalVar = item.variations.find(v =>
-                  v.formatted_name &&
-                  acceptedMetalNames.includes(v.formatted_name.trim().toLowerCase())
-                );
-                if (metalVar) {
-                  metalSelection = metalVar.formatted_value || "";
-                }
+        if (cell) {
+          if (i < items.length) {
+            const item = items[i];
+            try {
+              // fetch the listing's 1st image
+              const images = await fetchListingImages(item.listing_id);
+              if (images && images.length > 0) {
+                cell.innerHTML = `<img src="${images[0].url_fullxfull}" alt="Listing Image ${i}">`;
+              } else {
+                cell.innerHTML = "No images found";
               }
-              metalBox.value = "Metal: " + metalSelection;
+
+              // Make the cell clickable to show that item’s details
+              cell.style.cursor = "pointer";
+              cell.onclick = function() {
+                showItemDetails(i);
+              };
+            } catch (error) {
+              console.error(`Error fetching images for listing ${item.listing_id}:`, error);
+              cell.innerHTML = "Error loading image";
             }
-
-            // Build the multiline "Order Details" string
-            if (item.variations && Array.isArray(item.variations)) {
-              item.variations.forEach(v => {
-                if (v.formatted_name && v.formatted_value) {
-                  const nameLower = v.formatted_name.trim().toLowerCase();
-                  let value = v.formatted_value.trim();
-
-                  // Personalization replacement
-                  if (nameLower === "personalization" && value === "Not requested on this item.") {
-                    value = "Not Requested";
-                    variationsText += `Personalization: ${value}\n`;
-
-                  // Metal Variation
-                  } else if (acceptedMetalNames.includes(nameLower)) {
-                    variationsText += `Metal Choice: ${value}\n`;
-
-                  // Length Variation
-                  } else if (acceptedLengthNames.includes(nameLower)) {
-                    const lengthMapping = {
-                      '14&quot;': '14 Inches',
-                      '16&quot;': '16 Inches',
-                      '18&quot;': '18 Inches',
-                      '20&quot;': '20 Inches',
-                      '14""': '14 Inches',
-                      '16""': '16 Inches',
-                      '18""': '18 Inches',
-                      '20""': '20 Inches'
-                    };
-                    if (lengthMapping[value]) {
-                      value = lengthMapping[value];
-                    }
-                    variationsText += `Item Length: ${value}\n`;
-
-                  // Otherwise standard "Name: Value"
-                  } else {
-                    variationsText += `${v.formatted_name}: ${v.formatted_value}\n`;
-                  }
-                }
-              });
-            }
-
-          } catch (error) {
-            console.error(`Error fetching images for listing ${item.listing_id}:`, error);
-            cell.innerHTML = "Error loading image";
+          } else {
+            cell.innerHTML = "Empty";
+            cell.style.cursor = "default";
+            cell.onclick = null;
           }
-        } else if (cell) {
-          cell.innerHTML = "Empty";
         }
       }
 
-      // Place all variation details into the multiline textarea
-      document.getElementById("orderDetails").value = variationsText;
+      // By default, only show the details for the FIRST item (index 0)
+      if (items.length > 0) {
+        showItemDetails(0);
+      } else {
+        // No items => clear
+        document.getElementById("orderDetails").value = "ORDER DETAILS:\n\nNo items found.";
+      }
     }
 
     /********** Etsy Order Fetch **********/
@@ -547,32 +556,27 @@
         .then(response => response.json())
         .then(data => {
           console.log("Etsy Order Data:", data);
-
-          // Show raw JSON
           document.getElementById("orderInformation").value = JSON.stringify(data, null, 2);
 
-          // If there's at least one transaction, set date fields
+          // If there's at least one transaction, set date fields from the first
           if (data.transactions && data.transactions.length > 0) {
             const firstTrans = data.transactions[0];
 
             // Convert numeric month => written month
-            const monthNames = [
-              "Jan","Feb","Mar","Apr","May","Jun",
-              "Jul","Aug","Sep","Oct","Nov","Dec"
-            ];
+            const monthNames = [ "Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec" ];
 
-            // ========== Date Ordered ==========
+            // Date Ordered
             if (firstTrans.created_timestamp) {
               const dateObj = new Date(firstTrans.created_timestamp * 1000);
               const day = String(dateObj.getDate()).padStart(2, '0');
-              const monthStr = monthNames[dateObj.getMonth()]; // e.g. "Jan"
+              const monthStr = monthNames[dateObj.getMonth()];
               const year = dateObj.getFullYear();
               document.getElementById("dateOrdered").value = `${day} ${monthStr} ${year}`;
             } else {
               document.getElementById("dateOrdered").value = "";
             }
 
-            // ========== Ship Date ==========
+            // Ship Date
             if (firstTrans.expected_ship_date) {
               const shipObj = new Date(firstTrans.expected_ship_date * 1000);
               const sDay = String(shipObj.getDate()).padStart(2, '0');
@@ -582,9 +586,7 @@
             } else {
               document.getElementById("shipDate").value = "";
             }
-
           } else {
-            // No transactions
             document.getElementById("dateOrdered").value = "";
             document.getElementById("shipDate").value = "";
           }
@@ -629,7 +631,7 @@
         saveConfiguration();
       });
 
-      // Press Enter => fetch order from Etsy & update UI
+      // Press Enter => fetch order from Etsy & update the UI
       const etsyOrderInput = document.getElementById("etsyOrderNumber");
       etsyOrderInput.addEventListener("keydown", async function(e) {
         if (e.key === "Enter") {
