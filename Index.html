@@ -82,14 +82,11 @@
     }
 
     /*
-     * Order Details textarea: 
-     *  - line-height: 1.5 to get 1.5× spacing between each line
-     *  - The initial text has a blank line before "ORDER DETAILS:"
-     *    and two blank lines after, giving ~1.0 line spacing above
-     *    and ~2.0 line spacing below that line. 
-     *  - Height is 175px (50% of the old 350px).
-     *  - Width is 300px (50px wider than the original 250px).
-     *  - Font size is 0.8em (1 step bigger than previous 0.7em).
+     * Order Details textarea:
+     *  - line-height: 1.5 for all lines
+     *  - We'll insert partial line above 'ORDER DETAILS:' by using spaces plus \n
+     *  - We'll insert exactly 1 newline after 'ORDER DETAILS:' for 1.0 line gap
+     *  - The rest remains the same (height 175px, width 300px, font-size 0.8em)
      */
     #orderDetails {
       position: absolute;
@@ -99,8 +96,8 @@
       box-sizing: border-box !important;
       outline: none !important;
       background: transparent;
-      font-size: 0.8em !important;
-      line-height: 1.5 !important;  /* 1.5 line spacing for all lines */
+      font-size: 0.8em !important; 
+      line-height: 1.5 !important; /* Uniform spacing of 1.5 */
       resize: none;
       text-align: left;
       overflow-y: auto;
@@ -189,12 +186,13 @@
   <input type="text" id="metalCell7" class="text-box-absolute" readonly />
 
   <!-- Order Details Textarea 
-       Using extra blank lines to mimic 1.0 line spacing before 
-       "ORDER DETAILS:" and 2.0 line spacing after it -->
-  <textarea id="orderDetails">
-  
-ORDER DETAILS:
-
+       Attempting:
+         - ~0.5 line above ORDER DETAILS:
+         - 1 line after ORDER DETAILS:
+         - Then the rest of the lines at line-height: 1.5
+  -->
+  <textarea id="orderDetails"> 
+ ORDER DETAILS:
 
 </textarea>
 
@@ -278,8 +276,8 @@ ORDER DETAILS:
       const codeChallenge = await generateCodeChallenge(codeVerifier);
       const state = "randomState123";
       const scope = "listings_w listings_r transactions_r transactions_w";
-      const CLIENT_ID = "k75zdspz4r99txpqdji7i2em";
-      const redirectUri = "https://gokushipping.netlify.app";
+      const CLIENT_ID = "k75zdspz4r99txpqdji7i2em"; 
+      const redirectUri = "https://gokushipping.netlify.app"; 
       const etsyAuthUrl = `https://www.etsy.com/oauth/connect?response_type=code&client_id=${CLIENT_ID}`
                           + `&redirect_uri=${encodeURIComponent(redirectUri)}`
                           + `&scope=${encodeURIComponent(scope)}`
@@ -398,7 +396,6 @@ ORDER DETAILS:
     async function updateImageGrid(data) {
       let items = [];
 
-      // The receipt data might hold an array called "transactions"
       if (data.transactions && Array.isArray(data.transactions)) {
         items = data.transactions;
       } else if (data.shipments && Array.isArray(data.shipments)) {
@@ -434,8 +431,11 @@ ORDER DETAILS:
         "necklace length in inches"
       ];
 
-      // Start with 1 blank line, then "ORDER DETAILS:", then 2 blank lines
-      let variationsText = `\nORDER DETAILS:\n\n\n`; 
+      // We'll reuse the partial-line approach:
+      // " ' ' plus newline => ~0.5 line 
+      // 'ORDER DETAILS:' => line 
+      // then 1 newline => ~1 line after
+      let variationsText = ` \nORDER DETAILS:\n`;
 
       for (let i = 0; i < 8; i++) {
         const cell     = document.getElementById("previewCell" + i);
