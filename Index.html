@@ -102,7 +102,7 @@
     /* Single-line text boxes for Date Ordered & Ship Date */
     #dateOrdered, #shipDate {
       position: absolute;
-      border: 1px solid black !important; /* 1px border like Order Details box */
+      border: 1px solid black !important;
       width: 200px;
       height: 20px;
       box-sizing: border-box !important;
@@ -285,8 +285,8 @@
       "quantityCell0","quantityCell1","quantityCell2","quantityCell3","quantityCell4","quantityCell5","quantityCell6","quantityCell7",
       "metalCell0","metalCell1","metalCell2","metalCell3","metalCell4","metalCell5","metalCell6","metalCell7",
       "orderDetails",
-      "dateOrdered",   // For "Date Ordered"
-      "shipDate"       // For "Ship Date"
+      "dateOrdered",
+      "shipDate"
     ];
 
     function loadPositions() {
@@ -536,24 +536,29 @@
         .then(data => {
           console.log("Etsy Order Data:", data);
 
-          // 1) Put the raw response in #orderInformation
+          // Put the raw response in #orderInformation
           document.getElementById("orderInformation").value = JSON.stringify(data, null, 2);
 
-          // 2) Convert "created_timestamp" into Day/Month/Year
+          // ========== Date Ordered ==========
           if (data && data.created_timestamp) {
-            // Etsy's timestamp is often in seconds, so multiply by 1000
-            const dateObj = new Date(data.created_timestamp * 1000);
-
+            const dateObj = new Date(data.created_timestamp * 1000); // convert from seconds
             const day = String(dateObj.getDate()).padStart(2, '0');
-            const month = String(dateObj.getMonth() + 1).padStart(2, '0'); 
+            const month = String(dateObj.getMonth() + 1).padStart(2, '0');
             const year = dateObj.getFullYear();
-
-            // Example format: DD/MM/YYYY
-            const dateStr = `${day}/${month}/${year}`;
-            document.getElementById("dateOrdered").value = dateStr;
+            document.getElementById("dateOrdered").value = `${day}/${month}/${year}`;
           } else {
-            // If not found, clear or set a placeholder
             document.getElementById("dateOrdered").value = "";
+          }
+
+          // ========== Ship Date ==========
+          if (data && data.expected_ship_date) {
+            const shipObj = new Date(data.expected_ship_date * 1000); // convert from seconds
+            const day = String(shipObj.getDate()).padStart(2, '0');
+            const month = String(shipObj.getMonth() + 1).padStart(2, '0');
+            const year = shipObj.getFullYear();
+            document.getElementById("shipDate").value = `${day}/${month}/${year}`;
+          } else {
+            document.getElementById("shipDate").value = "";
           }
 
           return data;
