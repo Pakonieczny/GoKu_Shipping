@@ -18,7 +18,7 @@
       transition: opacity 0s;
     }
 
-    /* Buttons */
+    /* Existing Buttons */
     #connectEtsyBtn {
       position: absolute;
       left: 50px;
@@ -31,11 +31,28 @@
     }
 
     /*
-     * "Etsy Order Number" text box:
-     *   - no extra spacing below text => underline directly beneath
-     *   - fully left-justified
-     *   - line-height=1.0
-     *   - bottom border for underline
+     * NEW: "Order Link" button 
+     *   – place it near the other buttons. 
+     *   – no text, just the globe icon 
+     */
+    #orderLinkBtn {
+      position: absolute;
+      left: 120px; /* adjust as needed */
+      top: 20px;   /* or 80px, or wherever you prefer */
+      background: transparent; /* no color changes requested */
+      border: none;            /* if you want no border */
+      cursor: pointer;
+      padding: 0;             /* remove extra spacing so icon is flush */
+      outline: none;
+    }
+    #orderLinkBtn img {
+      width: 28px;   /* adjust icon size as needed */
+      height: 28px;  /* adjust icon size as needed */
+      display: block;
+    }
+
+    /*
+     * Etsy Order Number text box – no extra spacing, underline directly beneath
      */
     #etsyOrderNumber {
       position: absolute;
@@ -73,12 +90,7 @@
       width: 532px;
     }
 
-    /*
-     * 16 text-box-absolute for quantity & metal
-     *  - 0.7em font
-     *  - borderless
-     *  - leading space in JS
-     */
+    /* 16 text-box-absolute for quantity & metal */
     .text-box-absolute {
       position: absolute;
       border: none !important;
@@ -114,7 +126,9 @@
     }
 
     /*
-     * "Customer Message History" => read-only, 300×175, same as #orderDetails
+     * Customer Message History => read-and-write 
+     *  (i.e. we remove readonly attribute)
+     * same 300×175 dims
      */
     #customerMessageHistory {
       position: absolute;
@@ -131,9 +145,7 @@
       overflow-y: auto;
     }
 
-    /*
-     * Single-Line text boxes for DateOrdered, ShipDate => bigger & bold, read-only
-     */
+    /* Single-Line text boxes for DateOrdered, ShipDate => bigger & bold, read-only */
     #dateOrdered,
     #shipDate {
       position: absolute;
@@ -148,14 +160,11 @@
     }
 
     /*
-     * Title texts (labels) for existing "Order Date" & "Ship By"
-     * plus new ones: "Order Details:", "Message History:", "Brites Messages",
-     * "Purchased Items:", "Order Number"
+     * Title texts – we remove #titleMessageHistory
      */
     #titleOrderDate,
     #titleShipDate,
     #titleOrderDetails,
-    #titleMessageHistory,
     #titleBritesMessages,
     #titlePurchasedItems,
     #titleOrderNumber {
@@ -209,6 +218,11 @@
   <button id="connectEtsyBtn" class="configurable btn waves-effect waves-light">Connect to Etsy</button>
   <button id="openConfigBtn" class="configurable btn waves-effect waves-light">Open Config</button>
 
+  <!-- NEW Button (ID #orderLinkBtn) using "assets/Globe.png" image, no text shown -->
+  <button id="orderLinkBtn" name="Order Link">
+    <img src="assets/Globe.png" alt="Order Link Icon" />
+  </button>
+
   <!-- Etsy Order Fields -->
   <input type="text" id="etsyOrderNumber" placeholder="Etsy Order Number" />
   <textarea id="orderInformation" placeholder=" Order Information" readonly></textarea>
@@ -238,23 +252,20 @@
   <!-- Order Details -->
   <textarea id="orderDetails" readonly></textarea>
 
-  <!-- Customer Message History -->
-  <textarea id="customerMessageHistory" readonly></textarea>
+  <!-- Customer Message History => read-and-write now -->
+  <textarea id="customerMessageHistory"></textarea>
 
-  <!-- Existing Titles -->
+  <!-- Titles (we removed #titleMessageHistory) -->
   <div id="titleOrderDate">Order Date:</div>
   <div id="titleShipDate">Ship By:</div>
-
-  <!-- 5 New Title Objects -->
   <div id="titleOrderDetails">Order Details:</div>
-  <div id="titleMessageHistory">Message History:</div>
   <div id="titleBritesMessages">Brites Messages</div>
   <div id="titlePurchasedItems">Purchased Items:</div>
   <div id="titleOrderNumber">Order Number</div>
 
   <!-- Date/Ship Date boxes -->
   <input type="text" id="dateOrdered" readonly />
-  <input type="text" id="shipDate" readonly />
+  <input type="text" id="shipDate"    readonly />
 
   <!-- Configuration Modal -->
   <div id="configModal" class="modal">
@@ -285,15 +296,14 @@
 
   <script>
     /*
-     * This merges all your recent changes:
-     *  - "Payment Status:" -> "Order Status:" in showItemDetails()
-     *  - 5 new title objects
-     *  - remove "CUSTOMER MESSAGE HISTORY:" from message box
-     *  - #etsyOrderNumber has no extra spacing under text, 
-     *    underline directly beneath, fully left-justified
-     *  - read-only text boxes for dateOrdered, shipDate, orderDetails, 
-     *    customerMessageHistory
-     *  - shipping color logic => if shipped => #006400, else default
+     * Summary of changes:
+     * 1) Deleted the "Message History:" title (removed #titleMessageHistory).
+     * 2) #customerMessageHistory is now read/write (no readonly attribute).
+     * 3) Created new button #orderLinkBtn with an <img> from "assets/Globe.png"; 
+     *    no text displayed. 
+     *    Clicking it will parse "https://www.etsy.com/your/orders/sold?ref=seller-platform-mcnav&order_id=0000000000"
+     *    and replace the "0000000000" with the current #etsyOrderNumber,
+     *    then open a new tab to that custom link.
      */
 
     window.orderName      = "";
@@ -335,7 +345,6 @@
       }
       return text;
     }
-    
     async function generateCodeChallenge(codeVerifier) {
       const encoder=new TextEncoder();
       const data=encoder.encode(codeVerifier);
@@ -345,7 +354,6 @@
               .replace(/\//g,"_")
               .replace(/=+$/,"");
     }
-
     document.getElementById("connectEtsyBtn").addEventListener("click", async ()=>{
       const codeVerifier=generateRandomString(64);
       localStorage.setItem("etsy_code_verifier",codeVerifier);
@@ -369,6 +377,7 @@
     const configComponentIDs = [
       "connectEtsyBtn",
       "openConfigBtn",
+      "orderLinkBtn",  /* We also want to include the new button in the config table if you like */
       "etsyOrderNumber",
       "orderInformation",
       "Photo_Grid",
@@ -381,97 +390,88 @@
       "titleOrderDate",
       "titleShipDate",
       "titleOrderDetails",
-      "titleMessageHistory",
+      /* "titleMessageHistory" => removed */
       "titleBritesMessages",
       "titlePurchasedItems",
       "titleOrderNumber"
     ];
 
-    function loadPositions() {
-      configComponentIDs.forEach(id => {
-        const el = document.getElementById(id);
-        if (el) {
-          const left   = localStorage.getItem(`pos-${id}-left`);
-          const top    = localStorage.getItem(`pos-${id}-top`);
-          const width  = localStorage.getItem(`pos-${id}-width`);
-          const height = localStorage.getItem(`pos-${id}-height`);
-          if (left   !== null) el.style.left   = left + "px";
-          if (top    !== null) el.style.top    = top + "px";
-          if (width  !== null) el.style.width  = width + "px";
-          if (height !== null) el.style.height = height+ "px";
+    function loadPositions(){
+      configComponentIDs.forEach(id=>{
+        const el=document.getElementById(id);
+        if(el){
+          const left=localStorage.getItem(`pos-${id}-left`);
+          const top=localStorage.getItem(`pos-${id}-top`);
+          const width=localStorage.getItem(`pos-${id}-width`);
+          const height=localStorage.getItem(`pos-${id}-height`);
+          if(left!==null)   el.style.left=left+"px";
+          if(top!==null)    el.style.top=top+"px";
+          if(width!==null)  el.style.width=width+"px";
+          if(height!==null) el.style.height=height+"px";
         }
       });
     }
+    function populateConfigTable(){
+      const tbody=document.getElementById("configTable").querySelector("tbody");
+      tbody.innerHTML="";
+      configComponentIDs.forEach(id=>{
+        const el=document.getElementById(id);
+        if(!el)return;
+        const compName=el.textContent.trim()||el.value?.trim()||id;
+        const cs=window.getComputedStyle(el);
+        const leftVal=(cs.left==="auto")?0:parseInt(cs.left);
+        const topVal=(cs.top==="auto")?0:parseInt(cs.top);
+        const widthVal=(cs.width==="auto")?0:parseInt(cs.width);
+        const heightVal=(cs.height==="auto")?0:parseInt(cs.height);
 
-    function populateConfigTable() {
-      const tbody = document.getElementById("configTable").querySelector("tbody");
-      tbody.innerHTML = "";
-      configComponentIDs.forEach(id => {
-        const el = document.getElementById(id);
-        if (!el) return;
-        const compName = el.textContent.trim() || el.value?.trim() || id;
-        const cs = window.getComputedStyle(el);
-        const leftVal   = (cs.left === "auto") ? 0 : parseInt(cs.left);
-        const topVal    = (cs.top === "auto") ? 0 : parseInt(cs.top);
-        const widthVal  = (cs.width === "auto") ? 0 : parseInt(cs.width);
-        const heightVal = (cs.height=== "auto")? 0 : parseInt(cs.height);
-
-        const row = document.createElement("tr");
-        row.innerHTML = `
+        const row=document.createElement("tr");
+        row.innerHTML=`
           <td>${compName}</td>
-          <td><input type="number" value="${leftVal}"   data-id="${id}" class="left-input"></td>
-          <td><input type="number" value="${topVal}"    data-id="${id}" class="top-input"></td>
-          <td><input type="number" value="${widthVal}"  data-id="${id}" class="width-input"></td>
+          <td><input type="number" value="${leftVal}" data-id="${id}" class="left-input"></td>
+          <td><input type="number" value="${topVal}" data-id="${id}" class="top-input"></td>
+          <td><input type="number" value="${widthVal}" data-id="${id}" class="width-input"></td>
           <td><input type="number" value="${heightVal}" data-id="${id}" class="height-input"></td>
         `;
         tbody.appendChild(row);
 
-        // live updates
-        row.querySelector(".left-input").addEventListener("input", function(){
-          const tgt=document.getElementById(this.getAttribute("data-id"));
-          if(tgt) tgt.style.left= parseInt(this.value)+"px";
+        // Live updates
+        row.querySelector(".left-input").addEventListener("input",function(){
+          const target=document.getElementById(this.getAttribute("data-id"));
+          if(target)target.style.left=parseInt(this.value)+"px";
         });
-        row.querySelector(".top-input").addEventListener("input", function(){
-          const tgt=document.getElementById(this.getAttribute("data-id"));
-          if(tgt) tgt.style.top= parseInt(this.value)+"px";
+        row.querySelector(".top-input").addEventListener("input",function(){
+          const target=document.getElementById(this.getAttribute("data-id"));
+          if(target)target.style.top=parseInt(this.value)+"px";
         });
-        row.querySelector(".width-input").addEventListener("input", function(){
-          const tgt=document.getElementById(this.getAttribute("data-id"));
-          if(tgt) tgt.style.width= parseInt(this.value)+"px";
+        row.querySelector(".width-input").addEventListener("input",function(){
+          const target=document.getElementById(this.getAttribute("data-id"));
+          if(target)target.style.width=parseInt(this.value)+"px";
         });
-        row.querySelector(".height-input").addEventListener("input", function(){
-          const tgt=document.getElementById(this.getAttribute("data-id"));
-          if(tgt) tgt.style.height= parseInt(this.value)+"px";
+        row.querySelector(".height-input").addEventListener("input",function(){
+          const target=document.getElementById(this.getAttribute("data-id"));
+          if(target)target.style.height=parseInt(this.value)+"px";
         });
       });
     }
-
-    function saveConfiguration() {
-      configComponentIDs.forEach(id => {
-        const el = document.getElementById(id);
-        if (el) {
-          const cs       = window.getComputedStyle(el);
-          const leftVal  = parseInt(cs.left)   || 0;
-          const topVal   = parseInt(cs.top)    || 0;
-          const widthVal = parseInt(cs.width)  || 0;
-          const heightVal= parseInt(cs.height) || 0;
-          localStorage.setItem(`pos-${id}-left`,   leftVal);
-          localStorage.setItem(`pos-${id}-top`,    topVal);
-          localStorage.setItem(`pos-${id}-width`,  widthVal);
-          localStorage.setItem(`pos-${id}-height`, heightVal);
+    function saveConfiguration(){
+      configComponentIDs.forEach(id=>{
+        const el=document.getElementById(id);
+        if(el){
+          const cs=window.getComputedStyle(el);
+          const leftVal=parseInt(cs.left)||0;
+          const topVal=parseInt(cs.top)||0;
+          const widthVal=parseInt(cs.width)||0;
+          const heightVal=parseInt(cs.height)||0;
+          localStorage.setItem(`pos-${id}-left`,  leftVal);
+          localStorage.setItem(`pos-${id}-top`,   topVal);
+          localStorage.setItem(`pos-${id}-width`, widthVal);
+          localStorage.setItem(`pos-${id}-height`,heightVal);
         }
       });
       console.log("Configuration saved.");
     }
 
-    /************************************************************************
-     * showItemDetails(index):
-     *   " ORDER FROM: [name]"
-     *   " Order Status: [status]" (was Payment Status)
-     *   " Shipping Status: [Shipped!/Not Shipped]"
-     *   blank line
-     *   " ORDER DETAILS:"
-     ************************************************************************/
+    /********** showItemDetails => "Payment Status:" -> "Order Status:" **********/
     function showItemDetails(index){
       if(!window.cachedOrderItems||!window.cachedOrderItems[index]){
         console.warn("No item at index:",index);
@@ -483,7 +483,7 @@
       if(window.orderName){
         details+=" ORDER FROM: "+window.orderName+"\n";
       }
-      // Payment => Order
+      /* renamed Payment => Order */
       if(window.orderStatus){
         details+=" Order Status: "+window.orderStatus+"\n";
       }
@@ -494,6 +494,7 @@
       }
       details+=" ORDER DETAILS:\n\n";
 
+      // same Variation logic
       if(item.title){
         const firstFourWords=item.title.trim().split(" ").slice(0,4).join(" ");
         details+=" Title: "+firstFourWords+"\n";
@@ -539,8 +540,8 @@
       document.getElementById("orderDetails").value=details;
     }
 
-    /********** fetchListingImages => no changes **********/
     async function fetchListingImages(listingId){
+      // (unchanged)
       const response=await fetch(`/.netlify/functions/etsyImages?listingId=${listingId}`,{
         headers:{"access-token":localStorage.getItem("access_token")}
       });
@@ -551,8 +552,8 @@
       return data.results;
     }
 
-    /********** updateImageGrid => no changes **********/
     async function updateImageGrid(data){
+      // (unchanged)
       let items=[];
       if(data.transactions && Array.isArray(data.transactions)){
         items=data.transactions;
@@ -596,12 +597,10 @@
             cell.style.cursor="pointer";
             cell.onclick=()=> showItemDetails(i);
 
-            // quantity => leading space
             if(qtyBox){
               const actualQty=(item.quantity!=null)?item.quantity:0;
               qtyBox.value=" Quantity: "+actualQty;
             }
-            // metal => leading space
             if(metalBox){
               let metalSel="";
               if(item.variations && Array.isArray(item.variations)){
@@ -633,8 +632,8 @@
       }
     }
 
-    /********** pullEtsyOrderDetails => removing "CUSTOMER MESSAGE HISTORY:" + shipping color logic => "Shipped!" => #006400, else default **********/
     function pullEtsyOrderDetails(orderNumber){
+      // (unchanged, except for #customerMessageHistory not having "CUSTOMER MESSAGE HISTORY:")
       console.log("Pulling Etsy order details:",orderNumber);
       const token=localStorage.getItem("access_token");
       return fetch('/.netlify/functions/etsyOrderProxy?orderId='+encodeURIComponent(orderNumber),{
@@ -644,24 +643,19 @@
       .then(data=>{
         console.log("Etsy Order Data:",data);
 
-        // leading space in #orderInformation
         document.getElementById("orderInformation").value=" "+JSON.stringify(data,null,2);
 
-        // name => window.orderName
         if(data.name){
           window.orderName=data.name;
         }else{
           window.orderName="";
         }
-
-        // status => window.orderStatus => "Order Status:"
         if(data.status){
           window.orderStatus=data.status;
         }else{
           window.orderStatus="";
         }
 
-        // is_shipped => "Shipped!" or "Not Shipped"
         if(data.is_shipped===true){
           window.orderIsShipped="Shipped!";
         } else if(data.is_shipped===false){
@@ -670,7 +664,6 @@
           window.orderIsShipped="";
         }
 
-        // "customerMessageHistory" => no "CUSTOMER MESSAGE HISTORY:" text
         const msgHistoryBox=document.getElementById("customerMessageHistory");
         if(data.message_from_buyer){
           msgHistoryBox.value=data.message_from_buyer+"\n";
@@ -682,7 +675,6 @@
           const firstTrans=data.transactions[0];
           const monthNames=["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
 
-          // dateOrdered
           if(firstTrans.created_timestamp){
             const d=new Date(firstTrans.created_timestamp*1000);
             const day=("0"+d.getDate()).slice(-2);
@@ -693,7 +685,6 @@
             document.getElementById("dateOrdered").value="";
           }
 
-          // expected_ship_date => #shipDate => if shipped => #006400, else default
           const shipEl=document.getElementById("shipDate");
           shipEl.style.color="";
           if(firstTrans.expected_ship_date){
@@ -703,7 +694,7 @@
             const sYear=s.getFullYear();
             shipEl.value=" "+sDay+" "+sMonth+" "+sYear;
             if(window.orderIsShipped==="Shipped!"){
-              shipEl.style.color="#006400"; // dark green
+              shipEl.style.color="#006400";
             } else{
               shipEl.style.color="";
             }
@@ -729,7 +720,7 @@
       M.AutoInit();
       $("#Photo_Grid").load("imageGrid.html",(resp,status,xhr)=>{
         if(status==="error"){
-          console.error("Error loading image grid:",xhr.status,xhr.statusText);
+          console.error("Error loading image grid:",xhr.status, xhr.statusText);
         }else{
           console.log("Image grid loaded successfully.");
         }
@@ -762,6 +753,20 @@
             }
           }
         }
+      });
+
+      /********** NEW: #orderLinkBtn => opens new tab with custom link **********/
+      const orderLinkBtn=document.getElementById("orderLinkBtn");
+      orderLinkBtn.addEventListener("click", ()=>{
+        const baseUrl="https://www.etsy.com/your/orders/sold?ref=seller-platform-mcnav&order_id=0000000000";
+        const currentOrder=document.getElementById("etsyOrderNumber").value.trim();
+        if(!currentOrder){ 
+          console.log("No order number entered.");
+          return;
+        }
+        // Replace the trailing 10 digits in the link with the actual order
+        const customLink=baseUrl.replace("0000000000", currentOrder);
+        window.open(customLink, "_blank");
       });
     });
   </script>
