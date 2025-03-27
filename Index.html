@@ -9,9 +9,8 @@
     rel="stylesheet"
     href="https://cdnjs.cloudflare.com/ajax/libs/materialize/1.0.0/css/materialize.min.css"
   >
-
   <style>
-    /* Hide the page initially for a fade-in effect */
+    /* Hide page initially for a fade-in effect */
     body {
       background-color: white;
       margin: 0;
@@ -54,8 +53,8 @@
     }
 
     /*
-     * Etsy Order Number text box:
-     *   - no extra space below typed text => underline is right beneath
+     * Etsy Order Number text box
+     *   - no extra space => underline right beneath
      *   - fully left-justified
      */
     #etsyOrderNumber {
@@ -74,9 +73,7 @@
       outline: none;
     }
 
-    /*
-     * "Order Information" => read-only JSON
-     */
+    /* read-only JSON text area */
     #orderInformation {
       position: absolute;
       left: 50px;
@@ -89,7 +86,7 @@
     }
 
     /*
-     * The Photo Grid => scaled to 1.35, 2×4, 35px row gap, 5px column gap
+     * Photo Grid => scaled 1.35, 2×4, 35px row gap, 5px col gap
      */
     #Photo_Grid {
       position: absolute;
@@ -98,12 +95,10 @@
       transform: scale(1.25);
       transform-origin: top left;
     }
-
     #photoGridContainer {
       display: grid;
       grid-template-columns: repeat(4, 1fr);
       grid-template-rows: repeat(2, auto);
-      /* 35px row gap, 5px column gap => 10px less than previous 45px */
       gap: 35px 5px;
     }
     .grid-cell {
@@ -112,7 +107,7 @@
       align-items: center;
     }
     .preview-box {
-      border: 1px solid black !important; /* matching Order Details border thickness */
+      border: 1px solid black !important; /* match Order Details thickness */
       background: #f9f9f9;
       width: 100%;
       height: 150px;
@@ -132,7 +127,7 @@
     }
 
     /*
-     * 16 text-box-absolute => 0.9em to match #orderDetails
+     * 16 text-box-absolute => 0.9em
      */
     .text-box-absolute {
       position: absolute;
@@ -150,7 +145,7 @@
       box-sizing: border-box;
     }
 
-    /* read-only #orderDetails => 0.9em */
+    /* OrderDetails => read-only, 0.9em */
     #orderDetails {
       position: absolute;
       border: 1px solid black;
@@ -182,7 +177,9 @@
       overflow-y: auto;
     }
 
-    /* Single-line text boxes => bigger & bold, read-only */
+    /*
+     * single-line text boxes => bigger & bold, read-only
+     */
     #dateOrdered,
     #shipDate {
       position: absolute;
@@ -196,8 +193,11 @@
       font-weight: bold;
     }
 
-    /* Title texts => no "Message History:" */
+    /*
+     * Title texts => we have #titleOrderDate2 for shipped_timestamp
+     */
     #titleOrderDate,
+    #titleOrderDate2, /* will display shipped_timestamp if shipped, in bold */
     #titleShipDate,
     #titleOrderDetails,
     #titleBritesMessages,
@@ -207,6 +207,9 @@
       font-size: 0.7em;
       margin: 0;
       padding: 0;
+    }
+    #titleOrderDate2 {
+      font-weight: bold;
     }
 
     /* Configuration Modal styling */
@@ -262,7 +265,7 @@
   <input type="text" id="etsyOrderNumber" placeholder="Etsy Order Number" />
   <textarea id="orderInformation" placeholder=" Order Information" readonly></textarea>
 
-  <!-- Photo Grid => 2 rows × 4 columns, 35px row gap, 5px col gap, scaled 1.35, 1px border boxes -->
+  <!-- Photo Grid => 2×4, 35px row gap, 5px col gap, scaled 1.35, 1px border boxes -->
   <div id="Photo_Grid">
     <div id="photoGridContainer">
       <div class="grid-cell">
@@ -317,8 +320,9 @@
   <!-- Customer Message History => read/write, 0.9em -->
   <textarea id="customerMessageHistory"></textarea>
 
-  <!-- Title texts (no "Message History:") -->
+  <!-- Title texts, #titleOrderDate2 => bold, used for shipped_timestamp -->
   <div id="titleOrderDate">Order Date:</div>
+  <div id="titleOrderDate2" style="font-weight:bold;"></div>
   <div id="titleShipDate">Ship By:</div>
   <div id="titleOrderDetails">Order Details:</div>
   <div id="titleBritesMessages">Brites Messages</div>
@@ -360,17 +364,16 @@
 
   <script>
     /*
-     * COMPLETE final code:
-     * 1) Only show the shipped_timestamp if Shipping Status is "Shipped!"
-     * 2) Format date exactly like Order Date => e.g. "DD MMM YYYY"
-     * 3) Place it to the right side => "Shipping Status: Shipped! 24 Mar 2023"
+     * COMPLETELY updated code:
+     * - #titleOrderDate2 now displays shipped_timestamp in bold 
+     *   if is_shipped===true => "Shipped On: DD Mmm YYYY"
+     * - If not shipped => #titleOrderDate2 is empty.
      */
 
     window.orderName="";
     window.orderStatus="";
     window.orderIsShipped="";
     window.cachedOrderItems=[];
-    /* We'll store the shipped_timestamp from top-level or transaction so we can show it. */
     window.orderShippedTimestamp=null;
 
     /********** Check for Access Token / Code **********/
@@ -434,14 +437,17 @@
       window.location.href=etsyAuthUrl;
     });
 
-    /* Configuration system */
+    /*
+     * Configuration system
+     *   includes #titleOrderDate2 so you can position it if desired
+     */
     const configComponentIDs=[
       "connectEtsyBtn","openConfigBtn","orderLinkBtn","etsyOrderNumber","orderInformation",
       "Photo_Grid",
       "quantityCell0","quantityCell1","quantityCell2","quantityCell3","quantityCell4","quantityCell5","quantityCell6","quantityCell7",
       "metalCell0","metalCell1","metalCell2","metalCell3","metalCell4","metalCell5","metalCell6","metalCell7",
       "orderDetails","customerMessageHistory","dateOrdered","shipDate",
-      "titleOrderDate","titleShipDate","titleOrderDetails",
+      "titleOrderDate","titleOrderDate2","titleShipDate","titleOrderDetails",
       "titleBritesMessages","titlePurchasedItems","titleOrderNumber"
     ];
     function loadPositions(){
@@ -546,9 +552,8 @@
         details+=" Order Status: "+window.orderStatus+"\n";
       }
 
-      // SHIPPING STATUS => if "Shipped!", also append shipped_timestamp date
+      // SHIPPING STATUS => if "Shipped!", also date => "Shipping Status: Shipped! 24 Mar 2023"
       if(window.orderIsShipped==="Shipped!"){
-        // if we have a top-level orderShippedTimestamp => parse it
         let shippedDateString="";
         if(window.orderShippedTimestamp){
           const d=new Date(window.orderShippedTimestamp*1000);
@@ -561,17 +566,15 @@
         details+=" Shipping Status: Shipped!"+shippedDateString+"\n\n";
       }
       else if(window.orderIsShipped){
-        // e.g. "Not Shipped"
         details+=" Shipping Status: "+window.orderIsShipped+"\n\n";
       }
       else {
-        // no shipping status
         details+="\n";
       }
 
       details+=" ORDER DETAILS:\n\n";
 
-      // Title (first 4 words)
+      // Title => first 4 words
       if(item.title){
         const firstFourWords=item.title.trim().split(" ").slice(0,4).join(" ");
         details+=" Title: "+firstFourWords+"\n";
@@ -621,9 +624,6 @@
       document.getElementById("orderDetails").value=details;
     }
 
-    /*
-     * fetchListingImages => unchanged
-     */
     async function fetchListingImages(listingId){
       const response=await fetch(`/.netlify/functions/etsyImages?listingId=${listingId}`,{
         headers:{"access-token":localStorage.getItem("access_token")}
@@ -634,33 +634,21 @@
       const data=await response.json();
       return data.results;
     }
-
-    /*
-     * updateImageGrid => unchanged
-     */
     async function updateImageGrid(data){
       let items=[];
-      if(data.transactions && Array.isArray(data.transactions)){
-        items=data.transactions;
-      } else if(data.shipments && Array.isArray(data.shipments)){
-        items=data.shipments;
-      } else if(Array.isArray(data)){
-        items=data;
-      } else if(data.results && Array.isArray(data.results)){
-        items=data.results;
-      } else if(data.orders && Array.isArray(data.orders)){
-        items=data.orders;
-      } else if(typeof data==='object' && data!==null){
+      if(data.transactions && Array.isArray(data.transactions)){ items=data.transactions; }
+      else if(data.shipments && Array.isArray(data.shipments)){ items=data.shipments; }
+      else if(Array.isArray(data)){ items=data; }
+      else if(data.results && Array.isArray(data.results)){ items=data.results; }
+      else if(data.orders && Array.isArray(data.orders)){ items=data.orders; }
+      else if(typeof data==='object' && data!==null){
         for(const key in data){
-          if(Array.isArray(data[key])){
-            items=data[key];
-            break;
-          }
+          if(Array.isArray(data[key])){ items=data[key]; break; }
         }
       }
       window.cachedOrderItems=items;
 
-      for(let i=0; i<8; i++){
+      for(let i=0;i<8;i++){
         const cell=document.getElementById("previewCell"+i);
         const qtyBox=document.getElementById("quantityCell"+i);
         const metalBox=document.getElementById("metalCell"+i);
@@ -695,9 +683,7 @@
                 const metalVar=item.variations.find(v=>
                   v.formatted_name && acceptedMetalNames.includes(v.formatted_name.trim().toLowerCase())
                 );
-                if(metalVar){
-                  metalSel=metalVar.formatted_value||"";
-                }
+                if(metalVar){ metalSel=metalVar.formatted_value||""; }
               }
               metalBox.value=" Metal: "+metalSel;
             }
@@ -705,21 +691,19 @@
             cell.innerHTML="Empty";
             cell.style.cursor="default";
             cell.onclick=null;
-            if(qtyBox)qtyBox.value="";
-            if(metalBox)metalBox.value="";
+            if(qtyBox)   qtyBox.value="";
+            if(metalBox) metalBox.value="";
           }
         }
       }
-      if(items.length>0){
-        showItemDetails(0);
-      } else {
-        document.getElementById("orderDetails").value=
-          " ORDER DETAILS:\n\nNo items found.";
+      if(items.length>0){ showItemDetails(0); }
+      else {
+        document.getElementById("orderDetails").value=" ORDER DETAILS:\n\nNo items found.";
       }
     }
 
     /*
-     * pullEtsyOrderDetails => new logic to store "shipped_timestamp" globally
+     * pullEtsyOrderDetails => We'll also update #titleOrderDate2 if shipped
      */
     function pullEtsyOrderDetails(orderNumber){
       console.log("Pulling Etsy order details for order number:",orderNumber);
@@ -732,18 +716,21 @@
         console.log("Etsy Order Data:",data);
         document.getElementById("orderInformation").value=" "+JSON.stringify(data,null,2);
 
+        // default => clear #titleOrderDate2
+        const titleDate2=document.getElementById("titleOrderDate2");
+        titleDate2.textContent=""; 
+
         if(data.name){
           window.orderName=data.name;
-        }else{
+        } else {
           window.orderName="";
         }
         if(data.status){
           window.orderStatus=data.status;
-        }else{
+        } else {
           window.orderStatus="";
         }
 
-        // shipping logic
         if(data.is_shipped===true){
           window.orderIsShipped="Shipped!";
         } else if(data.is_shipped===false){
@@ -752,10 +739,7 @@
           window.orderIsShipped="";
         }
 
-        /*
-         * We'll see if there's a top-level "shipped_timestamp" 
-         * or maybe in the first transaction. Whichever we find first.
-         */
+        // Check top-level shipped_timestamp or first transaction shipped_timestamp
         let foundStamp=null;
         if(data.shipped_timestamp && data.is_shipped===true){
           foundStamp=data.shipped_timestamp;
@@ -763,13 +747,22 @@
         else if(data.transactions 
                 && Array.isArray(data.transactions) 
                 && data.transactions.length>0
-                && data.transactions[0].shipped_timestamp
+                && data.transactions[0].shipped_timestamp 
                 && data.is_shipped===true){
           foundStamp=data.transactions[0].shipped_timestamp;
         }
         window.orderShippedTimestamp=foundStamp;
 
-        // Customer Message History
+        // If shipped => display in #titleOrderDate2 => "Shipped On: DD Mmm YYYY"
+        if(window.orderIsShipped==="Shipped!" && window.orderShippedTimestamp){
+          const d=new Date(window.orderShippedTimestamp*1000);
+          const monthNames=["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+          const day=("0"+d.getDate()).slice(-2);
+          const mStr=monthNames[d.getMonth()];
+          const y=d.getFullYear();
+          titleDate2.textContent = `Shipped On: ${day} ${mStr} ${y}`; 
+        }
+
         const msgBox=document.getElementById("customerMessageHistory");
         if(data.message_from_buyer){
           msgBox.value=data.message_from_buyer+"\n";
@@ -777,24 +770,18 @@
           msgBox.value="";
         }
 
-        // If there's at least one transaction => set dateOrdered, shipDate
         if(data.transactions && data.transactions.length>0){
           const firstTrans=data.transactions[0];
           const monthNames=["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
-
-          // created_timestamp => dateOrdered
           if(firstTrans.created_timestamp){
             const d=new Date(firstTrans.created_timestamp*1000);
             const day=("0"+d.getDate()).slice(-2);
             const mStr=monthNames[d.getMonth()];
             const y=d.getFullYear();
-            document.getElementById("dateOrdered").value=
-              " "+day+" "+mStr+" "+y;
-          } else{
+            document.getElementById("dateOrdered").value=" "+day+" "+mStr+" "+y;
+          } else {
             document.getElementById("dateOrdered").value="";
           }
-
-          // expected_ship_date => #shipDate
           const shipEl=document.getElementById("shipDate");
           shipEl.style.color="";
           if(firstTrans.expected_ship_date){
@@ -828,8 +815,6 @@
 
     document.addEventListener("DOMContentLoaded",()=>{
       M.AutoInit();
-
-      // fade-in effect
       document.body.style.opacity=0;
       setTimeout(()=>{
         loadPositions();
@@ -873,7 +858,7 @@
         window.open(customLink,"_blank");
       });
 
-      // WHEEL-BASED ZOOM FOR EACH PREVIEW BOX
+      // WHEEL-BASED ZOOM FOR PREVIEW BOXES
       document.querySelectorAll('.preview-box').forEach(function(box) {
         box.addEventListener('wheel', function(e) {
           e.preventDefault();
