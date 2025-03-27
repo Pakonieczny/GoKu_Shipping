@@ -182,10 +182,10 @@
     readonly
   ></textarea>
 
-  <!-- Photo Grid -->
+  <!-- Photo Grid (8 preview cells) -->
   <div id="Photo_Grid"></div>
 
-  <!-- 16 text-box-absolute for quantity/metal -->
+  <!-- 16 text-box-absolute for quantity & metal -->
   <input type="text" id="quantityCell0" class="text-box-absolute" readonly />
   <input type="text" id="quantityCell1" class="text-box-absolute" readonly />
   <input type="text" id="quantityCell2" class="text-box-absolute" readonly />
@@ -244,12 +244,14 @@
 
   <script>
     /*
-     * This code now sets #shipDate color as follows:
-     *    1) If the date is exactly today => #FFDAB9 (light orange)
-     *    2) If the date is AFTER today:
-     *         - if shipping status is "Shipped!" => #90EE90 (light green)
-     *         - else => #FFB6C1 (light red)
-     *    3) If the date is before or equal to yesterday => default (no color)
+     * Updated logic for expected_ship_date:
+     *   1) if date == today:
+     *      - if shipping status == "Shipped!" => #006400 (darker green)
+     *      - else => #FF8C00 (darker orange)
+     *   2) if date is before today (a future date per your scenario):
+     *      - if shipping status == "Shipped!" => #006400 (darker green)
+     *      - else => #8B0000 (darker red)
+     *   3) otherwise => no color
      */
 
     window.orderName      = "";
@@ -284,18 +286,18 @@
 
     /********** Etsy OAuth: Connect to Etsy **********/
     function generateRandomString(length) {
-      const chars="ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
-      let text="";
-      for(let i=0;i<length;i++){
-        text+=chars.charAt(Math.floor(Math.random()*chars.length));
+      const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+      let text = "";
+      for (let i = 0; i < length; i++) {
+        text += chars.charAt(Math.floor(Math.random() * chars.length));
       }
       return text;
     }
     
     async function generateCodeChallenge(codeVerifier) {
-      const encoder=new TextEncoder();
-      const data=encoder.encode(codeVerifier);
-      const digest=await crypto.subtle.digest("SHA-256",data);
+      const encoder = new TextEncoder();
+      const data = encoder.encode(codeVerifier);
+      const digest = await crypto.subtle.digest("SHA-256", data);
       return btoa(String.fromCharCode(...new Uint8Array(digest)))
               .replace(/\+/g,"-")
               .replace(/\//g,"_")
@@ -303,26 +305,26 @@
     }
 
     document.getElementById("connectEtsyBtn").addEventListener("click", async ()=>{
-      const codeVerifier=generateRandomString(64);
-      localStorage.setItem("etsy_code_verifier",codeVerifier);
-      const codeChallenge=await generateCodeChallenge(codeVerifier);
-      const state="randomState123";
-      const scope="listings_w listings_r transactions_r transactions_w";
-      const CLIENT_ID="k75zdspz4r99txpqdji7i2em"; 
-      const redirectUri="https://gokushipping.netlify.app"; 
-      const etsyAuthUrl=`https://www.etsy.com/oauth/connect?response_type=code`
-                       +`&client_id=${CLIENT_ID}`
-                       +`&redirect_uri=${encodeURIComponent(redirectUri)}`
-                       +`&scope=${encodeURIComponent(scope)}`
-                       +`&state=${state}`
-                       +`&code_challenge=${encodeURIComponent(codeChallenge)}`
-                       +`&code_challenge_method=S256`;
-      console.log("Redirecting to Etsy OAuth URL:",etsyAuthUrl);
+      const codeVerifier = generateRandomString(64);
+      localStorage.setItem("etsy_code_verifier", codeVerifier);
+      const codeChallenge = await generateCodeChallenge(codeVerifier);
+      const state = "randomState123";
+      const scope = "listings_w listings_r transactions_r transactions_w";
+      const CLIENT_ID = "k75zdspz4r99txpqdji7i2em"; 
+      const redirectUri = "https://gokushipping.netlify.app"; 
+      const etsyAuthUrl = `https://www.etsy.com/oauth/connect?response_type=code`
+                        + `&client_id=${CLIENT_ID}`
+                        + `&redirect_uri=${encodeURIComponent(redirectUri)}`
+                        + `&scope=${encodeURIComponent(scope)}`
+                        + `&state=${state}`
+                        + `&code_challenge=${encodeURIComponent(codeChallenge)}`
+                        + `&code_challenge_method=S256`;
+      console.log("Redirecting to Etsy OAuth URL:", etsyAuthUrl);
       window.location.href=etsyAuthUrl;
     });
 
     /********** UI Configuration **********/
-    const configComponentIDs=[
+    const configComponentIDs = [
       "connectEtsyBtn",
       "openConfigBtn",
       "etsyOrderNumber",
@@ -337,36 +339,37 @@
       "titleShipDate"
     ];
 
-    function loadPositions(){
-      configComponentIDs.forEach(id=>{
-        const el=document.getElementById(id);
-        if(el){
-          const left=localStorage.getItem(`pos-${id}-left`);
-          const top=localStorage.getItem(`pos-${id}-top`);
-          const width=localStorage.getItem(`pos-${id}-width`);
-          const height=localStorage.getItem(`pos-${id}-height`);
-          if(left!==null)   el.style.left=left+"px";
-          if(top!==null)    el.style.top=top+"px";
-          if(width!==null)  el.style.width=width+"px";
-          if(height!==null) el.style.height=height+"px";
+    function loadPositions() {
+      configComponentIDs.forEach(id => {
+        const el = document.getElementById(id);
+        if (el) {
+          const left   = localStorage.getItem(`pos-${id}-left`);
+          const top    = localStorage.getItem(`pos-${id}-top`);
+          const width  = localStorage.getItem(`pos-${id}-width`);
+          const height = localStorage.getItem(`pos-${id}-height`);
+          if (left   !== null) el.style.left   = left + "px";
+          if (top    !== null) el.style.top    = top + "px";
+          if (width  !== null) el.style.width  = width + "px";
+          if (height !== null) el.style.height = height+ "px";
         }
       });
     }
-    function populateConfigTable(){
-      const tbody=document.getElementById("configTable").querySelector("tbody");
-      tbody.innerHTML="";
-      configComponentIDs.forEach(id=>{
-        const el=document.getElementById(id);
-        if(!el)return;
-        const compName=el.textContent.trim()||el.value?.trim()||id;
-        const cs=window.getComputedStyle(el);
-        const leftVal=(cs.left==="auto")?0:parseInt(cs.left);
-        const topVal=(cs.top==="auto")?0:parseInt(cs.top);
-        const widthVal=(cs.width==="auto")?0:parseInt(cs.width);
-        const heightVal=(cs.height==="auto")?0:parseInt(cs.height);
 
-        const row=document.createElement("tr");
-        row.innerHTML=`
+    function populateConfigTable() {
+      const tbody = document.getElementById("configTable").querySelector("tbody");
+      tbody.innerHTML = "";
+      configComponentIDs.forEach(id => {
+        const el = document.getElementById(id);
+        if (!el) return;
+        const compName = el.textContent.trim() || el.value?.trim() || id;
+        const cs = window.getComputedStyle(el);
+        const leftVal   = (cs.left === "auto") ? 0 : parseInt(cs.left);
+        const topVal    = (cs.top  === "auto") ? 0 : parseInt(cs.top);
+        const widthVal  = (cs.width === "auto") ? 0 : parseInt(cs.width);
+        const heightVal = (cs.height=== "auto")? 0 : parseInt(cs.height);
+
+        const row = document.createElement("tr");
+        row.innerHTML = `
           <td>${compName}</td>
           <td><input type="number" value="${leftVal}" data-id="${id}" class="left-input"></td>
           <td><input type="number" value="${topVal}" data-id="${id}" class="top-input"></td>
@@ -376,336 +379,338 @@
         tbody.appendChild(row);
 
         // Live updates
-        row.querySelector(".left-input").addEventListener("input",function(){
-          const target=document.getElementById(this.getAttribute("data-id"));
-          if(target)target.style.left=parseInt(this.value)+"px";
+        row.querySelector(".left-input").addEventListener("input", function() {
+          const tgt = document.getElementById(this.getAttribute("data-id"));
+          if (tgt) tgt.style.left = parseInt(this.value) + "px";
         });
-        row.querySelector(".top-input").addEventListener("input",function(){
-          const target=document.getElementById(this.getAttribute("data-id"));
-          if(target)target.style.top=parseInt(this.value)+"px";
+        row.querySelector(".top-input").addEventListener("input", function() {
+          const tgt = document.getElementById(this.getAttribute("data-id"));
+          if (tgt) tgt.style.top = parseInt(this.value) + "px";
         });
-        row.querySelector(".width-input").addEventListener("input",function(){
-          const target=document.getElementById(this.getAttribute("data-id"));
-          if(target)target.style.width=parseInt(this.value)+"px";
+        row.querySelector(".width-input").addEventListener("input", function() {
+          const tgt = document.getElementById(this.getAttribute("data-id"));
+          if (tgt) tgt.style.width= parseInt(this.value) + "px";
         });
-        row.querySelector(".height-input").addEventListener("input",function(){
-          const target=document.getElementById(this.getAttribute("data-id"));
-          if(target)target.style.height=parseInt(this.value)+"px";
+        row.querySelector(".height-input").addEventListener("input", function() {
+          const tgt = document.getElementById(this.getAttribute("data-id"));
+          if (tgt) tgt.style.height= parseInt(this.value) + "px";
         });
       });
     }
-    function saveConfiguration(){
-      configComponentIDs.forEach(id=>{
-        const el=document.getElementById(id);
-        if(el){
-          const cs=window.getComputedStyle(el);
-          const leftVal=parseInt(cs.left)||0;
-          const topVal=parseInt(cs.top)||0;
-          const widthVal=parseInt(cs.width)||0;
-          const heightVal=parseInt(cs.height)||0;
-          localStorage.setItem(`pos-${id}-left`,  leftVal);
-          localStorage.setItem(`pos-${id}-top`,   topVal);
-          localStorage.setItem(`pos-${id}-width`, widthVal);
-          localStorage.setItem(`pos-${id}-height`,heightVal);
+
+    function saveConfiguration() {
+      configComponentIDs.forEach(id => {
+        const el = document.getElementById(id);
+        if (el) {
+          const cs       = window.getComputedStyle(el);
+          const leftVal  = parseInt(cs.left)   || 0;
+          const topVal   = parseInt(cs.top)    || 0;
+          const widthVal = parseInt(cs.width)  || 0;
+          const heightVal= parseInt(cs.height) || 0;
+          localStorage.setItem(`pos-${id}-left`,   leftVal);
+          localStorage.setItem(`pos-${id}-top`,    topVal);
+          localStorage.setItem(`pos-${id}-width`,  widthVal);
+          localStorage.setItem(`pos-${id}-height`, heightVal);
         }
       });
       console.log("Configuration saved.");
     }
 
-    /***********************************************************************
+    /************************************************************************
      * showItemDetails(index):
      *   " ORDER FROM: [name]"
      *   " Payment Status: [status]"
      *   " Shipping Status: [Shipped!/Not Shipped]"
      *   blank line
      *   " ORDER DETAILS:"
-     ***********************************************************************/
-    function showItemDetails(index){
-      if(!window.cachedOrderItems||!window.cachedOrderItems[index]){
-        console.warn("No item at index:",index);
+     ************************************************************************/
+    function showItemDetails(index) {
+      if (!window.cachedOrderItems || !window.cachedOrderItems[index]) {
+        console.warn("No item at index:", index);
         return;
       }
-      const item=window.cachedOrderItems[index];
+      const item = window.cachedOrderItems[index];
 
-      let details="";
-
-      // " ORDER FROM: [name]"
-      if(window.orderName){
+      let details = "";
+      if (window.orderName) {
         details += " ORDER FROM: " + window.orderName + "\n";
       }
-
-      // " Payment Status: [someValue]"
-      if(window.orderStatus){
+      if (window.orderStatus) {
         details += " Payment Status: " + window.orderStatus + "\n";
       }
-
-      // " Shipping Status: [Shipped!/Not Shipped]" + blank line
-      if(window.orderIsShipped){
+      if (window.orderIsShipped) {
         details += " Shipping Status: " + window.orderIsShipped + "\n\n";
       } else {
-        details += "\n"; 
+        details += "\n";
       }
-
-      // " ORDER DETAILS:"
-      details += " ORDER DETAILS:\n\n"; 
+      details += " ORDER DETAILS:\n\n";
 
       // Title
-      if(item.title){
-        const firstFourWords=item.title.trim().split(" ").slice(0,4).join(" ");
-        details+=" Title: " + firstFourWords + "\n";
+      if (item.title) {
+        const firstFourWords = item.title.trim().split(" ").slice(0, 4).join(" ");
+        details += " Title: " + firstFourWords + "\n";
       }
 
       // SKU
-      if(item.sku){
-        details+=" SKU: " + item.sku + "\n";
+      if (item.sku) {
+        details += " SKU: " + item.sku + "\n";
       }
 
       // Variation logic
-      if(item.variations && Array.isArray(item.variations)){
-        const acceptedMetalNames=[
+      if (item.variations && Array.isArray(item.variations)) {
+        const acceptedMetalNames = [
           "metal","metal choice","metal - engraving","metal colour","color","metal choice / engraving option"
         ];
-        const acceptedLengthNames=[
+        const acceptedLengthNames = [
           "length","necklace length","metal/necklace length","metal choice / necklace length","necklace length in inches"
         ];
-        item.variations.forEach(v=>{
-          if(v.formatted_name && v.formatted_value){
-            const nameLower=v.formatted_name.trim().toLowerCase();
-            let val=v.formatted_value.trim();
-            if(nameLower==="personalization" && val==="Not requested on this item."){
-              val="Not Requested";
-              details+=" Personalization: " + val + "\n";
-            } else if(acceptedMetalNames.includes(nameLower)){
-              details+=" Metal Choice: " + val + "\n";
-            } else if(acceptedLengthNames.includes(nameLower)){
-              const lengthMapping={
-                '14&quot;':'14 Inches','16&quot;':'16 Inches','18&quot;':'18 Inches','20&quot;':'20 Inches',
-                '14""':'14 Inches','16""':'16 Inches','18""':'18 Inches','20""':'20 Inches'
+        item.variations.forEach(v => {
+          if (v.formatted_name && v.formatted_value) {
+            const nameLower = v.formatted_name.trim().toLowerCase();
+            let val = v.formatted_value.trim();
+            if (nameLower === "personalization" && val === "Not requested on this item.") {
+              val = "Not Requested";
+              details += " Personalization: " + val + "\n";
+            } 
+            else if (acceptedMetalNames.includes(nameLower)) {
+              details += " Metal Choice: " + val + "\n";
+            } 
+            else if (acceptedLengthNames.includes(nameLower)) {
+              const lengthMapping = {
+                '14&quot;': '14 Inches','16&quot;': '16 Inches','18&quot;': '18 Inches','20&quot;': '20 Inches',
+                '14""'   : '14 Inches','16""'   : '16 Inches','18""'   : '18 Inches','20""'   : '20 Inches'
               };
-              if(lengthMapping[val]){
-                val=lengthMapping[val];
+              if (lengthMapping[val]) {
+                val = lengthMapping[val];
               }
-              details+=" Item Length: " + val + "\n";
-            } else {
-              details+=" " + v.formatted_name + ": " + v.formatted_value + "\n";
+              details += " Item Length: " + val + "\n";
+            } 
+            else {
+              details += " " + v.formatted_name + ": " + v.formatted_value + "\n";
             }
           }
         });
       }
 
-      document.getElementById("orderDetails").value=details;
+      document.getElementById("orderDetails").value = details;
     }
 
     /********** fetchListingImages **********/
-    async function fetchListingImages(listingId){
-      const response=await fetch(`/.netlify/functions/etsyImages?listingId=${listingId}`,{
-        headers:{"access-token":localStorage.getItem("access_token")}
+    async function fetchListingImages(listingId) {
+      const response = await fetch(`/.netlify/functions/etsyImages?listingId=${listingId}`, {
+        headers: {
+          "access-token": localStorage.getItem("access_token")
+        }
       });
-      if(!response.ok){
+      if (!response.ok) {
         throw new Error(`Error fetching images for listing ${listingId}: ${response.statusText}`);
       }
-      const data=await response.json();
+      const data = await response.json();
       return data.results;
     }
 
     /********** updateImageGrid **********/
-    async function updateImageGrid(data){
-      let items=[];
-      if(data.transactions && Array.isArray(data.transactions)){
-        items=data.transactions;
-      } else if(data.shipments && Array.isArray(data.shipments)){
-        items=data.shipments;
-      } else if(Array.isArray(data)){
-        items=data;
-      } else if(data.results && Array.isArray(data.results)){
-        items=data.results;
-      } else if(data.orders && Array.isArray(data.orders)){
-        items=data.orders;
-      } else if(typeof data==='object' && data!==null){
-        for(const key in data){
-          if(Array.isArray(data[key])){
-            items=data[key];
+    async function updateImageGrid(data) {
+      let items = [];
+      if (data.transactions && Array.isArray(data.transactions)) {
+        items = data.transactions;
+      } else if (data.shipments && Array.isArray(data.shipments)) {
+        items = data.shipments;
+      } else if (Array.isArray(data)) {
+        items = data;
+      } else if (data.results && Array.isArray(data.results)) {
+        items = data.results;
+      } else if (data.orders && Array.isArray(data.orders)) {
+        items = data.orders;
+      } else if (typeof data === 'object' && data !== null) {
+        for (const key in data) {
+          if (Array.isArray(data[key])) {
+            items = data[key];
             break;
           }
         }
       }
-      window.cachedOrderItems=items;
+      window.cachedOrderItems = items;
 
-      for(let i=0;i<8;i++){
-        const cell=document.getElementById("previewCell"+i);
-        const qtyBox=document.getElementById("quantityCell"+i);
-        const metalBox=document.getElementById("metalCell"+i);
+      for (let i = 0; i < 8; i++) {
+        const cell     = document.getElementById("previewCell" + i);
+        const qtyBox   = document.getElementById("quantityCell" + i);
+        const metalBox = document.getElementById("metalCell" + i);
 
-        if(cell){
-          if(i<items.length){
-            const item=items[i];
-            try{
-              const images=await fetchListingImages(item.listing_id);
-              if(images && images.length>0){
-                cell.innerHTML=`<img src="${images[0].url_fullxfull}" alt="Listing Image ${i}">`;
+        if (cell) {
+          if (i < items.length) {
+            const item = items[i];
+            try {
+              const images = await fetchListingImages(item.listing_id);
+              if (images && images.length > 0) {
+                cell.innerHTML = `<img src="${images[0].url_fullxfull}" alt="Listing Image ${i}">`;
               } else {
-                cell.innerHTML="No images found";
+                cell.innerHTML = "No images found";
               }
-            } catch(err){
-              console.error(`Error fetching listing ${item.listing_id}:`,err);
-              cell.innerHTML="Error loading image";
+            } catch (err) {
+              console.error(`Error fetching listing ${item.listing_id}:`, err);
+              cell.innerHTML = "Error loading image";
             }
-            cell.style.cursor="pointer";
-            cell.onclick=()=>{ showItemDetails(i); };
+            cell.style.cursor = "pointer";
+            cell.onclick = () => { showItemDetails(i); };
 
             // quantity => leading space
-            if(qtyBox){
-              const actualQty=(item.quantity!=null)?item.quantity:0;
-              qtyBox.value=" Quantity: "+actualQty;
+            if (qtyBox) {
+              const actualQty = (item.quantity != null) ? item.quantity : 0;
+              qtyBox.value = " Quantity: " + actualQty;
             }
             // metal => leading space
-            if(metalBox){
-              let metalSelection="";
-              if(item.variations && Array.isArray(item.variations)){
-                const acceptedMetalNames=[
+            if (metalBox) {
+              let metalSelection = "";
+              if (item.variations && Array.isArray(item.variations)) {
+                const acceptedMetalNames = [
                   "metal","metal choice","metal - engraving","metal colour","color","metal choice / engraving option"
                 ];
-                const metalVar=item.variations.find(v=>
-                  v.formatted_name && acceptedMetalNames.includes(v.formatted_name.trim().toLowerCase())
+                const metalVar = item.variations.find(v =>
+                  v.formatted_name &&
+                  acceptedMetalNames.includes(v.formatted_name.trim().toLowerCase())
                 );
-                if(metalVar){
-                  metalSelection=metalVar.formatted_value||"";
+                if (metalVar) {
+                  metalSelection = metalVar.formatted_value || "";
                 }
               }
-              metalBox.value=" Metal: "+metalSelection;
+              metalBox.value = " Metal: " + metalSelection;
             }
           } else {
-            cell.innerHTML="Empty";
-            cell.style.cursor="default";
-            cell.onclick=null;
-            if(qtyBox)   qtyBox.value="";
-            if(metalBox) metalBox.value="";
+            cell.innerHTML = "Empty";
+            cell.style.cursor = "default";
+            cell.onclick = null;
+            if (qtyBox)   qtyBox.value   = "";
+            if (metalBox) metalBox.value = "";
           }
         }
       }
 
-      // default => item 0
-      if(items.length>0){
+      // Default => show item 0
+      if (items.length > 0) {
         showItemDetails(0);
       } else {
-        document.getElementById("orderDetails").value=" ORDER DETAILS:\n\nNo items found.";
+        document.getElementById("orderDetails").value = " ORDER DETAILS:\n\nNo items found.";
       }
     }
 
     /********** pullEtsyOrderDetails **********/
-    function pullEtsyOrderDetails(orderNumber){
-      console.log("Pulling Etsy order details for order number:",orderNumber);
-      const token=localStorage.getItem("access_token");
-      return fetch('/.netlify/functions/etsyOrderProxy?orderId='+encodeURIComponent(orderNumber),{
-        headers:{"access-token":token}
+    function pullEtsyOrderDetails(orderNumber) {
+      console.log("Pulling Etsy order details for order number:", orderNumber);
+      const token = localStorage.getItem("access_token");
+      return fetch('/.netlify/functions/etsyOrderProxy?orderId=' + encodeURIComponent(orderNumber), {
+        headers: { "access-token": token }
       })
-      .then(r=>r.json())
-      .then(data=>{
-        console.log("Etsy Order Data:",data);
+      .then(r => r.json())
+      .then(data => {
+        console.log("Etsy Order Data:", data);
 
         // leading space in #orderInformation
-        document.getElementById("orderInformation").value=" "+JSON.stringify(data,null,2);
+        document.getElementById("orderInformation").value = " " + JSON.stringify(data, null, 2);
 
         // name => window.orderName
-        if(data.name){
-          window.orderName=data.name;
+        if (data.name) {
+          window.orderName = data.name;
         } else {
-          window.orderName="";
+          window.orderName = "";
         }
 
         // status => window.orderStatus
-        if(data.status){
-          window.orderStatus=data.status;
+        if (data.status) {
+          window.orderStatus = data.status;
         } else {
-          window.orderStatus="";
+          window.orderStatus = "";
         }
 
         // is_shipped => "Shipped!" or "Not Shipped" or ""
-        if(data.is_shipped===true){
-          window.orderIsShipped="Shipped!";
-        } else if(data.is_shipped===false){
-          window.orderIsShipped="Not Shipped";
+        if (data.is_shipped === true) {
+          window.orderIsShipped = "Shipped!";
+        } else if (data.is_shipped === false) {
+          window.orderIsShipped = "Not Shipped";
         } else {
-          window.orderIsShipped="";
+          window.orderIsShipped = "";
         }
 
-        // Check if there's a transaction => set date fields from first
-        if(data.transactions && data.transactions.length>0){
-          const firstTrans=data.transactions[0];
-          const monthNames=["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+        // If there's at least one transaction => set date fields from the first
+        if (data.transactions && data.transactions.length > 0) {
+          const firstTrans = data.transactions[0];
+          const monthNames = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
 
           // created_timestamp => dateOrdered
-          if(firstTrans.created_timestamp){
-            const d=new Date(firstTrans.created_timestamp*1000);
-            const day=String(d.getDate()).padStart(2,'0');
-            const mStr=monthNames[d.getMonth()];
-            const yr=d.getFullYear();
-            document.getElementById("dateOrdered").value=" "+day+" "+mStr+" "+yr;
+          if (firstTrans.created_timestamp) {
+            const d = new Date(firstTrans.created_timestamp * 1000);
+            const day = String(d.getDate()).padStart(2,'0');
+            const mStr= monthNames[d.getMonth()];
+            const yr  = d.getFullYear();
+            document.getElementById("dateOrdered").value = " " + day + " " + mStr + " " + yr;
           } else {
-            document.getElementById("dateOrdered").value="";
+            document.getElementById("dateOrdered").value = "";
           }
 
           // expected_ship_date => shipDate
-          const shipDateField=document.getElementById("shipDate");
-          shipDateField.style.color=""; // reset color to default
+          const shipDateField = document.getElementById("shipDate");
+          shipDateField.style.color = ""; // reset color to default
 
-          if(firstTrans.expected_ship_date){
-            const s=new Date(firstTrans.expected_ship_date*1000);
-            const sDay=String(s.getDate()).padStart(2,'0');
-            const sMonth=monthNames[s.getMonth()];
-            const sYear=s.getFullYear();
-            shipDateField.value=" "+sDay+" "+sMonth+" "+sYear;
+          if (firstTrans.expected_ship_date) {
+            const s     = new Date(firstTrans.expected_ship_date * 1000);
+            const sDay  = String(s.getDate()).padStart(2,'0');
+            const sMonth= monthNames[s.getMonth()];
+            const sYear = s.getFullYear();
+            shipDateField.value = " " + sDay + " " + sMonth + " " + sYear;
 
-            // Compare ignoring time => see if it's "today", "after", or "past"
-            const today=new Date();
-            const todayMid=new Date(today.getFullYear(), today.getMonth(), today.getDate());
-            const shipMid=new Date(s.getFullYear(), s.getMonth(), s.getDate());
+            // Compare ignoring time => see if it's "today" or "before" => future date in your scenario
+            const today     = new Date();
+            const todayMid  = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+            const shipMid   = new Date(s.getFullYear(), s.getMonth(), s.getDate());
 
-            // 1) if same day => #FFDAB9
-            if(shipMid.getTime()===todayMid.getTime()){
-              shipDateField.style.color="#FFDAB9"; // orange
-            }
-            // 2) if AFTER today => shipMid > todayMid
-            else if(shipMid>todayMid){
-              // if shipping status is "Shipped!" => green
-              if(window.orderIsShipped==="Shipped!"){
-                shipDateField.style.color="#90EE90"; // light green
+            // 1) if same day => if shipping status=shipped => dark green, else => dark orange
+            if (shipMid.getTime() === todayMid.getTime()) {
+              if (window.orderIsShipped === "Shipped!") {
+                shipDateField.style.color = "#006400";  // darker green
               } else {
-                // else => red
-                shipDateField.style.color="#FFB6C1"; // light red
+                shipDateField.style.color = "#FF8C00";  // darker orange
               }
             }
-            // 3) otherwise => it's before or equal to yesterday => default color
+            // 2) if "before" => your scenario means future date => if shipping=shipped => green else => red
+            else if (shipMid < todayMid) {
+              if (window.orderIsShipped === "Shipped!") {
+                shipDateField.style.color = "#006400";  // darker green
+              } else {
+                shipDateField.style.color = "#8B0000";  // darker red
+              }
+            }
+            // 3) otherwise => no color
             else {
-              shipDateField.style.color="";
+              shipDateField.style.color = "";
             }
 
           } else {
-            shipDateField.value="";
+            shipDateField.value = "";
           }
 
         } else {
-          document.getElementById("dateOrdered").value="";
+          // no transactions => clear
+          document.getElementById("dateOrdered").value = "";
           const shipDateField=document.getElementById("shipDate");
           shipDateField.value="";
           shipDateField.style.color="";
         }
         return data;
       })
-      .catch(err=>{
-        console.error("Error fetching Etsy order details:",err);
+      .catch(err => {
+        console.error("Error fetching Etsy order details:", err);
         return null;
       });
     }
 
     /********** DOMContentLoaded **********/
-    document.addEventListener("DOMContentLoaded",()=>{
+    document.addEventListener("DOMContentLoaded", ()=>{
       M.AutoInit();
 
       // Load imageGrid.html
-      $("#Photo_Grid").load("imageGrid.html",(resp,status,xhr)=>{
-        if(status==="error"){
-          console.error("Error loading image grid:",xhr.status,xhr.statusText);
+      $("#Photo_Grid").load("imageGrid.html", (resp, status, xhr)=>{
+        if(status === "error"){
+          console.error("Error loading image grid:", xhr.status, xhr.statusText);
         } else {
           console.log("Image grid loaded successfully.");
         }
@@ -717,20 +722,21 @@
       },250);
 
       // open config
-      document.getElementById("openConfigBtn").addEventListener("click",()=>{
+      document.getElementById("openConfigBtn").addEventListener("click", ()=>{
         populateConfigTable();
         const modalElem=document.getElementById("configModal");
         const instance=M.Modal.getInstance(modalElem);
         instance.open();
       });
+
       // save config
-      document.getElementById("saveConfigBtn").addEventListener("click",()=>{
+      document.getElementById("saveConfigBtn").addEventListener("click", ()=>{
         saveConfiguration();
       });
 
       // Press Enter => fetch order => update grid
       const etsyOrderInput=document.getElementById("etsyOrderNumber");
-      etsyOrderInput.addEventListener("keydown",async e=>{
+      etsyOrderInput.addEventListener("keydown", async e=>{
         if(e.key==="Enter"){
           const orderNumber=etsyOrderInput.value.trim();
           if(orderNumber!==""){
