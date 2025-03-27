@@ -9,17 +9,17 @@
     href="https://cdnjs.cloudflare.com/ajax/libs/materialize/1.0.0/css/materialize.min.css"
   >
   <style>
-    /* Hide the page initially */
+    /* Hide the page initially for a fade-in effect */
     body {
       background-color: white;
       margin: 0;
       height: 100vh;
       position: relative;
-      opacity: 0;
-      transition: opacity 0s;
+      opacity: 0; /* hidden initially */
+      transition: opacity 0s; /* fade-in controlled by JS */
     }
 
-    /* Main UI Buttons */
+    /* Primary Buttons */
     #connectEtsyBtn {
       position: absolute;
       left: 50px;
@@ -31,15 +31,10 @@
       top: 80px;
     }
 
-    /*
-     * The new "Order Link" button (#orderLinkBtn)
-     *  - smaller (50% of previous size)
-     *  - uses an icon from assets/Globe.png
-     *  - no text displayed
-     */
+    /* New "Order Link" button w/ smaller Globe icon (14×14) */
     #orderLinkBtn {
       position: absolute;
-      left: 120px;
+      left: 120px; 
       top: 20px;
       background: transparent;
       border: none;
@@ -48,15 +43,15 @@
       outline: none;
     }
     #orderLinkBtn img {
-      width: 14px;   /* half the previous 28px */
-      height: 14px;  /* half the previous 28px */
+      width: 14px;   
+      height: 14px;  
       display: block;
     }
 
     /*
-     * Etsy Order Number text box:
-     *   - remove extra vertical spacing so the underline is right beneath text
-     *   - fully left-justified
+     * Etsy Order Number text box
+     *  - no spacing below typed text => underline is right beneath
+     *  - fully left-justified
      */
     #etsyOrderNumber {
       position: absolute;
@@ -74,7 +69,9 @@
       outline: none;
     }
 
-    /* #orderInformation => leading space in placeholder */
+    /*
+     * A text area for storing "Order Information" in JSON format, read-only
+     */
     #orderInformation {
       position: absolute;
       left: 50px;
@@ -87,21 +84,21 @@
     }
 
     /*
-     * Scale the Photo Grid (#Photo_Grid) by 1.5 => 50% larger
+     * The Photo Grid => scaled to 1.35 (down from 1.5 => ~15% smaller)
+     * Ensure imageGrid.html has row-gap: 45px (was 60px), col-gap: 5px, etc.
+     * Also each .preview-box => border: 1px solid black
      */
     #Photo_Grid {
       position: absolute;
       left: 400px;
       top: 140px;
-      transform: scale(1.5);
+      transform: scale(1.35);
       transform-origin: top left;
     }
 
     /*
-     * 16 text-box-absolute for quantity & metal
-     *  - 0.7em
-     *  - borderless
-     *  - leading space in JS
+     * The 16 text boxes for quantity/metal
+     * => match #orderDetails font size, i.e. 0.9em
      */
     .text-box-absolute {
       position: absolute;
@@ -110,7 +107,7 @@
       background: transparent !important;
       text-decoration: none !important;
       box-shadow: none !important;
-      font-size: 0.7em !important;
+      font-size: 0.9em !important; /* was 0.7em, now 0.9em */
       width: 60px;
       height: 20px;
       text-align: left;
@@ -120,7 +117,7 @@
     }
 
     /*
-     * Order Details box => read-only, bigger font
+     * The read-only Order Details box => 0.9em
      */
     #orderDetails {
       position: absolute;
@@ -138,7 +135,7 @@
     }
 
     /*
-     * Customer Message History => read/write, 300×175, same style
+     * The "Customer Message History" => read/write, 0.9em
      */
     #customerMessageHistory {
       position: absolute;
@@ -156,7 +153,7 @@
     }
 
     /*
-     * Single-Line text boxes => bigger & bold, read-only
+     * Single-line text boxes => bigger & bold, read-only
      */
     #dateOrdered,
     #shipDate {
@@ -172,7 +169,8 @@
     }
 
     /*
-     * Title texts => removed "Message History"
+     * Title texts
+     *  (We removed "Message History:" from previous versions)
      */
     #titleOrderDate,
     #titleShipDate,
@@ -186,7 +184,9 @@
       padding: 0;
     }
 
-    /* Configuration Modal styling */
+    /*
+     * The Configuration Modal styling
+     */
     .modal {
       position: fixed !important;
       top: 150px !important;
@@ -230,7 +230,7 @@
   <button id="connectEtsyBtn" class="configurable btn waves-effect waves-light">Connect to Etsy</button>
   <button id="openConfigBtn" class="configurable btn waves-effect waves-light">Open Config</button>
 
-  <!-- The new "Order Link" button with smaller globe icon -->
+  <!-- "Order Link" button => smaller globe icon -->
   <button id="orderLinkBtn" name="Order Link">
     <img src="assets/Globe.png" alt="Order Link Icon" />
   </button>
@@ -239,10 +239,10 @@
   <input type="text" id="etsyOrderNumber" placeholder="Etsy Order Number" />
   <textarea id="orderInformation" placeholder=" Order Information" readonly></textarea>
 
-  <!-- Photo Grid (scaled 1.5×) -->
+  <!-- Photo Grid (scaled at 1.35) -->
   <div id="Photo_Grid"></div>
 
-  <!-- 16 text-box-absolute for quantity/metal -->
+  <!-- 16 text-box-absolute for quantity & metal => 0.9em to match #orderDetails -->
   <input type="text" id="quantityCell0" class="text-box-absolute" readonly />
   <input type="text" id="quantityCell1" class="text-box-absolute" readonly />
   <input type="text" id="quantityCell2" class="text-box-absolute" readonly />
@@ -261,13 +261,13 @@
   <input type="text" id="metalCell6" class="text-box-absolute" readonly />
   <input type="text" id="metalCell7" class="text-box-absolute" readonly />
 
-  <!-- Order Details (read-only) -->
+  <!-- Order Details => read-only, 0.9em -->
   <textarea id="orderDetails" readonly></textarea>
 
-  <!-- Customer Message History => read/write now -->
+  <!-- Customer Message History => read/write, 0.9em -->
   <textarea id="customerMessageHistory"></textarea>
 
-  <!-- Title objects (removed "Message History:") -->
+  <!-- Titles (Removed "Message History:") -->
   <div id="titleOrderDate">Order Date:</div>
   <div id="titleShipDate">Ship By:</div>
   <div id="titleOrderDetails">Order Details:</div>
@@ -275,7 +275,7 @@
   <div id="titlePurchasedItems">Purchased Items:</div>
   <div id="titleOrderNumber">Order Number</div>
 
-  <!-- Date/Ship Date boxes -->
+  <!-- Date/Ship Date boxes => bigger & bold, read-only -->
   <input type="text" id="dateOrdered" readonly />
   <input type="text" id="shipDate"    readonly />
 
@@ -308,16 +308,12 @@
 
   <script>
     /*
-     * Final merged file with all changes:
-     *  - Payment Status -> Order Status
-     *  - Removed "Message History:" title object
-     *  - #customerMessageHistory is now read/write
-     *  - #orderLinkBtn is half the size it was (14×14)
-     *  - #Photo_Grid is scaled by 1.5
-     *  - #etsyOrderNumber has no extra spacing below text
-     *  - Text box read-only logic for dateOrdered, shipDate, orderDetails, etc.
+     * FULL, complete, final code for your Index.html
+     * With the 2-row gap decreased by 25% (45px), 
+     * 1px borders on the 8 preview boxes, 
+     * Photo Grid scaled by 1.35 (15% smaller than 1.5),
+     * and 0.9em text in the 16 grid text boxes.
      */
-
     window.orderName      = "";
     window.orderStatus    = "";
     window.orderIsShipped = "";
@@ -350,133 +346,121 @@
 
     /********** Etsy OAuth: Connect to Etsy **********/
     function generateRandomString(length) {
-      const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
-      let text = "";
-      for (let i = 0; i < length; i++){
-        text += chars.charAt(Math.floor(Math.random() * chars.length));
+      const chars="ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+      let text="";
+      for(let i=0;i<length;i++){
+        text+=chars.charAt(Math.floor(Math.random()*chars.length));
       }
       return text;
     }
     async function generateCodeChallenge(codeVerifier) {
-      const encoder = new TextEncoder();
-      const data = encoder.encode(codeVerifier);
-      const digest = await crypto.subtle.digest("SHA-256", data);
+      const encoder=new TextEncoder();
+      const data=encoder.encode(codeVerifier);
+      const digest=await crypto.subtle.digest("SHA-256",data);
       return btoa(String.fromCharCode(...new Uint8Array(digest)))
               .replace(/\+/g,"-")
               .replace(/\//g,"_")
               .replace(/=+$/,"");
     }
     document.getElementById("connectEtsyBtn").addEventListener("click", async ()=>{
-      const codeVerifier = generateRandomString(64);
+      const codeVerifier=generateRandomString(64);
       localStorage.setItem("etsy_code_verifier", codeVerifier);
-      const codeChallenge = await generateCodeChallenge(codeVerifier);
-      const state = "randomState123";
-      const scope = "listings_w listings_r transactions_r transactions_w";
-      const CLIENT_ID = "k75zdspz4r99txpqdji7i2em"; 
-      const redirectUri = "https://gokushipping.netlify.app"; 
-      const etsyAuthUrl = `https://www.etsy.com/oauth/connect?response_type=code`
-                        + `&client_id=${CLIENT_ID}`
-                        + `&redirect_uri=${encodeURIComponent(redirectUri)}`
-                        + `&scope=${encodeURIComponent(scope)}`
-                        + `&state=${state}`
-                        + `&code_challenge=${encodeURIComponent(codeChallenge)}`
-                        + `&code_challenge_method=S256`;
+      const codeChallenge=await generateCodeChallenge(codeVerifier);
+      const state="randomState123";
+      const scope="listings_w listings_r transactions_r transactions_w";
+      const CLIENT_ID="k75zdspz4r99txpqdji7i2em"; 
+      const redirectUri="https://gokushipping.netlify.app"; 
+      const etsyAuthUrl=`https://www.etsy.com/oauth/connect?response_type=code`
+                       +`&client_id=${CLIENT_ID}`
+                       +`&redirect_uri=${encodeURIComponent(redirectUri)}`
+                       +`&scope=${encodeURIComponent(scope)}`
+                       +`&state=${state}`
+                       +`&code_challenge=${encodeURIComponent(codeChallenge)}`
+                       +`&code_challenge_method=S256`;
       console.log("Redirecting to Etsy OAuth URL:", etsyAuthUrl);
-      window.location.href = etsyAuthUrl;
+      window.location.href=etsyAuthUrl;
     });
 
     /********** UI Configuration **********/
-    const configComponentIDs = [
-      "connectEtsyBtn",
-      "openConfigBtn",
-      "orderLinkBtn",
-      "etsyOrderNumber",
-      "orderInformation",
+    const configComponentIDs=[
+      "connectEtsyBtn","openConfigBtn","orderLinkBtn","etsyOrderNumber","orderInformation",
       "Photo_Grid",
       "quantityCell0","quantityCell1","quantityCell2","quantityCell3","quantityCell4","quantityCell5","quantityCell6","quantityCell7",
       "metalCell0","metalCell1","metalCell2","metalCell3","metalCell4","metalCell5","metalCell6","metalCell7",
-      "orderDetails",
-      "customerMessageHistory",
-      "dateOrdered",
-      "shipDate",
-      "titleOrderDate",
-      "titleShipDate",
-      "titleOrderDetails",
-      "titleBritesMessages",
-      "titlePurchasedItems",
-      "titleOrderNumber"
+      "orderDetails","customerMessageHistory","dateOrdered","shipDate",
+      "titleOrderDate","titleShipDate","titleOrderDetails",
+      "titleBritesMessages","titlePurchasedItems","titleOrderNumber"
     ];
-
-    function loadPositions() {
-      configComponentIDs.forEach(id => {
-        const el = document.getElementById(id);
-        if (el) {
-          const left   = localStorage.getItem(`pos-${id}-left`);
-          const top    = localStorage.getItem(`pos-${id}-top`);
-          const width  = localStorage.getItem(`pos-${id}-width`);
-          const height = localStorage.getItem(`pos-${id}-height`);
-          if (left   !== null) el.style.left   = left + "px";
-          if (top    !== null) el.style.top    = top + "px";
-          if (width  !== null) el.style.width  = width + "px";
-          if (height !== null) el.style.height = height+ "px";
+    function loadPositions(){
+      configComponentIDs.forEach(id=>{
+        const el=document.getElementById(id);
+        if(el){
+          const left=localStorage.getItem(`pos-${id}-left`);
+          const top=localStorage.getItem(`pos-${id}-top`);
+          const width=localStorage.getItem(`pos-${id}-width`);
+          const height=localStorage.getItem(`pos-${id}-height`);
+          if(left!==null)   el.style.left=left+"px";
+          if(top!==null)    el.style.top=top+"px";
+          if(width!==null)  el.style.width=width+"px";
+          if(height!==null) el.style.height=height+"px";
         }
       });
     }
-    function populateConfigTable() {
-      const tbody = document.getElementById("configTable").querySelector("tbody");
-      tbody.innerHTML = "";
-      configComponentIDs.forEach(id => {
-        const el = document.getElementById(id);
-        if (!el) return;
-        const compName = el.textContent.trim() || el.value?.trim() || id;
-        const cs = window.getComputedStyle(el);
-        const leftVal   = (cs.left === "auto") ? 0 : parseInt(cs.left);
-        const topVal    = (cs.top === "auto") ? 0 : parseInt(cs.top);
-        const widthVal  = (cs.width === "auto")? 0 : parseInt(cs.width);
-        const heightVal = (cs.height=== "auto")? 0 : parseInt(cs.height);
+    function populateConfigTable(){
+      const tbody=document.getElementById("configTable").querySelector("tbody");
+      tbody.innerHTML="";
+      configComponentIDs.forEach(id=>{
+        const el=document.getElementById(id);
+        if(!el)return;
+        const compName=el.textContent.trim()||el.value?.trim()||id;
+        const cs=window.getComputedStyle(el);
+        const leftVal=(cs.left==="auto")?0:parseInt(cs.left);
+        const topVal=(cs.top==="auto")?0:parseInt(cs.top);
+        const widthVal=(cs.width==="auto")?0:parseInt(cs.width);
+        const heightVal=(cs.height==="auto")?0:parseInt(cs.height);
 
-        const row = document.createElement("tr");
-        row.innerHTML = `
+        const row=document.createElement("tr");
+        row.innerHTML=`
           <td>${compName}</td>
-          <td><input type="number" value="${leftVal}"   data-id="${id}" class="left-input"></td>
-          <td><input type="number" value="${topVal}"    data-id="${id}" class="top-input"></td>
-          <td><input type="number" value="${widthVal}"  data-id="${id}" class="width-input"></td>
+          <td><input type="number" value="${leftVal}" data-id="${id}" class="left-input"></td>
+          <td><input type="number" value="${topVal}" data-id="${id}" class="top-input"></td>
+          <td><input type="number" value="${widthVal}" data-id="${id}" class="width-input"></td>
           <td><input type="number" value="${heightVal}" data-id="${id}" class="height-input"></td>
         `;
         tbody.appendChild(row);
 
         // Live updates
-        row.querySelector(".left-input").addEventListener("input", function(){
-          const tgt=document.getElementById(this.getAttribute("data-id"));
-          if(tgt) tgt.style.left= parseInt(this.value)+"px";
+        row.querySelector(".left-input").addEventListener("input",function(){
+          const target=document.getElementById(this.getAttribute("data-id"));
+          if(target)target.style.left=parseInt(this.value)+"px";
         });
-        row.querySelector(".top-input").addEventListener("input", function(){
-          const tgt=document.getElementById(this.getAttribute("data-id"));
-          if(tgt) tgt.style.top= parseInt(this.value)+"px";
+        row.querySelector(".top-input").addEventListener("input",function(){
+          const target=document.getElementById(this.getAttribute("data-id"));
+          if(target)target.style.top=parseInt(this.value)+"px";
         });
-        row.querySelector(".width-input").addEventListener("input", function(){
-          const tgt=document.getElementById(this.getAttribute("data-id"));
-          if(tgt) tgt.style.width= parseInt(this.value)+"px";
+        row.querySelector(".width-input").addEventListener("input",function(){
+          const target=document.getElementById(this.getAttribute("data-id"));
+          if(target)target.style.width=parseInt(this.value)+"px";
         });
-        row.querySelector(".height-input").addEventListener("input", function(){
-          const tgt=document.getElementById(this.getAttribute("data-id"));
-          if(tgt) tgt.style.height= parseInt(this.value)+"px";
+        row.querySelector(".height-input").addEventListener("input",function(){
+          const target=document.getElementById(this.getAttribute("data-id"));
+          if(target)target.style.height=parseInt(this.value)+"px";
         });
       });
     }
-    function saveConfiguration() {
-      configComponentIDs.forEach(id => {
-        const el = document.getElementById(id);
-        if (el) {
-          const cs       = window.getComputedStyle(el);
-          const leftVal  = parseInt(cs.left)   || 0;
-          const topVal   = parseInt(cs.top)    || 0;
-          const widthVal = parseInt(cs.width)  || 0;
-          const heightVal= parseInt(cs.height) || 0;
-          localStorage.setItem(`pos-${id}-left`,   leftVal);
-          localStorage.setItem(`pos-${id}-top`,    topVal);
-          localStorage.setItem(`pos-${id}-width`,  widthVal);
-          localStorage.setItem(`pos-${id}-height`, heightVal);
+    function saveConfiguration(){
+      configComponentIDs.forEach(id=>{
+        const el=document.getElementById(id);
+        if(el){
+          const cs=window.getComputedStyle(el);
+          const leftVal=parseInt(cs.left)||0;
+          const topVal=parseInt(cs.top)||0;
+          const widthVal=parseInt(cs.width)||0;
+          const heightVal=parseInt(cs.height)||0;
+          localStorage.setItem(`pos-${id}-left`,  leftVal);
+          localStorage.setItem(`pos-${id}-top`,   topVal);
+          localStorage.setItem(`pos-${id}-width`, widthVal);
+          localStorage.setItem(`pos-${id}-height`,heightVal);
         }
       });
       console.log("Configuration saved.");
@@ -485,27 +469,27 @@
     /************************************************************************
      * showItemDetails(index):
      *   " ORDER FROM: [name]"
-     *   " Order Status: [status]" (replaced Payment Status)
+     *   " Order Status: [status]" 
      *   " Shipping Status: [Shipped!/Not Shipped]"
      *   blank line
      *   " ORDER DETAILS:"
      ************************************************************************/
-    function showItemDetails(index) {
-      if(!window.cachedOrderItems || !window.cachedOrderItems[index]) {
-        console.warn("No item at index:", index);
+    function showItemDetails(index){
+      if(!window.cachedOrderItems||!window.cachedOrderItems[index]){
+        console.warn("No item at index:",index);
         return;
       }
-      const item = window.cachedOrderItems[index];
+      const item=window.cachedOrderItems[index];
 
       let details="";
       if(window.orderName){
-        details+=" ORDER FROM: " + window.orderName + "\n";
+        details+=" ORDER FROM: "+window.orderName+"\n";
       }
       if(window.orderStatus){
-        details+=" Order Status: " + window.orderStatus + "\n";
+        details+=" Order Status: "+window.orderStatus+"\n";
       }
       if(window.orderIsShipped){
-        details+=" Shipping Status: " + window.orderIsShipped + "\n\n";
+        details+=" Shipping Status: "+window.orderIsShipped+"\n\n";
       } else {
         details+="\n";
       }
@@ -513,12 +497,11 @@
 
       if(item.title){
         const firstFourWords=item.title.trim().split(" ").slice(0,4).join(" ");
-        details+=" Title: " + firstFourWords + "\n";
+        details+=" Title: "+firstFourWords+"\n";
       }
       if(item.sku){
-        details+=" SKU: " + item.sku + "\n";
+        details+=" SKU: "+item.sku+"\n";
       }
-
       if(item.variations && Array.isArray(item.variations)){
         const acceptedMetalNames=[
           "metal","metal choice","metal - engraving","metal colour","color","metal choice / engraving option"
@@ -532,45 +515,44 @@
             let val=v.formatted_value.trim();
             if(nameLower==="personalization" && val==="Not requested on this item."){
               val="Not Requested";
-              details+=" Personalization: " + val + "\n";
-            } else if(acceptedMetalNames.includes(nameLower)){
-              details+=" Metal Choice: " + val + "\n";
-            } else if(acceptedLengthNames.includes(nameLower)){
-              const lengthMapping={
+              details+=" Personalization: "+val+"\n";
+            }
+            else if(acceptedMetalNames.includes(nameLower)){
+              details+=" Metal Choice: "+val+"\n";
+            }
+            else if(acceptedLengthNames.includes(nameLower)){
+              const lengthMap={
                 '14&quot;':'14 Inches','16&quot;':'16 Inches','18&quot;':'18 Inches','20&quot;':'20 Inches',
                 '14""':'14 Inches','16""':'16 Inches','18""':'18 Inches','20""':'20 Inches'
               };
-              if(lengthMapping[val]){
-                val=lengthMapping[val];
+              if(lengthMap[val]){
+                val=lengthMap[val];
               }
-              details+=" Item Length: " + val + "\n";
-            } else {
-              details+=" " + v.formatted_name + ": " + v.formatted_value + "\n";
+              details+=" Item Length: "+val+"\n";
+            }
+            else{
+              details+=" "+v.formatted_name+": "+v.formatted_value+"\n";
             }
           }
         });
       }
-      document.getElementById("orderDetails").value = details;
+      document.getElementById("orderDetails").value=details;
     }
 
-    /*
-     * fetchListingImages => unchanged
-     */
-    async function fetchListingImages(listingId) {
-      const response = await fetch(`/.netlify/functions/etsyImages?listingId=${listingId}`, {
-        headers: {"access-token": localStorage.getItem("access_token")}
+    /********** fetchListingImages **********/
+    async function fetchListingImages(listingId){
+      const response=await fetch(`/.netlify/functions/etsyImages?listingId=${listingId}`,{
+        headers:{"access-token":localStorage.getItem("access_token")}
       });
-      if (!response.ok) {
+      if(!response.ok){
         throw new Error(`Error fetching images for listing ${listingId}: ${response.statusText}`);
       }
-      const data = await response.json();
+      const data=await response.json();
       return data.results;
     }
 
-    /*
-     * updateImageGrid => unchanged
-     */
-    async function updateImageGrid(data) {
+    /********** updateImageGrid **********/
+    async function updateImageGrid(data){
       let items=[];
       if(data.transactions && Array.isArray(data.transactions)){
         items=data.transactions;
@@ -593,30 +575,30 @@
       window.cachedOrderItems=items;
 
       for(let i=0; i<8; i++){
-        const cell = document.getElementById("previewCell" + i);
-        const qtyBox = document.getElementById("quantityCell" + i);
-        const metalBox = document.getElementById("metalCell" + i);
+        const cell=document.getElementById("previewCell"+i);
+        const qtyBox=document.getElementById("quantityCell"+i);
+        const metalBox=document.getElementById("metalCell"+i);
 
         if(cell){
-          if(i < items.length){
-            const item = items[i];
-            try {
-              const images = await fetchListingImages(item.listing_id);
+          if(i<items.length){
+            const item=items[i];
+            try{
+              const images=await fetchListingImages(item.listing_id);
               if(images && images.length>0){
-                cell.innerHTML = `<img src="${images[0].url_fullxfull}" alt="Listing Image ${i}">`;
+                cell.innerHTML=`<img src="${images[0].url_fullxfull}" alt="Listing Image ${i}">`;
               } else {
-                cell.innerHTML = "No images found";
+                cell.innerHTML="No images found";
               }
-            } catch(err){
-              console.error(`Error fetching listing ${item.listing_id}:`, err);
-              cell.innerHTML = "Error loading image";
+            }catch(err){
+              console.error(`Error fetching listing ${item.listing_id}:`,err);
+              cell.innerHTML="Error loading image";
             }
-            cell.style.cursor = "pointer";
-            cell.onclick = ()=> showItemDetails(i);
+            cell.style.cursor="pointer";
+            cell.onclick=()=> showItemDetails(i);
 
             if(qtyBox){
-              const actualQty = (item.quantity!=null)? item.quantity : 0;
-              qtyBox.value = " Quantity: " + actualQty;
+              const actualQty=(item.quantity!=null)?item.quantity:0;
+              qtyBox.value=" Quantity: "+actualQty;
             }
             if(metalBox){
               let metalSel="";
@@ -624,54 +606,52 @@
                 const acceptedMetalNames=[
                   "metal","metal choice","metal - engraving","metal colour","color","metal choice / engraving option"
                 ];
-                const metalVar = item.variations.find(v=>
+                const metalVar=item.variations.find(v=>
                   v.formatted_name && acceptedMetalNames.includes(v.formatted_name.trim().toLowerCase())
                 );
                 if(metalVar){
                   metalSel=metalVar.formatted_value||"";
                 }
               }
-              metalBox.value = " Metal: " + metalSel;
+              metalBox.value=" Metal: "+metalSel;
             }
           } else {
-            cell.innerHTML = "Empty";
-            cell.style.cursor = "default";
-            cell.onclick = null;
-            if(qtyBox)   qtyBox.value="";
-            if(metalBox) metalBox.value="";
+            cell.innerHTML="Empty";
+            cell.style.cursor="default";
+            cell.onclick=null;
+            if(qtyBox)qtyBox.value="";
+            if(metalBox)metalBox.value="";
           }
         }
       }
       if(items.length>0){
         showItemDetails(0);
       } else {
-        document.getElementById("orderDetails").value=" ORDER DETAILS:\n\nNo items found.";
+        document.getElementById("orderDetails").value=
+          " ORDER DETAILS:\n\nNo items found.";
       }
     }
 
-    /*
-     * pullEtsyOrderDetails => unchanged except removing "CUSTOMER MESSAGE HISTORY:"
-     * and shipping color logic => if Shipped => #006400
-     */
-    function pullEtsyOrderDetails(orderNumber) {
-      console.log("Pulling Etsy order details:", orderNumber);
+    /********** pullEtsyOrderDetails **********/
+    function pullEtsyOrderDetails(orderNumber){
+      console.log("Pulling Etsy order details for order number:",orderNumber);
       const token=localStorage.getItem("access_token");
-      return fetch('/.netlify/functions/etsyOrderProxy?orderId=' + encodeURIComponent(orderNumber), {
-        headers: {"access-token": token}
+      return fetch('/.netlify/functions/etsyOrderProxy?orderId='+encodeURIComponent(orderNumber),{
+        headers:{"access-token":token}
       })
       .then(r=>r.json())
       .then(data=>{
-        console.log("Etsy Order Data:", data);
-        document.getElementById("orderInformation").value = " " + JSON.stringify(data, null, 2);
+        console.log("Etsy Order Data:",data);
+        document.getElementById("orderInformation").value=" "+JSON.stringify(data,null,2);
 
         if(data.name){
-          window.orderName = data.name;
-        } else {
-          window.orderName = "";
+          window.orderName=data.name;
+        } else{
+          window.orderName="";
         }
         if(data.status){
-          window.orderStatus = data.status;
-        } else {
+          window.orderStatus=data.status;
+        } else{
           window.orderStatus="";
         }
         if(data.is_shipped===true){
@@ -684,7 +664,7 @@
 
         const msgBox=document.getElementById("customerMessageHistory");
         if(data.message_from_buyer){
-          msgBox.value=data.message_from_buyer + "\n";
+          msgBox.value=data.message_from_buyer+"\n";
         } else{
           msgBox.value="";
         }
@@ -711,7 +691,7 @@
             shipEl.value=" "+sDay+" "+sMonth+" "+sYear;
             if(window.orderIsShipped==="Shipped!"){
               shipEl.style.color="#006400";
-            } else {
+            } else{
               shipEl.style.color="";
             }
           } else {
@@ -726,39 +706,44 @@
         return data;
       })
       .catch(err=>{
-        console.error("Error fetching Etsy order details:", err);
+        console.error("Error fetching Etsy order details:",err);
         return null;
       });
     }
 
-    document.addEventListener("DOMContentLoaded", ()=>{
+    document.addEventListener("DOMContentLoaded",()=>{
       M.AutoInit();
-      // Load imageGrid
+
+      // Load imageGrid.html with 45px row gap & 5px column gap, 1px border
       $("#Photo_Grid").load("imageGrid.html",(resp,status,xhr)=>{
         if(status==="error"){
-          console.error("Error loading image grid:", xhr.status, xhr.statusText);
-        } else{
+          console.error("Error loading image grid:",xhr.status,xhr.statusText);
+        }else{
           console.log("Image grid loaded successfully.");
         }
       });
+
+      // Fade-in effect
       document.body.style.opacity=0;
       setTimeout(()=>{
         loadPositions();
         document.body.style.opacity=1;
       },250);
 
-      document.getElementById("openConfigBtn").addEventListener("click", ()=>{
+      // Open config modal
+      document.getElementById("openConfigBtn").addEventListener("click",()=>{
         populateConfigTable();
         const modalElem=document.getElementById("configModal");
         const instance=M.Modal.getInstance(modalElem);
         instance.open();
       });
-      document.getElementById("saveConfigBtn").addEventListener("click", ()=>{
+      document.getElementById("saveConfigBtn").addEventListener("click",()=>{
         saveConfiguration();
       });
 
+      // Press Enter => fetch Etsy order => update grid
       const etsyOrderInput=document.getElementById("etsyOrderNumber");
-      etsyOrderInput.addEventListener("keydown", async e=>{
+      etsyOrderInput.addEventListener("keydown",async e=>{
         if(e.key==="Enter"){
           const orderNumber=etsyOrderInput.value.trim();
           if(orderNumber!==""){
@@ -770,7 +755,7 @@
         }
       });
 
-      // "Order Link" button => open new tab with custom link
+      // "Order Link" button => opens new tab with custom link for current order
       const orderLinkBtn=document.getElementById("orderLinkBtn");
       orderLinkBtn.addEventListener("click",()=>{
         const baseUrl="https://www.etsy.com/your/orders/sold?ref=seller-platform-mcnav&order_id=0000000000";
@@ -779,6 +764,7 @@
           console.log("No order number entered.");
           return;
         }
+        // Replace "0000000000" with the actual order number
         const customLink=baseUrl.replace("0000000000", currentOrder);
         window.open(customLink,"_blank");
       });
