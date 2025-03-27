@@ -67,12 +67,12 @@
      */
     .text-box-absolute {
       position: absolute;
-      border: none !important;         
-      outline: none !important;        
+      border: none !important;
+      outline: none !important;
       background: transparent !important;
       text-decoration: none !important;
-      box-shadow: none !important;     
-      font-size: 0.7em !important;     
+      box-shadow: none !important;
+      font-size: 0.7em !important;
       width: 60px;
       height: 20px;
       text-align: left;
@@ -81,8 +81,9 @@
       box-sizing: border-box;
     }
 
-    /*
+    /* 
      * Increase the Order Details text size by 1 step 
+     * and keep it read-only
      */
     #orderDetails {
       position: absolute;
@@ -92,7 +93,7 @@
       box-sizing: border-box;
       outline: none;
       background: transparent;
-      font-size: 0.9em; /* bigger than before */
+      font-size: 0.9em;
       line-height: 1.5;
       resize: none;
       text-align: left;
@@ -100,7 +101,28 @@
     }
 
     /*
-     * Single-Line text boxes for DateOrdered, ShipDate => bigger & bold 
+     * Create a new text box "Customer Message History"
+     * same dimensions as #orderDetails
+     * also read-only
+     */
+    #customerMessageHistory {
+      position: absolute;
+      border: 1px solid black;
+      width: 300px;
+      height: 175px;
+      box-sizing: border-box;
+      outline: none;
+      background: transparent;
+      font-size: 0.9em;
+      line-height: 1.5;
+      resize: none;
+      text-align: left;
+      overflow-y: auto;
+    }
+
+    /*
+     * Single-Line text boxes for DateOrdered, ShipDate => bigger & bold
+     * + read-only
      */
     #dateOrdered,
     #shipDate {
@@ -182,10 +204,10 @@
     readonly
   ></textarea>
 
-  <!-- Photo Grid (8 preview cells) -->
+  <!-- Photo Grid -->
   <div id="Photo_Grid"></div>
 
-  <!-- 16 text-box-absolute for quantity & metal -->
+  <!-- 16 text-box-absolute for quantity/metal -->
   <input type="text" id="quantityCell0" class="text-box-absolute" readonly />
   <input type="text" id="quantityCell1" class="text-box-absolute" readonly />
   <input type="text" id="quantityCell2" class="text-box-absolute" readonly />
@@ -205,15 +227,18 @@
   <input type="text" id="metalCell7" class="text-box-absolute" readonly />
 
   <!-- Order Details -->
-  <textarea id="orderDetails"></textarea>
+  <textarea id="orderDetails" readonly></textarea>
+
+  <!-- New "Customer Message History" text box, read-only, same 300×175 dims -->
+  <textarea id="customerMessageHistory" readonly></textarea>
 
   <!-- Title labels for Order/Ship Date (0.7em) -->
   <div id="titleOrderDate">Order Date:</div>
   <div id="titleShipDate">Ship By:</div>
 
   <!-- Date/Ship Date boxes -->
-  <input type="text" id="dateOrdered" placeholder="" />
-  <input type="text" id="shipDate"    placeholder="" />
+  <input type="text" id="dateOrdered" readonly />
+  <input type="text" id="shipDate"    readonly />
 
   <!-- Configuration Modal -->
   <div id="configModal" class="modal">
@@ -244,14 +269,8 @@
 
   <script>
     /*
-     * Updated logic for expected_ship_date:
-     *   1) if date == today:
-     *      - if shipping status == "Shipped!" => #006400 (darker green)
-     *      - else => #FF8C00 (darker orange)
-     *   2) if date is before today (a future date per your scenario):
-     *      - if shipping status == "Shipped!" => #006400 (darker green)
-     *      - else => #8B0000 (darker red)
-     *   3) otherwise => no color
+     * We will add "CUSTOMER MESSAGE HISTORY:" + message_from_buyer
+     * to the #customerMessageHistory text box, in the pullEtsyOrderDetails function.
      */
 
     window.orderName      = "";
@@ -286,18 +305,18 @@
 
     /********** Etsy OAuth: Connect to Etsy **********/
     function generateRandomString(length) {
-      const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
-      let text = "";
-      for (let i = 0; i < length; i++) {
-        text += chars.charAt(Math.floor(Math.random() * chars.length));
+      const chars="ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+      let text="";
+      for(let i=0;i<length;i++){
+        text+=chars.charAt(Math.floor(Math.random()*chars.length));
       }
       return text;
     }
     
     async function generateCodeChallenge(codeVerifier) {
-      const encoder = new TextEncoder();
-      const data = encoder.encode(codeVerifier);
-      const digest = await crypto.subtle.digest("SHA-256", data);
+      const encoder=new TextEncoder();
+      const data=encoder.encode(codeVerifier);
+      const digest=await crypto.subtle.digest("SHA-256",data);
       return btoa(String.fromCharCode(...new Uint8Array(digest)))
               .replace(/\+/g,"-")
               .replace(/\//g,"_")
@@ -305,21 +324,21 @@
     }
 
     document.getElementById("connectEtsyBtn").addEventListener("click", async ()=>{
-      const codeVerifier = generateRandomString(64);
-      localStorage.setItem("etsy_code_verifier", codeVerifier);
-      const codeChallenge = await generateCodeChallenge(codeVerifier);
-      const state = "randomState123";
-      const scope = "listings_w listings_r transactions_r transactions_w";
-      const CLIENT_ID = "k75zdspz4r99txpqdji7i2em"; 
-      const redirectUri = "https://gokushipping.netlify.app"; 
-      const etsyAuthUrl = `https://www.etsy.com/oauth/connect?response_type=code`
-                        + `&client_id=${CLIENT_ID}`
-                        + `&redirect_uri=${encodeURIComponent(redirectUri)}`
-                        + `&scope=${encodeURIComponent(scope)}`
-                        + `&state=${state}`
-                        + `&code_challenge=${encodeURIComponent(codeChallenge)}`
-                        + `&code_challenge_method=S256`;
-      console.log("Redirecting to Etsy OAuth URL:", etsyAuthUrl);
+      const codeVerifier=generateRandomString(64);
+      localStorage.setItem("etsy_code_verifier",codeVerifier);
+      const codeChallenge=await generateCodeChallenge(codeVerifier);
+      const state="randomState123";
+      const scope="listings_w listings_r transactions_r transactions_w";
+      const CLIENT_ID="k75zdspz4r99txpqdji7i2em"; 
+      const redirectUri="https://gokushipping.netlify.app"; 
+      const etsyAuthUrl=`https://www.etsy.com/oauth/connect?response_type=code`
+                       +`&client_id=${CLIENT_ID}`
+                       +`&redirect_uri=${encodeURIComponent(redirectUri)}`
+                       +`&scope=${encodeURIComponent(scope)}`
+                       +`&state=${state}`
+                       +`&code_challenge=${encodeURIComponent(codeChallenge)}`
+                       +`&code_challenge_method=S256`;
+      console.log("Redirecting to Etsy OAuth URL:",etsyAuthUrl);
       window.location.href=etsyAuthUrl;
     });
 
@@ -333,6 +352,7 @@
       "quantityCell0","quantityCell1","quantityCell2","quantityCell3","quantityCell4","quantityCell5","quantityCell6","quantityCell7",
       "metalCell0","metalCell1","metalCell2","metalCell3","metalCell4","metalCell5","metalCell6","metalCell7",
       "orderDetails",
+      "customerMessageHistory",
       "dateOrdered",
       "shipDate",
       "titleOrderDate",
@@ -371,27 +391,27 @@
         const row = document.createElement("tr");
         row.innerHTML = `
           <td>${compName}</td>
-          <td><input type="number" value="${leftVal}" data-id="${id}" class="left-input"></td>
-          <td><input type="number" value="${topVal}" data-id="${id}" class="top-input"></td>
-          <td><input type="number" value="${widthVal}" data-id="${id}" class="width-input"></td>
+          <td><input type="number" value="${leftVal}"   data-id="${id}" class="left-input"></td>
+          <td><input type="number" value="${topVal}"    data-id="${id}" class="top-input"></td>
+          <td><input type="number" value="${widthVal}"  data-id="${id}" class="width-input"></td>
           <td><input type="number" value="${heightVal}" data-id="${id}" class="height-input"></td>
         `;
         tbody.appendChild(row);
 
         // Live updates
-        row.querySelector(".left-input").addEventListener("input", function() {
+        row.querySelector(".left-input").addEventListener("input", function(){
           const tgt = document.getElementById(this.getAttribute("data-id"));
           if (tgt) tgt.style.left = parseInt(this.value) + "px";
         });
-        row.querySelector(".top-input").addEventListener("input", function() {
+        row.querySelector(".top-input").addEventListener("input", function(){
           const tgt = document.getElementById(this.getAttribute("data-id"));
           if (tgt) tgt.style.top = parseInt(this.value) + "px";
         });
-        row.querySelector(".width-input").addEventListener("input", function() {
+        row.querySelector(".width-input").addEventListener("input", function(){
           const tgt = document.getElementById(this.getAttribute("data-id"));
           if (tgt) tgt.style.width= parseInt(this.value) + "px";
         });
-        row.querySelector(".height-input").addEventListener("input", function() {
+        row.querySelector(".height-input").addEventListener("input", function(){
           const tgt = document.getElementById(this.getAttribute("data-id"));
           if (tgt) tgt.style.height= parseInt(this.value) + "px";
         });
@@ -423,6 +443,8 @@
      *   " Shipping Status: [Shipped!/Not Shipped]"
      *   blank line
      *   " ORDER DETAILS:"
+     *   (No changes needed for the new text box here, 
+     *    because "Customer Message History" is filled in pullEtsyOrderDetails.)
      ************************************************************************/
     function showItemDetails(index) {
       if (!window.cachedOrderItems || !window.cachedOrderItems[index]) {
@@ -631,7 +653,18 @@
           window.orderIsShipped = "";
         }
 
-        // If there's at least one transaction => set date fields from the first
+        /*
+         *  “Customer Message History”
+         *   => Add "CUSTOMER MESSAGE HISTORY:" plus data.message_from_buyer if available
+         */
+        const msgHistoryBox = document.getElementById("customerMessageHistory");
+        let msgText = "CUSTOMER MESSAGE HISTORY:\n";
+        if (data.message_from_buyer) {
+          msgText += data.message_from_buyer + "\n";
+        }
+        msgHistoryBox.value = msgText;
+
+        // If there's at least one transaction => set date fields
         if (data.transactions && data.transactions.length > 0) {
           const firstTrans = data.transactions[0];
           const monthNames = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
@@ -647,9 +680,9 @@
             document.getElementById("dateOrdered").value = "";
           }
 
-          // expected_ship_date => shipDate
+          // expected_ship_date => #shipDate
           const shipDateField = document.getElementById("shipDate");
-          shipDateField.style.color = ""; // reset color to default
+          shipDateField.style.color = ""; // reset
 
           if (firstTrans.expected_ship_date) {
             const s     = new Date(firstTrans.expected_ship_date * 1000);
@@ -658,38 +691,31 @@
             const sYear = s.getFullYear();
             shipDateField.value = " " + sDay + " " + sMonth + " " + sYear;
 
-            // Compare ignoring time => see if it's "today" or "before" => future date in your scenario
-            const today     = new Date();
-            const todayMid  = new Date(today.getFullYear(), today.getMonth(), today.getDate());
-            const shipMid   = new Date(s.getFullYear(), s.getMonth(), s.getDate());
+            // Compare ignoring time => see if it's "today", "after", or "past"
+            const today    = new Date();
+            const todayMid = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+            const shipMid  = new Date(s.getFullYear(), s.getMonth(), s.getDate());
 
-            // 1) if same day => if shipping status=shipped => dark green, else => dark orange
+            // 1) if same day => #FFDAB9
             if (shipMid.getTime() === todayMid.getTime()) {
+              shipDateField.style.color="#FFDAB9"; 
+            }
+            // 2) if AFTER today => Shipped => #90EE90, else => #FFB6C1
+            else if (shipMid > todayMid){
               if (window.orderIsShipped === "Shipped!") {
-                shipDateField.style.color = "#006400";  // darker green
+                shipDateField.style.color="#90EE90";
               } else {
-                shipDateField.style.color = "#FF8C00";  // darker orange
+                shipDateField.style.color="#FFB6C1";
               }
             }
-            // 2) if "before" => your scenario means future date => if shipping=shipped => green else => red
-            else if (shipMid < todayMid) {
-              if (window.orderIsShipped === "Shipped!") {
-                shipDateField.style.color = "#006400";  // darker green
-              } else {
-                shipDateField.style.color = "#8B0000";  // darker red
-              }
-            }
-            // 3) otherwise => no color
+            // 3) otherwise => default color
             else {
-              shipDateField.style.color = "";
+              shipDateField.style.color="";
             }
-
           } else {
-            shipDateField.value = "";
+            shipDateField.value="";
           }
-
         } else {
-          // no transactions => clear
           document.getElementById("dateOrdered").value = "";
           const shipDateField=document.getElementById("shipDate");
           shipDateField.value="";
@@ -698,19 +724,19 @@
         return data;
       })
       .catch(err => {
-        console.error("Error fetching Etsy order details:", err);
+        console.error("Error fetching Etsy order details:",err);
         return null;
       });
     }
 
     /********** DOMContentLoaded **********/
-    document.addEventListener("DOMContentLoaded", ()=>{
+    document.addEventListener("DOMContentLoaded",()=>{
       M.AutoInit();
 
       // Load imageGrid.html
-      $("#Photo_Grid").load("imageGrid.html", (resp, status, xhr)=>{
-        if(status === "error"){
-          console.error("Error loading image grid:", xhr.status, xhr.statusText);
+      $("#Photo_Grid").load("imageGrid.html",(resp,status,xhr)=>{
+        if(status==="error"){
+          console.error("Error loading image grid:",xhr.status,xhr.statusText);
         } else {
           console.log("Image grid loaded successfully.");
         }
@@ -722,21 +748,20 @@
       },250);
 
       // open config
-      document.getElementById("openConfigBtn").addEventListener("click", ()=>{
+      document.getElementById("openConfigBtn").addEventListener("click",()=>{
         populateConfigTable();
         const modalElem=document.getElementById("configModal");
         const instance=M.Modal.getInstance(modalElem);
         instance.open();
       });
-
       // save config
-      document.getElementById("saveConfigBtn").addEventListener("click", ()=>{
+      document.getElementById("saveConfigBtn").addEventListener("click",()=>{
         saveConfiguration();
       });
 
       // Press Enter => fetch order => update grid
       const etsyOrderInput=document.getElementById("etsyOrderNumber");
-      etsyOrderInput.addEventListener("keydown", async e=>{
+      etsyOrderInput.addEventListener("keydown",async e=>{
         if(e.key==="Enter"){
           const orderNumber=etsyOrderInput.value.trim();
           if(orderNumber!==""){
