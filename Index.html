@@ -30,8 +30,7 @@
     }
 
     /*
-     * EXCEPTION: #etsyOrderNumber => NO leading space
-     * (per your request)
+     * #etsyOrderNumber => NO leading space 
      */
     #etsyOrderNumber {
       position: absolute;
@@ -40,13 +39,10 @@
       font-size: 1em;
       padding: 8px;
       width: 250px;
-      /* NO leading space in placeholder or text here */
-      placeholder="Etsy Order Number";
     }
 
     /*
-     * #orderInformation => add 1 leading space in placeholder
-     * so lines start with space
+     * #orderInformation => add 1 leading space in the placeholder
      */
     #orderInformation {
       position: absolute;
@@ -58,9 +54,10 @@
       padding: 8px;
       resize: none;
     }
-    /* We'll set a placeholder with a leading space below in HTML */
 
-    /* The Photo Grid of 8 preview cells (loaded from imageGrid.html) */
+    /*
+     * The Photo Grid (8 preview cells) – loaded from imageGrid.html
+     */
     #Photo_Grid {
       position: absolute;
       left: 400px;
@@ -69,11 +66,10 @@
     }
 
     /*
-     * For the 16 text boxes (quantity & metal)
+     * 16 text-box-absolute for quantity & metal
      *  - 0.7em font
-     *  - border/outline removed
-     *  - each line gets a leading space in front
-     *    => We'll do that in the .value assignment in JS
+     *  - no border/outline
+     *  - leading space in value is set in JS
      */
     .text-box-absolute {
       position: absolute;
@@ -92,9 +88,9 @@
     }
 
     /*
-     * The multiline Order Details box:
+     * Order Details box:
      *  - line-height: 1.5
-     *  - We'll prefix each line with a space in our JS logic
+     *  - We'll prefix each line with a space in JS
      */
     #orderDetails {
       position: absolute;
@@ -109,10 +105,11 @@
       resize: none;
       text-align: left;
       overflow-y: auto;
-      /* We'll also add a leading space for the placeholder text below */
     }
 
-    /* Single-Line text boxes for Date/Ship => bigger & bold, plus leading space in JS */
+    /*
+     * Single-Line text boxes for Date/Ship => bigger & bold, plus leading space in JS
+     */
     #dateOrdered,
     #shipDate {
       position: absolute;
@@ -174,10 +171,9 @@
   <input 
     type="text" 
     id="etsyOrderNumber" 
-    placeholder="Etsy Order Number"  <!-- NO leading space here! -->
+    placeholder="Etsy Order Number"  
   />
 
-  <!-- Leading space in placeholder for #orderInformation lines -->
   <textarea 
     id="orderInformation" 
     placeholder=" Order Information" 
@@ -206,14 +202,10 @@
   <input type="text" id="metalCell6" class="text-box-absolute" readonly />
   <input type="text" id="metalCell7" class="text-box-absolute" readonly />
 
-  <!-- Order Details (leading space in placeholder) -->
-  <textarea 
-    id="orderDetails"
-    placeholder=" ORDER DETAILS:"
-  > 
-</textarea>
+  <!-- Order Details -->
+  <textarea id="orderDetails"></textarea>
 
-  <!-- Single-Line Date & Ship => We'll add leading space in JS logic -->
+  <!-- Date/Ship Date boxes -->
   <input type="text" id="dateOrdered" placeholder="" />
   <input type="text" id="shipDate"    placeholder="" />
 
@@ -246,15 +238,15 @@
 
   <script>
     /***********************************************************************
-     * We store data.name => orderName, data.status => orderStatus.
-     * Then in showItemDetails(index):
-     *   " ORDER FROM: [name]"
-     *   " Status: [status]\n\n"
-     *   " ORDER DETAILS:\n\n"
-     * Leading space on each line.
+     * Now we also have is_shipped => orderIsShipped
+     *   - If is_shipped is false => "Not Shipped"
+     *   - If is_shipped is true  => "Shipped!"
+     * We'll place that line right below "Status:"
+     * Then 1 blank line => "ORDER DETAILS:"
      ***********************************************************************/
-    window.orderName    = ""; 
-    window.orderStatus  = ""; 
+    window.orderName       = ""; 
+    window.orderStatus     = "";
+    window.orderIsShipped  = "";
     window.cachedOrderItems = [];
 
     /********** Check for Access Token / Code **********/
@@ -287,7 +279,7 @@
       const chars="ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
       let text="";
       for(let i=0;i<length;i++){
-        text += chars.charAt(Math.floor(Math.random()*chars.length));
+        text+=chars.charAt(Math.floor(Math.random()*chars.length));
       }
       return text;
     }
@@ -308,8 +300,8 @@
       const codeChallenge=await generateCodeChallenge(codeVerifier);
       const state="randomState123";
       const scope="listings_w listings_r transactions_r transactions_w";
-      const CLIENT_ID="k75zdspz4r99txpqdji7i2em";
-      const redirectUri="https://gokushipping.netlify.app";
+      const CLIENT_ID="k75zdspz4r99txpqdji7i2em"; 
+      const redirectUri="https://gokushipping.netlify.app"; 
       const etsyAuthUrl=`https://www.etsy.com/oauth/connect?response_type=code`
                        +`&client_id=${CLIENT_ID}`
                        +`&redirect_uri=${encodeURIComponent(redirectUri)}`
@@ -411,12 +403,12 @@
     }
 
     /***********************************************************************
-     * We'll store data.name => orderName, data.status => orderStatus
-     * Then in showItemDetails => 
-     *   " ORDER FROM: [name]"
-     *   " Status: [status]\n\n"
-     *   " ORDER DETAILS:\n\n"
-     * with a leading space on each line
+     * showItemDetails(index):
+     *  - " ORDER FROM: [name]"
+     *  - " Status: [status]"
+     *  - " is_shipped: ... (Shipped!/Not Shipped)"
+     *  - (blank line)
+     *  - " ORDER DETAILS:"
      ***********************************************************************/
     function showItemDetails(index){
       if(!window.cachedOrderItems||!window.cachedOrderItems[index]){
@@ -425,7 +417,6 @@
       }
       const item=window.cachedOrderItems[index];
 
-      // Start building lines w/ leading spaces
       let details="";
 
       // 1) "ORDER FROM: [name]" if we have name
@@ -435,23 +426,30 @@
 
       // 2) "Status: [someValue]" if we have orderStatus
       if(window.orderStatus){
-        // no blank line => it's placed right below "ORDER FROM:"
-        details += " Status: " + window.orderStatus + "\n\n";
-        // => 1 line space in-between "Status:" & "ORDER DETAILS:"
+        details += " Status: " + window.orderStatus + "\n";
       }
 
-      // 3) "ORDER DETAILS:"
+      // 3) "is_shipped" => " Shipped!" or " Not Shipped"
+      if(window.orderIsShipped){
+        details += " is_shipped: " + window.orderIsShipped + "\n\n"; 
+        // => 1 line space before "ORDER DETAILS:"
+      } else {
+        // If empty => do nothing
+        details += "\n"; // If you want a line even if is_shipped is missing
+      }
+
+      // 4) "ORDER DETAILS:"
       details += " ORDER DETAILS:\n\n"; 
 
       // Title
       if(item.title){
         const firstFourWords=item.title.trim().split(" ").slice(0,4).join(" ");
-        details += " Title: " + firstFourWords + "\n";
+        details+=" Title: " + firstFourWords + "\n";
       }
 
       // SKU
       if(item.sku){
-        details += " SKU: " + item.sku + "\n";
+        details+=" SKU: " + item.sku + "\n";
       }
 
       // Variation logic
@@ -462,22 +460,16 @@
         const acceptedLengthNames=[
           "length","necklace length","metal/necklace length","metal choice / necklace length","necklace length in inches"
         ];
-
         item.variations.forEach(v=>{
           if(v.formatted_name && v.formatted_value){
             const nameLower=v.formatted_name.trim().toLowerCase();
             let val=v.formatted_value.trim();
-            // Personalization
             if(nameLower==="personalization" && val==="Not requested on this item."){
               val="Not Requested";
-              details += " Personalization: " + val + "\n";
-            }
-            // Metal Variation
-            else if(acceptedMetalNames.includes(nameLower)){
-              details += " Metal Choice: " + val + "\n";
-            }
-            // Length Variation
-            else if(acceptedLengthNames.includes(nameLower)){
+              details+=" Personalization: " + val + "\n";
+            } else if(acceptedMetalNames.includes(nameLower)){
+              details+=" Metal Choice: " + val + "\n";
+            } else if(acceptedLengthNames.includes(nameLower)){
               const lengthMapping={
                 '14&quot;':'14 Inches','16&quot;':'16 Inches','18&quot;':'18 Inches','20&quot;':'20 Inches',
                 '14""':'14 Inches','16""':'16 Inches','18""':'18 Inches','20""':'20 Inches'
@@ -485,10 +477,9 @@
               if(lengthMapping[val]){
                 val=lengthMapping[val];
               }
-              details += " Item Length: " + val + "\n";
-            }
-            else{
-              details += " " + v.formatted_name + ": " + v.formatted_value + "\n";
+              details+=" Item Length: " + val + "\n";
+            } else {
+              details+=" " + v.formatted_name + ": " + v.formatted_value + "\n";
             }
           }
         });
@@ -514,15 +505,15 @@
       let items=[];
       if(data.transactions && Array.isArray(data.transactions)){
         items=data.transactions;
-      }else if(data.shipments && Array.isArray(data.shipments)){
+      } else if(data.shipments && Array.isArray(data.shipments)){
         items=data.shipments;
-      }else if(Array.isArray(data)){
+      } else if(Array.isArray(data)){
         items=data;
-      }else if(data.results && Array.isArray(data.results)){
+      } else if(data.results && Array.isArray(data.results)){
         items=data.results;
-      }else if(data.orders && Array.isArray(data.orders)){
+      } else if(data.orders && Array.isArray(data.orders)){
         items=data.orders;
-      }else if(typeof data==='object'&&data!==null){
+      } else if(typeof data==='object' && data!==null){
         for(const key in data){
           if(Array.isArray(data[key])){
             items=data[key];
@@ -532,7 +523,6 @@
       }
       window.cachedOrderItems=items;
 
-      // up to 8 images
       for(let i=0;i<8;i++){
         const cell=document.getElementById("previewCell"+i);
         const qtyBox=document.getElementById("quantityCell"+i);
@@ -545,22 +535,22 @@
               const images=await fetchListingImages(item.listing_id);
               if(images && images.length>0){
                 cell.innerHTML=`<img src="${images[0].url_fullxfull}" alt="Listing Image ${i}">`;
-              }else{
+              } else {
                 cell.innerHTML="No images found";
               }
-            }catch(err){
+            } catch(err){
               console.error(`Error fetching listing ${item.listing_id}:`,err);
               cell.innerHTML="Error loading image";
             }
-            // clickable => show details
             cell.style.cursor="pointer";
             cell.onclick=()=>{ showItemDetails(i); };
 
-            // LEADING SPACE => " Quantity: X"
+            // quantity => leading space
             if(qtyBox){
               const actualQty=(item.quantity!=null)?item.quantity:0;
               qtyBox.value=" Quantity: "+actualQty;
             }
+            // metal => leading space
             if(metalBox){
               let metalSelection="";
               if(item.variations && Array.isArray(item.variations)){
@@ -576,7 +566,7 @@
               }
               metalBox.value=" Metal: "+metalSelection;
             }
-          }else{
+          } else {
             cell.innerHTML="Empty";
             cell.style.cursor="default";
             cell.onclick=null;
@@ -586,10 +576,10 @@
         }
       }
 
-      // by default => item 0 in #orderDetails
+      // default => item 0
       if(items.length>0){
         showItemDetails(0);
-      }else{
+      } else {
         document.getElementById("orderDetails").value=" ORDER DETAILS:\n\nNo items found.";
       }
     }
@@ -605,24 +595,35 @@
       .then(data=>{
         console.log("Etsy Order Data:",data);
 
-        // leading space in the #orderInformation text
+        // leading space in #orderInformation
         document.getElementById("orderInformation").value=" "+JSON.stringify(data,null,2);
 
         // name => window.orderName
         if(data.name){
           window.orderName=data.name;
-        }else{
+        } else {
           window.orderName="";
         }
 
         // status => window.orderStatus
         if(data.status){
           window.orderStatus=data.status;
-        }else{
+        } else {
           window.orderStatus="";
         }
 
-        // If there's a transaction => set date fields from the 1st
+        // is_shipped => window.orderIsShipped
+        // if false => "Not Shipped"
+        // if true  => "Shipped!"
+        // if neither => ""
+        if(data.is_shipped===true){
+          window.orderIsShipped="Shipped!";
+        } else if(data.is_shipped===false){
+          window.orderIsShipped="Not Shipped";
+        } else {
+          window.orderIsShipped="";
+        }
+
         if(data.transactions && data.transactions.length>0){
           const firstTrans=data.transactions[0];
           const monthNames=["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
@@ -634,7 +635,7 @@
             const mStr=monthNames[d.getMonth()];
             const yr=d.getFullYear();
             document.getElementById("dateOrdered").value=" "+day+" "+mStr+" "+yr;
-          }else{
+          } else {
             document.getElementById("dateOrdered").value="";
           }
 
@@ -645,10 +646,10 @@
             const sMonth=monthNames[s.getMonth()];
             const sYear=s.getFullYear();
             document.getElementById("shipDate").value=" "+sDay+" "+sMonth+" "+sYear;
-          }else{
+          } else {
             document.getElementById("shipDate").value="";
           }
-        }else{
+        } else {
           document.getElementById("dateOrdered").value="";
           document.getElementById("shipDate").value="";
         }
@@ -668,7 +669,7 @@
       $("#Photo_Grid").load("imageGrid.html",(resp,status,xhr)=>{
         if(status==="error"){
           console.error("Error loading image grid:",xhr.status,xhr.statusText);
-        }else{
+        } else {
           console.log("Image grid loaded successfully.");
         }
       });
