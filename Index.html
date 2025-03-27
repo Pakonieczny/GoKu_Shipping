@@ -102,7 +102,7 @@
     /* Single-line text boxes for Date Ordered & Ship Date */
     #dateOrdered, #shipDate {
       position: absolute;
-      border: 1px solid black !important;
+      border: 1px solid black !important; /* 1px border, same style */
       width: 200px;
       height: 20px;
       box-sizing: border-box !important;
@@ -180,10 +180,10 @@
   <input type="text" id="metalCell6" class="text-box-absolute" readonly />
   <input type="text" id="metalCell7" class="text-box-absolute" readonly />
 
-  <!-- Use TEXTAREA for multiline, named "orderDetails" -->
+  <!-- Use TEXTAREA for multiline "Order Details" -->
   <textarea id="orderDetails">Order Details:</textarea>
 
-  <!-- 2 Single-Line Text Boxes w/ border for dates -->
+  <!-- Date Ordered & Ship Date text boxes -->
   <input type="text" id="dateOrdered" placeholder="Date Ordered" />
   <input type="text" id="shipDate" placeholder="Ship Date" />
 
@@ -236,7 +236,7 @@
         }
       }
     })();
-    
+
     /********** Etsy OAuth: Connect to Etsy **********/
     function generateRandomString(length) {
       const possible = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
@@ -274,7 +274,7 @@
       console.log("Redirecting to Etsy OAuth URL:", etsyAuthUrl);
       window.location.href = etsyAuthUrl;
     });
-    
+
     /********** UI Configuration **********/
     var configComponentIDs = [
       "connectEtsyBtn",
@@ -365,7 +365,7 @@
       });
       console.log("Configuration saved.");
     }
-    
+
     /********** Listing Images + “Update Image Grid” **********/
     async function fetchListingImages(listingId) {
       const response = await fetch(`/.netlify/functions/etsyImages?listingId=${listingId}`, {
@@ -382,6 +382,9 @@
     
     async function updateImageGrid(data) {
       let items = [];
+
+      // The receipt data might hold an array called "transactions"
+      // So let's get that array if it exists.
       if (data.transactions && Array.isArray(data.transactions)) {
         items = data.transactions;
       } else if (data.shipments && Array.isArray(data.shipments)) {
@@ -508,6 +511,7 @@
                 }
               });
             }
+
           } catch (error) {
             console.error(`Error fetching images for listing ${item.listing_id}:`, error);
             cell.innerHTML = "Error loading image";
@@ -536,28 +540,38 @@
         .then(data => {
           console.log("Etsy Order Data:", data);
 
-          // Put the raw response in #orderInformation
+          // Show raw JSON in #orderInformation
           document.getElementById("orderInformation").value = JSON.stringify(data, null, 2);
 
-          // ========== Date Ordered ==========
-          if (data && data.created_timestamp) {
-            const dateObj = new Date(data.created_timestamp * 1000); // convert from seconds
-            const day = String(dateObj.getDate()).padStart(2, '0');
-            const month = String(dateObj.getMonth() + 1).padStart(2, '0');
-            const year = dateObj.getFullYear();
-            document.getElementById("dateOrdered").value = `${day}/${month}/${year}`;
-          } else {
-            document.getElementById("dateOrdered").value = "";
-          }
+          // We expect data.transactions[0] to hold created_timestamp & expected_ship_date
+          if (data.transactions && data.transactions.length > 0) {
+            const firstTrans = data.transactions[0];
+            
+            // 1) Date Ordered
+            if (firstTrans.created_timestamp) {
+              const dateObj = new Date(firstTrans.created_timestamp * 1000); 
+              const day = String(dateObj.getDate()).padStart(2, '0');
+              const month = String(dateObj.getMonth() + 1).padStart(2, '0');
+              const year = dateObj.getFullYear();
+              document.getElementById("dateOrdered").value = `${day}/${month}/${year}`;
+            } else {
+              document.getElementById("dateOrdered").value = "";
+            }
 
-          // ========== Ship Date ==========
-          if (data && data.expected_ship_date) {
-            const shipObj = new Date(data.expected_ship_date * 1000); // convert from seconds
-            const day = String(shipObj.getDate()).padStart(2, '0');
-            const month = String(shipObj.getMonth() + 1).padStart(2, '0');
-            const year = shipObj.getFullYear();
-            document.getElementById("shipDate").value = `${day}/${month}/${year}`;
+            // 2) Ship Date
+            if (firstTrans.expected_ship_date) {
+              const shipObj = new Date(firstTrans.expected_ship_date * 1000);
+              const sDay = String(shipObj.getDate()).padStart(2, '0');
+              const sMonth = String(shipObj.getMonth() + 1).padStart(2, '0');
+              const sYear = shipObj.getFullYear();
+              document.getElementById("shipDate").value = `${sDay}/${sMonth}/${sYear}`;
+            } else {
+              document.getElementById("shipDate").value = "";
+            }
+
           } else {
+            // If we have no transactions or an empty array
+            document.getElementById("dateOrdered").value = "";
             document.getElementById("shipDate").value = "";
           }
 
@@ -616,7 +630,5 @@
       });
     });
   </script>
-</body>
-</html>
 </body>
 </html>
