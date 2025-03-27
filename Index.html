@@ -90,22 +90,20 @@
 
     /*
      * The Photo Grid (8 images) => scaled to 1.35
-     * We embed the markup in #Photo_Grid
      */
     #Photo_Grid {
       position: absolute;
       left: 400px;
       top: 140px;
-      transform: scale(1.25);
+      transform: scale(1.35);
       transform-origin: top left;
     }
 
-    /* 2×4 grid container => row gap is 35px, col gap is 5px */
+    /* 2×4 grid => 35px row gap, 5px column gap */
     #photoGridContainer {
       display: grid;
       grid-template-columns: repeat(4, 1fr);
       grid-template-rows: repeat(2, auto);
-      /* now 35px vertical gap */
       gap: 35px 5px;
     }
     .grid-cell {
@@ -113,13 +111,12 @@
       flex-direction: column;
       align-items: center;
     }
-
     /*
-     * Each .preview-box => 1px border EXACTLY, matching Order Details box
-     * plus wheel-based zoom code in script
+     * preview-box => 1px border EXACT, matching Order Details
+     * plus wheel-based zoom restored
      */
     .preview-box {
-      border: 1px solid black !important; /* Force 1px perimeter line */
+      border: 1px solid black !important;
       background: #f9f9f9;
       width: 100%;
       height: 150px;
@@ -139,7 +136,7 @@
     }
 
     /*
-     * 16 text-box-absolute => 0.9em (matching #orderDetails size)
+     * 16 text-box-absolute => 0.9em to match #orderDetails
      */
     .text-box-absolute {
       position: absolute;
@@ -148,7 +145,7 @@
       background: transparent !important;
       text-decoration: none !important;
       box-shadow: none !important;
-      font-size: 0.8em !important;
+      font-size: 0.9em !important;
       width: 60px;
       height: 20px;
       text-align: left;
@@ -189,9 +186,7 @@
       overflow-y: auto;
     }
 
-    /*
-     * Single-line text boxes => bigger & bold, read-only
-     */
+    /* Single-line text boxes => bigger & bold, read-only */
     #dateOrdered,
     #shipDate {
       position: absolute;
@@ -262,7 +257,7 @@
   <button id="connectEtsyBtn" class="configurable btn waves-effect waves-light">Connect to Etsy</button>
   <button id="openConfigBtn" class="configurable btn waves-effect waves-light">Open Config</button>
 
-  <!-- "Order Link" button => smaller globe icon -->
+  <!-- "Order Link" button => smaller 14×14 icon -->
   <button id="orderLinkBtn" name="Order Link">
     <img src="assets/Globe.png" alt="Order Link Icon" />
   </button>
@@ -271,7 +266,7 @@
   <input type="text" id="etsyOrderNumber" placeholder="Etsy Order Number" />
   <textarea id="orderInformation" placeholder=" Order Information" readonly></textarea>
 
-  <!-- Photo Grid => 2 rows × 4 columns, 35px row gap, 5px col gap, 1px border, scaled 1.35 -->
+  <!-- Photo Grid => 2 rows × 4 columns, 35px row gap, 5px col gap, scaled 1.35, 1px border boxes -->
   <div id="Photo_Grid">
     <div id="photoGridContainer">
       <div class="grid-cell">
@@ -338,7 +333,7 @@
   <input type="text" id="dateOrdered" readonly />
   <input type="text" id="shipDate"    readonly />
 
-  <!-- Config Modal -->
+  <!-- Configuration Modal -->
   <div id="configModal" class="modal">
     <div class="modal-content">
       <table class="striped" id="configTable">
@@ -370,18 +365,17 @@
   <script>
     /*
      * COMPLETE final code:
-     * 1) Perimeter line on each preview box => 1px EXACT, matching Order Details
-     * 2) Wheel-based zoom restored so user can scroll/zoom each image
-     * 3) Vertical gap between the 2 rows => 35px
-     * 4) .text-box-absolute => 0.9em
-     * 5) "Message History:" title removed, #customerMessageHistory => read/write
-     * 6) Payment Status => "Order Status:" (in showItemDetails)
+     * - 1) 1px border => matched to Order Details box
+     * - 2) wheel-based zoom restored for each .preview-box
+     * - 3) If Shipping Status is "Shipped!", we append shipped_timestamp (Day Mmm YYYY) to the right side
+     *   e.g. "Shipping Status: Shipped! 24 Mar 2023"
      */
 
     window.orderName="";
     window.orderStatus="";
     window.orderIsShipped="";
     window.cachedOrderItems=[];
+    window.orderShippedTimestamp=null; /* We'll store top-level shipped_timestamp if present */
 
     /********** Check for Access Token / Code **********/
     (function(){
@@ -493,6 +487,7 @@
         `;
         tbody.appendChild(row);
 
+        // Live updates
         row.querySelector(".left-input").addEventListener("input",function(){
           const tgt=document.getElementById(this.getAttribute("data-id"));
           if(tgt)tgt.style.left=parseInt(this.value)+"px";
@@ -529,7 +524,14 @@
       console.log("Configuration saved.");
     }
 
-    /********** showItemDetails => Payment->Order Status **********/
+    /************************************************************************
+     * showItemDetails(index):
+     *   " ORDER FROM: [name]"
+     *   " Order Status: [status]"
+     *   " Shipping Status: [Shipped! + shipped_timestamp if available]"
+     *   blank line
+     *   " ORDER DETAILS:"
+     ************************************************************************/
     function showItemDetails(index){
       if(!window.cachedOrderItems||!window.cachedOrderItems[index]){
         console.warn("No item at index:",index);
@@ -538,26 +540,54 @@
       const item=window.cachedOrderItems[index];
 
       let details="";
+
+      // ORDER FROM:
       if(window.orderName){
         details+=" ORDER FROM: "+window.orderName+"\n";
       }
+
+      // ORDER STATUS:
       if(window.orderStatus){
         details+=" Order Status: "+window.orderStatus+"\n";
       }
-      if(window.orderIsShipped){
+
+      // SHIPPING STATUS => if "Shipped!", also append shipped_timestamp date
+      if(window.orderIsShipped==="Shipped!"){
+        // if we have a top-level shipped_timestamp, parse it
+        let shippedDateString="";
+        if(window.orderShippedTimestamp){
+          const d=new Date(window.orderShippedTimestamp*1000);
+          const monthNames=["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+          const day=("0"+d.getDate()).slice(-2);
+          const mStr=monthNames[d.getMonth()];
+          const y=d.getFullYear();
+          shippedDateString=" "+day+" "+mStr+" "+y; 
+        }
+        details+=" Shipping Status: Shipped!"+shippedDateString+"\n\n";
+      }
+      else if(window.orderIsShipped){
+        // e.g. "Not Shipped"
         details+=" Shipping Status: "+window.orderIsShipped+"\n\n";
-      }else{
+      }
+      else {
+        // no shipping status
         details+="\n";
       }
+
       details+=" ORDER DETAILS:\n\n";
 
+      // Title (first 4 words)
       if(item.title){
         const firstFourWords=item.title.trim().split(" ").slice(0,4).join(" ");
         details+=" Title: "+firstFourWords+"\n";
       }
+
+      // SKU
       if(item.sku){
         details+=" SKU: "+item.sku+"\n";
       }
+
+      // Variation logic
       if(item.variations && Array.isArray(item.variations)){
         const acceptedMetalNames=[
           "metal","metal choice","metal - engraving","metal colour","color","metal choice / engraving option"
@@ -592,6 +622,7 @@
           }
         });
       }
+
       document.getElementById("orderDetails").value=details;
     }
 
@@ -610,7 +641,7 @@
     }
 
     /*
-     * updateImageGrid => unchanged, except inlined
+     * updateImageGrid => unchanged
      */
     async function updateImageGrid(data){
       let items=[];
@@ -693,7 +724,7 @@
     }
 
     /*
-     * pullEtsyOrderDetails => "CUSTOMER MESSAGE HISTORY:" removed, shipping color logic => #006400 if shipped
+     * pullEtsyOrderDetails => new logic to store "shipped_timestamp" globally
      */
     function pullEtsyOrderDetails(orderNumber){
       console.log("Pulling Etsy order details for order number:",orderNumber);
@@ -716,6 +747,8 @@
         }else{
           window.orderStatus="";
         }
+
+        // shipping logic
         if(data.is_shipped===true){
           window.orderIsShipped="Shipped!";
         } else if(data.is_shipped===false){
@@ -724,6 +757,15 @@
           window.orderIsShipped="";
         }
 
+        // If there's a top-level shipped_timestamp => store it
+        // so we can format it in showItemDetails
+        if(data.shipped_timestamp && data.is_shipped===true){
+          window.orderShippedTimestamp=data.shipped_timestamp;
+        } else {
+          window.orderShippedTimestamp=null;
+        }
+
+        // Customer Message History
         const msgBox=document.getElementById("customerMessageHistory");
         if(data.message_from_buyer){
           msgBox.value=data.message_from_buyer+"\n";
@@ -731,6 +773,7 @@
           msgBox.value="";
         }
 
+        // If there's at least one transaction => set dateOrdered, shipDate
         if(data.transactions && data.transactions.length>0){
           const firstTrans=data.transactions[0];
           const monthNames=["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
@@ -739,10 +782,12 @@
             const day=("0"+d.getDate()).slice(-2);
             const mStr=monthNames[d.getMonth()];
             const y=d.getFullYear();
-            document.getElementById("dateOrdered").value=" "+day+" "+mStr+" "+y;
+            document.getElementById("dateOrdered").value=
+              " "+day+" "+mStr+" "+y;
           } else{
             document.getElementById("dateOrdered").value="";
           }
+
           const shipEl=document.getElementById("shipDate");
           shipEl.style.color="";
           if(firstTrans.expected_ship_date){
@@ -765,6 +810,7 @@
           shipEl.value="";
           shipEl.style.color="";
         }
+
         return data;
       })
       .catch(err=>{
@@ -783,7 +829,6 @@
         document.body.style.opacity=1;
       },250);
 
-      // Open config modal
       document.getElementById("openConfigBtn").addEventListener("click",()=>{
         populateConfigTable();
         const modalElem=document.getElementById("configModal");
@@ -821,17 +866,18 @@
         window.open(customLink,"_blank");
       });
 
-      /********** WHEEL-BASED ZOOM FOR EACH PREVIEW BOX **********/
+      // WHEEL-BASED ZOOM FOR EACH PREVIEW BOX
       document.querySelectorAll('.preview-box').forEach(function(box) {
         box.addEventListener('wheel', function(e) {
           e.preventDefault();
           const img = box.querySelector('img');
           if (!img) return;
           let currentScale = parseFloat(img.dataset.scale) || 1;
-          // if the user scrolls up => zoom in; scrolls down => zoom out
           if (e.deltaY < 0) {
+            // scroll up => zoom in
             currentScale *= 1.1;
           } else {
+            // scroll down => zoom out
             currentScale /= 1.1;
           }
           // clamp scale between 1 and 3
