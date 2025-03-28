@@ -32,10 +32,7 @@
       top: 80px;
     }
 
-    /*
-     * "Order Link" button (#orderLinkBtn)
-     *   - smaller globe icon (14×14)
-     */
+    /* "Order Link" button (#orderLinkBtn) => smaller globe icon (14×14) */
     #orderLinkBtn {
       position: absolute;
       left: 120px;
@@ -52,11 +49,7 @@
       display: block;
     }
 
-    /*
-     * Etsy Order Number text box
-     *   - no extra space => underline right beneath
-     *   - fully left-justified
-     */
+    /* Etsy Order Number text box */
     #etsyOrderNumber {
       position: absolute;
       left: 50px;
@@ -85,9 +78,7 @@
       resize: none;
     }
 
-    /*
-     * Photo Grid => scaled 1.35, 2×4, 35px row gap, 5px col gap
-     */
+    /* Photo Grid => scaled 1.25, 2×4, 35px row gap, 5px col gap */
     #Photo_Grid {
       position: absolute;
       left: 400px;
@@ -107,7 +98,7 @@
       align-items: center;
     }
     .preview-box {
-      border: 1px solid black !important; /* match Order Details thickness */
+      border: 1px solid black !important;
       background: #f9f9f9;
       width: 100%;
       height: 150px;
@@ -126,9 +117,7 @@
       transition: transform 0.2s ease;
     }
 
-    /*
-     * 16 text-box-absolute => 0.9em
-     */
+    /* 16 text-box-absolute => 0.9em */
     .text-box-absolute {
       position: absolute;
       border: none !important;
@@ -177,9 +166,7 @@
       overflow-y: auto;
     }
 
-    /*
-     * single-line text boxes => bigger & bold, read-only
-     */
+    /* single-line text boxes => bigger & bold, read-only */
     #dateOrdered,
     #shipDate {
       position: absolute;
@@ -194,10 +181,10 @@
     }
 
     /*
-     * Title texts => we have #titleOrderDate2 for shipped_timestamp
+     * Title texts => #titleOrderDate2 used for shipped_timestamp
      */
     #titleOrderDate,
-    #titleOrderDate2, /* will display shipped_timestamp if shipped, in bold */
+    #titleOrderDate2,
     #titleShipDate,
     #titleOrderDetails,
     #titleBritesMessages,
@@ -235,7 +222,6 @@
       background: white;
       font-size: 0.9em;
     }
-
     table.striped {
       width: 100%;
     }
@@ -265,7 +251,7 @@
   <input type="text" id="etsyOrderNumber" placeholder="Etsy Order Number" />
   <textarea id="orderInformation" placeholder=" Order Information" readonly></textarea>
 
-  <!-- Photo Grid => 2×4, 35px row gap, 5px col gap, scaled 1.35, 1px border boxes -->
+  <!-- Photo Grid => 2×4, scaled 1.25, 1px border boxes -->
   <div id="Photo_Grid">
     <div id="photoGridContainer">
       <div class="grid-cell">
@@ -331,7 +317,7 @@
 
   <!-- Single-line text boxes => bigger & bold, read-only -->
   <input type="text" id="dateOrdered" readonly />
-  <input type="text" id="shipDate"    readonly />
+  <input type="text" id="shipDate" readonly />
 
   <!-- Configuration Modal -->
   <div id="configModal" class="modal">
@@ -363,85 +349,89 @@
   ></script>
 
   <script>
-    /*
-     * COMPLETELY updated code:
-     * - #titleOrderDate2 now displays shipped_timestamp in bold 
-     *   if is_shipped===true => "Shipped On: DD Mmm YYYY"
-     * - If not shipped => #titleOrderDate2 is empty.
-     */
+    /********************************************************
+     * This script fetches Etsy order details, loads images,
+     * handles user interaction, and provides a config system
+     * for repositioning elements on the page.
+     ********************************************************/
 
-    window.orderName="";
-    window.orderStatus="";
-    window.orderIsShipped="";
-    window.cachedOrderItems=[];
-    window.orderShippedTimestamp=null;
+    window.orderName = "";
+    window.orderStatus = "";
+    window.orderIsShipped = "";
+    window.cachedOrderItems = [];
+    window.orderShippedTimestamp = null;
 
     /********** Check for Access Token / Code **********/
     (function(){
-      const urlParams=new URLSearchParams(window.location.search);
-      const accessToken=urlParams.get("access_token");
+      const urlParams = new URLSearchParams(window.location.search);
+      const accessToken = urlParams.get("access_token");
       if(accessToken){
-        localStorage.setItem("access_token",accessToken);
-        window.history.replaceState({},document.title,window.location.pathname);
-        M.toast({html:"Connection Successful!"});
-        console.log("Access token received:",accessToken);
-      }else{
-        const authCode=urlParams.get("code");
+        localStorage.setItem("access_token", accessToken);
+        window.history.replaceState({}, document.title, window.location.pathname);
+        M.toast({html: "Connection Successful!"});
+        console.log("Access token received:", accessToken);
+      } else {
+        const authCode = urlParams.get("code");
         if(authCode){
-          const storedCodeVerifier=localStorage.getItem("etsy_code_verifier");
+          const storedCodeVerifier = localStorage.getItem("etsy_code_verifier");
           if(storedCodeVerifier){
-            window.location.href="/.netlify/functions/exchangeToken?code="
-                                 +encodeURIComponent(authCode)
-                                 +"&code_verifier="
-                                 +encodeURIComponent(storedCodeVerifier);
-          }else{
+            window.location.href = 
+              "/.netlify/functions/exchangeToken?code=" +
+              encodeURIComponent(authCode) +
+              "&code_verifier=" +
+              encodeURIComponent(storedCodeVerifier);
+          } else {
             console.error("No code verifier found in localStorage.");
           }
         }
       }
     })();
 
+    /* OAuth Helpers for code challenge, code verifier, etc. */
     function generateRandomString(length){
-      const chars="ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
-      let text="";
-      for(let i=0;i<length;i++){
-        text+=chars.charAt(Math.floor(Math.random()*chars.length));
+      const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+      let text = "";
+      for(let i=0; i<length; i++){
+        text += chars.charAt(Math.floor(Math.random() * chars.length));
       }
       return text;
     }
     async function generateCodeChallenge(codeVerifier){
-      const encoder=new TextEncoder();
-      const data=encoder.encode(codeVerifier);
-      const digest=await crypto.subtle.digest("SHA-256",data);
+      const encoder = new TextEncoder();
+      const data = encoder.encode(codeVerifier);
+      const digest = await crypto.subtle.digest("SHA-256", data);
       return btoa(String.fromCharCode(...new Uint8Array(digest)))
               .replace(/\+/g,"-")
               .replace(/\//g,"_")
               .replace(/=+$/,"");
     }
-    document.getElementById("connectEtsyBtn").addEventListener("click",async ()=>{
-      const codeVerifier=generateRandomString(64);
-      localStorage.setItem("etsy_code_verifier",codeVerifier);
-      const codeChallenge=await generateCodeChallenge(codeVerifier);
-      const state="randomState123";
-      const scope="listings_w listings_r transactions_r transactions_w";
-      const CLIENT_ID="k75zdspz4r99txpqdji7i2em";
-      const redirectUri="https://gokushipping.netlify.app";
-      const etsyAuthUrl=`https://www.etsy.com/oauth/connect?response_type=code`
-                       +`&client_id=${CLIENT_ID}`
-                       +`&redirect_uri=${encodeURIComponent(redirectUri)}`
-                       +`&scope=${encodeURIComponent(scope)}`
-                       +`&state=${state}`
-                       +`&code_challenge=${encodeURIComponent(codeChallenge)}`
-                       +`&code_challenge_method=S256`;
-      console.log("Redirecting to Etsy OAuth URL:",etsyAuthUrl);
-      window.location.href=etsyAuthUrl;
+
+    /* Connect to Etsy button => initiate OAuth */
+    document.getElementById("connectEtsyBtn").addEventListener("click", async ()=>{
+      const codeVerifier = generateRandomString(64);
+      localStorage.setItem("etsy_code_verifier", codeVerifier);
+      const codeChallenge = await generateCodeChallenge(codeVerifier);
+      const state = "randomState123";
+      const scope = "listings_w listings_r transactions_r transactions_w";
+      const CLIENT_ID = "k75zdspz4r99txpqdji7i2em";
+      const redirectUri = "https://gokushipping.netlify.app";
+      const etsyAuthUrl = 
+        "https://www.etsy.com/oauth/connect?response_type=code" +
+        `&client_id=${CLIENT_ID}` +
+        `&redirect_uri=${encodeURIComponent(redirectUri)}` +
+        `&scope=${encodeURIComponent(scope)}` +
+        `&state=${state}` +
+        `&code_challenge=${encodeURIComponent(codeChallenge)}` +
+        "&code_challenge_method=S256";
+      console.log("Redirecting to Etsy OAuth URL:", etsyAuthUrl);
+      window.location.href = etsyAuthUrl;
     });
 
-    /*
-     * Configuration system
-     *   includes #titleOrderDate2 so you can position it if desired
-     */
-    const configComponentIDs=[
+    /***********************************************
+     * CONFIGURATION SYSTEM
+     * Allows user to drag/position components
+     ***********************************************/
+    const configComponentIDs = [
       "connectEtsyBtn","openConfigBtn","orderLinkBtn","etsyOrderNumber","orderInformation",
       "Photo_Grid",
       "quantityCell0","quantityCell1","quantityCell2","quantityCell3","quantityCell4","quantityCell5","quantityCell6","quantityCell7",
@@ -450,36 +440,38 @@
       "titleOrderDate","titleOrderDate2","titleShipDate","titleOrderDetails",
       "titleBritesMessages","titlePurchasedItems","titleOrderNumber"
     ];
+
     function loadPositions(){
       configComponentIDs.forEach(id=>{
-        const el=document.getElementById(id);
+        const el = document.getElementById(id);
         if(el){
-          const left=localStorage.getItem(`pos-${id}-left`);
-          const top=localStorage.getItem(`pos-${id}-top`);
-          const width=localStorage.getItem(`pos-${id}-width`);
-          const height=localStorage.getItem(`pos-${id}-height`);
-          if(left!==null)   el.style.left=left+"px";
-          if(top!==null)    el.style.top=top+"px";
-          if(width!==null)  el.style.width=width+"px";
-          if(height!==null) el.style.height=height+"px";
+          const left = localStorage.getItem(`pos-${id}-left`);
+          const top = localStorage.getItem(`pos-${id}-top`);
+          const width = localStorage.getItem(`pos-${id}-width`);
+          const height = localStorage.getItem(`pos-${id}-height`);
+          if(left!==null)   el.style.left = left + "px";
+          if(top!==null)    el.style.top = top + "px";
+          if(width!==null)  el.style.width = width + "px";
+          if(height!==null) el.style.height = height + "px";
         }
       });
     }
-    function populateConfigTable(){
-      const tbody=document.getElementById("configTable").querySelector("tbody");
-      tbody.innerHTML="";
-      configComponentIDs.forEach(id=>{
-        const el=document.getElementById(id);
-        if(!el)return;
-        const compName=el.textContent.trim()||el.value?.trim()||id;
-        const cs=window.getComputedStyle(el);
-        const leftVal=(cs.left==="auto")?0:parseInt(cs.left);
-        const topVal=(cs.top==="auto")?0:parseInt(cs.top);
-        const widthVal=(cs.width==="auto")?0:parseInt(cs.width);
-        const heightVal=(cs.height==="auto")?0:parseInt(cs.height);
 
-        const row=document.createElement("tr");
-        row.innerHTML=`
+    function populateConfigTable(){
+      const tbody = document.getElementById("configTable").querySelector("tbody");
+      tbody.innerHTML = "";
+      configComponentIDs.forEach(id=>{
+        const el = document.getElementById(id);
+        if(!el) return;
+        const compName = el.textContent.trim() || el.value?.trim() || id;
+        const cs = window.getComputedStyle(el);
+        const leftVal = (cs.left==="auto") ? 0 : parseInt(cs.left,10);
+        const topVal = (cs.top==="auto") ? 0 : parseInt(cs.top,10);
+        const widthVal = (cs.width==="auto") ? 0 : parseInt(cs.width,10);
+        const heightVal = (cs.height==="auto") ? 0 : parseInt(cs.height,10);
+
+        const row = document.createElement("tr");
+        row.innerHTML = `
           <td>${compName}</td>
           <td><input type="number" value="${leftVal}" data-id="${id}" class="left-input"></td>
           <td><input type="number" value="${topVal}" data-id="${id}" class="top-input"></td>
@@ -488,356 +480,397 @@
         `;
         tbody.appendChild(row);
 
-        // Live updates
-        row.querySelector(".left-input").addEventListener("input",function(){
-          const tgt=document.getElementById(this.getAttribute("data-id"));
-          if(tgt)tgt.style.left=parseInt(this.value)+"px";
+        // Live updates when user types in the config table
+        row.querySelector(".left-input").addEventListener("input", function(){
+          const tgt = document.getElementById(this.getAttribute("data-id"));
+          if(tgt) tgt.style.left = parseInt(this.value,10) + "px";
         });
-        row.querySelector(".top-input").addEventListener("input",function(){
-          const tgt=document.getElementById(this.getAttribute("data-id"));
-          if(tgt)tgt.style.top=parseInt(this.value)+"px";
+        row.querySelector(".top-input").addEventListener("input", function(){
+          const tgt = document.getElementById(this.getAttribute("data-id"));
+          if(tgt) tgt.style.top = parseInt(this.value,10) + "px";
         });
-        row.querySelector(".width-input").addEventListener("input",function(){
-          const tgt=document.getElementById(this.getAttribute("data-id"));
-          if(tgt)tgt.style.width=parseInt(this.value)+"px";
+        row.querySelector(".width-input").addEventListener("input", function(){
+          const tgt = document.getElementById(this.getAttribute("data-id"));
+          if(tgt) tgt.style.width = parseInt(this.value,10) + "px";
         });
-        row.querySelector(".height-input").addEventListener("input",function(){
-          const tgt=document.getElementById(this.getAttribute("data-id"));
-          if(tgt)tgt.style.height=parseInt(this.value)+"px";
+        row.querySelector(".height-input").addEventListener("input", function(){
+          const tgt = document.getElementById(this.getAttribute("data-id"));
+          if(tgt) tgt.style.height = parseInt(this.value,10) + "px";
         });
       });
     }
+
     function saveConfiguration(){
       configComponentIDs.forEach(id=>{
-        const el=document.getElementById(id);
+        const el = document.getElementById(id);
         if(el){
-          const cs=window.getComputedStyle(el);
-          const leftVal=parseInt(cs.left)||0;
-          const topVal=parseInt(cs.top)||0;
-          const widthVal=parseInt(cs.width)||0;
-          const heightVal=parseInt(cs.height)||0;
-          localStorage.setItem(`pos-${id}-left`,  leftVal);
-          localStorage.setItem(`pos-${id}-top`,   topVal);
+          const cs = window.getComputedStyle(el);
+          const leftVal = parseInt(cs.left,10) || 0;
+          const topVal = parseInt(cs.top,10) || 0;
+          const widthVal = parseInt(cs.width,10) || 0;
+          const heightVal = parseInt(cs.height,10) || 0;
+          localStorage.setItem(`pos-${id}-left`, leftVal);
+          localStorage.setItem(`pos-${id}-top`, topVal);
           localStorage.setItem(`pos-${id}-width`, widthVal);
-          localStorage.setItem(`pos-${id}-height`,heightVal);
+          localStorage.setItem(`pos-${id}-height`, heightVal);
         }
       });
       console.log("Configuration saved.");
     }
 
-    /************************************************************************
+    /***************************************************************
      * showItemDetails(index):
-     *   " ORDER FROM: [name]"
-     *   " Order Status: [status]"
-     *   " Shipping Status: [Shipped! + shipped_timestamp if available]"
-     *   blank line
-     *   " ORDER DETAILS:"
-     ************************************************************************/
+     * Displays summary info in #orderDetails text box:
+     * - " ORDER FROM: [name]"
+     * - " Order Status: [status]"
+     * - " Shipping Status: Shipped!" or "Not Shipped" (no date)
+     * - Then " ORDER DETAILS:"
+     ***************************************************************/
     function showItemDetails(index){
-      if(!window.cachedOrderItems||!window.cachedOrderItems[index]){
+      if(!window.cachedOrderItems || !window.cachedOrderItems[index]){
         console.warn("No item at index:",index);
         return;
       }
-      const item=window.cachedOrderItems[index];
+      const item = window.cachedOrderItems[index];
 
-      let details="";
+      let details = "";
 
       // ORDER FROM:
       if(window.orderName){
-        details+=" ORDER FROM: "+window.orderName+"\n";
+        details += " ORDER FROM: " + window.orderName + "\n";
       }
 
       // ORDER STATUS:
       if(window.orderStatus){
-        details+=" Order Status: "+window.orderStatus+"\n";
+        details += " Order Status: " + window.orderStatus + "\n";
       }
 
-      // SHIPPING STATUS => if "Shipped!", also date => "Shipping Status: Shipped! 24 Mar 2023"
-      if(window.orderIsShipped==="Shipped!"){
-        let shippedDateString="";
-        if(window.orderShippedTimestamp){
-          const d=new Date(window.orderShippedTimestamp*1000);
-          const monthNames=["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
-          const day=("0"+d.getDate()).slice(-2);
-          const mStr=monthNames[d.getMonth()];
-          const y=d.getFullYear();
-          shippedDateString=" "+day+" "+mStr+" "+y; 
-        }
-        details+=" Shipping Status: Shipped!"+shippedDateString+"\n\n";
-      }
-      else if(window.orderIsShipped){
-        details+=" Shipping Status: "+window.orderIsShipped+"\n\n";
-      }
-      else {
-        details+="\n";
+      // SHIPPING STATUS (Shipped / Not Shipped, no date shown here)
+      if(window.orderIsShipped === "Shipped!"){
+        details += " Shipping Status: Shipped!\n\n";
+      } else if(window.orderIsShipped){
+        details += " Shipping Status: " + window.orderIsShipped + "\n\n";
+      } else {
+        details += "\n";
       }
 
-      details+=" ORDER DETAILS:\n\n";
+      details += " ORDER DETAILS:\n\n";
 
       // Title => first 4 words
       if(item.title){
-        const firstFourWords=item.title.trim().split(" ").slice(0,4).join(" ");
-        details+=" Title: "+firstFourWords+"\n";
+        const firstFour = item.title.trim().split(" ").slice(0,4).join(" ");
+        details += " Title: " + firstFour + "\n";
       }
 
       // SKU
       if(item.sku){
-        details+=" SKU: "+item.sku+"\n";
+        details += " SKU: " + item.sku + "\n";
       }
 
       // Variation logic
       if(item.variations && Array.isArray(item.variations)){
-        const acceptedMetalNames=[
+        const acceptedMetalNames = [
           "metal","metal choice","metal - engraving","metal colour","color","metal choice / engraving option"
         ];
-        const acceptedLengthNames=[
+        const acceptedLengthNames = [
           "length","necklace length","metal/necklace length","metal choice / necklace length","necklace length in inches"
         ];
         item.variations.forEach(v=>{
           if(v.formatted_name && v.formatted_value){
-            const nameLower=v.formatted_name.trim().toLowerCase();
-            let val=v.formatted_value.trim();
+            const nameLower = v.formatted_name.trim().toLowerCase();
+            let val = v.formatted_value.trim();
             if(nameLower==="personalization" && val==="Not requested on this item."){
               val="Not Requested";
-              details+=" Personalization: "+val+"\n";
-            }
-            else if(acceptedMetalNames.includes(nameLower)){
-              details+=" Metal Choice: "+val+"\n";
-            }
-            else if(acceptedLengthNames.includes(nameLower)){
-              const lengthMap={
+              details += " Personalization: " + val + "\n";
+            } else if(acceptedMetalNames.includes(nameLower)){
+              details += " Metal Choice: " + val + "\n";
+            } else if(acceptedLengthNames.includes(nameLower)){
+              const lengthMap = {
                 '14&quot;':'14 Inches','16&quot;':'16 Inches','18&quot;':'18 Inches','20&quot;':'20 Inches',
                 '14""':'14 Inches','16""':'16 Inches','18""':'18 Inches','20""':'20 Inches'
               };
               if(lengthMap[val]){
-                val=lengthMap[val];
+                val = lengthMap[val];
               }
-              details+=" Item Length: "+val+"\n";
-            }
-            else{
-              details+=" "+v.formatted_name+": "+v.formatted_value+"\n";
+              details += " Item Length: " + val + "\n";
+            } else {
+              // Generic variation
+              details += " " + v.formatted_name + ": " + v.formatted_value + "\n";
             }
           }
         });
       }
 
-      document.getElementById("orderDetails").value=details;
+      document.getElementById("orderDetails").value = details;
     }
 
+    /**********************************************
+     * fetchListingImages(listingId)
+     *  => calls our netlify function to retrieve
+     *     the Etsy images for the given listing
+     **********************************************/
     async function fetchListingImages(listingId){
-      const response=await fetch(`/.netlify/functions/etsyImages?listingId=${listingId}`,{
-        headers:{"access-token":localStorage.getItem("access_token")}
+      const response = await fetch(`/.netlify/functions/etsyImages?listingId=${listingId}`, {
+        headers: { "access-token": localStorage.getItem("access_token") }
       });
       if(!response.ok){
         throw new Error(`Error fetching images for listing ${listingId}: ${response.statusText}`);
       }
-      const data=await response.json();
+      const data = await response.json();
       return data.results;
     }
+
+    /**********************************************
+     * updateImageGrid(data):
+     *  - Figures out which array has the items
+     *  - Fills up to 8 cells with item images
+     *  - Binds a click => showItemDetails(i)
+     **********************************************/
     async function updateImageGrid(data){
-      let items=[];
-      if(data.transactions && Array.isArray(data.transactions)){ items=data.transactions; }
-      else if(data.shipments && Array.isArray(data.shipments)){ items=data.shipments; }
-      else if(Array.isArray(data)){ items=data; }
-      else if(data.results && Array.isArray(data.results)){ items=data.results; }
-      else if(data.orders && Array.isArray(data.orders)){ items=data.orders; }
-      else if(typeof data==='object' && data!==null){
+      let items = [];
+
+      if(data.transactions && Array.isArray(data.transactions)){
+        items = data.transactions;
+      } else if(data.shipments && Array.isArray(data.shipments)){
+        items = data.shipments;
+      } else if(Array.isArray(data)){
+        items = data;
+      } else if(data.results && Array.isArray(data.results)){
+        items = data.results;
+      } else if(data.orders && Array.isArray(data.orders)){
+        items = data.orders;
+      } else if(typeof data === "object" && data !== null){
+        // If there's some unknown property with array value
         for(const key in data){
-          if(Array.isArray(data[key])){ items=data[key]; break; }
-        }
-      }
-      window.cachedOrderItems=items;
-
-      for(let i=0;i<8;i++){
-        const cell=document.getElementById("previewCell"+i);
-        const qtyBox=document.getElementById("quantityCell"+i);
-        const metalBox=document.getElementById("metalCell"+i);
-
-        if(cell){
-          if(i<items.length){
-            const item=items[i];
-            try{
-              const images=await fetchListingImages(item.listing_id);
-              if(images && images.length>0){
-                cell.innerHTML=`<img src="${images[0].url_fullxfull}" alt="Listing Image ${i}">`;
-              } else {
-                cell.innerHTML="No images found";
-              }
-            }catch(err){
-              console.error(`Error fetching listing ${item.listing_id}:`,err);
-              cell.innerHTML="Error loading image";
-            }
-            cell.style.cursor="pointer";
-            cell.onclick=()=> showItemDetails(i);
-
-            if(qtyBox){
-              const actualQty=(item.quantity!=null)?item.quantity:0;
-              qtyBox.value=" Quantity: "+actualQty;
-            }
-            if(metalBox){
-              let metalSel="";
-              if(item.variations && Array.isArray(item.variations)){
-                const acceptedMetalNames=[
-                  "metal","metal choice","metal - engraving","metal colour","color","metal choice / engraving option"
-                ];
-                const metalVar=item.variations.find(v=>
-                  v.formatted_name && acceptedMetalNames.includes(v.formatted_name.trim().toLowerCase())
-                );
-                if(metalVar){ metalSel=metalVar.formatted_value||""; }
-              }
-              metalBox.value=" Metal: "+metalSel;
-            }
-          } else {
-            cell.innerHTML="Empty";
-            cell.style.cursor="default";
-            cell.onclick=null;
-            if(qtyBox)   qtyBox.value="";
-            if(metalBox) metalBox.value="";
+          if(Array.isArray(data[key])){
+            items = data[key];
+            break;
           }
         }
       }
-      if(items.length>0){ showItemDetails(0); }
-      else {
-        document.getElementById("orderDetails").value=" ORDER DETAILS:\n\nNo items found.";
+
+      window.cachedOrderItems = items;
+
+      for(let i=0; i<8; i++){
+        const cell = document.getElementById("previewCell"+i);
+        const qtyBox = document.getElementById("quantityCell"+i);
+        const metalBox = document.getElementById("metalCell"+i);
+
+        if(cell){
+          if(i < items.length){
+            const item = items[i];
+            try {
+              const images = await fetchListingImages(item.listing_id);
+              if(images && images.length>0){
+                cell.innerHTML = `<img src="${images[0].url_fullxfull}" alt="Listing Image ${i}">`;
+              } else {
+                cell.innerHTML = "No images found";
+              }
+            } catch(err){
+              console.error(`Error fetching listing ${item.listing_id}:`, err);
+              cell.innerHTML = "Error loading image";
+            }
+            cell.style.cursor = "pointer";
+            cell.onclick = () => showItemDetails(i);
+
+            if(qtyBox){
+              const actualQty = (item.quantity != null) ? item.quantity : 0;
+              qtyBox.value = " Quantity: " + actualQty;
+            }
+            if(metalBox){
+              let metalSel = "";
+              if(item.variations && Array.isArray(item.variations)){
+                const acceptedMetalNames = [
+                  "metal","metal choice","metal - engraving","metal colour","color","metal choice / engraving option"
+                ];
+                const metalVar = item.variations.find(v =>
+                  v.formatted_name &&
+                  acceptedMetalNames.includes(v.formatted_name.trim().toLowerCase())
+                );
+                if(metalVar){
+                  metalSel = metalVar.formatted_value || "";
+                }
+              }
+              metalBox.value = " Metal: " + metalSel;
+            }
+          } else {
+            cell.innerHTML = "Empty";
+            cell.style.cursor = "default";
+            cell.onclick = null;
+            if(qtyBox)   qtyBox.value = "";
+            if(metalBox) metalBox.value = "";
+          }
+        }
+      }
+
+      if(items.length > 0){
+        showItemDetails(0);
+      } else {
+        document.getElementById("orderDetails").value =
+          " ORDER DETAILS:\n\nNo items found.";
       }
     }
 
-    /*
-     * pullEtsyOrderDetails => We'll also update #titleOrderDate2 if shipped
-     */
+    /**********************************************
+     * pullEtsyOrderDetails(orderNumber):
+     *  - fetch from our netlify function
+     *  - update top-level shipping fields
+     *  - sets orderIsShipped => "Shipped!" or "Not Shipped" or ""
+     *  - also sets #dateOrdered, #shipDate
+     **********************************************/
     function pullEtsyOrderDetails(orderNumber){
-      console.log("Pulling Etsy order details for order number:",orderNumber);
-      const token=localStorage.getItem("access_token");
-      return fetch('/.netlify/functions/etsyOrderProxy?orderId='+encodeURIComponent(orderNumber),{
-        headers:{"access-token":token}
+      console.log("Pulling Etsy order details for order number:", orderNumber);
+      const token = localStorage.getItem("access_token");
+      return fetch('/.netlify/functions/etsyOrderProxy?orderId='+encodeURIComponent(orderNumber), {
+        headers: { "access-token": token }
       })
-      .then(r=>r.json())
-      .then(data=>{
-        console.log("Etsy Order Data:",data);
-        document.getElementById("orderInformation").value=" "+JSON.stringify(data,null,2);
+      .then(r => r.json())
+      .then(data => {
+        console.log("Etsy Order Data:", data);
+        document.getElementById("orderInformation").value =
+          " " + JSON.stringify(data, null, 2);
 
         // default => clear #titleOrderDate2
-        const titleDate2=document.getElementById("titleOrderDate2");
-        titleDate2.textContent=""; 
+        const titleDate2 = document.getElementById("titleOrderDate2");
+        titleDate2.textContent = "";
 
+        // Basic name & status
         if(data.name){
-          window.orderName=data.name;
+          window.orderName = data.name;
         } else {
-          window.orderName="";
+          window.orderName = "";
         }
         if(data.status){
-          window.orderStatus=data.status;
+          window.orderStatus = data.status;
         } else {
-          window.orderStatus="";
+          window.orderStatus = "";
         }
 
-        if(data.is_shipped===true){
-          window.orderIsShipped="Shipped!";
-        } else if(data.is_shipped===false){
-          window.orderIsShipped="Not Shipped";
+        // is_shipped => "Shipped!" or "Not Shipped"
+        if(data.is_shipped === true){
+          window.orderIsShipped = "Shipped!";
+        } else if(data.is_shipped === false){
+          window.orderIsShipped = "Not Shipped";
         } else {
-          window.orderIsShipped="";
+          window.orderIsShipped = "";
         }
 
-        // Check top-level shipped_timestamp or first transaction shipped_timestamp
-        let foundStamp=null;
-        if(data.shipped_timestamp && data.is_shipped===true){
-          foundStamp=data.shipped_timestamp;
-        } 
-        else if(data.transactions 
-                && Array.isArray(data.transactions) 
-                && data.transactions.length>0
-                && data.transactions[0].shipped_timestamp 
-                && data.is_shipped===true){
-          foundStamp=data.transactions[0].shipped_timestamp;
+        // Identify shipped_timestamp
+        let foundStamp = null;
+        if(data.shipped_timestamp && data.is_shipped === true){
+          foundStamp = data.shipped_timestamp;
+        } else if(
+          data.transactions &&
+          Array.isArray(data.transactions) &&
+          data.transactions.length>0 &&
+          data.transactions[0].shipped_timestamp &&
+          data.is_shipped === true
+        ){
+          foundStamp = data.transactions[0].shipped_timestamp;
         }
-        window.orderShippedTimestamp=foundStamp;
+        window.orderShippedTimestamp = foundStamp;
 
-        // If shipped => display in #titleOrderDate2 => "Shipped On: DD Mmm YYYY"
-        if(window.orderIsShipped==="Shipped!" && window.orderShippedTimestamp){
-          const d=new Date(window.orderShippedTimestamp*1000);
-          const monthNames=["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
-          const day=("0"+d.getDate()).slice(-2);
-          const mStr=monthNames[d.getMonth()];
-          const y=d.getFullYear();
-          titleDate2.textContent = `Shipped On: ${day} ${mStr} ${y}`; 
+        // If shipped => #titleOrderDate2 => "Shipped On: DD Mmm YYYY"
+        if(window.orderIsShipped === "Shipped!" && window.orderShippedTimestamp){
+          const d = new Date(window.orderShippedTimestamp*1000);
+          const monthNames = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+          const day = ("0" + d.getDate()).slice(-2);
+          const mStr = monthNames[d.getMonth()];
+          const y = d.getFullYear();
+          titleDate2.textContent = `Shipped On: ${day} ${mStr} ${y}`;
         }
 
-        const msgBox=document.getElementById("customerMessageHistory");
+        // Buyer message
+        const msgBox = document.getElementById("customerMessageHistory");
         if(data.message_from_buyer){
-          msgBox.value=data.message_from_buyer+"\n";
-        } else{
-          msgBox.value="";
+          msgBox.value = data.message_from_buyer + "\n";
+        } else {
+          msgBox.value = "";
         }
 
+        // If we have transactions => dateOrdered => from created_timestamp
+        // Also set #shipDate => from expected_ship_date
         if(data.transactions && data.transactions.length>0){
-          const firstTrans=data.transactions[0];
-          const monthNames=["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+          const firstTrans = data.transactions[0];
+          const monthNames = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+
+          // dateOrdered
           if(firstTrans.created_timestamp){
-            const d=new Date(firstTrans.created_timestamp*1000);
-            const day=("0"+d.getDate()).slice(-2);
-            const mStr=monthNames[d.getMonth()];
-            const y=d.getFullYear();
-            document.getElementById("dateOrdered").value=" "+day+" "+mStr+" "+y;
+            const d = new Date(firstTrans.created_timestamp*1000);
+            const day = ("0" + d.getDate()).slice(-2);
+            const mStr = monthNames[d.getMonth()];
+            const y = d.getFullYear();
+            document.getElementById("dateOrdered").value =
+              " " + day + " " + mStr + " " + y;
           } else {
-            document.getElementById("dateOrdered").value="";
+            document.getElementById("dateOrdered").value = "";
           }
-          const shipEl=document.getElementById("shipDate");
-          shipEl.style.color="";
+
+          // shipDate
+          const shipEl = document.getElementById("shipDate");
+          shipEl.style.color = "";
           if(firstTrans.expected_ship_date){
-            const s=new Date(firstTrans.expected_ship_date*1000);
-            const sDay=("0"+s.getDate()).slice(-2);
-            const sMonth=monthNames[s.getMonth()];
-            const sYear=s.getFullYear();
-            shipEl.value=" "+sDay+" "+sMonth+" "+sYear;
-            if(window.orderIsShipped==="Shipped!"){
-              shipEl.style.color="#006400";
-            } else{
-              shipEl.style.color="";
+            const s = new Date(firstTrans.expected_ship_date*1000);
+            const sDay = ("0" + s.getDate()).slice(-2);
+            const sMonth = monthNames[s.getMonth()];
+            const sYear = s.getFullYear();
+            shipEl.value = " " + sDay + " " + sMonth + " " + sYear;
+
+            // If actually shipped, color #shipDate green
+            if(window.orderIsShipped === "Shipped!"){
+              shipEl.style.color = "#006400";
+            } else {
+              shipEl.style.color = "";
             }
-          } else{
-            shipEl.value="";
+          } else {
+            shipEl.value = "";
           }
-        } else{
-          document.getElementById("dateOrdered").value="";
-          const shipEl=document.getElementById("shipDate");
-          shipEl.value="";
-          shipEl.style.color="";
+        } else {
+          document.getElementById("dateOrdered").value = "";
+          const shipEl = document.getElementById("shipDate");
+          shipEl.value = "";
+          shipEl.style.color = "";
         }
 
         return data;
       })
-      .catch(err=>{
-        console.error("Error fetching Etsy order details:",err);
+      .catch(err => {
+        console.error("Error fetching Etsy order details:", err);
         return null;
       });
     }
 
-    document.addEventListener("DOMContentLoaded",()=>{
+    /***************************************
+     * On DOMContentLoaded => Initialize
+     ***************************************/
+    document.addEventListener("DOMContentLoaded", ()=>{
       M.AutoInit();
-      document.body.style.opacity=0;
+      document.body.style.opacity = 0;
       setTimeout(()=>{
         loadPositions();
-        document.body.style.opacity=1;
-      },250);
+        document.body.style.opacity = 1;
+      }, 250);
 
-      document.getElementById("openConfigBtn").addEventListener("click",()=>{
+      // Open Config => show the config modal
+      document.getElementById("openConfigBtn").addEventListener("click", ()=>{
         populateConfigTable();
-        const modalElem=document.getElementById("configModal");
-        const instance=M.Modal.getInstance(modalElem);
+        const modalElem = document.getElementById("configModal");
+        const instance = M.Modal.getInstance(modalElem);
         instance.open();
       });
-      document.getElementById("saveConfigBtn").addEventListener("click",()=>{
+
+      // Save config => store to localStorage
+      document.getElementById("saveConfigBtn").addEventListener("click", ()=>{
         saveConfiguration();
       });
 
-      // Press Enter => fetch Etsy order => update grid
-      const etsyOrderInput=document.getElementById("etsyOrderNumber");
-      etsyOrderInput.addEventListener("keydown",async e=>{
-        if(e.key==="Enter"){
-          const orderNumber=etsyOrderInput.value.trim();
-          if(orderNumber!==""){
-            const orderData=await pullEtsyOrderDetails(orderNumber);
+      // Press Enter in #etsyOrderNumber => fetch & update grid
+      const etsyOrderInput = document.getElementById("etsyOrderNumber");
+      etsyOrderInput.addEventListener("keydown", async (e)=>{
+        if(e.key === "Enter"){
+          const orderNumber = etsyOrderInput.value.trim();
+          if(orderNumber !== ""){
+            const orderData = await pullEtsyOrderDetails(orderNumber);
             if(orderData){
               await updateImageGrid(orderData);
             }
@@ -846,26 +879,26 @@
       });
 
       // "Order Link" => open new tab with custom link
-      const orderLinkBtn=document.getElementById("orderLinkBtn");
-      orderLinkBtn.addEventListener("click",()=>{
-        const baseUrl="https://www.etsy.com/your/orders/sold?ref=seller-platform-mcnav&order_id=0000000000";
-        const currentOrder=etsyOrderInput.value.trim();
+      const orderLinkBtn = document.getElementById("orderLinkBtn");
+      orderLinkBtn.addEventListener("click", ()=>{
+        const baseUrl = "https://www.etsy.com/your/orders/sold?ref=seller-platform-mcnav&order_id=0000000000";
+        const currentOrder = etsyOrderInput.value.trim();
         if(!currentOrder){
           console.log("No order number entered.");
           return;
         }
-        const customLink=baseUrl.replace("0000000000",currentOrder);
-        window.open(customLink,"_blank");
+        const customLink = baseUrl.replace("0000000000", currentOrder);
+        window.open(customLink, "_blank");
       });
 
-      // WHEEL-BASED ZOOM FOR PREVIEW BOXES
-      document.querySelectorAll('.preview-box').forEach(function(box) {
-        box.addEventListener('wheel', function(e) {
+      // WHEEL-BASED ZOOM for each preview box
+      document.querySelectorAll(".preview-box").forEach(function(box) {
+        box.addEventListener("wheel", function(e) {
           e.preventDefault();
-          const img = box.querySelector('img');
+          const img = box.querySelector("img");
           if (!img) return;
           let currentScale = parseFloat(img.dataset.scale) || 1;
-          if (e.deltaY < 0) {
+          if(e.deltaY < 0){
             // scroll up => zoom in
             currentScale *= 1.1;
           } else {
