@@ -1,8 +1,6 @@
 <!-- screenTwo.html -->
 <div id="screenTwo" style="display:none;">
-  <!-- Removed <h2>Welcome to Screen Two!</h2> -->
-
-  <!-- Simple "Return to Screen One" button -->
+  <!-- "Return to Screen One" button -->
   <button id="goBackBtn" class="btn">Return to Screen One</button>
 
   <!-- 1) Chit Chat "Order Search" input/btn -->
@@ -52,20 +50,23 @@
 
   <script>
     /**********************************************************
-     * Called after screenTwo.html is injected and appended.
-     * We'll do three main things:
-     *  1) Re-init Materialize so the new modal is recognized.
-     *  2) Wire up the "Chit Chat" order search logic.
-     *  3) Wire up the config system for Screen Two.
-     *  4) Restore the "Return to Screen One" button.
+     * initScreenTwo():
+     *   1) Re-init Materialize for the new modal
+     *   2) loadPositionsScreenTwo() => force absolute positioning
+     *   3) wire up the "Return to Screen One" button
+     *   4) wire up the "Chit Chat" search
+     *   5) wire up the config for Screen Two
      **********************************************************/
     function initScreenTwo() {
       console.log("Screen Two loaded!");
 
-      // 1) Re-init Materialize so this new modal is recognized
+      // 1) Re-init Materialize so the new modal is recognized
       M.AutoInit();
 
-      // 2) "Return to Screen One" button => show #screenOne, hide #screenTwo
+      // 2) Force absolute positioning + load stored left/top
+      loadPositionsScreenTwo();
+
+      // 3) "Return to Screen One" button => show #screenOne, hide #screenTwo
       const backBtn = document.getElementById('goBackBtn');
       if(backBtn){
         backBtn.addEventListener('click', function(){
@@ -76,7 +77,7 @@
         });
       }
 
-      // 3) Chit Chat order search
+      // 4) Chit Chat order search
       const searchBtn = document.getElementById('chitChatSearchBtn');
       if (searchBtn) {
         searchBtn.addEventListener('click', async () => {
@@ -109,7 +110,7 @@
         });
       }
 
-      // 4) Duplicate config system for Screen Two
+      // 5) Screen Two config system
       const openConfigBtn2 = document.getElementById("openConfigBtnScreenTwo");
       if (openConfigBtn2) {
         openConfigBtn2.addEventListener("click", () => {
@@ -128,11 +129,51 @@
       }
     }
 
-    /********** CONFIG SYSTEM FOR SCREEN TWO **********/
+    /********** COMPONENT IDs & Positions for Screen Two **********/
     const screenTwoComponentIDs = [
+      "goBackBtn",
       "chitChatOrderSearch","chitChatSearchBtn","chitChatOrders",
-      "openConfigBtnScreenTwo","saveConfigBtnScreenTwo","goBackBtn"
+      "openConfigBtnScreenTwo","saveConfigBtnScreenTwo"
     ];
+
+    /***********************************************************
+     * loadPositionsScreenTwo():
+     *   - Force .style.position = "absolute"
+     *   - If there's a stored left/top in localStorage, apply it
+     *   - Otherwise default to 0,0 at top-left corner
+     ***********************************************************/
+    function loadPositionsScreenTwo(){
+      screenTwoComponentIDs.forEach(id => {
+        const el = document.getElementById(id);
+        if(!el) return;
+
+        // Force position: absolute so left/top changes move them
+        el.style.position = "absolute";
+
+        // Load stored or fallback to 0,0
+        const savedLeft = localStorage.getItem(`pos2-${id}-left`);
+        const savedTop  = localStorage.getItem(`pos2-${id}-top`);
+        const savedWidth = localStorage.getItem(`pos2-${id}-width`);
+        const savedHeight= localStorage.getItem(`pos2-${id}-height`);
+
+        if(savedLeft !== null) {
+          el.style.left = savedLeft + "px";
+        } else {
+          el.style.left = "0px";
+        }
+        if(savedTop !== null) {
+          el.style.top = savedTop + "px";
+        } else {
+          el.style.top = "0px";
+        }
+        if(savedWidth !== null) {
+          el.style.width = savedWidth + "px";
+        }
+        if(savedHeight!== null) {
+          el.style.height= savedHeight+ "px";
+        }
+      });
+    }
 
     function populateConfigTableScreenTwo(){
       const tbody = document.getElementById("configTableScreenTwo").querySelector("tbody");
@@ -140,24 +181,27 @@
       screenTwoComponentIDs.forEach(id => {
         const el = document.getElementById(id);
         if (!el) return;
-        const compName = el.textContent.trim() || el.value?.trim() || id;
+
+        // Use either the button's text, or input's placeholder, or the ID
+        const compName = el.textContent.trim() || el.placeholder || id;
         const cs = window.getComputedStyle(el);
+        // parse left, top, width, height
         const leftVal = (cs.left==="auto") ? 0 : parseInt(cs.left,10);
-        const topVal = (cs.top==="auto") ? 0 : parseInt(cs.top,10);
-        const widthVal = (cs.width==="auto") ? 0 : parseInt(cs.width,10);
-        const heightVal = (cs.height==="auto") ? 0 : parseInt(cs.height,10);
+        const topVal  = (cs.top==="auto")  ? 0 : parseInt(cs.top,10);
+        const widthVal= (cs.width==="auto")?0 : parseInt(cs.width,10);
+        const heightVal=(cs.height==="auto")?0: parseInt(cs.height,10);
 
         const row = document.createElement("tr");
         row.innerHTML = `
           <td>${compName}</td>
           <td><input type="number" value="${leftVal}" data-id="${id}" class="left-input2"></td>
-          <td><input type="number" value="${topVal}" data-id="${id}" class="top-input2"></td>
+          <td><input type="number" value="${topVal}"  data-id="${id}" class="top-input2"></td>
           <td><input type="number" value="${widthVal}" data-id="${id}" class="width-input2"></td>
           <td><input type="number" value="${heightVal}" data-id="${id}" class="height-input2"></td>
         `;
         tbody.appendChild(row);
 
-        // Live updates
+        // Live updates: as user types, item moves/resizes
         row.querySelector(".left-input2").addEventListener("input", function(){
           const tgt = document.getElementById(this.getAttribute("data-id"));
           if(tgt) tgt.style.left = parseInt(this.value,10)+"px";
@@ -172,7 +216,7 @@
         });
         row.querySelector(".height-input2").addEventListener("input", function(){
           const tgt = document.getElementById(this.getAttribute("data-id"));
-          if(tgt) tgt.style.height = parseInt(this.value,10)+"px";
+          if(tgt) tgt.style.height= parseInt(this.value,10)+"px";
         });
       });
     }
@@ -180,17 +224,17 @@
     function saveConfigurationScreenTwo(){
       screenTwoComponentIDs.forEach(id => {
         const el = document.getElementById(id);
-        if (el) {
-          const cs = window.getComputedStyle(el);
-          const leftVal = parseInt(cs.left,10)||0;
-          const topVal = parseInt(cs.top,10)||0;
+        if(el){
+          const cs=window.getComputedStyle(el);
+          const leftVal  = parseInt(cs.left,10)||0;
+          const topVal   = parseInt(cs.top,10)||0;
           const widthVal = parseInt(cs.width,10)||0;
-          const heightVal = parseInt(cs.height,10)||0;
+          const heightVal= parseInt(cs.height,10)||0;
           // prefix them as pos2- to differentiate from screenOne
           localStorage.setItem(`pos2-${id}-left`, leftVal);
           localStorage.setItem(`pos2-${id}-top`, topVal);
           localStorage.setItem(`pos2-${id}-width`, widthVal);
-          localStorage.setItem(`pos2-${id}-height`, heightVal);
+          localStorage.setItem(`pos2-${id}-height`,heightVal);
         }
       });
       console.log("ScreenTwo configuration saved.");
