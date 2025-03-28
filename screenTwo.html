@@ -1,33 +1,191 @@
-<!-- screenTwo.html (no <html> or <body> tags) -->
+<!-- screenTwo.html -->
 <div id="screenTwo" style="display:none;">
   <h2>Welcome to Screen Two!</h2>
-  <p>This is your brand-new, dynamically loaded UI!</p>
 
-  <!-- Button that should take you back -->
-  <button id="goBackBtn">Return to Screen One</button>
+  <!-- 1) New user input => "Order Search" -->
+  <label for="chitChatOrderSearch">Order Search:</label>
+  <input
+    type="text"
+    id="chitChatOrderSearch"
+    placeholder="Chit Chat Order #"
+    style="height:10px; width:150px;"
+  />
+  <button id="chitChatSearchBtn" class="btn">Search</button>
+
+  <!-- 2) New read-only text box => "Orders" for Chit Chat API results -->
+  <textarea
+    id="chitChatOrders"
+    readonly
+    style="height:300px; width:250px;"
+    placeholder="Chit Chat search results"
+  ></textarea>
+
+  <!-- 3) Duplicate "Open Config" modal, button, and table (renamed IDs for Screen Two) -->
+  <button id="openConfigBtnScreenTwo" class="configurable btn waves-effect waves-light">
+    Open Config (Screen Two)
+  </button>
+
+  <!-- Modal for Screen Two's config -->
+  <div id="configModalScreenTwo" class="modal">
+    <div class="modal-content">
+      <table class="striped" id="configTableScreenTwo">
+        <thead>
+          <tr>
+            <th>Component Name</th>
+            <th>Left (px)</th>
+            <th>Top (px)</th>
+            <th>Width (px)</th>
+            <th>Height (px)</th>
+          </tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </div>
+    <div class="modal-footer">
+      <a href="#!" id="saveConfigBtnScreenTwo" class="modal-close waves-effect waves-green btn">
+        Save Config
+      </a>
+    </div>
+  </div>
 
   <script>
-    // Called automatically by index.html’s loadScreenTwo() if it finds this function.
+    /**********************************************************
+     * This function runs after screenTwo.html is injected.
+     * It duplicates the logic for config and sets up the
+     * Chit Chat order search events. 
+     **********************************************************/
     function initScreenTwo() {
       console.log("Screen Two loaded!");
-      
-      // Attach listener to the "Return to Screen One" button
-      const btn = document.getElementById('goBackBtn');
-      if (btn) {
-        btn.addEventListener('click', function() {
-          // Hide screenTwo
-          const s2 = document.getElementById('screenTwo');
-          if (s2) {
-            s2.style.display = 'none';
-          }
 
-          // Show screenOne
-          const s1 = document.getElementById('screenOne');
-          if (s1) {
-            s1.style.display = 'block';
+      /********** CHIT CHAT ORDER SEARCH **********/
+      const searchBtn = document.getElementById('chitChatSearchBtn');
+      if (searchBtn) {
+        searchBtn.addEventListener('click', async () => {
+          const query = document.getElementById('chitChatOrderSearch').value.trim();
+          if (!query) {
+            console.warn("No Chit Chat order query provided.");
+            return;
+          }
+          console.log("Searching Chit Chat for order:", query);
+
+          // Example fetch to the Chit Chat API
+          // (Replace this with your real endpoint & query parameters)
+          try {
+            // Suppose the Chit Chat docs say something like:
+            // GET https://api.chitchat.com/v1/orders?search=...
+            // We'll do a placeholder fetch below:
+            const response = await fetch(`https://api.chitchat.com/v1/orders?search=${encodeURIComponent(query)}`, {
+              method: 'GET',
+              // add any required headers here
+            });
+            if (!response.ok) {
+              throw new Error(`Chit Chat search failed: ${response.statusText}`);
+            }
+            const data = await response.json();
+            console.log("Chit Chat Orders Data:", data);
+
+            // Show results in the "Orders" text area
+            const output = document.getElementById('chitChatOrders');
+            output.value = JSON.stringify(data, null, 2);
+
+          } catch (err) {
+            console.error("Error fetching from Chit Chat:", err);
+            const output = document.getElementById('chitChatOrders');
+            output.value = "Error: " + err.message;
           }
         });
       }
+
+      /********** SCREEN TWO CONFIG DUPLICATION **********/
+      const openConfigBtn2 = document.getElementById("openConfigBtnScreenTwo");
+      if (openConfigBtn2) {
+        // We'll rely on Materialize's modal system, same as in Index.html
+        openConfigBtn2.addEventListener("click", () => {
+          populateConfigTableScreenTwo();
+          const modalElem2 = document.getElementById("configModalScreenTwo");
+          const instance2 = M.Modal.getInstance(modalElem2);
+          instance2.open();
+        });
+      }
+
+      const saveConfigBtn2 = document.getElementById("saveConfigBtnScreenTwo");
+      if (saveConfigBtn2) {
+        saveConfigBtn2.addEventListener("click", () => {
+          saveConfigurationScreenTwo();
+        });
+      }
+    }
+
+    /********** CONFIG SYSTEM FOR SCREEN TWO **********/
+    // We'll assume separate sets of IDs to manage in screenTwo.
+    // If you want to manage the same exact elements from Index, 
+    // adapt accordingly. For now, let's create a minimal example.
+    const screenTwoComponentIDs = [
+      "chitChatOrderSearch","chitChatSearchBtn","chitChatOrders",
+      "openConfigBtnScreenTwo","saveConfigBtnScreenTwo"
+    ];
+
+    function populateConfigTableScreenTwo(){
+      const tbody = document.getElementById("configTableScreenTwo").querySelector("tbody");
+      tbody.innerHTML="";
+      screenTwoComponentIDs.forEach(id => {
+        const el = document.getElementById(id);
+        if (!el) return;
+        // We'll guess a name
+        const compName = el.textContent.trim() || el.value?.trim() || id;
+        const cs = window.getComputedStyle(el);
+        const leftVal = (cs.left==="auto") ? 0 : parseInt(cs.left,10);
+        const topVal = (cs.top==="auto") ? 0 : parseInt(cs.top,10);
+        const widthVal = (cs.width==="auto") ? 0 : parseInt(cs.width,10);
+        const heightVal = (cs.height==="auto") ? 0 : parseInt(cs.height,10);
+
+        const row = document.createElement("tr");
+        row.innerHTML = `
+          <td>${compName}</td>
+          <td><input type="number" value="${leftVal}" data-id="${id}" class="left-input2"></td>
+          <td><input type="number" value="${topVal}" data-id="${id}" class="top-input2"></td>
+          <td><input type="number" value="${widthVal}" data-id="${id}" class="width-input2"></td>
+          <td><input type="number" value="${heightVal}" data-id="${id}" class="height-input2"></td>
+        `;
+        tbody.appendChild(row);
+
+        // Live updates
+        row.querySelector(".left-input2").addEventListener("input", function(){
+          const tgt = document.getElementById(this.getAttribute("data-id"));
+          if(tgt) tgt.style.left = parseInt(this.value,10)+"px";
+        });
+        row.querySelector(".top-input2").addEventListener("input", function(){
+          const tgt = document.getElementById(this.getAttribute("data-id"));
+          if(tgt) tgt.style.top = parseInt(this.value,10)+"px";
+        });
+        row.querySelector(".width-input2").addEventListener("input", function(){
+          const tgt = document.getElementById(this.getAttribute("data-id"));
+          if(tgt) tgt.style.width = parseInt(this.value,10)+"px";
+        });
+        row.querySelector(".height-input2").addEventListener("input", function(){
+          const tgt = document.getElementById(this.getAttribute("data-id"));
+          if(tgt) tgt.style.height = parseInt(this.value,10)+"px";
+        });
+      });
+    }
+
+    function saveConfigurationScreenTwo(){
+      screenTwoComponentIDs.forEach(id => {
+        const el = document.getElementById(id);
+        if (el) {
+          const cs = window.getComputedStyle(el);
+          const leftVal = parseInt(cs.left,10)||0;
+          const topVal = parseInt(cs.top,10)||0;
+          const widthVal = parseInt(cs.width,10)||0;
+          const heightVal = parseInt(cs.height,10)||0;
+          // For screen two, we'll store them under pos2- prefix
+          localStorage.setItem(`pos2-${id}-left`, leftVal);
+          localStorage.setItem(`pos2-${id}-top`, topVal);
+          localStorage.setItem(`pos2-${id}-width`, widthVal);
+          localStorage.setItem(`pos2-${id}-height`, heightVal);
+        }
+      });
+      console.log("ScreenTwo configuration saved.");
     }
   </script>
 </div>
