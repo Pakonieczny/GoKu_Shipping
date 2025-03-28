@@ -32,7 +32,7 @@
       top: 80px;
     }
 
-    /* "Order Link" button (#orderLinkBtn) => smaller globe icon (14×14) */
+    /* "Order Link" button => smaller globe icon (14×14) */
     #orderLinkBtn {
       position: absolute;
       left: 120px;
@@ -351,8 +351,7 @@
   <script>
     /********************************************************
      * This script fetches Etsy order details, loads images,
-     * handles user interaction, and provides a config system
-     * for repositioning elements on the page.
+     * handles user interaction, and provides a config system.
      ********************************************************/
 
     window.orderName = "";
@@ -429,7 +428,6 @@
 
     /***********************************************
      * CONFIGURATION SYSTEM
-     * Allows user to drag/position components
      ***********************************************/
     const configComponentIDs = [
       "connectEtsyBtn","openConfigBtn","orderLinkBtn","etsyOrderNumber","orderInformation",
@@ -520,15 +518,11 @@
 
     /***************************************************************
      * showItemDetails(index):
-     * Displays summary info in #orderDetails text box:
-     * - " ORDER FROM: [name]"
-     * - " Order Status: [status]"
-     * - " Shipping Status: Shipped!" or "Not Shipped" (no date)
-     * - Then " ORDER DETAILS:"
+     * NO LONGER shows "Shipped!" in the text box.
      ***************************************************************/
     function showItemDetails(index){
       if(!window.cachedOrderItems || !window.cachedOrderItems[index]){
-        console.warn("No item at index:",index);
+        console.warn("No item at index:", index);
         return;
       }
       const item = window.cachedOrderItems[index];
@@ -545,10 +539,14 @@
         details += " Order Status: " + window.orderStatus + "\n";
       }
 
-      // SHIPPING STATUS (Shipped / Not Shipped, no date shown here)
-      if(window.orderIsShipped === "Shipped!"){
-        details += " Shipping Status: Shipped!\n\n";
-      } else if(window.orderIsShipped){
+      /*
+        Hide "Shipped!" in the Order Details text box.
+        If it's "Shipped!", we do nothing.
+        If it's "Not Shipped" or something else, show that.
+      */
+      if(window.orderIsShipped === "Shipped!") {
+        // Do nothing (don't append "Shipped!")
+      } else if(window.orderIsShipped) {
         details += " Shipping Status: " + window.orderIsShipped + "\n\n";
       } else {
         details += "\n";
@@ -606,8 +604,6 @@
 
     /**********************************************
      * fetchListingImages(listingId)
-     *  => calls our netlify function to retrieve
-     *     the Etsy images for the given listing
      **********************************************/
     async function fetchListingImages(listingId){
       const response = await fetch(`/.netlify/functions/etsyImages?listingId=${listingId}`, {
@@ -622,9 +618,6 @@
 
     /**********************************************
      * updateImageGrid(data):
-     *  - Figures out which array has the items
-     *  - Fills up to 8 cells with item images
-     *  - Binds a click => showItemDetails(i)
      **********************************************/
     async function updateImageGrid(data){
       let items = [];
@@ -640,7 +633,6 @@
       } else if(data.orders && Array.isArray(data.orders)){
         items = data.orders;
       } else if(typeof data === "object" && data !== null){
-        // If there's some unknown property with array value
         for(const key in data){
           if(Array.isArray(data[key])){
             items = data[key];
@@ -713,10 +705,6 @@
 
     /**********************************************
      * pullEtsyOrderDetails(orderNumber):
-     *  - fetch from our netlify function
-     *  - update top-level shipping fields
-     *  - sets orderIsShipped => "Shipped!" or "Not Shipped" or ""
-     *  - also sets #dateOrdered, #shipDate
      **********************************************/
     function pullEtsyOrderDetails(orderNumber){
       console.log("Pulling Etsy order details for order number:", orderNumber);
