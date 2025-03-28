@@ -1,4 +1,7 @@
 <!-- screenTwo.html -->
+<div id="screenTwo" style="display:none;">
+  <!-- Removed <h2>Welcome to Screen Two!</h2> -->
+
   <!-- Simple "Return to Screen One" button -->
   <button id="goBackBtn" class="btn">Return to Screen One</button>
 
@@ -59,11 +62,8 @@
     function initScreenTwo() {
       console.log("Screen Two loaded!");
 
-      // 1) Re-init Materialize so this new modal is recognized:
-      M.AutoInit(); 
-      // Alternatively, we could do:
-      // const modalElem = document.getElementById('configModalScreenTwo');
-      // M.Modal.init(modalElem);
+      // 1) Re-init Materialize so this new modal is recognized
+      M.AutoInit();
 
       // 2) "Return to Screen One" button => show #screenOne, hide #screenTwo
       const backBtn = document.getElementById('goBackBtn');
@@ -88,8 +88,7 @@
           console.log("Searching Chit Chat for order:", query);
 
           try {
-            // Suppose your Chit Chat endpoint is something like:
-            // GET https://api.chitchat.com/v1/orders?search=...
+            // Example: GET https://api.chitchat.com/v1/orders?search=<query>
             const response = await fetch(`https://api.chitchat.com/v1/orders?search=${encodeURIComponent(query)}`, {
               method: 'GET'
             });
@@ -99,7 +98,7 @@
             const data = await response.json();
             console.log("Chit Chat Orders Data:", data);
 
-            // show result in #chitChatOrders
+            // Show result in #chitChatOrders
             const output = document.getElementById('chitChatOrders');
             output.value = JSON.stringify(data, null, 2);
           } catch (err) {
