@@ -354,6 +354,11 @@
      * handles user interaction, and provides a config system.
      ********************************************************/
 
+    // We'll store the top-level is_gift / gift_message in these global vars
+    // so that showItemDetails can append them to the details box:
+    window.receiptIsGift = null;
+    window.receiptGiftMessage = null;
+
     window.orderName = "";
     window.orderStatus = "";
     window.orderIsShipped = "";
@@ -565,7 +570,7 @@
 
       /*
        * Variation logic
-       * (Personalization)
+       * (Personalization and other custom properties)
        */
       if(item.variations && Array.isArray(item.variations)){
         const acceptedMetalNames = [
@@ -601,15 +606,14 @@
       }
 
       /*
-       * 1) Marked as Gift: item.is_gift
-       * 2) Gift Message: item.gift_message
-       * Just below the personalization lines
+       * Now append the is_gift / gift_message from the *receipt* level.
+       * We saved these in window.receiptIsGift / window.receiptGiftMessage
        */
-      if(typeof item.is_gift !== "undefined"){
-        details += " Marked as Gift: " + item.is_gift + "\n";
+      if(window.receiptIsGift !== null && typeof window.receiptIsGift !== "undefined"){
+        details += " Marked as Gift: " + window.receiptIsGift + "\n";
       }
-      if(item.gift_message){
-        details += " Gift Message: " + item.gift_message + "\n";
+      if(window.receiptGiftMessage){
+        details += " Gift Message: " + window.receiptGiftMessage + "\n";
       }
 
       document.getElementById("orderDetails").value = details;
@@ -635,6 +639,7 @@
     async function updateImageGrid(data){
       let items = [];
 
+      // We figure out which array has the items
       if(data.transactions && Array.isArray(data.transactions)){
         items = data.transactions;
       } else if(data.shipments && Array.isArray(data.shipments)){
@@ -708,6 +713,7 @@
         }
       }
 
+      // Show details of the first item, if any
       if(items.length > 0){
         showItemDetails(0);
       } else {
@@ -718,6 +724,7 @@
 
     /**********************************************
      * pullEtsyOrderDetails(orderNumber):
+     *  => This is where we retrieve is_gift and gift_message
      **********************************************/
     function pullEtsyOrderDetails(orderNumber){
       console.log("Pulling Etsy order details for order number:", orderNumber);
@@ -731,7 +738,14 @@
         document.getElementById("orderInformation").value =
           " " + JSON.stringify(data, null, 2);
 
-        // default => clear #titleOrderDate2
+        // Store is_gift / gift_message at the top-level for showItemDetails:
+        // Because they're on the receipt object, not per transaction
+        window.receiptIsGift = (typeof data.is_gift !== "undefined")
+                                 ? data.is_gift
+                                 : null;
+        window.receiptGiftMessage = data.gift_message || "";
+
+        // Clear #titleOrderDate2 by default
         const titleDate2 = document.getElementById("titleOrderDate2");
         titleDate2.textContent = "";
 
@@ -807,7 +821,7 @@
             document.getElementById("dateOrdered").value = "";
           }
 
-          // shipDate
+          // shipDate => check color logic
           const shipEl = document.getElementById("shipDate");
           shipEl.style.color = "";
           if(firstTrans.expected_ship_date){
@@ -817,18 +831,16 @@
             const sYear = s.getFullYear();
             shipEl.value = " " + sDay + " " + sMonth + " " + sYear;
 
-            // example logic for coloring green/orange
+            // If shipped => green
             if(window.orderIsShipped === "Shipped!"){
-              // shipped => green
               shipEl.style.color = "#006400";
             } else {
-              // not shipped => maybe check if due today
+              // If not shipped => check if due today => orange
               const today = new Date();
               today.setHours(0,0,0,0);
               const dueDate = new Date(sYear, s.getMonth(), sDay);
               dueDate.setHours(0,0,0,0);
               if(dueDate.getTime() === today.getTime()){
-                // If due today but not shipped => color orange
                 shipEl.style.color = "orange";
               } else {
                 shipEl.style.color = "";
@@ -884,6 +896,7 @@
           if(orderNumber !== ""){
             const orderData = await pullEtsyOrderDetails(orderNumber);
             if(orderData){
+              // Now that we have data, update the image grid
               await updateImageGrid(orderData);
             }
           }
