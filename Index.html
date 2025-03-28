@@ -32,7 +32,10 @@
       top: 80px;
     }
 
-    /* "Order Link" button => smaller globe icon (14×14) */
+    /*
+     * "Order Link" button (#orderLinkBtn)
+     *   - smaller globe icon (14×14)
+     */
     #orderLinkBtn {
       position: absolute;
       left: 120px;
@@ -49,7 +52,11 @@
       display: block;
     }
 
-    /* Etsy Order Number text box */
+    /*
+     * Etsy Order Number text box
+     *   - no extra space => underline right beneath
+     *   - fully left-justified
+     */
     #etsyOrderNumber {
       position: absolute;
       left: 50px;
@@ -187,7 +194,7 @@
     }
 
     /*
-     * Title texts => we have #titleOrderDate2 for shipped_timestamp
+     * Title texts => #titleOrderDate2 used for shipped_timestamp
      */
     #titleOrderDate,
     #titleOrderDate2, /* will display shipped_timestamp if shipped, in bold */
@@ -358,15 +365,14 @@
     /********************************************************
      * This script fetches Etsy order details, loads images,
      * handles user interaction, and provides a config system
-     * for repositioning elements on the page. We also skip
-     * "Shipped!" text in the Order Details box, handle "is_gift"
-     * + "gift_message," color the Ship By date, etc.
-     *
-     * Now with panning logic for zoomed images.
+     * for repositioning elements on the page. We skip
+     * "Shipped!" in the Order Details, handle is_gift/gift_message,
+     * color the Ship By date, etc. 
+     * 
+     * We also restore wheel-based zoom & click-drag panning.
      ********************************************************/
 
     // We'll store the top-level is_gift / gift_message in these global vars
-    // so showItemDetails() can display them in the Order Details box.
     window.receiptIsGift = null;
     window.receiptGiftMessage = null;
 
@@ -383,19 +389,19 @@
       if(accessToken){
         localStorage.setItem("access_token", accessToken);
         window.history.replaceState({}, document.title, window.location.pathname);
-        M.toast({html: "Connection Successful!"});
-        console.log("Access token received:", accessToken);
-      } else {
+        M.toast({html:"Connection Successful!"});
+        console.log("Access token received:",accessToken);
+      }else{
         const authCode = urlParams.get("code");
         if(authCode){
-          const storedCodeVerifier = localStorage.getItem("etsy_code_verifier");
+          const storedCodeVerifier=localStorage.getItem("etsy_code_verifier");
           if(storedCodeVerifier){
-            window.location.href =
+            window.location.href = 
               "/.netlify/functions/exchangeToken?code=" +
               encodeURIComponent(authCode) +
               "&code_verifier=" +
               encodeURIComponent(storedCodeVerifier);
-          } else {
+          }else{
             console.error("No code verifier found in localStorage.");
           }
         }
@@ -404,17 +410,17 @@
 
     /* OAuth Helpers for code challenge, code verifier, etc. */
     function generateRandomString(length){
-      const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
-      let text = "";
+      const chars="ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+      let text="";
       for(let i=0;i<length;i++){
         text += chars.charAt(Math.floor(Math.random()*chars.length));
       }
       return text;
     }
     async function generateCodeChallenge(codeVerifier){
-      const encoder = new TextEncoder();
-      const data = encoder.encode(codeVerifier);
-      const digest = await crypto.subtle.digest("SHA-256", data);
+      const encoder=new TextEncoder();
+      const data=encoder.encode(codeVerifier);
+      const digest=await crypto.subtle.digest("SHA-256",data);
       return btoa(String.fromCharCode(...new Uint8Array(digest)))
               .replace(/\+/g,"-")
               .replace(/\//g,"_")
@@ -422,30 +428,30 @@
     }
 
     /* Connect to Etsy button => initiate OAuth */
-    document.getElementById("connectEtsyBtn").addEventListener("click", async ()=>{
-      const codeVerifier = generateRandomString(64);
-      localStorage.setItem("etsy_code_verifier", codeVerifier);
-      const codeChallenge = await generateCodeChallenge(codeVerifier);
-      const state = "randomState123";
-      const scope = "listings_w listings_r transactions_r transactions_w";
-      const CLIENT_ID = "k75zdspz4r99txpqdji7i2em";
-      const redirectUri = "https://gokushipping.netlify.app";
-      const etsyAuthUrl =
-        "https://www.etsy.com/oauth/connect?response_type=code" +
-        `&client_id=${CLIENT_ID}` +
-        `&redirect_uri=${encodeURIComponent(redirectUri)}` +
-        `&scope=${encodeURIComponent(scope)}` +
-        `&state=${state}` +
-        `&code_challenge=${encodeURIComponent(codeChallenge)}` +
+    document.getElementById("connectEtsyBtn").addEventListener("click",async ()=>{
+      const codeVerifier=generateRandomString(64);
+      localStorage.setItem("etsy_code_verifier",codeVerifier);
+      const codeChallenge=await generateCodeChallenge(codeVerifier);
+      const state="randomState123";
+      const scope="listings_w listings_r transactions_r transactions_w";
+      const CLIENT_ID="k75zdspz4r99txpqdji7i2em";
+      const redirectUri="https://gokushipping.netlify.app";
+      const etsyAuthUrl=
+        "https://www.etsy.com/oauth/connect?response_type=code"+
+        `&client_id=${CLIENT_ID}`+
+        `&redirect_uri=${encodeURIComponent(redirectUri)}`+
+        `&scope=${encodeURIComponent(scope)}`+
+        `&state=${state}`+
+        `&code_challenge=${encodeURIComponent(codeChallenge)}`+
         "&code_challenge_method=S256";
-      console.log("Redirecting to Etsy OAuth URL:", etsyAuthUrl);
-      window.location.href = etsyAuthUrl;
+      console.log("Redirecting to Etsy OAuth URL:",etsyAuthUrl);
+      window.location.href=etsyAuthUrl;
     });
 
     /***********************************************
      * CONFIGURATION SYSTEM
      ***********************************************/
-    const configComponentIDs = [
+    const configComponentIDs=[
       "connectEtsyBtn","openConfigBtn","orderLinkBtn","etsyOrderNumber","orderInformation",
       "Photo_Grid",
       "quantityCell0","quantityCell1","quantityCell2","quantityCell3","quantityCell4","quantityCell5","quantityCell6","quantityCell7",
@@ -454,38 +460,36 @@
       "titleOrderDate","titleOrderDate2","titleShipDate","titleOrderDetails",
       "titleBritesMessages","titlePurchasedItems","titleOrderNumber"
     ];
-
     function loadPositions(){
       configComponentIDs.forEach(id=>{
-        const el = document.getElementById(id);
+        const el=document.getElementById(id);
         if(el){
-          const left = localStorage.getItem(`pos-${id}-left`);
-          const top = localStorage.getItem(`pos-${id}-top`);
-          const width = localStorage.getItem(`pos-${id}-width`);
-          const height = localStorage.getItem(`pos-${id}-height`);
-          if(left!==null)   el.style.left = left + "px";
-          if(top!==null)    el.style.top = top + "px";
-          if(width!==null)  el.style.width = width + "px";
-          if(height!==null) el.style.height = height + "px";
+          const left=localStorage.getItem(`pos-${id}-left`);
+          const top=localStorage.getItem(`pos-${id}-top`);
+          const width=localStorage.getItem(`pos-${id}-width`);
+          const height=localStorage.getItem(`pos-${id}-height`);
+          if(left!==null)   el.style.left=left+"px";
+          if(top!==null)    el.style.top=top+"px";
+          if(width!==null)  el.style.width=width+"px";
+          if(height!==null) el.style.height=height+"px";
         }
       });
     }
-
     function populateConfigTable(){
-      const tbody = document.getElementById("configTable").querySelector("tbody");
-      tbody.innerHTML = "";
+      const tbody=document.getElementById("configTable").querySelector("tbody");
+      tbody.innerHTML="";
       configComponentIDs.forEach(id=>{
-        const el = document.getElementById(id);
+        const el=document.getElementById(id);
         if(!el) return;
-        const compName = el.textContent.trim() || el.value?.trim() || id;
-        const cs = window.getComputedStyle(el);
-        const leftVal = (cs.left==="auto") ? 0 : parseInt(cs.left,10);
-        const topVal = (cs.top==="auto") ? 0 : parseInt(cs.top,10);
-        const widthVal = (cs.width==="auto") ? 0 : parseInt(cs.width,10);
-        const heightVal = (cs.height==="auto") ? 0 : parseInt(cs.height,10);
+        const compName=el.textContent.trim() || el.value?.trim() || id;
+        const cs=window.getComputedStyle(el);
+        const leftVal=(cs.left==="auto")?0:parseInt(cs.left,10);
+        const topVal=(cs.top==="auto")?0:parseInt(cs.top,10);
+        const widthVal=(cs.width==="auto")?0:parseInt(cs.width,10);
+        const heightVal=(cs.height==="auto")?0:parseInt(cs.height,10);
 
-        const row = document.createElement("tr");
-        row.innerHTML = `
+        const row=document.createElement("tr");
+        row.innerHTML=`
           <td>${compName}</td>
           <td><input type="number" value="${leftVal}" data-id="${id}" class="left-input"></td>
           <td><input type="number" value="${topVal}" data-id="${id}" class="top-input"></td>
@@ -495,38 +499,37 @@
         tbody.appendChild(row);
 
         // Live updates
-        row.querySelector(".left-input").addEventListener("input", function(){
-          const tgt = document.getElementById(this.getAttribute("data-id"));
-          if(tgt) tgt.style.left = parseInt(this.value,10) + "px";
+        row.querySelector(".left-input").addEventListener("input",function(){
+          const tgt=document.getElementById(this.getAttribute("data-id"));
+          if(tgt) tgt.style.left=parseInt(this.value,10)+"px";
         });
-        row.querySelector(".top-input").addEventListener("input", function(){
-          const tgt = document.getElementById(this.getAttribute("data-id"));
-          if(tgt) tgt.style.top = parseInt(this.value,10) + "px";
+        row.querySelector(".top-input").addEventListener("input",function(){
+          const tgt=document.getElementById(this.getAttribute("data-id"));
+          if(tgt) tgt.style.top=parseInt(this.value,10)+"px";
         });
-        row.querySelector(".width-input").addEventListener("input", function(){
-          const tgt = document.getElementById(this.getAttribute("data-id"));
-          if(tgt) tgt.style.width = parseInt(this.value,10) + "px";
+        row.querySelector(".width-input").addEventListener("input",function(){
+          const tgt=document.getElementById(this.getAttribute("data-id"));
+          if(tgt) tgt.style.width=parseInt(this.value,10)+"px";
         });
-        row.querySelector(".height-input").addEventListener("input", function(){
-          const tgt = document.getElementById(this.getAttribute("data-id"));
-          if(tgt) tgt.style.height = parseInt(this.value,10) + "px";
+        row.querySelector(".height-input").addEventListener("input",function(){
+          const tgt=document.getElementById(this.getAttribute("data-id"));
+          if(tgt) tgt.style.height=parseInt(this.value,10)+"px";
         });
       });
     }
-
     function saveConfiguration(){
       configComponentIDs.forEach(id=>{
-        const el = document.getElementById(id);
+        const el=document.getElementById(id);
         if(el){
-          const cs = window.getComputedStyle(el);
-          const leftVal = parseInt(cs.left,10)||0;
-          const topVal = parseInt(cs.top,10)||0;
-          const widthVal = parseInt(cs.width,10)||0;
-          const heightVal = parseInt(cs.height,10)||0;
-          localStorage.setItem(`pos-${id}-left`, leftVal);
-          localStorage.setItem(`pos-${id}-top`, topVal);
-          localStorage.setItem(`pos-${id}-width`, widthVal);
-          localStorage.setItem(`pos-${id}-height`, heightVal);
+          const cs=window.getComputedStyle(el);
+          const leftVal=parseInt(cs.left,10)||0;
+          const topVal=parseInt(cs.top,10)||0;
+          const widthVal=parseInt(cs.width,10)||0;
+          const heightVal=parseInt(cs.height,10)||0;
+          localStorage.setItem(`pos-${id}-left`,leftVal);
+          localStorage.setItem(`pos-${id}-top`,topVal);
+          localStorage.setItem(`pos-${id}-width`,widthVal);
+          localStorage.setItem(`pos-${id}-height`,heightVal);
         }
       });
       console.log("Configuration saved.");
@@ -543,25 +546,24 @@
         console.warn("No item at index:", index);
         return;
       }
-      const item = window.cachedOrderItems[index];
-
-      let details = "";
+      const item=window.cachedOrderItems[index];
+      let details="";
 
       // ORDER FROM:
       if(window.orderName){
-        details += " ORDER FROM: " + window.orderName + "\n";
+        details += " ORDER FROM: "+window.orderName+"\n";
       }
 
       // ORDER STATUS:
       if(window.orderStatus){
-        details += " Order Status: " + window.orderStatus + "\n";
+        details += " Order Status: "+window.orderStatus+"\n";
       }
 
-      // Always show "Shipping Status:" but skip the actual "Shipped!" text
-      if(window.orderIsShipped === "Shipped!") {
+      // Always show "Shipping Status:" but skip actual "Shipped!" text
+      if(window.orderIsShipped==="Shipped!"){
         details += " Shipping Status:\n\n";
-      } else if(window.orderIsShipped) {
-        details += " Shipping Status: " + window.orderIsShipped + "\n\n";
+      } else if(window.orderIsShipped){
+        details += " Shipping Status: "+window.orderIsShipped+"\n\n";
       } else {
         details += " Shipping Status:\n\n";
       }
@@ -570,149 +572,159 @@
 
       // Title => first 4 words
       if(item.title){
-        const firstFour = item.title.trim().split(" ").slice(0,4).join(" ");
-        details += " Title: " + firstFour + "\n";
+        const firstFour=item.title.trim().split(" ").slice(0,4).join(" ");
+        details += " Title: "+firstFour+"\n";
       }
 
       // SKU
       if(item.sku){
-        details += " SKU: " + item.sku + "\n";
+        details += " SKU: "+item.sku+"\n";
       }
 
       // Variation logic
       if(item.variations && Array.isArray(item.variations)){
-        const acceptedMetalNames = [
+        const acceptedMetalNames=[
           "metal","metal choice","metal - engraving","metal colour","color","metal choice / engraving option"
         ];
-        const acceptedLengthNames = [
+        const acceptedLengthNames=[
           "length","necklace length","metal/necklace length","metal choice / necklace length","necklace length in inches"
         ];
         item.variations.forEach(v=>{
           if(v.formatted_name && v.formatted_value){
-            const nameLower = v.formatted_name.trim().toLowerCase();
-            let val = v.formatted_value.trim();
+            const nameLower=v.formatted_name.trim().toLowerCase();
+            let val=v.formatted_value.trim();
             if(nameLower==="personalization" && val==="Not requested on this item."){
               val="Not Requested";
-              details += " Personalization: " + val + "\n";
+              details += " Personalization: "+val+"\n";
             } else if(acceptedMetalNames.includes(nameLower)){
-              details += " Metal Choice: " + val + "\n";
+              details += " Metal Choice: "+val+"\n";
             } else if(acceptedLengthNames.includes(nameLower)){
-              const lengthMap = {
+              const lengthMap={
                 '14&quot;':'14 Inches','16&quot;':'16 Inches','18&quot;':'18 Inches','20&quot;':'20 Inches',
                 '14""':'14 Inches','16""':'16 Inches','18""':'18 Inches','20""':'20 Inches'
               };
               if(lengthMap[val]){
-                val = lengthMap[val];
+                val=lengthMap[val];
               }
-              details += " Item Length: " + val + "\n";
+              details += " Item Length: "+val+"\n";
             } else {
-              details += " " + v.formatted_name + ": " + v.formatted_value + "\n";
+              details += " "+v.formatted_name+": "+v.formatted_value+"\n";
             }
           }
         });
       }
 
-      // Add receipt-level is_gift + gift_message
-      if(window.receiptIsGift !== null && typeof window.receiptIsGift !== "undefined"){
-        details += " Marked as Gift: " + window.receiptIsGift + "\n";
+      // Add receipt-level is_gift & gift_message
+      if(window.receiptIsGift!==null && typeof window.receiptIsGift!=="undefined"){
+        details += " Marked as Gift: "+window.receiptIsGift+"\n";
       }
       if(window.receiptGiftMessage){
-        details += " Gift Message: " + window.receiptGiftMessage + "\n";
+        details += " Gift Message: "+window.receiptGiftMessage+"\n";
       }
 
-      document.getElementById("orderDetails").value = details;
+      document.getElementById("orderDetails").value=details;
     }
 
     /**********************************************
      * fetchListingImages(listingId)
      **********************************************/
     async function fetchListingImages(listingId){
-      const response = await fetch(`/.netlify/functions/etsyImages?listingId=${listingId}`, {
-        headers: { "access-token": localStorage.getItem("access_token") }
+      const response=await fetch(`/.netlify/functions/etsyImages?listingId=${listingId}`,{
+        headers:{"access-token":localStorage.getItem("access_token")}
       });
       if(!response.ok){
         throw new Error(`Error fetching images for listing ${listingId}: ${response.statusText}`);
       }
-      const data = await response.json();
+      const data=await response.json();
       return data.results;
     }
 
     /**********************************************
      * updateImageGrid(data):
-     *  => loads up to 8 images from the data
-     *  => sets onclick => showItemDetails(i)
+     *  => loads up to 8 images, sets on-click => showItemDetails(i)
+     *  => ensures each image starts with data-scale=1, etc.
      **********************************************/
     async function updateImageGrid(data){
-      let items = [];
+      let items=[];
 
       // Figure out which array has the items
       if(data.transactions && Array.isArray(data.transactions)){
-        items = data.transactions;
+        items=data.transactions;
       } else if(data.shipments && Array.isArray(data.shipments)){
-        items = data.shipments;
+        items=data.shipments;
       } else if(Array.isArray(data)){
-        items = data;
+        items=data;
       } else if(data.results && Array.isArray(data.results)){
-        items = data.results;
+        items=data.results;
       } else if(data.orders && Array.isArray(data.orders)){
-        items = data.orders;
-      } else if(typeof data === "object" && data !== null){
+        items=data.orders;
+      } else if(typeof data==="object" && data!==null){
         for(const key in data){
           if(Array.isArray(data[key])){
-            items = data[key];
+            items=data[key];
             break;
           }
         }
       }
 
-      window.cachedOrderItems = items;
+      window.cachedOrderItems=items;
 
-      for(let i=0; i<8; i++){
-        const cell = document.getElementById("previewCell"+i);
-        const qtyBox = document.getElementById("quantityCell"+i);
-        const metalBox = document.getElementById("metalCell"+i);
+      for(let i=0;i<8;i++){
+        const cell=document.getElementById("previewCell"+i);
+        const qtyBox=document.getElementById("quantityCell"+i);
+        const metalBox=document.getElementById("metalCell"+i);
 
         if(cell){
-          if(i < items.length){
-            const item = items[i];
-            try {
-              const images = await fetchListingImages(item.listing_id);
+          if(i<items.length){
+            const item=items[i];
+            try{
+              const images=await fetchListingImages(item.listing_id);
               if(images && images.length>0){
-                cell.innerHTML = `<img src="${images[0].url_fullxfull}" alt="Listing Image ${i}">`;
+                // Ensure each new image starts with scale=1, offset=0
+                cell.innerHTML = `
+                  <img
+                    src="${images[0].url_fullxfull}"
+                    alt="Listing Image ${i}"
+                    data-scale="1"
+                    data-offsetX="0"
+                    data-offsetY="0"
+                  >
+                `;
               } else {
-                cell.innerHTML = "No images found";
+                cell.innerHTML="No images found";
               }
             } catch(err){
-              console.error(`Error fetching listing ${item.listing_id}:`, err);
-              cell.innerHTML = "Error loading image";
+              console.error(`Error fetching listing ${item.listing_id}:`,err);
+              cell.innerHTML="Error loading image";
             }
-            cell.style.cursor = "pointer";
-            cell.onclick = () => showItemDetails(i);
+            cell.style.cursor="pointer";
+            cell.onclick=()=> showItemDetails(i);
 
             if(qtyBox){
-              const actualQty = (item.quantity!=null) ? item.quantity : 0;
-              qtyBox.value = " Quantity: " + actualQty;
+              const actualQty=(item.quantity!=null)?item.quantity:0;
+              qtyBox.value=" Quantity: "+actualQty;
             }
             if(metalBox){
-              let metalSel = "";
+              let metalSel="";
               if(item.variations && Array.isArray(item.variations)){
-                const acceptedMetalNames = [
+                const acceptedMetalNames=[
                   "metal","metal choice","metal - engraving","metal colour","color","metal choice / engraving option"
                 ];
-                const metalVar = item.variations.find(v =>
-                  v.formatted_name && acceptedMetalNames.includes(v.formatted_name.trim().toLowerCase())
+                const metalVar=item.variations.find(v=>
+                  v.formatted_name &&
+                  acceptedMetalNames.includes(v.formatted_name.trim().toLowerCase())
                 );
                 if(metalVar){
-                  metalSel = metalVar.formatted_value||"";
+                  metalSel=metalVar.formatted_value||"";
                 }
               }
-              metalBox.value = " Metal: " + metalSel;
+              metalBox.value=" Metal: "+metalSel;
             }
           } else {
-            cell.innerHTML = "Empty";
-            cell.style.cursor = "default";
-            cell.onclick = null;
-            if(qtyBox) qtyBox.value="";
+            cell.innerHTML="Empty";
+            cell.style.cursor="default";
+            cell.onclick=null;
+            if(qtyBox)   qtyBox.value="";
             if(metalBox) metalBox.value="";
           }
         }
@@ -721,32 +733,30 @@
       if(items.length>0){
         showItemDetails(0);
       } else {
-        document.getElementById("orderDetails").value =
+        document.getElementById("orderDetails").value=
           " ORDER DETAILS:\n\nNo items found.";
       }
     }
 
     /**********************************************
      * pullEtsyOrderDetails(orderNumber):
-     *  => main Etsy fetch => sets is_gift, gift_message, etc.
      **********************************************/
     function pullEtsyOrderDetails(orderNumber){
-      console.log("Pulling Etsy order details for order number:", orderNumber);
-      const token = localStorage.getItem("access_token");
+      console.log("Pulling Etsy order details for order number:",orderNumber);
+      const token=localStorage.getItem("access_token");
       return fetch('/.netlify/functions/etsyOrderProxy?orderId='+encodeURIComponent(orderNumber),{
         headers:{"access-token":token}
       })
       .then(r=>r.json())
       .then(data=>{
         console.log("Etsy Order Data:",data);
-        document.getElementById("orderInformation").value =
-          " "+JSON.stringify(data,null,2);
+        document.getElementById("orderInformation").value=" "+JSON.stringify(data,null,2);
 
-        // store is_gift / gift_message
+        // store is_gift / gift_message at top level
         window.receiptIsGift = (typeof data.is_gift !== "undefined") ? data.is_gift : null;
         window.receiptGiftMessage = data.gift_message || "";
 
-        // default => clear #titleOrderDate2
+        // Clear #titleOrderDate2
         const titleDate2=document.getElementById("titleOrderDate2");
         titleDate2.textContent="";
 
@@ -769,16 +779,15 @@
           window.orderIsShipped="";
         }
 
-        // shipped_timestamp => top-level or transaction
         let foundStamp=null;
         if(data.shipped_timestamp && data.is_shipped===true){
           foundStamp=data.shipped_timestamp;
         }
         else if(data.transactions
-           && Array.isArray(data.transactions)
-           && data.transactions.length>0
-           && data.transactions[0].shipped_timestamp
-           && data.is_shipped===true){
+             && Array.isArray(data.transactions)
+             && data.transactions.length>0
+             && data.transactions[0].shipped_timestamp
+             && data.is_shipped===true){
           foundStamp=data.transactions[0].shipped_timestamp;
         }
         window.orderShippedTimestamp=foundStamp;
@@ -790,13 +799,13 @@
           const day=("0"+d.getDate()).slice(-2);
           const mStr=monthNames[d.getMonth()];
           const y=d.getFullYear();
-          titleDate2.textContent = `Shipped On: ${day} ${mStr} ${y}`;
+          titleDate2.textContent=`Shipped On: ${day} ${mStr} ${y}`;
         }
 
         const msgBox=document.getElementById("customerMessageHistory");
         if(data.message_from_buyer){
           msgBox.value=data.message_from_buyer+"\n";
-        } else{
+        } else {
           msgBox.value="";
         }
 
@@ -809,8 +818,7 @@
             const day=("0"+d.getDate()).slice(-2);
             const mStr=monthNames[d.getMonth()];
             const y=d.getFullYear();
-            document.getElementById("dateOrdered").value=
-              " "+day+" "+mStr+" "+y;
+            document.getElementById("dateOrdered").value=` ${day} ${mStr} ${y}`;
           } else {
             document.getElementById("dateOrdered").value="";
           }
@@ -822,13 +830,12 @@
             const sDay=("0"+s.getDate()).slice(-2);
             const sMonth=monthNames[s.getMonth()];
             const sYear=s.getFullYear();
-            shipEl.value=" "+sDay+" "+sMonth+" "+sYear;
+            shipEl.value=` ${sDay} ${sMonth} ${sYear}`;
 
             if(window.orderIsShipped==="Shipped!"){
-              // shipped => green
-              shipEl.style.color="#006400";
+              shipEl.style.color="#006400"; // green
             } else {
-              // not shipped => check if it's due today => orange
+              // not shipped => check if due today => orange
               const today=new Date();
               today.setHours(0,0,0,0);
               const dueDate=new Date(sYear,s.getMonth(),sDay);
@@ -865,7 +872,7 @@
         document.body.style.opacity=1;
       },250);
 
-      // Open Config => show the config modal
+      // Open config modal
       document.getElementById("openConfigBtn").addEventListener("click",()=>{
         populateConfigTable();
         const modalElem=document.getElementById("configModal");
@@ -907,80 +914,79 @@
        * WHEEL-BASED ZOOM + DRAG PANNING
        ****************************************/
       document.querySelectorAll('.preview-box').forEach(function(box) {
-        const img = box.querySelector('img');
+        // We'll parse the scale/offset from dataset each time
+        let isDragging=false;
+        let lastX=0;
+        let lastY=0;
 
-        // Wheel zoom
-        box.addEventListener('wheel', function(e) {
-          e.preventDefault();
+        box.addEventListener('wheel', function(e){
+          const img = box.querySelector('img');
           if(!img) return;
+          e.preventDefault();
 
-          let currentScale = parseFloat(img.dataset.scale) || 1;
-          let offsetX = parseFloat(img.dataset.offsetX) || 0;
-          let offsetY = parseFloat(img.dataset.offsetY) || 0;
+          let currentScale=parseFloat(img.dataset.scale)||1;
+          let offsetX=parseFloat(img.dataset.offsetX)||0;
+          let offsetY=parseFloat(img.dataset.offsetY)||0;
 
-          if (e.deltaY < 0){
+          if(e.deltaY<0){
             currentScale *= 1.1; // zoom in
           } else {
             currentScale /= 1.1; // zoom out
-            if(currentScale <= 1){
-              currentScale = 1;
-              offsetX = 0;
-              offsetY = 0;
+            if(currentScale<=1){
+              currentScale=1;
+              offsetX=0;
+              offsetY=0;
             }
           }
-          // clamp scale to [1, 4]
-          currentScale = Math.max(1, Math.min(4, currentScale));
-
-          img.dataset.scale = currentScale;
-          img.dataset.offsetX = offsetX;
-          img.dataset.offsetY = offsetY;
-          img.style.transform = `translate(${offsetX}px, ${offsetY}px) scale(${currentScale})`;
+          currentScale=Math.max(1, Math.min(4, currentScale));
+          img.dataset.scale=currentScale;
+          img.dataset.offsetX=offsetX;
+          img.dataset.offsetY=offsetY;
+          img.style.transform=`translate(${offsetX}px, ${offsetY}px) scale(${currentScale})`;
         });
 
-        // Panning logic
-        let isDragging = false;
-        let lastX = 0;
-        let lastY = 0;
-
-        box.addEventListener('mousedown', function(e) {
+        // Mousedown => start drag if scale>1
+        box.addEventListener('mousedown', function(e){
+          const img = box.querySelector('img');
           if(!img) return;
 
-          let currentScale = parseFloat(img.dataset.scale) || 1;
-          if(currentScale <= 1) return; // only drag if scaled
-
+          let currentScale=parseFloat(img.dataset.scale)||1;
+          if(currentScale<=1) return;
           e.preventDefault();
-          isDragging = true;
-          lastX = e.clientX;
-          lastY = e.clientY;
+          isDragging=true;
+          lastX=e.clientX;
+          lastY=e.clientY;
         });
 
-        box.addEventListener('mousemove', function(e) {
-          if(!img || !isDragging) return;
+        // Mousemove => handle panning
+        box.addEventListener('mousemove', function(e){
+          if(!isDragging) return;
           e.preventDefault();
+          const img = box.querySelector('img');
+          if(!img) return;
+          let currentScale=parseFloat(img.dataset.scale)||1;
+          let offsetX=parseFloat(img.dataset.offsetX)||0;
+          let offsetY=parseFloat(img.dataset.offsetY)||0;
 
-          let currentScale = parseFloat(img.dataset.scale) || 1;
-          let offsetX = parseFloat(img.dataset.offsetX) || 0;
-          let offsetY = parseFloat(img.dataset.offsetY) || 0;
+          const dx=e.clientX-lastX;
+          const dy=e.clientY-lastY;
+          offsetX+=dx;
+          offsetY+=dy;
 
-          const dx = e.clientX - lastX;
-          const dy = e.clientY - lastY;
+          img.dataset.offsetX=offsetX;
+          img.dataset.offsetY=offsetY;
+          img.style.transform=`translate(${offsetX}px, ${offsetY}px) scale(${currentScale})`;
 
-          offsetX += dx;
-          offsetY += dy;
-
-          img.dataset.offsetX = offsetX;
-          img.dataset.offsetY = offsetY;
-          img.style.transform = `translate(${offsetX}px, ${offsetY}px) scale(${currentScale})`;
-
-          lastX = e.clientX;
-          lastY = e.clientY;
+          lastX=e.clientX;
+          lastY=e.clientY;
         });
 
+        // Mouse up or leave => stop dragging
         box.addEventListener('mouseup', function(e){
-          isDragging = false;
+          isDragging=false;
         });
         box.addEventListener('mouseleave', function(e){
-          isDragging = false;
+          isDragging=false;
         });
       });
     });
