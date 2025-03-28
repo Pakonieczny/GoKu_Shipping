@@ -528,7 +528,7 @@
       console.log("Configuration saved.");
     }
 
-    /********** Show Item Details (no status==="Completed" check) **********/
+    /********** Show Item Details (Reduced spacing & conditional extra space) **********/
     function showItemDetails(index){
       if(!window.cachedOrderItems || !window.cachedOrderItems[index]){
         console.warn("No item at index:", index);
@@ -547,17 +547,16 @@
         details += " Order Status: "+window.orderStatus+"\n";
       }
 
-      // Always show "Shipping Status:"
+      // Eliminate vertical space => single \n
       if(window.orderIsShipped==="Shipped!"){
-        details += " Shipping Status:\n\n";
+        details += " Shipping Status:\n";
       } else if(window.orderIsShipped){
-        details += " Shipping Status: "+window.orderIsShipped+"\n\n";
+        details += " Shipping Status: "+window.orderIsShipped+"\n";
       } else {
-        details += " Shipping Status:\n\n";
+        details += " Shipping Status:\n";
       }
 
-      // [REMOVED the condition window.orderStatus==="Completed"]
-      // Now we only check if is_shipped===true => "Shipped!"
+      // If is_shipped===true => "Shipped!"
       if(window.orderIsShipped==="Shipped!"){
         if(window.orderShipments && window.orderShipments.length>0){
           const ship = window.orderShipments[0];
@@ -565,11 +564,13 @@
             details += " Carrier Name: "+ship.carrier_name+"\n";
           }
           if(ship.tracking_code){
-            details += " Tracking Number: "+ship.tracking_code+"\n";
+            // If tracking code is present => add an extra blank line after
+            details += " Tracking Number: "+ship.tracking_code+"\n\n";
           }
         }
       }
 
+      // We'll keep " ORDER DETAILS:\n\n" after the above
       details += " ORDER DETAILS:\n\n";
 
       // Title => first 4 words
