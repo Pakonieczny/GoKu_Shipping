@@ -518,7 +518,8 @@
 
     /***************************************************************
      * showItemDetails(index):
-     * Always displays "Shipping Status:" but never the word "Shipped!"
+     *   Always displays "Shipping Status:" but never the word "Shipped!"
+     *   Also includes is_gift + gift_message near personalization.
      ***************************************************************/
     function showItemDetails(index){
       if(!window.cachedOrderItems || !window.cachedOrderItems[index]){
@@ -544,10 +545,8 @@
         // if it's "Shipped!", just show the label with no status
         details += " Shipping Status:\n\n";
       } else if(window.orderIsShipped) {
-        // "Not Shipped" or anything else
         details += " Shipping Status: " + window.orderIsShipped + "\n\n";
       } else {
-        // if it's blank
         details += " Shipping Status:\n\n";
       }
 
@@ -564,7 +563,10 @@
         details += " SKU: " + item.sku + "\n";
       }
 
-      // Variation logic
+      /*
+       * Variation logic
+       * (Personalization)
+       */
       if(item.variations && Array.isArray(item.variations)){
         const acceptedMetalNames = [
           "metal","metal choice","metal - engraving","metal colour","color","metal choice / engraving option"
@@ -596,6 +598,18 @@
             }
           }
         });
+      }
+
+      /*
+       * 1) Marked as Gift: item.is_gift
+       * 2) Gift Message: item.gift_message
+       * Just below the personalization lines
+       */
+      if(typeof item.is_gift !== "undefined"){
+        details += " Marked as Gift: " + item.is_gift + "\n";
+      }
+      if(item.gift_message){
+        details += " Gift Message: " + item.gift_message + "\n";
       }
 
       document.getElementById("orderDetails").value = details;
@@ -704,8 +718,6 @@
 
     /**********************************************
      * pullEtsyOrderDetails(orderNumber):
-     * Now includes logic to color "Ship By:" orange
-     * if due today but not shipped.
      **********************************************/
     function pullEtsyOrderDetails(orderNumber){
       console.log("Pulling Etsy order details for order number:", orderNumber);
@@ -798,7 +810,6 @@
           // shipDate
           const shipEl = document.getElementById("shipDate");
           shipEl.style.color = "";
-
           if(firstTrans.expected_ship_date){
             const s = new Date(firstTrans.expected_ship_date*1000);
             const sDay = ("0" + s.getDate()).slice(-2);
@@ -806,23 +817,20 @@
             const sYear = s.getFullYear();
             shipEl.value = " " + sDay + " " + sMonth + " " + sYear;
 
-            // 1) Check if shipped => color green
+            // example logic for coloring green/orange
             if(window.orderIsShipped === "Shipped!"){
+              // shipped => green
               shipEl.style.color = "#006400";
             } else {
-              // 2) If not shipped, check if it's due *today*
+              // not shipped => maybe check if due today
               const today = new Date();
               today.setHours(0,0,0,0);
-
-              // Compare ignoring time
               const dueDate = new Date(sYear, s.getMonth(), sDay);
               dueDate.setHours(0,0,0,0);
-
               if(dueDate.getTime() === today.getTime()){
                 // If due today but not shipped => color orange
                 shipEl.style.color = "orange";
               } else {
-                // Not shipped, not due today => default
                 shipEl.style.color = "";
               }
             }
