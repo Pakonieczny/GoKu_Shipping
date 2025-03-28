@@ -78,7 +78,9 @@
       resize: none;
     }
 
-    /* Photo Grid => scaled 1.25, 2×4, 35px row gap, 5px col gap */
+    /*
+     * Photo Grid => scaled 1.25, 2×4, 35px row gap, 5px col gap
+     */
     #Photo_Grid {
       position: absolute;
       left: 400px;
@@ -98,7 +100,7 @@
       align-items: center;
     }
     .preview-box {
-      border: 1px solid black !important;
+      border: 1px solid black !important; /* match Order Details thickness */
       background: #f9f9f9;
       width: 100%;
       height: 150px;
@@ -107,17 +109,19 @@
       justify-content: center;
       overflow: hidden;
       position: relative;
+      user-select: none; /* helps reduce text-selection while panning */
     }
     .preview-box img {
       width: 100%;
       height: 100%;
       object-fit: cover;
-      transform: scale(1);
       transform-origin: center center;
-      transition: transform 0.2s ease;
+      transition: transform 0.2s ease; /* for smooth wheel zoom */
     }
 
-    /* 16 text-box-absolute => 0.9em */
+    /*
+     * 16 text-box-absolute => 0.9em
+     */
     .text-box-absolute {
       position: absolute;
       border: none !important;
@@ -166,7 +170,9 @@
       overflow-y: auto;
     }
 
-    /* single-line text boxes => bigger & bold, read-only */
+    /*
+     * single-line text boxes => bigger & bold, read-only
+     */
     #dateOrdered,
     #shipDate {
       position: absolute;
@@ -181,10 +187,10 @@
     }
 
     /*
-     * Title texts => #titleOrderDate2 used for shipped_timestamp
+     * Title texts => we have #titleOrderDate2 for shipped_timestamp
      */
     #titleOrderDate,
-    #titleOrderDate2,
+    #titleOrderDate2, /* will display shipped_timestamp if shipped, in bold */
     #titleShipDate,
     #titleOrderDetails,
     #titleBritesMessages,
@@ -351,11 +357,16 @@
   <script>
     /********************************************************
      * This script fetches Etsy order details, loads images,
-     * handles user interaction, and provides a config system.
+     * handles user interaction, and provides a config system
+     * for repositioning elements on the page. We also skip
+     * "Shipped!" text in the Order Details box, handle "is_gift"
+     * + "gift_message," color the Ship By date, etc.
+     *
+     * Now with panning logic for zoomed images.
      ********************************************************/
 
     // We'll store the top-level is_gift / gift_message in these global vars
-    // so that showItemDetails can append them to the details box:
+    // so showItemDetails() can display them in the Order Details box.
     window.receiptIsGift = null;
     window.receiptGiftMessage = null;
 
@@ -395,8 +406,8 @@
     function generateRandomString(length){
       const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
       let text = "";
-      for(let i=0; i<length; i++){
-        text += chars.charAt(Math.floor(Math.random() * chars.length));
+      for(let i=0;i<length;i++){
+        text += chars.charAt(Math.floor(Math.random()*chars.length));
       }
       return text;
     }
@@ -483,7 +494,7 @@
         `;
         tbody.appendChild(row);
 
-        // Live updates when user types in the config table
+        // Live updates
         row.querySelector(".left-input").addEventListener("input", function(){
           const tgt = document.getElementById(this.getAttribute("data-id"));
           if(tgt) tgt.style.left = parseInt(this.value,10) + "px";
@@ -508,10 +519,10 @@
         const el = document.getElementById(id);
         if(el){
           const cs = window.getComputedStyle(el);
-          const leftVal = parseInt(cs.left,10) || 0;
-          const topVal = parseInt(cs.top,10) || 0;
-          const widthVal = parseInt(cs.width,10) || 0;
-          const heightVal = parseInt(cs.height,10) || 0;
+          const leftVal = parseInt(cs.left,10)||0;
+          const topVal = parseInt(cs.top,10)||0;
+          const widthVal = parseInt(cs.width,10)||0;
+          const heightVal = parseInt(cs.height,10)||0;
           localStorage.setItem(`pos-${id}-left`, leftVal);
           localStorage.setItem(`pos-${id}-top`, topVal);
           localStorage.setItem(`pos-${id}-width`, widthVal);
@@ -523,8 +534,9 @@
 
     /***************************************************************
      * showItemDetails(index):
-     *   Always displays "Shipping Status:" but never the word "Shipped!"
-     *   Also includes is_gift + gift_message near personalization.
+     *   1) Skips "Shipped!" in the text box
+     *   2) Always shows "Shipping Status:"
+     *   3) Adds "Marked as Gift:" + "Gift Message:" below personalization
      ***************************************************************/
     function showItemDetails(index){
       if(!window.cachedOrderItems || !window.cachedOrderItems[index]){
@@ -547,7 +559,6 @@
 
       // Always show "Shipping Status:" but skip the actual "Shipped!" text
       if(window.orderIsShipped === "Shipped!") {
-        // if it's "Shipped!", just show the label with no status
         details += " Shipping Status:\n\n";
       } else if(window.orderIsShipped) {
         details += " Shipping Status: " + window.orderIsShipped + "\n\n";
@@ -568,10 +579,7 @@
         details += " SKU: " + item.sku + "\n";
       }
 
-      /*
-       * Variation logic
-       * (Personalization and other custom properties)
-       */
+      // Variation logic
       if(item.variations && Array.isArray(item.variations)){
         const acceptedMetalNames = [
           "metal","metal choice","metal - engraving","metal colour","color","metal choice / engraving option"
@@ -598,17 +606,13 @@
               }
               details += " Item Length: " + val + "\n";
             } else {
-              // Generic variation
               details += " " + v.formatted_name + ": " + v.formatted_value + "\n";
             }
           }
         });
       }
 
-      /*
-       * Now append the is_gift / gift_message from the *receipt* level.
-       * We saved these in window.receiptIsGift / window.receiptGiftMessage
-       */
+      // Add receipt-level is_gift + gift_message
       if(window.receiptIsGift !== null && typeof window.receiptIsGift !== "undefined"){
         details += " Marked as Gift: " + window.receiptIsGift + "\n";
       }
@@ -635,11 +639,13 @@
 
     /**********************************************
      * updateImageGrid(data):
+     *  => loads up to 8 images from the data
+     *  => sets onclick => showItemDetails(i)
      **********************************************/
     async function updateImageGrid(data){
       let items = [];
 
-      // We figure out which array has the items
+      // Figure out which array has the items
       if(data.transactions && Array.isArray(data.transactions)){
         items = data.transactions;
       } else if(data.shipments && Array.isArray(data.shipments)){
@@ -684,7 +690,7 @@
             cell.onclick = () => showItemDetails(i);
 
             if(qtyBox){
-              const actualQty = (item.quantity != null) ? item.quantity : 0;
+              const actualQty = (item.quantity!=null) ? item.quantity : 0;
               qtyBox.value = " Quantity: " + actualQty;
             }
             if(metalBox){
@@ -694,11 +700,10 @@
                   "metal","metal choice","metal - engraving","metal colour","color","metal choice / engraving option"
                 ];
                 const metalVar = item.variations.find(v =>
-                  v.formatted_name &&
-                  acceptedMetalNames.includes(v.formatted_name.trim().toLowerCase())
+                  v.formatted_name && acceptedMetalNames.includes(v.formatted_name.trim().toLowerCase())
                 );
                 if(metalVar){
-                  metalSel = metalVar.formatted_value || "";
+                  metalSel = metalVar.formatted_value||"";
                 }
               }
               metalBox.value = " Metal: " + metalSel;
@@ -707,14 +712,13 @@
             cell.innerHTML = "Empty";
             cell.style.cursor = "default";
             cell.onclick = null;
-            if(qtyBox)   qtyBox.value = "";
-            if(metalBox) metalBox.value = "";
+            if(qtyBox) qtyBox.value="";
+            if(metalBox) metalBox.value="";
           }
         }
       }
 
-      // Show details of the first item, if any
-      if(items.length > 0){
+      if(items.length>0){
         showItemDetails(0);
       } else {
         document.getElementById("orderDetails").value =
@@ -724,179 +728,162 @@
 
     /**********************************************
      * pullEtsyOrderDetails(orderNumber):
-     *  => This is where we retrieve is_gift and gift_message
+     *  => main Etsy fetch => sets is_gift, gift_message, etc.
      **********************************************/
     function pullEtsyOrderDetails(orderNumber){
       console.log("Pulling Etsy order details for order number:", orderNumber);
       const token = localStorage.getItem("access_token");
-      return fetch('/.netlify/functions/etsyOrderProxy?orderId='+encodeURIComponent(orderNumber), {
-        headers: { "access-token": token }
+      return fetch('/.netlify/functions/etsyOrderProxy?orderId='+encodeURIComponent(orderNumber),{
+        headers:{"access-token":token}
       })
-      .then(r => r.json())
-      .then(data => {
-        console.log("Etsy Order Data:", data);
+      .then(r=>r.json())
+      .then(data=>{
+        console.log("Etsy Order Data:",data);
         document.getElementById("orderInformation").value =
-          " " + JSON.stringify(data, null, 2);
+          " "+JSON.stringify(data,null,2);
 
-        // Store is_gift / gift_message at the top-level for showItemDetails:
-        // Because they're on the receipt object, not per transaction
-        window.receiptIsGift = (typeof data.is_gift !== "undefined")
-                                 ? data.is_gift
-                                 : null;
+        // store is_gift / gift_message
+        window.receiptIsGift = (typeof data.is_gift !== "undefined") ? data.is_gift : null;
         window.receiptGiftMessage = data.gift_message || "";
 
-        // Clear #titleOrderDate2 by default
-        const titleDate2 = document.getElementById("titleOrderDate2");
-        titleDate2.textContent = "";
+        // default => clear #titleOrderDate2
+        const titleDate2=document.getElementById("titleOrderDate2");
+        titleDate2.textContent="";
 
-        // Basic name & status
         if(data.name){
-          window.orderName = data.name;
+          window.orderName=data.name;
         } else {
-          window.orderName = "";
+          window.orderName="";
         }
         if(data.status){
-          window.orderStatus = data.status;
+          window.orderStatus=data.status;
         } else {
-          window.orderStatus = "";
+          window.orderStatus="";
         }
 
-        // is_shipped => "Shipped!" or "Not Shipped"
-        if(data.is_shipped === true){
-          window.orderIsShipped = "Shipped!";
-        } else if(data.is_shipped === false){
-          window.orderIsShipped = "Not Shipped";
+        if(data.is_shipped===true){
+          window.orderIsShipped="Shipped!";
+        } else if(data.is_shipped===false){
+          window.orderIsShipped="Not Shipped";
         } else {
-          window.orderIsShipped = "";
+          window.orderIsShipped="";
         }
 
-        // Identify shipped_timestamp
-        let foundStamp = null;
-        if(data.shipped_timestamp && data.is_shipped === true){
-          foundStamp = data.shipped_timestamp;
-        } else if(
-          data.transactions &&
-          Array.isArray(data.transactions) &&
-          data.transactions.length>0 &&
-          data.transactions[0].shipped_timestamp &&
-          data.is_shipped === true
-        ){
-          foundStamp = data.transactions[0].shipped_timestamp;
+        // shipped_timestamp => top-level or transaction
+        let foundStamp=null;
+        if(data.shipped_timestamp && data.is_shipped===true){
+          foundStamp=data.shipped_timestamp;
         }
-        window.orderShippedTimestamp = foundStamp;
+        else if(data.transactions
+           && Array.isArray(data.transactions)
+           && data.transactions.length>0
+           && data.transactions[0].shipped_timestamp
+           && data.is_shipped===true){
+          foundStamp=data.transactions[0].shipped_timestamp;
+        }
+        window.orderShippedTimestamp=foundStamp;
 
         // If shipped => #titleOrderDate2 => "Shipped On: DD Mmm YYYY"
-        if(window.orderIsShipped === "Shipped!" && window.orderShippedTimestamp){
-          const d = new Date(window.orderShippedTimestamp*1000);
-          const monthNames = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
-          const day = ("0" + d.getDate()).slice(-2);
-          const mStr = monthNames[d.getMonth()];
-          const y = d.getFullYear();
+        if(window.orderIsShipped==="Shipped!" && window.orderShippedTimestamp){
+          const d=new Date(window.orderShippedTimestamp*1000);
+          const monthNames=["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+          const day=("0"+d.getDate()).slice(-2);
+          const mStr=monthNames[d.getMonth()];
+          const y=d.getFullYear();
           titleDate2.textContent = `Shipped On: ${day} ${mStr} ${y}`;
         }
 
-        // Buyer message
-        const msgBox = document.getElementById("customerMessageHistory");
+        const msgBox=document.getElementById("customerMessageHistory");
         if(data.message_from_buyer){
-          msgBox.value = data.message_from_buyer + "\n";
-        } else {
-          msgBox.value = "";
+          msgBox.value=data.message_from_buyer+"\n";
+        } else{
+          msgBox.value="";
         }
 
-        // If we have transactions => dateOrdered => from created_timestamp
-        // Also set #shipDate => from expected_ship_date
         if(data.transactions && data.transactions.length>0){
-          const firstTrans = data.transactions[0];
-          const monthNames = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+          const firstTrans=data.transactions[0];
+          const monthNames=["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
 
-          // dateOrdered
           if(firstTrans.created_timestamp){
-            const d = new Date(firstTrans.created_timestamp*1000);
-            const day = ("0" + d.getDate()).slice(-2);
-            const mStr = monthNames[d.getMonth()];
-            const y = d.getFullYear();
-            document.getElementById("dateOrdered").value =
-              " " + day + " " + mStr + " " + y;
+            const d=new Date(firstTrans.created_timestamp*1000);
+            const day=("0"+d.getDate()).slice(-2);
+            const mStr=monthNames[d.getMonth()];
+            const y=d.getFullYear();
+            document.getElementById("dateOrdered").value=
+              " "+day+" "+mStr+" "+y;
           } else {
-            document.getElementById("dateOrdered").value = "";
+            document.getElementById("dateOrdered").value="";
           }
 
-          // shipDate => check color logic
-          const shipEl = document.getElementById("shipDate");
-          shipEl.style.color = "";
+          const shipEl=document.getElementById("shipDate");
+          shipEl.style.color="";
           if(firstTrans.expected_ship_date){
-            const s = new Date(firstTrans.expected_ship_date*1000);
-            const sDay = ("0" + s.getDate()).slice(-2);
-            const sMonth = monthNames[s.getMonth()];
-            const sYear = s.getFullYear();
-            shipEl.value = " " + sDay + " " + sMonth + " " + sYear;
+            const s=new Date(firstTrans.expected_ship_date*1000);
+            const sDay=("0"+s.getDate()).slice(-2);
+            const sMonth=monthNames[s.getMonth()];
+            const sYear=s.getFullYear();
+            shipEl.value=" "+sDay+" "+sMonth+" "+sYear;
 
-            // If shipped => green
-            if(window.orderIsShipped === "Shipped!"){
-              shipEl.style.color = "#006400";
+            if(window.orderIsShipped==="Shipped!"){
+              // shipped => green
+              shipEl.style.color="#006400";
             } else {
-              // If not shipped => check if due today => orange
-              const today = new Date();
+              // not shipped => check if it's due today => orange
+              const today=new Date();
               today.setHours(0,0,0,0);
-              const dueDate = new Date(sYear, s.getMonth(), sDay);
+              const dueDate=new Date(sYear,s.getMonth(),sDay);
               dueDate.setHours(0,0,0,0);
-              if(dueDate.getTime() === today.getTime()){
-                shipEl.style.color = "orange";
+              if(dueDate.getTime()===today.getTime()){
+                shipEl.style.color="orange";
               } else {
-                shipEl.style.color = "";
+                shipEl.style.color="";
               }
             }
           } else {
-            shipEl.value = "";
+            shipEl.value="";
           }
         } else {
-          document.getElementById("dateOrdered").value = "";
-          const shipEl = document.getElementById("shipDate");
-          shipEl.value = "";
-          shipEl.style.color = "";
+          document.getElementById("dateOrdered").value="";
+          const shipEl=document.getElementById("shipDate");
+          shipEl.value="";
+          shipEl.style.color="";
         }
 
         return data;
       })
-      .catch(err => {
-        console.error("Error fetching Etsy order details:", err);
+      .catch(err=>{
+        console.error("Error fetching Etsy order details:",err);
         return null;
       });
     }
 
-    /***************************************
-     * On DOMContentLoaded => Initialize
-     ***************************************/
-    document.addEventListener("DOMContentLoaded", ()=>{
+    document.addEventListener("DOMContentLoaded",()=>{
       M.AutoInit();
-      document.body.style.opacity = 0;
+      document.body.style.opacity=0;
       setTimeout(()=>{
         loadPositions();
-        document.body.style.opacity = 1;
-      }, 250);
+        document.body.style.opacity=1;
+      },250);
 
       // Open Config => show the config modal
-      document.getElementById("openConfigBtn").addEventListener("click", ()=>{
+      document.getElementById("openConfigBtn").addEventListener("click",()=>{
         populateConfigTable();
-        const modalElem = document.getElementById("configModal");
-        const instance = M.Modal.getInstance(modalElem);
+        const modalElem=document.getElementById("configModal");
+        const instance=M.Modal.getInstance(modalElem);
         instance.open();
       });
-
-      // Save config => store to localStorage
-      document.getElementById("saveConfigBtn").addEventListener("click", ()=>{
+      document.getElementById("saveConfigBtn").addEventListener("click",()=>{
         saveConfiguration();
       });
 
-      // Press Enter in #etsyOrderNumber => fetch & update grid
-      const etsyOrderInput = document.getElementById("etsyOrderNumber");
-      etsyOrderInput.addEventListener("keydown", async (e)=>{
-        if(e.key === "Enter"){
-          const orderNumber = etsyOrderInput.value.trim();
-          if(orderNumber !== ""){
-            const orderData = await pullEtsyOrderDetails(orderNumber);
+      // Press Enter => fetch Etsy order => update grid
+      const etsyOrderInput=document.getElementById("etsyOrderNumber");
+      etsyOrderInput.addEventListener("keydown",async e=>{
+        if(e.key==="Enter"){
+          const orderNumber=etsyOrderInput.value.trim();
+          if(orderNumber!==""){
+            const orderData=await pullEtsyOrderDetails(orderNumber);
             if(orderData){
-              // Now that we have data, update the image grid
               await updateImageGrid(orderData);
             }
           }
@@ -904,36 +891,96 @@
       });
 
       // "Order Link" => open new tab with custom link
-      const orderLinkBtn = document.getElementById("orderLinkBtn");
-      orderLinkBtn.addEventListener("click", ()=>{
-        const baseUrl = "https://www.etsy.com/your/orders/sold?ref=seller-platform-mcnav&order_id=0000000000";
-        const currentOrder = etsyOrderInput.value.trim();
+      const orderLinkBtn=document.getElementById("orderLinkBtn");
+      orderLinkBtn.addEventListener("click",()=>{
+        const baseUrl="https://www.etsy.com/your/orders/sold?ref=seller-platform-mcnav&order_id=0000000000";
+        const currentOrder=etsyOrderInput.value.trim();
         if(!currentOrder){
           console.log("No order number entered.");
           return;
         }
-        const customLink = baseUrl.replace("0000000000", currentOrder);
-        window.open(customLink, "_blank");
+        const customLink=baseUrl.replace("0000000000",currentOrder);
+        window.open(customLink,"_blank");
       });
 
-      // WHEEL-BASED ZOOM for each preview box
-      document.querySelectorAll(".preview-box").forEach(function(box) {
-        box.addEventListener("wheel", function(e) {
+      /****************************************
+       * WHEEL-BASED ZOOM + DRAG PANNING
+       ****************************************/
+      document.querySelectorAll('.preview-box').forEach(function(box) {
+        const img = box.querySelector('img');
+
+        // Wheel zoom
+        box.addEventListener('wheel', function(e) {
           e.preventDefault();
-          const img = box.querySelector("img");
-          if (!img) return;
+          if(!img) return;
+
           let currentScale = parseFloat(img.dataset.scale) || 1;
-          if(e.deltaY < 0){
-            // scroll up => zoom in
-            currentScale *= 1.1;
+          let offsetX = parseFloat(img.dataset.offsetX) || 0;
+          let offsetY = parseFloat(img.dataset.offsetY) || 0;
+
+          if (e.deltaY < 0){
+            currentScale *= 1.1; // zoom in
           } else {
-            // scroll down => zoom out
-            currentScale /= 1.1;
+            currentScale /= 1.1; // zoom out
+            if(currentScale <= 1){
+              currentScale = 1;
+              offsetX = 0;
+              offsetY = 0;
+            }
           }
-          // clamp scale between 1 and 3
-          currentScale = Math.max(1, Math.min(3, currentScale));
+          // clamp scale to [1, 4]
+          currentScale = Math.max(1, Math.min(4, currentScale));
+
           img.dataset.scale = currentScale;
-          img.style.transform = `scale(${currentScale})`;
+          img.dataset.offsetX = offsetX;
+          img.dataset.offsetY = offsetY;
+          img.style.transform = `translate(${offsetX}px, ${offsetY}px) scale(${currentScale})`;
+        });
+
+        // Panning logic
+        let isDragging = false;
+        let lastX = 0;
+        let lastY = 0;
+
+        box.addEventListener('mousedown', function(e) {
+          if(!img) return;
+
+          let currentScale = parseFloat(img.dataset.scale) || 1;
+          if(currentScale <= 1) return; // only drag if scaled
+
+          e.preventDefault();
+          isDragging = true;
+          lastX = e.clientX;
+          lastY = e.clientY;
+        });
+
+        box.addEventListener('mousemove', function(e) {
+          if(!img || !isDragging) return;
+          e.preventDefault();
+
+          let currentScale = parseFloat(img.dataset.scale) || 1;
+          let offsetX = parseFloat(img.dataset.offsetX) || 0;
+          let offsetY = parseFloat(img.dataset.offsetY) || 0;
+
+          const dx = e.clientX - lastX;
+          const dy = e.clientY - lastY;
+
+          offsetX += dx;
+          offsetY += dy;
+
+          img.dataset.offsetX = offsetX;
+          img.dataset.offsetY = offsetY;
+          img.style.transform = `translate(${offsetX}px, ${offsetY}px) scale(${currentScale})`;
+
+          lastX = e.clientX;
+          lastY = e.clientY;
+        });
+
+        box.addEventListener('mouseup', function(e){
+          isDragging = false;
+        });
+        box.addEventListener('mouseleave', function(e){
+          isDragging = false;
         });
       });
     });
