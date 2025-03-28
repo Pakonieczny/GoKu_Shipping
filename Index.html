@@ -194,10 +194,10 @@
     }
 
     /*
-     * Title texts => we have #titleOrderDate2 for shipped_timestamp
+     * Title texts => #titleOrderDate2 remains, but we won't fill it with shipping date
      */
     #titleOrderDate,
-    #titleOrderDate2, /* will display shipped_timestamp if shipped, in bold */
+    #titleOrderDate2,
     #titleShipDate,
     #titleOrderDetails,
     #titleBritesMessages,
@@ -207,9 +207,6 @@
       font-size: 0.7em;
       margin: 0;
       padding: 0;
-    }
-    #titleOrderDate2 {
-      font-weight: bold;
     }
 
     /* Configuration Modal styling */
@@ -265,7 +262,7 @@
   <input type="text" id="etsyOrderNumber" placeholder="Etsy Order Number" />
   <textarea id="orderInformation" placeholder=" Order Information" readonly></textarea>
 
-  <!-- Photo Grid => 2×4, 35px row gap, 5px col gap, scaled 1.35, 1px border boxes -->
+  <!-- Photo Grid => 2×4, scaled 1.25, 1px border boxes -->
   <div id="Photo_Grid">
     <div id="photoGridContainer">
       <div class="grid-cell">
@@ -320,7 +317,7 @@
   <!-- Customer Message History => read/write, 0.9em -->
   <textarea id="customerMessageHistory"></textarea>
 
-  <!-- Title texts, #titleOrderDate2 => bold, used for shipped_timestamp -->
+  <!-- Title texts -->
   <div id="titleOrderDate">Order Date:</div>
   <div id="titleOrderDate2" style="font-weight:bold;"></div>
   <div id="titleShipDate">Ship By:</div>
@@ -364,17 +361,15 @@
 
   <script>
     /*
-     * COMPLETELY updated code:
-     * - #titleOrderDate2 now displays shipped_timestamp in bold 
-     *   if is_shipped===true => "Shipped On: DD Mmm YYYY"
-     * - If not shipped => #titleOrderDate2 is empty.
+     * Only changes:
+     *   1) Removed all shipped_timestamp references, including window.orderShippedTimestamp.
+     *   2) No longer appends shipped date to “Shipping Status” in the Order Details text.
      */
 
     window.orderName="";
     window.orderStatus="";
     window.orderIsShipped="";
     window.cachedOrderItems=[];
-    window.orderShippedTimestamp=null;
 
     /********** Check for Access Token / Code **********/
     (function(){
@@ -439,7 +434,6 @@
 
     /*
      * Configuration system
-     *   includes #titleOrderDate2 so you can position it if desired
      */
     const configComponentIDs=[
       "connectEtsyBtn","openConfigBtn","orderLinkBtn","etsyOrderNumber","orderInformation",
@@ -527,11 +521,8 @@
 
     /************************************************************************
      * showItemDetails(index):
-     *   " ORDER FROM: [name]"
-     *   " Order Status: [status]"
-     *   " Shipping Status: [Shipped! + shipped_timestamp if available]"
-     *   blank line
-     *   " ORDER DETAILS:"
+     *   • Removed shipped date logic.
+     *   • We still say "Shipping Status: Shipped!" or "Not Shipped" with no date appended.
      ************************************************************************/
     function showItemDetails(index){
       if(!window.cachedOrderItems||!window.cachedOrderItems[index]){
@@ -552,18 +543,9 @@
         details+=" Order Status: "+window.orderStatus+"\n";
       }
 
-      // SHIPPING STATUS => if "Shipped!", also date => "Shipping Status: Shipped! 24 Mar 2023"
+      // SHIPPING STATUS => no date
       if(window.orderIsShipped==="Shipped!"){
-        let shippedDateString="";
-        if(window.orderShippedTimestamp){
-          const d=new Date(window.orderShippedTimestamp*1000);
-          const monthNames=["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
-          const day=("0"+d.getDate()).slice(-2);
-          const mStr=monthNames[d.getMonth()];
-          const y=d.getFullYear();
-          shippedDateString=" "+day+" "+mStr+" "+y; 
-        }
-        details+=" Shipping Status: Shipped!"+shippedDateString+"\n\n";
+        details+=" Shipping Status: Shipped!\n\n";
       }
       else if(window.orderIsShipped){
         details+=" Shipping Status: "+window.orderIsShipped+"\n\n";
@@ -659,12 +641,12 @@
             try{
               const images=await fetchListingImages(item.listing_id);
               if(images && images.length>0){
-                cell.innerHTML=`<img src="${images[0].url_fullxfull}" alt="Listing Image ${i}">`;
+                cell.innerHTML = `<img src="${images[0].url_fullxfull}" alt="Listing Image ${i}">`;
               } else {
                 cell.innerHTML="No images found";
               }
             }catch(err){
-              console.error(`Error fetching listing ${item.listing_id}:`,err);
+              console.error(`Error fetching listing ${item.listing_id}:`, err);
               cell.innerHTML="Error loading image";
             }
             cell.style.cursor="pointer";
@@ -703,7 +685,9 @@
     }
 
     /*
-     * pullEtsyOrderDetails => We'll also update #titleOrderDate2 if shipped
+     * pullEtsyOrderDetails
+     *   • Removes all usage of shipped_timestamp.
+     *   • We still set window.orderIsShipped = "Shipped!" / "Not Shipped".
      */
     function pullEtsyOrderDetails(orderNumber){
       console.log("Pulling Etsy order details for order number:",orderNumber);
@@ -716,21 +700,15 @@
         console.log("Etsy Order Data:",data);
         document.getElementById("orderInformation").value=" "+JSON.stringify(data,null,2);
 
-        // default => clear #titleOrderDate2
+        // Clear #titleOrderDate2 so we don’t show a shipping date
         const titleDate2=document.getElementById("titleOrderDate2");
-        titleDate2.textContent=""; 
+        titleDate2.textContent="";
 
-        if(data.name){
-          window.orderName=data.name;
-        } else {
-          window.orderName="";
-        }
-        if(data.status){
-          window.orderStatus=data.status;
-        } else {
-          window.orderStatus="";
-        }
+        // Basic fields
+        window.orderName   = data.name   || "";
+        window.orderStatus = data.status || "";
 
+        // is_shipped => just "Shipped!" or "Not Shipped"
         if(data.is_shipped===true){
           window.orderIsShipped="Shipped!";
         } else if(data.is_shipped===false){
@@ -739,40 +717,16 @@
           window.orderIsShipped="";
         }
 
-        // Check top-level shipped_timestamp or first transaction shipped_timestamp
-        let foundStamp=null;
-        if(data.shipped_timestamp && data.is_shipped===true){
-          foundStamp=data.shipped_timestamp;
-        } 
-        else if(data.transactions 
-                && Array.isArray(data.transactions) 
-                && data.transactions.length>0
-                && data.transactions[0].shipped_timestamp 
-                && data.is_shipped===true){
-          foundStamp=data.transactions[0].shipped_timestamp;
-        }
-        window.orderShippedTimestamp=foundStamp;
-
-        // If shipped => display in #titleOrderDate2 => "Shipped On: DD Mmm YYYY"
-        if(window.orderIsShipped==="Shipped!" && window.orderShippedTimestamp){
-          const d=new Date(window.orderShippedTimestamp*1000);
-          const monthNames=["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
-          const day=("0"+d.getDate()).slice(-2);
-          const mStr=monthNames[d.getMonth()];
-          const y=d.getFullYear();
-          titleDate2.textContent = `Shipped On: ${day} ${mStr} ${y}`; 
-        }
-
+        // Buyer message
         const msgBox=document.getElementById("customerMessageHistory");
-        if(data.message_from_buyer){
-          msgBox.value=data.message_from_buyer+"\n";
-        } else{
-          msgBox.value="";
-        }
+        msgBox.value = data.message_from_buyer ? data.message_from_buyer + "\n" : "";
 
+        // Order date & expected ship date
         if(data.transactions && data.transactions.length>0){
           const firstTrans=data.transactions[0];
           const monthNames=["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+
+          // Order placed date
           if(firstTrans.created_timestamp){
             const d=new Date(firstTrans.created_timestamp*1000);
             const day=("0"+d.getDate()).slice(-2);
@@ -782,6 +736,8 @@
           } else {
             document.getElementById("dateOrdered").value="";
           }
+
+          // "Ship By" date
           const shipEl=document.getElementById("shipDate");
           shipEl.style.color="";
           if(firstTrans.expected_ship_date){
@@ -790,15 +746,16 @@
             const sMonth=monthNames[s.getMonth()];
             const sYear=s.getFullYear();
             shipEl.value=" "+sDay+" "+sMonth+" "+sYear;
+
+            // If already shipped, show "Ship By" in green
             if(window.orderIsShipped==="Shipped!"){
               shipEl.style.color="#006400";
-            } else{
-              shipEl.style.color="";
             }
           } else{
             shipEl.value="";
           }
         } else{
+          // No transaction details => blank out date fields
           document.getElementById("dateOrdered").value="";
           const shipEl=document.getElementById("shipDate");
           shipEl.value="";
@@ -875,7 +832,7 @@
           // clamp scale between 1 and 3
           currentScale = Math.max(1, Math.min(3, currentScale));
           img.dataset.scale = currentScale;
-          img.style.transform = `scale(${currentScale})`;
+          img.style.transform = \`scale(\${currentScale})\`;
         });
       });
     });
