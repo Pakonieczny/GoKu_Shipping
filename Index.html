@@ -233,7 +233,7 @@
 </head>
 
 <body>
-  <!-- WRAP ALL SCREEN ONE CONTENT IN THIS CONTAINER -->
+  <!-- WRAP SCREEN ONE CONTENT IN THIS CONTAINER -->
   <div id="screenOne">
 
     <!-- Main UI Buttons -->
@@ -357,10 +357,9 @@
   ></script>
 
   <script>
-    // We'll store the top-level is_gift / gift_message in these global vars
+    /********** Global Vars for Etsy and Order **********/
     window.receiptIsGift = null;
     window.receiptGiftMessage = null;
-
     window.orderName = "";
     window.orderStatus = "";
     window.orderIsShipped = "";
@@ -376,24 +375,24 @@
         window.history.replaceState({}, document.title, window.location.pathname);
         M.toast({html:"Connection Successful!"});
         console.log("Access token received:",accessToken);
-      }else{
+      } else {
         const authCode = urlParams.get("code");
         if(authCode){
-          const storedCodeVerifier=localStorage.getItem("etsy_code_verifier");
+          const storedCodeVerifier = localStorage.getItem("etsy_code_verifier");
           if(storedCodeVerifier){
-            window.location.href = 
+            window.location.href =
               "/.netlify/functions/exchangeToken?code=" +
               encodeURIComponent(authCode) +
               "&code_verifier=" +
               encodeURIComponent(storedCodeVerifier);
-          }else{
+          } else {
             console.error("No code verifier found in localStorage.");
           }
         }
       }
     })();
 
-    /* OAuth Helpers for code challenge, code verifier, etc. */
+    /********** OAuth Helpers for code challenge, code verifier, etc. **********/
     function generateRandomString(length){
       const chars="ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
       let text="";
@@ -405,36 +404,45 @@
     async function generateCodeChallenge(codeVerifier){
       const encoder=new TextEncoder();
       const data=encoder.encode(codeVerifier);
-      const digest=await crypto.subtle.digest("SHA-256",data);
+      const digest=await crypto.subtle.digest("SHA-256", data);
       return btoa(String.fromCharCode(...new Uint8Array(digest)))
               .replace(/\+/g,"-")
               .replace(/\//g,"_")
               .replace(/=+$/,"");
     }
 
-    /* Connect to Etsy button => initiate OAuth */
-    document.getElementById("connectEtsyBtn").addEventListener("click",async ()=>{
-      const codeVerifier=generateRandomString(64);
-      localStorage.setItem("etsy_code_verifier",codeVerifier);
-      const codeChallenge=await generateCodeChallenge(codeVerifier);
-      const state="randomState123";
-      const scope="listings_w listings_r transactions_r transactions_w";
-      const CLIENT_ID="k75zdspz4r99txpqdji7i2em"; /* Example – replace with your actual client ID */
-      const redirectUri="https://gokushipping.netlify.app"; /* Use your real redirect URL */
-      const etsyAuthUrl=
-        "https://www.etsy.com/oauth/connect?response_type=code"+
-        `&client_id=${CLIENT_ID}`+
-        `&redirect_uri=${encodeURIComponent(redirectUri)}`+
-        `&scope=${encodeURIComponent(scope)}`+
-        `&state=${state}`+
-        `&code_challenge=${encodeURIComponent(codeChallenge)}`+
-        "&code_challenge_method=S256";
-      console.log("Redirecting to Etsy OAuth URL:",etsyAuthUrl);
-      window.location.href=etsyAuthUrl;
+    /********** Connect to Etsy Button => Initiate OAuth **********/
+    document.addEventListener("DOMContentLoaded", () => {
+      const connectBtn = document.getElementById("connectEtsyBtn");
+      if(connectBtn){
+        connectBtn.addEventListener("click", async ()=>{
+          const codeVerifier = generateRandomString(64);
+          localStorage.setItem("etsy_code_verifier", codeVerifier);
+          const codeChallenge = await generateCodeChallenge(codeVerifier);
+          const state = "randomState123";
+          const scope = "listings_w listings_r transactions_r transactions_w";
+          // Replace with your actual client ID
+          const CLIENT_ID="k75zdspz4r99txpqdji7i2em";
+          // Replace with your actual redirect URI
+          const redirectUri="https://gokushipping.netlify.app";
+
+          const etsyAuthUrl =
+            "https://www.etsy.com/oauth/connect?response_type=code"+
+            `&client_id=${CLIENT_ID}`+
+            `&redirect_uri=${encodeURIComponent(redirectUri)}`+
+            `&scope=${encodeURIComponent(scope)}`+
+            `&state=${state}`+
+            `&code_challenge=${encodeURIComponent(codeChallenge)}`+
+            "&code_challenge_method=S256";
+
+          console.log("Redirecting to Etsy OAuth URL:", etsyAuthUrl);
+          window.location.href = etsyAuthUrl;
+        });
+      }
     });
 
-    /* CONFIGURATION SYSTEM */
-    const configComponentIDs=[
+    /********** CONFIGURATION SYSTEM **********/
+    const configComponentIDs = [
       "connectEtsyBtn","openConfigBtn","orderLinkBtn","etsyOrderNumber","orderInformation",
       "Photo_Grid",
       "quantityCell0","quantityCell1","quantityCell2","quantityCell3","quantityCell4","quantityCell5","quantityCell6","quantityCell7",
@@ -460,19 +468,19 @@
       });
     }
     function populateConfigTable(){
-      const tbody=document.getElementById("configTable").querySelector("tbody");
+      const tbody = document.getElementById("configTable").querySelector("tbody");
       tbody.innerHTML="";
       configComponentIDs.forEach(id=>{
-        const el=document.getElementById(id);
+        const el = document.getElementById(id);
         if(!el) return;
-        const compName=el.textContent.trim() || el.value?.trim() || id;
-        const cs=window.getComputedStyle(el);
-        const leftVal=(cs.left==="auto")?0:parseInt(cs.left,10);
-        const topVal=(cs.top==="auto")?0:parseInt(cs.top,10);
-        const widthVal=(cs.width==="auto")?0:parseInt(cs.width,10);
-        const heightVal=(cs.height==="auto")?0:parseInt(cs.height,10);
+        const compName = el.textContent.trim() || el.value?.trim() || id;
+        const cs = window.getComputedStyle(el);
+        const leftVal = (cs.left==="auto")?0:parseInt(cs.left,10);
+        const topVal = (cs.top==="auto")?0:parseInt(cs.top,10);
+        const widthVal = (cs.width==="auto")?0:parseInt(cs.width,10);
+        const heightVal = (cs.height==="auto")?0:parseInt(cs.height,10);
 
-        const row=document.createElement("tr");
+        const row = document.createElement("tr");
         row.innerHTML=`
           <td>${compName}</td>
           <td><input type="number" value="${leftVal}" data-id="${id}" class="left-input"></td>
@@ -519,7 +527,7 @@
       console.log("Configuration saved.");
     }
 
-    /* showItemDetails(index): */
+    /********** Show Item Details **********/
     function showItemDetails(index){
       if(!window.cachedOrderItems || !window.cachedOrderItems[index]){
         console.warn("No item at index:", index);
@@ -604,7 +612,7 @@
       document.getElementById("orderDetails").value=details;
     }
 
-    /* fetchListingImages(listingId) */
+    /********** Fetch Listing Images **********/
     async function fetchListingImages(listingId){
       const response=await fetch(`/.netlify/functions/etsyImages?listingId=${listingId}`,{
         headers:{"access-token":localStorage.getItem("access_token")}
@@ -616,6 +624,7 @@
       return data.results;
     }
 
+    /********** Update Image Grid **********/
     async function updateImageGrid(data){
       let items=[];
 
@@ -710,6 +719,7 @@
       }
     }
 
+    /********** Pull Etsy Order Details **********/
     function pullEtsyOrderDetails(orderNumber){
       console.log("Pulling Etsy order details for order number:",orderNumber);
       const token=localStorage.getItem("access_token");
@@ -833,40 +843,58 @@
       });
     }
 
-    /* 
-      The function to load our second screen's markup (screenTwo.html).
-      We'll hide #screenOne, then reveal #screenTwo after injection.
-    */
+    /********** DOMParser Approach to load screenTwo.html **********/
     async function loadScreenTwo() {
       try {
+        // Step 1: Fetch the raw HTML
         const response = await fetch('screenTwo.html');
-        const screenTwoHTML = await response.text();
+        let screenTwoHTML = await response.text();
 
-        // Inject the content into #secondaryContainer
-        document.getElementById('secondaryContainer').innerHTML = screenTwoHTML;
+        // Step 2: Parse using DOMParser
+        const parser = new DOMParser();
+        const doc = parser.parseFromString(screenTwoHTML, 'text/html');
 
-        // Hide #screenOne
+        // Step 3: Collect <script> tags
+        const scriptEls = doc.querySelectorAll('script');
+
+        // Step 4: Remove those <script> tags from the doc
+        // so we can safely inject only the "markup" portion via .innerHTML
+        scriptEls.forEach(scriptEl => scriptEl.remove());
+
+        // Step 5: Now doc only contains the HTML markup
+        // We'll store it in finalHTML
+        const finalHTML = doc.body.innerHTML;
+
+        // Step 6: Insert that into #secondaryContainer
+        const container = document.getElementById('secondaryContainer');
+        container.innerHTML = finalHTML;
+
+        // Step 7: Hide #screenOne, show #screenTwo
         const screenOneDiv = document.getElementById('screenOne');
         if(screenOneDiv) {
           screenOneDiv.style.display = 'none';
         }
 
-        // Show #screenTwo
         const screenTwoDiv = document.getElementById('screenTwo');
         if(screenTwoDiv) {
           screenTwoDiv.style.display = 'block';
         }
 
-        // If there's an init function in screenTwo.html, call it now
-        if(typeof initScreenTwo === 'function'){
-          initScreenTwo();
-        }
+        // Step 8: Evaluate each script's text so it actually runs
+        scriptEls.forEach(oldScript => {
+          const newScript = document.createElement('script');
+          // If oldScript has a src, do: newScript.src = oldScript.src
+          // Otherwise, just use its inline code
+          newScript.textContent = oldScript.textContent;
+          document.body.appendChild(newScript);
+        });
       } catch(err) {
         console.error('Error loading screenTwo:', err);
       }
     }
 
-    document.addEventListener("DOMContentLoaded",()=>{
+    /********** DOMContentLoaded: Attach handlers, do init, etc. **********/
+    document.addEventListener("DOMContentLoaded", ()=>{
       M.AutoInit();
       document.body.style.opacity=0;
       setTimeout(()=>{
@@ -874,45 +902,57 @@
         document.body.style.opacity=1;
       },250);
 
-      // Open config modal
-      document.getElementById("openConfigBtn").addEventListener("click",()=>{
-        populateConfigTable();
-        const modalElem=document.getElementById("configModal");
-        const instance=M.Modal.getInstance(modalElem);
-        instance.open();
-      });
-      document.getElementById("saveConfigBtn").addEventListener("click",()=>{
-        saveConfiguration();
-      });
+      // Hook up "Open Config"
+      const openCfgBtn = document.getElementById("openConfigBtn");
+      if(openCfgBtn){
+        openCfgBtn.addEventListener("click", ()=>{
+          populateConfigTable();
+          const modalElem = document.getElementById("configModal");
+          const instance = M.Modal.getInstance(modalElem);
+          instance.open();
+        });
+      }
+
+      // Hook up "Save Config"
+      const saveCfgBtn = document.getElementById("saveConfigBtn");
+      if(saveCfgBtn){
+        saveCfgBtn.addEventListener("click", ()=>{
+          saveConfiguration();
+        });
+      }
 
       // Press Enter => fetch Etsy order => update grid
-      const etsyOrderInput=document.getElementById("etsyOrderNumber");
-      etsyOrderInput.addEventListener("keydown",async e=>{
-        if(e.key==="Enter"){
-          const orderNumber=etsyOrderInput.value.trim();
-          if(orderNumber!==""){
-            const orderData=await pullEtsyOrderDetails(orderNumber);
-            if(orderData){
-              await updateImageGrid(orderData);
+      const etsyOrderInput = document.getElementById("etsyOrderNumber");
+      if(etsyOrderInput){
+        etsyOrderInput.addEventListener("keydown", async e=>{
+          if(e.key==="Enter"){
+            const orderNumber=etsyOrderInput.value.trim();
+            if(orderNumber!==""){
+              const orderData=await pullEtsyOrderDetails(orderNumber);
+              if(orderData){
+                await updateImageGrid(orderData);
+              }
             }
           }
-        }
-      });
+        });
+      }
 
-      // "Order Link" => open new tab with custom link
-      const orderLinkBtn=document.getElementById("orderLinkBtn");
-      orderLinkBtn.addEventListener("click",()=>{
-        const baseUrl="https://www.etsy.com/your/orders/sold?ref=seller-platform-mcnav&order_id=0000000000";
-        const currentOrder=etsyOrderInput.value.trim();
-        if(!currentOrder){
-          console.log("No order number entered.");
-          return;
-        }
-        const customLink=baseUrl.replace("0000000000",currentOrder);
-        window.open(customLink,"_blank");
-      });
+      // "Order Link" => open new tab
+      const orderLinkBtn = document.getElementById("orderLinkBtn");
+      if(orderLinkBtn){
+        orderLinkBtn.addEventListener("click", ()=>{
+          const baseUrl = "https://www.etsy.com/your/orders/sold?ref=seller-platform-mcnav&order_id=0000000000";
+          const currentOrder = etsyOrderInput.value.trim();
+          if(!currentOrder){
+            console.log("No order number entered.");
+            return;
+          }
+          const customLink = baseUrl.replace("0000000000", currentOrder);
+          window.open(customLink, "_blank");
+        });
+      }
 
-      /* WHEEL-BASED ZOOM + DRAG PANNING for each preview-box */
+      // WHEEL-BASED ZOOM + DRAG PANNING
       document.querySelectorAll('.preview-box').forEach(function(box) {
         let isDragging=false;
         let lastX=0;
@@ -988,11 +1028,13 @@
         });
       });
 
-      // "Go to Screen Two" button => load screenTwo.html
+      // "Go to Screen Two" button => loadScreenTwo via DOMParser
       const goBtn = document.getElementById('goScreenTwoBtn');
-      goBtn.addEventListener('click', ()=>{
-        loadScreenTwo();
-      });
+      if(goBtn){
+        goBtn.addEventListener('click', ()=>{
+          loadScreenTwo();
+        });
+      }
     });
   </script>
 </body>
