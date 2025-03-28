@@ -528,7 +528,7 @@
       console.log("Configuration saved.");
     }
 
-    /********** Show Item Details (Reduced spacing & conditional extra space) **********/
+    /********** Show Item Details (Spacing logic for tracking/no tracking) **********/
     function showItemDetails(index){
       if(!window.cachedOrderItems || !window.cachedOrderItems[index]){
         console.warn("No item at index:", index);
@@ -547,7 +547,7 @@
         details += " Order Status: "+window.orderStatus+"\n";
       }
 
-      // Eliminate vertical space => single \n
+      // Single \n after "Shipping Status:"
       if(window.orderIsShipped==="Shipped!"){
         details += " Shipping Status:\n";
       } else if(window.orderIsShipped){
@@ -564,13 +564,19 @@
             details += " Carrier Name: "+ship.carrier_name+"\n";
           }
           if(ship.tracking_code){
-            // If tracking code is present => add an extra blank line after
+            // If tracking code => add extra blank line
             details += " Tracking Number: "+ship.tracking_code+"\n\n";
+          } else {
+            // If NO tracking code => add a single newline
+            details += "\n";
           }
+        } else {
+          // If there's no shipments at all => still add a single newline
+          details += "\n";
         }
       }
 
-      // We'll keep " ORDER DETAILS:\n\n" after the above
+      // "ORDER DETAILS:" => always appended next
       details += " ORDER DETAILS:\n\n";
 
       // Title => first 4 words
