@@ -32,10 +32,6 @@
       top: 80px;
     }
 
-    /*
-     * "Order Link" button (#orderLinkBtn)
-     *   - smaller globe icon (14×14)
-     */
     #orderLinkBtn {
       position: absolute;
       left: 120px;
@@ -52,11 +48,6 @@
       display: block;
     }
 
-    /*
-     * Etsy Order Number text box
-     *   - no extra space => underline right beneath
-     *   - fully left-justified
-     */
     #etsyOrderNumber {
       position: absolute;
       left: 50px;
@@ -85,9 +76,6 @@
       resize: none;
     }
 
-    /*
-     * Photo Grid => scaled 1.25, 2×4, 35px row gap, 5px col gap
-     */
     #Photo_Grid {
       position: absolute;
       left: 400px;
@@ -126,9 +114,7 @@
       transition: transform 0.2s ease; /* for smooth wheel zoom */
     }
 
-    /*
-     * 16 text-box-absolute => 0.9em
-     */
+    /* 16 text-box-absolute => 0.9em */
     .text-box-absolute {
       position: absolute;
       border: none !important;
@@ -161,7 +147,7 @@
       overflow-y: auto;
     }
 
-    /* read/write #customerMessageHistory => 0.9em */
+    /* Customer Message History => read/write, 0.9em */
     #customerMessageHistory {
       position: absolute;
       border: 1px solid black;
@@ -177,9 +163,7 @@
       overflow-y: auto;
     }
 
-    /*
-     * single-line text boxes => bigger & bold, read-only
-     */
+    /* single-line text boxes => bigger & bold, read-only */
     #dateOrdered,
     #shipDate {
       position: absolute;
@@ -193,9 +177,7 @@
       font-weight: bold;
     }
 
-    /*
-     * Title texts => #titleOrderDate2 used for shipped_timestamp
-     */
+    /* Title texts => #titleOrderDate2 used for shipped_timestamp */
     #titleOrderDate,
     #titleOrderDate2, /* will display shipped_timestamp if shipped, in bold */
     #titleShipDate,
@@ -355,6 +337,17 @@
     </div>
   </div>
 
+  <!-- 
+       Here's our new container for screenTwo.html.
+       We'll load "screenTwo.html" inside here dynamically.
+  -->
+  <div id="secondaryContainer"></div>
+
+  <!-- Add a button to show the second screen -->
+  <button id="goScreenTwoBtn" class="btn" style="position:absolute; left:180px; top:80px;">
+    Go to Screen Two
+  </button>
+
   <!-- jQuery & Materialize -->
   <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
   <script
@@ -362,16 +355,6 @@
   ></script>
 
   <script>
-    /********************************************************
-     * This script fetches Etsy order details, loads images,
-     * handles user interaction, and provides a config system
-     * for repositioning elements on the page. We skip
-     * "Shipped!" in the Order Details, handle is_gift/gift_message,
-     * color the Ship By date, etc. 
-     * 
-     * We also restore wheel-based zoom & click-drag panning.
-     ********************************************************/
-
     // We'll store the top-level is_gift / gift_message in these global vars
     window.receiptIsGift = null;
     window.receiptGiftMessage = null;
@@ -448,9 +431,7 @@
       window.location.href=etsyAuthUrl;
     });
 
-    /***********************************************
-     * CONFIGURATION SYSTEM
-     ***********************************************/
+    /* CONFIGURATION SYSTEM */
     const configComponentIDs=[
       "connectEtsyBtn","openConfigBtn","orderLinkBtn","etsyOrderNumber","orderInformation",
       "Photo_Grid",
@@ -458,7 +439,8 @@
       "metalCell0","metalCell1","metalCell2","metalCell3","metalCell4","metalCell5","metalCell6","metalCell7",
       "orderDetails","customerMessageHistory","dateOrdered","shipDate",
       "titleOrderDate","titleOrderDate2","titleShipDate","titleOrderDetails",
-      "titleBritesMessages","titlePurchasedItems","titleOrderNumber"
+      "titleBritesMessages","titlePurchasedItems","titleOrderNumber",
+      "goScreenTwoBtn"  /* Include the new button so you can position it too */
     ];
     function loadPositions(){
       configComponentIDs.forEach(id=>{
@@ -535,12 +517,7 @@
       console.log("Configuration saved.");
     }
 
-    /***************************************************************
-     * showItemDetails(index):
-     *   1) Skips "Shipped!" in the text box
-     *   2) Always shows "Shipping Status:"
-     *   3) Adds "Marked as Gift:" + "Gift Message:" below personalization
-     ***************************************************************/
+    /* showItemDetails(index): */
     function showItemDetails(index){
       if(!window.cachedOrderItems || !window.cachedOrderItems[index]){
         console.warn("No item at index:", index);
@@ -625,9 +602,7 @@
       document.getElementById("orderDetails").value=details;
     }
 
-    /**********************************************
-     * fetchListingImages(listingId)
-     **********************************************/
+    /* fetchListingImages(listingId) */
     async function fetchListingImages(listingId){
       const response=await fetch(`/.netlify/functions/etsyImages?listingId=${listingId}`,{
         headers:{"access-token":localStorage.getItem("access_token")}
@@ -639,11 +614,6 @@
       return data.results;
     }
 
-    /**********************************************
-     * updateImageGrid(data):
-     *  => loads up to 8 images, sets on-click => showItemDetails(i)
-     *  => ensures each image starts with data-scale=1, etc.
-     **********************************************/
     async function updateImageGrid(data){
       let items=[];
 
@@ -738,9 +708,6 @@
       }
     }
 
-    /**********************************************
-     * pullEtsyOrderDetails(orderNumber):
-     **********************************************/
     function pullEtsyOrderDetails(orderNumber){
       console.log("Pulling Etsy order details for order number:",orderNumber);
       const token=localStorage.getItem("access_token");
@@ -864,6 +831,34 @@
       });
     }
 
+    /* 
+      The magic to load our second screen's markup (screenTwo.html).
+      We'll hide screenOne and show screenTwo after loading.
+    */
+    async function loadScreenTwo() {
+      try {
+        // Grab the HTML from screenTwo.html
+        const response = await fetch('screenTwo.html');
+        const screenTwoHTML = await response.text();
+
+        // Inject it into #secondaryContainer
+        document.getElementById('secondaryContainer').innerHTML = screenTwoHTML;
+
+        // Hide screenOne and show #screenTwo
+        document.getElementById('screenOne').style.display = 'none';
+        document.getElementById('screenTwo').style.display = 'block';
+
+        // If there's an initScreenTwo function in the injected markup, call it
+        // (You can define it inside screenTwo.html if needed)
+        if(typeof initScreenTwo === 'function'){
+          initScreenTwo();
+        }
+      } catch(err) {
+        console.error('Error loading screenTwo:', err);
+      }
+    }
+
+    // On DOM load
     document.addEventListener("DOMContentLoaded",()=>{
       M.AutoInit();
       document.body.style.opacity=0;
@@ -910,11 +905,8 @@
         window.open(customLink,"_blank");
       });
 
-      /****************************************
-       * WHEEL-BASED ZOOM + DRAG PANNING
-       ****************************************/
+      /* WHEEL-BASED ZOOM + DRAG PANNING for each preview-box */
       document.querySelectorAll('.preview-box').forEach(function(box) {
-        // We'll parse the scale/offset from dataset each time
         let isDragging=false;
         let lastX=0;
         let lastY=0;
@@ -949,7 +941,6 @@
         box.addEventListener('mousedown', function(e){
           const img = box.querySelector('img');
           if(!img) return;
-
           let currentScale=parseFloat(img.dataset.scale)||1;
           if(currentScale<=1) return;
           e.preventDefault();
@@ -982,12 +973,27 @@
         });
 
         // Mouse up or leave => stop dragging
-        box.addEventListener('mouseup', function(e){
+        box.addEventListener('mouseup', function(){
           isDragging=false;
         });
-        box.addEventListener('mouseleave', function(e){
+        box.addEventListener('mouseleave', function(){
           isDragging=false;
         });
+      });
+
+      // Hook up "Go to Screen Two" button
+      const goBtn = document.getElementById('goScreenTwoBtn');
+      goBtn.addEventListener('click', ()=>{
+        // We must define "screenOne" as everything on the original screen
+        // so we can hide it before showing "screenTwo"
+        // Easiest way is to wrap all original content in <div id="screenOne">.
+        // For this example, let's do it in code:
+        let screenOne = document.createElement('div');
+        screenOne.id = 'screenOne';
+        // We’ll just assume all the original content is already in #screenOne
+        // If not, you can wrap the entire body with a big <div> except the #secondaryContainer.
+        // Then call loadScreenTwo() to swap.
+        loadScreenTwo();
       });
     });
   </script>

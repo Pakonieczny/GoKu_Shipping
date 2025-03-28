@@ -1,0 +1,28 @@
+<!-- screenTwo.html (no <html> or <body> tags, just the inner markup) -->
+<div id="screenTwo" style="display:none;">
+  <h2>Welcome to Screen Two!</h2>
+  <p>This is your brand-new, dynamically loaded UI.</p>
+
+  <!-- Example button to go back to Screen One -->
+  <button id="goBackBtn">Return to Screen One</button>
+
+  <script>
+    // If you need special JS for Screen Two, define it here.
+    // This function is invoked after screenTwo.html is injected.
+    function initScreenTwo() {
+      console.log("Screen Two loaded!");
+      const btn = document.getElementById('goBackBtn');
+      if (btn) {
+        btn.addEventListener('click', function() {
+          // Hide screenTwo, show screenOne
+          document.getElementById('screenTwo').style.display = 'none';
+          // If you have #screenOne in your Index.html, show it:
+          const screenOneDiv = document.getElementById('screenOne');
+          if (screenOneDiv) {
+            screenOneDiv.style.display = 'block';
+          }
+        });
+      }
+    }
+  </script>
+</div>
