@@ -374,7 +374,7 @@
         if(authCode){
           const storedCodeVerifier = localStorage.getItem("etsy_code_verifier");
           if(storedCodeVerifier){
-            window.location.href = 
+            window.location.href =
               "/.netlify/functions/exchangeToken?code=" +
               encodeURIComponent(authCode) +
               "&code_verifier=" +
@@ -414,7 +414,7 @@
       const scope = "listings_w listings_r transactions_r transactions_w";
       const CLIENT_ID = "k75zdspz4r99txpqdji7i2em";
       const redirectUri = "https://gokushipping.netlify.app";
-      const etsyAuthUrl = 
+      const etsyAuthUrl =
         "https://www.etsy.com/oauth/connect?response_type=code" +
         `&client_id=${CLIENT_ID}` +
         `&redirect_uri=${encodeURIComponent(redirectUri)}` +
@@ -704,6 +704,8 @@
 
     /**********************************************
      * pullEtsyOrderDetails(orderNumber):
+     * Now includes logic to color "Ship By:" orange
+     * if due today but not shipped.
      **********************************************/
     function pullEtsyOrderDetails(orderNumber){
       console.log("Pulling Etsy order details for order number:", orderNumber);
@@ -796,6 +798,7 @@
           // shipDate
           const shipEl = document.getElementById("shipDate");
           shipEl.style.color = "";
+
           if(firstTrans.expected_ship_date){
             const s = new Date(firstTrans.expected_ship_date*1000);
             const sDay = ("0" + s.getDate()).slice(-2);
@@ -803,11 +806,25 @@
             const sYear = s.getFullYear();
             shipEl.value = " " + sDay + " " + sMonth + " " + sYear;
 
-            // If actually shipped, color #shipDate green
+            // 1) Check if shipped => color green
             if(window.orderIsShipped === "Shipped!"){
               shipEl.style.color = "#006400";
             } else {
-              shipEl.style.color = "";
+              // 2) If not shipped, check if it's due *today*
+              const today = new Date();
+              today.setHours(0,0,0,0);
+
+              // Compare ignoring time
+              const dueDate = new Date(sYear, s.getMonth(), sDay);
+              dueDate.setHours(0,0,0,0);
+
+              if(dueDate.getTime() === today.getTime()){
+                // If due today but not shipped => color orange
+                shipEl.style.color = "orange";
+              } else {
+                // Not shipped, not due today => default
+                shipEl.style.color = "";
+              }
             }
           } else {
             shipEl.value = "";
