@@ -552,26 +552,6 @@
         details+=" Order Status: "+window.orderStatus+"\n";
       }
 
-      // SHIPPING STATUS => if "Shipped!", also date => "Shipping Status: Shipped! 24 Mar 2023"
-      if(window.orderIsShipped==="Shipped!"){
-        let shippedDateString="";
-        if(window.orderShippedTimestamp){
-          const d=new Date(window.orderShippedTimestamp*1000);
-          const monthNames=["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
-          const day=("0"+d.getDate()).slice(-2);
-          const mStr=monthNames[d.getMonth()];
-          const y=d.getFullYear();
-          shippedDateString=" "+day+" "+mStr+" "+y; 
-        }
-        details+=" Shipping Status: Shipped!"+shippedDateString+"\n\n";
-      }
-      else if(window.orderIsShipped){
-        details+=" Shipping Status: "+window.orderIsShipped+"\n\n";
-      }
-      else {
-        details+="\n";
-      }
-
       details+=" ORDER DETAILS:\n\n";
 
       // Title => first 4 words
