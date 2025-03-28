@@ -846,9 +846,11 @@
     /********** DOMParser Approach to load screenTwo.html **********/
     async function loadScreenTwo() {
       try {
+        console.log("loadScreenTwo() called");
         // Step 1: Fetch the raw HTML
         const response = await fetch('screenTwo.html');
         let screenTwoHTML = await response.text();
+        console.log("Fetched screenTwo.html content:", screenTwoHTML);
 
         // Step 2: Parse using DOMParser
         const parser = new DOMParser();
@@ -856,13 +858,12 @@
 
         // Step 3: Collect <script> tags
         const scriptEls = doc.querySelectorAll('script');
+        console.log("Found", scriptEls.length, "<script> tags in screenTwo.html");
 
         // Step 4: Remove those <script> tags from the doc
-        // so we can safely inject only the "markup" portion via .innerHTML
         scriptEls.forEach(scriptEl => scriptEl.remove());
 
         // Step 5: Now doc only contains the HTML markup
-        // We'll store it in finalHTML
         const finalHTML = doc.body.innerHTML;
 
         // Step 6: Insert that into #secondaryContainer
@@ -873,21 +874,41 @@
         const screenOneDiv = document.getElementById('screenOne');
         if(screenOneDiv) {
           screenOneDiv.style.display = 'none';
+        } else {
+          console.warn("No #screenOne found in DOM");
         }
 
         const screenTwoDiv = document.getElementById('screenTwo');
         if(screenTwoDiv) {
           screenTwoDiv.style.display = 'block';
+        } else {
+          console.warn("No #screenTwo found in injected HTML");
         }
 
         // Step 8: Evaluate each script's text so it actually runs
-        scriptEls.forEach(oldScript => {
+        scriptEls.forEach((oldScript, index) => {
           const newScript = document.createElement('script');
-          // If oldScript has a src, do: newScript.src = oldScript.src
-          // Otherwise, just use its inline code
-          newScript.textContent = oldScript.textContent;
+          if(oldScript.src){
+            // If the oldScript had a src, we handle that here
+            newScript.src = oldScript.src;
+            console.log("Re-appending script from src:", oldScript.src);
+          } else {
+            newScript.textContent = oldScript.textContent;
+            console.log("Re-appending inline script #"+index);
+          }
           document.body.appendChild(newScript);
         });
+
+        // Final check: If screenTwo’s script declared a function initScreenTwo, call it
+        setTimeout(() => {
+          if(typeof window.initScreenTwo === 'function'){
+            console.log("Calling initScreenTwo() after scripts appended");
+            window.initScreenTwo();
+          } else {
+            console.log("No global initScreenTwo() found. Possibly your script is named differently?");
+          }
+        }, 100);
+
       } catch(err) {
         console.error('Error loading screenTwo:', err);
       }
@@ -895,6 +916,7 @@
 
     /********** DOMContentLoaded: Attach handlers, do init, etc. **********/
     document.addEventListener("DOMContentLoaded", ()=>{
+      console.log("DOM loaded - hooking up UI handlers now.");
       M.AutoInit();
       document.body.style.opacity=0;
       setTimeout(()=>{
