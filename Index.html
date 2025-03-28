@@ -365,6 +365,7 @@
     window.orderIsShipped = "";
     window.cachedOrderItems = [];
     window.orderShippedTimestamp = null;
+    window.orderShipments = [];
 
     /********** Check for Access Token / Code **********/
     (function(){
@@ -527,7 +528,7 @@
       console.log("Configuration saved.");
     }
 
-    /********** Show Item Details **********/
+    /********** Show Item Details (no status==="Completed" check) **********/
     function showItemDetails(index){
       if(!window.cachedOrderItems || !window.cachedOrderItems[index]){
         console.warn("No item at index:", index);
@@ -546,13 +547,27 @@
         details += " Order Status: "+window.orderStatus+"\n";
       }
 
-      // Always show "Shipping Status:" but skip actual "Shipped!" text
+      // Always show "Shipping Status:"
       if(window.orderIsShipped==="Shipped!"){
         details += " Shipping Status:\n\n";
       } else if(window.orderIsShipped){
         details += " Shipping Status: "+window.orderIsShipped+"\n\n";
       } else {
         details += " Shipping Status:\n\n";
+      }
+
+      // [REMOVED the condition window.orderStatus==="Completed"]
+      // Now we only check if is_shipped===true => "Shipped!"
+      if(window.orderIsShipped==="Shipped!"){
+        if(window.orderShipments && window.orderShipments.length>0){
+          const ship = window.orderShipments[0];
+          if(ship.carrier_name){
+            details += " Carrier Name: "+ship.carrier_name+"\n";
+          }
+          if(ship.tracking_code){
+            details += " Tracking Number: "+ship.tracking_code+"\n";
+          }
+        }
       }
 
       details += " ORDER DETAILS:\n\n";
@@ -719,7 +734,7 @@
       }
     }
 
-    /********** Pull Etsy Order Details **********/
+    /********** Pull Etsy Order Details (storing shipments) **********/
     function pullEtsyOrderDetails(orderNumber){
       console.log("Pulling Etsy order details for order number:",orderNumber);
       const token=localStorage.getItem("access_token");
@@ -735,6 +750,9 @@
         window.receiptIsGift = (typeof data.is_gift !== "undefined") ? data.is_gift : null;
         window.receiptGiftMessage = data.gift_message || "";
 
+        // store shipments array for easy reference in showItemDetails
+        window.orderShipments = data.shipments || [];
+
         // Clear #titleOrderDate2
         const titleDate2=document.getElementById("titleOrderDate2");
         titleDate2.textContent="";
@@ -745,7 +763,7 @@
           window.orderName="";
         }
         if(data.status){
-          window.orderStatus=data.status;
+          window.orderStatus=data.status;  // e.g. "Completed", "Open", etc.
         } else {
           window.orderStatus="";
         }
