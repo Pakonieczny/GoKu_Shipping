@@ -518,7 +518,7 @@
 
     /***************************************************************
      * showItemDetails(index):
-     * NO LONGER shows "Shipped!" in the text box.
+     * Always displays "Shipping Status:" but never the word "Shipped!"
      ***************************************************************/
     function showItemDetails(index){
       if(!window.cachedOrderItems || !window.cachedOrderItems[index]){
@@ -539,17 +539,16 @@
         details += " Order Status: " + window.orderStatus + "\n";
       }
 
-      /*
-        Hide "Shipped!" in the Order Details text box.
-        If it's "Shipped!", we do nothing.
-        If it's "Not Shipped" or something else, show that.
-      */
+      // Always show "Shipping Status:" but skip the actual "Shipped!" text
       if(window.orderIsShipped === "Shipped!") {
-        // Do nothing (don't append "Shipped!")
+        // if it's "Shipped!", just show the label with no status
+        details += " Shipping Status:\n\n";
       } else if(window.orderIsShipped) {
+        // "Not Shipped" or anything else
         details += " Shipping Status: " + window.orderIsShipped + "\n\n";
       } else {
-        details += "\n";
+        // if it's blank
+        details += " Shipping Status:\n\n";
       }
 
       details += " ORDER DETAILS:\n\n";
