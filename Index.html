@@ -233,120 +233,122 @@
 </head>
 
 <body>
-  <!-- Main UI Buttons -->
-  <button id="connectEtsyBtn" class="configurable btn waves-effect waves-light">Connect to Etsy</button>
-  <button id="openConfigBtn" class="configurable btn waves-effect waves-light">Open Config</button>
+  <!-- WRAP ALL SCREEN ONE CONTENT IN THIS CONTAINER -->
+  <div id="screenOne">
 
-  <!-- "Order Link" button => smaller 14×14 icon -->
-  <button id="orderLinkBtn" name="Order Link">
-    <img src="assets/Globe.png" alt="Order Link Icon" />
-  </button>
+    <!-- Main UI Buttons -->
+    <button id="connectEtsyBtn" class="configurable btn waves-effect waves-light">Connect to Etsy</button>
+    <button id="openConfigBtn" class="configurable btn waves-effect waves-light">Open Config</button>
 
-  <!-- Etsy Order Fields -->
-  <input type="text" id="etsyOrderNumber" placeholder="Etsy Order Number" />
-  <textarea id="orderInformation" placeholder=" Order Information" readonly></textarea>
+    <!-- "Order Link" button => smaller 14×14 icon -->
+    <button id="orderLinkBtn" name="Order Link">
+      <img src="assets/Globe.png" alt="Order Link Icon" />
+    </button>
 
-  <!-- Photo Grid => 2×4, scaled 1.25, 1px border boxes -->
-  <div id="Photo_Grid">
-    <div id="photoGridContainer">
-      <div class="grid-cell">
-        <div class="preview-box" id="previewCell0">Empty</div>
-      </div>
-      <div class="grid-cell">
-        <div class="preview-box" id="previewCell1">Empty</div>
-      </div>
-      <div class="grid-cell">
-        <div class="preview-box" id="previewCell2">Empty</div>
-      </div>
-      <div class="grid-cell">
-        <div class="preview-box" id="previewCell3">Empty</div>
-      </div>
-      <div class="grid-cell">
-        <div class="preview-box" id="previewCell4">Empty</div>
-      </div>
-      <div class="grid-cell">
-        <div class="preview-box" id="previewCell5">Empty</div>
-      </div>
-      <div class="grid-cell">
-        <div class="preview-box" id="previewCell6">Empty</div>
-      </div>
-      <div class="grid-cell">
-        <div class="preview-box" id="previewCell7">Empty</div>
+    <!-- Etsy Order Fields -->
+    <input type="text" id="etsyOrderNumber" placeholder="Etsy Order Number" />
+    <textarea id="orderInformation" placeholder=" Order Information" readonly></textarea>
+
+    <!-- Photo Grid => 2×4, scaled 1.25, 1px border boxes -->
+    <div id="Photo_Grid">
+      <div id="photoGridContainer">
+        <div class="grid-cell">
+          <div class="preview-box" id="previewCell0">Empty</div>
+        </div>
+        <div class="grid-cell">
+          <div class="preview-box" id="previewCell1">Empty</div>
+        </div>
+        <div class="grid-cell">
+          <div class="preview-box" id="previewCell2">Empty</div>
+        </div>
+        <div class="grid-cell">
+          <div class="preview-box" id="previewCell3">Empty</div>
+        </div>
+        <div class="grid-cell">
+          <div class="preview-box" id="previewCell4">Empty</div>
+        </div>
+        <div class="grid-cell">
+          <div class="preview-box" id="previewCell5">Empty</div>
+        </div>
+        <div class="grid-cell">
+          <div class="preview-box" id="previewCell6">Empty</div>
+        </div>
+        <div class="grid-cell">
+          <div class="preview-box" id="previewCell7">Empty</div>
+        </div>
       </div>
     </div>
-  </div>
 
-  <!-- 16 text-box-absolute => 0.9em -->
-  <input type="text" id="quantityCell0" class="text-box-absolute" readonly />
-  <input type="text" id="quantityCell1" class="text-box-absolute" readonly />
-  <input type="text" id="quantityCell2" class="text-box-absolute" readonly />
-  <input type="text" id="quantityCell3" class="text-box-absolute" readonly />
-  <input type="text" id="quantityCell4" class="text-box-absolute" readonly />
-  <input type="text" id="quantityCell5" class="text-box-absolute" readonly />
-  <input type="text" id="quantityCell6" class="text-box-absolute" readonly />
-  <input type="text" id="quantityCell7" class="text-box-absolute" readonly />
+    <!-- 16 text-box-absolute => 0.9em -->
+    <input type="text" id="quantityCell0" class="text-box-absolute" readonly />
+    <input type="text" id="quantityCell1" class="text-box-absolute" readonly />
+    <input type="text" id="quantityCell2" class="text-box-absolute" readonly />
+    <input type="text" id="quantityCell3" class="text-box-absolute" readonly />
+    <input type="text" id="quantityCell4" class="text-box-absolute" readonly />
+    <input type="text" id="quantityCell5" class="text-box-absolute" readonly />
+    <input type="text" id="quantityCell6" class="text-box-absolute" readonly />
+    <input type="text" id="quantityCell7" class="text-box-absolute" readonly />
 
-  <input type="text" id="metalCell0" class="text-box-absolute" readonly />
-  <input type="text" id="metalCell1" class="text-box-absolute" readonly />
-  <input type="text" id="metalCell2" class="text-box-absolute" readonly />
-  <input type="text" id="metalCell3" class="text-box-absolute" readonly />
-  <input type="text" id="metalCell4" class="text-box-absolute" readonly />
-  <input type="text" id="metalCell5" class="text-box-absolute" readonly />
-  <input type="text" id="metalCell6" class="text-box-absolute" readonly />
-  <input type="text" id="metalCell7" class="text-box-absolute" readonly />
+    <input type="text" id="metalCell0" class="text-box-absolute" readonly />
+    <input type="text" id="metalCell1" class="text-box-absolute" readonly />
+    <input type="text" id="metalCell2" class="text-box-absolute" readonly />
+    <input type="text" id="metalCell3" class="text-box-absolute" readonly />
+    <input type="text" id="metalCell4" class="text-box-absolute" readonly />
+    <input type="text" id="metalCell5" class="text-box-absolute" readonly />
+    <input type="text" id="metalCell6" class="text-box-absolute" readonly />
+    <input type="text" id="metalCell7" class="text-box-absolute" readonly />
 
-  <!-- Order Details => read-only, 0.9em -->
-  <textarea id="orderDetails" readonly></textarea>
+    <!-- Order Details => read-only, 0.9em -->
+    <textarea id="orderDetails" readonly></textarea>
 
-  <!-- Customer Message History => read/write, 0.9em -->
-  <textarea id="customerMessageHistory"></textarea>
+    <!-- Customer Message History => read/write, 0.9em -->
+    <textarea id="customerMessageHistory"></textarea>
 
-  <!-- Title texts, #titleOrderDate2 => bold, used for shipped_timestamp -->
-  <div id="titleOrderDate">Order Date:</div>
-  <div id="titleOrderDate2" style="font-weight:bold;"></div>
-  <div id="titleShipDate">Ship By:</div>
-  <div id="titleOrderDetails">Order Details:</div>
-  <div id="titleBritesMessages">Brites Messages</div>
-  <div id="titlePurchasedItems">Purchased Items:</div>
-  <div id="titleOrderNumber">Order Number</div>
+    <!-- Title texts, #titleOrderDate2 => bold, used for shipped_timestamp -->
+    <div id="titleOrderDate">Order Date:</div>
+    <div id="titleOrderDate2" style="font-weight:bold;"></div>
+    <div id="titleShipDate">Ship By:</div>
+    <div id="titleOrderDetails">Order Details:</div>
+    <div id="titleBritesMessages">Brites Messages</div>
+    <div id="titlePurchasedItems">Purchased Items:</div>
+    <div id="titleOrderNumber">Order Number</div>
 
-  <!-- Single-line text boxes => bigger & bold, read-only -->
-  <input type="text" id="dateOrdered" readonly />
-  <input type="text" id="shipDate" readonly />
+    <!-- Single-line text boxes => bigger & bold, read-only -->
+    <input type="text" id="dateOrdered" readonly />
+    <input type="text" id="shipDate" readonly />
 
-  <!-- Configuration Modal -->
-  <div id="configModal" class="modal">
-    <div class="modal-content">
-      <table class="striped" id="configTable">
-        <thead>
-          <tr>
-            <th>Component Name</th>
-            <th>Left (px)</th>
-            <th>Top (px)</th>
-            <th>Width (px)</th>
-            <th>Height (px)</th>
-          </tr>
-        </thead>
-        <tbody></tbody>
-      </table>
+    <!-- Configuration Modal -->
+    <div id="configModal" class="modal">
+      <div class="modal-content">
+        <table class="striped" id="configTable">
+          <thead>
+            <tr>
+              <th>Component Name</th>
+              <th>Left (px)</th>
+              <th>Top (px)</th>
+              <th>Width (px)</th>
+              <th>Height (px)</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+      <div class="modal-footer">
+        <a href="#!" id="saveConfigBtn" class="modal-close waves-effect waves-green btn">
+          Save Config
+        </a>
+      </div>
     </div>
-    <div class="modal-footer">
-      <a href="#!" id="saveConfigBtn" class="modal-close waves-effect waves-green btn">
-        Save Config
-      </a>
-    </div>
-  </div>
 
-  <!-- 
-       Here's our new container for screenTwo.html.
-       We'll load "screenTwo.html" inside here dynamically.
-  -->
+    <!-- "Go to Screen Two" button -->
+    <button id="goScreenTwoBtn" class="btn" style="position:absolute; left:180px; top:80px;">
+      Go to Screen Two
+    </button>
+
+  </div> <!-- end #screenOne -->
+
+  <!-- This container is for the second screen's markup (injected dynamically) -->
   <div id="secondaryContainer"></div>
-
-  <!-- Add a button to show the second screen -->
-  <button id="goScreenTwoBtn" class="btn" style="position:absolute; left:180px; top:80px;">
-    Go to Screen Two
-  </button>
 
   <!-- jQuery & Materialize -->
   <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
@@ -417,8 +419,8 @@
       const codeChallenge=await generateCodeChallenge(codeVerifier);
       const state="randomState123";
       const scope="listings_w listings_r transactions_r transactions_w";
-      const CLIENT_ID="k75zdspz4r99txpqdji7i2em";
-      const redirectUri="https://gokushipping.netlify.app";
+      const CLIENT_ID="k75zdspz4r99txpqdji7i2em"; /* Example – replace with your actual client ID */
+      const redirectUri="https://gokushipping.netlify.app"; /* Use your real redirect URL */
       const etsyAuthUrl=
         "https://www.etsy.com/oauth/connect?response_type=code"+
         `&client_id=${CLIENT_ID}`+
@@ -440,7 +442,7 @@
       "orderDetails","customerMessageHistory","dateOrdered","shipDate",
       "titleOrderDate","titleOrderDate2","titleShipDate","titleOrderDetails",
       "titleBritesMessages","titlePurchasedItems","titleOrderNumber",
-      "goScreenTwoBtn"  /* Include the new button so you can position it too */
+      "goScreenTwoBtn"
     ];
     function loadPositions(){
       configComponentIDs.forEach(id=>{
@@ -832,24 +834,30 @@
     }
 
     /* 
-      The magic to load our second screen's markup (screenTwo.html).
-      We'll hide screenOne and show screenTwo after loading.
+      The function to load our second screen's markup (screenTwo.html).
+      We'll hide #screenOne, then reveal #screenTwo after injection.
     */
     async function loadScreenTwo() {
       try {
-        // Grab the HTML from screenTwo.html
         const response = await fetch('screenTwo.html');
         const screenTwoHTML = await response.text();
 
-        // Inject it into #secondaryContainer
+        // Inject the content into #secondaryContainer
         document.getElementById('secondaryContainer').innerHTML = screenTwoHTML;
 
-        // Hide screenOne and show #screenTwo
-        document.getElementById('screenOne').style.display = 'none';
-        document.getElementById('screenTwo').style.display = 'block';
+        // Hide #screenOne
+        const screenOneDiv = document.getElementById('screenOne');
+        if(screenOneDiv) {
+          screenOneDiv.style.display = 'none';
+        }
 
-        // If there's an initScreenTwo function in the injected markup, call it
-        // (You can define it inside screenTwo.html if needed)
+        // Show #screenTwo
+        const screenTwoDiv = document.getElementById('screenTwo');
+        if(screenTwoDiv) {
+          screenTwoDiv.style.display = 'block';
+        }
+
+        // If there's an init function in screenTwo.html, call it now
         if(typeof initScreenTwo === 'function'){
           initScreenTwo();
         }
@@ -858,7 +866,6 @@
       }
     }
 
-    // On DOM load
     document.addEventListener("DOMContentLoaded",()=>{
       M.AutoInit();
       document.body.style.opacity=0;
@@ -981,18 +988,9 @@
         });
       });
 
-      // Hook up "Go to Screen Two" button
+      // "Go to Screen Two" button => load screenTwo.html
       const goBtn = document.getElementById('goScreenTwoBtn');
       goBtn.addEventListener('click', ()=>{
-        // We must define "screenOne" as everything on the original screen
-        // so we can hide it before showing "screenTwo"
-        // Easiest way is to wrap all original content in <div id="screenOne">.
-        // For this example, let's do it in code:
-        let screenOne = document.createElement('div');
-        screenOne.id = 'screenOne';
-        // We’ll just assume all the original content is already in #screenOne
-        // If not, you can wrap the entire body with a big <div> except the #secondaryContainer.
-        // Then call loadScreenTwo() to swap.
         loadScreenTwo();
       });
     });
