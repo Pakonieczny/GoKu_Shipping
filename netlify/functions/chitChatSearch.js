@@ -3,7 +3,7 @@ const fetch = require("node-fetch");
 
 exports.handler = async function(event, context) {
   try {
-    // Retrieve the search query parameter
+    // Retrieve the search query parameter.
     const query = event.queryStringParameters.q;
     console.log("chitChatSearch: Received query:", query);
     if (!query) {
@@ -19,20 +19,20 @@ exports.handler = async function(event, context) {
     const accessToken = process.env.CHIT_CHATS_ACCESS_TOKEN;
     console.log("chitChatSearch: Using clientId:", clientId);
     if (!clientId || !accessToken) {
-      console.error("chitChatSearch: Missing CHIT_CHATS_CLIENT_ID or CHIT_CHATS_ACCESS_TOKEN in environment variables.");
+      console.error("chitChatSearch: Missing CHIT_CHATS_CLIENT_ID or CHIT_CHATS_ACCESS_TOKEN");
       return {
         statusCode: 500,
         body: JSON.stringify({ error: "Missing CHIT_CHATS_CLIENT_ID or CHIT_CHATS_ACCESS_TOKEN" })
       };
     }
     
-    // Construct the correct API URL.
-    // According to the docs, the endpoint is:
-    // https://chitchats.com/api/v1/clients/<YOUR_CLIENT_ID>/orders?search=<query>
-    const apiUrl = `https://chitchats.com/api/v1/clients/${clientId}/orders?search=${encodeURIComponent(query)}`;
+    // Construct the API URL using the correct base URL and endpoint.
+    // Based on the docs, the correct endpoint is assumed to be:
+    // https://chitchats.com/api/v1/clients/<YOUR_CLIENT_ID>/orders/search?query=<search_term>
+    const apiUrl = `https://chitchats.com/api/v1/clients/${clientId}/orders/search?query=${encodeURIComponent(query)}`;
     console.log("chitChatSearch: Calling API URL:", apiUrl);
     
-    // Make the API call.
+    // Make the API call using the stored credentials.
     const response = await fetch(apiUrl, {
       method: "GET",
       headers: {
@@ -42,7 +42,19 @@ exports.handler = async function(event, context) {
     });
     
     console.log("chitChatSearch: API response status:", response.status);
-    const data = await response.json();
+    // Get the raw response text for debugging.
+    const text = await response.text();
+    console.log("chitChatSearch: Raw response text:", text);
+    
+    // Try to parse the JSON response.
+    let data;
+    try {
+      data = JSON.parse(text);
+    } catch (err) {
+      console.error("chitChatSearch: Error parsing JSON:", err);
+      data = { raw: text };
+    }
+    
     console.log("chitChatSearch: API response data:", data);
     
     return {
