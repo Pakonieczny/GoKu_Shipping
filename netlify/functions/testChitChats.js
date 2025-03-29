@@ -21,7 +21,7 @@ exports.handler = async function(event, context) {
     }
     
     // Construct the shipments endpoint URL using the staging base URL.
-    const apiUrl = `${baseUrl}/clients/${clientId}`;
+    const apiUrl = `${baseUrl}/clients/${clientId}/shipments?limit=1&page=1`;
     console.log("testChitChats: Full API URL:", apiUrl);
     
     const response = await fetch(apiUrl, {
