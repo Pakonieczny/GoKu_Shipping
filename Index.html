@@ -390,6 +390,8 @@
     window.orderShipments = [];
     // Global variable to store tracking number for the selected order.
     window.currentTracking = null;
+    // Global variable to store the base URL for tracking (determined by carrier)
+    window.currentTrackingBase = null;
 
     /********** Check for Access Token / Code **********/
     (function(){
@@ -577,7 +579,7 @@
         details += " Shipping Status:\n";
       }
 
-      // Process shipments if shipped; save tracking number globally
+      // Process shipments if shipped; save tracking number globally and set tracking base URL accordingly
       if(window.orderIsShipped === "Shipped!"){
         if(window.orderShipments && window.orderShipments.length > 0){
           const ship = window.orderShipments[0];
@@ -587,16 +589,24 @@
           if(ship.tracking_code){
             details += " Tracking Number: " + ship.tracking_code + "\n\n";
             window.currentTracking = ship.tracking_code;
+            if(ship.carrier_name && ship.carrier_name.toUpperCase() !== "USPS"){
+              window.currentTrackingBase = "https://chitchats.com/tracking/0000000000000";
+            } else {
+              window.currentTrackingBase = "https://tools.usps.com/go/TrackConfirmAction_input?qtc_tLabels1=0000000000000000000000000000000000";
+            }
           } else {
             details += "\n";
             window.currentTracking = null;
+            window.currentTrackingBase = null;
           }
         } else {
           details += "\n";
           window.currentTracking = null;
+          window.currentTrackingBase = null;
         }
       } else {
         window.currentTracking = null;
+        window.currentTrackingBase = null;
       }
 
       // Toggle display of tracking button: show only if shipped and a tracking number exists
@@ -958,12 +968,16 @@
 
       // "Tracking Link" button event (only visible if tracking number exists)
       document.getElementById("trackingLinkBtn").addEventListener("click", () => {
-        if (!window.currentTracking) {
+        if (!window.currentTracking || !window.currentTrackingBase) {
           console.log("No tracking number available.");
           return;
         }
-        const templateUrl = "https://tools.usps.com/go/TrackConfirmAction_input?qtc_tLabels1=0000000000000000000000000000000000";
-        const trackingUrl = templateUrl.replace("0000000000000000000000000000000000", window.currentTracking);
+        let trackingUrl;
+        if(window.currentTrackingBase.includes("0000000000000000000000000000000000")){
+          trackingUrl = window.currentTrackingBase.replace("0000000000000000000000000000000000", window.currentTracking);
+        } else if(window.currentTrackingBase.includes("0000000000000")){
+          trackingUrl = window.currentTrackingBase.replace("0000000000000", window.currentTracking);
+        }
         window.open(trackingUrl, "_blank");
       });
 
