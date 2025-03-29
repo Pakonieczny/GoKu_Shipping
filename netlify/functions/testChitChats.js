@@ -8,11 +8,11 @@ exports.handler = async function(event, context) {
     if (!clientId || !accessToken) {
       return {
         statusCode: 500,
-        body: JSON.stringify({ error: "Missing CHIT_CHATS_CLIENT_ID or CHIT_CHATS_ACCESS_TOKEN" })
+        body: JSON.stringify({ success: false, error: "Missing CHIT_CHATS_CLIENT_ID or CHIT_CHATS_ACCESS_TOKEN" })
       };
     }
     
-    // Use the shipments endpoint as a simple test.
+    // Use the shipments endpoint as a test.
     const apiUrl = `https://chitchats.com/api/v1/clients/${clientId}/shipments?limit=1&page=1`;
     console.log("testChitChats: Calling API URL:", apiUrl);
     
@@ -24,19 +24,26 @@ exports.handler = async function(event, context) {
       }
     });
     
-    console.log("testChitChats: API response status:", response.status);
     const data = await response.json();
+    console.log("testChitChats: API response status:", response.status);
     console.log("testChitChats: API response data:", data);
     
-    return {
-      statusCode: response.status,
-      body: JSON.stringify({ success: true, data })
-    };
+    if (response.status === 200) {
+      return {
+        statusCode: 200,
+        body: JSON.stringify({ success: true, data })
+      };
+    } else {
+      return {
+        statusCode: response.status,
+        body: JSON.stringify({ success: false, error: data.error || data })
+      };
+    }
   } catch (error) {
     console.error("testChitChats: Caught error:", error);
     return {
       statusCode: 500,
-      body: JSON.stringify({ error: error.message })
+      body: JSON.stringify({ success: false, error: error.message })
     };
   }
 };
