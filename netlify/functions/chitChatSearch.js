@@ -3,30 +3,31 @@ const fetch = require("node-fetch");
 
 exports.handler = async function(event, context) {
   try {
-    // Retrieve the search query parameter
     const query = event.queryStringParameters.q;
+    console.log("chitChatSearch: Received query:", query);
     if (!query) {
+      console.error("chitChatSearch: Missing query parameter 'q'");
       return { 
         statusCode: 400, 
         body: JSON.stringify({ error: "Missing query parameter 'q'" })
       };
     }
-
-    // Retrieve your Chit Chats API credentials from environment variables.
+    
     const clientId = process.env.CHIT_CHATS_CLIENT_ID;
     const accessToken = process.env.CHIT_CHATS_ACCESS_TOKEN;
+    console.log("chitChatSearch: Using clientId:", clientId);
     if (!clientId || !accessToken) {
+      console.error("chitChatSearch: Missing environment variables");
       return {
         statusCode: 500,
-        body: JSON.stringify({ error: "Missing CHIT_CHATS_CLIENT_ID or CHIT_CHATS_ACCESS_TOKEN in environment variables." })
+        body: JSON.stringify({ error: "Missing CHIT_CHATS_CLIENT_ID or CHIT_CHATS_ACCESS_TOKEN" })
       };
     }
-
-    // Construct the Chit Chats API URL for order search.
-    // (According to https://chitchats.com/docs/api/v1, adjust the endpoint as needed.)
-    const apiUrl = `https://chitchats.com/api/v1/orders?search=${encodeURIComponent(query)}`;
-
-    // Make the API call using the stored credentials.
+    
+    // Construct the Chit Chats API URL – adjust the endpoint as per docs.
+    const apiUrl = `https://api.chitchat.com/v1/orders?search=${encodeURIComponent(query)}`;
+    console.log("chitChatSearch: Calling API URL:", apiUrl);
+    
     const response = await fetch(apiUrl, {
       method: "GET",
       headers: {
@@ -35,14 +36,17 @@ exports.handler = async function(event, context) {
         "x-api-key": clientId
       }
     });
+    
+    console.log("chitChatSearch: API response status:", response.status);
     const data = await response.json();
+    console.log("chitChatSearch: API response data:", data);
     
     return {
       statusCode: response.status,
       body: JSON.stringify(data)
     };
   } catch (error) {
-    console.error("Error in chitChatSearch:", error);
+    console.error("chitChatSearch: Caught error:", error);
     return {
       statusCode: 500,
       body: JSON.stringify({ error: error.message })
