@@ -26,11 +26,13 @@ exports.handler = async function(event, context) {
       };
     }
     
-    // Construct the correct API URL using the proper base URL with an "s" and including the clientId in the path.
+    // Construct the correct API URL.
+    // According to the docs, the endpoint is:
+    // https://chitchats.com/api/v1/clients/<YOUR_CLIENT_ID>/orders?search=<query>
     const apiUrl = `https://chitchats.com/api/v1/clients/${clientId}/orders?search=${encodeURIComponent(query)}`;
     console.log("chitChatSearch: Calling API URL:", apiUrl);
     
-    // Make the API call using the stored credentials.
+    // Make the API call.
     const response = await fetch(apiUrl, {
       method: "GET",
       headers: {
