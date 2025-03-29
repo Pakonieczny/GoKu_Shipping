@@ -48,7 +48,7 @@
       display: block;
     }
 
-    /* New Tracking Link button */
+    /* New "Tracking Link" button */
     #trackingLinkBtn {
       position: absolute;
       left: 160px;
@@ -58,7 +58,7 @@
       cursor: pointer;
       padding: 0;
       outline: none;
-      z-index: 9999; /* ensures the button is on top of other elements */
+      z-index: 9999; /* on top of other UI elements */
       display: none; /* hidden by default */
     }
     #trackingLinkBtn img {
@@ -114,7 +114,7 @@
       align-items: center;
     }
     .preview-box {
-      border: 1px solid black !important; /* match Order Details thickness */
+      border: 1px solid black !important;
       background: #f9f9f9;
       width: 100%;
       height: 150px;
@@ -123,17 +123,17 @@
       justify-content: center;
       overflow: hidden;
       position: relative;
-      user-select: none; /* helps reduce text-selection while panning */
+      user-select: none;
     }
     .preview-box img {
       width: 100%;
       height: 100%;
       object-fit: cover;
       transform-origin: center center;
-      transition: transform 0.2s ease; /* for smooth wheel zoom */
+      transition: transform 0.2s ease;
     }
 
-    /* 16 text-box-absolute => 0.9em */
+    /* 16 text-box-absolute elements */
     .text-box-absolute {
       position: absolute;
       border: none !important;
@@ -150,7 +150,7 @@
       box-sizing: border-box;
     }
 
-    /* OrderDetails => read-only, 0.9em */
+    /* Order Details text area */
     #orderDetails {
       position: absolute;
       border: 1px solid black;
@@ -166,7 +166,7 @@
       overflow-y: auto;
     }
 
-    /* Customer Message History => read/write, 0.9em */
+    /* Customer Message History text area */
     #customerMessageHistory {
       position: absolute;
       border: 1px solid black;
@@ -182,7 +182,7 @@
       overflow-y: auto;
     }
 
-    /* single-line text boxes => bigger & bold, read-only */
+    /* Single-line text boxes */
     #dateOrdered,
     #shipDate {
       position: absolute;
@@ -388,10 +388,9 @@
     window.cachedOrderItems = [];
     window.orderShippedTimestamp = null;
     window.orderShipments = [];
-    // Global variable to store tracking number for the selected order.
+    // Global variables for tracking
     window.currentTracking = null;
-    // Global variable to store the base URL for tracking (determined by carrier)
-    window.currentTrackingBase = null;
+    window.currentCarrier = null;
 
     /********** Check for Access Token / Code **********/
     (function(){
@@ -423,7 +422,7 @@
     function generateRandomString(length){
       const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
       let text = "";
-      for(let i=0; i<length; i++){
+      for(let i = 0; i < length; i++){
         text += chars.charAt(Math.floor(Math.random() * chars.length));
       }
       return text;
@@ -433,9 +432,9 @@
       const data = encoder.encode(codeVerifier);
       const digest = await crypto.subtle.digest("SHA-256", data);
       return btoa(String.fromCharCode(...new Uint8Array(digest)))
-              .replace(/\+/g,"-")
-              .replace(/\//g,"_")
-              .replace(/=+$/,"");
+              .replace(/\+/g, "-")
+              .replace(/\//g, "_")
+              .replace(/=+$/, "");
     }
 
     /********** Connect to Etsy Button **********/
@@ -579,34 +578,34 @@
         details += " Shipping Status:\n";
       }
 
-      // Process shipments if shipped; save tracking number globally and set tracking base URL accordingly
+      // Process shipments if shipped; save tracking number and carrier globally
       if(window.orderIsShipped === "Shipped!"){
         if(window.orderShipments && window.orderShipments.length > 0){
           const ship = window.orderShipments[0];
           if(ship.carrier_name){
             details += " Carrier Name: " + ship.carrier_name + "\n";
+            window.currentCarrier = ship.carrier_name;
           }
           if(ship.tracking_code){
-            details += " Tracking Number: " + ship.tracking_code + "\n\n";
+            // Place "Tracking Number:" label on one line and the tracking code on the next line
+            details += " Tracking Number:\n" + ship.tracking_code + "\n\n";
             window.currentTracking = ship.tracking_code;
-            if(ship.carrier_name && ship.carrier_name.toUpperCase() !== "USPS"){
-              window.currentTrackingBase = "https://chitchats.com/tracking/0000000000000";
+            // Update tracking button icon based on carrier name
+            if(window.currentCarrier && window.currentCarrier.toUpperCase() !== "USPS"){
+              document.getElementById("trackingLinkBtn").querySelector("img").src = "assets/ChitChats.png";
             } else {
-              window.currentTrackingBase = "https://tools.usps.com/go/TrackConfirmAction_input?qtc_tLabels1=0000000000000000000000000000000000";
+              document.getElementById("trackingLinkBtn").querySelector("img").src = "assets/USPS.png";
             }
           } else {
             details += "\n";
             window.currentTracking = null;
-            window.currentTrackingBase = null;
           }
         } else {
           details += "\n";
           window.currentTracking = null;
-          window.currentTrackingBase = null;
         }
       } else {
         window.currentTracking = null;
-        window.currentTrackingBase = null;
       }
 
       // Toggle display of tracking button: show only if shipped and a tracking number exists
@@ -631,8 +630,8 @@
 
       // Variations logic
       if(item.variations && Array.isArray(item.variations)){
-        const acceptedMetalNames = ["metal","metal choice","metal - engraving","metal colour","color","metal choice / engraving option"];
-        const acceptedLengthNames = ["length","necklace length","metal/necklace length","metal choice / necklace length","necklace length in inches"];
+        const acceptedMetalNames = ["metal", "metal choice", "metal - engraving", "metal colour", "color", "metal choice / engraving option"];
+        const acceptedLengthNames = ["length", "necklace length", "metal/necklace length", "metal choice / necklace length", "necklace length in inches"];
         item.variations.forEach(v => {
           if(v.formatted_name && v.formatted_value){
             const nameLower = v.formatted_name.trim().toLowerCase();
@@ -644,8 +643,8 @@
               details += " Metal Choice: " + val + "\n";
             } else if(acceptedLengthNames.includes(nameLower)){
               const lengthMap = {
-                '14&quot;':'14 Inches','16&quot;':'16 Inches','18&quot;':'18 Inches','20&quot;':'20 Inches',
-                '14""':'14 Inches','16""':'16 Inches','18""':'18 Inches','20""':'20 Inches'
+                '14&quot;':'14 Inches', '16&quot;':'16 Inches', '18&quot;':'18 Inches', '20&quot;':'20 Inches',
+                '14""':'14 Inches', '16""':'16 Inches', '18""':'18 Inches', '20""':'20 Inches'
               };
               if(lengthMap[val]){
                 val = lengthMap[val];
@@ -738,7 +737,7 @@
             if(metalBox){
               let metalSel = "";
               if(item.variations && Array.isArray(item.variations)){
-                const acceptedMetalNames = ["metal","metal choice","metal - engraving","metal colour","color","metal choice / engraving option"];
+                const acceptedMetalNames = ["metal", "metal choice", "metal - engraving", "metal colour", "color", "metal choice / engraving option"];
                 const metalVar = item.variations.find(v =>
                   v.formatted_name && acceptedMetalNames.includes(v.formatted_name.trim().toLowerCase())
                 );
@@ -808,7 +807,7 @@
         window.orderShippedTimestamp = foundStamp;
         if(window.orderIsShipped === "Shipped!" && window.orderShippedTimestamp){
           const d = new Date(window.orderShippedTimestamp * 1000);
-          const monthNames = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+          const monthNames = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
           const day = ("0" + d.getDate()).slice(-2);
           const mStr = monthNames[d.getMonth()];
           const y = d.getFullYear();
@@ -822,7 +821,7 @@
         }
         if(data.transactions && data.transactions.length > 0){
           const firstTrans = data.transactions[0];
-          const monthNames = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+          const monthNames = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
           if(firstTrans.created_timestamp){
             const d = new Date(firstTrans.created_timestamp * 1000);
             const day = ("0" + d.getDate()).slice(-2);
@@ -966,19 +965,23 @@
         window.open(customLink, "_blank");
       });
 
-      // "Tracking Link" button event (only visible if tracking number exists)
+      // "Tracking Link" button event
       document.getElementById("trackingLinkBtn").addEventListener("click", () => {
-        if (!window.currentTracking || !window.currentTrackingBase) {
+        if (!window.currentTracking) {
           console.log("No tracking number available.");
           return;
         }
-        let trackingUrl;
-        if(window.currentTrackingBase.includes("0000000000000000000000000000000000")){
-          trackingUrl = window.currentTrackingBase.replace("0000000000000000000000000000000000", window.currentTracking);
-        } else if(window.currentTrackingBase.includes("0000000000000")){
-          trackingUrl = window.currentTrackingBase.replace("0000000000000", window.currentTracking);
+        let templateUrl = "";
+        if(window.currentCarrier && window.currentCarrier.toUpperCase() !== "USPS"){
+          templateUrl = "https://chitchats.com/tracking/0000000000000";
+          // For Chit Chats, replace the 13 zeros with the tracking number
+          templateUrl = templateUrl.replace("0000000000000", window.currentTracking);
+        } else {
+          templateUrl = "https://tools.usps.com/go/TrackConfirmAction_input?qtc_tLabels1=0000000000000000000000000000000000";
+          // For USPS, replace the 34 zeros with the tracking number
+          templateUrl = templateUrl.replace("0000000000000000000000000000000000", window.currentTracking);
         }
-        window.open(trackingUrl, "_blank");
+        window.open(templateUrl, "_blank");
       });
 
       // Wheel-based zoom + drag panning for preview boxes
