@@ -19,17 +19,17 @@ exports.handler = async function(event, context) {
     const accessToken = process.env.CHIT_CHATS_ACCESS_TOKEN;
     console.log("chitChatSearch: Using clientId:", clientId);
     if (!clientId || !accessToken) {
-      console.error("chitChatSearch: Missing CHIT_CHATS_CLIENT_ID or CHIT_CHATS_ACCESS_TOKEN");
+      console.error("chitChatSearch: Missing CHIT_CHATS_CLIENT_ID or CHIT_CHATS_ACCESS_TOKEN in environment variables.");
       return {
         statusCode: 500,
         body: JSON.stringify({ error: "Missing CHIT_CHATS_CLIENT_ID or CHIT_CHATS_ACCESS_TOKEN" })
       };
     }
     
-    // Construct the API URL using the correct base URL and endpoint.
-    // Based on the docs, the correct endpoint is assumed to be:
-    // https://chitchats.com/api/v1/clients/<YOUR_CLIENT_ID>/orders/search?query=<search_term>
-    const apiUrl = `https://chitchats.com/api/v1/clients/${clientId}/orders/search?query=${encodeURIComponent(query)}`;
+    // Construct the correct API URL.
+    // According to the docs, the correct endpoint should be:
+    // https://chitchats.com/api/v1/clients/<YOUR_CLIENT_ID>/orders?search=<search_term>
+    const apiUrl = `https://chitchats.com/api/v1/clients/${clientId}/orders?search=${encodeURIComponent(query)}`;
     console.log("chitChatSearch: Calling API URL:", apiUrl);
     
     // Make the API call using the stored credentials.
@@ -42,17 +42,15 @@ exports.handler = async function(event, context) {
     });
     
     console.log("chitChatSearch: API response status:", response.status);
-    // Get the raw response text for debugging.
-    const text = await response.text();
-    console.log("chitChatSearch: Raw response text:", text);
+    const rawText = await response.text();
+    console.log("chitChatSearch: Raw response text:", rawText);
     
-    // Try to parse the JSON response.
     let data;
     try {
-      data = JSON.parse(text);
+      data = JSON.parse(rawText);
     } catch (err) {
       console.error("chitChatSearch: Error parsing JSON:", err);
-      data = { raw: text };
+      data = { raw: rawText };
     }
     
     console.log("chitChatSearch: API response data:", data);
