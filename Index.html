@@ -48,7 +48,7 @@
       display: block;
     }
 
-    /* New "Tracking Link" button */
+    /* New Tracking Link button */
     #trackingLinkBtn {
       position: absolute;
       left: 160px;
@@ -58,7 +58,7 @@
       cursor: pointer;
       padding: 0;
       outline: none;
-      z-index: 9999; /* ensures the button is on top */
+      z-index: 9999; /* ensures the button is on top of other elements */
       display: none; /* hidden by default */
     }
     #trackingLinkBtn img {
@@ -182,7 +182,7 @@
       overflow-y: auto;
     }
 
-    /* Single-line text boxes => bigger & bold, read-only */
+    /* single-line text boxes => bigger & bold, read-only */
     #dateOrdered,
     #shipDate {
       position: absolute;
@@ -389,7 +389,6 @@
     window.orderShippedTimestamp = null;
     window.orderShipments = [];
     // Global variable to store tracking number for the selected order.
-    // For non-USPS carriers, window.currentTracking will be an object with { url, number }
     window.currentTracking = null;
 
     /********** Check for Access Token / Code **********/
@@ -422,7 +421,7 @@
     function generateRandomString(length){
       const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
       let text = "";
-      for(let i = 0; i < length; i++){
+      for(let i=0; i<length; i++){
         text += chars.charAt(Math.floor(Math.random() * chars.length));
       }
       return text;
@@ -578,7 +577,7 @@
         details += " Shipping Status:\n";
       }
 
-      // Process shipments if shipped; store tracking number globally
+      // Process shipments if shipped; save tracking number globally
       if(window.orderIsShipped === "Shipped!"){
         if(window.orderShipments && window.orderShipments.length > 0){
           const ship = window.orderShipments[0];
@@ -586,22 +585,8 @@
             details += " Carrier Name: " + ship.carrier_name + "\n";
           }
           if(ship.tracking_code){
-            // Check if the carrier is USPS
-            if(ship.carrier_name && ship.carrier_name.trim().toLowerCase() === "usps"){
-              details += " Tracking Number: " + ship.tracking_code + "\n\n";
-              window.currentTracking = {
-                url: "https://tools.usps.com/go/TrackConfirmAction_input?qtc_tLabels1=0000000000000000000000000000000000".replace("0000000000000000000000000000000000", ship.tracking_code),
-                number: ship.tracking_code
-              };
-            } else {
-              // For carriers other than USPS, use the Chit Chats tracking URL template.
-              // Also print the tracking number on a new line below the "Tracking Number:" text.
-              details += " Tracking Number: " + ship.tracking_code + "\n" + ship.tracking_code + "\n\n";
-              window.currentTracking = {
-                url: "https://chitchats.com/tracking/0000000000000".replace("0000000000000", ship.tracking_code),
-                number: ship.tracking_code
-              };
-            }
+            details += " Tracking Number: " + ship.tracking_code + "\n\n";
+            window.currentTracking = ship.tracking_code;
           } else {
             details += "\n";
             window.currentTracking = null;
@@ -636,8 +621,8 @@
 
       // Variations logic
       if(item.variations && Array.isArray(item.variations)){
-        const acceptedMetalNames = ["metal", "metal choice", "metal - engraving", "metal colour", "color", "metal choice / engraving option"];
-        const acceptedLengthNames = ["length", "necklace length", "metal/necklace length", "metal choice / necklace length", "necklace length in inches"];
+        const acceptedMetalNames = ["metal","metal choice","metal - engraving","metal colour","color","metal choice / engraving option"];
+        const acceptedLengthNames = ["length","necklace length","metal/necklace length","metal choice / necklace length","necklace length in inches"];
         item.variations.forEach(v => {
           if(v.formatted_name && v.formatted_value){
             const nameLower = v.formatted_name.trim().toLowerCase();
@@ -743,7 +728,7 @@
             if(metalBox){
               let metalSel = "";
               if(item.variations && Array.isArray(item.variations)){
-                const acceptedMetalNames = ["metal", "metal choice", "metal - engraving", "metal colour", "color", "metal choice / engraving option"];
+                const acceptedMetalNames = ["metal","metal choice","metal - engraving","metal colour","color","metal choice / engraving option"];
                 const metalVar = item.variations.find(v =>
                   v.formatted_name && acceptedMetalNames.includes(v.formatted_name.trim().toLowerCase())
                 );
@@ -926,97 +911,133 @@
       }
     }
 
-    /********** "Tracking Link" Button Event **********/
-    document.getElementById("trackingLinkBtn").addEventListener("click", () => {
-      if (!window.currentTracking || !window.currentTracking.number) {
-        console.log("No tracking number available.");
-        return;
-      }
-      window.open(window.currentTracking.url, "_blank");
-    });
+    /********** DOMContentLoaded: Attach Handlers **********/
+    document.addEventListener("DOMContentLoaded", () => {
+      console.log("DOM loaded - initializing UI handlers.");
+      M.AutoInit();
+      document.body.style.opacity = 0;
+      setTimeout(() => {
+        loadPositions();
+        document.body.style.opacity = 1;
+      }, 250);
 
-    /********** "Order Link" Button Event **********/
-    document.getElementById("orderLinkBtn").addEventListener("click", () => {
-      const baseUrl = "https://www.etsy.com/your/orders/sold?ref=seller-platform-mcnav&order_id=0000000000";
-      const currentOrder = document.getElementById("etsyOrderNumber").value.trim();
-      if(!currentOrder){
-        console.log("No order number entered.");
-        return;
-      }
-      const customLink = baseUrl.replace("0000000000", currentOrder);
-      window.open(customLink, "_blank");
-    });
+      document.getElementById("openConfigBtn").addEventListener("click", () => {
+        populateConfigTable();
+        const modalElem = document.getElementById("configModal");
+        const instance = M.Modal.getInstance(modalElem);
+        instance.open();
+      });
+      document.getElementById("saveConfigBtn").addEventListener("click", () => {
+        saveConfiguration();
+      });
 
-    /********** Wheel-based Zoom & Drag Panning for Preview Boxes **********/
-    document.querySelectorAll('.preview-box').forEach(function(box) {
-      let isDragging = false;
-      let lastX = 0;
-      let lastY = 0;
-      box.addEventListener('wheel', function(e) {
-        const img = box.querySelector('img');
-        if (!img) return;
-        e.preventDefault();
-        let currentScale = parseFloat(img.dataset.scale) || 1;
-        let offsetX = parseFloat(img.dataset.offsetX) || 0;
-        let offsetY = parseFloat(img.dataset.offsetY) || 0;
-        if (e.deltaY < 0) {
-          currentScale *= 1.1;
-        } else {
-          currentScale /= 1.1;
-          if (currentScale <= 1) {
-            currentScale = 1;
-            offsetX = 0;
-            offsetY = 0;
+      const etsyOrderInput = document.getElementById("etsyOrderNumber");
+      etsyOrderInput.addEventListener("keydown", async e => {
+        if(e.key === "Enter"){
+          const orderNumber = etsyOrderInput.value.trim();
+          if(orderNumber !== ""){
+            const orderData = await pullEtsyOrderDetails(orderNumber);
+            if(orderData){
+              await updateImageGrid(orderData);
+            }
           }
         }
-        currentScale = Math.max(1, Math.min(4, currentScale));
-        img.dataset.scale = currentScale;
-        img.dataset.offsetX = offsetX;
-        img.dataset.offsetY = offsetY;
-        img.style.transform = `translate(${offsetX}px, ${offsetY}px) scale(${currentScale})`;
       });
-      box.addEventListener('mousedown', function(e) {
-        const img = box.querySelector('img');
-        if (!img) return;
-        let currentScale = parseFloat(img.dataset.scale) || 1;
-        if (currentScale <= 1) return;
-        e.preventDefault();
-        isDragging = true;
-        lastX = e.clientX;
-        lastY = e.clientY;
-      });
-      box.addEventListener('mousemove', function(e) {
-        if (!isDragging) return;
-        e.preventDefault();
-        const img = box.querySelector('img');
-        if (!img) return;
-        let currentScale = parseFloat(img.dataset.scale) || 1;
-        let offsetX = parseFloat(img.dataset.offsetX) || 0;
-        let offsetY = parseFloat(img.dataset.offsetY) || 0;
-        const dx = e.clientX - lastX;
-        const dy = e.clientY - lastY;
-        offsetX += dx;
-        offsetY += dy;
-        img.dataset.offsetX = offsetX;
-        img.dataset.offsetY = offsetY;
-        img.style.transform = `translate(${offsetX}px, ${offsetY}px) scale(${currentScale})`;
-        lastX = e.clientX;
-        lastY = e.clientY;
-      });
-      box.addEventListener('mouseup', function() {
-        isDragging = false;
-      });
-      box.addEventListener('mouseleave', function() {
-        isDragging = false;
-      });
-    });
 
-    /********** "Go to Screen Two" Button Event **********/
-    const goBtn = document.getElementById('goScreenTwoBtn');
-    if(goBtn){
-      goBtn.addEventListener('click', () => {
-        loadScreenTwo();
+      // "Order Link" button event
+      document.getElementById("orderLinkBtn").addEventListener("click", () => {
+        const baseUrl = "https://www.etsy.com/your/orders/sold?ref=seller-platform-mcnav&order_id=0000000000";
+        const currentOrder = etsyOrderInput.value.trim();
+        if(!currentOrder){
+          console.log("No order number entered.");
+          return;
+        }
+        const customLink = baseUrl.replace("0000000000", currentOrder);
+        window.open(customLink, "_blank");
       });
+
+      // "Tracking Link" button event (only visible if tracking number exists)
+      document.getElementById("trackingLinkBtn").addEventListener("click", () => {
+        if (!window.currentTracking) {
+          console.log("No tracking number available.");
+          return;
+        }
+        const templateUrl = "https://tools.usps.com/go/TrackConfirmAction_input?qtc_tLabels1=0000000000000000000000000000000000";
+        const trackingUrl = templateUrl.replace("0000000000000000000000000000000000", window.currentTracking);
+        window.open(trackingUrl, "_blank");
+      });
+
+      // Wheel-based zoom + drag panning for preview boxes
+      document.querySelectorAll('.preview-box').forEach(function(box) {
+        let isDragging = false;
+        let lastX = 0;
+        let lastY = 0;
+        box.addEventListener('wheel', function(e) {
+          const img = box.querySelector('img');
+          if (!img) return;
+          e.preventDefault();
+          let currentScale = parseFloat(img.dataset.scale) || 1;
+          let offsetX = parseFloat(img.dataset.offsetX) || 0;
+          let offsetY = parseFloat(img.dataset.offsetY) || 0;
+          if (e.deltaY < 0) {
+            currentScale *= 1.1;
+          } else {
+            currentScale /= 1.1;
+            if (currentScale <= 1) {
+              currentScale = 1;
+              offsetX = 0;
+              offsetY = 0;
+            }
+          }
+          currentScale = Math.max(1, Math.min(4, currentScale));
+          img.dataset.scale = currentScale;
+          img.dataset.offsetX = offsetX;
+          img.dataset.offsetY = offsetY;
+          img.style.transform = `translate(${offsetX}px, ${offsetY}px) scale(${currentScale})`;
+        });
+        box.addEventListener('mousedown', function(e) {
+          const img = box.querySelector('img');
+          if (!img) return;
+          let currentScale = parseFloat(img.dataset.scale) || 1;
+          if (currentScale <= 1) return;
+          e.preventDefault();
+          isDragging = true;
+          lastX = e.clientX;
+          lastY = e.clientY;
+        });
+        box.addEventListener('mousemove', function(e) {
+          if (!isDragging) return;
+          e.preventDefault();
+          const img = box.querySelector('img');
+          if (!img) return;
+          let currentScale = parseFloat(img.dataset.scale) || 1;
+          let offsetX = parseFloat(img.dataset.offsetX) || 0;
+          let offsetY = parseFloat(img.dataset.offsetY) || 0;
+          const dx = e.clientX - lastX;
+          const dy = e.clientY - lastY;
+          offsetX += dx;
+          offsetY += dy;
+          img.dataset.offsetX = offsetX;
+          img.dataset.offsetY = offsetY;
+          img.style.transform = `translate(${offsetX}px, ${offsetY}px) scale(${currentScale})`;
+          lastX = e.clientX;
+          lastY = e.clientY;
+        });
+        box.addEventListener('mouseup', function() {
+          isDragging = false;
+        });
+        box.addEventListener('mouseleave', function() {
+          isDragging = false;
+        });
+      });
+
+      // "Go to Screen Two" button event
+      const goBtn = document.getElementById('goScreenTwoBtn');
+      if(goBtn){
+        goBtn.addEventListener('click', () => {
+          loadScreenTwo();
+        });
+      }
     });
   </script>
 </body>
