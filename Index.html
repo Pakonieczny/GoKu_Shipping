@@ -58,7 +58,7 @@
       cursor: pointer;
       padding: 0;
       outline: none;
-      z-index: 9999; /* ensures the button is on top of other elements */
+      z-index: 9999; /* ensure it is on top */
       display: none; /* hidden by default */
     }
     #trackingLinkBtn img {
@@ -133,7 +133,7 @@
       transition: transform 0.2s ease; /* for smooth wheel zoom */
     }
 
-    /* 16 text-box-absolute => 0.9em */
+    /* 16 text-box-absolute elements */
     .text-box-absolute {
       position: absolute;
       border: none !important;
@@ -182,7 +182,7 @@
       overflow-y: auto;
     }
 
-    /* single-line text boxes => bigger & bold, read-only */
+    /* Single-line text boxes (bigger & bold, read-only) */
     #dateOrdered,
     #shipDate {
       position: absolute;
@@ -390,6 +390,8 @@
     window.orderShipments = [];
     // Global variable to store tracking number for the selected order.
     window.currentTracking = null;
+    // Global variable to store carrier name for the selected order.
+    window.currentCarrier = null;
 
     /********** Check for Access Token / Code **********/
     (function(){
@@ -421,7 +423,7 @@
     function generateRandomString(length){
       const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
       let text = "";
-      for(let i=0; i<length; i++){
+      for(let i = 0; i < length; i++){
         text += chars.charAt(Math.floor(Math.random() * chars.length));
       }
       return text;
@@ -431,9 +433,9 @@
       const data = encoder.encode(codeVerifier);
       const digest = await crypto.subtle.digest("SHA-256", data);
       return btoa(String.fromCharCode(...new Uint8Array(digest)))
-              .replace(/\+/g,"-")
-              .replace(/\//g,"_")
-              .replace(/=+$/,"");
+              .replace(/\+/g, "-")
+              .replace(/\//g, "_")
+              .replace(/=+$/, "");
     }
 
     /********** Connect to Etsy Button **********/
@@ -577,15 +579,19 @@
         details += " Shipping Status:\n";
       }
 
-      // Process shipments if shipped; save tracking number globally
+      // Process shipments if shipped; save tracking number and carrier globally
       if(window.orderIsShipped === "Shipped!"){
         if(window.orderShipments && window.orderShipments.length > 0){
           const ship = window.orderShipments[0];
           if(ship.carrier_name){
             details += " Carrier Name: " + ship.carrier_name + "\n";
+            window.currentCarrier = ship.carrier_name;
+          } else {
+            window.currentCarrier = "";
           }
           if(ship.tracking_code){
-            details += " Tracking Number: " + ship.tracking_code + "\n\n";
+            // For non-USPS carriers, place the tracking number on the next line
+            details += " Tracking Number:\n" + ship.tracking_code + "\n\n";
             window.currentTracking = ship.tracking_code;
           } else {
             details += "\n";
@@ -594,12 +600,14 @@
         } else {
           details += "\n";
           window.currentTracking = null;
+          window.currentCarrier = "";
         }
       } else {
         window.currentTracking = null;
+        window.currentCarrier = "";
       }
 
-      // Toggle display of tracking button: show only if shipped and a tracking number exists
+      // Toggle display of tracking button: show only if shipped and tracking exists
       if(window.orderIsShipped === "Shipped!" && window.currentTracking){
         document.getElementById("trackingLinkBtn").style.display = "block";
       } else {
@@ -911,134 +919,108 @@
       }
     }
 
-    /********** DOMContentLoaded: Attach Handlers **********/
-    document.addEventListener("DOMContentLoaded", () => {
-      console.log("DOM loaded - initializing UI handlers.");
-      M.AutoInit();
-      document.body.style.opacity = 0;
-      setTimeout(() => {
-        loadPositions();
-        document.body.style.opacity = 1;
-      }, 250);
-
-      document.getElementById("openConfigBtn").addEventListener("click", () => {
-        populateConfigTable();
-        const modalElem = document.getElementById("configModal");
-        const instance = M.Modal.getInstance(modalElem);
-        instance.open();
-      });
-      document.getElementById("saveConfigBtn").addEventListener("click", () => {
-        saveConfiguration();
-      });
-
-      const etsyOrderInput = document.getElementById("etsyOrderNumber");
-      etsyOrderInput.addEventListener("keydown", async e => {
-        if(e.key === "Enter"){
-          const orderNumber = etsyOrderInput.value.trim();
-          if(orderNumber !== ""){
-            const orderData = await pullEtsyOrderDetails(orderNumber);
-            if(orderData){
-              await updateImageGrid(orderData);
-            }
-          }
-        }
-      });
-
-      // "Order Link" button event
-      document.getElementById("orderLinkBtn").addEventListener("click", () => {
-        const baseUrl = "https://www.etsy.com/your/orders/sold?ref=seller-platform-mcnav&order_id=0000000000";
-        const currentOrder = etsyOrderInput.value.trim();
-        if(!currentOrder){
-          console.log("No order number entered.");
-          return;
-        }
-        const customLink = baseUrl.replace("0000000000", currentOrder);
-        window.open(customLink, "_blank");
-      });
-
-      // "Tracking Link" button event (only visible if tracking number exists)
-      document.getElementById("trackingLinkBtn").addEventListener("click", () => {
-        if (!window.currentTracking) {
-          console.log("No tracking number available.");
-          return;
-        }
-        const templateUrl = "https://tools.usps.com/go/TrackConfirmAction_input?qtc_tLabels1=0000000000000000000000000000000000";
+    /********** "Tracking Link" Button Event **********/
+    document.getElementById("trackingLinkBtn").addEventListener("click", () => {
+      if (!window.currentTracking) {
+        console.log("No tracking number available.");
+        return;
+      }
+      let templateUrl;
+      // If the carrier is not USPS, use the alternative link
+      if (window.currentCarrier && window.currentCarrier.toUpperCase() !== "USPS") {
+        templateUrl = "https://chitchats.com/tracking/0000000000000";
+        const trackingUrl = templateUrl.replace("0000000000000", window.currentTracking);
+        window.open(trackingUrl, "_blank");
+      } else {
+        templateUrl = "https://tools.usps.com/go/TrackConfirmAction_input?qtc_tLabels1=0000000000000000000000000000000000";
         const trackingUrl = templateUrl.replace("0000000000000000000000000000000000", window.currentTracking);
         window.open(trackingUrl, "_blank");
-      });
-
-      // Wheel-based zoom + drag panning for preview boxes
-      document.querySelectorAll('.preview-box').forEach(function(box) {
-        let isDragging = false;
-        let lastX = 0;
-        let lastY = 0;
-        box.addEventListener('wheel', function(e) {
-          const img = box.querySelector('img');
-          if (!img) return;
-          e.preventDefault();
-          let currentScale = parseFloat(img.dataset.scale) || 1;
-          let offsetX = parseFloat(img.dataset.offsetX) || 0;
-          let offsetY = parseFloat(img.dataset.offsetY) || 0;
-          if (e.deltaY < 0) {
-            currentScale *= 1.1;
-          } else {
-            currentScale /= 1.1;
-            if (currentScale <= 1) {
-              currentScale = 1;
-              offsetX = 0;
-              offsetY = 0;
-            }
-          }
-          currentScale = Math.max(1, Math.min(4, currentScale));
-          img.dataset.scale = currentScale;
-          img.dataset.offsetX = offsetX;
-          img.dataset.offsetY = offsetY;
-          img.style.transform = `translate(${offsetX}px, ${offsetY}px) scale(${currentScale})`;
-        });
-        box.addEventListener('mousedown', function(e) {
-          const img = box.querySelector('img');
-          if (!img) return;
-          let currentScale = parseFloat(img.dataset.scale) || 1;
-          if (currentScale <= 1) return;
-          e.preventDefault();
-          isDragging = true;
-          lastX = e.clientX;
-          lastY = e.clientY;
-        });
-        box.addEventListener('mousemove', function(e) {
-          if (!isDragging) return;
-          e.preventDefault();
-          const img = box.querySelector('img');
-          if (!img) return;
-          let currentScale = parseFloat(img.dataset.scale) || 1;
-          let offsetX = parseFloat(img.dataset.offsetX) || 0;
-          let offsetY = parseFloat(img.dataset.offsetY) || 0;
-          const dx = e.clientX - lastX;
-          const dy = e.clientY - lastY;
-          offsetX += dx;
-          offsetY += dy;
-          img.dataset.offsetX = offsetX;
-          img.dataset.offsetY = offsetY;
-          img.style.transform = `translate(${offsetX}px, ${offsetY}px) scale(${currentScale})`;
-          lastX = e.clientX;
-          lastY = e.clientY;
-        });
-        box.addEventListener('mouseup', function() {
-          isDragging = false;
-        });
-        box.addEventListener('mouseleave', function() {
-          isDragging = false;
-        });
-      });
-
-      // "Go to Screen Two" button event
-      const goBtn = document.getElementById('goScreenTwoBtn');
-      if(goBtn){
-        goBtn.addEventListener('click', () => {
-          loadScreenTwo();
-        });
       }
     });
+
+    /********** "Order Link" Button Event **********/
+    document.getElementById("orderLinkBtn").addEventListener("click", () => {
+      const baseUrl = "https://www.etsy.com/your/orders/sold?ref=seller-platform-mcnav&order_id=0000000000";
+      const currentOrder = document.getElementById("etsyOrderNumber").value.trim();
+      if(!currentOrder){
+        console.log("No order number entered.");
+        return;
+      }
+      const customLink = baseUrl.replace("0000000000", currentOrder);
+      window.open(customLink, "_blank");
+    });
+
+    /********** Wheel-based Zoom & Drag Panning for Preview Boxes **********/
+    document.querySelectorAll('.preview-box').forEach(function(box) {
+      let isDragging = false;
+      let lastX = 0;
+      let lastY = 0;
+      box.addEventListener('wheel', function(e) {
+        const img = box.querySelector('img');
+        if (!img) return;
+        e.preventDefault();
+        let currentScale = parseFloat(img.dataset.scale) || 1;
+        let offsetX = parseFloat(img.dataset.offsetX) || 0;
+        let offsetY = parseFloat(img.dataset.offsetY) || 0;
+        if (e.deltaY < 0) {
+          currentScale *= 1.1;
+        } else {
+          currentScale /= 1.1;
+          if (currentScale <= 1) {
+            currentScale = 1;
+            offsetX = 0;
+            offsetY = 0;
+          }
+        }
+        currentScale = Math.max(1, Math.min(4, currentScale));
+        img.dataset.scale = currentScale;
+        img.dataset.offsetX = offsetX;
+        img.dataset.offsetY = offsetY;
+        img.style.transform = `translate(${offsetX}px, ${offsetY}px) scale(${currentScale})`;
+      });
+      box.addEventListener('mousedown', function(e) {
+        const img = box.querySelector('img');
+        if (!img) return;
+        let currentScale = parseFloat(img.dataset.scale) || 1;
+        if (currentScale <= 1) return;
+        e.preventDefault();
+        isDragging = true;
+        lastX = e.clientX;
+        lastY = e.clientY;
+      });
+      box.addEventListener('mousemove', function(e) {
+        if (!isDragging) return;
+        e.preventDefault();
+        const img = box.querySelector('img');
+        if (!img) return;
+        let currentScale = parseFloat(img.dataset.scale) || 1;
+        let offsetX = parseFloat(img.dataset.offsetX) || 0;
+        let offsetY = parseFloat(img.dataset.offsetY) || 0;
+        const dx = e.clientX - lastX;
+        const dy = e.clientY - lastY;
+        offsetX += dx;
+        offsetY += dy;
+        img.dataset.offsetX = offsetX;
+        img.dataset.offsetY = offsetY;
+        img.style.transform = `translate(${offsetX}px, ${offsetY}px) scale(${currentScale})`;
+        lastX = e.clientX;
+        lastY = e.clientY;
+      });
+      box.addEventListener('mouseup', function() {
+        isDragging = false;
+      });
+      box.addEventListener('mouseleave', function() {
+        isDragging = false;
+      });
+    });
+
+    /********** "Go to Screen Two" Button Event **********/
+    const goBtn = document.getElementById('goScreenTwoBtn');
+    if(goBtn){
+      goBtn.addEventListener('click', () => {
+        loadScreenTwo();
+      });
+    }
   </script>
 </body>
 </html>
