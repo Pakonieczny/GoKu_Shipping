@@ -26,7 +26,7 @@
     ></textarea>
   </div>
 
-  <!-- Duplicate "Open Config" modal & button for Screen Two -->
+  <!-- Duplicate Open Config modal & button for Screen Two -->
   <button id="openConfigBtnScreenTwo" class="configurable btn waves-effect waves-light" style="margin-top: 10px;">
     Open Config (Screen Two)
   </button>
@@ -58,9 +58,10 @@
      * initScreenTwo():
      *   1) Re-init Materialize for the new modal.
      *   2) Load positions from localStorage (forcing absolute positioning).
-     *   3) Wire up the "Return to Screen One" button.
-     *   4) Wire up the Chit Chat order search.
-     *   5) Wire up the config system for Screen Two.
+     *   3) Test the Chit Chats API connection via our testChitChats Netlify function.
+     *   4) Wire up the "Return to Screen One" button.
+     *   5) Wire up the Chit Chat order search.
+     *   6) Wire up the config system for Screen Two.
      **********************************************************/
     function initScreenTwo() {
       console.log("Screen Two loaded!");
@@ -68,8 +69,28 @@
       // Re-init Materialize components.
       M.AutoInit();
 
-      // Load positions for screenTwo elements.
+      // Load positions for Screen Two elements.
       loadPositionsScreenTwo();
+
+      // Test connection to the Chit Chats API.
+      fetch('/.netlify/functions/testChitChats')
+        .then(response => {
+          console.log("TestChitChats: Response status", response.status);
+          return response.json();
+        })
+        .then(data => {
+          if (data.success) {
+            M.toast({ html: "Chit Chats API connected successfully!" });
+            console.log("TestChitChats: Connection successful", data);
+          } else {
+            M.toast({ html: "Failed to connect to Chit Chats API" });
+            console.error("TestChitChats: Data error", data);
+          }
+        })
+        .catch(err => {
+          M.toast({ html: "Error connecting to Chit Chats API" });
+          console.error("TestChitChats: Error", err);
+        });
 
       // "Return to Screen One" button functionality.
       const backBtn = document.getElementById('goBackBtn');
@@ -214,10 +235,10 @@
         const el = document.getElementById(id);
         if (el) {
           const cs = window.getComputedStyle(el);
-          const leftVal = parseInt(cs.left,10) || 0;
-          const topVal = parseInt(cs.top,10) || 0;
-          const widthVal = parseInt(cs.width,10) || 0;
-          const heightVal = parseInt(cs.height,10) || 0;
+          const leftVal = parseInt(cs.left, 10) || 0;
+          const topVal = parseInt(cs.top, 10) || 0;
+          const widthVal = parseInt(cs.width, 10) || 0;
+          const heightVal = parseInt(cs.height, 10) || 0;
           localStorage.setItem(`pos2-${id}-left`, leftVal);
           localStorage.setItem(`pos2-${id}-top`, topVal);
           localStorage.setItem(`pos2-${id}-width`, widthVal);
