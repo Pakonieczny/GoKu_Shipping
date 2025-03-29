@@ -6,7 +6,8 @@ exports.handler = async function(event, context) {
     const clientId = process.env.CHIT_CHATS_CLIENT_ID;
     const accessToken = process.env.CHIT_CHATS_ACCESS_TOKEN;
     
-    // Debug logging to verify credentials (remove in production)
+    // Debug logging to verify credentials
+    console.log("testChitChats: Using clientId:", clientId);
     console.log("testChitChats: Access token used:", accessToken);
     console.log("testChitChats: Authorization header:", `Bearer ${accessToken}`);
     
@@ -17,9 +18,9 @@ exports.handler = async function(event, context) {
       };
     }
     
-    // Construct the shipments endpoint URL
+    // Construct the shipments endpoint URL and log it
     const apiUrl = `https://chitchats.com/api/v1/clients/${clientId}/shipments?limit=1&page=1`;
-    console.log("testChitChats: Calling API URL:", apiUrl);
+    console.log("testChitChats: Full API URL:", apiUrl);
     
     const response = await fetch(apiUrl, {
       method: "GET",
