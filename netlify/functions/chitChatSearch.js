@@ -19,17 +19,17 @@ exports.handler = async function(event, context) {
     const accessToken = process.env.CHIT_CHATS_ACCESS_TOKEN;
     console.log("chitChatSearch: Using clientId:", clientId);
     if (!clientId || !accessToken) {
-      console.error("chitChatSearch: Missing CHIT_CHATS_CLIENT_ID or CHIT_CHATS_ACCESS_TOKEN in environment variables.");
+      console.error("chitChatSearch: Missing CHIT_CHATS_CLIENT_ID or CHIT_CHATS_ACCESS_TOKEN");
       return {
         statusCode: 500,
         body: JSON.stringify({ error: "Missing CHIT_CHATS_CLIENT_ID or CHIT_CHATS_ACCESS_TOKEN" })
       };
     }
     
-    // Construct the correct API URL.
+    // Construct the API URL using the "orders/search" endpoint.
     // According to the docs, the correct endpoint should be:
-    // https://chitchats.com/api/v1/clients/<YOUR_CLIENT_ID>/orders?search=<search_term>
-    const apiUrl = `https://chitchats.com/api/v1/clients/${clientId}/orders?search=${encodeURIComponent(query)}`;
+    // https://chitchats.com/api/v1/clients/<YOUR_CLIENT_ID>/orders/search?query=<search_term>
+    const apiUrl = `https://chitchats.com/api/v1/clients/${clientId}/orders/search?query=${encodeURIComponent(query)}`;
     console.log("chitChatSearch: Calling API URL:", apiUrl);
     
     // Make the API call using the stored credentials.
