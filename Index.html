@@ -61,8 +61,9 @@
       z-index: 9999; /* ensures the button is on top of other elements */
     }
     #trackingLinkBtn img {
-      width: 14px;
-      height: 14px;
+      /* Increased by 20%: 14px * 1.2 = 16.8px, rounded to 17px */
+      width: 17px;
+      height: 17px;
       display: block;
     }
 
@@ -332,7 +333,7 @@
     <div id="titleShipDate">Ship By:</div>
     <div id="titleOrderDetails">Order Details:</div>
     <div id="titleBritesMessages">Brites Messages</div>
-    <div id="titlePurchasedItems">Purchased Items:</div>
+    <div id="titlePurchasedItems">Purchased Items</div>
     <div id="titleOrderNumber">Order Number</div>
 
     <!-- Single-line text boxes -->
@@ -418,17 +419,17 @@
 
     /********** OAuth Helpers **********/
     function generateRandomString(length){
-      const chars="ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
-      let text="";
+      const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+      let text = "";
       for(let i=0;i<length;i++){
-        text += chars.charAt(Math.floor(Math.random()*chars.length));
+        text += chars.charAt(Math.floor(Math.random() * chars.length));
       }
       return text;
     }
     async function generateCodeChallenge(codeVerifier){
-      const encoder=new TextEncoder();
-      const data=encoder.encode(codeVerifier);
-      const digest=await crypto.subtle.digest("SHA-256", data);
+      const encoder = new TextEncoder();
+      const data = encoder.encode(codeVerifier);
+      const digest = await crypto.subtle.digest("SHA-256", data);
       return btoa(String.fromCharCode(...new Uint8Array(digest)))
               .replace(/\+/g,"-")
               .replace(/\//g,"_")
@@ -439,22 +440,22 @@
     document.addEventListener("DOMContentLoaded", () => {
       const connectBtn = document.getElementById("connectEtsyBtn");
       if(connectBtn){
-        connectBtn.addEventListener("click", async ()=>{
+        connectBtn.addEventListener("click", async () => {
           const codeVerifier = generateRandomString(64);
           localStorage.setItem("etsy_code_verifier", codeVerifier);
           const codeChallenge = await generateCodeChallenge(codeVerifier);
           const state = "randomState123";
           const scope = "listings_w listings_r transactions_r transactions_w";
-          const CLIENT_ID="k75zdspz4r99txpqdji7i2em"; // Your actual client ID
-          const redirectUri="https://gokushipping.netlify.app"; // Your actual redirect URI
+          const CLIENT_ID = "k75zdspz4r99txpqdji7i2em"; // Your actual client ID
+          const redirectUri = "https://gokushipping.netlify.app"; // Your actual redirect URI
 
           const etsyAuthUrl =
-            "https://www.etsy.com/oauth/connect?response_type=code"+
-            `&client_id=${CLIENT_ID}`+
-            `&redirect_uri=${encodeURIComponent(redirectUri)}`+
-            `&scope=${encodeURIComponent(scope)}`+
-            `&state=${state}`+
-            `&code_challenge=${encodeURIComponent(codeChallenge)}`+
+            "https://www.etsy.com/oauth/connect?response_type=code" +
+            `&client_id=${CLIENT_ID}` +
+            `&redirect_uri=${encodeURIComponent(redirectUri)}` +
+            `&scope=${encodeURIComponent(scope)}` +
+            `&state=${state}` +
+            `&code_challenge=${encodeURIComponent(codeChallenge)}` +
             "&code_challenge_method=S256";
 
           console.log("Redirecting to Etsy OAuth URL:", etsyAuthUrl);
@@ -465,45 +466,45 @@
 
     /********** Configuration System **********/
     const configComponentIDs = [
-      "connectEtsyBtn","openConfigBtn","orderLinkBtn","trackingLinkBtn","etsyOrderNumber","orderInformation",
+      "connectEtsyBtn", "openConfigBtn", "orderLinkBtn", "trackingLinkBtn", "etsyOrderNumber", "orderInformation",
       "Photo_Grid",
-      "quantityCell0","quantityCell1","quantityCell2","quantityCell3","quantityCell4","quantityCell5","quantityCell6","quantityCell7",
-      "metalCell0","metalCell1","metalCell2","metalCell3","metalCell4","metalCell5","metalCell6","metalCell7",
-      "orderDetails","customerMessageHistory","dateOrdered","shipDate",
-      "titleOrderDate","titleOrderDate2","titleShipDate","titleOrderDetails",
-      "titleBritesMessages","titlePurchasedItems","titleOrderNumber",
+      "quantityCell0", "quantityCell1", "quantityCell2", "quantityCell3", "quantityCell4", "quantityCell5", "quantityCell6", "quantityCell7",
+      "metalCell0", "metalCell1", "metalCell2", "metalCell3", "metalCell4", "metalCell5", "metalCell6", "metalCell7",
+      "orderDetails", "customerMessageHistory", "dateOrdered", "shipDate",
+      "titleOrderDate", "titleOrderDate2", "titleShipDate", "titleOrderDetails",
+      "titleBritesMessages", "titlePurchasedItems", "titleOrderNumber",
       "goScreenTwoBtn"
     ];
     function loadPositions(){
-      configComponentIDs.forEach(id=>{
-        const el=document.getElementById(id);
+      configComponentIDs.forEach(id => {
+        const el = document.getElementById(id);
         if(el){
-          const left=localStorage.getItem(`pos-${id}-left`);
-          const top=localStorage.getItem(`pos-${id}-top`);
-          const width=localStorage.getItem(`pos-${id}-width`);
-          const height=localStorage.getItem(`pos-${id}-height`);
-          if(left!==null)   el.style.left=left+"px";
-          if(top!==null)    el.style.top=top+"px";
-          if(width!==null)  el.style.width=width+"px";
-          if(height!==null) el.style.height=height+"px";
+          const left = localStorage.getItem(`pos-${id}-left`);
+          const top = localStorage.getItem(`pos-${id}-top`);
+          const width = localStorage.getItem(`pos-${id}-width`);
+          const height = localStorage.getItem(`pos-${id}-height`);
+          if(left !== null) el.style.left = left + "px";
+          if(top !== null) el.style.top = top + "px";
+          if(width !== null) el.style.width = width + "px";
+          if(height !== null) el.style.height = height + "px";
         }
       });
     }
     function populateConfigTable(){
       const tbody = document.getElementById("configTable").querySelector("tbody");
-      tbody.innerHTML="";
-      configComponentIDs.forEach(id=>{
+      tbody.innerHTML = "";
+      configComponentIDs.forEach(id => {
         const el = document.getElementById(id);
         if(!el) return;
         const compName = el.textContent.trim() || el.value?.trim() || id;
         const cs = window.getComputedStyle(el);
-        const leftVal = (cs.left==="auto")?0:parseInt(cs.left,10);
-        const topVal = (cs.top==="auto")?0:parseInt(cs.top,10);
-        const widthVal = (cs.width==="auto")?0:parseInt(cs.width,10);
-        const heightVal = (cs.height==="auto")?0:parseInt(cs.height,10);
+        const leftVal = (cs.left === "auto") ? 0 : parseInt(cs.left, 10);
+        const topVal = (cs.top === "auto") ? 0 : parseInt(cs.top, 10);
+        const widthVal = (cs.width === "auto") ? 0 : parseInt(cs.width, 10);
+        const heightVal = (cs.height === "auto") ? 0 : parseInt(cs.height, 10);
 
         const row = document.createElement("tr");
-        row.innerHTML=`
+        row.innerHTML = `
           <td>${compName}</td>
           <td><input type="number" value="${leftVal}" data-id="${id}" class="left-input"></td>
           <td><input type="number" value="${topVal}" data-id="${id}" class="top-input"></td>
@@ -512,37 +513,37 @@
         `;
         tbody.appendChild(row);
 
-        row.querySelector(".left-input").addEventListener("input",function(){
-          const tgt=document.getElementById(this.getAttribute("data-id"));
-          if(tgt) tgt.style.left=parseInt(this.value,10)+"px";
+        row.querySelector(".left-input").addEventListener("input", function(){
+          const tgt = document.getElementById(this.getAttribute("data-id"));
+          if(tgt) tgt.style.left = parseInt(this.value, 10) + "px";
         });
-        row.querySelector(".top-input").addEventListener("input",function(){
-          const tgt=document.getElementById(this.getAttribute("data-id"));
-          if(tgt) tgt.style.top=parseInt(this.value,10)+"px";
+        row.querySelector(".top-input").addEventListener("input", function(){
+          const tgt = document.getElementById(this.getAttribute("data-id"));
+          if(tgt) tgt.style.top = parseInt(this.value, 10) + "px";
         });
-        row.querySelector(".width-input").addEventListener("input",function(){
-          const tgt=document.getElementById(this.getAttribute("data-id"));
-          if(tgt) tgt.style.width=parseInt(this.value,10)+"px";
+        row.querySelector(".width-input").addEventListener("input", function(){
+          const tgt = document.getElementById(this.getAttribute("data-id"));
+          if(tgt) tgt.style.width = parseInt(this.value, 10) + "px";
         });
-        row.querySelector(".height-input").addEventListener("input",function(){
-          const tgt=document.getElementById(this.getAttribute("data-id"));
-          if(tgt) tgt.style.height=parseInt(this.value,10)+"px";
+        row.querySelector(".height-input").addEventListener("input", function(){
+          const tgt = document.getElementById(this.getAttribute("data-id"));
+          if(tgt) tgt.style.height = parseInt(this.value, 10) + "px";
         });
       });
     }
     function saveConfiguration(){
-      configComponentIDs.forEach(id=>{
-        const el=document.getElementById(id);
+      configComponentIDs.forEach(id => {
+        const el = document.getElementById(id);
         if(el){
-          const cs=window.getComputedStyle(el);
-          const leftVal=parseInt(cs.left,10)||0;
-          const topVal=parseInt(cs.top,10)||0;
-          const widthVal=parseInt(cs.width,10)||0;
-          const heightVal=parseInt(cs.height,10)||0;
-          localStorage.setItem(`pos-${id}-left`,leftVal);
-          localStorage.setItem(`pos-${id}-top`,topVal);
-          localStorage.setItem(`pos-${id}-width`,widthVal);
-          localStorage.setItem(`pos-${id}-height`,heightVal);
+          const cs = window.getComputedStyle(el);
+          const leftVal = parseInt(cs.left, 10) || 0;
+          const topVal = parseInt(cs.top, 10) || 0;
+          const widthVal = parseInt(cs.width, 10) || 0;
+          const heightVal = parseInt(cs.height, 10) || 0;
+          localStorage.setItem(`pos-${id}-left`, leftVal);
+          localStorage.setItem(`pos-${id}-top`, topVal);
+          localStorage.setItem(`pos-${id}-width`, widthVal);
+          localStorage.setItem(`pos-${id}-height`, heightVal);
         }
       });
       console.log("Configuration saved.");
@@ -576,7 +577,7 @@
         details += " Shipping Status:\n";
       }
 
-      // Process shipments if shipped, and save tracking number globally
+      // Process shipments if shipped; save tracking number globally
       if(window.orderIsShipped === "Shipped!"){
         if(window.orderShipments && window.orderShipments.length > 0){
           const ship = window.orderShipments[0];
@@ -595,12 +596,11 @@
           window.currentTracking = null;
         }
       } else {
-        // Hide tracking button if not shipped
         window.currentTracking = null;
       }
 
-      // Toggle display of tracking button based on shipment status
-      if(window.orderIsShipped === "Shipped!"){
+      // Toggle display of tracking button: show only if shipped and tracking exists
+      if(window.orderIsShipped === "Shipped!" && window.currentTracking){
         document.getElementById("trackingLinkBtn").style.display = "block";
       } else {
         document.getElementById("trackingLinkBtn").style.display = "none";
@@ -608,7 +608,7 @@
 
       details += " ORDER DETAILS:\n\n";
 
-      // Title => first 4 words
+      // Title: first 4 words
       if(item.title){
         const firstFour = item.title.trim().split(" ").slice(0,4).join(" ");
         details += " Title: " + firstFour + "\n";
@@ -912,27 +912,27 @@
     }
 
     /********** DOMContentLoaded: Attach Handlers **********/
-    document.addEventListener("DOMContentLoaded", ()=>{
+    document.addEventListener("DOMContentLoaded", () => {
       console.log("DOM loaded - initializing UI handlers.");
       M.AutoInit();
       document.body.style.opacity = 0;
-      setTimeout(()=>{
+      setTimeout(() => {
         loadPositions();
         document.body.style.opacity = 1;
-      },250);
+      }, 250);
 
-      document.getElementById("openConfigBtn").addEventListener("click", ()=>{
+      document.getElementById("openConfigBtn").addEventListener("click", () => {
         populateConfigTable();
         const modalElem = document.getElementById("configModal");
         const instance = M.Modal.getInstance(modalElem);
         instance.open();
       });
-      document.getElementById("saveConfigBtn").addEventListener("click", ()=>{
+      document.getElementById("saveConfigBtn").addEventListener("click", () => {
         saveConfiguration();
       });
 
       const etsyOrderInput = document.getElementById("etsyOrderNumber");
-      etsyOrderInput.addEventListener("keydown", async e=>{
+      etsyOrderInput.addEventListener("keydown", async e => {
         if(e.key === "Enter"){
           const orderNumber = etsyOrderInput.value.trim();
           if(orderNumber !== ""){
@@ -945,7 +945,7 @@
       });
 
       // "Order Link" button event
-      document.getElementById("orderLinkBtn").addEventListener("click", ()=>{
+      document.getElementById("orderLinkBtn").addEventListener("click", () => {
         const baseUrl = "https://www.etsy.com/your/orders/sold?ref=seller-platform-mcnav&order_id=0000000000";
         const currentOrder = etsyOrderInput.value.trim();
         if(!currentOrder){
@@ -956,7 +956,7 @@
         window.open(customLink, "_blank");
       });
 
-      // "Tracking Link" button event (only visible if shipped)
+      // "Tracking Link" button event (only visible if tracking number exists)
       document.getElementById("trackingLinkBtn").addEventListener("click", () => {
         if (!window.currentTracking) {
           console.log("No tracking number available.");
@@ -1034,7 +1034,7 @@
       // "Go to Screen Two" button event
       const goBtn = document.getElementById('goScreenTwoBtn');
       if(goBtn){
-        goBtn.addEventListener('click', ()=>{
+        goBtn.addEventListener('click', () => {
           loadScreenTwo();
         });
       }
