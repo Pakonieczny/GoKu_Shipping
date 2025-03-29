@@ -59,9 +59,9 @@
       padding: 0;
       outline: none;
       z-index: 9999; /* ensures the button is on top of other elements */
+      display: none; /* hidden by default */
     }
     #trackingLinkBtn img {
-      /* Increased by 20%: 14px * 1.2 = 16.8px, rounded to 17px */
       width: 17px;
       height: 17px;
       display: block;
@@ -421,7 +421,7 @@
     function generateRandomString(length){
       const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
       let text = "";
-      for(let i=0;i<length;i++){
+      for(let i=0; i<length; i++){
         text += chars.charAt(Math.floor(Math.random() * chars.length));
       }
       return text;
@@ -599,7 +599,7 @@
         window.currentTracking = null;
       }
 
-      // Toggle display of tracking button: show only if shipped and tracking exists
+      // Toggle display of tracking button: show only if shipped and a tracking number exists
       if(window.orderIsShipped === "Shipped!" && window.currentTracking){
         document.getElementById("trackingLinkBtn").style.display = "block";
       } else {
