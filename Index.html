@@ -58,6 +58,7 @@
       cursor: pointer;
       padding: 0;
       outline: none;
+      z-index: 9999; /* ensures the button is on top of other elements */
     }
     #trackingLinkBtn img {
       width: 14px;
@@ -261,7 +262,7 @@
       <img src="assets/Globe.png" alt="Order Link Icon" />
     </button>
 
-    <!-- New "Tracking Link" button => uses USPS.png from assets folder -->
+    <!-- New "Tracking Link" button -->
     <button id="trackingLinkBtn" name="Tracking Link">
       <img src="assets/USPS.png" alt="Tracking Link Icon" />
     </button>
@@ -386,7 +387,7 @@
     window.cachedOrderItems = [];
     window.orderShippedTimestamp = null;
     window.orderShipments = [];
-    // Global variable to store tracking number for the selected order
+    // Global variable to store tracking number for the selected order.
     window.currentTracking = null;
 
     /********** Check for Access Token / Code **********/
@@ -511,7 +512,6 @@
         `;
         tbody.appendChild(row);
 
-        // Live updates
         row.querySelector(".left-input").addEventListener("input",function(){
           const tgt=document.getElementById(this.getAttribute("data-id"));
           if(tgt) tgt.style.left=parseInt(this.value,10)+"px";
@@ -554,38 +554,37 @@
         console.warn("No item at index:", index);
         return;
       }
-      const item=window.cachedOrderItems[index];
-      let details="";
+      const item = window.cachedOrderItems[index];
+      let details = "";
 
       // ORDER FROM:
       if(window.orderName){
-        details += " ORDER FROM: "+window.orderName+"\n";
+        details += " ORDER FROM: " + window.orderName + "\n";
       }
 
       // ORDER STATUS:
       if(window.orderStatus){
-        details += " Order Status: "+window.orderStatus+"\n";
+        details += " Order Status: " + window.orderStatus + "\n";
       }
 
-      // Single newline after "Shipping Status:"
-      if(window.orderIsShipped==="Shipped!"){
+      // Shipping Status (single newline)
+      if(window.orderIsShipped === "Shipped!"){
         details += " Shipping Status:\n";
       } else if(window.orderIsShipped){
-        details += " Shipping Status: "+window.orderIsShipped+"\n";
+        details += " Shipping Status: " + window.orderIsShipped + "\n";
       } else {
         details += " Shipping Status:\n";
       }
 
-      // If shipped => possibly has shipments
-      if(window.orderIsShipped==="Shipped!"){
-        if(window.orderShipments && window.orderShipments.length>0){
+      // Process shipments if shipped, and save tracking number globally
+      if(window.orderIsShipped === "Shipped!"){
+        if(window.orderShipments && window.orderShipments.length > 0){
           const ship = window.orderShipments[0];
           if(ship.carrier_name){
-            details += " Carrier Name: "+ship.carrier_name+"\n";
+            details += " Carrier Name: " + ship.carrier_name + "\n";
           }
           if(ship.tracking_code){
-            details += " Tracking Number: "+ship.tracking_code+"\n\n";
-            // Save tracking number globally for the new button
+            details += " Tracking Number: " + ship.tracking_code + "\n\n";
             window.currentTracking = ship.tracking_code;
           } else {
             details += "\n";
@@ -595,56 +594,66 @@
           details += "\n";
           window.currentTracking = null;
         }
+      } else {
+        // Hide tracking button if not shipped
+        window.currentTracking = null;
+      }
+
+      // Toggle display of tracking button based on shipment status
+      if(window.orderIsShipped === "Shipped!"){
+        document.getElementById("trackingLinkBtn").style.display = "block";
+      } else {
+        document.getElementById("trackingLinkBtn").style.display = "none";
       }
 
       details += " ORDER DETAILS:\n\n";
 
       // Title => first 4 words
       if(item.title){
-        const firstFour=item.title.trim().split(" ").slice(0,4).join(" ");
-        details += " Title: "+firstFour+"\n";
+        const firstFour = item.title.trim().split(" ").slice(0,4).join(" ");
+        details += " Title: " + firstFour + "\n";
       }
 
       // SKU
       if(item.sku){
-        details += " SKU: "+item.sku+"\n";
+        details += " SKU: " + item.sku + "\n";
       }
 
-      // Variation logic
+      // Variations logic
       if(item.variations && Array.isArray(item.variations)){
-        const acceptedMetalNames=["metal","metal choice","metal - engraving","metal colour","color","metal choice / engraving option"];
-        const acceptedLengthNames=["length","necklace length","metal/necklace length","metal choice / necklace length","necklace length in inches"];
-        item.variations.forEach(v=>{
+        const acceptedMetalNames = ["metal","metal choice","metal - engraving","metal colour","color","metal choice / engraving option"];
+        const acceptedLengthNames = ["length","necklace length","metal/necklace length","metal choice / necklace length","necklace length in inches"];
+        item.variations.forEach(v => {
           if(v.formatted_name && v.formatted_value){
             const nameLower = v.formatted_name.trim().toLowerCase();
             let val = v.formatted_value.trim();
-            if(nameLower==="personalization" && val==="Not requested on this item."){
+            if(nameLower === "personalization" && val === "Not requested on this item."){
               val = "Not Requested";
-              details += " Personalization: "+val+"\n";
+              details += " Personalization: " + val + "\n";
             } else if(acceptedMetalNames.includes(nameLower)){
-              details += " Metal Choice: "+val+"\n";
+              details += " Metal Choice: " + val + "\n";
             } else if(acceptedLengthNames.includes(nameLower)){
               const lengthMap = {
                 '14&quot;':'14 Inches','16&quot;':'16 Inches','18&quot;':'18 Inches','20&quot;':'20 Inches',
                 '14""':'14 Inches','16""':'16 Inches','18""':'18 Inches','20""':'20 Inches'
               };
               if(lengthMap[val]){
-                val=lengthMap[val];
+                val = lengthMap[val];
               }
-              details += " Item Length: "+val+"\n";
+              details += " Item Length: " + val + "\n";
             } else {
-              details += " "+v.formatted_name+": "+v.formatted_value+"\n";
+              details += " " + v.formatted_name + ": " + v.formatted_value + "\n";
             }
           }
         });
       }
 
-      // Add receipt-level gift details
-      if(window.receiptIsGift!==null && typeof window.receiptIsGift!=="undefined"){
-        details += " Marked as Gift: "+window.receiptIsGift+"\n";
+      // Receipt-level gift details
+      if(window.receiptIsGift !== null && typeof window.receiptIsGift !== "undefined"){
+        details += " Marked as Gift: " + window.receiptIsGift + "\n";
       }
       if(window.receiptGiftMessage){
-        details += " Gift Message: "+window.receiptGiftMessage+"\n";
+        details += " Gift Message: " + window.receiptGiftMessage + "\n";
       }
 
       document.getElementById("orderDetails").value = details;
@@ -675,7 +684,7 @@
         items = data.results;
       } else if(data.orders && Array.isArray(data.orders)){
         items = data.orders;
-      } else if(typeof data==="object" && data!==null){
+      } else if(typeof data === "object" && data !== null){
         for(const key in data){
           if(Array.isArray(data[key])){
             items = data[key];
@@ -924,9 +933,9 @@
 
       const etsyOrderInput = document.getElementById("etsyOrderNumber");
       etsyOrderInput.addEventListener("keydown", async e=>{
-        if(e.key==="Enter"){
+        if(e.key === "Enter"){
           const orderNumber = etsyOrderInput.value.trim();
-          if(orderNumber!==""){
+          if(orderNumber !== ""){
             const orderData = await pullEtsyOrderDetails(orderNumber);
             if(orderData){
               await updateImageGrid(orderData);
@@ -935,7 +944,7 @@
         }
       });
 
-      // "Order Link" => open new tab
+      // "Order Link" button event
       document.getElementById("orderLinkBtn").addEventListener("click", ()=>{
         const baseUrl = "https://www.etsy.com/your/orders/sold?ref=seller-platform-mcnav&order_id=0000000000";
         const currentOrder = etsyOrderInput.value.trim();
@@ -947,7 +956,7 @@
         window.open(customLink, "_blank");
       });
 
-      // "Tracking Link" button => open USPS tracking if currentTracking is set
+      // "Tracking Link" button event (only visible if shipped)
       document.getElementById("trackingLinkBtn").addEventListener("click", () => {
         if (!window.currentTracking) {
           console.log("No tracking number available.");
@@ -958,7 +967,7 @@
         window.open(trackingUrl, "_blank");
       });
 
-      // Wheel-based zoom + drag panning for preview-box
+      // Wheel-based zoom + drag panning for preview boxes
       document.querySelectorAll('.preview-box').forEach(function(box) {
         let isDragging = false;
         let lastX = 0;
@@ -1022,7 +1031,7 @@
         });
       });
 
-      // "Go to Screen Two" button => load screenTwo
+      // "Go to Screen Two" button event
       const goBtn = document.getElementById('goScreenTwoBtn');
       if(goBtn){
         goBtn.addEventListener('click', ()=>{
