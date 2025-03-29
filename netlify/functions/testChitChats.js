@@ -5,6 +5,8 @@ exports.handler = async function(event, context) {
   try {
     const clientId = process.env.CHIT_CHATS_CLIENT_ID;
     const accessToken = process.env.CHIT_CHATS_ACCESS_TOKEN;
+    // Use the CHIT_CHATS_BASE_URL if provided, otherwise default to staging
+    const baseUrl = process.env.CHIT_CHATS_BASE_URL || "https://staging.chitchats.com/api/v1";
     
     // Debug logging to verify credentials
     console.log("testChitChats: Using clientId:", clientId);
@@ -18,8 +20,8 @@ exports.handler = async function(event, context) {
       };
     }
     
-    // Construct the shipments endpoint URL and log it
-    const apiUrl = `https://chitchats.com/api/v1/clients/${clientId}/shipments?limit=1&page=1`;
+    // Construct the shipments endpoint URL using the staging base URL.
+    const apiUrl = `${baseUrl}/clients/${clientId}/shipments?limit=1&page=1`;
     console.log("testChitChats: Full API URL:", apiUrl);
     
     const response = await fetch(apiUrl, {
