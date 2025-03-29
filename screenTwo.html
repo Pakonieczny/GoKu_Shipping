@@ -52,10 +52,10 @@
     /**********************************************************
      * initScreenTwo():
      *   1) Re-init Materialize for the new modal
-     *   2) loadPositionsScreenTwo() => force absolute positioning
+     *   2) loadPositionsScreenTwo() => recall positions from localStorage
      *   3) wire up the "Return to Screen One" button
-     *   4) wire up the "Chit Chat" search
-     *   5) wire up the config for Screen Two
+     *   4) wire up the "Chit Chat" order search
+     *   5) wire up the config system for Screen Two
      **********************************************************/
     function initScreenTwo() {
       console.log("Screen Two loaded!");
@@ -63,7 +63,7 @@
       // 1) Re-init Materialize so the new modal is recognized
       M.AutoInit();
 
-      // 2) Force absolute positioning + load stored left/top
+      // 2) Force absolute positioning & load from localStorage
       loadPositionsScreenTwo();
 
       // 3) "Return to Screen One" button => show #screenOne, hide #screenTwo
@@ -138,43 +138,41 @@
 
     /***********************************************************
      * loadPositionsScreenTwo():
-     *   - Force .style.position = "absolute"
+     *   - Force .style.position = "absolute" for each item
      *   - If there's a stored left/top in localStorage, apply it
-     *   - Otherwise default to 0,0 at top-left corner
+     *   - Otherwise default to 0,0 top-left
      ***********************************************************/
     function loadPositionsScreenTwo(){
       screenTwoComponentIDs.forEach(id => {
         const el = document.getElementById(id);
         if(!el) return;
 
-        // Force position: absolute so left/top changes move them
+        // Force position: absolute => so left/top changes actually move them
         el.style.position = "absolute";
 
-        // Load stored or fallback to 0,0
-        const savedLeft = localStorage.getItem(`pos2-${id}-left`);
-        const savedTop  = localStorage.getItem(`pos2-${id}-top`);
-        const savedWidth = localStorage.getItem(`pos2-${id}-width`);
-        const savedHeight= localStorage.getItem(`pos2-${id}-height`);
+        // Retrieve from localStorage if it exists
+        const savedLeft   = localStorage.getItem(`pos2-${id}-left`);
+        const savedTop    = localStorage.getItem(`pos2-${id}-top`);
+        const savedWidth  = localStorage.getItem(`pos2-${id}-width`);
+        const savedHeight = localStorage.getItem(`pos2-${id}-height`);
 
-        if(savedLeft !== null) {
-          el.style.left = savedLeft + "px";
-        } else {
-          el.style.left = "0px";
+        // If not stored, default to 0
+        el.style.left   = (savedLeft   !== null) ? savedLeft + "px"   : "0px";
+        el.style.top    = (savedTop    !== null) ? savedTop  + "px"   : "0px";
+        if(savedWidth !== null){
+          el.style.width  = savedWidth + "px";
         }
-        if(savedTop !== null) {
-          el.style.top = savedTop + "px";
-        } else {
-          el.style.top = "0px";
-        }
-        if(savedWidth !== null) {
-          el.style.width = savedWidth + "px";
-        }
-        if(savedHeight!== null) {
-          el.style.height= savedHeight+ "px";
+        if(savedHeight!== null){
+          el.style.height = savedHeight+ "px";
         }
       });
     }
 
+    /***********************************************************
+     * populateConfigTableScreenTwo():
+     *   - Build a table of left/top/width/height for each
+     *   - Let the user input numeric changes, applying them live
+     ***********************************************************/
     function populateConfigTableScreenTwo(){
       const tbody = document.getElementById("configTableScreenTwo").querySelector("tbody");
       tbody.innerHTML="";
@@ -182,10 +180,11 @@
         const el = document.getElementById(id);
         if (!el) return;
 
-        // Use either the button's text, or input's placeholder, or the ID
+        // If it's a button => text is .textContent
+        // If it's an input => placeholder
+        // Otherwise fallback to the ID
         const compName = el.textContent.trim() || el.placeholder || id;
         const cs = window.getComputedStyle(el);
-        // parse left, top, width, height
         const leftVal = (cs.left==="auto") ? 0 : parseInt(cs.left,10);
         const topVal  = (cs.top==="auto")  ? 0 : parseInt(cs.top,10);
         const widthVal= (cs.width==="auto")?0 : parseInt(cs.width,10);
@@ -194,14 +193,14 @@
         const row = document.createElement("tr");
         row.innerHTML = `
           <td>${compName}</td>
-          <td><input type="number" value="${leftVal}" data-id="${id}" class="left-input2"></td>
-          <td><input type="number" value="${topVal}"  data-id="${id}" class="top-input2"></td>
+          <td><input type="number" value="${leftVal}"  data-id="${id}" class="left-input2"></td>
+          <td><input type="number" value="${topVal}"   data-id="${id}" class="top-input2"></td>
           <td><input type="number" value="${widthVal}" data-id="${id}" class="width-input2"></td>
-          <td><input type="number" value="${heightVal}" data-id="${id}" class="height-input2"></td>
+          <td><input type="number" value="${heightVal}"data-id="${id}" class="height-input2"></td>
         `;
         tbody.appendChild(row);
 
-        // Live updates: as user types, item moves/resizes
+        // Live updates => move/resize the item as user types
         row.querySelector(".left-input2").addEventListener("input", function(){
           const tgt = document.getElementById(this.getAttribute("data-id"));
           if(tgt) tgt.style.left = parseInt(this.value,10)+"px";
@@ -221,6 +220,11 @@
       });
     }
 
+    /***********************************************************
+     * saveConfigurationScreenTwo():
+     *   - For each item, read computed left/top/width/height
+     *   - Store them in localStorage for next time
+     ***********************************************************/
     function saveConfigurationScreenTwo(){
       screenTwoComponentIDs.forEach(id => {
         const el = document.getElementById(id);
