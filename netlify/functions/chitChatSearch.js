@@ -3,6 +3,7 @@ const fetch = require("node-fetch");
 
 exports.handler = async function(event, context) {
   try {
+    // Retrieve the search query parameter
     const query = event.queryStringParameters.q;
     console.log("chitChatSearch: Received query:", query);
     if (!query) {
@@ -13,27 +14,28 @@ exports.handler = async function(event, context) {
       };
     }
     
+    // Retrieve your Chit Chats API credentials from environment variables.
     const clientId = process.env.CHIT_CHATS_CLIENT_ID;
     const accessToken = process.env.CHIT_CHATS_ACCESS_TOKEN;
     console.log("chitChatSearch: Using clientId:", clientId);
     if (!clientId || !accessToken) {
-      console.error("chitChatSearch: Missing environment variables");
+      console.error("chitChatSearch: Missing CHIT_CHATS_CLIENT_ID or CHIT_CHATS_ACCESS_TOKEN in environment variables.");
       return {
         statusCode: 500,
         body: JSON.stringify({ error: "Missing CHIT_CHATS_CLIENT_ID or CHIT_CHATS_ACCESS_TOKEN" })
       };
     }
     
-    // Construct the Chit Chats API URL – adjust the endpoint as per docs.
-    const apiUrl = `https://api.chitchat.com/v1/orders?search=${encodeURIComponent(query)}`;
+    // Construct the correct API URL using the proper base URL with an "s" and including the clientId in the path.
+    const apiUrl = `https://chitchats.com/api/v1/clients/${clientId}/orders?search=${encodeURIComponent(query)}`;
     console.log("chitChatSearch: Calling API URL:", apiUrl);
     
+    // Make the API call using the stored credentials.
     const response = await fetch(apiUrl, {
       method: "GET",
       headers: {
         "Authorization": `Bearer ${accessToken}`,
-        "Content-Type": "application/json",
-        "x-api-key": clientId
+        "Content-Type": "application/json"
       }
     });
     
