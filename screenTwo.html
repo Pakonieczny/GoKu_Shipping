@@ -1,4 +1,4 @@
-<!-- screenTwo.html (no <html> or <body> tags, only inner markup) -->
+<!-- screenTwo.html (no <html> or <body> tags; inner markup only) -->
 <div id="screenTwo" style="display:none;">
   <!-- "Return to Screen One" button -->
   <button id="goBackBtn" class="btn">Return to Screen One</button>
@@ -56,9 +56,9 @@
   <script>
     /**********************************************************
      * initScreenTwo():
-     *   1) Re-init Materialize for the new modal.
-     *   2) Load positions from localStorage (forcing absolute positioning).
-     *   3) Test the Chit Chats API connection via our testChitChats Netlify function.
+     *   1) Re-init Materialize so the new modal is recognized.
+     *   2) Load positions for Screen Two elements from localStorage.
+     *   3) Test the Chit Chats API connection via testChitChats Netlify function.
      *   4) Wire up the "Return to Screen One" button.
      *   5) Wire up the Chit Chat order search.
      *   6) Wire up the config system for Screen Two.
@@ -66,13 +66,13 @@
     function initScreenTwo() {
       console.log("Screen Two loaded!");
 
-      // Re-init Materialize components.
+      // 1) Re-init Materialize components.
       M.AutoInit();
 
-      // Load positions for Screen Two elements.
+      // 2) Load saved positions (forcing absolute positioning).
       loadPositionsScreenTwo();
 
-      // Test connection to the Chit Chats API.
+      // 3) Test connection to the Chit Chats API.
       fetch('/.netlify/functions/testChitChats')
         .then(response => {
           console.log("TestChitChats: Response status", response.status);
@@ -92,7 +92,7 @@
           console.error("TestChitChats: Error", err);
         });
 
-      // "Return to Screen One" button functionality.
+      // 4) "Return to Screen One" button functionality.
       const backBtn = document.getElementById('goBackBtn');
       if (backBtn) {
         backBtn.addEventListener('click', function(){
@@ -103,7 +103,7 @@
         });
       }
 
-      // Chit Chat Order Search functionality.
+      // 5) Chit Chat Order Search functionality.
       const searchBtn = document.getElementById('chitChatSearchBtn');
       if (searchBtn) {
         searchBtn.addEventListener('click', async () => {
@@ -132,7 +132,7 @@
         });
       }
 
-      // Config system for Screen Two.
+      // 6) Config system for Screen Two.
       const openConfigBtn2 = document.getElementById("openConfigBtnScreenTwo");
       if (openConfigBtn2) {
         openConfigBtn2.addEventListener("click", () => {
@@ -163,7 +163,7 @@
     /***********************************************************
      * loadPositionsScreenTwo():
      *   - Forces absolute positioning.
-     *   - Recalls saved left/top/width/height from localStorage or defaults to 0.
+     *   - Recalls saved left, top, width, and height from localStorage or defaults to 0.
      ***********************************************************/
     function loadPositionsScreenTwo() {
       screenTwoComponentIDs.forEach(id => {
@@ -209,19 +209,19 @@
         tbody.appendChild(row);
         row.querySelector(".left-input2").addEventListener("input", function(){
           const tgt = document.getElementById(this.getAttribute("data-id"));
-          if(tgt) tgt.style.left = parseInt(this.value,10) + "px";
+          if (tgt) tgt.style.left = parseInt(this.value, 10) + "px";
         });
         row.querySelector(".top-input2").addEventListener("input", function(){
           const tgt = document.getElementById(this.getAttribute("data-id"));
-          if(tgt) tgt.style.top = parseInt(this.value,10) + "px";
+          if (tgt) tgt.style.top = parseInt(this.value, 10) + "px";
         });
         row.querySelector(".width-input2").addEventListener("input", function(){
           const tgt = document.getElementById(this.getAttribute("data-id"));
-          if(tgt) tgt.style.width = parseInt(this.value,10) + "px";
+          if (tgt) tgt.style.width = parseInt(this.value, 10) + "px";
         });
         row.querySelector(".height-input2").addEventListener("input", function(){
           const tgt = document.getElementById(this.getAttribute("data-id"));
-          if(tgt) tgt.style.height = parseInt(this.value,10) + "px";
+          if (tgt) tgt.style.height = parseInt(this.value, 10) + "px";
         });
       });
     }
