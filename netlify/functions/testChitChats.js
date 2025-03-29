@@ -3,12 +3,13 @@ const fetch = require("node-fetch");
 
 exports.handler = async function(event, context) {
   try {
+    // Retrieve credentials from environment variables
     const clientId = process.env.CHIT_CHATS_CLIENT_ID;
     const accessToken = process.env.CHIT_CHATS_ACCESS_TOKEN;
-    // Use the CHIT_CHATS_BASE_URL if provided, otherwise default to staging
+    // Use the CHIT_CHATS_BASE_URL if provided; default to staging URL for testing
     const baseUrl = process.env.CHIT_CHATS_BASE_URL || "https://staging.chitchats.com/api/v1";
     
-    // Debug logging to verify credentials
+    // Debug logging to verify credentials and header
     console.log("testChitChats: Using clientId:", clientId);
     console.log("testChitChats: Access token used:", accessToken);
     console.log("testChitChats: Authorization header:", `Bearer ${accessToken}`);
@@ -20,10 +21,11 @@ exports.handler = async function(event, context) {
       };
     }
     
-    // Construct the shipments endpoint URL using the staging base URL.
-    const apiUrl = `${baseUrl}/clients/${clientId}/shipments?limit=1&page=1`;
+    // Construct the shipments endpoint URL with status=ready, limit and page parameters
+    const apiUrl = `${baseUrl}/clients/${clientId}/shipments?status=ready&limit=100&page=1`;
     console.log("testChitChats: Full API URL:", apiUrl);
     
+    // Make the API call
     const response = await fetch(apiUrl, {
       method: "GET",
       headers: {

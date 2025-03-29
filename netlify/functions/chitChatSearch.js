@@ -28,7 +28,7 @@ exports.handler = async function(event, context) {
     
     // Construct the API URL using the orders endpoint with additional parameters.
     // Example: list orders with limit, page and filter by search term.
-    const apiUrl = `https://staging.chitchats.com/api/v1/clients/${clientId}/orders?limit=10&page=1&search=${encodeURIComponent(query)}`;
+    const apiUrl = `https://staging.chitchats.com/api/v1/clients/${clientId}/shipments?status=ready&limit=100&page=1`;
     console.log("chitChatSearch: Calling API URL:", apiUrl);
     
     const response = await fetch(apiUrl, {
