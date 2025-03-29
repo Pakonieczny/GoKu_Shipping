@@ -12,7 +12,7 @@ exports.handler = async function(event, context) {
       };
     }
     
-    // Use the shipments endpoint as a test. Adjust parameters as needed.
+    // Use the shipments endpoint as a simple test.
     const apiUrl = `https://chitchats.com/api/v1/clients/${clientId}/shipments?limit=1&page=1`;
     console.log("testChitChats: Calling API URL:", apiUrl);
     
