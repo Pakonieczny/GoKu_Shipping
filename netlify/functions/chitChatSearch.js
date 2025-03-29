@@ -26,10 +26,10 @@ exports.handler = async function(event, context) {
       };
     }
     
-    // Construct the API URL using the proper base URL and adding client_id as a query parameter.
-    // According to the docs at https://chitchats.com/docs/api/v1, the correct endpoint should be:
-    // https://chitchats.com/api/v1/orders?client_id=<YOUR_CLIENT_ID>&search=<search_term>
-    const apiUrl = `https://chitchats.com/api/v1/orders?client_id=${clientId}&search=${encodeURIComponent(query)}`;
+    // Construct the API URL using an alternate endpoint pattern.
+    // This new URL uses: 
+    // https://chitchats.com/api/v1/orders/search?client_id=<clientId>&query=<search_term>
+    const apiUrl = `https://chitchats.com/api/v1/orders/search?client_id=${clientId}&query=${encodeURIComponent(query)}`;
     console.log("chitChatSearch: Calling API URL:", apiUrl);
     
     // Make the API call using the stored credentials.
