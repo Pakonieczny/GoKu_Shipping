@@ -28,7 +28,7 @@ exports.handler = async function(event, context) {
       method: "GET",
       headers: {
         "Authorization": `Bearer ${accessToken}`,
-        "Content-Type": "application/json"
+        "Content-Type": "application/json; charset=utf-8"
       }
     });
     
