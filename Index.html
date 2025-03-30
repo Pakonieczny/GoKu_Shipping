@@ -126,14 +126,14 @@
     .preview-box {
       border: 1px solid black !important;
       background: #f9f9f9;
+      width: 100%;
+      height: 150px;
       display: flex;
       align-items: center;
       justify-content: center;
       overflow: hidden;
       position: relative;
       user-select: none;
-      width: 100%;
-      height: 150px;
     }
     .preview-box img {
       width: 100%;
@@ -192,11 +192,12 @@
       overflow-y: auto;
     }
 
-    /* Single-line text boxes (shipDate, dateOrdered, labelCreationDate, employeeName) */
+    /* Single-line text boxes */
     #dateOrdered,
     #shipDate,
     #labelCreationDate,
-    #employeeName {
+    #employeeName,
+    #completedByEmployee {
       position: absolute;
       border: 1px solid black;
       width: 200px;
@@ -208,13 +209,19 @@
       font-weight: bold;
     }
 
-    /* "labelCreationDate" near the bottom, "employeeName" just beneath it */
+    /* "labelCreationDate" near the bottom, "employeeName" near it */
     #labelCreationDate {
       top: 350px;
       left: 50px;
     }
     #employeeName {
       top: 380px;
+      left: 50px;
+    }
+
+    /* 2) brand-new "completedByEmployee" text box */
+    #completedByEmployee {
+      top: 410px;
       left: 50px;
     }
 
@@ -271,7 +278,7 @@
       font-size: 0.8em;
     }
 
-    /* 4) "Signature Box" at 25px tall by 50px wide */
+    /* "Signature Box" at 25px tall by 50px wide */
     #signatureBox {
       position: absolute;
       left: 400px;
@@ -380,13 +387,16 @@
     <input type="text" id="dateOrdered" readonly />
     <input type="text" id="shipDate" readonly />
 
-    <!-- "labelCreationDate" (with date+time) -->
+    <!-- The label creation date box (date + time) -->
     <input type="text" id="labelCreationDate" placeholder="Label Creation Date" readonly />
 
-    <!-- "employeeName" text box, unconnected at this time -->
+    <!-- The employeeName text box (we do NOT update it on pullDatabase) -->
     <input type="text" id="employeeName" placeholder="Employee Name" readonly />
 
-    <!-- "Signature Box" (25x50) -->
+    <!-- 2) brand-new "completedByEmployee" text box, updated on Pull Database with "Employee Name" from Firestore -->
+    <input type="text" id="completedByEmployee" placeholder="Completed By Employee" readonly />
+
+    <!-- "Signature Box" (25px x 50px) -->
     <div id="signatureBox">Sig Box</div>
 
     <!-- Configuration Modal -->
@@ -421,7 +431,7 @@
   <!-- Container for the second screen markup -->
   <div id="secondaryContainer"></div>
 
-  <!-- 3) "User Log In" Modal that appears on load -->
+  <!-- "User Log In" Modal that appears on load -->
   <div id="userLoginModal" class="modal">
     <div class="modal-content">
       <h5>User Log In</h5>
@@ -497,19 +507,20 @@
 
     /********** Configuration System **********/
     var configComponentIDs = [
-      "connectEtsyBtn", "connectFirebaseBtn", "pullDatabaseBtn", "openConfigBtn", "orderLinkBtn",
-      "trackingLinkBtn", "etsyOrderNumber", "orderInformation",
+      "connectEtsyBtn", "connectFirebaseBtn", "pullDatabaseBtn", "openConfigBtn",
+      "orderLinkBtn", "trackingLinkBtn", "etsyOrderNumber", "orderInformation",
       "Photo_Grid",
       "quantityCell0", "quantityCell1", "quantityCell2", "quantityCell3",
       "quantityCell4", "quantityCell5", "quantityCell6", "quantityCell7",
       "metalCell0", "metalCell1", "metalCell2", "metalCell3",
       "metalCell4", "metalCell5", "metalCell6", "metalCell7",
       "orderDetails", "customerMessageHistory", "dateOrdered", "shipDate",
-      "labelCreationDate", "employeeName", "titleOrderDate", "titleOrderDate2", "titleShipDate",
-      "titleOrderDetails", "titleBritesMessages", "titlePurchasedItems",
-      "titleOrderNumber", "goScreenTwoBtn", "signatureBox",
-      "userLoginModal", "employeeNumberInput", "employeeLoginBtn"
+      "labelCreationDate", "employeeName", "completedByEmployee",
+      "titleOrderDate", "titleOrderDate2", "titleShipDate", "titleOrderDetails",
+      "titleBritesMessages", "titlePurchasedItems", "titleOrderNumber", "goScreenTwoBtn",
+      "signatureBox", "userLoginModal", "employeeNumberInput", "employeeLoginBtn"
     ];
+
     function loadPositions(){
       for(var i=0; i<configComponentIDs.length; i++){
         var id = configComponentIDs[i];
@@ -554,16 +565,16 @@
           if(tgt) tgt.style.left = parseInt(this.value, 10) + "px";
         });
         row.querySelector(".top-input").addEventListener("input", function(){
-          var tgt = document.getElementById(this.getAttribute("data-id"));
-          if(tgt) tgt.style.top = parseInt(this.value, 10) + "px";
+          var tgt2 = document.getElementById(this.getAttribute("data-id"));
+          if(tgt2) tgt2.style.top = parseInt(this.value, 10) + "px";
         });
         row.querySelector(".width-input").addEventListener("input", function(){
-          var tgt = document.getElementById(this.getAttribute("data-id"));
-          if(tgt) tgt.style.width = parseInt(this.value, 10) + "px";
+          var tgt3 = document.getElementById(this.getAttribute("data-id"));
+          if(tgt3) tgt3.style.width = parseInt(this.value, 10) + "px";
         });
         row.querySelector(".height-input").addEventListener("input", function(){
-          var tgt = document.getElementById(this.getAttribute("data-id"));
-          if(tgt) tgt.style.height = parseInt(this.value, 10) + "px";
+          var tgt4 = document.getElementById(this.getAttribute("data-id"));
+          if(tgt4) tgt4.style.height = parseInt(this.value, 10) + "px";
         });
       }
     }
@@ -599,11 +610,11 @@
       // Show the "User Log In" modal on load
       var userLoginModalElem = document.getElementById("userLoginModal");
       var userLoginModal = M.Modal.init(userLoginModalElem, {
-        dismissible: false // user can't close without logging in
+        dismissible: false
       });
       userLoginModal.open();
 
-      // "Log In" button
+      // "Log In" button for employees
       var employeeLoginBtn = document.getElementById("employeeLoginBtn");
       var employeeNumberInput = document.getElementById("employeeNumberInput");
       if(employeeLoginBtn){
@@ -615,28 +626,30 @@
               return;
             }
             // Retrieve doc "EmployeeNumbers" from Brites_Orders
-            var response = await fetch("/.netlify/functions/firebaseOrders?orderId=Employee Numbers");
-            if(!response.ok){
+            var responseEN = await fetch("/.netlify/functions/firebaseOrders?orderId=EmployeeNumbers");
+            if(!responseEN.ok){
               M.toast({ html: "Error fetching EmployeeNumbers doc!" });
               return;
             }
-            var result = await response.json();
-            if(!result.success || !result.data){
+            var resultEN = await responseEN.json();
+            if(!resultEN.success || !resultEN.data){
               M.toast({ html: "No data found for EmployeeNumbers doc!" });
               return;
             }
-            var docData = result.data; 
-            if(docData[empNumber]){
-              var nameFound = docData[empNumber];
+            var docDataEN = resultEN.data;
+            if(docDataEN[empNumber]){
+              var nameFound = docDataEN[empNumber];
               M.toast({ html: "Welcome, " + nameFound + "!" });
+              // Store it in "employeeName"
               document.getElementById("employeeName").value = nameFound;
+              // close modal
               userLoginModal.close();
             } else {
               M.toast({ html: "Employee # " + empNumber + " not found in DB!" });
             }
-          } catch(err){
-            console.error("Error in employee login flow:", err);
-            M.toast({ html: "Error: " + err.message });
+          } catch(errEN){
+            console.error("Error in employee login flow:", errEN);
+            M.toast({ html: "Error: " + errEN.message });
           }
         });
       }
@@ -652,7 +665,7 @@
         saveConfiguration();
       });
 
-      // Connect to Etsy button
+      // Connect to Etsy
       var connectEtsyBtn = document.getElementById("connectEtsyBtn");
       if(connectEtsyBtn){
         connectEtsyBtn.addEventListener("click", async function(){
@@ -678,7 +691,7 @@
         });
       }
 
-      // Pressing Enter in "etsyOrderNumber" to pull Etsy
+      // Press Enter in "etsyOrderNumber" to pull Etsy
       var etsyOrderInput = document.getElementById("etsyOrderNumber");
       etsyOrderInput.addEventListener("keydown", async function(e){
         if(e.key === "Enter"){
@@ -798,88 +811,92 @@
         });
       }
 
-      // Connect Firebase Button - store shippingLabelTimestamps
+      // Connect Firebase Button - store shippingLabelTimestamps + employeeName
       var connectFirebaseBtn2 = document.getElementById("connectFirebaseBtn");
       if(connectFirebaseBtn2){
         connectFirebaseBtn2.addEventListener("click", async function(){
           try {
-            var etsyOrderNumber2 = etsyOrderInput.value.trim();
-            var orderFrom = window.orderName || "";
-            var userMessages = document.getElementById("customerMessageHistory").value.trim();
-            var now = new Date();
-            var shippingLabelTS = now.toISOString();
+            var orderNumberVal = etsyOrderInput.value.trim(); // doc ID
+            var orderFromVal = window.orderName || "";
+            var userMsgsVal = document.getElementById("customerMessageHistory").value.trim();
+            var nowDate = new Date();
+            var shippingTS = nowDate.toISOString();
+
+            // read the "employeeName" text box
+            var empNameVal = document.getElementById("employeeName").value.trim();
 
             var bodyData = {
-              orderNumber: etsyOrderNumber2,
-              orderNumField: etsyOrderNumber2,
-              clientName: orderFrom,
-              britesMessages: userMessages,
-              shippingLabelTimestamps: shippingLabelTS
+              orderNumber: orderNumberVal,
+              orderNumField: orderNumberVal,
+              clientName: orderFromVal,
+              britesMessages: userMsgsVal,
+              shippingLabelTimestamps: shippingTS,
+              employeeName: empNameVal
             };
 
-            var response2 = await fetch("/.netlify/functions/firebaseOrders", {
+            var responseCF = await fetch("/.netlify/functions/firebaseOrders", {
               method: "POST",
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify(bodyData)
             });
-            var result2 = await response2.json();
+            var resultCF = await responseCF.json();
 
-            if (!response2.ok) {
-              throw new Error(result2.error || "Unknown error from firebaseOrders function");
+            if(!responseCF.ok){
+              throw new Error(resultCF.error || "Unknown error from firebaseOrders function");
             }
 
-            M.toast({ html: "Order data saved! " + JSON.stringify(result2) });
-            console.log("Successfully saved data to Firestore:", result2);
+            M.toast({ html: "Order data saved! " + JSON.stringify(resultCF) });
+            console.log("Successfully saved data to Firestore:", resultCF);
 
-          } catch (err2) {
-            M.toast({ html: "Error: " + err2.message });
-            console.error("Failed to save data to Firestore:", err2);
+          } catch(errCF){
+            M.toast({ html: "Error: " + errCF.message });
+            console.error("Failed to save data to Firestore:", errCF);
           }
         });
       }
 
-      // Pull Database Button - parse shippingLabelTimestamps for date + time
+      // Pull Database Button
       var pullDatabaseBtn2 = document.getElementById("pullDatabaseBtn");
       if(pullDatabaseBtn2){
         pullDatabaseBtn2.addEventListener("click", async function(){
           try {
-            var etsyOrderNumber3 = etsyOrderInput.value.trim();
-            if(!etsyOrderNumber3){
+            var etsyOrderVal2 = etsyOrderInput.value.trim();
+            if(!etsyOrderVal2){
               M.toast({ html: "Please enter an Etsy Order Number first." });
               return;
             }
 
-            var resp3 = await fetch("/.netlify/functions/firebaseOrders?orderId=" + encodeURIComponent(etsyOrderNumber3));
-            var res3 = await resp3.json();
-            if(!resp3.ok){
-              throw new Error(res3.error || "Unknown error from firebaseOrders function");
+            var respPD = await fetch("/.netlify/functions/firebaseOrders?orderId=" + encodeURIComponent(etsyOrderVal2));
+            var resPD = await respPD.json();
+            if(!respPD.ok){
+              throw new Error(resPD.error || "Unknown error from firebaseOrders function");
             }
 
-            var docData3 = res3.data;
-            var dbOrderNum3 = docData3["Order Number"];
-            if(dbOrderNum3 !== etsyOrderNumber3){
-              M.toast({ html: "Order mismatch: doc has '" + dbOrderNum3 + "', expected '" + etsyOrderNumber3 + "'" });
+            var docDataPD = resPD.data;
+            var dbOrderNum = docDataPD["Order Number"];
+            if(dbOrderNum !== etsyOrderVal2){
+              M.toast({ html: "Order mismatch: doc has '" + dbOrderNum + "', expected '" + etsyOrderVal2 + "'" });
               return;
             }
 
-            // Brites Messages
-            var dbBritesMessages3 = docData3["Brites Messages"] || "";
-            document.getElementById("customerMessageHistory").value = dbBritesMessages3;
+            // Brites Messages -> "customerMessageHistory"
+            var dbBrites = docDataPD["Brites Messages"] || "";
+            document.getElementById("customerMessageHistory").value = dbBrites;
             M.toast({ html: "Brites Messages loaded!" });
 
-            // Shipping Label Timestamps
-            var shippingTS3 = docData3["Shipping Label Timestamps"];
-            if(shippingTS3){
-              var d3 = new Date(shippingTS3);
-              if(!isNaN(d3.valueOf())){
-                var monthNames3 = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
-                var dd3 = ("0" + d3.getDate()).slice(-2);
-                var mStr3 = monthNames3[d3.getMonth()];
-                var yyyy3 = d3.getFullYear();
-                var hh3 = ("0" + d3.getHours()).slice(-2);
-                var mm3 = ("0" + d3.getMinutes()).slice(-2);
-                var formatted3 = dd3 + " " + mStr3 + " " + yyyy3 + ", " + hh3 + ":" + mm3;
-                document.getElementById("labelCreationDate").value = formatted3;
+            // Shipping Label Timestamps -> "labelCreationDate"
+            var shippingLabTS = docDataPD["Shipping Label Timestamps"];
+            if(shippingLabTS){
+              var dt = new Date(shippingLabTS);
+              if(!isNaN(dt.valueOf())){
+                var monthNamesF2 = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+                var dd = ("0" + dt.getDate()).slice(-2);
+                var mStr = monthNamesF2[dt.getMonth()];
+                var yyyy = dt.getFullYear();
+                var hh = ("0" + dt.getHours()).slice(-2);
+                var mm = ("0" + dt.getMinutes()).slice(-2);
+                var finalStr = dd + " " + mStr + " " + yyyy + ", " + hh + ":" + mm;
+                document.getElementById("labelCreationDate").value = finalStr;
               } else {
                 document.getElementById("labelCreationDate").value = "";
               }
@@ -887,16 +904,25 @@
               document.getElementById("labelCreationDate").value = "";
             }
 
-          } catch(err3){
-            M.toast({ html: "Error: " + err3.message });
-            console.error("Failed to pull data from Firestore:", err3);
+            // 1) DO NOT update "employeeName" from DB
+            // 2) Instead, update "completedByEmployee" with docDataPD["Employee Name"]
+            var dbEmpName = docDataPD["Employee Name"];
+            if(dbEmpName){
+              document.getElementById("completedByEmployee").value = dbEmpName;
+            } else {
+              document.getElementById("completedByEmployee").value = "";
+            }
+
+          } catch(errPD){
+            M.toast({ html: "Error: " + errPD.message });
+            console.error("Failed to pull data from Firestore:", errPD);
           }
         });
       }
     });
 
-    // loadScreenTwo function
-    async function loadScreenTwo() {
+    /********** loadScreenTwo (DOMParser) **********/
+    async function loadScreenTwo(){
       try {
         console.log("loadScreenTwo() called");
         var responseST = await fetch("screenTwo.html");
@@ -946,7 +972,7 @@
       }
     }
 
-    // The functions below remain the same
+    /********** updateImageGrid **********/
     async function updateImageGrid(data){
       var items = [];
       if(data.transactions && Array.isArray(data.transactions)){
@@ -960,6 +986,7 @@
       } else if(data.orders && Array.isArray(data.orders)){
         items = data.orders;
       } else if(typeof data === "object" && data !== null){
+        // If we find an array inside some key, use that
         for(var key in data){
           if(Array.isArray(data[key])){
             items = data[key];
@@ -968,17 +995,26 @@
         }
       }
       window.cachedOrderItems = items;
+
       for(var i=0; i<8; i++){
         var cell = document.getElementById("previewCell" + i);
         var qtyBox = document.getElementById("quantityCell" + i);
         var metalBox = document.getElementById("metalCell" + i);
+
         if(cell){
           if(i < items.length){
             var item = items[i];
             try {
               var images = await fetchListingImages(item.listing_id);
               if(images && images.length > 0){
-                cell.innerHTML = '<img src="' + images[0].url_fullxfull + '" alt="Listing Image ' + i + '" data-scale="1" data-offsetX="0" data-offsetY="0">';
+                cell.innerHTML =
+                  '<img ' +
+                  '  src="' + images[0].url_fullxfull + '" ' +
+                  '  alt="Listing Image ' + i + '" ' +
+                  '  data-scale="1" ' +
+                  '  data-offsetX="0" ' +
+                  '  data-offsetY="0"' +
+                  '>';
               } else {
                 cell.innerHTML = "No images found";
               }
@@ -987,21 +1023,34 @@
               cell.innerHTML = "Error loading image";
             }
             cell.style.cursor = "pointer";
-            cell.onclick = function(indexCopy){
-              return function(){ showItemDetails(indexCopy); };
-            }(i);
+
+            // closure for i
+            (function(idx){
+              cell.onclick = function(){
+                showItemDetails(idx);
+              };
+            })(i);
+
             if(qtyBox){
               var actualQty = (item.quantity != null) ? item.quantity : 0;
               qtyBox.value = " Quantity: " + actualQty;
             }
+
             if(metalBox){
               var metalSel = "";
               if(item.variations && Array.isArray(item.variations)){
-                var acceptedMetalNames = ["metal", "metal choice", "metal - engraving", "metal colour", "color", "metal choice / engraving option"];
+                var acceptedMetalNames = [
+                  "metal",
+                  "metal choice",
+                  "metal - engraving",
+                  "metal colour",
+                  "color",
+                  "metal choice / engraving option"
+                ];
                 var metalVar = item.variations.find(function(v){
                   if(!v.formatted_name) return false;
-                  var nameL = v.formatted_name.trim().toLowerCase();
-                  return acceptedMetalNames.indexOf(nameL) >= 0;
+                  var nameLC = v.formatted_name.trim().toLowerCase();
+                  return (acceptedMetalNames.indexOf(nameLC) >= 0);
                 });
                 if(metalVar && metalVar.formatted_value){
                   metalSel = metalVar.formatted_value;
@@ -1018,6 +1067,7 @@
           }
         }
       }
+
       if(items.length > 0){
         showItemDetails(0);
       } else {
@@ -1025,6 +1075,7 @@
       }
     }
 
+    /********** showItemDetails **********/
     function showItemDetails(index){
       if(!window.cachedOrderItems || !window.cachedOrderItems[index]){
         console.warn("No item at index:", index);
@@ -1033,12 +1084,17 @@
       var item = window.cachedOrderItems[index];
       var details = "";
 
+      // ORDER FROM:
       if(window.orderName){
         details += " ORDER FROM: " + window.orderName + "\n";
       }
+
+      // ORDER STATUS:
       if(window.orderStatus){
         details += " Order Status: " + window.orderStatus + "\n";
       }
+
+      // Shipping Status:
       if(window.orderIsShipped === "Shipped!"){
         details += " Shipping Status:\n";
       } else if(window.orderIsShipped){
@@ -1047,6 +1103,7 @@
         details += " Shipping Status:\n";
       }
 
+      // If shipped
       if(window.orderIsShipped === "Shipped!"){
         if(window.orderShipments && window.orderShipments.length > 0){
           var ship = window.orderShipments[0];
@@ -1082,21 +1139,40 @@
 
       details += " ORDER DETAILS:\n\n";
 
+      // Title: first 4 words
       if(item.title){
         var firstFour = item.title.trim().split(" ").slice(0,4).join(" ");
         details += " Title: " + firstFour + "\n";
       }
+
+      // SKU
       if(item.sku){
         details += " SKU: " + item.sku + "\n";
       }
+
+      // Variations
       if(item.variations && Array.isArray(item.variations)){
-        var acceptedMetalNames2 = ["metal","metal choice","metal - engraving","metal colour","color","metal choice / engraving option"];
-        var acceptedLengthNames2 = ["length","necklace length","metal/necklace length","metal choice / necklace length","necklace length in inches"];
+        var acceptedMetalNames2 = [
+          "metal",
+          "metal choice",
+          "metal - engraving",
+          "metal colour",
+          "color",
+          "metal choice / engraving option"
+        ];
+        var acceptedLengthNames2 = [
+          "length",
+          "necklace length",
+          "metal/necklace length",
+          "metal choice / necklace length",
+          "necklace length in inches"
+        ];
         for(var j=0; j<item.variations.length; j++){
           var v2 = item.variations[j];
           if(!v2.formatted_name || !v2.formatted_value) continue;
           var nameLower2 = v2.formatted_name.trim().toLowerCase();
           var val2 = v2.formatted_value.trim();
+
           if(nameLower2 === "personalization" && val2 === "Not requested on this item."){
             val2 = "Not Requested";
             details += " Personalization: " + val2 + "\n";
@@ -1104,8 +1180,14 @@
             details += " Metal Choice: " + val2 + "\n";
           } else if(acceptedLengthNames2.indexOf(nameLower2) >= 0){
             var lengthMap2 = {
-              "14&quot;": "14 Inches", "16&quot;": "16 Inches", "18&quot;": "18 Inches", "20&quot;": "20 Inches",
-              "14\"\"": "14 Inches", "16\"\"": "16 Inches", "18\"\"": "18 Inches", "20\"\"": "20 Inches"
+              "14&quot;": "14 Inches",
+              "16&quot;": "16 Inches",
+              "18&quot;": "18 Inches",
+              "20&quot;": "20 Inches",
+              "14\"\"": "14 Inches",
+              "16\"\"": "16 Inches",
+              "18\"\"": "18 Inches",
+              "20\"\"": "20 Inches"
             };
             if(lengthMap2[val2]){
               val2 = lengthMap2[val2];
@@ -1116,6 +1198,8 @@
           }
         }
       }
+
+      // Gift details
       if(window.receiptIsGift !== null && typeof window.receiptIsGift !== "undefined"){
         details += " Marked as Gift: " + window.receiptIsGift + "\n";
       }
@@ -1126,6 +1210,7 @@
       document.getElementById("orderDetails").value = details;
     }
 
+    /********** fetchListingImages **********/
     async function fetchListingImages(listingId){
       var responseLI = await fetch("/.netlify/functions/etsyImages?listingId=" + listingId, {
         headers: { "access-token": localStorage.getItem("access_token") }
@@ -1137,6 +1222,7 @@
       return dataLI.results;
     }
 
+    /********** pullEtsyOrderDetails **********/
     function pullEtsyOrderDetails(orderNumber){
       console.log("Pulling Etsy order details for order number:", orderNumber);
       var token = localStorage.getItem("access_token");
@@ -1147,11 +1233,14 @@
       .then(function(data){
         console.log("Etsy Order Data:", data);
         document.getElementById("orderInformation").value = " " + JSON.stringify(data, null, 2);
+
         window.receiptIsGift = (typeof data.is_gift !== "undefined") ? data.is_gift : null;
         window.receiptGiftMessage = data.gift_message || "";
         window.orderShipments = data.shipments || [];
+
         var titleDate2 = document.getElementById("titleOrderDate2");
         titleDate2.textContent = "";
+
         if(data.name){
           window.orderName = data.name;
         } else {
@@ -1169,30 +1258,37 @@
         } else {
           window.orderIsShipped = "";
         }
+
         var foundStamp = null;
         if(data.shipped_timestamp && data.is_shipped === true){
           foundStamp = data.shipped_timestamp;
-        } else if(data.transactions && Array.isArray(data.transactions) && data.transactions.length > 0 && data.transactions[0].shipped_timestamp && data.is_shipped === true){
+        }
+        else if(data.transactions && Array.isArray(data.transactions) && data.transactions.length > 0
+                && data.transactions[0].shipped_timestamp && data.is_shipped === true){
           foundStamp = data.transactions[0].shipped_timestamp;
         }
         window.orderShippedTimestamp = foundStamp;
+
         if(window.orderIsShipped === "Shipped!" && window.orderShippedTimestamp){
           var d4 = new Date(window.orderShippedTimestamp * 1000);
-          var monthNames4 = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+          var monthNames4 = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
           var day4 = ("0" + d4.getDate()).slice(-2);
           var mStr4 = monthNames4[d4.getMonth()];
           var y4 = d4.getFullYear();
           titleDate2.textContent = "Shipped On: " + day4 + " " + mStr4 + " " + y4;
         }
+
         var msgBox = document.getElementById("customerMessageHistory");
         if(data.message_from_buyer){
           msgBox.value = data.message_from_buyer + "\n";
         } else {
           msgBox.value = "";
         }
+
         if(data.transactions && data.transactions.length > 0){
           var firstTrans = data.transactions[0];
           var monthNamesF = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+
           if(firstTrans.created_timestamp){
             var dT = new Date(firstTrans.created_timestamp * 1000);
             var ddT = ("0" + dT.getDate()).slice(-2);
@@ -1202,6 +1298,7 @@
           } else {
             document.getElementById("dateOrdered").value = "";
           }
+
           var shipEl = document.getElementById("shipDate");
           shipEl.style.color = "";
           if(firstTrans.expected_ship_date){
@@ -1210,6 +1307,7 @@
             var sMonth = monthNamesF[sTS.getMonth()];
             var sYear = sTS.getFullYear();
             shipEl.value = " " + sDay + " " + sMonth + " " + sYear;
+
             if(window.orderIsShipped === "Shipped!"){
               shipEl.style.color = "#006400"; // green
             } else {
@@ -1232,6 +1330,7 @@
           shipEl2.value = "";
           shipEl2.style.color = "";
         }
+
         return data;
       })
       .catch(function(err){
