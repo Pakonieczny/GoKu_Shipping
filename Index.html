@@ -31,7 +31,6 @@
       left: 50px;
       top: 50px;
     }
-    /* NEW "Pull Database" button */
     #pullDatabaseBtn {
       position: absolute;
       left: 50px;
@@ -59,7 +58,6 @@
       display: block;
     }
 
-    /* "Tracking Link" button */
     #trackingLinkBtn {
       position: absolute;
       left: 160px;
@@ -69,7 +67,7 @@
       cursor: pointer;
       padding: 0;
       outline: none;
-      z-index: 9999; /* on top of other UI elements */
+      z-index: 9999;
       display: none; /* hidden by default */
     }
     #trackingLinkBtn img {
@@ -106,6 +104,7 @@
       resize: none;
     }
 
+    /* Photo Grid and Preview Boxes */
     #Photo_Grid {
       position: absolute;
       left: 400px;
@@ -127,8 +126,6 @@
     .preview-box {
       border: 1px solid black !important;
       background: #f9f9f9;
-      width: 100%;
-      height: 150px;
       display: flex;
       align-items: center;
       justify-content: center;
@@ -142,6 +139,12 @@
       object-fit: cover;
       transform-origin: center center;
       transition: transform 0.2s ease;
+    }
+
+    /* Default 8 preview boxes = 150px tall, full width in the cell. */
+    .preview-box {
+      width: 100%;
+      height: 150px;
     }
 
     /* 16 text-box-absolute elements */
@@ -193,9 +196,10 @@
       overflow-y: auto;
     }
 
-    /* Single-line text boxes */
+    /* Single-line text boxes (shipDate, dateOrdered, labelCreationDate, etc.) */
     #dateOrdered,
-    #shipDate {
+    #shipDate,
+    #labelCreationDate {
       position: absolute;
       border: 1px solid black;
       width: 200px;
@@ -205,6 +209,12 @@
       background: transparent;
       font-size: 0.9em;
       font-weight: bold;
+    }
+
+    /* "labelCreationDate" is a duplicate of shipDate, not connected to shipping logic. */
+    #labelCreationDate {
+      top: 350px;
+      left: 50px;
     }
 
     /* Title texts */
@@ -259,6 +269,22 @@
       width: 70px;
       font-size: 0.8em;
     }
+
+    /* 4) NEW "Signature Box" at 25px tall by 50px wide */
+    #signatureBox {
+      position: absolute;
+      left: 400px;
+      top: 360px;
+      width: 50px;
+      height: 25px;
+      border: 1px solid black !important;
+      background: #f9f9f9;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      overflow: hidden;
+      user-select: none;
+    }
   </style>
 </head>
 
@@ -268,7 +294,6 @@
     <!-- Main UI Buttons -->
     <button id="connectEtsyBtn" class="configurable btn waves-effect waves-light">Connect to Etsy</button>
     <button id="connectFirebaseBtn" class="configurable btn waves-effect waves-light">Connect Firebase</button>
-    <!-- NEW "Pull Database" button -->
     <button id="pullDatabaseBtn" class="configurable btn waves-effect waves-light">Pull Database</button>
     <button id="openConfigBtn" class="configurable btn waves-effect waves-light">Open Config</button>
 
@@ -353,6 +378,11 @@
     <!-- Single-line text boxes -->
     <input type="text" id="dateOrdered" readonly />
     <input type="text" id="shipDate" readonly />
+    <!-- Duplicated from shipDate, named labelCreationDate (not connected to shipping) -->
+    <input type="text" id="labelCreationDate" placeholder="Label Creation Date" readonly />
+
+    <!-- 4) New image preview box for Signature, 25x50 -->
+    <div id="signatureBox">Sig Box</div>
 
     <!-- Configuration Modal -->
     <div id="configModal" class="modal">
@@ -451,45 +481,19 @@
               .replace(/=+$/, "");
     }
 
-    /********** Connect to Etsy Button **********/
-    document.addEventListener("DOMContentLoaded", () => {
-      const connectBtn = document.getElementById("connectEtsyBtn");
-      if(connectBtn){
-        connectBtn.addEventListener("click", async () => {
-          const codeVerifier = generateRandomString(64);
-          localStorage.setItem("etsy_code_verifier", codeVerifier);
-          const codeChallenge = await generateCodeChallenge(codeVerifier);
-          const state = "randomState123";
-          const scope = "listings_w listings_r transactions_r transactions_w";
-          const CLIENT_ID = "k75zdspz4r99txpqdji7i2em"; // Example client ID
-          const redirectUri = "https://gokushipping.netlify.app"; // Example redirect URI
-
-          const etsyAuthUrl =
-            "https://www.etsy.com/oauth/connect?response_type=code" +
-            `&client_id=${CLIENT_ID}` +
-            `&redirect_uri=${encodeURIComponent(redirectUri)}` +
-            `&scope=${encodeURIComponent(scope)}` +
-            `&state=${state}` +
-            `&code_challenge=${encodeURIComponent(codeChallenge)}` +
-            "&code_challenge_method=S256";
-
-          console.log("Redirecting to Etsy OAuth URL:", etsyAuthUrl);
-          window.location.href = etsyAuthUrl;
-        });
-      }
-    });
-
     /********** Configuration System **********/
     const configComponentIDs = [
-      "connectEtsyBtn", "connectFirebaseBtn", "pullDatabaseBtn", "openConfigBtn", "orderLinkBtn", "trackingLinkBtn", 
-      "etsyOrderNumber", "orderInformation",
+      "connectEtsyBtn", "connectFirebaseBtn", "pullDatabaseBtn", "openConfigBtn", "orderLinkBtn", 
+      "trackingLinkBtn", "etsyOrderNumber", "orderInformation",
       "Photo_Grid",
-      "quantityCell0", "quantityCell1", "quantityCell2", "quantityCell3", "quantityCell4", "quantityCell5", "quantityCell6", "quantityCell7",
-      "metalCell0", "metalCell1", "metalCell2", "metalCell3", "metalCell4", "metalCell5", "metalCell6", "metalCell7",
+      "quantityCell0", "quantityCell1", "quantityCell2", "quantityCell3", 
+      "quantityCell4", "quantityCell5", "quantityCell6", "quantityCell7",
+      "metalCell0", "metalCell1", "metalCell2", "metalCell3", 
+      "metalCell4", "metalCell5", "metalCell6", "metalCell7",
       "orderDetails", "customerMessageHistory", "dateOrdered", "shipDate",
-      "titleOrderDate", "titleOrderDate2", "titleShipDate", "titleOrderDetails",
-      "titleBritesMessages", "titlePurchasedItems", "titleOrderNumber",
-      "goScreenTwoBtn"
+      "labelCreationDate", "titleOrderDate", "titleOrderDate2", "titleShipDate", 
+      "titleOrderDetails", "titleBritesMessages", "titlePurchasedItems", 
+      "titleOrderNumber", "goScreenTwoBtn", "signatureBox"
     ];
     function loadPositions(){
       configComponentIDs.forEach(id => {
@@ -565,134 +569,304 @@
       console.log("Configuration saved.");
     }
 
-    /********** Show Item Details Function **********/
-    function showItemDetails(index){
-      if(!window.cachedOrderItems || !window.cachedOrderItems[index]){
-        console.warn("No item at index:", index);
-        return;
-      }
-      const item = window.cachedOrderItems[index];
-      let details = "";
+    /********** DOMContentLoaded **********/
+    document.addEventListener("DOMContentLoaded", () => {
+      M.AutoInit();
+      document.body.style.opacity = 0;
+      setTimeout(() => {
+        loadPositions();
+        document.body.style.opacity = 1;
+      }, 250);
 
-      // ORDER FROM:
-      if(window.orderName){
-        details += " ORDER FROM: " + window.orderName + "\n";
-      }
+      // "Open Config" button
+      document.getElementById("openConfigBtn").addEventListener("click", () => {
+        populateConfigTable();
+        const modalElem = document.getElementById("configModal");
+        const instance = M.Modal.getInstance(modalElem);
+        instance.open();
+      });
+      document.getElementById("saveConfigBtn").addEventListener("click", () => {
+        saveConfiguration();
+      });
 
-      // ORDER STATUS:
-      if(window.orderStatus){
-        details += " Order Status: " + window.orderStatus + "\n";
-      }
-
-      // Shipping Status
-      if(window.orderIsShipped === "Shipped!"){
-        details += " Shipping Status:\n";
-      } else if(window.orderIsShipped){
-        details += " Shipping Status: " + window.orderIsShipped + "\n";
-      } else {
-        details += " Shipping Status:\n";
-      }
-
-      // Process shipments if shipped
-      if(window.orderIsShipped === "Shipped!"){
-        if(window.orderShipments && window.orderShipments.length > 0){
-          const ship = window.orderShipments[0];
-          if(ship.carrier_name){
-            details += " Carrier Name: " + ship.carrier_name + "\n";
-            window.currentCarrier = ship.carrier_name;
-          }
-          if(ship.tracking_code){
-            details += " Tracking Number:\n" + ship.tracking_code + "\n\n";
-            window.currentTracking = ship.tracking_code;
-            if(window.currentCarrier && window.currentCarrier.toUpperCase() !== "USPS"){
-              document.getElementById("trackingLinkBtn").querySelector("img").src = "assets/ChitChats.png";
-            } else {
-              document.getElementById("trackingLinkBtn").querySelector("img").src = "assets/USPS.png";
+      // Pull Etsy order on Enter in "etsyOrderNumber"
+      const etsyOrderInput = document.getElementById("etsyOrderNumber");
+      etsyOrderInput.addEventListener("keydown", async e => {
+        if(e.key === "Enter"){
+          const orderNumber = etsyOrderInput.value.trim();
+          if(orderNumber !== ""){
+            const orderData = await pullEtsyOrderDetails(orderNumber);
+            if(orderData){
+              await updateImageGrid(orderData);
             }
-          } else {
-            details += "\n";
-            window.currentTracking = null;
           }
-        } else {
-          details += "\n";
-          window.currentTracking = null;
         }
-      } else {
-        window.currentTracking = null;
-      }
+      });
 
-      if(window.orderIsShipped === "Shipped!" && window.currentTracking){
-        document.getElementById("trackingLinkBtn").style.display = "block";
-      } else {
-        document.getElementById("trackingLinkBtn").style.display = "none";
-      }
+      // "Order Link" button
+      document.getElementById("orderLinkBtn").addEventListener("click", () => {
+        const baseUrl = "https://www.etsy.com/your/orders/sold?ref=seller-platform-mcnav&order_id=0000000000";
+        const currentOrder = etsyOrderInput.value.trim();
+        if(!currentOrder){
+          console.log("No order number entered.");
+          return;
+        }
+        const customLink = baseUrl.replace("0000000000", currentOrder);
+        window.open(customLink, "_blank");
+      });
 
-      details += " ORDER DETAILS:\n\n";
+      // "Tracking Link" button
+      document.getElementById("trackingLinkBtn").addEventListener("click", () => {
+        if (!window.currentTracking) {
+          console.log("No tracking number available.");
+          return;
+        }
+        let templateUrl = "";
+        if(window.currentCarrier && window.currentCarrier.toUpperCase() !== "USPS"){
+          templateUrl = "https://chitchats.com/tracking/0000000000000";
+          templateUrl = templateUrl.replace("0000000000000", window.currentTracking);
+        } else {
+          templateUrl = "https://tools.usps.com/go/TrackConfirmAction_input?qtc_tLabels1=0000000000000000000000000000000000";
+          templateUrl = templateUrl.replace("0000000000000000000000000000000000", window.currentTracking);
+        }
+        window.open(templateUrl, "_blank");
+      });
 
-      // Title: first 4 words
-      if(item.title){
-        const firstFour = item.title.trim().split(" ").slice(0,4).join(" ");
-        details += " Title: " + firstFour + "\n";
-      }
-
-      // SKU
-      if(item.sku){
-        details += " SKU: " + item.sku + "\n";
-      }
-
-      // Variations logic
-      if(item.variations && Array.isArray(item.variations)){
-        const acceptedMetalNames = ["metal", "metal choice", "metal - engraving", "metal colour", "color", "metal choice / engraving option"];
-        const acceptedLengthNames = ["length", "necklace length", "metal/necklace length", "metal choice / necklace length", "necklace length in inches"];
-        item.variations.forEach(v => {
-          if(v.formatted_name && v.formatted_value){
-            const nameLower = v.formatted_name.trim().toLowerCase();
-            let val = v.formatted_value.trim();
-            if(nameLower === "personalization" && val === "Not requested on this item."){
-              val = "Not Requested";
-              details += " Personalization: " + val + "\n";
-            } else if(acceptedMetalNames.includes(nameLower)){
-              details += " Metal Choice: " + val + "\n";
-            } else if(acceptedLengthNames.includes(nameLower)){
-              const lengthMap = {
-                '14&quot;':'14 Inches', '16&quot;':'16 Inches', '18&quot;':'18 Inches', '20&quot;':'20 Inches',
-                '14""':'14 Inches', '16""':'16 Inches', '18""':'18 Inches', '20""':'20 Inches'
-              };
-              if(lengthMap[val]){
-                val = lengthMap[val];
-              }
-              details += " Item Length: " + val + "\n";
-            } else {
-              details += " " + v.formatted_name + ": " + v.formatted_value + "\n";
+      // Zoom + drag for preview boxes
+      document.querySelectorAll('.preview-box').forEach(function(box) {
+        let isDragging = false;
+        let lastX = 0;
+        let lastY = 0;
+        box.addEventListener('wheel', function(e) {
+          const img = box.querySelector('img');
+          if (!img) return;
+          e.preventDefault();
+          let currentScale = parseFloat(img.dataset.scale) || 1;
+          let offsetX = parseFloat(img.dataset.offsetX) || 0;
+          let offsetY = parseFloat(img.dataset.offsetY) || 0;
+          if (e.deltaY < 0) {
+            currentScale *= 1.1;
+          } else {
+            currentScale /= 1.1;
+            if (currentScale <= 1) {
+              currentScale = 1;
+              offsetX = 0;
+              offsetY = 0;
             }
+          }
+          currentScale = Math.max(1, Math.min(4, currentScale));
+          img.dataset.scale = currentScale;
+          img.dataset.offsetX = offsetX;
+          img.dataset.offsetY = offsetY;
+          img.style.transform = `translate(${offsetX}px, ${offsetY}px) scale(${currentScale})`;
+        });
+        box.addEventListener('mousedown', function(e) {
+          const img = box.querySelector('img');
+          if (!img) return;
+          let currentScale = parseFloat(img.dataset.scale) || 1;
+          if (currentScale <= 1) return;
+          e.preventDefault();
+          isDragging = true;
+          lastX = e.clientX;
+          lastY = e.clientY;
+        });
+        box.addEventListener('mousemove', function(e) {
+          if (!isDragging) return;
+          e.preventDefault();
+          const img = box.querySelector('img');
+          if (!img) return;
+          let currentScale = parseFloat(img.dataset.scale) || 1;
+          let offsetX = parseFloat(img.dataset.offsetX) || 0;
+          let offsetY = parseFloat(img.dataset.offsetY) || 0;
+          const dx = e.clientX - lastX;
+          const dy = e.clientY - lastY;
+          offsetX += dx;
+          offsetY += dy;
+          img.dataset.offsetX = offsetX;
+          img.dataset.offsetY = offsetY;
+          img.style.transform = `translate(${offsetX}px, ${offsetY}px) scale(${currentScale})`;
+          lastX = e.clientX;
+          lastY = e.clientY;
+        });
+        box.addEventListener('mouseup', function() {
+          isDragging = false;
+        });
+        box.addEventListener('mouseleave', function() {
+          isDragging = false;
+        });
+      });
+
+      // "Go to Screen Two" button
+      const goBtn = document.getElementById('goScreenTwoBtn');
+      if(goBtn){
+        goBtn.addEventListener('click', () => {
+          loadScreenTwo();
+        });
+      }
+
+      /***********************************************
+       * Connect Firebase Button
+       *  - Also store "Shipping Label Timestamps" as now.toISOString()
+       ***********************************************/
+      const connectFirebaseBtn = document.getElementById("connectFirebaseBtn");
+      if (connectFirebaseBtn) {
+        connectFirebaseBtn.addEventListener("click", async () => {
+          try {
+            const etsyOrderNumber = document.getElementById("etsyOrderNumber").value.trim();
+            const orderFrom = window.orderName || "";
+            const userMessages = document.getElementById("customerMessageHistory").value.trim();
+
+            // Generate a timestamp right now
+            const now = new Date();
+            // We'll store it as an ISO string in "Shipping Label Timestamps"
+            const shippingLabelTS = now.toISOString();
+
+            const bodyData = {
+              orderNumber: etsyOrderNumber,          // doc ID
+              orderNumField: etsyOrderNumber,        // "Order Number"
+              clientName: orderFrom,                 // "Client Name"
+              britesMessages: userMessages,          // "Brites Messages"
+              shippingLabelTimestamps: shippingLabelTS // new field
+            };
+
+            const response = await fetch("/.netlify/functions/firebaseOrders", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify(bodyData)
+            });
+            const result = await response.json();
+
+            if (!response.ok) {
+              throw new Error(result.error || "Unknown error from firebaseOrders function");
+            }
+
+            M.toast({ html: `Order data saved! ${JSON.stringify(result)}` });
+            console.log("Successfully saved data to Firestore:", result);
+
+          } catch (err) {
+            M.toast({ html: "Error: " + err.message });
+            console.error("Failed to save data to Firestore:", err);
           }
         });
       }
 
-      // Receipt-level gift details
-      if(window.receiptIsGift !== null && typeof window.receiptIsGift !== "undefined"){
-        details += " Marked as Gift: " + window.receiptIsGift + "\n";
-      }
-      if(window.receiptGiftMessage){
-        details += " Gift Message: " + window.receiptGiftMessage + "\n";
-      }
+      /***********************************************
+       * Pull Database Button
+       *  - Also populate "labelCreationDate" from
+       *    "Shipping Label Timestamps" field
+       ***********************************************/
+      const pullDatabaseBtn = document.getElementById("pullDatabaseBtn");
+      if (pullDatabaseBtn) {
+        pullDatabaseBtn.addEventListener("click", async () => {
+          try {
+            const etsyOrderNumber = document.getElementById("etsyOrderNumber").value.trim();
+            if (!etsyOrderNumber) {
+              M.toast({ html: "Please enter an Etsy Order Number first." });
+              return;
+            }
 
-      document.getElementById("orderDetails").value = details;
+            // GET the doc from firebaseOrders?orderId=...
+            const response = await fetch(
+              `/.netlify/functions/firebaseOrders?orderId=${encodeURIComponent(etsyOrderNumber)}`
+            );
+            const result = await response.json();
+            if (!response.ok) {
+              throw new Error(result.error || "Unknown error from firebaseOrders function");
+            }
+
+            const docData = result.data;
+            const dbOrderNum = docData["Order Number"];
+            if (dbOrderNum !== etsyOrderNumber) {
+              M.toast({
+                html: `Order mismatch: doc has "${dbOrderNum}", expected "${etsyOrderNumber}"`
+              });
+              return;
+            }
+
+            // Populate "customerMessageHistory" from "Brites Messages"
+            const dbBritesMessages = docData["Brites Messages"] || "";
+            document.getElementById("customerMessageHistory").value = dbBritesMessages;
+            M.toast({ html: "Brites Messages loaded!" });
+
+            // If "Shipping Label Timestamps" is present, parse & format
+            const shippingTS = docData["Shipping Label Timestamps"];
+            if (shippingTS) {
+              const d = new Date(shippingTS);
+              if (!isNaN(d.valueOf())) {
+                // e.g. "24 Mar 2025"
+                const monthNames = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+                const dd = ("0" + d.getDate()).slice(-2);
+                const mStr = monthNames[d.getMonth()];
+                const yyyy = d.getFullYear();
+                const formatted = `${dd} ${mStr} ${yyyy}`;
+                document.getElementById("labelCreationDate").value = formatted;
+              } else {
+                document.getElementById("labelCreationDate").value = "";
+              }
+            } else {
+              document.getElementById("labelCreationDate").value = "";
+            }
+
+          } catch (err) {
+            M.toast({ html: "Error: " + err.message });
+            console.error("Failed to pull data from Firestore:", err);
+          }
+        });
+      }
+    });
+
+    /********** loadScreenTwo (DOMParser) **********/
+    async function loadScreenTwo() {
+      try {
+        console.log("loadScreenTwo() called");
+        const response = await fetch('screenTwo.html');
+        let screenTwoHTML = await response.text();
+        console.log("Fetched screenTwo.html content:", screenTwoHTML);
+        const parser = new DOMParser();
+        const doc = parser.parseFromString(screenTwoHTML, 'text/html');
+        const scriptEls = doc.querySelectorAll('script');
+        console.log("Found", scriptEls.length, "<script> tags in screenTwo.html");
+        scriptEls.forEach(scriptEl => scriptEl.remove());
+        const finalHTML = doc.body.innerHTML;
+        const container = document.getElementById('secondaryContainer');
+        container.innerHTML = finalHTML;
+        const screenOneDiv = document.getElementById('screenOne');
+        if(screenOneDiv) {
+          screenOneDiv.style.display = 'none';
+        } else {
+          console.warn("No #screenOne found in DOM");
+        }
+        const screenTwoDiv = document.getElementById('screenTwo');
+        if(screenTwoDiv) {
+          screenTwoDiv.style.display = 'block';
+        } else {
+          console.warn("No #screenTwo found in injected HTML");
+        }
+        scriptEls.forEach((oldScript, index) => {
+          const newScript = document.createElement('script');
+          if(oldScript.src){
+            newScript.src = oldScript.src;
+            console.log("Re-appending script from src:", oldScript.src);
+          } else {
+            newScript.textContent = oldScript.textContent;
+            console.log("Re-appending inline script #"+index);
+          }
+          document.body.appendChild(newScript);
+        });
+        setTimeout(() => {
+          if(typeof window.initScreenTwo === 'function'){
+            console.log("Calling initScreenTwo() after scripts appended");
+            window.initScreenTwo();
+          } else {
+            console.log("No global initScreenTwo() found.");
+          }
+        }, 100);
+      } catch(err) {
+        console.error('Error loading screenTwo:', err);
+      }
     }
 
-    /********** Fetch Listing Images **********/
-    async function fetchListingImages(listingId){
-      const response = await fetch(`/.netlify/functions/etsyImages?listingId=${listingId}`, {
-        headers: {"access-token": localStorage.getItem("access_token")}
-      });
-      if(!response.ok){
-        throw new Error(`Error fetching images for listing ${listingId}: ${response.statusText}`);
-      }
-      const data = await response.json();
-      return data.results;
-    }
-
-    /********** Update Image Grid **********/
+    /********** pullEtsyOrderDetails & updateImageGrid **********/
     async function updateImageGrid(data){
       let items = [];
       if(data.transactions && Array.isArray(data.transactions)){
@@ -776,7 +950,131 @@
       }
     }
 
-    /********** Pull Etsy Order Details (store shipments) **********/
+    function showItemDetails(index){
+      if(!window.cachedOrderItems || !window.cachedOrderItems[index]){
+        console.warn("No item at index:", index);
+        return;
+      }
+      const item = window.cachedOrderItems[index];
+      let details = "";
+
+      // ORDER FROM:
+      if(window.orderName){
+        details += " ORDER FROM: " + window.orderName + "\n";
+      }
+
+      // ORDER STATUS:
+      if(window.orderStatus){
+        details += " Order Status: " + window.orderStatus + "\n";
+      }
+
+      // Shipping Status
+      if(window.orderIsShipped === "Shipped!"){
+        details += " Shipping Status:\n";
+      } else if(window.orderIsShipped){
+        details += " Shipping Status: " + window.orderIsShipped + "\n";
+      } else {
+        details += " Shipping Status:\n";
+      }
+
+      // If shipped
+      if(window.orderIsShipped === "Shipped!"){
+        if(window.orderShipments && window.orderShipments.length > 0){
+          const ship = window.orderShipments[0];
+          if(ship.carrier_name){
+            details += " Carrier Name: " + ship.carrier_name + "\n";
+            window.currentCarrier = ship.carrier_name;
+          }
+          if(ship.tracking_code){
+            details += " Tracking Number:\n" + ship.tracking_code + "\n\n";
+            window.currentTracking = ship.tracking_code;
+            if(window.currentCarrier && window.currentCarrier.toUpperCase() !== "USPS"){
+              document.getElementById("trackingLinkBtn").querySelector("img").src = "assets/ChitChats.png";
+            } else {
+              document.getElementById("trackingLinkBtn").querySelector("img").src = "assets/USPS.png";
+            }
+          } else {
+            details += "\n";
+            window.currentTracking = null;
+          }
+        } else {
+          details += "\n";
+          window.currentTracking = null;
+        }
+      } else {
+        window.currentTracking = null;
+      }
+
+      if(window.orderIsShipped === "Shipped!" && window.currentTracking){
+        document.getElementById("trackingLinkBtn").style.display = "block";
+      } else {
+        document.getElementById("trackingLinkBtn").style.display = "none";
+      }
+
+      details += " ORDER DETAILS:\n\n";
+
+      // Title: first 4 words
+      if(item.title){
+        const firstFour = item.title.trim().split(" ").slice(0,4).join(" ");
+        details += " Title: " + firstFour + "\n";
+      }
+
+      // SKU
+      if(item.sku){
+        details += " SKU: " + item.sku + "\n";
+      }
+
+      // Variations
+      if(item.variations && Array.isArray(item.variations)){
+        const acceptedMetalNames = ["metal", "metal choice", "metal - engraving", "metal colour", "color", "metal choice / engraving option"];
+        const acceptedLengthNames = ["length", "necklace length", "metal/necklace length", "metal choice / necklace length", "necklace length in inches"];
+        item.variations.forEach(v => {
+          if(v.formatted_name && v.formatted_value){
+            const nameLower = v.formatted_name.trim().toLowerCase();
+            let val = v.formatted_value.trim();
+            if(nameLower === "personalization" && val === "Not requested on this item."){
+              val = "Not Requested";
+              details += " Personalization: " + val + "\n";
+            } else if(acceptedMetalNames.includes(nameLower)){
+              details += " Metal Choice: " + val + "\n";
+            } else if(acceptedLengthNames.includes(nameLower)){
+              const lengthMap = {
+                '14&quot;':'14 Inches', '16&quot;':'16 Inches', '18&quot;':'18 Inches', '20&quot;':'20 Inches',
+                '14""':'14 Inches', '16""':'16 Inches', '18""':'18 Inches', '20""':'20 Inches'
+              };
+              if(lengthMap[val]){
+                val = lengthMap[val];
+              }
+              details += " Item Length: " + val + "\n";
+            } else {
+              details += " " + v.formatted_name + ": " + v.formatted_value + "\n";
+            }
+          }
+        });
+      }
+
+      // Gift details
+      if(window.receiptIsGift !== null && typeof window.receiptIsGift !== "undefined"){
+        details += " Marked as Gift: " + window.receiptIsGift + "\n";
+      }
+      if(window.receiptGiftMessage){
+        details += " Gift Message: " + window.receiptGiftMessage + "\n";
+      }
+
+      document.getElementById("orderDetails").value = details;
+    }
+
+    async function fetchListingImages(listingId){
+      const response = await fetch(`/.netlify/functions/etsyImages?listingId=${listingId}`, {
+        headers: {"access-token": localStorage.getItem("access_token")}
+      });
+      if(!response.ok){
+        throw new Error(`Error fetching images for listing ${listingId}: ${response.statusText}`);
+      }
+      const data = await response.json();
+      return data.results;
+    }
+
     function pullEtsyOrderDetails(orderNumber){
       console.log("Pulling Etsy order details for order number:", orderNumber);
       const token = localStorage.getItem("access_token");
@@ -833,7 +1131,7 @@
         }
         if(data.transactions && data.transactions.length > 0){
           const firstTrans = data.transactions[0];
-          const monthNames = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+          const monthNames = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
           if(firstTrans.created_timestamp){
             const d = new Date(firstTrans.created_timestamp * 1000);
             const day = ("0" + d.getDate()).slice(-2);
@@ -880,282 +1178,6 @@
         return null;
       });
     }
-
-    /********** loadScreenTwo (DOMParser) **********/
-    async function loadScreenTwo() {
-      try {
-        console.log("loadScreenTwo() called");
-        const response = await fetch('screenTwo.html');
-        let screenTwoHTML = await response.text();
-        console.log("Fetched screenTwo.html content:", screenTwoHTML);
-        const parser = new DOMParser();
-        const doc = parser.parseFromString(screenTwoHTML, 'text/html');
-        const scriptEls = doc.querySelectorAll('script');
-        console.log("Found", scriptEls.length, "<script> tags in screenTwo.html");
-        scriptEls.forEach(scriptEl => scriptEl.remove());
-        const finalHTML = doc.body.innerHTML;
-        const container = document.getElementById('secondaryContainer');
-        container.innerHTML = finalHTML;
-        const screenOneDiv = document.getElementById('screenOne');
-        if(screenOneDiv) {
-          screenOneDiv.style.display = 'none';
-        } else {
-          console.warn("No #screenOne found in DOM");
-        }
-        const screenTwoDiv = document.getElementById('screenTwo');
-        if(screenTwoDiv) {
-          screenTwoDiv.style.display = 'block';
-        } else {
-          console.warn("No #screenTwo found in injected HTML");
-        }
-        scriptEls.forEach((oldScript, index) => {
-          const newScript = document.createElement('script');
-          if(oldScript.src){
-            newScript.src = oldScript.src;
-            console.log("Re-appending script from src:", oldScript.src);
-          } else {
-            newScript.textContent = oldScript.textContent;
-            console.log("Re-appending inline script #"+index);
-          }
-          document.body.appendChild(newScript);
-        });
-        setTimeout(() => {
-          if(typeof window.initScreenTwo === 'function'){
-            console.log("Calling initScreenTwo() after scripts appended");
-            window.initScreenTwo();
-          } else {
-            console.log("No global initScreenTwo() found.");
-          }
-        }, 100);
-      } catch(err) {
-        console.error('Error loading screenTwo:', err);
-      }
-    }
-
-    /********** DOMContentLoaded: Attach Handlers **********/
-    document.addEventListener("DOMContentLoaded", () => {
-      console.log("DOM loaded - initializing UI handlers.");
-      M.AutoInit();
-      document.body.style.opacity = 0;
-      setTimeout(() => {
-        loadPositions();
-        document.body.style.opacity = 1;
-      }, 250);
-
-      // "Open Config" button logic
-      document.getElementById("openConfigBtn").addEventListener("click", () => {
-        populateConfigTable();
-        const modalElem = document.getElementById("configModal");
-        const instance = M.Modal.getInstance(modalElem);
-        instance.open();
-      });
-      document.getElementById("saveConfigBtn").addEventListener("click", () => {
-        saveConfiguration();
-      });
-
-      // Pull Etsy Order Info on "Enter" in the Etsy Order Number input
-      const etsyOrderInput = document.getElementById("etsyOrderNumber");
-      etsyOrderInput.addEventListener("keydown", async e => {
-        if(e.key === "Enter"){
-          const orderNumber = etsyOrderInput.value.trim();
-          if(orderNumber !== ""){
-            const orderData = await pullEtsyOrderDetails(orderNumber);
-            if(orderData){
-              await updateImageGrid(orderData);
-            }
-          }
-        }
-      });
-
-      // "Order Link" button event
-      document.getElementById("orderLinkBtn").addEventListener("click", () => {
-        const baseUrl = "https://www.etsy.com/your/orders/sold?ref=seller-platform-mcnav&order_id=0000000000";
-        const currentOrder = etsyOrderInput.value.trim();
-        if(!currentOrder){
-          console.log("No order number entered.");
-          return;
-        }
-        const customLink = baseUrl.replace("0000000000", currentOrder);
-        window.open(customLink, "_blank");
-      });
-
-      // "Tracking Link" button event
-      document.getElementById("trackingLinkBtn").addEventListener("click", () => {
-        if (!window.currentTracking) {
-          console.log("No tracking number available.");
-          return;
-        }
-        let templateUrl = "";
-        if(window.currentCarrier && window.currentCarrier.toUpperCase() !== "USPS"){
-          templateUrl = "https://chitchats.com/tracking/0000000000000";
-          templateUrl = templateUrl.replace("0000000000000", window.currentTracking);
-        } else {
-          templateUrl = "https://tools.usps.com/go/TrackConfirmAction_input?qtc_tLabels1=0000000000000000000000000000000000";
-          templateUrl = templateUrl.replace("0000000000000000000000000000000000", window.currentTracking);
-        }
-        window.open(templateUrl, "_blank");
-      });
-
-      // Wheel-based zoom + drag panning for preview boxes
-      document.querySelectorAll('.preview-box').forEach(function(box) {
-        let isDragging = false;
-        let lastX = 0;
-        let lastY = 0;
-        box.addEventListener('wheel', function(e) {
-          const img = box.querySelector('img');
-          if (!img) return;
-          e.preventDefault();
-          let currentScale = parseFloat(img.dataset.scale) || 1;
-          let offsetX = parseFloat(img.dataset.offsetX) || 0;
-          let offsetY = parseFloat(img.dataset.offsetY) || 0;
-          if (e.deltaY < 0) {
-            currentScale *= 1.1;
-          } else {
-            currentScale /= 1.1;
-            if (currentScale <= 1) {
-              currentScale = 1;
-              offsetX = 0;
-              offsetY = 0;
-            }
-          }
-          currentScale = Math.max(1, Math.min(4, currentScale));
-          img.dataset.scale = currentScale;
-          img.dataset.offsetX = offsetX;
-          img.dataset.offsetY = offsetY;
-          img.style.transform = `translate(${offsetX}px, ${offsetY}px) scale(${currentScale})`;
-        });
-        box.addEventListener('mousedown', function(e) {
-          const img = box.querySelector('img');
-          if (!img) return;
-          let currentScale = parseFloat(img.dataset.scale) || 1;
-          if (currentScale <= 1) return;
-          e.preventDefault();
-          isDragging = true;
-          lastX = e.clientX;
-          lastY = e.clientY;
-        });
-        box.addEventListener('mousemove', function(e) {
-          if (!isDragging) return;
-          e.preventDefault();
-          const img = box.querySelector('img');
-          if (!img) return;
-          let currentScale = parseFloat(img.dataset.scale) || 1;
-          let offsetX = parseFloat(img.dataset.offsetX) || 0;
-          let offsetY = parseFloat(img.dataset.offsetY) || 0;
-          const dx = e.clientX - lastX;
-          const dy = e.clientY - lastY;
-          offsetX += dx;
-          offsetY += dy;
-          img.dataset.offsetX = offsetX;
-          img.dataset.offsetY = offsetY;
-          img.style.transform = `translate(${offsetX}px, ${offsetY}px) scale(${currentScale})`;
-          lastX = e.clientX;
-          lastY = e.clientY;
-        });
-        box.addEventListener('mouseup', function() {
-          isDragging = false;
-        });
-        box.addEventListener('mouseleave', function() {
-          isDragging = false;
-        });
-      });
-
-      // "Go to Screen Two" button event
-      const goBtn = document.getElementById('goScreenTwoBtn');
-      if(goBtn){
-        goBtn.addEventListener('click', () => {
-          loadScreenTwo();
-        });
-      }
-
-      /***********************************************
-       * 1) Connect Firebase Button
-       ***********************************************/
-      const connectFirebaseBtn = document.getElementById("connectFirebaseBtn");
-      if (connectFirebaseBtn) {
-        connectFirebaseBtn.addEventListener("click", async () => {
-          try {
-            const etsyOrderNumber = document.getElementById("etsyOrderNumber").value.trim();
-            const orderFrom = window.orderName || "";
-            const userMessages = document.getElementById("customerMessageHistory").value.trim();
-
-            const bodyData = {
-              orderNumber: etsyOrderNumber,    // doc ID
-              orderNumField: etsyOrderNumber,  // "Order Number" in Firestore
-              clientName: orderFrom,           // "Client Name" in Firestore
-              britesMessages: userMessages     // "Brites Messages" in Firestore
-            };
-
-            const response = await fetch("/.netlify/functions/firebaseOrders", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify(bodyData)
-            });
-            const result = await response.json();
-
-            if (!response.ok) {
-              throw new Error(result.error || "Unknown error from firebaseOrders function");
-            }
-
-            M.toast({ html: `Order data saved! ${JSON.stringify(result)}` });
-            console.log("Successfully saved data to Firestore:", result);
-
-          } catch (err) {
-            M.toast({ html: "Error: " + err.message });
-            console.error("Failed to save data to Firestore:", err);
-          }
-        });
-      }
-
-      /***********************************************
-       * 2) Pull Database Button
-       *    - Reads "etsyOrderNumber" => doc ID
-       *    - GET from /firebaseOrders?orderId=...
-       *    - Checks if docData["Order Number"] matches
-       *      the "etsyOrderNumber"
-       *    - If so, populates "customerMessageHistory"
-       ***********************************************/
-      const pullDatabaseBtn = document.getElementById("pullDatabaseBtn");
-      if (pullDatabaseBtn) {
-        pullDatabaseBtn.addEventListener("click", async () => {
-          try {
-            const etsyOrderNumber = document.getElementById("etsyOrderNumber").value.trim();
-            if (!etsyOrderNumber) {
-              M.toast({ html: "Please enter an Etsy Order Number first." });
-              return;
-            }
-
-            // 1) Make a GET request for the doc ID = etsyOrderNumber
-            const response = await fetch(
-              `/.netlify/functions/firebaseOrders?orderId=${encodeURIComponent(etsyOrderNumber)}`
-            );
-            const result = await response.json();
-            if (!response.ok) {
-              throw new Error(result.error || "Unknown error from firebaseOrders function");
-            }
-
-            // 2) Check if the doc's "Order Number" matches
-            const docData = result.data;
-            const dbOrderNum = docData["Order Number"];
-            if (dbOrderNum !== etsyOrderNumber) {
-              M.toast({
-                html: `Order mismatch: doc has "${dbOrderNum}", expected "${etsyOrderNumber}"`
-              });
-              return;
-            }
-
-            // 3) If it matches, fill "customerMessageHistory" from "Brites Messages"
-            const dbBritesMessages = docData["Brites Messages"] || "";
-            document.getElementById("customerMessageHistory").value = dbBritesMessages;
-            M.toast({ html: "Brites Messages successfully loaded from DB!" });
-
-          } catch (err) {
-            M.toast({ html: "Error: " + err.message });
-            console.error("Failed to pull data from Firestore:", err);
-          }
-        });
-      }
-    });
   </script>
 </body>
 </html>

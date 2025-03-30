@@ -5,8 +5,24 @@ exports.handler = async (event, context) => {
   try {
     const method = event.httpMethod;
     if (method === "POST") {
+      /*
+        Expect fields:
+        {
+          "orderNumber": "1234",          // doc ID
+          "orderNumField": "1234",        // "Order Number"
+          "clientName": "Alice",          // "Client Name"
+          "britesMessages": "Hello",      // "Brites Messages"
+          "shippingLabelTimestamps": "...",  // new field
+        }
+      */
       const body = JSON.parse(event.body);
-      const { orderNumber, orderNumField, clientName, britesMessages } = body;
+      const {
+        orderNumber,
+        orderNumField,
+        clientName,
+        britesMessages,
+        shippingLabelTimestamps
+      } = body;
 
       if (!orderNumber) {
         return {
@@ -15,13 +31,17 @@ exports.handler = async (event, context) => {
         };
       }
 
+      // Build data for Firestore
       const dataToStore = {
         "Order Number": orderNumField || "",
         "Client Name": clientName || "",
-        "Brites Messages": britesMessages || ""
+        "Brites Messages": britesMessages || "",
+        "Shipping Label Timestamps": shippingLabelTimestamps || ""
       };
 
-      await db.collection("Brites_Orders")
+      // Insert/merge in Brites_Orders collection
+      await db
+        .collection("Brites_Orders")
         .doc(orderNumber)
         .set(dataToStore, { merge: true });
 
