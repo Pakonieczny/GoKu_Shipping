@@ -206,23 +206,22 @@
       outline: none;
       background: transparent;
       font-size: 0.9em;
-      font-weight: bold;
+      /* Removed bold from labelCreationDate & completedByEmployee: */
+      /* #employeeName remains bold if you want, but the instructions didn't mention removing it from employeeName. */
+      /* We'll only remove from labelCreationDate and completedByEmployee. 
+         So we won't add "font-weight: bold;" here. 
+         Let's handle them individually. */
     }
 
-    /* "labelCreationDate" near the bottom, "employeeName" near it */
-    #labelCreationDate {
-      top: 350px;
-      left: 50px;
-    }
+    /* We'll keep #employeeName bold, but remove bold from the others as requested. */
     #employeeName {
-      top: 380px;
-      left: 50px;
+      font-weight: bold; /* keep it for employeeName */
     }
-
-    /* 2) brand-new "completedByEmployee" text box */
+    #labelCreationDate {
+      font-weight: normal !important; /* remove bold */
+    }
     #completedByEmployee {
-      top: 410px;
-      left: 50px;
+      font-weight: normal !important; /* remove bold */
     }
 
     /* Title texts */
@@ -240,6 +239,35 @@
     }
     #titleOrderDate2 {
       font-weight: bold;
+    }
+
+    /* 1) Three duplicates of "titleShipDate" text objects: 
+       - "titleOrderCompletedOn" -> "Order Completed On:"
+       - "titleOrderCompletedBy" -> "Order Completed By:"
+       - "titleSignedInAs" -> "Signed In As:" */
+    #titleOrderCompletedOn,
+    #titleOrderCompletedBy,
+    #titleSignedInAs {
+      position: absolute;
+      font-size: 0.7em;
+      margin: 0;
+      padding: 0;
+    }
+    /* Place them near #titleShipDate for demonstration, 
+       adjust left/top as you see fit. We won't assume 
+       exact positions unless specified. We'll just 
+       stagger them so you can see them easily. */
+    #titleOrderCompletedOn {
+      left: 50px;
+      top: 460px;
+    }
+    #titleOrderCompletedBy {
+      left: 50px;
+      top: 480px;
+    }
+    #titleSignedInAs {
+      left: 50px;
+      top: 500px;
     }
 
     /* Configuration Modal styling */
@@ -378,6 +406,12 @@
     <div id="titleOrderDate">Order Date:</div>
     <div id="titleOrderDate2" style="font-weight:bold;"></div>
     <div id="titleShipDate">Ship By:</div>
+
+    <!-- 1) New duplicate "titleShipDate" texts with the requested content -->
+    <div id="titleOrderCompletedOn">Order Completed On:</div>
+    <div id="titleOrderCompletedBy">Order Completed By:</div>
+    <div id="titleSignedInAs">Signed In As:</div>
+
     <div id="titleOrderDetails">Order Details:</div>
     <div id="titleBritesMessages">Brites Messages</div>
     <div id="titlePurchasedItems">Purchased Items</div>
@@ -387,16 +421,16 @@
     <input type="text" id="dateOrdered" readonly />
     <input type="text" id="shipDate" readonly />
 
-    <!-- The label creation date box (date + time) -->
-    <input type="text" id="labelCreationDate" placeholder="Label Creation Date" readonly />
+    <!-- The label creation date (no bold) -->
+    <input type="text" id="labelCreationDate" placeholder="Label Creation Date" />
 
-    <!-- The employeeName text box (we do NOT update it on pullDatabase) -->
-    <input type="text" id="employeeName" placeholder="Employee Name" readonly />
+    <!-- The employeeName text box (still bold) -->
+    <input type="text" id="employeeName" placeholder="Employee Name" />
 
-    <!-- 2) brand-new "completedByEmployee" text box, updated on Pull Database with "Employee Name" from Firestore -->
-    <input type="text" id="completedByEmployee" placeholder="Completed By Employee" readonly />
+    <!-- The brand-new "completedByEmployee" text box (no bold) -->
+    <input type="text" id="completedByEmployee" placeholder="Completed By Employee" />
 
-    <!-- "Signature Box" (25px x 50px) -->
+    <!-- "Signature Box" (25x50) -->
     <div id="signatureBox">Sig Box</div>
 
     <!-- Configuration Modal -->
@@ -516,9 +550,10 @@
       "metalCell4", "metalCell5", "metalCell6", "metalCell7",
       "orderDetails", "customerMessageHistory", "dateOrdered", "shipDate",
       "labelCreationDate", "employeeName", "completedByEmployee",
-      "titleOrderDate", "titleOrderDate2", "titleShipDate", "titleOrderDetails",
-      "titleBritesMessages", "titlePurchasedItems", "titleOrderNumber", "goScreenTwoBtn",
-      "signatureBox", "userLoginModal", "employeeNumberInput", "employeeLoginBtn"
+      "titleOrderDate", "titleOrderDate2", "titleShipDate",
+      "titleOrderCompletedOn", "titleOrderCompletedBy", "titleSignedInAs",
+      "titleOrderDetails", "titleBritesMessages", "titlePurchasedItems", "titleOrderNumber",
+      "goScreenTwoBtn", "signatureBox", "userLoginModal", "employeeNumberInput", "employeeLoginBtn"
     ];
 
     function loadPositions(){
@@ -626,7 +661,7 @@
               return;
             }
             // Retrieve doc "EmployeeNumbers" from Brites_Orders
-            var responseEN = await fetch("/.netlify/functions/firebaseOrders?orderId=Employee Numbers");
+            var responseEN = await fetch("/.netlify/functions/firebaseOrders?orderId=EmployeeNumbers");
             if(!responseEN.ok){
               M.toast({ html: "Error fetching EmployeeNumbers doc!" });
               return;
@@ -640,9 +675,8 @@
             if(docDataEN[empNumber]){
               var nameFound = docDataEN[empNumber];
               M.toast({ html: "Welcome, " + nameFound + "!" });
-              // Store it in "employeeName"
+              // store in "employeeName"
               document.getElementById("employeeName").value = nameFound;
-              // close modal
               userLoginModal.close();
             } else {
               M.toast({ html: "Employee # " + empNumber + " not found in DB!" });
@@ -811,18 +845,18 @@
         });
       }
 
-      // Connect Firebase Button - store shippingLabelTimestamps + employeeName
+      // Connect Firebase Button
       var connectFirebaseBtn2 = document.getElementById("connectFirebaseBtn");
       if(connectFirebaseBtn2){
         connectFirebaseBtn2.addEventListener("click", async function(){
           try {
-            var orderNumberVal = etsyOrderInput.value.trim(); // doc ID
+            var orderNumberVal = etsyOrderInput.value.trim();
             var orderFromVal = window.orderName || "";
             var userMsgsVal = document.getElementById("customerMessageHistory").value.trim();
             var nowDate = new Date();
             var shippingTS = nowDate.toISOString();
 
-            // read the "employeeName" text box
+            // read the "employeeName"
             var empNameVal = document.getElementById("employeeName").value.trim();
 
             var bodyData = {
@@ -904,8 +938,8 @@
               document.getElementById("labelCreationDate").value = "";
             }
 
-            // 1) DO NOT update "employeeName" from DB
-            // 2) Instead, update "completedByEmployee" with docDataPD["Employee Name"]
+            // DO NOT update #employeeName from DB
+            // Instead, update "completedByEmployee" with docDataPD["Employee Name"]
             var dbEmpName = docDataPD["Employee Name"];
             if(dbEmpName){
               document.getElementById("completedByEmployee").value = dbEmpName;
