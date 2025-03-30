@@ -26,6 +26,12 @@
       left: 50px;
       top: 20px;
     }
+    /* NEW Connect Firebase button */
+    #connectFirebaseBtn {
+      position: absolute;
+      left: 50px;
+      top: 50px;
+    }
     #openConfigBtn {
       position: absolute;
       left: 50px;
@@ -256,6 +262,8 @@
   <div id="screenOne">
     <!-- Main UI Buttons -->
     <button id="connectEtsyBtn" class="configurable btn waves-effect waves-light">Connect to Etsy</button>
+    <!-- NEW Connect Firebase button -->
+    <button id="connectFirebaseBtn" class="configurable btn waves-effect waves-light">Connect Firebase</button>
     <button id="openConfigBtn" class="configurable btn waves-effect waves-light">Open Config</button>
 
     <!-- "Order Link" button -->
@@ -447,8 +455,8 @@
           const codeChallenge = await generateCodeChallenge(codeVerifier);
           const state = "randomState123";
           const scope = "listings_w listings_r transactions_r transactions_w";
-          const CLIENT_ID = "k75zdspz4r99txpqdji7i2em"; // Your actual client ID
-          const redirectUri = "https://gokushipping.netlify.app"; // Your actual redirect URI
+          const CLIENT_ID = "k75zdspz4r99txpqdji7i2em"; // Example client ID
+          const redirectUri = "https://gokushipping.netlify.app"; // Example redirect URI
 
           const etsyAuthUrl =
             "https://www.etsy.com/oauth/connect?response_type=code" +
@@ -467,7 +475,7 @@
 
     /********** Configuration System **********/
     const configComponentIDs = [
-      "connectEtsyBtn", "openConfigBtn", "orderLinkBtn", "trackingLinkBtn", "etsyOrderNumber", "orderInformation",
+      "connectEtsyBtn", "connectFirebaseBtn", "openConfigBtn", "orderLinkBtn", "trackingLinkBtn", "etsyOrderNumber", "orderInformation",
       "Photo_Grid",
       "quantityCell0", "quantityCell1", "quantityCell2", "quantityCell3", "quantityCell4", "quantityCell5", "quantityCell6", "quantityCell7",
       "metalCell0", "metalCell1", "metalCell2", "metalCell3", "metalCell4", "metalCell5", "metalCell6", "metalCell7",
@@ -578,7 +586,7 @@
         details += " Shipping Status:\n";
       }
 
-      // Process shipments if shipped; save tracking number and carrier globally
+      // Process shipments if shipped
       if(window.orderIsShipped === "Shipped!"){
         if(window.orderShipments && window.orderShipments.length > 0){
           const ship = window.orderShipments[0];
@@ -587,10 +595,8 @@
             window.currentCarrier = ship.carrier_name;
           }
           if(ship.tracking_code){
-            // Place "Tracking Number:" label on one line and the tracking code on the next line
             details += " Tracking Number:\n" + ship.tracking_code + "\n\n";
             window.currentTracking = ship.tracking_code;
-            // Update tracking button icon based on carrier name
             if(window.currentCarrier && window.currentCarrier.toUpperCase() !== "USPS"){
               document.getElementById("trackingLinkBtn").querySelector("img").src = "assets/ChitChats.png";
             } else {
@@ -608,7 +614,6 @@
         window.currentTracking = null;
       }
 
-      // Toggle display of tracking button: show only if shipped and a tracking number exists
       if(window.orderIsShipped === "Shipped!" && window.currentTracking){
         document.getElementById("trackingLinkBtn").style.display = "block";
       } else {
@@ -930,6 +935,7 @@
         document.body.style.opacity = 1;
       }, 250);
 
+      // "Open Config" button logic
       document.getElementById("openConfigBtn").addEventListener("click", () => {
         populateConfigTable();
         const modalElem = document.getElementById("configModal");
@@ -940,6 +946,7 @@
         saveConfiguration();
       });
 
+      // Pull Etsy Order Info on "Enter" in the Etsy Order Number input
       const etsyOrderInput = document.getElementById("etsyOrderNumber");
       etsyOrderInput.addEventListener("keydown", async e => {
         if(e.key === "Enter"){
@@ -974,11 +981,9 @@
         let templateUrl = "";
         if(window.currentCarrier && window.currentCarrier.toUpperCase() !== "USPS"){
           templateUrl = "https://chitchats.com/tracking/0000000000000";
-          // For Chit Chats, replace the 13 zeros with the tracking number
           templateUrl = templateUrl.replace("0000000000000", window.currentTracking);
         } else {
           templateUrl = "https://tools.usps.com/go/TrackConfirmAction_input?qtc_tLabels1=0000000000000000000000000000000000";
-          // For USPS, replace the 34 zeros with the tracking number
           templateUrl = templateUrl.replace("0000000000000000000000000000000000", window.currentTracking);
         }
         window.open(templateUrl, "_blank");
@@ -1053,6 +1058,38 @@
       if(goBtn){
         goBtn.addEventListener('click', () => {
           loadScreenTwo();
+        });
+      }
+
+      /***********************************************
+       * Connect Firebase Button
+       ***********************************************/
+      const connectFirebaseBtn = document.getElementById("connectFirebaseBtn");
+      if (connectFirebaseBtn) {
+        connectFirebaseBtn.addEventListener("click", async () => {
+          try {
+            // We do a quick GET request to firebaseOrders with a dummy orderId
+            const response = await fetch(
+              "/.netlify/functions/firebaseOrders?orderId=_testDoc"
+            );
+            const result = await response.json();
+
+            // If we get a 404 (doc not found), that still proves Firestore is functioning
+            if (response.ok) {
+              if (result.error && /not found/i.test(result.error)) {
+                M.toast({ html: "Firebase connected successfully (test doc not found)!" });
+              } else if (result.success) {
+                M.toast({ html: "Firebase connected successfully (doc found)!" });
+              } else {
+                M.toast({ html: "Firebase responded: " + JSON.stringify(result) });
+              }
+            } else {
+              throw new Error(result.error || "Unknown error");
+            }
+          } catch (err) {
+            M.toast({ html: "Error: " + err.message });
+            console.error("Firebase connection test failed:", err);
+          }
         });
       }
     });
