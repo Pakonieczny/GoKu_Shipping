@@ -20,15 +20,6 @@
       transition: opacity 0s; /* fade-in controlled by JS */
     }
 
-    /* Ensure the user login modal is always centered */
-    #userLoginModal {
-      /* Override Materialize's default positioning */
-      top: 50% !important;
-      left: 50% !important;
-      transform: translate(-50%, -50%) !important;
-      margin: 0 !important;
-    }
-
     /* Main UI Buttons */
     #connectEtsyBtn {
       position: absolute;
@@ -36,25 +27,20 @@
       top: 20px;
     }
 
-    /* The new "Save & Update" button (previously "Go To Screen Two") */
-    #saveUpdateBtn {
-      position: absolute;
-      left: 180px;
-      top: 20px;
-    }
+    /* (REMOVED Connect Firebase Button) */
 
-    /* We removed "Connect Firebase" and "Pull Database" per your request */
+    /* (REMOVED Pull Database Button) */
 
     #openConfigBtn {
       position: absolute;
       left: 50px;
-      top: 50px;
+      top: 110px;
     }
 
     #orderLinkBtn {
       position: absolute;
       left: 120px;
-      top: 60px;
+      top: 20px;
       background: transparent;
       border: none;
       cursor: pointer;
@@ -70,7 +56,7 @@
     #trackingLinkBtn {
       position: absolute;
       left: 160px;
-      top: 60px;
+      top: 20px;
       background: transparent;
       border: none;
       cursor: pointer;
@@ -88,7 +74,7 @@
     #etsyOrderNumber {
       position: absolute;
       left: 50px;
-      top: 100px;
+      top: 160px;
       margin: 0;
       padding: 0;
       line-height: 1.0;
@@ -105,7 +91,7 @@
     #orderInformation {
       position: absolute;
       left: 50px;
-      top: 150px;
+      top: 210px;
       width: 300px;
       height: 300px;
       font-size: 1em;
@@ -117,7 +103,7 @@
     #Photo_Grid {
       position: absolute;
       left: 400px;
-      top: 100px;
+      top: 160px;
       transform: scale(1.25);
       transform-origin: top left;
     }
@@ -208,27 +194,35 @@
     #employeeName,
     #completedByEmployee {
       position: absolute;
-      border: none;
-      border-bottom: 1px solid black; /* single underline */
+      /* originally had border: 1px solid black; removing to override below */
+      width: 200px;
+      height: 20px;
+      box-sizing: border-box;
       outline: none;
       background: transparent;
       font-size: 0.9em;
     }
 
-    #labelCreationDate {
-      font-style: italic;
-      font-weight: bold;
-    }
-    #completedByEmployee {
-      font-style: italic;
+    /* We'll keep #employeeName bold if originally set, 
+       but not messing with it here since no explicit mention to remove. */
+    #employeeName {
       font-weight: bold;
     }
 
-    #dateOrdered,
-    #shipDate,
-    #employeeName {
-      font-weight: normal;
-      font-style: normal;
+    /* Remove 1px border for #labelCreationDate, #completedByEmployee, #signatureBox 
+       and replace with single underline. */
+    #labelCreationDate,
+    #completedByEmployee,
+    #signatureBox {
+      border: none !important;
+      border-bottom: 1px solid black !important;
+    }
+
+    /* Make #labelCreationDate & #completedByEmployee bold & italic */
+    #labelCreationDate,
+    #completedByEmployee {
+      font-weight: bold !important;
+      font-style: italic !important;
     }
 
     /* Title texts */
@@ -248,21 +242,80 @@
       font-weight: bold;
     }
 
-    /* "Signature Box" - single underline, no perimeter outline */
+    /* 1) Three duplicates of "titleShipDate" text objects: 
+       - "titleOrderCompletedOn" -> "Last Updated On"
+       - "titleOrderCompletedBy" -> "Updated By:"
+       - "titleSignedInAs" -> "Signed In As:" */
+    #titleOrderCompletedOn,
+    #titleOrderCompletedBy,
+    #titleSignedInAs {
+      position: absolute;
+      font-size: 0.7em;
+      margin: 0;
+      padding: 0;
+    }
+    #titleOrderCompletedOn {
+      left: 50px;
+      top: 460px;
+    }
+    #titleOrderCompletedBy {
+      left: 50px;
+      top: 480px;
+    }
+    #titleSignedInAs {
+      left: 50px;
+      top: 500px;
+    }
+
+    /* Configuration Modal styling */
+    .modal {
+      position: fixed !important;
+      top: 150px !important;
+      right: 0 !important;
+      left: auto !important;
+      transform: none !important;
+      height: auto !important;
+      max-height: 70vh !important;
+      width: auto !important;
+      max-width: 650px !important;
+      overflow-y: scroll !important;
+    }
+    .modal .modal-content {
+      overflow-y: auto;
+      font-size: 0.9em;
+    }
+    .modal .modal-footer {
+      text-align: right;
+      padding: 10px;
+      background: white;
+      font-size: 0.9em;
+    }
+    table.striped {
+      width: 100%;
+    }
+    table.striped th,
+    table.striped td {
+      padding: 8px;
+      text-align: center;
+    }
+    input[type="number"] {
+      width: 70px;
+      font-size: 0.8em;
+    }
+
+    /* "Signature Box" at 25px tall by 50px wide */
     #signatureBox {
       position: absolute;
       left: 400px;
-      top: 300px;
+      top: 360px;
       width: 50px;
       height: 25px;
       background: #f9f9f9;
-      user-select: none;
-      border: none;
-      border-bottom: 1px solid black;
       display: flex;
       align-items: center;
       justify-content: center;
       overflow: hidden;
+      user-select: none;
     }
   </style>
 </head>
@@ -271,14 +324,11 @@
   <!-- WRAP SCREEN ONE CONTENT IN THIS CONTAINER -->
   <div id="screenOne">
     <!-- Main UI Buttons -->
-
-    <!-- "Connect to Etsy" remains -->
     <button id="connectEtsyBtn" class="configurable btn waves-effect waves-light">Connect to Etsy</button>
 
-    <!-- (2) The new "Save & Update" button -->
-    <button id="saveUpdateBtn" class="configurable btn waves-effect waves-light">Save & Update</button>
+    <!-- (REMOVED: <button id="connectFirebaseBtn">...) -->
 
-    <!-- "Connect Firebase" & "Pull Database" have been removed -->
+    <!-- (REMOVED: <button id="pullDatabaseBtn">...) -->
 
     <button id="openConfigBtn" class="configurable btn waves-effect waves-light">Open Config</button>
 
@@ -355,6 +405,12 @@
     <div id="titleOrderDate">Order Date:</div>
     <div id="titleOrderDate2" style="font-weight:bold;"></div>
     <div id="titleShipDate">Ship By:</div>
+
+    <!-- 1) New duplicate "titleShipDate" texts with the requested content -->
+    <div id="titleOrderCompletedOn">Last Updated On:</div>
+    <div id="titleOrderCompletedBy">Updated By:</div>
+    <div id="titleSignedInAs">Signed In As:</div>
+
     <div id="titleOrderDetails">Order Details:</div>
     <div id="titleBritesMessages">Brites Messages</div>
     <div id="titlePurchasedItems">Purchased Items</div>
@@ -364,14 +420,16 @@
     <input type="text" id="dateOrdered" readonly />
     <input type="text" id="shipDate" readonly />
 
-    <!-- italic+bold, single underline -->
+    <!-- The label creation date (underline, bold+italic) -->
     <input type="text" id="labelCreationDate" placeholder="Label Creation Date" />
-    <!-- normal style for "employeeName" -->
+
+    <!-- The employeeName text box (still bold) -->
     <input type="text" id="employeeName" placeholder="Employee Name" />
-    <!-- italic+bold, single underline -->
+
+    <!-- The brand-new "completedByEmployee" text box (underline, bold+italic) -->
     <input type="text" id="completedByEmployee" placeholder="Completed By Employee" />
 
-    <!-- "Signature Box" single underline -->
+    <!-- "Signature Box" (underline, no more 1px perimeter) -->
     <div id="signatureBox">Sig Box</div>
 
     <!-- Configuration Modal -->
@@ -397,12 +455,16 @@
       </div>
     </div>
 
+    <!-- "Save & Update" button (formerly "Go to Screen Two") -->
+    <button id="goScreenTwoBtn" class="btn" style="position:absolute; left:180px; top:110px;">
+      Save & Update
+    </button>
   </div> <!-- end #screenOne -->
 
-  <!-- Container for second screen markup (we keep it for completeness but do not use) -->
+  <!-- Container for the second screen markup -->
   <div id="secondaryContainer"></div>
 
-  <!-- "User Log In" Modal (centered) -->
+  <!-- "User Log In" Modal that appears on load -->
   <div id="userLoginModal" class="modal">
     <div class="modal-content">
       <h5>User Log In</h5>
@@ -478,7 +540,9 @@
 
     /********** Configuration System **********/
     var configComponentIDs = [
-      "connectEtsyBtn", /* removed connectFirebaseBtn, removed pullDatabaseBtn */
+      "connectEtsyBtn", 
+      /* REMOVED: "connectFirebaseBtn", */
+      /* REMOVED: "pullDatabaseBtn", */
       "openConfigBtn",
       "orderLinkBtn", "trackingLinkBtn", "etsyOrderNumber", "orderInformation",
       "Photo_Grid",
@@ -488,10 +552,10 @@
       "metalCell4", "metalCell5", "metalCell6", "metalCell7",
       "orderDetails", "customerMessageHistory", "dateOrdered", "shipDate",
       "labelCreationDate", "employeeName", "completedByEmployee",
-      "titleOrderDate", "titleOrderDate2", "titleShipDate", "titleOrderDetails",
-      "titleBritesMessages", "titlePurchasedItems", "titleOrderNumber",
-      "signatureBox", "userLoginModal", "employeeNumberInput",
-      "employeeLoginBtn", "saveUpdateBtn"
+      "titleOrderDate", "titleOrderDate2", "titleShipDate",
+      "titleOrderCompletedOn", "titleOrderCompletedBy", "titleSignedInAs",
+      "titleOrderDetails", "titleBritesMessages", "titlePurchasedItems", "titleOrderNumber",
+      "goScreenTwoBtn", "signatureBox", "userLoginModal", "employeeNumberInput", "employeeLoginBtn"
     ];
 
     function loadPositions(){
@@ -587,7 +651,7 @@
       });
       userLoginModal.open();
 
-      // "Log In" button
+      // "Log In" button for employees
       var employeeLoginBtn = document.getElementById("employeeLoginBtn");
       var employeeNumberInput = document.getElementById("employeeNumberInput");
       if(employeeLoginBtn){
@@ -598,6 +662,7 @@
               M.toast({html: "Please enter a valid 3-digit Employee Number!"});
               return;
             }
+            // Retrieve doc "Employee Numbers" from Brites_Orders
             var responseEN = await fetch("/.netlify/functions/firebaseOrders?orderId=Employee Numbers");
             if(!responseEN.ok){
               M.toast({ html: "Error fetching Employee Numbers doc!" });
@@ -612,6 +677,7 @@
             if(docDataEN[empNumber]){
               var nameFound = docDataEN[empNumber];
               M.toast({ html: "Welcome, " + nameFound + "!" });
+              // store in "employeeName"
               document.getElementById("employeeName").value = nameFound;
               userLoginModal.close();
             } else {
@@ -635,7 +701,7 @@
         saveConfiguration();
       });
 
-      // "Connect Etsy" button
+      // Connect to Etsy
       var connectEtsyBtn = document.getElementById("connectEtsyBtn");
       if(connectEtsyBtn){
         connectEtsyBtn.addEventListener("click", async function(){
@@ -644,7 +710,7 @@
           var codeChallenge = await generateCodeChallenge(codeVerifier);
           var state = "randomState123";
           var scope = "listings_w listings_r transactions_r transactions_w";
-          var CLIENT_ID = "k75zdspz4r99txpqdji7i2em"; 
+          var CLIENT_ID = "k75zdspz4r99txpqdji7i2em"; // example
           var redirectUri = "https://gokushipping.netlify.app";
 
           var etsyAuthUrl =
@@ -661,9 +727,7 @@
         });
       }
 
-      /* "Pull Database" logic is removed. We combine it after user presses Enter in "etsyOrderNumber" */
-
-      // Press Enter in "etsyOrderNumber" => 1) fetch from Etsy, 2) fetch from Firestore
+      // Press Enter in "etsyOrderNumber" to pull Etsy + Database
       var etsyOrderInput = document.getElementById("etsyOrderNumber");
       etsyOrderInput.addEventListener("keydown", async function(e){
         if(e.key === "Enter"){
@@ -674,19 +738,22 @@
             if(orderData){
               await updateImageGrid(orderData);
             }
-            // 2) Then do Firestore GET logic
+
+            // 2) "Pull Database" logic (merged here)
             try {
               var respPD = await fetch("/.netlify/functions/firebaseOrders?orderId=" + encodeURIComponent(orderNumber));
               var resPD = await respPD.json();
               if(!respPD.ok){
                 throw new Error(resPD.error || "Unknown error from firebaseOrders function");
               }
+
               var docDataPD = resPD.data;
               var dbOrderNum = docDataPD["Order Number"];
               if(dbOrderNum !== orderNumber){
                 M.toast({ html: "Order mismatch: doc has '" + dbOrderNum + "', expected '" + orderNumber + "'" });
                 return;
               }
+
               // Brites Messages -> "customerMessageHistory"
               var dbBrites = docDataPD["Brites Messages"] || "";
               document.getElementById("customerMessageHistory").value = dbBrites;
@@ -712,20 +779,18 @@
                 document.getElementById("labelCreationDate").value = "";
               }
 
-              // If docDataPD["Employee Name"] is "001," show Employee_001_Paul K.jpg in signatureBox
-              var dbEmpName = docDataPD["Employee Name"];
-              if(dbEmpName){
-                document.getElementById("completedByEmployee").value = dbEmpName;
-                if(dbEmpName === "001"){
-                  document.getElementById("signatureBox").innerHTML =
-                    '<img src="./assets/Employee_001_Paul K.jpg" style="width:100%; height:100%; object-fit:contain" alt="Signature">';
-                } else {
-                  document.getElementById("signatureBox").textContent = "Sig Box";
-                }
+              var dbEmpName = docDataPD["Employee Name"] || "";
+              document.getElementById("completedByEmployee").value = dbEmpName;
+
+              // If "Employee Name" == "001", show signature image
+              if(dbEmpName === "001"){
+                document.getElementById("signatureBox").innerHTML = `
+                  <img src="assets/Employee_001_Paul K.jpg" style="width:100%; height:100%; object-fit:cover;">
+                `;
               } else {
-                document.getElementById("completedByEmployee").value = "";
-                document.getElementById("signatureBox").textContent = "Sig Box";
+                document.getElementById("signatureBox").innerHTML = "Sig Box";
               }
+
             } catch(errPD){
               M.toast({ html: "Error: " + errPD.message });
               console.error("Failed to pull data from Firestore:", errPD);
@@ -734,14 +799,109 @@
         }
       });
 
-      // "Order Link" button event above
-      // "Tracking Link" button event above
-      // Zoom + Drag for preview boxes => see above
+      // "Order Link" button
+      document.getElementById("orderLinkBtn").addEventListener("click", function(){
+        var baseUrl = "https://www.etsy.com/your/orders/sold?ref=seller-platform-mcnav&order_id=0000000000";
+        var currentOrder = etsyOrderInput.value.trim();
+        if(!currentOrder){
+          console.log("No order number entered.");
+          return;
+        }
+        var customLink = baseUrl.replace("0000000000", currentOrder);
+        window.open(customLink, "_blank");
+      });
 
-      // (2) "Save & Update" merges old "Connect Firebase" logic
-      var saveUpdateBtn = document.getElementById("saveUpdateBtn");
-      if(saveUpdateBtn){
-        saveUpdateBtn.addEventListener("click", async function(){
+      // "Tracking Link" button
+      document.getElementById("trackingLinkBtn").addEventListener("click", function(){
+        if(!window.currentTracking){
+          console.log("No tracking number available.");
+          return;
+        }
+        var templateUrl = "";
+        if(window.currentCarrier && window.currentCarrier.toUpperCase() !== "USPS"){
+          templateUrl = "https://chitchats.com/tracking/0000000000000";
+          templateUrl = templateUrl.replace("0000000000000", window.currentTracking);
+        } else {
+          templateUrl = "https://tools.usps.com/go/TrackConfirmAction_input?qtc_tLabels1=0000000000000000000000000000000000";
+          templateUrl = templateUrl.replace("0000000000000000000000000000000000", window.currentTracking);
+        }
+        window.open(templateUrl, "_blank");
+      });
+
+      // Zoom + Drag for preview boxes
+      var previewBoxes = document.querySelectorAll('.preview-box');
+      previewBoxes.forEach(function(box){
+        var isDragging = false;
+        var lastX = 0;
+        var lastY = 0;
+
+        box.addEventListener('wheel', function(e){
+          var img = box.querySelector('img');
+          if(!img) return;
+          e.preventDefault();
+          var currentScale = parseFloat(img.dataset.scale) || 1;
+          var offsetX = parseFloat(img.dataset.offsetX) || 0;
+          var offsetY = parseFloat(img.dataset.offsetY) || 0;
+          if(e.deltaY < 0){
+            currentScale *= 1.1;
+          } else {
+            currentScale /= 1.1;
+            if(currentScale <= 1){
+              currentScale = 1;
+              offsetX = 0;
+              offsetY = 0;
+            }
+          }
+          currentScale = Math.max(1, Math.min(4, currentScale));
+          img.dataset.scale = currentScale;
+          img.dataset.offsetX = offsetX;
+          img.dataset.offsetY = offsetY;
+          img.style.transform = "translate(" + offsetX + "px, " + offsetY + "px) scale(" + currentScale + ")";
+        });
+
+        box.addEventListener('mousedown', function(e){
+          var img = box.querySelector('img');
+          if(!img) return;
+          var currentScale = parseFloat(img.dataset.scale) || 1;
+          if(currentScale <= 1) return;
+          e.preventDefault();
+          isDragging = true;
+          lastX = e.clientX;
+          lastY = e.clientY;
+        });
+
+        box.addEventListener('mousemove', function(e){
+          if(!isDragging) return;
+          e.preventDefault();
+          var img = box.querySelector('img');
+          if(!img) return;
+          var currentScale = parseFloat(img.dataset.scale) || 1;
+          var offsetX = parseFloat(img.dataset.offsetX) || 0;
+          var offsetY = parseFloat(img.dataset.offsetY) || 0;
+          var dx = e.clientX - lastX;
+          var dy = e.clientY - lastY;
+          offsetX += dx;
+          offsetY += dy;
+          img.dataset.offsetX = offsetX;
+          img.dataset.offsetY = offsetY;
+          img.style.transform = "translate(" + offsetX + "px, " + offsetY + "px) scale(" + currentScale + ")";
+          lastX = e.clientX;
+          lastY = e.clientY;
+        });
+
+        box.addEventListener('mouseup', function(){
+          isDragging = false;
+        });
+        box.addEventListener('mouseleave', function(){
+          isDragging = false;
+        });
+      });
+
+      // "Save & Update" button (formerly go to screen two)
+      var goBtn = document.getElementById('goScreenTwoBtn');
+      if(goBtn){
+        goBtn.addEventListener('click', async function(){
+          // Incorporate "Connect Firebase" logic:
           try {
             var orderNumberVal = etsyOrderInput.value.trim();
             var orderFromVal = window.orderName || "";
@@ -770,13 +930,16 @@
               throw new Error(resultCF.error || "Unknown error from firebaseOrders function");
             }
 
-            M.toast({ html: "Order data saved to Firestore! " + JSON.stringify(resultCF) });
+            M.toast({ html: "Order data saved! " + JSON.stringify(resultCF) });
             console.log("Successfully saved data to Firestore:", resultCF);
 
           } catch(errCF){
             M.toast({ html: "Error: " + errCF.message });
             console.error("Failed to save data to Firestore:", errCF);
           }
+
+          // Now optionally proceed to Screen Two if you still want that original navigation:
+          loadScreenTwo();
         });
       }
     });
@@ -846,6 +1009,7 @@
       } else if(data.orders && Array.isArray(data.orders)){
         items = data.orders;
       } else if(typeof data === "object" && data !== null){
+        // If we find an array inside some key, use that
         for(var key in data){
           if(Array.isArray(data[key])){
             items = data[key];
@@ -883,6 +1047,7 @@
             }
             cell.style.cursor = "pointer";
 
+            // closure for i
             (function(idx){
               cell.onclick = function(){
                 showItemDetails(idx);
@@ -898,8 +1063,12 @@
               var metalSel = "";
               if(item.variations && Array.isArray(item.variations)){
                 var acceptedMetalNames = [
-                  "metal", "metal choice", "metal - engraving", "metal colour",
-                  "color", "metal choice / engraving option"
+                  "metal",
+                  "metal choice",
+                  "metal - engraving",
+                  "metal colour",
+                  "color",
+                  "metal choice / engraving option"
                 ];
                 var metalVar = item.variations.find(function(v){
                   if(!v.formatted_name) return false;
@@ -925,8 +1094,7 @@
       if(items.length > 0){
         showItemDetails(0);
       } else {
-        document.getElementById("orderDetails").value =
-          " ORDER DETAILS:\n\nNo items found.";
+        document.getElementById("orderDetails").value = " ORDER DETAILS:\n\nNo items found.";
       }
     }
 
@@ -939,12 +1107,17 @@
       var item = window.cachedOrderItems[index];
       var details = "";
 
+      // ORDER FROM:
       if(window.orderName){
         details += " ORDER FROM: " + window.orderName + "\n";
       }
+
+      // ORDER STATUS:
       if(window.orderStatus){
         details += " Order Status: " + window.orderStatus + "\n";
       }
+
+      // Shipping Status:
       if(window.orderIsShipped === "Shipped!"){
         details += " Shipping Status:\n";
       } else if(window.orderIsShipped){
@@ -953,6 +1126,7 @@
         details += " Shipping Status:\n";
       }
 
+      // If shipped
       if(window.orderIsShipped === "Shipped!"){
         if(window.orderShipments && window.orderShipments.length > 0){
           var ship = window.orderShipments[0];
@@ -988,21 +1162,33 @@
 
       details += " ORDER DETAILS:\n\n";
 
+      // Title: first 4 words
       if(item.title){
         var firstFour = item.title.trim().split(" ").slice(0,4).join(" ");
         details += " Title: " + firstFour + "\n";
       }
+
+      // SKU
       if(item.sku){
         details += " SKU: " + item.sku + "\n";
       }
+
+      // Variations
       if(item.variations && Array.isArray(item.variations)){
         var acceptedMetalNames2 = [
-          "metal", "metal choice", "metal - engraving", "metal colour",
-          "color", "metal choice / engraving option"
+          "metal",
+          "metal choice",
+          "metal - engraving",
+          "metal colour",
+          "color",
+          "metal choice / engraving option"
         ];
         var acceptedLengthNames2 = [
-          "length","necklace length","metal/necklace length",
-          "metal choice / necklace length","necklace length in inches"
+          "length",
+          "necklace length",
+          "metal/necklace length",
+          "metal choice / necklace length",
+          "necklace length in inches"
         ];
         for(var j=0; j<item.variations.length; j++){
           var v2 = item.variations[j];
@@ -1035,6 +1221,8 @@
           }
         }
       }
+
+      // Gift details
       if(window.receiptIsGift !== null && typeof window.receiptIsGift !== "undefined"){
         details += " Marked as Gift: " + window.receiptIsGift + "\n";
       }
