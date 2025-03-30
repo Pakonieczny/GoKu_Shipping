@@ -26,26 +26,27 @@
       left: 50px;
       top: 20px;
     }
-    #connectFirebaseBtn {
+    /* (3) Remove "Connect Firebase" button – fully removed from DOM */
+
+    /* (1) "Go To Screen Two" becomes "Save & Update" */
+    #saveUpdateBtn {
       position: absolute;
-      left: 50px;
-      top: 50px;
+      left: 180px;
+      top: 20px;
     }
-    #pullDatabaseBtn {
-      position: absolute;
-      left: 50px;
-      top: 80px;
-    }
+
+    /* (4) Remove "Pull Database" button from DOM entirely. */
+
     #openConfigBtn {
       position: absolute;
       left: 50px;
-      top: 110px;
+      top: 50px;
     }
 
     #orderLinkBtn {
       position: absolute;
       left: 120px;
-      top: 20px;
+      top: 60px;
       background: transparent;
       border: none;
       cursor: pointer;
@@ -61,7 +62,7 @@
     #trackingLinkBtn {
       position: absolute;
       left: 160px;
-      top: 20px;
+      top: 60px;
       background: transparent;
       border: none;
       cursor: pointer;
@@ -79,7 +80,7 @@
     #etsyOrderNumber {
       position: absolute;
       left: 50px;
-      top: 160px;
+      top: 100px;
       margin: 0;
       padding: 0;
       line-height: 1.0;
@@ -96,7 +97,7 @@
     #orderInformation {
       position: absolute;
       left: 50px;
-      top: 210px;
+      top: 150px;
       width: 300px;
       height: 300px;
       font-size: 1em;
@@ -108,7 +109,7 @@
     #Photo_Grid {
       position: absolute;
       left: 400px;
-      top: 160px;
+      top: 100px;
       transform: scale(1.25);
       transform-origin: top left;
     }
@@ -199,29 +200,27 @@
     #employeeName,
     #completedByEmployee {
       position: absolute;
-      border: 1px solid black;
-      width: 200px;
-      height: 20px;
-      box-sizing: border-box;
+      border: none;
+      border-bottom: 1px solid black; /* (5) Single underline */
       outline: none;
       background: transparent;
       font-size: 0.9em;
-      /* Removed bold from labelCreationDate & completedByEmployee: */
-      /* #employeeName remains bold if you want, but the instructions didn't mention removing it from employeeName. */
-      /* We'll only remove from labelCreationDate and completedByEmployee. 
-         So we won't add "font-weight: bold;" here. 
-         Let's handle them individually. */
     }
 
-    /* We'll keep #employeeName bold, but remove bold from the others as requested. */
-    #employeeName {
-      font-weight: bold; /* keep it for employeeName */
-    }
+    /* Keep #dateOrdered, #shipDate normal,
+       but for #labelCreationDate & #completedByEmployee: italic + bold. */
     #labelCreationDate {
-      font-weight: normal !important; /* remove bold */
+      font-style: italic; 
+      font-weight: bold;
     }
     #completedByEmployee {
-      font-weight: normal !important; /* remove bold */
+      font-style: italic;
+      font-weight: bold;
+    }
+
+    #dateOrdered, #shipDate, #employeeName {
+      font-weight: normal;
+      font-style: normal;
     }
 
     /* Title texts */
@@ -241,85 +240,21 @@
       font-weight: bold;
     }
 
-    /* 1) Three duplicates of "titleShipDate" text objects: 
-       - "titleOrderCompletedOn" -> "Last Updated On"
-       - "titleOrderCompletedBy" -> "Updated By:"
-       - "titleSignedInAs" -> "Signed In As:" */
-    #titleOrderCompletedOn,
-    #titleOrderCompletedBy,
-    #titleSignedInAs {
-      position: absolute;
-      font-size: 0.7em;
-      margin: 0;
-      padding: 0;
-    }
-    /* Place them near #titleShipDate for demonstration, 
-       adjust left/top as you see fit. We won't assume 
-       exact positions unless specified. We'll just 
-       stagger them so you can see them easily. */
-    #titleOrderCompletedOn {
-      left: 50px;
-      top: 460px;
-    }
-    #titleOrderCompletedBy {
-      left: 50px;
-      top: 480px;
-    }
-    #titleSignedInAs {
-      left: 50px;
-      top: 500px;
-    }
-
-    /* Configuration Modal styling */
-    .modal {
-      position: fixed !important;
-      top: 150px !important;
-      right: 0 !important;
-      left: auto !important;
-      transform: none !important;
-      height: auto !important;
-      max-height: 70vh !important;
-      width: auto !important;
-      max-width: 650px !important;
-      overflow-y: scroll !important;
-    }
-    .modal .modal-content {
-      overflow-y: auto;
-      font-size: 0.9em;
-    }
-    .modal .modal-footer {
-      text-align: right;
-      padding: 10px;
-      background: white;
-      font-size: 0.9em;
-    }
-    table.striped {
-      width: 100%;
-    }
-    table.striped th,
-    table.striped td {
-      padding: 8px;
-      text-align: center;
-    }
-    input[type="number"] {
-      width: 70px;
-      font-size: 0.8em;
-    }
-
-    /* "Signature Box" at 25px tall by 50px wide */
+    /* Signature Box with underline only */
     #signatureBox {
       position: absolute;
       left: 400px;
-      top: 360px;
+      top: 300px;
       width: 50px;
       height: 25px;
-      border: 1px solid black !important;
       background: #f9f9f9;
+      user-select: none;
+      border: none; /* remove outline */
+      border-bottom: 1px solid black; /* single underline */
       display: flex;
       align-items: center;
       justify-content: center;
       overflow: hidden;
-      user-select: none;
     }
   </style>
 </head>
@@ -329,8 +264,13 @@
   <div id="screenOne">
     <!-- Main UI Buttons -->
     <button id="connectEtsyBtn" class="configurable btn waves-effect waves-light">Connect to Etsy</button>
-    <button id="connectFirebaseBtn" class="configurable btn waves-effect waves-light">Connect Firebase</button>
-    <button id="pullDatabaseBtn" class="configurable btn waves-effect waves-light">Pull Database</button>
+
+    <!-- (2) Instead of "Go To Screen Two," rename to "Save & Update" -->
+    <button id="saveUpdateBtn" class="configurable btn waves-effect waves-light">Save & Update</button>
+
+    <!-- (4) "Pull Database" button is removed. 
+         (3) "Connect Firebase" button is removed. -->
+
     <button id="openConfigBtn" class="configurable btn waves-effect waves-light">Open Config</button>
 
     <!-- "Order Link" button -->
@@ -406,12 +346,6 @@
     <div id="titleOrderDate">Order Date:</div>
     <div id="titleOrderDate2" style="font-weight:bold;"></div>
     <div id="titleShipDate">Ship By:</div>
-
-    <!-- 1) New duplicate "titleShipDate" texts with the requested content -->
-    <div id="titleOrderCompletedOn">Last Updated On:</div>
-    <div id="titleOrderCompletedBy">Updated By:</div>
-    <div id="titleSignedInAs">Signed In As:</div>
-
     <div id="titleOrderDetails">Order Details:</div>
     <div id="titleBritesMessages">Brites Messages</div>
     <div id="titlePurchasedItems">Purchased Items</div>
@@ -421,16 +355,16 @@
     <input type="text" id="dateOrdered" readonly />
     <input type="text" id="shipDate" readonly />
 
-    <!-- The label creation date (no bold) -->
+    <!-- labelCreationDate => italic + bold, underline only, no box outline. -->
     <input type="text" id="labelCreationDate" placeholder="Label Creation Date" />
 
-    <!-- The employeeName text box (still bold) -->
+    <!-- employeeName => remains with normal style except we had it bold earlier, let's keep it. -->
     <input type="text" id="employeeName" placeholder="Employee Name" />
 
-    <!-- The brand-new "completedByEmployee" text box (no bold) -->
+    <!-- brand-new "completedByEmployee", italic + bold, underline. -->
     <input type="text" id="completedByEmployee" placeholder="Completed By Employee" />
 
-    <!-- "Signature Box" (25x50) -->
+    <!-- "Signature Box" - single underline, no perimeter outline -->
     <div id="signatureBox">Sig Box</div>
 
     <!-- Configuration Modal -->
@@ -456,13 +390,9 @@
       </div>
     </div>
 
-    <!-- "Go to Screen Two" button -->
-    <button id="goScreenTwoBtn" class="btn" style="position:absolute; left:180px; top:110px;">
-      Go to Screen Two
-    </button>
   </div> <!-- end #screenOne -->
 
-  <!-- Container for the second screen markup -->
+  <!-- Container for the second screen markup (we no longer navigate there, but we keep it for completeness) -->
   <div id="secondaryContainer"></div>
 
   <!-- "User Log In" Modal that appears on load -->
@@ -541,8 +471,10 @@
 
     /********** Configuration System **********/
     var configComponentIDs = [
-      "connectEtsyBtn", "connectFirebaseBtn", "pullDatabaseBtn", "openConfigBtn",
-      "orderLinkBtn", "trackingLinkBtn", "etsyOrderNumber", "orderInformation",
+      "connectEtsyBtn", /* connectFirebaseBtn is removed */ 
+      /* pullDatabaseBtn removed */
+      "openConfigBtn", "orderLinkBtn", "trackingLinkBtn",
+      "etsyOrderNumber", "orderInformation",
       "Photo_Grid",
       "quantityCell0", "quantityCell1", "quantityCell2", "quantityCell3",
       "quantityCell4", "quantityCell5", "quantityCell6", "quantityCell7",
@@ -550,10 +482,10 @@
       "metalCell4", "metalCell5", "metalCell6", "metalCell7",
       "orderDetails", "customerMessageHistory", "dateOrdered", "shipDate",
       "labelCreationDate", "employeeName", "completedByEmployee",
-      "titleOrderDate", "titleOrderDate2", "titleShipDate",
-      "titleOrderCompletedOn", "titleOrderCompletedBy", "titleSignedInAs",
-      "titleOrderDetails", "titleBritesMessages", "titlePurchasedItems", "titleOrderNumber",
-      "goScreenTwoBtn", "signatureBox", "userLoginModal", "employeeNumberInput", "employeeLoginBtn"
+      "titleOrderDate", "titleOrderDate2", "titleShipDate", "titleOrderDetails",
+      "titleBritesMessages", "titlePurchasedItems", "titleOrderNumber",
+      "signatureBox", "userLoginModal", "employeeNumberInput",
+      "employeeLoginBtn", "saveUpdateBtn"
     ];
 
     function loadPositions(){
@@ -649,7 +581,7 @@
       });
       userLoginModal.open();
 
-      // "Log In" button for employees
+      // "Log In" button
       var employeeLoginBtn = document.getElementById("employeeLoginBtn");
       var employeeNumberInput = document.getElementById("employeeNumberInput");
       if(employeeLoginBtn){
@@ -660,8 +592,7 @@
               M.toast({html: "Please enter a valid 3-digit Employee Number!"});
               return;
             }
-            // Retrieve doc "EmployeeNumbers" from Brites_Orders
-            var responseEN = await fetch("/.netlify/functions/firebaseOrders?orderId=Employee Numbers");
+            var responseEN = await fetch("/.netlify/functions/firebaseOrders?orderId=EmployeeNumbers");
             if(!responseEN.ok){
               M.toast({ html: "Error fetching EmployeeNumbers doc!" });
               return;
@@ -675,7 +606,6 @@
             if(docDataEN[empNumber]){
               var nameFound = docDataEN[empNumber];
               M.toast({ html: "Welcome, " + nameFound + "!" });
-              // store in "employeeName"
               document.getElementById("employeeName").value = nameFound;
               userLoginModal.close();
             } else {
@@ -699,7 +629,7 @@
         saveConfiguration();
       });
 
-      // Connect to Etsy
+      // "Connect Etsy" button
       var connectEtsyBtn = document.getElementById("connectEtsyBtn");
       if(connectEtsyBtn){
         connectEtsyBtn.addEventListener("click", async function(){
@@ -708,7 +638,7 @@
           var codeChallenge = await generateCodeChallenge(codeVerifier);
           var state = "randomState123";
           var scope = "listings_w listings_r transactions_r transactions_w";
-          var CLIENT_ID = "k75zdspz4r99txpqdji7i2em"; // example
+          var CLIENT_ID = "k75zdspz4r99txpqdji7i2em"; 
           var redirectUri = "https://gokushipping.netlify.app";
 
           var etsyAuthUrl =
@@ -725,138 +655,98 @@
         });
       }
 
-      // Press Enter in "etsyOrderNumber" to pull Etsy
+      /************************************************
+       (4) "Pull Database" button logic => on Enter in "etsyOrderNumber"
+
+       We'll unify the logic after we fetch from Etsy.
+      ************************************************/
       var etsyOrderInput = document.getElementById("etsyOrderNumber");
       etsyOrderInput.addEventListener("keydown", async function(e){
         if(e.key === "Enter"){
           var orderNumber = etsyOrderInput.value.trim();
           if(orderNumber !== ""){
+            // 1) Pull from Etsy
             var orderData = await pullEtsyOrderDetails(orderNumber);
             if(orderData){
               await updateImageGrid(orderData);
             }
-          }
-        }
-      });
+            // 2) Then do Firestore GET logic (the old "pullDatabase" code):
+            try {
+              var respPD = await fetch("/.netlify/functions/firebaseOrders?orderId=" + encodeURIComponent(orderNumber));
+              var resPD = await respPD.json();
+              if(!respPD.ok){
+                throw new Error(resPD.error || "Unknown error from firebaseOrders function");
+              }
+              var docDataPD = resPD.data;
+              var dbOrderNum = docDataPD["Order Number"];
+              if(dbOrderNum !== orderNumber){
+                M.toast({ html: "Order mismatch: doc has '" + dbOrderNum + "', expected '" + orderNumber + "'" });
+                return;
+              }
+              // Brites Messages -> "customerMessageHistory"
+              var dbBrites = docDataPD["Brites Messages"] || "";
+              document.getElementById("customerMessageHistory").value = dbBrites;
+              M.toast({ html: "Brites Messages loaded!" });
 
-      // "Order Link" button
-      document.getElementById("orderLinkBtn").addEventListener("click", function(){
-        var baseUrl = "https://www.etsy.com/your/orders/sold?ref=seller-platform-mcnav&order_id=0000000000";
-        var currentOrder = etsyOrderInput.value.trim();
-        if(!currentOrder){
-          console.log("No order number entered.");
-          return;
-        }
-        var customLink = baseUrl.replace("0000000000", currentOrder);
-        window.open(customLink, "_blank");
-      });
-
-      // "Tracking Link" button
-      document.getElementById("trackingLinkBtn").addEventListener("click", function(){
-        if(!window.currentTracking){
-          console.log("No tracking number available.");
-          return;
-        }
-        var templateUrl = "";
-        if(window.currentCarrier && window.currentCarrier.toUpperCase() !== "USPS"){
-          templateUrl = "https://chitchats.com/tracking/0000000000000";
-          templateUrl = templateUrl.replace("0000000000000", window.currentTracking);
-        } else {
-          templateUrl = "https://tools.usps.com/go/TrackConfirmAction_input?qtc_tLabels1=0000000000000000000000000000000000";
-          templateUrl = templateUrl.replace("0000000000000000000000000000000000", window.currentTracking);
-        }
-        window.open(templateUrl, "_blank");
-      });
-
-      // Zoom + Drag for preview boxes
-      var previewBoxes = document.querySelectorAll('.preview-box');
-      previewBoxes.forEach(function(box){
-        var isDragging = false;
-        var lastX = 0;
-        var lastY = 0;
-
-        box.addEventListener('wheel', function(e){
-          var img = box.querySelector('img');
-          if(!img) return;
-          e.preventDefault();
-          var currentScale = parseFloat(img.dataset.scale) || 1;
-          var offsetX = parseFloat(img.dataset.offsetX) || 0;
-          var offsetY = parseFloat(img.dataset.offsetY) || 0;
-          if(e.deltaY < 0){
-            currentScale *= 1.1;
-          } else {
-            currentScale /= 1.1;
-            if(currentScale <= 1){
-              currentScale = 1;
-              offsetX = 0;
-              offsetY = 0;
+              // Shipping Label Timestamps -> "labelCreationDate"
+              var shippingLabTS = docDataPD["Shipping Label Timestamps"];
+              if(shippingLabTS){
+                var dt = new Date(shippingLabTS);
+                if(!isNaN(dt.valueOf())){
+                  var monthNamesF2 = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+                  var dd = ("0" + dt.getDate()).slice(-2);
+                  var mStr = monthNamesF2[dt.getMonth()];
+                  var yyyy = dt.getFullYear();
+                  var hh = ("0" + dt.getHours()).slice(-2);
+                  var mm = ("0" + dt.getMinutes()).slice(-2);
+                  var finalStr = dd + " " + mStr + " " + yyyy + ", " + hh + ":" + mm;
+                  document.getElementById("labelCreationDate").value = finalStr;
+                } else {
+                  document.getElementById("labelCreationDate").value = "";
+                }
+              } else {
+                document.getElementById("labelCreationDate").value = "";
+              }
+              // If docDataPD["Employee Name"] is "001," show Employee_001_Paul K.jpg in signatureBox
+              var dbEmpName = docDataPD["Employee Name"];
+              if(dbEmpName){
+                document.getElementById("completedByEmployee").value = ""; // do not keep old
+                document.getElementById("completedByEmployee").value = dbEmpName;
+                // (1a) If employee is "001," show image
+                if(dbEmpName === "001"){
+                  document.getElementById("signatureBox").innerHTML = '<img src="./assets/Employee_001_Paul K.jpg" style="width:100%; height:100%; object-fit:contain" alt="Signature">';
+                } else {
+                  // else clear or revert?
+                  document.getElementById("signatureBox").textContent = "Sig Box";
+                }
+              } else {
+                document.getElementById("completedByEmployee").value = "";
+                document.getElementById("signatureBox").textContent = "Sig Box";
+              }
+            } catch(errPD){
+              M.toast({ html: "Error: " + errPD.message });
+              console.error("Failed to pull data from Firestore:", errPD);
             }
           }
-          currentScale = Math.max(1, Math.min(4, currentScale));
-          img.dataset.scale = currentScale;
-          img.dataset.offsetX = offsetX;
-          img.dataset.offsetY = offsetY;
-          img.style.transform = "translate(" + offsetX + "px, " + offsetY + "px) scale(" + currentScale + ")";
-        });
-
-        box.addEventListener('mousedown', function(e){
-          var img = box.querySelector('img');
-          if(!img) return;
-          var currentScale = parseFloat(img.dataset.scale) || 1;
-          if(currentScale <= 1) return;
-          e.preventDefault();
-          isDragging = true;
-          lastX = e.clientX;
-          lastY = e.clientY;
-        });
-
-        box.addEventListener('mousemove', function(e){
-          if(!isDragging) return;
-          e.preventDefault();
-          var img = box.querySelector('img');
-          if(!img) return;
-          var currentScale = parseFloat(img.dataset.scale) || 1;
-          var offsetX = parseFloat(img.dataset.offsetX) || 0;
-          var offsetY = parseFloat(img.dataset.offsetY) || 0;
-          var dx = e.clientX - lastX;
-          var dy = e.clientY - lastY;
-          offsetX += dx;
-          offsetY += dy;
-          img.dataset.offsetX = offsetX;
-          img.dataset.offsetY = offsetY;
-          img.style.transform = "translate(" + offsetX + "px, " + offsetY + "px) scale(" + currentScale + ")";
-          lastX = e.clientX;
-          lastY = e.clientY;
-        });
-
-        box.addEventListener('mouseup', function(){
-          isDragging = false;
-        });
-        box.addEventListener('mouseleave', function(){
-          isDragging = false;
-        });
+        }
       });
 
-      // "Go to Screen Two" button
-      var goBtn = document.getElementById('goScreenTwoBtn');
-      if(goBtn){
-        goBtn.addEventListener('click', function(){
-          loadScreenTwo();
-        });
-      }
+      // "Order Link" button logic above
 
-      // Connect Firebase Button
-      var connectFirebaseBtn2 = document.getElementById("connectFirebaseBtn");
-      if(connectFirebaseBtn2){
-        connectFirebaseBtn2.addEventListener("click", async function(){
+      // "Tracking Link" button logic above
+
+      // Zoom + Drag for preview boxes -> see above
+
+      // (2)(3) "Save & Update" button => merges old "Connect Firebase" logic
+      var saveUpdateBtn = document.getElementById("saveUpdateBtn");
+      if(saveUpdateBtn){
+        saveUpdateBtn.addEventListener("click", async function(){
           try {
             var orderNumberVal = etsyOrderInput.value.trim();
             var orderFromVal = window.orderName || "";
             var userMsgsVal = document.getElementById("customerMessageHistory").value.trim();
             var nowDate = new Date();
             var shippingTS = nowDate.toISOString();
-
-            // read the "employeeName"
             var empNameVal = document.getElementById("employeeName").value.trim();
 
             var bodyData = {
@@ -879,7 +769,7 @@
               throw new Error(resultCF.error || "Unknown error from firebaseOrders function");
             }
 
-            M.toast({ html: "Order data saved! " + JSON.stringify(resultCF) });
+            M.toast({ html: "Order data saved to Firestore! " + JSON.stringify(resultCF) });
             console.log("Successfully saved data to Firestore:", resultCF);
 
           } catch(errCF){
@@ -888,74 +778,11 @@
           }
         });
       }
-
-      // Pull Database Button
-      var pullDatabaseBtn2 = document.getElementById("pullDatabaseBtn");
-      if(pullDatabaseBtn2){
-        pullDatabaseBtn2.addEventListener("click", async function(){
-          try {
-            var etsyOrderVal2 = etsyOrderInput.value.trim();
-            if(!etsyOrderVal2){
-              M.toast({ html: "Please enter an Etsy Order Number first." });
-              return;
-            }
-
-            var respPD = await fetch("/.netlify/functions/firebaseOrders?orderId=" + encodeURIComponent(etsyOrderVal2));
-            var resPD = await respPD.json();
-            if(!respPD.ok){
-              throw new Error(resPD.error || "Unknown error from firebaseOrders function");
-            }
-
-            var docDataPD = resPD.data;
-            var dbOrderNum = docDataPD["Order Number"];
-            if(dbOrderNum !== etsyOrderVal2){
-              M.toast({ html: "Order mismatch: doc has '" + dbOrderNum + "', expected '" + etsyOrderVal2 + "'" });
-              return;
-            }
-
-            // Brites Messages -> "customerMessageHistory"
-            var dbBrites = docDataPD["Brites Messages"] || "";
-            document.getElementById("customerMessageHistory").value = dbBrites;
-            M.toast({ html: "Brites Messages loaded!" });
-
-            // Shipping Label Timestamps -> "labelCreationDate"
-            var shippingLabTS = docDataPD["Shipping Label Timestamps"];
-            if(shippingLabTS){
-              var dt = new Date(shippingLabTS);
-              if(!isNaN(dt.valueOf())){
-                var monthNamesF2 = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
-                var dd = ("0" + dt.getDate()).slice(-2);
-                var mStr = monthNamesF2[dt.getMonth()];
-                var yyyy = dt.getFullYear();
-                var hh = ("0" + dt.getHours()).slice(-2);
-                var mm = ("0" + dt.getMinutes()).slice(-2);
-                var finalStr = dd + " " + mStr + " " + yyyy + ", " + hh + ":" + mm;
-                document.getElementById("labelCreationDate").value = finalStr;
-              } else {
-                document.getElementById("labelCreationDate").value = "";
-              }
-            } else {
-              document.getElementById("labelCreationDate").value = "";
-            }
-
-            // DO NOT update #employeeName from DB
-            // Instead, update "completedByEmployee" with docDataPD["Employee Name"]
-            var dbEmpName = docDataPD["Employee Name"];
-            if(dbEmpName){
-              document.getElementById("completedByEmployee").value = dbEmpName;
-            } else {
-              document.getElementById("completedByEmployee").value = "";
-            }
-
-          } catch(errPD){
-            M.toast({ html: "Error: " + errPD.message });
-            console.error("Failed to pull data from Firestore:", errPD);
-          }
-        });
-      }
     });
 
-    /********** loadScreenTwo (DOMParser) **********/
+    /********** loadScreenTwo (DOMParser) 
+       We are not using this for navigation now, but we keep it for completeness. 
+    **********/
     async function loadScreenTwo(){
       try {
         console.log("loadScreenTwo() called");
@@ -1020,7 +847,6 @@
       } else if(data.orders && Array.isArray(data.orders)){
         items = data.orders;
       } else if(typeof data === "object" && data !== null){
-        // If we find an array inside some key, use that
         for(var key in data){
           if(Array.isArray(data[key])){
             items = data[key];
@@ -1058,7 +884,6 @@
             }
             cell.style.cursor = "pointer";
 
-            // closure for i
             (function(idx){
               cell.onclick = function(){
                 showItemDetails(idx);
@@ -1105,7 +930,8 @@
       if(items.length > 0){
         showItemDetails(0);
       } else {
-        document.getElementById("orderDetails").value = " ORDER DETAILS:\n\nNo items found.";
+        document.getElementById("orderDetails").value =
+          " ORDER DETAILS:\n\nNo items found.";
       }
     }
 
@@ -1118,17 +944,12 @@
       var item = window.cachedOrderItems[index];
       var details = "";
 
-      // ORDER FROM:
       if(window.orderName){
         details += " ORDER FROM: " + window.orderName + "\n";
       }
-
-      // ORDER STATUS:
       if(window.orderStatus){
         details += " Order Status: " + window.orderStatus + "\n";
       }
-
-      // Shipping Status:
       if(window.orderIsShipped === "Shipped!"){
         details += " Shipping Status:\n";
       } else if(window.orderIsShipped){
@@ -1137,7 +958,6 @@
         details += " Shipping Status:\n";
       }
 
-      // If shipped
       if(window.orderIsShipped === "Shipped!"){
         if(window.orderShipments && window.orderShipments.length > 0){
           var ship = window.orderShipments[0];
@@ -1173,33 +993,21 @@
 
       details += " ORDER DETAILS:\n\n";
 
-      // Title: first 4 words
       if(item.title){
         var firstFour = item.title.trim().split(" ").slice(0,4).join(" ");
         details += " Title: " + firstFour + "\n";
       }
-
-      // SKU
       if(item.sku){
         details += " SKU: " + item.sku + "\n";
       }
-
-      // Variations
       if(item.variations && Array.isArray(item.variations)){
         var acceptedMetalNames2 = [
-          "metal",
-          "metal choice",
-          "metal - engraving",
-          "metal colour",
-          "color",
-          "metal choice / engraving option"
+          "metal", "metal choice", "metal - engraving", "metal colour", 
+          "color", "metal choice / engraving option"
         ];
         var acceptedLengthNames2 = [
-          "length",
-          "necklace length",
-          "metal/necklace length",
-          "metal choice / necklace length",
-          "necklace length in inches"
+          "length","necklace length","metal/necklace length",
+          "metal choice / necklace length","necklace length in inches"
         ];
         for(var j=0; j<item.variations.length; j++){
           var v2 = item.variations[j];
@@ -1232,8 +1040,6 @@
           }
         }
       }
-
-      // Gift details
       if(window.receiptIsGift !== null && typeof window.receiptIsGift !== "undefined"){
         details += " Marked as Gift: " + window.receiptIsGift + "\n";
       }
