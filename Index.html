@@ -133,7 +133,7 @@
       position: relative;
       user-select: none;
       width: 100%;
-      height: 150px; /* default for your 8 main preview boxes */
+      height: 150px;
     }
     .preview-box img {
       width: 100%;
@@ -192,10 +192,11 @@
       overflow-y: auto;
     }
 
-    /* Single-line text boxes (shipDate, dateOrdered, labelCreationDate, etc.) */
+    /* Single-line text boxes (shipDate, dateOrdered, labelCreationDate, employeeName) */
     #dateOrdered,
     #shipDate,
-    #labelCreationDate {
+    #labelCreationDate,
+    #employeeName {
       position: absolute;
       border: 1px solid black;
       width: 200px;
@@ -207,9 +208,13 @@
       font-weight: bold;
     }
 
-    /* "labelCreationDate" is a duplicate of shipDate, not connected to shipping logic. */
+    /* "labelCreationDate" near the bottom, "employeeName" just beneath it */
     #labelCreationDate {
       top: 350px;
+      left: 50px;
+    }
+    #employeeName {
+      top: 380px;
       left: 50px;
     }
 
@@ -266,7 +271,7 @@
       font-size: 0.8em;
     }
 
-    /* 4) NEW "Signature Box" at 25px tall by 50px wide */
+    /* 4) "Signature Box" at 25px tall by 50px wide */
     #signatureBox {
       position: absolute;
       left: 400px;
@@ -374,10 +379,14 @@
     <!-- Single-line text boxes -->
     <input type="text" id="dateOrdered" readonly />
     <input type="text" id="shipDate" readonly />
-    <!-- 1) Duplicated from "shipDate", named "labelCreationDate" -->
+
+    <!-- "labelCreationDate" (with date+time) -->
     <input type="text" id="labelCreationDate" placeholder="Label Creation Date" readonly />
 
-    <!-- 4) New image preview box for Signature, 25px x 50px -->
+    <!-- "employeeName" text box, unconnected at this time -->
+    <input type="text" id="employeeName" placeholder="Employee Name" readonly />
+
+    <!-- "Signature Box" (25x50) -->
     <div id="signatureBox">Sig Box</div>
 
     <!-- Configuration Modal -->
@@ -412,6 +421,18 @@
   <!-- Container for the second screen markup -->
   <div id="secondaryContainer"></div>
 
+  <!-- 3) "User Log In" Modal that appears on load -->
+  <div id="userLoginModal" class="modal">
+    <div class="modal-content">
+      <h5>User Log In</h5>
+      <p>Please enter your 3-digit Employee Number:</p>
+      <input type="text" id="employeeNumberInput" placeholder="123" />
+    </div>
+    <div class="modal-footer">
+      <button id="employeeLoginBtn" class="btn">Log In</button>
+    </div>
+  </div>
+
   <!-- jQuery & Materialize -->
   <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
   <script
@@ -428,23 +449,22 @@
     window.cachedOrderItems = [];
     window.orderShippedTimestamp = null;
     window.orderShipments = [];
-    // Global variables for tracking
     window.currentTracking = null;
     window.currentCarrier = null;
 
     /********** Check for Access Token / Code **********/
     (function(){
-      const urlParams = new URLSearchParams(window.location.search);
-      const accessToken = urlParams.get("access_token");
+      var urlParams = new URLSearchParams(window.location.search);
+      var accessToken = urlParams.get("access_token");
       if(accessToken){
         localStorage.setItem("access_token", accessToken);
         window.history.replaceState({}, document.title, window.location.pathname);
         M.toast({html:"Connection Successful!"});
         console.log("Access token received:", accessToken);
       } else {
-        const authCode = urlParams.get("code");
+        var authCode = urlParams.get("code");
         if(authCode){
-          const storedCodeVerifier = localStorage.getItem("etsy_code_verifier");
+          var storedCodeVerifier = localStorage.getItem("etsy_code_verifier");
           if(storedCodeVerifier){
             window.location.href =
               "/.netlify/functions/exchangeToken?code=" +
@@ -460,25 +480,23 @@
 
     /********** OAuth Helpers **********/
     function generateRandomString(length){
-      const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
-      let text = "";
-      for(let i = 0; i < length; i++){
+      var chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+      var text = "";
+      for(var i = 0; i < length; i++){
         text += chars.charAt(Math.floor(Math.random() * chars.length));
       }
       return text;
     }
     async function generateCodeChallenge(codeVerifier){
-      const encoder = new TextEncoder();
-      const data = encoder.encode(codeVerifier);
-      const digest = await crypto.subtle.digest("SHA-256", data);
-      return btoa(String.fromCharCode(...new Uint8Array(digest)))
-              .replace(/\+/g, "-")
-              .replace(/\//g, "_")
-              .replace(/=+$/, "");
+      var encoder = new TextEncoder();
+      var data = encoder.encode(codeVerifier);
+      var digest = await crypto.subtle.digest("SHA-256", data);
+      var base64String = btoa(String.fromCharCode.apply(null, new Uint8Array(digest)));
+      return base64String.replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
     }
 
     /********** Configuration System **********/
-    const configComponentIDs = [
+    var configComponentIDs = [
       "connectEtsyBtn", "connectFirebaseBtn", "pullDatabaseBtn", "openConfigBtn", "orderLinkBtn",
       "trackingLinkBtn", "etsyOrderNumber", "orderInformation",
       "Photo_Grid",
@@ -487,116 +505,172 @@
       "metalCell0", "metalCell1", "metalCell2", "metalCell3",
       "metalCell4", "metalCell5", "metalCell6", "metalCell7",
       "orderDetails", "customerMessageHistory", "dateOrdered", "shipDate",
-      "labelCreationDate", "titleOrderDate", "titleOrderDate2", "titleShipDate",
+      "labelCreationDate", "employeeName", "titleOrderDate", "titleOrderDate2", "titleShipDate",
       "titleOrderDetails", "titleBritesMessages", "titlePurchasedItems",
-      "titleOrderNumber", "goScreenTwoBtn", "signatureBox"
+      "titleOrderNumber", "goScreenTwoBtn", "signatureBox",
+      "userLoginModal", "employeeNumberInput", "employeeLoginBtn"
     ];
     function loadPositions(){
-      configComponentIDs.forEach(id => {
-        const el = document.getElementById(id);
+      for(var i=0; i<configComponentIDs.length; i++){
+        var id = configComponentIDs[i];
+        var el = document.getElementById(id);
         if(el){
-          const left = localStorage.getItem(`pos-${id}-left`);
-          const top = localStorage.getItem(`pos-${id}-top`);
-          const width = localStorage.getItem(`pos-${id}-width`);
-          const height = localStorage.getItem(`pos-${id}-height`);
+          var left = localStorage.getItem("pos-"+id+"-left");
+          var top = localStorage.getItem("pos-"+id+"-top");
+          var width = localStorage.getItem("pos-"+id+"-width");
+          var height = localStorage.getItem("pos-"+id+"-height");
           if(left !== null) el.style.left = left + "px";
           if(top !== null) el.style.top = top + "px";
           if(width !== null) el.style.width = width + "px";
           if(height !== null) el.style.height = height + "px";
         }
-      });
+      }
     }
     function populateConfigTable(){
-      const tbody = document.getElementById("configTable").querySelector("tbody");
+      var tbody = document.getElementById("configTable").querySelector("tbody");
       tbody.innerHTML = "";
-      configComponentIDs.forEach(id => {
-        const el = document.getElementById(id);
-        if(!el) return;
-        const compName = el.textContent.trim() || el.value?.trim() || id;
-        const cs = window.getComputedStyle(el);
-        const leftVal = (cs.left === "auto") ? 0 : parseInt(cs.left, 10);
-        const topVal = (cs.top === "auto") ? 0 : parseInt(cs.top, 10);
-        const widthVal = (cs.width === "auto") ? 0 : parseInt(cs.width, 10);
-        const heightVal = (cs.height === "auto") ? 0 : parseInt(cs.height, 10);
+      for(var i=0; i<configComponentIDs.length; i++){
+        var id = configComponentIDs[i];
+        var el = document.getElementById(id);
+        if(!el) continue;
+        var compName = (el.textContent && el.textContent.trim()) || (el.value && el.value.trim()) || id;
+        var cs = window.getComputedStyle(el);
+        var leftVal = (cs.left === "auto") ? 0 : parseInt(cs.left, 10);
+        var topVal = (cs.top === "auto") ? 0 : parseInt(cs.top, 10);
+        var widthVal = (cs.width === "auto") ? 0 : parseInt(cs.width, 10);
+        var heightVal = (cs.height === "auto") ? 0 : parseInt(cs.height, 10);
 
-        const row = document.createElement("tr");
-        row.innerHTML = `
-          <td>${compName}</td>
-          <td><input type="number" value="${leftVal}" data-id="${id}" class="left-input"></td>
-          <td><input type="number" value="${topVal}" data-id="${id}" class="top-input"></td>
-          <td><input type="number" value="${widthVal}" data-id="${id}" class="width-input"></td>
-          <td><input type="number" value="${heightVal}" data-id="${id}" class="height-input"></td>
-        `;
+        var row = document.createElement("tr");
+        row.innerHTML = ""
+          + "<td>" + compName + "</td>"
+          + "<td><input type='number' value='" + leftVal + "' data-id='" + id + "' class='left-input'></td>"
+          + "<td><input type='number' value='" + topVal + "' data-id='" + id + "' class='top-input'></td>"
+          + "<td><input type='number' value='" + widthVal + "' data-id='" + id + "' class='width-input'></td>"
+          + "<td><input type='number' value='" + heightVal + "' data-id='" + id + "' class='height-input'></td>";
         tbody.appendChild(row);
 
         row.querySelector(".left-input").addEventListener("input", function(){
-          const tgt = document.getElementById(this.getAttribute("data-id"));
+          var tgt = document.getElementById(this.getAttribute("data-id"));
           if(tgt) tgt.style.left = parseInt(this.value, 10) + "px";
         });
         row.querySelector(".top-input").addEventListener("input", function(){
-          const tgt = document.getElementById(this.getAttribute("data-id"));
+          var tgt = document.getElementById(this.getAttribute("data-id"));
           if(tgt) tgt.style.top = parseInt(this.value, 10) + "px";
         });
         row.querySelector(".width-input").addEventListener("input", function(){
-          const tgt = document.getElementById(this.getAttribute("data-id"));
+          var tgt = document.getElementById(this.getAttribute("data-id"));
           if(tgt) tgt.style.width = parseInt(this.value, 10) + "px";
         });
         row.querySelector(".height-input").addEventListener("input", function(){
-          const tgt = document.getElementById(this.getAttribute("data-id"));
+          var tgt = document.getElementById(this.getAttribute("data-id"));
           if(tgt) tgt.style.height = parseInt(this.value, 10) + "px";
         });
-      });
+      }
     }
     function saveConfiguration(){
-      configComponentIDs.forEach(id => {
-        const el = document.getElementById(id);
+      for(var i=0; i<configComponentIDs.length; i++){
+        var id = configComponentIDs[i];
+        var el = document.getElementById(id);
         if(el){
-          const cs = window.getComputedStyle(el);
-          const leftVal = parseInt(cs.left, 10) || 0;
-          const topVal = parseInt(cs.top, 10) || 0;
-          const widthVal = parseInt(cs.width, 10) || 0;
-          const heightVal = parseInt(cs.height, 10) || 0;
-          localStorage.setItem(`pos-${id}-left`, leftVal);
-          localStorage.setItem(`pos-${id}-top`, topVal);
-          localStorage.setItem(`pos-${id}-width`, widthVal);
-          localStorage.setItem(`pos-${id}-height`, heightVal);
+          var cs = window.getComputedStyle(el);
+          var leftVal = parseInt(cs.left, 10) || 0;
+          var topVal = parseInt(cs.top, 10) || 0;
+          var widthVal = parseInt(cs.width, 10) || 0;
+          var heightVal = parseInt(cs.height, 10) || 0;
+          localStorage.setItem("pos-"+id+"-left", leftVal);
+          localStorage.setItem("pos-"+id+"-top", topVal);
+          localStorage.setItem("pos-"+id+"-width", widthVal);
+          localStorage.setItem("pos-"+id+"-height", heightVal);
         }
-      });
+      }
       console.log("Configuration saved.");
     }
 
-    /********** DOMContentLoaded **********/
-    document.addEventListener("DOMContentLoaded", () => {
+    document.addEventListener("DOMContentLoaded", function(){
       M.AutoInit();
 
-      /********** Re-enable fade-in and load positions **********/
+      // Fade in body
       document.body.style.opacity = 0;
-      setTimeout(() => {
+      setTimeout(function(){
         loadPositions();
         document.body.style.opacity = 1;
       }, 250);
 
-      /********** Connect to Etsy Button **********/
-      const connectEtsyBtn = document.getElementById("connectEtsyBtn");
-      if(connectEtsyBtn){
-        connectEtsyBtn.addEventListener("click", async () => {
-          // The typical Etsy OAuth flow:
-          const codeVerifier = generateRandomString(64);
-          localStorage.setItem("etsy_code_verifier", codeVerifier);
-          const codeChallenge = await generateCodeChallenge(codeVerifier);
-          const state = "randomState123";
-          const scope = "listings_w listings_r transactions_r transactions_w";
-          // Example client ID and redirect
-          const CLIENT_ID = "k75zdspz4r99txpqdji7i2em";
-          const redirectUri = "https://gokushipping.netlify.app";
+      // Show the "User Log In" modal on load
+      var userLoginModalElem = document.getElementById("userLoginModal");
+      var userLoginModal = M.Modal.init(userLoginModalElem, {
+        dismissible: false // user can't close without logging in
+      });
+      userLoginModal.open();
 
-          const etsyAuthUrl =
+      // "Log In" button
+      var employeeLoginBtn = document.getElementById("employeeLoginBtn");
+      var employeeNumberInput = document.getElementById("employeeNumberInput");
+      if(employeeLoginBtn){
+        employeeLoginBtn.addEventListener("click", async function(){
+          try {
+            var empNumber = employeeNumberInput.value.trim();
+            if(!empNumber || empNumber.length !== 3){
+              M.toast({html: "Please enter a valid 3-digit Employee Number!"});
+              return;
+            }
+            // Retrieve doc "EmployeeNumbers" from Brites_Orders
+            var response = await fetch("/.netlify/functions/firebaseOrders?orderId=EmployeeNumbers");
+            if(!response.ok){
+              M.toast({ html: "Error fetching EmployeeNumbers doc!" });
+              return;
+            }
+            var result = await response.json();
+            if(!result.success || !result.data){
+              M.toast({ html: "No data found for EmployeeNumbers doc!" });
+              return;
+            }
+            var docData = result.data; 
+            if(docData[empNumber]){
+              var nameFound = docData[empNumber];
+              M.toast({ html: "Welcome, " + nameFound + "!" });
+              document.getElementById("employeeName").value = nameFound;
+              userLoginModal.close();
+            } else {
+              M.toast({ html: "Employee # " + empNumber + " not found in DB!" });
+            }
+          } catch(err){
+            console.error("Error in employee login flow:", err);
+            M.toast({ html: "Error: " + err.message });
+          }
+        });
+      }
+
+      // "Open Config" button
+      document.getElementById("openConfigBtn").addEventListener("click", function(){
+        populateConfigTable();
+        var modalElem = document.getElementById("configModal");
+        var instance = M.Modal.getInstance(modalElem);
+        instance.open();
+      });
+      document.getElementById("saveConfigBtn").addEventListener("click", function(){
+        saveConfiguration();
+      });
+
+      // Connect to Etsy button
+      var connectEtsyBtn = document.getElementById("connectEtsyBtn");
+      if(connectEtsyBtn){
+        connectEtsyBtn.addEventListener("click", async function(){
+          var codeVerifier = generateRandomString(64);
+          localStorage.setItem("etsy_code_verifier", codeVerifier);
+          var codeChallenge = await generateCodeChallenge(codeVerifier);
+          var state = "randomState123";
+          var scope = "listings_w listings_r transactions_r transactions_w";
+          var CLIENT_ID = "k75zdspz4r99txpqdji7i2em"; // example
+          var redirectUri = "https://gokushipping.netlify.app";
+
+          var etsyAuthUrl =
             "https://www.etsy.com/oauth/connect?response_type=code" +
-            `&client_id=${CLIENT_ID}` +
-            `&redirect_uri=${encodeURIComponent(redirectUri)}` +
-            `&scope=${encodeURIComponent(scope)}` +
-            `&state=${state}` +
-            `&code_challenge=${encodeURIComponent(codeChallenge)}` +
+            "&client_id=" + CLIENT_ID +
+            "&redirect_uri=" + encodeURIComponent(redirectUri) +
+            "&scope=" + encodeURIComponent(scope) +
+            "&state=" + state +
+            "&code_challenge=" + encodeURIComponent(codeChallenge) +
             "&code_challenge_method=S256";
 
           console.log("Redirecting to Etsy OAuth URL:", etsyAuthUrl);
@@ -604,24 +678,13 @@
         });
       }
 
-      /********** "Open Config" button **********/
-      document.getElementById("openConfigBtn").addEventListener("click", () => {
-        populateConfigTable();
-        const modalElem = document.getElementById("configModal");
-        const instance = M.Modal.getInstance(modalElem);
-        instance.open();
-      });
-      document.getElementById("saveConfigBtn").addEventListener("click", () => {
-        saveConfiguration();
-      });
-
-      /********** Pull Etsy order on Enter in "etsyOrderNumber" **********/
-      const etsyOrderInput = document.getElementById("etsyOrderNumber");
-      etsyOrderInput.addEventListener("keydown", async e => {
+      // Pressing Enter in "etsyOrderNumber" to pull Etsy
+      var etsyOrderInput = document.getElementById("etsyOrderNumber");
+      etsyOrderInput.addEventListener("keydown", async function(e){
         if(e.key === "Enter"){
-          const orderNumber = etsyOrderInput.value.trim();
+          var orderNumber = etsyOrderInput.value.trim();
           if(orderNumber !== ""){
-            const orderData = await pullEtsyOrderDetails(orderNumber);
+            var orderData = await pullEtsyOrderDetails(orderNumber);
             if(orderData){
               await updateImageGrid(orderData);
             }
@@ -629,25 +692,25 @@
         }
       });
 
-      /********** "Order Link" button **********/
-      document.getElementById("orderLinkBtn").addEventListener("click", () => {
-        const baseUrl = "https://www.etsy.com/your/orders/sold?ref=seller-platform-mcnav&order_id=0000000000";
-        const currentOrder = etsyOrderInput.value.trim();
+      // "Order Link" button
+      document.getElementById("orderLinkBtn").addEventListener("click", function(){
+        var baseUrl = "https://www.etsy.com/your/orders/sold?ref=seller-platform-mcnav&order_id=0000000000";
+        var currentOrder = etsyOrderInput.value.trim();
         if(!currentOrder){
           console.log("No order number entered.");
           return;
         }
-        const customLink = baseUrl.replace("0000000000", currentOrder);
+        var customLink = baseUrl.replace("0000000000", currentOrder);
         window.open(customLink, "_blank");
       });
 
-      /********** "Tracking Link" button **********/
-      document.getElementById("trackingLinkBtn").addEventListener("click", () => {
-        if (!window.currentTracking) {
+      // "Tracking Link" button
+      document.getElementById("trackingLinkBtn").addEventListener("click", function(){
+        if(!window.currentTracking){
           console.log("No tracking number available.");
           return;
         }
-        let templateUrl = "";
+        var templateUrl = "";
         if(window.currentCarrier && window.currentCarrier.toUpperCase() !== "USPS"){
           templateUrl = "https://chitchats.com/tracking/0000000000000";
           templateUrl = templateUrl.replace("0000000000000", window.currentTracking);
@@ -658,23 +721,25 @@
         window.open(templateUrl, "_blank");
       });
 
-      /********** Zoom + drag for preview boxes **********/
-      document.querySelectorAll('.preview-box').forEach(function(box) {
-        let isDragging = false;
-        let lastX = 0;
-        let lastY = 0;
-        box.addEventListener('wheel', function(e) {
-          const img = box.querySelector('img');
-          if (!img) return;
+      // Zoom + Drag for preview boxes
+      var previewBoxes = document.querySelectorAll('.preview-box');
+      previewBoxes.forEach(function(box){
+        var isDragging = false;
+        var lastX = 0;
+        var lastY = 0;
+
+        box.addEventListener('wheel', function(e){
+          var img = box.querySelector('img');
+          if(!img) return;
           e.preventDefault();
-          let currentScale = parseFloat(img.dataset.scale) || 1;
-          let offsetX = parseFloat(img.dataset.offsetX) || 0;
-          let offsetY = parseFloat(img.dataset.offsetY) || 0;
-          if (e.deltaY < 0) {
+          var currentScale = parseFloat(img.dataset.scale) || 1;
+          var offsetX = parseFloat(img.dataset.offsetX) || 0;
+          var offsetY = parseFloat(img.dataset.offsetY) || 0;
+          if(e.deltaY < 0){
             currentScale *= 1.1;
           } else {
             currentScale /= 1.1;
-            if (currentScale <= 1) {
+            if(currentScale <= 1){
               currentScale = 1;
               offsetX = 0;
               offsetY = 0;
@@ -684,146 +749,137 @@
           img.dataset.scale = currentScale;
           img.dataset.offsetX = offsetX;
           img.dataset.offsetY = offsetY;
-          img.style.transform = `translate(${offsetX}px, ${offsetY}px) scale(${currentScale})`;
+          img.style.transform = "translate(" + offsetX + "px, " + offsetY + "px) scale(" + currentScale + ")";
         });
-        box.addEventListener('mousedown', function(e) {
-          const img = box.querySelector('img');
-          if (!img) return;
-          let currentScale = parseFloat(img.dataset.scale) || 1;
-          if (currentScale <= 1) return;
+
+        box.addEventListener('mousedown', function(e){
+          var img = box.querySelector('img');
+          if(!img) return;
+          var currentScale = parseFloat(img.dataset.scale) || 1;
+          if(currentScale <= 1) return;
           e.preventDefault();
           isDragging = true;
           lastX = e.clientX;
           lastY = e.clientY;
         });
-        box.addEventListener('mousemove', function(e) {
-          if (!isDragging) return;
+
+        box.addEventListener('mousemove', function(e){
+          if(!isDragging) return;
           e.preventDefault();
-          const img = box.querySelector('img');
-          if (!img) return;
-          let currentScale = parseFloat(img.dataset.scale) || 1;
-          let offsetX = parseFloat(img.dataset.offsetX) || 0;
-          let offsetY = parseFloat(img.dataset.offsetY) || 0;
-          const dx = e.clientX - lastX;
-          const dy = e.clientY - lastY;
+          var img = box.querySelector('img');
+          if(!img) return;
+          var currentScale = parseFloat(img.dataset.scale) || 1;
+          var offsetX = parseFloat(img.dataset.offsetX) || 0;
+          var offsetY = parseFloat(img.dataset.offsetY) || 0;
+          var dx = e.clientX - lastX;
+          var dy = e.clientY - lastY;
           offsetX += dx;
           offsetY += dy;
           img.dataset.offsetX = offsetX;
           img.dataset.offsetY = offsetY;
-          img.style.transform = `translate(${offsetX}px, ${offsetY}px) scale(${currentScale})`;
+          img.style.transform = "translate(" + offsetX + "px, " + offsetY + "px) scale(" + currentScale + ")";
           lastX = e.clientX;
           lastY = e.clientY;
         });
-        box.addEventListener('mouseup', function() {
+
+        box.addEventListener('mouseup', function(){
           isDragging = false;
         });
-        box.addEventListener('mouseleave', function() {
+        box.addEventListener('mouseleave', function(){
           isDragging = false;
         });
       });
 
-      /********** "Go to Screen Two" button **********/
-      const goBtn = document.getElementById('goScreenTwoBtn');
+      // "Go to Screen Two" button
+      var goBtn = document.getElementById('goScreenTwoBtn');
       if(goBtn){
-        goBtn.addEventListener('click', () => {
+        goBtn.addEventListener('click', function(){
           loadScreenTwo();
         });
       }
 
-      /***********************************************
-       * Connect Firebase Button:
-       *   Also store "Shipping Label Timestamps" with now.toISOString()
-       ***********************************************/
-      const connectFirebaseBtn = document.getElementById("connectFirebaseBtn");
-      if (connectFirebaseBtn) {
-        connectFirebaseBtn.addEventListener("click", async () => {
+      // Connect Firebase Button - store shippingLabelTimestamps
+      var connectFirebaseBtn2 = document.getElementById("connectFirebaseBtn");
+      if(connectFirebaseBtn2){
+        connectFirebaseBtn2.addEventListener("click", async function(){
           try {
-            const etsyOrderNumber = document.getElementById("etsyOrderNumber").value.trim();
-            const orderFrom = window.orderName || "";
-            const userMessages = document.getElementById("customerMessageHistory").value.trim();
+            var etsyOrderNumber2 = etsyOrderInput.value.trim();
+            var orderFrom = window.orderName || "";
+            var userMessages = document.getElementById("customerMessageHistory").value.trim();
+            var now = new Date();
+            var shippingLabelTS = now.toISOString();
 
-            // Current timestamp for "Shipping Label Timestamps"
-            const now = new Date();
-            const shippingLabelTS = now.toISOString();
-
-            const bodyData = {
-              orderNumber: etsyOrderNumber,
-              orderNumField: etsyOrderNumber,
+            var bodyData = {
+              orderNumber: etsyOrderNumber2,
+              orderNumField: etsyOrderNumber2,
               clientName: orderFrom,
               britesMessages: userMessages,
               shippingLabelTimestamps: shippingLabelTS
             };
 
-            const response = await fetch("/.netlify/functions/firebaseOrders", {
+            var response2 = await fetch("/.netlify/functions/firebaseOrders", {
               method: "POST",
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify(bodyData)
             });
-            const result = await response.json();
+            var result2 = await response2.json();
 
-            if (!response.ok) {
-              throw new Error(result.error || "Unknown error from firebaseOrders function");
+            if (!response2.ok) {
+              throw new Error(result2.error || "Unknown error from firebaseOrders function");
             }
 
-            M.toast({ html: `Order data saved! ${JSON.stringify(result)}` });
-            console.log("Successfully saved data to Firestore:", result);
+            M.toast({ html: "Order data saved! " + JSON.stringify(result2) });
+            console.log("Successfully saved data to Firestore:", result2);
 
-          } catch (err) {
-            M.toast({ html: "Error: " + err.message });
-            console.error("Failed to save data to Firestore:", err);
+          } catch (err2) {
+            M.toast({ html: "Error: " + err2.message });
+            console.error("Failed to save data to Firestore:", err2);
           }
         });
       }
 
-      /***********************************************
-       * Pull Database Button:
-       *   - If doc found and "Order Number" matches
-       *   - Load "Brites Messages" -> customerMessageHistory
-       *   - Load "Shipping Label Timestamps" -> labelCreationDate
-       ***********************************************/
-      const pullDatabaseBtn = document.getElementById("pullDatabaseBtn");
-      if (pullDatabaseBtn) {
-        pullDatabaseBtn.addEventListener("click", async () => {
+      // Pull Database Button - parse shippingLabelTimestamps for date + time
+      var pullDatabaseBtn2 = document.getElementById("pullDatabaseBtn");
+      if(pullDatabaseBtn2){
+        pullDatabaseBtn2.addEventListener("click", async function(){
           try {
-            const etsyOrderNumber = document.getElementById("etsyOrderNumber").value.trim();
-            if (!etsyOrderNumber) {
+            var etsyOrderNumber3 = etsyOrderInput.value.trim();
+            if(!etsyOrderNumber3){
               M.toast({ html: "Please enter an Etsy Order Number first." });
               return;
             }
 
-            const response = await fetch(
-              `/.netlify/functions/firebaseOrders?orderId=${encodeURIComponent(etsyOrderNumber)}`
-            );
-            const result = await response.json();
-            if (!response.ok) {
-              throw new Error(result.error || "Unknown error from firebaseOrders function");
+            var resp3 = await fetch("/.netlify/functions/firebaseOrders?orderId=" + encodeURIComponent(etsyOrderNumber3));
+            var res3 = await resp3.json();
+            if(!resp3.ok){
+              throw new Error(res3.error || "Unknown error from firebaseOrders function");
             }
 
-            const docData = result.data;
-            const dbOrderNum = docData["Order Number"];
-            if (dbOrderNum !== etsyOrderNumber) {
-              M.toast({
-                html: `Order mismatch: doc has "${dbOrderNum}", expected "${etsyOrderNumber}"`
-              });
+            var docData3 = res3.data;
+            var dbOrderNum3 = docData3["Order Number"];
+            if(dbOrderNum3 !== etsyOrderNumber3){
+              M.toast({ html: "Order mismatch: doc has '" + dbOrderNum3 + "', expected '" + etsyOrderNumber3 + "'" });
               return;
             }
 
-            // Brites Messages -> customerMessageHistory
-            const dbBritesMessages = docData["Brites Messages"] || "";
-            document.getElementById("customerMessageHistory").value = dbBritesMessages;
+            // Brites Messages
+            var dbBritesMessages3 = docData3["Brites Messages"] || "";
+            document.getElementById("customerMessageHistory").value = dbBritesMessages3;
             M.toast({ html: "Brites Messages loaded!" });
 
-            // Shipping Label Timestamps -> labelCreationDate
-            const shippingTS = docData["Shipping Label Timestamps"];
-            if (shippingTS) {
-              const d = new Date(shippingTS);
-              if (!isNaN(d.valueOf())) {
-                const monthNames = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
-                const dd = ("0" + d.getDate()).slice(-2);
-                const mStr = monthNames[d.getMonth()];
-                const yyyy = d.getFullYear();
-                const formatted = `${dd} ${mStr} ${yyyy}`;
-                document.getElementById("labelCreationDate").value = formatted;
+            // Shipping Label Timestamps
+            var shippingTS3 = docData3["Shipping Label Timestamps"];
+            if(shippingTS3){
+              var d3 = new Date(shippingTS3);
+              if(!isNaN(d3.valueOf())){
+                var monthNames3 = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+                var dd3 = ("0" + d3.getDate()).slice(-2);
+                var mStr3 = monthNames3[d3.getMonth()];
+                var yyyy3 = d3.getFullYear();
+                var hh3 = ("0" + d3.getHours()).slice(-2);
+                var mm3 = ("0" + d3.getMinutes()).slice(-2);
+                var formatted3 = dd3 + " " + mStr3 + " " + yyyy3 + ", " + hh3 + ":" + mm3;
+                document.getElementById("labelCreationDate").value = formatted3;
               } else {
                 document.getElementById("labelCreationDate").value = "";
               }
@@ -831,68 +887,68 @@
               document.getElementById("labelCreationDate").value = "";
             }
 
-          } catch (err) {
-            M.toast({ html: "Error: " + err.message });
-            console.error("Failed to pull data from Firestore:", err);
+          } catch(err3){
+            M.toast({ html: "Error: " + err3.message });
+            console.error("Failed to pull data from Firestore:", err3);
           }
         });
       }
     });
 
-    /********** loadScreenTwo (DOMParser) **********/
+    // loadScreenTwo function
     async function loadScreenTwo() {
       try {
         console.log("loadScreenTwo() called");
-        const response = await fetch('screenTwo.html');
-        let screenTwoHTML = await response.text();
+        var responseST = await fetch("screenTwo.html");
+        var screenTwoHTML = await responseST.text();
         console.log("Fetched screenTwo.html content:", screenTwoHTML);
-        const parser = new DOMParser();
-        const doc = parser.parseFromString(screenTwoHTML, 'text/html');
-        const scriptEls = doc.querySelectorAll('script');
-        console.log("Found", scriptEls.length, "<script> tags in screenTwo.html");
-        scriptEls.forEach(scriptEl => scriptEl.remove());
-        const finalHTML = doc.body.innerHTML;
-        const container = document.getElementById('secondaryContainer');
-        container.innerHTML = finalHTML;
-        const screenOneDiv = document.getElementById('screenOne');
-        if(screenOneDiv) {
-          screenOneDiv.style.display = 'none';
+        var parserST = new DOMParser();
+        var docST = parserST.parseFromString(screenTwoHTML, "text/html");
+        var scriptElsST = docST.querySelectorAll("script");
+        console.log("Found " + scriptElsST.length + " <script> tags in screenTwo.html");
+        scriptElsST.forEach(function(scriptEl){ scriptEl.remove(); });
+        var finalHTMLst = docST.body.innerHTML;
+        var containerST = document.getElementById("secondaryContainer");
+        containerST.innerHTML = finalHTMLst;
+        var screenOneDivST = document.getElementById("screenOne");
+        if(screenOneDivST){
+          screenOneDivST.style.display = "none";
         } else {
           console.warn("No #screenOne found in DOM");
         }
-        const screenTwoDiv = document.getElementById('screenTwo');
-        if(screenTwoDiv) {
-          screenTwoDiv.style.display = 'block';
+        var screenTwoDivST = document.getElementById("screenTwo");
+        if(screenTwoDivST){
+          screenTwoDivST.style.display = "block";
         } else {
           console.warn("No #screenTwo found in injected HTML");
         }
-        scriptEls.forEach((oldScript, index) => {
-          const newScript = document.createElement('script');
+        scriptElsST.forEach(function(oldScript, indexST){
+          var newScriptST = document.createElement("script");
           if(oldScript.src){
-            newScript.src = oldScript.src;
+            newScriptST.src = oldScript.src;
             console.log("Re-appending script from src:", oldScript.src);
           } else {
-            newScript.textContent = oldScript.textContent;
-            console.log("Re-appending inline script #"+index);
+            newScriptST.textContent = oldScript.textContent;
+            console.log("Re-appending inline script #" + indexST);
           }
-          document.body.appendChild(newScript);
+          document.body.appendChild(newScriptST);
         });
-        setTimeout(() => {
-          if(typeof window.initScreenTwo === 'function'){
+        setTimeout(function(){
+          if(typeof window.initScreenTwo === "function"){
             console.log("Calling initScreenTwo() after scripts appended");
             window.initScreenTwo();
           } else {
             console.log("No global initScreenTwo() found.");
           }
         }, 100);
-      } catch(err) {
-        console.error('Error loading screenTwo:', err);
+      } catch(errST){
+        console.error("Error loading screenTwo:", errST);
       }
     }
 
-    /********** updateImageGrid & pullEtsyOrderDetails remain as is **********/
+    // The functions below remain the same
     async function updateImageGrid(data){
-      let items = [];
+      var items = [];
       if(data.transactions && Array.isArray(data.transactions)){
         items = data.transactions;
       } else if(data.shipments && Array.isArray(data.shipments)){
@@ -904,7 +960,7 @@
       } else if(data.orders && Array.isArray(data.orders)){
         items = data.orders;
       } else if(typeof data === "object" && data !== null){
-        for(const key in data){
+        for(var key in data){
           if(Array.isArray(data[key])){
             items = data[key];
             break;
@@ -912,47 +968,43 @@
         }
       }
       window.cachedOrderItems = items;
-      for(let i = 0; i < 8; i++){
-        const cell = document.getElementById("previewCell" + i);
-        const qtyBox = document.getElementById("quantityCell" + i);
-        const metalBox = document.getElementById("metalCell" + i);
+      for(var i=0; i<8; i++){
+        var cell = document.getElementById("previewCell" + i);
+        var qtyBox = document.getElementById("quantityCell" + i);
+        var metalBox = document.getElementById("metalCell" + i);
         if(cell){
           if(i < items.length){
-            const item = items[i];
-            try{
-              const images = await fetchListingImages(item.listing_id);
+            var item = items[i];
+            try {
+              var images = await fetchListingImages(item.listing_id);
               if(images && images.length > 0){
-                cell.innerHTML = `
-                  <img
-                    src="${images[0].url_fullxfull}"
-                    alt="Listing Image ${i}"
-                    data-scale="1"
-                    data-offsetX="0"
-                    data-offsetY="0"
-                  >
-                `;
+                cell.innerHTML = '<img src="' + images[0].url_fullxfull + '" alt="Listing Image ' + i + '" data-scale="1" data-offsetX="0" data-offsetY="0">';
               } else {
                 cell.innerHTML = "No images found";
               }
-            } catch(err){
-              console.error(`Error fetching listing ${item.listing_id}:`, err);
+            } catch(errA){
+              console.error("Error fetching listing " + item.listing_id + ": ", errA);
               cell.innerHTML = "Error loading image";
             }
             cell.style.cursor = "pointer";
-            cell.onclick = () => showItemDetails(i);
+            cell.onclick = function(indexCopy){
+              return function(){ showItemDetails(indexCopy); };
+            }(i);
             if(qtyBox){
-              const actualQty = (item.quantity != null) ? item.quantity : 0;
+              var actualQty = (item.quantity != null) ? item.quantity : 0;
               qtyBox.value = " Quantity: " + actualQty;
             }
             if(metalBox){
-              let metalSel = "";
+              var metalSel = "";
               if(item.variations && Array.isArray(item.variations)){
-                const acceptedMetalNames = ["metal", "metal choice", "metal - engraving", "metal colour", "color", "metal choice / engraving option"];
-                const metalVar = item.variations.find(v =>
-                  v.formatted_name && acceptedMetalNames.includes(v.formatted_name.trim().toLowerCase())
-                );
-                if(metalVar){
-                  metalSel = metalVar.formatted_value || "";
+                var acceptedMetalNames = ["metal", "metal choice", "metal - engraving", "metal colour", "color", "metal choice / engraving option"];
+                var metalVar = item.variations.find(function(v){
+                  if(!v.formatted_name) return false;
+                  var nameL = v.formatted_name.trim().toLowerCase();
+                  return acceptedMetalNames.indexOf(nameL) >= 0;
+                });
+                if(metalVar && metalVar.formatted_value){
+                  metalSel = metalVar.formatted_value;
                 }
               }
               metalBox.value = " Metal: " + metalSel;
@@ -969,8 +1021,7 @@
       if(items.length > 0){
         showItemDetails(0);
       } else {
-        document.getElementById("orderDetails").value =
-          " ORDER DETAILS:\n\nNo items found.";
+        document.getElementById("orderDetails").value = " ORDER DETAILS:\n\nNo items found.";
       }
     }
 
@@ -979,20 +1030,15 @@
         console.warn("No item at index:", index);
         return;
       }
-      const item = window.cachedOrderItems[index];
-      let details = "";
+      var item = window.cachedOrderItems[index];
+      var details = "";
 
-      // ORDER FROM:
       if(window.orderName){
         details += " ORDER FROM: " + window.orderName + "\n";
       }
-
-      // ORDER STATUS:
       if(window.orderStatus){
         details += " Order Status: " + window.orderStatus + "\n";
       }
-
-      // Shipping Status
       if(window.orderIsShipped === "Shipped!"){
         details += " Shipping Status:\n";
       } else if(window.orderIsShipped){
@@ -1001,10 +1047,9 @@
         details += " Shipping Status:\n";
       }
 
-      // If shipped
       if(window.orderIsShipped === "Shipped!"){
         if(window.orderShipments && window.orderShipments.length > 0){
-          const ship = window.orderShipments[0];
+          var ship = window.orderShipments[0];
           if(ship.carrier_name){
             details += " Carrier Name: " + ship.carrier_name + "\n";
             window.currentCarrier = ship.carrier_name;
@@ -1037,47 +1082,40 @@
 
       details += " ORDER DETAILS:\n\n";
 
-      // Title: first 4 words
       if(item.title){
-        const firstFour = item.title.trim().split(" ").slice(0,4).join(" ");
+        var firstFour = item.title.trim().split(" ").slice(0,4).join(" ");
         details += " Title: " + firstFour + "\n";
       }
-
-      // SKU
       if(item.sku){
         details += " SKU: " + item.sku + "\n";
       }
-
-      // Variations
       if(item.variations && Array.isArray(item.variations)){
-        const acceptedMetalNames = ["metal", "metal choice", "metal - engraving", "metal colour", "color", "metal choice / engraving option"];
-        const acceptedLengthNames = ["length", "necklace length", "metal/necklace length", "metal choice / necklace length", "necklace length in inches"];
-        item.variations.forEach(v => {
-          if(v.formatted_name && v.formatted_value){
-            const nameLower = v.formatted_name.trim().toLowerCase();
-            let val = v.formatted_value.trim();
-            if(nameLower === "personalization" && val === "Not requested on this item."){
-              val = "Not Requested";
-              details += " Personalization: " + val + "\n";
-            } else if(acceptedMetalNames.includes(nameLower)){
-              details += " Metal Choice: " + val + "\n";
-            } else if(acceptedLengthNames.includes(nameLower)){
-              const lengthMap = {
-                '14&quot;':'14 Inches', '16&quot;':'16 Inches', '18&quot;':'18 Inches', '20&quot;':'20 Inches',
-                '14""':'14 Inches', '16""':'16 Inches', '18""':'18 Inches', '20""':'20 Inches'
-              };
-              if(lengthMap[val]){
-                val = lengthMap[val];
-              }
-              details += " Item Length: " + val + "\n";
-            } else {
-              details += " " + v.formatted_name + ": " + v.formatted_value + "\n";
+        var acceptedMetalNames2 = ["metal","metal choice","metal - engraving","metal colour","color","metal choice / engraving option"];
+        var acceptedLengthNames2 = ["length","necklace length","metal/necklace length","metal choice / necklace length","necklace length in inches"];
+        for(var j=0; j<item.variations.length; j++){
+          var v2 = item.variations[j];
+          if(!v2.formatted_name || !v2.formatted_value) continue;
+          var nameLower2 = v2.formatted_name.trim().toLowerCase();
+          var val2 = v2.formatted_value.trim();
+          if(nameLower2 === "personalization" && val2 === "Not requested on this item."){
+            val2 = "Not Requested";
+            details += " Personalization: " + val2 + "\n";
+          } else if(acceptedMetalNames2.indexOf(nameLower2) >= 0){
+            details += " Metal Choice: " + val2 + "\n";
+          } else if(acceptedLengthNames2.indexOf(nameLower2) >= 0){
+            var lengthMap2 = {
+              "14&quot;": "14 Inches", "16&quot;": "16 Inches", "18&quot;": "18 Inches", "20&quot;": "20 Inches",
+              "14\"\"": "14 Inches", "16\"\"": "16 Inches", "18\"\"": "18 Inches", "20\"\"": "20 Inches"
+            };
+            if(lengthMap2[val2]){
+              val2 = lengthMap2[val2];
             }
+            details += " Item Length: " + val2 + "\n";
+          } else {
+            details += " " + v2.formatted_name + ": " + v2.formatted_value + "\n";
           }
-        });
+        }
       }
-
-      // Gift details
       if(window.receiptIsGift !== null && typeof window.receiptIsGift !== "undefined"){
         details += " Marked as Gift: " + window.receiptIsGift + "\n";
       }
@@ -1089,30 +1127,30 @@
     }
 
     async function fetchListingImages(listingId){
-      const response = await fetch(`/.netlify/functions/etsyImages?listingId=${listingId}`, {
-        headers: {"access-token": localStorage.getItem("access_token")}
+      var responseLI = await fetch("/.netlify/functions/etsyImages?listingId=" + listingId, {
+        headers: { "access-token": localStorage.getItem("access_token") }
       });
-      if(!response.ok){
-        throw new Error(`Error fetching images for listing ${listingId}: ${response.statusText}`);
+      if(!responseLI.ok){
+        throw new Error("Error fetching images for listing " + listingId + ": " + responseLI.statusText);
       }
-      const data = await response.json();
-      return data.results;
+      var dataLI = await responseLI.json();
+      return dataLI.results;
     }
 
     function pullEtsyOrderDetails(orderNumber){
       console.log("Pulling Etsy order details for order number:", orderNumber);
-      const token = localStorage.getItem("access_token");
-      return fetch('/.netlify/functions/etsyOrderProxy?orderId=' + encodeURIComponent(orderNumber), {
-        headers: {"access-token": token}
+      var token = localStorage.getItem("access_token");
+      return fetch("/.netlify/functions/etsyOrderProxy?orderId=" + encodeURIComponent(orderNumber), {
+        headers: { "access-token": token }
       })
-      .then(r => r.json())
-      .then(data => {
+      .then(function(r){ return r.json(); })
+      .then(function(data){
         console.log("Etsy Order Data:", data);
         document.getElementById("orderInformation").value = " " + JSON.stringify(data, null, 2);
         window.receiptIsGift = (typeof data.is_gift !== "undefined") ? data.is_gift : null;
         window.receiptGiftMessage = data.gift_message || "";
         window.orderShipments = data.shipments || [];
-        const titleDate2 = document.getElementById("titleOrderDate2");
+        var titleDate2 = document.getElementById("titleOrderDate2");
         titleDate2.textContent = "";
         if(data.name){
           window.orderName = data.name;
@@ -1131,56 +1169,55 @@
         } else {
           window.orderIsShipped = "";
         }
-        let foundStamp = null;
+        var foundStamp = null;
         if(data.shipped_timestamp && data.is_shipped === true){
           foundStamp = data.shipped_timestamp;
-        }
-        else if(data.transactions && Array.isArray(data.transactions) && data.transactions.length > 0 && data.transactions[0].shipped_timestamp && data.is_shipped === true){
+        } else if(data.transactions && Array.isArray(data.transactions) && data.transactions.length > 0 && data.transactions[0].shipped_timestamp && data.is_shipped === true){
           foundStamp = data.transactions[0].shipped_timestamp;
         }
         window.orderShippedTimestamp = foundStamp;
         if(window.orderIsShipped === "Shipped!" && window.orderShippedTimestamp){
-          const d = new Date(window.orderShippedTimestamp * 1000);
-          const monthNames = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-          const day = ("0" + d.getDate()).slice(-2);
-          const mStr = monthNames[d.getMonth()];
-          const y = d.getFullYear();
-          titleDate2.textContent = `Shipped On: ${day} ${mStr} ${y}`;
+          var d4 = new Date(window.orderShippedTimestamp * 1000);
+          var monthNames4 = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+          var day4 = ("0" + d4.getDate()).slice(-2);
+          var mStr4 = monthNames4[d4.getMonth()];
+          var y4 = d4.getFullYear();
+          titleDate2.textContent = "Shipped On: " + day4 + " " + mStr4 + " " + y4;
         }
-        const msgBox = document.getElementById("customerMessageHistory");
+        var msgBox = document.getElementById("customerMessageHistory");
         if(data.message_from_buyer){
           msgBox.value = data.message_from_buyer + "\n";
         } else {
           msgBox.value = "";
         }
         if(data.transactions && data.transactions.length > 0){
-          const firstTrans = data.transactions[0];
-          const monthNames = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+          var firstTrans = data.transactions[0];
+          var monthNamesF = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
           if(firstTrans.created_timestamp){
-            const d = new Date(firstTrans.created_timestamp * 1000);
-            const day = ("0" + d.getDate()).slice(-2);
-            const mStr = monthNames[d.getMonth()];
-            const y = d.getFullYear();
-            document.getElementById("dateOrdered").value = ` ${day} ${mStr} ${y}`;
+            var dT = new Date(firstTrans.created_timestamp * 1000);
+            var ddT = ("0" + dT.getDate()).slice(-2);
+            var mmT = monthNamesF[dT.getMonth()];
+            var yyT = dT.getFullYear();
+            document.getElementById("dateOrdered").value = " " + ddT + " " + mmT + " " + yyT;
           } else {
             document.getElementById("dateOrdered").value = "";
           }
-          const shipEl = document.getElementById("shipDate");
+          var shipEl = document.getElementById("shipDate");
           shipEl.style.color = "";
           if(firstTrans.expected_ship_date){
-            const s = new Date(firstTrans.expected_ship_date * 1000);
-            const sDay = ("0" + s.getDate()).slice(-2);
-            const sMonth = monthNames[s.getMonth()];
-            const sYear = s.getFullYear();
-            shipEl.value = ` ${sDay} ${sMonth} ${sYear}`;
+            var sTS = new Date(firstTrans.expected_ship_date * 1000);
+            var sDay = ("0" + sTS.getDate()).slice(-2);
+            var sMonth = monthNamesF[sTS.getMonth()];
+            var sYear = sTS.getFullYear();
+            shipEl.value = " " + sDay + " " + sMonth + " " + sYear;
             if(window.orderIsShipped === "Shipped!"){
               shipEl.style.color = "#006400"; // green
             } else {
-              const today = new Date();
-              today.setHours(0,0,0,0);
-              const dueDate = new Date(sYear, s.getMonth(), sDay);
-              dueDate.setHours(0,0,0,0);
-              if(dueDate.getTime() === today.getTime()){
+              var todayD = new Date();
+              todayD.setHours(0,0,0,0);
+              var dueDateD = new Date(sYear, sTS.getMonth(), sDay);
+              dueDateD.setHours(0,0,0,0);
+              if(dueDateD.getTime() === todayD.getTime()){
                 shipEl.style.color = "orange";
               } else {
                 shipEl.style.color = "";
@@ -1191,13 +1228,13 @@
           }
         } else {
           document.getElementById("dateOrdered").value = "";
-          const shipEl = document.getElementById("shipDate");
-          shipEl.value = "";
-          shipEl.style.color = "";
+          var shipEl2 = document.getElementById("shipDate");
+          shipEl2.value = "";
+          shipEl2.style.color = "";
         }
         return data;
       })
-      .catch(err => {
+      .catch(function(err){
         console.error("Error fetching Etsy order details:", err);
         return null;
       });
