@@ -132,6 +132,8 @@
       overflow: hidden;
       position: relative;
       user-select: none;
+      width: 100%;
+      height: 150px; /* default for your 8 main preview boxes */
     }
     .preview-box img {
       width: 100%;
@@ -139,12 +141,6 @@
       object-fit: cover;
       transform-origin: center center;
       transition: transform 0.2s ease;
-    }
-
-    /* Default 8 preview boxes = 150px tall, full width in the cell. */
-    .preview-box {
-      width: 100%;
-      height: 150px;
     }
 
     /* 16 text-box-absolute elements */
@@ -378,10 +374,10 @@
     <!-- Single-line text boxes -->
     <input type="text" id="dateOrdered" readonly />
     <input type="text" id="shipDate" readonly />
-    <!-- Duplicated from shipDate, named labelCreationDate (not connected to shipping) -->
+    <!-- 1) Duplicated from "shipDate", named "labelCreationDate" -->
     <input type="text" id="labelCreationDate" placeholder="Label Creation Date" readonly />
 
-    <!-- 4) New image preview box for Signature, 25x50 -->
+    <!-- 4) New image preview box for Signature, 25px x 50px -->
     <div id="signatureBox">Sig Box</div>
 
     <!-- Configuration Modal -->
@@ -483,16 +479,16 @@
 
     /********** Configuration System **********/
     const configComponentIDs = [
-      "connectEtsyBtn", "connectFirebaseBtn", "pullDatabaseBtn", "openConfigBtn", "orderLinkBtn", 
+      "connectEtsyBtn", "connectFirebaseBtn", "pullDatabaseBtn", "openConfigBtn", "orderLinkBtn",
       "trackingLinkBtn", "etsyOrderNumber", "orderInformation",
       "Photo_Grid",
-      "quantityCell0", "quantityCell1", "quantityCell2", "quantityCell3", 
+      "quantityCell0", "quantityCell1", "quantityCell2", "quantityCell3",
       "quantityCell4", "quantityCell5", "quantityCell6", "quantityCell7",
-      "metalCell0", "metalCell1", "metalCell2", "metalCell3", 
+      "metalCell0", "metalCell1", "metalCell2", "metalCell3",
       "metalCell4", "metalCell5", "metalCell6", "metalCell7",
       "orderDetails", "customerMessageHistory", "dateOrdered", "shipDate",
-      "labelCreationDate", "titleOrderDate", "titleOrderDate2", "titleShipDate", 
-      "titleOrderDetails", "titleBritesMessages", "titlePurchasedItems", 
+      "labelCreationDate", "titleOrderDate", "titleOrderDate2", "titleShipDate",
+      "titleOrderDetails", "titleBritesMessages", "titlePurchasedItems",
       "titleOrderNumber", "goScreenTwoBtn", "signatureBox"
     ];
     function loadPositions(){
@@ -572,13 +568,43 @@
     /********** DOMContentLoaded **********/
     document.addEventListener("DOMContentLoaded", () => {
       M.AutoInit();
+
+      /********** Re-enable fade-in and load positions **********/
       document.body.style.opacity = 0;
       setTimeout(() => {
         loadPositions();
         document.body.style.opacity = 1;
       }, 250);
 
-      // "Open Config" button
+      /********** Connect to Etsy Button **********/
+      const connectEtsyBtn = document.getElementById("connectEtsyBtn");
+      if(connectEtsyBtn){
+        connectEtsyBtn.addEventListener("click", async () => {
+          // The typical Etsy OAuth flow:
+          const codeVerifier = generateRandomString(64);
+          localStorage.setItem("etsy_code_verifier", codeVerifier);
+          const codeChallenge = await generateCodeChallenge(codeVerifier);
+          const state = "randomState123";
+          const scope = "listings_w listings_r transactions_r transactions_w";
+          // Example client ID and redirect
+          const CLIENT_ID = "k75zdspz4r99txpqdji7i2em";
+          const redirectUri = "https://gokushipping.netlify.app";
+
+          const etsyAuthUrl =
+            "https://www.etsy.com/oauth/connect?response_type=code" +
+            `&client_id=${CLIENT_ID}` +
+            `&redirect_uri=${encodeURIComponent(redirectUri)}` +
+            `&scope=${encodeURIComponent(scope)}` +
+            `&state=${state}` +
+            `&code_challenge=${encodeURIComponent(codeChallenge)}` +
+            "&code_challenge_method=S256";
+
+          console.log("Redirecting to Etsy OAuth URL:", etsyAuthUrl);
+          window.location.href = etsyAuthUrl;
+        });
+      }
+
+      /********** "Open Config" button **********/
       document.getElementById("openConfigBtn").addEventListener("click", () => {
         populateConfigTable();
         const modalElem = document.getElementById("configModal");
@@ -589,7 +615,7 @@
         saveConfiguration();
       });
 
-      // Pull Etsy order on Enter in "etsyOrderNumber"
+      /********** Pull Etsy order on Enter in "etsyOrderNumber" **********/
       const etsyOrderInput = document.getElementById("etsyOrderNumber");
       etsyOrderInput.addEventListener("keydown", async e => {
         if(e.key === "Enter"){
@@ -603,7 +629,7 @@
         }
       });
 
-      // "Order Link" button
+      /********** "Order Link" button **********/
       document.getElementById("orderLinkBtn").addEventListener("click", () => {
         const baseUrl = "https://www.etsy.com/your/orders/sold?ref=seller-platform-mcnav&order_id=0000000000";
         const currentOrder = etsyOrderInput.value.trim();
@@ -615,7 +641,7 @@
         window.open(customLink, "_blank");
       });
 
-      // "Tracking Link" button
+      /********** "Tracking Link" button **********/
       document.getElementById("trackingLinkBtn").addEventListener("click", () => {
         if (!window.currentTracking) {
           console.log("No tracking number available.");
@@ -632,7 +658,7 @@
         window.open(templateUrl, "_blank");
       });
 
-      // Zoom + drag for preview boxes
+      /********** Zoom + drag for preview boxes **********/
       document.querySelectorAll('.preview-box').forEach(function(box) {
         let isDragging = false;
         let lastX = 0;
@@ -696,7 +722,7 @@
         });
       });
 
-      // "Go to Screen Two" button
+      /********** "Go to Screen Two" button **********/
       const goBtn = document.getElementById('goScreenTwoBtn');
       if(goBtn){
         goBtn.addEventListener('click', () => {
@@ -705,8 +731,8 @@
       }
 
       /***********************************************
-       * Connect Firebase Button
-       *  - Also store "Shipping Label Timestamps" as now.toISOString()
+       * Connect Firebase Button:
+       *   Also store "Shipping Label Timestamps" with now.toISOString()
        ***********************************************/
       const connectFirebaseBtn = document.getElementById("connectFirebaseBtn");
       if (connectFirebaseBtn) {
@@ -716,17 +742,16 @@
             const orderFrom = window.orderName || "";
             const userMessages = document.getElementById("customerMessageHistory").value.trim();
 
-            // Generate a timestamp right now
+            // Current timestamp for "Shipping Label Timestamps"
             const now = new Date();
-            // We'll store it as an ISO string in "Shipping Label Timestamps"
             const shippingLabelTS = now.toISOString();
 
             const bodyData = {
-              orderNumber: etsyOrderNumber,          // doc ID
-              orderNumField: etsyOrderNumber,        // "Order Number"
-              clientName: orderFrom,                 // "Client Name"
-              britesMessages: userMessages,          // "Brites Messages"
-              shippingLabelTimestamps: shippingLabelTS // new field
+              orderNumber: etsyOrderNumber,
+              orderNumField: etsyOrderNumber,
+              clientName: orderFrom,
+              britesMessages: userMessages,
+              shippingLabelTimestamps: shippingLabelTS
             };
 
             const response = await fetch("/.netlify/functions/firebaseOrders", {
@@ -751,9 +776,10 @@
       }
 
       /***********************************************
-       * Pull Database Button
-       *  - Also populate "labelCreationDate" from
-       *    "Shipping Label Timestamps" field
+       * Pull Database Button:
+       *   - If doc found and "Order Number" matches
+       *   - Load "Brites Messages" -> customerMessageHistory
+       *   - Load "Shipping Label Timestamps" -> labelCreationDate
        ***********************************************/
       const pullDatabaseBtn = document.getElementById("pullDatabaseBtn");
       if (pullDatabaseBtn) {
@@ -765,7 +791,6 @@
               return;
             }
 
-            // GET the doc from firebaseOrders?orderId=...
             const response = await fetch(
               `/.netlify/functions/firebaseOrders?orderId=${encodeURIComponent(etsyOrderNumber)}`
             );
@@ -783,17 +808,16 @@
               return;
             }
 
-            // Populate "customerMessageHistory" from "Brites Messages"
+            // Brites Messages -> customerMessageHistory
             const dbBritesMessages = docData["Brites Messages"] || "";
             document.getElementById("customerMessageHistory").value = dbBritesMessages;
             M.toast({ html: "Brites Messages loaded!" });
 
-            // If "Shipping Label Timestamps" is present, parse & format
+            // Shipping Label Timestamps -> labelCreationDate
             const shippingTS = docData["Shipping Label Timestamps"];
             if (shippingTS) {
               const d = new Date(shippingTS);
               if (!isNaN(d.valueOf())) {
-                // e.g. "24 Mar 2025"
                 const monthNames = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
                 const dd = ("0" + d.getDate()).slice(-2);
                 const mStr = monthNames[d.getMonth()];
@@ -866,7 +890,7 @@
       }
     }
 
-    /********** pullEtsyOrderDetails & updateImageGrid **********/
+    /********** updateImageGrid & pullEtsyOrderDetails remain as is **********/
     async function updateImageGrid(data){
       let items = [];
       if(data.transactions && Array.isArray(data.transactions)){
