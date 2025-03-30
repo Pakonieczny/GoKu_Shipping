@@ -1,4 +1,3 @@
-// netlify/functions/firebaseAdmin.js
 const admin = require("firebase-admin");
 
 // Convert our environment variables into the credentials object:

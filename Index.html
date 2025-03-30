@@ -26,7 +26,6 @@
       left: 50px;
       top: 20px;
     }
-    /* NEW Connect Firebase button */
     #connectFirebaseBtn {
       position: absolute;
       left: 50px;
@@ -262,7 +261,6 @@
   <div id="screenOne">
     <!-- Main UI Buttons -->
     <button id="connectEtsyBtn" class="configurable btn waves-effect waves-light">Connect to Etsy</button>
-    <!-- NEW Connect Firebase button -->
     <button id="connectFirebaseBtn" class="configurable btn waves-effect waves-light">Connect Firebase</button>
     <button id="openConfigBtn" class="configurable btn waves-effect waves-light">Open Config</button>
 
@@ -1062,33 +1060,53 @@
       }
 
       /***********************************************
-       * Connect Firebase Button
+       * Connect Firebase Button:
+       *   POSTs to firebaseOrders.js with:
+       *     - "Order Number" => etsyOrderNumber
+       *     - "Client Name" => window.orderName
+       *     - "Brites Messages" => customerMessageHistory
        ***********************************************/
       const connectFirebaseBtn = document.getElementById("connectFirebaseBtn");
       if (connectFirebaseBtn) {
         connectFirebaseBtn.addEventListener("click", async () => {
           try {
-            // We do a quick GET request to firebaseOrders with a dummy orderId
-            const response = await fetch(
-              "/.netlify/functions/firebaseOrders?orderId=_testDoc"
-            );
+            // 1) Gather the values from the UI fields
+            const etsyOrderNumber = document.getElementById("etsyOrderNumber").value.trim();
+            const orderFrom = window.orderName || "";
+            const userMessages = document.getElementById("customerMessageHistory").value.trim();
+
+            // 2) Build the POST data
+            // We'll use etsyOrderNumber as the doc ID ("orderNumber").
+            // In Firestore:
+            //  - "Order Number" => etsyOrderNumber
+            //  - "Client Name"  => orderFrom
+            //  - "Brites Messages" => userMessages
+            const bodyData = {
+              orderNumber: etsyOrderNumber,    // doc ID
+              orderNumField: etsyOrderNumber,  // "Order Number" in Firestore
+              clientName: orderFrom,           // "Client Name" in Firestore
+              britesMessages: userMessages     // "Brites Messages" in Firestore
+            };
+
+            // 3) Send a POST request
+            const response = await fetch("/.netlify/functions/firebaseOrders", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify(bodyData)
+            });
             const result = await response.json();
 
-            // If we get a 404 (doc not found), that still proves Firestore is functioning
-            if (response.ok) {
-              if (result.error && /not found/i.test(result.error)) {
-                M.toast({ html: "Firebase connected successfully (test doc not found)!" });
-              } else if (result.success) {
-                M.toast({ html: "Firebase connected successfully (doc found)!" });
-              } else {
-                M.toast({ html: "Firebase responded: " + JSON.stringify(result) });
-              }
-            } else {
-              throw new Error(result.error || "Unknown error");
+            if (!response.ok) {
+              throw new Error(result.error || "Unknown error from firebaseOrders function");
             }
+
+            // 4) Confirm success
+            M.toast({ html: `Order data saved! ${JSON.stringify(result)}` });
+            console.log("Successfully saved data to Firestore:", result);
+
           } catch (err) {
             M.toast({ html: "Error: " + err.message });
-            console.error("Firebase connection test failed:", err);
+            console.error("Failed to save data to Firestore:", err);
           }
         });
       }
