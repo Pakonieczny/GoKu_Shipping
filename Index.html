@@ -31,10 +31,16 @@
       left: 50px;
       top: 50px;
     }
-    #openConfigBtn {
+    /* NEW "Pull Database" button */
+    #pullDatabaseBtn {
       position: absolute;
       left: 50px;
       top: 80px;
+    }
+    #openConfigBtn {
+      position: absolute;
+      left: 50px;
+      top: 110px;
     }
 
     #orderLinkBtn {
@@ -53,7 +59,7 @@
       display: block;
     }
 
-    /* New "Tracking Link" button */
+    /* "Tracking Link" button */
     #trackingLinkBtn {
       position: absolute;
       left: 160px;
@@ -75,7 +81,7 @@
     #etsyOrderNumber {
       position: absolute;
       left: 50px;
-      top: 140px;
+      top: 160px;
       margin: 0;
       padding: 0;
       line-height: 1.0;
@@ -92,7 +98,7 @@
     #orderInformation {
       position: absolute;
       left: 50px;
-      top: 190px;
+      top: 210px;
       width: 300px;
       height: 300px;
       font-size: 1em;
@@ -103,7 +109,7 @@
     #Photo_Grid {
       position: absolute;
       left: 400px;
-      top: 140px;
+      top: 160px;
       transform: scale(1.25);
       transform-origin: top left;
     }
@@ -262,6 +268,8 @@
     <!-- Main UI Buttons -->
     <button id="connectEtsyBtn" class="configurable btn waves-effect waves-light">Connect to Etsy</button>
     <button id="connectFirebaseBtn" class="configurable btn waves-effect waves-light">Connect Firebase</button>
+    <!-- NEW "Pull Database" button -->
+    <button id="pullDatabaseBtn" class="configurable btn waves-effect waves-light">Pull Database</button>
     <button id="openConfigBtn" class="configurable btn waves-effect waves-light">Open Config</button>
 
     <!-- "Order Link" button -->
@@ -269,7 +277,7 @@
       <img src="assets/Globe.png" alt="Order Link Icon" />
     </button>
 
-    <!-- New "Tracking Link" button -->
+    <!-- "Tracking Link" button -->
     <button id="trackingLinkBtn" name="Tracking Link">
       <img src="assets/USPS.png" alt="Tracking Link Icon" />
     </button>
@@ -370,7 +378,7 @@
     </div>
 
     <!-- "Go to Screen Two" button -->
-    <button id="goScreenTwoBtn" class="btn" style="position:absolute; left:180px; top:80px;">
+    <button id="goScreenTwoBtn" class="btn" style="position:absolute; left:180px; top:110px;">
       Go to Screen Two
     </button>
   </div> <!-- end #screenOne -->
@@ -473,7 +481,8 @@
 
     /********** Configuration System **********/
     const configComponentIDs = [
-      "connectEtsyBtn", "connectFirebaseBtn", "openConfigBtn", "orderLinkBtn", "trackingLinkBtn", "etsyOrderNumber", "orderInformation",
+      "connectEtsyBtn", "connectFirebaseBtn", "pullDatabaseBtn", "openConfigBtn", "orderLinkBtn", "trackingLinkBtn", 
+      "etsyOrderNumber", "orderInformation",
       "Photo_Grid",
       "quantityCell0", "quantityCell1", "quantityCell2", "quantityCell3", "quantityCell4", "quantityCell5", "quantityCell6", "quantityCell7",
       "metalCell0", "metalCell1", "metalCell2", "metalCell3", "metalCell4", "metalCell5", "metalCell6", "metalCell7",
@@ -575,7 +584,7 @@
         details += " Order Status: " + window.orderStatus + "\n";
       }
 
-      // Shipping Status (single newline)
+      // Shipping Status
       if(window.orderIsShipped === "Shipped!"){
         details += " Shipping Status:\n";
       } else if(window.orderIsShipped){
@@ -1060,27 +1069,16 @@
       }
 
       /***********************************************
-       * Connect Firebase Button:
-       *   POSTs to firebaseOrders.js with:
-       *     - "Order Number" => etsyOrderNumber
-       *     - "Client Name" => window.orderName
-       *     - "Brites Messages" => customerMessageHistory
+       * 1) Connect Firebase Button
        ***********************************************/
       const connectFirebaseBtn = document.getElementById("connectFirebaseBtn");
       if (connectFirebaseBtn) {
         connectFirebaseBtn.addEventListener("click", async () => {
           try {
-            // 1) Gather the values from the UI fields
             const etsyOrderNumber = document.getElementById("etsyOrderNumber").value.trim();
             const orderFrom = window.orderName || "";
             const userMessages = document.getElementById("customerMessageHistory").value.trim();
 
-            // 2) Build the POST data
-            // We'll use etsyOrderNumber as the doc ID ("orderNumber").
-            // In Firestore:
-            //  - "Order Number" => etsyOrderNumber
-            //  - "Client Name"  => orderFrom
-            //  - "Brites Messages" => userMessages
             const bodyData = {
               orderNumber: etsyOrderNumber,    // doc ID
               orderNumField: etsyOrderNumber,  // "Order Number" in Firestore
@@ -1088,7 +1086,6 @@
               britesMessages: userMessages     // "Brites Messages" in Firestore
             };
 
-            // 3) Send a POST request
             const response = await fetch("/.netlify/functions/firebaseOrders", {
               method: "POST",
               headers: { "Content-Type": "application/json" },
@@ -1100,13 +1097,61 @@
               throw new Error(result.error || "Unknown error from firebaseOrders function");
             }
 
-            // 4) Confirm success
             M.toast({ html: `Order data saved! ${JSON.stringify(result)}` });
             console.log("Successfully saved data to Firestore:", result);
 
           } catch (err) {
             M.toast({ html: "Error: " + err.message });
             console.error("Failed to save data to Firestore:", err);
+          }
+        });
+      }
+
+      /***********************************************
+       * 2) Pull Database Button
+       *    - Reads "etsyOrderNumber" => doc ID
+       *    - GET from /firebaseOrders?orderId=...
+       *    - Checks if docData["Order Number"] matches
+       *      the "etsyOrderNumber"
+       *    - If so, populates "customerMessageHistory"
+       ***********************************************/
+      const pullDatabaseBtn = document.getElementById("pullDatabaseBtn");
+      if (pullDatabaseBtn) {
+        pullDatabaseBtn.addEventListener("click", async () => {
+          try {
+            const etsyOrderNumber = document.getElementById("etsyOrderNumber").value.trim();
+            if (!etsyOrderNumber) {
+              M.toast({ html: "Please enter an Etsy Order Number first." });
+              return;
+            }
+
+            // 1) Make a GET request for the doc ID = etsyOrderNumber
+            const response = await fetch(
+              `/.netlify/functions/firebaseOrders?orderId=${encodeURIComponent(etsyOrderNumber)}`
+            );
+            const result = await response.json();
+            if (!response.ok) {
+              throw new Error(result.error || "Unknown error from firebaseOrders function");
+            }
+
+            // 2) Check if the doc's "Order Number" matches
+            const docData = result.data;
+            const dbOrderNum = docData["Order Number"];
+            if (dbOrderNum !== etsyOrderNumber) {
+              M.toast({
+                html: `Order mismatch: doc has "${dbOrderNum}", expected "${etsyOrderNumber}"`
+              });
+              return;
+            }
+
+            // 3) If it matches, fill "customerMessageHistory" from "Brites Messages"
+            const dbBritesMessages = docData["Brites Messages"] || "";
+            document.getElementById("customerMessageHistory").value = dbBritesMessages;
+            M.toast({ html: "Brites Messages successfully loaded from DB!" });
+
+          } catch (err) {
+            M.toast({ html: "Error: " + err.message });
+            console.error("Failed to pull data from Firestore:", err);
           }
         });
       }

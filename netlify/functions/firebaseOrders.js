@@ -5,15 +5,6 @@ exports.handler = async (event, context) => {
   try {
     const method = event.httpMethod;
     if (method === "POST") {
-      /*
-        Expecting fields like:
-        {
-          "orderNumber": "1234",   // doc ID
-          "orderNumField": "1234", // store in Firestore as "Order Number"
-          "clientName": "Alice",   // store as "Client Name"
-          "britesMessages": "Hi from the buyer!" // store as "Brites Messages"
-        }
-      */
       const body = JSON.parse(event.body);
       const { orderNumber, orderNumField, clientName, britesMessages } = body;
 
@@ -24,18 +15,15 @@ exports.handler = async (event, context) => {
         };
       }
 
-      // Build data matching your Firestore fields
       const dataToStore = {
         "Order Number": orderNumField || "",
         "Client Name": clientName || "",
         "Brites Messages": britesMessages || ""
       };
 
-      // We'll store it in the "Brites_Orders" collection
-      // doc ID = orderNumber
       await db.collection("Brites_Orders")
-              .doc(orderNumber)
-              .set(dataToStore, { merge: true });
+        .doc(orderNumber)
+        .set(dataToStore, { merge: true });
 
       return {
         statusCode: 200,

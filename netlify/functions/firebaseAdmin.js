@@ -1,6 +1,5 @@
 const admin = require("firebase-admin");
 
-// Convert our environment variables into the credentials object:
 const serviceAccount = {
   type: "service_account",
   project_id: process.env.FIREBASE_PROJECT_ID,
@@ -15,7 +14,6 @@ const serviceAccount = {
   universe_domain: process.env.FIREBASE_UNIVERSE_DOMAIN
 };
 
-// Initialize the Firebase Admin SDK once
 if (!admin.apps.length) {
   admin.initializeApp({
     credential: admin.credential.cert(serviceAccount)
