@@ -20,22 +20,30 @@
       transition: opacity 0s; /* fade-in controlled by JS */
     }
 
+    /* Ensure the user login modal is always centered */
+    #userLoginModal {
+      /* Override Materialize's default positioning */
+      top: 50% !important;
+      left: 50% !important;
+      transform: translate(-50%, -50%) !important;
+      margin: 0 !important;
+    }
+
     /* Main UI Buttons */
     #connectEtsyBtn {
       position: absolute;
       left: 50px;
       top: 20px;
     }
-    /* (3) Remove "Connect Firebase" button – fully removed from DOM */
 
-    /* (1) "Go To Screen Two" becomes "Save & Update" */
+    /* The new "Save & Update" button (previously "Go To Screen Two") */
     #saveUpdateBtn {
       position: absolute;
       left: 180px;
       top: 20px;
     }
 
-    /* (4) Remove "Pull Database" button from DOM entirely. */
+    /* We removed "Connect Firebase" and "Pull Database" per your request */
 
     #openConfigBtn {
       position: absolute;
@@ -201,16 +209,14 @@
     #completedByEmployee {
       position: absolute;
       border: none;
-      border-bottom: 1px solid black; /* (5) Single underline */
+      border-bottom: 1px solid black; /* single underline */
       outline: none;
       background: transparent;
       font-size: 0.9em;
     }
 
-    /* Keep #dateOrdered, #shipDate normal,
-       but for #labelCreationDate & #completedByEmployee: italic + bold. */
     #labelCreationDate {
-      font-style: italic; 
+      font-style: italic;
       font-weight: bold;
     }
     #completedByEmployee {
@@ -218,7 +224,9 @@
       font-weight: bold;
     }
 
-    #dateOrdered, #shipDate, #employeeName {
+    #dateOrdered,
+    #shipDate,
+    #employeeName {
       font-weight: normal;
       font-style: normal;
     }
@@ -240,7 +248,7 @@
       font-weight: bold;
     }
 
-    /* Signature Box with underline only */
+    /* "Signature Box" - single underline, no perimeter outline */
     #signatureBox {
       position: absolute;
       left: 400px;
@@ -249,8 +257,8 @@
       height: 25px;
       background: #f9f9f9;
       user-select: none;
-      border: none; /* remove outline */
-      border-bottom: 1px solid black; /* single underline */
+      border: none;
+      border-bottom: 1px solid black;
       display: flex;
       align-items: center;
       justify-content: center;
@@ -263,13 +271,14 @@
   <!-- WRAP SCREEN ONE CONTENT IN THIS CONTAINER -->
   <div id="screenOne">
     <!-- Main UI Buttons -->
+
+    <!-- "Connect to Etsy" remains -->
     <button id="connectEtsyBtn" class="configurable btn waves-effect waves-light">Connect to Etsy</button>
 
-    <!-- (2) Instead of "Go To Screen Two," rename to "Save & Update" -->
+    <!-- (2) The new "Save & Update" button -->
     <button id="saveUpdateBtn" class="configurable btn waves-effect waves-light">Save & Update</button>
 
-    <!-- (4) "Pull Database" button is removed. 
-         (3) "Connect Firebase" button is removed. -->
+    <!-- "Connect Firebase" & "Pull Database" have been removed -->
 
     <button id="openConfigBtn" class="configurable btn waves-effect waves-light">Open Config</button>
 
@@ -355,16 +364,14 @@
     <input type="text" id="dateOrdered" readonly />
     <input type="text" id="shipDate" readonly />
 
-    <!-- labelCreationDate => italic + bold, underline only, no box outline. -->
+    <!-- italic+bold, single underline -->
     <input type="text" id="labelCreationDate" placeholder="Label Creation Date" />
-
-    <!-- employeeName => remains with normal style except we had it bold earlier, let's keep it. -->
+    <!-- normal style for "employeeName" -->
     <input type="text" id="employeeName" placeholder="Employee Name" />
-
-    <!-- brand-new "completedByEmployee", italic + bold, underline. -->
+    <!-- italic+bold, single underline -->
     <input type="text" id="completedByEmployee" placeholder="Completed By Employee" />
 
-    <!-- "Signature Box" - single underline, no perimeter outline -->
+    <!-- "Signature Box" single underline -->
     <div id="signatureBox">Sig Box</div>
 
     <!-- Configuration Modal -->
@@ -392,10 +399,10 @@
 
   </div> <!-- end #screenOne -->
 
-  <!-- Container for the second screen markup (we no longer navigate there, but we keep it for completeness) -->
+  <!-- Container for second screen markup (we keep it for completeness but do not use) -->
   <div id="secondaryContainer"></div>
 
-  <!-- "User Log In" Modal that appears on load -->
+  <!-- "User Log In" Modal (centered) -->
   <div id="userLoginModal" class="modal">
     <div class="modal-content">
       <h5>User Log In</h5>
@@ -471,10 +478,9 @@
 
     /********** Configuration System **********/
     var configComponentIDs = [
-      "connectEtsyBtn", /* connectFirebaseBtn is removed */ 
-      /* pullDatabaseBtn removed */
-      "openConfigBtn", "orderLinkBtn", "trackingLinkBtn",
-      "etsyOrderNumber", "orderInformation",
+      "connectEtsyBtn", /* removed connectFirebaseBtn, removed pullDatabaseBtn */
+      "openConfigBtn",
+      "orderLinkBtn", "trackingLinkBtn", "etsyOrderNumber", "orderInformation",
       "Photo_Grid",
       "quantityCell0", "quantityCell1", "quantityCell2", "quantityCell3",
       "quantityCell4", "quantityCell5", "quantityCell6", "quantityCell7",
@@ -592,14 +598,14 @@
               M.toast({html: "Please enter a valid 3-digit Employee Number!"});
               return;
             }
-            var responseEN = await fetch("/.netlify/functions/firebaseOrders?orderId=EmployeeNumbers");
+            var responseEN = await fetch("/.netlify/functions/firebaseOrders?orderId=Employee Numbers");
             if(!responseEN.ok){
-              M.toast({ html: "Error fetching EmployeeNumbers doc!" });
+              M.toast({ html: "Error fetching Employee Numbers doc!" });
               return;
             }
             var resultEN = await responseEN.json();
             if(!resultEN.success || !resultEN.data){
-              M.toast({ html: "No data found for EmployeeNumbers doc!" });
+              M.toast({ html: "No data found for Employee Numbers doc!" });
               return;
             }
             var docDataEN = resultEN.data;
@@ -655,11 +661,9 @@
         });
       }
 
-      /************************************************
-       (4) "Pull Database" button logic => on Enter in "etsyOrderNumber"
+      /* "Pull Database" logic is removed. We combine it after user presses Enter in "etsyOrderNumber" */
 
-       We'll unify the logic after we fetch from Etsy.
-      ************************************************/
+      // Press Enter in "etsyOrderNumber" => 1) fetch from Etsy, 2) fetch from Firestore
       var etsyOrderInput = document.getElementById("etsyOrderNumber");
       etsyOrderInput.addEventListener("keydown", async function(e){
         if(e.key === "Enter"){
@@ -670,7 +674,7 @@
             if(orderData){
               await updateImageGrid(orderData);
             }
-            // 2) Then do Firestore GET logic (the old "pullDatabase" code):
+            // 2) Then do Firestore GET logic
             try {
               var respPD = await fetch("/.netlify/functions/firebaseOrders?orderId=" + encodeURIComponent(orderNumber));
               var resPD = await respPD.json();
@@ -707,16 +711,15 @@
               } else {
                 document.getElementById("labelCreationDate").value = "";
               }
+
               // If docDataPD["Employee Name"] is "001," show Employee_001_Paul K.jpg in signatureBox
               var dbEmpName = docDataPD["Employee Name"];
               if(dbEmpName){
-                document.getElementById("completedByEmployee").value = ""; // do not keep old
                 document.getElementById("completedByEmployee").value = dbEmpName;
-                // (1a) If employee is "001," show image
                 if(dbEmpName === "001"){
-                  document.getElementById("signatureBox").innerHTML = '<img src="./assets/Employee_001_Paul K.jpg" style="width:100%; height:100%; object-fit:contain" alt="Signature">';
+                  document.getElementById("signatureBox").innerHTML =
+                    '<img src="./assets/Employee_001_Paul K.jpg" style="width:100%; height:100%; object-fit:contain" alt="Signature">';
                 } else {
-                  // else clear or revert?
                   document.getElementById("signatureBox").textContent = "Sig Box";
                 }
               } else {
@@ -731,13 +734,11 @@
         }
       });
 
-      // "Order Link" button logic above
+      // "Order Link" button event above
+      // "Tracking Link" button event above
+      // Zoom + Drag for preview boxes => see above
 
-      // "Tracking Link" button logic above
-
-      // Zoom + Drag for preview boxes -> see above
-
-      // (2)(3) "Save & Update" button => merges old "Connect Firebase" logic
+      // (2) "Save & Update" merges old "Connect Firebase" logic
       var saveUpdateBtn = document.getElementById("saveUpdateBtn");
       if(saveUpdateBtn){
         saveUpdateBtn.addEventListener("click", async function(){
@@ -780,9 +781,7 @@
       }
     });
 
-    /********** loadScreenTwo (DOMParser) 
-       We are not using this for navigation now, but we keep it for completeness. 
-    **********/
+    /********** loadScreenTwo (DOMParser) **********/
     async function loadScreenTwo(){
       try {
         console.log("loadScreenTwo() called");
@@ -899,12 +898,8 @@
               var metalSel = "";
               if(item.variations && Array.isArray(item.variations)){
                 var acceptedMetalNames = [
-                  "metal",
-                  "metal choice",
-                  "metal - engraving",
-                  "metal colour",
-                  "color",
-                  "metal choice / engraving option"
+                  "metal", "metal choice", "metal - engraving", "metal colour",
+                  "color", "metal choice / engraving option"
                 ];
                 var metalVar = item.variations.find(function(v){
                   if(!v.formatted_name) return false;
@@ -1002,7 +997,7 @@
       }
       if(item.variations && Array.isArray(item.variations)){
         var acceptedMetalNames2 = [
-          "metal", "metal choice", "metal - engraving", "metal colour", 
+          "metal", "metal choice", "metal - engraving", "metal colour",
           "color", "metal choice / engraving option"
         ];
         var acceptedLengthNames2 = [
