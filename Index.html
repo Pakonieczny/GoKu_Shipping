@@ -449,7 +449,7 @@
   <!-- Container for the second screen markup -->
   <div id="secondaryContainer"></div>
 
-  <!-- "User Log In" Modal that appears on load -->
+  <!-- "User Log In" Modal (hidden for now; not auto-opened) -->
   <div id="userLoginModal" class="modal">
     <div class="modal-content">
       <h5>User Log In</h5>
@@ -574,10 +574,6 @@
         var widthVal = (cs.width === "auto") ? 0 : parseInt(cs.width, 10);
         var heightVal = (cs.height === "auto") ? 0 : parseInt(cs.height, 10);
 
-        /***************************************************************
-         * Keep your forced resets if needed. Otherwise, skip them here.
-         ***************************************************************/
-
         var row = document.createElement("tr");
         row.innerHTML = `
           <td>${compName}</td>
@@ -636,12 +632,7 @@
         document.body.style.opacity = 1;
       }, 250);
 
-      // Show the "User Log In" modal on load
-      var userLoginModalElem = document.getElementById("userLoginModal");
-      var userLoginModal = M.Modal.init(userLoginModalElem, {
-        dismissible: false
-      });
-      userLoginModal.open();
+      // **Temporarily hidden**: No code calls userLoginModal.open()
 
       // "Log In" button for employees
       var employeeLoginBtn = document.getElementById("employeeLoginBtn");
@@ -671,7 +662,9 @@
               M.toast({ html: "Welcome, " + nameFound + "!" });
               // store in "employeeName"
               document.getElementById("employeeName").value = nameFound;
-              userLoginModal.close();
+
+              // If you want to open or close the modal programmatically, you could do so here
+              // e.g. userLoginModal.close();
             } else {
               M.toast({ html: "Employee # " + empNumber + " not found in DB!" });
             }
@@ -682,7 +675,7 @@
         });
       }
 
-      // **Reverted** "Open Config" button logic
+      // "Open Config" button
       document.getElementById("openConfigBtn").addEventListener("click", function(){
         populateConfigTable();
         var modalElem = document.getElementById("configModal");
