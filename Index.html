@@ -27,10 +27,7 @@
       top: 20px;
     }
 
-    /* (REMOVED Connect Firebase Button) */
-
-    /* (REMOVED Pull Database Button) */
-
+    /* openConfigBtn is still here; other two were removed. */
     #openConfigBtn {
       position: absolute;
       left: 50px;
@@ -187,14 +184,17 @@
       overflow-y: auto;
     }
 
-    /* Single-line text boxes */
+    /*
+      Single-line text boxes:
+        #dateOrdered, #shipDate, #labelCreationDate,
+        #employeeName, #completedByEmployee
+    */
     #dateOrdered,
     #shipDate,
     #labelCreationDate,
     #employeeName,
     #completedByEmployee {
       position: absolute;
-      /* originally had border: 1px solid black; removing to override below */
       width: 200px;
       height: 20px;
       box-sizing: border-box;
@@ -203,26 +203,37 @@
       font-size: 0.9em;
     }
 
-    /* We'll keep #employeeName bold if originally set, 
-       but not messing with it here since no explicit mention to remove. */
-    #employeeName {
-      font-weight: bold;
-    }
-
-    /* Remove 1px border for #labelCreationDate, #completedByEmployee, #signatureBox 
-       and replace with single underline. */
-    #labelCreationDate,
-    #completedByEmployee,
-    #signatureBox {
-      border: none !important;
+    /*
+      As requested:
+      1) #dateOrdered => bold
+      2) #shipDate   => bold
+      3) #labelCreationDate => italic
+      4) #completedByEmployee => italic
+      5) Standardize underline color => black
+      Also keep #labelCreationDate & #completedByEmployee bold if previously required.
+      (We keep them bold+italic if that was already set in prior instructions.)
+    */
+    #dateOrdered {
+      font-weight: bold !important;
       border-bottom: 1px solid black !important;
     }
-
-    /* Make #labelCreationDate & #completedByEmployee bold & italic */
-    #labelCreationDate,
-    #completedByEmployee {
+    #shipDate {
       font-weight: bold !important;
+      border-bottom: 1px solid black !important;
+    }
+    #employeeName {
+      /* This was specified to remain bold from earlier instructions, but no underline. */
+      font-weight: bold;
+    }
+    #labelCreationDate {
+      font-weight: bold !important; /* from your prior request */
       font-style: italic !important;
+      border-bottom: 1px solid black !important;
+    }
+    #completedByEmployee {
+      font-weight: bold !important; /* from your prior request */
+      font-style: italic !important;
+      border-bottom: 1px solid black !important;
     }
 
     /* Title texts */
@@ -242,10 +253,7 @@
       font-weight: bold;
     }
 
-    /* 1) Three duplicates of "titleShipDate" text objects: 
-       - "titleOrderCompletedOn" -> "Last Updated On"
-       - "titleOrderCompletedBy" -> "Updated By:"
-       - "titleSignedInAs" -> "Signed In As:" */
+    /* 3 new duplicates of "titleShipDate" text objects */
     #titleOrderCompletedOn,
     #titleOrderCompletedBy,
     #titleSignedInAs {
@@ -316,6 +324,8 @@
       justify-content: center;
       overflow: hidden;
       user-select: none;
+      /* Underline, same color => black */
+      border-bottom: 1px solid black !important;
     }
   </style>
 </head>
@@ -326,10 +336,7 @@
     <!-- Main UI Buttons -->
     <button id="connectEtsyBtn" class="configurable btn waves-effect waves-light">Connect to Etsy</button>
 
-    <!-- (REMOVED: <button id="connectFirebaseBtn">...) -->
-
-    <!-- (REMOVED: <button id="pullDatabaseBtn">...) -->
-
+    <!-- The "Open Config" button (still present) -->
     <button id="openConfigBtn" class="configurable btn waves-effect waves-light">Open Config</button>
 
     <!-- "Order Link" button -->
@@ -406,7 +413,7 @@
     <div id="titleOrderDate2" style="font-weight:bold;"></div>
     <div id="titleShipDate">Ship By:</div>
 
-    <!-- 1) New duplicate "titleShipDate" texts with the requested content -->
+    <!-- 1) Additional duplicates of "titleShipDate" -->
     <div id="titleOrderCompletedOn">Last Updated On:</div>
     <div id="titleOrderCompletedBy">Updated By:</div>
     <div id="titleSignedInAs">Signed In As:</div>
@@ -420,16 +427,11 @@
     <input type="text" id="dateOrdered" readonly />
     <input type="text" id="shipDate" readonly />
 
-    <!-- The label creation date (underline, bold+italic) -->
     <input type="text" id="labelCreationDate" placeholder="Label Creation Date" />
-
-    <!-- The employeeName text box (still bold) -->
     <input type="text" id="employeeName" placeholder="Employee Name" />
-
-    <!-- The brand-new "completedByEmployee" text box (underline, bold+italic) -->
     <input type="text" id="completedByEmployee" placeholder="Completed By Employee" />
 
-    <!-- "Signature Box" (underline, no more 1px perimeter) -->
+    <!-- "Signature Box" -->
     <div id="signatureBox">Sig Box</div>
 
     <!-- Configuration Modal -->
@@ -540,9 +542,7 @@
 
     /********** Configuration System **********/
     var configComponentIDs = [
-      "connectEtsyBtn", 
-      /* REMOVED: "connectFirebaseBtn", */
-      /* REMOVED: "pullDatabaseBtn", */
+      "connectEtsyBtn",
       "openConfigBtn",
       "orderLinkBtn", "trackingLinkBtn", "etsyOrderNumber", "orderInformation",
       "Photo_Grid",
@@ -739,7 +739,7 @@
               await updateImageGrid(orderData);
             }
 
-            // 2) "Pull Database" logic (merged here)
+            // 2) "Pull Database" logic
             try {
               var respPD = await fetch("/.netlify/functions/firebaseOrders?orderId=" + encodeURIComponent(orderNumber));
               var resPD = await respPD.json();
@@ -782,7 +782,7 @@
               var dbEmpName = docDataPD["Employee Name"] || "";
               document.getElementById("completedByEmployee").value = dbEmpName;
 
-              // If "Employee Name" == "001", show signature image
+              // If "Employee Name" == "001", show signature
               if(dbEmpName === "001"){
                 document.getElementById("signatureBox").innerHTML = `
                   <img src="assets/Employee_001_Paul K.jpg" style="width:100%; height:100%; object-fit:cover;">
@@ -930,7 +930,9 @@
               throw new Error(resultCF.error || "Unknown error from firebaseOrders function");
             }
 
-            M.toast({ html: "Order data saved! " + JSON.stringify(resultCF) });
+            // (REMOVED THE TOAST MESSAGE THAT SHOWED THE ENTIRE JSON)
+            // M.toast({ html: "Order data saved! " + JSON.stringify(resultCF) }); // <— GONE!
+
             console.log("Successfully saved data to Firestore:", resultCF);
 
           } catch(errCF){
@@ -938,7 +940,7 @@
             console.error("Failed to save data to Firestore:", errCF);
           }
 
-          // Now optionally proceed to Screen Two if you still want that original navigation:
+          // Optionally go to screen two:
           loadScreenTwo();
         });
       }
