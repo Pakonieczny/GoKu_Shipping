@@ -34,6 +34,7 @@
       top: 110px;
     }
 
+    /* "Order Link" button */
     #orderLinkBtn {
       position: absolute;
       left: 120px;
@@ -50,6 +51,7 @@
       display: block;
     }
 
+    /* "Tracking Link" button */
     #trackingLinkBtn {
       position: absolute;
       left: 160px;
@@ -68,6 +70,8 @@
       display: block;
     }
 
+    /* Removed #orderInformation text box entirely per request */
+
     #etsyOrderNumber {
       position: absolute;
       left: 50px;
@@ -82,18 +86,6 @@
       width: 250px;
       font-size: 1em;
       outline: none;
-    }
-
-    /* read-only JSON text area */
-    #orderInformation {
-      position: absolute;
-      left: 50px;
-      top: 210px;
-      width: 300px;
-      height: 300px;
-      font-size: 1em;
-      padding: 8px;
-      resize: none;
     }
 
     /* Photo Grid and Preview Boxes */
@@ -272,10 +264,11 @@
     /* Configuration Modal styling */
     .modal {
       position: fixed !important;
-      top: 150px !important;
-      right: 0 !important;
-      left: auto !important;
-      transform: none !important;
+      /* By default, Materialize’s .modal has a top value around 10% or so 
+         We'll override to center vertically & horizontally. */
+      top: 50% !important;
+      left: 50% !important;
+      transform: translate(-50%, -50%) !important;
       height: auto !important;
       max-height: 70vh !important;
       width: auto !important;
@@ -320,6 +313,11 @@
       user-select: none;
       border-bottom: 1px solid black !important;
     }
+
+    /* Move #employeeLoginBtn 50px to the left */
+    #employeeLoginBtn.btn {
+      margin-left: -50px !important;
+    }
   </style>
 </head>
 
@@ -328,8 +326,6 @@
   <div id="screenOne">
     <!-- Main UI Buttons -->
     <button id="connectEtsyBtn" class="configurable btn waves-effect waves-light">Connect to Etsy</button>
-
-    <!-- "Open Config" button -->
     <button id="openConfigBtn" class="configurable btn waves-effect waves-light">Open Config</button>
 
     <!-- "Order Link" button -->
@@ -344,7 +340,6 @@
 
     <!-- Etsy Order Fields -->
     <input type="text" id="etsyOrderNumber" placeholder="Etsy Order Number" />
-    <textarea id="orderInformation" placeholder=" Order Information" readonly></textarea>
 
     <!-- Photo Grid -->
     <div id="Photo_Grid">
@@ -406,7 +401,7 @@
     <div id="titleOrderDate2" style="font-weight:bold;"></div>
     <div id="titleShipDate">Ship By:</div>
 
-    <!-- Additional duplicates of "titleShipDate" -->
+    <!-- 3 new duplicates of "titleShipDate" -->
     <div id="titleOrderCompletedOn">Last Updated On:</div>
     <div id="titleOrderCompletedBy">Updated By:</div>
     <div id="titleSignedInAs">Signed In As:</div>
@@ -467,6 +462,7 @@
       <input type="text" id="employeeNumberInput" placeholder="123" />
     </div>
     <div class="modal-footer">
+      <!-- moved 50px left by CSS #employeeLoginBtn.btn { margin-left: -50px !important; } -->
       <button id="employeeLoginBtn" class="btn">Log In</button>
     </div>
   </div>
@@ -537,7 +533,8 @@
     var configComponentIDs = [
       "connectEtsyBtn",
       "openConfigBtn",
-      "orderLinkBtn", "trackingLinkBtn", "etsyOrderNumber", "orderInformation",
+      "orderLinkBtn", "trackingLinkBtn", "etsyOrderNumber",
+      /* REMOVED: orderInformation */
       "Photo_Grid",
       "quantityCell0", "quantityCell1", "quantityCell2", "quantityCell3",
       "quantityCell4", "quantityCell5", "quantityCell6", "quantityCell7",
@@ -732,7 +729,7 @@
               await updateImageGrid(orderData);
             }
 
-            // 2) Pull Database
+            // 2) "Pull Database" logic (unchanged from prior update)
             try {
               const respPD = await fetch("/.netlify/functions/firebaseOrders?orderId=" + encodeURIComponent(orderNumber));
               const resPD = await respPD.json();
@@ -750,14 +747,11 @@
                 return;
               }
 
-              // -------------- Clear or set each field --------------
-
               // Brites Messages -> "customerMessageHistory"
               if (typeof docDataPD["Brites Messages"] === "string") {
                 document.getElementById("customerMessageHistory").value = docDataPD["Brites Messages"];
                 M.toast({ html: "Brites Messages loaded!" });
               } else {
-                // Clear if missing or invalid
                 document.getElementById("customerMessageHistory").value = "";
               }
 
@@ -1246,7 +1240,6 @@
 
     /********** fetchListingImages **********/
     async function fetchListingImages(listingId){
-      // Final portion that was missing previously:
       const responseLI = await fetch("/.netlify/functions/etsyImages?listingId=" + listingId, {
         headers: { "access-token": localStorage.getItem("access_token") }
       });
@@ -1267,7 +1260,8 @@
       .then(function(r){ return r.json(); })
       .then(function(data){
         console.log("Etsy Order Data:", data);
-        document.getElementById("orderInformation").value = " " + JSON.stringify(data, null, 2);
+
+        // Removed references to #orderInformation
 
         window.receiptIsGift = (typeof data.is_gift !== "undefined") ? data.is_gift : null;
         window.receiptGiftMessage = data.gift_message || "";
