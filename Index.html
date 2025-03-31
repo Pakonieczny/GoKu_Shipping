@@ -275,11 +275,9 @@
     .modal .modal-content {
       overflow-y: auto;
       font-size: 0.9em;
-      /* ensure left alignment for text input: */
       text-align: left !important;
     }
     .modal .modal-footer {
-      /* center the button horizontally at the bottom: */
       display: flex !important;
       justify-content: center !important;
       align-items: center !important;
@@ -456,11 +454,9 @@
     <div class="modal-content">
       <h5>User Log In</h5>
       <p>Please enter your 3-digit Employee Number:</p>
-      <!-- left-justify the input, courtesy of .modal-content { text-align: left } -->
       <input type="text" id="employeeNumberInput" placeholder="123" />
     </div>
     <div class="modal-footer">
-      <!-- Centered at bottom middle thanks to the .modal-footer changes -->
       <button id="employeeLoginBtn" class="btn">Log In</button>
     </div>
   </div>
@@ -560,29 +556,54 @@
         }
       }
     }
+
     function populateConfigTable(){
       var tbody = document.getElementById("configTable").querySelector("tbody");
       tbody.innerHTML = "";
+
       for(var i=0; i<configComponentIDs.length; i++){
         var id = configComponentIDs[i];
         var el = document.getElementById(id);
         if(!el) continue;
+
         var compName = (el.textContent && el.textContent.trim()) || (el.value && el.value.trim()) || id;
         var cs = window.getComputedStyle(el);
+
+        // read the actual numeric offsets
         var leftVal = (cs.left === "auto") ? 0 : parseInt(cs.left, 10);
         var topVal = (cs.top === "auto") ? 0 : parseInt(cs.top, 10);
         var widthVal = (cs.width === "auto") ? 0 : parseInt(cs.width, 10);
         var heightVal = (cs.height === "auto") ? 0 : parseInt(cs.height, 10);
 
+        /***************************************************************
+         * Step 1: If the ID is "userLoginModal", "employeeNumberInput",
+         * or "employeeLoginBtn", forcibly reset them to 0
+         ***************************************************************/
+        if (id === "userLoginModal" || id === "employeeNumberInput" || id === "employeeLoginBtn") {
+          leftVal = 0;
+          topVal = 0;
+          widthVal = 0;
+          heightVal = 0;
+
+          // update the element right now so it visually resets
+          el.style.left = "0px";
+          el.style.top = "0px";
+          el.style.width = "0px";
+          el.style.height = "0px";
+        }
+
+        // create the table row
         var row = document.createElement("tr");
-        row.innerHTML = ""
-          + "<td>" + compName + "</td>"
-          + "<td><input type='number' value='" + leftVal + "' data-id='" + id + "' class='left-input'></td>"
-          + "<td><input type='number' value='" + topVal + "' data-id='" + id + "' class='top-input'></td>"
-          + "<td><input type='number' value='" + widthVal + "' data-id='" + id + "' class='width-input'></td>"
-          + "<td><input type='number' value='" + heightVal + "' data-id='" + id + "' class='height-input'></td>";
+        row.innerHTML = `
+          <td>${compName}</td>
+          <td><input type='number' value='${leftVal}' data-id='${id}' class='left-input'></td>
+          <td><input type='number' value='${topVal}' data-id='${id}' class='top-input'></td>
+          <td><input type='number' value='${widthVal}' data-id='${id}' class='width-input'></td>
+          <td><input type='number' value='${heightVal}' data-id='${id}' class='height-input'></td>
+        `;
         tbody.appendChild(row);
 
+        // attach event listeners to each cell to allow updates
         row.querySelector(".left-input").addEventListener("input", function(){
           var tgt = document.getElementById(this.getAttribute("data-id"));
           if(tgt) tgt.style.left = parseInt(this.value, 10) + "px";
@@ -601,6 +622,7 @@
         });
       }
     }
+
     function saveConfiguration(){
       for(var i=0; i<configComponentIDs.length; i++){
         var id = configComponentIDs[i];
