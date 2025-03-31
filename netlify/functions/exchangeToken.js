@@ -1,3 +1,4 @@
+// exchangeToken.js
 const fetch = require("node-fetch");
 const crypto = require("crypto");
 
@@ -39,8 +40,8 @@ exports.handler = async function(event, context) {
       
       // Retrieve environment variables.
       const CLIENT_ID = process.env.CLIENT_ID;
-      // Note: Your Etsy app’s redirect URI must be set to your main site:
-      const REDIRECT_URI = "https://gokushipping.netlify.app";
+      // (UPDATED LINK) Your Etsy app’s redirect URI must be set to the new domain:
+      const REDIRECT_URI = "https://goldenspike.app";
       
       if (!CLIENT_ID || !REDIRECT_URI) {
         console.error("Missing required environment variables (CLIENT_ID or REDIRECT_URI).");
@@ -74,8 +75,8 @@ exports.handler = async function(event, context) {
     // Retrieve environment variables for token exchange.
     const CLIENT_ID = process.env.CLIENT_ID;
     const CLIENT_SECRET = process.env.CLIENT_SECRET;
-    // Use the same redirect URI as above.
-    const REDIRECT_URI = "https://gokushipping.netlify.app";
+    // (UPDATED LINK) Use the same redirect URI:
+    const REDIRECT_URI = "https://goldenspike.app";
 
     if (!CLIENT_ID || !CLIENT_SECRET || !REDIRECT_URI) {
       console.error("Missing required environment variables.");
