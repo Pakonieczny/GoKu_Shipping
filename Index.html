@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+<<!DOCTYPE html>
 <html>
 <head>
   <meta charset="UTF-8">
@@ -204,14 +204,12 @@
     }
 
     /*
-      As requested:
-      1) #dateOrdered => bold
-      2) #shipDate   => bold
-      3) #labelCreationDate => italic
-      4) #completedByEmployee => italic
-      5) Standardize underline color => black
-      Also keep #labelCreationDate & #completedByEmployee bold if previously required.
-      (We keep them bold+italic if that was already set in prior instructions.)
+      As per the most recent instructions:
+      - #dateOrdered => bold
+      - #shipDate   => bold
+      - #labelCreationDate => bold + italic
+      - #completedByEmployee => bold + italic
+      - Underline => black
     */
     #dateOrdered {
       font-weight: bold !important;
@@ -222,16 +220,16 @@
       border-bottom: 1px solid black !important;
     }
     #employeeName {
-      /* This was specified to remain bold from earlier instructions, but no underline. */
+      /* This was specified to remain bold from earlier instructions, no underline. */
       font-weight: bold;
     }
     #labelCreationDate {
-      font-weight: bold !important; /* from your prior request */
+      font-weight: bold !important;
       font-style: italic !important;
       border-bottom: 1px solid black !important;
     }
     #completedByEmployee {
-      font-weight: bold !important; /* from your prior request */
+      font-weight: bold !important;
       font-style: italic !important;
       border-bottom: 1px solid black !important;
     }
@@ -324,7 +322,6 @@
       justify-content: center;
       overflow: hidden;
       user-select: none;
-      /* Underline, same color => black */
       border-bottom: 1px solid black !important;
     }
   </style>
@@ -779,13 +776,18 @@
                 document.getElementById("labelCreationDate").value = "";
               }
 
+              // Check the "Employee Name" from DB
               var dbEmpName = docDataPD["Employee Name"] || "";
               document.getElementById("completedByEmployee").value = dbEmpName;
 
-              // If "Employee Name" == "001", show signature
+              // If "Employee Name" == "001", show Paul's signature
               if(dbEmpName === "001"){
                 document.getElementById("signatureBox").innerHTML = `
-                  <img src="assets/Employee_001_Paul K.jpg" style="width:100%; height:100%; object-fit:cover;">
+                  <img
+                    src="/assets/Employee_001_Paul K.jpg"
+                    style="width:100%; height:100%; object-fit:cover;"
+                    alt="Signature for Employee 001"
+                  >
                 `;
               } else {
                 document.getElementById("signatureBox").innerHTML = "Sig Box";
@@ -930,9 +932,7 @@
               throw new Error(resultCF.error || "Unknown error from firebaseOrders function");
             }
 
-            // (REMOVED THE TOAST MESSAGE THAT SHOWED THE ENTIRE JSON)
-            // M.toast({ html: "Order data saved! " + JSON.stringify(resultCF) }); // <— GONE!
-
+            // (Removed the toast showing entire JSON)
             console.log("Successfully saved data to Firestore:", resultCF);
 
           } catch(errCF){
