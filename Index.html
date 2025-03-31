@@ -237,7 +237,7 @@
       font-weight: bold;
     }
 
-    /* 3 new duplicates of "titleShipDate" text objects */
+    /* Additional duplicates of "titleShipDate" */
     #titleOrderCompletedOn,
     #titleOrderCompletedBy,
     #titleSignedInAs {
@@ -449,7 +449,7 @@
   <!-- Container for the second screen markup -->
   <div id="secondaryContainer"></div>
 
-  <!-- "User Log In" Modal (hidden for now; not auto-opened) -->
+  <!-- "User Log In" Modal (re-enabled) -->
   <div id="userLoginModal" class="modal">
     <div class="modal-content">
       <h5>User Log In</h5>
@@ -632,7 +632,12 @@
         document.body.style.opacity = 1;
       }, 250);
 
-      // **Temporarily hidden**: No code calls userLoginModal.open()
+      // **Re-enabled**: Show the "User Log In" modal on load
+      var userLoginModalElem = document.getElementById("userLoginModal");
+      var userLoginModal = M.Modal.init(userLoginModalElem, {
+        dismissible: false
+      });
+      userLoginModal.open(); // <--- This line ensures the modal appears on page load again
 
       // "Log In" button for employees
       var employeeLoginBtn = document.getElementById("employeeLoginBtn");
@@ -662,9 +667,7 @@
               M.toast({ html: "Welcome, " + nameFound + "!" });
               // store in "employeeName"
               document.getElementById("employeeName").value = nameFound;
-
-              // If you want to open or close the modal programmatically, you could do so here
-              // e.g. userLoginModal.close();
+              userLoginModal.close();
             } else {
               M.toast({ html: "Employee # " + empNumber + " not found in DB!" });
             }
