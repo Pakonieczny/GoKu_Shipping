@@ -1,4 +1,4 @@
-<<!DOCTYPE html>
+<!DOCTYPE html>
 <html>
 <head>
   <meta charset="UTF-8">
@@ -27,7 +27,7 @@
       top: 20px;
     }
 
-    /* openConfigBtn is still here; other two were removed. */
+    /* "Open Config" button */
     #openConfigBtn {
       position: absolute;
       left: 50px;
@@ -184,11 +184,7 @@
       overflow-y: auto;
     }
 
-    /*
-      Single-line text boxes:
-        #dateOrdered, #shipDate, #labelCreationDate,
-        #employeeName, #completedByEmployee
-    */
+    /* Single-line text boxes */
     #dateOrdered,
     #shipDate,
     #labelCreationDate,
@@ -203,31 +199,31 @@
       font-size: 0.9em;
     }
 
-    /*
-      As per the most recent instructions:
-      - #dateOrdered => bold
-      - #shipDate   => bold
-      - #labelCreationDate => bold + italic
-      - #completedByEmployee => bold + italic
-      - Underline => black
-    */
+    /* #dateOrdered => bold + black underline */
     #dateOrdered {
       font-weight: bold !important;
       border-bottom: 1px solid black !important;
     }
+
+    /* #shipDate => bold + black underline */
     #shipDate {
       font-weight: bold !important;
       border-bottom: 1px solid black !important;
     }
+
+    /* #employeeName => bold, no underline */
     #employeeName {
-      /* This was specified to remain bold from earlier instructions, no underline. */
       font-weight: bold;
     }
+
+    /* #labelCreationDate => bold+italic + black underline */
     #labelCreationDate {
       font-weight: bold !important;
       font-style: italic !important;
       border-bottom: 1px solid black !important;
     }
+
+    /* #completedByEmployee => bold+italic + black underline */
     #completedByEmployee {
       font-weight: bold !important;
       font-style: italic !important;
@@ -251,7 +247,7 @@
       font-weight: bold;
     }
 
-    /* 3 new duplicates of "titleShipDate" text objects */
+    /* "Last Updated On", "Updated By:", "Signed In As:" positions */
     #titleOrderCompletedOn,
     #titleOrderCompletedBy,
     #titleSignedInAs {
@@ -333,7 +329,7 @@
     <!-- Main UI Buttons -->
     <button id="connectEtsyBtn" class="configurable btn waves-effect waves-light">Connect to Etsy</button>
 
-    <!-- The "Open Config" button (still present) -->
+    <!-- "Open Config" button -->
     <button id="openConfigBtn" class="configurable btn waves-effect waves-light">Open Config</button>
 
     <!-- "Order Link" button -->
@@ -410,7 +406,7 @@
     <div id="titleOrderDate2" style="font-weight:bold;"></div>
     <div id="titleShipDate">Ship By:</div>
 
-    <!-- 1) Additional duplicates of "titleShipDate" -->
+    <!-- Additional duplicates of "titleShipDate" -->
     <div id="titleOrderCompletedOn">Last Updated On:</div>
     <div id="titleOrderCompletedBy">Updated By:</div>
     <div id="titleSignedInAs">Signed In As:</div>
@@ -728,46 +724,54 @@
       var etsyOrderInput = document.getElementById("etsyOrderNumber");
       etsyOrderInput.addEventListener("keydown", async function(e){
         if(e.key === "Enter"){
-          var orderNumber = etsyOrderInput.value.trim();
+          const orderNumber = etsyOrderInput.value.trim();
           if(orderNumber !== ""){
             // 1) Pull from Etsy
-            var orderData = await pullEtsyOrderDetails(orderNumber);
+            const orderData = await pullEtsyOrderDetails(orderNumber);
             if(orderData){
               await updateImageGrid(orderData);
             }
 
-            // 2) "Pull Database" logic
+            // 2) Pull Database
             try {
-              var respPD = await fetch("/.netlify/functions/firebaseOrders?orderId=" + encodeURIComponent(orderNumber));
-              var resPD = await respPD.json();
+              const respPD = await fetch("/.netlify/functions/firebaseOrders?orderId=" + encodeURIComponent(orderNumber));
+              const resPD = await respPD.json();
               if(!respPD.ok){
                 throw new Error(resPD.error || "Unknown error from firebaseOrders function");
               }
 
-              var docDataPD = resPD.data;
-              var dbOrderNum = docDataPD["Order Number"];
-              if(dbOrderNum !== orderNumber){
+              // docDataPD might be partial or empty if the doc is missing fields or doesn't exist
+              const docDataPD = resPD.data || {};
+
+              // Confirm the doc's "Order Number" matches the requested order
+              const dbOrderNum = docDataPD["Order Number"];
+              if (dbOrderNum !== orderNumber) {
                 M.toast({ html: "Order mismatch: doc has '" + dbOrderNum + "', expected '" + orderNumber + "'" });
                 return;
               }
 
+              // -------------- Clear or set each field --------------
+
               // Brites Messages -> "customerMessageHistory"
-              var dbBrites = docDataPD["Brites Messages"] || "";
-              document.getElementById("customerMessageHistory").value = dbBrites;
-              M.toast({ html: "Brites Messages loaded!" });
+              if (typeof docDataPD["Brites Messages"] === "string") {
+                document.getElementById("customerMessageHistory").value = docDataPD["Brites Messages"];
+                M.toast({ html: "Brites Messages loaded!" });
+              } else {
+                // Clear if missing or invalid
+                document.getElementById("customerMessageHistory").value = "";
+              }
 
               // Shipping Label Timestamps -> "labelCreationDate"
-              var shippingLabTS = docDataPD["Shipping Label Timestamps"];
-              if(shippingLabTS){
-                var dt = new Date(shippingLabTS);
-                if(!isNaN(dt.valueOf())){
-                  var monthNamesF2 = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
-                  var dd = ("0" + dt.getDate()).slice(-2);
-                  var mStr = monthNamesF2[dt.getMonth()];
-                  var yyyy = dt.getFullYear();
-                  var hh = ("0" + dt.getHours()).slice(-2);
-                  var mm = ("0" + dt.getMinutes()).slice(-2);
-                  var finalStr = dd + " " + mStr + " " + yyyy + ", " + hh + ":" + mm;
+              if (docDataPD["Shipping Label Timestamps"]) {
+                const dt = new Date(docDataPD["Shipping Label Timestamps"]);
+                if (!isNaN(dt.valueOf())) {
+                  const monthNamesF2 = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+                  const dd = ("0" + dt.getDate()).slice(-2);
+                  const mStr = monthNamesF2[dt.getMonth()];
+                  const yyyy = dt.getFullYear();
+                  const hh = ("0" + dt.getHours()).slice(-2);
+                  const mm = ("0" + dt.getMinutes()).slice(-2);
+                  const finalStr = dd + " " + mStr + " " + yyyy + ", " + hh + ":" + mm;
                   document.getElementById("labelCreationDate").value = finalStr;
                 } else {
                   document.getElementById("labelCreationDate").value = "";
@@ -776,17 +780,23 @@
                 document.getElementById("labelCreationDate").value = "";
               }
 
-              // Check the "Employee Name" from DB
-              var dbEmpName = docDataPD["Employee Name"] || "";
+              // "Employee Name" -> "completedByEmployee"
+              const dbEmpNameRaw = docDataPD["Employee Name"];
+              let dbEmpName = "";
+              if (typeof dbEmpNameRaw === "string") {
+                dbEmpName = dbEmpNameRaw.trim();
+              }
               document.getElementById("completedByEmployee").value = dbEmpName;
 
-              // If "Employee Name" == "001", show Paul's signature
-              if(dbEmpName === "001"){
+              // If we have a name, try to load the matching signature image
+              if (dbEmpName) {
+                const imageFile = encodeURIComponent(dbEmpName + ".jpg");
+                const imagePath = `/assets/${imageFile}`;
                 document.getElementById("signatureBox").innerHTML = `
                   <img
-                    src="/assets/Employee_001_Paul K.jpg"
+                    src="${imagePath}"
                     style="width:100%; height:100%; object-fit:cover;"
-                    alt="Signature for Employee 001"
+                    alt="Signature for ${dbEmpName}"
                   >
                 `;
               } else {
@@ -932,7 +942,6 @@
               throw new Error(resultCF.error || "Unknown error from firebaseOrders function");
             }
 
-            // (Removed the toast showing entire JSON)
             console.log("Successfully saved data to Firestore:", resultCF);
 
           } catch(errCF){
@@ -1237,13 +1246,14 @@
 
     /********** fetchListingImages **********/
     async function fetchListingImages(listingId){
-      var responseLI = await fetch("/.netlify/functions/etsyImages?listingId=" + listingId, {
+      // Final portion that was missing previously:
+      const responseLI = await fetch("/.netlify/functions/etsyImages?listingId=" + listingId, {
         headers: { "access-token": localStorage.getItem("access_token") }
       });
       if(!responseLI.ok){
         throw new Error("Error fetching images for listing " + listingId + ": " + responseLI.statusText);
       }
-      var dataLI = await responseLI.json();
+      const dataLI = await responseLI.json();
       return dataLI.results;
     }
 
