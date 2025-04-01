@@ -4,6 +4,6 @@
 
 [[redirects]]
   from = "https://scanner.goldenspike.app"
-  to = "/screenTwo.html"
+  to = "/scanner.html"
   status = 200
   force = true
