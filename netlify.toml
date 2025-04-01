@@ -1,12 +1,3 @@
 [build]
-  publish = "."
+  publish = "public"
   functions = "netlify/functions"
-
-[[redirects]]
-  from = "/*"
-  to = "/screenTwo.html"
-  status = 200
-  force = true
-  [redirects.conditions]
-    Host = ["scanner.goldenspike.app"]
-    
