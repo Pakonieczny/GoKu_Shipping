@@ -1,4 +1,20 @@
 [build]
-  publish = "."
+  command = "npm run build"
+  publish = "public"
   functions = "netlify/functions"
 
+[functions]
+  node_bundler = "esbuild"
+  external_node_modules = ["form-data", "node-fetch", "formidable"]
+
+[[functions]]
+  name = "imageUpload"
+  rawBody = true
+
+[[redirects]]
+  from = "/*"
+  to = "/screenTwo.html"
+  status = 200
+  force = true
+  [redirects.conditions]
+    Host = ["scanner.goldenspike.app"]
