@@ -1,0 +1,1440 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>Etsy Order & OAuth Integration</title>
+
+  <!-- Materialize CSS -->
+  <link
+    rel="stylesheet"
+    href="https://cdnjs.cloudflare.com/ajax/libs/materialize/1.0.0/css/materialize.min.css"
+  >
+  <style>
+    /* Hide page initially for a fade-in effect */
+    body {
+      background-color: white;
+      margin: 0;
+      height: 100vh;
+      position: relative;
+      opacity: 0; /* hidden initially */
+      transition: opacity 0s; /* fade-in controlled by JS */
+    }
+
+    /* Main UI Buttons */
+    #connectEtsyBtn {
+      position: absolute;
+      left: 50px;
+      top: 20px;
+      /* width/height not specified in CSS => treat as 0 for defaults */
+    }
+
+    /* "Open Config" button */
+    #openConfigBtn {
+      position: absolute;
+      left: 50px;
+      top: 110px;
+      /* no width/height => 0 */
+    }
+
+    /* "Order Link" button */
+    #orderLinkBtn {
+      position: absolute;
+      left: 120px;
+      top: 20px;
+      background: transparent;
+      border: none;
+      cursor: pointer;
+      padding: 0;
+      outline: none;
+      /* no width/height => 0 */
+    }
+    #orderLinkBtn img {
+      width: 14px;
+      height: 14px;
+      display: block;
+    }
+
+    /* "Tracking Link" button */
+    #trackingLinkBtn {
+      position: absolute;
+      left: 160px;
+      top: 20px;
+      background: transparent;
+      border: none;
+      cursor: pointer;
+      padding: 0;
+      outline: none;
+      z-index: 9999;
+      display: none; /* hidden by default */
+      /* no width/height => 0 */
+    }
+    #trackingLinkBtn img {
+      width: 17px;
+      height: 17px;
+      display: block;
+    }
+
+    #etsyOrderNumber {
+      position: absolute;
+      left: 50px;
+      top: 160px;
+      margin: 0;
+      padding: 0;
+      line-height: 1.0;
+      border: none;
+      border-bottom: 1px solid #000;
+      background: transparent !important;
+      text-align: left;
+      width: 250px; /* explicitly set => 250 */
+      font-size: 1em;
+      outline: none;
+      /* no explicit height => 0 */
+    }
+
+    /* Photo Grid and Preview Boxes */
+    #Photo_Grid {
+      position: absolute;
+      left: 400px;
+      top: 160px;
+      /* no width/height => 0,0 */
+      transform: scale(1.25);
+      transform-origin: top left;
+    }
+    #photoGridContainer {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      grid-template-rows: repeat(2, auto);
+      gap: 35px 5px;
+    }
+    .grid-cell {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+    }
+    .preview-box {
+      border: 1px solid black !important;
+      background: #f9f9f9;
+      width: 100%;
+      height: 150px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      overflow: hidden;
+      position: relative;
+      user-select: none;
+    }
+    .preview-box img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      transform-origin: center center;
+      transition: transform 0.2s ease;
+    }
+
+    /* 16 text-box-absolute elements */
+    .text-box-absolute {
+      position: absolute;
+      border: none !important;
+      outline: none !important;
+      background: transparent !important;
+      text-decoration: none !important;
+      box-shadow: none !important;
+      font-size: 0.8em !important;
+      width: 60px;
+      height: 20px;
+      text-align: left;
+      line-height: 1.0;
+      padding: 0 2px 2px 2px;
+      box-sizing: border-box;
+      /* But no left/top in code => default to 0,0 in JS  */
+    }
+
+    /* Order Details text area */
+    #orderDetails {
+      position: absolute;
+      border: 1px solid black;
+      width: 300px; /* explicitly set => 300 */
+      height: 175px; /* explicitly => 175 */
+      box-sizing: border-box;
+      outline: none;
+      background: transparent;
+      font-size: 0.9em;
+      line-height: 1.5;
+      resize: none;
+      text-align: left;
+      overflow-y: auto;
+      /* no left/top => 0,0 */
+    }
+
+    /* Customer Message History text area */
+    #customerMessageHistory {
+      position: absolute;
+      border: 1px solid black;
+      width: 300px; /* => 300 */
+      height: 175px; /* => 175 */
+      box-sizing: border-box;
+      outline: none;
+      background: transparent;
+      font-size: 0.9em;
+      line-height: 1.5;
+      resize: none;
+      text-align: left;
+      overflow-y: auto;
+      /* no left/top => 0,0 */
+    }
+
+    /* Single-line text boxes */
+    #dateOrdered,
+    #shipDate,
+    #labelCreationDate,
+    #employeeName,
+    #completedByEmployee {
+      position: absolute;
+      width: 200px; /* => 200 */
+      height: 20px; /* => 20 */
+      box-sizing: border-box;
+      outline: none;
+      background: transparent;
+      font-size: 0.9em;
+      /* no left/top => 0,0 */
+    }
+
+    /* #dateOrdered => bold + black underline */
+    #dateOrdered {
+      font-weight: bold !important;
+      border-bottom: 1px solid black !important;
+    }
+
+    /* #shipDate => bold + black underline */
+    #shipDate {
+      font-weight: bold !important;
+      border-bottom: 1px solid black !important;
+    }
+
+    /* #employeeName => bold, no underline */
+    #employeeName {
+      font-weight: bold;
+    }
+
+    /* #labelCreationDate => bold+italic + black underline */
+    #labelCreationDate {
+      font-weight: bold !important;
+      font-style: italic !important;
+      border-bottom: 1px solid black !important;
+    }
+
+    /* #completedByEmployee => bold+italic + black underline */
+    #completedByEmployee {
+      font-weight: bold !important;
+      font-style: italic !important;
+      border-bottom: 1px solid black !important;
+    }
+
+    /* Title texts */
+    #titleOrderDate,
+    #titleOrderDate2,
+    #titleShipDate,
+    #titleOrderDetails,
+    #titleBritesMessages,
+    #titlePurchasedItems,
+    #titleOrderNumber {
+      position: absolute;
+      font-size: 0.7em;
+      margin: 0;
+      padding: 0;
+      /* no left/top => 0,0, no width/height => 0 */
+    }
+    #titleOrderDate2 {
+      font-weight: bold;
+    }
+
+    /* Additional duplicates of "titleShipDate" */
+    #titleOrderCompletedOn,
+    #titleOrderCompletedBy,
+    #titleSignedInAs {
+      position: absolute;
+      font-size: 0.7em;
+      margin: 0;
+      padding: 0;
+    }
+    #titleOrderCompletedOn {
+      left: 50px; /* => 50 */
+      top: 460px; /* => 460 */
+      /* no width/height => 0 */
+    }
+    #titleOrderCompletedBy {
+      left: 50px; /* => 50 */
+      top: 480px; /* => 480 */
+      /* no width/height => 0 */
+    }
+    #titleSignedInAs {
+      left: 50px; /* => 50 */
+      top: 500px; /* => 500 */
+      /* no width/height => 0 */
+    }
+
+    /* Configuration Modal styling */
+    .modal {
+      position: fixed !important;
+      /* centered horizontally & vertically */
+      top: 50% !important;
+      left: 50% !important;
+      transform: translate(-50%, -50%) !important;
+      height: auto !important;
+      max-height: 70vh !important;
+      width: auto !important;
+      max-width: 650px !important;
+      overflow-y: scroll !important;
+    }
+    .modal .modal-content {
+      overflow-y: auto;
+      font-size: 0.9em;
+      text-align: left !important;
+    }
+    .modal .modal-footer {
+      display: flex !important;
+      justify-content: center !important;
+      align-items: center !important;
+      padding: 10px;
+      background: white;
+      font-size: 0.9em;
+    }
+    table.striped {
+      width: 100%;
+    }
+    table.striped th,
+    table.striped td {
+      padding: 8px;
+      text-align: center;
+    }
+    input[type="number"] {
+      width: 70px;
+      font-size: 0.8em;
+    }
+
+    /* "Signature Box" at 25px tall by 50px wide */
+    #signatureBox {
+      position: absolute;
+      left: 400px; /* => 400 */
+      top: 360px;  /* => 360 */
+      width: 50px; /* => 50 */
+      height: 25px;/* => 25 */
+      background: #f9f9f9;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      overflow: hidden;
+      user-select: none;
+      border-bottom: 1px solid black !important;
+    }
+  </style>
+</head>
+
+<body>
+  <!-- WRAP SCREEN ONE CONTENT IN THIS CONTAINER -->
+  <div id="screenOne">
+    <!-- Main UI Buttons -->
+    <button id="connectEtsyBtn" class="configurable btn waves-effect waves-light">Connect to Etsy</button>
+    <button id="openConfigBtn" class="configurable btn waves-effect waves-light">Open Config</button>
+
+    <!-- "Order Link" button -->
+    <button id="orderLinkBtn" name="Order Link">
+      <img src="assets/Globe.png" alt="Order Link Icon" />
+    </button>
+
+    <!-- "Tracking Link" button -->
+    <button id="trackingLinkBtn" name="Tracking Link">
+      <img src="assets/USPS.png" alt="Tracking Link Icon" />
+    </button>
+
+    <!-- Etsy Order Fields -->
+    <input type="text" id="etsyOrderNumber" placeholder="Etsy Order Number" />
+
+    <!-- Photo Grid -->
+    <div id="Photo_Grid">
+      <div id="photoGridContainer">
+        <div class="grid-cell">
+          <div class="preview-box" id="previewCell0">Empty</div>
+        </div>
+        <div class="grid-cell">
+          <div class="preview-box" id="previewCell1">Empty</div>
+        </div>
+        <div class="grid-cell">
+          <div class="preview-box" id="previewCell2">Empty</div>
+        </div>
+        <div class="grid-cell">
+          <div class="preview-box" id="previewCell3">Empty</div>
+        </div>
+        <div class="grid-cell">
+          <div class="preview-box" id="previewCell4">Empty</div>
+        </div>
+        <div class="grid-cell">
+          <div class="preview-box" id="previewCell5">Empty</div>
+        </div>
+        <div class="grid-cell">
+          <div class="preview-box" id="previewCell6">Empty</div>
+        </div>
+        <div class="grid-cell">
+          <div class="preview-box" id="previewCell7">Empty</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 16 text-box-absolute elements -->
+    <input type="text" id="quantityCell0" class="text-box-absolute" readonly />
+    <input type="text" id="quantityCell1" class="text-box-absolute" readonly />
+    <input type="text" id="quantityCell2" class="text-box-absolute" readonly />
+    <input type="text" id="quantityCell3" class="text-box-absolute" readonly />
+    <input type="text" id="quantityCell4" class="text-box-absolute" readonly />
+    <input type="text" id="quantityCell5" class="text-box-absolute" readonly />
+    <input type="text" id="quantityCell6" class="text-box-absolute" readonly />
+    <input type="text" id="quantityCell7" class="text-box-absolute" readonly />
+
+    <input type="text" id="metalCell0" class="text-box-absolute" readonly />
+    <input type="text" id="metalCell1" class="text-box-absolute" readonly />
+    <input type="text" id="metalCell2" class="text-box-absolute" readonly />
+    <input type="text" id="metalCell3" class="text-box-absolute" readonly />
+    <input type="text" id="metalCell4" class="text-box-absolute" readonly />
+    <input type="text" id="metalCell5" class="text-box-absolute" readonly />
+    <input type="text" id="metalCell6" class="text-box-absolute" readonly />
+    <input type="text" id="metalCell7" class="text-box-absolute" readonly />
+
+    <!-- Order Details (read-only) -->
+    <textarea id="orderDetails" readonly></textarea>
+
+    <!-- Customer Message History -->
+    <textarea id="customerMessageHistory"></textarea>
+
+    <!-- Title texts -->
+    <div id="titleOrderDate">Order Date:</div>
+    <div id="titleOrderDate2" style="font-weight:bold;"></div>
+    <div id="titleShipDate">Ship By:</div>
+
+    <!-- Additional duplicates of "titleShipDate" -->
+    <div id="titleOrderCompletedOn">Last Updated On:</div>
+    <div id="titleOrderCompletedBy">Updated By:</div>
+    <div id="titleSignedInAs">Signed In As:</div>
+
+    <div id="titleOrderDetails">Order Details:</div>
+    <div id="titleBritesMessages">Brites Messages</div>
+    <div id="titlePurchasedItems">Purchased Items</div>
+    <div id="titleOrderNumber">Order Number</div>
+
+    <!-- Single-line text boxes -->
+    <input type="text" id="dateOrdered" readonly />
+    <input type="text" id="shipDate" readonly />
+
+    <input type="text" id="labelCreationDate" placeholder="Label Creation Date" />
+    <input type="text" id="employeeName" placeholder="Employee Name" />
+    <input type="text" id="completedByEmployee" placeholder="Completed By Employee" />
+
+    <!-- "Signature Box" -->
+    <div id="signatureBox">Sig Box</div>
+
+    <!-- Configuration Modal -->
+    <div id="configModal" class="modal">
+      <div class="modal-content">
+        <table class="striped" id="configTable">
+          <thead>
+            <tr>
+              <th>Component Name</th>
+              <th>Left (px)</th>
+              <th>Top (px)</th>
+              <th>Width (px)</th>
+              <th>Height (px)</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+      <div class="modal-footer">
+        <a href="#!" id="saveConfigBtn" class="modal-close waves-effect waves-green btn">
+          Save Config
+        </a>
+      </div>
+    </div>
+
+    <!-- "Save & Update" button (formerly "Go to Screen Two") -->
+    <button id="goScreenTwoBtn" class="btn" style="position:absolute; left:180px; top:110px;">
+      Save & Update
+    </button>
+  </div> <!-- end #screenOne -->
+
+  <!-- Container for the second screen markup -->
+  <div id="secondaryContainer"></div>
+
+  <!-- "User Log In" Modal (re-enabled) -->
+  <div id="userLoginModal" class="modal">
+    <div class="modal-content">
+      <h5>User Log In</h5>
+      <p>Please enter your 3-digit Employee Number:</p>
+      <input type="text" id="employeeNumberInput" placeholder="123" />
+    </div>
+    <div class="modal-footer">
+      <button id="employeeLoginBtn" class="btn">Log In</button>
+    </div>
+  </div>
+
+  <!-- jQuery & Materialize -->
+  <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+  <script
+    src="https://cdnjs.cloudflare.com/ajax/libs/materialize/1.0.0/js/materialize.min.js"
+  ></script>
+
+  <script>
+    /********** Global Variables **********/
+    window.receiptIsGift = null;
+    window.receiptGiftMessage = null;
+    window.orderName = "";
+    window.orderStatus = "";
+    window.orderIsShipped = "";
+    window.cachedOrderItems = [];
+    window.orderShippedTimestamp = null;
+    window.orderShipments = [];
+    window.currentTracking = null;
+    window.currentCarrier = null;
+
+    /********** Check for Access Token / Code **********/
+    (function(){
+      var urlParams = new URLSearchParams(window.location.search);
+      var accessToken = urlParams.get("access_token");
+      if(accessToken){
+        localStorage.setItem("access_token", accessToken);
+        window.history.replaceState({}, document.title, window.location.pathname);
+        M.toast({html:"Connection Successful!"});
+        console.log("Access token received:", accessToken);
+      } else {
+        var authCode = urlParams.get("code");
+        if(authCode){
+          var storedCodeVerifier = localStorage.getItem("etsy_code_verifier");
+          if(storedCodeVerifier){
+            window.location.href =
+              "/.netlify/functions/exchangeToken?code=" +
+              encodeURIComponent(authCode) +
+              "&code_verifier=" +
+              encodeURIComponent(storedCodeVerifier);
+          } else {
+            console.error("No code verifier found in localStorage.");
+          }
+        }
+      }
+    })();
+
+    /********** OAuth Helpers **********/
+    function generateRandomString(length){
+      var chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+      var text = "";
+      for(var i = 0; i < length; i++){
+        text += chars.charAt(Math.floor(Math.random() * chars.length));
+      }
+      return text;
+    }
+    async function generateCodeChallenge(codeVerifier){
+      var encoder = new TextEncoder();
+      var data = encoder.encode(codeVerifier);
+      var digest = await crypto.subtle.digest("SHA-256", data);
+      var base64String = btoa(String.fromCharCode.apply(null, new Uint8Array(digest)));
+      return base64String.replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+    }
+
+    /********** Configuration System **********/
+    var configComponentIDs = [
+      "connectEtsyBtn", "openConfigBtn",
+      "orderLinkBtn", "trackingLinkBtn", "etsyOrderNumber",
+      "Photo_Grid",
+      "quantityCell0", "quantityCell1", "quantityCell2", "quantityCell3",
+      "quantityCell4", "quantityCell5", "quantityCell6", "quantityCell7",
+      "metalCell0", "metalCell1", "metalCell2", "metalCell3",
+      "metalCell4", "metalCell5", "metalCell6", "metalCell7",
+      "orderDetails", "customerMessageHistory", "dateOrdered", "shipDate",
+      "labelCreationDate", "employeeName", "completedByEmployee",
+      "titleOrderDate", "titleOrderDate2", "titleShipDate",
+      "titleOrderCompletedOn", "titleOrderCompletedBy", "titleSignedInAs",
+      "titleOrderDetails", "titleBritesMessages", "titlePurchasedItems", "titleOrderNumber",
+      "goScreenTwoBtn", "signatureBox", "userLoginModal", "employeeNumberInput", "employeeLoginBtn"
+    ];
+
+    /********** (NEW!) defaultPositions reflecting EXACT values from the CSS above **********/
+    const defaultPositions = {
+      connectEtsyBtn:         { left:1000,  top:600,  width:175,   height:36 },
+      openConfigBtn:          { left:1184,  top:600, width:150,   height:36 },
+      orderLinkBtn:           { left:640, top:76,  width:30,   height:30 },
+      trackingLinkBtn:        { left:134, top:248,  width:15,   height:16 },
+      etsyOrderNumber:        { left:11,  top:7, width:282, height:45},
+      Photo_Grid:             { left:535, top:115, width:633,   height:274 },
+      quantityCell0:          { left:536,   top:307,   width:153,   height:42 },
+      quantityCell1:          { left:737,   top:305,   width:153,   height:45 },
+      quantityCell2:          { left:937,   top:305,   width:153,   height:45 },
+      quantityCell3:          { left:1136,   top:305,   width:153,   height:45 },
+      quantityCell4:          { left:535,   top:521,   width:153,   height:45 },
+      quantityCell5:          { left:737,   top:521,   width:153,   height:45 },
+      quantityCell6:          { left:937,   top:521,   width:153,   height:45 },
+      quantityCell7:          { left:1136,   top:521,   width:153,   height:45 },
+      metalCell0:             { left:537,   top:290,   width:153,   height:45 },
+      metalCell1:             { left:737,   top:290,   width:153,   height:45 },
+      metalCell2:             { left:937,   top:290,   width:153,   height:45 },
+      metalCell3:             { left:1136,   top:290,   width:153,   height:45 },
+      metalCell4:             { left:536,   top:536,   width:153,   height:45 },
+      metalCell5:             { left:737,   top:536,   width:153,   height:45 },
+      metalCell6:             { left:937,   top:536,   width:153,   height:45 },
+      metalCell7:             { left:1136,   top:536,   width:153,   height:45 },
+      orderDetails:           { left:10,   top:162,   width:300, height:342 },
+      customerMessageHistory: { left:10,   top:536,   width:300, height:93 },
+      dateOrdered:            { left:10,   top:100,   width:145, height:30 },
+      shipDate:               { left:164,   top:100,   width:145, height:30 },
+      labelCreationDate:      { left:380,   top:23,   width:145, height:30 },
+      employeeName:           { left:1015,   top:23,   width:100, height:30 },
+      completedByEmployee:    { left:537,   top:23,   width:100, height:25 },
+      titleOrderDate:         { left:10,   top:82,   width:100,   height:15 },
+      titleOrderDate2:        { left:127,   top:209,   width:145,   height:15 },
+      titleShipDate:          { left:167,   top:82,   width:100,   height:15 },
+      titleOrderCompletedOn:  { left:381,  top:7, width:107,   height:15 },
+      titleOrderCompletedBy:  { left:538,  top:7, width:105,   height:15 },
+      titleSignedInAs:        { left:1016,  top:7, width:75,   height:15 },
+      titleOrderDetails:      { left:11,   top:144,   width:100,   height:15 },
+      titleBritesMessages:    { left:11,   top:518,   width:100,   height:15 },
+      titlePurchasedItems:    { left:538,   top:84,   width:100,   height:15 },
+      titleOrderNumber:       { left:11,   top:7,   width:100,   height:15 },
+      goScreenTwoBtn:         { left:1141, top:7, width:185,   height:36 },
+      signatureBox:           { left:624, top:19, width:105,  height:34 },
+      userLoginModal:         { left:50,   top:50,   width:0,   height:0 },
+      employeeNumberInput:    { left:50,   top:50,   width:250,   height:35 },
+      employeeLoginBtn:       { left:50,   top:50,   width:100,   height:35 }
+    };
+
+    function loadPositions(){
+      for(var i=0; i<configComponentIDs.length; i++){
+        var id = configComponentIDs[i];
+        var el = document.getElementById(id);
+        if(!el) continue;
+
+        // Grab defaults (or zero if none).
+        var def = defaultPositions[id] || { left:0, top:0, width:0, height:0 };
+
+        // Check localStorage first:
+        var left = localStorage.getItem("pos-"+id+"-left");
+        var top  = localStorage.getItem("pos-"+id+"-top");
+        var w    = localStorage.getItem("pos-"+id+"-width");
+        var h    = localStorage.getItem("pos-"+id+"-height");
+
+        // If there's nothing in localStorage, fall back to defaults:
+        if(left === null)  left = def.left;
+        if(top === null)   top  = def.top;
+        if(w === null)     w    = def.width;
+        if(h === null)     h    = def.height;
+
+        el.style.left   = left + "px";
+        el.style.top    = top  + "px";
+        el.style.width  = w    + "px";
+        el.style.height = h    + "px";
+      }
+    }
+
+    function populateConfigTable(){
+      var tbody = document.getElementById("configTable").querySelector("tbody");
+      tbody.innerHTML = "";
+
+      for(var i=0; i<configComponentIDs.length; i++){
+        var id = configComponentIDs[i];
+        var el = document.getElementById(id);
+        if(!el) continue;
+
+        var compName = (el.textContent && el.textContent.trim()) || (el.value && el.value.trim()) || id;
+        var cs = window.getComputedStyle(el);
+
+        var leftVal = (cs.left === "auto") ? 0 : parseInt(cs.left, 10);
+        var topVal = (cs.top === "auto") ? 0 : parseInt(cs.top, 10);
+        var widthVal = (cs.width === "auto") ? 0 : parseInt(cs.width, 10);
+        var heightVal = (cs.height === "auto") ? 0 : parseInt(cs.height, 10);
+
+        var row = document.createElement("tr");
+        row.innerHTML = `
+          <td>${compName}</td>
+          <td><input type='number' value='${leftVal}' data-id='${id}' class='left-input'></td>
+          <td><input type='number' value='${topVal}' data-id='${id}' class='top-input'></td>
+          <td><input type='number' value='${widthVal}' data-id='${id}' class='width-input'></td>
+          <td><input type='number' value='${heightVal}' data-id='${id}' class='height-input'></td>
+        `;
+        tbody.appendChild(row);
+
+        row.querySelector(".left-input").addEventListener("input", function(){
+          var tgt = document.getElementById(this.getAttribute("data-id"));
+          if(tgt) tgt.style.left = parseInt(this.value, 10) + "px";
+        });
+        row.querySelector(".top-input").addEventListener("input", function(){
+          var tgt2 = document.getElementById(this.getAttribute("data-id"));
+          if(tgt2) tgt2.style.top = parseInt(this.value, 10) + "px";
+        });
+        row.querySelector(".width-input").addEventListener("input", function(){
+          var tgt3 = document.getElementById(this.getAttribute("data-id"));
+          if(tgt3) tgt3.style.width = parseInt(this.value, 10) + "px";
+        });
+        row.querySelector(".height-input").addEventListener("input", function(){
+          var tgt4 = document.getElementById(this.getAttribute("data-id"));
+          if(tgt4) tgt4.style.height = parseInt(this.value, 10) + "px";
+        });
+      }
+    }
+
+    function saveConfiguration(){
+      for(var i=0; i<configComponentIDs.length; i++){
+        var id = configComponentIDs[i];
+        var el = document.getElementById(id);
+        if(el){
+          var cs = window.getComputedStyle(el);
+          var leftVal = parseInt(cs.left, 10) || 0;
+          var topVal = parseInt(cs.top, 10) || 0;
+          var widthVal = parseInt(cs.width, 10) || 0;
+          var heightVal = parseInt(cs.height, 10) || 0;
+          localStorage.setItem("pos-"+id+"-left", leftVal);
+          localStorage.setItem("pos-"+id+"-top", topVal);
+          localStorage.setItem("pos-"+id+"-width", widthVal);
+          localStorage.setItem("pos-"+id+"-height", heightVal);
+        }
+      }
+      console.log("Configuration saved.");
+    }
+
+    document.addEventListener("DOMContentLoaded", function(){
+      M.AutoInit();
+
+      // Fade in body
+      document.body.style.opacity = 0;
+      setTimeout(function(){
+        loadPositions();
+        document.body.style.opacity = 1;
+      }, 250);
+
+      // **Re-enabled**: Show the "User Log In" modal on load
+      var userLoginModalElem = document.getElementById("userLoginModal");
+      var userLoginModal = M.Modal.init(userLoginModalElem, {
+        dismissible: false
+      });
+      userLoginModal.open(); // <--- This line ensures the modal appears on page load again
+
+      // "Log In" button for employees
+      var employeeLoginBtn = document.getElementById("employeeLoginBtn");
+      var employeeNumberInput = document.getElementById("employeeNumberInput");
+      if(employeeLoginBtn){
+        employeeLoginBtn.addEventListener("click", async function(){
+          try {
+            var empNumber = employeeNumberInput.value.trim();
+            if(!empNumber || empNumber.length !== 3){
+              M.toast({html: "Please enter a valid 3-digit Employee Number!"});
+              return;
+            }
+            // Retrieve doc "Employee Numbers" from Brites_Orders
+            var responseEN = await fetch("/.netlify/functions/firebaseOrders?orderId=Employee Numbers");
+            if(!responseEN.ok){
+              M.toast({ html: "Error fetching Employee Numbers doc!" });
+              return;
+            }
+            var resultEN = await responseEN.json();
+            if(!resultEN.success || !resultEN.data){
+              M.toast({ html: "No data found for Employee Numbers doc!" });
+              return;
+            }
+            var docDataEN = resultEN.data;
+            if(docDataEN[empNumber]){
+              var nameFound = docDataEN[empNumber];
+              M.toast({ html: "Welcome, " + nameFound + "!" });
+              // store in "employeeName"
+              document.getElementById("employeeName").value = nameFound;
+              userLoginModal.close();
+            } else {
+              M.toast({ html: "Employee # " + empNumber + " not found in DB!" });
+            }
+          } catch(errEN){
+            console.error("Error in employee login flow:", errEN);
+            M.toast({ html: "Error: " + errEN.message });
+          }
+        });
+      }
+
+      // "Open Config" button
+      document.getElementById("openConfigBtn").addEventListener("click", function(){
+        populateConfigTable();
+        var modalElem = document.getElementById("configModal");
+        var instance = M.Modal.getInstance(modalElem);
+        instance.open();
+      });
+      document.getElementById("saveConfigBtn").addEventListener("click", function(){
+        saveConfiguration();
+      });
+
+      // Connect to Etsy
+      var connectEtsyBtn = document.getElementById("connectEtsyBtn");
+      if(connectEtsyBtn){
+        connectEtsyBtn.addEventListener("click", async function(){
+          var codeVerifier = generateRandomString(64);
+          localStorage.setItem("etsy_code_verifier", codeVerifier);
+          var codeChallenge = await generateCodeChallenge(codeVerifier);
+          var state = "randomState123";
+          var scope = "listings_w listings_r transactions_r transactions_w";
+          var CLIENT_ID = "k75zdspz4r99txpqdji7i2em"; // example
+          var redirectUri = "https://goldenspike.app";
+
+          var etsyAuthUrl =
+            "https://www.etsy.com/oauth/connect?response_type=code" +
+            "&client_id=" + CLIENT_ID +
+            "&redirect_uri=" + encodeURIComponent(redirectUri) +
+            "&scope=" + encodeURIComponent(scope) +
+            "&state=" + state +
+            "&code_challenge=" + encodeURIComponent(codeChallenge) +
+            "&code_challenge_method=S256";
+
+          console.log("Redirecting to Etsy OAuth URL:", etsyAuthUrl);
+          window.location.href = etsyAuthUrl;
+        });
+      }
+
+      // Press Enter in "etsyOrderNumber" to pull Etsy + Database
+      var etsyOrderInput = document.getElementById("etsyOrderNumber");
+      etsyOrderInput.addEventListener("keydown", async function(e){
+        if(e.key === "Enter"){
+          const orderNumber = etsyOrderInput.value.trim();
+          if(orderNumber !== ""){
+            // 1) Pull from Etsy
+            const orderData = await pullEtsyOrderDetails(orderNumber);
+            if(orderData){
+              await updateImageGrid(orderData);
+            }
+
+            // 2) Pull Database
+            try {
+              const respPD = await fetch("/.netlify/functions/firebaseOrders?orderId=" + encodeURIComponent(orderNumber));
+              const resPD = await respPD.json();
+              if(!respPD.ok){
+                throw new Error(resPD.error || "Unknown error from firebaseOrders function");
+              }
+
+              const docDataPD = resPD.data || {};
+
+              // Confirm the doc's "Order Number" matches the requested order
+              const dbOrderNum = docDataPD["Order Number"];
+              if (dbOrderNum !== orderNumber) {
+                M.toast({ html: "Order mismatch: doc has '" + dbOrderNum + "', expected '" + orderNumber + "'" });
+                return;
+              }
+
+              // Brites Messages -> "customerMessageHistory"
+              if (typeof docDataPD["Brites Messages"] === "string") {
+                document.getElementById("customerMessageHistory").value = docDataPD["Brites Messages"];
+                M.toast({ html: "Brites Messages loaded!" });
+              } else {
+                document.getElementById("customerMessageHistory").value = "";
+              }
+
+              // Shipping Label Timestamps -> "labelCreationDate"
+              if (docDataPD["Shipping Label Timestamps"]) {
+                const dt = new Date(docDataPD["Shipping Label Timestamps"]);
+                if (!isNaN(dt.valueOf())) {
+                  const monthNamesF2 = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+                  const dd = ("0" + dt.getDate()).slice(-2);
+                  const mStr = monthNamesF2[dt.getMonth()];
+                  const yyyy = dt.getFullYear();
+                  const hh = ("0" + dt.getHours()).slice(-2);
+                  const mm = ("0" + dt.getMinutes()).slice(-2);
+                  const finalStr = dd + " " + mStr + " " + yyyy + ", " + hh + ":" + mm;
+                  document.getElementById("labelCreationDate").value = finalStr;
+                } else {
+                  document.getElementById("labelCreationDate").value = "";
+                }
+              } else {
+                document.getElementById("labelCreationDate").value = "";
+              }
+
+              // "Employee Name" -> "completedByEmployee"
+              const dbEmpNameRaw = docDataPD["Employee Name"];
+              let dbEmpName = "";
+              if (typeof dbEmpNameRaw === "string") {
+                dbEmpName = dbEmpNameRaw.trim();
+              }
+              document.getElementById("completedByEmployee").value = dbEmpName;
+
+              // If we have a name, try to load the matching signature image
+              if (dbEmpName) {
+                const imageFile = encodeURIComponent(dbEmpName + ".jpg");
+                const imagePath = `/assets/${imageFile}`;
+                document.getElementById("signatureBox").innerHTML = `
+                  <img
+                    src="${imagePath}"
+                    style="width:100%; height:100%; object-fit:cover;"
+                    alt="Signature for ${dbEmpName}"
+                  >
+                `;
+              } else {
+                document.getElementById("signatureBox").innerHTML = "Sig Box";
+              }
+
+            } catch(errPD){
+              M.toast({ html: "Error: " + errPD.message });
+              console.error("Failed to pull data from Firestore:", errPD);
+            }
+          }
+        }
+      });
+
+      // "Order Link" button
+      document.getElementById("orderLinkBtn").addEventListener("click", function(){
+        var baseUrl = "https://www.etsy.com/your/orders/sold?ref=seller-platform-mcnav&order_id=0000000000";
+        var currentOrder = etsyOrderInput.value.trim();
+        if(!currentOrder){
+          console.log("No order number entered.");
+          return;
+        }
+        var customLink = baseUrl.replace("0000000000", currentOrder);
+        window.open(customLink, "_blank");
+      });
+
+      // "Tracking Link" button
+      document.getElementById("trackingLinkBtn").addEventListener("click", function(){
+        if(!window.currentTracking){
+          console.log("No tracking number available.");
+          return;
+        }
+        var templateUrl = "";
+        if(window.currentCarrier && window.currentCarrier.toUpperCase() !== "USPS"){
+          templateUrl = "https://chitchats.com/tracking/0000000000000";
+          templateUrl = templateUrl.replace("0000000000000", window.currentTracking);
+        } else {
+          templateUrl = "https://tools.usps.com/go/TrackConfirmAction_input?qtc_tLabels1=0000000000000000000000000000000000";
+          templateUrl = templateUrl.replace("0000000000000000000000000000000000", window.currentTracking);
+        }
+        window.open(templateUrl, "_blank");
+      });
+
+      // Zoom + Drag for preview boxes
+      var previewBoxes = document.querySelectorAll('.preview-box');
+      previewBoxes.forEach(function(box){
+        var isDragging = false;
+        var lastX = 0;
+        var lastY = 0;
+
+        box.addEventListener('wheel', function(e){
+          var img = box.querySelector('img');
+          if(!img) return;
+          e.preventDefault();
+          var currentScale = parseFloat(img.dataset.scale) || 1;
+          var offsetX = parseFloat(img.dataset.offsetX) || 0;
+          var offsetY = parseFloat(img.dataset.offsetY) || 0;
+          if(e.deltaY < 0){
+            currentScale *= 1.1;
+          } else {
+            currentScale /= 1.1;
+            if(currentScale <= 1){
+              currentScale = 1;
+              offsetX = 0;
+              offsetY = 0;
+            }
+          }
+          currentScale = Math.max(1, Math.min(4, currentScale));
+          img.dataset.scale = currentScale;
+          img.dataset.offsetX = offsetX;
+          img.dataset.offsetY = offsetY;
+          img.style.transform = "translate(" + offsetX + "px, " + offsetY + "px) scale(" + currentScale + ")";
+        });
+
+        box.addEventListener('mousedown', function(e){
+          var img = box.querySelector('img');
+          if(!img) return;
+          var currentScale = parseFloat(img.dataset.scale) || 1;
+          if(currentScale <= 1) return;
+          e.preventDefault();
+          isDragging = true;
+          lastX = e.clientX;
+          lastY = e.clientY;
+        });
+
+        box.addEventListener('mousemove', function(e){
+          if(!isDragging) return;
+          e.preventDefault();
+          var img = box.querySelector('img');
+          if(!img) return;
+          var currentScale = parseFloat(img.dataset.scale) || 1;
+          var offsetX = parseFloat(img.dataset.offsetX) || 0;
+          var offsetY = parseFloat(img.dataset.offsetY) || 0;
+          var dx = e.clientX - lastX;
+          var dy = e.clientY - lastY;
+          offsetX += dx;
+          offsetY += dy;
+          img.dataset.offsetX = offsetX;
+          img.dataset.offsetY = offsetY;
+          img.style.transform = "translate(" + offsetX + "px, " + offsetY + "px) scale(" + currentScale + ")";
+          lastX = e.clientX;
+          lastY = e.clientY;
+        });
+
+        box.addEventListener('mouseup', function(){
+          isDragging = false;
+        });
+        box.addEventListener('mouseleave', function(){
+          isDragging = false;
+        });
+      });
+
+      // "Save & Update" button (formerly go to screen two)
+      var goBtn = document.getElementById('goScreenTwoBtn');
+      if(goBtn){
+        goBtn.addEventListener('click', async function(){
+          // Incorporate "Connect Firebase" logic:
+          try {
+            var orderNumberVal = etsyOrderInput.value.trim();
+            var orderFromVal = window.orderName || "";
+            var userMsgsVal = document.getElementById("customerMessageHistory").value.trim();
+            var nowDate = new Date();
+            var shippingTS = nowDate.toISOString();
+            var empNameVal = document.getElementById("employeeName").value.trim();
+
+            var bodyData = {
+              orderNumber: orderNumberVal,
+              orderNumField: orderNumberVal,
+              clientName: orderFromVal,
+              britesMessages: userMsgsVal,
+              shippingLabelTimestamps: shippingTS,
+              employeeName: empNameVal
+            };
+
+            var responseCF = await fetch("/.netlify/functions/firebaseOrders", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify(bodyData)
+            });
+            var resultCF = await responseCF.json();
+
+            if(!responseCF.ok){
+              throw new Error(resultCF.error || "Unknown error from firebaseOrders function");
+            }
+
+            console.log("Successfully saved data to Firestore:", resultCF);
+
+          } catch(errCF){
+            M.toast({ html: "Error: " + errCF.message });
+            console.error("Failed to save data to Firestore:", errCF);
+          }
+
+          // Optionally go to screen two:
+          loadScreenTwo();
+        });
+      }
+    });
+
+    /********** loadScreenTwo (DOMParser) **********/
+    async function loadScreenTwo(){
+      try {
+        console.log("loadScreenTwo() called");
+        var responseST = await fetch("screenTwo.html");
+        var screenTwoHTML = await responseST.text();
+        console.log("Fetched screenTwo.html content:", screenTwoHTML);
+        var parserST = new DOMParser();
+        var docST = parserST.parseFromString(screenTwoHTML, "text/html");
+        var scriptElsST = docST.querySelectorAll("script");
+        console.log("Found " + scriptElsST.length + " <script> tags in screenTwo.html");
+        scriptElsST.forEach(function(scriptEl){ scriptEl.remove(); });
+        var finalHTMLst = docST.body.innerHTML;
+        var containerST = document.getElementById("secondaryContainer");
+        containerST.innerHTML = finalHTMLst;
+        var screenOneDivST = document.getElementById("screenOne");
+        if(screenOneDivST){
+          screenOneDivST.style.display = "none";
+        } else {
+          console.warn("No #screenOne found in DOM");
+        }
+        var screenTwoDivST = document.getElementById("screenTwo");
+        if(screenTwoDivST){
+          screenTwoDivST.style.display = "block";
+        } else {
+          console.warn("No #screenTwo found in injected HTML");
+        }
+        scriptElsST.forEach(function(oldScript, indexST){
+          var newScriptST = document.createElement("script");
+          if(oldScript.src){
+            newScriptST.src = oldScript.src;
+            console.log("Re-appending script from src:", oldScript.src);
+          } else {
+            newScriptST.textContent = oldScript.textContent;
+            console.log("Re-appending inline script #" + indexST);
+          }
+          document.body.appendChild(newScriptST);
+        });
+        setTimeout(function(){
+          if(typeof window.initScreenTwo === "function"){
+            console.log("Calling initScreenTwo() after scripts appended");
+            window.initScreenTwo();
+          } else {
+            console.log("No global initScreenTwo() found.");
+          }
+        }, 100);
+      } catch(errST){
+        console.error("Error loading screenTwo:", errST);
+      }
+    }
+
+    /********** updateImageGrid **********/
+    async function updateImageGrid(data){
+      var items = [];
+      if(data.transactions && Array.isArray(data.transactions)){
+        items = data.transactions;
+      } else if(data.shipments && Array.isArray(data.shipments)){
+        items = data.shipments;
+      } else if(Array.isArray(data)){
+        items = data;
+      } else if(data.results && Array.isArray(data.results)){
+        items = data.results;
+      } else if(data.orders && Array.isArray(data.orders)){
+        items = data.orders;
+      } else if(typeof data === "object" && data !== null){
+        // If we find an array inside some key, use that
+        for(var key in data){
+          if(Array.isArray(data[key])){
+            items = data[key];
+            break;
+          }
+        }
+      }
+      window.cachedOrderItems = items;
+
+      for(var i=0; i<8; i++){
+        var cell = document.getElementById("previewCell" + i);
+        var qtyBox = document.getElementById("quantityCell" + i);
+        var metalBox = document.getElementById("metalCell" + i);
+
+        if(cell){
+          if(i < items.length){
+            var item = items[i];
+            try {
+              var images = await fetchListingImages(item.listing_id);
+              if(images && images.length > 0){
+                cell.innerHTML =
+                  '<img ' +
+                  '  src="' + images[0].url_fullxfull + '" ' +
+                  '  alt="Listing Image ' + i + '" ' +
+                  '  data-scale="1" ' +
+                  '  data-offsetX="0" ' +
+                  '  data-offsetY="0"' +
+                  '>';
+              } else {
+                cell.innerHTML = "No images found";
+              }
+            } catch(errA){
+              console.error("Error fetching listing " + item.listing_id + ": ", errA);
+              cell.innerHTML = "Error loading image";
+            }
+            cell.style.cursor = "pointer";
+
+            // closure for i
+            (function(idx){
+              cell.onclick = function(){
+                showItemDetails(idx);
+              };
+            })(i);
+
+            if(qtyBox){
+              var actualQty = (item.quantity != null) ? item.quantity : 0;
+              qtyBox.value = " Quantity: " + actualQty;
+            }
+
+            if(metalBox){
+              var metalSel = "";
+              if(item.variations && Array.isArray(item.variations)){
+                var acceptedMetalNames = [
+                  "metal",
+                  "metal choice",
+                  "metal - engraving",
+                  "metal colour",
+                  "color",
+                  "metal choice / engraving option"
+                ];
+                var metalVar = item.variations.find(function(v){
+                  if(!v.formatted_name) return false;
+                  var nameLC = v.formatted_name.trim().toLowerCase();
+                  return (acceptedMetalNames.indexOf(nameLC) >= 0);
+                });
+                if(metalVar && metalVar.formatted_value){
+                  metalSel = metalVar.formatted_value;
+                }
+              }
+              metalBox.value = " Metal: " + metalSel;
+            }
+          } else {
+            cell.innerHTML = "Empty";
+            cell.style.cursor = "default";
+            cell.onclick = null;
+            if(qtyBox) qtyBox.value = "";
+            if(metalBox) metalBox.value = "";
+          }
+        }
+      }
+
+      if(items.length > 0){
+        showItemDetails(0);
+      } else {
+        document.getElementById("orderDetails").value = " ORDER DETAILS:\n\nNo items found.";
+      }
+    }
+
+    /********** showItemDetails **********/
+    function showItemDetails(index){
+      if(!window.cachedOrderItems || !window.cachedOrderItems[index]){
+        console.warn("No item at index:", index);
+        return;
+      }
+      var item = window.cachedOrderItems[index];
+      var details = "";
+
+      // ORDER FROM:
+      if(window.orderName){
+        details += " ORDER FROM: " + window.orderName + "\n";
+      }
+
+      // ORDER STATUS:
+      if(window.orderStatus){
+        details += " Order Status: " + window.orderStatus + "\n";
+      }
+
+      // Shipping Status:
+      if(window.orderIsShipped === "Shipped!"){
+        details += " Shipping Status:\n";
+      } else if(window.orderIsShipped){
+        details += " Shipping Status: " + window.orderIsShipped + "\n";
+      } else {
+        details += " Shipping Status:\n";
+      }
+
+      // If shipped
+      if(window.orderIsShipped === "Shipped!"){
+        if(window.orderShipments && window.orderShipments.length > 0){
+          var ship = window.orderShipments[0];
+          if(ship.carrier_name){
+            details += " Carrier Name: " + ship.carrier_name + "\n";
+            window.currentCarrier = ship.carrier_name;
+          }
+          if(ship.tracking_code){
+            details += " Tracking Number:\n" + ship.tracking_code + "\n\n";
+            window.currentTracking = ship.tracking_code;
+            if(window.currentCarrier && window.currentCarrier.toUpperCase() !== "USPS"){
+              document.getElementById("trackingLinkBtn").querySelector("img").src = "assets/ChitChats.png";
+            } else {
+              document.getElementById("trackingLinkBtn").querySelector("img").src = "assets/USPS.png";
+            }
+          } else {
+            details += "\n";
+            window.currentTracking = null;
+          }
+        } else {
+          details += "\n";
+          window.currentTracking = null;
+        }
+      } else {
+        window.currentTracking = null;
+      }
+
+      if(window.orderIsShipped === "Shipped!" && window.currentTracking){
+        document.getElementById("trackingLinkBtn").style.display = "block";
+      } else {
+        document.getElementById("trackingLinkBtn").style.display = "none";
+      }
+
+      details += " ORDER DETAILS:\n\n";
+
+      // Title: first 4 words
+      if(item.title){
+        var firstFour = item.title.trim().split(" ").slice(0,4).join(" ");
+        details += " Title: " + firstFour + "\n";
+      }
+
+      // SKU
+      if(item.sku){
+        details += " SKU: " + item.sku + "\n";
+      }
+
+      // Variations
+      if(item.variations && Array.isArray(item.variations)){
+        var acceptedMetalNames2 = [
+          "metal",
+          "metal choice",
+          "metal - engraving",
+          "metal colour",
+          "color",
+          "metal choice / engraving option"
+        ];
+        var acceptedLengthNames2 = [
+          "length",
+          "necklace length",
+          "metal/necklace length",
+          "metal choice / necklace length",
+          "necklace length in inches"
+        ];
+        for(var j=0; j<item.variations.length; j++){
+          var v2 = item.variations[j];
+          if(!v2.formatted_name || !v2.formatted_value) continue;
+          var nameLower2 = v2.formatted_name.trim().toLowerCase();
+          var val2 = v2.formatted_value.trim();
+
+          if(nameLower2 === "personalization" && val2 === "Not requested on this item."){
+            val2 = "Not Requested";
+            details += " Personalization: " + val2 + "\n";
+          } else if(acceptedMetalNames2.indexOf(nameLower2) >= 0){
+            details += " Metal Choice: " + val2 + "\n";
+          } else if(acceptedLengthNames2.indexOf(nameLower2) >= 0){
+            var lengthMap2 = {
+              "14&quot;": "14 Inches",
+              "16&quot;": "16 Inches",
+              "18&quot;": "18 Inches",
+              "20&quot;": "20 Inches",
+              "14\"\"": "14 Inches",
+              "16\"\"": "16 Inches",
+              "18\"\"": "18 Inches",
+              "20\"\"": "20 Inches"
+            };
+            if(lengthMap2[val2]){
+              val2 = lengthMap2[val2];
+            }
+            details += " Item Length: " + val2 + "\n";
+          } else {
+            details += " " + v2.formatted_name + ": " + v2.formatted_value + "\n";
+          }
+        }
+      }
+
+      // Gift details
+      if(window.receiptIsGift !== null && typeof window.receiptIsGift !== "undefined"){
+        details += " Marked as Gift: " + window.receiptIsGift + "\n";
+      }
+      if(window.receiptGiftMessage){
+        details += " Gift Message: " + window.receiptGiftMessage + "\n";
+      }
+
+      document.getElementById("orderDetails").value = details;
+    }
+
+    /********** fetchListingImages **********/
+    async function fetchListingImages(listingId){
+      const responseLI = await fetch("/.netlify/functions/etsyImages?listingId=" + listingId, {
+        headers: { "access-token": localStorage.getItem("access_token") }
+      });
+      if(!responseLI.ok){
+        throw new Error("Error fetching images for listing " + listingId + ": " + responseLI.statusText);
+      }
+      const dataLI = await responseLI.json();
+      return dataLI.results;
+    }
+
+    /********** pullEtsyOrderDetails **********/
+    function pullEtsyOrderDetails(orderNumber){
+      console.log("Pulling Etsy order details for order number:", orderNumber);
+      var token = localStorage.getItem("access_token");
+      return fetch("/.netlify/functions/etsyOrderProxy?orderId=" + encodeURIComponent(orderNumber), {
+        headers: { "access-token": token }
+      })
+      .then(function(r){ return r.json(); })
+      .then(function(data){
+        console.log("Etsy Order Data:", data);
+
+        window.receiptIsGift = (typeof data.is_gift !== "undefined") ? data.is_gift : null;
+        window.receiptGiftMessage = data.gift_message || "";
+        window.orderShipments = data.shipments || [];
+
+        var titleDate2 = document.getElementById("titleOrderDate2");
+        titleDate2.textContent = "";
+
+        if(data.name){
+          window.orderName = data.name;
+        } else {
+          window.orderName = "";
+        }
+        if(data.status){
+          window.orderStatus = data.status;
+        } else {
+          window.orderStatus = "";
+        }
+        if(data.is_shipped === true){
+          window.orderIsShipped = "Shipped!";
+        } else if(data.is_shipped === false){
+          window.orderIsShipped = "Not Shipped";
+        } else {
+          window.orderIsShipped = "";
+        }
+
+        var foundStamp = null;
+        if(data.shipped_timestamp && data.is_shipped === true){
+          foundStamp = data.shipped_timestamp;
+        }
+        else if(data.transactions && Array.isArray(data.transactions) && data.transactions.length > 0
+                && data.transactions[0].shipped_timestamp && data.is_shipped === true){
+          foundStamp = data.transactions[0].shipped_timestamp;
+        }
+        window.orderShippedTimestamp = foundStamp;
+
+        if(window.orderIsShipped === "Shipped!" && window.orderShippedTimestamp){
+          var d4 = new Date(window.orderShippedTimestamp * 1000);
+          var monthNames4 = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+          var day4 = ("0" + d4.getDate()).slice(-2);
+          var mStr4 = monthNames4[d4.getMonth()];
+          var y4 = d4.getFullYear();
+          titleDate2.textContent = "Shipped On: " + day4 + " " + mStr4 + " " + y4;
+        }
+
+        var msgBox = document.getElementById("customerMessageHistory");
+        if(data.message_from_buyer){
+          msgBox.value = data.message_from_buyer + "\n";
+        } else {
+          msgBox.value = "";
+        }
+
+        if(data.transactions && data.transactions.length > 0){
+          var firstTrans = data.transactions[0];
+          var monthNamesF = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+
+          if(firstTrans.created_timestamp){
+            var dT = new Date(firstTrans.created_timestamp * 1000);
+            var ddT = ("0" + dT.getDate()).slice(-2);
+            var mmT = monthNamesF[dT.getMonth()];
+            var yyT = dT.getFullYear();
+            document.getElementById("dateOrdered").value = " " + ddT + " " + mmT + " " + yyT;
+          } else {
+            document.getElementById("dateOrdered").value = "";
+          }
+
+          var shipEl = document.getElementById("shipDate");
+          shipEl.style.color = "";
+          if(firstTrans.expected_ship_date){
+            var sTS = new Date(firstTrans.expected_ship_date * 1000);
+            var sDay = ("0" + sTS.getDate()).slice(-2);
+            var sMonth = monthNamesF[sTS.getMonth()];
+            var sYear = sTS.getFullYear();
+            shipEl.value = " " + sDay + " " + sMonth + " " + sYear;
+
+            if(window.orderIsShipped === "Shipped!"){
+              shipEl.style.color = "#006400"; // green
+            } else {
+              var todayD = new Date();
+              todayD.setHours(0,0,0,0);
+              var dueDateD = new Date(sYear, sTS.getMonth(), sDay);
+              dueDateD.setHours(0,0,0,0);
+              if(dueDateD.getTime() === todayD.getTime()){
+                shipEl.style.color = "orange";
+              } else {
+                shipEl.style.color = "";
+              }
+            }
+          } else {
+            shipEl.value = "";
+          }
+        } else {
+          document.getElementById("dateOrdered").value = "";
+          var shipEl2 = document.getElementById("shipDate");
+          shipEl2.value = "";
+          shipEl2.style.color = "";
+        }
+
+        return data;
+      })
+      .catch(function(err){
+        console.error("Error fetching Etsy order details:", err);
+        return null;
+      });
+    }
+  </script>
+</body>
+</html>
