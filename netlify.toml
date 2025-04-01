@@ -10,11 +10,3 @@
 [[functions]]
   name = "imageUpload"
   rawBody = true
-
-[[redirects]]
-  from = "/*"
-  to = "/screenTwo.html"
-  status = 200
-  force = true
-  [redirects.conditions]
-    Host = ["scanner.goldenspike.app"]
