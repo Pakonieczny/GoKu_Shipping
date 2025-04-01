@@ -1,3 +1,9 @@
 [build]
   publish = "."
   functions = "netlify/functions"
+
+[[redirects]]
+  from = "https://scanner.goldenspike.app"
+  to = "/screenTwo.html"
+  status = 200
+  force = true
