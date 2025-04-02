@@ -37,7 +37,7 @@
       font-weight: bold;
     }
 
-    /* Repurposed input auto-populates with the scanned code */
+    /* The repurposed text input now auto-populates with the scanned code */
     #orderNumInput {
       position: absolute;
       width: 150px;
@@ -45,7 +45,7 @@
       background: #f9f9f9;
     }
 
-    /* We no longer have a "Generate QR" button in the UI, so #genQrBtn is gone */
+    /* We remove the old "Generate QR" button from the UI – no #genQrBtn in DOM */
 
     /* 6) QR Preview Title => "qrPreviewTitle" => "QR Code" */
     #qrPreviewTitle {
@@ -66,7 +66,7 @@
       font-weight: bold;
     }
 
-    /* Removed old "Start Camera" & "Stop Camera" buttons. Auto-start is used. */
+    /* The old "Start Camera" & "Stop Camera" are removed in favor of auto-start. */
 
     /* 11) Video Container => "video" */
     #video {
@@ -85,7 +85,7 @@
       position: absolute;
     }
 
-    /* Modal styling */
+    /* Modal styling (for the config system) */
     .modal {
       position: fixed !important;
       top: 50% !important;
@@ -154,11 +154,9 @@
 
   <!-- 11) Video Container (auto-start) -->
   <video id="video" playsinline></video>
-
-  <!-- 12) Hidden canvas for scanning -->
   <canvas id="captureCanvas"></canvas>
 
-  <!-- "Send" button => sends code to index.html -->
+  <!-- "Send" button => sends code to Firestore via firebaseOrders function -->
   <button id="sendBtn" class="btn waves-effect waves-light">Send</button>
 
   <!-- Config Modal -->
@@ -185,7 +183,7 @@
     </div>
   </div>
 
-  <!-- Local libs -->
+  <!-- Local libs for QR scanning & generation -->
   <script src="lib/qrcode.min.js"></script>
   <script src="lib/jsQR.js"></script>
 
@@ -210,7 +208,7 @@
 
     async function startCamera() {
       try {
-        // Use environment-facing camera
+        // Environment-facing camera
         stream = await navigator.mediaDevices.getUserMedia({
           video: { facingMode: "environment" }
         });
@@ -222,7 +220,6 @@
           ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
           const frame = ctx.getImageData(0, 0, canvas.width, canvas.height);
           const qrResult = jsQR(frame.data, frame.width, frame.height);
-
           if (qrResult) {
             handleScannedCode(qrResult.data);
           }
@@ -234,13 +231,13 @@
     }
 
     function handleScannedCode(codeText) {
-      if (codeText === lastScanned) return; // Avoid re-processing the same code
+      if (codeText === lastScanned) return; // Avoid re-processing same code
       lastScanned = codeText;
 
       // Show the code in the text input
       scannedInput.value = codeText;
 
-      // Generate a new QR code from the scanned code
+      // Auto-generate a new QR code for the scanned code
       qrcodeDiv.innerHTML = "";
       new QRCode(qrcodeDiv, {
         text: codeText,
@@ -252,39 +249,55 @@
     }
 
     /*************************************************************
-     * B) "SEND" BUTTON => pass scanned code to index.html
+     * B) "SEND" BUTTON => push scanned code to Firestore
      *************************************************************/
     const sendBtn = document.getElementById("sendBtn");
-    sendBtn.addEventListener("click", () => {
-      const codeVal = scannedInput.value.trim();
-      if (!codeVal) {
-        M.toast({ html: "No QR code scanned yet!" });
-        return;
+    sendBtn.addEventListener("click", async () => {
+      try {
+        const codeVal = scannedInput.value.trim();
+        if (!codeVal) {
+          M.toast({ html: "No QR code scanned yet!" });
+          return;
+        }
+
+        // We call your firebaseOrders Netlify function (server side),
+        // passing the scanned code so it can store it in Firestore.
+        // This uses the same logic you saw in firebaseOrders.js.
+        // The doc ID will be codeVal, and we'll store it as "Order Number" too.
+        const bodyData = {
+          orderNumber: codeVal,        // doc ID
+          orderNumField: codeVal,      // "Order Number" field
+          clientName: "From Scanner",  // example placeholder
+          britesMessages: "(Auto push from scanner.html)",
+          shippingLabelTimestamps: new Date().toISOString(),
+          employeeName: ""             // or fill with any other data
+        };
+
+        M.toast({ html: "Sending to Firestore: " + codeVal });
+
+        const response = await fetch("/.netlify/functions/firebaseOrders", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(bodyData)
+        });
+        const result = await response.json();
+
+        if (!response.ok) {
+          throw new Error(result.error || "Unknown error from firebaseOrders function");
+        }
+
+        M.toast({ html: "Firestore updated for order: " + codeVal });
+
+        // If index.html has a real-time listener or another approach,
+        // it can pick up this new doc, "push" data, etc.
+      } catch (err) {
+        M.toast({ html: "Error: " + err.message });
+        console.error("Error sending to Firestore:", err);
       }
-
-      // Show user that we're sending
-      M.toast({ html: "Sending order number: " + codeVal });
-
-      // Store in localStorage => index.html listens for "scannedQR"
-      localStorage.setItem("scannedQR", codeVal);
-
-      // Another toast confirming we put it in localStorage
-      M.toast({ html: "Order Number " + codeVal + " set in localStorage" });
     });
 
     /*************************************************************
-     * C) LISTEN FOR "scannedQR_ACK" – index.html confirms receipt
-     *************************************************************/
-    window.addEventListener("storage", (e) => {
-      if (e.key === "scannedQR_ACK") {
-        const ackValue = e.newValue;
-        // Just show a toast that index.html read the scannedQR
-        M.toast({ html: "Index ACK: " + ackValue });
-      }
-    });
-
-    /*************************************************************
-     * D) CONFIG SYSTEM FOR REPOSITIONING
+     * C) CONFIG SYSTEM FOR REPOSITIONING
      *************************************************************/
     const scannerConfigComponentIDs = [
       "scannerTitle",
@@ -300,7 +313,7 @@
     ];
 
     let scannerDefaultPositions = {
-      /* Keep your coordinate data, or set new ones as desired. */
+      /* Keep or update your coordinate data as desired. Example: */
       scannerTitle:         { left:1000,  top:3100,   width:255,  height:30 },
       openConfigBtnScanner: { left:1600, top:2600,  width:141,  height:36 },
       orderLabel:           { left:700,  top:2750,    width:70,   height:25 },
@@ -381,7 +394,6 @@
       });
     }
 
-    // Save => store entire scannerDefaultPositions in localStorage
     function scannerSaveConfiguration() {
       localStorage.setItem("scannerPositions", JSON.stringify(scannerDefaultPositions));
       console.log("Scanner layout saved!");
@@ -397,7 +409,7 @@
       // 2) Apply them
       applyPositions();
 
-      // 3) Auto-start camera immediately
+      // 3) Auto-start camera
       startCamera();
 
       // "Open Config" => populate table, show modal
