@@ -17,7 +17,7 @@
       font-family: sans-serif;
     }
 
-    /* Removed #scannerTitle and #scanTitle as requested */
+    /* Removed #scannerTitle and #scanTitle per request */
 
     /* Add an audio element for beep */
     #scanBeep {
@@ -27,19 +27,20 @@
     /********************************************
      * 4x ENLARGEMENT FOR SPECIFIC UI ELEMENTS  *
      ********************************************/
-    /* We skip #video from this list per your request,
-       so #video remains default size. */
+    /* The elements that must be 4x larger (including font size) */
 
     #openConfigBtnScanner,
     #orderLabel,
     #orderNumInput,
     #qrPreviewTitle,
     #qrcode,
+    #video,
     #sendBtn {
       /* Increase font size by 4x */
       font-size: 400% !important;
       /* Optionally increase the bounding box (especially for buttons/text fields) */
       transform: scale(4);
+      /* So they enlarge from their top-left corner */
       transform-origin: top left;
     }
 
@@ -53,6 +54,7 @@
     #orderNumInput {
       position: absolute;
       background: #f9f9f9;
+      /* Overriding smaller styles to keep it big enough after scaling */
       width: 150px;
       height: 25px;
     }
@@ -70,11 +72,10 @@
       height: 128px;
     }
 
-    /* Video Container => #video => default size (not scaled) */
+    /* 11) Video Container => #video => 4x bigger */
     #video {
       position: absolute;
       background: #333;
-      /* no transform scale for #video */
     }
 
     /* "Send" button => #sendBtn => 4x bigger */
@@ -82,15 +83,31 @@
       position: absolute;
     }
 
+    /* 2) "Open Config" button => #openConfigBtnScanner => 4x bigger */
+    #openConfigBtnScanner {
+      position: absolute;
+    }
+
+    /* 3) "Order Label" => "orderLabel" => "Order #:" */
+    #orderLabel {
+      position: absolute;
+      font-weight: bold;
+    }
+
     /* Hidden Canvas => #captureCanvas (unchanged) */
     #captureCanvas {
       position: absolute;
       display: none;
     }
+
+    /* Basic grid styles for the scanning environment remain the same */
   </style>
 </head>
 <body>
-  <!-- Audio element for beep -->
+  <!-- 1) Removed the #scannerTitle -->
+  <!-- 2) Removed the #scanTitle -->
+
+  <!-- Add the beep audio element -->
   <audio id="scanBeep" src="assets/beep.mp3" preload="auto"></audio>
 
   <!-- 2) "Open Config" button -->
@@ -115,7 +132,7 @@
   <!-- 7) Auto-generated QR Code Container -->
   <div id="qrcode"></div>
 
-  <!-- Video Container (auto-start) => default size -->
+  <!-- 11) Video Container (auto-start) -->
   <video id="video" playsinline></video>
   <canvas id="captureCanvas"></canvas>
 
@@ -251,9 +268,15 @@
 
         M.toast({ html: "Sending to Firestore doc 'ScannedOrder': " + codeVal });
 
+        // We call your firebaseOrders Netlify function (server side),
+        // passing the scanned code so it can store it in doc "ScannedOrder"
+        // in your "Brites_Orders" collection. This will be stored in the
+        // "Order Number" field, among others.
+
         const bodyData = {
+          // doc ID in Firestore => "ScannedOrder"
           orderNumber: "ScannedOrder",
-          orderNumField: codeVal,
+          orderNumField: codeVal,           // => "Order Number"
           clientName: "Scanner Page",
           britesMessages: "(Auto push from scanner.html)",
           shippingLabelTimestamps: new Date().toISOString(),
@@ -282,7 +305,7 @@
      * C) CONFIG SYSTEM FOR REPOSITIONING
      *************************************************************/
     const scannerConfigComponentIDs = [
-      // not including the removed #scannerTitle or #scanTitle
+      /* We removed #scannerTitle, #scanTitle from the HTML, so no references to them */
       "openConfigBtnScanner",
       "orderLabel",
       "orderNumInput",
@@ -294,14 +317,15 @@
     ];
 
     let scannerDefaultPositions = {
-      openConfigBtnScanner: { left:160, top:260, width:141, height:36 },
-      orderLabel:           { left:700, top:2750, width:70, height:25 },
-      orderNumInput:        { left:700, top:2800, width:150, height:25 },
-      qrPreviewTitle:       { left:500, top:2750, width:120, height:25 },
-      qrcode:               { left:500, top:2800, width:128, height:128 },
-      video:                { left:0,   top:0,    width:640, height:480 }, /* example default size */
-      captureCanvas:        { left:400, top:2600, width:300, height:200 },
-      sendBtn:              { left:900, top:2800, width:120, height:36 }
+      /* Adjust or keep existing coordinates if you had them */
+      openConfigBtnScanner: { left:160,   top:260,   width:141,  height:36 },
+      orderLabel:           { left:700,   top:2750,  width:70,   height:25 },
+      orderNumInput:        { left:700,   top:2800,  width:150,  height:25 },
+      qrPreviewTitle:       { left:500,   top:2750,  width:120,  height:25 },
+      qrcode:               { left:500,   top:2800,  width:128,  height:128 },
+      video:                { left:0,     top:0,     width:1800, height:2400 },
+      captureCanvas:        { left:400,   top:2600,  width:300,  height:200 },
+      sendBtn:              { left:900,   top:2800,  width:120,  height:36 }
     };
 
     function loadPositionsFromStorage() {
@@ -354,6 +378,7 @@
         `;
         tbody.appendChild(row);
 
+        // On input => update raw data & re-apply
         row.querySelectorAll("input").forEach((inp) => {
           inp.addEventListener("input", function(){
             const tgtId = this.getAttribute("data-id");
@@ -373,11 +398,18 @@
     }
 
     document.addEventListener("DOMContentLoaded", function(){
+      // Initialize Materialize
       M.AutoInit();
+
+      // Merge user-saved positions from localStorage
       loadPositionsFromStorage();
+      // Apply them
       applyPositions();
+
+      // Auto-start camera
       startCamera();
 
+      // "Open Config" => populate table, show modal
       document.getElementById("openConfigBtnScanner").addEventListener("click", () => {
         scannerPopulateConfigTable();
         const modalElem = document.getElementById("configModalScanner");
@@ -385,6 +417,7 @@
         instance.open();
       });
 
+      // "Save Config" => store positions
       document.getElementById("saveConfigBtnScanner").addEventListener("click", scannerSaveConfiguration);
     });
   </script>
