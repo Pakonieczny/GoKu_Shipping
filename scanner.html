@@ -3,19 +3,49 @@
 <head>
   <meta charset="UTF-8">
   <title>Scanner / Generator</title>
+
+  <!-- Materialize CSS (just like index.html) -->
+  <link
+    rel="stylesheet"
+    href="https://cdnjs.cloudflare.com/ajax/libs/materialize/1.0.0/css/materialize.min.css"
+  >
+
   <style>
     html, body {
-      margin: 0; 
-      padding: 0; 
+      margin: 0;
+      padding: 0;
       height: 100%;
       font-family: sans-serif;
-      display: flex; 
-      flex-direction: column; 
-      align-items: center; 
+      display: flex;
+      flex-direction: column;
+      align-items: center;
       justify-content: flex-start;
+      /* We'll fade in once positions load, matching index.html's approach */
+      opacity: 0;
+      transition: opacity 0s;
+    }
+    /* Buttons & containers */
+    #scannerTitle {
+      position: absolute;
+      left: 20px;
+      top: 10px;
+      font-size: 1.5em;
+      font-weight: bold;
+    }
+    #openConfigBtnScanner {
+      position: absolute;
+      left: 20px;
+      top: 60px;
+    }
+    #generatorContainer {
+      position: absolute;
+      left: 20px;
+      top: 120px;
     }
     #previewArea {
-      margin-top: 20px;
+      position: absolute;
+      left: 300px;
+      top: 120px;
       display: flex;
       gap: 20px;
     }
@@ -23,8 +53,9 @@
       text-align: center;
     }
     #cameraContainer {
-      margin-top: 20px;
-      position: relative;
+      position: absolute;
+      left: 20px;
+      top: 250px;
     }
     video {
       width: 300px; 
@@ -32,45 +63,118 @@
       background: #333;
     }
     canvas {
-      display: none; /* We'll use this hidden canvas to decode the video frames */
+      display: none; /* We'll use a hidden canvas to decode the video frames */
+    }
+
+    /* Modal for config (matching index.html style) */
+    .modal {
+      position: fixed !important;
+      top: 50% !important;
+      left: 50% !important;
+      transform: translate(-50%, -50%) !important;
+      height: auto !important;
+      max-height: 70vh !important;
+      width: auto !important;
+      max-width: 650px !important;
+      overflow-y: scroll !important;
+    }
+    .modal .modal-content {
+      overflow-y: auto;
+      font-size: 0.9em;
+      text-align: left !important;
+    }
+    .modal .modal-footer {
+      display: flex !important;
+      justify-content: center !important;
+      align-items: center !important;
+      padding: 10px;
+      background: white;
+      font-size: 0.9em;
+    }
+    table.striped {
+      width: 100%;
+    }
+    table.striped th,
+    table.striped td {
+      padding: 8px;
+      text-align: center;
+    }
+    input[type="number"] {
+      width: 70px;
+      font-size: 0.8em;
     }
   </style>
 </head>
 <body>
-  <h2>Bar/QR Code Generator & Scanner</h2>
+  <!-- Title -->
+  <div id="scannerTitle">Bar/QR Code Generator & Scanner</div>
 
-  <!-- 1) Generate a QR code from your order number -->
-  <div>
+  <!-- "Open Config" button -->
+  <button id="openConfigBtnScanner" class="btn waves-effect waves-light">
+    Open Config
+  </button>
+
+  <!-- 1) Generate a QR code from user’s order number -->
+  <div id="generatorContainer">
     <label for="orderNumInput">Order Number:</label>
     <input type="text" id="orderNumInput" placeholder="e.g. 123456" />
-    <button id="genQrBtn">Generate QR</button>
+    <button id="genQrBtn" class="btn">Generate QR</button>
   </div>
 
   <!-- 2) Preview area for the generated QR code -->
   <div id="previewArea">
     <div class="code-container">
-      <h4>QR Code</h4>
+      <h6>QR Code</h6>
       <div id="qrcode"></div>
     </div>
   </div>
 
   <!-- 3) Scanner Section: live camera feed + scanning -->
   <div id="cameraContainer">
-    <h3>Live Scanner</h3>
-    <button id="startScanBtn">Start Camera</button>
-    <button id="stopScanBtn">Stop Camera</button>
+    <h6>Live Scanner</h6>
+    <button id="startScanBtn" class="btn">Start Camera</button>
+    <button id="stopScanBtn" class="btn">Stop Camera</button>
     <video id="video" playsinline></video>
     <canvas id="captureCanvas" width="300" height="200"></canvas>
   </div>
 
-  <!-- 4) Local library references -->
-  <!-- Make sure these file paths match your actual /lib folder and filenames! -->
+  <!-- Config Modal (like index.html) -->
+  <div id="configModalScanner" class="modal">
+    <div class="modal-content">
+      <h5>Scanner Config</h5>
+      <table class="striped" id="configTableScanner">
+        <thead>
+          <tr>
+            <th>Component Name</th>
+            <th>Left (px)</th>
+            <th>Top (px)</th>
+            <th>Width (px)</th>
+            <th>Height (px)</th>
+          </tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </div>
+    <div class="modal-footer">
+      <a href="#!" id="saveConfigBtnScanner" class="modal-close waves-effect waves-green btn">
+        Save Config
+      </a>
+    </div>
+  </div>
+
+  <!-- Local library references (make sure these match your folder/file names) -->
   <script src="lib/qrcode.min.js"></script>
   <script src="lib/jsQR.js"></script>
 
+  <!-- jQuery & Materialize JS (just like index.html) -->
+  <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+  <script
+    src="https://cdnjs.cloudflare.com/ajax/libs/materialize/1.0.0/js/materialize.min.js"
+  ></script>
+
   <script>
     /*****************************************************************
-     * A) Generate the QR Code using qrcode.min.js
+     *  A) Generate the QR Code (using qrcode.min.js)
      *****************************************************************/
     const genQrBtn = document.getElementById("genQrBtn");
     const qrcodeContainer = document.getElementById("qrcode");
@@ -78,13 +182,13 @@
     genQrBtn.addEventListener("click", () => {
       const orderNum = document.getElementById("orderNumInput").value.trim();
       if (!orderNum) {
-        alert("Please enter an order number first!");
+        M.toast({html: "Please enter an order number first!"});
         return;
       }
-      // Clear any old QR code in the container:
+      // Clear any old QR code
       qrcodeContainer.innerHTML = "";
 
-      // Generate a new QR code from the user’s input:
+      // Generate a new QR code
       new QRCode(qrcodeContainer, {
         text: orderNum,
         width: 128,
@@ -93,7 +197,7 @@
     });
 
     /*****************************************************************
-     * B) Scanning with the camera using jsQR
+     *  B) Scanning with the camera (using jsQR)
      *****************************************************************/
     const startScanBtn = document.getElementById("startScanBtn");
     const stopScanBtn = document.getElementById("stopScanBtn");
@@ -104,42 +208,37 @@
     let stream = null;
     let scanningInterval = null;
 
-    // Start scanning:
+    // Start scanning
     startScanBtn.addEventListener("click", async () => {
       try {
-        // Request access to the environment-facing camera
         stream = await navigator.mediaDevices.getUserMedia({
           video: { facingMode: "environment" }
         });
         video.srcObject = stream;
         video.play();
 
-        // Periodically grab frames from the video and try to decode a QR code
+        // Periodically decode a frame
         scanningInterval = setInterval(() => {
           ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
           const frame = ctx.getImageData(0, 0, canvas.width, canvas.height);
 
-          // Decode with jsQR
           const qrResult = jsQR(frame.data, frame.width, frame.height);
           if (qrResult) {
-            alert("QR Code Detected: " + qrResult.data);
-            
-            // 1) Store it in localStorage for use in index.html:
+            M.toast({html: "QR Code: " + qrResult.data});
+            // Optionally store in localStorage & jump to index.html
             localStorage.setItem("scannedCode", qrResult.data);
-            // 2) Optionally navigate to index.html automatically:
-            window.location.href = "index.html";
-            
-            // Or, if you prefer not to auto-redirect:
-            // stopScan(); // Just stop scanning if you want to remain on this page
+            // window.location.href = "index.html";
+
+            stopScan(); // or comment out if you don't want to auto-stop
           }
-        }, 500); // every half second
+        }, 500);
       } catch (err) {
         console.error("Error starting camera:", err);
-        alert("Could not start camera: " + err.message);
+        M.toast({html: "Could not start camera: " + err.message});
       }
     });
 
-    // Stop scanning:
+    // Stop scanning
     stopScanBtn.addEventListener("click", stopScan);
 
     function stopScan() {
@@ -152,6 +251,166 @@
         stream = null;
       }
       video.srcObject = null;
+    }
+
+    /*****************************************************************
+     *  C) Config System (matching index.html style)
+     *****************************************************************/
+    // 1) All the component IDs that you want to reposition
+    const scannerConfigComponentIDs = [
+      "scannerTitle",
+      "openConfigBtnScanner",
+      "generatorContainer",
+      "orderNumInput",
+      "genQrBtn",
+      "previewArea",
+      "qrcode",
+      "cameraContainer",
+      "startScanBtn",
+      "stopScanBtn",
+      "video",
+      "captureCanvas"
+    ];
+
+    // 2) Default positions (optional). If you'd like all zero or you haven't decided, leave them at 0.
+    //    You can fill these in with your desired initial positions if you want.
+    const scannerDefaultPositions = {
+      scannerTitle:           { left: 20,  top: 10,   width: 300,  height: 30 },
+      openConfigBtnScanner:   { left: 20,  top: 60,   width: 120,  height: 36 },
+      generatorContainer:     { left: 20,  top: 120,  width: 220,  height: 50 },
+      orderNumInput:          { left: 0,   top: 0,    width: 100,  height: 25 },
+      genQrBtn:               { left: 0,   top: 0,    width: 100,  height: 36 },
+      previewArea:            { left: 300, top: 120,  width: 250,  height: 150 },
+      qrcode:                 { left: 0,   top: 0,    width: 128,  height: 128 },
+      cameraContainer:        { left: 20,  top: 250,  width: 350,  height: 300 },
+      startScanBtn:           { left: 0,   top: 0,    width: 120,  height: 36 },
+      stopScanBtn:            { left: 0,   top: 0,    width: 100,  height: 36 },
+      video:                  { left: 0,   top: 0,    width: 300,  height: 200 },
+      captureCanvas:          { left: 0,   top: 0,    width: 300,  height: 200 }
+    };
+
+    // 3) On DOMContentLoaded, we do two things:
+    //    - Initialize Materialize
+    //    - Load positions from localStorage
+    document.addEventListener("DOMContentLoaded", function(){
+      M.AutoInit();
+
+      // load positions, then fade in
+      setTimeout(() => {
+        scannerLoadPositions();
+        document.body.style.opacity = 1;
+      }, 250);
+
+      // Open config button => show the modal
+      const openBtn = document.getElementById("openConfigBtnScanner");
+      openBtn.addEventListener("click", () => {
+        scannerPopulateConfigTable();
+        const modalElem = document.getElementById("configModalScanner");
+        const instance = M.Modal.getInstance(modalElem);
+        instance.open();
+      });
+
+      // Save config button => store in localStorage
+      const saveBtn = document.getElementById("saveConfigBtnScanner");
+      saveBtn.addEventListener("click", () => {
+        scannerSaveConfiguration();
+      });
+    });
+
+    // 4) scannerLoadPositions: set each element's CSS from localStorage (or defaults)
+    function scannerLoadPositions() {
+      scannerConfigComponentIDs.forEach(id => {
+        const el = document.getElementById(id);
+        if (!el) return;
+
+        // fallback to default
+        const def = scannerDefaultPositions[id] || { left:0, top:0, width:50, height:20 };
+
+        const leftVal = localStorage.getItem("posScanner-" + id + "-left");
+        const topVal  = localStorage.getItem("posScanner-" + id + "-top");
+        const wVal    = localStorage.getItem("posScanner-" + id + "-width");
+        const hVal    = localStorage.getItem("posScanner-" + id + "-height");
+
+        const finalLeft   = (leftVal !== null) ? parseInt(leftVal, 10) : def.left;
+        const finalTop    = (topVal !== null)  ? parseInt(topVal, 10) : def.top;
+        const finalWidth  = (wVal !== null)    ? parseInt(wVal, 10)   : def.width;
+        const finalHeight = (hVal !== null)    ? parseInt(hVal, 10)   : def.height;
+
+        // apply styles
+        el.style.position = "absolute";
+        el.style.left   = finalLeft + "px";
+        el.style.top    = finalTop  + "px";
+        // If you want to let elements auto-size themselves, skip width/height
+        el.style.width  = finalWidth + "px";
+        el.style.height = finalHeight + "px";
+      });
+    }
+
+    // 5) scannerPopulateConfigTable: build the table with live inputs
+    function scannerPopulateConfigTable() {
+      const tbody = document.getElementById("configTableScanner").querySelector("tbody");
+      tbody.innerHTML = "";
+
+      scannerConfigComponentIDs.forEach(id => {
+        const el = document.getElementById(id);
+        if (!el) return;
+
+        // For the name cell, we can use textContent or placeholder or id
+        const compName = el.textContent?.trim() || el.placeholder || id;
+
+        const cs = window.getComputedStyle(el);
+        const leftVal = parseInt(cs.left, 10) || 0;
+        const topVal = parseInt(cs.top, 10) || 0;
+        const widthVal = parseInt(cs.width, 10) || 0;
+        const heightVal = parseInt(cs.height, 10) || 0;
+
+        const row = document.createElement("tr");
+        row.innerHTML = `
+          <td>${compName}</td>
+          <td><input type="number" value="${leftVal}" data-id="${id}" class="left-input-scanner"></td>
+          <td><input type="number" value="${topVal}" data-id="${id}" class="top-input-scanner"></td>
+          <td><input type="number" value="${widthVal}" data-id="${id}" class="width-input-scanner"></td>
+          <td><input type="number" value="${heightVal}" data-id="${id}" class="height-input-scanner"></td>
+        `;
+        tbody.appendChild(row);
+
+        // listeners for changes
+        row.querySelector(".left-input-scanner").addEventListener("input", function(){
+          const t = document.getElementById(this.getAttribute("data-id"));
+          if (t) t.style.left = parseInt(this.value, 10) + "px";
+        });
+        row.querySelector(".top-input-scanner").addEventListener("input", function(){
+          const t = document.getElementById(this.getAttribute("data-id"));
+          if (t) t.style.top = parseInt(this.value, 10) + "px";
+        });
+        row.querySelector(".width-input-scanner").addEventListener("input", function(){
+          const t = document.getElementById(this.getAttribute("data-id"));
+          if (t) t.style.width = parseInt(this.value, 10) + "px";
+        });
+        row.querySelector(".height-input-scanner").addEventListener("input", function(){
+          const t = document.getElementById(this.getAttribute("data-id"));
+          if (t) t.style.height = parseInt(this.value, 10) + "px";
+        });
+      });
+    }
+
+    // 6) scannerSaveConfiguration: store positions in localStorage
+    function scannerSaveConfiguration() {
+      scannerConfigComponentIDs.forEach(id => {
+        const el = document.getElementById(id);
+        if (!el) return;
+        const cs = window.getComputedStyle(el);
+        const leftVal = parseInt(cs.left, 10) || 0;
+        const topVal = parseInt(cs.top, 10) || 0;
+        const widthVal = parseInt(cs.width, 10) || 0;
+        const heightVal = parseInt(cs.height, 10) || 0;
+        localStorage.setItem("posScanner-" + id + "-left", leftVal);
+        localStorage.setItem("posScanner-" + id + "-top", topVal);
+        localStorage.setItem("posScanner-" + id + "-width", widthVal);
+        localStorage.setItem("posScanner-" + id + "-height", heightVal);
+      });
+      console.log("Scanner configuration saved.");
+      M.toast({html:"Scanner layout saved!"});
     }
   </script>
 </body>
