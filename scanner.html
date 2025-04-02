@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <title>Scanner / Generator with Raw Config Positions</title>
 
-  <!-- Materialize CSS from CDN -->
+  <!-- Materialize CSS from CDN (If offline, download locally) -->
   <link 
     rel="stylesheet"
     href="https://cdnjs.cloudflare.com/ajax/libs/materialize/1.0.0/css/materialize.min.css"
@@ -26,30 +26,30 @@
       font-weight: bold;
     }
 
-    /* 2) "Open Config" button */
+    /* 2) "Open Config" button => "openConfigBtnScanner" */
     #openConfigBtnScanner {
       position: absolute;
     }
 
-    /* 3) Order Label => "Order #:" */
+    /* 3) Order Label => "orderLabel" => "Order #:" */
     #orderLabel {
       position: absolute;
       font-weight: bold;
     }
 
-    /* 4) Order Input => "12345" */
+    /* 4) Order Input => "orderNumInput" => "12345" */
     #orderNumInput {
       position: absolute;
       width: 100px;
       height: 25px;
     }
 
-    /* 5) Generate QR Button => "Generate QR" */
+    /* 5) Generate QR Button => "genQrBtn" => "Generate QR" */
     #genQrBtn {
       position: absolute;
     }
 
-    /* 6) QR Preview Title => "QR Code" */
+    /* 6) QR Preview Title => "qrPreviewTitle" => "QR Code" */
     #qrPreviewTitle {
       position: absolute;
       font-weight: bold;
@@ -62,18 +62,18 @@
       height: 128px;
     }
 
-    /* 8) Scan Title => "Live Scanner" */
+    /* 8) Scan Title => "scanTitle" => "Live Scanner" */
     #scanTitle {
       position: absolute;
       font-weight: bold;
     }
 
-    /* 9) Start Scan Button => "Start Camera" */
+    /* 9) Start Scan Button => "startScanBtn" => "Start Camera" */
     #startScanBtn {
       position: absolute;
     }
 
-    /* 10) Stop Scan Button => "Stop Camera" */
+    /* 10) Stop Scan Button => "stopScanBtn" => "Stop Camera" */
     #stopScanBtn {
       position: absolute;
     }
@@ -292,16 +292,16 @@
 
     let scannerDefaultPositions = {
       scannerTitle:         { left:549,  top:10,   width:255, height:30 },
-      openConfigBtnScanner: { left:885,  top:584,  width:141, height:36 },
+      openConfigBtnScanner: { left:1100, top:905,  width:141, height:36 },
       orderLabel:           { left:980,  top:0,    width:70,  height:25 },
       orderNumInput:        { left:980,  top:25,   width:100, height:25 },
       genQrBtn:             { left:1100, top:15,   width:135, height:36 },
-      qrPreviewTitle:       { left:0,    top:0,    width:120, height:25 },
-      qrcode:               { left:0,    top:25,   width:128, height:128 },
-      scanTitle:            { left:475,  top:69,   width:120, height:25 },
-      startScanBtn:         { left:475,  top:438,  width:120, height:36 },
-      stopScanBtn:          { left:773,  top:438,  width:120, height:36 },
-      video:                { left:475,  top:97,   width:420, height:315 },
+      qrPreviewTitle:       { left:10,   top:89,   width:120, height:25 },
+      qrcode:               { left:10,   top:114,  width:128, height:128 },
+      scanTitle:            { left:242,  top:69,   width:120, height:25 },
+      startScanBtn:         { left:600,  top:905,  width:120, height:36 },
+      stopScanBtn:          { left:773,  top:905,  width:120, height:36 },
+      video:                { left:241,  top:97,   width:1000,height:800},
       captureCanvas:        { left:0,    top:70,   width:300, height:200 }
     };
 
@@ -322,7 +322,7 @@
       }
     }
 
-    // Apply the raw numbers from scannerDefaultPositions
+    // Apply these raw numbers to the elements
     function applyPositions() {
       scannerConfigComponentIDs.forEach(id => {
         const coords = scannerDefaultPositions[id];
@@ -337,7 +337,7 @@
       });
     }
 
-    // Show the config table with these raw numbers
+    // Populate the config modal table from scannerDefaultPositions
     function scannerPopulateConfigTable() {
       const tbody = document.getElementById("configTableScanner").querySelector("tbody");
       tbody.innerHTML = "";
@@ -359,22 +359,21 @@
         `;
         tbody.appendChild(row);
 
+        // On input => update our raw data & re-apply
         row.querySelectorAll("input").forEach((inp) => {
           inp.addEventListener("input", function(){
             const tgtId = this.getAttribute("data-id");
             const prop = this.getAttribute("data-prop");
             const newVal = parseInt(this.value, 10) || 0;
 
-            // update raw data
             scannerDefaultPositions[tgtId][prop] = newVal;
-            // re-apply to the page
             applyPositions();
           });
         });
       });
     }
 
-    // Save => store the entire scannerDefaultPositions object
+    // Save => store entire scannerDefaultPositions in localStorage
     function scannerSaveConfiguration() {
       localStorage.setItem("scannerPositions", JSON.stringify(scannerDefaultPositions));
       console.log("Scanner layout saved!");
