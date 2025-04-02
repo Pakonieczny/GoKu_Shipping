@@ -2,28 +2,157 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <title>Scanner</title>
+  <title>Scanner / Generator</title>
   <style>
-    /* Make the page take up full height */
     html, body {
+      margin: 0; 
+      padding: 0; 
       height: 100%;
-      margin: 0;
-      padding: 0;
-    }
-    /* Center the content both vertically and horizontally */
-    .centered {
-      display: flex;
-      justify-content: center;
-      align-items: center;
-      height: 100%;
-      font-size: 2em;
       font-family: sans-serif;
+      display: flex; 
+      flex-direction: column; 
+      align-items: center; 
+      justify-content: flex-start;
+    }
+    #previewArea {
+      margin-top: 20px;
+      display: flex;
+      gap: 20px;
+    }
+    .code-container {
+      text-align: center;
+    }
+    #cameraContainer {
+      margin-top: 20px;
+      position: relative;
+    }
+    video {
+      width: 300px; 
+      height: 200px;
+      background: #333;
+    }
+    canvas {
+      display: none; /* We'll use this hidden canvas to decode the video frames */
     }
   </style>
 </head>
 <body>
-  <div class="centered">
-    Hello World :)
+  <h2>Bar/QR Code Generator & Scanner</h2>
+
+  <!-- 1) Generate a QR code from your order number -->
+  <div>
+    <label for="orderNumInput">Order Number:</label>
+    <input type="text" id="orderNumInput" placeholder="e.g. 123456" />
+    <button id="genQrBtn">Generate QR</button>
   </div>
+
+  <!-- 2) Preview area for the generated QR code -->
+  <div id="previewArea">
+    <div class="code-container">
+      <h4>QR Code</h4>
+      <div id="qrcode"></div>
+    </div>
+  </div>
+
+  <!-- 3) Scanner Section: live camera feed + scanning -->
+  <div id="cameraContainer">
+    <h3>Live Scanner</h3>
+    <button id="startScanBtn">Start Camera</button>
+    <button id="stopScanBtn">Stop Camera</button>
+    <video id="video" playsinline></video>
+    <canvas id="captureCanvas" width="300" height="200"></canvas>
+  </div>
+
+  <!-- 4) Local library references -->
+  <!-- Make sure these file paths match your actual /lib folder and filenames! -->
+  <script src="lib/qrcode.min.js"></script>
+  <script src="lib/jsQR.js"></script>
+
+  <script>
+    /*****************************************************************
+     * A) Generate the QR Code using qrcode.min.js
+     *****************************************************************/
+    const genQrBtn = document.getElementById("genQrBtn");
+    const qrcodeContainer = document.getElementById("qrcode");
+
+    genQrBtn.addEventListener("click", () => {
+      const orderNum = document.getElementById("orderNumInput").value.trim();
+      if (!orderNum) {
+        alert("Please enter an order number first!");
+        return;
+      }
+      // Clear any old QR code in the container:
+      qrcodeContainer.innerHTML = "";
+
+      // Generate a new QR code from the user’s input:
+      new QRCode(qrcodeContainer, {
+        text: orderNum,
+        width: 128,
+        height: 128
+      });
+    });
+
+    /*****************************************************************
+     * B) Scanning with the camera using jsQR
+     *****************************************************************/
+    const startScanBtn = document.getElementById("startScanBtn");
+    const stopScanBtn = document.getElementById("stopScanBtn");
+    const video = document.getElementById("video");
+    const canvas = document.getElementById("captureCanvas");
+    const ctx = canvas.getContext("2d");
+
+    let stream = null;
+    let scanningInterval = null;
+
+    // Start scanning:
+    startScanBtn.addEventListener("click", async () => {
+      try {
+        // Request access to the environment-facing camera
+        stream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: "environment" }
+        });
+        video.srcObject = stream;
+        video.play();
+
+        // Periodically grab frames from the video and try to decode a QR code
+        scanningInterval = setInterval(() => {
+          ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+          const frame = ctx.getImageData(0, 0, canvas.width, canvas.height);
+
+          // Decode with jsQR
+          const qrResult = jsQR(frame.data, frame.width, frame.height);
+          if (qrResult) {
+            alert("QR Code Detected: " + qrResult.data);
+            
+            // 1) Store it in localStorage for use in index.html:
+            localStorage.setItem("scannedCode", qrResult.data);
+            // 2) Optionally navigate to index.html automatically:
+            window.location.href = "index.html";
+            
+            // Or, if you prefer not to auto-redirect:
+            // stopScan(); // Just stop scanning if you want to remain on this page
+          }
+        }, 500); // every half second
+      } catch (err) {
+        console.error("Error starting camera:", err);
+        alert("Could not start camera: " + err.message);
+      }
+    });
+
+    // Stop scanning:
+    stopScanBtn.addEventListener("click", stopScan);
+
+    function stopScan() {
+      if (scanningInterval) {
+        clearInterval(scanningInterval);
+        scanningInterval = null;
+      }
+      if (stream) {
+        stream.getTracks().forEach(track => track.stop());
+        stream = null;
+      }
+      video.srcObject = null;
+    }
+  </script>
 </body>
 </html>
