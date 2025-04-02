@@ -306,7 +306,6 @@
 <body>
   <!-- WRAP SCREEN ONE CONTENT IN THIS CONTAINER -->
   <div id="screenOne">
-    <!-- Main UI Buttons -->
     <button id="connectEtsyBtn" class="configurable btn waves-effect waves-light">Connect to Etsy</button>
     <button id="openConfigBtn" class="configurable btn waves-effect waves-light">Open Config</button>
 
@@ -372,13 +371,9 @@
     <input type="text" id="metalCell6" class="text-box-absolute" readonly />
     <input type="text" id="metalCell7" class="text-box-absolute" readonly />
 
-    <!-- Order Details (read-only) -->
     <textarea id="orderDetails" readonly></textarea>
-
-    <!-- Customer Message History -->
     <textarea id="customerMessageHistory"></textarea>
 
-    <!-- Title texts -->
     <div id="titleOrderDate">Order Date:</div>
     <div id="titleOrderDate2" style="font-weight:bold;"></div>
     <div id="titleShipDate">Ship By:</div>
@@ -391,17 +386,14 @@
     <div id="titlePurchasedItems">Purchased Items</div>
     <div id="titleOrderNumber">Order Number</div>
 
-    <!-- Single-line text boxes -->
     <input type="text" id="dateOrdered" readonly />
     <input type="text" id="shipDate" readonly />
     <input type="text" id="labelCreationDate" placeholder="Label Creation Date" />
     <input type="text" id="employeeName" placeholder="Employee Name" />
     <input type="text" id="completedByEmployee" placeholder="Completed By Employee" />
 
-    <!-- "Signature Box" -->
     <div id="signatureBox">Sig Box</div>
 
-    <!-- Configuration Modal -->
     <div id="configModal" class="modal">
       <div class="modal-content">
         <table class="striped" id="configTable">
@@ -424,16 +416,13 @@
       </div>
     </div>
 
-    <!-- "Save & Update" button (formerly "Go to Screen Two") -->
     <button id="goScreenTwoBtn" class="btn" style="position:absolute; left:180px; top:110px;">
       Save & Update
     </button>
-  </div> <!-- end #screenOne -->
+  </div>
 
-  <!-- Container for the second screen markup -->
   <div id="secondaryContainer"></div>
 
-  <!-- "User Log In" Modal (re-enabled) -->
   <div id="userLoginModal" class="modal">
     <div class="modal-content">
       <h5>User Log In</h5>
@@ -451,6 +440,23 @@
     src="https://cdnjs.cloudflare.com/ajax/libs/materialize/1.0.0/js/materialize.min.js"
   ></script>
 
+  <!-- 1) Firebase loaded first, define db for global usage -->
+  <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
+  <script>
+    const firebaseConfig = {
+      apiKey: "AIzaSyBXhQLsYRa4i0bX1TPTRiElF9Zjy5vSHlA",
+      authDomain: "gokudatabase.firebaseapp.com",
+      projectId: "gokudatabase",
+      storageBucket: "gokudatabase.firebasestorage.app",
+      messagingSenderId: "1078662308113",
+      appId: "1:1078662308113:web:41df0e5d229ff2af7a6cb0"
+    };
+    firebase.initializeApp(firebaseConfig);
+    window.db = firebase.firestore(); // define globally
+  </script>
+
+  <!-- 2) Now the rest of your logic can safely reference `db` -->
   <script>
     /********** Global Variables **********/
     window.receiptIsGift = null;
@@ -463,9 +469,8 @@
     window.orderShipments = [];
     window.currentTracking = null;
     window.currentCarrier = null;
-    window.isEmployeeLoggedIn = false; // We'll use this to know if user is "logged in" or not
+    window.isEmployeeLoggedIn = false; // We'll use this to guard the real-time listener
 
-    /********** Check for Access Token / Code **********/
     (function(){
       var urlParams = new URLSearchParams(window.location.search);
       var accessToken = urlParams.get("access_token");
@@ -491,7 +496,6 @@
       }
     })();
 
-    /********** OAuth Helpers **********/
     function generateRandomString(length){
       var chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
       var text = "";
@@ -508,25 +512,22 @@
       return base64String.replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
     }
 
-    /********** Configuration System **********/
     var configComponentIDs = [
-      "connectEtsyBtn", "openConfigBtn",
-      "orderLinkBtn", "trackingLinkBtn", "etsyOrderNumber",
-      "Photo_Grid",
-      "quantityCell0", "quantityCell1", "quantityCell2", "quantityCell3",
-      "quantityCell4", "quantityCell5", "quantityCell6", "quantityCell7",
-      "metalCell0", "metalCell1", "metalCell2", "metalCell3",
-      "metalCell4", "metalCell5", "metalCell6", "metalCell7",
-      "orderDetails", "customerMessageHistory", "dateOrdered", "shipDate",
-      "labelCreationDate", "employeeName", "completedByEmployee",
-      "titleOrderDate", "titleOrderDate2", "titleShipDate",
-      "titleOrderCompletedOn", "titleOrderCompletedBy", "titleSignedInAs",
-      "titleOrderDetails", "titleBritesMessages", "titlePurchasedItems", "titleOrderNumber",
-      "goScreenTwoBtn", "signatureBox", "userLoginModal", "employeeNumberInput", "employeeLoginBtn"
+      "connectEtsyBtn","openConfigBtn","orderLinkBtn","trackingLinkBtn","etsyOrderNumber",
+      "Photo_Grid","quantityCell0","quantityCell1","quantityCell2","quantityCell3",
+      "quantityCell4","quantityCell5","quantityCell6","quantityCell7",
+      "metalCell0","metalCell1","metalCell2","metalCell3",
+      "metalCell4","metalCell5","metalCell6","metalCell7",
+      "orderDetails","customerMessageHistory","dateOrdered","shipDate",
+      "labelCreationDate","employeeName","completedByEmployee",
+      "titleOrderDate","titleOrderDate2","titleShipDate",
+      "titleOrderCompletedOn","titleOrderCompletedBy","titleSignedInAs",
+      "titleOrderDetails","titleBritesMessages","titlePurchasedItems","titleOrderNumber",
+      "goScreenTwoBtn","signatureBox","userLoginModal","employeeNumberInput","employeeLoginBtn"
     ];
 
     const defaultPositions = {
-      /* The entire large defaultPositions object remains intact, exactly as you had it. */
+      /* Your large default positions object or existing stored positions... */
     };
 
     function loadPositions(){
@@ -663,13 +664,8 @@
               M.toast({ html: "Welcome, " + nameFound + "!" });
               document.getElementById("employeeName").value = nameFound;
               userLoginModal.close();
-
-              // Mark that we've "logged in"
               window.isEmployeeLoggedIn = true;
-
-              // => Now start the real-time Firestore listener:
               startScannedOrderListener();
-
             } else {
               M.toast({ html: "Employee # " + empNumber + " not found in DB!" });
             }
@@ -680,7 +676,6 @@
         });
       }
 
-      // "Open Config" button
       document.getElementById("openConfigBtn").addEventListener("click", function(){
         populateConfigTable();
         var modalElem = document.getElementById("configModal");
@@ -691,7 +686,6 @@
         saveConfiguration();
       });
 
-      // Connect to Etsy
       var connectEtsyBtn = document.getElementById("connectEtsyBtn");
       if(connectEtsyBtn){
         connectEtsyBtn.addEventListener("click", async function(){
@@ -700,7 +694,7 @@
           var codeChallenge = await generateCodeChallenge(codeVerifier);
           var state = "randomState123";
           var scope = "listings_w listings_r transactions_r transactions_w";
-          var CLIENT_ID = "k75zdspz4r99txpqdji7i2em"; // example
+          var CLIENT_ID = "k75zdspz4r99txpqdji7i2em";
           var redirectUri = "https://goldenspike.app";
 
           var etsyAuthUrl =
@@ -717,40 +711,33 @@
         });
       }
 
-      // Press Enter in "etsyOrderNumber" to pull Etsy + Database
       var etsyOrderInput = document.getElementById("etsyOrderNumber");
       etsyOrderInput.addEventListener("keydown", async function(e){
         if(e.key === "Enter"){
           const orderNumber = etsyOrderInput.value.trim();
           if(orderNumber !== ""){
-            // 1) Pull from Etsy
             const orderData = await pullEtsyOrderDetails(orderNumber);
             if(orderData){
               await updateImageGrid(orderData);
             }
-
-            // 2) Pull Database
             try {
               const respPD = await fetch("/.netlify/functions/firebaseOrders?orderId=" + encodeURIComponent(orderNumber));
               const resPD = await respPD.json();
               if(!respPD.ok){
                 throw new Error(resPD.error || "Unknown error from firebaseOrders function");
               }
-
               const docDataPD = resPD.data || {};
               const dbOrderNum = docDataPD["Order Number"];
               if (dbOrderNum !== orderNumber) {
                 M.toast({ html: "Order mismatch: doc has '" + dbOrderNum + "', expected '" + orderNumber + "'" });
                 return;
               }
-
               if (typeof docDataPD["Brites Messages"] === "string") {
                 document.getElementById("customerMessageHistory").value = docDataPD["Brites Messages"];
                 M.toast({ html: "Brites Messages loaded!" });
               } else {
                 document.getElementById("customerMessageHistory").value = "";
               }
-
               if (docDataPD["Shipping Label Timestamps"]) {
                 const dt = new Date(docDataPD["Shipping Label Timestamps"]);
                 if (!isNaN(dt.valueOf())) {
@@ -768,14 +755,12 @@
               } else {
                 document.getElementById("labelCreationDate").value = "";
               }
-
               const dbEmpNameRaw = docDataPD["Employee Name"];
               let dbEmpName = "";
               if (typeof dbEmpNameRaw === "string") {
                 dbEmpName = dbEmpNameRaw.trim();
               }
               document.getElementById("completedByEmployee").value = dbEmpName;
-
               if (dbEmpName) {
                 const imageFile = encodeURIComponent(dbEmpName + ".jpg");
                 const imagePath = `/assets/${imageFile}`;
@@ -789,7 +774,6 @@
               } else {
                 document.getElementById("signatureBox").innerHTML = "Sig Box";
               }
-
             } catch(errPD){
               M.toast({ html: "Error: " + errPD.message });
               console.error("Failed to pull data from Firestore:", errPD);
@@ -798,7 +782,6 @@
         }
       });
 
-      // "Order Link" button
       document.getElementById("orderLinkBtn").addEventListener("click", function(){
         var baseUrl = "https://www.etsy.com/your/orders/sold?ref=seller-platform-mcnav&order_id=0000000000";
         var currentOrder = etsyOrderInput.value.trim();
@@ -810,7 +793,6 @@
         window.open(customLink, "_blank");
       });
 
-      // "Tracking Link" button
       document.getElementById("trackingLinkBtn").addEventListener("click", function(){
         if(!window.currentTracking){
           console.log("No tracking number available.");
@@ -827,13 +809,11 @@
         window.open(templateUrl, "_blank");
       });
 
-      // Zoom + Drag for preview boxes
       var previewBoxes = document.querySelectorAll('.preview-box');
       previewBoxes.forEach(function(box){
         var isDragging = false;
         var lastX = 0;
         var lastY = 0;
-
         box.addEventListener('wheel', function(e){
           var img = box.querySelector('img');
           if(!img) return;
@@ -857,7 +837,6 @@
           img.dataset.offsetY = offsetY;
           img.style.transform = "translate(" + offsetX + "px, " + offsetY + "px) scale(" + currentScale + ")";
         });
-
         box.addEventListener('mousedown', function(e){
           var img = box.querySelector('img');
           if(!img) return;
@@ -868,7 +847,6 @@
           lastX = e.clientX;
           lastY = e.clientY;
         });
-
         box.addEventListener('mousemove', function(e){
           if(!isDragging) return;
           e.preventDefault();
@@ -887,7 +865,6 @@
           lastX = e.clientX;
           lastY = e.clientY;
         });
-
         box.addEventListener('mouseup', function(){
           isDragging = false;
         });
@@ -896,7 +873,6 @@
         });
       });
 
-      // "Save & Update" button
       var goBtn = document.getElementById('goScreenTwoBtn');
       if(goBtn){
         goBtn.addEventListener('click', async function(){
@@ -908,7 +884,6 @@
             var nowDate = new Date();
             var shippingTS = nowDate.toISOString();
             var empNameVal = document.getElementById("employeeName").value.trim();
-
             var bodyData = {
               orderNumber: orderNumberVal,
               orderNumField: orderNumberVal,
@@ -917,31 +892,25 @@
               shippingLabelTimestamps: shippingTS,
               employeeName: empNameVal
             };
-
             var responseCF = await fetch("/.netlify/functions/firebaseOrders", {
               method: "POST",
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify(bodyData)
             });
             var resultCF = await responseCF.json();
-
             if(!responseCF.ok){
               throw new Error(resultCF.error || "Unknown error from firebaseOrders function");
             }
-
             console.log("Successfully saved data to Firestore:", resultCF);
-
           } catch(errCF){
             M.toast({ html: "Error: " + errCF.message });
             console.error("Failed to save data to Firestore:", errCF);
           }
-
           loadScreenTwo();
         });
       }
     });
 
-    /********** loadScreenTwo (DOMParser) **********/
     async function loadScreenTwo(){
       try {
         console.log("loadScreenTwo() called");
@@ -992,7 +961,6 @@
       }
     }
 
-    /********** updateImageGrid **********/
     async function updateImageGrid(data){
       var items = [];
       if(data.transactions && Array.isArray(data.transactions)){
@@ -1014,12 +982,10 @@
         }
       }
       window.cachedOrderItems = items;
-
       for(var i=0; i<8; i++){
         var cell = document.getElementById("previewCell" + i);
         var qtyBox = document.getElementById("quantityCell" + i);
         var metalBox = document.getElementById("metalCell" + i);
-
         if(cell){
           if(i < items.length){
             var item = items[i];
@@ -1027,13 +993,7 @@
               var images = await fetchListingImages(item.listing_id);
               if(images && images.length > 0){
                 cell.innerHTML =
-                  '<img ' +
-                  '  src="' + images[0].url_fullxfull + '" ' +
-                  '  alt="Listing Image ' + i + '" ' +
-                  '  data-scale="1" ' +
-                  '  data-offsetX="0" ' +
-                  '  data-offsetY="0"' +
-                  '>';
+                  '<img src="' + images[0].url_fullxfull + '" alt="Listing Image ' + i + '" data-scale="1" data-offsetX="0" data-offsetY="0">';
               } else {
                 cell.innerHTML = "No images found";
               }
@@ -1042,28 +1002,21 @@
               cell.innerHTML = "Error loading image";
             }
             cell.style.cursor = "pointer";
-
             (function(idx){
               cell.onclick = function(){
                 showItemDetails(idx);
               };
             })(i);
-
             if(qtyBox){
               var actualQty = (item.quantity != null) ? item.quantity : 0;
               qtyBox.value = " Quantity: " + actualQty;
             }
-
             if(metalBox){
               var metalSel = "";
               if(item.variations && Array.isArray(item.variations)){
                 var acceptedMetalNames = [
-                  "metal",
-                  "metal choice",
-                  "metal - engraving",
-                  "metal colour",
-                  "color",
-                  "metal choice / engraving option"
+                  "metal","metal choice","metal - engraving","metal colour",
+                  "color","metal choice / engraving option"
                 ];
                 var metalVar = item.variations.find(function(v){
                   if(!v.formatted_name) return false;
@@ -1085,7 +1038,6 @@
           }
         }
       }
-
       if(items.length > 0){
         showItemDetails(0);
       } else {
@@ -1093,7 +1045,6 @@
       }
     }
 
-    /********** showItemDetails **********/
     function showItemDetails(index){
       if(!window.cachedOrderItems || !window.cachedOrderItems[index]){
         console.warn("No item at index:", index);
@@ -1101,7 +1052,6 @@
       }
       var item = window.cachedOrderItems[index];
       var details = "";
-
       if(window.orderName){
         details += " ORDER FROM: " + window.orderName + "\n";
       }
@@ -1115,7 +1065,6 @@
       } else {
         details += " Shipping Status:\n";
       }
-
       if(window.orderIsShipped === "Shipped!" && window.orderShipments && window.orderShipments.length > 0){
         var ship = window.orderShipments[0];
         if(ship.carrier_name){
@@ -1140,9 +1089,7 @@
       } else {
         document.getElementById("trackingLinkBtn").style.display = "none";
       }
-
       details += " ORDER DETAILS:\n\n";
-
       if(item.title){
         var firstFour = item.title.trim().split(" ").slice(0,4).join(" ");
         details += " Title: " + firstFour + "\n";
@@ -1150,29 +1097,20 @@
       if(item.sku){
         details += " SKU: " + item.sku + "\n";
       }
-
       if(item.variations && Array.isArray(item.variations)){
         var acceptedMetalNames2 = [
-          "metal",
-          "metal choice",
-          "metal - engraving",
-          "metal colour",
-          "color",
-          "metal choice / engraving option"
+          "metal","metal choice","metal - engraving","metal colour",
+          "color","metal choice / engraving option"
         ];
         var acceptedLengthNames2 = [
-          "length",
-          "necklace length",
-          "metal/necklace length",
-          "metal choice / necklace length",
-          "necklace length in inches"
+          "length","necklace length","metal/necklace length",
+          "metal choice / necklace length","necklace length in inches"
         ];
         for(var j=0; j<item.variations.length; j++){
           var v2 = item.variations[j];
           if(!v2.formatted_name || !v2.formatted_value) continue;
           var nameLower2 = v2.formatted_name.trim().toLowerCase();
           var val2 = v2.formatted_value.trim();
-
           if(nameLower2 === "personalization" && val2 === "Not requested on this item."){
             val2 = "Not Requested";
             details += " Personalization: " + val2 + "\n";
@@ -1198,18 +1136,15 @@
           }
         }
       }
-
-      if(window.receiptIsGift !== null && typeof window.receiptIsGift !== "undefined"){
+      if(window.receiptIsGift !== null){
         details += " Marked as Gift: " + window.receiptIsGift + "\n";
       }
       if(window.receiptGiftMessage){
         details += " Gift Message: " + window.receiptGiftMessage + "\n";
       }
-
       document.getElementById("orderDetails").value = details;
     }
 
-    /********** fetchListingImages **********/
     async function fetchListingImages(listingId){
       const responseLI = await fetch("/.netlify/functions/etsyImages?listingId=" + listingId, {
         headers: { "access-token": localStorage.getItem("access_token") }
@@ -1221,7 +1156,6 @@
       return dataLI.results;
     }
 
-    /********** pullEtsyOrderDetails **********/
     function pullEtsyOrderDetails(orderNumber){
       console.log("Pulling Etsy order details for order number:", orderNumber);
       var token = localStorage.getItem("access_token");
@@ -1231,14 +1165,11 @@
       .then(function(r){ return r.json(); })
       .then(function(data){
         console.log("Etsy Order Data:", data);
-
         window.receiptIsGift = (typeof data.is_gift !== "undefined") ? data.is_gift : null;
         window.receiptGiftMessage = data.gift_message || "";
         window.orderShipments = data.shipments || [];
-
         var titleDate2 = document.getElementById("titleOrderDate2");
         titleDate2.textContent = "";
-
         if(data.name){
           window.orderName = data.name;
         } else {
@@ -1256,7 +1187,6 @@
         } else {
           window.orderIsShipped = "";
         }
-
         var foundStamp = null;
         if(data.shipped_timestamp && data.is_shipped === true){
           foundStamp = data.shipped_timestamp;
@@ -1266,7 +1196,6 @@
           foundStamp = data.transactions[0].shipped_timestamp;
         }
         window.orderShippedTimestamp = foundStamp;
-
         if(window.orderIsShipped === "Shipped!" && window.orderShippedTimestamp){
           var d4 = new Date(window.orderShippedTimestamp * 1000);
           var monthNames4 = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
@@ -1275,18 +1204,15 @@
           var y4 = d4.getFullYear();
           titleDate2.textContent = "Shipped On: " + day4 + " " + mStr4 + " " + y4;
         }
-
         var msgBox = document.getElementById("customerMessageHistory");
         if(data.message_from_buyer){
           msgBox.value = data.message_from_buyer + "\n";
         } else {
           msgBox.value = "";
         }
-
         if(data.transactions && data.transactions.length > 0){
           var firstTrans = data.transactions[0];
           var monthNamesF = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
-
           if(firstTrans.created_timestamp){
             var dT = new Date(firstTrans.created_timestamp * 1000);
             var ddT = ("0" + dT.getDate()).slice(-2);
@@ -1296,7 +1222,6 @@
           } else {
             document.getElementById("dateOrdered").value = "";
           }
-
           var shipEl = document.getElementById("shipDate");
           shipEl.style.color = "";
           if(firstTrans.expected_ship_date){
@@ -1305,7 +1230,6 @@
             var sMonth = monthNamesF[sTS.getMonth()];
             var sYear = sTS.getFullYear();
             shipEl.value = " " + sDay + " " + sMonth + " " + sYear;
-
             if(window.orderIsShipped === "Shipped!"){
               shipEl.style.color = "#006400";
             } else {
@@ -1328,7 +1252,6 @@
           shipEl2.value = "";
           shipEl2.style.color = "";
         }
-
         return data;
       })
       .catch(function(err){
@@ -1337,24 +1260,20 @@
       });
     }
 
-    /********** Only Start Listener After Login **********/
     function startScannedOrderListener(){
-      // If you want to verify they're "logged in," check window.isEmployeeLoggedIn, etc.
       if(!window.isEmployeeLoggedIn){
         console.warn("startScannedOrderListener called but user not logged in!");
         return;
       }
-      // Real-time listener on the "ScannedOrder" doc in "Brites_Orders"
       db.collection("Brites_Orders").doc("ScannedOrder").onSnapshot((docSnap) => {
-        if (!window.isEmployeeLoggedIn) return; // If user logs out at some point, we can skip
-        if (docSnap.exists) {
+        if(!window.isEmployeeLoggedIn) return;
+        if(docSnap.exists){
           const data = docSnap.data();
-          if (data && data["Order Number"]) {
+          if(data && data["Order Number"]){
             const orderNumber = data["Order Number"];
             const etsyOrderInput = document.getElementById("etsyOrderNumber");
             etsyOrderInput.value = orderNumber;
-            // Simulate pressing Enter
-            const event = new KeyboardEvent("keydown", { key: "Enter", keyCode: 13, which: 13 });
+            const event = new KeyboardEvent("keydown",{key:"Enter",keyCode:13,which:13});
             etsyOrderInput.dispatchEvent(event);
           }
         }
