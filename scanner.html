@@ -17,57 +17,61 @@
       font-family: sans-serif;
     }
 
+    /* Remove #scannerTitle (the "Scanner & QR Generator" element) and #scanTitle (the "Live Scanner" element) */
+    /* => So we won't include them in the HTML at all. */
+
     /* 2) "Open Config" button => "openConfigBtnScanner" */
     #openConfigBtnScanner {
       position: absolute;
     }
 
-    /* 5) "Order #:" UI title => enlarge font size by 2x */
+    /* 3) Enlarge "Order #:" => #orderLabel => font-size 3x */
     #orderLabel {
       position: absolute;
       font-weight: bold;
-      font-size: 200% !important; /* 2x bigger */
+      font-size: 300% !important; /* 3x bigger */
     }
 
-    /* 4) The read-only text input => enlarge size & font by 2x */
+    /* (Scanned QR Code) text field => #orderNumInput => 3x bigger overall */
     #orderNumInput {
       position: absolute;
       background: #f9f9f9;
-      /* e.g. double the typical 150x25 => 300x50, plus font-size 2x */
-      width: 300px !important;
-      height: 50px !important;
-      font-size: 200% !important;
+      /* Increase size & font by 3x */
+      width: 450px !important;  /* 150 x 3 */
+      height: 75px !important;  /* 25 x 3 */
+      font-size: 300% !important; /* 3x bigger text */
     }
 
-    /* 6) "QR Code" UI title => enlarge font size by 2x */
+    /* 6) "QR Code" UI title => #qrPreviewTitle => 3x bigger font */
     #qrPreviewTitle {
       position: absolute;
       font-weight: bold;
-      font-size: 200% !important; /* 2x bigger */
+      font-size: 300% !important; /* 3x bigger */
     }
 
-    /* 2) #qrcode => ensure it's resizable from the config system (no fixed !important) */
+    /* 7) The QR code container => #qrcode => enlarge by 3x (was 128x128 => 384x384) */
     #qrcode {
       position: absolute;
-      /* no fixed width/height here so the config system can override */
+      width: 384px !important;
+      height: 384px !important;
     }
 
-    /* Video container => default size / no scale */
+    /* 11) Video Container => #video => remains at default size; no scaling per your instructions */
     #video {
       position: absolute;
       background: #333;
     }
 
-    /* Hidden canvas => #captureCanvas */
+    /* Hidden Canvas => #captureCanvas */
     #captureCanvas {
       position: absolute;
       display: none;
     }
 
-    /* 1) "Send" button => 2x bigger text */
+    /* "Send" button => #sendBtn => text font size by 3x */
     #sendBtn {
       position: absolute;
-      font-size: 200% !important;
+      font-size: 300% !important; /* Only enlarge the text, not necessarily the bounding box */
     }
 
     /* Modal styling (for the config system) */
@@ -108,20 +112,22 @@
     }
   </style>
 </head>
-
 <body>
-  <!-- Hidden audio element for beep -->
-  <audio id="scanBeep" src="assets/beep.mp3" preload="auto"></audio>
+  <!-- 
+       1) "Scanner & QR Generator" title (#scannerTitle) removed
+       2) "Live Scanner" title (#scanTitle) removed
+       So these two elements are NOT in the HTML now.
+  -->
 
-  <!-- "Open Config" button -->
+  <!-- 2) "Open Config" button -->
   <button id="openConfigBtnScanner" class="btn waves-effect waves-light">
     Open Config
   </button>
 
-  <!-- "Order #:" label -->
+  <!-- 3) Order Label => "Order #:" -->
   <div id="orderLabel">Order #:</div>
 
-  <!-- The read-only text input for scanned code -->
+  <!-- The read-only text input for scanned code (Scanned QR Code) -->
   <input
     type="text"
     id="orderNumInput"
@@ -129,13 +135,13 @@
     readonly
   />
 
-  <!-- "QR Code" title -->
+  <!-- 6) QR Preview Title => "QR Code" -->
   <div id="qrPreviewTitle">QR Code</div>
 
-  <!-- QR Code container -->
+  <!-- 7) Auto-generated QR Code Container -->
   <div id="qrcode"></div>
 
-  <!-- Video container (auto-start) -->
+  <!-- 11) Video Container -->
   <video id="video" playsinline></video>
   <canvas id="captureCanvas"></canvas>
 
@@ -207,7 +213,6 @@
     const ctx = canvas.getContext("2d");
     const scannedInput = document.getElementById("orderNumInput");
     const qrcodeDiv = document.getElementById("qrcode");
-    const beepAudio = document.getElementById("scanBeep"); // For beep
 
     async function startCamera() {
       try {
@@ -237,16 +242,10 @@
       if (codeText === lastScanned) return; // Avoid re-processing same code
       lastScanned = codeText;
 
-      // Beep on successful scan
-      if (beepAudio) {
-        beepAudio.currentTime = 0;
-        beepAudio.play().catch(err => console.log("Beep playback error:", err));
-      }
-
       // Show the code in the text input
       scannedInput.value = codeText;
 
-      // Generate a new QR code preview
+      // Auto-generate a new QR code from that scanned code
       qrcodeDiv.innerHTML = "";
       new QRCode(qrcodeDiv, {
         text: codeText,
@@ -270,6 +269,11 @@
         }
 
         M.toast({ html: "Sending to Firestore doc 'ScannedOrder': " + codeVal });
+
+        // We call your firebaseOrders Netlify function (server side),
+        // passing the scanned code so it can store it in doc "ScannedOrder"
+        // in your "Brites_Orders" collection. This will be stored in the
+        // "Order Number" field, among others.
 
         const bodyData = {
           orderNumber: "ScannedOrder",
@@ -302,6 +306,8 @@
      * C) CONFIG SYSTEM FOR REPOSITIONING
      *************************************************************/
     const scannerConfigComponentIDs = [
+      /* #scannerTitle removed from HTML => won't be in the final code */
+      /* #scanTitle removed from HTML => won't be in final code */
       "openConfigBtnScanner",
       "orderLabel",
       "orderNumInput",
@@ -313,14 +319,14 @@
     ];
 
     let scannerDefaultPositions = {
-      openConfigBtnScanner: { left: 1600, top: 2600, width: 141, height: 36 },
-      orderLabel:           { left: 700,  top: 2750, width: 70,  height: 25 },
-      orderNumInput:        { left: 700,  top: 2800, width: 450, height: 75 },
-      qrPreviewTitle:       { left: 500,  top: 2750, width: 120, height: 25 },
-      qrcode:               { left: 300,  top: 2800, width: 384, height: 384 },
-      video:                { left: 0,    top: 0,    width: 640, height: 480 },
-      captureCanvas:        { left: 400,  top: 2600, width: 300, height: 200 },
-      sendBtn:              { left: 1230, top: 3300, width: 550, height: 225 }
+      openConfigBtnScanner: { left:1600, top:2600, width:141, height:36 },
+      orderLabel:           { left:700,  top:2750,  width:70,  height:25 },
+      orderNumInput:        { left:700,  top:2800,  width:450, height:75 }, /* possible default for bigger box */
+      qrPreviewTitle:       { left:500,  top:2750,  width:120, height:25 },
+      qrcode:               { left:300,  top:2800,  width:384, height:384 },
+      video:                { left:0,    top:0,     width:1800, height:2400 },
+      captureCanvas:        { left:400,  top:2600,  width:300, height:200 },
+      sendBtn:              { left:1230, top:3300,  width:550, height:225 }
     };
 
     function loadPositionsFromStorage() {
@@ -370,7 +376,6 @@
           <td><input type="number" value="${coords.height}" data-id="${id}" data-prop="height"></td>
         `;
         tbody.appendChild(row);
-
         row.querySelectorAll("input").forEach((inp) => {
           inp.addEventListener("input", function(){
             const tgtId = this.getAttribute("data-id");
