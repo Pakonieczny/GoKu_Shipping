@@ -2,71 +2,125 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <title>Scanner / Generator</title>
+  <title>Scanner / Generator with Independent UI Elements</title>
 
-  <!-- Materialize CSS (just like index.html) -->
-  <link
+  <!-- Materialize CSS from CDN -->
+  <link 
     rel="stylesheet"
     href="https://cdnjs.cloudflare.com/ajax/libs/materialize/1.0.0/css/materialize.min.css"
-  >
-
+/>
   <style>
+    /* Basic reset */
     html, body {
-      margin: 0;
-      padding: 0;
-      height: 100%;
+      margin: 0; 
+      padding: 0; 
+      height: 100%; 
       font-family: sans-serif;
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      justify-content: flex-start;
-      /* We'll fade in once positions load, matching index.html's approach */
-      opacity: 0;
-      transition: opacity 0s;
     }
-    /* Buttons & containers */
+
+    /* Absolutely position every single UI element so 
+       we can move/resize them individually from the config modal */
+
+    /* 1) Title */
     #scannerTitle {
       position: absolute;
       left: 20px;
-      top: 10px;
-      font-size: 1.5em;
+      top: 20px;
+      font-size: 1.4rem;
       font-weight: bold;
     }
+
+    /* 2) The "Open Config" button */
     #openConfigBtnScanner {
       position: absolute;
       left: 20px;
-      top: 60px;
+      top: 70px;
     }
-    #generatorContainer {
+
+    /* 3) Order Label */
+    #orderLabel {
       position: absolute;
       left: 20px;
       top: 120px;
+      font-weight: bold;
     }
-    #previewArea {
+
+    /* 4) Order Input */
+    #orderNumInput {
       position: absolute;
-      left: 300px;
-      top: 120px;
-      display: flex;
-      gap: 20px;
+      left: 100px;
+      top: 115px;
+      width: 100px;
+      height: 25px;
     }
-    .code-container {
-      text-align: center;
+
+    /* 5) Generate QR Button */
+    #genQrBtn {
+      position: absolute;
+      left: 220px;
+      top: 115px;
     }
-    #cameraContainer {
+
+    /* 6) QR Preview Title */
+    #qrPreviewTitle {
       position: absolute;
       left: 20px;
-      top: 250px;
+      top: 170px;
+      font-weight: bold;
     }
-    video {
+
+    /* 7) QR Code Container */
+    #qrcode {
+      position: absolute;
+      left: 20px;
+      top: 200px;
+      width: 128px;
+      height: 128px;
+    }
+
+    /* 8) Scan Title */
+    #scanTitle {
+      position: absolute;
+      left: 20px;
+      top: 350px;
+      font-weight: bold;
+    }
+
+    /* 9) Start Scan Button */
+    #startScanBtn {
+      position: absolute;
+      left: 20px;
+      top: 380px;
+    }
+
+    /* 10) Stop Scan Button */
+    #stopScanBtn {
+      position: absolute;
+      left: 150px;
+      top: 380px;
+    }
+
+    /* 11) Video Container */
+    #video {
+      position: absolute;
+      left: 20px;
+      top: 430px;
       width: 300px; 
       height: 200px;
       background: #333;
     }
-    canvas {
-      display: none; /* We'll use a hidden canvas to decode the video frames */
+
+    /* 12) Hidden Canvas for scanning */
+    #captureCanvas {
+      position: absolute;
+      left: 20px;
+      top: 430px;
+      width: 300px;
+      height: 200px;
+      display: none;
     }
 
-    /* Modal for config (matching index.html style) */
+    /* Modal styling (matching your index.html approach) */
     .modal {
       position: fixed !important;
       top: 50% !important;
@@ -103,49 +157,57 @@
       width: 70px;
       font-size: 0.8em;
     }
+
   </style>
 </head>
 <body>
-  <!-- Title -->
-  <div id="scannerTitle">Bar/QR Code Generator & Scanner</div>
 
-  <!-- "Open Config" button -->
+  <!-- 1) Title -->
+  <div id="scannerTitle">Scanner & QR Generator</div>
+
+  <!-- 2) "Open Config" button -->
   <button id="openConfigBtnScanner" class="btn waves-effect waves-light">
     Open Config
   </button>
 
-  <!-- 1) Generate a QR code from user’s order number -->
-  <div id="generatorContainer">
-    <label for="orderNumInput">Order Number:</label>
-    <input type="text" id="orderNumInput" placeholder="e.g. 123456" />
-    <button id="genQrBtn" class="btn">Generate QR</button>
-  </div>
+  <!-- 3) Order Label -->
+  <div id="orderLabel">Order #:</div>
 
-  <!-- 2) Preview area for the generated QR code -->
-  <div id="previewArea">
-    <div class="code-container">
-      <h6>QR Code</h6>
-      <div id="qrcode"></div>
-    </div>
-  </div>
+  <!-- 4) Order Input -->
+  <input type="text" id="orderNumInput" placeholder="12345" />
 
-  <!-- 3) Scanner Section: live camera feed + scanning -->
-  <div id="cameraContainer">
-    <h6>Live Scanner</h6>
-    <button id="startScanBtn" class="btn">Start Camera</button>
-    <button id="stopScanBtn" class="btn">Stop Camera</button>
-    <video id="video" playsinline></video>
-    <canvas id="captureCanvas" width="300" height="200"></canvas>
-  </div>
+  <!-- 5) Generate QR Button -->
+  <button id="genQrBtn" class="btn">Generate QR</button>
 
-  <!-- Config Modal (like index.html) -->
+  <!-- 6) QR Preview Title -->
+  <div id="qrPreviewTitle">QR Code</div>
+
+  <!-- 7) QR Code Container -->
+  <div id="qrcode"></div>
+
+  <!-- 8) Scan Title -->
+  <div id="scanTitle">Live Scanner</div>
+
+  <!-- 9) Start Scan Button -->
+  <button id="startScanBtn" class="btn">Start Camera</button>
+
+  <!-- 10) Stop Scan Button -->
+  <button id="stopScanBtn" class="btn">Stop Camera</button>
+
+  <!-- 11) Video Container -->
+  <video id="video" playsinline></video>
+
+  <!-- 12) Hidden Canvas for scanning -->
+  <canvas id="captureCanvas"></canvas>
+
+  <!-- Config Modal -->
   <div id="configModalScanner" class="modal">
     <div class="modal-content">
-      <h5>Scanner Config</h5>
+      <h5>Layout Config</h5>
       <table class="striped" id="configTableScanner">
         <thead>
           <tr>
-            <th>Component Name</th>
+            <th>Component</th>
             <th>Left (px)</th>
             <th>Top (px)</th>
             <th>Width (px)</th>
@@ -156,49 +218,45 @@
       </table>
     </div>
     <div class="modal-footer">
-      <a href="#!" id="saveConfigBtnScanner" class="modal-close waves-effect waves-green btn">
+      <button id="saveConfigBtnScanner" class="modal-close btn">
         Save Config
-      </a>
+      </button>
     </div>
   </div>
 
-  <!-- Local library references (make sure these match your folder/file names) -->
+  <!-- Local libs -->
   <script src="lib/qrcode.min.js"></script>
   <script src="lib/jsQR.js"></script>
 
-  <!-- jQuery & Materialize JS (just like index.html) -->
-  <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
-  <script
-    src="https://cdnjs.cloudflare.com/ajax/libs/materialize/1.0.0/js/materialize.min.js"
-  ></script>
+  <!-- Materialize JS from CDN -->
+  <script 
+    src="https://cdnjs.cloudflare.com/ajax/libs/materialize/1.0.0/js/materialize.min.js">
+  </script>
 
   <script>
-    /*****************************************************************
-     *  A) Generate the QR Code (using qrcode.min.js)
-     *****************************************************************/
+    /***************************************************************
+     * A) Generate QR Code
+     ***************************************************************/
     const genQrBtn = document.getElementById("genQrBtn");
     const qrcodeContainer = document.getElementById("qrcode");
 
     genQrBtn.addEventListener("click", () => {
-      const orderNum = document.getElementById("orderNumInput").value.trim();
-      if (!orderNum) {
-        M.toast({html: "Please enter an order number first!"});
+      const val = document.getElementById("orderNumInput").value.trim();
+      if (!val) {
+        M.toast({html: "Please enter an order number!"});
         return;
       }
-      // Clear any old QR code
       qrcodeContainer.innerHTML = "";
-
-      // Generate a new QR code
-      new QRCode(qrcodeContainer, {
-        text: orderNum,
-        width: 128,
-        height: 128
+      new QRCode(qrcodeContainer, { 
+        text: val, 
+        width: 128, 
+        height: 128 
       });
     });
 
-    /*****************************************************************
-     *  B) Scanning with the camera (using jsQR)
-     *****************************************************************/
+    /***************************************************************
+     * B) Scanner
+     ***************************************************************/
     const startScanBtn = document.getElementById("startScanBtn");
     const stopScanBtn = document.getElementById("stopScanBtn");
     const video = document.getElementById("video");
@@ -208,7 +266,6 @@
     let stream = null;
     let scanningInterval = null;
 
-    // Start scanning
     startScanBtn.addEventListener("click", async () => {
       try {
         stream = await navigator.mediaDevices.getUserMedia({
@@ -217,28 +274,21 @@
         video.srcObject = stream;
         video.play();
 
-        // Periodically decode a frame
         scanningInterval = setInterval(() => {
           ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
           const frame = ctx.getImageData(0, 0, canvas.width, canvas.height);
-
           const qrResult = jsQR(frame.data, frame.width, frame.height);
           if (qrResult) {
-            M.toast({html: "QR Code: " + qrResult.data});
-            // Optionally store in localStorage & jump to index.html
-            localStorage.setItem("scannedCode", qrResult.data);
-            // window.location.href = "index.html";
-
-            stopScan(); // or comment out if you don't want to auto-stop
+            M.toast({html: "Scanned: " + qrResult.data});
+            stopScan();
           }
         }, 500);
       } catch (err) {
-        console.error("Error starting camera:", err);
+        console.error("Camera error:", err);
         M.toast({html: "Could not start camera: " + err.message});
       }
     });
 
-    // Stop scanning
     stopScanBtn.addEventListener("click", stopScan);
 
     function stopScan() {
@@ -247,106 +297,73 @@
         scanningInterval = null;
       }
       if (stream) {
-        stream.getTracks().forEach(track => track.stop());
+        stream.getTracks().forEach(t => t.stop());
         stream = null;
       }
       video.srcObject = null;
     }
 
-    /*****************************************************************
-     *  C) Config System (matching index.html style)
-     *****************************************************************/
-    // 1) All the component IDs that you want to reposition
+    /***************************************************************
+     * C) Config System
+     *    Each UI element is individually included for repositioning.
+     ***************************************************************/
     const scannerConfigComponentIDs = [
       "scannerTitle",
       "openConfigBtnScanner",
-      "generatorContainer",
+      "orderLabel",
       "orderNumInput",
       "genQrBtn",
-      "previewArea",
+      "qrPreviewTitle",
       "qrcode",
-      "cameraContainer",
+      "scanTitle",
       "startScanBtn",
       "stopScanBtn",
       "video",
       "captureCanvas"
     ];
 
-    // 2) Default positions (optional). If you'd like all zero or you haven't decided, leave them at 0.
-    //    You can fill these in with your desired initial positions if you want.
+    /* Default positions so everything starts visible.
+       Feel free to tweak them as you like! */
     const scannerDefaultPositions = {
-      scannerTitle:           { left: 20,  top: 10,   width: 300,  height: 30 },
-      openConfigBtnScanner:   { left: 20,  top: 60,   width: 120,  height: 36 },
-      generatorContainer:     { left: 20,  top: 120,  width: 220,  height: 50 },
-      orderNumInput:          { left: 0,   top: 0,    width: 100,  height: 25 },
-      genQrBtn:               { left: 0,   top: 0,    width: 100,  height: 36 },
-      previewArea:            { left: 300, top: 120,  width: 250,  height: 150 },
-      qrcode:                 { left: 0,   top: 0,    width: 128,  height: 128 },
-      cameraContainer:        { left: 20,  top: 250,  width: 350,  height: 300 },
-      startScanBtn:           { left: 0,   top: 0,    width: 120,  height: 36 },
-      stopScanBtn:            { left: 0,   top: 0,    width: 100,  height: 36 },
-      video:                  { left: 0,   top: 0,    width: 300,  height: 200 },
-      captureCanvas:          { left: 0,   top: 0,    width: 300,  height: 200 }
+      scannerTitle:         { left: 20,  top: 20,   width: 200, height: 30 },
+      openConfigBtnScanner: { left: 20,  top: 70,   width: 120, height: 36 },
+      orderLabel:           { left: 20,  top: 120,  width: 70,  height: 25 },
+      orderNumInput:        { left: 100, top: 115,  width: 100, height: 25 },
+      genQrBtn:             { left: 220, top: 115,  width: 100, height: 36 },
+      qrPreviewTitle:       { left: 20,  top: 170,  width: 120, height: 25 },
+      qrcode:               { left: 20,  top: 200,  width: 128, height: 128 },
+      scanTitle:            { left: 20,  top: 350,  width: 120, height: 25 },
+      startScanBtn:         { left: 20,  top: 380,  width: 120, height: 36 },
+      stopScanBtn:          { left: 150, top: 380,  width: 100, height: 36 },
+      video:                { left: 20,  top: 430,  width: 300, height: 200 },
+      captureCanvas:        { left: 20,  top: 430,  width: 300, height: 200 }
     };
 
-    // 3) On DOMContentLoaded, we do two things:
-    //    - Initialize Materialize
-    //    - Load positions from localStorage
-    document.addEventListener("DOMContentLoaded", function(){
-      M.AutoInit();
-
-      // load positions, then fade in
-      setTimeout(() => {
-        scannerLoadPositions();
-        document.body.style.opacity = 1;
-      }, 250);
-
-      // Open config button => show the modal
-      const openBtn = document.getElementById("openConfigBtnScanner");
-      openBtn.addEventListener("click", () => {
-        scannerPopulateConfigTable();
-        const modalElem = document.getElementById("configModalScanner");
-        const instance = M.Modal.getInstance(modalElem);
-        instance.open();
-      });
-
-      // Save config button => store in localStorage
-      const saveBtn = document.getElementById("saveConfigBtnScanner");
-      saveBtn.addEventListener("click", () => {
-        scannerSaveConfiguration();
-      });
-    });
-
-    // 4) scannerLoadPositions: set each element's CSS from localStorage (or defaults)
     function scannerLoadPositions() {
       scannerConfigComponentIDs.forEach(id => {
         const el = document.getElementById(id);
         if (!el) return;
 
-        // fallback to default
-        const def = scannerDefaultPositions[id] || { left:0, top:0, width:50, height:20 };
+        const def = scannerDefaultPositions[id] || { left:0, top:0, width:100, height:30 };
 
-        const leftVal = localStorage.getItem("posScanner-" + id + "-left");
-        const topVal  = localStorage.getItem("posScanner-" + id + "-top");
-        const wVal    = localStorage.getItem("posScanner-" + id + "-width");
-        const hVal    = localStorage.getItem("posScanner-" + id + "-height");
+        const leftVal = localStorage.getItem(`posScanner-${id}-left`);
+        const topVal  = localStorage.getItem(`posScanner-${id}-top`);
+        const wVal    = localStorage.getItem(`posScanner-${id}-width`);
+        const hVal    = localStorage.getItem(`posScanner-${id}-height`);
 
         const finalLeft   = (leftVal !== null) ? parseInt(leftVal, 10) : def.left;
         const finalTop    = (topVal !== null)  ? parseInt(topVal, 10) : def.top;
         const finalWidth  = (wVal !== null)    ? parseInt(wVal, 10)   : def.width;
         const finalHeight = (hVal !== null)    ? parseInt(hVal, 10)   : def.height;
 
-        // apply styles
         el.style.position = "absolute";
-        el.style.left   = finalLeft + "px";
-        el.style.top    = finalTop  + "px";
-        // If you want to let elements auto-size themselves, skip width/height
-        el.style.width  = finalWidth + "px";
+        el.style.left   = finalLeft   + "px";
+        el.style.top    = finalTop    + "px";
+        el.style.width  = finalWidth  + "px";
         el.style.height = finalHeight + "px";
       });
     }
 
-    // 5) scannerPopulateConfigTable: build the table with live inputs
     function scannerPopulateConfigTable() {
       const tbody = document.getElementById("configTableScanner").querySelector("tbody");
       tbody.innerHTML = "";
@@ -354,9 +371,8 @@
       scannerConfigComponentIDs.forEach(id => {
         const el = document.getElementById(id);
         if (!el) return;
-
-        // For the name cell, we can use textContent or placeholder or id
-        const compName = el.textContent?.trim() || el.placeholder || id;
+        // Use textContent, placeholder, or fallback to the ID
+        const compName = (el.textContent && el.textContent.trim()) || el.placeholder || id;
 
         const cs = window.getComputedStyle(el);
         const leftVal = parseInt(cs.left, 10) || 0;
@@ -374,7 +390,7 @@
         `;
         tbody.appendChild(row);
 
-        // listeners for changes
+        // Real-time updates
         row.querySelector(".left-input-scanner").addEventListener("input", function(){
           const t = document.getElementById(this.getAttribute("data-id"));
           if (t) t.style.left = parseInt(this.value, 10) + "px";
@@ -394,7 +410,6 @@
       });
     }
 
-    // 6) scannerSaveConfiguration: store positions in localStorage
     function scannerSaveConfiguration() {
       scannerConfigComponentIDs.forEach(id => {
         const el = document.getElementById(id);
@@ -404,14 +419,34 @@
         const topVal = parseInt(cs.top, 10) || 0;
         const widthVal = parseInt(cs.width, 10) || 0;
         const heightVal = parseInt(cs.height, 10) || 0;
-        localStorage.setItem("posScanner-" + id + "-left", leftVal);
-        localStorage.setItem("posScanner-" + id + "-top", topVal);
-        localStorage.setItem("posScanner-" + id + "-width", widthVal);
-        localStorage.setItem("posScanner-" + id + "-height", heightVal);
+
+        localStorage.setItem(`posScanner-${id}-left`, leftVal);
+        localStorage.setItem(`posScanner-${id}-top`, topVal);
+        localStorage.setItem(`posScanner-${id}-width`, widthVal);
+        localStorage.setItem(`posScanner-${id}-height`, heightVal);
       });
-      console.log("Scanner configuration saved.");
+      console.log("Scanner layout saved.");
       M.toast({html:"Scanner layout saved!"});
     }
+
+    document.addEventListener("DOMContentLoaded", function(){
+      // Initialize Materialize
+      M.AutoInit();
+
+      // Load existing positions (or defaults)
+      scannerLoadPositions();
+
+      // Open Config => show modal with the table
+      document.getElementById("openConfigBtnScanner").addEventListener("click", () => {
+        scannerPopulateConfigTable();
+        const modalElem = document.getElementById("configModalScanner");
+        const instance = M.Modal.getInstance(modalElem);
+        instance.open();
+      });
+
+      // Save Config => store positions
+      document.getElementById("saveConfigBtnScanner").addEventListener("click", scannerSaveConfiguration);
+    });
   </script>
 </body>
 </html>
