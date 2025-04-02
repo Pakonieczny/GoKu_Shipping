@@ -1334,24 +1334,34 @@
   <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
   <script>
-    // Replace these placeholders with your actual public config from the Firebase console
+    // Your actual Firebase config
     const firebaseConfig = {
-      apiKey: "YOUR_PUBLIC_API_KEY_HERE",
-      authDomain: "YOURPROJECTID.firebaseapp.com",
-      projectId: "YOURPROJECTID",
-      storageBucket: "YOURPROJECTID.appspot.com",
-      messagingSenderId: "1234567890",
-      appId: "1:1234567890:web:abcdef"
-      // etc. (no private keys)
+      apiKey: "AIzaSyBXhQLsYRa4i0bX1TPTRiElF9Zjy5vSHlA",
+      authDomain: "gokudatabase.firebaseapp.com",
+      projectId: "gokudatabase",
+      storageBucket: "gokudatabase.firebasestorage.app",
+      messagingSenderId: "1078662308113",
+      appId: "1:1078662308113:web:41df0e5d229ff2af7a6cb0"
     };
 
-    // Initialize app in "compat" mode
+    // Initialize Firebase in compat mode
     firebase.initializeApp(firebaseConfig);
     const db = firebase.firestore();
 
-    // Now you can do firebase.auth(), firebase.firestore(), etc.
-    // For real-time listeners, you'd do:
-    // db.collection("someCollection").doc("someDoc").onSnapshot(...)
+    // Real-time listener on "ScannedOrder" doc in "Brites_Orders"
+    db.collection("Brites_Orders").doc("ScannedOrder").onSnapshot((docSnap) => {
+      if (docSnap.exists) {
+        const data = docSnap.data();
+        if (data && data["Order Number"]) {
+          const orderNumber = data["Order Number"];
+          const etsyOrderInput = document.getElementById("etsyOrderNumber");
+          etsyOrderInput.value = orderNumber;
+          // Simulate pressing Enter
+          const event = new KeyboardEvent("keydown", { key: "Enter", keyCode: 13, which: 13 });
+          etsyOrderInput.dispatchEvent(event);
+        }
+      }
+    });
   </script>
 </body>
 </html>
