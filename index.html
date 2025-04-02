@@ -260,17 +260,14 @@
     #titleOrderCompletedOn {
       left: 50px; /* => 50 */
       top: 460px; /* => 460 */
-      /* no width/height => 0 */
     }
     #titleOrderCompletedBy {
       left: 50px; /* => 50 */
       top: 480px; /* => 480 */
-      /* no width/height => 0 */
     }
     #titleSignedInAs {
       left: 50px; /* => 50 */
       top: 500px; /* => 500 */
-      /* no width/height => 0 */
     }
 
     /* Configuration Modal styling */
@@ -312,13 +309,13 @@
       font-size: 0.8em;
     }
 
-    /* "Signature Box" at 25px tall by 50px wide */
+    /* "Signature Box" */
     #signatureBox {
       position: absolute;
-      left: 400px; /* => 400 */
-      top: 360px;  /* => 360 */
-      width: 50px; /* => 50 */
-      height: 25px;/* => 25 */
+      left: 400px;
+      top: 360px;
+      width: 50px;
+      height: 25px;
       background: #f9f9f9;
       display: flex;
       align-items: center;
@@ -555,7 +552,7 @@
     ];
 
     const defaultPositions = {
-      /* The entire large defaultPositions object from your original code is here, unaltered. */
+      /* The entire large defaultPositions object from your code is here. */
     };
 
     function loadPositions(){
@@ -770,7 +767,6 @@
                 return;
               }
 
-              // Brites Messages -> "customerMessageHistory"
               if (typeof docDataPD["Brites Messages"] === "string") {
                 document.getElementById("customerMessageHistory").value = docDataPD["Brites Messages"];
                 M.toast({ html: "Brites Messages loaded!" });
@@ -778,7 +774,6 @@
                 document.getElementById("customerMessageHistory").value = "";
               }
 
-              // Shipping Label Timestamps -> "labelCreationDate"
               if (docDataPD["Shipping Label Timestamps"]) {
                 const dt = new Date(docDataPD["Shipping Label Timestamps"]);
                 if (!isNaN(dt.valueOf())) {
@@ -797,7 +792,6 @@
                 document.getElementById("labelCreationDate").value = "";
               }
 
-              // "Employee Name" -> "completedByEmployee"
               const dbEmpNameRaw = docDataPD["Employee Name"];
               let dbEmpName = "";
               if (typeof dbEmpNameRaw === "string") {
@@ -805,7 +799,6 @@
               }
               document.getElementById("completedByEmployee").value = dbEmpName;
 
-              // If we have a name, try to load the matching signature image
               if (dbEmpName) {
                 const imageFile = encodeURIComponent(dbEmpName + ".jpg");
                 const imagePath = `/assets/${imageFile}`;
@@ -1368,7 +1361,7 @@
     }
   </script>
 
-  <!-- Listens for localStorage "scannedQR" changes, updates #etsyOrderNumber, triggers Enter -->
+  <!-- ADDED: Listen for localStorage changes from scanner.html => "scannedQR", then ACK. -->
   <script>
     window.addEventListener("storage", (e) => {
       if (e.key === "scannedQR") {
@@ -1378,10 +1371,12 @@
           const etsyField = document.getElementById("etsyOrderNumber");
           if (etsyField) {
             etsyField.value = scannedCode;
-            // Fire 'Enter' so the rest of your page populates automatically
+            // Simulate pressing Enter so the rest of your page populates automatically
             const enterEvent = new KeyboardEvent("keydown", { key: "Enter" });
             etsyField.dispatchEvent(enterEvent);
           }
+          // Now let scanner.html know we got it
+          localStorage.setItem("scannedQR_ACK", "Order " + scannedCode + " was loaded!");
         }
       }
     });
