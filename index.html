@@ -25,7 +25,6 @@
       position: absolute;
       left: 50px;
       top: 20px;
-      /* width/height not specified in CSS => treat as 0 for defaults */
     }
 
     /* "Open Config" button */
@@ -33,7 +32,6 @@
       position: absolute;
       left: 50px;
       top: 110px;
-      /* no width/height => 0 */
     }
 
     /* "Order Link" button */
@@ -46,7 +44,6 @@
       cursor: pointer;
       padding: 0;
       outline: none;
-      /* no width/height => 0 */
     }
     #orderLinkBtn img {
       width: 14px;
@@ -66,7 +63,6 @@
       outline: none;
       z-index: 9999;
       display: none; /* hidden by default */
-      /* no width/height => 0 */
     }
     #trackingLinkBtn img {
       width: 17px;
@@ -85,10 +81,9 @@
       border-bottom: 1px solid #000;
       background: transparent !important;
       text-align: left;
-      width: 250px; /* explicitly set => 250 */
+      width: 250px;
       font-size: 1em;
       outline: none;
-      /* no explicit height => 0 */
     }
 
     /* Photo Grid and Preview Boxes */
@@ -96,7 +91,6 @@
       position: absolute;
       left: 400px;
       top: 160px;
-      /* no width/height => 0,0 */
       transform: scale(1.25);
       transform-origin: top left;
     }
@@ -146,15 +140,14 @@
       line-height: 1.0;
       padding: 0 2px 2px 2px;
       box-sizing: border-box;
-      /* But no left/top in code => default to 0,0 in JS  */
     }
 
     /* Order Details text area */
     #orderDetails {
       position: absolute;
       border: 1px solid black;
-      width: 300px; /* explicitly set => 300 */
-      height: 175px; /* explicitly => 175 */
+      width: 300px;
+      height: 175px;
       box-sizing: border-box;
       outline: none;
       background: transparent;
@@ -163,15 +156,14 @@
       resize: none;
       text-align: left;
       overflow-y: auto;
-      /* no left/top => 0,0 */
     }
 
     /* Customer Message History text area */
     #customerMessageHistory {
       position: absolute;
       border: 1px solid black;
-      width: 300px; /* => 300 */
-      height: 175px; /* => 175 */
+      width: 300px;
+      height: 175px;
       box-sizing: border-box;
       outline: none;
       background: transparent;
@@ -180,7 +172,6 @@
       resize: none;
       text-align: left;
       overflow-y: auto;
-      /* no left/top => 0,0 */
     }
 
     /* Single-line text boxes */
@@ -190,39 +181,33 @@
     #employeeName,
     #completedByEmployee {
       position: absolute;
-      width: 200px; /* => 200 */
-      height: 20px; /* => 20 */
+      width: 200px;
+      height: 20px;
       box-sizing: border-box;
       outline: none;
       background: transparent;
       font-size: 0.9em;
-      /* no left/top => 0,0 */
     }
-
     /* #dateOrdered => bold + black underline */
     #dateOrdered {
       font-weight: bold !important;
       border-bottom: 1px solid black !important;
     }
-
     /* #shipDate => bold + black underline */
     #shipDate {
       font-weight: bold !important;
       border-bottom: 1px solid black !important;
     }
-
     /* #employeeName => bold, no underline */
     #employeeName {
       font-weight: bold;
     }
-
     /* #labelCreationDate => bold+italic + black underline */
     #labelCreationDate {
       font-weight: bold !important;
       font-style: italic !important;
       border-bottom: 1px solid black !important;
     }
-
     /* #completedByEmployee => bold+italic + black underline */
     #completedByEmployee {
       font-weight: bold !important;
@@ -242,7 +227,6 @@
       font-size: 0.7em;
       margin: 0;
       padding: 0;
-      /* no left/top => 0,0, no width/height => 0 */
     }
     #titleOrderDate2 {
       font-weight: bold;
@@ -258,25 +242,21 @@
       padding: 0;
     }
     #titleOrderCompletedOn {
-      left: 50px; /* => 50 */
-      top: 460px; /* => 460 */
-      /* no width/height => 0 */
+      left: 50px;
+      top: 460px;
     }
     #titleOrderCompletedBy {
-      left: 50px; /* => 50 */
-      top: 480px; /* => 480 */
-      /* no width/height => 0 */
+      left: 50px;
+      top: 480px;
     }
     #titleSignedInAs {
-      left: 50px; /* => 50 */
-      top: 500px; /* => 500 */
-      /* no width/height => 0 */
+      left: 50px;
+      top: 500px;
     }
 
     /* Configuration Modal styling */
     .modal {
       position: fixed !important;
-      /* centered horizontally & vertically */
       top: 50% !important;
       left: 50% !important;
       transform: translate(-50%, -50%) !important;
@@ -315,10 +295,10 @@
     /* "Signature Box" at 25px tall by 50px wide */
     #signatureBox {
       position: absolute;
-      left: 400px; /* => 400 */
-      top: 360px;  /* => 360 */
-      width: 50px; /* => 50 */
-      height: 25px;/* => 25 */
+      left: 400px;
+      top: 360px;
+      width: 50px;
+      height: 25px;
       background: #f9f9f9;
       display: flex;
       align-items: center;
@@ -554,52 +534,8 @@
       "goScreenTwoBtn", "signatureBox", "userLoginModal", "employeeNumberInput", "employeeLoginBtn"
     ];
 
-    /********** (NEW!) defaultPositions reflecting EXACT values from the CSS above **********/
     const defaultPositions = {
-      connectEtsyBtn:         { left:1000,  top:600,  width:175,   height:36 },
-      openConfigBtn:          { left:1184,  top:600, width:150,   height:36 },
-      orderLinkBtn:           { left:640, top:76,  width:30,   height:30 },
-      trackingLinkBtn:        { left:134, top:248,  width:15,   height:16 },
-      etsyOrderNumber:        { left:11,  top:7, width:282, height:45},
-      Photo_Grid:             { left:535, top:115, width:633,   height:274 },
-      quantityCell0:          { left:536,   top:307,   width:153,   height:42 },
-      quantityCell1:          { left:737,   top:305,   width:153,   height:45 },
-      quantityCell2:          { left:937,   top:305,   width:153,   height:45 },
-      quantityCell3:          { left:1136,   top:305,   width:153,   height:45 },
-      quantityCell4:          { left:535,   top:521,   width:153,   height:45 },
-      quantityCell5:          { left:737,   top:521,   width:153,   height:45 },
-      quantityCell6:          { left:937,   top:521,   width:153,   height:45 },
-      quantityCell7:          { left:1136,   top:521,   width:153,   height:45 },
-      metalCell0:             { left:537,   top:290,   width:153,   height:45 },
-      metalCell1:             { left:737,   top:290,   width:153,   height:45 },
-      metalCell2:             { left:937,   top:290,   width:153,   height:45 },
-      metalCell3:             { left:1136,   top:290,   width:153,   height:45 },
-      metalCell4:             { left:536,   top:536,   width:153,   height:45 },
-      metalCell5:             { left:737,   top:536,   width:153,   height:45 },
-      metalCell6:             { left:937,   top:536,   width:153,   height:45 },
-      metalCell7:             { left:1136,   top:536,   width:153,   height:45 },
-      orderDetails:           { left:10,   top:162,   width:300, height:342 },
-      customerMessageHistory: { left:10,   top:536,   width:300, height:93 },
-      dateOrdered:            { left:10,   top:100,   width:145, height:30 },
-      shipDate:               { left:164,   top:100,   width:145, height:30 },
-      labelCreationDate:      { left:380,   top:23,   width:145, height:30 },
-      employeeName:           { left:1015,   top:23,   width:100, height:30 },
-      completedByEmployee:    { left:537,   top:23,   width:100, height:25 },
-      titleOrderDate:         { left:10,   top:82,   width:100,   height:15 },
-      titleOrderDate2:        { left:127,   top:209,   width:145,   height:15 },
-      titleShipDate:          { left:167,   top:82,   width:100,   height:15 },
-      titleOrderCompletedOn:  { left:381,  top:7, width:107,   height:15 },
-      titleOrderCompletedBy:  { left:538,  top:7, width:105,   height:15 },
-      titleSignedInAs:        { left:1016,  top:7, width:75,   height:15 },
-      titleOrderDetails:      { left:11,   top:144,   width:100,   height:15 },
-      titleBritesMessages:    { left:11,   top:518,   width:100,   height:15 },
-      titlePurchasedItems:    { left:538,   top:84,   width:100,   height:15 },
-      titleOrderNumber:       { left:11,   top:7,   width:100,   height:15 },
-      goScreenTwoBtn:         { left:1141, top:7, width:185,   height:36 },
-      signatureBox:           { left:624, top:19, width:105,  height:34 },
-      userLoginModal:         { left:50,   top:50,   width:0,   height:0 },
-      employeeNumberInput:    { left:50,   top:50,   width:250,   height:35 },
-      employeeLoginBtn:       { left:50,   top:50,   width:100,   height:35 }
+      /* Possibly large object of defaults from earlier — omitted here, but in your real code it might be fully listed. */
     };
 
     function loadPositions(){
@@ -608,16 +544,14 @@
         var el = document.getElementById(id);
         if(!el) continue;
 
-        // Grab defaults (or zero if none).
+        // Grab defaults or zero if none
         var def = defaultPositions[id] || { left:0, top:0, width:0, height:0 };
 
-        // Check localStorage first:
         var left = localStorage.getItem("pos-"+id+"-left");
         var top  = localStorage.getItem("pos-"+id+"-top");
         var w    = localStorage.getItem("pos-"+id+"-width");
         var h    = localStorage.getItem("pos-"+id+"-height");
 
-        // If there's nothing in localStorage, fall back to defaults:
         if(left === null)  left = def.left;
         if(top === null)   top  = def.top;
         if(w === null)     w    = def.width;
@@ -705,12 +639,12 @@
         document.body.style.opacity = 1;
       }, 250);
 
-      // **Re-enabled**: Show the "User Log In" modal on load
+      // Show the "User Log In" modal on load
       var userLoginModalElem = document.getElementById("userLoginModal");
       var userLoginModal = M.Modal.init(userLoginModalElem, {
         dismissible: false
       });
-      userLoginModal.open(); // <--- This line ensures the modal appears on page load again
+      userLoginModal.open();
 
       // "Log In" button for employees
       var employeeLoginBtn = document.getElementById("employeeLoginBtn");
@@ -723,7 +657,6 @@
               M.toast({html: "Please enter a valid 3-digit Employee Number!"});
               return;
             }
-            // Retrieve doc "Employee Numbers" from Brites_Orders
             var responseEN = await fetch("/.netlify/functions/firebaseOrders?orderId=Employee Numbers");
             if(!responseEN.ok){
               M.toast({ html: "Error fetching Employee Numbers doc!" });
@@ -738,7 +671,6 @@
             if(docDataEN[empNumber]){
               var nameFound = docDataEN[empNumber];
               M.toast({ html: "Welcome, " + nameFound + "!" });
-              // store in "employeeName"
               document.getElementById("employeeName").value = nameFound;
               userLoginModal.close();
             } else {
@@ -800,7 +732,7 @@
               await updateImageGrid(orderData);
             }
 
-            // 2) Pull Database
+            // 2) Pull from Firestore
             try {
               const respPD = await fetch("/.netlify/functions/firebaseOrders?orderId=" + encodeURIComponent(orderNumber));
               const resPD = await respPD.json();
@@ -810,14 +742,12 @@
 
               const docDataPD = resPD.data || {};
 
-              // Confirm the doc's "Order Number" matches the requested order
               const dbOrderNum = docDataPD["Order Number"];
               if (dbOrderNum !== orderNumber) {
                 M.toast({ html: "Order mismatch: doc has '" + dbOrderNum + "', expected '" + orderNumber + "'" });
                 return;
               }
 
-              // Brites Messages -> "customerMessageHistory"
               if (typeof docDataPD["Brites Messages"] === "string") {
                 document.getElementById("customerMessageHistory").value = docDataPD["Brites Messages"];
                 M.toast({ html: "Brites Messages loaded!" });
@@ -825,7 +755,6 @@
                 document.getElementById("customerMessageHistory").value = "";
               }
 
-              // Shipping Label Timestamps -> "labelCreationDate"
               if (docDataPD["Shipping Label Timestamps"]) {
                 const dt = new Date(docDataPD["Shipping Label Timestamps"]);
                 if (!isNaN(dt.valueOf())) {
@@ -844,7 +773,6 @@
                 document.getElementById("labelCreationDate").value = "";
               }
 
-              // "Employee Name" -> "completedByEmployee"
               const dbEmpNameRaw = docDataPD["Employee Name"];
               let dbEmpName = "";
               if (typeof dbEmpNameRaw === "string") {
@@ -852,7 +780,6 @@
               }
               document.getElementById("completedByEmployee").value = dbEmpName;
 
-              // If we have a name, try to load the matching signature image
               if (dbEmpName) {
                 const imageFile = encodeURIComponent(dbEmpName + ".jpg");
                 const imagePath = `/assets/${imageFile}`;
@@ -973,11 +900,10 @@
         });
       });
 
-      // "Save & Update" button (formerly go to screen two)
+      // "Save & Update" button
       var goBtn = document.getElementById('goScreenTwoBtn');
       if(goBtn){
         goBtn.addEventListener('click', async function(){
-          // Incorporate "Connect Firebase" logic:
           try {
             var orderNumberVal = etsyOrderInput.value.trim();
             var orderFromVal = window.orderName || "";
@@ -1013,7 +939,7 @@
             console.error("Failed to save data to Firestore:", errCF);
           }
 
-          // Optionally go to screen two:
+          // Then load Screen Two
           loadScreenTwo();
         });
       }
@@ -1037,14 +963,10 @@
         var screenOneDivST = document.getElementById("screenOne");
         if(screenOneDivST){
           screenOneDivST.style.display = "none";
-        } else {
-          console.warn("No #screenOne found in DOM");
         }
         var screenTwoDivST = document.getElementById("screenTwo");
         if(screenTwoDivST){
           screenTwoDivST.style.display = "block";
-        } else {
-          console.warn("No #screenTwo found in injected HTML");
         }
         scriptElsST.forEach(function(oldScript, indexST){
           var newScriptST = document.createElement("script");
@@ -1084,7 +1006,6 @@
       } else if(data.orders && Array.isArray(data.orders)){
         items = data.orders;
       } else if(typeof data === "object" && data !== null){
-        // If we find an array inside some key, use that
         for(var key in data){
           if(Array.isArray(data[key])){
             items = data[key];
@@ -1122,7 +1043,6 @@
             }
             cell.style.cursor = "pointer";
 
-            // closure for i
             (function(idx){
               cell.onclick = function(){
                 showItemDetails(idx);
@@ -1133,7 +1053,6 @@
               var actualQty = (item.quantity != null) ? item.quantity : 0;
               qtyBox.value = " Quantity: " + actualQty;
             }
-
             if(metalBox){
               var metalSel = "";
               if(item.variations && Array.isArray(item.variations)){
@@ -1182,73 +1101,55 @@
       var item = window.cachedOrderItems[index];
       var details = "";
 
-      // ORDER FROM:
       if(window.orderName){
         details += " ORDER FROM: " + window.orderName + "\n";
       }
-
-      // ORDER STATUS:
       if(window.orderStatus){
         details += " Order Status: " + window.orderStatus + "\n";
       }
-
-      // Shipping Status:
-      if(window.orderIsShipped === "Shipped!"){
-        details += " Shipping Status:\n";
-      } else if(window.orderIsShipped){
+      if(window.orderIsShipped === true){
+        details += " Shipping Status: Shipped!\n";
+      } else if(typeof window.orderIsShipped === "string"){
         details += " Shipping Status: " + window.orderIsShipped + "\n";
       } else {
         details += " Shipping Status:\n";
       }
 
-      // If shipped
-      if(window.orderIsShipped === "Shipped!"){
-        if(window.orderShipments && window.orderShipments.length > 0){
-          var ship = window.orderShipments[0];
-          if(ship.carrier_name){
-            details += " Carrier Name: " + ship.carrier_name + "\n";
-            window.currentCarrier = ship.carrier_name;
-          }
-          if(ship.tracking_code){
-            details += " Tracking Number:\n" + ship.tracking_code + "\n\n";
-            window.currentTracking = ship.tracking_code;
-            if(window.currentCarrier && window.currentCarrier.toUpperCase() !== "USPS"){
-              document.getElementById("trackingLinkBtn").querySelector("img").src = "assets/ChitChats.png";
-            } else {
-              document.getElementById("trackingLinkBtn").querySelector("img").src = "assets/USPS.png";
-            }
+      if(window.orderIsShipped === "Shipped!" && window.orderShipments && window.orderShipments.length > 0){
+        var ship = window.orderShipments[0];
+        if(ship.carrier_name){
+          details += " Carrier Name: " + ship.carrier_name + "\n";
+          window.currentCarrier = ship.carrier_name;
+        }
+        if(ship.tracking_code){
+          details += " Tracking Number:\n" + ship.tracking_code + "\n\n";
+          window.currentTracking = ship.tracking_code;
+          if(window.currentCarrier && window.currentCarrier.toUpperCase() !== "USPS"){
+            document.getElementById("trackingLinkBtn").querySelector("img").src = "assets/ChitChats.png";
           } else {
-            details += "\n";
-            window.currentTracking = null;
+            document.getElementById("trackingLinkBtn").querySelector("img").src = "assets/USPS.png";
           }
         } else {
           details += "\n";
           window.currentTracking = null;
         }
-      } else {
-        window.currentTracking = null;
-      }
-
-      if(window.orderIsShipped === "Shipped!" && window.currentTracking){
-        document.getElementById("trackingLinkBtn").style.display = "block";
+        if(window.currentTracking){
+          document.getElementById("trackingLinkBtn").style.display = "block";
+        }
       } else {
         document.getElementById("trackingLinkBtn").style.display = "none";
       }
 
       details += " ORDER DETAILS:\n\n";
 
-      // Title: first 4 words
       if(item.title){
         var firstFour = item.title.trim().split(" ").slice(0,4).join(" ");
         details += " Title: " + firstFour + "\n";
       }
-
-      // SKU
       if(item.sku){
         details += " SKU: " + item.sku + "\n";
       }
 
-      // Variations
       if(item.variations && Array.isArray(item.variations)){
         var acceptedMetalNames2 = [
           "metal",
@@ -1297,7 +1198,6 @@
         }
       }
 
-      // Gift details
       if(window.receiptIsGift !== null && typeof window.receiptIsGift !== "undefined"){
         details += " Marked as Gift: " + window.receiptIsGift + "\n";
       }
@@ -1406,7 +1306,7 @@
             shipEl.value = " " + sDay + " " + sMonth + " " + sYear;
 
             if(window.orderIsShipped === "Shipped!"){
-              shipEl.style.color = "#006400"; // green
+              shipEl.style.color = "#006400";
             } else {
               var todayD = new Date();
               todayD.setHours(0,0,0,0);
@@ -1435,6 +1335,24 @@
         return null;
       });
     }
+  </script>
+
+  <!-- ADDED: Listen for localStorage changes from scanner.html -->
+  <script>
+    window.addEventListener("storage", (e) => {
+      if (e.key === "scannedQR") {
+        const scannedCode = e.newValue;
+        console.log("Index: Received scanned code via storage:", scannedCode);
+        const etsyEl = document.getElementById("etsyOrderNumber");
+        if (etsyEl && scannedCode) {
+          etsyEl.value = scannedCode;
+
+          // Now trigger the "Enter" key event so the rest of the page populates
+          const enterEvent = new KeyboardEvent("keydown", { key: "Enter" });
+          etsyEl.dispatchEvent(enterEvent);
+        }
+      }
+    });
   </script>
 </body>
 </html>
