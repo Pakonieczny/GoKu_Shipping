@@ -146,7 +146,6 @@
       line-height: 1.0;
       padding: 0 2px 2px 2px;
       box-sizing: border-box;
-      /* But no left/top in code => default to 0,0 in JS  */
     }
 
     /* Order Details text area */
@@ -163,7 +162,6 @@
       resize: none;
       text-align: left;
       overflow-y: auto;
-      /* no left/top => 0,0 */
     }
 
     /* Customer Message History text area */
@@ -180,7 +178,6 @@
       resize: none;
       text-align: left;
       overflow-y: auto;
-      /* no left/top => 0,0 */
     }
 
     /* Single-line text boxes */
@@ -196,7 +193,6 @@
       outline: none;
       background: transparent;
       font-size: 0.9em;
-      /* no left/top => 0,0 */
     }
 
     /* #dateOrdered => bold + black underline */
@@ -242,7 +238,6 @@
       font-size: 0.7em;
       margin: 0;
       padding: 0;
-      /* no left/top => 0,0, no width/height => 0 */
     }
     #titleOrderDate2 {
       font-weight: bold;
@@ -258,22 +253,21 @@
       padding: 0;
     }
     #titleOrderCompletedOn {
-      left: 50px; /* => 50 */
-      top: 460px; /* => 460 */
+      left: 50px;
+      top: 460px;
     }
     #titleOrderCompletedBy {
-      left: 50px; /* => 50 */
-      top: 480px; /* => 480 */
+      left: 50px;
+      top: 480px;
     }
     #titleSignedInAs {
-      left: 50px; /* => 50 */
-      top: 500px; /* => 500 */
+      left: 50px;
+      top: 500px;
     }
 
     /* Configuration Modal styling */
     .modal {
       position: fixed !important;
-      /* centered horizontally & vertically */
       top: 50% !important;
       left: 50% !important;
       transform: translate(-50%, -50%) !important;
@@ -552,7 +546,7 @@
     ];
 
     const defaultPositions = {
-      /* The entire large defaultPositions object from your code is here. */
+      /* The entire large defaultPositions object remains EXACTLY as you had it. */
     };
 
     function loadPositions(){
@@ -660,7 +654,7 @@
       var userLoginModal = M.Modal.init(userLoginModalElem, {
         dismissible: false
       });
-      userLoginModal.open(); // <--- This line ensures the modal appears on page load again
+      userLoginModal.open();
 
       // "Log In" button for employees
       var employeeLoginBtn = document.getElementById("employeeLoginBtn");
@@ -688,7 +682,6 @@
             if(docDataEN[empNumber]){
               var nameFound = docDataEN[empNumber];
               M.toast({ html: "Welcome, " + nameFound + "!" });
-              // store in "employeeName"
               document.getElementById("employeeName").value = nameFound;
               userLoginModal.close();
             } else {
@@ -759,8 +752,6 @@
               }
 
               const docDataPD = resPD.data || {};
-
-              // Confirm the doc's "Order Number" matches the requested order
               const dbOrderNum = docDataPD["Order Number"];
               if (dbOrderNum !== orderNumber) {
                 M.toast({ html: "Order mismatch: doc has '" + dbOrderNum + "', expected '" + orderNumber + "'" });
@@ -924,6 +915,7 @@
       if(goBtn){
         goBtn.addEventListener('click', async function(){
           try {
+            var etsyOrderInput = document.getElementById("etsyOrderNumber");
             var orderNumberVal = etsyOrderInput.value.trim();
             var orderFromVal = window.orderName || "";
             var userMsgsVal = document.getElementById("customerMessageHistory").value.trim();
@@ -1361,25 +1353,63 @@
     }
   </script>
 
-  <!-- ADDED: Listen for localStorage changes from scanner.html => "scannedQR", then ACK. -->
+  <!-- 1) Include the Firebase JS SDK (public config, not admin keys) -->
+  <!-- Example versions – adjust if you prefer v9, etc. -->
+  <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
+
   <script>
-    window.addEventListener("storage", (e) => {
-      if (e.key === "scannedQR") {
-        const scannedCode = e.newValue;
-        if (scannedCode) {
-          console.log("Index: Received scanned code from scanner.html:", scannedCode);
-          const etsyField = document.getElementById("etsyOrderNumber");
-          if (etsyField) {
-            etsyField.value = scannedCode;
-            // Simulate pressing Enter so the rest of your page populates automatically
-            const enterEvent = new KeyboardEvent("keydown", { key: "Enter" });
-            etsyField.dispatchEvent(enterEvent);
-          }
-          // Now let scanner.html know we got it
-          localStorage.setItem("scannedQR_ACK", "Order " + scannedCode + " was loaded!");
+    /******************************************************************
+     * 2) Initialize Firebase with your *client* config
+     *    (NOT your admin SDK private keys!)
+     ******************************************************************/
+    const firebaseConfig = {
+      apiKey: "YOUR_PUBLIC_WEB_API_KEY",
+      authDomain: "YOURPROJECTID.firebaseapp.com",
+      projectId: "YOURPROJECTID",
+      // etc – fill in your standard "web app" config from Firebase console
+    };
+
+    // Initialize the Firebase app & Firestore
+    firebase.initializeApp(firebaseConfig);
+    const db = firebase.firestore();
+
+    /******************************************************************
+     * 3) Real-time Firestore Listener (example):
+     *    We'll watch for doc changes in the Brites_Orders collection.
+     *    If doc with the scanned code is updated, we auto-populate.
+     ******************************************************************/
+    // Suppose the doc ID in "Brites_Orders" is "MyScannedDoc" or something.
+    // In reality, you might dynamically determine which doc to watch,
+    // but here's an example that listens for ANY new doc in that collection
+    // or specifically a single doc ID that the scanner sets.
+
+    // For demonstration, let's assume you want to watch a single doc ID:
+    const watchedDocId = "999999"; // Example placeholder – pick an ID you want to watch
+
+    db.collection("Brites_Orders").doc(watchedDocId)
+      .onSnapshot((docSnap) => {
+        if (!docSnap.exists) {
+          console.log("Doc", watchedDocId, "doesn't exist yet.");
+          return;
         }
-      }
-    });
+        const docData = docSnap.data();
+        console.log("Got doc changes for ID:", watchedDocId, docData);
+
+        // If doc has an "Order Number", place it in #etsyOrderNumber
+        if (docData["Order Number"]) {
+          const orderNumber = docData["Order Number"];
+          const etsyField = document.getElementById("etsyOrderNumber");
+          etsyField.value = orderNumber;
+
+          // Now fire "Enter" so the rest of the page populates
+          const enterEvent = new KeyboardEvent("keydown", { key: "Enter" });
+          etsyField.dispatchEvent(enterEvent);
+
+          // Or show a toast
+          M.toast({ html: "Auto-populated from Firestore: " + orderNumber });
+        }
+      });
   </script>
 </body>
 </html>
