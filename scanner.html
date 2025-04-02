@@ -8,7 +8,7 @@
   <link 
     rel="stylesheet"
     href="https://cdnjs.cloudflare.com/ajax/libs/materialize/1.0.0/css/materialize.min.css"
-/>
+  />
   <style>
     html, body {
       margin: 0; 
@@ -17,70 +17,61 @@
       font-family: sans-serif;
     }
 
-    /* All UI elements are absolute & independent */
-
-    /* 1) Title => "Scanner & QR Generator" */
-    #scannerTitle {
-      position: absolute;
-      font-size: 1.4rem;
-      font-weight: bold;
-    }
+    /* Remove #scannerTitle (the "Scanner & QR Generator" element) and #scanTitle (the "Live Scanner" element) */
+    /* => So we won't include them in the HTML at all. */
 
     /* 2) "Open Config" button => "openConfigBtnScanner" */
     #openConfigBtnScanner {
       position: absolute;
     }
 
-    /* 3) Order Label => "orderLabel" => "Order #:" */
+    /* 3) Enlarge "Order #:" => #orderLabel => font-size 3x */
     #orderLabel {
       position: absolute;
       font-weight: bold;
+      font-size: 300% !important; /* 3x bigger */
     }
 
-    /* The read-only text input now auto-populates with the scanned code */
+    /* (Scanned QR Code) text field => #orderNumInput => 3x bigger overall */
     #orderNumInput {
       position: absolute;
-      width: 150px;
-      height: 25px;
       background: #f9f9f9;
+      /* Increase size & font by 3x */
+      width: 450px !important;  /* 150 x 3 */
+      height: 75px !important;  /* 25 x 3 */
+      font-size: 300% !important; /* 3x bigger text */
     }
 
-    /* 6) QR Preview Title => "qrPreviewTitle" => "QR Code" */
+    /* 6) "QR Code" UI title => #qrPreviewTitle => 3x bigger font */
     #qrPreviewTitle {
       position: absolute;
       font-weight: bold;
+      font-size: 300% !important; /* 3x bigger */
     }
 
-    /* 7) QR Code Container => "qrcode" */
+    /* 7) The QR code container => #qrcode => enlarge by 3x (was 128x128 => 384x384) */
     #qrcode {
       position: absolute;
-      width: 128px;
-      height: 128px;
+      width: 384px !important;
+      height: 384px !important;
     }
 
-    /* 8) Scan Title => "scanTitle" => "Live Scanner" */
-    #scanTitle {
-      position: absolute;
-      font-weight: bold;
-    }
-
-    /* The old "Start Camera" & "Stop Camera" are removed in favor of auto-start. */
-
-    /* 11) Video Container => "video" */
+    /* 11) Video Container => #video => remains at default size; no scaling per your instructions */
     #video {
       position: absolute;
       background: #333;
     }
 
-    /* 12) Hidden Canvas => "captureCanvas" */
+    /* Hidden Canvas => #captureCanvas */
     #captureCanvas {
       position: absolute;
       display: none;
     }
 
-    /* "Send" button => #sendBtn */
+    /* "Send" button => #sendBtn => text font size by 3x */
     #sendBtn {
       position: absolute;
+      font-size: 300% !important; /* Only enlarge the text, not necessarily the bounding box */
     }
 
     /* Modal styling (for the config system) */
@@ -122,18 +113,21 @@
   </style>
 </head>
 <body>
-  <!-- 1) Title -->
-  <div id="scannerTitle">Scanner & QR Generator</div>
+  <!-- 
+       1) "Scanner & QR Generator" title (#scannerTitle) removed
+       2) "Live Scanner" title (#scanTitle) removed
+       So these two elements are NOT in the HTML now.
+  -->
 
   <!-- 2) "Open Config" button -->
   <button id="openConfigBtnScanner" class="btn waves-effect waves-light">
     Open Config
   </button>
 
-  <!-- 3) Order Label -->
+  <!-- 3) Order Label => "Order #:" -->
   <div id="orderLabel">Order #:</div>
 
-  <!-- The read-only text input for scanned code -->
+  <!-- The read-only text input for scanned code (Scanned QR Code) -->
   <input
     type="text"
     id="orderNumInput"
@@ -141,16 +135,13 @@
     readonly
   />
 
-  <!-- 6) QR Preview Title -->
+  <!-- 6) QR Preview Title => "QR Code" -->
   <div id="qrPreviewTitle">QR Code</div>
 
   <!-- 7) Auto-generated QR Code Container -->
   <div id="qrcode"></div>
 
-  <!-- 8) Scan Title -->
-  <div id="scanTitle">Live Scanner</div>
-
-  <!-- 11) Video Container (auto-start) -->
+  <!-- 11) Video Container -->
   <video id="video" playsinline></video>
   <canvas id="captureCanvas"></canvas>
 
@@ -190,7 +181,7 @@
     src="https://cdnjs.cloudflare.com/ajax/libs/materialize/1.0.0/js/materialize.min.js">
   </script>
 
-  <!-- (NEW) Firebase scripts for "compat" mode -->
+  <!-- Firebase scripts for "compat" mode -->
   <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
   <script>
@@ -285,9 +276,8 @@
         // "Order Number" field, among others.
 
         const bodyData = {
-          // doc ID in Firestore => "ScannedOrder"
           orderNumber: "ScannedOrder",
-          orderNumField: codeVal,           // => "Order Number"
+          orderNumField: codeVal,
           clientName: "Scanner Page",
           britesMessages: "(Auto push from scanner.html)",
           shippingLabelTimestamps: new Date().toISOString(),
@@ -316,33 +306,29 @@
      * C) CONFIG SYSTEM FOR REPOSITIONING
      *************************************************************/
     const scannerConfigComponentIDs = [
-      "scannerTitle",
+      /* #scannerTitle removed from HTML => won't be in the final code */
+      /* #scanTitle removed from HTML => won't be in final code */
       "openConfigBtnScanner",
       "orderLabel",
       "orderNumInput",
       "qrPreviewTitle",
       "qrcode",
-      "scanTitle",
       "video",
       "captureCanvas",
       "sendBtn"
     ];
 
     let scannerDefaultPositions = {
-      /* Keep or update your coordinate data as desired. Example: */
-      scannerTitle:         { left:1000,  top:3100,   width:255,  height:30 },
-      openConfigBtnScanner: { left:1600,  top:2600,   width:141,  height:36 },
-      orderLabel:           { left:700,   top:2750,   width:70,   height:25 },
-      orderNumInput:        { left:700,   top:2800,   width:150,  height:25 },
-      qrPreviewTitle:       { left:500,   top:2750,   width:120,  height:25 },
-      qrcode:               { left:500,   top:2800,   width:128,  height:128 },
-      scanTitle:            { left:242,   top:69,     width:120,  height:25 },
-      video:                { left:0,     top:0,      width:1800, height:2400 },
-      captureCanvas:        { left:400,   top:2600,   width:300,  height:200 },
-      sendBtn:              { left:900,   top:2800,   width:120,  height:36 }
+      openConfigBtnScanner: { left:1600, top:2600, width:141, height:36 },
+      orderLabel:           { left:700,  top:2750,  width:70,  height:25 },
+      orderNumInput:        { left:700,  top:2800,  width:450, height:75 }, /* possible default for bigger box */
+      qrPreviewTitle:       { left:500,  top:2750,  width:120, height:25 },
+      qrcode:               { left:300,  top:2800,  width:384, height:384 },
+      video:                { left:0,    top:0,     width:1800, height:2400 },
+      captureCanvas:        { left:400,  top:2600,  width:300, height:200 },
+      sendBtn:              { left:1230, top:3300,  width:550, height:225 }
     };
 
-    // Load from localStorage => override the numbers above if user saved previously
     function loadPositionsFromStorage() {
       const stored = localStorage.getItem("scannerPositions");
       if (stored) {
@@ -359,13 +345,11 @@
       }
     }
 
-    // Apply these raw numbers to the elements
     function applyPositions() {
       scannerConfigComponentIDs.forEach(id => {
         const coords = scannerDefaultPositions[id];
         const el = document.getElementById(id);
         if (!coords || !el) return;
-
         el.style.position = "absolute";
         el.style.left   = coords.left + "px";
         el.style.top    = coords.top  + "px";
@@ -374,7 +358,6 @@
       });
     }
 
-    // Populate the config modal table from scannerDefaultPositions
     function scannerPopulateConfigTable() {
       const tbody = document.getElementById("configTableScanner").querySelector("tbody");
       tbody.innerHTML = "";
@@ -383,9 +366,7 @@
         const coords = scannerDefaultPositions[id];
         const el = document.getElementById(id);
         if (!coords || !el) return;
-
         const compName = (el.textContent && el.textContent.trim()) || el.placeholder || id;
-
         const row = document.createElement("tr");
         row.innerHTML = `
           <td>${compName}</td>
@@ -395,14 +376,11 @@
           <td><input type="number" value="${coords.height}" data-id="${id}" data-prop="height"></td>
         `;
         tbody.appendChild(row);
-
-        // On input => update our raw data & re-apply
         row.querySelectorAll("input").forEach((inp) => {
           inp.addEventListener("input", function(){
             const tgtId = this.getAttribute("data-id");
             const prop = this.getAttribute("data-prop");
             const newVal = parseInt(this.value, 10) || 0;
-
             scannerDefaultPositions[tgtId][prop] = newVal;
             applyPositions();
           });
@@ -417,18 +395,11 @@
     }
 
     document.addEventListener("DOMContentLoaded", function(){
-      // Initialize Materialize
       M.AutoInit();
-
-      // 1) Merge user-saved positions from localStorage
       loadPositionsFromStorage();
-      // 2) Apply them
       applyPositions();
-
-      // 3) Auto-start camera
       startCamera();
 
-      // "Open Config" => populate table, show modal
       document.getElementById("openConfigBtnScanner").addEventListener("click", () => {
         scannerPopulateConfigTable();
         const modalElem = document.getElementById("configModalScanner");
@@ -436,7 +407,6 @@
         instance.open();
       });
 
-      // "Save Config" => store positions in localStorage
       document.getElementById("saveConfigBtnScanner").addEventListener("click", scannerSaveConfiguration);
     });
   </script>
