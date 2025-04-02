@@ -2,13 +2,13 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <title>QR Scanner (Production-Ready)</title>
+  <title>Scanner / Generator with Raw Config Positions</title>
 
   <!-- Materialize CSS from CDN (If offline, download locally) -->
   <link 
     rel="stylesheet"
     href="https://cdnjs.cloudflare.com/ajax/libs/materialize/1.0.0/css/materialize.min.css"
-  />
+/>
   <style>
     html, body {
       margin: 0; 
@@ -17,98 +17,113 @@
       font-family: sans-serif;
     }
 
-    /* Removed #scannerTitle and #scanTitle per request */
+    /* All UI elements are absolute & independent */
 
-    /* Add an audio element for beep */
-    #scanBeep {
-      display: none; /* hidden audio element */
+    /* 1) Title => "Scanner & QR Generator" */
+    #scannerTitle {
+      position: absolute;
+      font-size: 1.4rem;
+      font-weight: bold;
     }
 
-    /********************************************
-     * 4x ENLARGEMENT FOR SPECIFIC UI ELEMENTS  *
-     ********************************************/
-    /* The elements that must be 4x larger (including font size) */
-
-    #openConfigBtnScanner,
-    #orderLabel,
-    #orderNumInput,
-    #qrPreviewTitle,
-    #qrcode,
-    #video,
-    #sendBtn {
-      /* Increase font size by 4x */
-      font-size: 400% !important;
-      /* Optionally increase the bounding box (especially for buttons/text fields) */
-      transform: scale(4);
-      /* So they enlarge from their top-left corner */
-      transform-origin: top left;
+    /* 2) "Open Config" button => "openConfigBtnScanner" */
+    #openConfigBtnScanner {
+      position: absolute;
     }
 
-    /* 3) "Order Label" => "orderLabel" => "Order #:" */
+    /* 3) Order Label => "orderLabel" => "Order #:" */
     #orderLabel {
       position: absolute;
       font-weight: bold;
     }
 
-    /* The read-only text input => #orderNumInput => 4x bigger */
+    /* The read-only text input now auto-populates with the scanned code */
     #orderNumInput {
       position: absolute;
-      background: #f9f9f9;
-      /* Overriding smaller styles to keep it big enough after scaling */
       width: 150px;
       height: 25px;
+      background: #f9f9f9;
     }
 
-    /* 6) QR Preview Title => #qrPreviewTitle => "QR Code" */
+    /* 6) QR Preview Title => "qrPreviewTitle" => "QR Code" */
     #qrPreviewTitle {
       position: absolute;
       font-weight: bold;
     }
 
-    /* #qrcode => 4x bigger container for the generated code */
+    /* 7) QR Code Container => "qrcode" */
     #qrcode {
       position: absolute;
       width: 128px;
       height: 128px;
     }
 
-    /* 11) Video Container => #video => 4x bigger */
+    /* 8) Scan Title => "scanTitle" => "Live Scanner" */
+    #scanTitle {
+      position: absolute;
+      font-weight: bold;
+    }
+
+    /* The old "Start Camera" & "Stop Camera" are removed in favor of auto-start. */
+
+    /* 11) Video Container => "video" */
     #video {
       position: absolute;
       background: #333;
     }
 
-    /* "Send" button => #sendBtn => 4x bigger */
-    #sendBtn {
-      position: absolute;
-    }
-
-    /* 2) "Open Config" button => #openConfigBtnScanner => 4x bigger */
-    #openConfigBtnScanner {
-      position: absolute;
-    }
-
-    /* 3) "Order Label" => "orderLabel" => "Order #:" */
-    #orderLabel {
-      position: absolute;
-      font-weight: bold;
-    }
-
-    /* Hidden Canvas => #captureCanvas (unchanged) */
+    /* 12) Hidden Canvas => "captureCanvas" */
     #captureCanvas {
       position: absolute;
       display: none;
     }
 
-    /* Basic grid styles for the scanning environment remain the same */
+    /* "Send" button => #sendBtn */
+    #sendBtn {
+      position: absolute;
+    }
+
+    /* Modal styling (for the config system) */
+    .modal {
+      position: fixed !important;
+      top: 50% !important;
+      left: 50% !important;
+      transform: translate(-50%, -50%) !important;
+      height: auto !important;
+      max-height: 70vh !important;
+      width: auto !important;
+      max-width: 650px !important;
+      overflow-y: auto !important;
+    }
+    .modal .modal-content {
+      font-size: 0.9em;
+      text-align: left;
+    }
+    .modal .modal-footer {
+      display: flex !important;
+      justify-content: center !important;
+      align-items: center !important;
+      padding: 10px;
+      background: white;
+      font-size: 0.9em;
+    }
+    table.striped {
+      width: 100%;
+    }
+    table.striped th,
+    table.striped td {
+      padding: 8px;
+      text-align: center;
+    }
+    input[type="number"] {
+      width: 70px;
+      font-size: 0.8em;
+    }
   </style>
 </head>
 <body>
-  <!-- 1) Removed the #scannerTitle -->
-  <!-- 2) Removed the #scanTitle -->
-
-  <!-- Add the beep audio element -->
-  <audio id="scanBeep" src="assets/beep.mp3" preload="auto"></audio>
+  <!-- 1) Title -->
+  <div id="scannerTitle">Scanner & QR Generator</div>
 
   <!-- 2) "Open Config" button -->
   <button id="openConfigBtnScanner" class="btn waves-effect waves-light">
@@ -131,6 +146,9 @@
 
   <!-- 7) Auto-generated QR Code Container -->
   <div id="qrcode"></div>
+
+  <!-- 8) Scan Title -->
+  <div id="scanTitle">Live Scanner</div>
 
   <!-- 11) Video Container (auto-start) -->
   <video id="video" playsinline></video>
@@ -204,7 +222,6 @@
     const ctx = canvas.getContext("2d");
     const scannedInput = document.getElementById("orderNumInput");
     const qrcodeDiv = document.getElementById("qrcode");
-    const beepAudio = document.getElementById("scanBeep");
 
     async function startCamera() {
       try {
@@ -215,7 +232,7 @@
         video.srcObject = stream;
         video.play();
 
-        // Continuously scan QR codes
+        // Continuously scan
         scanningInterval = setInterval(() => {
           ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
           const frame = ctx.getImageData(0, 0, canvas.width, canvas.height);
@@ -236,12 +253,6 @@
 
       // Show the code in the text input
       scannedInput.value = codeText;
-
-      // Play beep
-      if (beepAudio) {
-        beepAudio.currentTime = 0; // restart from beginning
-        beepAudio.play().catch(err => console.log("Beep audio playback error:", err));
-      }
 
       // Auto-generate a new QR code from that scanned code
       qrcodeDiv.innerHTML = "";
@@ -305,29 +316,33 @@
      * C) CONFIG SYSTEM FOR REPOSITIONING
      *************************************************************/
     const scannerConfigComponentIDs = [
-      /* We removed #scannerTitle, #scanTitle from the HTML, so no references to them */
+      "scannerTitle",
       "openConfigBtnScanner",
       "orderLabel",
       "orderNumInput",
       "qrPreviewTitle",
       "qrcode",
+      "scanTitle",
       "video",
       "captureCanvas",
       "sendBtn"
     ];
 
     let scannerDefaultPositions = {
-      /* Adjust or keep existing coordinates if you had them */
-      openConfigBtnScanner: { left:160,   top:260,   width:141,  height:36 },
-      orderLabel:           { left:700,   top:2750,  width:70,   height:25 },
-      orderNumInput:        { left:700,   top:2800,  width:150,  height:25 },
-      qrPreviewTitle:       { left:500,   top:2750,  width:120,  height:25 },
-      qrcode:               { left:500,   top:2800,  width:128,  height:128 },
-      video:                { left:0,     top:0,     width:1800, height:2400 },
-      captureCanvas:        { left:400,   top:2600,  width:300,  height:200 },
-      sendBtn:              { left:900,   top:2800,  width:120,  height:36 }
+      /* Keep or update your coordinate data as desired. Example: */
+      scannerTitle:         { left:1000,  top:3100,   width:255,  height:30 },
+      openConfigBtnScanner: { left:1600,  top:2600,   width:141,  height:36 },
+      orderLabel:           { left:700,   top:2750,   width:70,   height:25 },
+      orderNumInput:        { left:700,   top:2800,   width:150,  height:25 },
+      qrPreviewTitle:       { left:500,   top:2750,   width:120,  height:25 },
+      qrcode:               { left:500,   top:2800,   width:128,  height:128 },
+      scanTitle:            { left:242,   top:69,     width:120,  height:25 },
+      video:                { left:0,     top:0,      width:1800, height:2400 },
+      captureCanvas:        { left:400,   top:2600,   width:300,  height:200 },
+      sendBtn:              { left:900,   top:2800,   width:120,  height:36 }
     };
 
+    // Load from localStorage => override the numbers above if user saved previously
     function loadPositionsFromStorage() {
       const stored = localStorage.getItem("scannerPositions");
       if (stored) {
@@ -344,11 +359,13 @@
       }
     }
 
+    // Apply these raw numbers to the elements
     function applyPositions() {
       scannerConfigComponentIDs.forEach(id => {
         const coords = scannerDefaultPositions[id];
         const el = document.getElementById(id);
         if (!coords || !el) return;
+
         el.style.position = "absolute";
         el.style.left   = coords.left + "px";
         el.style.top    = coords.top  + "px";
@@ -357,6 +374,7 @@
       });
     }
 
+    // Populate the config modal table from scannerDefaultPositions
     function scannerPopulateConfigTable() {
       const tbody = document.getElementById("configTableScanner").querySelector("tbody");
       tbody.innerHTML = "";
@@ -378,12 +396,13 @@
         `;
         tbody.appendChild(row);
 
-        // On input => update raw data & re-apply
+        // On input => update our raw data & re-apply
         row.querySelectorAll("input").forEach((inp) => {
           inp.addEventListener("input", function(){
             const tgtId = this.getAttribute("data-id");
             const prop = this.getAttribute("data-prop");
             const newVal = parseInt(this.value, 10) || 0;
+
             scannerDefaultPositions[tgtId][prop] = newVal;
             applyPositions();
           });
@@ -401,12 +420,12 @@
       // Initialize Materialize
       M.AutoInit();
 
-      // Merge user-saved positions from localStorage
+      // 1) Merge user-saved positions from localStorage
       loadPositionsFromStorage();
-      // Apply them
+      // 2) Apply them
       applyPositions();
 
-      // Auto-start camera
+      // 3) Auto-start camera
       startCamera();
 
       // "Open Config" => populate table, show modal
@@ -417,7 +436,7 @@
         instance.open();
       });
 
-      // "Save Config" => store positions
+      // "Save Config" => store positions in localStorage
       document.getElementById("saveConfigBtnScanner").addEventListener("click", scannerSaveConfiguration);
     });
   </script>
