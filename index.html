@@ -463,6 +463,7 @@
     window.orderShipments = [];
     window.currentTracking = null;
     window.currentCarrier = null;
+    window.isEmployeeLoggedIn = false; // We'll use this to know if user is "logged in" or not
 
     /********** Check for Access Token / Code **********/
     (function(){
@@ -662,6 +663,13 @@
               M.toast({ html: "Welcome, " + nameFound + "!" });
               document.getElementById("employeeName").value = nameFound;
               userLoginModal.close();
+
+              // Mark that we've "logged in"
+              window.isEmployeeLoggedIn = true;
+
+              // => Now start the real-time Firestore listener:
+              startScannedOrderListener();
+
             } else {
               M.toast({ html: "Employee # " + empNumber + " not found in DB!" });
             }
@@ -1328,40 +1336,30 @@
         return null;
       });
     }
-  </script>
 
-  <!-- (NEW) Load Firebase in "compat" mode from CDN -->
-  <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
-  <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
-  <script>
-    // Your actual Firebase config
-    const firebaseConfig = {
-      apiKey: "AIzaSyBXhQLsYRa4i0bX1TPTRiElF9Zjy5vSHlA",
-      authDomain: "gokudatabase.firebaseapp.com",
-      projectId: "gokudatabase",
-      storageBucket: "gokudatabase.firebasestorage.app",
-      messagingSenderId: "1078662308113",
-      appId: "1:1078662308113:web:41df0e5d229ff2af7a6cb0"
-    };
-
-    // Initialize Firebase in compat mode
-    firebase.initializeApp(firebaseConfig);
-    const db = firebase.firestore();
-
-    // Real-time listener on "ScannedOrder" doc in "Brites_Orders"
-    db.collection("Brites_Orders").doc("ScannedOrder").onSnapshot((docSnap) => {
-      if (docSnap.exists) {
-        const data = docSnap.data();
-        if (data && data["Order Number"]) {
-          const orderNumber = data["Order Number"];
-          const etsyOrderInput = document.getElementById("etsyOrderNumber");
-          etsyOrderInput.value = orderNumber;
-          // Simulate pressing Enter
-          const event = new KeyboardEvent("keydown", { key: "Enter", keyCode: 13, which: 13 });
-          etsyOrderInput.dispatchEvent(event);
-        }
+    /********** Only Start Listener After Login **********/
+    function startScannedOrderListener(){
+      // If you want to verify they're "logged in," check window.isEmployeeLoggedIn, etc.
+      if(!window.isEmployeeLoggedIn){
+        console.warn("startScannedOrderListener called but user not logged in!");
+        return;
       }
-    });
+      // Real-time listener on the "ScannedOrder" doc in "Brites_Orders"
+      db.collection("Brites_Orders").doc("ScannedOrder").onSnapshot((docSnap) => {
+        if (!window.isEmployeeLoggedIn) return; // If user logs out at some point, we can skip
+        if (docSnap.exists) {
+          const data = docSnap.data();
+          if (data && data["Order Number"]) {
+            const orderNumber = data["Order Number"];
+            const etsyOrderInput = document.getElementById("etsyOrderNumber");
+            etsyOrderInput.value = orderNumber;
+            // Simulate pressing Enter
+            const event = new KeyboardEvent("keydown", { key: "Enter", keyCode: 13, which: 13 });
+            etsyOrderInput.dispatchEvent(event);
+          }
+        }
+      });
+    }
   </script>
 </body>
 </html>
