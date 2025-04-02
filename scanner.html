@@ -37,17 +37,15 @@
       font-weight: bold;
     }
 
-    /* 4) Order Input => "orderNumInput" => "12345" */
+    /* The repurposed text input now auto-populates with the scanned code. */
     #orderNumInput {
       position: absolute;
-      width: 100px;
+      width: 150px;
       height: 25px;
     }
 
-    /* 5) Generate QR Button => "genQrBtn" => "Generate QR" */
-    #genQrBtn {
-      position: absolute;
-    }
+    /* We remove the old "Generate QR" button from the UI entirely,
+       so #genQrBtn is not in the DOM. */
 
     /* 6) QR Preview Title => "qrPreviewTitle" => "QR Code" */
     #qrPreviewTitle {
@@ -68,15 +66,9 @@
       font-weight: bold;
     }
 
-    /* 9) Start Scan Button => "startScanBtn" => "Start Camera" */
-    #startScanBtn {
-      position: absolute;
-    }
-
-    /* 10) Stop Scan Button => "stopScanBtn" => "Stop Camera" */
-    #stopScanBtn {
-      position: absolute;
-    }
+    /* We remove the old "Start Camera" (#startScanBtn) and "Stop Camera" (#stopScanBtn)
+       from the DOM altogether (the user requested to remove the "Stop" button and
+       auto-start the camera so no "Start" is needed either). */
 
     /* 11) Video Container => "video" */
     #video {
@@ -90,7 +82,12 @@
       display: none;
     }
 
-    /* Modal styling */
+    /* NEW "Send" button to push the scanned code to index.html */
+    #sendBtn {
+      position: absolute;
+    }
+
+    /* Modal styling (for the config system) */
     .modal {
       position: fixed !important;
       top: 50% !important;
@@ -140,32 +137,33 @@
   <!-- 3) Order Label -->
   <div id="orderLabel">Order #:</div>
 
-  <!-- 4) Order Input -->
-  <input type="text" id="orderNumInput" placeholder="12345" />
-
-  <!-- 5) Generate QR Button -->
-  <button id="genQrBtn" class="btn">Generate QR</button>
+  <!-- The read-only text input for scanned code (repurposed from "12345") -->
+  <input
+    type="text"
+    id="orderNumInput"
+    placeholder="(Scanned QR Code)"
+    readonly
+  />
 
   <!-- 6) QR Preview Title -->
   <div id="qrPreviewTitle">QR Code</div>
 
-  <!-- 7) QR Code Container -->
+  <!-- 7) Auto-generated QR Code Container -->
   <div id="qrcode"></div>
 
   <!-- 8) Scan Title -->
   <div id="scanTitle">Live Scanner</div>
 
-  <!-- 9) Start Scan Button -->
-  <button id="startScanBtn" class="btn">Start Camera</button>
-
-  <!-- 10) Stop Scan Button -->
-  <button id="stopScanBtn" class="btn">Stop Camera</button>
-
-  <!-- 11) Video Container -->
+  <!-- 11) Video Container (auto-starts) -->
   <video id="video" playsinline></video>
 
-  <!-- 12) Hidden Canvas for scanning -->
+  <!-- 12) Hidden canvas for scanning -->
   <canvas id="captureCanvas"></canvas>
+
+  <!-- NEW "Send" button -->
+  <button id="sendBtn" class="btn waves-effect waves-light">
+    Send
+  </button>
 
   <!-- Config Modal -->
   <div id="configModalScanner" class="modal">
@@ -201,39 +199,20 @@
   </script>
 
   <script>
-    /*************************************************************
-     * A) QR Generation
-     *************************************************************/
-    const genQrBtn = document.getElementById("genQrBtn");
-    const qrcodeContainer = document.getElementById("qrcode");
+    /****************************************************************
+     * A) AUTO-START CAMERA ON PAGE LOAD
+     ****************************************************************/
+    let stream = null;
+    let scanningInterval = null;
+    let lastScanned = "";
 
-    genQrBtn.addEventListener("click", () => {
-      const val = document.getElementById("orderNumInput").value.trim();
-      if (!val) {
-        M.toast({html: "Please enter an order number!"});
-        return;
-      }
-      qrcodeContainer.innerHTML = "";
-      new QRCode(qrcodeContainer, { 
-        text: val, 
-        width: 128, 
-        height: 128 
-      });
-    });
-
-    /*************************************************************
-     * B) Scanner
-     *************************************************************/
-    const startScanBtn = document.getElementById("startScanBtn");
-    const stopScanBtn = document.getElementById("stopScanBtn");
     const video = document.getElementById("video");
     const canvas = document.getElementById("captureCanvas");
     const ctx = canvas.getContext("2d");
+    const scannedInput = document.getElementById("orderNumInput");
+    const qrcodeDiv = document.getElementById("qrcode");
 
-    let stream = null;
-    let scanningInterval = null;
-
-    startScanBtn.addEventListener("click", async () => {
+    async function startCamera() {
       try {
         stream = await navigator.mediaDevices.getUserMedia({
           video: { facingMode: "environment" }
@@ -241,68 +220,87 @@
         video.srcObject = stream;
         video.play();
 
+        // Continuously scan
         scanningInterval = setInterval(() => {
           ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
           const frame = ctx.getImageData(0, 0, canvas.width, canvas.height);
           const qrResult = jsQR(frame.data, frame.width, frame.height);
+
           if (qrResult) {
-            M.toast({html: "Scanned: " + qrResult.data});
-            stopScan();
+            handleScannedCode(qrResult.data);
           }
         }, 500);
       } catch (err) {
         console.error("Camera error:", err);
-        M.toast({html: "Could not start camera: " + err.message});
+        alert("Could not start camera: " + err.message);
       }
-    });
-
-    stopScanBtn.addEventListener("click", stopScan);
-
-    function stopScan() {
-      if (scanningInterval) {
-        clearInterval(scanningInterval);
-        scanningInterval = null;
-      }
-      if (stream) {
-        stream.getTracks().forEach(t => t.stop());
-        stream = null;
-      }
-      video.srcObject = null;
     }
 
-    /*************************************************************
-     * C) Config System
-     *   We store the user-changed raw numbers in localStorage
-     *   and apply them exactly to each element (no offset calcs).
-     *************************************************************/
+    function handleScannedCode(codeText) {
+      // Avoid re-processing the same code if it repeats
+      if (codeText === lastScanned) return;
+      lastScanned = codeText;
+
+      // Show the code in the input
+      scannedInput.value = codeText;
+
+      // Autogenerate a new QR from that scanned code
+      qrcodeDiv.innerHTML = "";
+      new QRCode(qrcodeDiv, {
+        text: codeText,
+        width: 128,
+        height: 128
+      });
+
+      M.toast({ html: "Scanned: " + codeText });
+    }
+
+    /****************************************************************
+     * B) "Send" button => pass scanned code to index.html
+     ****************************************************************/
+    const sendBtn = document.getElementById("sendBtn");
+    sendBtn.addEventListener("click", () => {
+      const codeVal = scannedInput.value.trim();
+      if (!codeVal) {
+        M.toast({ html: "No QR code scanned yet!" });
+        return;
+      }
+      // Store in localStorage => index.html listens for "scannedQR"
+      localStorage.setItem("scannedQR", codeVal);
+      M.toast({ html: "Sent code to index.html: " + codeVal });
+    });
+
+    /****************************************************************
+     * C) CONFIG SYSTEM FOR REPOSITIONING
+     ****************************************************************/
     const scannerConfigComponentIDs = [
       "scannerTitle",
       "openConfigBtnScanner",
       "orderLabel",
       "orderNumInput",
-      "genQrBtn",
+      /* removed genQrBtn from DOM, so it's no longer in the config list */
       "qrPreviewTitle",
       "qrcode",
       "scanTitle",
-      "startScanBtn",
-      "stopScanBtn",
+      /* removed startScanBtn, stopScanBtn from the UI => remove from config system as well */
       "video",
-      "captureCanvas"
+      "captureCanvas",
+      "sendBtn" /* new "Send" button in the config system */
     ];
 
     let scannerDefaultPositions = {
-      scannerTitle:         { left:549,  top:10,   width:255, height:30 },
-      openConfigBtnScanner: { left:1100, top:905,  width:141, height:36 },
-      orderLabel:           { left:980,  top:0,    width:70,  height:25 },
-      orderNumInput:        { left:980,  top:25,   width:100, height:25 },
-      genQrBtn:             { left:1100, top:15,   width:135, height:36 },
-      qrPreviewTitle:       { left:10,   top:89,   width:120, height:25 },
-      qrcode:               { left:10,   top:114,  width:128, height:128 },
-      scanTitle:            { left:242,  top:69,   width:120, height:25 },
-      startScanBtn:         { left:600,  top:905,  width:120, height:36 },
-      stopScanBtn:          { left:773,  top:905,  width:120, height:36 },
-      video:                { left:241,  top:97,   width:1000,height:800},
-      captureCanvas:        { left:0,    top:70,   width:300, height:200 }
+      /* We keep your existing coordinate data for relevant elements,
+         plus new for "sendBtn" if you want it visible. For example: */
+      scannerTitle:         { left:1650,  top:10,   width:255,  height:30 },
+      openConfigBtnScanner: { left:1600, top:2600,  width:141,  height:36 },
+      orderLabel:           { left:980,  top:2600,    width:70,   height:25 },
+      orderNumInput:        { left:980,  top:2600,   width:150,  height:25 },
+      qrPreviewTitle:       { left:200,   top:2650,   width:120,  height:25 },
+      qrcode:               { left:200,   top:2650,  width:128,  height:128 },
+      scanTitle:            { left:242,  top:69,   width:120,  height:25 },
+      video:                { left:0,  top:0,   width:1800,  height:2400 },
+      captureCanvas:        { left:400,  top:2600,   width:300,  height:200 },
+      sendBtn:              { left:900,   top:2800,   width:120,  height:36 }
     };
 
     // Load from localStorage => override the numbers above if user saved previously
@@ -388,6 +386,9 @@
       loadPositionsFromStorage();
       // 2) Apply them
       applyPositions();
+
+      // 3) Auto-start camera
+      startCamera();
 
       // "Open Config" => populate table, show modal
       document.getElementById("openConfigBtnScanner").addEventListener("click", () => {
