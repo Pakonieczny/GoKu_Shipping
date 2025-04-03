@@ -1122,7 +1122,6 @@
       if(window.orderStatus){
         details += " Order Status: " + window.orderStatus + "\n";
       }
-      // Build shipping line
       if(window.orderIsShipped === true){
         details += " Shipping Status: Shipped!\n";
       } else if(typeof window.orderIsShipped === "string"){
@@ -1130,13 +1129,6 @@
       } else {
         details += " Shipping Status:\n";
       }
-
-      // If shipped => skip item detail text
-      if(window.orderIsShipped === "Shipped!"){
-        document.getElementById("orderDetails").value = "";
-        return;  // <----- Early return if shipped
-      }
-
       if(window.orderIsShipped === "Shipped!" && window.orderShipments && window.orderShipments.length > 0){
         var ship = window.orderShipments[0];
         if(ship.carrier_name){
@@ -1161,7 +1153,6 @@
       } else {
         document.getElementById("trackingLinkBtn").style.display = "none";
       }
-
       details += " ORDER DETAILS:\n\n";
       if(item.title){
         var firstFour = item.title.trim().split(" ").slice(0,4).join(" ");
@@ -1215,8 +1206,6 @@
       if(window.receiptGiftMessage){
         details += " Gift Message: " + window.receiptGiftMessage + "\n";
       }
-
-      // If not shipped => show details
       document.getElementById("orderDetails").value = details;
     }
 
