@@ -4,70 +4,87 @@
   <meta charset="UTF-8">
   <title>Scanner / Generator with Raw Config Positions</title>
 
-  <!-- Materialize CSS -->
+  <!-- Materialize CSS from CDN (If offline, download locally) -->
   <link 
     rel="stylesheet"
     href="https://cdnjs.cloudflare.com/ajax/libs/materialize/1.0.0/css/materialize.min.css"
   />
-
   <style>
     html, body {
-      margin: 0;
-      padding: 0;
+      margin: 0; 
+      padding: 0; 
       height: 100%;
       font-family: sans-serif;
     }
 
-    /* 2) "Open Config" button => #openConfigBtnScanner */
+    /* 
+       1) SEND BUTTON font size => 
+          from 300% in base code to 600% now (2x bigger).
+    */
+    #sendBtn {
+      position: absolute;
+      font-size: 600% !important; 
+    }
+
+    /*
+       2) Remove any forced width/height on #qrcode
+          so the user can freely resize it in the "Open Config" modal.
+    */
+    #qrcode {
+      position: absolute;
+      /* Removed fixed width/height so config can override */
+    }
+
+    /*
+       3) (Will add the beep in the JS below, not CSS)
+    */
+
+    /*
+       4) (Scanned QR Code) text box => currently 450px wide x 75px high, 300% font
+          => Now doubling => 900px x 150px, font-size: 600%
+    */
+    #orderNumInput {
+      position: absolute;
+      background: #f9f9f9;
+      width: 900px !important;
+      height: 150px !important;
+      font-size: 600% !important;
+    }
+
+    /*
+       5) "Order #:" => from 300% to 600%
+    */
+    #orderLabel {
+      position: absolute;
+      font-weight: bold;
+      font-size: 600% !important; 
+    }
+
+    /*
+       6) "QR Code" title => from 300% to 600%
+    */
+    #qrPreviewTitle {
+      position: absolute;
+      font-weight: bold;
+      font-size: 600% !important; 
+    }
+
+    /* 
+       Other elements remain as in the base code, 
+       but we leave them below for reference.
+    */
     #openConfigBtnScanner {
       position: absolute;
     }
 
-    /* 5) "Order #:" => #orderLabel => enlarge font size by 2x */
-    #orderLabel {
-      position: absolute;
-      font-weight: bold;
-      font-size: 200% !important; /* 2x bigger */
-    }
-
-    /* 4) (Scanned QR Code) text field => #orderNumInput => 2x bigger overall */
-    #orderNumInput {
-      position: absolute;
-      background: #f9f9f9;
-      width: 300px !important;  /* 2x from 150 => 300 */
-      height: 50px !important;  /* 2x from 25 => 50 */
-      font-size: 200% !important; /* 2x bigger text */
-    }
-
-    /* 6) "QR Code" UI title => #qrPreviewTitle => 2x bigger font */
-    #qrPreviewTitle {
-      position: absolute;
-      font-weight: bold;
-      font-size: 200% !important;
-    }
-
-    /* 2) #qrcode => ensure it can be resized in the config modal (no forced !important). */
-    #qrcode {
-      position: absolute;
-      /* No forced width/height here so the config system can override it. */
-    }
-
-    /* The video container => user did NOT request changes, so we keep it untouched */
     #video {
       position: absolute;
       background: #333;
     }
 
-    /* Hidden Canvas => #captureCanvas */
     #captureCanvas {
       position: absolute;
       display: none;
-    }
-
-    /* 1) "Send" button => text font size => 2x */
-    #sendBtn {
-      position: absolute;
-      font-size: 200% !important; /* 2x bigger text */
     }
 
     /* Modal styling (for the config system) */
@@ -108,20 +125,16 @@
     }
   </style>
 </head>
-
 <body>
-  <!-- 3) Loud beep for successful QR scans -->
-  <audio id="scanBeep" src="assets/loud_beep.mp3" preload="auto"></audio>
-
-  <!-- "Open Config" button -->
+  <!-- 1) "Open Config" button -->
   <button id="openConfigBtnScanner" class="btn waves-effect waves-light">
     Open Config
   </button>
 
-  <!-- 5) "Order #:" label -->
+  <!-- 5) Order Label => "Order #:" -->
   <div id="orderLabel">Order #:</div>
 
-  <!-- 4) (Scanned QR Code) text field -->
+  <!-- 4) The read-only text input for scanned code -->
   <input
     type="text"
     id="orderNumInput"
@@ -129,17 +142,17 @@
     readonly
   />
 
-  <!-- 6) "QR Code" UI title -->
+  <!-- 6) QR Preview Title => "QR Code" -->
   <div id="qrPreviewTitle">QR Code</div>
 
-  <!-- The QR code container (resizable via config) -->
+  <!-- 2) Auto-generated QR Code Container -->
   <div id="qrcode"></div>
 
-  <!-- The video element => no forced size changes -->
+  <!-- Video Container -->
   <video id="video" playsinline></video>
   <canvas id="captureCanvas"></canvas>
 
-  <!-- 1) "Send" button => 2x text size -->
+  <!-- 1) "Send" button => 2x bigger than base code -->
   <button id="sendBtn" class="btn waves-effect waves-light">Send</button>
 
   <!-- Config Modal -->
@@ -179,7 +192,7 @@
   <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
   <script>
-    /* Your Firebase config, unchanged */
+    // Your web app's Firebase configuration
     const firebaseConfig = {
       apiKey: "AIzaSyBXhQLsYRa4i0bX1TPTRiElF9Zjy5vSHlA",
       authDomain: "gokudatabase.firebaseapp.com",
@@ -189,7 +202,7 @@
       appId: "1:1078662308113:web:41df0e5d229ff2af7a6cb0"
     };
 
-    // Initialize in compat mode
+    // Initialize app in "compat" mode
     firebase.initializeApp(firebaseConfig);
     const db = firebase.firestore();
   </script>
@@ -207,7 +220,11 @@
     const ctx = canvas.getContext("2d");
     const scannedInput = document.getElementById("orderNumInput");
     const qrcodeDiv = document.getElementById("qrcode");
-    const beepAudio = document.getElementById("scanBeep"); // Loud beep
+
+    // 3) Loud beep sound
+    const beepSound = new Audio("beep.mp3"); 
+    // Make sure you have a "beep.mp3" file available. 
+    // (Alternatively, you can use a data URL or different file.)
 
     async function startCamera() {
       try {
@@ -234,20 +251,17 @@
     }
 
     function handleScannedCode(codeText) {
-      if (codeText === lastScanned) return;
+      if (codeText === lastScanned) return; // Avoid re-processing the same code
       lastScanned = codeText;
 
-      // 3) Play loud beep on successful scan
-      if (beepAudio) {
-        beepAudio.currentTime = 0;
-        beepAudio.volume = 1.0; // Make sure volume is full
-        beepAudio.play().catch(err => console.log("Beep playback error:", err));
-      }
+      // 3) Play beep
+      beepSound.currentTime = 0; // reset playback time
+      beepSound.play().catch(e => console.warn("Beep sound error:", e));
 
-      // Show the code in the text field
+      // Show the code in the text input
       scannedInput.value = codeText;
 
-      // Generate new QR code preview
+      // Generate a new QR code from that scanned code
       qrcodeDiv.innerHTML = "";
       new QRCode(qrcodeDiv, {
         text: codeText,
@@ -259,7 +273,7 @@
     }
 
     /*************************************************************
-     * B) "SEND" BUTTON => push scanned code to Firestore doc
+     * B) "SEND" BUTTON => push scanned code to Firestore doc "ScannedOrder"
      *************************************************************/
     const sendBtn = document.getElementById("sendBtn");
     sendBtn.addEventListener("click", async () => {
@@ -272,7 +286,6 @@
 
         M.toast({ html: "Sending to Firestore doc 'ScannedOrder': " + codeVal });
 
-        // We'll store it in your "Brites_Orders" collection doc "ScannedOrder"
         const bodyData = {
           orderNumber: "ScannedOrder",
           orderNumField: codeVal,
@@ -282,7 +295,6 @@
           employeeName: "ScannerBot"
         };
 
-        // POST to your Netlify function
         const response = await fetch("/.netlify/functions/firebaseOrders", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -302,7 +314,7 @@
     });
 
     /*************************************************************
-     * C) CONFIG SYSTEM
+     * C) CONFIG SYSTEM FOR REPOSITIONING
      *************************************************************/
     const scannerConfigComponentIDs = [
       "openConfigBtnScanner",
@@ -315,17 +327,15 @@
       "sendBtn"
     ];
 
-    /* We'll keep your defaultPositions exactly as in your base code, except
-       we won't force anything for #qrcode or #video beyond what's there. */
     let scannerDefaultPositions = {
-      openConfigBtnScanner: { left:1600, top:2600, width:141,  height:36 },
-      orderLabel:           { left:700,  top:2750, width:70,   height:25 },
-      orderNumInput:        { left:700,  top:2800, width:450,  height:75 },
-      qrPreviewTitle:       { left:500,  top:2750, width:120,  height:25 },
-      qrcode:               { left:300,  top:2800, width:384,  height:384 },
-      video:                { left:0,    top:0,    width:1800, height:2400 },
-      captureCanvas:        { left:400,  top:2600, width:300,  height:200 },
-      sendBtn:              { left:1230, top:3300, width:550,  height:225 }
+      openConfigBtnScanner: { left:1600, top:2600, width:141, height:36 },
+      orderLabel:           { left:700,  top:2750,  width:70,  height:25 },
+      orderNumInput:        { left:700,  top:2800,  width:900, height:150 }, 
+      qrPreviewTitle:       { left:500,  top:2750,  width:120, height:25 },
+      qrcode:               { left:300,  top:2800,  width:384, height:384 },
+      video:                { left:0,    top:0,     width:1800, height:2400 },
+      captureCanvas:        { left:400,  top:2600,  width:300, height:200 },
+      sendBtn:              { left:1230, top:3300,  width:550, height:225 }
     };
 
     function loadPositionsFromStorage() {
@@ -366,22 +376,20 @@
         const el = document.getElementById(id);
         if (!coords || !el) return;
         const compName = (el.textContent && el.textContent.trim()) || el.placeholder || id;
-
         const row = document.createElement("tr");
         row.innerHTML = `
           <td>${compName}</td>
-          <td><input type="number" value="${coords.left}"   data-id="${id}" data-prop="left"></td>
-          <td><input type="number" value="${coords.top}"    data-id="${id}" data-prop="top"></td>
-          <td><input type="number" value="${coords.width}"  data-id="${id}" data-prop="width"></td>
+          <td><input type="number" value="${coords.left}" data-id="${id}" data-prop="left"></td>
+          <td><input type="number" value="${coords.top}"  data-id="${id}" data-prop="top"></td>
+          <td><input type="number" value="${coords.width}" data-id="${id}" data-prop="width"></td>
           <td><input type="number" value="${coords.height}" data-id="${id}" data-prop="height"></td>
         `;
         tbody.appendChild(row);
-
-        row.querySelectorAll("input").forEach(inp => {
+        row.querySelectorAll("input").forEach((inp) => {
           inp.addEventListener("input", function(){
             const tgtId = this.getAttribute("data-id");
-            const prop  = this.getAttribute("data-prop");
-            const newVal= parseInt(this.value, 10) || 0;
+            const prop = this.getAttribute("data-prop");
+            const newVal = parseInt(this.value, 10) || 0;
             scannerDefaultPositions[tgtId][prop] = newVal;
             applyPositions();
           });
