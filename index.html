@@ -283,8 +283,8 @@
      */
     #userLoginModal.modal {
       position: fixed !important;
-      top: 40% !important;
-      left: 30% !important;
+      top: 50% !important;
+      left: 50% !important;
       transform: translate(-50%, -50%) !important;
       height: auto !important;
       max-height: 70vh !important;
@@ -297,10 +297,8 @@
       position: relative !important; /* anchor for absolutely placed children */
       min-height: 200px; /* example dimension */
     }
-    
-    /* Hard-coded positions per your request */
 
-    /* "User Log In" => 130, 0, 250, 0 */
+    /* Hard-coded positions for login modal elements (as previously requested) */
     #loginModalTitle {
       position: absolute;
       left: 130px;
@@ -308,8 +306,6 @@
       width: 250px;
       height: 0px;
     }
-
-    /* "Please enter your 3-digit Employee Number:" => 40, 90, 325, 0 */
     #loginModalPrompt {
       position: absolute;
       left: 40px;
@@ -317,8 +313,6 @@
       width: 325px;
       height: 0px;
     }
-
-    /* "001" => 40, 60, 75, 35 */
     #employeeNumberInput {
       position: absolute;
       left: 40px;
@@ -326,8 +320,6 @@
       width: 75px;
       height: 35px;
     }
-
-    /* "Log In" => 20, 0, 250, 0 */
     #loginModalFooter {
       position: absolute;
       left: 20px;
@@ -335,8 +327,6 @@
       width: 250px;
       height: 0px;
     }
-
-    /* "Log In" => 130, 150, 100, 35 */
     #employeeLoginBtn {
       position: absolute;
       left: 130px;
@@ -1132,6 +1122,7 @@
       if(window.orderStatus){
         details += " Order Status: " + window.orderStatus + "\n";
       }
+      // Build shipping line
       if(window.orderIsShipped === true){
         details += " Shipping Status: Shipped!\n";
       } else if(typeof window.orderIsShipped === "string"){
@@ -1139,6 +1130,13 @@
       } else {
         details += " Shipping Status:\n";
       }
+
+      // If shipped => skip item detail text
+      if(window.orderIsShipped === "Shipped!"){
+        document.getElementById("orderDetails").value = "";
+        return;  // <----- Early return if shipped
+      }
+
       if(window.orderIsShipped === "Shipped!" && window.orderShipments && window.orderShipments.length > 0){
         var ship = window.orderShipments[0];
         if(ship.carrier_name){
@@ -1163,6 +1161,7 @@
       } else {
         document.getElementById("trackingLinkBtn").style.display = "none";
       }
+
       details += " ORDER DETAILS:\n\n";
       if(item.title){
         var firstFour = item.title.trim().split(" ").slice(0,4).join(" ");
@@ -1216,6 +1215,8 @@
       if(window.receiptGiftMessage){
         details += " Gift Message: " + window.receiptGiftMessage + "\n";
       }
+
+      // If not shipped => show details
       document.getElementById("orderDetails").value = details;
     }
 
