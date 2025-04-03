@@ -23,22 +23,14 @@
     /* Main UI Buttons */
     #connectEtsyBtn {
       position: absolute;
-      left: 50px;
-      top: 20px;
     }
 
-    /* "Open Config" button */
     #openConfigBtn {
       position: absolute;
-      left: 50px;
-      top: 110px;
     }
 
-    /* "Order Link" button */
     #orderLinkBtn {
       position: absolute;
-      left: 120px;
-      top: 20px;
       background: transparent;
       border: none;
       cursor: pointer;
@@ -51,11 +43,8 @@
       display: block;
     }
 
-    /* "Tracking Link" button */
     #trackingLinkBtn {
       position: absolute;
-      left: 160px;
-      top: 20px;
       background: transparent;
       border: none;
       cursor: pointer;
@@ -72,8 +61,6 @@
 
     #etsyOrderNumber {
       position: absolute;
-      left: 50px;
-      top: 160px;
       margin: 0;
       padding: 0;
       line-height: 1.0;
@@ -81,7 +68,6 @@
       border-bottom: 1px solid #000;
       background: transparent !important;
       text-align: left;
-      width: 250px; /* explicitly set => 250 */
       font-size: 1em;
       outline: none;
     }
@@ -89,9 +75,6 @@
     /* Photo Grid and Preview Boxes */
     #Photo_Grid {
       position: absolute;
-      left: 400px;
-      top: 160px;
-      transform: scale(1.25);
       transform-origin: top left;
     }
     #photoGridContainer {
@@ -134,8 +117,6 @@
       text-decoration: none !important;
       box-shadow: none !important;
       font-size: 0.8em !important;
-      width: 60px;
-      height: 20px;
       text-align: left;
       line-height: 1.0;
       padding: 0 2px 2px 2px;
@@ -146,8 +127,6 @@
     #orderDetails {
       position: absolute;
       border: 1px solid black;
-      width: 300px; /* explicitly => 300 */
-      height: 175px; /* explicitly => 175 */
       box-sizing: border-box;
       outline: none;
       background: transparent;
@@ -162,8 +141,6 @@
     #customerMessageHistory {
       position: absolute;
       border: 1px solid black;
-      width: 300px; /* => 300 */
-      height: 175px; /* => 175 */
       box-sizing: border-box;
       outline: none;
       background: transparent;
@@ -181,8 +158,6 @@
     #employeeName,
     #completedByEmployee {
       position: absolute;
-      width: 200px;
-      height: 20px;
       box-sizing: border-box;
       outline: none;
       background: transparent;
@@ -234,24 +209,12 @@
       margin: 0;
       padding: 0;
     }
-    #titleOrderCompletedOn {
-      left: 50px;
-      top: 460px;
-    }
-    #titleOrderCompletedBy {
-      left: 50px;
-      top: 480px;
-    }
-    #titleSignedInAs {
-      left: 50px;
-      top: 500px;
-    }
 
     /* Configuration Modal styling */
     #configModal.modal {
       position: fixed !important;
-      top: 50% !important;
-      left: 50% !important;
+      top: 35% !important;
+      left: 40% !important;
       transform: translate(-50%, -50%) !important;
       height: auto !important;
       max-height: 70vh !important;
@@ -263,10 +226,6 @@
     /* "Signature Box" */
     #signatureBox {
       position: absolute;
-      left: 400px;
-      top: 360px;
-      width: 50px;
-      height: 25px;
       background: #f9f9f9;
       display: flex;
       align-items: center;
@@ -294,45 +253,8 @@
       z-index: 9999 !important;
     }
     #userLoginModalContainer {
-      position: relative !important; /* anchor for absolutely placed children */
+      position: relative !important;
       min-height: 200px; /* example dimension */
-    }
-
-    /* Hard-coded positions for login modal elements (as previously requested) */
-    #loginModalTitle {
-      position: absolute;
-      left: 130px;
-      top: 0px;
-      width: 250px;
-      height: 0px;
-    }
-    #loginModalPrompt {
-      position: absolute;
-      left: 40px;
-      top: 90px;
-      width: 325px;
-      height: 0px;
-    }
-    #employeeNumberInput {
-      position: absolute;
-      left: 40px;
-      top: 60px;
-      width: 75px;
-      height: 35px;
-    }
-    #loginModalFooter {
-      position: absolute;
-      left: 20px;
-      top: 0px;
-      width: 250px;
-      height: 0px;
-    }
-    #employeeLoginBtn {
-      position: absolute;
-      left: 130px;
-      top: 150px;
-      width: 100px;
-      height: 35px;
     }
   </style>
 </head>
@@ -340,8 +262,12 @@
 <body>
   <!-- WRAP SCREEN ONE CONTENT IN THIS CONTAINER -->
   <div id="screenOne">
-    <button id="connectEtsyBtn" class="configurable btn waves-effect waves-light">Connect to Etsy</button>
-    <button id="openConfigBtn" class="configurable btn waves-effect waves-light">Open Config</button>
+    <button id="connectEtsyBtn" class="configurable btn waves-effect waves-light">
+      Connect to Etsy
+    </button>
+    <button id="openConfigBtn" class="configurable btn waves-effect waves-light">
+      Open Config
+    </button>
 
     <!-- "Order Link" button -->
     <button id="orderLinkBtn" name="Order Link">
@@ -450,7 +376,7 @@
       </div>
     </div>
 
-    <button id="goScreenTwoBtn" class="btn" style="position:absolute; left:180px; top:110px;">
+    <button id="goScreenTwoBtn" class="btn">
       Save & Update
     </button>
   </div>
@@ -459,14 +385,13 @@
 
   <!-- The user login modal -->
   <div id="userLoginModal" class="modal">
-    <!-- A wrapper with position: relative, so children can be absolutely placed -->
-    <div id="userLoginModalContainer" class="modal-content" style="position:relative;">
+    <div id="userLoginModalContainer" class="modal-content">
       <h5 id="loginModalTitle">User Log In</h5>
       <p id="loginModalPrompt">Please enter your 3-digit Employee Number:</p>
       <input
         type="text"
         id="employeeNumberInput"
-        placeholder="001"
+        placeholder="002"
       />
     </div>
     <div id="loginModalFooter" class="modal-footer">
@@ -483,6 +408,7 @@
   <!-- 1) Firebase loaded first, define db for global usage -->
   <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
+
   <script>
     const firebaseConfig = {
       apiKey: "AIzaSyBXhQLsYRa4i0bX1TPTRiElF9Zjy5vSHlA",
@@ -510,6 +436,130 @@
     window.currentCarrier = null;
     window.isEmployeeLoggedIn = false; // We'll use this to guard the real-time listener
 
+    /*
+     * Hard-coded default positions (from your provided table).
+     * If localStorage has no saved config for a component,
+     * these fallback coordinates are used.
+     */
+    const defaultPositions = {
+      connectEtsyBtn:         { left:1000, top:600, width:175, height:36 },
+      openConfigBtn:          { left:1184, top:600, width:150, height:36 },
+      orderLinkBtn:           { left:640,  top:76,  width:30,  height:30 },
+      trackingLinkBtn:        { left:134,  top:248, width:15,  height:16 },
+
+      // "3640642113" => the "etsyOrderNumber" text box
+      etsyOrderNumber:        { left:11, top:7, width:282, height:45 },
+
+      // 8 image preview boxes => #Photo_Grid
+      Photo_Grid:             { left:535, top:115, width:633, height:274 },
+
+      // quantity cells
+      quantityCell0: { left:536,  top:307, width:153, height:42 },
+      quantityCell1: { left:737,  top:305, width:153, height:45 },
+      quantityCell2: { left:937,  top:305, width:153, height:45 },
+      quantityCell3: { left:1136, top:305, width:153, height:45 },
+      quantityCell4: { left:535,  top:521, width:153, height:45 },
+      quantityCell5: { left:737,  top:521, width:153, height:45 },
+      quantityCell6: { left:937,  top:521, width:153, height:45 },
+      quantityCell7: { left:1136, top:521, width:153, height:45 },
+
+      // metal cells
+      metalCell0: { left:537,  top:290, width:153, height:45 },
+      metalCell1: { left:737,  top:290, width:153, height:45 },
+      metalCell2: { left:937,  top:290, width:153, height:45 },
+      metalCell3: { left:1136, top:290, width:153, height:45 },
+      metalCell4: { left:536,  top:536, width:153, height:45 },
+      metalCell5: { left:737,  top:536, width:153, height:45 },
+      metalCell6: { left:937,  top:536, width:153, height:45 },
+      metalCell7: { left:1136, top:536, width:153, height:45 },
+
+      // "ORDER DETAILS: No items found." => #orderDetails
+      orderDetails: { left:10, top:162, width:300, height:342 },
+
+      // "Hello Crab!" => #customerMessageHistory
+      customerMessageHistory: { left:10, top:535, width:300, height:93 },
+
+      // #dateOrdered => 10,100,145,30
+      dateOrdered: { left:10, top:100, width:145, height:30 },
+
+      // #shipDate => 164,100,145,30
+      shipDate: { left:164, top:100, width:145, height:30 },
+
+      // "31 Mar 2025, 00:59 (Last Updated On:)" => #labelCreationDate => 380,23,145,30
+      labelCreationDate: { left:380, top:23, width:145, height:30 },
+
+      // "Michelle_R (Signed in As:)" => #employeeName => 1015,23,100,30
+      employeeName: { left:1015, top:23, width:100, height:30 },
+
+      // "Michelle_R (Updated By:)" => #completedByEmployee => 537,23,100,30
+      completedByEmployee: { left:537, top:23, width:100, height:30 },
+
+      // #titleOrderDate => "Order Date:" => 10,82,99,25
+      titleOrderDate: { left:10, top:82, width:99, height:25 },
+
+      // #titleOrderDate2 => 127,209,145,15
+      titleOrderDate2: { left:127, top:209, width:145, height:15 },
+
+      // #titleShipDate => "Ship By:" => 167,82,99,15
+      titleShipDate: { left:167, top:82, width:99, height:15 },
+
+      // #titleOrderCompletedOn => "Last Updated On:" => 381,7,107,15
+      titleOrderCompletedOn: { left:381, top:7, width:107, height:15 },
+
+      // #titleOrderCompletedBy => "Updated By:" => 538,7,105,15
+      titleOrderCompletedBy: { left:538, top:7, width:105, height:15 },
+
+      // #titleSignedInAs => "Signed In As:" => 1016,7,75,15
+      titleSignedInAs: { left:1016, top:7, width:75, height:15 },
+
+      // #titleOrderDetails => "Order Details:" => 11,144,99,15
+      titleOrderDetails: { left:11, top:144, width:99, height:15 },
+
+      // #titleBritesMessages => "Brites Messages" => 11,518,99,15
+      titleBritesMessages: { left:11, top:518, width:99, height:15 },
+
+      // #titlePurchasedItems => "Purchased Items" => 538,84,99,15
+      titlePurchasedItems: { left:538, top:84, width:99, height:15 },
+
+      // #titleOrderNumber => "Order Number" => 11,7,99,15
+      titleOrderNumber: { left:11, top:7, width:99, height:15 },
+
+      // #goScreenTwoBtn => "Save & Update" => 1141,7,185,36
+      goScreenTwoBtn: { left:1141, top:7, width:185, height:36 },
+
+      // #signatureBox => 624,19,105,34
+      signatureBox: { left:624, top:19, width:105, height:34 },
+
+      // The user login modal
+      userLoginModal:         { left:0, top:0, width:0, height:0 },
+      userLoginModalContainer:{ left:0, top:0, width:0, height:0 },
+      loginModalTitle:        { left:0, top:0, width:0, height:0 },
+      loginModalPrompt:       { left:0, top:0, width:0, height:0 },
+
+      // #employeeNumberInput => "002 => (50,50,250,35)"
+      employeeNumberInput: { left:50, top:50, width:250, height:35 },
+
+      // #employeeLoginBtn => "Log In => (50,50,100,35)"
+      employeeLoginBtn:    { left:50, top:50, width:100, height:35 },
+      loginModalFooter:    { left:0, top:0, width:0, height:0 },
+    };
+
+    var configComponentIDs = [
+      "connectEtsyBtn","openConfigBtn","orderLinkBtn","trackingLinkBtn","etsyOrderNumber",
+      "Photo_Grid","quantityCell0","quantityCell1","quantityCell2","quantityCell3",
+      "quantityCell4","quantityCell5","quantityCell6","quantityCell7",
+      "metalCell0","metalCell1","metalCell2","metalCell3",
+      "metalCell4","metalCell5","metalCell6","metalCell7",
+      "orderDetails","customerMessageHistory","dateOrdered","shipDate",
+      "labelCreationDate","employeeName","completedByEmployee",
+      "titleOrderDate","titleOrderDate2","titleShipDate",
+      "titleOrderCompletedOn","titleOrderCompletedBy","titleSignedInAs",
+      "titleOrderDetails","titleBritesMessages","titlePurchasedItems","titleOrderNumber",
+      "goScreenTwoBtn","signatureBox",
+      "userLoginModal","userLoginModalContainer","loginModalTitle",
+      "loginModalPrompt","employeeNumberInput","loginModalFooter","employeeLoginBtn"
+    ];
+
     (function(){
       var urlParams = new URLSearchParams(window.location.search);
       var accessToken = urlParams.get("access_token");
@@ -535,69 +585,26 @@
       }
     })();
 
-    function generateRandomString(length){
-      var chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
-      var text = "";
-      for(var i = 0; i < length; i++){
-        text += chars.charAt(Math.floor(Math.random() * chars.length));
-      }
-      return text;
-    }
-    async function generateCodeChallenge(codeVerifier){
-      var encoder = new TextEncoder();
-      var data = encoder.encode(codeVerifier);
-      var digest = await crypto.subtle.digest("SHA-256", data);
-      var base64String = btoa(String.fromCharCode.apply(null, new Uint8Array(digest)));
-      return base64String.replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
-    }
-
-    /*
-     * Incorporate the new login modal elements in the config array so they're adjustable.
-     */
-    var configComponentIDs = [
-      "connectEtsyBtn","openConfigBtn","orderLinkBtn","trackingLinkBtn","etsyOrderNumber",
-      "Photo_Grid","quantityCell0","quantityCell1","quantityCell2","quantityCell3",
-      "quantityCell4","quantityCell5","quantityCell6","quantityCell7",
-      "metalCell0","metalCell1","metalCell2","metalCell3",
-      "metalCell4","metalCell5","metalCell6","metalCell7",
-      "orderDetails","customerMessageHistory","dateOrdered","shipDate",
-      "labelCreationDate","employeeName","completedByEmployee",
-      "titleOrderDate","titleOrderDate2","titleShipDate",
-      "titleOrderCompletedOn","titleOrderCompletedBy","titleSignedInAs",
-      "titleOrderDetails","titleBritesMessages","titlePurchasedItems","titleOrderNumber",
-      "goScreenTwoBtn","signatureBox",
-      /* Existing modal references */
-      "userLoginModal",
-      /* Newly added for positioning the login elements */
-      "userLoginModalContainer",
-      "loginModalTitle",
-      "loginModalPrompt",
-      "employeeNumberInput",
-      "loginModalFooter",
-      "employeeLoginBtn"
-    ];
-
-    const defaultPositions = {
-      /* Only necessary if you have fallback positions, otherwise empty. */
-    };
-
     function loadPositions(){
       for(var i=0; i<configComponentIDs.length; i++){
         var id = configComponentIDs[i];
         var el = document.getElementById(id);
         if(!el) continue;
 
+        // Fallback to 0 if not in defaultPositions
         var def = defaultPositions[id] || { left:0, top:0, width:0, height:0 };
 
+        // Check localStorage
         var left = localStorage.getItem("pos-"+id+"-left");
         var top  = localStorage.getItem("pos-"+id+"-top");
         var w    = localStorage.getItem("pos-"+id+"-width");
         var h    = localStorage.getItem("pos-"+id+"-height");
 
-        if(left === null)  left = def.left;
-        if(top === null)   top  = def.top;
-        if(w === null)     w    = def.width;
-        if(h === null)     h    = def.height;
+        // If no localStorage => use defaults
+        if(left === null) left = def.left;
+        if(top === null)  top  = def.top;
+        if(w === null)    w    = def.width;
+        if(h === null)    h    = def.height;
 
         el.style.position = "absolute";
         el.style.left   = left + "px";
@@ -1122,13 +1129,16 @@
       if(window.orderStatus){
         details += " Order Status: " + window.orderStatus + "\n";
       }
+
+      // Only skip "Shipped!" text, keep "Shipping Status:" line
       if(window.orderIsShipped === true){
-        details += " Shipping Status: Shipped!\n";
+        details += " Shipping Status:\n"; 
       } else if(typeof window.orderIsShipped === "string"){
         details += " Shipping Status: " + window.orderIsShipped + "\n";
       } else {
         details += " Shipping Status:\n";
       }
+
       if(window.orderIsShipped === "Shipped!" && window.orderShipments && window.orderShipments.length > 0){
         var ship = window.orderShipments[0];
         if(ship.carrier_name){
@@ -1153,6 +1163,7 @@
       } else {
         document.getElementById("trackingLinkBtn").style.display = "none";
       }
+
       details += " ORDER DETAILS:\n\n";
       if(item.title){
         var firstFour = item.title.trim().split(" ").slice(0,4).join(" ");
