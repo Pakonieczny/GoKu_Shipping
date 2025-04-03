@@ -248,16 +248,16 @@
     }
 
     /* Configuration Modal styling */
-    #configModal.modal {
+    #userLoginModal.modal {
       position: fixed !important;
-      top: 50% !important;
-      left: 50% !important;
+      top: 35% !important;
+      left: 40% !important;
       transform: translate(-50%, -50%) !important;
       height: auto !important;
       max-height: 70vh !important;
       width: auto !important;
-      max-width: 650px !important;
-      overflow-y: scroll !important;
+      max-width: 400px !important;
+      overflow-y: auto !important;
     }
 
     /* "Signature Box" */
@@ -540,7 +540,7 @@
       "employeeLoginBtn"
     ];
 
-    // --- THIS IS THE UPDATED BLOCK WITH YOUR SPECIFIED POSITIONS ---
+    // Updated default positions block
     const defaultPositions = {
       connectEtsyBtn:       { left: 1000, top: 600,  width: 175, height: 36 },
       openConfigBtn:        { left: 1184, top: 600,  width: 150, height: 36 },
@@ -591,13 +591,11 @@
       signatureBox:         { left: 624,  top: 19,   width: 105, height: 34 },
 
       // The modal elements:
-      userLoginModal:       { left: 0,    top: 0,    width: 0,   height: 0 },
-      userLoginModalContainer: { left:0,  top: 0,    width: 0,   height: 0 },
-      loginModalTitle:      { left: 0,    top: 0,    width: 0,   height: 0 },
-      loginModalPrompt:     { left: 0,    top: 0,    width: 0,   height: 0 },
-      employeeNumberInput:  { left: 50,   top: 50,   width: 250, height: 35 },
-      loginModalFooter:     { left: 0,    top: 0,    width: 0,   height: 0 },
-      employeeLoginBtn:     { left: 50,   top: 50,   width: 100, height: 35 }
+      loginModalTitle:      { left: 130,    top: 0,    width: 250,   height: 0 },
+      loginModalPrompt:     { left: 40,    top: 90,    width: 325,   height: 0 },
+      employeeNumberInput:  { left: 40,   top: 60,   width: 75, height: 35 },
+      loginModalFooter:     { left: 20,    top: 0,    width: 250,   height: 0 },
+      employeeLoginBtn:     { left: 130,   top: 150,   width: 100, height: 35 }
     };
 
     function loadPositions(){
@@ -1142,12 +1140,18 @@
         details += " Order Status: " + window.orderStatus + "\n";
       }
 
-      // Only skip the "Shipped!" text, but keep "Shipping Status:" line
-      if(window.orderIsShipped === true){
-        details += " Shipping Status:\n"; 
-      } else if(typeof window.orderIsShipped === "string"){
+      /*
+       * REVISED CODE TO HIDE ONLY "Shipped!" TEXT
+       * We still append "Shipping Status:" but skip the literal "Shipped!" if it equals "Shipped!"
+       */
+      if (window.orderIsShipped === "Shipped!") {
+        // Only show "Shipping Status:" with no further text
+        details += " Shipping Status:\n";
+      } else if (typeof window.orderIsShipped === "string") {
+        // For other string statuses, append them normally
         details += " Shipping Status: " + window.orderIsShipped + "\n";
       } else {
+        // If there's no recognized "shipped" string or it's boolean false, fallback
         details += " Shipping Status:\n";
       }
 
