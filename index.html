@@ -247,7 +247,7 @@
       top: 500px;
     }
 
-    /* Configuration Modal styling (scoped specifically to the config modal) */
+    /* Configuration Modal styling */
     #configModal.modal {
       position: fixed !important;
       top: 50% !important;
@@ -258,19 +258,6 @@
       width: auto !important;
       max-width: 650px !important;
       overflow-y: scroll !important;
-    }
-
-    #userLoginModal.modal {
-      position: fixed !important;
-      top: 50% !important;
-      left: 50% !important;
-      transform: translate(-50%, -50%) !important;
-      height: auto !important;
-      max-height: 70vh !important;
-      width: auto !important;
-      max-width: 400px !important;
-      overflow-y: auto !important;
-      z-index: 9999 !important;
     }
 
     /* "Signature Box" */
@@ -287,6 +274,41 @@
       overflow: hidden;
       user-select: none;
       border-bottom: 1px solid black !important;
+    }
+
+    /*
+     * Always-center the user login modal,
+     * but use a relative container so we can move
+     * the text/prompt inside with "Open Config."
+     */
+    #userLoginModal.modal {
+      position: fixed !important;
+      top: 50% !important;
+      left: 50% !important;
+      transform: translate(-50%, -50%) !important;
+      height: auto !important;
+      max-height: 70vh !important;
+      width: auto !important;
+      max-width: 400px !important;
+      overflow-y: auto !important;
+      z-index: 9999 !important;
+    }
+    #userLoginModalContainer {
+      position: relative !important; /* anchor for absolutely placed children */
+      min-height: 200px; /* example dimension */
+    }
+    /* Absolutely position these so "Open Config" can move them around */
+    #loginModalTitle {
+      position: absolute;
+    }
+    #loginModalPrompt {
+      position: absolute;
+    }
+    #employeeNumberInput {
+      position: absolute;
+    }
+    #loginModalFooter {
+      position: relative; /* or absolute if you want to move it too */
     }
   </style>
 </head>
@@ -411,13 +433,22 @@
 
   <div id="secondaryContainer"></div>
 
+  <!-- The user login modal -->
   <div id="userLoginModal" class="modal">
-    <div class="modal-content">
-      <h5>User Log In</h5>
-      <p>Please enter your 3-digit Employee Number:</p>
-      <input type="text" id="employeeNumberInput" placeholder="123" />
+    <!-- A wrapper with position: relative, so children can be absolutely placed -->
+    <div id="userLoginModalContainer" class="modal-content" style="position:relative;">
+      <h5 id="loginModalTitle" style="position:absolute;">User Log In</h5>
+      <p id="loginModalPrompt" style="position:absolute;">
+        Please enter your 3-digit Employee Number:
+      </p>
+      <input
+        type="text"
+        id="employeeNumberInput"
+        style="position:absolute;"
+        placeholder="123"
+      />
     </div>
-    <div class="modal-footer">
+    <div id="loginModalFooter" class="modal-footer" style="position:relative;">
       <button id="employeeLoginBtn" class="btn">Log In</button>
     </div>
   </div>
@@ -499,6 +530,9 @@
       return base64String.replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
     }
 
+    /*
+     * Incorporate the new login modal elements in the config array so they're all adjustable.
+     */
     var configComponentIDs = [
       "connectEtsyBtn","openConfigBtn","orderLinkBtn","trackingLinkBtn","etsyOrderNumber",
       "Photo_Grid","quantityCell0","quantityCell1","quantityCell2","quantityCell3",
@@ -510,7 +544,16 @@
       "titleOrderDate","titleOrderDate2","titleShipDate",
       "titleOrderCompletedOn","titleOrderCompletedBy","titleSignedInAs",
       "titleOrderDetails","titleBritesMessages","titlePurchasedItems","titleOrderNumber",
-      "goScreenTwoBtn","signatureBox","userLoginModal","employeeNumberInput","employeeLoginBtn"
+      "goScreenTwoBtn","signatureBox",
+      /* Existing modal references */
+      "userLoginModal",
+      /* Newly added to move login modal internal text/prompt/etc. */
+      "userLoginModalContainer",
+      "loginModalTitle",
+      "loginModalPrompt",
+      "employeeNumberInput",
+      "loginModalFooter",
+      "employeeLoginBtn"
     ];
 
     const defaultPositions = {
