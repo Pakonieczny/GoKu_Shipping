@@ -456,7 +456,6 @@
     window.db = firebase.firestore(); // define globally
   </script>
 
-  <!-- 2) Now the rest of your logic can safely reference `db` -->
   <script>
     /********** Global Variables **********/
     window.receiptIsGift = null;
@@ -527,7 +526,7 @@
     ];
 
     const defaultPositions = {
-      /* Your large default positions object or existing stored positions... */
+      /* You can fill in any default positioning data here, if needed. */
     };
 
     function loadPositions(){
@@ -548,6 +547,7 @@
         if(w === null)     w    = def.width;
         if(h === null)     h    = def.height;
 
+        el.style.position = "absolute";
         el.style.left   = left + "px";
         el.style.top    = top  + "px";
         el.style.width  = w    + "px";
@@ -723,24 +723,39 @@
             try {
               const respPD = await fetch("/.netlify/functions/firebaseOrders?orderId=" + encodeURIComponent(orderNumber));
               const resPD = await respPD.json();
+
+              /*
+                >>> UPDATED LOGIC FOR "DOC NOT FOUND":
+                If not OK and the server says "not found", we clear the fields
+                with NO error toast or console error. Otherwise, we raise a real error.
+              */
               if(!respPD.ok){
-                throw new Error(resPD.error || "Unknown error from firebaseOrders function");
+                if(resPD.error && resPD.error.toLowerCase().includes("not found")){
+                  // Doc not found => clear fields quietly, no error
+                  document.getElementById("labelCreationDate").value = "";
+                  document.getElementById("completedByEmployee").value = "";
+                  return;
+                } else {
+                  throw new Error(resPD.error || "Unknown error from firebaseOrders function");
+                }
               }
+
+              // If we reach here => doc is found or newly created
               const docDataPD = resPD.data || {};
               const dbOrderNum = docDataPD["Order Number"];
-              if (dbOrderNum !== orderNumber) {
+              if(dbOrderNum !== orderNumber){
                 M.toast({ html: "Order mismatch: doc has '" + dbOrderNum + "', expected '" + orderNumber + "'" });
                 return;
               }
-              if (typeof docDataPD["Brites Messages"] === "string") {
+              if(typeof docDataPD["Brites Messages"] === "string"){
                 document.getElementById("customerMessageHistory").value = docDataPD["Brites Messages"];
                 M.toast({ html: "Brites Messages loaded!" });
               } else {
                 document.getElementById("customerMessageHistory").value = "";
               }
-              if (docDataPD["Shipping Label Timestamps"]) {
+              if(docDataPD["Shipping Label Timestamps"]){
                 const dt = new Date(docDataPD["Shipping Label Timestamps"]);
-                if (!isNaN(dt.valueOf())) {
+                if(!isNaN(dt.valueOf())){
                   const monthNamesF2 = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
                   const dd = ("0" + dt.getDate()).slice(-2);
                   const mStr = monthNamesF2[dt.getMonth()];
@@ -757,11 +772,11 @@
               }
               const dbEmpNameRaw = docDataPD["Employee Name"];
               let dbEmpName = "";
-              if (typeof dbEmpNameRaw === "string") {
+              if(typeof dbEmpNameRaw === "string"){
                 dbEmpName = dbEmpNameRaw.trim();
               }
               document.getElementById("completedByEmployee").value = dbEmpName;
-              if (dbEmpName) {
+              if(dbEmpName){
                 const imageFile = encodeURIComponent(dbEmpName + ".jpg");
                 const imagePath = `/assets/${imageFile}`;
                 document.getElementById("signatureBox").innerHTML = `
@@ -775,6 +790,7 @@
                 document.getElementById("signatureBox").innerHTML = "Sig Box";
               }
             } catch(errPD){
+              // Real error from network or code, not doc-not-found
               M.toast({ html: "Error: " + errPD.message });
               console.error("Failed to pull data from Firestore:", errPD);
             }

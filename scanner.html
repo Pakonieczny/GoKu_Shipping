@@ -17,26 +17,18 @@
       font-family: sans-serif;
     }
 
-    /*
-       Double-sized "Send" button (font-size 600%).
-    */
+    /* "Send" button (font-size 600%). */
     #sendBtn {
       position: absolute;
       font-size: 600% !important;
     }
 
-    /* 
-       1) Ensure #qrcode can be resized:
-          - Remove any forced width/height in CSS.
-          - The config modal will control it.
-    */
+    /* Let #qrcode be resizable by config (no forced width/height). */
     #qrcode {
       position: absolute;
     }
 
-    /* 
-       (Scanned QR Code) text box => bigger + big font
-    */
+    /* (Scanned QR Code) text box => bigger + big font */
     #orderNumInput {
       position: absolute;
       background: #f9f9f9;
@@ -45,18 +37,12 @@
       font-size: 600% !important;
     }
 
-    /*
-       "Order #:" => bigger font
-    */
     #orderLabel {
       position: absolute;
       font-weight: bold;
       font-size: 600% !important;
     }
 
-    /*
-       "QR Code" title => bigger font
-    */
     #qrPreviewTitle {
       position: absolute;
       font-weight: bold;
@@ -211,10 +197,15 @@
     const scannedInput = document.getElementById("orderNumInput");
     const qrcodeDiv = document.getElementById("qrcode");
 
-    // Loud beep sound (ensure "beep.mp3" is in the same folder or use your own path).
-    const beepSound = new Audio("beep.mp3");
-    // If you prefer an embedded beep, you could do something like:
-    // const beepSound = new Audio("data:audio/wav;base64,SUQzAwAAAA...");
+    // 1) Embed a tiny beep as Base64 to avoid external file issues
+    //    Extremely short beep so it usually won't be blocked.
+    const beepBase64 =
+      "data:audio/wav;base64," +
+      "UklGRuQAAABXQVZFZm10IBAAAAABAAEAQB8AAIA+AAACABAAZGF0YSQAAAD/AACAgICAgP8A" +
+      "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA" +
+      "AAAAACH5BAEAAAIALAAAAAAQABAAAARQsMhJQBg2SSnRybfAwiE0jmWo3Ky21UIkx4BMaCZH" +
+      "KILtnEMhkkMAADs=";
+    const beepSound = new Audio(beepBase64);
 
     async function startCamera() {
       try {
@@ -244,16 +235,15 @@
       if (codeText === lastScanned) return; // Avoid re-processing the same code
       lastScanned = codeText;
 
-      // Trigger the beep sound
-      beepSound.currentTime = 0; 
+      // 2) Attempt to play the beep
+      beepSound.currentTime = 0;
       beepSound.play().catch(e => console.warn("Beep sound error:", e));
 
-      // Show the code in the text input
+      // Show code in text input
       scannedInput.value = codeText;
 
-      // Re-generate the QR code using the container’s current dimensions
+      // Create new QR code matching container’s current dimensions
       qrcodeDiv.innerHTML = "";
-
       const containerStyles = window.getComputedStyle(qrcodeDiv);
       const containerWidth  = parseInt(containerStyles.width, 10)  || 128;
       const containerHeight = parseInt(containerStyles.height, 10) || 128;
