@@ -250,8 +250,8 @@
     /* Configuration Modal styling */
     #configModal.modal {
       position: fixed !important;
-      top: 50% !important;
-      left: 50% !important;
+      top: 35% !important;
+      left: 40% !important;
       transform: translate(-50%, -50%) !important;
       height: auto !important;
       max-height: 70vh !important;
@@ -298,7 +298,7 @@
       min-height: 200px; /* example dimension */
     }
 
-    /* Hard-coded positions for login modal elements (as previously requested) */
+    /* Hard-coded positions for login modal elements */
     #loginModalTitle {
       position: absolute;
       left: 130px;
@@ -1122,13 +1122,17 @@
       if(window.orderStatus){
         details += " Order Status: " + window.orderStatus + "\n";
       }
+
+      // Only skip the "Shipped!" text, but keep "Shipping Status:" line
       if(window.orderIsShipped === true){
-        details += " Shipping Status: Shipped!\n";
+        details += " Shipping Status:\n"; 
       } else if(typeof window.orderIsShipped === "string"){
         details += " Shipping Status: " + window.orderIsShipped + "\n";
       } else {
         details += " Shipping Status:\n";
       }
+
+      // If there's shipping data, we proceed as normal
       if(window.orderIsShipped === "Shipped!" && window.orderShipments && window.orderShipments.length > 0){
         var ship = window.orderShipments[0];
         if(ship.carrier_name){
@@ -1153,6 +1157,7 @@
       } else {
         document.getElementById("trackingLinkBtn").style.display = "none";
       }
+
       details += " ORDER DETAILS:\n\n";
       if(item.title){
         var firstFour = item.title.trim().split(" ").slice(0,4).join(" ");
