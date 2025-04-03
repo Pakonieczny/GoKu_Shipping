@@ -247,8 +247,8 @@
       top: 500px;
     }
 
-    /* Configuration Modal styling */
-    .modal {
+    /* Configuration Modal styling (scoped specifically to the config modal) */
+    #configModal.modal {
       position: fixed !important;
       top: 50% !important;
       left: 50% !important;
@@ -258,31 +258,6 @@
       width: auto !important;
       max-width: 650px !important;
       overflow-y: scroll !important;
-    }
-    .modal .modal-content {
-      overflow-y: auto;
-      font-size: 0.9em;
-      text-align: left !important;
-    }
-    .modal .modal-footer {
-      display: flex !important;
-      justify-content: center !important;
-      align-items: center !important;
-      padding: 10px;
-      background: white;
-      font-size: 0.9em;
-    }
-    table.striped {
-      width: 100%;
-    }
-    table.striped th,
-    table.striped td {
-      padding: 8px;
-      text-align: center;
-    }
-    input[type="number"] {
-      width: 70px;
-      font-size: 0.8em;
     }
 
     /* "Signature Box" */
@@ -724,16 +699,12 @@
               const respPD = await fetch("/.netlify/functions/firebaseOrders?orderId=" + encodeURIComponent(orderNumber));
               const resPD = await respPD.json();
 
-              /*
-                >>> UPDATED LOGIC FOR "DOC NOT FOUND":
-                If not OK and the server says "not found", we clear the fields
-                with NO error toast or console error. Otherwise, we raise a real error.
-              */
               if(!respPD.ok){
                 if(resPD.error && resPD.error.toLowerCase().includes("not found")){
                   // Doc not found => clear fields quietly, no error
                   document.getElementById("labelCreationDate").value = "";
                   document.getElementById("completedByEmployee").value = "";
+                  document.getElementById("signatureBox").innerHTML = "Sig Box";
                   return;
                 } else {
                   throw new Error(resPD.error || "Unknown error from firebaseOrders function");
