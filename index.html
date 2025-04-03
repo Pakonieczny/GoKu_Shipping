@@ -297,18 +297,52 @@
       position: relative !important; /* anchor for absolutely placed children */
       min-height: 200px; /* example dimension */
     }
-    /* Absolutely position these so "Open Config" can move them around */
+    
+    /* Hard-coded positions per your request */
+
+    /* "User Log In" => 130, 0, 250, 0 */
     #loginModalTitle {
       position: absolute;
+      left: 130px;
+      top: 0px;
+      width: 250px;
+      height: 0px;
     }
+
+    /* "Please enter your 3-digit Employee Number:" => 40, 90, 325, 0 */
     #loginModalPrompt {
       position: absolute;
+      left: 40px;
+      top: 90px;
+      width: 325px;
+      height: 0px;
     }
+
+    /* "001" => 40, 60, 75, 35 */
     #employeeNumberInput {
       position: absolute;
+      left: 40px;
+      top: 60px;
+      width: 75px;
+      height: 35px;
     }
+
+    /* "Log In" => 20, 0, 250, 0 */
     #loginModalFooter {
-      position: relative; /* or absolute if you want to move it too */
+      position: absolute;
+      left: 20px;
+      top: 0px;
+      width: 250px;
+      height: 0px;
+    }
+
+    /* "Log In" => 130, 150, 100, 35 */
+    #employeeLoginBtn {
+      position: absolute;
+      left: 130px;
+      top: 150px;
+      width: 100px;
+      height: 35px;
     }
   </style>
 </head>
@@ -437,18 +471,15 @@
   <div id="userLoginModal" class="modal">
     <!-- A wrapper with position: relative, so children can be absolutely placed -->
     <div id="userLoginModalContainer" class="modal-content" style="position:relative;">
-      <h5 id="loginModalTitle" style="position:absolute;">User Log In</h5>
-      <p id="loginModalPrompt" style="position:absolute;">
-        Please enter your 3-digit Employee Number:
-      </p>
+      <h5 id="loginModalTitle">User Log In</h5>
+      <p id="loginModalPrompt">Please enter your 3-digit Employee Number:</p>
       <input
         type="text"
         id="employeeNumberInput"
-        style="position:absolute;"
-        placeholder="123"
+        placeholder="001"
       />
     </div>
-    <div id="loginModalFooter" class="modal-footer" style="position:relative;">
+    <div id="loginModalFooter" class="modal-footer">
       <button id="employeeLoginBtn" class="btn">Log In</button>
     </div>
   </div>
@@ -531,7 +562,7 @@
     }
 
     /*
-     * Incorporate the new login modal elements in the config array so they're all adjustable.
+     * Incorporate the new login modal elements in the config array so they're adjustable.
      */
     var configComponentIDs = [
       "connectEtsyBtn","openConfigBtn","orderLinkBtn","trackingLinkBtn","etsyOrderNumber",
@@ -547,7 +578,7 @@
       "goScreenTwoBtn","signatureBox",
       /* Existing modal references */
       "userLoginModal",
-      /* Newly added to move login modal internal text/prompt/etc. */
+      /* Newly added for positioning the login elements */
       "userLoginModalContainer",
       "loginModalTitle",
       "loginModalPrompt",
@@ -557,7 +588,7 @@
     ];
 
     const defaultPositions = {
-      /* You can fill in any default positioning data here, if needed. */
+      /* Only necessary if you have fallback positions, otherwise empty. */
     };
 
     function loadPositions(){
