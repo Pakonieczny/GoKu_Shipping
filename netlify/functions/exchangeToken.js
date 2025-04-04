@@ -3,23 +3,12 @@
 const fetch = require("node-fetch");
 const crypto = require("crypto");
 
-/*
-  We support exactly two domains:
-    1) https://sorting.goldenspike.app
-    2) https://goldenspike.app
-
-  - If ?redirect_domain=sorting => domain = sorting.goldenspike.app
-  - If ?redirect_domain=goldenspike => domain = goldenspike.app
-  - If missing or empty => default to "sorting".
-  - If something else => return 400.
-*/
-
+// We only allow EXACTLY these two domains
 const ALLOWED_REDIRECT_URIS = {
   sorting:     "https://sorting.goldenspike.app",
   goldenspike: "https://goldenspike.app"
 };
 
-// Helper: Generate PKCE code_verifier
 function generateRandomString(length) {
   const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
   let text = "";
@@ -29,7 +18,6 @@ function generateRandomString(length) {
   return text;
 }
 
-// Helper: Convert code_verifier => code_challenge
 function generateCodeChallenge(codeVerifier) {
   const hash = crypto.createHash("sha256").update(codeVerifier).digest();
   return hash.toString("base64")
@@ -38,46 +26,50 @@ function generateCodeChallenge(codeVerifier) {
     .replace(/=+$/, "");
 }
 
-exports.handler = async function(event, context) {
+exports.handler = async function(event) {
   try {
-    // 1) Parse query params
     const query = event.queryStringParameters || {};
-    const code = query.code;                 // from Etsy
-    const codeVerifier = query.code_verifier; // from localStorage, if used
+    const code = query.code;
+    const codeVerifier = query.code_verifier;
 
-    // domainParam might be "sorting", "goldenspike", or missing
-    const domainParam = (query.redirect_domain || "sorting").toLowerCase();
-    console.log("exchangeToken => raw domainParam:", query.redirect_domain, " => final:", domainParam);
-
-    // If it's not in our allowed set => 400
-    if (!ALLOWED_REDIRECT_URIS[domainParam]) {
-      console.error("Invalid domainParam =>", domainParam);
+    // 1) Must specify ?redirect_domain=sorting or =goldenspike
+    const domainParam = query.redirect_domain;
+    if (!domainParam) {
+      console.error("No redirect_domain => can't pick the domain");
       return {
         statusCode: 400,
         body: JSON.stringify({
-          error: `Invalid redirect_domain="${domainParam}". Must be "sorting" or "goldenspike".`
+          error: "Missing ?redirect_domain= sorting or goldenspike"
         })
       };
     }
-
-    // Choose the final domain
+    if (!ALLOWED_REDIRECT_URIS[domainParam]) {
+      console.error(`Invalid redirect_domain => ${domainParam}`);
+      return {
+        statusCode: 400,
+        body: JSON.stringify({
+          error: `Invalid redirect_domain='${domainParam}'. Must be 'sorting' or 'goldenspike'`
+        })
+      };
+    }
     const finalRedirectUri = ALLOWED_REDIRECT_URIS[domainParam];
+    console.log("exchangeToken => domainParam:", domainParam);
     console.log("exchangeToken => using redirectUri:", finalRedirectUri);
 
-    // 2) If there's no code => start OAuth with PKCE
+    // 2) If no ?code => start PKCE
     if (!code) {
-      console.log("No ?code => starting new OAuth flow w/ PKCE...");
+      console.log("No code => starting new OAuth flow...");
 
       const newCodeVerifier = generateRandomString(64);
       const codeChallenge   = generateCodeChallenge(newCodeVerifier);
 
-      // Typically, store newCodeVerifier in a cookie/session:
+      // for demonstration
       console.log("PKCE code_verifier:", newCodeVerifier);
       console.log("PKCE code_challenge:", codeChallenge);
 
       const CLIENT_ID = process.env.CLIENT_ID;
       if (!CLIENT_ID) {
-        console.error("Missing CLIENT_ID env var!");
+        console.error("Missing CLIENT_ID env var");
         return {
           statusCode: 500,
           body: JSON.stringify({ error: "Server config error: no CLIENT_ID" })
@@ -85,11 +77,11 @@ exports.handler = async function(event, context) {
       }
 
       const scope = "listings_w listings_r transactions_r transactions_w";
-      const state = "randomState123"; // in production => randomize
+      const state = "randomState123";
 
-      // Build the Etsy OAuth URL
       const oauthUrl =
-        `https://www.etsy.com/oauth/connect?response_type=code` +
+        `https://www.etsy.com/oauth/connect` +
+        `?response_type=code` +
         `&client_id=${CLIENT_ID}` +
         `&redirect_uri=${encodeURIComponent(finalRedirectUri)}` +
         `&scope=${encodeURIComponent(scope)}` +
@@ -105,25 +97,23 @@ exports.handler = async function(event, context) {
       };
     }
 
-    // 3) If code but no codeVerifier => can't finish
+    // 3) If code but no codeVerifier => fail
     if (!codeVerifier) {
-      console.error("No code_verifier => can't complete token exchange");
+      console.error("No code_verifier => can't finalize token");
       return {
         statusCode: 400,
-        body: JSON.stringify({ error: "Missing code_verifier parameter" })
+        body: JSON.stringify({ error: "Missing code_verifier param" })
       };
     }
 
-    // 4) Exchange code for an Etsy access_token
+    // 4) Attempt token exchange with Etsy
     const CLIENT_ID = process.env.CLIENT_ID;
     const CLIENT_SECRET = process.env.CLIENT_SECRET;
     if (!CLIENT_ID || !CLIENT_SECRET) {
-      console.error("Missing CLIENT_ID or CLIENT_SECRET!");
+      console.error("Missing CLIENT_ID or CLIENT_SECRET env vars");
       return {
         statusCode: 500,
-        body: JSON.stringify({
-          error: "Server config error: missing Etsy OAuth credentials"
-        })
+        body: JSON.stringify({ error: "Server config error: missing credentials" })
       };
     }
 
@@ -156,7 +146,7 @@ exports.handler = async function(event, context) {
       };
     }
 
-    // 5) On success => redirect back w/ ?access_token=...
+    // success => redirect to domain with ?access_token=...
     const finalUrl = `${finalRedirectUri}?access_token=${encodeURIComponent(data.access_token)}`;
     console.log("Token exchange success => redirect =>", finalUrl);
 
