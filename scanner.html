@@ -4,10 +4,7 @@
   <meta charset="UTF-8">
   <title>Scanner / Generator with Auto Camera & Touch-to-Unlock Audio</title>
   <!-- Materialize CSS (CDN) -->
-  <link
-    rel="stylesheet"
-    href="https://cdnjs.cloudflare.com/ajax/libs/materialize/1.0.0/css/materialize.min.css"
-  />
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/materialize/1.0.0/css/materialize.min.css" />
   <style>
     html, body {
       margin: 0;
@@ -194,15 +191,15 @@
         oscillator.connect(gainNode);
         gainNode.connect(audioCtx.destination);
         oscillator.type = "sine";
-        // Increase frequency by 33% (440 Hz * 1.33 ≈ 585 Hz)
-        oscillator.frequency.setValueAtTime(440 * 1.33, audioCtx.currentTime);
+        // Increase frequency by 33% twice: 440 Hz * 1.33 * 1.33 ≈ 778 Hz
+        oscillator.frequency.setValueAtTime(440 * 1.33 * 1.33, audioCtx.currentTime);
         gainNode.gain.setValueAtTime(0.5, audioCtx.currentTime);
         oscillator.start();
-        // Shorten playback time by 33% (0.2 sec * 0.67 ≈ 0.134 sec)
-        oscillator.stop(audioCtx.currentTime + 0.2 * 0.67);
+        // Shorten playback time by 33% twice: 0.2 sec * 0.67 * 0.67 ≈ 0.09 sec
+        oscillator.stop(audioCtx.currentTime + 0.2 * 0.67 * 0.67);
       } else {
-        // Fallback using the Audio element: set playback rate to 1.33
-        beepSound.playbackRate = 1.33;
+        // Fallback using the Audio element: set playback rate to 1.33 * 1.33 ≈ 1.77
+        beepSound.playbackRate = 1.33 * 1.33;
         beepSound.currentTime = 0;
         beepSound.play().catch(e => console.warn("Beep fallback error:", e));
       }
@@ -280,7 +277,7 @@
           console.warn("AudioContext resume error:", e);
           // Fallback: try playing the MP3 file with fallback settings
           beepSound.currentTime = 0;
-          beepSound.playbackRate = 1.33;
+          beepSound.playbackRate = 1.33 * 1.33;
           beepSound.play().then(() => {
             audioUnlocked = true;
             M.toast({ html: "Audio unlocked via MP3 fallback. Beeps will now play." });
@@ -292,7 +289,7 @@
       } else {
         // If no AudioContext, fallback to MP3 directly
         beepSound.currentTime = 0;
-        beepSound.playbackRate = 1.33;
+        beepSound.playbackRate = 1.33 * 1.33;
         beepSound.play().then(() => {
           audioUnlocked = true;
           M.toast({ html: "Audio unlocked via MP3 fallback. Beeps will now play." });
