@@ -178,26 +178,31 @@
     const scannedInput = document.getElementById("orderNumInput");
     const qrcodeDiv    = document.getElementById("qrcode");
 
-    // Use your external beep file as a fallback—but we’ll use Web Audio API on mobile.
-    const beepSound    = new Audio("./assets/scannerBeep.mp3");
+    // Use your external MP3 beep from the assets folder
+    const beepSound = new Audio("./assets/scannerBeep.mp3");
+    beepSound.preload = "auto";
+    beepSound.load();
 
     /*************************************************************
-     * 2) FUNCTION TO PLAY A BEEP USING THE Web Audio API
+     * 2) PLAY BEEP USING THE MP3 FILE WITH ADJUSTED PARAMETERS
      *************************************************************/
     function playBeep() {
-      // If AudioContext is available, use it.
+      // If AudioContext is available, use it with modified parameters:
       if (audioCtx) {
         const oscillator = audioCtx.createOscillator();
         const gainNode = audioCtx.createGain();
         oscillator.connect(gainNode);
         gainNode.connect(audioCtx.destination);
         oscillator.type = "sine";
-        oscillator.frequency.setValueAtTime(440, audioCtx.currentTime); // 440 Hz = A4 note
-        gainNode.gain.setValueAtTime(0.5, audioCtx.currentTime); // moderate volume
+        // Increase frequency by 33% (440 Hz * 1.33 ≈ 585 Hz)
+        oscillator.frequency.setValueAtTime(440 * 1.33, audioCtx.currentTime);
+        gainNode.gain.setValueAtTime(0.5, audioCtx.currentTime);
         oscillator.start();
-        oscillator.stop(audioCtx.currentTime + 0.2); // beep duration: 0.2 seconds
+        // Shorten playback time by 33% (0.2 sec * 0.67 ≈ 0.134 sec)
+        oscillator.stop(audioCtx.currentTime + 0.2 * 0.67);
       } else {
-        // Fallback using the Audio element
+        // Fallback using the Audio element: set playback rate to 1.33
+        beepSound.playbackRate = 1.33;
         beepSound.currentTime = 0;
         beepSound.play().catch(e => console.warn("Beep fallback error:", e));
       }
@@ -237,7 +242,7 @@
       if (codeText === lastScanned) return;
       lastScanned = codeText;
 
-      // If audio is unlocked, play the beep
+      // If audio is unlocked, play the beep using your MP3 with adjusted parameters
       if (audioUnlocked) {
         playBeep();
       }
@@ -245,7 +250,7 @@
       // Display the scanned code
       scannedInput.value = codeText;
 
-      // Render a QR code in the qrcode container
+      // Render a new QR code in the qrcode container
       qrcodeDiv.innerHTML = "";
       const containerStyles = window.getComputedStyle(qrcodeDiv);
       const containerWidth  = parseInt(containerStyles.width, 10)  || 128;
@@ -273,8 +278,9 @@
           M.toast({ html: "Audio unlocked via Web Audio API. Beeps will now play." });
         }).catch(e => {
           console.warn("AudioContext resume error:", e);
-          // Fallback: try playing the MP3 file
+          // Fallback: try playing the MP3 file with fallback settings
           beepSound.currentTime = 0;
+          beepSound.playbackRate = 1.33;
           beepSound.play().then(() => {
             audioUnlocked = true;
             M.toast({ html: "Audio unlocked via MP3 fallback. Beeps will now play." });
@@ -284,8 +290,9 @@
           });
         });
       } else {
-        // If no AudioContext, fallback to MP3
+        // If no AudioContext, fallback to MP3 directly
         beepSound.currentTime = 0;
+        beepSound.playbackRate = 1.33;
         beepSound.play().then(() => {
           audioUnlocked = true;
           M.toast({ html: "Audio unlocked via MP3 fallback. Beeps will now play." });
@@ -295,12 +302,12 @@
         });
       }
       // Remove the listeners after first interaction
-      document.removeEventListener("touchstart", unlockAudio);
-      document.removeEventListener("click", unlockAudio);
+      window.removeEventListener("touchstart", unlockAudio);
+      window.removeEventListener("click", unlockAudio);
     }
-    // Attach listeners for both touchstart and click events (once)
-    document.addEventListener("touchstart", unlockAudio, { once: true });
-    document.addEventListener("click", unlockAudio, { once: true });
+    // Attach unlock event listeners to window (covers mobile and desktop)
+    window.addEventListener("touchstart", unlockAudio, { once: true });
+    window.addEventListener("click", unlockAudio, { once: true });
 
     /*************************************************************
      * 6) "SEND" BUTTON: Push scanned code to Firestore
@@ -424,10 +431,10 @@
     document.addEventListener("DOMContentLoaded", function() {
       // Initialize Materialize
       M.AutoInit();
-      // Load and apply any stored positions
+      // Load and apply stored positions
       loadPositionsFromStorage();
       applyPositions();
-      // Start camera scanning automatically
+      // Start the camera scanning automatically
       startCamera();
       // Hook up "Open Config" button to show config modal
       document.getElementById("openConfigBtnScanner").addEventListener("click", () => {
