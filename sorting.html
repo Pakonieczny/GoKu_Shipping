@@ -391,7 +391,7 @@
       // “Test Etsy” button
       document.getElementById("testEtsyBtn").addEventListener("click", async () => {
         try {
-          const testListingId = "123456"; // any valid listing
+          const testListingId = "3638101799"; // any valid listing
           const resp = await fetch(`/.netlify/functions/etsyProxy?listingId=${testListingId}`, {
             headers: { "access-token": localStorage.getItem("access_token") || "" }
           });
