@@ -1,8 +1,23 @@
-// exchangeToken.js
+// netlify/functions/exchangeToken.js
 const fetch = require("node-fetch");
 const crypto = require("crypto");
 
-// Helper: generate a random string of specified length.
+/*
+  We allow three possible redirect URIs:
+  1) https://sorting.goldenspike.app
+  2) https://scanner.goldenspike.app
+  3) https://goldenspike.app
+
+  The user picks via a ?redirect_domain=sorting|scanner|goldenspike
+  If absent or invalid, we default to the "sorting" domain.
+*/
+const ALLOWED_REDIRECTS = {
+  sorting:     "https://sorting.goldenspike.app",
+  scanner:     "https://scanner.goldenspike.app",
+  goldenspike: "https://goldenspike.app"
+};
+
+// Helpers
 function generateRandomString(length) {
   const possible = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
   let text = "";
@@ -12,7 +27,6 @@ function generateRandomString(length) {
   return text;
 }
 
-// Helper: generate code challenge from the code verifier using SHA-256.
 function generateCodeChallenge(codeVerifier) {
   const hash = crypto.createHash("sha256").update(codeVerifier).digest();
   return hash.toString("base64")
@@ -21,38 +35,37 @@ function generateCodeChallenge(codeVerifier) {
     .replace(/=+$/, "");
 }
 
+// Main handler
 exports.handler = async function(event, context) {
   try {
-    // Retrieve query parameters.
+    // 1) Parse query params
     const queryParams = event.queryStringParameters || {};
     const code = queryParams.code;
     const codeVerifier = queryParams.code_verifier;
+    // The user can specify "sorting", "scanner", or "goldenspike"
+    // If none is provided, we default to "sorting"
+    const requestedDomain = (queryParams.redirect_domain || "sorting").toLowerCase();
+    const redirectUri = ALLOWED_REDIRECTS[requestedDomain] || ALLOWED_REDIRECTS.sorting;
 
-    // If no code is provided, initiate the OAuth flow.
+    // If no code => initiate the OAuth flow 
+    // (rarely used from a function, but we keep it for completeness)
     if (!code) {
       console.log("No code parameter found – initiating OAuth redirect.");
 
-      // Generate a new code verifier and code challenge.
       const newCodeVerifier = generateRandomString(64);
       const codeChallenge = generateCodeChallenge(newCodeVerifier);
-      
-      // In production, store newCodeVerifier securely (e.g., via a cookie) for later retrieval.
-      
-      // Retrieve environment variables.
-      const CLIENT_ID = process.env.CLIENT_ID;
-      // (UPDATED LINK) Your Etsy app’s redirect URI must be set to the new domain:
-      const REDIRECT_URI = "https://goldenspike.app";
-      
-      if (!CLIENT_ID || !REDIRECT_URI) {
-        console.error("Missing required environment variables (CLIENT_ID or REDIRECT_URI).");
-        return { statusCode: 500, body: JSON.stringify({ error: "Server configuration error" }) };
-      }
 
-      const state = "randomState123"; // Replace with a secure state in production.
-      const scope = "listings_w listings_r"; // Adjust scope as needed.
+      // In production, store newCodeVerifier securely (e.g. via a cookie)
+      const CLIENT_ID = process.env.CLIENT_ID;
+      if (!CLIENT_ID || !redirectUri) {
+        console.error("Missing CLIENT_ID or redirectUri for OAuth start.");
+        return { statusCode: 500, body: JSON.stringify({ error: "Server config error." }) };
+      }
+      const state = "randomState123";
+      const scope = "listings_w listings_r";
 
       const oauthUrl = `https://www.etsy.com/oauth/connect?response_type=code&client_id=${CLIENT_ID}` +
-                       `&redirect_uri=${encodeURIComponent(REDIRECT_URI)}` +
+                       `&redirect_uri=${encodeURIComponent(redirectUri)}` +
                        `&scope=${encodeURIComponent(scope)}` +
                        `&state=${state}` +
                        `&code_challenge=${encodeURIComponent(codeChallenge)}` +
@@ -66,33 +79,32 @@ exports.handler = async function(event, context) {
       };
     }
 
-    // If code is provided but no code_verifier, error.
+    // If code is provided but no code_verifier => error
     if (!codeVerifier) {
       console.error("Missing 'code_verifier' parameter in query string.");
       return { statusCode: 400, body: JSON.stringify({ error: "Missing code_verifier parameter" }) };
     }
 
-    // Retrieve environment variables for token exchange.
+    // 2) Use environment variables for the final exchange
     const CLIENT_ID = process.env.CLIENT_ID;
     const CLIENT_SECRET = process.env.CLIENT_SECRET;
-    // (UPDATED LINK) Use the same redirect URI:
-    const REDIRECT_URI = "https://goldenspike.app";
-
-    if (!CLIENT_ID || !CLIENT_SECRET || !REDIRECT_URI) {
-      console.error("Missing required environment variables.");
-      return { statusCode: 500, body: JSON.stringify({ error: "Server configuration error" }) };
+    if (!CLIENT_ID || !CLIENT_SECRET) {
+      console.error("Missing CLIENT_ID or CLIENT_SECRET env variables.");
+      return { statusCode: 500, body: JSON.stringify({ error: "Server config error" }) };
     }
 
+    // Build Etsy’s token exchange POST
     const params = new URLSearchParams({
       grant_type: "authorization_code",
       client_id: CLIENT_ID,
       client_secret: CLIENT_SECRET,
       code: code,
-      redirect_uri: REDIRECT_URI,
+      redirect_uri: redirectUri,
       code_verifier: codeVerifier
     });
     console.log("Token exchange parameters:", params.toString());
 
+    // 3) POST to Etsy's token endpoint
     const response = await fetch("https://api.etsy.com/v3/public/oauth/token", {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
@@ -109,10 +121,13 @@ exports.handler = async function(event, context) {
       };
     }
 
-    // Redirect to index.html with the access token appended.
+    // 4) Redirect to the specified domain with the access token
+    // e.g. https://sorting.goldenspike.app?access_token=xxx
     return {
       statusCode: 302,
-      headers: { Location: "/?access_token=" + data.access_token },
+      headers: {
+        Location: `${redirectUri}?access_token=${encodeURIComponent(data.access_token)}`
+      },
       body: ""
     };
 
