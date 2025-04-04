@@ -2,7 +2,7 @@
 <html>
 <head>
   <meta charset="UTF-8" />
-  <title>Sorting - Individual Box Control</title>
+  <title>Sorting - Batch Etsy Orders</title>
 
   <!-- Materialize CSS -->
   <link
@@ -16,15 +16,11 @@
       margin: 0;
       height: 100vh;
       position: relative;
-      opacity: 0; /* for a fade-in effect */
+      opacity: 0;
       transition: opacity 0s;
     }
 
-    /* Three main buttons:
-       1) Connect to Etsy
-       2) Test OpenAI
-       3) Open Config
-    */
+    /* Buttons */
     #connectEtsyBtn,
     #testOpenAIBtn,
     #openConfigBtn {
@@ -43,12 +39,12 @@
       top: 120px;
     }
 
-    /* Etsy Order Number input */
+    /* The "Etsy Order Number" text can hold up to 50 comma-delimited numbers now */
     #etsyOrderNumber {
       position: absolute;
       left: 20px;
       top: 170px;
-      width: 200px;
+      width: 300px; /* maybe a bit wider, since user might type multiple numbers */
       height: 30px;
       border: 1px solid #999;
       padding: 4px;
@@ -56,18 +52,16 @@
       font-size: 0.9em;
     }
 
-    /* Container for the 35 boxes (absolute inside). */
+    /* Container for the 35 boxes */
     #photoGridContainer {
       position: relative;
       width: 1200px; 
       height: 700px; 
       border: 1px dashed #ccc; 
-      left: 250px;
+      left: 350px; /* shift a bit, since we made the input wider */
       top: 20px;
     }
 
-    /* Each preview-box, quantity-label, and title-label 
-       is now absolutely positioned for individual control. */
     .preview-box {
       position: absolute;
       width: 66px;
@@ -102,34 +96,29 @@
       margin-top: 3px;
     }
 
-    /* Open Config Modal: 250px wide, 450px tall */
+    /* Config Modal => 250×450, same as prior version */
     #configModal.modal {
       position: fixed !important;
       top: 50% !important;
       left: 50% !important;
       transform: translate(-50%, -50%) !important;
-      width: 500px !important;
-      height: 600px !important;
+      width: 250px !important;
+      height: 450px !important;
       max-height: none !important;
       overflow-y: auto !important;
     }
-
     #configTable thead tr th {
       font-size: 0.9em;
     }
     #configTable tbody tr td {
       font-size: 0.8em;
     }
-
-    /*
-      2× the horizontal width for Left/Top/Width/Height text fields in config table.
-      For example, if default is ~40px, let's do ~80px.
-    */
+    /* 2× wide text boxes for Left/Top/Width/Height */
     #configTable .left-input,
     #configTable .top-input,
     #configTable .width-input,
     #configTable .height-input {
-      width: 80px !important; /* 2× the typical default */
+      width: 80px !important;
     }
   </style>
 </head>
@@ -140,12 +129,11 @@
   <button id="testOpenAIBtn" class="btn waves-effect waves-light">Test OpenAI</button>
   <button id="openConfigBtn" class="btn waves-effect waves-light">Open Config</button>
 
-  <!-- Etsy Order Number input -->
-  <input type="text" id="etsyOrderNumber" placeholder="Etsy Order Number" />
+  <!-- "Etsy Order Number" => now can hold up to 50 comma-delimited order IDs -->
+  <input type="text" id="etsyOrderNumber" placeholder="Comma-delimited Etsy Order Numbers" />
 
-  <!-- Photo Grid container, but now it's absolute for each box -->
   <div id="photoGridContainer">
-    <!-- 35 sets of (preview, quantity, title) -->
+    <!-- 35 sets of preview, quantity, and title elements -->
     <div class="preview-box" id="previewCell0">Empty</div>
     <div class="quantity-label" id="quantityCell0"></div>
     <div class="title-label" id="titleCell0"></div>
@@ -287,7 +275,6 @@
     <div class="title-label" id="titleCell34"></div>
   </div>
 
-  <!-- Config Modal -->
   <div id="configModal" class="modal">
     <div class="modal-content">
       <table class="striped" id="configTable">
@@ -317,21 +304,21 @@
   ></script>
 
   <script>
-    /**********************************
-     * PKCE + Sorting logic ...
-     **********************************/
+    /******************************************************
+     * PKCE + Overall logic, same as before
+     ******************************************************/
     (function(){
-      var urlParams = new URLSearchParams(window.location.search);
-      var accessToken = urlParams.get("access_token");
+      const urlParams = new URLSearchParams(window.location.search);
+      const accessToken = urlParams.get("access_token");
       if(accessToken){
         localStorage.setItem("access_token", accessToken);
         window.history.replaceState({}, document.title, window.location.pathname);
         M.toast({html:"Connection Successful!"});
         console.log("Access token received:", accessToken);
       } else {
-        var authCode = urlParams.get("code");
+        const authCode = urlParams.get("code");
         if(authCode){
-          var storedCodeVerifier = localStorage.getItem("etsy_code_verifier");
+          const storedCodeVerifier = localStorage.getItem("etsy_code_verifier");
           if(storedCodeVerifier){
             window.location.href =
               "/.netlify/functions/exchangeToken?code=" +
@@ -346,18 +333,19 @@
     })();
 
     function generateRandomString(length) {
-      var chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
-      var text = "";
-      for (var i = 0; i < length; i++){
+      const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+      let text = "";
+      for (let i = 0; i < length; i++){
         text += chars.charAt(Math.floor(Math.random() * chars.length));
       }
       return text;
     }
+
     async function generateCodeChallenge(codeVerifier) {
-      var encoder = new TextEncoder();
-      var data = encoder.encode(codeVerifier);
-      var digest = await crypto.subtle.digest("SHA-256", data);
-      var base64String = btoa(String.fromCharCode(...new Uint8Array(digest)));
+      const encoder = new TextEncoder();
+      const data = encoder.encode(codeVerifier);
+      const digest = await crypto.subtle.digest("SHA-256", data);
+      let base64String = btoa(String.fromCharCode(...new Uint8Array(digest)));
       return base64String.replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
     }
 
@@ -370,7 +358,7 @@
         document.body.style.opacity = 1;
       }, 200);
 
-      // Connect Etsy
+      // Connect to Etsy
       document.getElementById("connectEtsyBtn").addEventListener("click", async () => {
         try {
           const codeVerifier = generateRandomString(64);
@@ -381,7 +369,7 @@
           const scope = "listings_w listings_r transactions_r transactions_w";
 
           const CLIENT_ID = "k75zdspz4r99txpqdji7i2em";
-          const redirectUri = "https://sorting.goldenspike.app"; 
+          const redirectUri = "https://sorting.goldenspike.app";
 
           const etsyAuthUrl =
             "https://www.etsy.com/oauth/connect?response_type=code" +
@@ -424,29 +412,24 @@
         }
       });
 
-      // Open Config
-      document.getElementById("openConfigBtn").addEventListener("click", () => {
-        populateConfigTable();
-        const modalElem = document.getElementById("configModal");
-        const modalInst = M.Modal.getInstance(modalElem);
-        modalInst.open();
-      });
-      document.getElementById("saveConfigBtn").addEventListener("click", () => {
-        saveConfiguration();
-      });
-
-      // If user hits Enter in Etsy Order => load order
+      // "Enter" on the Etsy Order Number => parse multiple comma-delimited orders
       const etsyOrderInput = document.getElementById("etsyOrderNumber");
       etsyOrderInput.addEventListener("keydown", async (e) => {
         if (e.key === "Enter") {
-          const orderNum = etsyOrderInput.value.trim();
-          if (orderNum) {
-            await loadEtsyOrderItems(orderNum);
-          }
+          let inputVal = etsyOrderInput.value.trim();
+          if (!inputVal) return; // empty => do nothing
+          
+          // split by comma => array of up to 50
+          let orderNumbers = inputVal.split(",").map(x => x.trim()).filter(x => x);
+          // optional: limit to 50
+          orderNumbers = orderNumbers.slice(0, 50);
+
+          // fetch them in batch, combine all items
+          await loadBatchEtsyOrders(orderNumbers);
         }
       });
 
-      // Wheel zoom & drag for each preview-box
+      //  Zoom & drag for each preview-box
       [...document.querySelectorAll(".preview-box")].forEach((box) => {
         let isDragging = false, lastX = 0, lastY = 0;
         box.addEventListener("wheel", (ev) => {
@@ -497,77 +480,101 @@
         box.addEventListener("mouseup", () => { isDragging = false; });
         box.addEventListener("mouseleave", () => { isDragging = false; });
       });
+
     });
 
-    async function loadEtsyOrderItems(orderNumber) {
+    // 1) For multiple order numbers => combine their transactions
+    async function loadBatchEtsyOrders(orderNumbers) {
       try {
+        M.toast({ html: "Loading " + orderNumbers.length + " order(s)..." });
         const token = localStorage.getItem("access_token") || "";
-        const url = `/.netlify/functions/etsyOrderProxy?orderId=${encodeURIComponent(orderNumber)}`;
-        const resp = await fetch(url, { headers: { "access-token": token } });
-        if (!resp.ok) {
-          throw new Error("Etsy order fetch failed with status " + resp.status);
-        }
-        const data = await resp.json();
-        if (!data.transactions || !Array.isArray(data.transactions) || data.transactions.length === 0) {
-          M.toast({ html: "No transactions found for this order!" });
-          clearGrid();
-          return;
-        }
-        const items = data.transactions;
-        for (let i = 0; i < 35; i++) {
-          const cell = document.getElementById(`previewCell${i}`);
-          const qtyLabel = document.getElementById(`quantityCell${i}`);
-          const titleLabel = document.getElementById(`titleCell${i}`);
-          if (i < items.length) {
-            const { listing_id, quantity, title } = items[i];
-            cell.innerHTML = "Loading...";
-            qtyLabel.textContent = "Qty: " + (quantity || 0);
-            const firstFourWords = (title || "").split(" ").slice(0, 4).join(" ");
-            titleLabel.textContent = firstFourWords;
+        let combinedItems = [];
 
-            const imageData = await fetchListingImages(listing_id);
-            if (imageData && imageData.length > 0) {
-              cell.innerHTML = `<img src="${imageData[0].url_fullxfull}" 
-                                  alt="Listing ${listing_id}" 
-                                  data-scale="1" 
-                                  data-offsetX="0" 
-                                  data-offsetY="0" />`;
-            } else {
-              cell.innerHTML = "No Img";
-            }
+        // We'll fetch each order in sequence (you can do Promise.all if you prefer concurrency)
+        for (let ord of orderNumbers) {
+          const url = `/.netlify/functions/etsyOrderProxy?orderId=${encodeURIComponent(ord)}`;
+          const resp = await fetch(url, { headers: { "access-token": token } });
+          if (!resp.ok) {
+            console.warn("Order fetch failed for " + ord + ", status=" + resp.status);
+            continue; // skip this order if error
+          }
+          const data = await resp.json();
+          if (data.transactions && Array.isArray(data.transactions)) {
+            // push them all in
+            combinedItems.push(...data.transactions);
           } else {
-            cell.innerHTML = "Empty";
-            qtyLabel.textContent = "";
-            titleLabel.textContent = "";
+            console.warn("No transactions for order " + ord);
           }
         }
-      } catch (error) {
-        console.error("Error loading Etsy order:", error);
-        M.toast({ html: "Error: " + error.message });
-        clearGrid();
+
+        // Now fill the first 35 boxes
+        fillPreviewBoxes(combinedItems);
+
+      } catch (err) {
+        console.error("Error in loadBatchEtsyOrders:", err);
+        M.toast({ html: "Error: " + err.message });
       }
     }
 
-    function clearGrid() {
+    // 2) Fill up to 35 boxes from the combined array
+    async function fillPreviewBoxes(items) {
+      // Clear existing boxes
       for (let i = 0; i < 35; i++) {
         document.getElementById(`previewCell${i}`).innerHTML = "Empty";
         document.getElementById(`quantityCell${i}`).textContent = "";
         document.getElementById(`titleCell${i}`).textContent = "";
       }
+
+      // If there are more than 35 combined items, we only show first 35
+      const limitedItems = items.slice(0, 35);
+      for (let i = 0; i < limitedItems.length; i++) {
+        const { listing_id, quantity, title } = limitedItems[i];
+        const cell = document.getElementById(`previewCell${i}`);
+        const qtyBox = document.getElementById(`quantityCell${i}`);
+        const titleBox = document.getElementById(`titleCell${i}`);
+
+        cell.innerHTML = "Loading...";
+        qtyBox.textContent = "Qty: " + (quantity || 0);
+
+        const firstFour = (title || "").split(" ").slice(0, 4).join(" ");
+        titleBox.textContent = firstFour;
+
+        // fetch images
+        try {
+          const imageData = await fetchListingImages(listing_id);
+          if (imageData && imageData.length > 0) {
+            cell.innerHTML = `<img src="${imageData[0].url_fullxfull}"
+                                  alt="Listing ${listing_id}"
+                                  data-scale="1"
+                                  data-offsetX="0"
+                                  data-offsetY="0" />`;
+          } else {
+            cell.innerHTML = "No Img";
+          }
+        } catch (imageErr) {
+          console.warn("Image fetch failed for listing", listing_id, imageErr);
+          cell.innerHTML = "Img Error";
+        }
+      }
     }
 
+    // Reusable function to fetch listing images from your serverless function
     async function fetchListingImages(listingId) {
       const token = localStorage.getItem("access_token") || "";
       const resp = await fetch(`/.netlify/functions/etsyImages?listingId=${listingId}`, {
         headers: { "access-token": token }
       });
       if (!resp.ok) {
+        console.warn("Image fetch failed. HTTP", resp.status);
         return [];
       }
       const data = await resp.json();
       return data.results || [];
     }
 
+    /*******************************************************
+     *  Config modal for positioning
+     *******************************************************/
     const configIDs = [
       "connectEtsyBtn","testOpenAIBtn","openConfigBtn","etsyOrderNumber",
       "photoGridContainer","configModal","configTable","saveConfigBtn",
@@ -576,7 +583,7 @@
       ])
     ];
 
-    const defaults = {}; // if needed
+    const defaults = {}; // if you have default positions
 
     function loadPositions() {
       configIDs.forEach(id => {
