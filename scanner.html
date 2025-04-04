@@ -2,33 +2,33 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <title>Scanner / Generator with Audio Unlock on Touch</title>
+  <title>Scanner / Generator with Auto Camera & Touch-to-Unlock Audio</title>
 
   <!-- Materialize CSS (CDN) -->
-  <link 
+  <link
     rel="stylesheet"
     href="https://cdnjs.cloudflare.com/ajax/libs/materialize/1.0.0/css/materialize.min.css"
   />
   <style>
     html, body {
-      margin: 0; 
-      padding: 0; 
+      margin: 0;
+      padding: 0;
       height: 100%;
       font-family: sans-serif;
     }
 
-    /* "Send" button: large for easy tapping */
+    /* "Send" button => big for easy tapping */
     #sendBtn {
       position: absolute;
       font-size: 600% !important;
     }
 
-    /* #qrcode => resizable by config (no forced dimensions). */
+    /* #qrcode => resizable by config */
     #qrcode {
       position: absolute;
     }
 
-    /* (Scanned QR Code) text box => big font. */
+    /* The (Scanned QR Code) text box => big font */
     #orderNumInput {
       position: absolute;
       background: #f9f9f9;
@@ -63,7 +63,7 @@
       display: none;
     }
 
-    /* Config modal styling */
+    /* Modal styling for layout config */
     .modal {
       position: fixed !important;
       top: 50% !important;
@@ -102,7 +102,6 @@
   </style>
 </head>
 <body>
-
   <!-- "Open Config" button -->
   <button id="openConfigBtnScanner" class="btn waves-effect waves-light">
     Open Config
@@ -111,7 +110,7 @@
   <!-- "Order #:" label -->
   <div id="orderLabel">Order #:</div>
 
-  <!-- Scanned code goes here -->
+  <!-- Scanned code text box -->
   <input
     type="text"
     id="orderNumInput"
@@ -122,19 +121,19 @@
   <!-- "QR Code" title -->
   <div id="qrPreviewTitle">QR Code</div>
 
-  <!-- The QR code container (resizable via config) -->
+  <!-- Container for generated QR code (resizable by config) -->
   <div id="qrcode"></div>
 
-  <!-- Video container for camera feed -->
+  <!-- Camera feed -->
   <video id="video" playsinline></video>
-  
-  <!-- Hidden canvas for scanning frames -->
+
+  <!-- Hidden canvas to grab frames for scanning -->
   <canvas id="captureCanvas" width="640" height="480" style="display:none;"></canvas>
 
   <!-- "Send" button -->
   <button id="sendBtn" class="btn waves-effect waves-light">Send</button>
 
-  <!-- Config Modal -->
+  <!-- Config modal -->
   <div id="configModalScanner" class="modal">
     <div class="modal-content">
       <h5>Layout Config</h5>
@@ -163,16 +162,16 @@
   <script src="lib/jsQR.js"></script>
 
   <!-- Materialize JS (CDN) -->
-  <script 
-    src="https://cdnjs.cloudflare.com/ajax/libs/materialize/1.0.0/js/materialize.min.js">
-  </script>
+  <script
+    src="https://cdnjs.cloudflare.com/ajax/libs/materialize/1.0.0/js/materialize.min.js"
+  ></script>
 
-  <!-- Firebase scripts for "compat" mode -->
+  <!-- Firebase (compat mode) -->
   <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
   <script>
     /*************************************************************
-     * 0) FIREBASE CONFIG (Adjust if necessary)
+     * 0) FIREBASE CONFIG (Adjust if needed)
      *************************************************************/
     const firebaseConfig = {
       apiKey: "YourApiKeyHere",
@@ -186,29 +185,24 @@
     const db = firebase.firestore();
 
     /*************************************************************
-     * A) CAMERA + QR SCANNING + AUDIO UNLOCK
+     * A) GLOBAL VARIABLES
      *************************************************************/
     let stream = null;
     let scanningInterval = null;
     let lastScanned = "";
-    let audioUnlocked = false; // We'll only beep if true
+    let audioUnlocked = false; // We'll beep only if this is true
 
-    const video = null;
-    const beepSound = null;
-  </script>
+    const video        = document.getElementById("video");
+    const canvas       = document.getElementById("captureCanvas");
+    const ctx          = canvas.getContext("2d");
+    const scannedInput = document.getElementById("orderNumInput");
+    const qrcodeDiv    = document.getElementById("qrcode");
 
-  <script>
-    const video       = document.getElementById("video");
-    const canvas      = document.getElementById("captureCanvas");
-    const ctx         = canvas.getContext("2d");
-    const scannedInput= document.getElementById("orderNumInput");
-    const qrcodeDiv   = document.getElementById("qrcode");
-
-    // 1) Use your external beep file from ./assets/scannerBeep.mp3
-    const beepSound   = new Audio("./assets/scannerBeep.mp3");
+    // External MP3 beep in ./assets folder
+    const beepSound    = new Audio("./assets/scannerBeep.mp3");
 
     /*************************************************************
-     * Automatic scanning on page load
+     * B) START CAMERA AUTOMATICALLY
      *************************************************************/
     async function startCamera() {
       try {
@@ -224,29 +218,33 @@
           ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
           const frame = ctx.getImageData(0, 0, canvas.width, canvas.height);
           const qrResult = jsQR(frame.data, frame.width, frame.height);
-          if (qrResult) handleScannedCode(qrResult.data);
+          if (qrResult) {
+            handleScannedCode(qrResult.data);
+          }
         }, 500);
+
       } catch (err) {
         console.error("Camera error:", err);
         alert("Could not start camera: " + err.message);
       }
     }
 
+    // Called when we get a new QR code
     function handleScannedCode(codeText) {
-      // Avoid re-scanning duplicates
+      // Avoid reprocessing duplicates
       if (codeText === lastScanned) return;
       lastScanned = codeText;
 
-      // Only beep if unlocked
+      // If audio is unlocked, beep
       if (audioUnlocked) {
         beepSound.currentTime = 0;
         beepSound.play().catch(e => console.warn("Beep sound error:", e));
       }
 
-      // Show scanned code
+      // Display code in text box
       scannedInput.value = codeText;
 
-      // Display code as a new QR
+      // Show an actual QR in #qrcode
       qrcodeDiv.innerHTML = "";
       const containerStyles = window.getComputedStyle(qrcodeDiv);
       const containerWidth  = parseInt(containerStyles.width, 10)  || 128;
@@ -262,29 +260,31 @@
     }
 
     /*************************************************************
-     * B) Unlock audio on first screen touch/click
+     * C) UNLOCK AUDIO ON FIRST TOUCH OR CLICK
      *************************************************************/
     function unlockAudio() {
       beepSound.currentTime = 0;
       beepSound.play()
         .then(() => {
           audioUnlocked = true;
-          M.toast({ html: "Audio unlocked! Beeps will play on future scans." });
+          M.toast({ html: "Audio unlocked. Beeps will now play on scans!" });
         })
-        .catch(e => console.warn("Could not unlock audio:", e));
-      // Remove these listeners so we don't keep retrying
+        .catch(e => {
+          console.warn("Could not unlock audio:", e);
+          M.toast({ html: "Audio blocked—check volume/silent mode." });
+        });
+      // Remove these so we only attempt once
       document.removeEventListener("touchstart", unlockAudio);
       document.removeEventListener("click", unlockAudio);
     }
-
-    // We attach two events—mobile often uses 'touchstart'
+    // Attach both touchstart & click for broad coverage
     document.addEventListener("touchstart", unlockAudio, { once: true });
     document.addEventListener("click", unlockAudio, { once: true });
   </script>
 
   <script>
     /*************************************************************
-     * C) "SEND" BUTTON => push scanned code to Firestore doc
+     * D) "SEND" BUTTON => push scanned code to Firestore
      *************************************************************/
     const sendBtn = document.getElementById("sendBtn");
     sendBtn.addEventListener("click", async () => {
@@ -325,7 +325,7 @@
     });
 
     /*************************************************************
-     * D) CONFIG SYSTEM FOR REPOSITIONING LAYOUT
+     * E) CONFIG SYSTEM FOR REPOSITIONING LAYOUT
      *************************************************************/
     const scannerConfigComponentIDs = [
       "openConfigBtnScanner",
@@ -336,7 +336,7 @@
       "video",
       "captureCanvas",
       "sendBtn"
-      // (Removed "startScanBtn" because we no longer have one)
+      // (No "startScanBtn" here, since it's removed)
     ];
 
     let scannerDefaultPositions = {
@@ -424,17 +424,17 @@
     }
 
     document.addEventListener("DOMContentLoaded", function() {
-      // Initialize Materialize
+      // 1) Init Materialize
       M.AutoInit();
 
-      // Load stored positions & apply
+      // 2) Load stored positions & apply them
       loadPositionsFromStorage();
       applyPositions();
 
-      // Start scanning automatically
+      // 3) Immediately start camera scanning
       startCamera();
 
-      // "Open Config" => populate table & show modal
+      // 4) Hook up "Open Config" => populate table & open modal
       document
         .getElementById("openConfigBtnScanner")
         .addEventListener("click", () => {
@@ -444,7 +444,7 @@
           instance.open();
         });
 
-      // "Save Config"
+      // 5) Save config
       document
         .getElementById("saveConfigBtnScanner")
         .addEventListener("click", scannerSaveConfiguration);
