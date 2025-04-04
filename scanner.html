@@ -4,14 +4,11 @@
   <meta charset="UTF-8">
   <title>Scanner / Generator with Auto Camera & Touch-to-Unlock Audio (Using MP3)</title>
   <!-- Materialize CSS (CDN) -->
-  <link
-    rel="stylesheet"
-    href="https://cdnjs.cloudflare.com/ajax/libs/materialize/1.0.0/css/materialize.min.css"
-  />
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/materialize/1.0.0/css/materialize.min.css" />
   <style>
     html, body {
-      margin: 0;
-      padding: 0;
+      margin: 0; 
+      padding: 0; 
       height: 100%;
       font-family: sans-serif;
     }
@@ -93,14 +90,12 @@
 </head>
 <body>
   <!-- "Open Config" button -->
-  <button id="openConfigBtnScanner" class="btn waves-effect waves-light">
-    Open Config
-  </button>
+  <button id="openConfigBtnScanner" class="btn waves-effect waves-light">Open Config</button>
 
   <!-- "Order #:" label -->
   <div id="orderLabel">Order #:</div>
 
-  <!-- Scanned code text box -->
+  <!-- Scanned QR Code text box -->
   <input type="text" id="orderNumInput" placeholder="(Scanned QR Code)" readonly />
 
   <!-- "QR Code" title -->
@@ -178,7 +173,10 @@
     const qrcodeDiv    = document.getElementById("qrcode");
 
     // Use your external MP3 beep from the assets folder
-    const beepSound    = new Audio("./assets/scannerBeep.mp3");
+    const beepSound = new Audio("./assets/scannerBeep.mp3");
+    // Preload the MP3
+    beepSound.preload = "auto";
+    beepSound.load();
 
     /*************************************************************
      * 2) PLAY BEEP USING THE MP3 FILE
@@ -228,7 +226,7 @@
         playBeep();
       }
 
-      // Display the scanned code in the text box
+      // Display the scanned code
       scannedInput.value = codeText;
 
       // Render a new QR code in the #qrcode container
@@ -246,10 +244,10 @@
     }
 
     /*************************************************************
-     * 5) UNLOCK AUDIO ON FIRST TOUCH OR CLICK
+     * 5) UNLOCK AUDIO ON FIRST TOUCH OR CLICK (ATTACHED TO WINDOW)
      *************************************************************/
     function unlockAudio() {
-      // Attempt to play the beep once in response to user interaction
+      // Attempt to play the beep in response to user interaction
       beepSound.currentTime = 0;
       beepSound.play()
         .then(() => {
@@ -260,13 +258,13 @@
           console.warn("Could not unlock audio:", e);
           M.toast({ html: "Audio blocked—check volume/silent mode." });
         });
-      // Remove these listeners to ensure this runs only once
-      document.removeEventListener("touchstart", unlockAudio);
-      document.removeEventListener("click", unlockAudio);
+      // Remove these listeners so this only happens once
+      window.removeEventListener("touchstart", unlockAudio);
+      window.removeEventListener("click", unlockAudio);
     }
-    // Attach both touchstart and click events for audio unlock
-    document.addEventListener("touchstart", unlockAudio, { once: true });
-    document.addEventListener("click", unlockAudio, { once: true });
+    // Attach unlock event listeners to window (covers mobile and desktop)
+    window.addEventListener("touchstart", unlockAudio, { once: true });
+    window.addEventListener("click", unlockAudio, { once: true });
 
     /*************************************************************
      * 6) "SEND" BUTTON: Push scanned code to Firestore
@@ -395,14 +393,14 @@
       applyPositions();
       // Start the camera scanning automatically
       startCamera();
-      // "Open Config" button: populate table & open modal
+      // Hook up "Open Config" button to show the config modal
       document.getElementById("openConfigBtnScanner").addEventListener("click", () => {
         scannerPopulateConfigTable();
         const modalElem = document.getElementById("configModalScanner");
         const instance = M.Modal.getInstance(modalElem);
         instance.open();
       });
-      // "Save Config" button
+      // Hook up "Save Config" button
       document.getElementById("saveConfigBtnScanner").addEventListener("click", scannerSaveConfiguration);
     });
   </script>
