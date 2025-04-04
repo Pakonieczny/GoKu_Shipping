@@ -124,9 +124,11 @@
   <!-- The QR code container (resizable via config) -->
   <div id="qrcode"></div>
 
-  <!-- Video Container -->
+  <!-- Video Container for camera feed -->
   <video id="video" playsinline></video>
-  <canvas id="captureCanvas"></canvas>
+  
+  <!-- Hidden canvas for scanning frames -->
+  <canvas id="captureCanvas" width="640" height="480" style="display:none;"></canvas>
 
   <!-- "Send" button -->
   <button id="sendBtn" class="btn waves-effect waves-light">Send</button>
@@ -168,7 +170,9 @@
   <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
   <script>
-    // Your web app's Firebase configuration
+    /*************************************************************
+     * 0) FIREBASE CONFIG (Adjust if necessary)
+     *************************************************************/
     const firebaseConfig = {
       apiKey: "YourApiKeyHere",
       authDomain: "YourAuthDomainHere",
@@ -178,14 +182,13 @@
       appId: "1:1078662308113:web:41df0e5d229ff2af7a6cb0"
     };
 
-    // Initialize app in "compat" mode
     firebase.initializeApp(firebaseConfig);
     const db = firebase.firestore();
   </script>
 
   <script>
     /*************************************************************
-     * A) AUTO-START CAMERA ON PAGE LOAD
+     * A) AUTO-START CAMERA ON PAGE LOAD + SCANNING
      *************************************************************/
     let stream = null;
     let scanningInterval = null;
@@ -198,25 +201,26 @@
     const qrcodeDiv = document.getElementById("qrcode");
 
     // 1) Embed a tiny beep as Base64 to avoid external file issues
-    //    Extremely short beep so it usually won't be blocked.
+    //    Short beep so it's less likely to be blocked by browser policies.
     const beepBase64 =
       "data:audio/wav;base64," +
-      "UklGRuQAAABXQVZFZm10IBAAAAABAAEAQB8AAIA+AAACABAAZGF0YSQAAAD/AACAgICAgP8A" +
-      "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA" +
-      "AAAAACH5BAEAAAIALAAAAAAQABAAAARQsMhJQBg2SSnRybfAwiE0jmWo3Ky21UIkx4BMaCZH" +
-      "KILtnEMhkkMAADs=";
+      "UklGRuQAAABXQVZFZm10IBAAAAABAAEAQB8AAIA+AAACABAAZGF0YSQAAAD/AACAgICAgP8A"+
+      "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"+
+      "AAAAAAAACH5BAEAAAIALAAAAAAQABAAAARQsMhJQBg2SSnRybfAwiE0jmWo3Ky21UIkx4BMaC"+
+      "ZHKILtnEMhkkMAADs=";
     const beepSound = new Audio(beepBase64);
 
+    // Start the camera and continuously scan
     async function startCamera() {
       try {
-        // Use environment-facing camera
+        // Request environment-facing camera
         stream = await navigator.mediaDevices.getUserMedia({
           video: { facingMode: "environment" }
         });
         video.srcObject = stream;
         video.play();
 
-        // Continuously scan
+        // Continuously scan every half-second
         scanningInterval = setInterval(() => {
           ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
           const frame = ctx.getImageData(0, 0, canvas.width, canvas.height);
@@ -231,18 +235,20 @@
       }
     }
 
+    // Handle a newly scanned QR code and play beep
     function handleScannedCode(codeText) {
-      if (codeText === lastScanned) return; // Avoid re-processing the same code
+      // Avoid re-processing the same code repeatedly
+      if (codeText === lastScanned) return;
       lastScanned = codeText;
 
       // 2) Attempt to play the beep
       beepSound.currentTime = 0;
       beepSound.play().catch(e => console.warn("Beep sound error:", e));
 
-      // Show code in text input
+      // Show scanned code in text input
       scannedInput.value = codeText;
 
-      // Create new QR code matching container’s current dimensions
+      // Create a new QR code in #qrcode with the container's current size
       qrcodeDiv.innerHTML = "";
       const containerStyles = window.getComputedStyle(qrcodeDiv);
       const containerWidth  = parseInt(containerStyles.width, 10)  || 128;
@@ -254,6 +260,7 @@
         height: containerHeight
       });
 
+      // If you're using Materialize, you can toast it
       M.toast({ html: "Scanned: " + codeText });
     }
 
@@ -299,7 +306,7 @@
     });
 
     /*************************************************************
-     * C) CONFIG SYSTEM FOR REPOSITIONING
+     * C) CONFIG SYSTEM FOR REPOSITIONING LAYOUT
      *************************************************************/
     const scannerConfigComponentIDs = [
       "openConfigBtnScanner",
@@ -397,11 +404,16 @@
     }
 
     document.addEventListener("DOMContentLoaded", function() {
+      // Initialize Materialize
       M.AutoInit();
+      // Load any stored positions
       loadPositionsFromStorage();
+      // Apply them to the DOM
       applyPositions();
+      // Start scanning
       startCamera();
 
+      // Open the config modal
       document
         .getElementById("openConfigBtnScanner")
         .addEventListener("click", () => {
@@ -411,6 +423,7 @@
           instance.open();
         });
 
+      // Save config
       document
         .getElementById("saveConfigBtnScanner")
         .addEventListener("click", scannerSaveConfiguration);
