@@ -2,7 +2,7 @@
 <html>
 <head>
   <meta charset="UTF-8" />
-  <title>Sorting Grid of 35</title>
+  <title>Sorting - Connect to Etsy</title>
 
   <!-- Materialize CSS -->
   <link
@@ -20,7 +20,13 @@
       transition: opacity 0s;
     }
 
-    /* Buttons */
+    /* We now have four buttons:
+       1) Connect to Etsy
+       2) Test Etsy
+       3) Test OpenAI
+       4) Open Config
+    */
+    #connectEtsyBtn,
     #testEtsyBtn,
     #testOpenAIBtn,
     #openConfigBtn {
@@ -29,21 +35,24 @@
       width: 140px;
       height: 36px;
     }
-    #testEtsyBtn {
-      top: 20px;
+    #connectEtsyBtn {
+      top: 20px;    /* The newly added Connect to Etsy button */
     }
-    #testOpenAIBtn {
+    #testEtsyBtn {
       top: 70px;
     }
-    #openConfigBtn {
+    #testOpenAIBtn {
       top: 120px;
+    }
+    #openConfigBtn {
+      top: 170px;
     }
 
     /* Etsy Order Number input */
     #etsyOrderNumber {
       position: absolute;
       left: 20px;
-      top: 170px;
+      top: 220px;
       width: 200px;
       height: 30px;
       border: 1px solid #999;
@@ -52,13 +61,13 @@
       font-size: 0.9em;
     }
 
-    /* The 35-box grid */
+    /* 35-box grid */
     #photoGridContainer {
       position: absolute;
       left: 250px;
       top: 20px;
 
-      /* 5 columns x 7 rows = 35 boxes */
+      /* 5 columns x 7 rows => 35 total boxes */
       display: grid;
       grid-template-columns: repeat(5, 66px);
       grid-template-rows: repeat(7, auto);
@@ -105,7 +114,7 @@
       text-overflow: ellipsis;
     }
 
-    /* Configuration Modal styling */
+    /* Configuration Modal styling (from the final Sorting.html) */
     #configModal.modal {
       position: fixed !important;
       top: 50% !important;
@@ -128,7 +137,8 @@
 </head>
 
 <body>
-  <!-- Buttons to test connectivity and open the position-config modal -->
+  <!-- Buttons: Connect, Test Etsy, Test OpenAI, Open Config -->
+  <button id="connectEtsyBtn" class="btn waves-effect waves-light">Connect to Etsy</button>
   <button id="testEtsyBtn" class="btn waves-effect waves-light">Test Etsy</button>
   <button id="testOpenAIBtn" class="btn waves-effect waves-light">Test OpenAI</button>
   <button id="openConfigBtn" class="btn waves-effect waves-light">Open Config</button>
@@ -139,12 +149,8 @@
   <!-- 35-Image Grid -->
   <div id="photoGridContainer">
     <!-- We'll create 35 .grid-cell elements. 
-         Each cell has: 
-         - A .preview-box for the image
-         - A .quantity-label for the quantity
-         - A .title-label for the first 4 words. 
-    -->
-    <!-- For i=0 to 34 -->
+         Each cell has a .preview-box, .quantity-label, and .title-label.
+         They remain EXACTLY as in final Sorting.html, with no omissions. -->
     <div class="grid-cell">
       <div class="preview-box" id="previewCell0">Empty</div>
       <div class="quantity-label" id="quantityCell0"></div>
@@ -325,7 +331,7 @@
     </div>
   </div>
 
-  <!-- The configuration modal for adjusting element positions -->
+  <!-- Configuration modal -->
   <div id="configModal" class="modal">
     <div class="modal-content">
       <table class="striped" id="configTable">
@@ -354,67 +360,130 @@
     src="https://cdnjs.cloudflare.com/ajax/libs/materialize/1.0.0/js/materialize.min.js"
   ></script>
 
+  <!-- ****************************************************************
+       PKCE + Sorting scripts combined, fully unabridged 
+       **************************************************************** -->
   <script>
+    /******************************************************
+     * 1) Immediately check URL for ?access_token or ?code 
+     *    (PKCE logic from your index.html, unabridged)
+     ******************************************************/
+    (function(){
+      var urlParams = new URLSearchParams(window.location.search);
+      var accessToken = urlParams.get("access_token");
+      if(accessToken){
+        localStorage.setItem("access_token", accessToken);
+        // Remove ?access_token from URL
+        window.history.replaceState({}, document.title, window.location.pathname);
+        M.toast({html:"Connection Successful!"});
+        console.log("Access token received:", accessToken);
+      } else {
+        var authCode = urlParams.get("code");
+        if(authCode){
+          var storedCodeVerifier = localStorage.getItem("etsy_code_verifier");
+          if(storedCodeVerifier){
+            // This calls your netlify function which finalizes the token exchange
+            window.location.href =
+              "/.netlify/functions/exchangeToken?code=" +
+              encodeURIComponent(authCode) +
+              "&code_verifier=" +
+              encodeURIComponent(storedCodeVerifier);
+          } else {
+            console.error("No code verifier found in localStorage.");
+          }
+        }
+      }
+    })();
+
+    function generateRandomString(length) {
+      var chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+      var text = "";
+      for (var i = 0; i < length; i++){
+        text += chars.charAt(Math.floor(Math.random() * chars.length));
+      }
+      return text;
+    }
+    async function generateCodeChallenge(codeVerifier) {
+      var encoder = new TextEncoder();
+      var data = encoder.encode(codeVerifier);
+      var digest = await crypto.subtle.digest("SHA-256", data);
+      var base64String = btoa(String.fromCharCode(...new Uint8Array(digest)));
+      return base64String.replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+    }
+
     document.addEventListener("DOMContentLoaded", function() {
       M.AutoInit();
 
       // Fade in body
       setTimeout(() => {
+        loadPositions();
         document.body.style.opacity = 1;
       }, 200);
 
-      // Attempt to load saved positions from localStorage
-      loadPositions();
+      /******************************************************
+       * 2) “Connect to Etsy” => Start PKCE OAuth
+       ******************************************************/
+      const connectBtn = document.getElementById("connectEtsyBtn");
+      connectBtn.addEventListener("click", async () => {
+        try {
+          const codeVerifier = generateRandomString(64);
+          localStorage.setItem("etsy_code_verifier", codeVerifier);
 
-      // “Open Config” button
-      document.getElementById("openConfigBtn").addEventListener("click", () => {
-        populateConfigTable();
-        const modalElem = document.getElementById("configModal");
-        const modalInst = M.Modal.getInstance(modalElem);
-        modalInst.open();
-      });
-      document.getElementById("saveConfigBtn").addEventListener("click", () => {
-        saveConfiguration();
-      });
+          const codeChallenge = await generateCodeChallenge(codeVerifier);
+          const state = "randomState123"; 
+          const scope = "listings_w listings_r transactions_r transactions_w";
 
-      // Etsy Order input => load transactions
-      const etsyOrderInput = document.getElementById("etsyOrderNumber");
-      etsyOrderInput.addEventListener("keydown", async (e) => {
-        if (e.key === "Enter") {
-          const orderNum = etsyOrderInput.value.trim();
-          if (orderNum) {
-            await loadEtsyOrderItems(orderNum);
-          }
+          // Replace with your real Etsy Client ID
+          const CLIENT_ID = "k75zdspz4r99txpqdji7i2em";
+          // Must match what your exchangeToken function uses, 
+          // plus what’s set in your Etsy Developer App
+          const redirectUri = "https://your-domain.com/sorting.html";
+
+          const etsyAuthUrl =
+            "https://www.etsy.com/oauth/connect?response_type=code" +
+            "&client_id=" + CLIENT_ID +
+            "&redirect_uri=" + encodeURIComponent(redirectUri) +
+            "&scope=" + encodeURIComponent(scope) +
+            "&state=" + state +
+            "&code_challenge=" + encodeURIComponent(codeChallenge) +
+            "&code_challenge_method=S256";
+
+          console.log("Redirecting to Etsy OAuth URL:", etsyAuthUrl);
+          window.location.href = etsyAuthUrl;
+        } catch (err) {
+          console.error("Error starting OAuth:", err);
+          M.toast({ html: "OAuth error: " + err.message });
         }
       });
 
-      // “Test Etsy” button
+      /******************************************************
+       * 3) Test Etsy & Test OpenAI => same approach from final Sorting.html
+       ******************************************************/
       document.getElementById("testEtsyBtn").addEventListener("click", async () => {
         try {
-          const testListingId = "3638101799"; // any valid listing
+          const testListingId = "123456"; // or a valid listing in your shop
           const resp = await fetch(`/.netlify/functions/etsyProxy?listingId=${testListingId}`, {
             headers: { "access-token": localStorage.getItem("access_token") || "" }
           });
-          if (!resp.ok) throw new Error("Etsy test call failed!");
+          if (!resp.ok) throw new Error("Etsy test call failed with status " + resp.status);
           M.toast({ html: "Etsy connectivity OK!" });
         } catch (err) {
           M.toast({ html: "Etsy test failed: " + err.message });
         }
       });
 
-      // “Test OpenAI” button
       document.getElementById("testOpenAIBtn").addEventListener("click", async () => {
         try {
           const testBody = {
             model: "gpt-3.5-turbo",
-            messages: [{ role: "user", content: "Hello from the new Sorting page!" }]
+            messages: [{ role: "user", content: "Hello from the Sorting page!" }]
           };
           const resp = await fetch("/.netlify/functions/openaiProxy", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify(testBody)
           });
-          if (!resp.ok) throw new Error("OpenAI test call failed!");
+          if (!resp.ok) throw new Error("OpenAI test call failed with status " + resp.status);
           const data = await resp.json();
           if (data.choices && data.choices[0] && data.choices[0].message) {
             M.toast({ html: "OpenAI responded successfully." });
@@ -426,7 +495,31 @@
         }
       });
 
-      // Enable zoom & drag inside each preview-box
+      // 4) “Open Config” => show the table for adjusting positions
+      document.getElementById("openConfigBtn").addEventListener("click", () => {
+        populateConfigTable();
+        const modalElem = document.getElementById("configModal");
+        const modalInst = M.Modal.getInstance(modalElem);
+        modalInst.open();
+      });
+      document.getElementById("saveConfigBtn").addEventListener("click", () => {
+        saveConfiguration();
+      });
+
+      /*******************************************************
+       * 5) Press Enter in Etsy Order => call etsyOrderProxy
+       *******************************************************/
+      const etsyOrderInput = document.getElementById("etsyOrderNumber");
+      etsyOrderInput.addEventListener("keydown", async (e) => {
+        if (e.key === "Enter") {
+          const orderNum = etsyOrderInput.value.trim();
+          if (orderNum) {
+            await loadEtsyOrderItems(orderNum);
+          }
+        }
+      });
+
+      // 6) Enable wheel zoom & drag on each .preview-box
       [...document.querySelectorAll(".preview-box")].forEach((box) => {
         let isDragging = false, lastX = 0, lastY = 0;
         box.addEventListener("wheel", (ev) => {
@@ -480,7 +573,7 @@
     });
 
     /*******************************************************
-     *  Load Etsy order => fetch transactions => fill boxes
+     * 7) Load Etsy order => fetch transactions => fill boxes
      *******************************************************/
     async function loadEtsyOrderItems(orderNumber) {
       try {
@@ -488,7 +581,7 @@
         const url = `/.netlify/functions/etsyOrderProxy?orderId=${encodeURIComponent(orderNumber)}`;
         const resp = await fetch(url, { headers: { "access-token": token } });
         if (!resp.ok) {
-          throw new Error("Etsy order fetch failed");
+          throw new Error("Etsy order fetch failed with status " + resp.status);
         }
         const data = await resp.json();
         if (!data.transactions || !Array.isArray(data.transactions) || data.transactions.length === 0) {
@@ -556,10 +649,10 @@
     }
 
     /*******************************************************
-     *           Positioning Config (like in index.html)
+     * 8) Positioning Config => identical to final Sorting.html
      *******************************************************/
     const configIDs = [
-      "testEtsyBtn","testOpenAIBtn","openConfigBtn","etsyOrderNumber",
+      "connectEtsyBtn","testEtsyBtn","testOpenAIBtn","openConfigBtn","etsyOrderNumber",
       "photoGridContainer","configModal","configTable","saveConfigBtn",
       /* 35 sets of 3 IDs each */
       ...[...Array(35).keys()].flatMap(i => [
@@ -567,7 +660,7 @@
       ])
     ];
 
-    const defaults = {}; // if you want to specify any default positions
+    const defaults = {}; // if you want default positions
 
     function loadPositions() {
       configIDs.forEach(id => {
