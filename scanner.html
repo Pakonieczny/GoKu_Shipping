@@ -2,13 +2,13 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <title>Scanner / Generator with Auto Camera & Touch-to-Unlock Audio (Using MP3 via Web Audio API)</title>
+  <title>Scanner / Generator with Auto Camera & Touch-to-Unlock Audio</title>
   <!-- Materialize CSS (CDN) -->
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/materialize/1.0.0/css/materialize.min.css" />
   <style>
     html, body {
-      margin: 0; 
-      padding: 0; 
+      margin: 0;
+      padding: 0;
       height: 100%;
       font-family: sans-serif;
     }
@@ -95,7 +95,7 @@
   <!-- "Order #:" label -->
   <div id="orderLabel">Order #:</div>
   
-  <!-- Scanned code text box -->
+  <!-- Scanned QR Code text box -->
   <input type="text" id="orderNumInput" placeholder="(Scanned QR Code)" readonly />
   
   <!-- "QR Code" title -->
@@ -157,56 +157,36 @@
     };
     firebase.initializeApp(firebaseConfig);
     const db = firebase.firestore();
-
+  
     /*************************************************************
      * 1) GLOBAL VARIABLES
      *************************************************************/
     let stream = null;
     let scanningInterval = null;
     let lastScanned = "";
-    let audioUnlocked = false; // We'll beep only if this is true
-    let beepBuffer = null;     // Holds the decoded MP3
-    let audioCtx = null;       // Web Audio API context
-
+    let audioUnlocked = false; // Beep only if true
+  
     const video        = document.getElementById("video");
     const canvas       = document.getElementById("captureCanvas");
     const ctx          = canvas.getContext("2d");
     const scannedInput = document.getElementById("orderNumInput");
     const qrcodeDiv    = document.getElementById("qrcode");
-
+  
+    // Use your external MP3 beep from the assets folder
+    const beepSound = new Audio("./assets/scannerBeep.mp3");
+    beepSound.preload = "auto";
+    beepSound.load();
+  
     /*************************************************************
-     * 2) LOAD THE EXTERNAL MP3 FILE INTO AN AudioBuffer USING THE Web Audio API
-     *************************************************************/
-    async function loadBeepBuffer() {
-      // Create AudioContext if not already created
-      if (!audioCtx && (window.AudioContext || window.webkitAudioContext)) {
-        audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-      }
-      try {
-        const response = await fetch("./assets/scannerBeep.mp3");
-        const arrayBuffer = await response.arrayBuffer();
-        beepBuffer = await audioCtx.decodeAudioData(arrayBuffer);
-      } catch (e) {
-        console.warn("Error loading beep buffer:", e);
-      }
-    }
-
-    /*************************************************************
-     * 3) PLAY BEEP USING THE LOADED AudioBuffer
+     * 2) PLAY BEEP USING THE MP3 FILE
      *************************************************************/
     function playBeep() {
-      if (audioCtx && beepBuffer) {
-        const source = audioCtx.createBufferSource();
-        source.buffer = beepBuffer;
-        source.connect(audioCtx.destination);
-        source.start(0);
-      } else {
-        console.warn("Beep buffer not loaded; cannot play beep.");
-      }
+      beepSound.currentTime = 0;
+      beepSound.play().catch(e => console.warn("Beep sound error:", e));
     }
-
+  
     /*************************************************************
-     * 4) START CAMERA AUTOMATICALLY
+     * 3) START CAMERA AUTOMATICALLY
      *************************************************************/
     async function startCamera() {
       try {
@@ -216,7 +196,7 @@
         });
         video.srcObject = stream;
         video.play();
-
+  
         // Continuously scan every 500ms
         scanningInterval = setInterval(() => {
           ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
@@ -231,24 +211,23 @@
         alert("Could not start camera: " + err.message);
       }
     }
-
+  
     /*************************************************************
-     * 5) HANDLE NEW QR CODE SCAN
+     * 4) HANDLE A NEW QR CODE SCAN
      *************************************************************/
     function handleScannedCode(codeText) {
-      // Avoid reprocessing duplicates
       if (codeText === lastScanned) return;
       lastScanned = codeText;
-
-      // If audio is unlocked, play the beep using the loaded MP3 buffer
+  
+      // If audio is unlocked, play the beep using your MP3 file
       if (audioUnlocked) {
         playBeep();
       }
-
+  
       // Display the scanned code
       scannedInput.value = codeText;
-
-      // Render a new QR code in the #qrcode container
+  
+      // Render a new QR code in the qrcode container
       qrcodeDiv.innerHTML = "";
       const containerStyles = window.getComputedStyle(qrcodeDiv);
       const containerWidth  = parseInt(containerStyles.width, 10)  || 128;
@@ -258,34 +237,35 @@
         width: containerWidth,
         height: containerHeight
       });
-
+  
       M.toast({ html: "Scanned: " + codeText });
     }
-
+  
     /*************************************************************
-     * 6) UNLOCK AUDIO ON FIRST TOUCH OR CLICK (USING WINDOW EVENT)
+     * 5) UNLOCK AUDIO ON FIRST TOUCH OR CLICK
      *************************************************************/
-    async function unlockAudio() {
-      // Load the beep buffer if not already loaded
-      if (!beepBuffer) {
-        await loadBeepBuffer();
-      }
-      // Resume the AudioContext (required on some mobile browsers)
-      if (audioCtx && audioCtx.state === "suspended") {
-        await audioCtx.resume();
-      }
-      audioUnlocked = true;
-      M.toast({ html: "Audio unlocked. Beeps will now play on scans!" });
-      // Remove the unlock listeners (once)
+    function unlockAudio() {
+      // Attempt to play the MP3 in response to user interaction
+      beepSound.currentTime = 0;
+      beepSound.play()
+        .then(() => {
+          audioUnlocked = true;
+          M.toast({ html: "Audio unlocked. Beeps will now play on scans!" });
+        })
+        .catch(e => {
+          console.warn("Could not unlock audio:", e);
+          M.toast({ html: "Audio blocked—check volume/silent mode." });
+        });
+      // Remove these listeners so this only happens once
       window.removeEventListener("touchstart", unlockAudio);
       window.removeEventListener("click", unlockAudio);
     }
     // Attach unlock event listeners to window (covers mobile and desktop)
     window.addEventListener("touchstart", unlockAudio, { once: true });
     window.addEventListener("click", unlockAudio, { once: true });
-
+  
     /*************************************************************
-     * 7) "SEND" BUTTON: Push scanned code to Firestore
+     * 6) "SEND" BUTTON: Push scanned code to Firestore
      *************************************************************/
     const sendBtn = document.getElementById("sendBtn");
     sendBtn.addEventListener("click", async () => {
@@ -319,9 +299,9 @@
         console.error("Error sending to Firestore:", err);
       }
     });
-
+  
     /*************************************************************
-     * 8) CONFIG SYSTEM FOR LAYOUT REPOSITIONING
+     * 7) CONFIG SYSTEM FOR LAYOUT REPOSITIONING
      *************************************************************/
     const scannerConfigComponentIDs = [
       "openConfigBtnScanner",
