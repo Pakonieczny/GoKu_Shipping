@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <title>Scanner / Generator with Auto Camera & Touch-to-Unlock Audio</title>
+  <title>Scanner / Generator with Auto Camera & Touch-to-Unlock Audio (Using MP3)</title>
   <!-- Materialize CSS (CDN) -->
   <link
     rel="stylesheet"
@@ -170,7 +170,6 @@
     let scanningInterval = null;
     let lastScanned = "";
     let audioUnlocked = false; // We'll beep only if this is true
-    let audioCtx = null;       // For Web Audio API
 
     const video        = document.getElementById("video");
     const canvas       = document.getElementById("captureCanvas");
@@ -178,29 +177,15 @@
     const scannedInput = document.getElementById("orderNumInput");
     const qrcodeDiv    = document.getElementById("qrcode");
 
-    // Use your external beep file as a fallback—but we’ll use Web Audio API on mobile.
+    // Use your external MP3 beep from the assets folder
     const beepSound    = new Audio("./assets/scannerBeep.mp3");
 
     /*************************************************************
-     * 2) FUNCTION TO PLAY A BEEP USING THE Web Audio API
+     * 2) PLAY BEEP USING THE MP3 FILE
      *************************************************************/
     function playBeep() {
-      // If AudioContext is available, use it.
-      if (audioCtx) {
-        const oscillator = audioCtx.createOscillator();
-        const gainNode = audioCtx.createGain();
-        oscillator.connect(gainNode);
-        gainNode.connect(audioCtx.destination);
-        oscillator.type = "sine";
-        oscillator.frequency.setValueAtTime(440, audioCtx.currentTime); // 440 Hz = A4 note
-        gainNode.gain.setValueAtTime(0.5, audioCtx.currentTime); // moderate volume
-        oscillator.start();
-        oscillator.stop(audioCtx.currentTime + 0.2); // beep duration: 0.2 seconds
-      } else {
-        // Fallback using the Audio element
-        beepSound.currentTime = 0;
-        beepSound.play().catch(e => console.warn("Beep fallback error:", e));
-      }
+      beepSound.currentTime = 0;
+      beepSound.play().catch(e => console.warn("Beep sound error:", e));
     }
 
     /*************************************************************
@@ -231,21 +216,22 @@
     }
 
     /*************************************************************
-     * 4) HANDLE A NEW QR CODE SCAN
+     * 4) HANDLE NEW QR CODE SCAN
      *************************************************************/
     function handleScannedCode(codeText) {
+      // Avoid reprocessing the same code
       if (codeText === lastScanned) return;
       lastScanned = codeText;
 
-      // If audio is unlocked, play the beep
+      // If audio is unlocked, play the beep using your MP3 file
       if (audioUnlocked) {
         playBeep();
       }
 
-      // Display the scanned code
+      // Display the scanned code in the text box
       scannedInput.value = codeText;
 
-      // Render a QR code in the qrcode container
+      // Render a new QR code in the #qrcode container
       qrcodeDiv.innerHTML = "";
       const containerStyles = window.getComputedStyle(qrcodeDiv);
       const containerWidth  = parseInt(containerStyles.width, 10)  || 128;
@@ -263,42 +249,22 @@
      * 5) UNLOCK AUDIO ON FIRST TOUCH OR CLICK
      *************************************************************/
     function unlockAudio() {
-      // Try initializing/resuming the AudioContext
-      if (!audioCtx && (window.AudioContext || window.webkitAudioContext)) {
-        audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-      }
-      if (audioCtx) {
-        audioCtx.resume().then(() => {
+      // Attempt to play the beep once in response to user interaction
+      beepSound.currentTime = 0;
+      beepSound.play()
+        .then(() => {
           audioUnlocked = true;
-          M.toast({ html: "Audio unlocked via Web Audio API. Beeps will now play." });
-        }).catch(e => {
-          console.warn("AudioContext resume error:", e);
-          // Fallback: try playing the MP3 file
-          beepSound.currentTime = 0;
-          beepSound.play().then(() => {
-            audioUnlocked = true;
-            M.toast({ html: "Audio unlocked via MP3 fallback. Beeps will now play." });
-          }).catch(err => {
-            console.warn("Fallback audio play error:", err);
-            M.toast({ html: "Audio still blocked – check your volume/silent mode." });
-          });
+          M.toast({ html: "Audio unlocked. Beeps will now play on scans!" });
+        })
+        .catch(e => {
+          console.warn("Could not unlock audio:", e);
+          M.toast({ html: "Audio blocked—check volume/silent mode." });
         });
-      } else {
-        // If no AudioContext, fallback to MP3
-        beepSound.currentTime = 0;
-        beepSound.play().then(() => {
-          audioUnlocked = true;
-          M.toast({ html: "Audio unlocked via MP3 fallback. Beeps will now play." });
-        }).catch(err => {
-          console.warn("Fallback audio play error:", err);
-          M.toast({ html: "Audio still blocked – check your volume/silent mode." });
-        });
-      }
-      // Remove the listeners after first interaction
+      // Remove these listeners to ensure this runs only once
       document.removeEventListener("touchstart", unlockAudio);
       document.removeEventListener("click", unlockAudio);
     }
-    // Attach listeners for both touchstart and click events (once)
+    // Attach both touchstart and click events for audio unlock
     document.addEventListener("touchstart", unlockAudio, { once: true });
     document.addEventListener("click", unlockAudio, { once: true });
 
@@ -424,19 +390,19 @@
     document.addEventListener("DOMContentLoaded", function() {
       // Initialize Materialize
       M.AutoInit();
-      // Load and apply any stored positions
+      // Load and apply stored positions
       loadPositionsFromStorage();
       applyPositions();
-      // Start camera scanning automatically
+      // Start the camera scanning automatically
       startCamera();
-      // Hook up "Open Config" button to show config modal
+      // "Open Config" button: populate table & open modal
       document.getElementById("openConfigBtnScanner").addEventListener("click", () => {
         scannerPopulateConfigTable();
         const modalElem = document.getElementById("configModalScanner");
         const instance = M.Modal.getInstance(modalElem);
         instance.open();
       });
-      // Hook up "Save Config" button
+      // "Save Config" button
       document.getElementById("saveConfigBtnScanner").addEventListener("click", scannerSaveConfiguration);
     });
   </script>
