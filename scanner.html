@@ -63,6 +63,12 @@
       display: none;
     }
 
+    /* NEW: "Start Scanning" button */
+    #startScanBtn {
+      position: absolute;
+      font-size: 600% !important;
+    }
+
     /* Modal styling (for the config system) */
     .modal {
       position: fixed !important;
@@ -134,6 +140,9 @@
   <!-- "Send" button -->
   <button id="sendBtn" class="btn waves-effect waves-light">Send</button>
 
+  <!-- NEW: "Start Scanning" button -->
+  <button id="startScanBtn" class="btn waves-effect waves-light">Start Scanning</button>
+
   <!-- Config Modal -->
   <div id="configModalScanner" class="modal">
     <div class="modal-content">
@@ -188,11 +197,12 @@
 
   <script>
     /*************************************************************
-     * A) CAMERA + QR SCANNING (with beep)
+     * A) CAMERA + QR SCANNING + AUDIO UNLOCK
      *************************************************************/
     let stream = null;
     let scanningInterval = null;
     let lastScanned = "";
+    let audioUnlocked = false; // We'll only beep if this is true
 
     const video = document.getElementById("video");
     const canvas = document.getElementById("captureCanvas");
@@ -200,12 +210,10 @@
     const scannedInput = document.getElementById("orderNumInput");
     const qrcodeDiv = document.getElementById("qrcode");
 
-    // This is a ~1 second beep in Base64 (44100 Hz, 16-bit PCM).
-    // Slightly larger than a tiny beep so browsers are less likely to ignore it.
+    // This is a ~1 second beep in Base64
     const beepBase64 =
       "data:audio/wav;base64," +
       "UklGRr4JAABXQVZFZm10IBAAAAABAAEAQB8AAIA+AAACABAAZGF0YS4JAACQe5G0Q8REAACQ"+"Z7mxtEPERAAA0QQEEACicAADAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"+"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAACZ6m0Q8REAAAkHHuRtEPERAA"+"Ap3AKMAtgAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"+"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAACQZ7m0Q8REAAAuRHuRtEPERAAD/////"+"////////////////////////////////////////////////////////////////////"+"////////////////////////////////////////////////////////8AAAAAAAAAAAAAAAAA"+"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"+"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
-
     const beepSound = new Audio(beepBase64);
 
     async function startCamera() {
@@ -238,9 +246,11 @@
       if (codeText === lastScanned) return;
       lastScanned = codeText;
 
-      // Attempt to play the beep (browser should allow this after user clicks)
-      beepSound.currentTime = 0;
-      beepSound.play().catch(e => console.warn("Beep sound error:", e));
+      // If user has tapped "Start Scanning," we beep
+      if (audioUnlocked) {
+        beepSound.currentTime = 0;
+        beepSound.play().catch(e => console.warn("Beep sound error:", e));
+      }
 
       // Show scanned code in text input
       scannedInput.value = codeText;
@@ -257,27 +267,25 @@
         height: containerHeight
       });
 
-      // Materialize toast
+      // Toast
       M.toast({ html: "Scanned: " + codeText });
     }
 
     /*************************************************************
-     * B) EXPLICIT USER EVENT TO UNLOCK AUDIO
+     * B) "START SCANNING" BUTTON => unlock audio
      *************************************************************/
-    // On the first click or tap anywhere in the document, play the beep once.
-    // This ensures a user-initiated event is recognized, so future beepSound.play() won't be blocked.
-    function unlockAudio() {
-      beepSound.play()
-        .then(() => {
-          console.log("Audio unlocked—future beepSound.play() calls allowed.");
-        })
-        .catch(e => console.warn("Audio unlock attempt error:", e));
-      // Remove this event listener after first attempt
-      document.removeEventListener("click", unlockAudio);
-      document.removeEventListener("touchstart", unlockAudio);
-    }
-    document.addEventListener("click", unlockAudio, { once: true });
-    document.addEventListener("touchstart", unlockAudio, { once: true });
+    const startScanBtn = document.getElementById("startScanBtn");
+    startScanBtn.addEventListener("click", () => {
+      // Attempt to play a quick beep in direct response to user event
+      beepSound.currentTime = 0;
+      beepSound.play().then(() => {
+        audioUnlocked = true;
+        M.toast({ html: "Audio Unlocked! Beep will play on new scans." });
+      }).catch(err => {
+        console.warn("Could not unlock audio:", err);
+        M.toast({ html: "Audio blocked by browser. Check volume / silent mode." });
+      });
+    });
 
     /*************************************************************
      * C) "SEND" BUTTON => push scanned code to Firestore doc "ScannedOrder"
@@ -331,7 +339,8 @@
       "qrcode",
       "video",
       "captureCanvas",
-      "sendBtn"
+      "sendBtn",
+      "startScanBtn" // Include our new button in the config table
     ];
 
     let scannerDefaultPositions = {
@@ -342,7 +351,8 @@
       qrcode:               { left:70,   top:3000,  width:384, height:384 },
       video:                { left:0,    top:0,     width:1800,height:2400 },
       captureCanvas:        { left:400,  top:2600,  width:300, height:200 },
-      sendBtn:              { left:1150, top:2820,  width:550, height:225 }
+      sendBtn:              { left:1150, top:2820,  width:550, height:225 },
+      startScanBtn:         { left:1150, top:2600,  width:600, height:225 } // Example position
     };
 
     function loadPositionsFromStorage() {
@@ -425,11 +435,11 @@
       loadPositionsFromStorage();
       // Apply them to the DOM
       applyPositions();
-      
-      // Start scanning
+
+      // Start scanning automatically anyway
       startCamera();
 
-      // Open the config modal
+      // "Open Config" button => show config modal
       document
         .getElementById("openConfigBtnScanner")
         .addEventListener("click", () => {
@@ -439,7 +449,7 @@
           instance.open();
         });
 
-      // Save config
+      // "Save Config" button
       document
         .getElementById("saveConfigBtnScanner")
         .addEventListener("click", scannerSaveConfiguration);
