@@ -2,22 +2,12 @@
 const fetch = require("node-fetch");
 const crypto = require("crypto");
 
-/*
-  We allow three possible redirect URIs:
-  1) https://sorting.goldenspike.app
-  2) https://scanner.goldenspike.app
-  3) https://goldenspike.app
-
-  The user picks via a ?redirect_domain=sorting|scanner|goldenspike
-  If absent or invalid, we default to the "sorting" domain.
-*/
+// We only allow two possible redirects now
 const ALLOWED_REDIRECTS = {
   sorting:     "https://sorting.goldenspike.app",
-  scanner:     "https://scanner.goldenspike.app",
   goldenspike: "https://goldenspike.app"
 };
 
-// Helpers
 function generateRandomString(length) {
   const possible = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
   let text = "";
@@ -35,27 +25,24 @@ function generateCodeChallenge(codeVerifier) {
     .replace(/=+$/, "");
 }
 
-// Main handler
 exports.handler = async function(event, context) {
   try {
-    // 1) Parse query params
     const queryParams = event.queryStringParameters || {};
     const code = queryParams.code;
     const codeVerifier = queryParams.code_verifier;
-    // The user can specify "sorting", "scanner", or "goldenspike"
-    // If none is provided, we default to "sorting"
+
+    // Choose which domain to redirect to at the end
+    // If none specified, we default to "sorting".
     const requestedDomain = (queryParams.redirect_domain || "sorting").toLowerCase();
     const redirectUri = ALLOWED_REDIRECTS[requestedDomain] || ALLOWED_REDIRECTS.sorting;
 
-    // If no code => initiate the OAuth flow 
-    // (rarely used from a function, but we keep it for completeness)
+    // If no code => initiate the OAuth flow
     if (!code) {
       console.log("No code parameter found – initiating OAuth redirect.");
+      const codeVerif = generateRandomString(64);
+      const codeChall = generateCodeChallenge(codeVerif);
 
-      const newCodeVerifier = generateRandomString(64);
-      const codeChallenge = generateCodeChallenge(newCodeVerifier);
-
-      // In production, store newCodeVerifier securely (e.g. via a cookie)
+      // In production, store codeVerif securely (e.g., a cookie)
       const CLIENT_ID = process.env.CLIENT_ID;
       if (!CLIENT_ID || !redirectUri) {
         console.error("Missing CLIENT_ID or redirectUri for OAuth start.");
@@ -64,12 +51,14 @@ exports.handler = async function(event, context) {
       const state = "randomState123";
       const scope = "listings_w listings_r";
 
-      const oauthUrl = `https://www.etsy.com/oauth/connect?response_type=code&client_id=${CLIENT_ID}` +
-                       `&redirect_uri=${encodeURIComponent(redirectUri)}` +
-                       `&scope=${encodeURIComponent(scope)}` +
-                       `&state=${state}` +
-                       `&code_challenge=${encodeURIComponent(codeChallenge)}` +
-                       `&code_challenge_method=S256`;
+      const oauthUrl = `https://www.etsy.com/oauth/connect`
+        + `?response_type=code`
+        + `&client_id=${CLIENT_ID}`
+        + `&redirect_uri=${encodeURIComponent(redirectUri)}`
+        + `&scope=${encodeURIComponent(scope)}`
+        + `&state=${state}`
+        + `&code_challenge=${encodeURIComponent(codeChall)}`
+        + `&code_challenge_method=S256`;
 
       console.log("Redirecting to Etsy OAuth URL:", oauthUrl);
       return {
@@ -85,7 +74,7 @@ exports.handler = async function(event, context) {
       return { statusCode: 400, body: JSON.stringify({ error: "Missing code_verifier parameter" }) };
     }
 
-    // 2) Use environment variables for the final exchange
+    // Pull environment variables
     const CLIENT_ID = process.env.CLIENT_ID;
     const CLIENT_SECRET = process.env.CLIENT_SECRET;
     if (!CLIENT_ID || !CLIENT_SECRET) {
@@ -93,7 +82,7 @@ exports.handler = async function(event, context) {
       return { statusCode: 500, body: JSON.stringify({ error: "Server config error" }) };
     }
 
-    // Build Etsy’s token exchange POST
+    // Token exchange parameters
     const params = new URLSearchParams({
       grant_type: "authorization_code",
       client_id: CLIENT_ID,
@@ -104,7 +93,7 @@ exports.handler = async function(event, context) {
     });
     console.log("Token exchange parameters:", params.toString());
 
-    // 3) POST to Etsy's token endpoint
+    // POST to Etsy's token endpoint
     const response = await fetch("https://api.etsy.com/v3/public/oauth/token", {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
@@ -121,8 +110,7 @@ exports.handler = async function(event, context) {
       };
     }
 
-    // 4) Redirect to the specified domain with the access token
-    // e.g. https://sorting.goldenspike.app?access_token=xxx
+    // Finally, redirect to the chosen domain with ?access_token=...
     return {
       statusCode: 302,
       headers: {
