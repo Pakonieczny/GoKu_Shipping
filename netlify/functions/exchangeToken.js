@@ -1,24 +1,31 @@
 // netlify/functions/exchangeToken.js
+// Final version supporting exactly these 2 domains:
+//   1) https://sorting.goldenspike.app
+//   2) https://goldenspike.app
+//
+// If user calls it without ?redirect_domain=... => we throw an error (400).
+// If user calls ?redirect_domain=somethingElse => we throw an error (400).
+
 const fetch = require("node-fetch");
 const crypto = require("crypto");
 
-// Exactly these two, no fallback to anything else:
-const ALLOWED_DOMAINS = {
-  sorting: "https://sorting.goldenspike.app",
+// 1) We define only the two allowed domains:
+const ALLOWED_REDIRECT_URIS = {
+  sorting:     "https://sorting.goldenspike.app",
   goldenspike: "https://goldenspike.app"
 };
 
-// Generate code_verifier
+// 2) Helper: generate a random code_verifier for PKCE
 function generateRandomString(length) {
   const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
   let text = "";
-  for (let i = 0; i < length; i++) {
+  for (let i = 0; i < length; i++){
     text += chars.charAt(Math.floor(Math.random() * chars.length));
   }
   return text;
 }
 
-// Generate code_challenge from code_verifier
+// 3) Helper: generate code_challenge from code_verifier
 function generateCodeChallenge(codeVerifier) {
   const hash = crypto.createHash("sha256").update(codeVerifier).digest();
   return hash.toString("base64")
@@ -27,73 +34,76 @@ function generateCodeChallenge(codeVerifier) {
     .replace(/=+$/, "");
 }
 
-exports.handler = async function(event) {
+exports.handler = async function(event, context) {
   try {
+    // 4) Read query params
     const query = event.queryStringParameters || {};
-    const code = query.code;
-    const codeVerifier = query.code_verifier;
+    const code = query.code;               // present only after Etsy returns
+    const codeVerifier = query.code_verifier; // from localStorage, if you do that
 
-    // Must specify ?redirect_domain=sorting or =goldenspike
+    // This param must be either "sorting" or "goldenspike"
     const domainParam = query.redirect_domain;
     if (!domainParam) {
-      // If user didn’t specify ANY domain => fail clearly
-      console.error("No redirect_domain param => can't decide which domain to use");
+      console.error("No redirect_domain param => cannot pick which domain to use");
       return {
         statusCode: 400,
         body: JSON.stringify({
-          error: "Missing ?redirect_domain= sorting or goldenspike"
+          error: "Missing ?redirect_domain= (must be 'sorting' or 'goldenspike')"
         })
       };
     }
-    if (!ALLOWED_DOMAINS[domainParam]) {
-      // If user specified something else => fail
-      console.error("Invalid redirect_domain =>", domainParam);
+    if (!ALLOWED_REDIRECT_URIS[domainParam]) {
+      console.error("Invalid domainParam =>", domainParam);
       return {
         statusCode: 400,
         body: JSON.stringify({
-          error: "Invalid redirect_domain param. Must be 'sorting' or 'goldenspike'."
+          error: `Invalid redirect_domain: ${domainParam} (must be 'sorting' or 'goldenspike')`
         })
       };
     }
 
-    // So we’re using exactly the domain they requested
-    const redirectUri = ALLOWED_DOMAINS[domainParam];
-    console.log("exchangeToken => domainParam:", domainParam);
-    console.log("exchangeToken => chosen redirectUri:", redirectUri);
+    // So we definitely pick the correct domain with no fallback
+    const finalRedirectUri = ALLOWED_REDIRECT_URIS[domainParam];
+    console.log(`exchangeToken => domainParam: ${domainParam}`);
+    console.log(`exchangeToken => finalRedirectUri: ${finalRedirectUri}`);
 
-    // If no code => begin OAuth with PKCE
+    // 5) If no code => start PKCE-based OAuth with Etsy
     if (!code) {
-      console.log("No ?code => starting new OAuth flow with PKCE...");
+      console.log("No ?code => beginning new OAuth request with PKCE...");
 
       const newCodeVerifier = generateRandomString(64);
       const codeChallenge   = generateCodeChallenge(newCodeVerifier);
 
-      console.log("Generated code_verifier:", newCodeVerifier);
-      console.log("Generated code_challenge:", codeChallenge);
+      // Typically, you'd store newCodeVerifier in a cookie or localStorage.
+      // For demonstration, we log it here:
+      console.log("PKCE code_verifier:", newCodeVerifier);
+      console.log("PKCE code_challenge:", codeChallenge);
 
       const CLIENT_ID = process.env.CLIENT_ID;
       if (!CLIENT_ID) {
-        console.error("Missing CLIENT_ID env var");
+        console.error("Missing CLIENT_ID in environment variables!");
         return {
           statusCode: 500,
-          body: JSON.stringify({
-            error: "Server config error: missing CLIENT_ID"
-          })
+          body: JSON.stringify({ error: "Server config error: no CLIENT_ID" })
         };
       }
 
+      // The scopes you need for your Etsy app
       const scope = "listings_w listings_r transactions_r transactions_w";
-      const state = "randomState123"; // in production, randomize
-      const oauthUrl =
-        `https://www.etsy.com/oauth/connect?response_type=code` +
+      const state = "randomState123"; // in production, use a real random value
+
+      // Build the Etsy OAuth connect URL
+      const oauthUrl = 
+        `https://www.etsy.com/oauth/connect` +
+        `?response_type=code` +
         `&client_id=${CLIENT_ID}` +
-        `&redirect_uri=${encodeURIComponent(redirectUri)}` +
+        `&redirect_uri=${encodeURIComponent(finalRedirectUri)}` +
         `&scope=${encodeURIComponent(scope)}` +
         `&state=${state}` +
         `&code_challenge=${encodeURIComponent(codeChallenge)}` +
         `&code_challenge_method=S256`;
 
-      console.log("Redirecting user to Etsy =>", oauthUrl);
+      console.log("Redirecting to Etsy =>", oauthUrl);
       return {
         statusCode: 302,
         headers: { Location: oauthUrl },
@@ -101,22 +111,22 @@ exports.handler = async function(event) {
       };
     }
 
-    // If code is present but no code_verifier => can’t finish
+    // 6) If we do have ?code=..., we need code_verifier => if missing => error
     if (!codeVerifier) {
-      console.error("Missing code_verifier => can’t do token exchange");
+      console.error("Missing code_verifier => cannot finalize token exchange!");
       return {
         statusCode: 400,
         body: JSON.stringify({
-          error: "Missing code_verifier parameter"
+          error: "Missing code_verifier param => can't complete token exchange"
         })
       };
     }
 
-    // We have code & code_verifier => final token exchange
+    // 7) Exchange the code for an Etsy access token
     const CLIENT_ID = process.env.CLIENT_ID;
     const CLIENT_SECRET = process.env.CLIENT_SECRET;
     if (!CLIENT_ID || !CLIENT_SECRET) {
-      console.error("Missing CLIENT_ID or CLIENT_SECRET env variables!");
+      console.error("Missing CLIENT_ID or CLIENT_SECRET env vars!");
       return {
         statusCode: 500,
         body: JSON.stringify({
@@ -125,12 +135,13 @@ exports.handler = async function(event) {
       };
     }
 
+    // Build the POST body
     const params = new URLSearchParams({
-      grant_type: "authorization_code",
-      client_id: CLIENT_ID,
+      grant_type:    "authorization_code",
+      client_id:     CLIENT_ID,
       client_secret: CLIENT_SECRET,
-      code,
-      redirect_uri: redirectUri,
+      code:          code,
+      redirect_uri:  finalRedirectUri,
       code_verifier: codeVerifier
     });
     console.log("Token exchange =>", params.toString());
@@ -154,9 +165,9 @@ exports.handler = async function(event) {
       };
     }
 
-    // success => redirect to chosen domain with ?access_token=...
-    const finalUrl = `${redirectUri}?access_token=${encodeURIComponent(data.access_token)}`;
-    console.log("Token exchange success => redirecting =>", finalUrl);
+    // 8) On success => redirect user to domain with ?access_token=...
+    const finalUrl = `${finalRedirectUri}?access_token=${encodeURIComponent(data.access_token)}`;
+    console.log("Token exchange success => final redirect =>", finalUrl);
 
     return {
       statusCode: 302,
@@ -164,11 +175,11 @@ exports.handler = async function(event) {
       body: ""
     };
 
-  } catch (error) {
-    console.error("Error in exchangeToken =>", error);
+  } catch (err) {
+    console.error("Error in exchangeToken =>", err);
     return {
       statusCode: 500,
-      body: JSON.stringify({ error: error.message })
+      body: JSON.stringify({ error: err.message })
     };
   }
 };
