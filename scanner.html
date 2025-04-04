@@ -102,6 +102,7 @@
   </style>
 </head>
 <body>
+
   <!-- "Open Config" button -->
   <button id="openConfigBtnScanner" class="btn waves-effect waves-light">
     Open Config
@@ -181,14 +182,13 @@
       messagingSenderId: "1078662308113",
       appId: "1:1078662308113:web:41df0e5d229ff2af7a6cb0"
     };
-
     firebase.initializeApp(firebaseConfig);
     const db = firebase.firestore();
   </script>
 
   <script>
     /*************************************************************
-     * A) AUTO-START CAMERA ON PAGE LOAD + SCANNING
+     * A) CAMERA + QR SCANNING (with beep)
      *************************************************************/
     let stream = null;
     let scanningInterval = null;
@@ -200,17 +200,14 @@
     const scannedInput = document.getElementById("orderNumInput");
     const qrcodeDiv = document.getElementById("qrcode");
 
-    // 1) Embed a tiny beep as Base64 to avoid external file issues
-    //    Short beep so it's less likely to be blocked by browser policies.
+    // This is a ~1 second beep in Base64 (44100 Hz, 16-bit PCM).
+    // Slightly larger than a tiny beep so browsers are less likely to ignore it.
     const beepBase64 =
       "data:audio/wav;base64," +
-      "UklGRuQAAABXQVZFZm10IBAAAAABAAEAQB8AAIA+AAACABAAZGF0YSQAAAD/AACAgICAgP8A"+
-      "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"+
-      "AAAAAAAACH5BAEAAAIALAAAAAAQABAAAARQsMhJQBg2SSnRybfAwiE0jmWo3Ky21UIkx4BMaC"+
-      "ZHKILtnEMhkkMAADs=";
+      "UklGRr4JAABXQVZFZm10IBAAAAABAAEAQB8AAIA+AAACABAAZGF0YS4JAACQe5G0Q8REAACQ"+"Z7mxtEPERAAA0QQEEACicAADAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"+"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAACZ6m0Q8REAAAkHHuRtEPERAA"+"Ap3AKMAtgAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"+"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAACQZ7m0Q8REAAAuRHuRtEPERAAD/////"+"////////////////////////////////////////////////////////////////////"+"////////////////////////////////////////////////////////8AAAAAAAAAAAAAAAAA"+"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"+"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
+
     const beepSound = new Audio(beepBase64);
 
-    // Start the camera and continuously scan
     async function startCamera() {
       try {
         // Request environment-facing camera
@@ -235,13 +232,13 @@
       }
     }
 
-    // Handle a newly scanned QR code and play beep
+    // Handle a newly scanned QR code
     function handleScannedCode(codeText) {
       // Avoid re-processing the same code repeatedly
       if (codeText === lastScanned) return;
       lastScanned = codeText;
 
-      // 2) Attempt to play the beep
+      // Attempt to play the beep (browser should allow this after user clicks)
       beepSound.currentTime = 0;
       beepSound.play().catch(e => console.warn("Beep sound error:", e));
 
@@ -260,12 +257,30 @@
         height: containerHeight
       });
 
-      // If you're using Materialize, you can toast it
+      // Materialize toast
       M.toast({ html: "Scanned: " + codeText });
     }
 
     /*************************************************************
-     * B) "SEND" BUTTON => push scanned code to Firestore doc "ScannedOrder"
+     * B) EXPLICIT USER EVENT TO UNLOCK AUDIO
+     *************************************************************/
+    // On the first click or tap anywhere in the document, play the beep once.
+    // This ensures a user-initiated event is recognized, so future beepSound.play() won't be blocked.
+    function unlockAudio() {
+      beepSound.play()
+        .then(() => {
+          console.log("Audio unlocked—future beepSound.play() calls allowed.");
+        })
+        .catch(e => console.warn("Audio unlock attempt error:", e));
+      // Remove this event listener after first attempt
+      document.removeEventListener("click", unlockAudio);
+      document.removeEventListener("touchstart", unlockAudio);
+    }
+    document.addEventListener("click", unlockAudio, { once: true });
+    document.addEventListener("touchstart", unlockAudio, { once: true });
+
+    /*************************************************************
+     * C) "SEND" BUTTON => push scanned code to Firestore doc "ScannedOrder"
      *************************************************************/
     const sendBtn = document.getElementById("sendBtn");
     sendBtn.addEventListener("click", async () => {
@@ -306,7 +321,7 @@
     });
 
     /*************************************************************
-     * C) CONFIG SYSTEM FOR REPOSITIONING LAYOUT
+     * D) CONFIG SYSTEM FOR REPOSITIONING LAYOUT
      *************************************************************/
     const scannerConfigComponentIDs = [
       "openConfigBtnScanner",
@@ -410,6 +425,7 @@
       loadPositionsFromStorage();
       // Apply them to the DOM
       applyPositions();
+      
       // Start scanning
       startCamera();
 
