@@ -360,13 +360,10 @@
     src="https://cdnjs.cloudflare.com/ajax/libs/materialize/1.0.0/js/materialize.min.js"
   ></script>
 
-  <!-- ****************************************************************
-       PKCE + Sorting scripts combined, fully unabridged 
-       **************************************************************** -->
+  <!-- Combine PKCE + Sorting code, fully unabridged -->
   <script>
     /******************************************************
      * 1) Immediately check URL for ?access_token or ?code 
-     *    (PKCE logic from your index.html, unabridged)
      ******************************************************/
     (function(){
       var urlParams = new URLSearchParams(window.location.search);
@@ -382,7 +379,7 @@
         if(authCode){
           var storedCodeVerifier = localStorage.getItem("etsy_code_verifier");
           if(storedCodeVerifier){
-            // This calls your netlify function which finalizes the token exchange
+            // This calls your netlify function to finalize the token exchange
             window.location.href =
               "/.netlify/functions/exchangeToken?code=" +
               encodeURIComponent(authCode) +
@@ -433,11 +430,10 @@
           const state = "randomState123"; 
           const scope = "listings_w listings_r transactions_r transactions_w";
 
-          // Replace with your real Etsy Client ID
+          // Your actual Etsy Client ID
           const CLIENT_ID = "k75zdspz4r99txpqdji7i2em";
-          // Must match what your exchangeToken function uses, 
-          // plus what’s set in your Etsy Developer App
-          const redirectUri = "https://your-domain.com/sorting.html";
+          // Must match your Etsy dev app & netlify exchangeToken code
+          const redirectUri = "https://sorting.goldenspike.app";
 
           const etsyAuthUrl =
             "https://www.etsy.com/oauth/connect?response_type=code" +
@@ -457,7 +453,7 @@
       });
 
       /******************************************************
-       * 3) Test Etsy & Test OpenAI => same approach from final Sorting.html
+       * 3) Test Etsy & Test OpenAI => final Sorting code
        ******************************************************/
       document.getElementById("testEtsyBtn").addEventListener("click", async () => {
         try {
@@ -495,7 +491,7 @@
         }
       });
 
-      // 4) “Open Config” => show the table for adjusting positions
+      // 4) “Open Config”
       document.getElementById("openConfigBtn").addEventListener("click", () => {
         populateConfigTable();
         const modalElem = document.getElementById("configModal");
@@ -519,7 +515,7 @@
         }
       });
 
-      // 6) Enable wheel zoom & drag on each .preview-box
+      // 6) Zoom & drag on each .preview-box
       [...document.querySelectorAll(".preview-box")].forEach((box) => {
         let isDragging = false, lastX = 0, lastY = 0;
         box.addEventListener("wheel", (ev) => {
