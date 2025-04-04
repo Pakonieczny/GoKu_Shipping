@@ -247,22 +247,17 @@
       top: 500px;
     }
 
-    /* 
-     * ONE block for #userLoginModal.modal 
-     * without transform or forced top/left.
-     */
-    #userLoginModal.modal {
-      position: fixed; /* remove !important so config can override */
-      height: auto;
-      max-height: 70vh;
-      width: auto;
-      max-width: 400px;
-      overflow-y: auto;
-      z-index: 9999;
-      /* Transform commented out so we can drag the modal:
-         transform: translate(-50%, -50%);
-         top: 50%; left: 50%; 
-         If you prefer a default position, you can set it here or rely on the config. */
+    /* Configuration Modal styling */
+    #configModal.modal {
+      position: fixed !important;
+      top: 50% !important;
+      left: 50% !important;
+      transform: translate(-50%, -50%) !important;
+      height: auto !important;
+      max-height: 70vh !important;
+      width: auto !important;
+      max-width: 650px !important;
+      overflow-y: scroll !important;
     }
 
     /* "Signature Box" */
@@ -281,11 +276,28 @@
       border-bottom: 1px solid black !important;
     }
 
-    /* The userLoginModalContainer anchor for absolutely placed children */
-    #userLoginModalContainer {
-      position: relative !important;
-      min-height: 200px; /* example dimension */
-    }
+    /*
+     * Always-center the user login modal,
+     * but use a relative container so we can move
+     * the text/prompt inside with "Open Config."
+     */
+    #userLoginModal.modal {
+  position: fixed !important;
+  top: 35% !important;
+  left: 50% !important;
+  transform: translate(-50%, -50%) !important;
+  width: 400px !important;
+  height: 200px !important;
+  margin: 0 !important;
+  z-index: 9999 !important;
+  overflow: hidden !important; /* or 'auto' if you prefer scrolling */
+}
+
+#userLoginModalContainer {
+  position: static !important; /* so content doesn’t shrink weirdly */
+  height: auto !important;
+  width: auto !important;
+}
   </style>
 </head>
 
@@ -518,8 +530,9 @@
       "titleOrderCompletedOn","titleOrderCompletedBy","titleSignedInAs",
       "titleOrderDetails","titleBritesMessages","titlePurchasedItems","titleOrderNumber",
       "goScreenTwoBtn","signatureBox",
-      /* The login modal references to be repositioned: */
+      /* Existing modal references */
       "userLoginModal",
+      /* Newly added for positioning the login elements */
       "userLoginModalContainer",
       "loginModalTitle",
       "loginModalPrompt",
@@ -579,13 +592,13 @@
       signatureBox:         { left: 624,  top: 19,   width: 105, height: 34 },
 
       // The modal elements:
-      userLoginModal:       { left: 100,  top: 100,  width: 400, height: 250 },
+      userLoginModal:       { left: 0,    top: 0,    width: 0,   height: 0 },
       userLoginModalContainer: { left:0,  top: 0,    width: 0,   height: 0 },
-      loginModalTitle:      { left: 130, top: 0, width: 250, height: 0 },
-      loginModalPrompt:     { left: 40,  top: 90, width: 325, height: 0 },
-      employeeNumberInput:  { left: 40,  top: 60, width: 75,  height: 35 },
-      loginModalFooter:     { left: 20,  top: 0,  width: 250, height: 0 },
-      employeeLoginBtn:     { left: 130, top: 150,width: 100, height: 35 }
+      loginModalTitle:      { left: 130,    top: 0,    width: 250,   height: 0 },
+      loginModalPrompt:     { left: 40,    top: 90,    width: 325,   height: 0 },
+      employeeNumberInput:  { left: 40,   top: 60,   width: 75, height: 35 },
+      loginModalFooter:     { left: 20,    top: 0,    width: 250,   height: 0 },
+      employeeLoginBtn:     { left: 130,   top: 150,   width: 100, height: 35 }
     };
 
     function loadPositions(){
@@ -695,14 +708,6 @@
         dismissible: false
       });
       userLoginModal.open();
-
-      // Force remove any inline transform that Materialize applies
-      setTimeout(() => {
-        userLoginModalElem.style.transform = "none";
-        // If you want to remove any forced top/left from Materialize:
-        userLoginModalElem.style.removeProperty("top");
-        userLoginModalElem.style.removeProperty("left");
-      }, 300);
 
       // "Log In" button for employees
       var employeeLoginBtn = document.getElementById("employeeLoginBtn");
