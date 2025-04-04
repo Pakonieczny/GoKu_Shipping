@@ -7,3 +7,9 @@
   to = "/scanner.html"
   status = 200
   force = true
+
+  [[redirects]]
+  from = "https://sorting.goldenspike.app"
+  to = "/sorting.html"
+  status = 200
+  force = true
