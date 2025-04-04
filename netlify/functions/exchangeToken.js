@@ -1,18 +1,21 @@
 // netlify/functions/exchangeToken.js
+// A single function that auto-detects your domain from request headers.
+// If "sorting.goldenspike.app" => uses that redirect
+// else if "goldenspike.app" => uses that
+// else => defaults to goldenspike (you can invert this default if you wish).
 
 const fetch = require("node-fetch");
 const crypto = require("crypto");
 
-// We only allow EXACTLY these two domains
-const ALLOWED_REDIRECT_URIS = {
-  sorting:     "https://sorting.goldenspike.app",
-  goldenspike: "https://goldenspike.app"
-};
+// We only allow these two final domains:
+const SORTING_DOMAIN      = "https://sorting.goldenspike.app";
+const GOLDENSPIKE_DOMAIN  = "https://goldenspike.app";
 
+// Helpers for PKCE:
 function generateRandomString(length) {
   const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
   let text = "";
-  for (let i = 0; i < length; i++){
+  for (let i = 0; i < length; i++) {
     text += chars.charAt(Math.floor(Math.random() * chars.length));
   }
   return text;
@@ -26,50 +29,63 @@ function generateCodeChallenge(codeVerifier) {
     .replace(/=+$/, "");
 }
 
+// Helper to auto-detect domain from the request's host header
+function pickDomainFromHost(event) {
+  // 'x-forwarded-host' is typical under Netlify; fallback to Host if needed
+  const host = event.headers["x-forwarded-host"] 
+            || event.headers["host"] 
+            || "";
+
+  console.log("exchangeToken => Detected host:", host);
+
+  const param = (event.queryStringParameters || {}).redirect_domain || "";
+  if (param === "sorting") {
+    console.log("Overriding domain: user specified ?redirect_domain=sorting");
+    return SORTING_DOMAIN;
+  } else if (param === "goldenspike") {
+    console.log("Overriding domain: user specified ?redirect_domain=goldenspike");
+    return GOLDENSPIKE_DOMAIN;
+  }
+
+  // If no param => auto detect from host
+  if (host.includes("sorting.goldenspike.app")) {
+    console.log("Auto-detected sorting domain from host");
+    return SORTING_DOMAIN;
+  } 
+  else if (host.includes("goldenspike.app")) {
+    console.log("Auto-detected goldenspike domain from host");
+    return GOLDENSPIKE_DOMAIN;
+  }
+
+  // If we can't detect, pick a default. Let's default to goldenspike:
+  console.log("Host doesn't match either domain => defaulting to goldenspike");
+  return GOLDENSPIKE_DOMAIN;
+}
+
 exports.handler = async function(event) {
   try {
     const query = event.queryStringParameters || {};
     const code = query.code;
     const codeVerifier = query.code_verifier;
 
-    // 1) Must specify ?redirect_domain=sorting or =goldenspike
-    const domainParam = query.redirect_domain;
-    if (!domainParam) {
-      console.error("No redirect_domain => can't pick the domain");
-      return {
-        statusCode: 400,
-        body: JSON.stringify({
-          error: "Missing ?redirect_domain= sorting or goldenspike"
-        })
-      };
-    }
-    if (!ALLOWED_REDIRECT_URIS[domainParam]) {
-      console.error(`Invalid redirect_domain => ${domainParam}`);
-      return {
-        statusCode: 400,
-        body: JSON.stringify({
-          error: `Invalid redirect_domain='${domainParam}'. Must be 'sorting' or 'goldenspike'`
-        })
-      };
-    }
-    const finalRedirectUri = ALLOWED_REDIRECT_URIS[domainParam];
-    console.log("exchangeToken => domainParam:", domainParam);
-    console.log("exchangeToken => using redirectUri:", finalRedirectUri);
+    // 1) Decide which domain to use => either from ?redirect_domain=... or from host auto-detection
+    const finalRedirectUri = pickDomainFromHost(event);
 
-    // 2) If no ?code => start PKCE
+    console.log("exchangeToken => finalRedirectUri:", finalRedirectUri);
+
+    // 2) If no code => begin OAuth w/ PKCE
     if (!code) {
-      console.log("No code => starting new OAuth flow...");
+      console.log("No ?code => starting PKCE handshake...");
 
       const newCodeVerifier = generateRandomString(64);
       const codeChallenge   = generateCodeChallenge(newCodeVerifier);
-
-      // for demonstration
+      
       console.log("PKCE code_verifier:", newCodeVerifier);
       console.log("PKCE code_challenge:", codeChallenge);
 
       const CLIENT_ID = process.env.CLIENT_ID;
       if (!CLIENT_ID) {
-        console.error("Missing CLIENT_ID env var");
+        console.error("Missing CLIENT_ID env var!");
         return {
           statusCode: 500,
           body: JSON.stringify({ error: "Server config error: no CLIENT_ID" })
@@ -77,10 +93,11 @@ exports.handler = async function(event) {
       }
 
       const scope = "listings_w listings_r transactions_r transactions_w";
-      const state = "randomState123";
+      const state = "randomState123"; // or random
 
+      // Build Etsy OAuth URL
       const oauthUrl =
-        `https://www.etsy.com/oauth/connect` +
+        "https://www.etsy.com/oauth/connect" +
         `?response_type=code` +
         `&client_id=${CLIENT_ID}` +
         `&redirect_uri=${encodeURIComponent(finalRedirectUri)}` +
@@ -97,23 +114,25 @@ exports.handler = async function(event) {
       };
     }
 
-    // 3) If code but no codeVerifier => fail
+    // 3) If we have code => we need codeVerifier => if missing => 400
     if (!codeVerifier) {
-      console.error("No code_verifier => can't finalize token");
+      console.error("Missing code_verifier => can't finalize token exchange!");
       return {
         statusCode: 400,
         body: JSON.stringify({ error: "Missing code_verifier param" })
       };
     }
 
-    // 4) Attempt token exchange with Etsy
+    // 4) Perform token exchange
     const CLIENT_ID = process.env.CLIENT_ID;
     const CLIENT_SECRET = process.env.CLIENT_SECRET;
     if (!CLIENT_ID || !CLIENT_SECRET) {
-      console.error("Missing CLIENT_ID or CLIENT_SECRET env vars");
+      console.error("Missing CLIENT_ID or CLIENT_SECRET env vars!");
       return {
         statusCode: 500,
-        body: JSON.stringify({ error: "Server config error: missing credentials" })
+        body: JSON.stringify({
+          error: "Server config error: missing Etsy OAuth credentials"
+        })
       };
     }
 
@@ -146,9 +165,9 @@ exports.handler = async function(event) {
       };
     }
 
-    // success => redirect to domain with ?access_token=...
+    // 5) success => redirect to domain with ?access_token=...
     const finalUrl = `${finalRedirectUri}?access_token=${encodeURIComponent(data.access_token)}`;
-    console.log("Token exchange success => redirect =>", finalUrl);
+    console.log("Token exchange success => final redirect =>", finalUrl);
 
     return {
       statusCode: 302,
