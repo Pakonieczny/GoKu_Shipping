@@ -473,11 +473,9 @@
       titleCell34:          {left: 875,  top: 600,  width: 66,   height: 0},
     };
 
-    // IDs for config
     const configIDs = [
       "connectEtsyBtn","testOpenAIBtn","openConfigBtn","etsyOrderNumber",
       "photoGridContainer","configModal","configTable","saveConfigBtn",
-      // all 35 sets
       ...[...Array(35).keys()].flatMap(function(i) {
         return ["previewCell" + i, "quantityCell" + i, "titleCell" + i];
       })
@@ -486,7 +484,6 @@
     document.addEventListener("DOMContentLoaded", function() {
       M.AutoInit();
 
-      // Fade in after loading offsets
       setTimeout(function() {
         loadPositions();
         document.body.style.opacity = 1;
@@ -497,7 +494,6 @@
         try {
           const codeVerifier = generateRandomString(64);
           localStorage.setItem("etsy_code_verifier", codeVerifier);
-
           const codeChallenge = await generateCodeChallenge(codeVerifier);
           const CLIENT_ID = "k75zdspz4r99txpqdji7i2em";
           const redirectUri = "https://sorting.goldenspike.app";
@@ -513,7 +509,6 @@
             "&code_challenge=" + encodeURIComponent(codeChallenge) +
             "&code_challenge_method=S256";
 
-          console.log("Redirecting to Etsy:", etsyAuthUrl);
           window.location.href = etsyAuthUrl;
         } catch (err) {
           console.error("OAuth start error:", err);
@@ -547,7 +542,7 @@
         }
       });
 
-      // Batch orders on Enter
+      // Loading multiple orders
       var etsyOrderInput = document.getElementById("etsyOrderNumber");
       etsyOrderInput.addEventListener("keydown", async function(e) {
         if (e.key === "Enter") {
@@ -559,10 +554,16 @@
         }
       });
 
-      // Existing wheel zoom & drag
+      // ============ Wheel zoom & drag & Single-click ============ 
       var previewBoxes = document.querySelectorAll(".preview-box");
       previewBoxes.forEach(function(box) {
-        var isDragging = false, lastX = 0, lastY = 0;
+        var isDragging = false;
+        var isMouseDown = false;
+        var dragStartX = 0, dragStartY = 0;
+        var lastX = 0, lastY = 0;
+        var dragThreshold = 3; // if we move more than 3px, we'll consider it a drag
+
+        // Wheel => Zoom
         box.addEventListener("wheel", function(ev) {
           var img = box.querySelector("img");
           if (!img) return;
@@ -589,20 +590,32 @@
           img.style.transform = "translate(" + offX + "px, " + offY + "px) scale(" + currentScale + ")";
         });
 
+        // Mouse down => check drag
         box.addEventListener("mousedown", function(ev) {
           var img = box.querySelector("img");
           if (!img) return;
           var scaleNow = parseFloat(img.dataset.scale) || 1;
           if (scaleNow <= 1) return;
           ev.preventDefault();
-          isDragging = true;
+          isMouseDown = true;
+          isDragging = false;
+          dragStartX = ev.clientX;
+          dragStartY = ev.clientY;
           lastX = ev.clientX;
           lastY = ev.clientY;
         });
 
+        // Mouse move => panning if we're dragging
         box.addEventListener("mousemove", function(ev) {
-          if (!isDragging) return;
+          if (!isMouseDown) return;
           ev.preventDefault();
+          var dxAll = Math.abs(ev.clientX - dragStartX);
+          var dyAll = Math.abs(ev.clientY - dragStartY);
+          // If we've moved beyond threshold, call it a drag
+          if (dxAll > dragThreshold || dyAll > dragThreshold) {
+            isDragging = true;
+          }
+
           var img = box.querySelector("img");
           if (!img) return;
           var scaleNow = parseFloat(img.dataset.scale) || 1;
@@ -619,15 +632,23 @@
           lastY = ev.clientY;
         });
 
+        // Mouse up => end of drag
         box.addEventListener("mouseup", function() {
-          isDragging = false;
+          isMouseDown = false;
         });
         box.addEventListener("mouseleave", function() {
-          isDragging = false;
+          isMouseDown = false;
         });
 
-        // Single-click => Zoom in at the click point
+        // Single-click => Zoom, but only if not dragging
         box.addEventListener("click", function(ev) {
+          // If user was dragging, skip the single-click zoom
+          if (isDragging) {
+            // reset for the next interaction
+            isDragging = false;
+            return;
+          }
+
           var img = box.querySelector("img");
           if (!img) return;
 
@@ -639,14 +660,8 @@
           var dx = ev.clientX - boxCenterX;
           var dy = ev.clientY - boxCenterY;
 
-          // We'll set the scale to 4
           var scale = 4;
-
-          // A small fudge factor to move everything slightly downward 
-          // (or upward if you use a negative)
-          var fudgeY = 15; // try adjusting +/− to taste
-
-          // offset = -scale * dx, -scale * dy + fudgeY
+          var fudgeY = 15; // optional vertical shift
           var offsetX = -scale * dx;
           var offsetY = -scale * dy + fudgeY;
 
@@ -658,7 +673,6 @@
       });
     });
 
-    // Combines transactions from multiple orders
     async function loadBatchEtsyOrders(orderNumbers) {
       try {
         M.toast({ html: "Loading " + orderNumbers.length + " order(s)..." });
@@ -680,7 +694,6 @@
             console.warn("No transactions for order " + ord);
           }
         }
-
         fillPreviewBoxes(combinedItems);
       } catch (err) {
         console.error("Error loading batch orders:", err);
@@ -689,13 +702,11 @@
     }
 
     async function fillPreviewBoxes(items) {
-      // Clear existing
       for (var i = 0; i < 35; i++) {
         document.getElementById("previewCell" + i).innerHTML = "Empty";
         document.getElementById("quantityCell" + i).textContent = "";
         document.getElementById("titleCell" + i).textContent = "";
       }
-      // Fill up to 35
       var limitedItems = items.slice(0, 35);
       for (var j = 0; j < limitedItems.length; j++) {
         var listingId = limitedItems[j].listing_id;
@@ -743,26 +754,21 @@
       return data.results || [];
     }
 
-    /*******************************************************
-     * The config modal for absolute positions
-     *******************************************************/
     function loadPositions() {
       configIDs.forEach(function(id) {
         var el = document.getElementById(id);
         if (!el) return;
 
-        // If localStorage is missing, fall back to the hardcoded defaults
         var def = defaults[id] || { left: 0, top: 0, width: 0, height: 0 };
-
         var left = localStorage.getItem("pos-" + id + "-left");
         var top  = localStorage.getItem("pos-" + id + "-top");
         var w    = localStorage.getItem("pos-" + id + "-width");
         var h    = localStorage.getItem("pos-" + id + "-height");
 
-        if (left === null) { left = def.left; }
-        if (top === null)  { top  = def.top; }
-        if (w === null)    { w    = def.width; }
-        if (h === null)    { h    = def.height; }
+        if (left === null)  left = def.left;
+        if (top === null)   top  = def.top;
+        if (w === null)     w    = def.width;
+        if (h === null)     h    = def.height;
 
         el.style.position = "absolute";
         el.style.left   = left + "px";
@@ -784,7 +790,6 @@
         var widthVal = parseInt(cs.width, 10) || 0;
         var heightVal = parseInt(cs.height, 10) || 0;
         var row = document.createElement("tr");
-
         row.innerHTML =
           "<td>" + id + "</td>" +
           "<td><input type=\"number\" value=\"" + leftVal + "\" data-id=\"" + id + "\" class=\"left-input\" /></td>" +
