@@ -1,13 +1,24 @@
 const fetch = require("node-fetch");
 
-exports.handler = async function(event, context) {
+exports.handler = async (event, context) => {
   try {
-    const payload = JSON.parse(event.body);
-    const apiKey = process.env.OPENAI_API_KEY;
-    if (!apiKey) throw new Error("Missing OPENAI_API_KEY environment variable");
+    console.log("openaiProxy received event:", event);
 
-    // Forward the request to OpenAI's chat completions endpoint
-    const response = await fetch("https://api.openai.com/v1/chat/completions", {
+    // Parse the payload from the request body
+    const payload = JSON.parse(event.body);
+    
+    // Retrieve the API key from environment variables
+    const apiKey = process.env.OPENAI_API_KEY;
+    if (!apiKey) {
+      throw new Error("Missing OPENAI_API_KEY environment variable");
+    }
+
+    // Define the OpenAI endpoint (currently for chat completions)
+    const endpoint = "https://api.openai.com/v1/chat/completions";
+    console.log("Forwarding request to OpenAI endpoint:", endpoint);
+    
+    // Forward the request to OpenAI's API
+    const response = await fetch(endpoint, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -16,15 +27,17 @@ exports.handler = async function(event, context) {
       body: JSON.stringify(payload)
     });
 
+    const data = await response.json();
+
     if (!response.ok) {
-      const errorData = await response.json();
+      console.error("OpenAI API error:", data);
       return {
         statusCode: response.status,
-        body: JSON.stringify({ error: errorData })
+        body: JSON.stringify({ error: data })
       };
     }
 
-    const data = await response.json();
+    console.log("OpenAI API response:", data);
     return {
       statusCode: 200,
       body: JSON.stringify(data)

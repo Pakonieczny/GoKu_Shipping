@@ -338,6 +338,9 @@
   ></script>
 
   <script>
+    // Define a base URL for all Netlify function calls
+    const functionsBaseUrl = window.location.origin + "/.netlify/functions";
+
     (function(){
       const urlParams = new URLSearchParams(window.location.search);
       const accessToken = urlParams.get("access_token");
@@ -552,7 +555,7 @@
             model: "gpt-3.5-turbo",
             messages: [{ role: "user", content: "Hello from the Sorting page!" }]
           };
-          const resp = await fetch("/.netlify/functions/openaiProxy", {
+          const resp = await fetch(functionsBaseUrl + "/openaiProxy", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify(testBody)
@@ -675,7 +678,6 @@
         box.addEventListener("click", function(ev) {
           // If user was dragging, skip the single-click zoom
           if (isDragging) {
-            // reset for the next interaction
             isDragging = false;
             return;
           }
@@ -712,7 +714,7 @@
 
         for (var i = 0; i < orderNumbers.length; i++) {
           var ord = orderNumbers[i];
-          var url = "/.netlify/functions/etsyOrderProxy?orderId=" + encodeURIComponent(ord);
+          var url = functionsBaseUrl + "/etsyOrderProxy?orderId=" + encodeURIComponent(ord);
           var resp = await fetch(url, { headers: { "access-token": token } });
           if (!resp.ok) {
             console.warn("Order fetch failed for " + ord + ", status=" + resp.status);
@@ -757,11 +759,7 @@
         try {
           var imageData = await fetchListingImages(listingId);
           if (imageData && imageData.length > 0) {
-            cell.innerHTML = "<img src=\"" + imageData[0].url_fullxfull + "\" "
-              + "alt=\"Listing " + listingId + "\" "
-              + "data-scale=\"1\" "
-              + "data-offsetX=\"0\" "
-              + "data-offsetY=\"0\" />";
+            cell.innerHTML = "<img src=\"" + imageData[0].url_fullxfull + "\" alt=\"Listing " + listingId + "\" data-scale=\"1\" data-offsetX=\"0\" data-offsetY=\"0\" />";
           } else {
             cell.innerHTML = "No Img";
           }
@@ -774,7 +772,7 @@
 
     async function fetchListingImages(listingId) {
       var token = localStorage.getItem("access_token") || "";
-      var resp = await fetch("/.netlify/functions/etsyImages?listingId=" + listingId, {
+      var resp = await fetch(functionsBaseUrl + "/etsyImages?listingId=" + listingId, {
         headers: { "access-token": token }
       });
       if (!resp.ok) {
@@ -908,7 +906,7 @@
         prompt: "Analyze this user image and extract key features."
       };
       try {
-        const response = await fetch("/.netlify/functions/openaiProxy", {
+        const response = await fetch(functionsBaseUrl + "/openaiProxy", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(payload)
@@ -941,7 +939,7 @@
             prompt: "Compare this preview image with the user image analysis and provide a similarity score."
           };
           try {
-            const response = await fetch("/.netlify/functions/openaiProxy", {
+            const response = await fetch(functionsBaseUrl + "/openaiProxy", {
               method: "POST",
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify(payload)
