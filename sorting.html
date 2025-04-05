@@ -473,7 +473,7 @@
       titleCell34:          {left: 875,  top: 600,  width: 66,   height: 0},
     };
 
-    // All the IDs we need to handle for config
+    // IDs for config
     const configIDs = [
       "connectEtsyBtn","testOpenAIBtn","openConfigBtn","etsyOrderNumber",
       "photoGridContainer","configModal","configTable","saveConfigBtn",
@@ -631,21 +631,24 @@
           var img = box.querySelector("img");
           if (!img) return;
 
-          // Let’s measure the click relative to the *center* of the box in screen coords
+          // measure offset from the box center
           var rect = box.getBoundingClientRect();
           var boxCenterX = rect.left + box.clientWidth / 2;
-          var boxCenterY = rect.top + box.clientHeight / 2;
+          var boxCenterY = rect.top  + box.clientHeight / 2;
 
-          // dx, dy is how far the click is from the center of the box in screen coords
           var dx = ev.clientX - boxCenterX;
           var dy = ev.clientY - boxCenterY;
 
           // We'll set the scale to 4
           var scale = 4;
 
-          // Because transform-origin is center center, we offset by -scale * that offset
+          // A small fudge factor to move everything slightly downward 
+          // (or upward if you use a negative)
+          var fudgeY = 20; // try adjusting +/− to taste
+
+          // offset = -scale * dx, -scale * dy + fudgeY
           var offsetX = -scale * dx;
-          var offsetY = -scale * dy;
+          var offsetY = -scale * dy + fudgeY;
 
           img.dataset.scale = scale;
           img.dataset.offsetX = offsetX;
