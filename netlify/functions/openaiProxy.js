@@ -7,7 +7,16 @@ exports.handler = async (event, context) => {
     // Parse the payload from the request body
     const payload = JSON.parse(event.body);
 
-    // Override the model to use "gpt-4o-mini"
+    // If "messages" is missing, attempt to construct it from "prompt"
+    if (!payload.messages) {
+      if (payload.prompt) {
+        payload.messages = [{ role: "user", content: payload.prompt }];
+      } else {
+        throw new Error("Missing required parameter: 'messages'");
+      }
+    }
+
+    // Override the model to use "gpt-4o-latest"
     payload.model = "gpt-4o-mini";
 
     // Retrieve the API key from environment variables
@@ -16,7 +25,7 @@ exports.handler = async (event, context) => {
       throw new Error("Missing OPENAI_API_KEY environment variable");
     }
 
-    // Define the OpenAI endpoint (currently for chat completions)
+    // Define the OpenAI endpoint for chat completions
     const endpoint = "https://api.openai.com/v1/chat/completions";
     console.log("Forwarding request to OpenAI endpoint:", endpoint);
     
