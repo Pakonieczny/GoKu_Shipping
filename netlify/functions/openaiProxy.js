@@ -4,40 +4,44 @@ exports.handler = async (event, context) => {
   try {
     console.log("openaiProxy received event:", event);
 
-    // Parse the payload from the request body
+    // Parse the incoming payload.
+    // The payload should already follow the vision guidelines, for example:
+    // {
+    //   "model": "some-model", // this will be overridden,
+    //   "messages": [{
+    //     "role": "user",
+    //     "content": [
+    //       { "type": "text", "text": "What's in this image?" },
+    //       {
+    //         "type": "image_url",
+    //         "image_url": {
+    //           "url": "https://upload.wikimedia.org/wikipedia/commons/thumb/d/dd/Gfp-wisconsin-madison-the-nature-boardwalk.jpg/2560px-Gfp-wisconsin-madison-the-nature-boardwalk.jpg",
+    //           "detail": "high"
+    //         }
+    //       }
+    //     ]
+    //   }],
+    //   "max_tokens": 300
+    // }
     const payload = JSON.parse(event.body);
 
-    // If "messages" is missing but a "prompt" is provided, use it to create a message
-    if (!payload.messages) {
-      if (payload.prompt) {
-        payload.messages = [{ role: "user", content: payload.prompt }];
-      } else {
-        throw new Error("Missing required parameter: 'messages'");
-      }
-    }
-
-    // Remove unsupported keys before forwarding the request
-    if (payload.image) {
-      delete payload.image;
-    }
-    if (payload.prompt) {
-      delete payload.prompt;
-    }
-
-    // Force the model to "gpt-4o-latest"
+    // Force the model to "gpt-4o-mini"
     payload.model = "gpt-4o-mini";
 
-    // Retrieve the API key from environment variables
+    // Log the final payload (for debugging purposes)
+    console.log("Forwarding payload:", JSON.stringify(payload, null, 2));
+
+    // Retrieve the OpenAI API key from environment variables
     const apiKey = process.env.OPENAI_API_KEY;
     if (!apiKey) {
       throw new Error("Missing OPENAI_API_KEY environment variable");
     }
 
-    // Define the OpenAI endpoint for chat completions
+    // Define the endpoint for chat completions (which supports vision inputs)
     const endpoint = "https://api.openai.com/v1/chat/completions";
     console.log("Forwarding request to OpenAI endpoint:", endpoint);
 
-    // Forward the request to OpenAI's API with the cleaned payload
+    // Forward the request exactly as received
     const response = await fetch(endpoint, {
       method: "POST",
       headers: {
