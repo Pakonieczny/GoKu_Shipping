@@ -5,50 +5,59 @@ exports.handler = async (event, context) => {
     console.log("openaiProxy received event:", event);
 
     // Parse the incoming payload.
-    // The payload should already follow the vision guidelines, for example:
-    // {
-    //   "model": "some-model", // this will be overridden,
-    //   "messages": [{
-    //     "role": "user",
-    //     "content": [
-    //       { "type": "text", "text": "What's in this image?" },
-    //       {
-    //         "type": "image_url",
-    //         "image_url": {
-    //           "url": "https://upload.wikimedia.org/wikipedia/commons/thumb/d/dd/Gfp-wisconsin-madison-the-nature-boardwalk.jpg/2560px-Gfp-wisconsin-madison-the-nature-boardwalk.jpg",
-    //           "detail": "high"
-    //         }
-    //       }
-    //     ]
-    //   }],
-    //   "max_tokens": 300
-    // }
-    const payload = JSON.parse(event.body);
+    const inputPayload = JSON.parse(event.body);
 
-    // Force the model to "gpt-4o-mini"
-    payload.model = "gpt-4o-mini";
+    // Force the model to "gpt-4o-mini" regardless of what the client sent.
+    inputPayload.model = "gpt-4o-mini";
 
-    // Log the final payload (for debugging purposes)
-    console.log("Forwarding payload:", JSON.stringify(payload, null, 2));
+    // If no "messages" array is provided but an "image" field exists, construct a messages array.
+    if (!inputPayload.messages) {
+      if (inputPayload.image) {
+        // Use the provided prompt if available; otherwise, default to a standard prompt.
+        const promptText = inputPayload.prompt || "What's in this image?";
+        // Use the provided detail level, or default to "auto" (you may choose "low" or "high" based on your needs).
+        const detail = inputPayload.detail || "auto";
 
-    // Retrieve the OpenAI API key from environment variables
+        // Construct the messages array as specified by the OpenAI vision documentation.
+        inputPayload.messages = [
+          {
+            role: "user",
+            content: [
+              { type: "text", text: promptText },
+              {
+                type: "image_url",
+                image_url: { url: inputPayload.image, detail: detail }
+              }
+            ]
+          }
+        ];
+      } else {
+        // If neither messages nor an image is provided, throw an error.
+        throw new Error("Missing required parameter: 'messages' or 'image'");
+      }
+    }
+
+    // (Optional) Log the final payload for debugging.
+    console.log("Forwarding payload:", JSON.stringify(inputPayload, null, 2));
+
+    // Retrieve the OpenAI API key from the environment.
     const apiKey = process.env.OPENAI_API_KEY;
     if (!apiKey) {
       throw new Error("Missing OPENAI_API_KEY environment variable");
     }
 
-    // Define the endpoint for chat completions (which supports vision inputs)
+    // Define the endpoint for chat completions (vision-capable requests).
     const endpoint = "https://api.openai.com/v1/chat/completions";
     console.log("Forwarding request to OpenAI endpoint:", endpoint);
 
-    // Forward the request exactly as received
+    // Forward the request with the complete payload.
     const response = await fetch(endpoint, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
         "Authorization": `Bearer ${apiKey}`
       },
-      body: JSON.stringify(payload)
+      body: JSON.stringify(inputPayload)
     });
 
     const data = await response.json();
