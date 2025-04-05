@@ -785,10 +785,10 @@
         try {
           var imageData = await fetchListingImages(listingId);
           if (imageData && imageData.length > 0) {
-            cell.innerHTML = "<img src=\"" + imageData[0].url_fullxfull + "\" alt=\"Listing " + listingId + "\" data-scale=\"1\" data-offsetX=\"0\" data-offsetY=\"0\" />";
+          cell.innerHTML = `<img crossOrigin="anonymous" src="${imageData[0].url_fullxfull}" alt="Listing ${listingId}" data-scale="1" data-offsetX="0" data-offsetY="0" />`;
           } else {
-            cell.innerHTML = "No Img";
-          }
+          cell.innerHTML = "No Img";
+          }   
         } catch (err) {
           console.warn("Image fetch error for listing", listingId, err);
           cell.innerHTML = "Img Error";
