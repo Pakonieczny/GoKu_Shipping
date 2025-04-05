@@ -56,6 +56,29 @@
       font-size: 0.9em;
     }
 
+    /* New UI elements for image comparison */
+    #imageComparisonContainer {
+      position: absolute;
+      left: 20px;
+      top: 220px;
+    }
+    #photoDragDrop {
+      width: 100px;
+      height: 100px;
+      border: 2px dashed #ccc;
+      text-align: center;
+      line-height: 100px;
+      display: inline-block;
+      margin-right: 10px;
+    }
+    #userImage {
+      width: 100px;
+      height: 100px;
+      border: 1px solid #000;
+      display: none;
+      vertical-align: top;
+    }
+
     /* Container for the 35 boxes */
     #photoGridContainer {
       position: relative;
@@ -134,6 +157,12 @@
 
   <!-- Etsy Order Number input -->
   <input type="text" id="etsyOrderNumber" placeholder="Comma-delimited Etsy Order Numbers" />
+
+  <!-- New Image Comparison UI -->
+  <div id="imageComparisonContainer">
+    <div id="photoDragDrop">Drag & Drop Photo</div>
+    <img id="userImage" src="" alt="User Image" />
+  </div>
 
   <!-- 35 Boxes -->
   <div id="photoGridContainer">
@@ -839,6 +868,105 @@
         localStorage.setItem("pos-" + id + "-height", parseInt(cs.height, 10) || 0);
       });
       M.toast({ html: "Positions saved!" });
+    }
+
+    // =========================================
+    // NEW CODE FOR IMAGE COMPARISON PROCESS
+    // =========================================
+
+    // Set up drag & drop for the photoDragDrop element
+    const photoDragDrop = document.getElementById("photoDragDrop");
+    photoDragDrop.addEventListener("dragover", function(e) {
+      e.preventDefault();
+    });
+
+    photoDragDrop.addEventListener("drop", function(e) {
+      e.preventDefault();
+      const file = e.dataTransfer.files[0];
+      const reader = new FileReader();
+      reader.onload = async function(e) {
+        const imageData = e.target.result;
+        // Display the uploaded image in the "User Image" preview window
+        const userImageElem = document.getElementById("userImage");
+        userImageElem.src = imageData;
+        userImageElem.style.display = "inline-block";
+        
+        // Analyze the user image via OpenAI API
+        const userAnalysis = await analyzeUserImage(imageData);
+        
+        // Start batch comparing preview images
+        await compareImagesBatch(userAnalysis);
+      };
+      reader.readAsDataURL(file);
+    });
+
+    // Function to analyze the user image using OpenAI API
+    async function analyzeUserImage(imageData) {
+      const payload = {
+        model: "image-analysis-model", // Replace with your actual image analysis model
+        image: imageData,
+        prompt: "Analyze this user image and extract key features."
+      };
+      try {
+        const response = await fetch("/.netlify/functions/openaiProxy", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload)
+        });
+        const data = await response.json();
+        // Assume API returns an 'analysis' property with the image features
+        return data.analysis;
+      } catch (error) {
+        console.error("Error analyzing user image:", error);
+        return null;
+      }
+    }
+
+    // Batch process to compare each preview image against the user image analysis
+    async function compareImagesBatch(userAnalysis) {
+      if (!userAnalysis) {
+        console.error("No analysis data available for user image.");
+        return;
+      }
+      let bestScore = -Infinity;
+      let bestIndex = -1;
+      for (let i = 0; i < 35; i++) {
+        const cell = document.getElementById("previewCell" + i);
+        const img = cell.querySelector("img");
+        if (img && img.src && img.src !== "") {
+          const payload = {
+            model: "image-comparison-model", // Replace with your actual comparison model
+            userAnalysis: userAnalysis,
+            previewImage: img.src,
+            prompt: "Compare this preview image with the user image analysis and provide a similarity score."
+          };
+          try {
+            const response = await fetch("/.netlify/functions/openaiProxy", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify(payload)
+            });
+            const data = await response.json();
+            // Assume the API returns a 'similarityScore' property
+            const score = data.similarityScore;
+            if (score > bestScore) {
+              bestScore = score;
+              bestIndex = i;
+            }
+          } catch (error) {
+            console.error("Error comparing image in cell", i, error);
+          }
+        }
+      }
+      if (bestIndex !== -1) {
+        const bestCell = document.getElementById("previewCell" + bestIndex);
+        // Highlight the best match with a 2px blue outline
+        bestCell.style.outline = "2px solid blue";
+        // Optionally, remove the outline after a few seconds (e.g., 5 seconds)
+        setTimeout(() => {
+          bestCell.style.outline = "";
+        }, 5000);
+      }
     }
   </script>
 </body>
