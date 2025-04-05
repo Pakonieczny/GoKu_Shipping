@@ -16,8 +16,7 @@ exports.handler = async function(event) {
     const payload = JSON.parse(event.body);
 
     // Determine action: "create" or "query"
-    // You can add more, e.g. "list", "delete", etc.
-    let action = "query";
+    let action = "query";  // default
     if (payload.action === "create") {
       action = "create";
     } else if (payload.action === "query") {
@@ -30,10 +29,7 @@ exports.handler = async function(event) {
         "Authorization": `Bearer ${apiKey}`,
         "Content-Type": "application/json"
       };
-      const options = {
-        method,
-        headers
-      };
+      const options = { method, headers };
       if (bodyObj) {
         options.body = JSON.stringify(bodyObj);
       }
@@ -57,7 +53,6 @@ exports.handler = async function(event) {
         name: payload.name || "My Vector Store",
         file_ids: payload.file_ids
       };
-      // POST to /v1/vector_stores
       console.log("Creating vector store with:", dataToSend);
       const result = await openAIRequest(baseUrl, "POST", dataToSend);
       return {
@@ -97,7 +92,6 @@ exports.handler = async function(event) {
         })
       };
     }
-
   } catch (err) {
     console.error("Exception in myVectorStore.js:", err);
     return {

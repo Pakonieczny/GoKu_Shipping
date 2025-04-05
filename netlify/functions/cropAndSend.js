@@ -4,16 +4,16 @@ const fetch = require("node-fetch");
 const FormData = require("form-data");
 
 /**
- * Receives JSON in POST body:
+ * Expects POST body like:
  * {
- *   "fileBase64": "<base64 string>",
+ *   "fileBase64": "<base64>",
  *   "fileName": "cropped_image_X.jpg"
- *   "vectorStoreId": "optional if you want to attach to an existing store"
+ *   "vectorStoreId": "<optional>"
  * }
  *
  * Then:
- * 1) Uploads the base64 image to OpenAI /v1/files
- * 2) Calls "myVectorStore.js" with action: "create" to attach file to a new store
+ *  1) Upload the file to OpenAI /v1/files
+ *  2) "create" a new store or attach the file to an existing store in myVectorStore.js
  */
 exports.handler = async function(event) {
   try {
@@ -21,7 +21,7 @@ exports.handler = async function(event) {
       throw new Error("No JSON body provided.");
     }
     const payload = JSON.parse(event.body);
-    const { fileBase64, fileName, vectorStoreId } = payload || {};
+    const { fileBase64, fileName, vectorStoreId } = payload;
 
     if (!fileBase64 || !fileBase64.trim()) {
       throw new Error("Missing 'fileBase64'.");
@@ -35,7 +35,7 @@ exports.handler = async function(event) {
       throw new Error("Missing OPENAI_API_KEY environment variable.");
     }
 
-    // Upload the file to /v1/files
+    // Convert base64 -> buffer
     const buffer = Buffer.from(fileBase64, "base64");
     let contentType = "image/jpeg";
     if (fileName.toLowerCase().endsWith(".png")) {
@@ -46,9 +46,9 @@ exports.handler = async function(event) {
 
     const form = new FormData();
     form.append("file", buffer, { filename: fileName, contentType });
-    // You can choose "fine-tune" or "embeddings" as purpose
-    form.append("purpose", "fine-tune");
+    form.append("purpose", "fine-tune"); // or 'embeddings'
 
+    // Upload to /v1/files
     const openAiResp = await fetch("https://api.openai.com/v1/files", {
       method: "POST",
       headers: {
@@ -70,30 +70,27 @@ exports.handler = async function(event) {
         JSON.stringify(openAiData)
       );
     }
-
     const fileId = openAiData.id;
     if (!fileId) {
-      throw new Error("OpenAI upload succeeded but no 'id' returned.");
+      throw new Error("OpenAI upload succeeded but no 'id' was returned.");
     }
 
-    // Now call myVectorStore.js to attach the file ID
-    // We'll do action: "create" for a new store each time, or adapt if you want an existing store
-    const vectorStorePayload = {
+    // Next => attach that file ID to a new or existing store
+    // For simplicity, we do "create" a new store
+    const storePayload = {
       action: "create",
       file_ids: [fileId],
       name: "My Images Vector Store"
     };
     if (vectorStoreId) {
-      // If you want to attach to an existing store, you'd do a different approach
-      // or rename the action, etc.
+      // if you want to attach to an existing store, adapt logic here
     }
 
-    // We'll fetch the local netlify function "myVectorStore" 
-    // using a relative path. If needed, you can use `process.env.URL + "/.netlify/functions/myVectorStore"`
+    // Call local netlify function "myVectorStore"
     const storeResp = await fetch("/.netlify/functions/myVectorStore", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(vectorStorePayload)
+      body: JSON.stringify(storePayload)
     });
     const storeRespText = await storeResp.text();
     let storeData;
@@ -118,7 +115,6 @@ exports.handler = async function(event) {
         vectorResult: storeData
       })
     };
-
   } catch (err) {
     console.error("Error in cropAndSend.js:", err);
     return {
