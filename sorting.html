@@ -478,22 +478,24 @@
       "connectEtsyBtn","testOpenAIBtn","openConfigBtn","etsyOrderNumber",
       "photoGridContainer","configModal","configTable","saveConfigBtn",
       // all 35 sets
-      ...[...Array(35).keys()].flatMap(i => [
-        `previewCell${i}`, `quantityCell${i}`, `titleCell${i}`
-      ])
+      // for i in 0..34 => previewCell, quantityCell, titleCell
+      // using flatMap approach
+      ...[...Array(35).keys()].flatMap(function(i) {
+        return ["previewCell" + i, "quantityCell" + i, "titleCell" + i];
+      })
     ];
 
     document.addEventListener("DOMContentLoaded", function() {
       M.AutoInit();
 
       // Fade in after loading offsets
-      setTimeout(() => {
+      setTimeout(function() {
         loadPositions();
         document.body.style.opacity = 1;
       }, 200);
 
       // Connect to Etsy
-      document.getElementById("connectEtsyBtn").addEventListener("click", async () => {
+      document.getElementById("connectEtsyBtn").addEventListener("click", async function() {
         try {
           const codeVerifier = generateRandomString(64);
           localStorage.setItem("etsy_code_verifier", codeVerifier);
@@ -522,7 +524,7 @@
       });
 
       // Test OpenAI
-      document.getElementById("testOpenAIBtn").addEventListener("click", async () => {
+      document.getElementById("testOpenAIBtn").addEventListener("click", async function() {
         try {
           const testBody = {
             model: "gpt-3.5-turbo",
@@ -533,7 +535,9 @@
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify(testBody)
           });
-          if (!resp.ok) throw new Error("OpenAI test call failed with " + resp.status);
+          if (!resp.ok) {
+            throw new Error("OpenAI test call failed with " + resp.status);
+          }
           const data = await resp.json();
           if (data.choices && data.choices[0] && data.choices[0].message) {
             M.toast({ html: "OpenAI responded successfully." });
@@ -546,90 +550,103 @@
       });
 
       // Batch orders on Enter
-      const etsyOrderInput = document.getElementById("etsyOrderNumber");
-      etsyOrderInput.addEventListener("keydown", async (e) => {
+      var etsyOrderInput = document.getElementById("etsyOrderNumber");
+      etsyOrderInput.addEventListener("keydown", async function(e) {
         if (e.key === "Enter") {
-          let inputVal = etsyOrderInput.value.trim();
+          var inputVal = etsyOrderInput.value.trim();
           if (!inputVal) return;
-          let orderNumbers = inputVal.split(",").map(x => x.trim()).filter(x => x);
+          var orderNumbers = inputVal.split(",").map(function(x){return x.trim();}).filter(function(x){return x;});
           orderNumbers = orderNumbers.slice(0, 50);
           await loadBatchEtsyOrders(orderNumbers);
         }
       });
 
       // Existing wheel zoom & drag
-      [...document.querySelectorAll(".preview-box")].forEach(box => {
-        let isDragging = false, lastX = 0, lastY = 0;
-        box.addEventListener("wheel", ev => {
-          const img = box.querySelector("img");
+      var previewBoxes = document.querySelectorAll(".preview-box");
+      previewBoxes.forEach(function(box) {
+        var isDragging = false, lastX = 0, lastY = 0;
+        box.addEventListener("wheel", function(ev) {
+          var img = box.querySelector("img");
           if (!img) return;
           ev.preventDefault();
-          let currentScale = parseFloat(img.dataset.scale) || 1;
-          let offX = parseFloat(img.dataset.offsetX) || 0;
-          let offY = parseFloat(img.dataset.offsetY) || 0;
+          var currentScale = parseFloat(img.dataset.scale) || 1;
+          var offX = parseFloat(img.dataset.offsetX) || 0;
+          var offY = parseFloat(img.dataset.offsetY) || 0;
           if (ev.deltaY < 0) {
             currentScale *= 1.1;
           } else {
             currentScale /= 1.1;
             if (currentScale <= 1) {
-              currentScale = 1; offX = 0; offY = 0;
+              currentScale = 1;
+              offX = 0;
+              offY = 0;
             }
           }
-          currentScale = Math.min(currentScale, 4);
+          if (currentScale > 4) {
+            currentScale = 4;
+          }
           img.dataset.scale = currentScale;
           img.dataset.offsetX = offX;
           img.dataset.offsetY = offY;
-          img.style.transform = \translate(\${offX}px, \${offY}px) scale(\${currentScale})\;
+          img.style.transform = "translate(" + offX + "px, " + offY + "px) scale(" + currentScale + ")";
         });
-        box.addEventListener("mousedown", ev => {
-          const img = box.querySelector("img");
+        box.addEventListener("mousedown", function(ev) {
+          var img = box.querySelector("img");
           if (!img) return;
-          let scaleNow = parseFloat(img.dataset.scale) || 1;
+          var scaleNow = parseFloat(img.dataset.scale) || 1;
           if (scaleNow <= 1) return;
           ev.preventDefault();
-          isDragging = true; lastX = ev.clientX; lastY = ev.clientY;
+          isDragging = true;
+          lastX = ev.clientX;
+          lastY = ev.clientY;
         });
-        box.addEventListener("mousemove", ev => {
+        box.addEventListener("mousemove", function(ev) {
           if (!isDragging) return;
           ev.preventDefault();
-          const img = box.querySelector("img");
+          var img = box.querySelector("img");
           if (!img) return;
-          let scaleNow = parseFloat(img.dataset.scale) || 1;
-          let offX = parseFloat(img.dataset.offsetX) || 0;
-          let offY = parseFloat(img.dataset.offsetY) || 0;
-          const dx = ev.clientX - lastX;
-          const dy = ev.clientY - lastY;
-          offX += dx; offY += dy;
+          var scaleNow = parseFloat(img.dataset.scale) || 1;
+          var offX = parseFloat(img.dataset.offsetX) || 0;
+          var offY = parseFloat(img.dataset.offsetY) || 0;
+          var dx = ev.clientX - lastX;
+          var dy = ev.clientY - lastY;
+          offX += dx;
+          offY += dy;
           img.dataset.offsetX = offX;
           img.dataset.offsetY = offY;
-          img.style.transform = \translate(\${offX}px, \${offY}px) scale(\${scaleNow})\;
-          lastX = ev.clientX; lastY = ev.clientY;
+          img.style.transform = "translate(" + offX + "px, " + offY + "px) scale(" + scaleNow + ")";
+          lastX = ev.clientX;
+          lastY = ev.clientY;
         });
-        box.addEventListener("mouseup", () => { isDragging = false; });
-        box.addEventListener("mouseleave", () => { isDragging = false; });
+        box.addEventListener("mouseup", function() {
+          isDragging = false;
+        });
+        box.addEventListener("mouseleave", function() {
+          isDragging = false;
+        });
 
         // Single-click => Zoom in at the click point
-        box.addEventListener("click", ev => {
-          const img = box.querySelector("img");
+        box.addEventListener("click", function(ev) {
+          var img = box.querySelector("img");
           if (!img) return;
 
-          const rect = box.getBoundingClientRect();
-          const localX = ev.clientX - rect.left;
-          const localY = ev.clientY - rect.top;
+          var rect = box.getBoundingClientRect();
+          var localX = ev.clientX - rect.left;
+          var localY = ev.clientY - rect.top;
 
           // We'll set the scale to 4
-          const scale = 4;
-          const halfW = box.clientWidth / 2; // 66/2 = 33
-          const halfH = box.clientHeight / 2; // 66/2 = 33
+          var scale = 4;
+          var halfW = box.clientWidth / 2; // 66/2 = 33
+          var halfH = box.clientHeight / 2; // 66/2 = 33
 
           // offset = center - (clickedCoord * scale)
-          const offsetX = halfW - (localX * scale);
-          const offsetY = halfH - (localY * scale);
+          var offsetX = halfW - (localX * scale);
+          var offsetY = halfH - (localY * scale);
 
           img.dataset.scale = scale;
           img.dataset.offsetX = offsetX;
           img.dataset.offsetY = offsetY;
-          img.style.transform = \translate(\${offsetX}px, \${offsetY}px) scale(\${scale})\;
+          img.style.transform = "translate(" + offsetX + "px, " + offsetY + "px) scale(" + scale + ")";
         });
       });
     });
@@ -638,19 +655,20 @@
     async function loadBatchEtsyOrders(orderNumbers) {
       try {
         M.toast({ html: "Loading " + orderNumbers.length + " order(s)..." });
-        const token = localStorage.getItem("access_token") || "";
-        let combinedItems = [];
+        var token = localStorage.getItem("access_token") || "";
+        var combinedItems = [];
 
-        for (let ord of orderNumbers) {
-          const url = \/.netlify/functions/etsyOrderProxy?orderId=\${encodeURIComponent(ord)}\;
-          const resp = await fetch(url, { headers: { "access-token": token } });
+        for (var i = 0; i < orderNumbers.length; i++) {
+          var ord = orderNumbers[i];
+          var url = "/.netlify/functions/etsyOrderProxy?orderId=" + encodeURIComponent(ord);
+          var resp = await fetch(url, { headers: { "access-token": token } });
           if (!resp.ok) {
             console.warn("Order fetch failed for " + ord + ", status=" + resp.status);
             continue;
           }
-          const data = await resp.json();
+          var data = await resp.json();
           if (data.transactions && Array.isArray(data.transactions)) {
-            combinedItems.push(...data.transactions);
+            combinedItems.push.apply(combinedItems, data.transactions);
           } else {
             console.warn("No transactions for order " + ord);
           }
@@ -665,52 +683,56 @@
 
     async function fillPreviewBoxes(items) {
       // Clear existing
-      for (let i = 0; i < 35; i++) {
-        document.getElementById(\previewCell\${i}\).innerHTML = "Empty";
-        document.getElementById(\quantityCell\${i}\).textContent = "";
-        document.getElementById(\titleCell\${i}\).textContent = "";
+      for (var i = 0; i < 35; i++) {
+        document.getElementById("previewCell" + i).innerHTML = "Empty";
+        document.getElementById("quantityCell" + i).textContent = "";
+        document.getElementById("titleCell" + i).textContent = "";
       }
       // Fill up to 35
-      const limitedItems = items.slice(0, 35);
-      for (let i = 0; i < limitedItems.length; i++) {
-        const { listing_id, quantity, title } = limitedItems[i];
-        const cell = document.getElementById(\previewCell\${i}\);
-        const qtyBox = document.getElementById(\quantityCell\${i}\);
-        const titleBox = document.getElementById(\titleCell\${i});
+      var limitedItems = items.slice(0, 35);
+      for (var j = 0; j < limitedItems.length; j++) {
+        var listingId = limitedItems[j].listing_id;
+        var quantity = limitedItems[j].quantity;
+        var title = limitedItems[j].title || "";
+
+        var cell = document.getElementById("previewCell" + j);
+        var qtyBox = document.getElementById("quantityCell" + j);
+        var titleBox = document.getElementById("titleCell" + j);
+
         cell.innerHTML = "Loading...";
         qtyBox.textContent = "Qty: " + (quantity || 0);
 
-        const firstFour = (title || "").split(" ").slice(0, 4).join(" ");
+        var firstFour = title.split(" ").slice(0, 4).join(" ");
         titleBox.textContent = firstFour;
 
         try {
-          const imageData = await fetchListingImages(listing_id);
+          var imageData = await fetchListingImages(listingId);
           if (imageData && imageData.length > 0) {
-            cell.innerHTML = \<img src="\${imageData[0].url_fullxfull}"
-                                  alt="Listing \${listing_id}"
-                                  data-scale="1"
-                                  data-offsetX="0"
-                                  data-offsetY="0" />\;
+            cell.innerHTML = "<img src=\"" + imageData[0].url_fullxfull + "\" "
+              + "alt=\"Listing " + listingId + "\" "
+              + "data-scale=\"1\" "
+              + "data-offsetX=\"0\" "
+              + "data-offsetY=\"0\" />";
           } else {
             cell.innerHTML = "No Img";
           }
         } catch (err) {
-          console.warn("Image fetch error for listing", listing_id, err);
+          console.warn("Image fetch error for listing", listingId, err);
           cell.innerHTML = "Img Error";
         }
       }
     }
 
     async function fetchListingImages(listingId) {
-      const token = localStorage.getItem("access_token") || "";
-      const resp = await fetch(\/.netlify/functions/etsyImages?listingId=\${listingId}\, {
+      var token = localStorage.getItem("access_token") || "";
+      var resp = await fetch("/.netlify/functions/etsyImages?listingId=" + listingId, {
         headers: { "access-token": token }
       });
       if (!resp.ok) {
         console.warn("Image fetch HTTP error:", resp.status);
         return [];
       }
-      const data = await resp.json();
+      var data = await resp.json();
       return data.results || [];
     }
 
@@ -718,22 +740,22 @@
      * The config modal for absolute positions
      *******************************************************/
     function loadPositions() {
-      configIDs.forEach(id => {
-        const el = document.getElementById(id);
+      configIDs.forEach(function(id) {
+        var el = document.getElementById(id);
         if (!el) return;
 
         // If localStorage is missing, fall back to the hardcoded defaults
-        const def = defaults[id] || { left: 0, top: 0, width: 0, height: 0 };
+        var def = defaults[id] || { left: 0, top: 0, width: 0, height: 0 };
 
-        let left = localStorage.getItem(\pos-\${id}-left\);
-        let top  = localStorage.getItem(\pos-\${id}-top\);
-        let w    = localStorage.getItem(\pos-\${id}-width\);
-        let h    = localStorage.getItem(\pos-\${id}-height\);
+        var left = localStorage.getItem("pos-" + id + "-left");
+        var top  = localStorage.getItem("pos-" + id + "-top");
+        var w    = localStorage.getItem("pos-" + id + "-width");
+        var h    = localStorage.getItem("pos-" + id + "-height");
 
-        if (left === null) left = def.left;
-        if (top === null)  top  = def.top;
-        if (w === null)    w    = def.width;
-        if (h === null)    h    = def.height;
+        if (left === null) { left = def.left; }
+        if (top === null)  { top  = def.top; }
+        if (w === null)    { w    = def.width; }
+        if (h === null)    { h    = def.height; }
 
         el.style.position = "absolute";
         el.style.left   = left + "px";
@@ -744,54 +766,63 @@
     }
 
     function populateConfigTable() {
-      const tbody = document.querySelector("#configTable tbody");
+      var tbody = document.querySelector("#configTable tbody");
       tbody.innerHTML = "";
-      configIDs.forEach(id => {
-        const el = document.getElementById(id);
+      configIDs.forEach(function(id) {
+        var el = document.getElementById(id);
         if (!el) return;
-        const cs = window.getComputedStyle(el);
-        const leftVal = parseInt(cs.left) || 0;
-        const topVal = parseInt(cs.top) || 0;
-        const widthVal = parseInt(cs.width) || 0;
-        const heightVal = parseInt(cs.height) || 0;
-        const row = document.createElement("tr");
-        row.innerHTML = `
-          <td>${id}</td>
-          <td><input type="number" value="${leftVal}" data-id="${id}" class="left-input" /></td>
-          <td><input type="number" value="${topVal}" data-id="${id}" class="top-input" /></td>
-          <td><input type="number" value="${widthVal}" data-id="${id}" class="width-input" /></td>
-          <td><input type="number" value="${heightVal}" data-id="${id}" class="height-input" /></td>
-        `;
+        var cs = window.getComputedStyle(el);
+        var leftVal = parseInt(cs.left, 10) || 0;
+        var topVal = parseInt(cs.top, 10) || 0;
+        var widthVal = parseInt(cs.width, 10) || 0;
+        var heightVal = parseInt(cs.height, 10) || 0;
+        var row = document.createElement("tr");
+
+        row.innerHTML =
+          "<td>" + id + "</td>" +
+          "<td><input type=\"number\" value=\"" + leftVal + "\" data-id=\"" + id + "\" class=\"left-input\" /></td>" +
+          "<td><input type=\"number\" value=\"" + topVal + "\" data-id=\"" + id + "\" class=\"top-input\" /></td>" +
+          "<td><input type=\"number\" value=\"" + widthVal + "\" data-id=\"" + id + "\" class=\"width-input\" /></td>" +
+          "<td><input type=\"number\" value=\"" + heightVal + "\" data-id=\"" + id + "\" class=\"height-input\" /></td>";
+
         tbody.appendChild(row);
 
         row.querySelector(".left-input").addEventListener("input", function() {
-          const target = document.getElementById(this.dataset.id);
-          if (target) target.style.left = parseInt(this.value, 10) + "px";
+          var target = document.getElementById(this.dataset.id);
+          if (target) {
+            target.style.left = parseInt(this.value, 10) + "px";
+          }
         });
         row.querySelector(".top-input").addEventListener("input", function() {
-          const target = document.getElementById(this.dataset.id);
-          if (target) target.style.top = parseInt(this.value, 10) + "px";
+          var target = document.getElementById(this.dataset.id);
+          if (target) {
+            target.style.top = parseInt(this.value, 10) + "px";
+          }
         });
         row.querySelector(".width-input").addEventListener("input", function() {
-          const target = document.getElementById(this.dataset.id);
-          if (target) target.style.width = parseInt(this.value, 10) + "px";
+          var target = document.getElementById(this.dataset.id);
+          if (target) {
+            target.style.width = parseInt(this.value, 10) + "px";
+          }
         });
         row.querySelector(".height-input").addEventListener("input", function() {
-          const target = document.getElementById(this.dataset.id);
-          if (target) target.style.height = parseInt(this.value, 10) + "px";
+          var target = document.getElementById(this.dataset.id);
+          if (target) {
+            target.style.height = parseInt(this.value, 10) + "px";
+          }
         });
       });
     }
 
     function saveConfiguration() {
-      configIDs.forEach(id => {
-        const el = document.getElementById(id);
+      configIDs.forEach(function(id) {
+        var el = document.getElementById(id);
         if (!el) return;
-        const cs = window.getComputedStyle(el);
-        localStorage.setItem(\`pos-\${id}-left\`, parseInt(cs.left) || 0);
-        localStorage.setItem(\`pos-\${id}-top\`, parseInt(cs.top) || 0);
-        localStorage.setItem(\`pos-\${id}-width\`, parseInt(cs.width) || 0);
-        localStorage.setItem(\`pos-\${id}-height\`, parseInt(cs.height) || 0);
+        var cs = window.getComputedStyle(el);
+        localStorage.setItem("pos-" + id + "-left", parseInt(cs.left, 10) || 0);
+        localStorage.setItem("pos-" + id + "-top", parseInt(cs.top, 10) || 0);
+        localStorage.setItem("pos-" + id + "-width", parseInt(cs.width, 10) || 0);
+        localStorage.setItem("pos-" + id + "-height", parseInt(cs.height, 10) || 0);
       });
       M.toast({ html: "Positions saved!" });
     }
