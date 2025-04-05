@@ -2,34 +2,33 @@
 <html>
 <head>
   <meta charset="UTF-8" />
-  <title>Sorting - Single-Click Zoom</title>
+  <title>Sorting - Server-Side Save & Crop</title>
 
   <!-- Materialize CSS -->
   <link
     rel="stylesheet"
     href="https://cdnjs.cloudflare.com/ajax/libs/materialize/1.0.0/css/materialize.min.css"
   />
-
   <style>
     body {
       background-color: #fff;
       margin: 0;
       height: 100vh;
       position: relative;
-      opacity: 0; 
+      opacity: 0;
       transition: opacity 0s;
     }
 
-    /* Three main buttons:
+    /* Four main buttons:
        1) Connect to Etsy
        2) Test OpenAI
        3) Open Config
-       + (NEW) Crop & Send
+       4) Crop & Send All
     */
     #connectEtsyBtn,
     #testOpenAIBtn,
     #openConfigBtn,
-    #cropAndSendBtn {
+    #cropAndSendAllBtn {
       position: absolute;
       left: 20px;
       width: 140px;
@@ -44,8 +43,7 @@
     #openConfigBtn {
       top: 120px;
     }
-    /* NEW: Crop & Send button */
-    #cropAndSendBtn {
+    #cropAndSendAllBtn {
       top: 170px;
     }
 
@@ -65,9 +63,9 @@
     /* Container for the 35 boxes */
     #photoGridContainer {
       position: relative;
-      width: 1200px; 
-      height: 700px; 
-      border: 1px dashed #ccc; 
+      width: 1200px;
+      height: 700px;
+      border: 1px dashed #ccc;
       left: 350px;
       top: 20px;
     }
@@ -137,8 +135,8 @@
   <button id="connectEtsyBtn" class="btn waves-effect waves-light">Connect to Etsy</button>
   <button id="testOpenAIBtn" class="btn waves-effect waves-light">Test OpenAI</button>
   <button id="openConfigBtn" class="btn waves-effect waves-light">Open Config</button>
-  <!-- NEW -->
-  <button id="cropAndSendBtn" class="btn waves-effect waves-light">Crop & Send</button>
+  <!-- New: "Crop & Send All" server-side -->
+  <button id="cropAndSendAllBtn" class="btn waves-effect waves-light">Crop & Send All</button>
 
   <!-- Etsy Order Number input -->
   <input type="text" id="etsyOrderNumber" placeholder="Comma-delimited Etsy Order Numbers" />
@@ -318,14 +316,15 @@
 
   <script>
     (function(){
+      // If ?access_token=..., store it and remove from URL
       const urlParams = new URLSearchParams(window.location.search);
       const accessToken = urlParams.get("access_token");
       if(accessToken){
         localStorage.setItem("access_token", accessToken);
         window.history.replaceState({}, document.title, window.location.pathname);
         M.toast({html:"Connection Successful!"});
-        console.log("Access token received:", accessToken);
       } else {
+        // Possibly handle ?code=... for Etsy if needed
         const authCode = urlParams.get("code");
         if(authCode){
           const storedCodeVerifier = localStorage.getItem("etsy_code_verifier");
@@ -335,13 +334,12 @@
               encodeURIComponent(authCode) +
               "&code_verifier=" +
               encodeURIComponent(storedCodeVerifier);
-          } else {
-            console.error("No code verifier found in localStorage.");
           }
         }
       }
     })();
 
+    // Utility to generate random strings (for code verifier)
     function generateRandomString(length) {
       const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
       let text = "";
@@ -351,6 +349,7 @@
       return text;
     }
 
+    // Utility to generate code challenge from code verifier
     async function generateCodeChallenge(codeVerifier) {
       const encoder = new TextEncoder();
       const data = encoder.encode(codeVerifier);
@@ -359,18 +358,21 @@
       return base64String.replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
     }
 
-    // =========================================
-    // HARD-CODED DEFAULT OFFSETS
-    // =========================================
+    // Hard-coded default offsets
     const defaults = {
       configModal:          {left: 847,  top: 426,  width: 500,  height: 600},
       configTable:          {left: 24,   top: 24,   width: 485,  height: 9542},
       connectEtsyBtn:       {left: 20,   top: 20,   width: 140,  height: 36},
       testOpenAIBtn:        {left: 20,   top: 70,   width: 140,  height: 36},
       openConfigBtn:        {left: 20,   top: 120,  width: 140,  height: 36},
-      cropAndSendBtn:       {left: 20,   top: 170,  width: 140,  height: 36},
+      cropAndSendAllBtn:    {left: 20,   top: 170,  width: 140,  height: 36},
+
       etsyOrderNumber:      {left: 20,   top: 220,  width: 300,  height: 30},
       photoGridContainer:   {left: 350,  top: 20,   width: 1200, height: 700},
+
+      /* We'll define positions for previewCell0..34, quantityCell0..34, titleCell0..34 
+         to match your existing layout. */
+
       previewCell0:         {left: 0,    top: 0,    width: 66,   height: 66},
       previewCell1:         {left: 125,  top: 0,    width: 66,   height: 66},
       previewCell2:         {left: 250,  top: 0,    width: 66,   height: 66},
@@ -484,11 +486,13 @@
     };
 
     const configIDs = [
-      "connectEtsyBtn","testOpenAIBtn","openConfigBtn","cropAndSendBtn","etsyOrderNumber",
-      "photoGridContainer","configModal","configTable","saveConfigBtn",
-      ...[...Array(35).keys()].flatMap(function(i) {
-        return ["previewCell" + i, "quantityCell" + i, "titleCell" + i];
-      })
+      "connectEtsyBtn","testOpenAIBtn","openConfigBtn","cropAndSendAllBtn",
+      "etsyOrderNumber","photoGridContainer","configModal","configTable","saveConfigBtn",
+      ...[...Array(35).keys()].flatMap(i => [
+        "previewCell" + i,
+        "quantityCell" + i,
+        "titleCell" + i
+      ])
     ];
 
     document.addEventListener("DOMContentLoaded", function() {
@@ -505,13 +509,16 @@
           const codeVerifier = generateRandomString(64);
           localStorage.setItem("etsy_code_verifier", codeVerifier);
           const codeChallenge = await generateCodeChallenge(codeVerifier);
-          const CLIENT_ID = "k75zdspz4r99txpqdji7i2em";
+
+          // Put your real Etsy client info here
+          const CLIENT_ID = "YOUR_CLIENT_ID_HERE";
           const redirectUri = "https://sorting.goldenspike.app";
-          const state = "randomState123";
           const scope = "listings_w listings_r transactions_r transactions_w";
+          const state = "SomeRandomState";
 
           const etsyAuthUrl =
-            "https://www.etsy.com/oauth/connect?response_type=code" +
+            "https://www.etsy.com/oauth/connect" +
+            "?response_type=code" +
             "&client_id=" + CLIENT_ID +
             "&redirect_uri=" + encodeURIComponent(redirectUri) +
             "&scope=" + encodeURIComponent(scope) +
@@ -542,7 +549,7 @@
             throw new Error("OpenAI test call failed with " + resp.status);
           }
           const data = await resp.json();
-          if (data.choices && data.choices[0] && data.choices[0].message) {
+          if (data.choices && data.choices[0]) {
             M.toast({ html: "OpenAI responded successfully." });
           } else {
             throw new Error("No valid response from OpenAI!");
@@ -552,154 +559,94 @@
         }
       });
 
-      // Loading multiple orders
-      var etsyOrderInput = document.getElementById("etsyOrderNumber");
+      // Manually typing an Etsy order #, pressing Enter => load
+      const etsyOrderInput = document.getElementById("etsyOrderNumber");
       etsyOrderInput.addEventListener("keydown", async function(e) {
         if (e.key === "Enter") {
-          var inputVal = etsyOrderInput.value.trim();
+          const inputVal = etsyOrderInput.value.trim();
           if (!inputVal) return;
-          var orderNumbers = inputVal.split(",").map(function(x){return x.trim();}).filter(function(x){return x;});
-          orderNumbers = orderNumbers.slice(0, 50);
+          const orderNumbers = inputVal
+            .split(",")
+            .map(x => x.trim())
+            .filter(x => x)
+            .slice(0, 50);
           await loadBatchEtsyOrders(orderNumbers);
         }
       });
 
-      // ============ Wheel zoom & drag & Single-click ============ 
-      var previewBoxes = document.querySelectorAll(".preview-box");
-      previewBoxes.forEach(function(box) {
-        var isDragging = false;
-        var isMouseDown = false;
-        var dragStartX = 0, dragStartY = 0;
-        var lastX = 0, lastY = 0;
-        var dragThreshold = 3; // if we move more than 3px, we'll consider it a drag
+      // Crop & Send All => server-side approach
+      document.getElementById("cropAndSendAllBtn").addEventListener("click", async function() {
+        try {
+          M.toast({ html: "Starting server-side Save & Crop for all images..." });
+          const allPreviews = document.querySelectorAll(".preview-box");
 
-        // Wheel => Zoom
-        box.addEventListener("wheel", function(ev) {
-          var img = box.querySelector("img");
-          if (!img) return;
-          ev.preventDefault();
-          var currentScale = parseFloat(img.dataset.scale) || 1;
-          var offX = parseFloat(img.dataset.offsetX) || 0;
-          var offY = parseFloat(img.dataset.offsetY) || 0;
-          if (ev.deltaY < 0) {
-            currentScale *= 1.1;
-          } else {
-            currentScale /= 1.1;
-            if (currentScale <= 1) {
-              currentScale = 1;
-              offX = 0;
-              offY = 0;
+          for (let i = 0; i < allPreviews.length; i++) {
+            const box = allPreviews[i];
+            const img = box.querySelector("img");
+            if (!img) continue;
+
+            // The original Etsy URL
+            const imageUrl = img.dataset.etsyUrl || img.src;
+            M.toast({ html: "Saving image #" + i + " => server" });
+
+            // Step 1) Request /saveEtsyAsJpg?imageUrl=...
+            const saveResp = await fetch(
+              "/.netlify/functions/saveEtsyAsJpg?imageUrl=" + encodeURIComponent(imageUrl)
+            );
+            const saveData = await saveResp.json();
+            if (!saveResp.ok) {
+              throw new Error(
+                `saveEtsyAsJpg failed: ${saveResp.status} => ${JSON.stringify(saveData)}`
+              );
             }
-          }
-          if (currentScale > 4) {
-            currentScale = 4;
-          }
-          img.dataset.scale = currentScale;
-          img.dataset.offsetX = offX;
-          img.dataset.offsetY = offY;
-          img.style.transform = "translate(" + offX + "px, " + offY + "px) scale(" + currentScale + ")";
-        });
 
-        // Mouse down => check drag
-        box.addEventListener("mousedown", function(ev) {
-          var img = box.querySelector("img");
-          if (!img) return;
-          var scaleNow = parseFloat(img.dataset.scale) || 1;
-          if (scaleNow <= 1) return;
-          ev.preventDefault();
-          isMouseDown = true;
-          isDragging = false;
-          dragStartX = ev.clientX;
-          dragStartY = ev.clientY;
-          lastX = ev.clientX;
-          lastY = ev.clientY;
-        });
+            const localPath = saveData.savedPath;
+            M.toast({ html: "Local path: " + localPath + " => Now cropping & sending..." });
 
-        // Mouse move => panning if we're dragging
-        box.addEventListener("mousemove", function(ev) {
-          if (!isMouseDown) return;
-          ev.preventDefault();
-          var dxAll = Math.abs(ev.clientX - dragStartX);
-          var dyAll = Math.abs(ev.clientY - dragStartY);
-          // If we've moved beyond threshold, call it a drag
-          if (dxAll > dragThreshold || dyAll > dragThreshold) {
-            isDragging = true;
+            // Step 2) POST to /cropAndSendLocal with localPath
+            const pay = {
+              localPath,
+              fileName: "cropped_image_" + i + ".jpg"
+              // vectorStoreId: "If you have a store ID"
+            };
+            const cResp = await fetch("/.netlify/functions/cropAndSendLocal", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify(pay)
+            });
+            const cData = await cResp.json();
+            if (!cResp.ok) {
+              throw new Error(
+                `cropAndSendLocal failed: ${cResp.status} => ${JSON.stringify(cData)}`
+              );
+            }
+            M.toast({ html: `[#${i}] Done! fileId=${cData.fileId}` });
           }
 
-          var img = box.querySelector("img");
-          if (!img) return;
-          var scaleNow = parseFloat(img.dataset.scale) || 1;
-          var offX = parseFloat(img.dataset.offsetX) || 0;
-          var offY = parseFloat(img.dataset.offsetY) || 0;
-          var dx = ev.clientX - lastX;
-          var dy = ev.clientY - lastY;
-          offX += dx;
-          offY += dy;
-          img.dataset.offsetX = offX;
-          img.dataset.offsetY = offY;
-          img.style.transform = "translate(" + offX + "px, " + offY + "px) scale(" + scaleNow + ")";
-          lastX = ev.clientX;
-          lastY = ev.clientY;
-        });
-
-        // Mouse up => end of drag
-        box.addEventListener("mouseup", function() {
-          isMouseDown = false;
-        });
-        box.addEventListener("mouseleave", function() {
-          isMouseDown = false;
-        });
-
-        // Single-click => Zoom, but only if not dragging
-        box.addEventListener("click", function(ev) {
-          // If user was dragging, skip the single-click zoom
-          if (isDragging) {
-            // reset for the next interaction
-            isDragging = false;
-            return;
-          }
-
-          var img = box.querySelector("img");
-          if (!img) return;
-
-          // measure offset from the box center
-          var rect = box.getBoundingClientRect();
-          var boxCenterX = rect.left + box.clientWidth / 2;
-          var boxCenterY = rect.top  + box.clientHeight / 2;
-
-          var dx = ev.clientX - boxCenterX;
-          var dy = ev.clientY - boxCenterY;
-
-          var scale = 4;
-          var fudgeY = 10; // optional vertical shift
-          var offsetX = -scale * dx;
-          var offsetY = -scale * dy + fudgeY;
-
-          img.dataset.scale = scale;
-          img.dataset.offsetX = offsetX;
-          img.dataset.offsetY = offsetY;
-          img.style.transform = "translate(" + offsetX + "px, " + offsetY + "px) scale(" + scale + ")";
-        });
+          M.toast({ html: "All images processed via server side!" });
+        } catch (err) {
+          console.error("cropAndSendAll error:", err);
+          M.toast({ html: "Error: " + err.message });
+        }
       });
     });
 
     async function loadBatchEtsyOrders(orderNumbers) {
       try {
         M.toast({ html: "Loading " + orderNumbers.length + " order(s)..." });
-        var token = localStorage.getItem("access_token") || "";
-        var combinedItems = [];
+        const token = localStorage.getItem("access_token") || "";
+        const combinedItems = [];
 
-        for (var i = 0; i < orderNumbers.length; i++) {
-          var ord = orderNumbers[i];
-          var url = "/.netlify/functions/etsyOrderProxy?orderId=" + encodeURIComponent(ord);
-          var resp = await fetch(url, { headers: { "access-token": token } });
+        for (let ord of orderNumbers) {
+          const url = "/.netlify/functions/etsyOrderProxy?orderId=" + encodeURIComponent(ord);
+          const resp = await fetch(url, { headers: { "access-token": token } });
           if (!resp.ok) {
             console.warn("Order fetch failed for " + ord + ", status=" + resp.status);
             continue;
           }
-          var data = await resp.json();
+          const data = await resp.json();
           if (data.transactions && Array.isArray(data.transactions)) {
-            combinedItems.push.apply(combinedItems, data.transactions);
+            combinedItems.push(...data.transactions);
           } else {
             console.warn("No transactions for order " + ord);
           }
@@ -712,36 +659,38 @@
     }
 
     async function fillPreviewBoxes(items) {
-      for (var i = 0; i < 35; i++) {
+      // Clear out old previews first
+      for (let i = 0; i < 35; i++) {
         document.getElementById("previewCell" + i).innerHTML = "Empty";
         document.getElementById("quantityCell" + i).textContent = "";
         document.getElementById("titleCell" + i).textContent = "";
       }
-      var limitedItems = items.slice(0, 35);
-      for (var j = 0; j < limitedItems.length; j++) {
-        var listingId = limitedItems[j].listing_id;
-        var quantity = limitedItems[j].quantity;
-        var title = limitedItems[j].title || "";
 
-        var cell = document.getElementById("previewCell" + j);
-        var qtyBox = document.getElementById("quantityCell" + j);
-        var titleBox = document.getElementById("titleCell" + j);
+      const limitedItems = items.slice(0, 35);
+      for (let j = 0; j < limitedItems.length; j++) {
+        const listingId = limitedItems[j].listing_id;
+        const quantity = limitedItems[j].quantity;
+        const title = limitedItems[j].title || "";
+
+        const cell = document.getElementById("previewCell" + j);
+        const qtyBox = document.getElementById("quantityCell" + j);
+        const titleBox = document.getElementById("titleCell" + j);
 
         cell.innerHTML = "Loading...";
         qtyBox.textContent = "Qty: " + (quantity || 0);
 
-        var firstFour = title.split(" ").slice(0, 4).join(" ");
+        const firstFour = title.split(" ").slice(0, 4).join(" ");
         titleBox.textContent = firstFour;
 
         try {
-          var imageData = await fetchListingImages(listingId);
+          const imageData = await fetchListingImages(listingId);
           if (imageData && imageData.length > 0) {
-            cell.innerHTML = "<img src=\"" + imageData[0].url_fullxfull + "\" "
-              + "alt=\"Listing " + listingId + "\" "
-              + "data-scale=\"1\" "
-              + "data-offsetX=\"0\" "
-              + "data-offsetY=\"0\" "
-              + "crossorigin=\"anonymous\" />";
+            // We store the Etsy URL in data-etsyUrl for later server-side fetching
+            cell.innerHTML = `<img
+              src="${imageData[0].url_fullxfull}"
+              data-etsyUrl="${imageData[0].url_fullxfull}"
+              alt="Listing ${listingId}"
+            />`;
           } else {
             cell.innerHTML = "No Img";
           }
@@ -753,28 +702,28 @@
     }
 
     async function fetchListingImages(listingId) {
-      var token = localStorage.getItem("access_token") || "";
-      var resp = await fetch("/.netlify/functions/etsyImages?listingId=" + listingId, {
+      const token = localStorage.getItem("access_token") || "";
+      const resp = await fetch("/.netlify/functions/etsyImages?listingId=" + listingId, {
         headers: { "access-token": token }
       });
       if (!resp.ok) {
         console.warn("Image fetch HTTP error:", resp.status);
         return [];
       }
-      var data = await resp.json();
+      const data = await resp.json();
       return data.results || [];
     }
 
     function loadPositions() {
       configIDs.forEach(function(id) {
-        var el = document.getElementById(id);
+        const el = document.getElementById(id);
         if (!el) return;
 
-        var def = defaults[id] || { left: 0, top: 0, width: 0, height: 0 };
-        var left = localStorage.getItem("pos-" + id + "-left");
-        var top  = localStorage.getItem("pos-" + id + "-top");
-        var w    = localStorage.getItem("pos-" + id + "-width");
-        var h    = localStorage.getItem("pos-" + id + "-height");
+        const def = defaults[id] || { left: 0, top: 0, width: 0, height: 0 };
+        let left = localStorage.getItem("pos-" + id + "-left");
+        let top  = localStorage.getItem("pos-" + id + "-top");
+        let w    = localStorage.getItem("pos-" + id + "-width");
+        let h    = localStorage.getItem("pos-" + id + "-height");
 
         if (left === null)  left = def.left;
         if (top === null)   top  = def.top;
@@ -790,46 +739,47 @@
     }
 
     function populateConfigTable() {
-      var tbody = document.querySelector("#configTable tbody");
+      const tbody = document.querySelector("#configTable tbody");
       tbody.innerHTML = "";
       configIDs.forEach(function(id) {
-        var el = document.getElementById(id);
+        const el = document.getElementById(id);
         if (!el) return;
-        var cs = window.getComputedStyle(el);
-        var leftVal = parseInt(cs.left, 10) || 0;
-        var topVal = parseInt(cs.top, 10) || 0;
-        var widthVal = parseInt(cs.width, 10) || 0;
-        var heightVal = parseInt(cs.height, 10) || 0;
-        var row = document.createElement("tr");
+        const cs = window.getComputedStyle(el);
+        const leftVal = parseInt(cs.left, 10) || 0;
+        const topVal = parseInt(cs.top, 10) || 0;
+        const widthVal = parseInt(cs.width, 10) || 0;
+        const heightVal = parseInt(cs.height, 10) || 0;
+
+        const row = document.createElement("tr");
         row.innerHTML =
-          "<td>" + id + "</td>" +
-          "<td><input type=\"number\" value=\"" + leftVal + "\" data-id=\"" + id + "\" class=\"left-input\" /></td>" +
-          "<td><input type=\"number\" value=\"" + topVal + "\" data-id=\"" + id + "\" class=\"top-input\" /></td>" +
-          "<td><input type=\"number\" value=\"" + widthVal + "\" data-id=\"" + id + "\" class=\"width-input\" /></td>" +
-          "<td><input type=\"number\" value=\"" + heightVal + "\" data-id=\"" + id + "\" class=\"height-input\" /></td>";
+          `<td>${id}</td>
+           <td><input type="number" value="${leftVal}" data-id="${id}" class="left-input" /></td>
+           <td><input type="number" value="${topVal}" data-id="${id}" class="top-input" /></td>
+           <td><input type="number" value="${widthVal}" data-id="${id}" class="width-input" /></td>
+           <td><input type="number" value="${heightVal}" data-id="${id}" class="height-input" /></td>`;
 
         tbody.appendChild(row);
 
         row.querySelector(".left-input").addEventListener("input", function() {
-          var target = document.getElementById(this.dataset.id);
+          const target = document.getElementById(this.dataset.id);
           if (target) {
             target.style.left = parseInt(this.value, 10) + "px";
           }
         });
         row.querySelector(".top-input").addEventListener("input", function() {
-          var target = document.getElementById(this.dataset.id);
+          const target = document.getElementById(this.dataset.id);
           if (target) {
             target.style.top = parseInt(this.value, 10) + "px";
           }
         });
         row.querySelector(".width-input").addEventListener("input", function() {
-          var target = document.getElementById(this.dataset.id);
+          const target = document.getElementById(this.dataset.id);
           if (target) {
             target.style.width = parseInt(this.value, 10) + "px";
           }
         });
         row.querySelector(".height-input").addEventListener("input", function() {
-          var target = document.getElementById(this.dataset.id);
+          const target = document.getElementById(this.dataset.id);
           if (target) {
             target.style.height = parseInt(this.value, 10) + "px";
           }
@@ -839,9 +789,9 @@
 
     function saveConfiguration() {
       configIDs.forEach(function(id) {
-        var el = document.getElementById(id);
+        const el = document.getElementById(id);
         if (!el) return;
-        var cs = window.getComputedStyle(el);
+        const cs = window.getComputedStyle(el);
         localStorage.setItem("pos-" + id + "-left", parseInt(cs.left, 10) || 0);
         localStorage.setItem("pos-" + id + "-top", parseInt(cs.top, 10) || 0);
         localStorage.setItem("pos-" + id + "-width", parseInt(cs.width, 10) || 0);
@@ -849,54 +799,6 @@
       });
       M.toast({ html: "Positions saved!" });
     }
-
-    // === NEW: "Crop & Send" Handler ===
-    document.getElementById("cropAndSendBtn").addEventListener("click", async function() {
-      try {
-        M.toast({ html: "Starting Crop & Send..." });
-        const allPreviews = document.querySelectorAll(".preview-box");
-
-        for (let i = 0; i < allPreviews.length; i++) {
-          const box = allPreviews[i];
-          const img = box.querySelector("img");
-          if (!img) continue; // skip empty
-
-          M.toast({ html: "Cropping image #" + i + "..." });
-
-          // Create a canvas and draw the entire image (or incorporate offsets if desired).
-          const tempCanvas = document.createElement("canvas");
-          const ctx = tempCanvas.getContext("2d");
-          tempCanvas.width = img.naturalWidth;
-          tempCanvas.height = img.naturalHeight;
-          ctx.drawImage(img, 0, 0);
-
-          const dataUrl = tempCanvas.toDataURL("image/jpeg");
-          const base64WithoutPrefix = dataUrl.replace(/^data:image\/(png|jpeg);base64,/, "");
-
-          const payload = {
-            fileBase64: base64WithoutPrefix,
-            fileName: "cropped_image_" + i + ".jpg"
-            // vectorStoreId: "IfYouHaveAnExistingStoreID"
-          };
-
-          const resp = await fetch("/.netlify/functions/cropAndSend", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(payload)
-          });
-          const result = await resp.json();
-          if (!resp.ok) {
-            throw new Error("cropAndSend failed: " + JSON.stringify(result));
-          }
-          M.toast({ html: `Sent #${i} to vector store: ${result.fileId}` });
-        }
-
-        M.toast({ html: "All images processed!" });
-      } catch (err) {
-        console.error("Crop & Send error:", err);
-        M.toast({ html: "Crop & Send error: " + err.message });
-      }
-    });
   </script>
 </body>
 </html>
