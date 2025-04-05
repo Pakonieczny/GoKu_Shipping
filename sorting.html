@@ -626,27 +626,26 @@
           isDragging = false;
         });
 
-        // Single-click => Zoom in at the click point (with transform-origin: center center)
+        // Single-click => Zoom in at the click point
         box.addEventListener("click", function(ev) {
           var img = box.querySelector("img");
           if (!img) return;
 
+          // Let’s measure the click relative to the *center* of the box in screen coords
           var rect = box.getBoundingClientRect();
-          var localX = ev.clientX - rect.left;
-          var localY = ev.clientY - rect.top;
+          var boxCenterX = rect.left + box.clientWidth / 2;
+          var boxCenterY = rect.top + box.clientHeight / 2;
+
+          // dx, dy is how far the click is from the center of the box in screen coords
+          var dx = ev.clientX - boxCenterX;
+          var dy = ev.clientY - boxCenterY;
 
           // We'll set the scale to 4
           var scale = 4;
 
-          // We want the clicked point to end up at the box's center
-          var halfW = box.clientWidth / 2;
-          var halfH = box.clientHeight / 2;
-
-          // Because transform-origin is center center, we do:
-          // finalX = offsetX + scale*(localX - halfW)
-          // We want finalX = halfW => offsetX = halfW - scale*(localX - halfW)
-          var offsetX = halfW - scale * (localX - halfW);
-          var offsetY = halfH - scale * (localY - halfH);
+          // Because transform-origin is center center, we offset by -scale * that offset
+          var offsetX = -scale * dx;
+          var offsetY = -scale * dy;
 
           img.dataset.scale = scale;
           img.dataset.offsetX = offsetX;
