@@ -7,8 +7,8 @@ exports.handler = async (event, context) => {
     // Parse the payload from the request body
     const payload = JSON.parse(event.body);
 
-    // Override the model to use "gpt-4o-latest"
-    payload.model = "gpt-4o-latest";
+    // Override the model to use "gpt-4o-mini"
+    payload.model = "gpt-4o-mini";
 
     // Retrieve the API key from environment variables
     const apiKey = process.env.OPENAI_API_KEY;
