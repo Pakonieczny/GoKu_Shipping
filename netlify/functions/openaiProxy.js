@@ -7,7 +7,7 @@ exports.handler = async (event, context) => {
     // Parse the payload from the request body
     const payload = JSON.parse(event.body);
 
-    // If "messages" is missing, attempt to construct it from "prompt"
+    // If "messages" is missing but a "prompt" is provided, use it to create a message
     if (!payload.messages) {
       if (payload.prompt) {
         payload.messages = [{ role: "user", content: payload.prompt }];
@@ -16,7 +16,15 @@ exports.handler = async (event, context) => {
       }
     }
 
-    // Override the model to use "gpt-4o-latest"
+    // Remove unsupported keys before forwarding the request
+    if (payload.image) {
+      delete payload.image;
+    }
+    if (payload.prompt) {
+      delete payload.prompt;
+    }
+
+    // Force the model to "gpt-4o-latest"
     payload.model = "gpt-4o-mini";
 
     // Retrieve the API key from environment variables
@@ -28,8 +36,8 @@ exports.handler = async (event, context) => {
     // Define the OpenAI endpoint for chat completions
     const endpoint = "https://api.openai.com/v1/chat/completions";
     console.log("Forwarding request to OpenAI endpoint:", endpoint);
-    
-    // Forward the request to OpenAI's API with the updated payload
+
+    // Forward the request to OpenAI's API with the cleaned payload
     const response = await fetch(endpoint, {
       method: "POST",
       headers: {
