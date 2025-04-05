@@ -8,7 +8,7 @@ exports.handler = async function(event, context) {
       throw new Error("No request body provided");
     }
     const payload = JSON.parse(event.body);
-    const { file, fileName, purpose } = payload;
+    const { file, fileName } = payload;
     const apiKey = process.env.OPENAI_API_KEY;
     if (!apiKey) throw new Error("Missing OPENAI_API_KEY environment variable");
     if (!file || !file.trim()) {
@@ -33,10 +33,13 @@ exports.handler = async function(event, context) {
       contentType = "image/jpeg";
     }
     
+    // Force the purpose to "fine-tune" per the API beta documentation.
+    const purposeValue = "fine-tune";
+    
     // Prepare form-data.
     const form = new FormData();
     form.append("file", buffer, { filename: fileName, contentType });
-    form.append("purpose", purpose);
+    form.append("purpose", purposeValue);
     
     console.log("FormData prepared. Headers:", form.getHeaders());
     
