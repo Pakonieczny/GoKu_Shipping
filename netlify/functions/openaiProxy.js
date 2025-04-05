@@ -6,7 +6,10 @@ exports.handler = async (event, context) => {
 
     // Parse the payload from the request body
     const payload = JSON.parse(event.body);
-    
+
+    // Override the model to use "gpt-4o-latest"
+    payload.model = "gpt-4o-latest";
+
     // Retrieve the API key from environment variables
     const apiKey = process.env.OPENAI_API_KEY;
     if (!apiKey) {
@@ -17,7 +20,7 @@ exports.handler = async (event, context) => {
     const endpoint = "https://api.openai.com/v1/chat/completions";
     console.log("Forwarding request to OpenAI endpoint:", endpoint);
     
-    // Forward the request to OpenAI's API
+    // Forward the request to OpenAI's API with the updated payload
     const response = await fetch(endpoint, {
       method: "POST",
       headers: {
