@@ -351,10 +351,142 @@
       return base64String.replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
     }
 
+    // =========================================
+    // HARD-CODED DEFAULT OFFSETS
+    // =========================================
+    const defaults = {
+      configModal:          {left: 847,  top: 426,  width: 500,  height: 600},
+      configTable:          {left: 24,   top: 24,   width: 485,  height: 9542},
+      connectEtsyBtn:       {left: 20,   top: 20,   width: 140,  height: 36},
+      etsyOrderNumber:      {left: 20,   top: 170,  width: 200,  height: 30},
+      openConfigBtn:        {left: 20,   top: 120,  width: 140,  height: 36},
+      photoGridContainer:   {left: 250,  top: 20,   width: 1200, height: 700},
+      previewCell0:         {left: 0,    top: 0,    width: 110,  height: 110},
+      previewCell1:         {left: 125,  top: 0,    width: 110,  height: 110},
+      previewCell2:         {left: 250,  top: 0,    width: 110,  height: 110},
+      previewCell3:         {left: 375,  top: 0,    width: 110,  height: 110},
+      previewCell4:         {left: 500,  top: 0,    width: 110,  height: 110},
+      previewCell5:         {left: 625,  top: 0,    width: 110,  height: 110},
+      previewCell6:         {left: 750,  top: 0,    width: 110,  height: 110},
+      previewCell7:         {left: 875,  top: 0,    width: 110,  height: 110},
+      previewCell8:         {left: 1000, top: 0,    width: 110,  height: 110},
+      previewCell9:         {left: 0,    top: 200,  width: 110,  height: 110},
+      previewCell10:        {left: 125,  top: 200,  width: 110,  height: 110},
+      previewCell11:        {left: 250,  top: 200,  width: 110,  height: 110},
+      previewCell12:        {left: 375,  top: 200,  width: 110,  height: 110},
+      previewCell13:        {left: 500,  top: 200,  width: 110,  height: 110},
+      previewCell14:        {left: 625,  top: 200,  width: 110,  height: 110},
+      previewCell15:        {left: 750,  top: 200,  width: 110,  height: 110},
+      previewCell16:        {left: 875,  top: 200,  width: 110,  height: 110},
+      previewCell17:        {left: 1000, top: 200,  width: 110,  height: 110},
+      previewCell18:        {left: 0,    top: 400,  width: 110,  height: 110},
+      previewCell19:        {left: 125,  top: 400,  width: 110,  height: 110},
+      previewCell20:        {left: 250,  top: 400,  width: 110,  height: 110},
+      previewCell21:        {left: 375,  top: 400,  width: 110,  height: 110},
+      previewCell22:        {left: 500,  top: 400,  width: 110,  height: 110},
+      previewCell23:        {left: 625,  top: 400,  width: 110,  height: 110},
+      previewCell24:        {left: 750,  top: 400,  width: 110,  height: 110},
+      previewCell25:        {left: 875,  top: 400,  width: 110,  height: 110},
+      previewCell26:        {left: 1000, top: 400,  width: 110,  height: 110},
+      previewCell27:        {left: 0,    top: 600,  width: 110,  height: 110},
+      previewCell28:        {left: 125,  top: 600,  width: 110,  height: 110},
+      previewCell29:        {left: 250,  top: 600,  width: 110,  height: 110},
+      previewCell30:        {left: 375,  top: 600,  width: 110,  height: 110},
+      previewCell31:        {left: 500,  top: 600,  width: 110,  height: 110},
+      previewCell32:        {left: 625,  top: 600,  width: 110,  height: 110},
+      previewCell33:        {left: 750,  top: 600,  width: 110,  height: 110},
+      previewCell34:        {left: 875,  top: 600,  width: 110,  height: 110},
+
+      quantityCell0:        {left: 0,    top: 0,    width: 66,   height: 15},
+      quantityCell1:        {left: 125,  top: 0,    width: 66,   height: 15},
+      quantityCell2:        {left: 250,  top: 0,    width: 66,   height: 15},
+      quantityCell3:        {left: 375,  top: 0,    width: 66,   height: 15},
+      quantityCell4:        {left: 500,  top: 0,    width: 66,   height: 15},
+      quantityCell5:        {left: 625,  top: 0,    width: 66,   height: 15},
+      quantityCell6:        {left: 750,  top: 0,    width: 66,   height: 0},
+      quantityCell7:        {left: 875,  top: 0,    width: 66,   height: 0},
+      quantityCell8:        {left: 1000, top: 0,    width: 66,   height: 0},
+      quantityCell9:        {left: 0,    top: 200,  width: 66,   height: 0},
+      quantityCell10:       {left: 125,  top: 200,  width: 66,   height: 0},
+      quantityCell11:       {left: 250,  top: 200,  width: 66,   height: 0},
+      quantityCell12:       {left: 375,  top: 200,  width: 66,   height: 0},
+      quantityCell13:       {left: 500,  top: 200,  width: 66,   height: 0},
+      quantityCell14:       {left: 625,  top: 200,  width: 66,   height: 0},
+      quantityCell15:       {left: 750,  top: 200,  width: 66,   height: 0},
+      quantityCell16:       {left: 875,  top: 200,  width: 66,   height: 0},
+      quantityCell17:       {left: 1000, top: 200,  width: 66,   height: 0},
+      quantityCell18:       {left: 0,    top: 400,  width: 66,   height: 0},
+      quantityCell19:       {left: 125,  top: 400,  width: 66,   height: 0},
+      quantityCell20:       {left: 250,  top: 400,  width: 66,   height: 0},
+      quantityCell21:       {left: 375,  top: 400,  width: 66,   height: 0},
+      quantityCell22:       {left: 500,  top: 400,  width: 66,   height: 0},
+      quantityCell23:       {left: 625,  top: 400,  width: 66,   height: 0},
+      quantityCell24:       {left: 750,  top: 400,  width: 66,   height: 0},
+      quantityCell25:       {left: 875,  top: 400,  width: 66,   height: 0},
+      quantityCell26:       {left: 1000, top: 400,  width: 66,   height: 0},
+      quantityCell27:       {left: 0,    top: 600,  width: 66,   height: 0},
+      quantityCell28:       {left: 125,  top: 600,  width: 66,   height: 0},
+      quantityCell29:       {left: 250,  top: 600,  width: 66,   height: 0},
+      quantityCell30:       {left: 375,  top: 600,  width: 66,   height: 0},
+      quantityCell31:       {left: 500,  top: 600,  width: 66,   height: 0},
+      quantityCell32:       {left: 625,  top: 600,  width: 66,   height: 0},
+      quantityCell33:       {left: 750,  top: 600,  width: 66,   height: 0},
+      quantityCell34:       {left: 875,  top: 600,  width: 66,   height: 0},
+
+      saveConfigBtn:        {left: 479,  top: 52,   width: 87,   height: 36},
+      testOpenAIBtn:        {left: 20,   top: 70,   width: 140,  height: 36},
+
+      titleCell0:           {left: 0,    top: 0,    width: 66,   height: 15},
+      titleCell1:           {left: 125,  top: 0,    width: 66,   height: 15},
+      titleCell2:           {left: 250,  top: 0,    width: 66,   height: 15},
+      titleCell3:           {left: 375,  top: 0,    width: 66,   height: 15},
+      titleCell4:           {left: 500,  top: 0,    width: 66,   height: 15},
+      titleCell5:           {left: 625,  top: 0,    width: 66,   height: 15},
+      titleCell6:           {left: 750,  top: 0,    width: 66,   height: 0},
+      titleCell7:           {left: 875,  top: 0,    width: 66,   height: 0},
+      titleCell8:           {left: 1000, top: 0,    width: 66,   height: 0},
+      titleCell9:           {left: 0,    top: 200,  width: 66,   height: 0},
+      titleCell10:          {left: 125,  top: 200,  width: 66,   height: 0},
+      titleCell11:          {left: 250,  top: 200,  width: 66,   height: 0},
+      titleCell12:          {left: 375,  top: 200,  width: 66,   height: 0},
+      titleCell13:          {left: 500,  top: 200,  width: 66,   height: 0},
+      titleCell14:          {left: 625,  top: 200,  width: 66,   height: 0},
+      titleCell15:          {left: 750,  top: 200,  width: 66,   height: 0},
+      titleCell16:          {left: 875,  top: 200,  width: 66,   height: 0},
+      titleCell17:          {left: 1000, top: 200,  width: 66,   height: 0},
+      titleCell18:          {left: 0,    top: 400,  width: 66,   height: 0},
+      titleCell19:          {left: 125,  top: 400,  width: 66,   height: 0},
+      titleCell20:          {left: 250,  top: 400,  width: 66,   height: 0},
+      titleCell21:          {left: 375,  top: 400,  width: 66,   height: 0},
+      titleCell22:          {left: 500,  top: 400,  width: 66,   height: 0},
+      titleCell23:          {left: 625,  top: 400,  width: 66,   height: 0},
+      titleCell24:          {left: 750,  top: 400,  width: 66,   height: 0},
+      titleCell25:          {left: 875,  top: 400,  width: 66,   height: 0},
+      titleCell26:          {left: 1000, top: 400,  width: 66,   height: 0},
+      titleCell27:          {left: 0,    top: 600,  width: 66,   height: 0},
+      titleCell28:          {left: 125,  top: 600,  width: 66,   height: 0},
+      titleCell29:          {left: 250,  top: 600,  width: 66,   height: 0},
+      titleCell30:          {left: 375,  top: 600,  width: 66,   height: 0},
+      titleCell31:          {left: 500,  top: 600,  width: 66,   height: 0},
+      titleCell32:          {left: 625,  top: 600,  width: 66,   height: 0},
+      titleCell33:          {left: 750,  top: 600,  width: 66,   height: 0},
+      titleCell34:          {left: 875,  top: 600,  width: 66,   height: 0},
+    };
+
+    // All the IDs we need to handle for config
+    const configIDs = [
+      "connectEtsyBtn","testOpenAIBtn","openConfigBtn","etsyOrderNumber",
+      "photoGridContainer","configModal","configTable","saveConfigBtn",
+      // all 35 sets
+      ...[...Array(35).keys()].flatMap(i => [
+        `previewCell${i}`, `quantityCell${i}`, `titleCell${i}`
+      ])
+    ];
+
     document.addEventListener("DOMContentLoaded", function() {
       M.AutoInit();
 
-      // Fade in
+      // Fade in after loading offsets
       setTimeout(() => {
         loadPositions();
         document.body.style.opacity = 1;
@@ -447,7 +579,7 @@
           img.dataset.scale = currentScale;
           img.dataset.offsetX = offX;
           img.dataset.offsetY = offY;
-          img.style.transform = `translate(${offX}px, ${offY}px) scale(${currentScale})`;
+          img.style.transform = \translate(\${offX}px, \${offY}px) scale(\${currentScale})\;
         });
         box.addEventListener("mousedown", ev => {
           const img = box.querySelector("img");
@@ -470,37 +602,34 @@
           offX += dx; offY += dy;
           img.dataset.offsetX = offX;
           img.dataset.offsetY = offY;
-          img.style.transform = `translate(${offX}px, ${offY}px) scale(${scaleNow})`;
+          img.style.transform = \translate(\${offX}px, \${offY}px) scale(\${scaleNow})\;
           lastX = ev.clientX; lastY = ev.clientY;
         });
         box.addEventListener("mouseup", () => { isDragging = false; });
         box.addEventListener("mouseleave", () => { isDragging = false; });
 
-        // === NEW: Single-click => Zoom in at the click point ===
+        // Single-click => Zoom in at the click point
         box.addEventListener("click", ev => {
           const img = box.querySelector("img");
-          if (!img) return; // no image => do nothing
+          if (!img) return;
 
-          // Compute local click coords in the box
           const rect = box.getBoundingClientRect();
           const localX = ev.clientX - rect.left;
           const localY = ev.clientY - rect.top;
 
           // We'll set the scale to 4
           const scale = 4;
-          // The center of the box is (boxWidth/2, boxHeight/2)
           const halfW = box.clientWidth / 2; // 66/2 = 33
           const halfH = box.clientHeight / 2; // 66/2 = 33
 
-          // We want the clicked pixel to end up at the center => offset = center - (clickedCoord * scale)
+          // offset = center - (clickedCoord * scale)
           const offsetX = halfW - (localX * scale);
           const offsetY = halfH - (localY * scale);
 
-          // Store them in the dataset
           img.dataset.scale = scale;
           img.dataset.offsetX = offsetX;
           img.dataset.offsetY = offsetY;
-          img.style.transform = `translate(${offsetX}px, ${offsetY}px) scale(${scale})`;
+          img.style.transform = \translate(\${offsetX}px, \${offsetY}px) scale(\${scale})\;
         });
       });
     });
@@ -513,7 +642,7 @@
         let combinedItems = [];
 
         for (let ord of orderNumbers) {
-          const url = `/.netlify/functions/etsyOrderProxy?orderId=${encodeURIComponent(ord)}`;
+          const url = \/.netlify/functions/etsyOrderProxy?orderId=\${encodeURIComponent(ord)}\;
           const resp = await fetch(url, { headers: { "access-token": token } });
           if (!resp.ok) {
             console.warn("Order fetch failed for " + ord + ", status=" + resp.status);
@@ -537,17 +666,17 @@
     async function fillPreviewBoxes(items) {
       // Clear existing
       for (let i = 0; i < 35; i++) {
-        document.getElementById(`previewCell${i}`).innerHTML = "Empty";
-        document.getElementById(`quantityCell${i}`).textContent = "";
-        document.getElementById(`titleCell${i}`).textContent = "";
+        document.getElementById(\previewCell\${i}\).innerHTML = "Empty";
+        document.getElementById(\quantityCell\${i}\).textContent = "";
+        document.getElementById(\titleCell\${i}\).textContent = "";
       }
       // Fill up to 35
       const limitedItems = items.slice(0, 35);
       for (let i = 0; i < limitedItems.length; i++) {
         const { listing_id, quantity, title } = limitedItems[i];
-        const cell = document.getElementById(`previewCell${i}`);
-        const qtyBox = document.getElementById(`quantityCell${i}`);
-        const titleBox = document.getElementById(`titleCell${i}`);
+        const cell = document.getElementById(\previewCell\${i}\);
+        const qtyBox = document.getElementById(\quantityCell\${i}\);
+        const titleBox = document.getElementById(\titleCell\${i});
         cell.innerHTML = "Loading...";
         qtyBox.textContent = "Qty: " + (quantity || 0);
 
@@ -557,11 +686,11 @@
         try {
           const imageData = await fetchListingImages(listing_id);
           if (imageData && imageData.length > 0) {
-            cell.innerHTML = `<img src="${imageData[0].url_fullxfull}"
-                                  alt="Listing ${listing_id}"
+            cell.innerHTML = \<img src="\${imageData[0].url_fullxfull}"
+                                  alt="Listing \${listing_id}"
                                   data-scale="1"
                                   data-offsetX="0"
-                                  data-offsetY="0" />`;
+                                  data-offsetY="0" />\;
           } else {
             cell.innerHTML = "No Img";
           }
@@ -574,7 +703,7 @@
 
     async function fetchListingImages(listingId) {
       const token = localStorage.getItem("access_token") || "";
-      const resp = await fetch(`/.netlify/functions/etsyImages?listingId=${listingId}`, {
+      const resp = await fetch(\/.netlify/functions/etsyImages?listingId=\${listingId}\, {
         headers: { "access-token": token }
       });
       if (!resp.ok) {
@@ -588,26 +717,18 @@
     /*******************************************************
      * The config modal for absolute positions
      *******************************************************/
-    const configIDs = [
-      "connectEtsyBtn","testOpenAIBtn","openConfigBtn","etsyOrderNumber",
-      "photoGridContainer","configModal","configTable","saveConfigBtn",
-      // all 35 sets
-      ...[...Array(35).keys()].flatMap(i => [
-        `previewCell${i}`, `quantityCell${i}`, `titleCell${i}`
-      ])
-    ];
-
-    const defaults = {}; 
-
     function loadPositions() {
       configIDs.forEach(id => {
         const el = document.getElementById(id);
         if (!el) return;
+
+        // If localStorage is missing, fall back to the hardcoded defaults
         const def = defaults[id] || { left: 0, top: 0, width: 0, height: 0 };
-        let left = localStorage.getItem(`pos-${id}-left`);
-        let top  = localStorage.getItem(`pos-${id}-top`);
-        let w    = localStorage.getItem(`pos-${id}-width`);
-        let h    = localStorage.getItem(`pos-${id}-height`);
+
+        let left = localStorage.getItem(\pos-\${id}-left\);
+        let top  = localStorage.getItem(\pos-\${id}-top\);
+        let w    = localStorage.getItem(\pos-\${id}-width\);
+        let h    = localStorage.getItem(\pos-\${id}-height\);
 
         if (left === null) left = def.left;
         if (top === null)  top  = def.top;
@@ -615,10 +736,10 @@
         if (h === null)    h    = def.height;
 
         el.style.position = "absolute";
-        if (+left)  el.style.left   = left + "px";
-        if (+top)   el.style.top    = top  + "px";
-        if (+w)     el.style.width  = w    + "px";
-        if (+h)     el.style.height = h    + "px";
+        el.style.left   = left + "px";
+        el.style.top    = top  + "px";
+        el.style.width  = w    + "px";
+        el.style.height = h    + "px";
       });
     }
 
@@ -667,10 +788,10 @@
         const el = document.getElementById(id);
         if (!el) return;
         const cs = window.getComputedStyle(el);
-        localStorage.setItem(`pos-${id}-left`, parseInt(cs.left) || 0);
-        localStorage.setItem(`pos-${id}-top`, parseInt(cs.top) || 0);
-        localStorage.setItem(`pos-${id}-width`, parseInt(cs.width) || 0);
-        localStorage.setItem(`pos-${id}-height`, parseInt(cs.height) || 0);
+        localStorage.setItem(\`pos-\${id}-left\`, parseInt(cs.left) || 0);
+        localStorage.setItem(\`pos-\${id}-top\`, parseInt(cs.top) || 0);
+        localStorage.setItem(\`pos-\${id}-width\`, parseInt(cs.width) || 0);
+        localStorage.setItem(\`pos-\${id}-height\`, parseInt(cs.height) || 0);
       });
       M.toast({ html: "Positions saved!" });
     }
