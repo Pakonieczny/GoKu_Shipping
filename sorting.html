@@ -20,16 +20,14 @@
       transition: opacity 0s;
     }
 
-    /* Four main buttons:
+    /* Three main buttons:
        1) Connect to Etsy
        2) Test OpenAI
        3) Open Config
-       4) Crop & Send
     */
     #connectEtsyBtn,
     #testOpenAIBtn,
-    #openConfigBtn,
-    #cropAndSendBtn {
+    #openConfigBtn {
       position: absolute;
       left: 20px;
       width: 140px;
@@ -44,16 +42,12 @@
     #openConfigBtn {
       top: 120px;
     }
-    /* Crop & Send button */
-    #cropAndSendBtn {
-      top: 170px;
-    }
 
     /* The "Etsy Order Number" can hold multiple comma-delimited orders */
     #etsyOrderNumber {
       position: absolute;
       left: 20px;
-      top: 220px;
+      top: 170px;
       width: 300px;
       height: 30px;
       border: 1px solid #999;
@@ -137,7 +131,6 @@
   <button id="connectEtsyBtn" class="btn waves-effect waves-light">Connect to Etsy</button>
   <button id="testOpenAIBtn" class="btn waves-effect waves-light">Test OpenAI</button>
   <button id="openConfigBtn" class="btn waves-effect waves-light">Open Config</button>
-  <button id="cropAndSendBtn" class="btn waves-effect waves-light">Crop & Send</button>
 
   <!-- Etsy Order Number input -->
   <input type="text" id="etsyOrderNumber" placeholder="Comma-delimited Etsy Order Numbers" />
@@ -481,9 +474,8 @@
     };
 
     const configIDs = [
-      "connectEtsyBtn","testOpenAIBtn","openConfigBtn","cropAndSendBtn",
-      "etsyOrderNumber","photoGridContainer","configModal","configTable","saveConfigBtn",
-      // Add each cell’s ID for 0..34
+      "connectEtsyBtn","testOpenAIBtn","openConfigBtn","etsyOrderNumber",
+      "photoGridContainer","configModal","configTable","saveConfigBtn",
       ...[...Array(35).keys()].flatMap(function(i) {
         return ["previewCell" + i, "quantityCell" + i, "titleCell" + i];
       })
@@ -550,88 +542,37 @@
         }
       });
 
-      // Crop & Send
-      document.getElementById("cropAndSendBtn").addEventListener("click", async function() {
-        try {
-          M.toast({ html: "Starting crop & send..." });
-          const allBoxes = document.querySelectorAll(".preview-box");
-          for (let i = 0; i < allBoxes.length; i++) {
-            const box = allBoxes[i];
-            const img = box.querySelector("img");
-            if (!img) continue; // skip empty cells
-
-            M.toast({ html: "Cropping image #" + i + "..." });
-            // Create a canvas and draw the full image. 
-            // (If you want to incorporate panning/zoom offsets, you’ll need a more advanced approach.)
-            const canvas = document.createElement("canvas");
-            const ctx = canvas.getContext("2d");
-
-            // For a naive approach, just use the natural image size:
-            canvas.width = img.naturalWidth;
-            canvas.height = img.naturalHeight;
-            ctx.drawImage(img, 0, 0);
-
-            // Convert to base64
-            const base64Data = canvas.toDataURL("image/jpeg");
-            // Remove data prefix => "data:image/jpeg;base64,"
-            const pureBase64 = base64Data.replace(/^data:image\/(png|jpeg);base64,/, "");
-
-            // Prepare payload for netlify function
-            const payload = {
-              fileBase64: pureBase64,
-              fileName: "cropped_image_" + i + ".jpg"
-            };
-
-            // Send to your cropAndSend netlify function
-            const resp = await fetch("/.netlify/functions/cropAndSend", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify(payload)
-            });
-            const result = await resp.json();
-            if (!resp.ok) {
-              throw new Error("cropAndSend error: " + JSON.stringify(result));
-            }
-            M.toast({ html: "Sent image #" + i + " to OpenAI successfully!" });
-          }
-          M.toast({ html: "All done cropping & sending." });
-        } catch (err) {
-          console.error("Crop & Send error:", err);
-          M.toast({ html: "Crop & Send error: " + err.message });
-        }
-      });
-
       // Loading multiple orders
-      const etsyOrderInput = document.getElementById("etsyOrderNumber");
+      var etsyOrderInput = document.getElementById("etsyOrderNumber");
       etsyOrderInput.addEventListener("keydown", async function(e) {
         if (e.key === "Enter") {
-          const inputVal = etsyOrderInput.value.trim();
+          var inputVal = etsyOrderInput.value.trim();
           if (!inputVal) return;
-          let orderNumbers = inputVal.split(",")
-            .map(x => x.trim())
-            .filter(x => x);
+          var orderNumbers = inputVal.split(",")
+            .map(function(x){return x.trim();})
+            .filter(function(x){return x;});
           orderNumbers = orderNumbers.slice(0, 50);
           await loadBatchEtsyOrders(orderNumbers);
         }
       });
 
       // ============ Wheel zoom & drag & Single-click ============ 
-      const previewBoxes = document.querySelectorAll(".preview-box");
+      var previewBoxes = document.querySelectorAll(".preview-box");
       previewBoxes.forEach(function(box) {
-        let isDragging = false;
-        let isMouseDown = false;
-        let dragStartX = 0, dragStartY = 0;
-        let lastX = 0, lastY = 0;
-        const dragThreshold = 3; // if we move more than 3px, it's a drag
+        var isDragging = false;
+        var isMouseDown = false;
+        var dragStartX = 0, dragStartY = 0;
+        var lastX = 0, lastY = 0;
+        var dragThreshold = 3; // if we move more than 3px, we'll consider it a drag
 
         // Wheel => Zoom
         box.addEventListener("wheel", function(ev) {
-          const img = box.querySelector("img");
+          var img = box.querySelector("img");
           if (!img) return;
           ev.preventDefault();
-          let currentScale = parseFloat(img.dataset.scale) || 1;
-          let offX = parseFloat(img.dataset.offsetX) || 0;
-          let offY = parseFloat(img.dataset.offsetY) || 0;
+          var currentScale = parseFloat(img.dataset.scale) || 1;
+          var offX = parseFloat(img.dataset.offsetX) || 0;
+          var offY = parseFloat(img.dataset.offsetY) || 0;
           if (ev.deltaY < 0) {
             currentScale *= 1.1;
           } else {
@@ -648,15 +589,15 @@
           img.dataset.scale = currentScale;
           img.dataset.offsetX = offX;
           img.dataset.offsetY = offY;
-          img.style.transform = `translate(${offX}px, ${offY}px) scale(${currentScale})`;
+          img.style.transform = "translate(" + offX + "px, " + offY + "px) scale(" + currentScale + ")";
         });
 
         // Mouse down => check drag
         box.addEventListener("mousedown", function(ev) {
-          const img = box.querySelector("img");
+          var img = box.querySelector("img");
           if (!img) return;
-          const scaleNow = parseFloat(img.dataset.scale) || 1;
-          if (scaleNow <= 1) return; // no panning at scale=1?
+          var scaleNow = parseFloat(img.dataset.scale) || 1;
+          if (scaleNow <= 1) return;
           ev.preventDefault();
           isMouseDown = true;
           isDragging = false;
@@ -670,30 +611,30 @@
         box.addEventListener("mousemove", function(ev) {
           if (!isMouseDown) return;
           ev.preventDefault();
-          const dxAll = Math.abs(ev.clientX - dragStartX);
-          const dyAll = Math.abs(ev.clientY - dragStartY);
-          // If we've moved beyond threshold, it's a drag
+          var dxAll = Math.abs(ev.clientX - dragStartX);
+          var dyAll = Math.abs(ev.clientY - dragStartY);
+          // If we've moved beyond threshold, call it a drag
           if (dxAll > dragThreshold || dyAll > dragThreshold) {
             isDragging = true;
           }
 
-          const img = box.querySelector("img");
+          var img = box.querySelector("img");
           if (!img) return;
-          const scaleNow = parseFloat(img.dataset.scale) || 1;
-          let offX = parseFloat(img.dataset.offsetX) || 0;
-          let offY = parseFloat(img.dataset.offsetY) || 0;
-          const dx = ev.clientX - lastX;
-          const dy = ev.clientY - lastY;
+          var scaleNow = parseFloat(img.dataset.scale) || 1;
+          var offX = parseFloat(img.dataset.offsetX) || 0;
+          var offY = parseFloat(img.dataset.offsetY) || 0;
+          var dx = ev.clientX - lastX;
+          var dy = ev.clientY - lastY;
           offX += dx;
           offY += dy;
           img.dataset.offsetX = offX;
           img.dataset.offsetY = offY;
-          img.style.transform = `translate(${offX}px, ${offY}px) scale(${scaleNow})`;
+          img.style.transform = "translate(" + offX + "px, " + offY + "px) scale(" + scaleNow + ")";
           lastX = ev.clientX;
           lastY = ev.clientY;
         });
 
-        // Mouse up => end drag
+        // Mouse up => end of drag
         box.addEventListener("mouseup", function() {
           isMouseDown = false;
         });
@@ -703,29 +644,33 @@
 
         // Single-click => Zoom, but only if not dragging
         box.addEventListener("click", function(ev) {
+          // If user was dragging, skip the single-click zoom
           if (isDragging) {
-            // reset for next interaction
+            // reset for the next interaction
             isDragging = false;
             return;
           }
-          const img = box.querySelector("img");
+
+          var img = box.querySelector("img");
           if (!img) return;
 
-          const rect = box.getBoundingClientRect();
-          const boxCenterX = rect.left + box.clientWidth / 2;
-          const boxCenterY = rect.top  + box.clientHeight / 2;
-          const dx = ev.clientX - boxCenterX;
-          const dy = ev.clientY - boxCenterY;
+          // measure offset from the box center
+          var rect = box.getBoundingClientRect();
+          var boxCenterX = rect.left + box.clientWidth / 2;
+          var boxCenterY = rect.top  + box.clientHeight / 2;
 
-          const scale = 4;
-          const fudgeY = 10; // optional vertical shift
-          const offsetX = -scale * dx;
-          const offsetY = -scale * dy + fudgeY;
+          var dx = ev.clientX - boxCenterX;
+          var dy = ev.clientY - boxCenterY;
+
+          var scale = 4;
+          var fudgeY = 10; // optional vertical shift
+          var offsetX = -scale * dx;
+          var offsetY = -scale * dy + fudgeY;
 
           img.dataset.scale = scale;
           img.dataset.offsetX = offsetX;
           img.dataset.offsetY = offsetY;
-          img.style.transform = `translate(${offsetX}px, ${offsetY}px) scale(${scale})`;
+          img.style.transform = "translate(" + offsetX + "px, " + offsetY + "px) scale(" + scale + ")";
         });
       });
     });
@@ -733,18 +678,18 @@
     async function loadBatchEtsyOrders(orderNumbers) {
       try {
         M.toast({ html: "Loading " + orderNumbers.length + " order(s)..." });
-        const token = localStorage.getItem("access_token") || "";
-        const combinedItems = [];
+        var token = localStorage.getItem("access_token") || "";
+        var combinedItems = [];
 
-        for (let i = 0; i < orderNumbers.length; i++) {
-          const ord = orderNumbers[i];
-          const url = "/.netlify/functions/etsyOrderProxy?orderId=" + encodeURIComponent(ord);
-          const resp = await fetch(url, { headers: { "access-token": token } });
+        for (var i = 0; i < orderNumbers.length; i++) {
+          var ord = orderNumbers[i];
+          var url = "/.netlify/functions/etsyOrderProxy?orderId=" + encodeURIComponent(ord);
+          var resp = await fetch(url, { headers: { "access-token": token } });
           if (!resp.ok) {
             console.warn("Order fetch failed for " + ord + ", status=" + resp.status);
             continue;
           }
-          const data = await resp.json();
+          var data = await resp.json();
           if (data.transactions && Array.isArray(data.transactions)) {
             combinedItems.push.apply(combinedItems, data.transactions);
           } else {
@@ -759,41 +704,35 @@
     }
 
     async function fillPreviewBoxes(items) {
-      for (let i = 0; i < 35; i++) {
+      for (var i = 0; i < 35; i++) {
         document.getElementById("previewCell" + i).innerHTML = "Empty";
         document.getElementById("quantityCell" + i).textContent = "";
         document.getElementById("titleCell" + i).textContent = "";
       }
-      const limitedItems = items.slice(0, 35);
-      for (let j = 0; j < limitedItems.length; j++) {
-        const listingId = limitedItems[j].listing_id;
-        const quantity = limitedItems[j].quantity;
-        const title = limitedItems[j].title || "";
+      var limitedItems = items.slice(0, 35);
+      for (var j = 0; j < limitedItems.length; j++) {
+        var listingId = limitedItems[j].listing_id;
+        var quantity = limitedItems[j].quantity;
+        var title = limitedItems[j].title || "";
 
-        const cell = document.getElementById("previewCell" + j);
-        const qtyBox = document.getElementById("quantityCell" + j);
-        const titleBox = document.getElementById("titleCell" + j);
+        var cell = document.getElementById("previewCell" + j);
+        var qtyBox = document.getElementById("quantityCell" + j);
+        var titleBox = document.getElementById("titleCell" + j);
 
         cell.innerHTML = "Loading...";
         qtyBox.textContent = "Qty: " + (quantity || 0);
-        const firstFour = title.split(" ").slice(0, 4).join(" ");
+
+        var firstFour = title.split(" ").slice(0, 4).join(" ");
         titleBox.textContent = firstFour;
 
         try {
-          const imageData = await fetchListingImages(listingId);
+          var imageData = await fetchListingImages(listingId);
           if (imageData && imageData.length > 0) {
-            // If you need canvas .toDataURL() later, add:
-            // crossOrigin="anonymous" and ensure the host has proper CORS
-            cell.innerHTML = `
-              <img 
-                src="${imageData[0].url_fullxfull}" 
-                alt="Listing ${listingId}" 
-                data-scale="1" 
-                data-offsetX="0" 
-                data-offsetY="0"
-                crossorigin="anonymous"
-              />
-            `;
+            cell.innerHTML = "<img src=\"" + imageData[0].url_fullxfull + "\" "
+              + "alt=\"Listing " + listingId + "\" "
+              + "data-scale=\"1\" "
+              + "data-offsetX=\"0\" "
+              + "data-offsetY=\"0\" />";
           } else {
             cell.innerHTML = "No Img";
           }
@@ -805,28 +744,28 @@
     }
 
     async function fetchListingImages(listingId) {
-      const token = localStorage.getItem("access_token") || "";
-      const resp = await fetch("/.netlify/functions/etsyImages?listingId=" + listingId, {
+      var token = localStorage.getItem("access_token") || "";
+      var resp = await fetch("/.netlify/functions/etsyImages?listingId=" + listingId, {
         headers: { "access-token": token }
       });
       if (!resp.ok) {
         console.warn("Image fetch HTTP error:", resp.status);
         return [];
       }
-      const data = await resp.json();
+      var data = await resp.json();
       return data.results || [];
     }
 
     function loadPositions() {
       configIDs.forEach(function(id) {
-        const el = document.getElementById(id);
+        var el = document.getElementById(id);
         if (!el) return;
 
-        const def = defaults[id] || { left: 0, top: 0, width: 0, height: 0 };
-        let left = localStorage.getItem("pos-" + id + "-left");
-        let top  = localStorage.getItem("pos-" + id + "-top");
-        let w    = localStorage.getItem("pos-" + id + "-width");
-        let h    = localStorage.getItem("pos-" + id + "-height");
+        var def = defaults[id] || { left: 0, top: 0, width: 0, height: 0 };
+        var left = localStorage.getItem("pos-" + id + "-left");
+        var top  = localStorage.getItem("pos-" + id + "-top");
+        var w    = localStorage.getItem("pos-" + id + "-width");
+        var h    = localStorage.getItem("pos-" + id + "-height");
 
         if (left === null)  left = def.left;
         if (top === null)   top  = def.top;
@@ -842,46 +781,46 @@
     }
 
     function populateConfigTable() {
-      const tbody = document.querySelector("#configTable tbody");
+      var tbody = document.querySelector("#configTable tbody");
       tbody.innerHTML = "";
       configIDs.forEach(function(id) {
-        const el = document.getElementById(id);
+        var el = document.getElementById(id);
         if (!el) return;
-        const cs = window.getComputedStyle(el);
-        const leftVal = parseInt(cs.left, 10) || 0;
-        const topVal = parseInt(cs.top, 10) || 0;
-        const widthVal = parseInt(cs.width, 10) || 0;
-        const heightVal = parseInt(cs.height, 10) || 0;
-        const row = document.createElement("tr");
+        var cs = window.getComputedStyle(el);
+        var leftVal = parseInt(cs.left, 10) || 0;
+        var topVal = parseInt(cs.top, 10) || 0;
+        var widthVal = parseInt(cs.width, 10) || 0;
+        var heightVal = parseInt(cs.height, 10) || 0;
+        var row = document.createElement("tr");
         row.innerHTML =
-          `<td>${id}</td>
-           <td><input type="number" value="${leftVal}" data-id="${id}" class="left-input" /></td>
-           <td><input type="number" value="${topVal}" data-id="${id}" class="top-input" /></td>
-           <td><input type="number" value="${widthVal}" data-id="${id}" class="width-input" /></td>
-           <td><input type="number" value="${heightVal}" data-id="${id}" class="height-input" /></td>`;
+          "<td>" + id + "</td>" +
+          "<td><input type=\"number\" value=\"" + leftVal + "\" data-id=\"" + id + "\" class=\"left-input\" /></td>" +
+          "<td><input type=\"number\" value=\"" + topVal + "\" data-id=\"" + id + "\" class=\"top-input\" /></td>" +
+          "<td><input type=\"number\" value=\"" + widthVal + "\" data-id=\"" + id + "\" class=\"width-input\" /></td>" +
+          "<td><input type=\"number\" value=\"" + heightVal + "\" data-id=\"" + id + "\" class=\"height-input\" /></td>";
 
         tbody.appendChild(row);
 
         row.querySelector(".left-input").addEventListener("input", function() {
-          const target = document.getElementById(this.dataset.id);
+          var target = document.getElementById(this.dataset.id);
           if (target) {
             target.style.left = parseInt(this.value, 10) + "px";
           }
         });
         row.querySelector(".top-input").addEventListener("input", function() {
-          const target = document.getElementById(this.dataset.id);
+          var target = document.getElementById(this.dataset.id);
           if (target) {
             target.style.top = parseInt(this.value, 10) + "px";
           }
         });
         row.querySelector(".width-input").addEventListener("input", function() {
-          const target = document.getElementById(this.dataset.id);
+          var target = document.getElementById(this.dataset.id);
           if (target) {
             target.style.width = parseInt(this.value, 10) + "px";
           }
         });
         row.querySelector(".height-input").addEventListener("input", function() {
-          const target = document.getElementById(this.dataset.id);
+          var target = document.getElementById(this.dataset.id);
           if (target) {
             target.style.height = parseInt(this.value, 10) + "px";
           }
@@ -891,9 +830,9 @@
 
     function saveConfiguration() {
       configIDs.forEach(function(id) {
-        const el = document.getElementById(id);
+        var el = document.getElementById(id);
         if (!el) return;
-        const cs = window.getComputedStyle(el);
+        var cs = window.getComputedStyle(el);
         localStorage.setItem("pos-" + id + "-left", parseInt(cs.left, 10) || 0);
         localStorage.setItem("pos-" + id + "-top", parseInt(cs.top, 10) || 0);
         localStorage.setItem("pos-" + id + "-width", parseInt(cs.width, 10) || 0);
