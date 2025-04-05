@@ -33,9 +33,15 @@
       width: 140px;
       height: 36px;
     }
-    #connectEtsyBtn { top: 20px; }
-    #testOpenAIBtn { top: 70px; }
-    #openConfigBtn { top: 120px; }
+    #connectEtsyBtn {
+      top: 20px;
+    }
+    #testOpenAIBtn {
+      top: 70px;
+    }
+    #openConfigBtn {
+      top: 120px;
+    }
 
     /* The "Etsy Order Number" can hold multiple comma-delimited orders */
     #etsyOrderNumber {
@@ -128,13 +134,17 @@
       max-height: none !important;
       overflow-y: auto !important;
     }
-    #configTable thead tr th { font-size: 0.9em; }
-    #configTable tbody tr td { font-size: 0.8em; }
+    #configTable thead tr th {
+      font-size: 0.9em;
+    }
+    #configTable tbody tr td {
+      font-size: 0.8em;
+    }
     #configTable .left-input,
     #configTable .top-input,
     #configTable .width-input,
     #configTable .height-input {
-      width: 80px !important;
+      width: 80px !important; /* 2x wider */
     }
   </style>
 </head>
@@ -156,7 +166,7 @@
 
   <!-- 35 Boxes -->
   <div id="photoGridContainer">
-    <!-- Static elements for 35 preview boxes with associated labels -->
+    <!-- For i=0..34 => previewCellX, quantityCellX, titleCellX -->
     <div class="preview-box" id="previewCell0">Empty</div>
     <div class="quantity-label" id="quantityCell0"></div>
     <div class="title-label" id="titleCell0"></div>
@@ -492,8 +502,8 @@
     };
 
     const configIDs = [
-      "connectEtsyBtn", "testOpenAIBtn", "openConfigBtn", "etsyOrderNumber",
-      "photoGridContainer", "configModal", "configTable", "saveConfigBtn",
+      "connectEtsyBtn","testOpenAIBtn","openConfigBtn","etsyOrderNumber",
+      "photoGridContainer","configModal","configTable","saveConfigBtn",
       ...[...Array(35).keys()].flatMap(function(i) {
         return ["previewCell" + i, "quantityCell" + i, "titleCell" + i];
       })
@@ -842,14 +852,13 @@
         userImageElem.src = imageData;
         userImageElem.style.display = "inline-block";
         M.toast({ html: "User Image captured." });
-        // Analyze user image (if needed) or directly use it for comparison
-        // Here we assume we want to compare directly
+        // Directly compare User Image with grid images
         await compareImagesBatch(imageData);
       };
       reader.readAsDataURL(file);
     });
 
-    // Batch process to compare each preview image against the User Image.
+    // Batch process: Compare the User Image with all grid images
     async function compareImagesBatch(userImage) {
       let bestScore = -Infinity;
       let bestIndex = -1;
@@ -878,14 +887,15 @@
 
     // Function to compare two images by sending a payload to the openaiProxy.
     async function compareImages(userImage, gridImage, cellIndex) {
-      // Build the payload following the vision input guidelines.
+      // Build the payload following vision input guidelines.
+      // Updated prompt instructs the AI to return ONLY a numeric similarity score.
       const payload = {
         model: "gpt-4o-mini",
         messages: [
           {
             role: "user",
             content: [
-              { type: "text", text: "Compare these two images and provide a similarity score between 0 and 1." },
+              { type: "text", text: "Compare these two images and return ONLY a numeric similarity score between 0 and 1, with no additional text." },
               { type: "image_url", image_url: { url: userImage, detail: "high" } },
               { type: "image_url", image_url: { url: gridImage, detail: "high" } }
             ]
@@ -902,11 +912,11 @@
         });
         const data = await response.json();
         console.log("Response for cell " + cellIndex + ":", data);
-        // Assume the API returns the similarity score in the message content.
-        const scoreText = data.choices[0].message.content;
+        // Extract and trim the similarity score from the response.
+        const scoreText = data.choices[0].message.content.trim();
         const score = parseFloat(scoreText);
         if (isNaN(score)) {
-          M.toast({ html: "Cell " + cellIndex + ": Invalid score received" });
+          M.toast({ html: "Cell " + cellIndex + ": Invalid score received (" + scoreText + ")" });
           return 0;
         }
         M.toast({ html: "Cell " + cellIndex + ": Score " + score });
