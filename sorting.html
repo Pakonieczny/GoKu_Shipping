@@ -2,7 +2,7 @@
 <html>
 <head>
   <meta charset="UTF-8" />
-  <title>Sorting - Single-Click Zoom</title>
+  <title>Sorting - Single-Click Zoom & Vector Store Upload</title>
 
   <!-- Materialize CSS -->
   <link
@@ -20,14 +20,16 @@
       transition: opacity 0s;
     }
 
-    /* Three main buttons:
+    /* Four main buttons:
        1) Connect to Etsy
        2) Test OpenAI
        3) Open Config
+       4) Upload Cropped Image (new)
     */
     #connectEtsyBtn,
     #testOpenAIBtn,
-    #openConfigBtn {
+    #openConfigBtn,
+    #uploadVectorBtn {
       position: absolute;
       left: 20px;
       width: 140px;
@@ -42,12 +44,15 @@
     #openConfigBtn {
       top: 120px;
     }
+    #uploadVectorBtn {
+      top: 170px;
+    }
 
-    /* The "Etsy Order Number" can hold multiple comma-delimited orders */
+    /* The "Etsy Order Number" input */
     #etsyOrderNumber {
       position: absolute;
       left: 20px;
-      top: 170px;
+      top: 220px;
       width: 300px;
       height: 30px;
       border: 1px solid #999;
@@ -79,6 +84,10 @@
       user-select: none;
       font-size: 0.7em;
       text-align: center;
+      cursor: pointer;
+    }
+    .preview-box.selected {
+      border: 2px solid #f00;
     }
     .preview-box img {
       width: 100%;
@@ -121,7 +130,7 @@
     #configTable .top-input,
     #configTable .width-input,
     #configTable .height-input {
-      width: 80px !important; /* 2x wider */
+      width: 80px !important;
     }
   </style>
 </head>
@@ -131,13 +140,13 @@
   <button id="connectEtsyBtn" class="btn waves-effect waves-light">Connect to Etsy</button>
   <button id="testOpenAIBtn" class="btn waves-effect waves-light">Test OpenAI</button>
   <button id="openConfigBtn" class="btn waves-effect waves-light">Open Config</button>
+  <button id="uploadVectorBtn" class="btn waves-effect waves-light">Upload Cropped Image</button>
 
   <!-- Etsy Order Number input -->
   <input type="text" id="etsyOrderNumber" placeholder="Comma-delimited Etsy Order Numbers" />
 
   <!-- 35 Boxes -->
   <div id="photoGridContainer">
-    <!-- For i=0..34 => previewCellX, quantityCellX, titleCellX -->
     <div class="preview-box" id="previewCell0">Empty</div>
     <div class="quantity-label" id="quantityCell0"></div>
     <div class="title-label" id="titleCell0"></div>
@@ -309,6 +318,8 @@
   ></script>
 
   <script>
+    let selectedPreviewBox = null; // Global variable to store the selected preview box
+
     (function(){
       const urlParams = new URLSearchParams(window.location.search);
       const accessToken = urlParams.get("access_token");
@@ -325,8 +336,7 @@
             window.location.href =
               "/.netlify/functions/exchangeToken?code=" +
               encodeURIComponent(authCode) +
-              "&code_verifier=" +
-              encodeURIComponent(storedCodeVerifier);
+              "&code_verifier=" + encodeURIComponent(storedCodeVerifier);
           } else {
             console.error("No code verifier found in localStorage.");
           }
@@ -352,14 +362,15 @@
     }
 
     // =========================================
-    // HARD-CODED DEFAULT OFFSETS
+    // HARD-CODED DEFAULT OFFSETS (unchanged from original)
     // =========================================
     const defaults = {
       configModal:          {left: 847,  top: 426,  width: 500,  height: 600},
       configTable:          {left: 24,   top: 24,   width: 485,  height: 9542},
       connectEtsyBtn:       {left: 20,   top: 20,   width: 140,  height: 36},
-      etsyOrderNumber:      {left: 20,   top: 170,  width: 200,  height: 30},
+      etsyOrderNumber:      {left: 20,   top: 220,  width: 200,  height: 30},
       openConfigBtn:        {left: 20,   top: 120,  width: 140,  height: 36},
+      uploadVectorBtn:      {left: 20,   top: 170,  width: 140,  height: 36},
       photoGridContainer:   {left: 250,  top: 20,   width: 1200, height: 700},
       previewCell0:         {left: 0,    top: 0,    width: 66,   height: 66},
       previewCell1:         {left: 125,  top: 0,    width: 66,   height: 66},
@@ -396,86 +407,83 @@
       previewCell32:        {left: 625,  top: 600,  width: 66,   height: 66},
       previewCell33:        {left: 750,  top: 600,  width: 66,   height: 66},
       previewCell34:        {left: 875,  top: 600,  width: 66,   height: 66},
-
       quantityCell0:        {left: 0,    top: 0,    width: 66,   height: 15},
       quantityCell1:        {left: 125,  top: 0,    width: 66,   height: 15},
       quantityCell2:        {left: 250,  top: 0,    width: 66,   height: 15},
       quantityCell3:        {left: 375,  top: 0,    width: 66,   height: 15},
       quantityCell4:        {left: 500,  top: 0,    width: 66,   height: 15},
       quantityCell5:        {left: 625,  top: 0,    width: 66,   height: 15},
-      quantityCell6:        {left: 750,  top: 0,    width: 66,   height: 0},
-      quantityCell7:        {left: 875,  top: 0,    width: 66,   height: 0},
-      quantityCell8:        {left: 1000, top: 0,    width: 66,   height: 0},
-      quantityCell9:        {left: 0,    top: 200,  width: 66,   height: 0},
-      quantityCell10:       {left: 125,  top: 200,  width: 66,   height: 0},
-      quantityCell11:       {left: 250,  top: 200,  width: 66,   height: 0},
-      quantityCell12:       {left: 375,  top: 200,  width: 66,   height: 0},
-      quantityCell13:       {left: 500,  top: 200,  width: 66,   height: 0},
-      quantityCell14:       {left: 625,  top: 200,  width: 66,   height: 0},
-      quantityCell15:       {left: 750,  top: 200,  width: 66,   height: 0},
-      quantityCell16:       {left: 875,  top: 200,  width: 66,   height: 0},
-      quantityCell17:       {left: 1000, top: 200,  width: 66,   height: 0},
-      quantityCell18:       {left: 0,    top: 400,  width: 66,   height: 0},
-      quantityCell19:       {left: 125,  top: 400,  width: 66,   height: 0},
-      quantityCell20:       {left: 250,  top: 400,  width: 66,   height: 0},
-      quantityCell21:       {left: 375,  top: 400,  width: 66,   height: 0},
-      quantityCell22:       {left: 500,  top: 400,  width: 66,   height: 0},
-      quantityCell23:       {left: 625,  top: 400,  width: 66,   height: 0},
-      quantityCell24:       {left: 750,  top: 400,  width: 66,   height: 0},
-      quantityCell25:       {left: 875,  top: 400,  width: 66,   height: 0},
-      quantityCell26:       {left: 1000, top: 400,  width: 66,   height: 0},
-      quantityCell27:       {left: 0,    top: 600,  width: 66,   height: 0},
-      quantityCell28:       {left: 125,  top: 600,  width: 66,   height: 0},
-      quantityCell29:       {left: 250,  top: 600,  width: 66,   height: 0},
-      quantityCell30:       {left: 375,  top: 600,  width: 66,   height: 0},
-      quantityCell31:       {left: 500,  top: 600,  width: 66,   height: 0},
-      quantityCell32:       {left: 625,  top: 600,  width: 66,   height: 0},
-      quantityCell33:       {left: 750,  top: 600,  width: 66,   height: 0},
-      quantityCell34:       {left: 875,  top: 600,  width: 66,   height: 0},
-
+      quantityCell6:        {left: 750,  top: 0,    width: 66,   height: 15},
+      quantityCell7:        {left: 875,  top: 0,    width: 66,   height: 15},
+      quantityCell8:        {left: 1000, top: 0,    width: 66,   height: 15},
+      quantityCell9:        {left: 0,    top: 200,  width: 66,   height: 15},
+      quantityCell10:       {left: 125,  top: 200,  width: 66,   height: 15},
+      quantityCell11:       {left: 250,  top: 200,  width: 66,   height: 15},
+      quantityCell12:       {left: 375,  top: 200,  width: 66,   height: 15},
+      quantityCell13:       {left: 500,  top: 200,  width: 66,   height: 15},
+      quantityCell14:       {left: 625,  top: 200,  width: 66,   height: 15},
+      quantityCell15:       {left: 750,  top: 200,  width: 66,   height: 15},
+      quantityCell16:       {left: 875,  top: 200,  width: 66,   height: 15},
+      quantityCell17:       {left: 1000, top: 200,  width: 66,   height: 15},
+      quantityCell18:       {left: 0,    top: 400,  width: 66,   height: 15},
+      quantityCell19:       {left: 125,  top: 400,  width: 66,   height: 15},
+      quantityCell20:       {left: 250,  top: 400,  width: 66,   height: 15},
+      quantityCell21:       {left: 375,  top: 400,  width: 66,   height: 15},
+      quantityCell22:       {left: 500,  top: 400,  width: 66,   height: 15},
+      quantityCell23:       {left: 625,  top: 400,  width: 66,   height: 15},
+      quantityCell24:       {left: 750,  top: 400,  width: 66,   height: 15},
+      quantityCell25:       {left: 875,  top: 400,  width: 66,   height: 15},
+      quantityCell26:       {left: 1000, top: 400,  width: 66,   height: 15},
+      quantityCell27:       {left: 0,    top: 600,  width: 66,   height: 15},
+      quantityCell28:       {left: 125,  top: 600,  width: 66,   height: 15},
+      quantityCell29:       {left: 250,  top: 600,  width: 66,   height: 15},
+      quantityCell30:       {left: 375,  top: 600,  width: 66,   height: 15},
+      quantityCell31:       {left: 500,  top: 600,  width: 66,   height: 15},
+      quantityCell32:       {left: 625,  top: 600,  width: 66,   height: 15},
+      quantityCell33:       {left: 750,  top: 600,  width: 66,   height: 15},
+      quantityCell34:       {left: 875,  top: 600,  width: 66,   height: 15},
       saveConfigBtn:        {left: 479,  top: 52,   width: 87,   height: 36},
       testOpenAIBtn:        {left: 20,   top: 70,   width: 140,  height: 36},
-
       titleCell0:           {left: 0,    top: 0,    width: 66,   height: 15},
       titleCell1:           {left: 125,  top: 0,    width: 66,   height: 15},
       titleCell2:           {left: 250,  top: 0,    width: 66,   height: 15},
       titleCell3:           {left: 375,  top: 0,    width: 66,   height: 15},
       titleCell4:           {left: 500,  top: 0,    width: 66,   height: 15},
       titleCell5:           {left: 625,  top: 0,    width: 66,   height: 15},
-      titleCell6:           {left: 750,  top: 0,    width: 66,   height: 0},
-      titleCell7:           {left: 875,  top: 0,    width: 66,   height: 0},
-      titleCell8:           {left: 1000, top: 0,    width: 66,   height: 0},
-      titleCell9:           {left: 0,    top: 200,  width: 66,   height: 0},
-      titleCell10:          {left: 125,  top: 200,  width: 66,   height: 0},
-      titleCell11:          {left: 250,  top: 200,  width: 66,   height: 0},
-      titleCell12:          {left: 375,  top: 200,  width: 66,   height: 0},
-      titleCell13:          {left: 500,  top: 200,  width: 66,   height: 0},
-      titleCell14:          {left: 625,  top: 200,  width: 66,   height: 0},
-      titleCell15:          {left: 750,  top: 200,  width: 66,   height: 0},
-      titleCell16:          {left: 875,  top: 200,  width: 66,   height: 0},
-      titleCell17:          {left: 1000, top: 200,  width: 66,   height: 0},
-      titleCell18:          {left: 0,    top: 400,  width: 66,   height: 0},
-      titleCell19:          {left: 125,  top: 400,  width: 66,   height: 0},
-      titleCell20:          {left: 250,  top: 400,  width: 66,   height: 0},
-      titleCell21:          {left: 375,  top: 400,  width: 66,   height: 0},
-      titleCell22:          {left: 500,  top: 400,  width: 66,   height: 0},
-      titleCell23:          {left: 625,  top: 400,  width: 66,   height: 0},
-      titleCell24:          {left: 750,  top: 400,  width: 66,   height: 0},
-      titleCell25:          {left: 875,  top: 400,  width: 66,   height: 0},
-      titleCell26:          {left: 1000, top: 400,  width: 66,   height: 0},
-      titleCell27:          {left: 0,    top: 600,  width: 66,   height: 0},
-      titleCell28:          {left: 125,  top: 600,  width: 66,   height: 0},
-      titleCell29:          {left: 250,  top: 600,  width: 66,   height: 0},
-      titleCell30:          {left: 375,  top: 600,  width: 66,   height: 0},
-      titleCell31:          {left: 500,  top: 600,  width: 66,   height: 0},
-      titleCell32:          {left: 625,  top: 600,  width: 66,   height: 0},
-      titleCell33:          {left: 750,  top: 600,  width: 66,   height: 0},
-      titleCell34:          {left: 875,  top: 600,  width: 66,   height: 0},
+      titleCell6:           {left: 750,  top: 0,    width: 66,   height: 15},
+      titleCell7:           {left: 875,  top: 0,    width: 66,   height: 15},
+      titleCell8:           {left: 1000, top: 0,    width: 66,   height: 15},
+      titleCell9:           {left: 0,    top: 200,  width: 66,   height: 15},
+      titleCell10:          {left: 125,  top: 200,  width: 66,   height: 15},
+      titleCell11:          {left: 250,  top: 200,  width: 66,   height: 15},
+      titleCell12:          {left: 375,  top: 200,  width: 66,   height: 15},
+      titleCell13:          {left: 500,  top: 200,  width: 66,   height: 15},
+      titleCell14:          {left: 625,  top: 200,  width: 66,   height: 15},
+      titleCell15:          {left: 750,  top: 200,  width: 66,   height: 15},
+      titleCell16:          {left: 875,  top: 200,  width: 66,   height: 15},
+      titleCell17:          {left: 1000, top: 200,  width: 66,   height: 15},
+      titleCell18:          {left: 0,    top: 400,  width: 66,   height: 15},
+      titleCell19:          {left: 125,  top: 400,  width: 66,   height: 15},
+      titleCell20:          {left: 250,  top: 400,  width: 66,   height: 15},
+      titleCell21:          {left: 375,  top: 400,  width: 66,   height: 15},
+      titleCell22:          {left: 500,  top: 400,  width: 66,   height: 15},
+      titleCell23:          {left: 625,  top: 400,  width: 66,   height: 15},
+      titleCell24:          {left: 750,  top: 400,  width: 66,   height: 15},
+      titleCell25:          {left: 875,  top: 400,  width: 66,   height: 15},
+      titleCell26:          {left: 1000, top: 400,  width: 66,   height: 15},
+      titleCell27:          {left: 0,    top: 600,  width: 66,   height: 15},
+      titleCell28:          {left: 125,  top: 600,  width: 66,   height: 15},
+      titleCell29:          {left: 250,  top: 600,  width: 66,   height: 15},
+      titleCell30:          {left: 375,  top: 600,  width: 66,   height: 15},
+      titleCell31:          {left: 500,  top: 600,  width: 66,   height: 15},
+      titleCell32:          {left: 625,  top: 600,  width: 66,   height: 15},
+      titleCell33:          {left: 750,  top: 600,  width: 66,   height: 15},
+      titleCell34:          {left: 875,  top: 600,  width: 66,   height: 15}
     };
 
     const configIDs = [
       "connectEtsyBtn","testOpenAIBtn","openConfigBtn","etsyOrderNumber",
-      "photoGridContainer","configModal","configTable","saveConfigBtn",
+      "uploadVectorBtn","photoGridContainer","configModal","configTable","saveConfigBtn",
       ...[...Array(35).keys()].flatMap(function(i) {
         return ["previewCell" + i, "quantityCell" + i, "titleCell" + i];
       })
@@ -549,14 +557,14 @@
           var inputVal = etsyOrderInput.value.trim();
           if (!inputVal) return;
           var orderNumbers = inputVal.split(",")
-            .map(function(x){return x.trim();})
-            .filter(function(x){return x;});
+            .map(function(x){ return x.trim(); })
+            .filter(function(x){ return x; });
           orderNumbers = orderNumbers.slice(0, 50);
           await loadBatchEtsyOrders(orderNumbers);
         }
       });
 
-      // ============ Wheel zoom & drag & Single-click ============ 
+      // Setup preview boxes: zoom/drag and selection for upload
       var previewBoxes = document.querySelectorAll(".preview-box");
       previewBoxes.forEach(function(box) {
         var isDragging = false;
@@ -607,17 +615,15 @@
           lastY = ev.clientY;
         });
 
-        // Mouse move => panning if we're dragging
+        // Mouse move => panning if dragging
         box.addEventListener("mousemove", function(ev) {
           if (!isMouseDown) return;
           ev.preventDefault();
           var dxAll = Math.abs(ev.clientX - dragStartX);
           var dyAll = Math.abs(ev.clientY - dragStartY);
-          // If we've moved beyond threshold, call it a drag
           if (dxAll > dragThreshold || dyAll > dragThreshold) {
             isDragging = true;
           }
-
           var img = box.querySelector("img");
           if (!img) return;
           var scaleNow = parseFloat(img.dataset.scale) || 1;
@@ -634,44 +640,100 @@
           lastY = ev.clientY;
         });
 
-        // Mouse up => end of drag
-        box.addEventListener("mouseup", function() {
-          isMouseDown = false;
-        });
-        box.addEventListener("mouseleave", function() {
-          isMouseDown = false;
-        });
+        // Mouse up => end drag
+        box.addEventListener("mouseup", function() { isMouseDown = false; });
+        box.addEventListener("mouseleave", function() { isMouseDown = false; });
 
-        // Single-click => Zoom, but only if not dragging
+        // Single-click => Zoom and select box if not dragging
         box.addEventListener("click", function(ev) {
-          // If user was dragging, skip the single-click zoom
           if (isDragging) {
-            // reset for the next interaction
             isDragging = false;
             return;
           }
-
+          // Mark this box as selected for upload.
+          previewBoxes.forEach(function(b) {
+            b.classList.remove("selected");
+          });
+          box.classList.add("selected");
+          selectedPreviewBox = box;
           var img = box.querySelector("img");
           if (!img) return;
-
-          // measure offset from the box center
           var rect = box.getBoundingClientRect();
           var boxCenterX = rect.left + box.clientWidth / 2;
-          var boxCenterY = rect.top  + box.clientHeight / 2;
-
+          var boxCenterY = rect.top + box.clientHeight / 2;
           var dx = ev.clientX - boxCenterX;
           var dy = ev.clientY - boxCenterY;
-
           var scale = 4;
-          var fudgeY = 10; // optional vertical shift
+          var fudgeY = 10;
           var offsetX = -scale * dx;
           var offsetY = -scale * dy + fudgeY;
-
           img.dataset.scale = scale;
           img.dataset.offsetX = offsetX;
           img.dataset.offsetY = offsetY;
           img.style.transform = "translate(" + offsetX + "px, " + offsetY + "px) scale(" + scale + ")";
         });
+      });
+
+      // Upload Cropped Image button event listener.
+      document.getElementById("uploadVectorBtn").addEventListener("click", async function() {
+        if (!selectedPreviewBox) {
+          M.toast({html:"Please select a preview box first."});
+          return;
+        }
+        const img = selectedPreviewBox.querySelector("img");
+        if (!img) {
+          M.toast({html:"Selected box has no image."});
+          return;
+        }
+        try {
+          // Create a canvas to capture the cropped image (66x66).
+          const canvas = document.createElement("canvas");
+          const boxWidth = selectedPreviewBox.clientWidth;
+          const boxHeight = selectedPreviewBox.clientHeight;
+          canvas.width = boxWidth;
+          canvas.height = boxHeight;
+          const ctx = canvas.getContext("2d");
+          const scale = parseFloat(img.dataset.scale) || 1;
+          const offsetX = parseFloat(img.dataset.offsetX) || 0;
+          const offsetY = parseFloat(img.dataset.offsetY) || 0;
+          const cx = boxWidth / 2, cy = boxHeight / 2;
+          ctx.save();
+          ctx.translate(cx + offsetX, cy + offsetY);
+          ctx.scale(scale, scale);
+          ctx.translate(-cx, -cy);
+          ctx.drawImage(img, 0, 0, boxWidth, boxHeight);
+          ctx.restore();
+          const dataURL = canvas.toDataURL("image/png");
+          const base64Data = dataURL.replace(/^data:image\/png;base64,/, "");
+          // Upload the cropped image via the uploadFile function.
+          const uploadResponse = await fetch("/.netlify/functions/uploadFile", {
+            method: "POST",
+            headers: {"Content-Type": "application/json"},
+            body: JSON.stringify({
+              file: base64Data,
+              fileName: "cropped-" + Date.now() + ".png",
+              purpose: "vector_store"
+            })
+          });
+          if (!uploadResponse.ok) throw new Error("File upload failed.");
+          const uploadResult = await uploadResponse.json();
+          console.log("Upload result:", uploadResult);
+          const fileId = uploadResult.id;
+          if (!fileId) throw new Error("No file ID returned from upload.");
+          // Now create the vector store with the uploaded file id.
+          const vectorResponse = await fetch("/.netlify/functions/vectorStore", {
+            method: "POST",
+            headers: {"Content-Type": "application/json"},
+            body: JSON.stringify({ file_ids: [fileId], name: "Image Vector Store" })
+          });
+          if (!vectorResponse.ok) throw new Error("Vector store creation failed.");
+          const vectorResult = await vectorResponse.json();
+          console.log("Vector store result:", vectorResult);
+          M.toast({html:"Cropped image uploaded and vector store created!"});
+        } catch (err) {
+          console.error("Error in uploading cropped image:", err);
+          M.toast({html:"Upload failed: " + err.message});
+        }
       });
     });
 
@@ -680,7 +742,6 @@
         M.toast({ html: "Loading " + orderNumbers.length + " order(s)..." });
         var token = localStorage.getItem("access_token") || "";
         var combinedItems = [];
-
         for (var i = 0; i < orderNumbers.length; i++) {
           var ord = orderNumbers[i];
           var url = "/.netlify/functions/etsyOrderProxy?orderId=" + encodeURIComponent(ord);
@@ -714,25 +775,17 @@
         var listingId = limitedItems[j].listing_id;
         var quantity = limitedItems[j].quantity;
         var title = limitedItems[j].title || "";
-
         var cell = document.getElementById("previewCell" + j);
         var qtyBox = document.getElementById("quantityCell" + j);
         var titleBox = document.getElementById("titleCell" + j);
-
         cell.innerHTML = "Loading...";
         qtyBox.textContent = "Qty: " + (quantity || 0);
-
         var firstFour = title.split(" ").slice(0, 4).join(" ");
         titleBox.textContent = firstFour;
-
         try {
           var imageData = await fetchListingImages(listingId);
           if (imageData && imageData.length > 0) {
-            cell.innerHTML = "<img src=\"" + imageData[0].url_fullxfull + "\" "
-              + "alt=\"Listing " + listingId + "\" "
-              + "data-scale=\"1\" "
-              + "data-offsetX=\"0\" "
-              + "data-offsetY=\"0\" />";
+            cell.innerHTML = "<img src=\"" + imageData[0].url_fullxfull + "\" alt=\"Listing " + listingId + "\" data-scale=\"1\" data-offsetX=\"0\" data-offsetY=\"0\" />";
           } else {
             cell.innerHTML = "No Img";
           }
@@ -760,7 +813,6 @@
       configIDs.forEach(function(id) {
         var el = document.getElementById(id);
         if (!el) return;
-
         var def = defaults[id] || { left: 0, top: 0, width: 0, height: 0 };
         var left = localStorage.getItem("pos-" + id + "-left");
         var top  = localStorage.getItem("pos-" + id + "-top");
@@ -798,32 +850,22 @@
           "<td><input type=\"number\" value=\"" + topVal + "\" data-id=\"" + id + "\" class=\"top-input\" /></td>" +
           "<td><input type=\"number\" value=\"" + widthVal + "\" data-id=\"" + id + "\" class=\"width-input\" /></td>" +
           "<td><input type=\"number\" value=\"" + heightVal + "\" data-id=\"" + id + "\" class=\"height-input\" /></td>";
-
         tbody.appendChild(row);
-
         row.querySelector(".left-input").addEventListener("input", function() {
           var target = document.getElementById(this.dataset.id);
-          if (target) {
-            target.style.left = parseInt(this.value, 10) + "px";
-          }
+          if (target) target.style.left = parseInt(this.value, 10) + "px";
         });
         row.querySelector(".top-input").addEventListener("input", function() {
           var target = document.getElementById(this.dataset.id);
-          if (target) {
-            target.style.top = parseInt(this.value, 10) + "px";
-          }
+          if (target) target.style.top = parseInt(this.value, 10) + "px";
         });
         row.querySelector(".width-input").addEventListener("input", function() {
           var target = document.getElementById(this.dataset.id);
-          if (target) {
-            target.style.width = parseInt(this.value, 10) + "px";
-          }
+          if (target) target.style.width = parseInt(this.value, 10) + "px";
         });
         row.querySelector(".height-input").addEventListener("input", function() {
           var target = document.getElementById(this.dataset.id);
-          if (target) {
-            target.style.height = parseInt(this.value, 10) + "px";
-          }
+          if (target) target.style.height = parseInt(this.value, 10) + "px";
         });
       });
     }
