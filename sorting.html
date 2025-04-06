@@ -17,14 +17,11 @@
       opacity: 0; 
       transition: opacity 0s;
     }
-    /* Three main buttons:
-       1) Connect to Etsy
-       2) Test OpenAI
-       3) Open Config
-    */
+    /* Main Buttons */
     #connectEtsyBtn,
     #testOpenAIBtn,
-    #openConfigBtn {
+    #openConfigBtn,
+    #cropImagesBtn {
       position: absolute;
       left: 20px;
       width: 140px;
@@ -33,12 +30,13 @@
     #connectEtsyBtn { top: 20px; }
     #testOpenAIBtn { top: 70px; }
     #openConfigBtn { top: 120px; }
-
-    /* The "Etsy Order Number" input */
+    #cropImagesBtn { top: 170px; }
+    
+    /* Etsy Order Number input */
     #etsyOrderNumber {
       position: absolute;
       left: 20px;
-      top: 170px;
+      top: 220px;
       width: 300px;
       height: 30px;
       border: 1px solid #999;
@@ -47,11 +45,11 @@
       font-size: 0.9em;
     }
 
-    /* New UI elements for image comparison */
+    /* New UI for Image Comparison */
     #imageComparisonContainer {
       position: absolute;
       left: 20px;
-      top: 220px;
+      top: 260px;
     }
     #photoDragDrop {
       width: 100px;
@@ -69,8 +67,20 @@
       display: none;
       vertical-align: top;
     }
+    /* New Cropped Image Preview Box */
+    #croppedImageContainer {
+      position: absolute;
+      left: 20px;
+      top: 370px;
+    }
+    #croppedImagePreview {
+      width: 100px;
+      height: 100px;
+      border: 1px solid #000;
+      background: #eee;
+    }
 
-    /* Container for the 35 boxes */
+    /* Container for the 35 image preview boxes */
     #photoGridContainer {
       position: relative;
       width: 1200px; 
@@ -79,7 +89,6 @@
       left: 350px;
       top: 20px;
     }
-
     .preview-box {
       position: absolute;
       width: 66px;
@@ -112,8 +121,7 @@
       text-overflow: ellipsis;
       margin-top: 3px;
     }
-
-    /* Open Config Modal => 250×450, with larger text fields */
+    /* Open Config Modal */
     #configModal.modal {
       position: fixed !important;
       top: 50% !important;
@@ -129,24 +137,29 @@
     #configTable .left-input,
     #configTable .top-input,
     #configTable .width-input,
-    #configTable .height-input {
-      width: 80px !important;
-    }
+    #configTable .height-input { width: 80px !important; }
   </style>
 </head>
 <body>
-  <!-- Buttons -->
+  <!-- Main Buttons -->
   <button id="connectEtsyBtn" class="btn waves-effect waves-light">Connect to Etsy</button>
   <button id="testOpenAIBtn" class="btn waves-effect waves-light">Test OpenAI</button>
   <button id="openConfigBtn" class="btn waves-effect waves-light">Open Config</button>
+  <button id="cropImagesBtn" class="btn waves-effect waves-light">Crop Images</button>
   
   <!-- Etsy Order Number input -->
   <input type="text" id="etsyOrderNumber" placeholder="Comma-delimited Etsy Order Numbers" />
 
-  <!-- New Image Comparison UI -->
+  <!-- Image Comparison UI -->
   <div id="imageComparisonContainer">
     <div id="photoDragDrop">Drag & Drop Photo</div>
     <img id="userImage" src="" alt="User Image" />
+  </div>
+  
+  <!-- Cropped Image Preview -->
+  <div id="croppedImageContainer">
+    <p>First Cropped Image:</p>
+    <img id="croppedImagePreview" src="" alt="Cropped Preview" />
   </div>
 
   <!-- 35 Boxes -->
@@ -484,6 +497,7 @@
       titleCell33:          {left: 750,  top: 600,  width: 66,   height: 0},
       titleCell34:          {left: 875,  top: 600,  width: 66,   height: 0},
     };
+    
     const configIDs = [
       "connectEtsyBtn", "testOpenAIBtn", "openConfigBtn", "etsyOrderNumber",
       "photoGridContainer", "configModal", "configTable", "saveConfigBtn",
@@ -560,7 +574,12 @@
         }
       });
 
-      // ============ Wheel zoom & drag & Single-click ============
+      // Crop Images Button - new functionality
+      document.getElementById("cropImagesBtn").addEventListener("click", async function() {
+        await cropAllImages();
+      });
+
+      // ============ Wheel zoom & drag & Single-click for preview boxes ============
       var previewBoxes = document.querySelectorAll(".preview-box");
       previewBoxes.forEach(function(box) {
         var isDragging = false;
@@ -568,7 +587,7 @@
         var dragStartX = 0, dragStartY = 0;
         var lastX = 0, lastY = 0;
         var dragThreshold = 3; // if we move more than 3px, consider it a drag
-        // Wheel => Zoom
+        // Wheel zoom
         box.addEventListener("wheel", function(ev) {
           var img = box.querySelector("img");
           if (!img) return;
@@ -700,6 +719,7 @@
         try {
           var imageData = await fetchListingImages(listingId);
           if (imageData && imageData.length > 0) {
+            // Use the imageProxy to save the image locally and avoid CORS issues.
             const localImageData = await getLocalImageData(imageData[0].url_fullxfull);
             cell.innerHTML = "<img src=\"" + localImageData + "\" alt=\"Listing " + listingId + "\" data-scale=\"1\" data-offsetX=\"0\" data-offsetY=\"0\" />";
           } else {
@@ -815,9 +835,11 @@
       M.toast({ html: "Positions saved!" });
     }
 
-    // =========================================
-    // NEW CODE FOR IMAGE COMPARISON PROCESS
-    // =========================================
+    // =====================================================
+    // NEW CODE FOR IMAGE COMPARISON & CROPPING PROCESS
+    // =====================================================
+
+    // Set up drag & drop for the photoDragDrop element
     const photoDragDrop = document.getElementById("photoDragDrop");
     photoDragDrop.addEventListener("dragover", function(e) {
       e.preventDefault();
@@ -832,43 +854,37 @@
         userImageElem.src = imageData;
         userImageElem.style.display = "inline-block";
         M.toast({ html: "User Image captured." });
-        await compareImagesBatch(imageData);
+        // Optionally, auto-run a full comparison here or wait for user to click Crop Images.
       };
       reader.readAsDataURL(file);
     });
 
-    async function compareImagesBatch(userImage) {
-      let bestScore = -Infinity;
-      let bestIndex = -1;
+    // New function: Crop all preview images
+    async function cropAllImages() {
+      let croppedImages = [];
       for (let i = 0; i < 35; i++) {
         const cell = document.getElementById("previewCell" + i);
         const img = cell.querySelector("img");
         if (img && img.src && img.src !== "") {
-          let croppedGridImage;
           try {
-            croppedGridImage = await cropImageFromPreview(cell);
+            // Crop and resize to 256x256
+            const cropped = await cropImageFromPreview(cell, 256, 256);
+            croppedImages.push(cropped);
+            M.toast({ html: "Cell " + i + ": Cropped successfully." });
           } catch (err) {
             console.error("Cropping failed for cell", i, err);
             M.toast({ html: "Cell " + i + ": Cropping error" });
-            continue;
-          }
-          const score = await compareImages(userImage, croppedGridImage, i);
-          console.log("Score for cell " + i + ":", score);
-          if (score > bestScore) {
-            bestScore = score;
-            bestIndex = i;
           }
         }
       }
-      if (bestIndex !== -1) {
-        const bestCell = document.getElementById("previewCell" + bestIndex);
-        bestCell.style.outline = "2px solid blue";
-        M.toast({ html: "Best match: cell " + bestIndex + " (score: " + bestScore + ")" });
-        setTimeout(() => { bestCell.style.outline = ""; }, 5000);
+      if (croppedImages.length > 0) {
+        // Show the first cropped image in the new preview box
+        document.getElementById("croppedImagePreview").src = croppedImages[0];
       }
     }
 
-    function cropImageFromPreview(cell) {
+    // Modified cropImageFromPreview function to accept canvas dimensions
+    function cropImageFromPreview(cell, canvasWidth, canvasHeight) {
       return new Promise((resolve, reject) => {
         const imgElem = cell.querySelector("img");
         if (!imgElem) {
@@ -878,20 +894,23 @@
         const scale = parseFloat(imgElem.dataset.scale) || 1;
         const offsetX = parseFloat(imgElem.dataset.offsetX) || 0;
         const offsetY = parseFloat(imgElem.dataset.offsetY) || 0;
+        // Use the cell's client dimensions as the visible area.
         const previewWidth = cell.clientWidth;
         const previewHeight = cell.clientHeight;
+        // Calculate source rectangle from transform data.
         const srcX = -offsetX / scale;
         const srcY = -offsetY / scale;
         const srcWidth = previewWidth / scale;
         const srcHeight = previewHeight / scale;
+        // Create canvas with provided dimensions.
         const canvas = document.createElement("canvas");
-        canvas.width = 512;
-        canvas.height = 512;
+        canvas.width = canvasWidth;
+        canvas.height = canvasHeight;
         const ctx = canvas.getContext("2d");
         const sourceImage = new Image();
         sourceImage.crossOrigin = "Anonymous";
         sourceImage.onload = function() {
-          ctx.drawImage(sourceImage, srcX, srcY, srcWidth, srcHeight, 0, 0, 512, 512);
+          ctx.drawImage(sourceImage, srcX, srcY, srcWidth, srcHeight, 0, 0, canvasWidth, canvasHeight);
           resolve(canvas.toDataURL());
         };
         sourceImage.onerror = function(e) {
@@ -901,6 +920,7 @@
       });
     }
 
+    // New function: Compare images (existing functionality remains unchanged)
     async function compareImages(userImage, croppedGridImage, cellIndex) {
       const payload = {
         model: "gpt-4o-mini",
@@ -927,7 +947,7 @@
         const scoreText = data.choices[0].message.content.trim();
         const score = parseFloat(scoreText);
         if (isNaN(score)) {
-          M.toast({ html: "Cell " + cellIndex + ": Invalid score received (" + scoreText + ")" });
+          M.toast({ html: "Cell " + cellIndex + ": Invalid score (" + scoreText + ")" });
           return 0;
         }
         M.toast({ html: "Cell " + cellIndex + ": Score " + score });
