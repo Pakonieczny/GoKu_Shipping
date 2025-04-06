@@ -116,7 +116,7 @@
       position: absolute;
       width: 55px;
       height: 7px;
-      font-size: 0.5em !important;
+      font-size: 0.6em !important;
       border: none !important;
       outline: none !important;
       -webkit-appearance: none !important;
@@ -376,7 +376,7 @@
         orderInput.id = "orderCell" + index;
         orderInput.classList.add("detail-box");
         orderInput.style.left = previewLeft + "px";
-        orderInput.style.top = (previewTop + 100) + "px";
+        orderInput.style.top = (previewTop + 95) + "px";
         orderInput.value = item.orderNumber || "No Order #";
     
         const qtyInput = document.createElement("input");
@@ -385,7 +385,7 @@
         qtyInput.id = "quantityCell" + index;
         qtyInput.classList.add("detail-box");
         qtyInput.style.left = previewLeft + "px";
-        qtyInput.style.top = (previewTop + 110) + "px";
+        qtyInput.style.top = (previewTop + 107) + "px";
         qtyInput.value = "Qty: " + (item.quantity || 0);
     
         const metalInput = document.createElement("input");
@@ -394,7 +394,7 @@
         metalInput.id = "metalCell" + index;
         metalInput.classList.add("detail-box");
         metalInput.style.left = previewLeft + "px";
-        metalInput.style.top = (previewTop + 120) + "px";
+        metalInput.style.top = (previewTop + 119) + "px";
         metalInput.value = item.metal || "No Metal";
     
         container.appendChild(previewBox);
