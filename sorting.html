@@ -206,7 +206,7 @@
     // Base URL for Netlify functions
     const functionsBaseUrl = window.location.origin + "/.netlify/functions";
     
-    // Global arrays to store cropped grid images and user images (both resized to 256x256)
+    // Global arrays to store cropped grid images and user images (both resized to 512x512)
     let croppedImagesArray = [];
     let userImagesArray = []; // Each element will be an object: { name, data }
     
@@ -714,17 +714,17 @@
       }
     });
     
-    // Function to resize user images to 256x256
+    // Function to resize user images to 512x512
     function resizeUserImage(dataUrl) {
       return new Promise((resolve, reject) => {
         const img = new Image();
         img.crossOrigin = "Anonymous";
         img.onload = function() {
           const canvas = document.createElement("canvas");
-          canvas.width = 256;
-          canvas.height = 256;
+          canvas.width = 512;
+          canvas.height = 512;
           const ctx = canvas.getContext("2d");
-          ctx.drawImage(img, 0, 0, 256, 256);
+          ctx.drawImage(img, 0, 0, 512, 512);
           resolve(canvas.toDataURL());
         };
         img.onerror = function(err) { reject(err); };
@@ -732,7 +732,7 @@
       });
     }
     
-    // Crop all preview images and store cropped images (256x256) in global array
+    // Crop all preview images and store cropped images (512x512) in global array
     async function cropAllImages() {
       croppedImagesArray = [];
       const previewBoxes = document.querySelectorAll(".preview-box");
@@ -741,7 +741,7 @@
         const img = cell.querySelector("img");
         if (img && img.src && img.src !== "") {
           try {
-            const cropped = await cropImageFromPreview(cell, 256, 256);
+            const cropped = await cropImageFromPreview(cell, 512, 512);
             croppedImagesArray[i] = cropped;
             M.toast({ html: "Cell " + i + ": Cropped successfully." });
           } catch (err) {
