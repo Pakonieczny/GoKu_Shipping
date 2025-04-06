@@ -108,17 +108,19 @@
       height: 100%;
       object-fit: cover;
       transform-origin: center center;
-      transition: transform 0.2s ease;
+      transition: transform 0.3s ease;
     }
     /* Detail text boxes: 55px x 15px, left-justified relative to preview box */
     .detail-box {
-      position: absolute;
-      width: 55px;
-      height: 15px;
-      font-size: 0.7em;
-      border: none;
-      background: #f0f0f0;
-      color: #333;
+    position: absolute;
+    width: 55px;
+    height: 7px;
+    font-size: 0.4em;
+    border: none;            /* Remove default borders */
+    outline: none;           /* Remove any outline */
+    -webkit-appearance: none;/* Remove default styling in WebKit browsers */
+    background: #f0f0f0;
+    color: #333;
     }
     .detail-box:read-only {
       pointer-events: none;
@@ -368,7 +370,7 @@
         orderInput.id = "orderCell" + index;
         orderInput.classList.add("detail-box");
         orderInput.style.left = previewLeft + "px";
-        orderInput.style.top = (previewTop + 110) + "px";
+        orderInput.style.top = (previewTop + 113) + "px";
         orderInput.value = item.orderNumber || "No Order #";
     
         const qtyInput = document.createElement("input");
@@ -377,7 +379,7 @@
         qtyInput.id = "quantityCell" + index;
         qtyInput.classList.add("detail-box");
         qtyInput.style.left = previewLeft + "px";
-        qtyInput.style.top = (previewTop + 130) + "px";
+        qtyInput.style.top = (previewTop + 123) + "px";
         qtyInput.value = "Qty: " + (item.quantity || 0);
     
         const metalInput = document.createElement("input");
@@ -386,7 +388,7 @@
         metalInput.id = "metalCell" + index;
         metalInput.classList.add("detail-box");
         metalInput.style.left = previewLeft + "px";
-        metalInput.style.top = (previewTop + 150) + "px";
+        metalInput.style.top = (previewTop + 133) + "px";
         metalInput.value = item.metal || "No Metal";
     
         container.appendChild(previewBox);
