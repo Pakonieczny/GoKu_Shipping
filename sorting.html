@@ -3,13 +3,11 @@
 <head>
   <meta charset="UTF-8" />
   <title>Sorting - Single-Click Zoom</title>
-
   <!-- Materialize CSS -->
   <link
     rel="stylesheet"
     href="https://cdnjs.cloudflare.com/ajax/libs/materialize/1.0.0/css/materialize.min.css"
   />
-
   <style>
     body {
       background-color: #fff;
@@ -19,7 +17,6 @@
       opacity: 0; 
       transition: opacity 0s;
     }
-
     /* Three main buttons:
        1) Connect to Etsy
        2) Test OpenAI
@@ -33,17 +30,11 @@
       width: 140px;
       height: 36px;
     }
-    #connectEtsyBtn {
-      top: 20px;
-    }
-    #testOpenAIBtn {
-      top: 70px;
-    }
-    #openConfigBtn {
-      top: 120px;
-    }
+    #connectEtsyBtn { top: 20px; }
+    #testOpenAIBtn { top: 70px; }
+    #openConfigBtn { top: 120px; }
 
-    /* The "Etsy Order Number" can hold multiple comma-delimited orders */
+    /* The "Etsy Order Number" input */
     #etsyOrderNumber {
       position: absolute;
       left: 20px;
@@ -110,7 +101,6 @@
       transform-origin: center center;
       transition: transform 0.2s ease;
     }
-
     .quantity-label,
     .title-label {
       position: absolute;
@@ -123,7 +113,7 @@
       margin-top: 3px;
     }
 
-    /* Open Config Modal */
+    /* Open Config Modal => 250×450, with larger text fields */
     #configModal.modal {
       position: fixed !important;
       top: 50% !important;
@@ -134,12 +124,8 @@
       max-height: none !important;
       overflow-y: auto !important;
     }
-    #configTable thead tr th {
-      font-size: 0.9em;
-    }
-    #configTable tbody tr td {
-      font-size: 0.8em;
-    }
+    #configTable thead tr th { font-size: 0.9em; }
+    #configTable tbody tr td { font-size: 0.8em; }
     #configTable .left-input,
     #configTable .top-input,
     #configTable .width-input,
@@ -148,13 +134,12 @@
     }
   </style>
 </head>
-
 <body>
   <!-- Buttons -->
   <button id="connectEtsyBtn" class="btn waves-effect waves-light">Connect to Etsy</button>
   <button id="testOpenAIBtn" class="btn waves-effect waves-light">Test OpenAI</button>
   <button id="openConfigBtn" class="btn waves-effect waves-light">Open Config</button>
-
+  
   <!-- Etsy Order Number input -->
   <input type="text" id="etsyOrderNumber" placeholder="Comma-delimited Etsy Order Numbers" />
 
@@ -332,7 +317,6 @@
   <!-- jQuery & Materialize JS -->
   <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/materialize/1.0.0/js/materialize.min.js"></script>
-
   <script>
     // Base URL for Netlify functions
     const functionsBaseUrl = window.location.origin + "/.netlify/functions";
@@ -498,20 +482,16 @@
       titleCell31:          {left: 500,  top: 600,  width: 66,   height: 0},
       titleCell32:          {left: 625,  top: 600,  width: 66,   height: 0},
       titleCell33:          {left: 750,  top: 600,  width: 66,   height: 0},
-      titleCell34:          {left: 875,  top: 600,  width: 66,   height: 0}
+      titleCell34:          {left: 875,  top: 600,  width: 66,   height: 0},
     };
-
     const configIDs = [
-      "connectEtsyBtn","testOpenAIBtn","openConfigBtn","etsyOrderNumber",
-      "photoGridContainer","configModal","configTable","saveConfigBtn",
-      ...[...Array(35).keys()].flatMap(function(i) {
-        return ["previewCell" + i, "quantityCell" + i, "titleCell" + i];
-      })
+      "connectEtsyBtn", "testOpenAIBtn", "openConfigBtn", "etsyOrderNumber",
+      "photoGridContainer", "configModal", "configTable", "saveConfigBtn",
+      ...[...Array(35).keys()].flatMap(i => ["previewCell" + i, "quantityCell" + i, "titleCell" + i])
     ];
 
     document.addEventListener("DOMContentLoaded", function() {
       M.AutoInit();
-
       setTimeout(function() {
         loadPositions();
         document.body.style.opacity = 1;
@@ -527,7 +507,6 @@
           const redirectUri = "https://sorting.goldenspike.app";
           const state = "randomState123";
           const scope = "listings_w listings_r transactions_r transactions_w";
-
           const etsyAuthUrl =
             "https://www.etsy.com/oauth/connect?response_type=code" +
             "&client_id=" + CLIENT_ID +
@@ -536,7 +515,6 @@
             "&state=" + state +
             "&code_challenge=" + encodeURIComponent(codeChallenge) +
             "&code_challenge_method=S256";
-
           window.location.href = etsyAuthUrl;
         } catch (err) {
           console.error("OAuth start error:", err);
@@ -576,9 +554,7 @@
         if (e.key === "Enter") {
           var inputVal = etsyOrderInput.value.trim();
           if (!inputVal) return;
-          var orderNumbers = inputVal.split(",")
-            .map(function(x){ return x.trim(); })
-            .filter(function(x){ return x; });
+          var orderNumbers = inputVal.split(",").map(x => x.trim()).filter(x => x);
           orderNumbers = orderNumbers.slice(0, 50);
           await loadBatchEtsyOrders(orderNumbers);
         }
@@ -592,7 +568,6 @@
         var dragStartX = 0, dragStartY = 0;
         var lastX = 0, lastY = 0;
         var dragThreshold = 3; // if we move more than 3px, consider it a drag
-
         // Wheel => Zoom
         box.addEventListener("wheel", function(ev) {
           var img = box.querySelector("img");
@@ -617,7 +592,6 @@
           img.dataset.offsetY = offY;
           img.style.transform = "translate(" + offX + "px, " + offY + "px) scale(" + currentScale + ")";
         });
-
         // Mouse down => start drag
         box.addEventListener("mousedown", function(ev) {
           var img = box.querySelector("img");
@@ -632,7 +606,6 @@
           lastX = ev.clientX;
           lastY = ev.clientY;
         });
-
         // Mouse move => panning if dragging
         box.addEventListener("mousemove", function(ev) {
           if (!isMouseDown) return;
@@ -655,11 +628,9 @@
           lastX = ev.clientX;
           lastY = ev.clientY;
         });
-
         // Mouse up / leave => end drag
         box.addEventListener("mouseup", function() { isMouseDown = false; });
         box.addEventListener("mouseleave", function() { isMouseDown = false; });
-
         // Single-click => Zoom if not dragging
         box.addEventListener("click", function(ev) {
           if (isDragging) { isDragging = false; return; }
@@ -725,12 +696,12 @@
         var titleBox = document.getElementById("titleCell" + j);
         cell.innerHTML = "Loading...";
         qtyBox.textContent = "Qty: " + (quantity || 0);
-        var firstFour = title.split(" ").slice(0, 4).join(" ");
-        titleBox.textContent = firstFour;
+        titleBox.textContent = title.split(" ").slice(0, 4).join(" ");
         try {
           var imageData = await fetchListingImages(listingId);
           if (imageData && imageData.length > 0) {
-            cell.innerHTML = "<img src=\"" + imageData[0].url_fullxfull + "\" alt=\"Listing " + listingId + "\" data-scale=\"1\" data-offsetX=\"0\" data-offsetY=\"0\" />";
+            const localImageData = await getLocalImageData(imageData[0].url_fullxfull);
+            cell.innerHTML = "<img src=\"" + localImageData + "\" alt=\"Listing " + listingId + "\" data-scale=\"1\" data-offsetX=\"0\" data-offsetY=\"0\" />";
           } else {
             cell.innerHTML = "No Img";
           }
@@ -754,19 +725,31 @@
       return data.results || [];
     }
 
+    async function getLocalImageData(imageUrl) {
+      try {
+        const response = await fetch(functionsBaseUrl + "/imageProxy?url=" + encodeURIComponent(imageUrl));
+        const blob = await response.blob();
+        return new Promise((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = () => resolve(reader.result);
+          reader.onerror = reject;
+          reader.readAsDataURL(blob);
+        });
+      } catch (err) {
+        console.error("Error in getLocalImageData:", err);
+        throw err;
+      }
+    }
+
     function loadPositions() {
       configIDs.forEach(function(id) {
         var el = document.getElementById(id);
         if (!el) return;
-        var def = defaults[id] || { left: 0, top: 0, width: 0, height: 0 };
-        var left = localStorage.getItem("pos-" + id + "-left");
-        var top  = localStorage.getItem("pos-" + id + "-top");
-        var w    = localStorage.getItem("pos-" + id + "-width");
-        var h    = localStorage.getItem("pos-" + id + "-height");
-        if (left === null) left = def.left;
-        if (top === null) top = def.top;
-        if (w === null) w = def.width;
-        if (h === null) h = def.height;
+        var def = {}; // Replace with your default values if needed
+        var left = localStorage.getItem("pos-" + id + "-left") || def.left || 0;
+        var top  = localStorage.getItem("pos-" + id + "-top") || def.top || 0;
+        var w    = localStorage.getItem("pos-" + id + "-width") || def.width || 0;
+        var h    = localStorage.getItem("pos-" + id + "-height") || def.height || 0;
         el.style.position = "absolute";
         el.style.left = left + "px";
         el.style.top = top + "px";
@@ -835,57 +818,10 @@
     // =========================================
     // NEW CODE FOR IMAGE COMPARISON PROCESS
     // =========================================
-
-    // Function to crop and resize an image from a preview cell.
-    // It extracts the visible area based on the image's transform data (scale, offsetX, offsetY)
-    // and then resizes that cropped region to 512x512.
-    function cropImageFromPreview(cell) {
-      return new Promise((resolve, reject) => {
-        const imgElem = cell.querySelector("img");
-        if (!imgElem) {
-          reject("No image element found");
-          return;
-        }
-        const scale = parseFloat(imgElem.dataset.scale) || 1;
-        const offsetX = parseFloat(imgElem.dataset.offsetX) || 0;
-        const offsetY = parseFloat(imgElem.dataset.offsetY) || 0;
-        // The preview cell dimensions (visible area)
-        const previewWidth = cell.clientWidth;
-        const previewHeight = cell.clientHeight;
-        // Calculate the source rectangle in the original image.
-        // Since the image is transformed with translate(offsetX, offsetY) and scale,
-        // the top-left of the visible area corresponds to (-offsetX, -offsetY) in scaled space.
-        const srcX = -offsetX / scale;
-        const srcY = -offsetY / scale;
-        const srcWidth = previewWidth / scale;
-        const srcHeight = previewHeight / scale;
-        // Create a canvas of 512x512 to draw the cropped region.
-        const canvas = document.createElement("canvas");
-        canvas.width = 512;
-        canvas.height = 512;
-        const ctx = canvas.getContext("2d");
-        // Create a new Image to load the original source.
-        const sourceImage = new Image();
-        // Set crossOrigin if needed
-        sourceImage.crossOrigin = "Anonymous";
-        sourceImage.onload = function() {
-          // Draw the cropped region onto the canvas, scaling it to 512x512.
-          ctx.drawImage(sourceImage, srcX, srcY, srcWidth, srcHeight, 0, 0, 512, 512);
-          resolve(canvas.toDataURL());
-        };
-        sourceImage.onerror = function(e) {
-          reject(e);
-        };
-        sourceImage.src = imgElem.src;
-      });
-    }
-
-    // Set up drag & drop for the photoDragDrop element
     const photoDragDrop = document.getElementById("photoDragDrop");
     photoDragDrop.addEventListener("dragover", function(e) {
       e.preventDefault();
     });
-
     photoDragDrop.addEventListener("drop", function(e) {
       e.preventDefault();
       const file = e.dataTransfer.files[0];
@@ -896,13 +832,11 @@
         userImageElem.src = imageData;
         userImageElem.style.display = "inline-block";
         M.toast({ html: "User Image captured." });
-        // Directly compare User Image with grid images
         await compareImagesBatch(imageData);
       };
       reader.readAsDataURL(file);
     });
 
-    // Batch process: Compare the User Image with all grid images.
     async function compareImagesBatch(userImage) {
       let bestScore = -Infinity;
       let bestIndex = -1;
@@ -910,7 +844,6 @@
         const cell = document.getElementById("previewCell" + i);
         const img = cell.querySelector("img");
         if (img && img.src && img.src !== "") {
-          // Crop and resize the grid image from its preview.
           let croppedGridImage;
           try {
             croppedGridImage = await cropImageFromPreview(cell);
@@ -931,15 +864,44 @@
         const bestCell = document.getElementById("previewCell" + bestIndex);
         bestCell.style.outline = "2px solid blue";
         M.toast({ html: "Best match: cell " + bestIndex + " (score: " + bestScore + ")" });
-        setTimeout(() => {
-          bestCell.style.outline = "";
-        }, 5000);
+        setTimeout(() => { bestCell.style.outline = ""; }, 5000);
       }
     }
 
-    // Function to compare two images by sending a payload to the openaiProxy.
+    function cropImageFromPreview(cell) {
+      return new Promise((resolve, reject) => {
+        const imgElem = cell.querySelector("img");
+        if (!imgElem) {
+          reject("No image element found");
+          return;
+        }
+        const scale = parseFloat(imgElem.dataset.scale) || 1;
+        const offsetX = parseFloat(imgElem.dataset.offsetX) || 0;
+        const offsetY = parseFloat(imgElem.dataset.offsetY) || 0;
+        const previewWidth = cell.clientWidth;
+        const previewHeight = cell.clientHeight;
+        const srcX = -offsetX / scale;
+        const srcY = -offsetY / scale;
+        const srcWidth = previewWidth / scale;
+        const srcHeight = previewHeight / scale;
+        const canvas = document.createElement("canvas");
+        canvas.width = 512;
+        canvas.height = 512;
+        const ctx = canvas.getContext("2d");
+        const sourceImage = new Image();
+        sourceImage.crossOrigin = "Anonymous";
+        sourceImage.onload = function() {
+          ctx.drawImage(sourceImage, srcX, srcY, srcWidth, srcHeight, 0, 0, 512, 512);
+          resolve(canvas.toDataURL());
+        };
+        sourceImage.onerror = function(e) {
+          reject(e);
+        };
+        sourceImage.src = imgElem.src;
+      });
+    }
+
     async function compareImages(userImage, croppedGridImage, cellIndex) {
-      // Build the payload following vision input guidelines.
       const payload = {
         model: "gpt-4o-mini",
         messages: [
@@ -954,7 +916,6 @@
         ],
         max_tokens: 100
       };
-
       try {
         const response = await fetch(functionsBaseUrl + "/openaiProxy", {
           method: "POST",
