@@ -18,7 +18,8 @@
     #connectEtsyBtn,
     #testOpenAIBtn,
     #openConfigBtn,
-    #cropImagesBtn {
+    #cropImagesBtn,
+    #sendMatchBtn {
       position: absolute;
       left: 20px;
       width: 140px;
@@ -28,12 +29,13 @@
     #testOpenAIBtn { top: 70px; }
     #openConfigBtn { top: 120px; }
     #cropImagesBtn { top: 170px; }
+    #sendMatchBtn { top: 220px; }
     
     /* Etsy Order Number input */
     #etsyOrderNumber {
       position: absolute;
       left: 20px;
-      top: 220px;
+      top: 270px;
       width: 300px;
       height: 30px;
       border: 1px solid #999;
@@ -46,7 +48,7 @@
     #imageComparisonContainer {
       position: absolute;
       left: 20px;
-      top: 260px;
+      top: 310px;
     }
     #photoDragDrop {
       width: 100px;
@@ -68,7 +70,7 @@
     #croppedImageContainer {
       position: absolute;
       left: 20px;
-      top: 370px;
+      top: 420px;
     }
     #croppedImagePreview {
       width: 100px;
@@ -118,7 +120,7 @@
       text-overflow: ellipsis;
       margin-top: 3px;
     }
-    /* Open Config Modal */
+    /* Config Modal */
     #configModal.modal {
       position: fixed !important;
       top: 50% !important;
@@ -143,6 +145,7 @@
   <button id="testOpenAIBtn" class="btn waves-effect waves-light">Test OpenAI</button>
   <button id="openConfigBtn" class="btn waves-effect waves-light">Open Config</button>
   <button id="cropImagesBtn" class="btn waves-effect waves-light">Crop Images</button>
+  <button id="sendMatchBtn" class="btn waves-effect waves-light">Send & Match</button>
   
   <!-- Etsy Order Number input -->
   <input type="text" id="etsyOrderNumber" placeholder="Comma-delimited Etsy Order Numbers" />
@@ -330,7 +333,10 @@
   <script>
     // Base URL for Netlify functions
     const functionsBaseUrl = window.location.origin + "/.netlify/functions";
-
+    
+    // Global array to store cropped images (256x256)
+    let croppedImagesArray = [];
+    
     (function(){
       const urlParams = new URLSearchParams(window.location.search);
       const accessToken = urlParams.get("access_token");
@@ -355,7 +361,7 @@
         }
       }
     })();
-
+    
     function generateRandomString(length) {
       const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
       let text = "";
@@ -364,7 +370,7 @@
       }
       return text;
     }
-
+    
     async function generateCodeChallenge(codeVerifier) {
       const encoder = new TextEncoder();
       const data = encoder.encode(codeVerifier);
@@ -372,25 +378,25 @@
       let base64String = btoa(String.fromCharCode(...new Uint8Array(digest)));
       return base64String.replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
     }
-
+    
     // ---------------------------------------------------------------------
     // HARD-CODED DEFAULT OFFSETS
     // (Insert your full default offsets here if needed)
     // ---------------------------------------------------------------------
-
+    
     const configIDs = [
       "connectEtsyBtn", "testOpenAIBtn", "openConfigBtn", "etsyOrderNumber",
       "photoGridContainer", "configModal", "configTable", "saveConfigBtn",
       ...[...Array(35).keys()].flatMap(i => ["previewCell" + i, "quantityCell" + i, "titleCell" + i])
     ];
-
+    
     document.addEventListener("DOMContentLoaded", function() {
       M.AutoInit();
       setTimeout(function() {
         loadPositions();
         document.body.style.opacity = 1;
       }, 200);
-
+    
       // Connect to Etsy
       document.getElementById("connectEtsyBtn").addEventListener("click", async function() {
         try {
@@ -415,7 +421,7 @@
           M.toast({ html: "OAuth error: " + err.message });
         }
       });
-
+    
       // Test OpenAI
       document.getElementById("testOpenAIBtn").addEventListener("click", async function() {
         try {
@@ -441,7 +447,7 @@
           M.toast({ html: "OpenAI test failed: " + err.message });
         }
       });
-
+    
       // Load multiple orders
       var etsyOrderInput = document.getElementById("etsyOrderNumber");
       etsyOrderInput.addEventListener("keydown", async function(e) {
@@ -453,12 +459,19 @@
           await loadBatchEtsyOrders(orderNumbers);
         }
       });
-
-      // Crop Images Button - new functionality
+    
+      // Crop Images Button
       document.getElementById("cropImagesBtn").addEventListener("click", async function() {
+        // Clear the global array
+        croppedImagesArray = [];
         await cropAllImages();
       });
-
+    
+      // Send & Match Button
+      document.getElementById("sendMatchBtn").addEventListener("click", async function() {
+        await sendAndMatch();
+      });
+    
       // ============ Wheel zoom, drag & single-click for preview boxes ============
       var previewBoxes = document.querySelectorAll(".preview-box");
       previewBoxes.forEach(function(box) {
@@ -551,7 +564,7 @@
         });
       });
     });
-
+    
     async function loadBatchEtsyOrders(orderNumbers) {
       try {
         M.toast({ html: "Loading " + orderNumbers.length + " order(s)..." });
@@ -578,7 +591,7 @@
         M.toast({ html: "Error: " + err.message });
       }
     }
-
+    
     async function fillPreviewBoxes(items) {
       for (var i = 0; i < 35; i++) {
         document.getElementById("previewCell" + i).innerHTML = "Empty";
@@ -610,7 +623,7 @@
         }
       }
     }
-
+    
     async function fetchListingImages(listingId) {
       var token = localStorage.getItem("access_token") || "";
       var resp = await fetch(functionsBaseUrl + "/etsyImages?listingId=" + listingId, {
@@ -623,7 +636,7 @@
       var data = await resp.json();
       return data.results || [];
     }
-
+    
     async function getLocalImageData(imageUrl) {
       try {
         const response = await fetch(functionsBaseUrl + "/imageProxy?url=" + encodeURIComponent(imageUrl));
@@ -639,7 +652,7 @@
         throw err;
       }
     }
-
+    
     function loadPositions() {
       configIDs.forEach(function(id) {
         var el = document.getElementById(id);
@@ -657,7 +670,7 @@
       });
     }
     loadPositions();
-
+    
     function populateConfigTable() {
       var tbody = document.querySelector("#configTable tbody");
       tbody.innerHTML = "";
@@ -695,12 +708,12 @@
         });
       });
     }
-
+    
     document.getElementById("openConfigBtn").addEventListener("click", function() {
       populateConfigTable();
       M.Modal.getInstance(document.getElementById("configModal")).open();
     });
-
+    
     function saveConfiguration() {
       configIDs.forEach(function(id) {
         var el = document.getElementById(id);
@@ -713,12 +726,12 @@
       });
       M.toast({ html: "Positions saved!" });
     }
-
+    
     // =====================================================
-    // NEW CODE FOR IMAGE COMPARISON & CROPPING PROCESS
+    // NEW CODE FOR IMAGE COMPARISON, CROPPING, & SEND/MATCH
     // =====================================================
-
-    // Set up drag & drop for photoDragDrop
+    
+    // Drag & Drop for photoDragDrop
     const photoDragDrop = document.getElementById("photoDragDrop");
     photoDragDrop.addEventListener("dragover", function(e) { e.preventDefault(); });
     photoDragDrop.addEventListener("drop", function(e) {
@@ -734,17 +747,17 @@
       };
       reader.readAsDataURL(file);
     });
-
-    // New function: Crop all preview images and save as 256x256
+    
+    // Crop all preview images and save them (256x256) in global array
     async function cropAllImages() {
-      let croppedImages = [];
+      croppedImagesArray = [];
       for (let i = 0; i < 35; i++) {
         const cell = document.getElementById("previewCell" + i);
         const img = cell.querySelector("img");
         if (img && img.src && img.src !== "") {
           try {
             const cropped = await cropImageFromPreview(cell, 256, 256);
-            croppedImages.push(cropped);
+            croppedImagesArray[i] = cropped;
             M.toast({ html: "Cell " + i + ": Cropped successfully." });
           } catch (err) {
             console.error("Cropping failed for cell", i, err);
@@ -752,12 +765,12 @@
           }
         }
       }
-      if (croppedImages.length > 0) {
-        document.getElementById("croppedImagePreview").src = croppedImages[0];
+      if (croppedImagesArray.length > 0 && croppedImagesArray[0]) {
+        document.getElementById("croppedImagePreview").src = croppedImagesArray[0];
       }
     }
-
-    // Updated cropImageFromPreview uses bounding rect intersections
+    
+    // Updated cropImageFromPreview using bounding rectangles to determine visible area
     function cropImageFromPreview(cell, canvasWidth, canvasHeight) {
       return new Promise((resolve, reject) => {
         const imgElem = cell.querySelector("img");
@@ -765,10 +778,10 @@
           reject("No image element found");
           return;
         }
-        // Get bounding rectangles
+        // Get bounding rectangles of cell and image
         const cellRect = cell.getBoundingClientRect();
         const imgRect = imgElem.getBoundingClientRect();
-        // Compute the intersection of the cell and the image
+        // Determine intersection (visible area)
         const visibleLeft = Math.max(cellRect.left, imgRect.left);
         const visibleTop = Math.max(cellRect.top, imgRect.top);
         const visibleRight = Math.min(cellRect.right, imgRect.right);
@@ -782,13 +795,11 @@
         const sourceImage = new Image();
         sourceImage.crossOrigin = "Anonymous";
         sourceImage.onload = function() {
-          // Get rendered dimensions of the image element
-          const renderedWidth = imgRect.width;
-          const renderedHeight = imgRect.height;
-          // Calculate the ratio between natural and rendered sizes
-          const ratioX = sourceImage.naturalWidth / renderedWidth;
-          const ratioY = sourceImage.naturalHeight / renderedHeight;
-          // Map the visible region back to source image coordinates
+          // The image element is rendered with width imgRect.width and height imgRect.height
+          // Calculate ratio from natural image size to rendered size
+          const ratioX = sourceImage.naturalWidth / imgRect.width;
+          const ratioY = sourceImage.naturalHeight / imgRect.height;
+          // Map the visible portion from screen coordinates to source image coordinates
           const srcX = (visibleLeft - imgRect.left) * ratioX;
           const srcY = (visibleTop - imgRect.top) * ratioY;
           const srcWidth = visibleWidth * ratioX;
@@ -806,7 +817,42 @@
         sourceImage.src = imgElem.src;
       });
     }
-
+    
+    // New function: Send & Match using cropped images
+    async function sendAndMatch() {
+      const userImageElem = document.getElementById("userImage");
+      if (!userImageElem.src) {
+        M.toast({ html: "User image not available!" });
+        return;
+      }
+      if (!croppedImagesArray || croppedImagesArray.length === 0) {
+        M.toast({ html: "No cropped images available! Please crop images first." });
+        return;
+      }
+      let bestScore = -Infinity;
+      let bestIndex = -1;
+      for (let i = 0; i < croppedImagesArray.length; i++) {
+        if (!croppedImagesArray[i]) continue;
+        try {
+          const score = await compareImages(userImageElem.src, croppedImagesArray[i], i);
+          if (score > bestScore) {
+            bestScore = score;
+            bestIndex = i;
+          }
+        } catch (err) {
+          console.error("Comparison failed for cell", i, err);
+        }
+      }
+      if (bestIndex !== -1) {
+        const bestCell = document.getElementById("previewCell" + bestIndex);
+        bestCell.style.outline = "2px solid blue";
+        M.toast({ html: "Best match: cell " + bestIndex + " (score: " + bestScore + ")" });
+        setTimeout(() => { bestCell.style.outline = ""; }, 5000);
+      } else {
+        M.toast({ html: "No valid matches found." });
+      }
+    }
+    
     async function compareImages(userImage, croppedGridImage, cellIndex) {
       const payload = {
         model: "gpt-4o-mini",
