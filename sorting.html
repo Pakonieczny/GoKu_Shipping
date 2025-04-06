@@ -100,7 +100,7 @@
       justify-content: center;
       overflow: hidden;
       user-select: none;
-      font-size: 0.7em;
+      font-size: 0.4em;
       text-align: center;
     }
     .preview-box img {
@@ -136,12 +136,12 @@
       max-height: none !important;
       overflow-y: auto !important;
     }
-    #configTable thead tr th { font-size: 0.9em; }
-    #configTable tbody tr td { font-size: 0.8em; }
+    #configTable thead tr th { font-size: 0.8em; }
+    #configTable tbody tr td { font-size: 0.7em; }
     #configTable .left-input,
     #configTable .top-input,
     #configTable .width-input,
-    #configTable .height-input { width: 80px !important; }
+    #configTable .height-input { width: 225px !important; }
   </style>
 </head>
 <body>
@@ -370,7 +370,7 @@
         orderInput.id = "orderCell" + index;
         orderInput.classList.add("detail-box");
         orderInput.style.left = previewLeft + "px";
-        orderInput.style.top = (previewTop + 113) + "px";
+        orderInput.style.top = (previewTop + 105) + "px";
         orderInput.value = item.orderNumber || "No Order #";
     
         const qtyInput = document.createElement("input");
@@ -379,7 +379,7 @@
         qtyInput.id = "quantityCell" + index;
         qtyInput.classList.add("detail-box");
         qtyInput.style.left = previewLeft + "px";
-        qtyInput.style.top = (previewTop + 123) + "px";
+        qtyInput.style.top = (previewTop + 115) + "px";
         qtyInput.value = "Qty: " + (item.quantity || 0);
     
         const metalInput = document.createElement("input");
@@ -388,7 +388,7 @@
         metalInput.id = "metalCell" + index;
         metalInput.classList.add("detail-box");
         metalInput.style.left = previewLeft + "px";
-        metalInput.style.top = (previewTop + 133) + "px";
+        metalInput.style.top = (previewTop + 125) + "px";
         metalInput.value = item.metal || "No Metal";
     
         container.appendChild(previewBox);
