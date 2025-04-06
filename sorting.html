@@ -462,12 +462,12 @@
     
       // Crop Images Button
       document.getElementById("cropImagesBtn").addEventListener("click", async function() {
-        // Clear the global array
+        // Clear global cropped images array
         croppedImagesArray = [];
         await cropAllImages();
       });
     
-      // Send & Match Button
+      // Send & Match Button (parallelized)
       document.getElementById("sendMatchBtn").addEventListener("click", async function() {
         await sendAndMatch();
       });
@@ -728,7 +728,7 @@
     }
     
     // =====================================================
-    // NEW CODE FOR IMAGE COMPARISON, CROPPING, & SEND/MATCH
+    // NEW CODE FOR IMAGE COMPARISON, CROPPING, & SEND/MATCH (Parallel)
     // =====================================================
     
     // Drag & Drop for photoDragDrop
@@ -770,7 +770,7 @@
       }
     }
     
-    // Updated cropImageFromPreview using bounding rectangles to determine visible area
+    // Updated cropImageFromPreview using bounding rectangles to determine the visible area
     function cropImageFromPreview(cell, canvasWidth, canvasHeight) {
       return new Promise((resolve, reject) => {
         const imgElem = cell.querySelector("img");
@@ -795,7 +795,6 @@
         const sourceImage = new Image();
         sourceImage.crossOrigin = "Anonymous";
         sourceImage.onload = function() {
-          // The image element is rendered with width imgRect.width and height imgRect.height
           // Calculate ratio from natural image size to rendered size
           const ratioX = sourceImage.naturalWidth / imgRect.width;
           const ratioY = sourceImage.naturalHeight / imgRect.height;
@@ -818,7 +817,7 @@
       });
     }
     
-    // New function: Send & Match using cropped images
+    // New function: Send & Match (Parallel) using cropped images
     async function sendAndMatch() {
       const userImageElem = document.getElementById("userImage");
       if (!userImageElem.src) {
@@ -829,20 +828,20 @@
         M.toast({ html: "No cropped images available! Please crop images first." });
         return;
       }
+      // Create an array of promises to compare images in parallel
+      const comparePromises = croppedImagesArray.map((croppedImage, index) => {
+        if (!croppedImage) return Promise.resolve(0);
+        return compareImages(userImageElem.src, croppedImage, index);
+      });
+      const scores = await Promise.all(comparePromises);
       let bestScore = -Infinity;
       let bestIndex = -1;
-      for (let i = 0; i < croppedImagesArray.length; i++) {
-        if (!croppedImagesArray[i]) continue;
-        try {
-          const score = await compareImages(userImageElem.src, croppedImagesArray[i], i);
-          if (score > bestScore) {
-            bestScore = score;
-            bestIndex = i;
-          }
-        } catch (err) {
-          console.error("Comparison failed for cell", i, err);
+      scores.forEach((score, index) => {
+        if (score > bestScore) {
+          bestScore = score;
+          bestIndex = index;
         }
-      }
+      });
       if (bestIndex !== -1) {
         const bestCell = document.getElementById("previewCell" + bestIndex);
         bestCell.style.outline = "2px solid blue";
