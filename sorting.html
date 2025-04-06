@@ -163,7 +163,7 @@
   
   <!-- Image Comparison UI -->
   <div id="imageComparisonContainer">
-    <div id="photoDragDrop">Drag & Drop Photo</div>
+    <div id="photoDragDrop">Drag & Drop Photo(s)</div>
     <img id="userImage" src="" alt="User Image" />
   </div>
   
@@ -175,7 +175,7 @@
   
   <!-- Container for dynamically generated preview boxes and detail boxes -->
   <div id="photoGridContainer">
-    <!-- Preview boxes will be created dynamically -->
+    <!-- Preview boxes and detail boxes will be created dynamically -->
   </div>
   
   <!-- Config Modal -->
@@ -206,8 +206,9 @@
     // Base URL for Netlify functions
     const functionsBaseUrl = window.location.origin + "/.netlify/functions";
     
-    // Global array to store cropped images (256x256)
+    // Global arrays to store cropped grid images and user images (both resized to 256x256)
     let croppedImagesArray = [];
+    let userImagesArray = []; // Each element will be an object: { name, data }
     
     (function(){
       const urlParams = new URLSearchParams(window.location.search);
@@ -251,7 +252,7 @@
       return base64String.replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
     }
     
-    // (HARD-CODED DEFAULT OFFSETS block skipped)
+    // (HARD-CODED DEFAULT OFFSETS omitted for brevity)
     
     const configIDs = [
       "connectEtsyBtn", "testOpenAIBtn", "openConfigBtn", "etsyOrderNumber",
@@ -316,7 +317,7 @@
         }
       });
     
-      // Load multiple orders when the user presses Enter
+      // Load multiple orders on Enter key
       var etsyOrderInput = document.getElementById("etsyOrderNumber");
       etsyOrderInput.addEventListener("keydown", async function(e) {
         if (e.key === "Enter") {
@@ -341,7 +342,8 @@
     });
     
     // ---------------------------------------------------------
-    // Dynamically generate preview boxes and detail boxes
+    // Dynamically generate preview boxes and four detail boxes per item
+    // (Detail boxes: Order #, Quantity, Metal, and a fourth (match box) initially empty)
     // ---------------------------------------------------------
     async function fillPreviewBoxes(items) {
       const container = document.getElementById("photoGridContainer");
@@ -365,7 +367,7 @@
         previewBox.style.height = "110px";
         previewBox.innerHTML = "Loading...";
     
-        // Create detail text boxes, left-justified (same left as preview box)
+        // Create detail text boxes (first three)
         const orderInput = document.createElement("input");
         orderInput.type = "text";
         orderInput.readOnly = true;
@@ -373,8 +375,7 @@
         orderInput.classList.add("detail-box");
         orderInput.style.left = previewLeft + "px";
         orderInput.style.top = (previewTop + 95) + "px";
-        // Use Etsy's receipt_id for the order number
-        orderInput.value = item.receipt_id || "No Order #";
+        orderInput.value = item.orderNumber || "No Order #";
     
         const qtyInput = document.createElement("input");
         qtyInput.type = "text";
@@ -392,24 +393,23 @@
         metalInput.classList.add("detail-box");
         metalInput.style.left = previewLeft + "px";
         metalInput.style.top = (previewTop + 119) + "px";
-        // Use variations to extract the metal information from Etsy
-        let metalSel = "";
-        if (item.variations && Array.isArray(item.variations)) {
-          const acceptedMetalNames = ["metal", "metal choice", "metal - engraving", "metal colour", "color", "metal choice / engraving option"];
-          const metalVar = item.variations.find(function(v) {
-            if (!v.formatted_name) return false;
-            return acceptedMetalNames.indexOf(v.formatted_name.trim().toLowerCase()) >= 0;
-          });
-          if (metalVar && metalVar.formatted_value) {
-            metalSel = metalVar.formatted_value;
-          }
-        }
-        metalInput.value = " Metal: " + (metalSel || "No Metal");
+        metalInput.value = item.metal || "No Metal";
+    
+        // Fourth detail box for matching user image names (initially empty)
+        const matchInput = document.createElement("input");
+        matchInput.type = "text";
+        matchInput.readOnly = true;
+        matchInput.id = "matchCell" + index;
+        matchInput.classList.add("detail-box");
+        matchInput.style.left = previewLeft + "px";
+        matchInput.style.top = (previewTop + 131) + "px";
+        matchInput.value = "";
     
         container.appendChild(previewBox);
         container.appendChild(orderInput);
         container.appendChild(qtyInput);
         container.appendChild(metalInput);
+        container.appendChild(matchInput);
     
         // Load image for the preview box
         fetchListingImages(item.listing_id)
@@ -422,7 +422,7 @@
           })
           .then(localImageData => {
             previewBox.innerHTML = `<img src="${localImageData}" alt="Listing ${item.listing_id}" data-scale="1" data-offsetX="0" data-offsetY="0" />`;
-            // Attach event listeners for zoom, drag, and click
+            // Attach event listeners to this preview box
             attachPreviewBoxListeners(previewBox);
           })
           .catch(err => {
@@ -531,7 +531,7 @@
     }
     
     // ---------------------------------------------------------
-    // Load orders and fill preview boxes
+    // Load orders and fill preview boxes from Etsy data
     // ---------------------------------------------------------
     async function loadBatchEtsyOrders(orderNumbers) {
       try {
@@ -619,12 +619,13 @@
         const widthVal = parseInt(cs.width, 10) || 0;
         const heightVal = parseInt(cs.height, 10) || 0;
         const row = document.createElement("tr");
-        row.innerHTML =
-          "<td>" + id + "</td>" +
-          "<td><input type='number' value='" + leftVal + "' data-id='" + id + "' class='left-input'></td>" +
-          "<td><input type='number' value='" + topVal + "' data-id='" + id + "' class='top-input'></td>" +
-          "<td><input type='number' value='" + widthVal + "' data-id='" + id + "' class='width-input'></td>" +
-          "<td><input type='number' value='" + heightVal + "' data-id='" + id + "' class='height-input'></td>";
+        row.innerHTML = `
+          <td>${id}</td>
+          <td><input type="number" value="${leftVal}" data-id="${id}" class="left-input"></td>
+          <td><input type="number" value="${topVal}" data-id="${id}" class="top-input"></td>
+          <td><input type="number" value="${widthVal}" data-id="${id}" class="width-input"></td>
+          <td><input type="number" value="${heightVal}" data-id="${id}" class="height-input"></td>
+        `;
         tbody.appendChild(row);
         row.querySelector(".left-input").addEventListener("input", function() {
           const target = document.getElementById(this.dataset.id);
@@ -667,22 +668,55 @@
     // NEW CODE FOR IMAGE COMPARISON, CROPPING, & SEND/MATCH (Parallel)
     // =====================================================
     
-    // Drag & Drop for photoDragDrop
+    // Drag & Drop for photoDragDrop supporting multiple files
     const photoDragDropElem = document.getElementById("photoDragDrop");
     photoDragDropElem.addEventListener("dragover", function(e) { e.preventDefault(); });
     photoDragDropElem.addEventListener("drop", function(e) {
       e.preventDefault();
-      const file = e.dataTransfer.files[0];
-      const reader = new FileReader();
-      reader.onload = function(e) {
-        const imageData = e.target.result;
-        const userImageElem = document.getElementById("userImage");
-        userImageElem.src = imageData;
-        userImageElem.style.display = "inline-block";
-        M.toast({ html: "User Image captured." });
-      };
-      reader.readAsDataURL(file);
+      const files = e.dataTransfer.files;
+      // Process each dropped file
+      for (let i = 0; i < files.length; i++) {
+        const file = files[i];
+        const reader = new FileReader();
+        reader.onload = async function(e) {
+          const imageData = e.target.result;
+          try {
+            const resizedData = await resizeUserImage(imageData);
+            // Store an object with the file name and the resized image data
+            userImagesArray.push({ name: file.name, data: resizedData });
+            M.toast({ html: "User image " + userImagesArray.length + " captured and resized." });
+            // If first image, display in userImage preview
+            if (userImagesArray.length === 1) {
+              const userImageElem = document.getElementById("userImage");
+              userImageElem.src = resizedData;
+              userImageElem.style.display = "inline-block";
+            }
+          } catch(err) {
+            console.error("Error resizing user image:", err);
+            M.toast({ html: "Error processing one of the user images." });
+          }
+        };
+        reader.readAsDataURL(file);
+      }
     });
+    
+    // Function to resize user images to 256x256
+    function resizeUserImage(dataUrl) {
+      return new Promise((resolve, reject) => {
+        const img = new Image();
+        img.crossOrigin = "Anonymous";
+        img.onload = function() {
+          const canvas = document.createElement("canvas");
+          canvas.width = 256;
+          canvas.height = 256;
+          const ctx = canvas.getContext("2d");
+          ctx.drawImage(img, 0, 0, 256, 256);
+          resolve(canvas.toDataURL());
+        };
+        img.onerror = function(err) { reject(err); };
+        img.src = dataUrl;
+      });
+    }
     
     // Crop all preview images and store cropped images (256x256) in global array
     async function cropAllImages() {
@@ -753,39 +787,31 @@
     
     // Send & Match function (parallel requests)
     async function sendAndMatch() {
-      const userImageElem = document.getElementById("userImage");
-      if (!userImageElem.src) {
-        M.toast({ html: "User image not available!" });
+      if (userImagesArray.length === 0) {
+        M.toast({ html: "No user images available! Please drop user images first." });
         return;
       }
       if (!croppedImagesArray || croppedImagesArray.length === 0) {
-        M.toast({ html: "No cropped images available! Please crop images first." });
+        M.toast({ html: "No cropped grid images available! Please crop images first." });
         return;
       }
-      const comparePromises = croppedImagesArray.map((croppedImage, index) => {
-        if (!croppedImage) return Promise.resolve(0);
-        return compareImages(userImageElem.src, croppedImage, index);
-      });
-      const scores = await Promise.all(comparePromises);
-      let bestScore = -Infinity;
-      let bestIndex = -1;
-      scores.forEach((score, index) => {
-        if (score > bestScore) {
-          bestScore = score;
-          bestIndex = index;
+      // For each grid cell, compare its cropped image with every user image in parallel
+      for (let i = 0; i < croppedImagesArray.length; i++) {
+        let comparisonPromises = userImagesArray.map(user =>
+          compareImages(user.data, croppedImagesArray[i], i, user.name)
+        );
+        let results = await Promise.all(comparisonPromises);
+        // For this grid cell, collect names with a score >= 0.8
+        let matchingNames = results.filter(res => res.score >= 0.8 && res.name).map(res => res.name);
+        let matchBox = document.getElementById("matchCell" + i);
+        if (matchBox) {
+          matchBox.value = matchingNames.join(", ");
         }
-      });
-      if (bestIndex !== -1) {
-        const bestCell = document.getElementById("previewCell" + bestIndex);
-        bestCell.style.outline = "2px solid blue";
-        M.toast({ html: "Best match: cell " + bestIndex + " (score: " + bestScore + ")" });
-        setTimeout(() => { bestCell.style.outline = ""; }, 5000);
-      } else {
-        M.toast({ html: "No valid matches found." });
       }
     }
     
-    async function compareImages(userImage, croppedGridImage, cellIndex) {
+    // Modified compareImages: returns an object with score and, if threshold met, the user image name.
+    async function compareImages(userImage, croppedGridImage, cellIndex, userImageName) {
       const payload = {
         model: "gpt-4o-mini",
         messages: [
@@ -807,63 +833,20 @@
           body: JSON.stringify(payload)
         });
         const data = await response.json();
-        console.log("Response for cell " + cellIndex + ":", data);
+        console.log("Response for cell " + cellIndex + ", user image " + userImageName + ":", data);
         const scoreText = data.choices[0].message.content.trim();
         const score = parseFloat(scoreText);
         if (isNaN(score)) {
-          M.toast({ html: "Cell " + cellIndex + ": Invalid score (" + scoreText + ")" });
-          return 0;
+          M.toast({ html: "Cell " + cellIndex + " (" + userImageName + "): Invalid score (" + scoreText + ")" });
+          return { score: 0, name: null };
         }
-        M.toast({ html: "Cell " + cellIndex + ": Score " + score });
-        return score;
+        M.toast({ html: "Cell " + cellIndex + " (" + userImageName + "): Score " + score });
+        return { score: score, name: (score >= 0.8) ? userImageName : null };
       } catch (error) {
-        console.error("Error comparing cell " + cellIndex + ":", error);
-        M.toast({ html: "Cell " + cellIndex + ": Comparison error" });
-        return 0;
+        console.error("Error comparing cell " + cellIndex + ", user image " + userImageName + ":", error);
+        M.toast({ html: "Cell " + cellIndex + " (" + userImageName + "): Comparison error" });
+        return { score: 0, name: null };
       }
-    }
-    
-    // ---------------------------------------------------------
-    // Order details pulling from Etsy API
-    // ---------------------------------------------------------
-    function pullEtsyOrderDetails(orderNumber) {
-      console.log("Pulling Etsy order details for order number:", orderNumber);
-      var token = localStorage.getItem("access_token");
-      return fetch(functionsBaseUrl + "/etsyOrderProxy?orderId=" + encodeURIComponent(orderNumber), {
-        headers: { "access-token": token }
-      })
-      .then(function(r) { return r.json(); })
-      .then(function(data) {
-        console.log("Etsy Order Data:", data);
-        // Set global variables for order details if needed
-        // (Adjust these assignments as required by your Etsy API response structure)
-        window.receiptIsGift = (typeof data.is_gift !== "undefined") ? data.is_gift : null;
-        window.receiptGiftMessage = data.gift_message || "";
-        window.orderShipments = data.shipments || [];
-        if(data.name){
-          window.orderName = data.name;
-        } else {
-          window.orderName = "";
-        }
-        if(data.status){
-          window.orderStatus = data.status;
-        } else {
-          window.orderStatus = "";
-        }
-        if(data.is_shipped === true){
-          window.orderIsShipped = "Shipped!";
-        } else if(data.is_shipped === false){
-          window.orderIsShipped = "Not Shipped";
-        } else {
-          window.orderIsShipped = "";
-        }
-        // (Additional order detail processing can be added here)
-        return data;
-      })
-      .catch(function(err) {
-        console.error("Error fetching Etsy order details:", err);
-        return null;
-      });
     }
   </script>
 </body>
