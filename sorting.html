@@ -251,15 +251,11 @@
       return base64String.replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
     }
     
-    // ---------------------------------------------------------------------
-    // HARD-CODED DEFAULT OFFSETS
-    // (Insert your full default offsets here if needed)
-    // ---------------------------------------------------------------------
+    // (HARD-CODED DEFAULT OFFSETS block skipped)
     
     const configIDs = [
       "connectEtsyBtn", "testOpenAIBtn", "openConfigBtn", "etsyOrderNumber",
       "photoGridContainer", "configModal", "configTable", "saveConfigBtn"
-      // Preview boxes and detail boxes will be generated dynamically.
     ];
     
     document.addEventListener("DOMContentLoaded", function() {
@@ -377,7 +373,8 @@
         orderInput.classList.add("detail-box");
         orderInput.style.left = previewLeft + "px";
         orderInput.style.top = (previewTop + 95) + "px";
-        orderInput.value = item.orderNumber || "No Order #";
+        // Use Etsy's receipt_id for the order number
+        orderInput.value = item.receipt_id || "No Order #";
     
         const qtyInput = document.createElement("input");
         qtyInput.type = "text";
@@ -395,7 +392,19 @@
         metalInput.classList.add("detail-box");
         metalInput.style.left = previewLeft + "px";
         metalInput.style.top = (previewTop + 119) + "px";
-        metalInput.value = item.metal || "No Metal";
+        // Use variations to extract the metal information from Etsy
+        let metalSel = "";
+        if (item.variations && Array.isArray(item.variations)) {
+          const acceptedMetalNames = ["metal", "metal choice", "metal - engraving", "metal colour", "color", "metal choice / engraving option"];
+          const metalVar = item.variations.find(function(v) {
+            if (!v.formatted_name) return false;
+            return acceptedMetalNames.indexOf(v.formatted_name.trim().toLowerCase()) >= 0;
+          });
+          if (metalVar && metalVar.formatted_value) {
+            metalSel = metalVar.formatted_value;
+          }
+        }
+        metalInput.value = " Metal: " + (metalSel || "No Metal");
     
         container.appendChild(previewBox);
         container.appendChild(orderInput);
@@ -413,7 +422,7 @@
           })
           .then(localImageData => {
             previewBox.innerHTML = `<img src="${localImageData}" alt="Listing ${item.listing_id}" data-scale="1" data-offsetX="0" data-offsetY="0" />`;
-            // Attach event listeners to this preview box
+            // Attach event listeners for zoom, drag, and click
             attachPreviewBoxListeners(previewBox);
           })
           .catch(err => {
@@ -612,10 +621,10 @@
         const row = document.createElement("tr");
         row.innerHTML =
           "<td>" + id + "</td>" +
-          "<td><input type=\"number\" value=\"" + leftVal + "\" data-id=\"" + id + "\" class=\"left-input\" /></td>" +
-          "<td><input type=\"number\" value=\"" + topVal + "\" data-id=\"" + id + "\" class=\"top-input\" /></td>" +
-          "<td><input type=\"number\" value=\"" + widthVal + "\" data-id=\"" + id + "\" class=\"width-input\" /></td>" +
-          "<td><input type=\"number\" value=\"" + heightVal + "\" data-id=\"" + id + "\" class=\"height-input\" /></td>";
+          "<td><input type='number' value='" + leftVal + "' data-id='" + id + "' class='left-input'></td>" +
+          "<td><input type='number' value='" + topVal + "' data-id='" + id + "' class='top-input'></td>" +
+          "<td><input type='number' value='" + widthVal + "' data-id='" + id + "' class='width-input'></td>" +
+          "<td><input type='number' value='" + heightVal + "' data-id='" + id + "' class='height-input'></td>";
         tbody.appendChild(row);
         row.querySelector(".left-input").addEventListener("input", function() {
           const target = document.getElementById(this.dataset.id);
@@ -641,7 +650,7 @@
       M.Modal.getInstance(document.getElementById("configModal")).open();
     });
     
-    function saveConfiguration() {
+    document.getElementById("saveConfigBtn").addEventListener("click", function() {
       configIDs.forEach(function(id) {
         const el = document.getElementById(id);
         if (!el) return;
@@ -652,7 +661,7 @@
         localStorage.setItem("pos-" + id + "-height", parseInt(cs.height, 10) || 0);
       });
       M.toast({ html: "Positions saved!" });
-    }
+    });
     
     // =====================================================
     // NEW CODE FOR IMAGE COMPARISON, CROPPING, & SEND/MATCH (Parallel)
@@ -812,6 +821,49 @@
         M.toast({ html: "Cell " + cellIndex + ": Comparison error" });
         return 0;
       }
+    }
+    
+    // ---------------------------------------------------------
+    // Order details pulling from Etsy API
+    // ---------------------------------------------------------
+    function pullEtsyOrderDetails(orderNumber) {
+      console.log("Pulling Etsy order details for order number:", orderNumber);
+      var token = localStorage.getItem("access_token");
+      return fetch(functionsBaseUrl + "/etsyOrderProxy?orderId=" + encodeURIComponent(orderNumber), {
+        headers: { "access-token": token }
+      })
+      .then(function(r) { return r.json(); })
+      .then(function(data) {
+        console.log("Etsy Order Data:", data);
+        // Set global variables for order details if needed
+        // (Adjust these assignments as required by your Etsy API response structure)
+        window.receiptIsGift = (typeof data.is_gift !== "undefined") ? data.is_gift : null;
+        window.receiptGiftMessage = data.gift_message || "";
+        window.orderShipments = data.shipments || [];
+        if(data.name){
+          window.orderName = data.name;
+        } else {
+          window.orderName = "";
+        }
+        if(data.status){
+          window.orderStatus = data.status;
+        } else {
+          window.orderStatus = "";
+        }
+        if(data.is_shipped === true){
+          window.orderIsShipped = "Shipped!";
+        } else if(data.is_shipped === false){
+          window.orderIsShipped = "Not Shipped";
+        } else {
+          window.orderIsShipped = "";
+        }
+        // (Additional order detail processing can be added here)
+        return data;
+      })
+      .catch(function(err) {
+        console.error("Error fetching Etsy order details:", err);
+        return null;
+      });
     }
   </script>
 </body>
