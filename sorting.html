@@ -252,7 +252,9 @@
       return base64String.replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
     }
     
-    // (HARD-CODED DEFAULT OFFSETS omitted for brevity)
+    // ---------------------------------------------------------------------
+    // (HARD-CODED DEFAULT OFFSETS omitted as requested)
+    // ---------------------------------------------------------------------
     
     const configIDs = [
       "connectEtsyBtn", "testOpenAIBtn", "openConfigBtn", "etsyOrderNumber",
@@ -317,7 +319,7 @@
         }
       });
     
-      // Load multiple orders on Enter key
+      // Load multiple orders when the user presses Enter
       var etsyOrderInput = document.getElementById("etsyOrderNumber");
       etsyOrderInput.addEventListener("keydown", async function(e) {
         if (e.key === "Enter") {
@@ -343,7 +345,7 @@
     
     // ---------------------------------------------------------
     // Dynamically generate preview boxes and four detail boxes per item
-    // (Detail boxes: Order #, Quantity, Metal, and a fourth (match box) initially empty)
+    // (Detail boxes: Order # (bold), Quantity, Metal, and a fourth (match) box initially empty)
     // ---------------------------------------------------------
     async function fillPreviewBoxes(items) {
       const container = document.getElementById("photoGridContainer");
@@ -367,7 +369,7 @@
         previewBox.style.height = "110px";
         previewBox.innerHTML = "Loading...";
     
-        // Create detail text boxes (first three)
+        // Create first detail box: Order # (bold)
         const orderInput = document.createElement("input");
         orderInput.type = "text";
         orderInput.readOnly = true;
@@ -375,8 +377,11 @@
         orderInput.classList.add("detail-box");
         orderInput.style.left = previewLeft + "px";
         orderInput.style.top = (previewTop + 95) + "px";
-        orderInput.value = item.orderNumber || "No Order #";
+        // Use receipt_id if available; otherwise fallback to orderNumber
+        orderInput.value = item.receipt_id ? item.receipt_id : (item.orderNumber || "No Order #");
+        orderInput.style.fontWeight = "bold";
     
+        // Create second detail box: Quantity
         const qtyInput = document.createElement("input");
         qtyInput.type = "text";
         qtyInput.readOnly = true;
@@ -384,8 +389,9 @@
         qtyInput.classList.add("detail-box");
         qtyInput.style.left = previewLeft + "px";
         qtyInput.style.top = (previewTop + 107) + "px";
-        qtyInput.value = "Qty: " + (item.quantity || 0);
+        qtyInput.value = " Qty: " + (item.quantity != null ? item.quantity : 0);
     
+        // Create third detail box: Metal
         const metalInput = document.createElement("input");
         metalInput.type = "text";
         metalInput.readOnly = true;
@@ -393,9 +399,17 @@
         metalInput.classList.add("detail-box");
         metalInput.style.left = previewLeft + "px";
         metalInput.style.top = (previewTop + 119) + "px";
-        metalInput.value = item.metal || "No Metal";
+        let metalSel = "";
+        if (item.variations && Array.isArray(item.variations)) {
+          const acceptedMetalNames = ["metal", "metal choice", "metal - engraving", "metal colour", "color", "metal choice / engraving option"];
+          const metalVar = item.variations.find(v => v.formatted_name && acceptedMetalNames.includes(v.formatted_name.trim().toLowerCase()));
+          if (metalVar && metalVar.formatted_value) {
+            metalSel = metalVar.formatted_value;
+          }
+        }
+        metalInput.value = " Metal: " + (metalSel || "No Metal");
     
-        // Fourth detail box for matching user image names (initially empty)
+        // Create fourth detail box: Match info (initially empty)
         const matchInput = document.createElement("input");
         matchInput.type = "text";
         matchInput.readOnly = true;
@@ -843,10 +857,48 @@
         M.toast({ html: "Cell " + cellIndex + " (" + userImageName + "): Score " + score });
         return { score: score, name: (score >= 0.8) ? userImageName : null };
       } catch (error) {
-        console.error("Error comparing cell " + cellIndex + ", user image " + userImageName + ":", error);
+        console.error("Error comparing cell " + cellIndex + " (" + userImageName + "):", error);
         M.toast({ html: "Cell " + cellIndex + " (" + userImageName + "): Comparison error" });
         return { score: 0, name: null };
       }
+    }
+    
+    // ---------------------------------------------------------
+    // Pull Etsy order details and update grid details
+    // (This function uses the Etsy API response to update the three read-only detail boxes)
+    // ---------------------------------------------------------
+    function pullEtsyOrderDetails(orderNumber) {
+      console.log("Pulling Etsy order details for order number:", orderNumber);
+      var token = localStorage.getItem("access_token");
+      return fetch(functionsBaseUrl + "/etsyOrderProxy?orderId=" + encodeURIComponent(orderNumber), {
+        headers: { "access-token": token }
+      })
+      .then(function(r) { return r.json(); })
+      .then(function(data) {
+        console.log("Etsy Order Data:", data);
+        // Update global variables as needed (not shown here)
+        // Return the data to be used in updateImageGrid
+        return data;
+      })
+      .catch(function(err) {
+        console.error("Error fetching Etsy order details:", err);
+        return null;
+      });
+    }
+    
+    // Example: update the grid details using pulled Etsy order details
+    async function updateImageGrid(data) {
+      // Assuming data.transactions contains the order items from Etsy
+      let items = [];
+      if (data.transactions && Array.isArray(data.transactions)) {
+        items = data.transactions;
+      } else if (Array.isArray(data)) {
+        items = data;
+      }
+      // Store items globally if needed
+      window.cachedOrderItems = items;
+      // Now, repopulate the grid using the items array (which now contains real Etsy data)
+      await fillPreviewBoxes(items);
     }
   </script>
 </body>
