@@ -14,7 +14,7 @@
       margin: 0;
       height: 100vh;
       position: relative;
-      opacity: 0; 
+      opacity: 0;
       transition: opacity 0s;
     }
     /* Main Buttons */
@@ -45,7 +45,7 @@
       font-size: 0.9em;
     }
 
-    /* New UI for Image Comparison */
+    /* Image Comparison UI */
     #imageComparisonContainer {
       position: absolute;
       left: 20px;
@@ -67,7 +67,7 @@
       display: none;
       vertical-align: top;
     }
-    /* New Cropped Image Preview Box */
+    /* New Cropped Image Preview */
     #croppedImageContainer {
       position: absolute;
       left: 20px;
@@ -80,12 +80,12 @@
       background: #eee;
     }
 
-    /* Container for the 35 image preview boxes */
+    /* 35 Image Grid */
     #photoGridContainer {
       position: relative;
-      width: 1200px; 
-      height: 700px; 
-      border: 1px dashed #ccc; 
+      width: 1200px;
+      height: 700px;
+      border: 1px dashed #ccc;
       left: 350px;
       top: 20px;
     }
@@ -121,7 +121,7 @@
       text-overflow: ellipsis;
       margin-top: 3px;
     }
-    /* Open Config Modal */
+    /* Config Modal */
     #configModal.modal {
       position: fixed !important;
       top: 50% !important;
@@ -137,7 +137,9 @@
     #configTable .left-input,
     #configTable .top-input,
     #configTable .width-input,
-    #configTable .height-input { width: 80px !important; }
+    #configTable .height-input {
+      width: 80px !important;
+    }
   </style>
 </head>
 <body>
@@ -376,6 +378,349 @@
       return base64String.replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
     }
 
+    // ---------------------------------------------------------------------
+    // HARD-CODED DEFAULT OFFSETS
+    // (Insert your full default offsets here if needed)
+    // ---------------------------------------------------------------------
+
+    // Assume configIDs is defined as in your existing implementation.
+    const configIDs = [
+      "connectEtsyBtn", "testOpenAIBtn", "openConfigBtn", "etsyOrderNumber",
+      "photoGridContainer", "configModal", "configTable", "saveConfigBtn",
+      ...[...Array(35).keys()].flatMap(i => ["previewCell" + i, "quantityCell" + i, "titleCell" + i])
+    ];
+
+    document.addEventListener("DOMContentLoaded", function() {
+      M.AutoInit();
+      setTimeout(function() {
+        loadPositions();
+        document.body.style.opacity = 1;
+      }, 200);
+
+      // Connect to Etsy
+      document.getElementById("connectEtsyBtn").addEventListener("click", async function() {
+        try {
+          const codeVerifier = generateRandomString(64);
+          localStorage.setItem("etsy_code_verifier", codeVerifier);
+          const codeChallenge = await generateCodeChallenge(codeVerifier);
+          const CLIENT_ID = "k75zdspz4r99txpqdji7i2em";
+          const redirectUri = "https://sorting.goldenspike.app";
+          const state = "randomState123";
+          const scope = "listings_w listings_r transactions_r transactions_w";
+          const etsyAuthUrl =
+            "https://www.etsy.com/oauth/connect?response_type=code" +
+            "&client_id=" + CLIENT_ID +
+            "&redirect_uri=" + encodeURIComponent(redirectUri) +
+            "&scope=" + encodeURIComponent(scope) +
+            "&state=" + state +
+            "&code_challenge=" + encodeURIComponent(codeChallenge) +
+            "&code_challenge_method=S256";
+          window.location.href = etsyAuthUrl;
+        } catch (err) {
+          console.error("OAuth start error:", err);
+          M.toast({ html: "OAuth error: " + err.message });
+        }
+      });
+
+      // Test OpenAI
+      document.getElementById("testOpenAIBtn").addEventListener("click", async function() {
+        try {
+          const testBody = {
+            model: "gpt-3.5-turbo",
+            messages: [{ role: "user", content: "Hello from the Sorting page!" }]
+          };
+          const resp = await fetch(functionsBaseUrl + "/openaiProxy", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(testBody)
+          });
+          if (!resp.ok) {
+            throw new Error("OpenAI test call failed with " + resp.status);
+          }
+          const data = await resp.json();
+          if (data.choices && data.choices[0] && data.choices[0].message) {
+            M.toast({ html: "OpenAI responded successfully." });
+          } else {
+            throw new Error("No valid response from OpenAI!");
+          }
+        } catch (err) {
+          M.toast({ html: "OpenAI test failed: " + err.message });
+        }
+      });
+
+      // Loading multiple orders
+      var etsyOrderInput = document.getElementById("etsyOrderNumber");
+      etsyOrderInput.addEventListener("keydown", async function(e) {
+        if (e.key === "Enter") {
+          var inputVal = etsyOrderInput.value.trim();
+          if (!inputVal) return;
+          var orderNumbers = inputVal.split(",").map(x => x.trim()).filter(x => x);
+          orderNumbers = orderNumbers.slice(0, 50);
+          await loadBatchEtsyOrders(orderNumbers);
+        }
+      });
+
+      // Crop Images Button - new functionality
+      document.getElementById("cropImagesBtn").addEventListener("click", async function() {
+        await cropAllImages();
+      });
+
+      // ============ Wheel zoom, drag & single-click for preview boxes ============
+      var previewBoxes = document.querySelectorAll(".preview-box");
+      previewBoxes.forEach(function(box) {
+        var isDragging = false;
+        var isMouseDown = false;
+        var dragStartX = 0, dragStartY = 0;
+        var lastX = 0, lastY = 0;
+        var dragThreshold = 3; // if we move more than 3px, consider it a drag
+        // Wheel zoom
+        box.addEventListener("wheel", function(ev) {
+          var img = box.querySelector("img");
+          if (!img) return;
+          ev.preventDefault();
+          var currentScale = parseFloat(img.dataset.scale) || 1;
+          var offX = parseFloat(img.dataset.offsetX) || 0;
+          var offY = parseFloat(img.dataset.offsetY) || 0;
+          if (ev.deltaY < 0) {
+            currentScale *= 1.1;
+          } else {
+            currentScale /= 1.1;
+            if (currentScale <= 1) {
+              currentScale = 1;
+              offX = 0;
+              offY = 0;
+            }
+          }
+          if (currentScale > 4) currentScale = 4;
+          img.dataset.scale = currentScale;
+          img.dataset.offsetX = offX;
+          img.dataset.offsetY = offY;
+          img.style.transform = "translate(" + offX + "px, " + offY + "px) scale(" + currentScale + ")";
+        });
+        // Mouse down => start drag
+        box.addEventListener("mousedown", function(ev) {
+          var img = box.querySelector("img");
+          if (!img) return;
+          var scaleNow = parseFloat(img.dataset.scale) || 1;
+          if (scaleNow <= 1) return;
+          ev.preventDefault();
+          isMouseDown = true;
+          isDragging = false;
+          dragStartX = ev.clientX;
+          dragStartY = ev.clientY;
+          lastX = ev.clientX;
+          lastY = ev.clientY;
+        });
+        // Mouse move => panning if dragging
+        box.addEventListener("mousemove", function(ev) {
+          if (!isMouseDown) return;
+          ev.preventDefault();
+          var dxAll = Math.abs(ev.clientX - dragStartX);
+          var dyAll = Math.abs(ev.clientY - dragStartY);
+          if (dxAll > dragThreshold || dyAll > dragThreshold) isDragging = true;
+          var img = box.querySelector("img");
+          if (!img) return;
+          var scaleNow = parseFloat(img.dataset.scale) || 1;
+          var offX = parseFloat(img.dataset.offsetX) || 0;
+          var offY = parseFloat(img.dataset.offsetY) || 0;
+          var dx = ev.clientX - lastX;
+          var dy = ev.clientY - lastY;
+          offX += dx;
+          offY += dy;
+          img.dataset.offsetX = offX;
+          img.dataset.offsetY = offY;
+          img.style.transform = "translate(" + offX + "px, " + offY + "px) scale(" + scaleNow + ")";
+          lastX = ev.clientX;
+          lastY = ev.clientY;
+        });
+        // Mouse up/leave => end drag
+        box.addEventListener("mouseup", function() { isMouseDown = false; });
+        box.addEventListener("mouseleave", function() { isMouseDown = false; });
+        // Single-click => Zoom if not dragging
+        box.addEventListener("click", function(ev) {
+          if (isDragging) { isDragging = false; return; }
+          var img = box.querySelector("img");
+          if (!img) return;
+          var rect = box.getBoundingClientRect();
+          var boxCenterX = rect.left + box.clientWidth / 2;
+          var boxCenterY = rect.top + box.clientHeight / 2;
+          var dx = ev.clientX - boxCenterX;
+          var dy = ev.clientY - boxCenterY;
+          var scale = 4;
+          var fudgeY = 10;
+          var offsetX = -scale * dx;
+          var offsetY = -scale * dy + fudgeY;
+          img.dataset.scale = scale;
+          img.dataset.offsetX = offsetX;
+          img.dataset.offsetY = offsetY;
+          img.style.transform = "translate(" + offsetX + "px, " + offsetY + "px) scale(" + scale + ")";
+        });
+      });
+    });
+
+    async function loadBatchEtsyOrders(orderNumbers) {
+      try {
+        M.toast({ html: "Loading " + orderNumbers.length + " order(s)..." });
+        var token = localStorage.getItem("access_token") || "";
+        var combinedItems = [];
+        for (var i = 0; i < orderNumbers.length; i++) {
+          var ord = orderNumbers[i];
+          var url = functionsBaseUrl + "/etsyOrderProxy?orderId=" + encodeURIComponent(ord);
+          var resp = await fetch(url, { headers: { "access-token": token } });
+          if (!resp.ok) {
+            console.warn("Order fetch failed for " + ord + ", status=" + resp.status);
+            continue;
+          }
+          var data = await resp.json();
+          if (data.transactions && Array.isArray(data.transactions)) {
+            combinedItems.push.apply(combinedItems, data.transactions);
+          } else {
+            console.warn("No transactions for order " + ord);
+          }
+        }
+        fillPreviewBoxes(combinedItems);
+      } catch (err) {
+        console.error("Error loading batch orders:", err);
+        M.toast({ html: "Error: " + err.message });
+      }
+    }
+
+    async function fillPreviewBoxes(items) {
+      for (var i = 0; i < 35; i++) {
+        document.getElementById("previewCell" + i).innerHTML = "Empty";
+        document.getElementById("quantityCell" + i).textContent = "";
+        document.getElementById("titleCell" + i).textContent = "";
+      }
+      var limitedItems = items.slice(0, 35);
+      for (var j = 0; j < limitedItems.length; j++) {
+        var listingId = limitedItems[j].listing_id;
+        var quantity = limitedItems[j].quantity;
+        var title = limitedItems[j].title || "";
+        var cell = document.getElementById("previewCell" + j);
+        var qtyBox = document.getElementById("quantityCell" + j);
+        var titleBox = document.getElementById("titleCell" + j);
+        cell.innerHTML = "Loading...";
+        qtyBox.textContent = "Qty: " + (quantity || 0);
+        titleBox.textContent = title.split(" ").slice(0, 4).join(" ");
+        try {
+          var imageData = await fetchListingImages(listingId);
+          if (imageData && imageData.length > 0) {
+            // Save the image locally via our imageProxy to avoid CORS issues.
+            const localImageData = await getLocalImageData(imageData[0].url_fullxfull);
+            cell.innerHTML = "<img src=\"" + localImageData + "\" alt=\"Listing " + listingId + "\" data-scale=\"1\" data-offsetX=\"0\" data-offsetY=\"0\" />";
+          } else {
+            cell.innerHTML = "No Img";
+          }
+        } catch (err) {
+          console.warn("Image fetch error for listing", listingId, err);
+          cell.innerHTML = "Img Error";
+        }
+      }
+    }
+
+    async function fetchListingImages(listingId) {
+      var token = localStorage.getItem("access_token") || "";
+      var resp = await fetch(functionsBaseUrl + "/etsyImages?listingId=" + listingId, {
+        headers: { "access-token": token }
+      });
+      if (!resp.ok) {
+        console.warn("Image fetch HTTP error:", resp.status);
+        return [];
+      }
+      var data = await resp.json();
+      return data.results || [];
+    }
+
+    async function getLocalImageData(imageUrl) {
+      try {
+        const response = await fetch(functionsBaseUrl + "/imageProxy?url=" + encodeURIComponent(imageUrl));
+        const blob = await response.blob();
+        return new Promise((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = () => resolve(reader.result);
+          reader.onerror = reject;
+          reader.readAsDataURL(blob);
+        });
+      } catch (err) {
+        console.error("Error in getLocalImageData:", err);
+        throw err;
+      }
+    }
+
+    function loadPositions() {
+      configIDs.forEach(function(id) {
+        var el = document.getElementById(id);
+        if (!el) return;
+        var def = {}; // Replace with your default values if needed
+        var left = localStorage.getItem("pos-" + id + "-left") || def.left || 0;
+        var top  = localStorage.getItem("pos-" + id + "-top") || def.top || 0;
+        var w    = localStorage.getItem("pos-" + id + "-width") || def.width || 0;
+        var h    = localStorage.getItem("pos-" + id + "-height") || def.height || 0;
+        el.style.position = "absolute";
+        el.style.left = left + "px";
+        el.style.top = top + "px";
+        el.style.width = w + "px";
+        el.style.height = h + "px";
+      });
+    }
+    loadPositions();
+
+    function populateConfigTable() {
+      var tbody = document.querySelector("#configTable tbody");
+      tbody.innerHTML = "";
+      configIDs.forEach(function(id) {
+        var el = document.getElementById(id);
+        if (!el) return;
+        var cs = window.getComputedStyle(el);
+        var leftVal = parseInt(cs.left, 10) || 0;
+        var topVal = parseInt(cs.top, 10) || 0;
+        var widthVal = parseInt(cs.width, 10) || 0;
+        var heightVal = parseInt(cs.height, 10) || 0;
+        var row = document.createElement("tr");
+        row.innerHTML =
+          "<td>" + id + "</td>" +
+          "<td><input type=\"number\" value=\"" + leftVal + "\" data-id=\"" + id + "\" class=\"left-input\" /></td>" +
+          "<td><input type=\"number\" value=\"" + topVal + "\" data-id=\"" + id + "\" class=\"top-input\" /></td>" +
+          "<td><input type=\"number\" value=\"" + widthVal + "\" data-id=\"" + id + "\" class=\"width-input\" /></td>" +
+          "<td><input type=\"number\" value=\"" + heightVal + "\" data-id=\"" + id + "\" class=\"height-input\" /></td>";
+        tbody.appendChild(row);
+        row.querySelector(".left-input").addEventListener("input", function() {
+          var target = document.getElementById(this.dataset.id);
+          if (target) target.style.left = parseInt(this.value, 10) + "px";
+        });
+        row.querySelector(".top-input").addEventListener("input", function() {
+          var target = document.getElementById(this.dataset.id);
+          if (target) target.style.top = parseInt(this.value, 10) + "px";
+        });
+        row.querySelector(".width-input").addEventListener("input", function() {
+          var target = document.getElementById(this.dataset.id);
+          if (target) target.style.width = parseInt(this.value, 10) + "px";
+        });
+        row.querySelector(".height-input").addEventListener("input", function() {
+          var target = document.getElementById(this.dataset.id);
+          if (target) target.style.height = parseInt(this.value, 10) + "px";
+        });
+      });
+    }
+
+    document.getElementById("openConfigBtn").addEventListener("click", function() {
+      populateConfigTable();
+      M.Modal.getInstance(document.getElementById("configModal")).open();
+    });
+
+    function saveConfiguration() {
+      configIDs.forEach(function(id) {
+        var el = document.getElementById(id);
+        if (!el) return;
+        var cs = window.getComputedStyle(el);
+        localStorage.setItem("pos-" + id + "-left", parseInt(cs.left, 10) || 0);
+        localStorage.setItem("pos-" + id + "-top", parseInt(cs.top, 10) || 0);
+        localStorage.setItem("pos-" + id + "-width", parseInt(cs.width, 10) || 0);
+        localStorage.setItem("pos-" + id + "-height", parseInt(cs.height, 10) || 0);
+      });
+      M.toast({ html: "Positions saved!" });
+    }
+
     // =========================================
     // HARD-CODED DEFAULT OFFSETS
     // =========================================
@@ -498,348 +843,6 @@
       titleCell34:          {left: 875,  top: 600,  width: 66,   height: 0},
     };
     
-    const configIDs = [
-      "connectEtsyBtn", "testOpenAIBtn", "openConfigBtn", "etsyOrderNumber",
-      "photoGridContainer", "configModal", "configTable", "saveConfigBtn",
-      ...[...Array(35).keys()].flatMap(i => ["previewCell" + i, "quantityCell" + i, "titleCell" + i])
-    ];
-
-    document.addEventListener("DOMContentLoaded", function() {
-      M.AutoInit();
-      setTimeout(function() {
-        loadPositions();
-        document.body.style.opacity = 1;
-      }, 200);
-
-      // Connect to Etsy
-      document.getElementById("connectEtsyBtn").addEventListener("click", async function() {
-        try {
-          const codeVerifier = generateRandomString(64);
-          localStorage.setItem("etsy_code_verifier", codeVerifier);
-          const codeChallenge = await generateCodeChallenge(codeVerifier);
-          const CLIENT_ID = "k75zdspz4r99txpqdji7i2em";
-          const redirectUri = "https://sorting.goldenspike.app";
-          const state = "randomState123";
-          const scope = "listings_w listings_r transactions_r transactions_w";
-          const etsyAuthUrl =
-            "https://www.etsy.com/oauth/connect?response_type=code" +
-            "&client_id=" + CLIENT_ID +
-            "&redirect_uri=" + encodeURIComponent(redirectUri) +
-            "&scope=" + encodeURIComponent(scope) +
-            "&state=" + state +
-            "&code_challenge=" + encodeURIComponent(codeChallenge) +
-            "&code_challenge_method=S256";
-          window.location.href = etsyAuthUrl;
-        } catch (err) {
-          console.error("OAuth start error:", err);
-          M.toast({ html: "OAuth error: " + err.message });
-        }
-      });
-
-      // Test OpenAI
-      document.getElementById("testOpenAIBtn").addEventListener("click", async function() {
-        try {
-          const testBody = {
-            model: "gpt-3.5-turbo",
-            messages: [{ role: "user", content: "Hello from the Sorting page!" }]
-          };
-          const resp = await fetch(functionsBaseUrl + "/openaiProxy", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(testBody)
-          });
-          if (!resp.ok) {
-            throw new Error("OpenAI test call failed with " + resp.status);
-          }
-          const data = await resp.json();
-          if (data.choices && data.choices[0] && data.choices[0].message) {
-            M.toast({ html: "OpenAI responded successfully." });
-          } else {
-            throw new Error("No valid response from OpenAI!");
-          }
-        } catch (err) {
-          M.toast({ html: "OpenAI test failed: " + err.message });
-        }
-      });
-
-      // Loading multiple orders
-      var etsyOrderInput = document.getElementById("etsyOrderNumber");
-      etsyOrderInput.addEventListener("keydown", async function(e) {
-        if (e.key === "Enter") {
-          var inputVal = etsyOrderInput.value.trim();
-          if (!inputVal) return;
-          var orderNumbers = inputVal.split(",").map(x => x.trim()).filter(x => x);
-          orderNumbers = orderNumbers.slice(0, 50);
-          await loadBatchEtsyOrders(orderNumbers);
-        }
-      });
-
-      // Crop Images Button - new functionality
-      document.getElementById("cropImagesBtn").addEventListener("click", async function() {
-        await cropAllImages();
-      });
-
-      // ============ Wheel zoom & drag & Single-click for preview boxes ============
-      var previewBoxes = document.querySelectorAll(".preview-box");
-      previewBoxes.forEach(function(box) {
-        var isDragging = false;
-        var isMouseDown = false;
-        var dragStartX = 0, dragStartY = 0;
-        var lastX = 0, lastY = 0;
-        var dragThreshold = 3; // if we move more than 3px, consider it a drag
-        // Wheel zoom
-        box.addEventListener("wheel", function(ev) {
-          var img = box.querySelector("img");
-          if (!img) return;
-          ev.preventDefault();
-          var currentScale = parseFloat(img.dataset.scale) || 1;
-          var offX = parseFloat(img.dataset.offsetX) || 0;
-          var offY = parseFloat(img.dataset.offsetY) || 0;
-          if (ev.deltaY < 0) {
-            currentScale *= 1.1;
-          } else {
-            currentScale /= 1.1;
-            if (currentScale <= 1) {
-              currentScale = 1;
-              offX = 0;
-              offY = 0;
-            }
-          }
-          if (currentScale > 4) currentScale = 4;
-          img.dataset.scale = currentScale;
-          img.dataset.offsetX = offX;
-          img.dataset.offsetY = offY;
-          img.style.transform = "translate(" + offX + "px, " + offY + "px) scale(" + currentScale + ")";
-        });
-        // Mouse down => start drag
-        box.addEventListener("mousedown", function(ev) {
-          var img = box.querySelector("img");
-          if (!img) return;
-          var scaleNow = parseFloat(img.dataset.scale) || 1;
-          if (scaleNow <= 1) return;
-          ev.preventDefault();
-          isMouseDown = true;
-          isDragging = false;
-          dragStartX = ev.clientX;
-          dragStartY = ev.clientY;
-          lastX = ev.clientX;
-          lastY = ev.clientY;
-        });
-        // Mouse move => panning if dragging
-        box.addEventListener("mousemove", function(ev) {
-          if (!isMouseDown) return;
-          ev.preventDefault();
-          var dxAll = Math.abs(ev.clientX - dragStartX);
-          var dyAll = Math.abs(ev.clientY - dragStartY);
-          if (dxAll > dragThreshold || dyAll > dragThreshold) isDragging = true;
-          var img = box.querySelector("img");
-          if (!img) return;
-          var scaleNow = parseFloat(img.dataset.scale) || 1;
-          var offX = parseFloat(img.dataset.offsetX) || 0;
-          var offY = parseFloat(img.dataset.offsetY) || 0;
-          var dx = ev.clientX - lastX;
-          var dy = ev.clientY - lastY;
-          offX += dx;
-          offY += dy;
-          img.dataset.offsetX = offX;
-          img.dataset.offsetY = offY;
-          img.style.transform = "translate(" + offX + "px, " + offY + "px) scale(" + scaleNow + ")";
-          lastX = ev.clientX;
-          lastY = ev.clientY;
-        });
-        // Mouse up / leave => end drag
-        box.addEventListener("mouseup", function() { isMouseDown = false; });
-        box.addEventListener("mouseleave", function() { isMouseDown = false; });
-        // Single-click => Zoom if not dragging
-        box.addEventListener("click", function(ev) {
-          if (isDragging) { isDragging = false; return; }
-          var img = box.querySelector("img");
-          if (!img) return;
-          var rect = box.getBoundingClientRect();
-          var boxCenterX = rect.left + box.clientWidth / 2;
-          var boxCenterY = rect.top + box.clientHeight / 2;
-          var dx = ev.clientX - boxCenterX;
-          var dy = ev.clientY - boxCenterY;
-          var scale = 4;
-          var fudgeY = 10;
-          var offsetX = -scale * dx;
-          var offsetY = -scale * dy + fudgeY;
-          img.dataset.scale = scale;
-          img.dataset.offsetX = offsetX;
-          img.dataset.offsetY = offsetY;
-          img.style.transform = "translate(" + offsetX + "px, " + offsetY + "px) scale(" + scale + ")";
-        });
-      });
-    });
-
-    async function loadBatchEtsyOrders(orderNumbers) {
-      try {
-        M.toast({ html: "Loading " + orderNumbers.length + " order(s)..." });
-        var token = localStorage.getItem("access_token") || "";
-        var combinedItems = [];
-        for (var i = 0; i < orderNumbers.length; i++) {
-          var ord = orderNumbers[i];
-          var url = functionsBaseUrl + "/etsyOrderProxy?orderId=" + encodeURIComponent(ord);
-          var resp = await fetch(url, { headers: { "access-token": token } });
-          if (!resp.ok) {
-            console.warn("Order fetch failed for " + ord + ", status=" + resp.status);
-            continue;
-          }
-          var data = await resp.json();
-          if (data.transactions && Array.isArray(data.transactions)) {
-            combinedItems.push.apply(combinedItems, data.transactions);
-          } else {
-            console.warn("No transactions for order " + ord);
-          }
-        }
-        fillPreviewBoxes(combinedItems);
-      } catch (err) {
-        console.error("Error loading batch orders:", err);
-        M.toast({ html: "Error: " + err.message });
-      }
-    }
-
-    async function fillPreviewBoxes(items) {
-      for (var i = 0; i < 35; i++) {
-        document.getElementById("previewCell" + i).innerHTML = "Empty";
-        document.getElementById("quantityCell" + i).textContent = "";
-        document.getElementById("titleCell" + i).textContent = "";
-      }
-      var limitedItems = items.slice(0, 35);
-      for (var j = 0; j < limitedItems.length; j++) {
-        var listingId = limitedItems[j].listing_id;
-        var quantity = limitedItems[j].quantity;
-        var title = limitedItems[j].title || "";
-        var cell = document.getElementById("previewCell" + j);
-        var qtyBox = document.getElementById("quantityCell" + j);
-        var titleBox = document.getElementById("titleCell" + j);
-        cell.innerHTML = "Loading...";
-        qtyBox.textContent = "Qty: " + (quantity || 0);
-        titleBox.textContent = title.split(" ").slice(0, 4).join(" ");
-        try {
-          var imageData = await fetchListingImages(listingId);
-          if (imageData && imageData.length > 0) {
-            // Use the imageProxy to save the image locally and avoid CORS issues.
-            const localImageData = await getLocalImageData(imageData[0].url_fullxfull);
-            cell.innerHTML = "<img src=\"" + localImageData + "\" alt=\"Listing " + listingId + "\" data-scale=\"1\" data-offsetX=\"0\" data-offsetY=\"0\" />";
-          } else {
-            cell.innerHTML = "No Img";
-          }
-        } catch (err) {
-          console.warn("Image fetch error for listing", listingId, err);
-          cell.innerHTML = "Img Error";
-        }
-      }
-    }
-
-    async function fetchListingImages(listingId) {
-      var token = localStorage.getItem("access_token") || "";
-      var resp = await fetch(functionsBaseUrl + "/etsyImages?listingId=" + listingId, {
-        headers: { "access-token": token }
-      });
-      if (!resp.ok) {
-        console.warn("Image fetch HTTP error:", resp.status);
-        return [];
-      }
-      var data = await resp.json();
-      return data.results || [];
-    }
-
-    async function getLocalImageData(imageUrl) {
-      try {
-        const response = await fetch(functionsBaseUrl + "/imageProxy?url=" + encodeURIComponent(imageUrl));
-        const blob = await response.blob();
-        return new Promise((resolve, reject) => {
-          const reader = new FileReader();
-          reader.onload = () => resolve(reader.result);
-          reader.onerror = reject;
-          reader.readAsDataURL(blob);
-        });
-      } catch (err) {
-        console.error("Error in getLocalImageData:", err);
-        throw err;
-      }
-    }
-
-    function loadPositions() {
-      configIDs.forEach(function(id) {
-        var el = document.getElementById(id);
-        if (!el) return;
-        var def = {}; // Replace with your default values if needed
-        var left = localStorage.getItem("pos-" + id + "-left") || def.left || 0;
-        var top  = localStorage.getItem("pos-" + id + "-top") || def.top || 0;
-        var w    = localStorage.getItem("pos-" + id + "-width") || def.width || 0;
-        var h    = localStorage.getItem("pos-" + id + "-height") || def.height || 0;
-        el.style.position = "absolute";
-        el.style.left = left + "px";
-        el.style.top = top + "px";
-        el.style.width = w + "px";
-        el.style.height = h + "px";
-      });
-    }
-    loadPositions();
-
-    function populateConfigTable() {
-      var tbody = document.querySelector("#configTable tbody");
-      tbody.innerHTML = "";
-      configIDs.forEach(function(id) {
-        var el = document.getElementById(id);
-        if (!el) return;
-        var cs = window.getComputedStyle(el);
-        var leftVal = parseInt(cs.left, 10) || 0;
-        var topVal = parseInt(cs.top, 10) || 0;
-        var widthVal = parseInt(cs.width, 10) || 0;
-        var heightVal = parseInt(cs.height, 10) || 0;
-        var row = document.createElement("tr");
-        row.innerHTML =
-          "<td>" + id + "</td>" +
-          "<td><input type=\"number\" value=\"" + leftVal + "\" data-id=\"" + id + "\" class=\"left-input\" /></td>" +
-          "<td><input type=\"number\" value=\"" + topVal + "\" data-id=\"" + id + "\" class=\"top-input\" /></td>" +
-          "<td><input type=\"number\" value=\"" + widthVal + "\" data-id=\"" + id + "\" class=\"width-input\" /></td>" +
-          "<td><input type=\"number\" value=\"" + heightVal + "\" data-id=\"" + id + "\" class=\"height-input\" /></td>";
-        tbody.appendChild(row);
-        row.querySelector(".left-input").addEventListener("input", function() {
-          var target = document.getElementById(this.dataset.id);
-          if (target) target.style.left = parseInt(this.value, 10) + "px";
-        });
-        row.querySelector(".top-input").addEventListener("input", function() {
-          var target = document.getElementById(this.dataset.id);
-          if (target) target.style.top = parseInt(this.value, 10) + "px";
-        });
-        row.querySelector(".width-input").addEventListener("input", function() {
-          var target = document.getElementById(this.dataset.id);
-          if (target) target.style.width = parseInt(this.value, 10) + "px";
-        });
-        row.querySelector(".height-input").addEventListener("input", function() {
-          var target = document.getElementById(this.dataset.id);
-          if (target) target.style.height = parseInt(this.value, 10) + "px";
-        });
-      });
-    }
-
-    document.getElementById("openConfigBtn").addEventListener("click", function() {
-      populateConfigTable();
-      M.Modal.getInstance(document.getElementById("configModal")).open();
-    });
-
-    function saveConfiguration() {
-      configIDs.forEach(function(id) {
-        var el = document.getElementById(id);
-        if (!el) return;
-        var cs = window.getComputedStyle(el);
-        localStorage.setItem("pos-" + id + "-left", parseInt(cs.left, 10) || 0);
-        localStorage.setItem("pos-" + id + "-top", parseInt(cs.top, 10) || 0);
-        localStorage.setItem("pos-" + id + "-width", parseInt(cs.width, 10) || 0);
-        localStorage.setItem("pos-" + id + "-height", parseInt(cs.height, 10) || 0);
-      });
-      M.toast({ html: "Positions saved!" });
-    }
-
-    // =====================================================
-    // NEW CODE FOR IMAGE COMPARISON & CROPPING PROCESS
-    // =====================================================
-
-    // Set up drag & drop for the photoDragDrop element
     const photoDragDrop = document.getElementById("photoDragDrop");
     photoDragDrop.addEventListener("dragover", function(e) {
       e.preventDefault();
@@ -854,7 +857,7 @@
         userImageElem.src = imageData;
         userImageElem.style.display = "inline-block";
         M.toast({ html: "User Image captured." });
-        // Optionally, auto-run a full comparison here or wait for user to click Crop Images.
+        // You may choose to auto-run comparisons here or let the user click "Crop Images"
       };
       reader.readAsDataURL(file);
     });
@@ -867,7 +870,7 @@
         const img = cell.querySelector("img");
         if (img && img.src && img.src !== "") {
           try {
-            // Crop and resize to 256x256
+            // Crop and resize each image to 256x256
             const cropped = await cropImageFromPreview(cell, 256, 256);
             croppedImages.push(cropped);
             M.toast({ html: "Cell " + i + ": Cropped successfully." });
@@ -878,12 +881,11 @@
         }
       }
       if (croppedImages.length > 0) {
-        // Show the first cropped image in the new preview box
         document.getElementById("croppedImagePreview").src = croppedImages[0];
       }
     }
 
-    // Modified cropImageFromPreview function to accept canvas dimensions
+    // Modified cropImageFromPreview to compute crop coordinates using the ratio between natural and displayed sizes.
     function cropImageFromPreview(cell, canvasWidth, canvasHeight) {
       return new Promise((resolve, reject) => {
         const imgElem = cell.querySelector("img");
@@ -894,15 +896,12 @@
         const scale = parseFloat(imgElem.dataset.scale) || 1;
         const offsetX = parseFloat(imgElem.dataset.offsetX) || 0;
         const offsetY = parseFloat(imgElem.dataset.offsetY) || 0;
-        // Use the cell's client dimensions as the visible area.
-        const previewWidth = cell.clientWidth;
-        const previewHeight = cell.clientHeight;
-        // Calculate source rectangle from transform data.
-        const srcX = -offsetX / scale;
-        const srcY = -offsetY / scale;
-        const srcWidth = previewWidth / scale;
-        const srcHeight = previewHeight / scale;
-        // Create canvas with provided dimensions.
+        // The visible area is defined by the cell dimensions.
+        const cellWidth = cell.clientWidth;
+        const cellHeight = cell.clientHeight;
+        // Get displayed dimensions of the image.
+        const displayedWidth = imgElem.clientWidth;
+        const displayedHeight = imgElem.clientHeight;
         const canvas = document.createElement("canvas");
         canvas.width = canvasWidth;
         canvas.height = canvasHeight;
@@ -910,6 +909,14 @@
         const sourceImage = new Image();
         sourceImage.crossOrigin = "Anonymous";
         sourceImage.onload = function() {
+          // Calculate ratio from displayed to natural dimensions.
+          const ratioX = sourceImage.naturalWidth / displayedWidth;
+          const ratioY = sourceImage.naturalHeight / displayedHeight;
+          // Compute crop rectangle in the original image.
+          const srcX = (-offsetX / scale) * ratioX;
+          const srcY = (-offsetY / scale) * ratioY;
+          const srcWidth = (cellWidth / scale) * ratioX;
+          const srcHeight = (cellHeight / scale) * ratioY;
           ctx.drawImage(sourceImage, srcX, srcY, srcWidth, srcHeight, 0, 0, canvasWidth, canvasHeight);
           resolve(canvas.toDataURL());
         };
@@ -920,7 +927,7 @@
       });
     }
 
-    // New function: Compare images (existing functionality remains unchanged)
+    // New function: Compare images (unchanged from previous implementation)
     async function compareImages(userImage, croppedGridImage, cellIndex) {
       const payload = {
         model: "gpt-4o-mini",
