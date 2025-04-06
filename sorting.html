@@ -123,7 +123,7 @@
       margin-top: 3px;
     }
 
-    /* Open Config Modal => 250×450, and bigger text fields for Left/Top/Width/Height */
+    /* Open Config Modal */
     #configModal.modal {
       position: fixed !important;
       top: 50% !important;
@@ -144,7 +144,7 @@
     #configTable .top-input,
     #configTable .width-input,
     #configTable .height-input {
-      width: 80px !important; /* 2x wider */
+      width: 80px !important;
     }
   </style>
 </head>
@@ -166,7 +166,7 @@
 
   <!-- 35 Boxes -->
   <div id="photoGridContainer">
-    <!-- For i=0..34 => previewCellX, quantityCellX, titleCellX -->
+    <!-- 35 preview boxes (each with associated quantity and title labels) -->
     <div class="preview-box" id="previewCell0">Empty</div>
     <div class="quantity-label" id="quantityCell0"></div>
     <div class="title-label" id="titleCell0"></div>
@@ -836,6 +836,50 @@
     // NEW CODE FOR IMAGE COMPARISON PROCESS
     // =========================================
 
+    // Function to crop and resize an image from a preview cell.
+    // It extracts the visible area based on the image's transform data (scale, offsetX, offsetY)
+    // and then resizes that cropped region to 512x512.
+    function cropImageFromPreview(cell) {
+      return new Promise((resolve, reject) => {
+        const imgElem = cell.querySelector("img");
+        if (!imgElem) {
+          reject("No image element found");
+          return;
+        }
+        const scale = parseFloat(imgElem.dataset.scale) || 1;
+        const offsetX = parseFloat(imgElem.dataset.offsetX) || 0;
+        const offsetY = parseFloat(imgElem.dataset.offsetY) || 0;
+        // The preview cell dimensions (visible area)
+        const previewWidth = cell.clientWidth;
+        const previewHeight = cell.clientHeight;
+        // Calculate the source rectangle in the original image.
+        // Since the image is transformed with translate(offsetX, offsetY) and scale,
+        // the top-left of the visible area corresponds to (-offsetX, -offsetY) in scaled space.
+        const srcX = -offsetX / scale;
+        const srcY = -offsetY / scale;
+        const srcWidth = previewWidth / scale;
+        const srcHeight = previewHeight / scale;
+        // Create a canvas of 512x512 to draw the cropped region.
+        const canvas = document.createElement("canvas");
+        canvas.width = 512;
+        canvas.height = 512;
+        const ctx = canvas.getContext("2d");
+        // Create a new Image to load the original source.
+        const sourceImage = new Image();
+        // Set crossOrigin if needed
+        sourceImage.crossOrigin = "Anonymous";
+        sourceImage.onload = function() {
+          // Draw the cropped region onto the canvas, scaling it to 512x512.
+          ctx.drawImage(sourceImage, srcX, srcY, srcWidth, srcHeight, 0, 0, 512, 512);
+          resolve(canvas.toDataURL());
+        };
+        sourceImage.onerror = function(e) {
+          reject(e);
+        };
+        sourceImage.src = imgElem.src;
+      });
+    }
+
     // Set up drag & drop for the photoDragDrop element
     const photoDragDrop = document.getElementById("photoDragDrop");
     photoDragDrop.addEventListener("dragover", function(e) {
@@ -858,7 +902,7 @@
       reader.readAsDataURL(file);
     });
 
-    // Batch process: Compare the User Image with all grid images
+    // Batch process: Compare the User Image with all grid images.
     async function compareImagesBatch(userImage) {
       let bestScore = -Infinity;
       let bestIndex = -1;
@@ -866,8 +910,16 @@
         const cell = document.getElementById("previewCell" + i);
         const img = cell.querySelector("img");
         if (img && img.src && img.src !== "") {
-          const gridImage = img.src;
-          const score = await compareImages(userImage, gridImage, i);
+          // Crop and resize the grid image from its preview.
+          let croppedGridImage;
+          try {
+            croppedGridImage = await cropImageFromPreview(cell);
+          } catch (err) {
+            console.error("Cropping failed for cell", i, err);
+            M.toast({ html: "Cell " + i + ": Cropping error" });
+            continue;
+          }
+          const score = await compareImages(userImage, croppedGridImage, i);
           console.log("Score for cell " + i + ":", score);
           if (score > bestScore) {
             bestScore = score;
@@ -886,9 +938,8 @@
     }
 
     // Function to compare two images by sending a payload to the openaiProxy.
-    async function compareImages(userImage, gridImage, cellIndex) {
+    async function compareImages(userImage, croppedGridImage, cellIndex) {
       // Build the payload following vision input guidelines.
-      // Updated prompt instructs the AI to return ONLY a numeric similarity score.
       const payload = {
         model: "gpt-4o-mini",
         messages: [
@@ -897,7 +948,7 @@
             content: [
               { type: "text", text: "Compare these two images and return ONLY a numeric similarity score between 0 and 1, with no additional text." },
               { type: "image_url", image_url: { url: userImage, detail: "high" } },
-              { type: "image_url", image_url: { url: gridImage, detail: "high" } }
+              { type: "image_url", image_url: { url: croppedGridImage, detail: "high" } }
             ]
           }
         ],
@@ -912,7 +963,6 @@
         });
         const data = await response.json();
         console.log("Response for cell " + cellIndex + ":", data);
-        // Extract and trim the similarity score from the response.
         const scoreText = data.choices[0].message.content.trim();
         const score = parseFloat(scoreText);
         if (isNaN(score)) {
