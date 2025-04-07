@@ -209,7 +209,7 @@
     // Global arrays to store cropped grid images and user images (both resized to 512x512)
     let croppedImagesArray = [];
     let userImagesArray = []; // Each element will be an object: { name, data }
-    // Global set to store indices of grid cells that should be omitted on subsequent comparison runs
+    // Global set to track omitted grid cells (for which quantity is 1 and a match has been found)
     let omittedIndices = new Set();
     
     (function(){
@@ -812,27 +812,47 @@
         M.toast({ html: "No cropped grid images available! Please crop images first." });
         return;
       }
-      // For each grid cell, compare its cropped image with every user image in parallel
+      // For each grid cell, compare its cropped image with user images
       for (let i = 0; i < croppedImagesArray.length; i++) {
-        // Skip cells that have been omitted on previous runs
+        // If this cell is already omitted from previous runs, skip it.
         if (omittedIndices.has(i)) {
-          M.toast({ html: "Cell " + i + " omitted due to quantity 1 match." });
+          M.toast({ html: "Cell " + i + " omitted due to previous quantity-1 match." });
           continue;
         }
-        // Run comparisons in parallel for the current grid cell
-        let comparisonPromises = userImagesArray.map(user =>
-          compareImages(user.data, croppedImagesArray[i], i, user.name)
-        );
-        let results = await Promise.all(comparisonPromises);
-        // For this grid cell, collect names with a score >= 0.85
-        let matchingNames = results.filter(res => res.score >= 0.85 && res.name).map(res => res.name);
+        // Check if this grid cell's order quantity is 1
+        let currentItem = window.cachedOrderItems[i];
+        let isQuantityOne = currentItem && currentItem.quantity == 1;
+        let matchName = "";
+        let matchScore = 0;
+        if (isQuantityOne) {
+          // Process user images sequentially and break immediately when a match is found.
+          for (let j = 0; j < userImagesArray.length; j++) {
+            let result = await compareImages(userImagesArray[j].data, croppedImagesArray[i], i, userImagesArray[j].name);
+            if (result.score >= 0.85) {
+              matchName = userImagesArray[j].name;
+              matchScore = result.score;
+              break; // immediately stop further comparisons for this cell
+            }
+          }
+          // If a match is found, add this cell's index to omittedIndices.
+          if (matchName !== "") {
+            omittedIndices.add(i);
+          }
+        } else {
+          // For non-quantity-1 items, run comparisons in parallel
+          let comparisonPromises = userImagesArray.map(user =>
+            compareImages(user.data, croppedImagesArray[i], i, user.name)
+          );
+          let results = await Promise.all(comparisonPromises);
+          let matches = results.filter(res => res.score >= 0.85 && res.name);
+          if (matches.length > 0) {
+            matchName = matches.map(m => m.name).join(", ");
+            matchScore = Math.max(...matches.map(m => m.score));
+          }
+        }
         let matchBox = document.getElementById("matchCell" + i);
         if (matchBox) {
-          matchBox.value = matchingNames.join(", ");
-        }
-        // If the original order's quantity is 1 and we got a match, omit this cell in subsequent runs
-        if (window.cachedOrderItems && window.cachedOrderItems[i] && window.cachedOrderItems[i].quantity == 1 && matchingNames.length > 0) {
-          omittedIndices.add(i);
+          matchBox.value = matchName;
         }
       }
     }
