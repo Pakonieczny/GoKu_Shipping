@@ -208,7 +208,10 @@
     
     // Global arrays to store cropped grid images and user images (both resized to 512x512)
     let croppedImagesArray = [];
-    let userImagesArray = []; // Each element will be an object: { name, data }
+    let userImagesArray = []; // Each element: { name, data }
+    
+    // Global object to track for Qty==1 cells if a match has been found so that remaining comparisons are skipped immediately.
+    let omittedCells = {};
     
     (function(){
       const urlParams = new URLSearchParams(window.location.search);
@@ -802,9 +805,9 @@
     }
     
     // Send & Match function (parallel requests)
-    // This version runs comparisons in parallel for each grid cell.
-    // For grid cells where quantity equals 1, if a match (score >= 0.85) is found from any user image, 
-    // it immediately “skips” further comparisons for that cell.
+    // For each grid cell, if the Qty equals 1, run comparisons in parallel using AbortController.
+    // As soon as one comparison yields a score >= 0.85, immediately skip remaining comparisons for that cell,
+    // display "Skipped!!" for each skipped comparison, and remove both the user image and grid image from further comparisons.
     async function sendAndMatch() {
       if (userImagesArray.length === 0) {
         M.toast({ html: "No user images available! Please drop user images first." });
@@ -814,30 +817,39 @@
         M.toast({ html: "No cropped grid images available! Please crop images first." });
         return;
       }
-      // Object to track omitted cells (for items with Qty 1 and a successful match)
-      let omittedCells = {};
-      
-      // Loop over each grid cell (by index)
+      // Loop over each grid cell by index
       for (let i = 0; i < croppedImagesArray.length; i++) {
-        // Check if this cell has already been omitted (match already found)
-        if (omittedCells[i]) continue;
-        // Get the quantity for this cell from the cached order items
+        // Skip if grid image was already removed
+        if (!croppedImagesArray[i]) continue;
+    
         const cellQuantity = window.cachedOrderItems && window.cachedOrderItems[i] && window.cachedOrderItems[i].quantity;
     
         if (cellQuantity === 1) {
-          // For items with quantity 1, we want to run comparisons in parallel but cancel remaining ones as soon as a match is found.
-          let promises = userImagesArray.map(user =>
-            new Promise((resolve, reject) => {
-              compareImages(user.data, croppedImagesArray[i], i, user.name).then(result => {
-                if (result.score >= 0.85) {
-                  omittedCells[i] = true; // Mark this cell as having a match
-                  resolve(result);
-                } else {
-                  reject("Score below threshold");
-                }
-              }).catch(err => reject(err));
-            })
-          );
+          let controllers = [];
+          let promises = userImagesArray.map(user => {
+            let controller = new AbortController();
+            controllers.push(controller);
+            return new Promise((resolve, reject) => {
+              compareImages(user.data, croppedImagesArray[i], i, user.name, controller.signal)
+                .then(result => {
+                  if (result.score >= 0.85) {
+                    // Immediately abort remaining comparisons for this cell
+                    controllers.forEach(c => c.abort());
+                    resolve(result);
+                  } else {
+                    reject("Score below threshold");
+                  }
+                })
+                .catch(err => {
+                  if (err.name === "AbortError") {
+                    M.toast({ html: "Cell " + i + " (" + user.name + "): Skipped!!" });
+                    reject(err);
+                  } else {
+                    reject(err);
+                  }
+                });
+            });
+          });
           try {
             const firstMatch = await Promise.any(promises);
             let matchBox = document.getElementById("matchCell" + i);
@@ -845,15 +857,17 @@
               matchBox.value = firstMatch.name;
             }
             M.toast({ html: "Cell " + i + ": Best match found: " + firstMatch.name + " with score " + firstMatch.score });
+            // Remove the matched user image and grid image from further comparisons immediately
+            userImagesArray = userImagesArray.filter(u => u.name !== firstMatch.name);
+            croppedImagesArray[i] = null;
           } catch (e) {
-            // If no promise meets the threshold, clear the match box
             let matchBox = document.getElementById("matchCell" + i);
             if (matchBox) {
               matchBox.value = "";
             }
           }
         } else {
-          // For items with quantity other than 1, compare all user images in parallel and pick the best
+          // For items with quantity other than 1, run all comparisons in parallel normally and choose the best
           let comparisonPromises = userImagesArray.map(user =>
             compareImages(user.data, croppedImagesArray[i], i, user.name)
           );
@@ -875,7 +889,12 @@
     }
     
     // Modified compareImages: returns an object with score and, if threshold met, the user image name.
-    async function compareImages(userImage, croppedGridImage, cellIndex, userImageName) {
+    // Accepts an optional AbortSignal for cancellation.
+    async function compareImages(userImage, croppedGridImage, cellIndex, userImageName, signal) {
+      if (signal && signal.aborted) {
+        M.toast({ html: "Cell " + cellIndex + " (" + userImageName + "): Skipped!!" });
+        return { score: 0, name: "Skipped!!" };
+      }
       const payload = {
         model: "gpt-4o-mini",
         messages: [
@@ -884,17 +903,16 @@
             content: [
               { 
                 type: "text", 
-                text: "Follow the below rules strictly!!!" 
-                "1. Look for a best fit and matching charms within these two images, return ONLY a numeric similarity score between 0 and 1, with no additional text."  
-                "2. Focus solley on the charm and specific fine details of the charm in the images."  
-                "3. Focus solely on the charms and charm details, disregard the background and all other accessories completely."  
-                "4. Assume all charms are the same size and same colour, disregard all colour and shading biases."  
-                "5. Always aim for 0.90 accuracy when comparing charms; 0.85+ is the minimum threshold."  
-                "6. Only focus on the charms and the very fine details of the charm when scoring the match."  
-                "7. Disregard all other items around and attached to the charm such as necklaces, chains, hoops, jumps, rings, clothing, skin."  
-                "8. When matching, look for specific shapes and patterns engraved inside each charm."  
-                "9. Put high importance on the pose of the charm with emphasis on the direction the charm is facing."  
-                "10. Beyond just the type of animal or shape of the charm, attach a high degree of importance to the pose and directionality of the charm inside each photo." 
+                text: "Follow the below rules strictly!!! " +
+                      "1. Look for a best fit and matching charms within these two images, return ONLY a numeric similarity score between 0 and 1, with no additional text. " +
+                      "2. Focus solely on the charm and its very fine details; disregard the background and all accessories. " +
+                      "3. Focus solely on the charms and charm details, disregard the background and all accessories completely. " +
+                      "4. Assume all charms are the same size and same colour, disregard colour and shading biases. " +
+                      "5. Always aim for 0.90 accuracy when comparing charms; 0.85+ is the minimum threshold. " +
+                      "6. Only focus on the charm and its very fine details when scoring the match. " +
+                      "7. Disregard all items around and attached to the charm such as necklaces, chains, hoops, rings, clothing, or skin. " +
+                      "8. Emphasize the pose and directionality of the charm. " +
+                      "9. Look for subtle differences in outlines, interior lines and patterns engraved inside each charm." 
               },
               { type: "image_url", image_url: { url: userImage, detail: "high" } },
               { type: "image_url", image_url: { url: croppedGridImage, detail: "high" } }
@@ -907,7 +925,8 @@
         const response = await fetch(functionsBaseUrl + "/openaiProxy", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(payload)
+          body: JSON.stringify(payload),
+          signal: signal
         });
         const data = await response.json();
         console.log("Response for cell " + cellIndex + ", user image " + userImageName + ":", data);
@@ -920,6 +939,10 @@
         M.toast({ html: "Cell " + cellIndex + " (" + userImageName + "): Score " + score });
         return { score: score, name: (score >= 0.85) ? userImageName : null };
       } catch (error) {
+        if (error.name === "AbortError") {
+          M.toast({ html: "Cell " + cellIndex + " (" + userImageName + "): Skipped!!" });
+          return { score: 0, name: "Skipped!!" };
+        }
         console.error("Error comparing cell " + cellIndex + " (" + userImageName + "):", error);
         M.toast({ html: "Cell " + cellIndex + " (" + userImageName + "): Comparison error" });
         return { score: 0, name: null };
@@ -939,7 +962,6 @@
       .then(function(r) { return r.json(); })
       .then(function(data) {
         console.log("Etsy Order Data:", data);
-        // Update global variables as needed (not shown here)
         // Return the data to be used in updateImageGrid
         return data;
       })
@@ -951,16 +973,13 @@
     
     // Example: update the grid details using pulled Etsy order details
     async function updateImageGrid(data) {
-      // Assuming data.transactions contains the order items from Etsy
       let items = [];
       if (data.transactions && Array.isArray(data.transactions)) {
         items = data.transactions;
       } else if (Array.isArray(data)) {
         items = data;
       }
-      // Store items globally if needed
       window.cachedOrderItems = items;
-      // Now, repopulate the grid using the items array (which now contains real Etsy data)
       await fillPreviewBoxes(items);
     }
   </script>
