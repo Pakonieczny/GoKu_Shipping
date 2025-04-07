@@ -476,8 +476,8 @@
             offY = 0;
           }
         }
-        // Increase max zoom from 4x to 6x
-        if (currentScale > 8) currentScale = 8;
+        // Increase max zoom from 4x to 6x for wheel zoom
+        if (currentScale > 6) currentScale = 6;
         img.dataset.scale = currentScale;
         img.dataset.offsetX = offX;
         img.dataset.offsetY = offY;
@@ -827,24 +827,36 @@
         const cellQuantity = window.cachedOrderItems && window.cachedOrderItems[i] && window.cachedOrderItems[i].quantity;
     
         if (cellQuantity === 1) {
-          // For items with quantity 1, run comparisons in parallel with a 300ms delay between each request
+          // For items with quantity 1, run comparisons in parallel with a 25ms delay between each request,
+          // and use AbortControllers so that once a match is found, remaining comparisons are cancelled.
+          let abortControllers = [];
           let promises = userImagesArray.map((user, j) => {
+            const controller = new AbortController();
+            abortControllers.push(controller);
             return new Promise((resolve, reject) => {
               setTimeout(() => {
-                compareImages(user.data, croppedImagesArray[i], i, user.name).then(result => {
-                  if (result.score >= 0.85) {
-                    omittedCells[i] = true; // Mark this cell as omitted immediately
-                    resolve(result);
-                  } else {
-                    reject("Score below threshold");
-                  }
-                }).catch(err => reject(err));
-              }, j * 300);
+                compareImages(user.data, croppedImagesArray[i], i, user.name, controller.signal)
+                  .then(result => {
+                    if (result.score >= 0.85) {
+                      resolve(result);
+                    } else {
+                      reject("Score below threshold");
+                    }
+                  })
+                  .catch(err => {
+                    if (err.name === "AbortError") {
+                      M.toast({ html: "Cell " + i + " (" + user.name + "): Skipped!!" });
+                    }
+                    reject(err);
+                  });
+              }, j * 250);
             });
           });
           try {
             // Use Promise.any to get the first match meeting the threshold
             const firstMatch = await Promise.any(promises);
+            // Abort all pending requests
+            abortControllers.forEach(ctrl => ctrl.abort());
             let matchBox = document.getElementById("matchCell" + i);
             if (matchBox) {
               matchBox.value = firstMatch.name;
@@ -860,12 +872,12 @@
             }
           }
         } else {
-          // For items with quantity other than 1, compare all user images in parallel with a 100ms delay between each request
+          // For items with quantity other than 1, compare all user images in parallel with a 25ms delay between each request
           let comparisonPromises = userImagesArray.map((user, j) => {
             return new Promise(resolve => {
               setTimeout(() => {
                 resolve(compareImages(user.data, croppedImagesArray[i], i, user.name));
-              }, j * 300);
+              }, j * 250);
             });
           });
           let results = await Promise.all(comparisonPromises);
@@ -885,8 +897,8 @@
       }
     }
     
-    // Modified compareImages: returns an object with score and, if threshold met, the user image name.
-    async function compareImages(userImage, croppedGridImage, cellIndex, userImageName) {
+    // Modified compareImages: now accepts an optional signal parameter for aborting.
+    async function compareImages(userImage, croppedGridImage, cellIndex, userImageName, signal = undefined) {
       const payload = {
         model: "gpt-4o-mini",
         messages: [
@@ -899,24 +911,26 @@
                       "1. Look for a best fit and matching charms within these two images, return ONLY a numeric similarity score between 0 and 1, with no additional text. " +
                       "2. Focus solely on the charm and its fine details; disregard the background and any other accessories. " +
                       "3. Assume all charms are the same size and colour, disregarding any shading biases. " +
-                      "4. Always aim for a 0.90 accuracy when comparing charms; 0.85+ is the minimum threshold. " +
-                      "5. Only consider the charm and its fine details when scoring the match. " +
-                      "6. Ignore all items attached to or surrounding the charm such as necklaces, chains, hoops, rings, clothing, or skin. " +
-                      "7. Emphasize the pose and direction the charm is facing. " +
-                      "8. Focus on subtle details in the charm’s outline and interior engravings."
+                      "4. If you detect an animal charm, be extra detailed in your charm analysis. Put a lot of weight on details such as (Ear position, face position, eye position, paw and leg oriantation and position, internal charm engravings. " +
+                      "5. Always aim for a 0.90 accuracy when comparing charms; 0.85+ is the minimum threshold. " +
+                      "6. Only consider the charm and its fine details when scoring the match. " +
+                      "7. Ignore all items attached to or surrounding the charm such as necklaces, chains, hoops, rings, clothing, or skin. " +
+                      "8. Emphasize the pose and direction the charm is facing. " +
+                      "9. Focus on subtle details in the charm’s outline and interior engravings."
               },
               { type: "image_url", image_url: { url: userImage, detail: "high" } },
               { type: "image_url", image_url: { url: croppedGridImage, detail: "high" } }
             ]
           }
         ],
-        max_tokens: 100
+        max_tokens: 300
       };
       try {
         const response = await fetch(functionsBaseUrl + "/openaiProxy", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(payload)
+          body: JSON.stringify(payload),
+          signal: signal
         });
         const data = await response.json();
         console.log("Response for cell " + cellIndex + ", user image " + userImageName + ":", data);
@@ -930,6 +944,10 @@
         return { score: score, name: (score >= 0.85) ? userImageName : null };
       } catch (error) {
         console.error("Error comparing cell " + cellIndex + " (" + userImageName + "):", error);
+        if (error.name === "AbortError") {
+          // The request was aborted, so we consider it skipped.
+          return { score: 0, name: null };
+        }
         M.toast({ html: "Cell " + cellIndex + " (" + userImageName + "): Comparison error" });
         return { score: 0, name: null };
       }
