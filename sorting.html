@@ -210,8 +210,13 @@
     let croppedImagesArray = [];
     let userImagesArray = []; // Each element: { name, data }
     
-    // Global object to track for Qty==1 cells if a match has been found so that remaining comparisons are skipped immediately.
+    // Global object to track skipped comparisons for Qty==1 cells
     let omittedCells = {};
+    
+    // Helper function to create an artificial delay of given ms
+    function delay(ms) {
+      return new Promise(resolve => setTimeout(resolve, ms));
+    }
     
     (function(){
       const urlParams = new URLSearchParams(window.location.search);
@@ -890,11 +895,13 @@
     
     // Modified compareImages: returns an object with score and, if threshold met, the user image name.
     // Accepts an optional AbortSignal for cancellation.
+    // Added a 25ms artificial delay before making the API request.
     async function compareImages(userImage, croppedGridImage, cellIndex, userImageName, signal) {
       if (signal && signal.aborted) {
         M.toast({ html: "Cell " + cellIndex + " (" + userImageName + "): Skipped!!" });
         return { score: 0, name: "Skipped!!" };
       }
+      await delay(25);
       const payload = {
         model: "gpt-4o-mini",
         messages: [
