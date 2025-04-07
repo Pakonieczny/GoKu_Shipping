@@ -814,8 +814,8 @@
           compareImages(user.data, croppedImagesArray[i], i, user.name)
         );
         let results = await Promise.all(comparisonPromises);
-        // For this grid cell, collect names with a score >= 0.8
-        let matchingNames = results.filter(res => res.score >= 0.8 && res.name).map(res => res.name);
+        // For this grid cell, collect names with a score >= 0.85
+        let matchingNames = results.filter(res => res.score >= 0.85 && res.name).map(res => res.name);
         let matchBox = document.getElementById("matchCell" + i);
         if (matchBox) {
           matchBox.value = matchingNames.join(", ");
@@ -824,7 +824,7 @@
     }
     
     // Modified compareImages: returns an object with score and, if threshold met, the user image name.
-    // The prompt now includes hard-coded rules for detailed comparison.
+    // Updated prompt: removed secondary validation and detail rules; threshold is now 0.85.
     async function compareImages(userImage, croppedGridImage, cellIndex, userImageName) {
       const payload = {
         model: "gpt-4o-mini",
@@ -834,7 +834,7 @@
             content: [
               { 
                 type: "text", 
-                text: "Compare these two images and return ONLY a numeric similarity score between 0 and 1, with no additional text. Follow these rules strictly: Focus solely on the charms and disregard the background completely. Assume all charms are the same size. For similarity scores between 0.75 and 0.85, perform a secondary detailed validation review by incorporating results from both runs to arrive at a more accurate similarity score, and display that refined result. Look for subtle differences in the outlines of charms—especially for items like Bunnies, Bees, Humming Birds, balls, basketball, volleyball, baseball, etc.—and examine details down to the millimetre accuracy in shapes, outlines, and interior lines. Always aim for 0.9 accuracy when comparing charms; 0.8+ is the minimum threshold." 
+                text: "Compare these two images and return ONLY a numeric similarity score between 0 and 1, with no additional text. Follow these rules strictly:  1. Focus solely on the charms and disregard the background completely.  2. Assume all charms are the same size.  3. Always aim for 0.85 accuracy when comparing charms; 0.85+ is the minimum threshold.  4.Only focus on the charm and the very fine details of the charm when scoring the match.  5.Disregard all other items around and attached to the charm such as (necklace, chains hoops, jump, rings, clothing, skin).  6.When matching look for specific shapes and patterns engraved inside each charm." 
               },
               { type: "image_url", image_url: { url: userImage, detail: "high" } },
               { type: "image_url", image_url: { url: croppedGridImage, detail: "high" } }
@@ -858,7 +858,7 @@
           return { score: 0, name: null };
         }
         M.toast({ html: "Cell " + cellIndex + " (" + userImageName + "): Score " + score });
-        return { score: score, name: (score >= 0.8) ? userImageName : null };
+        return { score: score, name: (score >= 0.85) ? userImageName : null };
       } catch (error) {
         console.error("Error comparing cell " + cellIndex + " (" + userImageName + "):", error);
         M.toast({ html: "Cell " + cellIndex + " (" + userImageName + "): Comparison error" });
@@ -868,7 +868,7 @@
     
     // ---------------------------------------------------------
     // Pull Etsy order details and update grid details
-    // (This function uses the Etsy API response to update the three read-only detail boxes)
+    // (This function uses the Etsy API response to update the detail boxes)
     // ---------------------------------------------------------
     function pullEtsyOrderDetails(orderNumber) {
       console.log("Pulling Etsy order details for order number:", orderNumber);
