@@ -209,6 +209,8 @@
     // Global arrays to store cropped grid images and user images (both resized to 512x512)
     let croppedImagesArray = [];
     let userImagesArray = []; // Each element will be an object: { name, data }
+    // Global set to store indices of grid cells that should be omitted on subsequent comparison runs
+    let omittedIndices = new Set();
     
     (function(){
       const urlParams = new URLSearchParams(window.location.search);
@@ -348,6 +350,8 @@
     // (Detail boxes: Order # (bold), Quantity, Metal, and a fourth (match) box initially empty)
     // ---------------------------------------------------------
     async function fillPreviewBoxes(items) {
+      // Store the items globally for later access
+      window.cachedOrderItems = items;
       const container = document.getElementById("photoGridContainer");
       container.innerHTML = "";
     
@@ -810,6 +814,12 @@
       }
       // For each grid cell, compare its cropped image with every user image in parallel
       for (let i = 0; i < croppedImagesArray.length; i++) {
+        // Skip cells that have been omitted on previous runs
+        if (omittedIndices.has(i)) {
+          M.toast({ html: "Cell " + i + " omitted due to quantity 1 match." });
+          continue;
+        }
+        // Run comparisons in parallel for the current grid cell
         let comparisonPromises = userImagesArray.map(user =>
           compareImages(user.data, croppedImagesArray[i], i, user.name)
         );
@@ -820,11 +830,14 @@
         if (matchBox) {
           matchBox.value = matchingNames.join(", ");
         }
+        // If the original order's quantity is 1 and we got a match, omit this cell in subsequent runs
+        if (window.cachedOrderItems && window.cachedOrderItems[i] && window.cachedOrderItems[i].quantity == 1 && matchingNames.length > 0) {
+          omittedIndices.add(i);
+        }
       }
     }
     
     // Modified compareImages: returns an object with score and, if threshold met, the user image name.
-    // Updated prompt: removed secondary validation and detail rules; threshold is now 0.85.
     async function compareImages(userImage, croppedGridImage, cellIndex, userImageName) {
       const payload = {
         model: "gpt-4o-mini",
@@ -834,7 +847,7 @@
             content: [
               { 
                 type: "text", 
-                text: "Compare these two images and return ONLY a numeric similarity score between 0 and 1, with no additional text. Follow these rules strictly:  1. Focus solely on the charms and disregard the background completely.  2. Assume all charms are the same size.  3. Always aim for 0.85 accuracy when comparing charms; 0.85+ is the minimum threshold.  4.Only focus on the charm and the very fine details of the charm when scoring the match.  5.Disregard all other items around and attached to the charm such as (necklace, chains hoops, jump, rings, clothing, skin).  6.When matching look for specific shapes and patterns engraved inside each charm." 
+                text: "Compare these two images and return ONLY a numeric similarity score between 0 and 1, with no additional text. Follow these rules strictly:  1. Focus solely on the charms and disregard the background completely.  2. Assume all charms are the same size.  3. Always aim for 0.85 accuracy when comparing charms; 0.85+ is the minimum threshold.  4. Only focus on the charms and the very fine details of the charm when scoring the match.  5. Disregard all other items around and attached to the charm such as necklaces, chains, hoops, jumps, rings, clothing, or skin.  6. When matching, look for specific shapes and patterns engraved inside each charm.  7. Put high importance on the pose of the charm with emphasis on the direction the charm is facing.  8. Beyond just the type of animal or shape of the charm, attach high importance to the pose and directionality of the charm inside each photo." 
               },
               { type: "image_url", image_url: { url: userImage, detail: "high" } },
               { type: "image_url", image_url: { url: croppedGridImage, detail: "high" } }
