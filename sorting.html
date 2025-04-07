@@ -209,8 +209,6 @@
     // Global arrays to store cropped grid images and user images (both resized to 512x512)
     let croppedImagesArray = [];
     let userImagesArray = []; // Each element will be an object: { name, data }
-    // Global set to track omitted grid cells (for which quantity is 1 and a match has been found)
-    let omittedIndices = new Set();
     
     (function(){
       const urlParams = new URLSearchParams(window.location.search);
@@ -350,10 +348,11 @@
     // (Detail boxes: Order # (bold), Quantity, Metal, and a fourth (match) box initially empty)
     // ---------------------------------------------------------
     async function fillPreviewBoxes(items) {
-      // Store the items globally for later access
-      window.cachedOrderItems = items;
       const container = document.getElementById("photoGridContainer");
       container.innerHTML = "";
+    
+      // Store the items globally for later access (e.g. in sendAndMatch)
+      window.cachedOrderItems = items;
     
       items.forEach((item, index) => {
         // Use 9 boxes per row
@@ -803,6 +802,9 @@
     }
     
     // Send & Match function (parallel requests)
+    // This version runs comparisons in parallel for each grid cell.
+    // For grid cells where quantity equals 1, if a match (score >= 0.85) is found from any user image, 
+    // it immediately “skips” further comparisons for that cell.
     async function sendAndMatch() {
       if (userImagesArray.length === 0) {
         M.toast({ html: "No user images available! Please drop user images first." });
@@ -812,47 +814,62 @@
         M.toast({ html: "No cropped grid images available! Please crop images first." });
         return;
       }
-      // For each grid cell, compare its cropped image with user images
+      // Object to track omitted cells (for items with Qty 1 and a successful match)
+      let omittedCells = {};
+      
+      // Loop over each grid cell (by index)
       for (let i = 0; i < croppedImagesArray.length; i++) {
-        // If this cell is already omitted from previous runs, skip it.
-        if (omittedIndices.has(i)) {
-          M.toast({ html: "Cell " + i + " omitted due to previous quantity-1 match." });
-          continue;
-        }
-        // Check if this grid cell's order quantity is 1
-        let currentItem = window.cachedOrderItems[i];
-        let isQuantityOne = currentItem && currentItem.quantity == 1;
-        let matchName = "";
-        let matchScore = 0;
-        if (isQuantityOne) {
-          // Process user images sequentially and break immediately when a match is found.
-          for (let j = 0; j < userImagesArray.length; j++) {
-            let result = await compareImages(userImagesArray[j].data, croppedImagesArray[i], i, userImagesArray[j].name);
-            if (result.score >= 0.85) {
-              matchName = userImagesArray[j].name;
-              matchScore = result.score;
-              break; // immediately stop further comparisons for this cell
+        // Check if this cell has already been omitted (match already found)
+        if (omittedCells[i]) continue;
+        // Get the quantity for this cell from the cached order items
+        const cellQuantity = window.cachedOrderItems && window.cachedOrderItems[i] && window.cachedOrderItems[i].quantity;
+    
+        if (cellQuantity === 1) {
+          // For items with quantity 1, we want to run comparisons in parallel but cancel remaining ones as soon as a match is found.
+          let promises = userImagesArray.map(user =>
+            new Promise((resolve, reject) => {
+              compareImages(user.data, croppedImagesArray[i], i, user.name).then(result => {
+                if (result.score >= 0.85) {
+                  omittedCells[i] = true; // Mark this cell as having a match
+                  resolve(result);
+                } else {
+                  reject("Score below threshold");
+                }
+              }).catch(err => reject(err));
+            })
+          );
+          try {
+            const firstMatch = await Promise.any(promises);
+            let matchBox = document.getElementById("matchCell" + i);
+            if (matchBox) {
+              matchBox.value = firstMatch.name;
+            }
+            M.toast({ html: "Cell " + i + ": Best match found: " + firstMatch.name + " with score " + firstMatch.score });
+          } catch (e) {
+            // If no promise meets the threshold, clear the match box
+            let matchBox = document.getElementById("matchCell" + i);
+            if (matchBox) {
+              matchBox.value = "";
             }
           }
-          // If a match is found, add this cell's index to omittedIndices.
-          if (matchName !== "") {
-            omittedIndices.add(i);
-          }
         } else {
-          // For non-quantity-1 items, run comparisons in parallel
+          // For items with quantity other than 1, compare all user images in parallel and pick the best
           let comparisonPromises = userImagesArray.map(user =>
             compareImages(user.data, croppedImagesArray[i], i, user.name)
           );
           let results = await Promise.all(comparisonPromises);
-          let matches = results.filter(res => res.score >= 0.85 && res.name);
-          if (matches.length > 0) {
-            matchName = matches.map(m => m.name).join(", ");
-            matchScore = Math.max(...matches.map(m => m.score));
+          let bestScore = -Infinity;
+          let bestName = null;
+          results.forEach(result => {
+            if (result.score > bestScore && result.score >= 0.85) {
+              bestScore = result.score;
+              bestName = result.name;
+            }
+          });
+          let matchBox = document.getElementById("matchCell" + i);
+          if (matchBox) {
+            matchBox.value = bestName ? bestName : "";
           }
-        }
-        let matchBox = document.getElementById("matchCell" + i);
-        if (matchBox) {
-          matchBox.value = matchName;
         }
       }
     }
@@ -867,7 +884,7 @@
             content: [
               { 
                 type: "text", 
-                text: "Compare these two images and return ONLY a numeric similarity score between 0 and 1, with no additional text. Follow these rules strictly:  1. Focus solely on the charms and disregard the background completely.  2. Assume all charms are the same size.  3. Always aim for 0.85 accuracy when comparing charms; 0.85+ is the minimum threshold.  4. Only focus on the charms and the very fine details of the charm when scoring the match.  5. Disregard all other items around and attached to the charm such as necklaces, chains, hoops, jumps, rings, clothing, or skin.  6. When matching, look for specific shapes and patterns engraved inside each charm.  7. Put high importance on the pose of the charm with emphasis on the direction the charm is facing.  8. Beyond just the type of animal or shape of the charm, attach high importance to the pose and directionality of the charm inside each photo." 
+                text: "Compare these two images and return ONLY a numeric similarity score between 0 and 1, with no additional text. Follow these rules strictly:  1. Focus solely on the charms and disregard the background completely.  2. Assume all charms are the same size.  3. Always aim for 0.85 accuracy when comparing charms; 0.85+ is the minimum threshold.  4. Only focus on the charms and the very fine details of the charm when scoring the match.  5. Disregard all other items around and attached to the charm such as necklaces, chains, hoops, jumps, rings, clothing, skin.  6. When matching, look for specific shapes and patterns engraved inside each charm.  7. Put high importance on the pose of the charm with emphasis on the direction the charm is facing.  8. Beyond just the type of animal or shape of the charm, attach a high degree of importance to the pose and directionality of the charm inside each photo." 
               },
               { type: "image_url", image_url: { url: userImage, detail: "high" } },
               { type: "image_url", image_url: { url: croppedGridImage, detail: "high" } }
