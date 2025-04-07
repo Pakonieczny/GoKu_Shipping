@@ -208,7 +208,7 @@
     
     // Global arrays to store cropped grid images and user images (both resized to 512x512)
     let croppedImagesArray = [];
-    let userImagesArray = []; // Each element: { name, data }
+    let userImagesArray = []; // Each element will be an object: { name, data }
     
     // Global object to track skipped comparisons for Qty==1 cells
     let omittedCells = {};
@@ -831,28 +831,32 @@
     
         if (cellQuantity === 1) {
           let controllers = [];
-          let promises = userImagesArray.map(user => {
+          // Create an array of promises with staggered start times (j * 25ms delay)
+          let promises = userImagesArray.map((user, j) => {
             let controller = new AbortController();
             controllers.push(controller);
             return new Promise((resolve, reject) => {
-              compareImages(user.data, croppedImagesArray[i], i, user.name, controller.signal)
-                .then(result => {
-                  if (result.score >= 0.85) {
-                    // Immediately abort remaining comparisons for this cell
-                    controllers.forEach(c => c.abort());
-                    resolve(result);
-                  } else {
-                    reject("Score below threshold");
-                  }
-                })
-                .catch(err => {
-                  if (err.name === "AbortError") {
-                    M.toast({ html: "Cell " + i + " (" + user.name + "): Skipped!!" });
-                    reject(err);
-                  } else {
-                    reject(err);
-                  }
-                });
+              setTimeout(() => {
+                compareImages(user.data, croppedImagesArray[i], i, user.name, controller.signal)
+                  .then(result => {
+                    if (result.score >= 0.85) {
+                      // Immediately abort remaining comparisons for this cell
+                      controllers.forEach(c => c.abort());
+                      resolve(result);
+                    } else {
+                      reject("Score below threshold");
+                    }
+                  })
+                  .catch(err => {
+                    // If aborted, show "Skipped!!"
+                    if (err.name === "AbortError") {
+                      M.toast({ html: "Cell " + i + " (" + user.name + "): Skipped!!" });
+                      reject(err);
+                    } else {
+                      reject(err);
+                    }
+                  });
+              }, j * 50);
             });
           });
           try {
@@ -872,10 +876,14 @@
             }
           }
         } else {
-          // For items with quantity other than 1, run all comparisons in parallel normally and choose the best
-          let comparisonPromises = userImagesArray.map(user =>
-            compareImages(user.data, croppedImagesArray[i], i, user.name)
-          );
+          // For items with quantity other than 1, run comparisons for each user image with staggered delay
+          let comparisonPromises = userImagesArray.map((user, j) => {
+            return new Promise(resolve => {
+              setTimeout(() => {
+                resolve(compareImages(user.data, croppedImagesArray[i], i, user.name));
+              }, j * 25);
+            });
+          });
           let results = await Promise.all(comparisonPromises);
           let bestScore = -Infinity;
           let bestName = null;
@@ -895,13 +903,12 @@
     
     // Modified compareImages: returns an object with score and, if threshold met, the user image name.
     // Accepts an optional AbortSignal for cancellation.
-    // Added a 25ms artificial delay before making the API request.
+    // A 25ms delay is added here if no external signal is provided, but typically the staggered delays in sendAndMatch handle the spacing.
     async function compareImages(userImage, croppedGridImage, cellIndex, userImageName, signal) {
       if (signal && signal.aborted) {
         M.toast({ html: "Cell " + cellIndex + " (" + userImageName + "): Skipped!!" });
         return { score: 0, name: "Skipped!!" };
       }
-      await delay(100);
       const payload = {
         model: "gpt-4o-mini",
         messages: [
@@ -926,7 +933,7 @@
             ]
           }
         ],
-        max_tokens: 100
+        max_tokens: 200
       };
       try {
         const response = await fetch(functionsBaseUrl + "/openaiProxy", {
