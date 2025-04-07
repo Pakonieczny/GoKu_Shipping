@@ -175,7 +175,7 @@
   
   <!-- Container for dynamically generated preview boxes and detail boxes -->
   <div id="photoGridContainer">
-    <!-- Preview boxes and detail boxes are created dynamically -->
+    <!-- Preview boxes and detail boxes will be created dynamically -->
   </div>
   
   <!-- Config Modal -->
@@ -205,27 +205,26 @@
   
   <!-- Full Script Code -->
   <script>
-    // Set the base URL for Netlify functions.
+    // Base URL for Netlify functions
     const functionsBaseUrl = window.location.origin + "/.netlify/functions";
     
-    // Global arrays to store cropped grid images and user images (both resized to 512x512).
+    // Global arrays to store cropped grid images and user images (both resized to 512x512)
     let croppedImagesArray = [];
-    let userImagesArray = []; // Each element will be an object: { name, data }
-
-    // Immediately invoked function to handle OAuth tokens.
+    let userImagesArray = []; // Each element: { name, data }
+    
     (function(){
       const urlParams = new URLSearchParams(window.location.search);
       const accessToken = urlParams.get("access_token");
-      if(accessToken){
+      if (accessToken) {
         localStorage.setItem("access_token", accessToken);
         window.history.replaceState({}, document.title, window.location.pathname);
-        M.toast({html:"Connection Successful!"});
+        M.toast({ html: "Connection Successful!" });
         console.log("Access token received:", accessToken);
       } else {
         const authCode = urlParams.get("code");
-        if(authCode){
+        if (authCode) {
           const storedCodeVerifier = localStorage.getItem("etsy_code_verifier");
-          if(storedCodeVerifier){
+          if (storedCodeVerifier) {
             window.location.href =
               "/.netlify/functions/exchangeToken?code=" +
               encodeURIComponent(authCode) +
@@ -238,17 +237,17 @@
       }
     })();
     
-    // Function to generate a random string of specified length.
+    // Utility: generate a random string.
     function generateRandomString(length) {
       const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
       let text = "";
-      for (let i = 0; i < length; i++){
+      for (let i = 0; i < length; i++) {
         text += chars.charAt(Math.floor(Math.random() * chars.length));
       }
       return text;
     }
     
-    // Function to generate a code challenge for OAuth.
+    // Utility: generate code challenge for OAuth.
     async function generateCodeChallenge(codeVerifier) {
       const encoder = new TextEncoder();
       const data = encoder.encode(codeVerifier);
@@ -257,13 +256,12 @@
       return base64String.replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
     }
     
-    // Hard-coded configuration IDs for UI elements.
+    // Configuration UI element IDs.
     const configIDs = [
       "connectEtsyBtn", "testOpenAIBtn", "openConfigBtn", "etsyOrderNumber",
       "photoGridContainer", "configModal", "configTable", "saveConfigBtn"
     ];
     
-    // DOMContentLoaded initialization.
     document.addEventListener("DOMContentLoaded", function() {
       M.AutoInit();
       setTimeout(function() {
@@ -271,7 +269,7 @@
         document.body.style.opacity = 1;
       }, 200);
     
-      // Connect to Etsy button click.
+      // Connect to Etsy.
       document.getElementById("connectEtsyBtn").addEventListener("click", async function() {
         try {
           const codeVerifier = generateRandomString(64);
@@ -296,7 +294,7 @@
         }
       });
     
-      // Test OpenAI button click.
+      // Test OpenAI.
       document.getElementById("testOpenAIBtn").addEventListener("click", async function() {
         try {
           const testBody = {
@@ -322,7 +320,7 @@
         }
       });
     
-      // Load Etsy orders when Enter key is pressed in the order number input.
+      // Load orders on pressing Enter.
       var etsyOrderInput = document.getElementById("etsyOrderNumber");
       etsyOrderInput.addEventListener("keydown", async function(e) {
         if (e.key === "Enter") {
@@ -334,26 +332,26 @@
         }
       });
     
-      // Crop Images button click.
+      // Crop Images button.
       document.getElementById("cropImagesBtn").addEventListener("click", async function() {
         croppedImagesArray = [];
         await cropAllImages();
       });
     
-      // Send & Match button click.
+      // Send & Match button.
       document.getElementById("sendMatchBtn").addEventListener("click", async function() {
         await sendAndMatch();
       });
     });
     
-    // Function to load positions for UI elements from localStorage.
+    // Load positions from localStorage.
     function loadPositions() {
       configIDs.forEach(function(id) {
         const el = document.getElementById(id);
         if (!el) return;
         const def = {};
         const left = localStorage.getItem("pos-" + id + "-left") || def.left || 0;
-        const top  = localStorage.getItem("pos-" + id + "-top") || def.top || 0;
+        const top = localStorage.getItem("pos-" + id + "-top") || def.top || 0;
         const width = localStorage.getItem("pos-" + id + "-width") || def.width || 0;
         const height = localStorage.getItem("pos-" + id + "-height") || def.height || 0;
         el.style.position = "absolute";
@@ -365,7 +363,7 @@
     }
     loadPositions();
     
-    // Function to populate the configuration table.
+    // Populate configuration table.
     function populateConfigTable() {
       const tbody = document.querySelector("#configTable tbody");
       tbody.innerHTML = "";
@@ -405,13 +403,11 @@
       });
     }
     
-    // Event listener for opening the configuration modal.
     document.getElementById("openConfigBtn").addEventListener("click", function() {
       populateConfigTable();
       M.Modal.getInstance(document.getElementById("configModal")).open();
     });
     
-    // Event listener for saving configuration positions.
     document.getElementById("saveConfigBtn").addEventListener("click", function() {
       configIDs.forEach(function(id) {
         const el = document.getElementById(id);
@@ -425,20 +421,20 @@
       M.toast({ html: "Positions saved!" });
     });
     
-    // ---------------------------------------------------------
-    // Function to generate preview boxes and detail boxes for each order item.
+    // =====================================================
+    // Dynamically generate preview boxes and detail boxes.
     async function fillPreviewBoxes(items) {
       const container = document.getElementById("photoGridContainer");
       container.innerHTML = "";
-      // Store the items globally for later access (such as in sendAndMatch).
+      // Store items globally (for use in matching).
       window.cachedOrderItems = items;
     
       items.forEach((item, index) => {
         // Calculate positioning: 9 boxes per row.
         const row = Math.floor(index / 9);
         const col = index % 9;
-        const previewLeft = col * 125; // horizontal gap of 125px
-        const previewTop = row * 165;  // 110px preview plus 55px for details
+        const previewLeft = col * 125;
+        const previewTop = row * 165;
     
         // Create preview box.
         const previewBox = document.createElement("div");
@@ -451,7 +447,7 @@
         previewBox.style.height = "110px";
         previewBox.innerHTML = "Loading...";
     
-        // Create first detail box: Order Number (bold).
+        // Create first detail box: Order # (bold).
         const orderInput = document.createElement("input");
         orderInput.type = "text";
         orderInput.readOnly = true;
@@ -500,7 +496,6 @@
         matchInput.style.top = (previewTop + 131) + "px";
         matchInput.value = "";
     
-        // Append all created elements.
         container.appendChild(previewBox);
         container.appendChild(orderInput);
         container.appendChild(qtyInput);
@@ -527,8 +522,8 @@
       });
     }
     
-    // ---------------------------------------------------------
-    // Function to attach event listeners for zooming, dragging, and clicking on a preview box.
+    // =====================================================
+    // Attach event listeners for preview boxes (wheel zoom, drag, click).
     function attachPreviewBoxListeners(box) {
       let isDragging = false;
       let isMouseDown = false;
@@ -536,7 +531,7 @@
       let lastX = 0, lastY = 0;
       const dragThreshold = 3;
     
-      // Wheel zoom event.
+      // Wheel zoom.
       box.addEventListener("wheel", function(ev) {
         const img = box.querySelector("img");
         if (!img) return;
@@ -561,7 +556,7 @@
         img.style.transform = "translate(" + offX + "px, " + offY + "px) scale(" + currentScale + ")";
       });
     
-      // Mouse down: initiate drag.
+      // Mouse down: start drag.
       box.addEventListener("mousedown", function(ev) {
         const img = box.querySelector("img");
         if (!img) return;
@@ -576,7 +571,7 @@
         lastY = ev.clientY;
       });
     
-      // Mouse move: handle panning.
+      // Mouse move for dragging.
       box.addEventListener("mousemove", function(ev) {
         if (!isMouseDown) return;
         ev.preventDefault();
@@ -599,11 +594,11 @@
         lastY = ev.clientY;
       });
     
-      // Mouse up/leave: end dragging.
+      // End drag.
       box.addEventListener("mouseup", function() { isMouseDown = false; });
       box.addEventListener("mouseleave", function() { isMouseDown = false; });
     
-      // Single-click: perform zoom if not dragging.
+      // Single-click: Zoom if not dragging.
       box.addEventListener("click", function(ev) {
         if (isDragging) { isDragging = false; return; }
         const img = box.querySelector("img");
@@ -613,7 +608,7 @@
         const boxCenterY = rect.top + box.clientHeight / 2;
         const dx = ev.clientX - boxCenterX;
         const dy = ev.clientY - boxCenterY;
-        const scale = 4;
+        const scale = 6;
         const fudgeY = 10;
         const offsetX = -scale * dx;
         const offsetY = -scale * dy + fudgeY;
@@ -624,8 +619,8 @@
       });
     }
     
-    // ---------------------------------------------------------
-    // Load batch of Etsy orders and create preview boxes.
+    // =====================================================
+    // Load Etsy orders and generate preview boxes.
     async function loadBatchEtsyOrders(orderNumbers) {
       try {
         M.toast({ html: "Loading " + orderNumbers.length + " order(s)..." });
@@ -653,7 +648,6 @@
       }
     }
     
-    // Function to fetch listing images from Etsy.
     async function fetchListingImages(listingId) {
       const token = localStorage.getItem("access_token") || "";
       const resp = await fetch(functionsBaseUrl + "/etsyImages?listingId=" + listingId, {
@@ -667,7 +661,6 @@
       return data.results || [];
     }
     
-    // Function to get local image data via proxy.
     async function getLocalImageData(imageUrl) {
       try {
         const response = await fetch(functionsBaseUrl + "/imageProxy?url=" + encodeURIComponent(imageUrl));
@@ -684,124 +677,8 @@
       }
     }
     
-    // ---------------------------------------------------------
-    // Drag & Drop functionality for user images.
-    const photoDragDropElem = document.getElementById("photoDragDrop");
-    photoDragDropElem.addEventListener("dragover", function(e) { e.preventDefault(); });
-    photoDragDropElem.addEventListener("drop", function(e) {
-      e.preventDefault();
-      const files = e.dataTransfer.files;
-      for (let i = 0; i < files.length; i++) {
-        const file = files[i];
-        const reader = new FileReader();
-        reader.onload = async function(e) {
-          const imageData = e.target.result;
-          try {
-            const resizedData = await resizeUserImage(imageData);
-            userImagesArray.push({ name: file.name, data: resizedData });
-            M.toast({ html: "User image " + userImagesArray.length + " captured and resized." });
-            if (userImagesArray.length === 1) {
-              const userImageElem = document.getElementById("userImage");
-              userImageElem.src = resizedData;
-              userImageElem.style.display = "inline-block";
-            }
-          } catch(err) {
-            console.error("Error resizing user image:", err);
-            M.toast({ html: "Error processing one of the user images." });
-          }
-        };
-        reader.readAsDataURL(file);
-      }
-    });
-    
-    // Function to resize user image to 512x512.
-    function resizeUserImage(dataUrl) {
-      return new Promise((resolve, reject) => {
-        const img = new Image();
-        img.crossOrigin = "Anonymous";
-        img.onload = function() {
-          const canvas = document.createElement("canvas");
-          canvas.width = 512;
-          canvas.height = 512;
-          const ctx = canvas.getContext("2d");
-          ctx.drawImage(img, 0, 0, 512, 512);
-          resolve(canvas.toDataURL());
-        };
-        img.onerror = function(err) { reject(err); };
-        img.src = dataUrl;
-      });
-    }
-    
-    // ---------------------------------------------------------
-    // Function to crop all preview images and store cropped images.
-    async function cropAllImages() {
-      croppedImagesArray = [];
-      const previewBoxes = document.querySelectorAll(".preview-box");
-      for (let i = 0; i < previewBoxes.length; i++) {
-        const cell = previewBoxes[i];
-        const img = cell.querySelector("img");
-        if (img && img.src && img.src !== "") {
-          try {
-            const cropped = await cropImageFromPreview(cell, 512, 512);
-            croppedImagesArray[i] = cropped;
-            M.toast({ html: "Cell " + i + ": Cropped successfully." });
-          } catch (err) {
-            console.error("Cropping failed for cell", i, err);
-            M.toast({ html: "Cell " + i + ": Cropping error" });
-          }
-        }
-      }
-      if (croppedImagesArray.length > 0 && croppedImagesArray[0]) {
-        document.getElementById("croppedImagePreview").src = croppedImagesArray[0];
-      }
-    }
-    
-    // Function to crop image from a preview box using bounding rectangles.
-    function cropImageFromPreview(cell, canvasWidth, canvasHeight) {
-      return new Promise((resolve, reject) => {
-        const imgElem = cell.querySelector("img");
-        if (!imgElem) {
-          reject("No image element found");
-          return;
-        }
-        const cellRect = cell.getBoundingClientRect();
-        const imgRect = imgElem.getBoundingClientRect();
-        const visibleLeft = Math.max(cellRect.left, imgRect.left);
-        const visibleTop = Math.max(cellRect.top, imgRect.top);
-        const visibleRight = Math.min(cellRect.right, imgRect.right);
-        const visibleBottom = Math.min(cellRect.bottom, imgRect.bottom);
-        if (visibleRight <= visibleLeft || visibleBottom <= visibleTop) {
-          reject("No visible intersection");
-          return;
-        }
-        const visibleWidth = visibleRight - visibleLeft;
-        const visibleHeight = visibleBottom - visibleTop;
-        const sourceImage = new Image();
-        sourceImage.crossOrigin = "Anonymous";
-        sourceImage.onload = function() {
-          const ratioX = sourceImage.naturalWidth / imgRect.width;
-          const ratioY = sourceImage.naturalHeight / imgRect.height;
-          const srcX = (visibleLeft - imgRect.left) * ratioX;
-          const srcY = (visibleTop - imgRect.top) * ratioY;
-          const srcWidth = visibleWidth * ratioX;
-          const srcHeight = visibleHeight * ratioY;
-          const canvas = document.createElement("canvas");
-          canvas.width = canvasWidth;
-          canvas.height = canvasHeight;
-          const ctx = canvas.getContext("2d");
-          ctx.drawImage(sourceImage, srcX, srcY, srcWidth, srcHeight, 0, 0, canvasWidth, canvasHeight);
-          resolve(canvas.toDataURL());
-        };
-        sourceImage.onerror = function(e) {
-          reject(e);
-        };
-        sourceImage.src = imgElem.src;
-      });
-    }
-    
-    // ---------------------------------------------------------
-    // Production-ready sendAndMatch function:
-    // This function uses thresholds [0.95, 0.90, 0.85] to update each grid cell’s match box with a numeric similarity score.
+    // =====================================================
+    // Production-Ready Send & Match Function with Three Sequential Loops and Immediate Removal for Quantity==1
     async function sendAndMatch() {
       if (userImagesArray.length === 0) {
         M.toast({ html: "No user images available! Please drop user images first." });
@@ -811,64 +688,103 @@
         M.toast({ html: "No cropped grid images available! Please crop images first." });
         return;
       }
+    
+      // Define thresholds for three sequential loops.
       const thresholds = [0.95, 0.90, 0.85];
-      let cellRemaining = [];
-      for (let i = 0; i < croppedImagesArray.length; i++) {
-        cellRemaining[i] = [...userImagesArray];
-      }
-      let cellMatches = new Array(croppedImagesArray.length).fill(null);
     
+      // Create copies of the user images and grid images to work with.
+      let remainingUserImages = [...userImagesArray];
+      let remainingCropped = [...croppedImagesArray];
+    
+      // Process each threshold sequentially.
       for (let t = 0; t < thresholds.length; t++) {
-        let threshold = thresholds[t];
-        for (let i = 0; i < croppedImagesArray.length; i++) {
-          if (cellMatches[i] !== null || !croppedImagesArray[i]) continue;
-          if (!cellRemaining[i] || cellRemaining[i].length === 0) continue;
+        let currentThreshold = thresholds[t];
+        for (let i = 0; i < remainingCropped.length; i++) {
+          if (!remainingCropped[i]) continue; // Skip already matched cells.
     
-          let comparisonPromises = cellRemaining[i].map((user, j) => {
-            return new Promise(resolve => {
-              setTimeout(() => {
-                resolve(compareImages(user.data, croppedImagesArray[i], i, user.name));
-              }, 300 * j);
+          // Get the quantity for this grid cell from the cached order items.
+          let cellQuantity = window.cachedOrderItems && window.cachedOrderItems[i] && window.cachedOrderItems[i].quantity;
+    
+          // For cells with quantity equal to 1, use an immediate removal branch using AbortControllers.
+          if (cellQuantity === 1) {
+            let abortControllers = [];
+            let promises = remainingUserImages.map((user, index) => {
+              const controller = new AbortController();
+              abortControllers.push(controller);
+              return new Promise((resolve, reject) => {
+                setTimeout(() => {
+                  resolve(compareImages(user.data, remainingCropped[i], i, user.name, controller.signal));
+                }, index * 300);
+              });
             });
-          });
-          let results = await Promise.all(comparisonPromises);
-          let found = null;
-          for (let r of results) {
-            if (r.score >= threshold) {
-              found = r;
-              break;
-            }
-          }
-          if (found !== null) {
-            cellMatches[i] = found;
-            cellRemaining[i] = cellRemaining[i].filter(user => user.name !== found.name);
-            croppedImagesArray[i] = null;
-            let matchBox = document.getElementById("matchCell" + i);
-            if (matchBox) {
-              matchBox.value = found.score.toFixed(3);
-              matchBox.style.textAlign = "right";
-              if (found.score < 0.9) {
-                matchBox.style.fontWeight = "bold";
-                matchBox.style.color = "orange";
-              } else {
-                matchBox.style.fontWeight = "normal";
-                matchBox.style.color = "black";
+            try {
+              // Use Promise.any to get the first match that meets the current threshold.
+              const firstMatch = await Promise.any(promises.filter(p => p)); // p are promises
+              // Only accept the match if its score meets the threshold.
+              if (firstMatch.score >= currentThreshold) {
+                abortControllers.forEach(ctrl => ctrl.abort());
+                let matchBox = document.getElementById("matchCell" + i);
+                if (matchBox) {
+                  matchBox.value = firstMatch.score.toFixed(3);
+                  matchBox.style.textAlign = "right";
+                  if (firstMatch.score < 0.9) {
+                    matchBox.style.fontWeight = "bold";
+                    matchBox.style.color = "orange";
+                  } else {
+                    matchBox.style.fontWeight = "normal";
+                    matchBox.style.color = "black";
+                  }
+                }
+                M.toast({ html: "Cell " + i + ": Best match found: " + firstMatch.name + " with score " + firstMatch.score });
+                remainingCropped[i] = null;
+                remainingUserImages = remainingUserImages.filter(user => user.name !== firstMatch.name);
+                continue; // Skip remaining checks for this cell.
               }
+            } catch (e) {
+              // No match found at this threshold for a quantity==1 cell; let it try in the next threshold loop.
             }
-            M.toast({ html: "Cell " + i + ": Best match found: " + found.name + " with score " + found.score });
           } else {
-            let matchBox = document.getElementById("matchCell" + i);
-            if (matchBox) {
-              matchBox.value = "";
+            // For cells with quantity other than 1, process normally:
+            let promises = remainingUserImages.map((user, index) => {
+              return new Promise(resolve => {
+                setTimeout(() => {
+                  resolve(compareImages(user.data, remainingCropped[i], i, user.name));
+                }, index * 300);
+              });
+            });
+            let results = await Promise.all(promises);
+            let bestMatch = null;
+            results.forEach(result => {
+              if (result.score >= currentThreshold) {
+                if (!bestMatch || result.score > bestMatch.score) {
+                  bestMatch = result;
+                }
+              }
+            });
+            if (bestMatch !== null) {
+              let matchBox = document.getElementById("matchCell" + i);
+              if (matchBox) {
+                matchBox.value = bestMatch.score.toFixed(3);
+                matchBox.style.textAlign = "right";
+                if (bestMatch.score < 0.9) {
+                  matchBox.style.fontWeight = "bold";
+                  matchBox.style.color = "orange";
+                } else {
+                  matchBox.style.fontWeight = "normal";
+                  matchBox.style.color = "black";
+                }
+              }
+              M.toast({ html: "Cell " + i + ": Best match found: " + bestMatch.name + " with score " + bestMatch.score });
+              remainingCropped[i] = null;
+              remainingUserImages = remainingUserImages.filter(user => user.name !== bestMatch.name);
             }
           }
         }
       }
     }
     
-    // ---------------------------------------------------------
-    // Production-ready compareImages function.
-    // This function calls the image comparison API and returns a numeric similarity score.
+    // =====================================================
+    // Production-Ready Compare Images Function.
     async function compareImages(userImage, croppedGridImage, cellIndex, userImageName, signal = undefined) {
       const payload = {
         model: "gpt-4o-mini",
@@ -882,19 +798,18 @@
                       "1. Look for a best fit and matching charms within these two images, return ONLY a numeric similarity score between 0 and 1, with no additional text. " +
                       "2. Focus solely on the charm and its fine details; disregard the background and any other accessories. " +
                       "3. Assume all charms are the same size and colour, disregarding any shading biases. " +
-                      "4. If you detect an animal charm, be extra detailed in your charm analysis. " +
-                      "5. Always aim for a 0.90 accuracy when comparing charms; 0.85+ is the minimum threshold. " +
-                      "6. Only consider the charm and its fine details when scoring the match. " +
-                      "7. Ignore all items attached to or surrounding the charm such as necklaces, chains, hoops, rings, clothing, or skin. " +
-                      "8. Emphasize the pose and direction the charm is facing. " +
-                      "9. Focus on subtle details in the charm’s outline and interior engravings."
+                      "4. Always aim for a 0.90 accuracy when comparing charms; 0.85+ is the minimum threshold. " +
+                      "5. Only consider the charm and its fine details when scoring the match. " +
+                      "6. Ignore all items attached to or surrounding the charm such as necklaces, chains, hoops, rings, clothing, or skin. " +
+                      "7. Emphasize the pose and direction the charm is facing. " +
+                      "8. Focus on subtle details in the charm’s outline and interior engravings."
               },
               { type: "image_url", image_url: { url: userImage, detail: "high" } },
               { type: "image_url", image_url: { url: croppedGridImage, detail: "high" } }
             ]
           }
         ],
-        max_tokens: 300
+        max_tokens: 350
       };
       try {
         const response = await fetch(functionsBaseUrl + "/openaiProxy", {
@@ -923,8 +838,8 @@
       }
     }
     
-    // ---------------------------------------------------------
-    // Function to pull Etsy order details (for further processing if needed).
+    // =====================================================
+    // Function to pull Etsy order details (if needed).
     function pullEtsyOrderDetails(orderNumber) {
       console.log("Pulling Etsy order details for order number:", orderNumber);
       var token = localStorage.getItem("access_token");
@@ -942,7 +857,7 @@
       });
     }
     
-    // Example function to update image grid details using pulled Etsy order details.
+    // Example: update the grid using pulled Etsy order details.
     async function updateImageGrid(data) {
       let items = [];
       if (data.transactions && Array.isArray(data.transactions)) {
