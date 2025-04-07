@@ -901,7 +901,7 @@
         M.toast({ html: "Cell " + cellIndex + " (" + userImageName + "): Skipped!!" });
         return { score: 0, name: "Skipped!!" };
       }
-      await delay(25);
+      await delay(100);
       const payload = {
         model: "gpt-4o-mini",
         messages: [
