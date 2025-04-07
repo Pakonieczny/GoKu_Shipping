@@ -377,7 +377,6 @@
         orderInput.classList.add("detail-box");
         orderInput.style.left = previewLeft + "px";
         orderInput.style.top = (previewTop + 95) + "px";
-        // Use receipt_id if available; otherwise fallback to orderNumber
         orderInput.value = item.receipt_id ? item.receipt_id : (item.orderNumber || "No Order #");
         orderInput.style.fontWeight = "bold";
     
@@ -825,6 +824,7 @@
     }
     
     // Modified compareImages: returns an object with score and, if threshold met, the user image name.
+    // The prompt now includes hard-coded rules for detailed comparison.
     async function compareImages(userImage, croppedGridImage, cellIndex, userImageName) {
       const payload = {
         model: "gpt-4o-mini",
@@ -832,7 +832,10 @@
           {
             role: "user",
             content: [
-              { type: "text", text: "Compare these two images and return ONLY a numeric similarity score between 0 and 1, with no additional text." },
+              { 
+                type: "text", 
+                text: "Compare these two images and return ONLY a numeric similarity score between 0 and 1, with no additional text. Follow these rules strictly: Focus solely on the charms and disregard the background completely. Assume all charms are the same size. For similarity scores between 0.75 and 0.85, perform a secondary detailed validation review by incorporating results from both runs to arrive at a more accurate similarity score, and display that refined result. Look for subtle differences in the outlines of charms—especially for items like Bunnies, Bees, Humming Birds, balls, basketball, volleyball, baseball, etc.—and examine details down to the millimetre accuracy in shapes, outlines, and interior lines. Always aim for 0.9 accuracy when comparing charms; 0.8+ is the minimum threshold." 
+              },
               { type: "image_url", image_url: { url: userImage, detail: "high" } },
               { type: "image_url", image_url: { url: croppedGridImage, detail: "high" } }
             ]
