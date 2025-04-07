@@ -827,7 +827,7 @@
         const cellQuantity = window.cachedOrderItems && window.cachedOrderItems[i] && window.cachedOrderItems[i].quantity;
     
         if (cellQuantity === 1) {
-          // For items with quantity 1, run comparisons in parallel with a 25ms delay between each request
+          // For items with quantity 1, run comparisons in parallel with a 250ms delay between each request
           let promises = userImagesArray.map((user, j) => {
             return new Promise((resolve, reject) => {
               setTimeout(() => {
@@ -839,7 +839,7 @@
                     reject("Score below threshold");
                   }
                 }).catch(err => reject(err));
-              }, j * 25);
+              }, j * 250);
             });
           });
           try {
@@ -860,12 +860,12 @@
             }
           }
         } else {
-          // For items with quantity other than 1, compare all user images in parallel with a 25ms delay between each request
+          // For items with quantity other than 1, compare all user images in parallel with a 100ms delay between each request
           let comparisonPromises = userImagesArray.map((user, j) => {
             return new Promise(resolve => {
               setTimeout(() => {
                 resolve(compareImages(user.data, croppedImagesArray[i], i, user.name));
-              }, j * 25);
+              }, j * 100);
             });
           });
           let results = await Promise.all(comparisonPromises);
