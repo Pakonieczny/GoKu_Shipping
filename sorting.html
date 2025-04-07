@@ -206,7 +206,7 @@
     // Base URL for Netlify functions
     const functionsBaseUrl = window.location.origin + "/.netlify/functions";
     
-    // Global arrays to store cropped grid images and user images (both resized to 1024x1024)
+    // Global arrays to store cropped grid images and user images (both resized to 512x512)
     let croppedImagesArray = [];
     let userImagesArray = []; // Each element will be an object: { name, data }
     
@@ -716,17 +716,17 @@
       }
     });
     
-    // Function to resize user images to 1024x1024
+    // Function to resize user images to 512x512
     function resizeUserImage(dataUrl) {
       return new Promise((resolve, reject) => {
         const img = new Image();
         img.crossOrigin = "Anonymous";
         img.onload = function() {
           const canvas = document.createElement("canvas");
-          canvas.width = 1024;
-          canvas.height = 1024;
+          canvas.width = 512;
+          canvas.height = 512;
           const ctx = canvas.getContext("2d");
-          ctx.drawImage(img, 0, 0, 1024, 1024);
+          ctx.drawImage(img, 0, 0, 512, 512);
           resolve(canvas.toDataURL());
         };
         img.onerror = function(err) { reject(err); };
@@ -734,7 +734,7 @@
       });
     }
     
-    // Crop all preview images and store cropped images (1024x1024) in global array
+    // Crop all preview images and store cropped images (512x512) in global array
     async function cropAllImages() {
       croppedImagesArray = [];
       const previewBoxes = document.querySelectorAll(".preview-box");
@@ -743,7 +743,7 @@
         const img = cell.querySelector("img");
         if (img && img.src && img.src !== "") {
           try {
-            const cropped = await cropImageFromPreview(cell, 1024, 1024);
+            const cropped = await cropImageFromPreview(cell, 512, 512);
             croppedImagesArray[i] = cropped;
             M.toast({ html: "Cell " + i + ": Cropped successfully." });
           } catch (err) {
@@ -884,7 +884,17 @@
             content: [
               { 
                 type: "text", 
-                text: "Compare these two images and return ONLY a numeric similarity score between 0 and 1, with no additional text. Follow these rules strictly:  1. Focus solely on the charms and disregard the background completely.  2. Assume all charms are the same size and same colour, disregard all colour and shading biases.  3. Always aim for 0.85 accuracy when comparing charms; 0.85+ is the minimum threshold.  4. Only focus on the charms and the very fine details of the charm when scoring the match.  5. Disregard all other items around and attached to the charm such as necklaces, chains, hoops, jumps, rings, clothing, skin.  6. When matching, look for specific shapes and patterns engraved inside each charm.  7. Put high importance on the pose of the charm with emphasis on the direction the charm is facing.  8. Beyond just the type of animal or shape of the charm, attach a high degree of importance to the pose and directionality of the charm inside each photo." 
+                text: "Follow the below rules strictly!!!" 
+                "1. Look for a best fit and matching charms within these two images, return ONLY a numeric similarity score between 0 and 1, with no additional text."  
+                "2. Focus solley on the charm and specific fine details of the charm in the images."  
+                "3. Focus solely on the charms and charm details, disregard the background and all other accessories completely."  
+                "4. Assume all charms are the same size and same colour, disregard all colour and shading biases."  
+                "5. Always aim for 0.90 accuracy when comparing charms; 0.85+ is the minimum threshold."  
+                "6. Only focus on the charms and the very fine details of the charm when scoring the match."  
+                "7. Disregard all other items around and attached to the charm such as necklaces, chains, hoops, jumps, rings, clothing, skin."  
+                "8. When matching, look for specific shapes and patterns engraved inside each charm."  
+                "9. Put high importance on the pose of the charm with emphasis on the direction the charm is facing."  
+                "10. Beyond just the type of animal or shape of the charm, attach a high degree of importance to the pose and directionality of the charm inside each photo." 
               },
               { type: "image_url", image_url: { url: userImage, detail: "high" } },
               { type: "image_url", image_url: { url: croppedGridImage, detail: "high" } }
