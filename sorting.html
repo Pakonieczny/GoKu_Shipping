@@ -203,7 +203,7 @@
     // Global arrays to store cropped grid images, user images (both resized to 512x512)
     // And an object to store matches dedicated to each cell (key: cell index, value: array of match objects)
     let croppedImagesArray = [];
-    let userImagesArray = []; // Each element: { name, data }
+    let userImagesArray = []; // { name, data }
     let cellMatches = {};
     
     (function(){
@@ -416,9 +416,7 @@
         matchInput.style.left = previewLeft + "px";
         matchInput.style.top = (previewTop + 131) + "px";
         matchInput.value = "";
-        // Ensure this box is clickable despite being read-only.
-        matchInput.style.pointerEvents = "auto";
-        // Attach event listener to open modal with matches for this cell.
+        // Attach event listener dedicated to this preview cell to open modal with its matches.
         matchInput.addEventListener("click", function() {
           showMatchesModal(index);
         });
@@ -579,7 +577,7 @@
     }
     
     async function fetchListingImages(listingId) {
-      const token = localStorage.getItem("access-token") || "";
+      const token = localStorage.getItem("access_token") || "";
       const resp = await fetch(functionsBaseUrl + "/etsyImages?listingId=" + listingId, {
         headers: { "access-token": token }
       });
@@ -796,9 +794,7 @@
       });
     }
     
-    // =======================================================================
-    // NEW MATCHING LOGIC – SINGLE Loop per Etsy-Derived Image
-    // =======================================================================
+    // Send & Match function (parallel requests)
     async function sendAndMatch() {
       if (userImagesArray.length === 0) {
         M.toast({ html: "No user images available! Please drop user images first." });
@@ -808,73 +804,119 @@
         M.toast({ html: "No cropped grid images available! Please crop images first." });
         return;
       }
-      
-      // Loop through each Etsy-derived image cell.
+    
+      let unmatchedCells = [];
       for (let i = 0; i < croppedImagesArray.length; i++) {
-        if (!croppedImagesArray[i]) continue;  // Skip if already processed.
-    
-        // --- First Round: Compare all user images for this cell ---
-        let firstRoundResults = [];
-        for (let j = 0; j < userImagesArray.length; j++) {
-          const user = userImagesArray[j];
-          const result = await compareImages(user.data, croppedImagesArray[i], i, user.name);
-          // Only consider valid scores above the minimum threshold.
-          if (result.score >= 0.85) {
-            firstRoundResults.push({ user: user, score: result.score });
-          }
+        if (croppedImagesArray[i]) {
+          unmatchedCells.push(i);
         }
+      }
+      
+      const thresholds = [0.95, 0.90, 0.85];
     
-        if (firstRoundResults.length === 0) continue;  // No valid matches; move to next cell.
+      for (let loopIndex = 0; loopIndex < thresholds.length; loopIndex++) {
+        const currentThreshold = thresholds[loopIndex];
+        console.log("Processing loop " + (loopIndex + 1) + " with threshold " + currentThreshold);
+        let remainingCells = [];
+        
+        for (const i of unmatchedCells) {
+          let cellMatched = false;
+          let bestResult = { score: 0, name: null };
+          const cellQuantity = window.cachedOrderItems && window.cachedOrderItems[i] && window.cachedOrderItems[i].quantity;
+          const matchBox = document.getElementById("matchCell" + i);
     
-        // Identify the two user images with the highest similarity scores.
-        firstRoundResults.sort((a, b) => b.score - a.score);
-        let topCandidates = firstRoundResults.slice(0, 2);
-    
-        // --- Second Round: Re-run comparisons for the top two candidates ---
-        let secondRoundResults = [];
-        for (let candidate of topCandidates) {
-          const secondResult = await compareImages(candidate.user.data, croppedImagesArray[i], i, candidate.user.name);
-          const averagedScore = (candidate.score + secondResult.score) / 2;
-          secondRoundResults.push({ user: candidate.user, averagedScore: averagedScore });
-        }
-    
-        // Choose the candidate with the highest averaged score.
-        secondRoundResults.sort((a, b) => b.averagedScore - a.averagedScore);
-        const bestCandidate = secondRoundResults[0];
-    
-        // Remove the file extension (.jpg or .png) from the image name.
-        const finalName = bestCandidate.user.name.replace(/\.(jpg|png)$/i, "");
-    
-        // Update the match text box for this cell.
-        const matchBox = document.getElementById("matchCell" + i);
-        if (matchBox) {
-          matchBox.value = finalName;
-          if (bestCandidate.averagedScore < 0.9) {
-            matchBox.style.fontWeight = "bold";
-            matchBox.style.color = "orangered";
+          if (cellQuantity === 1) {
+            let abortControllers = [];
+            let promises = userImagesArray.map((user, j) => {
+              const controller = new AbortController();
+              abortControllers.push(controller);
+              return new Promise((resolve, reject) => {
+                setTimeout(() => {
+                  compareImages(user.data, croppedImagesArray[i], i, user.name, controller.signal)
+                    .then(result => {
+                      if (result.score >= currentThreshold) {
+                        resolve({ result, user });
+                      } else {
+                        reject("Score below threshold");
+                      }
+                    })
+                    .catch(err => {
+                      if (err.name === "AbortError") { }
+                      reject(err);
+                    });
+                }, j * 300);
+              });
+            });
+            try {
+              const { result, user } = await Promise.any(promises);
+              cellMatched = true;
+              bestResult = result;
+              abortControllers.forEach(ctrl => ctrl.abort());
+              if (matchBox) {
+                matchBox.value = user.name;
+                if (result.score < 0.93) {
+                  matchBox.style.fontWeight = "bold";
+                  matchBox.style.color = "orangered";
+                } else {
+                  matchBox.style.fontWeight = "";
+                  matchBox.style.color = "";
+                }
+              }
+              M.toast({ html: "Cell " + i + ": Best match found in loop " + (loopIndex + 1) + " - " + user.name + " with score " + result.score });
+              if (!cellMatches[i]) { cellMatches[i] = []; }
+              cellMatches[i].push({ userName: user.name, userImage: user.data, score: result.score });
+              croppedImagesArray[i] = null;
+              userImagesArray = userImagesArray.filter(u => u.name !== user.name);
+            } catch (e) {
+              console.log("Cell " + i + " did not match in loop " + (loopIndex + 1));
+            }
           } else {
-            matchBox.style.fontWeight = "";
-            matchBox.style.color = "";
+            let bestUser = null;
+            let comparisonPromises = userImagesArray.map((user, j) => {
+              return new Promise(resolve => {
+                setTimeout(() => {
+                  resolve(
+                    compareImages(user.data, croppedImagesArray[i], i, user.name)
+                      .then(result => ({ result, user }))
+                  );
+                }, j * 300);
+              });
+            });
+            let results = await Promise.all(comparisonPromises);
+            results.forEach(({ result, user }) => {
+              if (result.score >= currentThreshold && result.score > bestResult.score) {
+                bestResult = result;
+                bestUser = user;
+              }
+            });
+            if (bestUser && bestResult.score >= currentThreshold) {
+              cellMatched = true;
+              if (matchBox) {
+                matchBox.value = bestUser.name;
+                if (bestResult.score < 0.93) {
+                  matchBox.style.setProperty("font-weight", "bold", "important");
+                  matchBox.style.setProperty("color", "orangered", "important");
+                } else {
+                  matchBox.style.setProperty("font-weight", "", "");
+                  matchBox.style.setProperty("color", "", "");
+                }
+              }
+              M.toast({ html: "Cell " + i + ": Best match found in loop " + (loopIndex + 1) + " - " + bestUser.name + " with score " + bestResult.score });
+              if (!cellMatches[i]) { cellMatches[i] = []; }
+              cellMatches[i].push({ userName: bestUser.name, userImage: bestUser.data, score: bestResult.score });
+              croppedImagesArray[i] = null;
+              userImagesArray = userImagesArray.filter(u => u.name !== bestUser.name);
+            }
+          }
+          if (!cellMatched) {
+            remainingCells.push(i);
           }
         }
-    
-        M.toast({ html: `Cell ${i}: Final match - ${finalName} with averaged score ${bestCandidate.averagedScore.toFixed(2)}` });
-    
-        // Save the final match in the cell-specific matches.
-        if (!cellMatches[i]) { cellMatches[i] = []; }
-        cellMatches[i].push({ userName: finalName, userImage: bestCandidate.user.data, averagedScore: bestCandidate.averagedScore });
-    
-        // Remove the matched user image from further matching if desired.
-        userImagesArray = userImagesArray.filter(u => u.name !== bestCandidate.user.name);
-    
-        // Mark this cell as processed.
-        croppedImagesArray[i] = null;
+        unmatchedCells = remainingCells;
       }
     }
     
-    // =======================================================================
-    // Modified compareImages: Accepts an optional signal for aborting.
-    // =======================================================================
+    // Modified compareImages: accepts an optional signal for aborting.
     async function compareImages(userImage, croppedGridImage, cellIndex, userImageName, signal = undefined) {
       const payload = {
         model: "gpt-4o-mini",
@@ -899,7 +941,7 @@
             ]
           }
         ],
-        max_tokens: 250
+        max_tokens: 350
       };
       try {
         const response = await fetch(functionsBaseUrl + "/openaiProxy", {
@@ -909,23 +951,23 @@
           signal: signal
         });
         const data = await response.json();
-        console.log(`Response for cell ${cellIndex}, user image ${userImageName}:`, data);
+        console.log("Response for cell " + cellIndex + ", user image " + userImageName + ":", data);
         const scoreText = data.choices[0].message.content.trim();
         const score = parseFloat(scoreText);
         if (isNaN(score)) {
-          console.error(`Cell ${cellIndex} (${userImageName}): Invalid score (${scoreText})`);
+          console.error("Cell " + cellIndex + " (" + userImageName + "): Invalid score (" + scoreText + ")");
           return { score: 0, name: null };
         }
         if (score >= 0.85) {
-          M.toast({ html: `Cell ${cellIndex} (${userImageName}): Score ${score}` });
+          M.toast({ html: "Cell " + cellIndex + " (" + userImageName + "): Score " + score });
         }
         return { score: score, name: (score >= 0.85) ? userImageName : null };
       } catch (error) {
-        console.error(`Error comparing cell ${cellIndex} (${userImageName}):`, error);
+        console.error("Error comparing cell " + cellIndex + " (" + userImageName + "):", error);
         if (error.name === "AbortError") {
           return { score: 0, name: null };
         }
-        M.toast({ html: `Cell ${cellIndex} (${userImageName}): Comparison error` });
+        M.toast({ html: "Cell " + cellIndex + " (" + userImageName + "): Comparison error" });
         return { score: 0, name: null };
       }
     }
