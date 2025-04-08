@@ -743,7 +743,7 @@ function resizeUserImage(dataUrl) {
 
 // =============================
 // REPLACE ONLY THIS PORTION OF sendAndMatch()
-// Removing second-run averaging, removing file extensions
+// (Remove the second-run comparison & averaging.)
 // =============================
 async function sendAndMatch() {
   if (userImagesArray.length === 0) {
@@ -758,7 +758,9 @@ async function sendAndMatch() {
   // Identify all cells that still have images
   let unmatchedCells = [];
   for (let i = 0; i < croppedImagesArray.length; i++) {
-    if (croppedImagesArray[i]) unmatchedCells.push(i);
+    if (croppedImagesArray[i]) {
+      unmatchedCells.push(i);
+    }
   }
 
   // Single pass: For each unmatched cell
@@ -785,24 +787,28 @@ async function sendAndMatch() {
     // 2) Check for a perfect 100% match
     const perfectMatch = results.find(r => r.result.score === 1.0);
     if (perfectMatch) {
-      const matchName = perfectMatch.user.name.replace(/(\.jpg|\.png)$/i, "");
-      M.toast({ html: "Cell " + i + ": PERFECT MATCH => " + matchName + " (100.00%)" });
-
+      M.toast({
+        html: "Cell " + i + ": PERFECT MATCH => " +
+              perfectMatch.user.name + " (100.00%)"
+      });
+      // Assign & skip
       if (matchBox) {
-        matchBox.value = matchName;
-        // e.g., 95% threshold
+        matchBox.value = perfectMatch.user.name;
+        // e.g., 0.95 => 95% threshold for styling
         matchBox.style.fontWeight = (1.0 < 0.95) ? "bold" : "";
         matchBox.style.color = (1.0 < 0.95) ? "orangered" : "";
       }
-      if (!cellMatches[i]) cellMatches[i] = [];
+      if (!cellMatches[i]) {
+        cellMatches[i] = [];
+      }
       cellMatches[i].push({
-        userName: matchName,
+        userName: perfectMatch.user.name,
         userImage: perfectMatch.user.data,
         score: 1.0
       });
       userImagesArray = userImagesArray.filter(u => u.name !== perfectMatch.user.name);
       croppedImagesArray[i] = null;
-      continue;
+      continue; // Move on
     }
 
     // 3) Otherwise, pick the single highest-scoring candidate
@@ -811,16 +817,17 @@ async function sendAndMatch() {
       continue;
     }
     const topCandidate = results[0]; // { result: {score}, user }
-    const topScorePerc = (topCandidate.result.score * 100).toFixed(2);
-    // Remove extension from the user name
-    const matchName = topCandidate.user.name.replace(/(\.jpg|\.png)$/i, "");
 
+    // Show a toast for the top candidate’s initial score
+    const topScorePerc = (topCandidate.result.score * 100).toFixed(2);
     M.toast({
-      html: "Cell " + i + ": Best candidate => " + matchName + " (" + topScorePerc + "%)"
+      html: "Cell " + i + ": Best candidate => " + 
+            topCandidate.user.name + " (" + topScorePerc + "%)"
     });
 
-    // 4) Check threshold
+    // 4) Check if topCandidate meets your threshold
     if (topCandidate.result.score < 0.90) {
+      // Example threshold at 90%
       M.toast({
         html: "Cell " + i + ": Highest score " + topScorePerc +
               "% is under 90%—no match."
@@ -830,10 +837,12 @@ async function sendAndMatch() {
 
     // 5) Accept the top candidate
     M.toast({
-      html: "Cell " + i + ": Matched => " + matchName + " (" + topScorePerc + "%)"
+      html: "Cell " + i + ": Matched => " +
+            topCandidate.user.name + " (" + topScorePerc + "%)"
     });
     if (matchBox) {
-      matchBox.value = matchName;
+      matchBox.value = topCandidate.user.name;
+      // Example styling threshold of 0.95 => 95%
       if (topCandidate.result.score < 0.95) {
         matchBox.style.fontWeight = "bold";
         matchBox.style.color = "orangered";
@@ -844,9 +853,11 @@ async function sendAndMatch() {
     }
 
     // Store the final match
-    if (!cellMatches[i]) cellMatches[i] = [];
+    if (!cellMatches[i]) {
+      cellMatches[i] = [];
+    }
     cellMatches[i].push({
-      userName: matchName,
+      userName: topCandidate.user.name,
       userImage: topCandidate.user.data,
       score: topCandidate.result.score
     });
