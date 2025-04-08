@@ -794,12 +794,10 @@
       });
     }
     
-    // =============================
-// REPLACE ONLY THIS PORTION OF sendAndMatch()
-// (Remove everything from: "let unmatchedCells = [];" down to the closing brace 
-// of the function, then insert the following code in its place.)
 // =============================
-
+// REPLACE ONLY THIS PORTION OF sendAndMatch()
+// where we previously replaced the 3-loop logic
+// =============================
 async function sendAndMatch() {
   if (userImagesArray.length === 0) {
     M.toast({ html: "No user images available! Please drop user images first." });
@@ -835,6 +833,7 @@ async function sendAndMatch() {
     });
 
     let results = await Promise.all(comparisonPromises);
+
     // Sort results by descending similarity score
     results.sort((a, b) => b.result.score - a.result.score);
 
@@ -846,14 +845,22 @@ async function sendAndMatch() {
         M.toast({ html: "Cell " + i + ": No valid matches found!" });
         continue;
       }
-      M.toast({
-        html: "Cell " + i + ": Top 1 image => " +
+
+      // Convert to percentage and round to two decimals
+      let bestScore = (topTwo[0].result.score * 100).toFixed(1); 
+      // e.g. 0.831 => 83.1
+
+      // Single toast for top image
+      M.toast({ 
+        html: "Cell " + i + ": Top match => " + 
               topTwo[0].user.name + 
-              " (Score " + topTwo[0].result.score.toFixed(2) + ")"
+              " (" + bestScore + "%)" 
       });
+
       // Proceed as if it's the only candidate
       if (matchBox) {
         matchBox.value = topTwo[0].user.name;
+        // Compare threshold in decimal form; e.g. 0.93 means 93%
         if (topTwo[0].result.score < 0.93) {
           matchBox.style.fontWeight = "bold";
           matchBox.style.color = "orangered";
@@ -862,6 +869,7 @@ async function sendAndMatch() {
           matchBox.style.color = "";
         }
       }
+
       if (!cellMatches[i]) { cellMatches[i] = []; }
       cellMatches[i].push({
         userName: topTwo[0].user.name,
@@ -873,11 +881,13 @@ async function sendAndMatch() {
       continue;
     }
 
-    // Show a toast with the top 2 initial scores (no duplicates)
+    // Show a toast with the top 2 initial scores (each converted to percent)
+    let firstScorePerc = (topTwo[0].result.score * 100).toFixed(1);
+    let secondScorePerc = (topTwo[1].result.score * 100).toFixed(1);
     M.toast({
-      html: "Cell " + i + ": Top 2 images => " +
-            topTwo[0].user.name + " (Score " + topTwo[0].result.score.toFixed(2) + "), " +
-            topTwo[1].user.name + " (Score " + topTwo[1].result.score.toFixed(2) + ")"
+      html: "Cell " + i + ": Top 2 initial => " +
+            topTwo[0].user.name + " (" + firstScorePerc + "%), " +
+            topTwo[1].user.name + " (" + secondScorePerc + "%)"
     });
 
     // 3) Re-run the comparison for just these top 2 images
@@ -889,8 +899,15 @@ async function sendAndMatch() {
         i,
         candidate.user.name
       );
+      // Round second-round score to two decimals for precision
+      // (But store it as decimal in the object.)
+      secondRound.score = parseFloat(secondRound.score.toFixed(2));
+
       // 4) Average the results for each image
       let avgScore = (candidate.result.score + secondRound.score) / 2;
+      // Round the average as well
+      avgScore = parseFloat(avgScore.toFixed(2));
+
       finalCandidates.push({
         user: candidate.user,
         firstScore: candidate.result.score,
@@ -899,23 +916,37 @@ async function sendAndMatch() {
       });
     }
 
+    // Show separate toasts for the final average of each top candidate
+    // e.g. 0.831 => 83.1%, 0.92 => 92.0%
+    let [candA, candB] = finalCandidates;
+    let candAavgPerc = (candA.avgScore * 100).toFixed(1);
+    let candBavgPerc = (candB.avgScore * 100).toFixed(1);
+
+    M.toast({
+      html: "Cell " + i + ": " + candA.user.name +
+            " final average => " + candAavgPerc + "%"
+    });
+    M.toast({
+      html: "Cell " + i + ": " + candB.user.name +
+            " final average => " + candBavgPerc + "%"
+    });
+
     // 5) Pick the one with the highest average
     finalCandidates.sort((a, b) => b.avgScore - a.avgScore);
     const best = finalCandidates[0];
     const runnerUp = finalCandidates[1];
 
-    // 6) Toast message for the final averages and final choice
+    // 6) Final toast message for the chosen image
     M.toast({
-      html: 
-        "Cell " + i + ": " +
-        best.user.name + " final avg " + best.avgScore.toFixed(2) + ", " +
-        runnerUp.user.name + " final avg " + runnerUp.avgScore.toFixed(2) +
-        " => Chosen: " + best.user.name
+      html: "Cell " + i + ": " +
+            "Chosen => " + best.user.name + 
+            " (" + (best.avgScore * 100).toFixed(1) + "%)"
     });
 
     // Update the match text box with the final match
     if (matchBox) {
       matchBox.value = best.user.name;
+      // Compare threshold in decimal form (0.93 => 93%)
       if (best.avgScore < 0.93) {
         matchBox.style.fontWeight = "bold";
         matchBox.style.color = "orangered";
