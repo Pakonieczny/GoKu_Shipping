@@ -205,6 +205,7 @@
     let croppedImagesArray = [];
     let userImagesArray = []; // { name, data }
     let cellMatches = {};
+    let partialMatches = {};
 
     (function(){
       const urlParams = new URLSearchParams(window.location.search);
@@ -933,6 +934,11 @@ async function sendAndMatch() {
         score: topScore
       });
       croppedImagesArray[i] = null;
+      partialMatches[topCandidate.user.name] = {
+      cellIndex: i,
+      score: topScore
+      };
+
       // Notice: We do NOT remove topCandidate.user from userImagesArray
       // because the user wants that image to remain available
       // in case it finds a higher match (≥95%) with future Etsy images.
@@ -945,6 +951,29 @@ async function sendAndMatch() {
         html: "Cell " + i + ": Matched with " + matchName + 
               " at " + topScorePerc + "%. (≥95% => removing image)"
       });
+
+      if (partialMatches[topCandidate.user.name]) {
+        // 1) The user image was partially matched elsewhere. Undo that old partial match
+        const oldCellIndex = partialMatches[topCandidate.user.name].cellIndex;
+        
+        // Clear out the old partial match visually
+        const oldMatchBox = document.getElementById("matchCell" + oldCellIndex);
+        if (oldMatchBox) {
+          oldMatchBox.value = "";
+          oldMatchBox.style.fontWeight = "";
+          oldMatchBox.style.color = "";
+        }
+        // Remove from cellMatches if you want:
+        if (cellMatches[oldCellIndex]) {
+          cellMatches[oldCellIndex] = cellMatches[oldCellIndex].filter(
+            (m) => m.userName !== topCandidate.user.name
+          );
+        }
+
+        // 2) Remove from partialMatches
+        delete partialMatches[topCandidate.user.name];
+      }
+
       if (matchBox) {
         matchBox.value = matchName;
         // If topScore < 0.95 => orangered styling, else normal
