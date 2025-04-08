@@ -843,7 +843,7 @@ async function sendAndMatch() {
       // Show "100.0000%" for the toast
       M.toast({
         html: "Cell " + i + ": PERFECT MATCH => " +
-              perfectMatch.user.name + " (100.0000%)"
+              perfectMatch.user.name + " (100.00%)"
       });
       // Still meets 95% min threshold, obviously. Assign & move on.
       if (matchBox) {
@@ -917,10 +917,10 @@ async function sendAndMatch() {
               "Skipping second round. " +
               "Best => " + topTwo[0].user.name + " (" + bestScorePerc + "%)"
       });
-      // Check 92% threshold for acceptance
-      if (topTwo[0].result.score < 0.92) {
+      // Check 91% threshold for acceptance
+      if (topTwo[0].result.score < 0.91) {
         M.toast({ 
-          html: "Cell " + i + ": Best is under 92%—no valid match." 
+          html: "Cell " + i + ": Best is under 91%—no valid match." 
         });
         continue;
       }
@@ -993,12 +993,12 @@ async function sendAndMatch() {
             " final average => " + candBavgPerc + "%"
     });
 
-    // 5) Pick the highest average
+    // Pick the highest average
     finalCandidates.sort((a, b) => b.avgScore - a.avgScore);
     const best = finalCandidates[0];
 
     // Must still meet the 95% threshold
-    if (best.avgScore < 0.95) {
+    if (best.avgScore < 0.92) {
       M.toast({ 
         html: "Cell " + i + ": Highest final average " + 
               (best.avgScore * 100).toFixed(2) + 
@@ -1055,15 +1055,15 @@ async function compareImages(userImage, croppedGridImage, cellIndex, userImageNa
             type: "text", 
             text: 
               "Follow the below rules strictly!!! " +
-              "1. Look for a best fit and matching charms within these two images, return ONLY a numeric similarity score between 0 and 1, with no additional text. " +
+              "1. Look for a best fit and matching charms within the two images. " +
+              "2. Return a numeric similarity score between 0.0000 and 1.0000 with EXACTLY four decimal places, for example 0.8937, 0.9231, or 1.675, and no additional text. "
               "2. Focus solely on the charm and its fine details; disregard the background and any other accessories. " +
               "3. Assume all charms are the same size and colour, disregarding any shading biases. " +
-              "4. Always aim for a 0.90 accuracy when comparing charms; 0.85+ is the minimum threshold. " +
+              "4. Always aim for a 0.95+ accuracy when comparing charms; " +
               "5. Only consider the charm and its fine details when scoring the match. " +
               "6. Ignore all items attached to or surrounding the charm such as necklaces, chains, hoops, rings, clothing, or skin. " +
               "7. Emphasize the pose and direction the charm is facing. " +
-              "8. Focus on subtle details in the charm’s outline and interior engravings. " +
-              "9. Return a numeric similarity score between 0 and 1 with at least FOUR decimal places of precision, and no additional text."
+              "8. Focus on subtle details in the charm’s outline and interior engravings. "
           },
           { type: "image_url", image_url: { url: userImage, detail: "high" } },
           { type: "image_url", image_url: { url: croppedGridImage, detail: "high" } }
