@@ -796,7 +796,7 @@
     
 // =============================
 // REPLACE ONLY THIS PORTION OF sendAndMatch()
-// (the single-pass code where we compare, pick top 2, etc.)
+// where we do the single-pass logic with top two images, etc.
 // =============================
 async function sendAndMatch() {
   if (userImagesArray.length === 0) {
@@ -816,11 +816,11 @@ async function sendAndMatch() {
     }
   }
 
-  // Single pass: For each unmatched cell, do the new 2-stage comparison logic
+  // Single pass: For each unmatched cell, do the 2-stage comparison logic
   for (const i of unmatchedCells) {
     const matchBox = document.getElementById("matchCell" + i);
 
-    // 1) Compare all user-provided images in parallel to this Etsy-derived image
+    // 1) Compare all user-provided images in parallel for this Etsy image
     let comparisonPromises = userImagesArray.map((user, j) => {
       return new Promise(resolve => {
         setTimeout(() => {
@@ -837,36 +837,66 @@ async function sendAndMatch() {
     // Sort results by descending similarity score
     results.sort((a, b) => b.result.score - a.result.score);
 
-    // 2) Identify the top 2 user-provided images with the highest scores
-    let topTwo = results.slice(0, 2);
-    if (topTwo.length < 2) {
-      // If there's fewer than 2 user images total, just pick the best we have
-      if (topTwo.length === 0 || topTwo[0].result.score === 0) {
-        M.toast({ html: "Cell " + i + ": No valid matches found!" });
-        continue;
+    // ===== Check if any image is at 100% (score === 1.0)
+    // If found, immediately choose that image & skip second round
+    const perfectMatch = results.find(r => r.result.score === 1.0);
+    if (perfectMatch) {
+      M.toast({
+        html: "Cell " + i + ": PERFECT MATCH => " +
+              perfectMatch.user.name + " (100.0%)"
+      });
+
+      // Before final acceptance, we still respect your existing 90% min threshold, 
+      // but 1.0 obviously passes. So we skip directly to final assignment.
+      if (matchBox) {
+        matchBox.value = perfectMatch.user.name;
+        // 0.93 => 93% threshold for orangered styling
+        matchBox.style.fontWeight = (1.0 < 0.95) ? "bold" : "";
+        matchBox.style.color = (1.0 < 0.95) ? "orangered" : "";
       }
 
-      // Convert to percentage with a single decimal place
-      let bestScorePerc = (topTwo[0].result.score * 100).toFixed(1); 
+      if (!cellMatches[i]) { cellMatches[i] = []; }
+      cellMatches[i].push({
+        userName: perfectMatch.user.name,
+        userImage: perfectMatch.user.data,
+        score: 1.0
+      });
 
-      // Check threshold of 90% (0.90)
+      // Remove from userImagesArray and mark cell done
+      userImagesArray = userImagesArray.filter(u => u.name !== perfectMatch.user.name);
+      croppedImagesArray[i] = null;
+      continue; // Move on to the next Etsy-derived image
+    }
+    // ===== End "perfect match" check
+
+    // 2) Identify top 2 user-provided images with the highest scores
+    let topTwo = results.slice(0, 2);
+
+    // If there's fewer than 2 user images total or topOne is zero => no valid match
+    if (topTwo.length < 1 || topTwo[0].result.score === 0) {
+      M.toast({ html: "Cell " + i + ": No valid matches found!" });
+      continue;
+    }
+    // If there's exactly 1 user image or topTwo[1] doesn't exist
+    // then there's only 1 candidate
+    if (topTwo.length < 2) {
+      // Single candidate scenario
+      let bestScorePerc = (topTwo[0].result.score * 100).toFixed(1); 
       if (topTwo[0].result.score < 0.90) {
         M.toast({ 
-          html: "Cell " + i + ": Best score " + bestScorePerc + "% is under 90%—no valid match." 
+          html: "Cell " + i + ": Best score " + bestScorePerc + 
+                "% is under 90%—no valid match." 
         });
         continue;
       }
-
       // Single toast for top image
       M.toast({ 
-        html: "Cell " + i + ": Top match => " + 
-              topTwo[0].user.name + 
-              " (" + bestScorePerc + "%)" 
+        html: "Cell " + i + ": Only one candidate => " + 
+              topTwo[0].user.name + " (" + bestScorePerc + "%)" 
       });
 
       if (matchBox) {
         matchBox.value = topTwo[0].user.name;
-        // 0.93 => 93% threshold
         if (topTwo[0].result.score < 0.93) {
           matchBox.style.fontWeight = "bold";
           matchBox.style.color = "orangered";
@@ -875,7 +905,6 @@ async function sendAndMatch() {
           matchBox.style.color = "";
         }
       }
-
       if (!cellMatches[i]) { cellMatches[i] = []; }
       cellMatches[i].push({
         userName: topTwo[0].user.name,
@@ -887,7 +916,45 @@ async function sendAndMatch() {
       continue;
     }
 
-    // Show a toast with the top 2 initial scores (converted to percent with 1 decimal)
+    // If topTwo[1] is below 0.90, skip second round & treat topOne as final 
+    // (subject to the 90% min threshold).
+    if (topTwo[1].result.score < 0.90) {
+      let bestScorePerc = (topTwo[0].result.score * 100).toFixed(1);
+      M.toast({
+        html: "Cell " + i + ": 2nd place under 85%. " +
+              "Skipping second round. " +
+              "Best => " + topTwo[0].user.name + " (" + bestScorePerc + "%)"
+      });
+      // Check 90% threshold for acceptance
+      if (topTwo[0].result.score < 0.90) {
+        M.toast({ 
+          html: "Cell " + i + ": Best is under 90%—no valid match." 
+        });
+        continue;
+      }
+      // Accept topOne
+      if (matchBox) {
+        matchBox.value = topTwo[0].user.name;
+        if (topTwo[0].result.score < 0.95) {
+          matchBox.style.fontWeight = "bold";
+          matchBox.style.color = "orangered";
+        } else {
+          matchBox.style.fontWeight = "";
+          matchBox.style.color = "";
+        }
+      }
+      if (!cellMatches[i]) { cellMatches[i] = []; }
+      cellMatches[i].push({
+        userName: topTwo[0].user.name,
+        userImage: topTwo[0].user.data,
+        score: topTwo[0].result.score
+      });
+      croppedImagesArray[i] = null;
+      userImagesArray = userImagesArray.filter(u => u.name !== topTwo[0].user.name);
+      continue;
+    }
+
+    // Otherwise, we do the normal second-round process with topTwo
     let firstScorePerc = (topTwo[0].result.score * 100).toFixed(1);
     let secondScorePerc = (topTwo[1].result.score * 100).toFixed(1);
     M.toast({
@@ -905,12 +972,10 @@ async function sendAndMatch() {
         i,
         candidate.user.name
       );
-      // Round second-round score to two decimals
       secondRound.score = parseFloat(secondRound.score.toFixed(2));
       // 4) Average the results for each image
       let avgScore = (candidate.result.score + secondRound.score) / 2;
       avgScore = parseFloat(avgScore.toFixed(2));
-
       finalCandidates.push({
         user: candidate.user,
         firstScore: candidate.result.score,
@@ -938,11 +1003,11 @@ async function sendAndMatch() {
     const best = finalCandidates[0];
     const runnerUp = finalCandidates[1];
 
-    // Check threshold of 90% (0.90)
-    if (best.avgScore < 0.90) {
+    // Must still meet the 92% threshold
+    if (best.avgScore < 0.92) {
       M.toast({ 
         html: "Cell " + i + ": Highest final average " + 
-              (best.avgScore * 100).toFixed(1) + "% is under 90%—no valid match." 
+              (best.avgScore * 100).toFixed(1) + "% is under 92%—no valid match." 
       });
       continue;
     }
@@ -956,7 +1021,7 @@ async function sendAndMatch() {
     // Update the match text box with the final match
     if (matchBox) {
       matchBox.value = best.user.name;
-      if (best.avgScore < 0.93) {
+      if (best.avgScore < 0.95) {
         matchBox.style.fontWeight = "bold";
         matchBox.style.color = "orangered";
       } else {
