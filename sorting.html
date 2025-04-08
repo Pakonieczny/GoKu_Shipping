@@ -182,7 +182,7 @@
     </div>
   </div>
   
-  <!-- Matches Modal -->
+  <!-- Matches Modal (Shared, but will be populated with cell-specific matches) -->
   <div id="matchesModal" class="modal">
     <div class="modal-content">
       <h5>Successful Image Matches</h5>
@@ -200,10 +200,11 @@
     // Base URL for Netlify functions
     const functionsBaseUrl = window.location.origin + "/.netlify/functions";
     
-    // Global arrays to store cropped grid images, user images (both resized to 512x512) and successful matches
+    // Global arrays to store cropped grid images, user images (both resized to 512x512)
+    // And an object to store matches dedicated to each cell (key: cell index, value: array of match objects)
     let croppedImagesArray = [];
-    let userImagesArray = []; // Each element will be an object: { name, data }
-    let successfulMatches = [];
+    let userImagesArray = []; // { name, data }
+    let cellMatches = {};
     
     (function(){
       const urlParams = new URLSearchParams(window.location.search);
@@ -415,10 +416,9 @@
         matchInput.style.left = previewLeft + "px";
         matchInput.style.top = (previewTop + 131) + "px";
         matchInput.value = "";
-    
-        // Add click listener to open the matches modal when the match box is clicked.
+        // Attach event listener dedicated to this preview cell to open modal with its matches.
         matchInput.addEventListener("click", function() {
-          showMatchesModal();
+          showMatchesModal(index);
         });
     
         container.appendChild(previewBox);
@@ -476,7 +476,6 @@
             offY = 0;
           }
         }
-        // Increase max zoom from 4x to 6x for wheel zoom
         if (currentScale > 8) currentScale = 8;
         img.dataset.scale = currentScale;
         img.dataset.offsetX = offX;
@@ -526,7 +525,7 @@
       box.addEventListener("mouseup", function() { isMouseDown = false; });
       box.addEventListener("mouseleave", function() { isMouseDown = false; });
     
-      // Single-click: Zoom if not dragging (do not change this functionality)
+      // Single-click: Zoom if not dragging
       box.addEventListener("click", function(ev) {
         if (isDragging) { isDragging = false; return; }
         const img = box.querySelector("img");
@@ -610,7 +609,7 @@
       configIDs.forEach(function(id) {
         const el = document.getElementById(id);
         if (!el) return;
-        const def = {}; // Replace with your default values if needed
+        const def = {};
         const left = localStorage.getItem("pos-" + id + "-left") || def.left || 0;
         const top  = localStorage.getItem("pos-" + id + "-top") || def.top || 0;
         const w    = localStorage.getItem("pos-" + id + "-width") || def.width || 0;
@@ -681,9 +680,9 @@
       M.toast({ html: "Positions saved!" });
     });
     
-    // =====================================================
+    // ----------------------------------------------------
     // NEW CODE FOR IMAGE COMPARISON, CROPPING, & SEND/MATCH (Parallel)
-    // =====================================================
+    // ----------------------------------------------------
     
     // Drag & Drop for photoDragDrop supporting multiple files
     const photoDragDropElem = document.getElementById("photoDragDrop");
@@ -691,7 +690,6 @@
     photoDragDropElem.addEventListener("drop", function(e) {
       e.preventDefault();
       const files = e.dataTransfer.files;
-      // Process each dropped file
       for (let i = 0; i < files.length; i++) {
         const file = files[i];
         const reader = new FileReader();
@@ -699,10 +697,8 @@
           const imageData = e.target.result;
           try {
             const resizedData = await resizeUserImage(imageData);
-            // Store an object with the file name and the resized image data
             userImagesArray.push({ name: file.name, data: resizedData });
             M.toast({ html: "User image " + userImagesArray.length + " captured and resized." });
-            // If first image, display in userImage preview
             if (userImagesArray.length === 1) {
               const userImageElem = document.getElementById("userImage");
               userImageElem.src = resizedData;
@@ -765,7 +761,6 @@
         }
         const cellRect = cell.getBoundingClientRect();
         const imgRect = imgElem.getBoundingClientRect();
-        // Determine the intersection (visible area) between cell and image
         const visibleLeft = Math.max(cellRect.left, imgRect.left);
         const visibleTop = Math.max(cellRect.top, imgRect.top);
         const visibleRight = Math.min(cellRect.right, imgRect.right);
@@ -800,11 +795,7 @@
     }
     
     // Send & Match function (parallel requests)
-    // For each grid cell, compare its cropped image with every user image in parallel.
-    // For grid cells where quantity equals 1, if a match (score >= 0.85) is found,
-    // immediately skip remaining comparisons for that cell and remove both images from further analysis.
     async function sendAndMatch() {
-      // Check prerequisites
       if (userImagesArray.length === 0) {
         M.toast({ html: "No user images available! Please drop user images first." });
         return;
@@ -814,7 +805,6 @@
         return;
       }
     
-      // Build an array of indices that still need matching
       let unmatchedCells = [];
       for (let i = 0; i < croppedImagesArray.length; i++) {
         if (croppedImagesArray[i]) {
@@ -822,14 +812,12 @@
         }
       }
       
-      // Define the sequential thresholds for the three loops:
       const thresholds = [0.95, 0.90, 0.85];
     
-      // Loop through the matching phases one by one.
       for (let loopIndex = 0; loopIndex < thresholds.length; loopIndex++) {
         const currentThreshold = thresholds[loopIndex];
         console.log("Processing loop " + (loopIndex + 1) + " with threshold " + currentThreshold);
-        let remainingCells = [];  // will hold indices that didn't match in this loop
+        let remainingCells = [];
         
         for (const i of unmatchedCells) {
           let cellMatched = false;
@@ -837,7 +825,6 @@
           const cellQuantity = window.cachedOrderItems && window.cachedOrderItems[i] && window.cachedOrderItems[i].quantity;
           const matchBox = document.getElementById("matchCell" + i);
     
-          // If quantity == 1, use the Promise.any approach (fast exit on first good match)
           if (cellQuantity === 1) {
             let abortControllers = [];
             let promises = userImagesArray.map((user, j) => {
@@ -847,7 +834,6 @@
                 setTimeout(() => {
                   compareImages(user.data, croppedImagesArray[i], i, user.name, controller.signal)
                     .then(result => {
-                      // Accept only scores meeting the current threshold.
                       if (result.score >= currentThreshold) {
                         resolve({ result, user });
                       } else {
@@ -855,24 +841,20 @@
                       }
                     })
                     .catch(err => {
-                      if (err.name === "AbortError") {
-                        // This promise was cancelled.
-                      }
+                      if (err.name === "AbortError") { }
                       reject(err);
                     });
-                }, j * 300); // 300ms delay between requests.
+                }, j * 300);
               });
             });
             try {
               const { result, user } = await Promise.any(promises);
               cellMatched = true;
               bestResult = result;
-              // Abort all remaining requests for this cell.
               abortControllers.forEach(ctrl => ctrl.abort());
               if (matchBox) {
                 matchBox.value = user.name;
-                // If the similarity score is lower than 0.9, update the style.
-                if (result.score < 0.9) {
+                if (result.score < 0.93) {
                   matchBox.style.fontWeight = "bold";
                   matchBox.style.color = "orangered";
                 } else {
@@ -881,16 +863,14 @@
                 }
               }
               M.toast({ html: "Cell " + i + ": Best match found in loop " + (loopIndex + 1) + " - " + user.name + " with score " + result.score });
-              // Store the successful match before removing it from further loops.
-              successfulMatches.push({ cellIndex: i, userName: user.name, userImage: user.data });
-              // Remove matched grid image and the matched user image from further loops.
+              if (!cellMatches[i]) { cellMatches[i] = []; }
+              cellMatches[i].push({ userName: user.name, userImage: user.data, score: result.score });
               croppedImagesArray[i] = null;
               userImagesArray = userImagesArray.filter(u => u.name !== user.name);
             } catch (e) {
               console.log("Cell " + i + " did not match in loop " + (loopIndex + 1));
             }
           } else {
-            // For items with quantity != 1, compare all user images in parallel.
             let bestUser = null;
             let comparisonPromises = userImagesArray.map((user, j) => {
               return new Promise(resolve => {
@@ -903,7 +883,6 @@
               });
             });
             let results = await Promise.all(comparisonPromises);
-            // Find the best scoring result that meets the current threshold.
             results.forEach(({ result, user }) => {
               if (result.score >= currentThreshold && result.score > bestResult.score) {
                 bestResult = result;
@@ -914,7 +893,7 @@
               cellMatched = true;
               if (matchBox) {
                 matchBox.value = bestUser.name;
-                if (bestResult.score < 0.9) {
+                if (bestResult.score < 0.93) {
                   matchBox.style.setProperty("font-weight", "bold", "important");
                   matchBox.style.setProperty("color", "orangered", "important");
                 } else {
@@ -923,23 +902,21 @@
                 }
               }
               M.toast({ html: "Cell " + i + ": Best match found in loop " + (loopIndex + 1) + " - " + bestUser.name + " with score " + bestResult.score });
-              // Store the successful match before removing it from further loops.
-              successfulMatches.push({ cellIndex: i, userName: bestUser.name, userImage: bestUser.data });
+              if (!cellMatches[i]) { cellMatches[i] = []; }
+              cellMatches[i].push({ userName: bestUser.name, userImage: bestUser.data, score: bestResult.score });
               croppedImagesArray[i] = null;
               userImagesArray = userImagesArray.filter(u => u.name !== bestUser.name);
             }
           }
-          // If no match was found during this loop, carry this cell over to the next loop.
           if (!cellMatched) {
             remainingCells.push(i);
           }
         }
-        // Prepare for the next loop: only process cells that still have no match.
         unmatchedCells = remainingCells;
       }
     }
     
-    // Modified compareImages: now accepts an optional signal parameter for aborting.
+    // Modified compareImages: accepts an optional signal for aborting.
     async function compareImages(userImage, croppedGridImage, cellIndex, userImageName, signal = undefined) {
       const payload = {
         model: "gpt-4o-mini",
@@ -988,7 +965,6 @@
       } catch (error) {
         console.error("Error comparing cell " + cellIndex + " (" + userImageName + "):", error);
         if (error.name === "AbortError") {
-          // The request was aborted, so we consider it skipped.
           return { score: 0, name: null };
         }
         M.toast({ html: "Cell " + cellIndex + " (" + userImageName + "): Comparison error" });
@@ -998,7 +974,6 @@
     
     // ---------------------------------------------------------
     // Pull Etsy order details and update grid details
-    // (This function uses the Etsy API response to update the detail boxes)
     // ---------------------------------------------------------
     function pullEtsyOrderDetails(orderNumber) {
       console.log("Pulling Etsy order details for order number:", orderNumber);
@@ -1009,8 +984,6 @@
       .then(function(r) { return r.json(); })
       .then(function(data) {
         console.log("Etsy Order Data:", data);
-        // Update global variables as needed (not shown here)
-        // Return the data to be used in updateImageGrid
         return data;
       })
       .catch(function(err) {
@@ -1021,50 +994,51 @@
     
     // Example: update the grid details using pulled Etsy order details
     async function updateImageGrid(data) {
-      // Assuming data.transactions contains the order items from Etsy
       let items = [];
       if (data.transactions && Array.isArray(data.transactions)) {
         items = data.transactions;
       } else if (Array.isArray(data)) {
         items = data;
       }
-      // Store items globally if needed
       window.cachedOrderItems = items;
-      // Now, repopulate the grid using the items array (which now contains real Etsy data)
       await fillPreviewBoxes(items);
     }
     
     // ---------------------------------------------------------
-    // New function to display successful image matches in a modal.
+    // New function to display matches for a specific preview cell in a modal.
     // ---------------------------------------------------------
-    function showMatchesModal() {
+    function showMatchesModal(cellIndex) {
       const modalElem = document.getElementById("matchesModal");
       const container = document.getElementById("matchesGridContainer");
       container.innerHTML = "";
       
-      // Loop through successfulMatches and create preview boxes.
-      successfulMatches.forEach((match) => {
-        const box = document.createElement("div");
-        box.classList.add("preview-box");
-        box.style.width = "110px";
-        box.style.height = "110px";
-        box.style.border = "1px solid #000";
-        box.style.background = "#fafafa";
-        box.style.display = "flex";
-        box.style.alignItems = "center";
-        box.style.justifyContent = "center";
-        box.style.overflow = "hidden";
-        
-        const img = document.createElement("img");
-        img.src = match.userImage;
-        img.alt = "Match for cell " + match.cellIndex;
-        img.style.width = "100%";
-        img.style.height = "100%";
-        img.style.objectFit = "cover";
-        
-        box.appendChild(img);
-        container.appendChild(box);
-      });
+      const matches = cellMatches[cellIndex] || [];
+      if (matches.length === 0) {
+        container.innerHTML = "<p>No matches found for this photo.</p>";
+      } else {
+        matches.forEach((match) => {
+          const box = document.createElement("div");
+          box.classList.add("preview-box");
+          box.style.width = "110px";
+          box.style.height = "110px";
+          box.style.border = "1px solid #000";
+          box.style.background = "#fafafa";
+          box.style.display = "flex";
+          box.style.alignItems = "center";
+          box.style.justifyContent = "center";
+          box.style.overflow = "hidden";
+          
+          const img = document.createElement("img");
+          img.src = match.userImage;
+          img.alt = "Match for cell " + cellIndex;
+          img.style.width = "100%";
+          img.style.height = "100%";
+          img.style.objectFit = "cover";
+          
+          box.appendChild(img);
+          container.appendChild(box);
+        });
+      }
       
       const instance = M.Modal.getInstance(modalElem);
       if (instance) {
