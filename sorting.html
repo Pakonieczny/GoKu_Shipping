@@ -911,10 +911,10 @@ async function sendAndMatch() {
     });
 
     // Check final threshold (example: 0.95 => 95%)
-    if (avgScore < 0.95) {
+    if (avgScore < 0.91) {
       M.toast({
         html: "Cell " + i + ": Final average " + avgScorePerc + 
-              "% below 95%—no match."
+              "% below 91%—no match."
       });
       continue;
     }
