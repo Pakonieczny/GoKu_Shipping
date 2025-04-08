@@ -1041,61 +1041,71 @@ async function sendAndMatch() {
   }
 }
     
-    // Modified compareImages: accepts an optional signal for aborting.
-    async function compareImages(userImage, croppedGridImage, cellIndex, userImageName, signal = undefined) {
-      const payload = {
-        model: "gpt-4o-mini",
-        messages: [
-          {
-            role: "user",
-            content: [
-              { 
-                type: "text", 
-                text: "Follow the below rules strictly!!! " +
-                      "1. Look for a best fit and matching charms within these two images, return ONLY a numeric similarity score between 0 and 1, with no additional text. " +
-                      "2. Focus solely on the charm and its fine details; disregard the background and any other accessories. " +
-                      "3. Assume all charms are the same size and colour, disregarding any shading biases. " +
-                      "4. Always aim for a 0.90 accuracy when comparing charms; 0.85+ is the minimum threshold. " +
-                      "5. Only consider the charm and its fine details when scoring the match. " +
-                      "6. Ignore all items attached to or surrounding the charm such as necklaces, chains, hoops, rings, clothing, or skin. " +
-                      "7. Emphasize the pose and direction the charm is facing. " +
-                      "8. Focus on subtle details in the charm’s outline and interior engravings."
-              },
-              { type: "image_url", image_url: { url: userImage, detail: "high" } },
-              { type: "image_url", image_url: { url: croppedGridImage, detail: "high" } }
-            ]
-          }
-        ],
-        max_tokens: 350
-      };
-      try {
-        const response = await fetch(functionsBaseUrl + "/openaiProxy", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(payload),
-          signal: signal
-        });
-        const data = await response.json();
-        console.log("Response for cell " + cellIndex + ", user image " + userImageName + ":", data);
-        const scoreText = data.choices[0].message.content.trim();
-        const score = parseFloat(scoreText);
-        if (isNaN(score)) {
-          console.error("Cell " + cellIndex + " (" + userImageName + "): Invalid score (" + scoreText + ")");
-          return { score: 0, name: null };
-        }
-        if (score >= 0.85) {
-          M.toast({ html: "Cell " + cellIndex + " (" + userImageName + "): Score " + score });
-        }
-        return { score: score, name: (score >= 0.85) ? userImageName : null };
-      } catch (error) {
-        console.error("Error comparing cell " + cellIndex + " (" + userImageName + "):", error);
-        if (error.name === "AbortError") {
-          return { score: 0, name: null };
-        }
-        M.toast({ html: "Cell " + cellIndex + " (" + userImageName + "): Comparison error" });
-        return { score: 0, name: null };
+    // Modified compareImages: 
+// Updated text instructions to request more precise similarity scores.
+
+async function compareImages(userImage, croppedGridImage, cellIndex, userImageName, signal = undefined) {
+  const payload = {
+    model: "gpt-4o-mini",
+    messages: [
+      {
+        role: "user",
+        content: [
+          { 
+            type: "text", 
+            text: 
+              "Follow the below rules strictly!!! " +
+              "1. Look for a best fit and matching charms within these two images, return ONLY a numeric similarity score between 0 and 1, with no additional text. " +
+              "2. Focus solely on the charm and its fine details; disregard the background and any other accessories. " +
+              "3. Assume all charms are the same size and colour, disregarding any shading biases. " +
+              "4. Always aim for a 0.90 accuracy when comparing charms; 0.85+ is the minimum threshold. " +
+              "5. Only consider the charm and its fine details when scoring the match. " +
+              "6. Ignore all items attached to or surrounding the charm such as necklaces, chains, hoops, rings, clothing, or skin. " +
+              "7. Emphasize the pose and direction the charm is facing. " +
+              "8. Focus on subtle details in the charm’s outline and interior engravings. " +
+              "9. Return a numeric similarity score between 0 and 1 with at least FOUR decimal places of precision, and no additional text."
+          },
+          { type: "image_url", image_url: { url: userImage, detail: "high" } },
+          { type: "image_url", image_url: { url: croppedGridImage, detail: "high" } }
+        ]
       }
+    ],
+    max_tokens: 250
+  };
+
+  try {
+    const response = await fetch(functionsBaseUrl + "/openaiProxy", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+      signal: signal
+    });
+    const data = await response.json();
+    console.log("Response for cell " + cellIndex + ", user image " + userImageName + ":", data);
+
+    const scoreText = data.choices[0].message.content.trim();
+    const score = parseFloat(scoreText);
+    
+    if (isNaN(score)) {
+      console.error("Cell " + cellIndex + " (" + userImageName + "): Invalid score (" + scoreText + ")");
+      return { score: 0, name: null };
     }
+
+    // Optionally show a toast if it's ≥ 0.85
+    if (score >= 0.85) {
+      M.toast({ html: "Cell " + cellIndex + " (" + userImageName + "): Score " + score });
+    }
+
+    return { score: score, name: (score >= 0.85) ? userImageName : null };
+  } catch (error) {
+    console.error("Error comparing cell " + cellIndex + " (" + userImageName + "):", error);
+    if (error.name === "AbortError") {
+      return { score: 0, name: null };
+    }
+    M.toast({ html: "Cell " + cellIndex + " (" + userImageName + "): Comparison error" });
+    return { score: 0, name: null };
+  }
+}
     
     // ---------------------------------------------------------
     // Pull Etsy order details and update grid details
