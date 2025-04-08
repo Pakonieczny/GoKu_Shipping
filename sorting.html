@@ -203,7 +203,7 @@
     // Global arrays to store cropped grid images, user images (both resized to 512x512)
     // And an object to store matches dedicated to each cell (key: cell index, value: array of match objects)
     let croppedImagesArray = [];
-    let userImagesArray = []; // { name, data }
+    let userImagesArray = []; // Each element: { name, data }
     let cellMatches = {};
     
     (function(){
@@ -416,7 +416,9 @@
         matchInput.style.left = previewLeft + "px";
         matchInput.style.top = (previewTop + 131) + "px";
         matchInput.value = "";
-        // Attach event listener dedicated to this preview cell to open modal with its matches.
+        // Override pointer-events so this box is clickable despite being read-only.
+        matchInput.style.pointerEvents = "auto";
+        // Dynamically attach an event listener to open the modal with this cell's matches.
         matchInput.addEventListener("click", function() {
           showMatchesModal(index);
         });
@@ -854,7 +856,7 @@
               abortControllers.forEach(ctrl => ctrl.abort());
               if (matchBox) {
                 matchBox.value = user.name;
-                if (result.score < 0.93) {
+                if (result.score < 0.9) {
                   matchBox.style.fontWeight = "bold";
                   matchBox.style.color = "orangered";
                 } else {
