@@ -796,7 +796,7 @@
     
 // =============================
 // REPLACE ONLY THIS PORTION OF sendAndMatch()
-// where we do the single-pass logic with top two images, etc.
+// (the single-pass logic with perfect match checks, etc.)
 // =============================
 async function sendAndMatch() {
   if (userImagesArray.length === 0) {
@@ -838,50 +838,43 @@ async function sendAndMatch() {
     results.sort((a, b) => b.result.score - a.result.score);
 
     // ===== Check if any image is at 100% (score === 1.0)
-    // If found, immediately choose that image & skip second round
     const perfectMatch = results.find(r => r.result.score === 1.0);
     if (perfectMatch) {
+      // Show "100.0000%" for the toast
       M.toast({
         html: "Cell " + i + ": PERFECT MATCH => " +
-              perfectMatch.user.name + " (100.0%)"
+              perfectMatch.user.name + " (100.0000%)"
       });
-
-      // Before final acceptance, we still respect your existing 90% min threshold, 
-      // but 1.0 obviously passes. So we skip directly to final assignment.
+      // Still meets 95% min threshold, obviously. Assign & move on.
       if (matchBox) {
         matchBox.value = perfectMatch.user.name;
-        // 0.93 => 93% threshold for orangered styling
+        // 0.95 => 95% threshold for orangered styling
         matchBox.style.fontWeight = (1.0 < 0.95) ? "bold" : "";
         matchBox.style.color = (1.0 < 0.95) ? "orangered" : "";
       }
-
       if (!cellMatches[i]) { cellMatches[i] = []; }
       cellMatches[i].push({
         userName: perfectMatch.user.name,
         userImage: perfectMatch.user.data,
         score: 1.0
       });
-
-      // Remove from userImagesArray and mark cell done
       userImagesArray = userImagesArray.filter(u => u.name !== perfectMatch.user.name);
       croppedImagesArray[i] = null;
-      continue; // Move on to the next Etsy-derived image
+      continue; // Move on to the next Etsy image
     }
-    // ===== End "perfect match" check
 
     // 2) Identify top 2 user-provided images with the highest scores
     let topTwo = results.slice(0, 2);
 
-    // If there's fewer than 2 user images total or topOne is zero => no valid match
+    // If there's fewer than 1 or topOne is zero => no valid match
     if (topTwo.length < 1 || topTwo[0].result.score === 0) {
       M.toast({ html: "Cell " + i + ": No valid matches found!" });
       continue;
     }
-    // If there's exactly 1 user image or topTwo[1] doesn't exist
-    // then there's only 1 candidate
+
+    // If there's exactly 1 user image
     if (topTwo.length < 2) {
-      // Single candidate scenario
-      let bestScorePerc = (topTwo[0].result.score * 100).toFixed(1); 
+      let bestScorePerc = (topTwo[0].result.score * 100).toFixed(2); 
       if (topTwo[0].result.score < 0.90) {
         M.toast({ 
           html: "Cell " + i + ": Best score " + bestScorePerc + 
@@ -897,7 +890,7 @@ async function sendAndMatch() {
 
       if (matchBox) {
         matchBox.value = topTwo[0].user.name;
-        if (topTwo[0].result.score < 0.93) {
+        if (topTwo[0].result.score < 0.95) {
           matchBox.style.fontWeight = "bold";
           matchBox.style.color = "orangered";
         } else {
@@ -916,19 +909,18 @@ async function sendAndMatch() {
       continue;
     }
 
-    // If topTwo[1] is below 0.90, skip second round & treat topOne as final 
-    // (subject to the 90% min threshold).
+    // If topTwo[1] is below 0.90, skip second round
     if (topTwo[1].result.score < 0.90) {
-      let bestScorePerc = (topTwo[0].result.score * 100).toFixed(1);
+      let bestScorePerc = (topTwo[0].result.score * 100).toFixed(2);
       M.toast({
-        html: "Cell " + i + ": 2nd place under 85%. " +
+        html: "Cell " + i + ": 2nd place under 90%. " +
               "Skipping second round. " +
               "Best => " + topTwo[0].user.name + " (" + bestScorePerc + "%)"
       });
-      // Check 90% threshold for acceptance
-      if (topTwo[0].result.score < 0.90) {
+      // Check 92% threshold for acceptance
+      if (topTwo[0].result.score < 0.92) {
         M.toast({ 
-          html: "Cell " + i + ": Best is under 90%—no valid match." 
+          html: "Cell " + i + ": Best is under 92%—no valid match." 
         });
         continue;
       }
@@ -954,16 +946,16 @@ async function sendAndMatch() {
       continue;
     }
 
-    // Otherwise, we do the normal second-round process with topTwo
-    let firstScorePerc = (topTwo[0].result.score * 100).toFixed(1);
-    let secondScorePerc = (topTwo[1].result.score * 100).toFixed(1);
+    // Otherwise, do the normal second-round process
+    let firstScorePerc = (topTwo[0].result.score * 100).toFixed(2);
+    let secondScorePerc = (topTwo[1].result.score * 100).toFixed(2);
     M.toast({
       html: "Cell " + i + ": Top 2 initial => " +
             topTwo[0].user.name + " (" + firstScorePerc + "%), " +
             topTwo[1].user.name + " (" + secondScorePerc + "%)"
     });
 
-    // 3) Re-run the comparison for just these top 2 images
+    // 3) Re-run comparison for the top 2 images
     let finalCandidates = [];
     for (let candidate of topTwo) {
       let secondRound = await compareImages(
@@ -972,10 +964,13 @@ async function sendAndMatch() {
         i,
         candidate.user.name
       );
+      // Round second-round to 2 decimals just for internal consistency
       secondRound.score = parseFloat(secondRound.score.toFixed(2));
-      // 4) Average the results for each image
+
+      // 4) Average the results
       let avgScore = (candidate.result.score + secondRound.score) / 2;
       avgScore = parseFloat(avgScore.toFixed(2));
+
       finalCandidates.push({
         user: candidate.user,
         firstScore: candidate.result.score,
@@ -984,10 +979,10 @@ async function sendAndMatch() {
       });
     }
 
-    // Show separate toasts for the final average of each top candidate
+    // Show separate toasts for the final average of each candidate
     let [candA, candB] = finalCandidates;
-    let candAavgPerc = (candA.avgScore * 100).toFixed(1);
-    let candBavgPerc = (candB.avgScore * 100).toFixed(1);
+    let candAavgPerc = (candA.avgScore * 100).toFixed(2);
+    let candBavgPerc = (candB.avgScore * 100).toFixed(2);
 
     M.toast({
       html: "Cell " + i + ": " + candA.user.name +
@@ -998,27 +993,27 @@ async function sendAndMatch() {
             " final average => " + candBavgPerc + "%"
     });
 
-    // 5) Pick the one with the highest average
+    // 5) Pick the highest average
     finalCandidates.sort((a, b) => b.avgScore - a.avgScore);
     const best = finalCandidates[0];
-    const runnerUp = finalCandidates[1];
 
-    // Must still meet the 92% threshold
-    if (best.avgScore < 0.92) {
+    // Must still meet the 95% threshold
+    if (best.avgScore < 0.95) {
       M.toast({ 
         html: "Cell " + i + ": Highest final average " + 
-              (best.avgScore * 100).toFixed(1) + "% is under 92%—no valid match." 
+              (best.avgScore * 100).toFixed(2) + 
+              "% is under 90%—no valid match." 
       });
       continue;
     }
 
-    // 6) Final toast message for the chosen image
+    // 6) Final toast for the chosen image
     M.toast({
       html: "Cell " + i + ": Chosen => " +
-            best.user.name + " (" + (best.avgScore * 100).toFixed(1) + "%)"
+            best.user.name + " (" + (best.avgScore * 100).toFixed(2) + "%)"
     });
 
-    // Update the match text box with the final match
+    // Update the match text box
     if (matchBox) {
       matchBox.value = best.user.name;
       if (best.avgScore < 0.95) {
@@ -1030,7 +1025,7 @@ async function sendAndMatch() {
       }
     }
 
-    // Store the final match in cellMatches
+    // Store the final match
     if (!cellMatches[i]) { cellMatches[i] = []; }
     cellMatches[i].push({
       userName: best.user.name,
@@ -1038,10 +1033,10 @@ async function sendAndMatch() {
       avgScore: best.avgScore
     });
 
-    // Remove the matched user from userImagesArray so it won't be re-used
+    // Remove the matched user
     userImagesArray = userImagesArray.filter(u => u.name !== best.user.name);
 
-    // Mark this grid cell as done
+    // Mark this cell done
     croppedImagesArray[i] = null;
   }
 }
