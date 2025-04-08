@@ -1008,14 +1008,16 @@ async function compareImages(userImage, croppedGridImage, cellIndex, userImageNa
               "Follow the below rules strictly!!! " +
               "1. Look for a best fit and matching charms within the two images. " +
               "2. Return a numeric similarity score between 0.0000 and 1.0000 with EXACTLY four decimal places, for example 0.8937, 0.9231, or 1.675, and no additional text. " +
-              "3. Focus solely on the charm and its fine details, disregard the background and any other accessories. " +
-              "4. Disregards charm size, rotation and colour " +
-              "5. If you detect an animal charm then focus matching the existance and position of the HEAD, EYES, BEAK, MOUTH, EARS, LEGS, WINGS to make a better match " +
-              "6. When detecting similar objects focus on the details of the shape and outline of the charm along with engraving details " +
-              "7. Only consider the charm and its fine details when scoring the match. " +
-              "8. Ignore all items attached to or surrounding the charm such as necklaces, chains, hoops, rings, clothing, or skin. " +
-              "9. Emphasize the pose and direction the charm is facing. " +
-              "10. Focus on subtle details in the charm’s outline and interior engravings. "
+              "3. Return a similarity score, ensuring you have thoroughly analyzed every edge, line, and engraving in the charm. " +
+              "4. Focus intensely on the charm’s outline and the shape of each internal engraving. " +
+              "5. Describe each line, curve, and any letters or design inside the charm itself. " +
+              "6. If you detect an animal charm then focus matching the existance and position of the HEAD, EYES, BEAK, MOUTH, EARS, LEGS, WINGS to make a better match " +
+              "7. Compare the negative space (cutouts or holes) within the charm. " +
+              "8. Ignore color shading but pay extra attention to the shape of any letters or symbols. " +
+              "9. Examine each engraved line or symbol inside the charm. " +
+              "10. Compare the relative size and position of these engravings. " +
+              "11. Ignore all items attached to or surrounding the charm such as necklaces, chains, hoops, rings, clothing, or skin. " +
+              "12. Emphasize the pose and direction the charm is facing. " 
           },
           { type: "image_url", image_url: { url: userImage, detail: "high" } },
           { type: "image_url", image_url: { url: croppedGridImage, detail: "high" } }
