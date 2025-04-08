@@ -794,7 +794,12 @@
       });
     }
     
-   // Updated Send & Match function using a single loop with two-stage comparisons and percentage-based scores/styling
+    // =============================
+// REPLACE ONLY THIS PORTION OF sendAndMatch()
+// (Remove everything from: "let unmatchedCells = [];" down to the closing brace 
+// of the function, then insert the following code in its place.)
+// =============================
+
 async function sendAndMatch() {
   if (userImagesArray.length === 0) {
     M.toast({ html: "No user images available! Please drop user images first." });
@@ -805,163 +810,192 @@ async function sendAndMatch() {
     return;
   }
 
-  // Process each Etsy-derived (grid) image individually
+  // Collect all cells that still have images
+  let unmatchedCells = [];
   for (let i = 0; i < croppedImagesArray.length; i++) {
-    if (!croppedImagesArray[i]) continue; // Skip if already matched
-
-    let firstRoundResults = [];
-
-    // First round: cycle through all user-provided images and get similarity scores
-    for (let j = 0; j < userImagesArray.length; j++) {
-      try {
-        await new Promise((res) => setTimeout(res, j * 300));
-        let result = await compareImages(
-          userImagesArray[j].data,
-          croppedImagesArray[i],
-          i,
-          userImagesArray[j].name
-        );
-        firstRoundResults.push({ result: result, user: userImagesArray[j] });
-      } catch (error) {
-        console.error("Error in first round for cell " + i, error);
-      }
+    if (croppedImagesArray[i]) {
+      unmatchedCells.push(i);
     }
+  }
 
-    if (firstRoundResults.length === 0) {
-      M.toast({ html: "Cell " + i + ": No comparisons succeeded in the first round." });
-      continue;
-    }
+  // Single pass: For each unmatched cell, do the new 2-stage comparison logic
+  for (const i of unmatchedCells) {
+    const matchBox = document.getElementById("matchCell" + i);
 
-    // Sort and pick the top two candidates based on their similarity scores
-    firstRoundResults.sort((a, b) => b.result.score - a.result.score);
-    let topTwo = firstRoundResults.slice(0, 2);
-    
-    // Second round: re-run comparisons for the top candidates and average their scores
-    let finalCandidates = [];
-    for (let candidate of topTwo) {
-      try {
-        let secondRoundResult = await compareImages(
-          candidate.user.data,
-          croppedImagesArray[i],
-          i,
-          candidate.user.name
-        );
-        // Average the scores from both rounds and round the average to the nearest whole percent
-        let avgScore = Math.round((candidate.result.score + secondRoundResult.score) / 2);
-        finalCandidates.push({
-          user: candidate.user,
-          avgScore: avgScore,
-          firstScore: candidate.result.score,
-          secondScore: secondRoundResult.score,
-        });
-      } catch (error) {
-        console.error("Error in second round for cell " + i + ", candidate " + candidate.user.name, error);
-      }
-    }
-
-    if (finalCandidates.length === 0) {
-      M.toast({ html: "Cell " + i + ": No successful second round comparisons." });
-      continue;
-    }
-
-    finalCandidates.sort((a, b) => b.avgScore - a.avgScore);
-    let finalMatch = finalCandidates[0];
-
-    // Clean the image name by removing the extension (.jpg/.png)
-    let matchName = finalMatch.user.name.replace(/\.jpg$/i, "").replace(/\.png$/i, "");
-
-    // Reinserted styling functionality with percentage-based score
-    let matchBox = document.getElementById("matchCell" + i);
-    if (matchBox) {
-      matchBox.value = matchName;
-      if (finalMatch.avgScore < 93) {
-        matchBox.style.setProperty("font-weight", "bold", "important");
-        matchBox.style.setProperty("color", "orangered", "important");
-      } else {
-        matchBox.style.setProperty("font-weight", "", "");
-        matchBox.style.setProperty("color", "", "");
-      }
-    }
-
-    // Save match details for the modal display
-    if (!cellMatches[i]) {
-      cellMatches[i] = [];
-    }
-    cellMatches[i].push({
-      userName: matchName,
-      userImage: finalMatch.user.data,
-      avgScore: finalMatch.avgScore,  // Score in %
-      firstScore: finalMatch.firstScore,
-      secondScore: finalMatch.secondScore,
+    // 1) Compare all user-provided images in parallel to this Etsy-derived image
+    let comparisonPromises = userImagesArray.map((user, j) => {
+      return new Promise(resolve => {
+        setTimeout(() => {
+          resolve(
+            compareImages(user.data, croppedImagesArray[i], i, user.name)
+              .then(result => ({ result, user }))
+          );
+        }, j * 300);
+      });
     });
 
-    M.toast({ html: "Cell " + i + ": Matched with " + matchName + " (Avg Score: " + finalMatch.avgScore + "%)" });
+    let results = await Promise.all(comparisonPromises);
+    // Sort results by descending similarity score
+    results.sort((a, b) => b.result.score - a.result.score);
 
-    // Remove the matched user image to avoid re-use
-    userImagesArray = userImagesArray.filter(u => u.name !== finalMatch.user.name);
-    // Mark the grid cell as processed
+    // 2) Identify the top 2 user-provided images with the highest scores
+    let topTwo = results.slice(0, 2);
+    if (topTwo.length < 2) {
+      // If there's fewer than 2 user images total, just pick the best we have
+      if (topTwo.length === 0 || topTwo[0].result.score === 0) {
+        M.toast({ html: "Cell " + i + ": No valid matches found!" });
+        continue;
+      }
+      M.toast({
+        html: "Cell " + i + ": Top 1 image => " +
+              topTwo[0].user.name + 
+              " (Score " + topTwo[0].result.score.toFixed(2) + ")"
+      });
+      // Proceed as if it's the only candidate
+      if (matchBox) {
+        matchBox.value = topTwo[0].user.name;
+        if (topTwo[0].result.score < 0.93) {
+          matchBox.style.fontWeight = "bold";
+          matchBox.style.color = "orangered";
+        } else {
+          matchBox.style.fontWeight = "";
+          matchBox.style.color = "";
+        }
+      }
+      if (!cellMatches[i]) { cellMatches[i] = []; }
+      cellMatches[i].push({
+        userName: topTwo[0].user.name,
+        userImage: topTwo[0].user.data,
+        score: topTwo[0].result.score
+      });
+      croppedImagesArray[i] = null;
+      userImagesArray = userImagesArray.filter(u => u.name !== topTwo[0].user.name);
+      continue;
+    }
+
+    // Show a toast with the top 2 initial scores (no duplicates)
+    M.toast({
+      html: "Cell " + i + ": Top 2 images => " +
+            topTwo[0].user.name + " (Score " + topTwo[0].result.score.toFixed(2) + "), " +
+            topTwo[1].user.name + " (Score " + topTwo[1].result.score.toFixed(2) + ")"
+    });
+
+    // 3) Re-run the comparison for just these top 2 images
+    let finalCandidates = [];
+    for (let candidate of topTwo) {
+      let secondRound = await compareImages(
+        candidate.user.data,
+        croppedImagesArray[i],
+        i,
+        candidate.user.name
+      );
+      // 4) Average the results for each image
+      let avgScore = (candidate.result.score + secondRound.score) / 2;
+      finalCandidates.push({
+        user: candidate.user,
+        firstScore: candidate.result.score,
+        secondScore: secondRound.score,
+        avgScore: avgScore
+      });
+    }
+
+    // 5) Pick the one with the highest average
+    finalCandidates.sort((a, b) => b.avgScore - a.avgScore);
+    const best = finalCandidates[0];
+    const runnerUp = finalCandidates[1];
+
+    // 6) Toast message for the final averages and final choice
+    M.toast({
+      html: 
+        "Cell " + i + ": " +
+        best.user.name + " final avg " + best.avgScore.toFixed(2) + ", " +
+        runnerUp.user.name + " final avg " + runnerUp.avgScore.toFixed(2) +
+        " => Chosen: " + best.user.name
+    });
+
+    // Update the match text box with the final match
+    if (matchBox) {
+      matchBox.value = best.user.name;
+      if (best.avgScore < 0.93) {
+        matchBox.style.fontWeight = "bold" "important";
+        matchBox.style.color = "orangered" "important";
+      } else {
+        matchBox.style.fontWeight = "";
+        matchBox.style.color = "";
+      }
+    }
+
+    // Store the final match in cellMatches
+    if (!cellMatches[i]) { cellMatches[i] = []; }
+    cellMatches[i].push({
+      userName: best.user.name,
+      userImage: best.user.data,
+      avgScore: best.avgScore
+    });
+
+    // Remove the matched user from userImagesArray so it won't be re-used
+    userImagesArray = userImagesArray.filter(u => u.name !== best.user.name);
+
+    // Mark this grid cell as done
     croppedImagesArray[i] = null;
   }
 }
     
     // Modified compareImages: accepts an optional signal for aborting.
-    // Updated compareImages function: Returns similarity scores in 1% increments (as integer percentages)
-async function compareImages(userImage, croppedGridImage, cellIndex, userImageName, signal = undefined) {
-  const payload = {
-    model: "gpt-4o-mini",
-    messages: [
-      {
-        role: "user",
-        content: [
-          { 
-            type: "text", 
-            text: "Follow the below rules strictly!!! " +
-                  "1. Look for a best fit and matching charms within these two images, return ONLY a numeric similarity score between 0 and 1, with no additional text. " +
-                  "2. Focus solely on the charm and its fine details; disregard the background and any other accessories. " +
-                  "3. Assume all charms are the same size and colour, disregarding any shading biases. " +
-                  "4. Always aim for a 0.90 accuracy when comparing charms; 0.85+ is the minimum threshold. " +
-                  "5. Only consider the charm and its fine details when scoring the match. " +
-                  "6. Ignore all items attached to or surrounding the charm such as necklaces, chains, hoops, rings, clothing, or skin. " +
-                  "7. Emphasize the pose and direction the charm is facing. " +
-                  "8. Focus on subtle details in the charm’s outline and interior engravings."
-          },
-          { type: "image_url", image_url: { url: userImage, detail: "high" } },
-          { type: "image_url", image_url: { url: croppedGridImage, detail: "high" } }
-        ]
+    async function compareImages(userImage, croppedGridImage, cellIndex, userImageName, signal = undefined) {
+      const payload = {
+        model: "gpt-4o-mini",
+        messages: [
+          {
+            role: "user",
+            content: [
+              { 
+                type: "text", 
+                text: "Follow the below rules strictly!!! " +
+                      "1. Look for a best fit and matching charms within these two images, return ONLY a numeric similarity score between 0 and 1, with no additional text. " +
+                      "2. Focus solely on the charm and its fine details; disregard the background and any other accessories. " +
+                      "3. Assume all charms are the same size and colour, disregarding any shading biases. " +
+                      "4. Always aim for a 0.90 accuracy when comparing charms; 0.85+ is the minimum threshold. " +
+                      "5. Only consider the charm and its fine details when scoring the match. " +
+                      "6. Ignore all items attached to or surrounding the charm such as necklaces, chains, hoops, rings, clothing, or skin. " +
+                      "7. Emphasize the pose and direction the charm is facing. " +
+                      "8. Focus on subtle details in the charm’s outline and interior engravings."
+              },
+              { type: "image_url", image_url: { url: userImage, detail: "high" } },
+              { type: "image_url", image_url: { url: croppedGridImage, detail: "high" } }
+            ]
+          }
+        ],
+        max_tokens: 350
+      };
+      try {
+        const response = await fetch(functionsBaseUrl + "/openaiProxy", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+          signal: signal
+        });
+        const data = await response.json();
+        console.log("Response for cell " + cellIndex + ", user image " + userImageName + ":", data);
+        const scoreText = data.choices[0].message.content.trim();
+        const score = parseFloat(scoreText);
+        if (isNaN(score)) {
+          console.error("Cell " + cellIndex + " (" + userImageName + "): Invalid score (" + scoreText + ")");
+          return { score: 0, name: null };
+        }
+        if (score >= 0.85) {
+          M.toast({ html: "Cell " + cellIndex + " (" + userImageName + "): Score " + score });
+        }
+        return { score: score, name: (score >= 0.85) ? userImageName : null };
+      } catch (error) {
+        console.error("Error comparing cell " + cellIndex + " (" + userImageName + "):", error);
+        if (error.name === "AbortError") {
+          return { score: 0, name: null };
+        }
+        M.toast({ html: "Cell " + cellIndex + " (" + userImageName + "): Comparison error" });
+        return { score: 0, name: null };
       }
-    ],
-    max_tokens: 250
-  };
-
-  try {
-    const response = await fetch(functionsBaseUrl + "/openaiProxy", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-      signal: signal
-    });
-    const data = await response.json();
-    const scoreText = data.choices[0].message.content.trim();
-    const rawScore = parseFloat(scoreText);
-    if (isNaN(rawScore)) {
-      console.error("Cell " + cellIndex + " (" + userImageName + "): Invalid score (" + scoreText + ")");
-      return { score: 0, name: null };
     }
-    // Convert to an integer percentage (increments of 1%)
-    const roundedScorePercent = Math.round(rawScore * 100);
-    if (roundedScorePercent >= 85) {
-      M.toast({ html: "Cell " + cellIndex + " (" + userImageName + "): Score " + roundedScorePercent + "%" });
-    }
-    return { score: roundedScorePercent, name: (roundedScorePercent >= 85) ? userImageName : null };
-  } catch (error) {
-    console.error("Error comparing cell " + cellIndex + " (" + userImageName + "):", error);
-    if (error.name === "AbortError") {
-      return { score: 0, name: null };
-    }
-    M.toast({ html: "Cell " + cellIndex + " (" + userImageName + "): Comparison error" });
-    return { score: 0, name: null };
-  }
-}
     
     // ---------------------------------------------------------
     // Pull Etsy order details and update grid details
