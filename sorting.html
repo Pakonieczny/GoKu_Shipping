@@ -680,123 +680,9 @@
       M.toast({ html: "Positions saved!" });
     });
     
-    // ----------------------------------------------------
-    // NEW CODE FOR IMAGE COMPARISON, CROPPING, & SEND/MATCH (Parallel)
-    // ----------------------------------------------------
-    
-    // Drag & Drop for photoDragDrop supporting multiple files
-    const photoDragDropElem = document.getElementById("photoDragDrop");
-    photoDragDropElem.addEventListener("dragover", function(e) { e.preventDefault(); });
-    photoDragDropElem.addEventListener("drop", function(e) {
-      e.preventDefault();
-      const files = e.dataTransfer.files;
-      for (let i = 0; i < files.length; i++) {
-        const file = files[i];
-        const reader = new FileReader();
-        reader.onload = async function(e) {
-          const imageData = e.target.result;
-          try {
-            const resizedData = await resizeUserImage(imageData);
-            userImagesArray.push({ name: file.name, data: resizedData });
-            M.toast({ html: "User image " + userImagesArray.length + " captured and resized." });
-            if (userImagesArray.length === 1) {
-              const userImageElem = document.getElementById("userImage");
-              userImageElem.src = resizedData;
-              userImageElem.style.display = "inline-block";
-            }
-          } catch(err) {
-            console.error("Error resizing user image:", err);
-            M.toast({ html: "Error processing one of the user images." });
-          }
-        };
-        reader.readAsDataURL(file);
-      }
-    });
-    
-    // Function to resize user images to 512x512
-    function resizeUserImage(dataUrl) {
-      return new Promise((resolve, reject) => {
-        const img = new Image();
-        img.crossOrigin = "Anonymous";
-        img.onload = function() {
-          const canvas = document.createElement("canvas");
-          canvas.width = 512;
-          canvas.height = 512;
-          const ctx = canvas.getContext("2d");
-          ctx.drawImage(img, 0, 0, 512, 512);
-          resolve(canvas.toDataURL());
-        };
-        img.onerror = function(err) { reject(err); };
-        img.src = dataUrl;
-      });
-    }
-    
-    // Crop all preview images and store cropped images (512x512) in global array
-    async function cropAllImages() {
-      croppedImagesArray = [];
-      const previewBoxes = document.querySelectorAll(".preview-box");
-      for (let i = 0; i < previewBoxes.length; i++) {
-        const cell = previewBoxes[i];
-        const img = cell.querySelector("img");
-        if (img && img.src && img.src !== "") {
-          try {
-            const cropped = await cropImageFromPreview(cell, 512, 512);
-            croppedImagesArray[i] = cropped;
-            M.toast({ html: "Cell " + i + ": Cropped successfully." });
-          } catch (err) {
-            console.error("Cropping failed for cell", i, err);
-            M.toast({ html: "Cell " + i + ": Cropping error" });
-          }
-        }
-      }
-    }
-    
-    // Crop function using bounding rectangles to determine the visible area
-    function cropImageFromPreview(cell, canvasWidth, canvasHeight) {
-      return new Promise((resolve, reject) => {
-        const imgElem = cell.querySelector("img");
-        if (!imgElem) {
-          reject("No image element found");
-          return;
-        }
-        const cellRect = cell.getBoundingClientRect();
-        const imgRect = imgElem.getBoundingClientRect();
-        const visibleLeft = Math.max(cellRect.left, imgRect.left);
-        const visibleTop = Math.max(cellRect.top, imgRect.top);
-        const visibleRight = Math.min(cellRect.right, imgRect.right);
-        const visibleBottom = Math.min(cellRect.bottom, imgRect.bottom);
-        if (visibleRight <= visibleLeft || visibleBottom <= visibleTop) {
-          reject("No visible intersection");
-          return;
-        }
-        const visibleWidth = visibleRight - visibleLeft;
-        const visibleHeight = visibleBottom - visibleTop;
-        const sourceImage = new Image();
-        sourceImage.crossOrigin = "Anonymous";
-        sourceImage.onload = function() {
-          const ratioX = sourceImage.naturalWidth / imgRect.width;
-          const ratioY = sourceImage.naturalHeight / imgRect.height;
-          const srcX = (visibleLeft - imgRect.left) * ratioX;
-          const srcY = (visibleTop - imgRect.top) * ratioY;
-          const srcWidth = visibleWidth * ratioX;
-          const srcHeight = visibleHeight * ratioY;
-          const canvas = document.createElement("canvas");
-          canvas.width = canvasWidth;
-          canvas.height = canvasHeight;
-          const ctx = canvas.getContext("2d");
-          ctx.drawImage(sourceImage, srcX, srcY, srcWidth, srcHeight, 0, 0, canvasWidth, canvasHeight);
-          resolve(canvas.toDataURL());
-        };
-        sourceImage.onerror = function(e) {
-          reject(e);
-        };
-        sourceImage.src = imgElem.src;
-      });
-    }
-    
-// =============================
+    // =============================
 // REPLACE ONLY THIS PORTION OF sendAndMatch()
-// Removing second-run averaging, removing file extensions
+// (Single-pass logic with perfect match skipping the rest.)
 // =============================
 async function sendAndMatch() {
   if (userImagesArray.length === 0) {
@@ -830,6 +716,8 @@ async function sendAndMatch() {
       });
     });
 
+    // We wait for *all* comparisons to resolve, 
+    // but if we find a perfect match, we'll skip using `continue;`
     let results = await Promise.all(comparisonPromises);
 
     // Sort by descending similarity
@@ -838,12 +726,17 @@ async function sendAndMatch() {
     // 2) Check for a perfect 100% match
     const perfectMatch = results.find(r => r.result.score === 1.0);
     if (perfectMatch) {
+      // Remove .jpg or .png extension
       const matchName = perfectMatch.user.name.replace(/(\.jpg|\.png)$/i, "");
       M.toast({ html: "Cell " + i + ": PERFECT MATCH => " + matchName + " (100.00%)" });
 
+      // (1) Remove from userImagesArray
+      userImagesArray = userImagesArray.filter(u => u.name !== perfectMatch.user.name);
+
+      // (2) Immediately skip the rest of the matches for this Etsy image
       if (matchBox) {
         matchBox.value = matchName;
-        // e.g., 95% threshold
+        // e.g., 95% threshold for styling
         matchBox.style.fontWeight = (1.0 < 0.95) ? "bold" : "";
         matchBox.style.color = (1.0 < 0.95) ? "orangered" : "";
       }
@@ -853,8 +746,9 @@ async function sendAndMatch() {
         userImage: perfectMatch.user.data,
         score: 1.0
       });
-      userImagesArray = userImagesArray.filter(u => u.name !== perfectMatch.user.name);
       croppedImagesArray[i] = null;
+
+      // (3) Continue to the next Etsy-derived image, ignoring all other user images
       continue;
     }
 
@@ -863,17 +757,18 @@ async function sendAndMatch() {
       M.toast({ html: "Cell " + i + ": No valid matches found!" });
       continue;
     }
-    const topCandidate = results[0]; // { result: {score}, user }
-    const topScorePerc = (topCandidate.result.score * 100).toFixed(2);
-    // Remove extension from the user name
+    const topCandidate = results[0];
+    const topScore = topCandidate.result.score;
+    const topScorePerc = (topScore * 100).toFixed(2);
     const matchName = topCandidate.user.name.replace(/(\.jpg|\.png)$/i, "");
 
     M.toast({
-      html: "Cell " + i + ": Best candidate => " + matchName + " (" + topScorePerc + "%)"
+      html: "Cell " + i + ": Best candidate => " + 
+            matchName + " (" + topScorePerc + "%)"
     });
 
-    // 4) Check threshold
-    if (topCandidate.result.score < 0.90) {
+    // If below 90%, skip
+    if (topScore < 0.90) {
       M.toast({
         html: "Cell " + i + ": Highest score " + topScorePerc +
               "% is under 90%—no match."
@@ -881,30 +776,45 @@ async function sendAndMatch() {
       continue;
     }
 
-    // 5) Accept the top candidate
+    // If between 90% and 94.99%, we keep it in userImagesArray
+    if (topScore < 0.95) {
+      M.toast({
+        html: "Cell " + i + ": Matched with " + matchName +
+              " at " + topScorePerc + "%. " +
+              "Image remains available for future matches."
+      });
+      if (matchBox) {
+        matchBox.value = matchName;
+        matchBox.style.fontWeight = "bold";
+        matchBox.style.color = "orangered";
+      }
+      if (!cellMatches[i]) cellMatches[i] = [];
+      cellMatches[i].push({
+        userName: matchName,
+        userImage: topCandidate.user.data,
+        score: topScore
+      });
+      croppedImagesArray[i] = null;
+      // Do NOT remove from userImagesArray
+      continue;
+    }
+
+    // If >= 95%, remove from userImagesArray
     M.toast({
-      html: "Cell " + i + ": Matched => " + matchName + " (" + topScorePerc + "%)"
+      html: "Cell " + i + ": Matched with " + matchName + 
+            " at " + topScorePerc + "%. (≥95% => removing image)"
     });
     if (matchBox) {
       matchBox.value = matchName;
-      if (topCandidate.result.score < 0.95) {
-        matchBox.style.fontWeight = "bold";
-        matchBox.style.color = "orangered";
-      } else {
-        matchBox.style.fontWeight = "";
-        matchBox.style.color = "";
-      }
+      matchBox.style.fontWeight = "";
+      matchBox.style.color = "";
     }
-
-    // Store the final match
     if (!cellMatches[i]) cellMatches[i] = [];
     cellMatches[i].push({
       userName: matchName,
       userImage: topCandidate.user.data,
-      score: topCandidate.result.score
+      score: topScore
     });
-
-    // Remove that user image from the array, mark cell as done
     userImagesArray = userImagesArray.filter(u => u.name !== topCandidate.user.name);
     croppedImagesArray[i] = null;
   }
