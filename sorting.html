@@ -680,10 +680,71 @@
       M.toast({ html: "Positions saved!" });
     });
     
-    // =============================
-// REPLACE ONLY THIS PORTION OF sendAndMatch()
-// (Single-pass logic with perfect match skipping the rest.)
-// =============================
+/////////////////////////////
+// 1) Drag-and-Drop + Resize Logic
+/////////////////////////////
+
+// Drag & Drop setup for photoDragDrop supporting multiple files
+const photoDragDropElem = document.getElementById("photoDragDrop");
+
+// Allows dropping items onto photoDragDrop without the browser blocking the event.
+photoDragDropElem.addEventListener("dragover", function(e) {
+  e.preventDefault();
+});
+
+// Handle dropped files
+photoDragDropElem.addEventListener("drop", function(e) {
+  e.preventDefault();
+  const files = e.dataTransfer.files;
+  for (let i = 0; i < files.length; i++) {
+    const file = files[i];
+    const reader = new FileReader();
+    reader.onload = async function(e) {
+      const imageData = e.target.result;
+      try {
+        // Resize the image before adding it to userImagesArray
+        const resizedData = await resizeUserImage(imageData);
+        userImagesArray.push({ name: file.name, data: resizedData });
+
+        M.toast({ html: "User image " + userImagesArray.length + " captured and resized." });
+
+        // If it's the first user image, show a preview in #userImage
+        if (userImagesArray.length === 1) {
+          const userImageElem = document.getElementById("userImage");
+          userImageElem.src = resizedData;
+          userImageElem.style.display = "inline-block";
+        }
+      } catch(err) {
+        console.error("Error resizing user image:", err);
+        M.toast({ html: "Error processing one of the user images." });
+      }
+    };
+    reader.readAsDataURL(file);
+  }
+});
+
+// Resize user images to 512x512 so they're consistent for matching
+function resizeUserImage(dataUrl) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.crossOrigin = "Anonymous";
+    img.onload = function() {
+      const canvas = document.createElement("canvas");
+      canvas.width = 512;
+      canvas.height = 512;
+      const ctx = canvas.getContext("2d");
+      ctx.drawImage(img, 0, 0, 512, 512);
+      resolve(canvas.toDataURL());
+    };
+    img.onerror = function(err) { reject(err); };
+    img.src = dataUrl;
+  });
+}
+
+/////////////////////////////
+// 2) Single-Pass sendAndMatch Logic
+/////////////////////////////
+
 async function sendAndMatch() {
   if (userImagesArray.length === 0) {
     M.toast({ html: "No user images available! Please drop user images first." });
@@ -716,8 +777,7 @@ async function sendAndMatch() {
       });
     });
 
-    // We wait for *all* comparisons to resolve, 
-    // but if we find a perfect match, we'll skip using `continue;`
+    // We wait for *all* comparisons to resolve
     let results = await Promise.all(comparisonPromises);
 
     // Sort by descending similarity
@@ -730,13 +790,13 @@ async function sendAndMatch() {
       const matchName = perfectMatch.user.name.replace(/(\.jpg|\.png)$/i, "");
       M.toast({ html: "Cell " + i + ": PERFECT MATCH => " + matchName + " (100.00%)" });
 
-      // (1) Remove from userImagesArray
+      // Remove from userImagesArray
       userImagesArray = userImagesArray.filter(u => u.name !== perfectMatch.user.name);
 
-      // (2) Immediately skip the rest of the matches for this Etsy image
+      // Update UI for this cell
       if (matchBox) {
         matchBox.value = matchName;
-        // e.g., 95% threshold for styling
+        // e.g., 0.95 => 95% threshold for styling
         matchBox.style.fontWeight = (1.0 < 0.95) ? "bold" : "";
         matchBox.style.color = (1.0 < 0.95) ? "orangered" : "";
       }
@@ -746,9 +806,10 @@ async function sendAndMatch() {
         userImage: perfectMatch.user.data,
         score: 1.0
       });
+      // Mark cell as done
       croppedImagesArray[i] = null;
 
-      // (3) Continue to the next Etsy-derived image, ignoring all other user images
+      // Immediately move on to next Etsy item
       continue;
     }
 
@@ -767,16 +828,16 @@ async function sendAndMatch() {
             matchName + " (" + topScorePerc + "%)"
     });
 
-    // If below 90%, skip
+    // If below 91%, skip
     if (topScore < 0.90) {
       M.toast({
-        html: "Cell " + i + ": Highest score " + topScorePerc +
-              "% is under 90%—no match."
+        html: "Cell " + i + ": Highest score " + topScorePerc + 
+              "% is under 91%—no match."
       });
       continue;
     }
 
-    // If between 90% and 94.99%, we keep it in userImagesArray
+    // If between 90% and 94.99%, keep user image
     if (topScore < 0.95) {
       M.toast({
         html: "Cell " + i + ": Matched with " + matchName +
@@ -795,13 +856,13 @@ async function sendAndMatch() {
         score: topScore
       });
       croppedImagesArray[i] = null;
-      // Do NOT remove from userImagesArray
+      // Do NOT remove user image from array
       continue;
     }
 
     // If >= 95%, remove from userImagesArray
     M.toast({
-      html: "Cell " + i + ": Matched with " + matchName + 
+      html: "Cell " + i + ": Matched with " + matchName +
             " at " + topScorePerc + "%. (≥95% => removing image)"
     });
     if (matchBox) {
