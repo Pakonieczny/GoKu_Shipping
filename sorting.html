@@ -796,7 +796,7 @@
     
 // =============================
 // REPLACE ONLY THIS PORTION OF sendAndMatch()
-// (the single-pass logic with perfect match checks, etc.)
+// (Remove all references to second-place logic, etc.)
 // =============================
 async function sendAndMatch() {
   if (userImagesArray.length === 0) {
@@ -808,7 +808,7 @@ async function sendAndMatch() {
     return;
   }
 
-  // Collect all cells that still have images
+  // Identify all cells that still have images
   let unmatchedCells = [];
   for (let i = 0; i < croppedImagesArray.length; i++) {
     if (croppedImagesArray[i]) {
@@ -816,11 +816,11 @@ async function sendAndMatch() {
     }
   }
 
-  // Single pass: For each unmatched cell, do the 2-stage comparison logic
+  // Single pass: For each unmatched cell, do the new logic
   for (const i of unmatchedCells) {
     const matchBox = document.getElementById("matchCell" + i);
 
-    // 1) Compare all user-provided images in parallel for this Etsy image
+    // 1) Compare all user images in parallel
     let comparisonPromises = userImagesArray.map((user, j) => {
       return new Promise(resolve => {
         setTimeout(() => {
@@ -834,25 +834,26 @@ async function sendAndMatch() {
 
     let results = await Promise.all(comparisonPromises);
 
-    // Sort results by descending similarity score
+    // Sort by descending similarity
     results.sort((a, b) => b.result.score - a.result.score);
 
-    // ===== Check if any image is at 100% (score === 1.0)
+    // ===== Check for a perfect 100% match
     const perfectMatch = results.find(r => r.result.score === 1.0);
     if (perfectMatch) {
-      // Show "100.0000%" for the toast
       M.toast({
         html: "Cell " + i + ": PERFECT MATCH => " +
               perfectMatch.user.name + " (100.00%)"
       });
-      // Still meets 95% min threshold, obviously. Assign & move on.
+      // Instantly accept
       if (matchBox) {
         matchBox.value = perfectMatch.user.name;
-        // 0.95 => 95% threshold for orangered styling
+        // E.g., 0.95 => 95% threshold for styling
         matchBox.style.fontWeight = (1.0 < 0.95) ? "bold" : "";
         matchBox.style.color = (1.0 < 0.95) ? "orangered" : "";
       }
-      if (!cellMatches[i]) { cellMatches[i] = []; }
+      if (!cellMatches[i]) {
+        cellMatches[i] = [];
+      }
       cellMatches[i].push({
         userName: perfectMatch.user.name,
         userImage: perfectMatch.user.data,
@@ -860,163 +861,72 @@ async function sendAndMatch() {
       });
       userImagesArray = userImagesArray.filter(u => u.name !== perfectMatch.user.name);
       croppedImagesArray[i] = null;
-      continue; // Move on to the next Etsy image
+      continue; // Move on to next Etsy image
     }
 
-    // 2) Identify top 2 user-provided images with the highest scores
-    let topTwo = results.slice(0, 2);
-
-    // If there's fewer than 1 or topOne is zero => no valid match
-    if (topTwo.length < 1 || topTwo[0].result.score === 0) {
+    // 2) Take the single highest-scoring candidate
+    if (results.length === 0 || results[0].result.score === 0) {
       M.toast({ html: "Cell " + i + ": No valid matches found!" });
       continue;
     }
+    const topCandidate = results[0];  // { result, user }
 
-    // If there's exactly 1 user image
-    if (topTwo.length < 2) {
-      let bestScorePerc = (topTwo[0].result.score * 100).toFixed(2); 
-      if (topTwo[0].result.score < 0.90) {
-        M.toast({ 
-          html: "Cell " + i + ": Best score " + bestScorePerc + 
-                "% is under 90%—no valid match." 
-        });
-        continue;
-      }
-      // Single toast for top image
-      M.toast({ 
-        html: "Cell " + i + ": Only one candidate => " + 
-              topTwo[0].user.name + " (" + bestScorePerc + "%)" 
-      });
-
-      if (matchBox) {
-        matchBox.value = topTwo[0].user.name;
-        if (topTwo[0].result.score < 0.95) {
-          matchBox.style.fontWeight = "bold";
-          matchBox.style.color = "orangered";
-        } else {
-          matchBox.style.fontWeight = "";
-          matchBox.style.color = "";
-        }
-      }
-      if (!cellMatches[i]) { cellMatches[i] = []; }
-      cellMatches[i].push({
-        userName: topTwo[0].user.name,
-        userImage: topTwo[0].user.data,
-        score: topTwo[0].result.score
-      });
-      croppedImagesArray[i] = null;
-      userImagesArray = userImagesArray.filter(u => u.name !== topTwo[0].user.name);
-      continue;
-    }
-
-    // If topTwo[1] is below 0.90, skip second round
-    if (topTwo[1].result.score < 0.90) {
-      let bestScorePerc = (topTwo[0].result.score * 100).toFixed(2);
+    // 3) If the top candidate is below your minimum acceptance threshold, skip
+    if (topCandidate.result.score < 0.90) {
       M.toast({
-        html: "Cell " + i + ": 2nd place under 90%. " +
-              "Skipping second round. " +
-              "Best => " + topTwo[0].user.name + " (" + bestScorePerc + "%)"
-      });
-      // Check 91% threshold for acceptance
-      if (topTwo[0].result.score < 0.91) {
-        M.toast({ 
-          html: "Cell " + i + ": Best is under 91%—no valid match." 
-        });
-        continue;
-      }
-      // Accept topOne
-      if (matchBox) {
-        matchBox.value = topTwo[0].user.name;
-        if (topTwo[0].result.score < 0.95) {
-          matchBox.style.fontWeight = "bold";
-          matchBox.style.color = "orangered";
-        } else {
-          matchBox.style.fontWeight = "";
-          matchBox.style.color = "";
-        }
-      }
-      if (!cellMatches[i]) { cellMatches[i] = []; }
-      cellMatches[i].push({
-        userName: topTwo[0].user.name,
-        userImage: topTwo[0].user.data,
-        score: topTwo[0].result.score
-      });
-      croppedImagesArray[i] = null;
-      userImagesArray = userImagesArray.filter(u => u.name !== topTwo[0].user.name);
-      continue;
-    }
-
-    // Otherwise, do the normal second-round process
-    let firstScorePerc = (topTwo[0].result.score * 100).toFixed(2);
-    let secondScorePerc = (topTwo[1].result.score * 100).toFixed(2);
-    M.toast({
-      html: "Cell " + i + ": Top 2 initial => " +
-            topTwo[0].user.name + " (" + firstScorePerc + "%), " +
-            topTwo[1].user.name + " (" + secondScorePerc + "%)"
-    });
-
-    // 3) Re-run comparison for the top 2 images
-    let finalCandidates = [];
-    for (let candidate of topTwo) {
-      let secondRound = await compareImages(
-        candidate.user.data,
-        croppedImagesArray[i],
-        i,
-        candidate.user.name
-      );
-      // Round second-round to 2 decimals just for internal consistency
-      secondRound.score = parseFloat(secondRound.score.toFixed(2));
-
-      // 4) Average the results
-      let avgScore = (candidate.result.score + secondRound.score) / 2;
-      avgScore = parseFloat(avgScore.toFixed(2));
-
-      finalCandidates.push({
-        user: candidate.user,
-        firstScore: candidate.result.score,
-        secondScore: secondRound.score,
-        avgScore: avgScore
-      });
-    }
-
-    // Show separate toasts for the final average of each candidate
-    let [candA, candB] = finalCandidates;
-    let candAavgPerc = (candA.avgScore * 100).toFixed(2);
-    let candBavgPerc = (candB.avgScore * 100).toFixed(2);
-
-    M.toast({
-      html: "Cell " + i + ": " + candA.user.name +
-            " final average => " + candAavgPerc + "%"
-    });
-    M.toast({
-      html: "Cell " + i + ": " + candB.user.name +
-            " final average => " + candBavgPerc + "%"
-    });
-
-    // Pick the highest average
-    finalCandidates.sort((a, b) => b.avgScore - a.avgScore);
-    const best = finalCandidates[0];
-
-    // Must still meet the 95% threshold
-    if (best.avgScore < 0.92) {
-      M.toast({ 
-        html: "Cell " + i + ": Highest final average " + 
-              (best.avgScore * 100).toFixed(2) + 
-              "% is under 90%—no valid match." 
+        html: "Cell " + i + ": Highest score " + 
+              (topCandidate.result.score * 100).toFixed(2) + 
+              "% is below 90%—no match."
       });
       continue;
     }
 
-    // 6) Final toast for the chosen image
+    // Show a toast with the top candidate's initial score
+    const topScorePerc = (topCandidate.result.score * 100).toFixed(2);
+    M.toast({
+      html: "Cell " + i + ": Top candidate => " +
+            topCandidate.user.name + " (" + topScorePerc + "% initial)"
+    });
+
+    // 4) Re-run comparison with the same top candidate
+    let secondRound = await compareImages(
+      topCandidate.user.data,
+      croppedImagesArray[i],
+      i,
+      topCandidate.user.name
+    );
+
+    // Round second round to 2 decimals for consistency
+    secondRound.score = parseFloat(secondRound.score.toFixed(2));
+
+    // 5) Average the two results (first + second)
+    let avgScore = (topCandidate.result.score + secondRound.score) / 2;
+    avgScore = parseFloat(avgScore.toFixed(2));
+
+    // Toast showing the final average
+    const avgScorePerc = (avgScore * 100).toFixed(2);
+    M.toast({
+      html: "Cell " + i + ": " + topCandidate.user.name + 
+            " final average => " + avgScorePerc + "%"
+    });
+
+    // Check final threshold (example: 0.95 => 95%)
+    if (avgScore < 0.95) {
+      M.toast({
+        html: "Cell " + i + ": Final average " + avgScorePerc + 
+              "% below 95%—no match."
+      });
+      continue;
+    }
+
+    // 6) Accept the final match
     M.toast({
       html: "Cell " + i + ": Chosen => " +
-            best.user.name + " (" + (best.avgScore * 100).toFixed(2) + "%)"
+            topCandidate.user.name + " (" + avgScorePerc + "%)"
     });
-
-    // Update the match text box
     if (matchBox) {
-      matchBox.value = best.user.name;
-      if (best.avgScore < 0.95) {
+      matchBox.value = topCandidate.user.name;
+      if (avgScore < 0.95) {
         matchBox.style.fontWeight = "bold";
         matchBox.style.color = "orangered";
       } else {
@@ -1025,18 +935,18 @@ async function sendAndMatch() {
       }
     }
 
-    // Store the final match
-    if (!cellMatches[i]) { cellMatches[i] = []; }
+    // Save the final match
+    if (!cellMatches[i]) {
+      cellMatches[i] = [];
+    }
     cellMatches[i].push({
-      userName: best.user.name,
-      userImage: best.user.data,
-      avgScore: best.avgScore
+      userName: topCandidate.user.name,
+      userImage: topCandidate.user.data,
+      avgScore: avgScore
     });
 
-    // Remove the matched user
-    userImagesArray = userImagesArray.filter(u => u.name !== best.user.name);
-
-    // Mark this cell done
+    // Remove the matched user, mark cell done
+    userImagesArray = userImagesArray.filter(u => u.name !== topCandidate.user.name);
     croppedImagesArray[i] = null;
   }
 }
@@ -1057,13 +967,14 @@ async function compareImages(userImage, croppedGridImage, cellIndex, userImageNa
               "Follow the below rules strictly!!! " +
               "1. Look for a best fit and matching charms within the two images. " +
               "2. Return a numeric similarity score between 0.0000 and 1.0000 with EXACTLY four decimal places, for example 0.8937, 0.9231, or 1.675, and no additional text. " +
-              "2. Focus solely on the charm and its fine details; disregard the background and any other accessories. " +
-              "3. Assume all charms are the same size and colour, disregarding any shading biases. " +
-              "4. Always aim for a 0.95+ accuracy when comparing charms; " +
-              "5. Only consider the charm and its fine details when scoring the match. " +
-              "6. Ignore all items attached to or surrounding the charm such as necklaces, chains, hoops, rings, clothing, or skin. " +
-              "7. Emphasize the pose and direction the charm is facing. " +
-              "8. Focus on subtle details in the charm’s outline and interior engravings. "
+              "3. Focus solely on the charm and its fine details; disregard the background and any other accessories. " +
+              "4. Assume all charms are the same size and colour, disregarding any shading biases. " +
+              "5. When detecting any animal charm focus on the position of the HEAD, EYES, BEAK, MOUTH, EARS, LEGS, WINGS to make a better match " +
+              "6. When detecting similar objects focus on the details of the shape and outline of the charm along with engraving details "
+              "7. Only consider the charm and its fine details when scoring the match. " +
+              "8. Ignore all items attached to or surrounding the charm such as necklaces, chains, hoops, rings, clothing, or skin. " +
+              "9. Emphasize the pose and direction the charm is facing. " +
+              "10. Focus on subtle details in the charm’s outline and interior engravings. "
           },
           { type: "image_url", image_url: { url: userImage, detail: "high" } },
           { type: "image_url", image_url: { url: croppedGridImage, detail: "high" } }
