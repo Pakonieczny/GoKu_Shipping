@@ -205,7 +205,8 @@
     let croppedImagesArray = [];
     let userImagesArray = []; // { name, data }
     let cellMatches = {};
-    
+    let croppedImagesArray = [];
+
     (function(){
       const urlParams = new URLSearchParams(window.location.search);
       const accessToken = urlParams.get("access_token");
@@ -327,6 +328,13 @@
         }
       });
     
+      // Crop Images Button
+      document.getElementById("cropImagesBtn").addEventListener("click", async function() {
+      // Clear any old data and run the cropping process
+      croppedImagesArray = [];
+      await cropAllImages();
+      });
+
       // Crop Images Button
       document.getElementById("cropImagesBtn").addEventListener("click", async function() {
         croppedImagesArray = [];
@@ -546,6 +554,79 @@
       });
     }
     
+      // =====================================================
+      // (A) cropAllImages() 
+      // =====================================================
+      async function cropAllImages() {
+        const previewBoxes = document.querySelectorAll(".preview-box");
+        for (let i = 0; i < previewBoxes.length; i++) {
+          const cell = previewBoxes[i];
+          const img = cell.querySelector("img");
+          if (img && img.src && img.src !== "") {
+            try {
+              const cropped = await cropImageFromPreview(cell, 512, 512);
+              croppedImagesArray[i] = cropped;
+              M.toast({ html: "Cell " + i + ": Cropped successfully." });
+            } catch (err) {
+              console.error("Cropping failed for cell", i, err);
+              M.toast({ html: "Cell " + i + ": Cropping error" });
+            }
+          }
+        }
+      }
+
+      // =====================================================
+      // (B) cropImageFromPreview()
+      // =====================================================
+      function cropImageFromPreview(cell, canvasWidth, canvasHeight) {
+        return new Promise((resolve, reject) => {
+          const imgElem = cell.querySelector("img");
+          if (!imgElem) {
+            reject("No image element found");
+            return;
+          }
+          
+          const cellRect = cell.getBoundingClientRect();
+          const imgRect = imgElem.getBoundingClientRect();
+
+          const visibleLeft = Math.max(cellRect.left, imgRect.left);
+          const visibleTop = Math.max(cellRect.top, imgRect.top);
+          const visibleRight = Math.min(cellRect.right, imgRect.right);
+          const visibleBottom = Math.min(cellRect.bottom, imgRect.bottom);
+
+          if (visibleRight <= visibleLeft || visibleBottom <= visibleTop) {
+            reject("No visible intersection");
+            return;
+          }
+
+          const visibleWidth = visibleRight - visibleLeft;
+          const visibleHeight = visibleBottom - visibleTop;
+
+          const sourceImage = new Image();
+          sourceImage.crossOrigin = "Anonymous"; 
+          sourceImage.onload = function() {
+            const ratioX = sourceImage.naturalWidth / imgRect.width;
+            const ratioY = sourceImage.naturalHeight / imgRect.height;
+
+            const srcX = (visibleLeft - imgRect.left) * ratioX;
+            const srcY = (visibleTop - imgRect.top) * ratioY;
+            const srcWidth = visibleWidth * ratioX;
+            const srcHeight = visibleHeight * ratioY;
+
+            const canvas = document.createElement("canvas");
+            canvas.width = canvasWidth;
+            canvas.height = canvasHeight;
+            const ctx = canvas.getContext("2d");
+            ctx.drawImage(sourceImage, srcX, srcY, srcWidth, srcHeight, 0, 0, canvasWidth, canvasHeight);
+            resolve(canvas.toDataURL());
+          };
+          sourceImage.onerror = function(e) {
+            reject(e);
+          };
+          sourceImage.src = imgElem.src;
+        });
+      }
+
     // ---------------------------------------------------------
     // Load orders and fill preview boxes from Etsy data
     // ---------------------------------------------------------
@@ -859,7 +940,7 @@ async function sendAndMatch() {
       continue;
     }
 
-    // 6) If >= 95%, we remove from userImages
+    // If >= 95%, we remove from userImages
     if (topScore >= 0.95) {
       M.toast({
         html: "Cell " + i + ": Matched with " + matchName + 
