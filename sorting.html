@@ -741,10 +741,10 @@ function resizeUserImage(dataUrl) {
   });
 }
 
-/////////////////////////////
-// 2) Single-Pass sendAndMatch Logic
-/////////////////////////////
-
+// =============================
+// REPLACE ONLY THIS PORTION OF sendAndMatch()
+// (Removes userImages from array ONLY if match ≥ 0.95 or 1.0 perfect match.)
+// =============================
 async function sendAndMatch() {
   if (userImagesArray.length === 0) {
     M.toast({ html: "No user images available! Please drop user images first." });
@@ -777,7 +777,6 @@ async function sendAndMatch() {
       });
     });
 
-    // We wait for *all* comparisons to resolve
     let results = await Promise.all(comparisonPromises);
 
     // Sort by descending similarity
@@ -786,14 +785,10 @@ async function sendAndMatch() {
     // 2) Check for a perfect 100% match
     const perfectMatch = results.find(r => r.result.score === 1.0);
     if (perfectMatch) {
-      // Remove .jpg or .png extension
       const matchName = perfectMatch.user.name.replace(/(\.jpg|\.png)$/i, "");
       M.toast({ html: "Cell " + i + ": PERFECT MATCH => " + matchName + " (100.00%)" });
 
-      // Remove from userImagesArray
-      userImagesArray = userImagesArray.filter(u => u.name !== perfectMatch.user.name);
-
-      // Update UI for this cell
+      // Assign & remove from userImages
       if (matchBox) {
         matchBox.value = matchName;
         // e.g., 0.95 => 95% threshold for styling
@@ -806,11 +801,9 @@ async function sendAndMatch() {
         userImage: perfectMatch.user.data,
         score: 1.0
       });
-      // Mark cell as done
+      userImagesArray = userImagesArray.filter(u => u.name !== perfectMatch.user.name);
       croppedImagesArray[i] = null;
-
-      // Immediately move on to next Etsy item
-      continue;
+      continue; // Move on
     }
 
     // 3) Otherwise, pick the single highest-scoring candidate
@@ -818,34 +811,38 @@ async function sendAndMatch() {
       M.toast({ html: "Cell " + i + ": No valid matches found!" });
       continue;
     }
-    const topCandidate = results[0];
+    const topCandidate = results[0]; // { result: {score}, user }
     const topScore = topCandidate.result.score;
     const topScorePerc = (topScore * 100).toFixed(2);
+    // Remove extension from user name
     const matchName = topCandidate.user.name.replace(/(\.jpg|\.png)$/i, "");
 
+    // Show a toast for the top candidate’s score
     M.toast({
       html: "Cell " + i + ": Best candidate => " + 
             matchName + " (" + topScorePerc + "%)"
     });
 
-    // If below 91%, skip
+    // 4) Check if topCandidate meets your threshold
     if (topScore < 0.90) {
       M.toast({
-        html: "Cell " + i + ": Highest score " + topScorePerc + 
-              "% is under 91%—no match."
+        html: "Cell " + i + ": Highest score " + topScorePerc +
+              "% is under 90%—no match."
       });
       continue;
     }
 
-    // If between 90% and 94.99%, keep user image
-    if (topScore < 0.95) {
+    // 5) If between 90.00% and 94.99%, we keep the user image in the array
+    //    (do NOT remove from userImagesArray)
+    if (topScore >= 0.90 && topScore < 0.95) {
       M.toast({
-        html: "Cell " + i + ": Matched with " + matchName +
+        html: "Cell " + i + ": Matched with " + matchName + 
               " at " + topScorePerc + "%. " +
               "Image remains available for future matches."
       });
       if (matchBox) {
         matchBox.value = matchName;
+        // Style it if < 0.95
         matchBox.style.fontWeight = "bold";
         matchBox.style.color = "orangered";
       }
@@ -856,28 +853,33 @@ async function sendAndMatch() {
         score: topScore
       });
       croppedImagesArray[i] = null;
-      // Do NOT remove user image from array
+      // Notice: We do NOT remove topCandidate.user from userImagesArray
+      // because the user wants that image to remain available
+      // in case it finds a higher match (≥95%) with future Etsy images.
       continue;
     }
 
-    // If >= 95%, remove from userImagesArray
-    M.toast({
-      html: "Cell " + i + ": Matched with " + matchName +
-            " at " + topScorePerc + "%. (≥95% => removing image)"
-    });
-    if (matchBox) {
-      matchBox.value = matchName;
-      matchBox.style.fontWeight = "";
-      matchBox.style.color = "";
+    // 6) If >= 95%, we remove from userImages
+    if (topScore >= 0.95) {
+      M.toast({
+        html: "Cell " + i + ": Matched with " + matchName + 
+              " at " + topScorePerc + "%. (≥95% => removing image)"
+      });
+      if (matchBox) {
+        matchBox.value = matchName;
+        // If topScore < 0.95 => orangered styling, else normal
+        matchBox.style.fontWeight = "";
+        matchBox.style.color = "";
+      }
+      if (!cellMatches[i]) cellMatches[i] = [];
+      cellMatches[i].push({
+        userName: matchName,
+        userImage: topCandidate.user.data,
+        score: topScore
+      });
+      userImagesArray = userImagesArray.filter(u => u.name !== topCandidate.user.name);
+      croppedImagesArray[i] = null;
     }
-    if (!cellMatches[i]) cellMatches[i] = [];
-    cellMatches[i].push({
-      userName: matchName,
-      userImage: topCandidate.user.data,
-      score: topScore
-    });
-    userImagesArray = userImagesArray.filter(u => u.name !== topCandidate.user.name);
-    croppedImagesArray[i] = null;
   }
 }
     
