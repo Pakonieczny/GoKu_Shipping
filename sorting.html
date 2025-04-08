@@ -913,15 +913,15 @@
         if (bestResult.name && bestResult.score >= currentThreshold) {
           cellMatched = true;
           if (matchBox) {
-            matchBox.value = bestResult.name;
-            if (bestResult.score < 0.9) {
-              matchBox.style.fontWeight = "bold";
-              matchBox.style.color = "orangered";
-            } else {
-              matchBox.style.fontWeight = "";
-              matchBox.style.color = "";
-            }
+          matchBox.value = bestResult.name;
+          if (bestResult.score < 0.9) {
+            matchBox.style.setProperty("font-weight", "bold", "important");
+            matchBox.style.setProperty("color", "orangered", "important");
+          } else {
+            matchBox.style.setProperty("font-weight", "", "");
+            matchBox.style.setProperty("color", "", "");
           }
+        }
           M.toast({ html: "Cell " + i + ": Best match found in loop " + (loopIndex + 1) + " - " + bestResult.name + " with score " + bestResult.score });
           croppedImagesArray[i] = null;
           userImagesArray = userImagesArray.filter(u => u.name !== bestResult.name);
