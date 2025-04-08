@@ -846,17 +846,17 @@
         const finalName = bestCandidate.user.name.replace(/\.(jpg|png)$/i, "");
     
         // Update the match text box for this cell.
-        if (bestUser && bestResult.score >= currentThreshold) {
-              cellMatched = true;
-              if (matchBox) {
-                matchBox.value = bestUser.name;
-                if (bestResult.score < 0.93) {
-                  matchBox.style.setProperty("font-weight", "bold", "important");
-                  matchBox.style.setProperty("color", "orangered", "important");
-                } else {
-                  matchBox.style.setProperty("font-weight", "", "");
-                  matchBox.style.setProperty("color", "", "");
-                }
+        const matchBox = document.getElementById("matchCell" + i);
+        if (matchBox) {
+          matchBox.value = finalName;
+          if (bestCandidate.averagedScore < 0.9) {
+            matchBox.style.fontWeight = "bold";
+            matchBox.style.color = "orangered";
+          } else {
+            matchBox.style.fontWeight = "";
+            matchBox.style.color = "";
+          }
+        }
     
         M.toast({ html: `Cell ${i}: Final match - ${finalName} with averaged score ${bestCandidate.averagedScore.toFixed(2)}` });
     
