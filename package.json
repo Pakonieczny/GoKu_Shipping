@@ -4,8 +4,6 @@
   "description": "Etsy listing and image upload application",
   "main": "index.js",
   "scripts": {
-    "prebuild": "node copySecrets.js",
-    "build": "npm run prebuild && netlify build",
     "start": "netlify dev"
   },
   "dependencies": {
