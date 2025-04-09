@@ -4,9 +4,10 @@
   "description": "Etsy listing and image upload application",
   "main": "index.js",
   "scripts": {
-    "start": "netlify dev",
-    "prebuild": "cp -R ../my-private-secrets/local-secrets ./netlify/functions/secrets",
-    "build": "npm run prebuild && netlify build"
+    "prebuild": "cp -R ../gcp-secrets/secrets ./netlify/functions/secrets",
+    "build": "npm run prebuild && netlify build",
+    "start": "netlify dev"
+
   },
   "dependencies": {
     "node-fetch": "^2.6.1",

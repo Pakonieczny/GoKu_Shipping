@@ -1,43 +1,43 @@
 // netlify/functions/visionWarehouse.js
 //
 // Fully expanded, no placeholders. This function demonstrates the following actions:
-//   - createCorpus         (makes a new image-based Warehouse corpus)
+//   - createCorpus         (creates an image-based Warehouse corpus)
 //   - uploadAndImport      (uploads a base64 image to GCS, then creates a Warehouse asset)
-//   - analyzeCorpus        (generates embeddings for the images in your corpus)
+//   - analyzeCorpus        (generates embeddings for images in your corpus)
 //   - createIndex          (creates an index for your corpus)
-//   - deployIndex          (creates an index endpoint - you’d eventually deploy your index to it)
+//   - deployIndex          (creates an index endpoint—deploy your index to it eventually)
 //   - search               (submits text or image queries to the index endpoint)
 //
-// REQUIRED ENV VARS in Netlify:
+// REQUIRED ENV VARS in Netlify (all except the private key):
 //   GCP_CLIENT_EMAIL
-//   GCP_PRIVATE_KEY           (this should NOT contain your key directly; it’s loaded from disk)
 //   GCP_PROJECT_ID
-//   GCP_PROJECT_NUMBER        (e.g., "123456789012")
-//   GCP_BUCKET_NAME           (e.g., "my-bucket")
-//   (optional) GCP_LOCATION   (e.g., "us-central1", defaults to "us-central1")
+//   GCP_PROJECT_NUMBER       (e.g., "123456789012")
+//   GCP_BUCKET_NAME          (e.g., "my-bucket")
+//   (optional) GCP_LOCATION  (e.g., "us-central1", defaults to "us-central1")
 //
-// This version loads the GCP private key from a local file (stored in a "secrets" folder) and
-// uses environment variables for the remaining credentials. Make sure your secrets folder is
-// copied into the functions bundle during build (using a prebuild script) and is excluded from
-// version control (added to .gitignore).
+// NOTE: Only the GCP private key is loaded from disk, so it is not subject to Netlify’s 4 KB environment variable limit.
+// Ensure your build process (e.g. via a prebuild script) copies your secrets folder (containing GCP_PRIVATE_KEY.txt) 
+// into your functions bundle, for example into: ./netlify/functions/secrets/GCP_PRIVATE_KEY.txt
 
 const fs = require('fs');
 const path = require('path');
 
-// Read the private key from disk (the file should be copied into your functions bundle)
+// Load the private key from a local file on disk.
+// The file is expected to be in the 'secrets' subfolder relative to this file.
 const privateKeyPath = path.join(__dirname, 'secrets', 'GCP_PRIVATE_KEY.txt');
 let gcpPrivateKey;
 try {
   gcpPrivateKey = fs.readFileSync(privateKeyPath, 'utf8');
 } catch (err) {
   console.error("Error reading GCP private key file:", err);
-  gcpPrivateKey = ""; // Fallback to an empty string (you may want to handle this more gracefully)
+  // You can decide how to handle this error – for example, throw an error so that the function fails fast.
+  throw new Error("GCP private key file not found. Ensure that it is copied into your functions bundle.");
 }
 
-// Build the serviceAccount object using environment variables plus the private key from file.
+// Build the serviceAccount object using environment variables for everything except the private key.
+// Replace any escaped newline characters in the private key with actual newline characters.
 const serviceAccount = {
   client_email: process.env.GCP_CLIENT_EMAIL,
-  // Replace any escaped newlines with actual newline characters
   private_key: gcpPrivateKey.replace(/\\n/g, '\n'),
   project_id: process.env.GCP_PROJECT_ID
 };
@@ -56,13 +56,10 @@ if (!bucketName) {
 // Vertex AI Vision Warehouse v1 endpoint
 const WAREHOUSE_API_ROOT = "https://warehouse-visionai.googleapis.com/v1";
 
-const fetch = require("node-fetch"); // For Node < 18
-const { GoogleAuth } = require("google-auth-library");
-const { Storage } = require("@google-cloud/storage");
-
 // -------------------------------------------------------------------
 // 1) Auth for Warehouse
 // -------------------------------------------------------------------
+const { GoogleAuth } = require("google-auth-library");
 const auth = new GoogleAuth({
   credentials: {
     client_email: serviceAccount.client_email,
@@ -80,6 +77,7 @@ async function getAccessToken() {
 // -------------------------------------------------------------------
 // 2) Google Cloud Storage client for uploading images
 // -------------------------------------------------------------------
+const { Storage } = require("@google-cloud/storage");
 const gcsStorage = new Storage({
   projectId: serviceAccount.project_id,
   credentials: {
@@ -88,7 +86,7 @@ const gcsStorage = new Storage({
   }
 });
 
-// Helper to upload base64 data to GCS and return a "gs://bucket/file" URI
+// Helper to upload base64 image data to GCS and return a "gs://bucket/file" URI.
 async function uploadBase64ToGCS(base64Data, objectKey) {
   const match = base64Data.match(/^data:(?<mime>[^;]+);base64,(?<base64>.+)$/);
   if (!match || !match.groups) {
@@ -111,13 +109,15 @@ async function uploadBase64ToGCS(base64Data, objectKey) {
 // -------------------------------------------------------------------
 // 3) The Netlify Handler with six main actions
 // -------------------------------------------------------------------
+const fetch = require("node-fetch"); // For Node < 18
+
 exports.handler = async (event, context) => {
   try {
     const body = JSON.parse(event.body || "{}");
     const action = body.action;
 
     switch (action) {
-      // A) createCorpus
+      // A) createCorpus: Create a new image corpus.
       case "createCorpus": {
         const displayName = body.displayName || "My Image Warehouse";
         const description = body.description || "No description provided.";
@@ -149,7 +149,7 @@ exports.handler = async (event, context) => {
         return json200(data);
       }
 
-      // B) uploadAndImport: Upload base64 image to GCS, then create an asset
+      // B) uploadAndImport: Upload a base64 image to GCS and create an asset.
       case "uploadAndImport": {
         const { corpusName, assetId, base64Image } = body;
         if (!corpusName || !assetId || !base64Image) {
@@ -183,7 +183,7 @@ exports.handler = async (event, context) => {
         });
       }
 
-      // C) analyzeCorpus: Generate embeddings
+      // C) analyzeCorpus: Generate embeddings for the images in the corpus.
       case "analyzeCorpus": {
         const { corpusName } = body;
         if (!corpusName) {
@@ -209,7 +209,7 @@ exports.handler = async (event, context) => {
         return json200(data);
       }
 
-      // D) createIndex: Build an embedding index
+      // D) createIndex: Create an index for the corpus.
       case "createIndex": {
         const { corpusName, displayName, description } = body;
         if (!corpusName) {
@@ -240,7 +240,7 @@ exports.handler = async (event, context) => {
         return json200(data);
       }
 
-      // E) deployIndex: Create an index endpoint
+      // E) deployIndex: Create an index endpoint.
       case "deployIndex": {
         const { indexName } = body;
         if (!indexName) {
@@ -268,7 +268,7 @@ exports.handler = async (event, context) => {
         });
       }
 
-      // F) search: Submit text or image queries to the index endpoint
+      // F) search: Submit text or image queries to the index endpoint.
       case "search": {
         const { indexEndpointName, textQuery, imageQueryBase64 } = body;
         if (!indexEndpointName) {
@@ -316,6 +316,7 @@ exports.handler = async (event, context) => {
 function json200(obj) {
   return { statusCode: 200, body: JSON.stringify(obj) };
 }
+
 function json400(obj) {
   return { statusCode: 400, body: JSON.stringify(obj) };
 }
