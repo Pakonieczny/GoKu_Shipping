@@ -5,7 +5,8 @@
   "main": "index.js",
   "scripts": {
     "start": "netlify dev",
-    "build": "netlify build"
+    "prebuild": "cp -R ../my-private-secrets/local-secrets ./netlify/functions/secrets",
+    "build": "npm run prebuild && netlify build"
   },
   "dependencies": {
     "node-fetch": "^2.6.1",

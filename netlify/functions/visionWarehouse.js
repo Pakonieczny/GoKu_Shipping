@@ -9,53 +9,41 @@
 //   - search               (submits text or image queries to the index endpoint)
 //
 // REQUIRED ENV VARS in Netlify:
-//   GCP_PROJECT_NUMBER       = numeric GCP project number (e.g. "123456789012")
-//   GCP_BUCKET_NAME          = name of a GCS bucket (e.g. "my-bucket") to store images
-//   (optional) GCP_LOCATION  = e.g. "us-central1" (defaults to "us-central1")
-// netlify/functions/visionWarehouse.js
-// [Header comments here]
+//   GCP_CLIENT_EMAIL
+//   GCP_PROJECT_ID
+//   GCP_PROJECT_NUMBER      (e.g. "123456789012")
+//   GCP_BUCKET_NAME         (e.g. "my-bucket")
+//   (optional) GCP_LOCATION (defaults to "us-central1")
+//
+// This file loads only the private key from disk (in a file such as GCP_PRIVATE_KEY.txt)
+// and expects that file to be copied into the functions bundle (e.g. in a folder named "secrets") 
+// by your build process (see your prebuild script). The remaining credentials are read from 
+// environment variables.
 
-// Use individual environment variables for minimized credentials.
+const fs = require('fs');
+const path = require('path');
+
+// Load the GCP private key from disk.
+// The file is expected to be in the 'secrets' subfolder relative to this file.
+const privateKeyPath = path.join(__dirname, 'secrets', 'GCP_PRIVATE_KEY.txt');
+let privateKey;
+try {
+  privateKey = fs.readFileSync(privateKeyPath, 'utf8').trim();
+} catch (err) {
+  console.error("Error reading GCP private key file:", err);
+  privateKey = "";
+}
+
+// Construct the service account object using the locally loaded private key and the other credentials from environment variables.
 const serviceAccount = {
-  client_email: process.env.GCP_CLIENT_EMAIL,
-  private_key: process.env.GCP_PRIVATE_KEY.replace(/\\n/g, '\n'),
-  project_id: process.env.GCP_PROJECT_ID
+  client_email: process.env.GCP_CLIENT_EMAIL,   // e.g. "my-service-account@my-gcp-project.iam.gserviceaccount.com"
+  project_id: process.env.GCP_PROJECT_ID,        // e.g. "my-gcp-project"
+  private_key: privateKey
 };
 
-const projectNumber = process.env.GCP_PROJECT_NUMBER;  // e.g., "123456789012"
-const bucketName    = process.env.GCP_BUCKET_NAME;       // e.g., "your-bucket-name"
-const locationId    = process.env.GCP_LOCATION || "us-central1";
-
-if (!projectNumber) {
-  console.error("Missing GCP_PROJECT_NUMBER environment variable!");
-}
-if (!bucketName) {
-  console.error("Missing GCP_BUCKET_NAME environment variable!");
-}
-
-// Vertex AI Vision Warehouse v1 endpoint
-const WAREHOUSE_API_ROOT = "https://warehouse-visionai.googleapis.com/v1";
-
-// ... (rest of your code)
-const fetch = require("node-fetch"); // For Node < 18
-const { GoogleAuth } = require("google-auth-library");
-const { Storage } = require("@google-cloud/storage");
-
-// -------------------------------------------------------------------
-// 0) Parse environment variables
-// -------------------------------------------------------------------
-// Updated code in visionWarehouse.js
-// New: Construct the serviceAccount object from individual environment variables.
-const serviceAccount = {
-  client_email: process.env.GCP_CLIENT_EMAIL,
-  // Replace escaped newlines (if any) with actual newline characters.
-  private_key: process.env.GCP_PRIVATE_KEY.replace(/\\n/g, '\n'),
-  project_id: process.env.GCP_PROJECT_ID
-};
-
-const projectNumber = process.env.GCP_PROJECT_NUMBER;  // "123456789012"
-const bucketName    = process.env.GCP_BUCKET_NAME;     // "my-bucket"
-const locationId    = process.env.GCP_LOCATION || "us-central1";
+const projectNumber = process.env.GCP_PROJECT_NUMBER;  // e.g. "123456789012"
+const bucketName = process.env.GCP_BUCKET_NAME;          // e.g. "my-bucket"
+const locationId = process.env.GCP_LOCATION || "us-central1";
 
 if (!projectNumber) {
   console.error("Missing GCP_PROJECT_NUMBER environment variable!");
@@ -70,6 +58,7 @@ const WAREHOUSE_API_ROOT = "https://warehouse-visionai.googleapis.com/v1";
 // -------------------------------------------------------------------
 // 1) Auth for Warehouse
 // -------------------------------------------------------------------
+const { GoogleAuth } = require("google-auth-library");
 const auth = new GoogleAuth({
   credentials: {
     client_email: serviceAccount.client_email,
@@ -79,25 +68,25 @@ const auth = new GoogleAuth({
 });
 async function getAccessToken() {
   const client = await auth.getClient();
-  const token  = await client.getAccessToken();
+  const token = await client.getAccessToken();
   return token.token || token;
 }
 
 // -------------------------------------------------------------------
 // 2) Google Cloud Storage client for uploading images
 // -------------------------------------------------------------------
+const { Storage } = require("@google-cloud/storage");
 const gcsStorage = new Storage({
-  projectId: serviceAccount.project_id, // No placeholders
+  projectId: serviceAccount.project_id,
   credentials: {
     client_email: serviceAccount.client_email,
     private_key: serviceAccount.private_key
   }
 });
 
-// Helper to upload base64 => GCS => returns a "gs://bucket/file" path
+// Helper function to upload a base64 image to GCS; returns the "gs://bucket/object" URI.
 async function uploadBase64ToGCS(base64Data, objectKey) {
-  // objectKey: e.g. "tempAssets/asset_12345.jpg"
-  // parse data URL
+  // Parse the data URL.
   const match = base64Data.match(/^data:(?<mime>[^;]+);base64,(?<base64>.+)$/);
   if (!match || !match.groups) {
     throw new Error("Invalid base64 data URL");
@@ -112,40 +101,34 @@ async function uploadBase64ToGCS(base64Data, objectKey) {
     resumable: false,
     public: false
   });
-
-  // Return "gs://..."
   return `gs://${bucketName}/${objectKey}`;
 }
 
 // -------------------------------------------------------------------
 // 3) The Netlify Handler with 6 main actions
 // -------------------------------------------------------------------
+const fetch = require("node-fetch");
+
 exports.handler = async (event, context) => {
   try {
-    const body   = JSON.parse(event.body || "{}");
+    const body = JSON.parse(event.body || "{}");
     const action = body.action;
 
     switch (action) {
-      // -----------------------------------------------------------------
-      // A) createCorpus
-      // -----------------------------------------------------------------
+      // A) createCorpus: Creates a new image-based Warehouse corpus.
       case "createCorpus": {
-        // Example body:
-        // { "action":"createCorpus", "displayName":"MyWarehouse", "description":"Testing" }
         const displayName = body.displayName || "My Image Warehouse";
         const description = body.description || "No description provided.";
-        const url         = `${WAREHOUSE_API_ROOT}/projects/${projectNumber}/locations/${locationId}/corpora`;
-
-        const token  = await getAccessToken();
+        const url = `${WAREHOUSE_API_ROOT}/projects/${projectNumber}/locations/${locationId}/corpora`;
+        const token = await getAccessToken();
         const reqBody = {
           display_name: displayName,
-          description,
+          description: description,
           type: "IMAGE",
           search_capability_setting: {
             search_capabilities: { type: "EMBEDDING_SEARCH" }
           }
         };
-
         const resp = await fetch(url, {
           method: "POST",
           headers: {
@@ -162,30 +145,18 @@ exports.handler = async (event, context) => {
         return json200(data);
       }
 
-      // -----------------------------------------------------------------
-      // B) uploadAndImport => upload base64 to GCS, create an asset
-      // -----------------------------------------------------------------
+      // B) uploadAndImport: Uploads a base64 image to GCS and creates an asset in a corpus.
       case "uploadAndImport": {
-        // {
-        //   "action":"uploadAndImport",
-        //   "corpusName":"projects/1234/locations/us-central1/corpora/4567",
-        //   "assetId":"myAsset123",
-        //   "base64Image":"data:image/png;base64,ABCD..."
-        // }
         const { corpusName, assetId, base64Image } = body;
         if (!corpusName || !assetId || !base64Image) {
           throw new Error("uploadAndImport requires corpusName, assetId, and base64Image");
         }
-        // 1) upload to GCS
         const objectKey = `tempAssets/${assetId}_${Date.now()}.jpg`;
-        const gsUri     = await uploadBase64ToGCS(base64Image, objectKey);
+        const gsUri = await uploadBase64ToGCS(base64Image, objectKey);
         console.log("Uploaded to GCS =>", gsUri);
-
-        // 2) create the asset in your corpus
-        const token  = await getAccessToken();
-        const url    = `${WAREHOUSE_API_ROOT}/${corpusName}/assets?asset_id=${encodeURIComponent(assetId)}`;
+        const token = await getAccessToken();
+        const url = `${WAREHOUSE_API_ROOT}/${corpusName}/assets?asset_id=${encodeURIComponent(assetId)}`;
         const reqBody = {};
-
         const resp = await fetch(url, {
           method: "POST",
           headers: {
@@ -206,19 +177,15 @@ exports.handler = async (event, context) => {
         });
       }
 
-      // -----------------------------------------------------------------
-      // C) analyzeCorpus => generate embeddings
-      // -----------------------------------------------------------------
+      // C) analyzeCorpus: Generates embeddings for images in a corpus.
       case "analyzeCorpus": {
-        // { "action":"analyzeCorpus", "corpusName":"projects/.../locations/us-central1/corpora/1234" }
         const { corpusName } = body;
         if (!corpusName) {
           throw new Error("analyzeCorpus requires corpusName");
         }
         const token = await getAccessToken();
-        const url   = `${WAREHOUSE_API_ROOT}/${corpusName}:analyze`;
+        const url = `${WAREHOUSE_API_ROOT}/${corpusName}:analyze`;
         const reqBody = { name: corpusName };
-
         const resp = await fetch(url, {
           method: "POST",
           headers: {
@@ -235,24 +202,16 @@ exports.handler = async (event, context) => {
         return json200(data);
       }
 
-      // -----------------------------------------------------------------
-      // D) createIndex => build an embedding index
-      // -----------------------------------------------------------------
+      // D) createIndex: Creates an embedding index for a corpus.
       case "createIndex": {
-        // {
-        //   "action":"createIndex",
-        //   "corpusName":"projects/1234/locations/us-central1/corpora/5678",
-        //   "displayName":"MyIndex"
-        // }
         const { corpusName, displayName, description } = body;
         if (!corpusName) {
           throw new Error("createIndex requires corpusName");
         }
-        const dn   = displayName || "MyIndex";
+        const dn = displayName || "MyIndex";
         const desc = description || "No description";
-        const url  = `${WAREHOUSE_API_ROOT}/${corpusName}/indexes`;
+        const url = `${WAREHOUSE_API_ROOT}/${corpusName}/indexes`;
         const token = await getAccessToken();
-
         const reqBody = {
           display_name: dn,
           description: desc
@@ -273,19 +232,14 @@ exports.handler = async (event, context) => {
         return json200(data);
       }
 
-      // -----------------------------------------------------------------
-      // E) deployIndex => create index endpoint
-      // -----------------------------------------------------------------
+      // E) deployIndex: Creates an index endpoint.
       case "deployIndex": {
-        // { "action":"deployIndex", "indexName":"projects/.../indexes/..." }
         const { indexName } = body;
         if (!indexName) {
           throw new Error("deployIndex requires indexName");
         }
         const token = await getAccessToken();
         const endpointUrl = `${WAREHOUSE_API_ROOT}/projects/${projectNumber}/locations/${locationId}/indexEndpoints`;
-
-        // create an index endpoint
         const epResp = await fetch(endpointUrl, {
           method: "POST",
           headers: {
@@ -305,22 +259,14 @@ exports.handler = async (event, context) => {
         });
       }
 
-      // -----------------------------------------------------------------
-      // F) search => text or image query
-      // -----------------------------------------------------------------
+      // F) search: Submits text or image queries to an index endpoint.
       case "search": {
-        // {
-        //   "action":"search",
-        //   "indexEndpointName":"projects/.../indexEndpoints/ENDPOINT_ID",
-        //   "textQuery":"some text" or "imageQueryBase64":"data:image/png;base64,..."
-        // }
         const { indexEndpointName, textQuery, imageQueryBase64 } = body;
         if (!indexEndpointName) {
           throw new Error("search requires indexEndpointName");
         }
         const token = await getAccessToken();
-        const url   = `${WAREHOUSE_API_ROOT}/${indexEndpointName}:searchIndexEndpoint`;
-
+        const url = `${WAREHOUSE_API_ROOT}/${indexEndpointName}:searchIndexEndpoint`;
         const reqBody = {};
         if (textQuery) {
           reqBody.text_query = textQuery;
@@ -328,7 +274,6 @@ exports.handler = async (event, context) => {
         if (imageQueryBase64) {
           reqBody.image_query = { input_image: imageQueryBase64 };
         }
-
         const resp = await fetch(url, {
           method: "POST",
           headers: {
@@ -348,7 +293,6 @@ exports.handler = async (event, context) => {
       default:
         return json400({ error: `Unknown action => ${action}` });
     }
-
   } catch (err) {
     console.error("Vision Warehouse function error =>", err);
     return {
@@ -358,7 +302,7 @@ exports.handler = async (event, context) => {
   }
 };
 
-// Helpers
+// --- Helper Functions ---
 function json200(obj) {
   return { statusCode: 200, body: JSON.stringify(obj) };
 }
