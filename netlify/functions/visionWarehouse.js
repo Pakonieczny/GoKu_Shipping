@@ -26,7 +26,7 @@ const fs = require('fs');
 const path = require('path');
 
 // The file is expected to be in the "secrets" subfolder relative to this file.
-const privateKeyPath = path.join(__dirname, 'secrets', 'GCP_PRIVATE_KEY.txt');
+const privateKeyPath = path.join(__dirname, 'secrets', 'gcpPrivateKey.txt');
 let gcpPrivateKey;
 try {
   gcpPrivateKey = fs.readFileSync(privateKeyPath, 'utf8');
