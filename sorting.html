@@ -100,7 +100,7 @@
       transform-origin: center center;
       transition: transform 0.3s ease;
     }
-    /* Detail text boxes: 55px x 7px, left-justified relative to preview box */
+    /* Detail text boxes: 55px x 7px */
     .detail-box {
       position: absolute;
       width: 55px;
@@ -136,7 +136,9 @@
     #configTable .left-input,
     #configTable .top-input,
     #configTable .width-input,
-    #configTable .height-input { width: 80px !important; }
+    #configTable .height-input {
+      width: 80px !important;
+    }
   </style>
 </head>
 <body>
@@ -182,7 +184,7 @@
     </div>
   </div>
   
-  <!-- Matches Modal (Shared, but will be populated with cell-specific matches) -->
+  <!-- Matches Modal (Shared, for cell-specific matches) -->
   <div id="matchesModal" class="modal">
     <div class="modal-content">
       <h5>Successful Image Matches</h5>
@@ -200,13 +202,13 @@
     // We'll store the base URL for Netlify functions
     const functionsBaseUrl = window.location.origin + "/.netlify/functions";
 
-    // Global arrays to store images
     let croppedImagesArray = [];
     let userImagesArray = [];
     let cellMatches = {};
     let partialMatches = {};
     let currentProductSetId = null; // For Vision Product Search
 
+    // On-page load: check for any returning OAuth tokens
     (function(){
       const urlParams = new URLSearchParams(window.location.search);
       const accessToken = urlParams.get("access_token");
@@ -231,7 +233,8 @@
         }
       }
     })();
-
+    
+    // Generate random string (already present in the original code)
     function generateRandomString(length) {
       const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
       let text = "";
@@ -241,6 +244,16 @@
       return text;
     }
 
+    // ***** ADDED FROM sorting copy.html *****
+    // This function creates the PKCE code challenge
+    async function generateCodeChallenge(codeVerifier) {
+      const encoder = new TextEncoder();
+      const data = encoder.encode(codeVerifier);
+      const digest = await crypto.subtle.digest("SHA-256", data);
+      let base64String = btoa(String.fromCharCode(...new Uint8Array(digest)));
+      return base64String.replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+    }
+
     document.addEventListener("DOMContentLoaded", function() {
       M.AutoInit();
       setTimeout(() => {
@@ -248,12 +261,29 @@
         document.body.style.opacity = 1;
       }, 200);
 
+      // ***** UPDATED TO MATCH sorting copy.html *****
       // Connect to Etsy
       document.getElementById("connectEtsyBtn").addEventListener("click", async function() {
         try {
           const codeVerifier = generateRandomString(64);
           localStorage.setItem("etsy_code_verifier", codeVerifier);
-          // ... your existing Etsy OAuth approach
+          const codeChallenge = await generateCodeChallenge(codeVerifier);
+
+          // Hardcoded credentials for demonstration:
+          const CLIENT_ID = "k75zdspz4r99txpqdji7i2em";
+          const redirectUri = "https://sorting.goldenspike.app";
+          const state = "randomState123";
+          const scope = "listings_w listings_r transactions_r transactions_w";
+
+          const etsyAuthUrl =
+            "https://www.etsy.com/oauth/connect?response_type=code" +
+            "&client_id=" + CLIENT_ID +
+            "&redirect_uri=" + encodeURIComponent(redirectUri) +
+            "&scope=" + encodeURIComponent(scope) +
+            "&state=" + state +
+            "&code_challenge=" + encodeURIComponent(codeChallenge) +
+            "&code_challenge_method=S256";
+          window.location.href = etsyAuthUrl;
         } catch (err) {
           console.error("OAuth start error:", err);
           M.toast({ html: "OAuth error: " + err.message });
@@ -286,13 +316,16 @@
         }
       });
 
-      // Etsy Order Number "Enter" => load orders
+      // Etsy Order Number => load orders on Enter
       const etsyOrderInput = document.getElementById("etsyOrderNumber");
       etsyOrderInput.addEventListener("keydown", async function(e) {
         if (e.key === "Enter") {
           const inputVal = etsyOrderInput.value.trim();
           if (!inputVal) return;
-          const orderNumbers = inputVal.split(",").map(x => x.trim()).filter(x => x);
+          const orderNumbers = inputVal
+            .split(",")
+            .map(x => x.trim())
+            .filter(x => x);
           await loadBatchEtsyOrders(orderNumbers);
         }
       });
@@ -321,9 +354,9 @@
       });
     });
 
-    // ============================
-    // Netlify Function Calls
-    // ============================
+    // ~~~~~~~~~~~~~~~~~~~~~~~~~~
+    // Google Vision Product Search Routines
+    // ~~~~~~~~~~~~~~~~~~~~~~~~~~
     async function initGoogleProductSearchSession() {
       currentProductSetId = "temp_" + Date.now();
       const body = {
@@ -348,8 +381,6 @@
     }
 
     async function googleProductSearchForEtsyImage(base64) {
-      // In reality, we'd need to upload this 'base64' to a GCS or HTTPS link. 
-      // For demonstration, the server uses placekitten. 
       const body = {
         action: "search",
         productSetId: currentProductSetId,
@@ -384,9 +415,9 @@
       currentProductSetId = null;
     }
 
-    // ============================
-    // The main "sendAndMatch"
-    // ============================
+    // ~~~~~~~~~~~~~~~~~~~~~~~~~~
+    // The main "Send & Match"
+    // ~~~~~~~~~~~~~~~~~~~~~~~~~~
     async function sendAndMatch() {
       if (userImagesArray.length === 0) {
         M.toast({ html: "No user images available! Please drop user images first." });
@@ -442,8 +473,6 @@
           if (!cellMatches[i]) cellMatches[i] = [];
           cellMatches[i].push({ userName: productName, userImage: "", score: topScore });
           croppedImagesArray[i] = null;
-
-          // keep user image in userImagesArray
           partialMatches[productName] = { cellIndex: i, score: topScore };
           continue;
         }
@@ -476,9 +505,9 @@
       }
     }
 
-    // ============================
+    // ~~~~~~~~~~~~~~~~~~~~~~~~~~
     // Drag & Drop
-    // ============================
+    // ~~~~~~~~~~~~~~~~~~~~~~~~~~
     const photoDragDropElem = document.getElementById("photoDragDrop");
     photoDragDropElem.addEventListener("dragover", function(e) {
       e.preventDefault();
@@ -526,9 +555,9 @@
       });
     }
 
-    // ============================
-    // fillPreviewBoxes, loadBatchEtsyOrders, etc. remain the same
-    // ============================
+    // ~~~~~~~~~~~~~~~~~~~~~~~~~~
+    // Etsy Orders -> fillPreviewBoxes
+    // ~~~~~~~~~~~~~~~~~~~~~~~~~~
     async function loadBatchEtsyOrders(orderNumbers) {
       try {
         M.toast({ html: "Loading " + orderNumbers.length + " order(s)..." });
@@ -559,6 +588,7 @@
       const container = document.getElementById("photoGridContainer");
       container.innerHTML = "";
       window.cachedOrderItems = items;
+
       items.forEach((item, index) => {
         const row = Math.floor(index / 9);
         const col = index % 9;
@@ -604,7 +634,9 @@
         let metalSel = "";
         if (item.variations && Array.isArray(item.variations)) {
           const acceptedMetalNames = ["metal", "metal choice", "metal - engraving", "metal colour", "color", "metal choice / engraving option"];
-          const metalVar = item.variations.find(v => v.formatted_name && acceptedMetalNames.includes(v.formatted_name.trim().toLowerCase()));
+          const metalVar = item.variations.find(v =>
+            v.formatted_name && acceptedMetalNames.includes(v.formatted_name.trim().toLowerCase())
+          );
           if (metalVar && metalVar.formatted_value) {
             metalSel = metalVar.formatted_value;
           }
@@ -678,6 +710,79 @@
       }
     }
 
+    // ~~~~~~~~~~~~~~~~~~~~~~~~~~
+    // Crop images from the grid
+    // ~~~~~~~~~~~~~~~~~~~~~~~~~~
+    async function cropAllImages() {
+      const previewBoxes = document.querySelectorAll(".preview-box");
+      for (let i = 0; i < previewBoxes.length; i++) {
+        const cell = previewBoxes[i];
+        const img = cell.querySelector("img");
+        if (img && img.src) {
+          try {
+            const cropped = await cropImageFromPreview(cell, 512, 512);
+            croppedImagesArray[i] = cropped;
+            M.toast({ html: `Cell ${i}: Cropped successfully.` });
+          } catch (err) {
+            console.error("Cropping failed for cell", i, err);
+            M.toast({ html: `Cell ${i}: Cropping error.` });
+          }
+        }
+      }
+    }
+
+    function cropImageFromPreview(cell, canvasWidth, canvasHeight) {
+      return new Promise((resolve, reject) => {
+        const imgElem = cell.querySelector("img");
+        if (!imgElem) {
+          reject("No image element found");
+          return;
+        }
+        
+        const cellRect = cell.getBoundingClientRect();
+        const imgRect = imgElem.getBoundingClientRect();
+
+        const visibleLeft = Math.max(cellRect.left, imgRect.left);
+        const visibleTop = Math.max(cellRect.top, imgRect.top);
+        const visibleRight = Math.min(cellRect.right, imgRect.right);
+        const visibleBottom = Math.min(cellRect.bottom, imgRect.bottom);
+
+        if (visibleRight <= visibleLeft || visibleBottom <= visibleTop) {
+          reject("No visible intersection");
+          return;
+        }
+
+        const visibleWidth = visibleRight - visibleLeft;
+        const visibleHeight = visibleBottom - visibleTop;
+
+        const sourceImage = new Image();
+        sourceImage.crossOrigin = "Anonymous"; 
+        sourceImage.onload = function() {
+          const ratioX = sourceImage.naturalWidth / imgRect.width;
+          const ratioY = sourceImage.naturalHeight / imgRect.height;
+
+          const srcX = (visibleLeft - imgRect.left) * ratioX;
+          const srcY = (visibleTop - imgRect.top) * ratioY;
+          const srcWidth = visibleWidth * ratioX;
+          const srcHeight = visibleHeight * ratioY;
+
+          const canvas = document.createElement("canvas");
+          canvas.width = canvasWidth;
+          canvas.height = canvasHeight;
+          const ctx = canvas.getContext("2d");
+          ctx.drawImage(sourceImage, srcX, srcY, srcWidth, srcHeight, 0, 0, canvasWidth, canvasHeight);
+          resolve(canvas.toDataURL());
+        };
+        sourceImage.onerror = function(e) {
+          reject(e);
+        };
+        sourceImage.src = imgElem.src;
+      });
+    }
+
+    // ~~~~~~~~~~~~~~~~~~~~~~~~~~
+    // Zoom & Drag in preview boxes
+    // ~~~~~~~~~~~~~~~~~~~~~~~~~~
     function attachPreviewBoxListeners(box) {
       let isDragging = false;
       let isMouseDown = false;
@@ -768,6 +873,9 @@
       });
     }
 
+    // ~~~~~~~~~~~~~~~~~~~~~~~~~~
+    // Position loading and config table
+    // ~~~~~~~~~~~~~~~~~~~~~~~~~~
     function loadPositions() {
       const configIDs = [
         "connectEtsyBtn", "testOpenAIBtn", "openConfigBtn", "etsyOrderNumber",
@@ -813,6 +921,7 @@
           <td><input type="number" value="${heightVal}" data-id="${id}" class="height-input"></td>
         `;
         tbody.appendChild(row);
+
         row.querySelector(".left-input").addEventListener("input", function() {
           const target = document.getElementById(this.dataset.id);
           if (target) target.style.left = parseInt(this.value, 10) + "px";
