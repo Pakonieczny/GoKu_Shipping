@@ -7,7 +7,6 @@
     "prebuild": "mkdir -p ./netlify/functions/secrets && cp -R ./gcp-secrets/secrets ./netlify/functions/secrets && ls -la ./netlify/functions/secrets",
     "build": "npm run prebuild && netlify build",
     "start": "netlify dev"
-
   },
   "dependencies": {
     "node-fetch": "^2.6.1",
@@ -15,7 +14,9 @@
     "form-data": "^4.0.0",
     "bootstrap": "^5.2.0",
     "firebase-admin": "^11.5.0",
-    "@google-cloud/vision": "^4.3.1"
+    "@google-cloud/vision": "^4.3.1",
+    "google-auth-library": "^7.16.0",
+    "@google-cloud/storage": "^5.18.4"
   },
   "devDependencies": {},
   "keywords": [],
