@@ -22,7 +22,14 @@ const { Storage } = require("@google-cloud/storage");
 // 0) Parse environment variables
 // -------------------------------------------------------------------
 // Updated code in visionWarehouse.js
-const serviceAccount = require("./GCP_Service_Account_Credentials.json");
+const serviceAccountRaw = process.env.GCP_SERVICE_ACCOUNT_JSON || "{}";
+let serviceAccount;
+try {
+  serviceAccount = JSON.parse(serviceAccountRaw);
+} catch (err) {
+  console.error("Error parsing GCP_SERVICE_ACCOUNT_JSON:", err);
+  serviceAccount = {};
+}
 // Now you no longer use process.env.GCP_SERVICE_ACCOUNT_JSON
 
 const projectNumber = process.env.GCP_PROJECT_NUMBER;  // "123456789012"

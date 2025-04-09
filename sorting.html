@@ -199,6 +199,10 @@
   <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/materialize/1.0.0/js/materialize.min.js"></script>
   <script>
+
+    const DEFAULT_INDEX_ENDPOINT_NAME = "projects/my-gcp-project/locations/us-central1/indexEndpoints/1234567890123456789";
+    const DEFAULT_TEXT_QUERY = "Default search query";
+    
     // We'll store the base URL for Netlify functions
     const functionsBaseUrl = window.location.origin + "/.netlify/functions";
 
@@ -337,13 +341,13 @@
         });
 
         // Send & Match
-          document.getElementById("sendMatchBtn").addEventListener("click", async function() {
-          try {
-              await warehouseSendAndMatch();
-          } catch (err) {
-              console.error("Send & Match error:", err);
-              M.toast({ html: "Error: " + err.message });
-          }
+        document.getElementById("sendMatchBtn").addEventListener("click", async function() {
+        try {
+          await warehouseSendAndMatch();
+        } catch (err) {
+          console.error("Send & Match error:", err);
+          M.toast({ html: "Error: " + err.message });
+        }
       });
     });
         //New visionWarehouse flow
@@ -877,10 +881,11 @@
       }
     }
 
-          // NEW: Matching function using Vision Warehouse API per cell
-          // Prompt for the index endpoint name once (applied to all cells)
-        async function warehouseSendAndMatch() {
-        const endpoint = prompt("Enter indexEndpointName (projects/.../indexEndpoints/ID):");
+          /// NEW: Matching function using Vision Warehouse API per cell.
+          // This replaces the old sendAndMatch() function.
+      async function warehouseSendAndMatch() {
+        // Use the default endpoint defined in configuration
+        const endpoint = DEFAULT_INDEX_ENDPOINT_NAME;
         if (!endpoint) {
           M.toast({ html: "Index endpoint name is required." });
           return;
@@ -903,14 +908,15 @@
           const matchBox = document.getElementById("matchCell" + i);
           const croppedImage = croppedImagesArray[i];
 
-          // Build the request body for the Vision Warehouse search; use the cropped image as the image query.
+          // Build the request body for Vision Warehouse search; use the cropped image as the image query.
           const reqBody = {
             action: "search",
             indexEndpointName: endpoint,
             imageQueryBase64: croppedImage
+            // If needed, add textQuery: DEFAULT_TEXT_QUERY,
           };
           
-          // Send the request to the Vision Warehouse Netlify function.
+          // Send the request to your Vision Warehouse Netlify function.
           const resp = await fetch(functionsBaseUrl + "/visionWarehouse", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
