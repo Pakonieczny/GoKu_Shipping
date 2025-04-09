@@ -997,7 +997,7 @@ async function sendAndMatch() {
 
 async function compareImages(userImage, croppedGridImage, cellIndex, userImageName, signal = undefined) {
   const payload = {
-    model: "gpt-4o-mini",
+    model: "gpt-4o",
     messages: [
       {
         role: "user",
@@ -1008,7 +1008,7 @@ async function compareImages(userImage, croppedGridImage, cellIndex, userImageNa
               "Follow the below rules strictly!!! " +
               "1. Look for a best fit and matching charms within the two images. " +
               "2. Return a numeric similarity score between 0.0000 and 1.0000 with EXACTLY four decimal places, for example 0.8937, 0.9231, or 1.675, and no additional text. " +
-              "3. Return a similarity score, ensuring you have thoroughly analyzed every edge, line, and engraving in the charm. " +
+              "3. Return a similarity score, ensuring you have thoroughly analyzed every edge, line, and engraving in the charm." +
               "4. Focus intensely on the charm’s outline and the shape of each internal engraving. " +
               "5. Describe each line, curve, and any letters or design inside the charm itself. " +
               "6. If you detect an animal charm then focus matching the existance and position of the HEAD, EYES, BEAK, MOUTH, EARS, LEGS, WINGS to make a better match " +
@@ -1017,7 +1017,8 @@ async function compareImages(userImage, croppedGridImage, cellIndex, userImageNa
               "9. Examine each engraved line or symbol inside the charm. " +
               "10. Compare the relative size and position of these engravings. " +
               "11. Ignore all items attached to or surrounding the charm such as necklaces, chains, hoops, rings, clothing, or skin. " +
-              "12. Emphasize the pose and direction the charm is facing. " 
+              "12. Emphasize the pose and direction the charm is facing. " +
+              "13. Focus on subtle details in the charm’s outline and interior engravings. "
           },
           { type: "image_url", image_url: { url: userImage, detail: "high" } },
           { type: "image_url", image_url: { url: croppedGridImage, detail: "high" } }
