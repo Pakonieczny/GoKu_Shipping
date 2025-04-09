@@ -7,7 +7,6 @@
     "prebuild": "mkdir -p ./netlify/functions/secrets && cp -R ../gcp-secrets/secrets/* ./netlify/functions/secrets",
     "build": "npm run prebuild && netlify build",
     "start": "netlify dev"
-  }
 
   },
   "dependencies": {
