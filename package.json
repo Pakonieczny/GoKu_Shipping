@@ -4,7 +4,7 @@
   "description": "Etsy listing and image upload application",
   "main": "index.js",
   "scripts": {
-    "prebuild": "mkdir -p ./netlify/functions/secrets && cp -vR ../Users/pakonieczny/desktop/GoKu_Shipping/gcp-secrets/secrets* ./netlify/functions/secrets",
+    "prebuild": "mkdir -p ./netlify/functions/secrets && cp -vR /Users/pakonieczny/desktop/GoKu_Shipping/gcp-secrets/secrets* ./netlify/functions/secrets",
     "build": "npm run prebuild && netlify build",
     "start": "netlify dev"
 
