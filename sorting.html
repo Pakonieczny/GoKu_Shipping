@@ -330,179 +330,51 @@
         }
       });
 
-      // Crop Images
-      document.getElementById("cropImagesBtn").addEventListener("click", async function() {
-        croppedImagesArray = [];
-        await cropAllImages();
-      });
+        // Crop Images
+        document.getElementById("cropImagesBtn").addEventListener("click", async function() {
+          croppedImagesArray = [];
+          await cropAllImages();
+        });
 
-      // Send & Match
-      document.getElementById("sendMatchBtn").addEventListener("click", async function() {
-        try {
-          // 1) Initialize the ProductSet with user images
-          await initGoogleProductSearchSession();
-
-          // 2) Run sendAndMatch
-          await sendAndMatch();
-
-          // 3) Cleanup
-          await cleanupGoogleProductSearchSession();
-        } catch (err) {
-          console.error("Send & Match error:", err);
-          M.toast({ html: "Error: " + err.message });
-        }
+        // Send & Match
+          document.getElementById("sendMatchBtn").addEventListener("click", async function() {
+          try {
+              await warehouseSendAndMatch();
+          } catch (err) {
+              console.error("Send & Match error:", err);
+              M.toast({ html: "Error: " + err.message });
+          }
       });
     });
-
-    // ~~~~~~~~~~~~~~~~~~~~~~~~~~
-    // Google Vision Product Search Routines
-    // ~~~~~~~~~~~~~~~~~~~~~~~~~~
-    async function initGoogleProductSearchSession() {
-      currentProductSetId = "temp_" + Date.now();
-      const body = {
-        action: "init",
-        productSetId: currentProductSetId,
-        location: "us-east1",
-        base64Images: userImagesArray.map(u => ({
-          name: u.name,
-          base64: u.data
-        }))
-      };
-      const resp = await fetch(`${functionsBaseUrl}/googleVisionProductSearch`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body)
-      });
-      const data = await resp.json();
-      if (!data.success) {
-        throw new Error("Failed to init ProductSet: " + JSON.stringify(data));
+        //New visionWarehouse flow
+        async function warehouseSearchFlow() {
+      // Prompt the user for the index endpoint name
+      const endpoint = prompt("Enter indexEndpointName (projects/.../indexEndpoints/ID):");
+      if (!endpoint) {
+        M.toast({ html: "Index endpoint name is required." });
+        return;
       }
-      console.log("ProductSet created:", data.productSetId);
-    }
-
-    async function googleProductSearchForEtsyImage(base64) {
-      const body = {
+      // Prompt for a text query
+      const textQuery = prompt("Enter a text query:");
+      if (!textQuery) {
+        M.toast({ html: "Text query is required." });
+        return;
+      }
+      // Build the request body for Vision Warehouse search
+      const reqBody = {
         action: "search",
-        productSetId: currentProductSetId,
-        location: "us-east1",
-        singleEtsyImage: { name: "etsy", base64 }
+        indexEndpointName: endpoint,
+        textQuery: textQuery
       };
-      const resp = await fetch(`${functionsBaseUrl}/googleVisionProductSearch`, {
+      // Send the request to your Vision Warehouse Netlify function
+      const resp = await fetch(functionsBaseUrl + "/visionWarehouse", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body)
+        body: JSON.stringify(reqBody)
       });
       const data = await resp.json();
-      return {
-        score: data.matchScore || 0,
-        productName: data.productName || null
-      };
-    }
-
-    async function cleanupGoogleProductSearchSession() {
-      if (!currentProductSetId) return;
-      const body = {
-        action: "cleanup",
-        productSetId: currentProductSetId,
-        location: "us-east1"
-      };
-      await fetch(`${functionsBaseUrl}/googleVisionProductSearch`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body)
-      });
-      console.log("Cleaned up ProductSet " + currentProductSetId);
-      currentProductSetId = null;
-    }
-
-    // ~~~~~~~~~~~~~~~~~~~~~~~~~~
-    // The main "Send & Match"
-    // ~~~~~~~~~~~~~~~~~~~~~~~~~~
-    async function sendAndMatch() {
-      if (userImagesArray.length === 0) {
-        M.toast({ html: "No user images available! Please drop user images first." });
-        return;
-      }
-      if (!croppedImagesArray || croppedImagesArray.length === 0) {
-        M.toast({ html: "No cropped grid images available! Please crop images first." });
-        return;
-      }
-
-      let unmatchedCells = [];
-      for (let i = 0; i < croppedImagesArray.length; i++) {
-        if (croppedImagesArray[i]) unmatchedCells.push(i);
-      }
-
-      for (const i of unmatchedCells) {
-        const matchBox = document.getElementById("matchCell" + i);
-        const etsyCroppedBase64 = croppedImagesArray[i];
-
-        // Query Vision Product Search
-        const { score, productName } = await googleProductSearchForEtsyImage(etsyCroppedBase64);
-        if (score === 0) {
-          M.toast({ html: "Cell " + i + ": No valid matches found (score=0)." });
-          continue;
-        }
-        const topScore = score;
-        const topScorePerc = (topScore * 100).toFixed(2);
-
-        M.toast({ html: `Cell ${i}: Best candidate => ${productName} (${topScorePerc}%)` });
-
-        if (topScore >= 1.0) {
-          // Perfect
-          matchBox.value = productName;
-          matchBox.style.fontWeight = (1.0 < 0.95) ? "bold" : "";
-          matchBox.style.color = (1.0 < 0.95) ? "orangered" : "";
-          if (!cellMatches[i]) cellMatches[i] = [];
-          cellMatches[i].push({ userName: productName, userImage: "", score: 1.0 });
-          userImagesArray = userImagesArray.filter(u => u.name !== productName);
-          croppedImagesArray[i] = null;
-          continue;
-        }
-
-        if (topScore < 0.90) {
-          M.toast({ html: `Cell ${i}: Score ${topScorePerc}% < 90% => no match.` });
-          continue;
-        }
-
-        if (topScore >= 0.90 && topScore < 0.95) {
-          // partial
-          matchBox.value = productName;
-          matchBox.style.fontWeight = "bold";
-          matchBox.style.color = "orangered";
-          if (!cellMatches[i]) cellMatches[i] = [];
-          cellMatches[i].push({ userName: productName, userImage: "", score: topScore });
-          croppedImagesArray[i] = null;
-          partialMatches[productName] = { cellIndex: i, score: topScore };
-          continue;
-        }
-
-        if (topScore >= 0.95) {
-          // strong
-          // if partial matched before, undo it
-          if (partialMatches[productName]) {
-            const oldCellIndex = partialMatches[productName].cellIndex;
-            const oldMatchBox = document.getElementById("matchCell" + oldCellIndex);
-            if (oldMatchBox) {
-              oldMatchBox.value = "";
-              oldMatchBox.style.fontWeight = "";
-              oldMatchBox.style.color = "";
-            }
-            if (cellMatches[oldCellIndex]) {
-              cellMatches[oldCellIndex] = cellMatches[oldCellIndex].filter(m => m.userName !== productName);
-            }
-            delete partialMatches[productName];
-          }
-
-          matchBox.value = productName;
-          matchBox.style.fontWeight = "";
-          matchBox.style.color = "";
-          if (!cellMatches[i]) cellMatches[i] = [];
-          cellMatches[i].push({ userName: productName, userImage: "", score: topScore });
-          userImagesArray = userImagesArray.filter(u => u.name !== productName);
-          croppedImagesArray[i] = null;
-        }
-      }
+      console.log("Warehouse search results:", data);
+      M.toast({ html: "Search complete. Check console for results." });
     }
 
     // ~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -1004,6 +876,99 @@
         M.Modal.getInstance(modalElem).open();
       }
     }
+
+          // NEW: Matching function using Vision Warehouse API per cell
+          // Prompt for the index endpoint name once (applied to all cells)
+        async function warehouseSendAndMatch() {
+        const endpoint = prompt("Enter indexEndpointName (projects/.../indexEndpoints/ID):");
+        if (!endpoint) {
+          M.toast({ html: "Index endpoint name is required." });
+          return;
+        }
+        
+        // Verify that we have cropped images available
+        if (!croppedImagesArray || croppedImagesArray.length === 0) {
+          M.toast({ html: "No cropped grid images available! Please crop images first." });
+          return;
+        }
+        
+        // Build an array of the cell indices that still have a cropped image.
+        let unmatchedCells = [];
+        for (let i = 0; i < croppedImagesArray.length; i++) {
+          if (croppedImagesArray[i]) unmatchedCells.push(i);
+        }
+        
+        // Iterate over each cropped image cell
+        for (const i of unmatchedCells) {
+          const matchBox = document.getElementById("matchCell" + i);
+          const croppedImage = croppedImagesArray[i];
+
+          // Build the request body for the Vision Warehouse search; use the cropped image as the image query.
+          const reqBody = {
+            action: "search",
+            indexEndpointName: endpoint,
+            imageQueryBase64: croppedImage
+          };
+          
+          // Send the request to the Vision Warehouse Netlify function.
+          const resp = await fetch(functionsBaseUrl + "/visionWarehouse", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(reqBody)
+          });
+          
+          // Parse the response.
+          const data = await resp.json();
+          const score = data.matchScore || 0;
+          const productName = data.productName || "No Match";
+          const scorePerc = (score * 100).toFixed(2);
+          
+          // Show a toast message with the candidate and its similarity score.
+          M.toast({ html: `Cell ${i}: Candidate => ${productName} (${scorePerc}%)` });
+          
+          // Update the match cell using threshold logic:
+          if (score >= 1.0) { // Perfect match
+            matchBox.value = productName;
+            matchBox.style.fontWeight = "";
+            matchBox.style.color = "";
+            if (!cellMatches[i]) cellMatches[i] = [];
+            cellMatches[i].push({ userName: productName, userImage: "", score: score });
+            croppedImagesArray[i] = null;
+          } else if (score < 0.90) {
+            M.toast({ html: `Cell ${i}: Score ${scorePerc}% is below threshold, no match.` });
+            // Optionally leave the cell unchanged or clear the match.
+          } else if (score >= 0.90 && score < 0.95) { // Partial match
+            matchBox.value = productName;
+            matchBox.style.fontWeight = "bold";
+            matchBox.style.color = "orangered";
+            if (!cellMatches[i]) cellMatches[i] = [];
+            cellMatches[i].push({ userName: productName, userImage: "", score: score });
+            croppedImagesArray[i] = null;
+            partialMatches[productName] = { cellIndex: i, score: score };
+          } else if (score >= 0.95) { // Strong match
+            // If a partial match exists for this candidate, remove it first
+            if (partialMatches[productName]) {
+              const oldCellIndex = partialMatches[productName].cellIndex;
+              const oldMatchBox = document.getElementById("matchCell" + oldCellIndex);
+              if (oldMatchBox) {
+                oldMatchBox.value = "";
+                oldMatchBox.style.fontWeight = "";
+                oldMatchBox.style.color = "";
+              }
+              if (cellMatches[oldCellIndex]) {
+                cellMatches[oldCellIndex] = cellMatches[oldCellIndex].filter(m => m.userName !== productName);
+              }
+              delete partialMatches[productName];
+            }
+            matchBox.value = productName;
+            matchBox.style.fontWeight = "";
+            matchBox.style.color = "";
+            if (!cellMatches[i]) cellMatches[i] = [];
+            cellMatches[i].push({ userName: productName, userImage: "", score: score });
+            croppedImagesArray[i] = null;
+          }
+        }
+      }
   </script>
 </body>
 </html>
