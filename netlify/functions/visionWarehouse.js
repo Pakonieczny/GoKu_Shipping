@@ -9,11 +9,34 @@
 //   - search               (submits text or image queries to the index endpoint)
 //
 // REQUIRED ENV VARS in Netlify:
-//   GCP_SERVICE_ACCOUNT_JSON = entire raw JSON of your service account key
 //   GCP_PROJECT_NUMBER       = numeric GCP project number (e.g. "123456789012")
 //   GCP_BUCKET_NAME          = name of a GCS bucket (e.g. "my-bucket") to store images
 //   (optional) GCP_LOCATION  = e.g. "us-central1" (defaults to "us-central1")
+// netlify/functions/visionWarehouse.js
+// [Header comments here]
 
+// Use individual environment variables for minimized credentials.
+const serviceAccount = {
+  client_email: process.env.GCP_CLIENT_EMAIL,
+  private_key: process.env.GCP_PRIVATE_KEY.replace(/\\n/g, '\n'),
+  project_id: process.env.GCP_PROJECT_ID
+};
+
+const projectNumber = process.env.GCP_PROJECT_NUMBER;  // e.g., "123456789012"
+const bucketName    = process.env.GCP_BUCKET_NAME;       // e.g., "your-bucket-name"
+const locationId    = process.env.GCP_LOCATION || "us-central1";
+
+if (!projectNumber) {
+  console.error("Missing GCP_PROJECT_NUMBER environment variable!");
+}
+if (!bucketName) {
+  console.error("Missing GCP_BUCKET_NAME environment variable!");
+}
+
+// Vertex AI Vision Warehouse v1 endpoint
+const WAREHOUSE_API_ROOT = "https://warehouse-visionai.googleapis.com/v1";
+
+// ... (rest of your code)
 const fetch = require("node-fetch"); // For Node < 18
 const { GoogleAuth } = require("google-auth-library");
 const { Storage } = require("@google-cloud/storage");
@@ -22,15 +45,13 @@ const { Storage } = require("@google-cloud/storage");
 // 0) Parse environment variables
 // -------------------------------------------------------------------
 // Updated code in visionWarehouse.js
-const serviceAccountRaw = process.env.GCP_SERVICE_ACCOUNT_JSON || "{}";
-let serviceAccount;
-try {
-  serviceAccount = JSON.parse(serviceAccountRaw);
-} catch (err) {
-  console.error("Error parsing GCP_SERVICE_ACCOUNT_JSON:", err);
-  serviceAccount = {};
-}
-// Now you no longer use process.env.GCP_SERVICE_ACCOUNT_JSON
+// New: Construct the serviceAccount object from individual environment variables.
+const serviceAccount = {
+  client_email: process.env.GCP_CLIENT_EMAIL,
+  // Replace escaped newlines (if any) with actual newline characters.
+  private_key: process.env.GCP_PRIVATE_KEY.replace(/\\n/g, '\n'),
+  project_id: process.env.GCP_PROJECT_ID
+};
 
 const projectNumber = process.env.GCP_PROJECT_NUMBER;  // "123456789012"
 const bucketName    = process.env.GCP_BUCKET_NAME;     // "my-bucket"
