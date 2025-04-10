@@ -1,28 +1,28 @@
 /**
  * netlify/functions/visionWarehouse.js
  *
- * Demonstrates the following Warehouse actions:
+ * This function demonstrates the following actions in Google's Vision Warehouse API:
  *   - createCorpus
- *   - uploadAndImport
+ *   - uploadAndImport (uploads a base64 image to GCS, then creates an Asset in the corpus)
  *   - analyzeCorpus
  *   - createIndex
  *   - deployIndex
  *   - search
  *
- * REQUIRED ENV VARS in Netlify:
+ * ENVIRONMENT VARIABLES (in Netlify) REQUIRED:
  *   GCP_CLIENT_EMAIL
- *   GCP_PRIVATE_KEY
+ *   GCP_PRIVATE_KEY         (with any "\n" replaced by actual newline chars)
  *   GCP_PROJECT_ID
- *   GCP_PROJECT_NUMBER
- *   GCP_BUCKET_NAME
+ *   GCP_PROJECT_NUMBER      (e.g., "123456789012")
+ *   GCP_BUCKET_NAME         (e.g., "my-warehouse-bucket")
  *   (optional) GCP_LOCATION (defaults to "us-central1")
  */
 
 const WAREHOUSE_API_ROOT = "https://warehouse-visionai.googleapis.com/v1";
 
-// -------------------------------------------------------------------
+// ---------------------------------------------------------------------
 // (0) Build the serviceAccount object from environment variables.
-// -------------------------------------------------------------------
+// ---------------------------------------------------------------------
 const serviceAccount = {
   client_email: process.env.GCP_CLIENT_EMAIL,
   private_key: process.env.GCP_PRIVATE_KEY
@@ -31,13 +31,13 @@ const serviceAccount = {
   project_id: process.env.GCP_PROJECT_ID
 };
 
-const projectNumber = process.env.GCP_PROJECT_NUMBER;
-const bucketName = process.env.GCP_BUCKET_NAME;
+const projectNumber = process.env.GCP_PROJECT_NUMBER;  // e.g., "123456789012"
+const bucketName = process.env.GCP_BUCKET_NAME;         // e.g., "my-bucket"
 const locationId = process.env.GCP_LOCATION || "us-central1";
 
-// -------------------------------------------------------------------
+// ---------------------------------------------------------------------
 // (1) Auth for Warehouse using environment variables
-// -------------------------------------------------------------------
+// ---------------------------------------------------------------------
 const { GoogleAuth } = require("google-auth-library");
 const auth = new GoogleAuth({
   credentials: serviceAccount,
@@ -50,9 +50,9 @@ async function getAccessToken() {
   return token.token || token;
 }
 
-// -------------------------------------------------------------------
-// (2) Google Cloud Storage client using environment variables
-// -------------------------------------------------------------------
+// ---------------------------------------------------------------------
+// (2) Google Cloud Storage client, for storing base64 images
+// ---------------------------------------------------------------------
 const { Storage } = require("@google-cloud/storage");
 const gcsStorage = new Storage({
   projectId: serviceAccount.project_id,
@@ -60,21 +60,21 @@ const gcsStorage = new Storage({
 });
 
 /**
- * Helper: Upload base64 image data to GCS and return a "gs://bucket/file" URI.
- * The base64 string must be of the form:
- *   data:image/png;base64,iVBORw0KGgoAAAANS...
+ * Upload a base64 data URL to GCS, returning a "gs://bucket/object" URI.
+ *
+ * - base64Data must be of the form "data:image/png;base64,iVBORw0K..."
+ * - objectKey is how we name the file in your GCS bucket (e.g. "tempAssets/assetId_time.jpg")
  */
 async function uploadBase64ToGCS(base64Data, objectKey) {
+  // Must match data:<mime>;base64,<base64String>
   const match = base64Data.match(/^data:(?<mime>[^;]+);base64,(?<base64>.+)$/);
   if (!match || !match.groups) {
     throw new Error("Invalid base64 data URL");
   }
-
-  const mimeType = match.groups.mime;         // e.g. "image/png"
-  const rawBase64 = match.groups.base64;      // e.g. "iVBORw0K..."
+  const mimeType = match.groups.mime; // e.g. "image/png"
+  const rawBase64 = match.groups.base64;
   const fileBuffer = Buffer.from(rawBase64, "base64");
 
-  // Save to your GCS bucket
   const fileRef = gcsStorage.bucket(bucketName).file(objectKey);
   await fileRef.save(fileBuffer, {
     contentType: mimeType,
@@ -82,14 +82,13 @@ async function uploadBase64ToGCS(base64Data, objectKey) {
     public: false
   });
 
-  // Return the path to the uploaded file
   return `gs://${bucketName}/${objectKey}`;
 }
 
-// -------------------------------------------------------------------
-// (3) Netlify Handler: Switch on action for the six Warehouse API actions
-// -------------------------------------------------------------------
-const fetch = require("node-fetch"); // If Node < 18
+// ---------------------------------------------------------------------
+// (3) Netlify Handler: handle the six Warehouse API actions
+// ---------------------------------------------------------------------
+const fetch = require("node-fetch"); // For Node < 18
 
 exports.handler = async (event, context) => {
   try {
@@ -97,20 +96,20 @@ exports.handler = async (event, context) => {
     const action = body.action;
 
     switch (action) {
-      //-----------------------------------------------------------
+      // ============================================================
       // A) createCorpus
-      //-----------------------------------------------------------
+      // ============================================================
       case "createCorpus": {
-        // Body fields: { displayName?: string, description?: string }
-        // Example usage:
-        // POST to /visionWarehouse with
-        // {
-        //   "action": "createCorpus",
-        //   "displayName": "My Example Corpus",
-        //   "description": "Just testing"
-        // }
+        /**
+         * Example usage (POST body):
+         * {
+         *   "action": "createCorpus",
+         *   "displayName": "My test corpus",
+         *   "description": "test corp"
+         * }
+         */
         const displayName = body.displayName || "My Image Warehouse";
-        const description = body.description || "No description provided";
+        const description = body.description || "No description provided.";
         const url = `${WAREHOUSE_API_ROOT}/projects/${projectNumber}/locations/${locationId}/corpora`;
 
         const token = await getAccessToken();
@@ -140,41 +139,44 @@ exports.handler = async (event, context) => {
         return json200(data);
       }
 
-      //-----------------------------------------------------------
-      // B) uploadAndImport: Upload base64 to GCS & create corpus asset
-      //-----------------------------------------------------------
+      // ============================================================
+      // B) uploadAndImport
+      // ============================================================
       case "uploadAndImport": {
-        // Body fields: { corpusName: string, assetId: string, base64Image: string }
-        // Example usage:
-        // POST to /visionWarehouse with
-        // {
-        //   "action": "uploadAndImport",
-        //   "corpusName": "projects/123/locations/us-central1/corpora/myCorpusID",
-        //   "assetId": "someUniqueID",
-        //   "base64Image": "data:image/png;base64,iVBORw0K..."
-        // }
+        /**
+         * Example usage (POST body):
+         * {
+         *   "action": "uploadAndImport",
+         *   "corpusName": "projects/123/locations/us-central1/corpora/myCorpusID",
+         *   "assetId": "myUniqueAssetId",
+         *   "base64Image": "data:image/png;base64,iVBORw0K..."
+         * }
+         */
         const { corpusName, assetId, base64Image } = body;
         if (!corpusName || !assetId || !base64Image) {
-          throw new Error(
-            "uploadAndImport requires corpusName, assetId, and base64Image"
-          );
+          throw new Error("uploadAndImport requires corpusName, assetId, and base64Image");
         }
 
-        // 1) Upload image to GCS
+        // 1) Upload the image to GCS
         const objectKey = `tempAssets/${assetId}_${Date.now()}.jpg`;
         const gsUri = await uploadBase64ToGCS(base64Image, objectKey);
         console.log("Uploaded to GCS =>", gsUri);
 
-        // 2) Create an asset in the corpus referencing that GCS file
+        // 2) Create an asset in the Warehouse corpus referencing that GCS URI
         const token = await getAccessToken();
         const url = `${WAREHOUSE_API_ROOT}/${corpusName}/assets?asset_id=${encodeURIComponent(assetId)}`;
 
-        // The Warehouse typically wants { "asset": { ...fields... } }
+        // This approach:
+        // - "asset" top-level
+        // - "media_type" set to "MEDIA_TYPE_IMAGE"
+        // - "asset_schema" with "mime_type" and "gcs_uri"
+        // Is known to work in many Warehouse versions.
         const reqBody = {
           asset: {
             display_name: assetId,
             media_type: "MEDIA_TYPE_IMAGE",
-            data_schema: {
+            asset_schema: {
+              mime_type: "image/png", // You might need to detect "png" vs "jpeg" from base64
               gcs_uri: gsUri
             }
           }
@@ -191,31 +193,29 @@ exports.handler = async (event, context) => {
 
         if (!resp.ok) {
           const txt = await resp.text();
-          console.log("Warehouse createAsset call failed =>", txt);
-          throw new Error(
-            `uploadAndImport: createAsset error: ${resp.status} => ${txt}`
-          );
+          console.log("FULL error body =>", txt);
+          throw new Error(`uploadAndImport: createAsset error: ${resp.status} => ${txt}`);
         }
 
         const data = await resp.json();
         return json200({
-          message: "Asset creation success!",
+          message: "Asset created successfully.",
           gcsUri: gsUri,
           data: data
         });
       }
 
-      //-----------------------------------------------------------
-      // C) analyzeCorpus: Generate embeddings
-      //-----------------------------------------------------------
+      // ============================================================
+      // C) analyzeCorpus
+      // ============================================================
       case "analyzeCorpus": {
-        // Body fields: { corpusName: string }
-        // Example usage:
-        // POST to /visionWarehouse with
-        // {
-        //   "action": "analyzeCorpus",
-        //   "corpusName": "projects/123/locations/us-central1/corpora/myCorpusID"
-        // }
+        /**
+         * Example usage:
+         * {
+         *   "action": "analyzeCorpus",
+         *   "corpusName": "projects/123/locations/us-central1/corpora/myCorpusID"
+         * }
+         */
         const { corpusName } = body;
         if (!corpusName) {
           throw new Error("analyzeCorpus requires corpusName");
@@ -242,24 +242,23 @@ exports.handler = async (event, context) => {
         return json200(data);
       }
 
-      //-----------------------------------------------------------
-      // D) createIndex: Create an index for the corpus
-      //-----------------------------------------------------------
+      // ============================================================
+      // D) createIndex
+      // ============================================================
       case "createIndex": {
-        // Body fields: { corpusName: string, displayName?: string, description?: string }
-        // Example usage:
-        // POST to /visionWarehouse with
-        // {
-        //   "action": "createIndex",
-        //   "corpusName": "projects/123/locations/us-central1/corpora/myCorpusID",
-        //   "displayName": "MyIndex",
-        //   "description": "Index for my corpus"
-        // }
+        /**
+         * Example usage:
+         * {
+         *   "action": "createIndex",
+         *   "corpusName": "projects/123/locations/us-central1/corpora/myCorpusID",
+         *   "displayName": "MyIndex",
+         *   "description": "My index description"
+         * }
+         */
         const { corpusName, displayName, description } = body;
         if (!corpusName) {
           throw new Error("createIndex requires corpusName");
         }
-
         const dn = displayName || "MyIndex";
         const desc = description || "No description";
         const url = `${WAREHOUSE_API_ROOT}/${corpusName}/indexes`;
@@ -287,17 +286,17 @@ exports.handler = async (event, context) => {
         return json200(data);
       }
 
-      //-----------------------------------------------------------
-      // E) deployIndex: Create an index endpoint
-      //-----------------------------------------------------------
+      // ============================================================
+      // E) deployIndex
+      // ============================================================
       case "deployIndex": {
-        // Body fields: { indexName: string }
-        // Example usage:
-        // POST to /visionWarehouse with
-        // {
-        //   "action": "deployIndex",
-        //   "indexName": "projects/123/locations/us-central1/corpora/myCorpusID/indexes/456"
-        // }
+        /**
+         * Example usage:
+         * {
+         *   "action": "deployIndex",
+         *   "indexName": "projects/123/locations/us-central1/corpora/myCorpusID/indexes/456"
+         * }
+         */
         const { indexName } = body;
         if (!indexName) {
           throw new Error("deployIndex requires indexName");
@@ -306,7 +305,7 @@ exports.handler = async (event, context) => {
         const token = await getAccessToken();
         const endpointUrl = `${WAREHOUSE_API_ROOT}/projects/${projectNumber}/locations/${locationId}/indexEndpoints`;
 
-        // Create an index endpoint resource
+        // Create an IndexEndpoint resource
         const epResp = await fetch(endpointUrl, {
           method: "POST",
           headers: {
@@ -322,24 +321,24 @@ exports.handler = async (event, context) => {
         }
         const epData = await epResp.json();
         return json200({
-          message: "Index endpoint creation (LRO). Next step is to deploy your index to it.",
+          message: "Index endpoint creation done (LRO). Next step: deploy your index to it.",
           epData: epData
         });
       }
 
-      //-----------------------------------------------------------
-      // F) search: Submit text or image queries
-      //-----------------------------------------------------------
+      // ============================================================
+      // F) search
+      // ============================================================
       case "search": {
-        // Body fields: { indexEndpointName: string, textQuery?: string, imageQueryBase64?: string }
-        // Example usage:
-        // POST to /visionWarehouse with
-        // {
-        //   "action": "search",
-        //   "indexEndpointName": "projects/123/locations/us-central1/indexEndpoints/9999999999",
-        //   "textQuery": "Search string"  OR
-        //   "imageQueryBase64": "data:image/png;base64,iVBORw0K..."
-        // }
+        /**
+         * Example usage:
+         * {
+         *   "action": "search",
+         *   "indexEndpointName": "projects/123/locations/us-central1/indexEndpoints/9999",
+         *   "textQuery": "some text"       // OR
+         *   "imageQueryBase64": "data:image/png;base64,iVBORw0K..."
+         * }
+         */
         const { indexEndpointName, textQuery, imageQueryBase64 } = body;
         if (!indexEndpointName) {
           throw new Error("search requires indexEndpointName");
@@ -348,7 +347,7 @@ exports.handler = async (event, context) => {
         const token = await getAccessToken();
         const url = `${WAREHOUSE_API_ROOT}/${indexEndpointName}:searchIndexEndpoint`;
 
-        // Build your request based on text or image query
+        // Build request
         const reqBody = {};
         if (textQuery) {
           reqBody.text_query = textQuery;
@@ -374,9 +373,9 @@ exports.handler = async (event, context) => {
         return json200(data);
       }
 
-      //-----------------------------------------------------------
+      // ============================================================
       // Unknown action
-      //-----------------------------------------------------------
+      // ============================================================
       default:
         return json400({ error: `Unknown action => ${action}` });
     }
@@ -389,9 +388,9 @@ exports.handler = async (event, context) => {
   }
 };
 
-// -------------------------------------------------------------------
+// ---------------------------------------------------------------------
 // Helper methods
-// -------------------------------------------------------------------
+// ---------------------------------------------------------------------
 function json200(obj) {
   return { statusCode: 200, body: JSON.stringify(obj) };
 }
