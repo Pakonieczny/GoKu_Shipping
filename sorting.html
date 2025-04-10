@@ -836,17 +836,18 @@ async function sendAndMatch() {
     return;
   }
 
-  // Identify all cells that still have images
+  // --------------------------------------------------------------
+  // FIRST PASS: Accept only perfect (100%) matches (score === 1.0).
+  // --------------------------------------------------------------
   let unmatchedCells = [];
   for (let i = 0; i < croppedImagesArray.length; i++) {
     if (croppedImagesArray[i]) unmatchedCells.push(i);
   }
 
-  // Single pass: For each unmatched cell
   for (const i of unmatchedCells) {
     const matchBox = document.getElementById("matchCell" + i);
 
-    // 1) Compare all user images in parallel
+    // Compare all user images for this cell
     let comparisonPromises = userImagesArray.map((user, j) => {
       return new Promise(resolve => {
         setTimeout(() => {
@@ -859,22 +860,72 @@ async function sendAndMatch() {
     });
 
     let results = await Promise.all(comparisonPromises);
+    results.sort((a, b) => b.result.score - a.result.score);
 
+    // Check for a perfect 100% match
+    const perfectMatch = results.find(r => r.result.score === 1.0);
+    if (perfectMatch) {
+      // Inform user
+      const matchName = perfectMatch.user.name.replace(/(\.jpg|\.png)$/i, "");
+      M.toast({ html: "Cell " + i + ": PERFECT MATCH => " + matchName + " (100.00%)" });
+
+      // Assign & remove from userImages so it's no longer available
+      if (matchBox) {
+        matchBox.value = matchName;
+        matchBox.style.fontWeight = "";
+        matchBox.style.color = "";
+      }
+      if (!cellMatches[i]) cellMatches[i] = [];
+      cellMatches[i].push({
+        userName: matchName,
+        userImage: perfectMatch.user.data,
+        score: 1.0
+      });
+
+      userImagesArray = userImagesArray.filter(u => u.name !== perfectMatch.user.name);
+      croppedImagesArray[i] = null; // This cell is done
+    }
+    // If no perfect match is found, do nothing here.
+  }
+
+  // -----------------------------------------------------------------------
+  // SECOND PASS: For all cells still unmatched, run the original logic again
+  // but allow an acceptable similarity of 88% (instead of the old 90%).
+  // -----------------------------------------------------------------------
+  unmatchedCells = [];
+  for (let i = 0; i < croppedImagesArray.length; i++) {
+    if (croppedImagesArray[i]) unmatchedCells.push(i);
+  }
+
+  for (const i of unmatchedCells) {
+    const matchBox = document.getElementById("matchCell" + i);
+
+    // Compare all user images in parallel
+    let comparisonPromises = userImagesArray.map((user, j) => {
+      return new Promise(resolve => {
+        setTimeout(() => {
+          resolve(
+            compareImages(user.data, croppedImagesArray[i], i, user.name)
+              .then(result => ({ result, user }))
+          );
+        }, j * 300);
+      });
+    });
+
+    let results = await Promise.all(comparisonPromises);
     // Sort by descending similarity
     results.sort((a, b) => b.result.score - a.result.score);
 
-    // 2) Check for a perfect 100% match
+    // Check for a perfect 100% match
     const perfectMatch = results.find(r => r.result.score === 1.0);
     if (perfectMatch) {
       const matchName = perfectMatch.user.name.replace(/(\.jpg|\.png)$/i, "");
       M.toast({ html: "Cell " + i + ": PERFECT MATCH => " + matchName + " (100.00%)" });
 
-      // Assign & remove from userImages
       if (matchBox) {
         matchBox.value = matchName;
-        // e.g., 0.95 => 95% threshold for styling
-        matchBox.style.fontWeight = (1.0 < 0.95) ? "bold" : "";
-        matchBox.style.color = (1.0 < 0.95) ? "orangered" : "";
+        matchBox.style.fontWeight = "";
+        matchBox.style.color = "";
       }
       if (!cellMatches[i]) cellMatches[i] = [];
       cellMatches[i].push({
@@ -884,46 +935,40 @@ async function sendAndMatch() {
       });
       userImagesArray = userImagesArray.filter(u => u.name !== perfectMatch.user.name);
       croppedImagesArray[i] = null;
-      continue; // Move on
+      continue;
     }
 
-    // 3) Otherwise, pick the single highest-scoring candidate
+    // Otherwise, pick the single highest-scoring candidate
     if (results.length === 0 || results[0].result.score === 0) {
       M.toast({ html: "Cell " + i + ": No valid matches found!" });
       continue;
     }
-    const topCandidate = results[0]; // { result: {score}, user }
+    const topCandidate = results[0];
     const topScore = topCandidate.result.score;
     const topScorePerc = (topScore * 100).toFixed(2);
-    // Remove extension from user name
     const matchName = topCandidate.user.name.replace(/(\.jpg|\.png)$/i, "");
 
     // Show a toast for the top candidate’s score
     M.toast({
-      html: "Cell " + i + ": Best candidate => " + 
-            matchName + " (" + topScorePerc + "%)"
+      html: "Cell " + i + ": Best candidate => " + matchName + " (" + topScorePerc + "%)"
     });
 
-    // 4) Check if topCandidate meets your threshold
-    if (topScore < 0.90) {
+    // If below 88%, we skip it as "no match"
+    if (topScore < 0.88) {
       M.toast({
-        html: "Cell " + i + ": Highest score " + topScorePerc +
-              "% is under 90%—no match."
+        html: "Cell " + i + ": Highest score " + topScorePerc + "% < 88%—no match."
       });
       continue;
     }
 
-    // 5) If between 90.00% and 94.99%, we keep the user image in the array
-    //    (do NOT remove from userImagesArray)
-    if (topScore >= 0.90 && topScore < 0.95) {
+    // 88% to below 95% => partial match
+    if (topScore >= 0.88 && topScore < 0.95) {
       M.toast({
-        html: "Cell " + i + ": Matched with " + matchName + 
-              " at " + topScorePerc + "%. " +
-              "Image remains available for future matches."
+        html: "Cell " + i + ": Matched with " + matchName + " at " + topScorePerc +
+              "%. Image remains available for future matches."
       });
       if (matchBox) {
         matchBox.value = matchName;
-        // Style it if < 0.95
         matchBox.style.fontWeight = "bold";
         matchBox.style.color = "orangered";
       }
@@ -933,50 +978,37 @@ async function sendAndMatch() {
         userImage: topCandidate.user.data,
         score: topScore
       });
-      croppedImagesArray[i] = null;
-      partialMatches[topCandidate.user.name] = {
-      cellIndex: i,
-      score: topScore
-      };
-
-      // Notice: We do NOT remove topCandidate.user from userImagesArray
-      // because the user wants that image to remain available
-      // in case it finds a higher match (≥95%) with future Etsy images.
+      croppedImagesArray[i] = null; // Mark cell matched
+      partialMatches[topCandidate.user.name] = { cellIndex: i, score: topScore };
       continue;
     }
 
-    // If >= 95%, we remove from userImages
+    // If 95% or above => remove user’s image
     if (topScore >= 0.95) {
       M.toast({
-        html: "Cell " + i + ": Matched with " + matchName + 
-              " at " + topScorePerc + "%. (≥95% => removing image)"
+        html: "Cell " + i + ": Matched with " + matchName + " at " + topScorePerc + 
+              "%. (≥95% => removing image)"
       });
 
+      // If we previously had a partial match for the same user image, undo that old partial match
       if (partialMatches[topCandidate.user.name]) {
-        // 1) The user image was partially matched elsewhere. Undo that old partial match
         const oldCellIndex = partialMatches[topCandidate.user.name].cellIndex;
-        
-        // Clear out the old partial match visually
-        const oldMatchBox = document.getElementById("matchCell" + oldCellIndex);
-        if (oldMatchBox) {
-          oldMatchBox.value = "";
-          oldMatchBox.style.fontWeight = "";
-          oldMatchBox.style.color = "";
+        const oldBox = document.getElementById("matchCell" + oldCellIndex);
+        if (oldBox) {
+          oldBox.value = "";
+          oldBox.style.fontWeight = "";
+          oldBox.style.color = "";
         }
-        // Remove from cellMatches if you want:
         if (cellMatches[oldCellIndex]) {
           cellMatches[oldCellIndex] = cellMatches[oldCellIndex].filter(
             (m) => m.userName !== topCandidate.user.name
           );
         }
-
-        // 2) Remove from partialMatches
         delete partialMatches[topCandidate.user.name];
       }
 
       if (matchBox) {
         matchBox.value = matchName;
-        // If topScore < 0.95 => orangered styling, else normal
         matchBox.style.fontWeight = "";
         matchBox.style.color = "";
       }
@@ -986,6 +1018,7 @@ async function sendAndMatch() {
         userImage: topCandidate.user.data,
         score: topScore
       });
+
       userImagesArray = userImagesArray.filter(u => u.name !== topCandidate.user.name);
       croppedImagesArray[i] = null;
     }
