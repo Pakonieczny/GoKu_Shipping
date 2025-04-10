@@ -1,5 +1,0 @@
-# Node modules
-node_modules/
-
-# Netlify functions secrets (do not commit your private key file)
-netlify/functions/secrets/gcpPrivateKey.txt
