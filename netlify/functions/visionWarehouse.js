@@ -1,31 +1,30 @@
 // netlify/functions/visionWarehouse.js
 //
-// Fully expanded, no placeholders. This function demonstrates the following actions
-// for Vertex AI Vision Warehouse:
+// This function demonstrates these actions:
 //   - createCorpus         (creates an image-based Warehouse corpus)
 //   - uploadAndImport      (uploads a base64 image to GCS, then creates a Warehouse asset)
 //   - analyzeCorpus        (generates embeddings for images in your corpus)
 //   - createIndex          (creates an index for your corpus)
-//   - deployIndex          (creates an index endpoint—deploy your index to it eventually)
+//   - deployIndex          (creates an index endpoint; later deploy your index to it)
 //   - search               (submits text or image queries to the index endpoint)
 //
 // REQUIRED ENV VARS in Netlify:
 //   GCP_CLIENT_EMAIL
+//   GCP_PRIVATE_KEY        (the raw private key; store any newlines as escaped \n)
 //   GCP_PROJECT_ID
-//   GCP_PROJECT_NUMBER       (e.g., "123456789012")
-//   GCP_BUCKET_NAME          (e.g., "my-bucket")
-//   (optional) GCP_LOCATION  (e.g., "us-central1"; defaults to "us-central1")
-//   GCP_PRIVATE_KEY          (your full private key string with newline characters escaped)
-//
+//   GCP_PROJECT_NUMBER     (e.g., "123456789012")
+//   GCP_BUCKET_NAME        (e.g., "my-bucket")
+//   (optional) GCP_LOCATION (e.g., "us-central1", defaults to "us-central1")
 
 // -------------------------------------------------------------------
-// 0) Construct the serviceAccount object from environment variables
+// 0) Build the serviceAccount object from environment variables.
 // -------------------------------------------------------------------
-
-cconst serviceAccount = {
+const serviceAccount = {
   client_email: process.env.GCP_CLIENT_EMAIL,
   // Replace any escaped newline characters with actual newline characters.
-  private_key: process.env.GCP_PRIVATE_KEY.replace(/\\n/g, '\n'),
+  private_key: process.env.GCP_PRIVATE_KEY
+    ? process.env.GCP_PRIVATE_KEY.replace(/\\n/g, "\n")
+    : "",
   project_id: process.env.GCP_PROJECT_ID
 };
 
@@ -33,8 +32,17 @@ const projectNumber = process.env.GCP_PROJECT_NUMBER;  // e.g., "123456789012"
 const bucketName = process.env.GCP_BUCKET_NAME;          // e.g., "my-bucket"
 const locationId = process.env.GCP_LOCATION || "us-central1";
 
+if (!projectNumber) {
+  console.error("Missing GCP_PROJECT_NUMBER environment variable!");
+}
+if (!bucketName) {
+  console.error("Missing GCP_BUCKET_NAME environment variable!");
+}
+
+const WAREHOUSE_API_ROOT = "https://warehouse-visionai.googleapis.com/v1";
+
 // -------------------------------------------------------------------
-// 1) Auth for Warehouse using environment variables only
+// 1) Auth for Warehouse using environment variables
 // -------------------------------------------------------------------
 const { GoogleAuth } = require("google-auth-library");
 const auth = new GoogleAuth({
@@ -49,7 +57,7 @@ async function getAccessToken() {
 }
 
 // -------------------------------------------------------------------
-// 2) Google Cloud Storage client using environment variables only
+// 2) Google Cloud Storage client using environment variables
 // -------------------------------------------------------------------
 const { Storage } = require("@google-cloud/storage");
 const gcsStorage = new Storage({
@@ -78,15 +86,17 @@ async function uploadBase64ToGCS(base64Data, objectKey) {
 }
 
 // -------------------------------------------------------------------
-// 3) Netlify Function Handler with six main actions
+// 3) Netlify Handler: Switch on action for six Warehouse API actions
 // -------------------------------------------------------------------
+const fetch = require("node-fetch"); // For Node < 18
+
 exports.handler = async (event, context) => {
   try {
     const body = JSON.parse(event.body || "{}");
     const action = body.action;
 
     switch (action) {
-      // A) createCorpus: Create a new image-based Warehouse corpus.
+      // A) createCorpus: Create a new image corpus.
       case "createCorpus": {
         const displayName = body.displayName || "My Image Warehouse";
         const description = body.description || "No description provided.";
@@ -95,7 +105,7 @@ exports.handler = async (event, context) => {
         const token = await getAccessToken();
         const reqBody = {
           display_name: displayName,
-          description,
+          description: description,
           type: "IMAGE",
           search_capability_setting: {
             search_capabilities: { type: "EMBEDDING_SEARCH" }
@@ -118,7 +128,7 @@ exports.handler = async (event, context) => {
         return json200(data);
       }
 
-      // B) uploadAndImport: Upload a base64 image to GCS and create an asset.
+      // B) uploadAndImport: Upload a base64 image to GCS and create an asset in your corpus.
       case "uploadAndImport": {
         const { corpusName, assetId, base64Image } = body;
         if (!corpusName || !assetId || !base64Image) {
@@ -147,12 +157,12 @@ exports.handler = async (event, context) => {
         const data = await resp.json();
         return json200({
           message: "Asset creation request returned successfully. Check data for LRO or final resource.",
-          gcsUri,
-          data
+          gcsUri: gsUri,
+          data: data
         });
       }
 
-      // C) analyzeCorpus: Generate embeddings for the images in the corpus.
+      // C) analyzeCorpus: Generate embeddings for the images in a corpus.
       case "analyzeCorpus": {
         const { corpusName } = body;
         if (!corpusName) {
@@ -233,7 +243,7 @@ exports.handler = async (event, context) => {
         const epData = await epResp.json();
         return json200({
           message: "Index endpoint creation (LRO). Next step is deploying your index to it.",
-          epData
+          epData: epData
         });
       }
 
