@@ -17,7 +17,7 @@
 //
 // NOTE: The GCP private key is loaded from disk from the local file,
 // which is not subject to Netlify’s 4 KB environment variable limit. Ensure
-// that the file is available at: "./netlify/functions/secrets/GCP_PRIVATE_KEY.txt"
+// that the file is available at: "./netlify/functions/secrets/gcpPrivateKey.txt"
 
 // -------------------------------------------------------------------
 // 0) Load the GCP private key from disk
@@ -26,13 +26,13 @@ const fs = require('fs');
 const path = require('path');
 
 // The file is expected to be in the "secrets" subfolder relative to this file.
-const privateKeyPath = path.join(__dirname, 'secrets', 'gcpPrivateKey.txt');
+const privateKeyPath = path.join(__dirname, 'secrets', 'gcpprivatekey.txt');
 let gcpPrivateKey;
 try {
   gcpPrivateKey = fs.readFileSync(privateKeyPath, 'utf8');
 } catch (err) {
   console.error("Error reading GCP private key file:", err);
-  throw new Error("GCP private key file not found. Ensure that it is present at ./netlify/functions/secrets/GCP_PRIVATE_KEY.txt");
+  throw new Error("GCP private key file not found. Ensure that it is present at ./netlify/functions/secrets/gcpPrivateKey.txt");
 }
 
 // -------------------------------------------------------------------
