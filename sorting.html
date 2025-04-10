@@ -1053,7 +1053,7 @@ async function sendAndMatch() {
             compareImages(task.user.data, croppedImagesArray[task.cellIndex],
               task.cellIndex, task.user.name
             ).then(r => resolve({ cellIndex: task.cellIndex, user: task.user, result: r }));
-          }, task.j * 100); // keep your j*200ms offset per user
+          }, task.j * 100); // keep your j*100ms offset per user
         })
       )
     );
@@ -1178,7 +1178,7 @@ async function compareImages(userImage, croppedGridImage, cellIndex, userImageNa
       return { score: 0, name: null };
     }
 
-    // Optionally show a toast if it's ≥ 0.85
+    // Optionally show a toast if it's ≥ 0.88
     if (score >= 0.88) {
       M.toast({ html: "Cell " + cellIndex + " (" + userImageName + "): Score " + score });
     }
