@@ -835,121 +835,93 @@ async function sendAndMatch() {
     return;
   }
 
-  ////////////////////////////////////////////////////////
-  // (A) passOne() => only matches ≥ 0.98, plus delta≥15%
-  ////////////////////////////////////////////////////////
+  /////////////////////////////////////////////////////////////
+  // 1) passOne => only matches ≥0.98 (plus 15%-delta check)
+  /////////////////////////////////////////////////////////////
   async function passOne() {
-    // Gather unmatched cells
-    let unmatchedCells = [];
+    // Gather any cells that remain unmatched
+    const unmatchedCells = [];
     for (let i = 0; i < croppedImagesArray.length; i++) {
       if (croppedImagesArray[i]) unmatchedCells.push(i);
     }
     if (!unmatchedCells.length) return;
 
-    // Build tasks: for each unmatched cell + each user image
-    let tasks = [];
-    unmatchedCells.forEach(cellIndex => {
-      userImagesArray.forEach((user, j) => {
-        tasks.push({ cellIndex, user, j });
-      });
-    });
+    // For each unmatched cell, compare all user images sequentially
+    for (const cellIndex of unmatchedCells) {
+      // If this cell was already matched, skip
+      if (!croppedImagesArray[cellIndex]) continue;
 
-    // Compare them all in parallel, but stagger by j*100ms
-    const results = await Promise.all(
-      tasks.map(task =>
-        new Promise(resolve => {
-          setTimeout(() => {
-            compareImages(
-              task.user.data,
-              croppedImagesArray[task.cellIndex],
-              task.cellIndex,
-              task.user.name
-            )
-              .then(r => resolve({ cellIndex: task.cellIndex, user: task.user, result: r }))
-              .catch(err => {
-                console.error("PassOne compare error", task.cellIndex, task.user.name, err);
-                resolve({ cellIndex: task.cellIndex, user: task.user, result: { score: 0 } });
-              });
-          }, task.j * 100); // 100ms offset for each user
-        })
-      )
-    );
+      // We'll collect results for each user in an array
+      let results = [];
 
-    // Group results by cellIndex
-    const cellMap = {};
-    for (const item of results) {
-      if (!cellMap[item.cellIndex]) cellMap[item.cellIndex] = [];
-      cellMap[item.cellIndex].push(item);
-    }
+      // Compare every user image in sequential order, with 100ms between each
+      for (let j = 0; j < userImagesArray.length; j++) {
+        // 100ms pause
+        await new Promise(resolve => setTimeout(resolve, 100));
 
-    // Finalize pass1 matches for each cell
-    for (const i of unmatchedCells) {
-      if (!croppedImagesArray[i]) continue; // matched by a sibling
-      finalizeCellPassOne(i, cellMap[i] || []);
+        try {
+          const cmp = await compareImages(
+            userImagesArray[j].data,
+            croppedImagesArray[cellIndex],
+            cellIndex,
+            userImagesArray[j].name
+          );
+          results.push({ user: userImagesArray[j], result: cmp });
+        } catch (err) {
+          console.error("PassOne compare error:", cellIndex, userImagesArray[j].name, err);
+          results.push({ user: userImagesArray[j], result: { score: 0 } });
+        }
+      }
+
+      // Now we finalize passOne logic for this cell
+      finalizeCellPassOne(cellIndex, results);
     }
   }
 
-  ////////////////////////////////////////////////////////
-  // (B) passTwo() => second pass with multi-threshold logic
-  ////////////////////////////////////////////////////////
+  /////////////////////////////////////////////////////////////
+  // 2) passTwo => multi-threshold approach
+  /////////////////////////////////////////////////////////////
   async function passTwo() {
-    let unmatchedCells = [];
+    const unmatchedCells = [];
     for (let i = 0; i < croppedImagesArray.length; i++) {
       if (croppedImagesArray[i]) unmatchedCells.push(i);
     }
     if (!unmatchedCells.length) return;
 
-    let tasks = [];
-    unmatchedCells.forEach(cellIndex => {
-      userImagesArray.forEach((user, j) => {
-        tasks.push({ cellIndex, user, j });
-      });
-    });
-    if (!tasks.length) return;
+    for (const cellIndex of unmatchedCells) {
+      if (!croppedImagesArray[cellIndex]) continue;
 
-    // Compare in parallel, offset by j*100ms
-    const results = await Promise.all(
-      tasks.map(task =>
-        new Promise(resolve => {
-          setTimeout(() => {
-            compareImages(
-              task.user.data,
-              croppedImagesArray[task.cellIndex],
-              task.cellIndex,
-              task.user.name
-            )
-              .then(r => resolve({ cellIndex: task.cellIndex, user: task.user, result: r }))
-              .catch(err => {
-                console.error("PassTwo compare error", task.cellIndex, task.user.name, err);
-                resolve({ cellIndex: task.cellIndex, user: task.user, result: { score: 0 } });
-              });
-          }, task.j * 100);
-        })
-      )
-    );
+      let results = [];
 
-    // Group pass2 results by cellIndex
-    const cellMap = {};
-    for (const item of results) {
-      if (!cellMap[item.cellIndex]) cellMap[item.cellIndex] = [];
-      cellMap[item.cellIndex].push(item);
-    }
+      // Again, we do a fully sequential approach for each user
+      for (let j = 0; j < userImagesArray.length; j++) {
+        await new Promise(resolve => setTimeout(resolve, 100));
 
-    // Finalize pass2 matches
-    for (const i of unmatchedCells) {
-      if (!croppedImagesArray[i]) continue;
-      finalizeCellPassTwo(i, cellMap[i] || []);
+        try {
+          const cmp = await compareImages(
+            userImagesArray[j].data,
+            croppedImagesArray[cellIndex],
+            cellIndex,
+            userImagesArray[j].name
+          );
+          results.push({ user: userImagesArray[j], result: cmp });
+        } catch (err) {
+          console.error("PassTwo compare error:", cellIndex, userImagesArray[j].name, err);
+          results.push({ user: userImagesArray[j], result: { score: 0 } });
+        }
+      }
+
+      finalizeCellPassTwo(cellIndex, results);
     }
   }
 
-  ////////////////////////////////////////////////////////
-  // (C) finalizeCellPassOne()
-  ////////////////////////////////////////////////////////
+  /////////////////////////////////////////////////////////////
+  // 3) finalizeCellPassOne => exactly as your code defines
+  /////////////////////////////////////////////////////////////
   function finalizeCellPassOne(cellIndex, results) {
-    // Sort by descending similarity
+    // Sort by descending
     results.sort((a, b) => b.result.score - a.result.score);
 
-    // If nothing or top=0 => skip
     if (!results.length || results[0].result.score === 0) {
       M.toast({ html: `Cell ${cellIndex}: No valid matches in first pass.` });
       return;
@@ -980,16 +952,17 @@ async function sendAndMatch() {
           userImage: topCandidate.user.data,
           score: topScore
         });
+        // Remove top user image so it can't match again
         userImagesArray = userImagesArray.filter(u => u.name !== topCandidate.user.name);
         croppedImagesArray[cellIndex] = null;
         return;
       }
     }
 
-    // 2) Standard first-pass threshold: topScore≥0.98
+    // 2) If top≥0.98 => remove user image
     if (topScore >= 0.98) {
       M.toast({
-        html: `Cell ${cellIndex}: First-pass match≥98% => ${matchName} (${topScorePerc}%)`
+        html: `Cell ${cellIndex}: First-pass≥98% => ${matchName} (${topScorePerc}%)`
       });
       if (matchBox) {
         matchBox.value = matchName;
@@ -1008,9 +981,9 @@ async function sendAndMatch() {
     // else => fallback to pass #2
   }
 
-  ////////////////////////////////////////////////////////
-  // (D) finalizeCellPassTwo()
-  ////////////////////////////////////////////////////////
+  /////////////////////////////////////////////////////////////
+  // 4) finalizeCellPassTwo => multi-threshold logic (unchanged)
+  /////////////////////////////////////////////////////////////
   function finalizeCellPassTwo(cellIndex, results) {
     results.sort((a, b) => b.result.score - a.result.score);
 
@@ -1029,7 +1002,7 @@ async function sendAndMatch() {
       html: `Cell ${cellIndex}: Best candidate => ${matchName} (${topScorePerc}%)`
     });
 
-    // 1) Delta check
+    // 1) Delta≥15% if top≥0.88 => immediate accept
     if (results.length > 1) {
       const secondScore = results[1].result.score;
       const delta = topScore - secondScore;
@@ -1054,8 +1027,9 @@ async function sendAndMatch() {
       }
     }
 
-    // 2) existing second-pass threshold logic
+    // 2) second-pass thresholds
     if (topScore === 1.0) {
+      // EXACT 100%
       M.toast({ html: `Cell ${cellIndex}: PERFECT MATCH => ${matchName} (100%)` });
       if (matchBox) {
         matchBox.value = matchName;
@@ -1072,8 +1046,7 @@ async function sendAndMatch() {
       croppedImagesArray[cellIndex] = null;
 
     } else if (topScore >= 0.98) {
-      // NEAR-PERFECT≥0.98 => remove user image
-      // If partial-matched, undo that first
+      // NEAR-PERFECT≥0.98 => remove
       if (partialMatches[topCandidate.user.name]) {
         const oldCellIndex = partialMatches[topCandidate.user.name].cellIndex;
         const oldBox = document.getElementById("matchCell" + oldCellIndex);
@@ -1110,7 +1083,7 @@ async function sendAndMatch() {
     } else if (topScore >= 0.88) {
       // PARTIAL MATCH => keep user image
       M.toast({
-        html: `Cell ${cellIndex}: PARTIAL MATCH >=88% => ${matchName} (${topScorePerc}%).`
+        html: `Cell ${cellIndex}: PARTIAL MATCH ≥88% => ${matchName} (${topScorePerc}%).`
       });
       if (matchBox) {
         matchBox.value = matchName;
@@ -1134,13 +1107,13 @@ async function sendAndMatch() {
     }
   }
 
-  ////////////////////////////////////////
-  // (E) Execute pass #1, then pass #2
-  ////////////////////////////////////////
+  /////////////////////////////////////////////////////////////
+  // 5) Finally, run passOne, then passTwo
+  /////////////////////////////////////////////////////////////
   await passOne();
   await passTwo();
 
-  M.toast({ html: "Finished matching passes with 100ms offset, no cell-by-cell pause!" });
+  M.toast({ html: "Finished matching passes. Guaranteed 100ms pause between each user–image match." });
 }
 
     // Modified compareImages: 
