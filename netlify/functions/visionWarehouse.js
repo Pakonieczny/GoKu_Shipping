@@ -25,12 +25,19 @@
 const fs = require('fs');
 const path = require('path');
 
-// Debug: list files in the secrets folder
-try {
-  const secretsDir = path.join(__dirname, 'secrets');
-  console.log("Files in secrets folder:", fs.readdirSync(secretsDir));
-} catch (err) {
-  console.error("Error listing secrets folder:", err);
+// Define the absolute path to your private key file. The file is expected to be in the "secrets" subfolder relative to this file.
+const privateKeyPath = path.join(__dirname, 'secrets', 'gcpPrivateKey.txt');
+let gcpPrivateKey = '';
+if (fs.existsSync(privateKeyPath)) {
+  try {
+    gcpPrivateKey = fs.readFileSync(privateKeyPath, 'utf8');
+  } catch (err) {
+    console.error("Error reading GCP private key file:", err);
+    throw new Error("GCP private key file could not be read from " + privateKeyPath);
+  }
+} else {
+  console.error("GCP private key file not found at", privateKeyPath);
+  throw new Error("GCP private key file not found. Ensure that it is present at " + privateKeyPath);
 }
 
 // -------------------------------------------------------------------
