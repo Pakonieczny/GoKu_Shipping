@@ -25,14 +25,12 @@
 const fs = require('fs');
 const path = require('path');
 
-// The file is expected to be in the "secrets" subfolder relative to this file.
-const privateKeyPath = path.join(__dirname, 'secrets', 'gcpprivatekey.txt');
-let gcpPrivateKey;
+// Debug: list files in the secrets folder
 try {
-  gcpPrivateKey = fs.readFileSync(privateKeyPath, 'utf8');
+  const secretsDir = path.join(__dirname, 'secrets');
+  console.log("Files in secrets folder:", fs.readdirSync(secretsDir));
 } catch (err) {
-  console.error("Error reading GCP private key file:", err);
-  throw new Error("GCP private key file not found. Ensure that it is present at ./netlify/functions/secrets/gcpPrivateKey.txt");
+  console.error("Error listing secrets folder:", err);
 }
 
 // -------------------------------------------------------------------
