@@ -36,6 +36,7 @@ const projectNumber = process.env.GCP_PROJECT_NUMBER;  // e.g., "123456789012"
 const bucketName = process.env.GCP_BUCKET_NAME;         // e.g., "my-bucket"
 const locationId = process.env.GCP_LOCATION || "us-central1";
 
+// Validate environment variables
 if (!projectNumber) {
   console.error("Missing GCP_PROJECT_NUMBER environment variable!");
 }
@@ -67,10 +68,14 @@ const gcsStorage = new Storage({
   credentials: serviceAccount
 });
 
-// Helper: Upload base64 image data to GCS and return a "gs://bucket/file" URI.
+/**
+ * Helper: Upload base64 image data (data:image/xxx;base64,...) to GCS 
+ * and return a "gs://bucket/file" URI.
+ */
 async function uploadBase64ToGCS(base64Data, objectKey) {
-  // Ensure the string is in the format data:image/<type>;base64,<rawBase64>:
-  // e.g. "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAUA..."
+  // The regex below requires the base64 string to be of the form:
+  // data:<mimeType>;base64,<base64EncodedFile>
+  // e.g.: "data:image/png;base64,iVBORw0K..."
   const match = base64Data.match(/^data:(?<mime>[^;]+);base64,(?<base64>.+)$/);
   if (!match || !match.groups) {
     throw new Error("Invalid base64 data URL");
@@ -102,6 +107,15 @@ exports.handler = async (event, context) => {
     switch (action) {
       // A) createCorpus: Create a new image corpus.
       case "createCorpus": {
+        /**
+         * Usage:
+         * POST /visionWarehouse
+         * {
+         *   "action": "createCorpus",
+         *   "displayName": "My Example Corpus",
+         *   "description": "Cool test corpus"
+         * }
+         */
         const displayName = body.displayName || "My Image Warehouse";
         const description = body.description || "No description provided.";
         const url = `${WAREHOUSE_API_ROOT}/projects/${projectNumber}/locations/${locationId}/corpora`;
@@ -134,26 +148,40 @@ exports.handler = async (event, context) => {
 
       // B) uploadAndImport: Upload a base64 image to GCS and create an asset in your corpus.
       case "uploadAndImport": {
+        /**
+         * Usage:
+         * POST /visionWarehouse
+         * {
+         *   "action": "uploadAndImport",
+         *   "corpusName": "projects/123/locations/us-central1/corpora/myCorpusId",
+         *   "assetId": "someUniqueAssetId",
+         *   "base64Image": "data:image/png;base64,iVBORw0K..."
+         * }
+         */
         const { corpusName, assetId, base64Image } = body;
         if (!corpusName || !assetId || !base64Image) {
-          throw new Error(
-            "uploadAndImport requires corpusName, assetId, and base64Image"
-          );
+          throw new Error("uploadAndImport requires corpusName, assetId, and base64Image");
         }
 
         // objectKey is how we'll name the file in the GCS bucket
         const objectKey = `tempAssets/${assetId}_${Date.now()}.jpg`;
 
-        // Attempt to upload to GCS. If the base64 data is missing the
-        // 'data:image/...;base64,' prefix, this will fail with an Error.
+        // 1) Upload to GCS
         const gsUri = await uploadBase64ToGCS(base64Image, objectKey);
         console.log("Uploaded to GCS =>", gsUri);
 
+        // 2) Create an asset in the corpus, referencing our GCS URI
         const token = await getAccessToken();
-        const url = `${WAREHOUSE_API_ROOT}/${corpusName}/assets?asset_id=${encodeURIComponent(
-          assetId
-        )}`;
-        const reqBody = {}; // minimal body for createAsset request
+        const url = `${WAREHOUSE_API_ROOT}/${corpusName}/assets?asset_id=${encodeURIComponent(assetId)}`;
+
+        // IMPORTANT: Provide media_type + data_schema/gcs_uri 
+        // so the Warehouse can map the asset to the newly uploaded file.
+        const reqBody = {
+          media_type: "MEDIA_TYPE_IMAGE",
+          data_schema: {
+            gcs_uri: gsUri
+          }
+        };
 
         const resp = await fetch(url, {
           method: "POST",
@@ -169,10 +197,10 @@ exports.handler = async (event, context) => {
             `uploadAndImport: createAsset error: ${resp.status} => ${txt}`
           );
         }
+
         const data = await resp.json();
         return json200({
-          message:
-            "Asset creation request returned successfully. Check data for LRO or final resource.",
+          message: "Asset creation request returned successfully. Check data for LRO or final resource.",
           gcsUri: gsUri,
           data: data
         });
@@ -180,6 +208,14 @@ exports.handler = async (event, context) => {
 
       // C) analyzeCorpus: Generate embeddings for the images in a corpus.
       case "analyzeCorpus": {
+        /**
+         * Usage:
+         * POST /visionWarehouse
+         * {
+         *   "action": "analyzeCorpus",
+         *   "corpusName": "projects/123/locations/us-central1/corpora/myCorpusId"
+         * }
+         */
         const { corpusName } = body;
         if (!corpusName) {
           throw new Error("analyzeCorpus requires corpusName");
@@ -206,6 +242,16 @@ exports.handler = async (event, context) => {
 
       // D) createIndex: Create an index for the corpus.
       case "createIndex": {
+        /**
+         * Usage:
+         * POST /visionWarehouse
+         * {
+         *   "action": "createIndex",
+         *   "corpusName": "projects/123/locations/us-central1/corpora/myCorpusId",
+         *   "displayName": "MyIndex",
+         *   "description": "Optional desc"
+         * }
+         */
         const { corpusName, displayName, description } = body;
         if (!corpusName) {
           throw new Error("createIndex requires corpusName");
@@ -237,6 +283,14 @@ exports.handler = async (event, context) => {
 
       // E) deployIndex: Create an index endpoint (then you can deploy your index to it).
       case "deployIndex": {
+        /**
+         * Usage:
+         * POST /visionWarehouse
+         * {
+         *   "action": "deployIndex",
+         *   "indexName": "projects/123/locations/us-central1/corpora/myCorpusId/indexes/myIndexId"
+         * }
+         */
         const { indexName } = body;
         if (!indexName) {
           throw new Error("deployIndex requires indexName");
@@ -259,14 +313,23 @@ exports.handler = async (event, context) => {
         }
         const epData = await epResp.json();
         return json200({
-          message:
-            "Index endpoint creation (LRO). Next step is deploying your index to it.",
+          message: "Index endpoint creation (LRO). Next step is deploying your index to it.",
           epData: epData
         });
       }
 
       // F) search: Submit text or image queries to the index endpoint.
       case "search": {
+        /**
+         * Usage:
+         * POST /visionWarehouse
+         * {
+         *   "action": "search",
+         *   "indexEndpointName": "projects/123/locations/us-central1/indexEndpoints/987654321987654321",
+         *   "textQuery": "my text query" OR
+         *   "imageQueryBase64": "data:image/png;base64,iVBORw0K..."
+         * }
+         */
         const { indexEndpointName, textQuery, imageQueryBase64 } = body;
         if (!indexEndpointName) {
           throw new Error("search requires indexEndpointName");
@@ -274,15 +337,14 @@ exports.handler = async (event, context) => {
         const token = await getAccessToken();
         const url = `${WAREHOUSE_API_ROOT}/${indexEndpointName}:searchIndexEndpoint`;
 
+        // build search request
         const reqBody = {};
         if (textQuery) {
           reqBody.text_query = textQuery;
         }
         if (imageQueryBase64) {
-          // Must include 'data:image/...;base64,' for the regex in uploadBase64ToGCS, 
-          // but since we are not writing to GCS here, you simply pass the 
-          // full base64 string here if the API requires it for searching. 
-          // (Check the Vision Warehouse docs for exact format needed.)
+          // For searching with an image, pass the entire data URL string 
+          // (data:image/xxx;base64,...) if the Warehouse requires that format. 
           reqBody.image_query = { input_image: imageQueryBase64 };
         }
 
