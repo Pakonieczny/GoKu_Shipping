@@ -1,6 +1,7 @@
 // netlify/functions/visionWarehouse.js
 //
-// Fully expanded, no placeholders. This function demonstrates the following actions:
+// Fully expanded, no placeholders. This function demonstrates the following actions
+// for Vertex AI Vision Warehouse:
 //   - createCorpus         (creates an image-based Warehouse corpus)
 //   - uploadAndImport      (uploads a base64 image to GCS, then creates a Warehouse asset)
 //   - analyzeCorpus        (generates embeddings for images in your corpus)
@@ -8,93 +9,55 @@
 //   - deployIndex          (creates an index endpoint—deploy your index to it eventually)
 //   - search               (submits text or image queries to the index endpoint)
 //
-// REQUIRED ENV VARS in Netlify (all except the private key):
+// REQUIRED ENV VARS in Netlify:
 //   GCP_CLIENT_EMAIL
 //   GCP_PROJECT_ID
 //   GCP_PROJECT_NUMBER       (e.g., "123456789012")
 //   GCP_BUCKET_NAME          (e.g., "my-bucket")
-//   (optional) GCP_LOCATION  (e.g., "us-central1", defaults to "us-central1")
+//   (optional) GCP_LOCATION  (e.g., "us-central1"; defaults to "us-central1")
+//   GCP_PRIVATE_KEY          (your full private key string with newline characters escaped)
 //
-// NOTE: The GCP private key is loaded from disk from the local file,
-// which is not subject to Netlify’s 4 KB environment variable limit. Ensure
-// that the file is available at: "./netlify/functions/secrets/gcpPrivateKey.txt"
 
 // -------------------------------------------------------------------
-// 0) Load the GCP private key from disk
+// 0) Construct the serviceAccount object from environment variables
 // -------------------------------------------------------------------
-const fs = require('fs');
-const path = require('path');
 
-// Define the absolute path to your private key file. The file is expected to be in the "secrets" subfolder relative to this file.
-const privateKeyPath = path.join(__dirname, 'secrets', 'gcpPrivateKey.txt');
-let gcpPrivateKey = '';
-if (fs.existsSync(privateKeyPath)) {
-  try {
-    gcpPrivateKey = fs.readFileSync(privateKeyPath, 'utf8');
-  } catch (err) {
-    console.error("Error reading GCP private key file:", err);
-    throw new Error("GCP private key file could not be read from " + privateKeyPath);
-  }
-} else {
-  console.error("GCP private key file not found at", privateKeyPath);
-  throw new Error("GCP private key file not found. Ensure that it is present at " + privateKeyPath);
-}
-
-// -------------------------------------------------------------------
-// 1) Build the serviceAccount object from environment variables and file data
-// -------------------------------------------------------------------
-const serviceAccount = {
+cconst serviceAccount = {
   client_email: process.env.GCP_CLIENT_EMAIL,
-  // Replace any escaped newline characters with actual newlines
-  private_key: gcpPrivateKey.replace(/\\n/g, '\n'),
+  // Replace any escaped newline characters with actual newline characters.
+  private_key: process.env.GCP_PRIVATE_KEY.replace(/\\n/g, '\n'),
   project_id: process.env.GCP_PROJECT_ID
 };
 
 const projectNumber = process.env.GCP_PROJECT_NUMBER;  // e.g., "123456789012"
-const bucketName    = process.env.GCP_BUCKET_NAME;         // e.g., "my-bucket"
-const locationId    = process.env.GCP_LOCATION || "us-central1";
-
-if (!projectNumber) {
-  console.error("Missing GCP_PROJECT_NUMBER environment variable!");
-}
-if (!bucketName) {
-  console.error("Missing GCP_BUCKET_NAME environment variable!");
-}
-
-// Vertex AI Vision Warehouse v1 endpoint
-const WAREHOUSE_API_ROOT = "https://warehouse-visionai.googleapis.com/v1";
+const bucketName = process.env.GCP_BUCKET_NAME;          // e.g., "my-bucket"
+const locationId = process.env.GCP_LOCATION || "us-central1";
 
 // -------------------------------------------------------------------
-// 2) Auth for Warehouse (using google-auth-library)
+// 1) Auth for Warehouse using environment variables only
 // -------------------------------------------------------------------
 const { GoogleAuth } = require("google-auth-library");
 const auth = new GoogleAuth({
-  credentials: {
-    client_email: serviceAccount.client_email,
-    private_key: serviceAccount.private_key
-  },
+  credentials: serviceAccount,
   scopes: ["https://www.googleapis.com/auth/cloud-platform"]
 });
 
 async function getAccessToken() {
   const client = await auth.getClient();
-  const token  = await client.getAccessToken();
+  const token = await client.getAccessToken();
   return token.token || token;
 }
 
 // -------------------------------------------------------------------
-// 3) Google Cloud Storage client for uploading images
+// 2) Google Cloud Storage client using environment variables only
 // -------------------------------------------------------------------
 const { Storage } = require("@google-cloud/storage");
 const gcsStorage = new Storage({
   projectId: serviceAccount.project_id,
-  credentials: {
-    client_email: serviceAccount.client_email,
-    private_key: serviceAccount.private_key
-  }
+  credentials: serviceAccount
 });
 
-// Helper: upload base64 image data to GCS and return a "gs://bucket/file" URI.
+// Helper: Upload base64 image data to GCS and return a "gs://bucket/file" URI.
 async function uploadBase64ToGCS(base64Data, objectKey) {
   const match = base64Data.match(/^data:(?<mime>[^;]+);base64,(?<base64>.+)$/);
   if (!match || !match.groups) {
@@ -115,21 +78,20 @@ async function uploadBase64ToGCS(base64Data, objectKey) {
 }
 
 // -------------------------------------------------------------------
-// 4) The Netlify Handler with six main actions
+// 3) Netlify Function Handler with six main actions
 // -------------------------------------------------------------------
-const fetch = require("node-fetch"); // For Node < 18
-
 exports.handler = async (event, context) => {
   try {
     const body = JSON.parse(event.body || "{}");
     const action = body.action;
 
     switch (action) {
-      // A) createCorpus: Create a new image corpus.
+      // A) createCorpus: Create a new image-based Warehouse corpus.
       case "createCorpus": {
         const displayName = body.displayName || "My Image Warehouse";
         const description = body.description || "No description provided.";
         const url = `${WAREHOUSE_API_ROOT}/projects/${projectNumber}/locations/${locationId}/corpora`;
+
         const token = await getAccessToken();
         const reqBody = {
           display_name: displayName,
@@ -291,6 +253,7 @@ exports.handler = async (event, context) => {
         if (imageQueryBase64) {
           reqBody.image_query = { input_image: imageQueryBase64 };
         }
+
         const resp = await fetch(url, {
           method: "POST",
           headers: {
