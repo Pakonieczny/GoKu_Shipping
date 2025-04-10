@@ -837,7 +837,7 @@ async function sendAndMatch() {
   }
 
   // --------------------------------------------------------------
-  // FIRST PASS: Accept only => 0.98 matches (score >= 0.98).
+  // FIRST PASS: Accept only matches ≥ 0.98 (removes user image).
   // --------------------------------------------------------------
   let unmatchedCells = [];
   for (let i = 0; i < croppedImagesArray.length; i++) {
@@ -848,26 +848,35 @@ async function sendAndMatch() {
     const matchBox = document.getElementById("matchCell" + i);
 
     // Compare all user images for this cell
-    let comparisonPromises = userImagesArray.map((user, j) => {
+    const comparisonPromises = userImagesArray.map((user, j) => {
       return new Promise(resolve => {
         setTimeout(() => {
-          resolve(
-            compareImages(user.data, croppedImagesArray[i], i, user.name)
-              .then(result => ({ result, user }))
-          );
-        }, j * 300);
+          compareImages(user.data, croppedImagesArray[i], i, user.name)
+            .then(result => resolve({ result, user }));
+        }, j * 400);
       });
     });
-
-    let results = await Promise.all(comparisonPromises);
+    const results = await Promise.all(comparisonPromises);
     results.sort((a, b) => b.result.score - a.result.score);
 
-    // Check for at least 0.98
-    const perfectMatch = results.find(r => r.result.score >= 0.98);
-    if (perfectMatch) {
-      const matchName = perfectMatch.user.name.replace(/(\.jpg|\.png)$/i, "");
-      M.toast({ html: "Cell " + i + ": MATCH FOUND 98%+ => " + matchName });
+    // If best candidate is empty or score=0 => skip
+    if (!results.length || results[0].result.score === 0) {
+      M.toast({ html: "Cell " + i + ": No valid matches in first pass." });
+      continue;
+    }
 
+    // Grab highest-scoring candidate
+    const topCandidate = results[0];
+    const topScore = topCandidate.result.score;
+    const topScorePerc = (topScore * 100).toFixed(2);
+    const matchName = topCandidate.user.name.replace(/(\.jpg|\.png)$/i, "");
+
+    // Check for ≥ 0.98
+    if (topScore >= 0.98) {
+      M.toast({
+        html: `Cell ${i}: MATCH FOUND 98%+ ${matchName} (${topScorePerc}%)`
+      });
+      // Update UI
       if (matchBox) {
         matchBox.value = matchName;
         matchBox.style.fontWeight = "";
@@ -876,23 +885,20 @@ async function sendAndMatch() {
       if (!cellMatches[i]) cellMatches[i] = [];
       cellMatches[i].push({
         userName: matchName,
-        userImage: perfectMatch.user.data,
-        score: perfectMatch.result.score
+        userImage: topCandidate.user.data,
+        score: topScore
       });
 
-      // Remove this image from userImages so it’s no longer available
-      userImagesArray = userImagesArray.filter(u => u.name !== perfectMatch.user.name);
-      croppedImagesArray[i] = null; // This cell is now matched
-      // Use 'continue' if you want to skip the rest of this loop iteration
-      continue;
+      // Remove the user’s image from availability
+      userImagesArray = userImagesArray.filter(u => u.name !== topCandidate.user.name);
+      // Mark this cell matched
+      croppedImagesArray[i] = null;
     }
-
-    // If no perfect match found, do nothing here for now
-    // (No extra brace here!)
-  } // End of FIRST PASS loop
+    // Else do nothing => fallback to second pass
+  }
 
   // -----------------------------------------------------------------------
-  // SECOND PASS: For all cells still unmatched, threshold is 0.88
+  // SECOND PASS: For all cells still unmatched, do a multi-branch if/else.
   // -----------------------------------------------------------------------
   unmatchedCells = [];
   for (let i = 0; i < croppedImagesArray.length; i++) {
@@ -903,26 +909,41 @@ async function sendAndMatch() {
     const matchBox = document.getElementById("matchCell" + i);
 
     // Compare all user images in parallel
-    let comparisonPromises = userImagesArray.map((user, j) => {
+    const comparisonPromises = userImagesArray.map((user, j) => {
       return new Promise(resolve => {
         setTimeout(() => {
-          resolve(
-            compareImages(user.data, croppedImagesArray[i], i, user.name)
-              .then(result => ({ result, user }))
-          );
-        }, j * 300);
+          compareImages(user.data, croppedImagesArray[i], i, user.name)
+            .then(result => resolve({ result, user }));
+        }, j * 400);
       });
     });
-
-    let results = await Promise.all(comparisonPromises);
+    const results = await Promise.all(comparisonPromises);
     results.sort((a, b) => b.result.score - a.result.score);
 
-    // Check for a perfect 100% match
-    const perfectMatch = results.find(r => r.result.score === 1.0);
-    if (perfectMatch) {
-      const matchName = perfectMatch.user.name.replace(/(\.jpg|\.png)$/i, "");
-      M.toast({ html: "Cell " + i + ": PERFECT MATCH FOUND => " + matchName + " (100%)" });
+    // If nothing found or top is 0 => skip
+    if (!results.length || results[0].result.score === 0) {
+      M.toast({ html: `Cell ${i}: No valid matches found in second pass.` });
+      continue;
+    }
 
+    // Highest-scoring candidate
+    const topCandidate = results[0];
+    const topScore = topCandidate.result.score;
+    const topScorePerc = (topScore * 100).toFixed(2);
+    const matchName = topCandidate.user.name.replace(/(\.jpg|\.png)$/i, "");
+
+    M.toast({
+      html: `Cell ${i}: Best candidate => ${matchName} (${topScorePerc}%)`
+    });
+
+    // --------------------------------
+    // CHAINED IF / ELSE-IF / ELSE
+    // --------------------------------
+    if (topScore === 1.0) {
+      // 1) EXACT 100% => remove user image
+      M.toast({
+        html: `Cell ${i}: PERFECT MATCH FOUND ${matchName} 100%`
+      });
       if (matchBox) {
         matchBox.value = matchName;
         matchBox.style.fontWeight = "";
@@ -931,61 +952,15 @@ async function sendAndMatch() {
       if (!cellMatches[i]) cellMatches[i] = [];
       cellMatches[i].push({
         userName: matchName,
-        userImage: perfectMatch.user.data,
-        score: 1.0
-      });
-      userImagesArray = userImagesArray.filter(u => u.name !== perfectMatch.user.name);
-      croppedImagesArray[i] = null;
-      continue;
-    }
-
-    // Otherwise, pick the single highest-scoring candidate
-    if (results.length === 0 || results[0].result.score === 0) {
-      M.toast({ html: "Cell " + i + ": No valid matches found." });
-      continue;
-    }
-
-    const topCandidate = results[0];
-    const topScore = topCandidate.result.score;
-    const topScorePerc = (topScore * 100).toFixed(2);
-    const matchName = topCandidate.user.name.replace(/(\.jpg|\.png)$/i, "");
-
-    M.toast({
-      html: "Cell " + i + ": Best candidate => " + matchName + " (" + topScorePerc + "%)"
-    });
-
-    // If below 0.88, we skip it
-    if (topScore < 0.88) {
-      M.toast({
-        html: "Cell " + i + ": Highest score " + topScorePerc + "% is under 88%—no match."
-      });
-      continue;
-    }
-
-    // 0.88 up to 0.95 => partial match
-    if (topScore >= 0.88 && topScore < 0.95) {
-      M.toast({
-        html: "Cell " + i + ": Matched " + matchName + " at " + topScorePerc + "%. Image stays."
-      });
-      if (matchBox) {
-        matchBox.value = matchName;
-        matchBox.style.fontWeight = "bold";
-        matchBox.style.color = "orangered";
-      }
-      if (!cellMatches[i]) cellMatches[i] = [];
-      cellMatches[i].push({
-        userName: matchName,
         userImage: topCandidate.user.data,
         score: topScore
       });
-      croppedImagesArray[i] = null; 
-      partialMatches[topCandidate.user.name] = { cellIndex: i, score: topScore };
-      continue;
+      userImagesArray = userImagesArray.filter(u => u.name !== topCandidate.user.name);
+      croppedImagesArray[i] = null;
     }
-
-    // If >= 0.98 => remove user image
-    if (topScore >= 0.98) {
-      // If we had a partial match with this same user image somewhere else, undo that old partial
+    else if (topScore >= 0.98) {
+      // 2) NEAR-PERFECT >= 0.98 => remove user image
+      // If previously partial-matched, undo that first
       if (partialMatches[topCandidate.user.name]) {
         const oldCellIndex = partialMatches[topCandidate.user.name].cellIndex;
         const oldBox = document.getElementById("matchCell" + oldCellIndex);
@@ -1003,7 +978,7 @@ async function sendAndMatch() {
       }
 
       M.toast({
-        html: "Cell " + i + ": Matched " + matchName + " at " + topScorePerc + "%. Removing image."
+        html: `Cell ${i}: MATCH FOUND 98%+ ${matchName} (${topScorePerc}%). Removing image.`
       });
       if (matchBox) {
         matchBox.value = matchName;
@@ -1020,9 +995,40 @@ async function sendAndMatch() {
       userImagesArray = userImagesArray.filter(u => u.name !== topCandidate.user.name);
       croppedImagesArray[i] = null;
     }
-  } // End of SECOND PASS loop
+    else if (topScore >= 0.88) {
+      // 3) PARTIAL MATCH => keep user image in userImages array
+      M.toast({
+        html: `Cell ${i}: PARTIAL MATCH 88%+ ${matchName} (${topScorePerc}%). Image stays available.`
+      });
+      if (matchBox) {
+        matchBox.value = matchName;
+        matchBox.style.fontWeight = "bold";
+        matchBox.style.color = "orangered";
+      }
+      if (!cellMatches[i]) cellMatches[i] = [];
+      cellMatches[i].push({
+        userName: matchName,
+        userImage: topCandidate.user.data,
+        score: topScore
+      });
+
+      // Mark cell matched, but DO NOT remove from userImages
+      croppedImagesArray[i] = null;
+      partialMatches[topCandidate.user.name] = { cellIndex: i, score: topScore };
+    }
+    else {
+      // 4) BELOW 0.88 => no match
+      M.toast({
+        html: `Cell ${i}: Score ${topScorePerc}% NO MATCH FOUND <= 88%`
+      });
+      // do nothing
+    }
+  } // end of second pass
+
+  // Done with both passes!
+  M.toast({ html: "Finished matching passes." });
 }
-    
+
     // Modified compareImages: 
 // Updated text instructions to request more precise similarity scores.
 
@@ -1051,7 +1057,7 @@ async function compareImages(userImage, croppedGridImage, cellIndex, userImageNa
         ]
       }
     ],
-    max_tokens: 250
+    max_tokens: 500
   };
 
   try {
@@ -1073,11 +1079,11 @@ async function compareImages(userImage, croppedGridImage, cellIndex, userImageNa
     }
 
     // Optionally show a toast if it's ≥ 0.85
-    if (score >= 0.85) {
+    if (score >= 0.88) {
       M.toast({ html: "Cell " + cellIndex + " (" + userImageName + "): Score " + score });
     }
 
-    return { score: score, name: (score >= 0.85) ? userImageName : null };
+    return { score: score, name: (score >= 0.88) ? userImageName : null };
   } catch (error) {
     console.error("Error comparing cell " + cellIndex + " (" + userImageName + "):", error);
     if (error.name === "AbortError") {
