@@ -1,20 +1,24 @@
-// netlify/functions/visionWarehouse.js
-//
-// This function demonstrates these actions:
-//   - createCorpus         (creates an image-based Warehouse corpus)
-//   - uploadAndImport      (uploads a base64 image to GCS, then creates a Warehouse asset)
-//   - analyzeCorpus        (generates embeddings for images in your corpus)
-//   - createIndex          (creates an index for your corpus)
-//   - deployIndex          (creates an index endpoint; later deploy your index to it)
-//   - search               (submits text or image queries to the index endpoint)
-//
-// REQUIRED ENV VARS in Netlify:
-//   GCP_CLIENT_EMAIL
-//   GCP_PRIVATE_KEY        (the raw private key; store any newlines as escaped \n)
-//   GCP_PROJECT_ID
-//   GCP_PROJECT_NUMBER     (e.g., "123456789012")
-//   GCP_BUCKET_NAME        (e.g., "my-bucket")
-//   (optional) GCP_LOCATION (e.g., "us-central1", defaults to "us-central1")
+/**
+ * netlify/functions/visionWarehouse.js
+ *
+ * This function demonstrates these actions against Google's Vision Warehouse API:
+ *   - createCorpus         (creates an image-based Warehouse corpus)
+ *   - uploadAndImport      (uploads a base64 image to GCS, then creates a Warehouse asset)
+ *   - analyzeCorpus        (generates embeddings for images in your corpus)
+ *   - createIndex          (creates an index for your corpus)
+ *   - deployIndex          (creates an index endpoint; later deploy your index to it)
+ *   - search               (submits text or image queries to the index endpoint)
+ *
+ * REQUIRED ENV VARS in Netlify:
+ *   GCP_CLIENT_EMAIL
+ *   GCP_PRIVATE_KEY        (the raw private key; store any newlines as escaped \n)
+ *   GCP_PROJECT_ID
+ *   GCP_PROJECT_NUMBER     (e.g., "123456789012")
+ *   GCP_BUCKET_NAME        (e.g., "my-bucket")
+ *   (optional) GCP_LOCATION (e.g., "us-central1", defaults to "us-central1")
+ */
+
+const WAREHOUSE_API_ROOT = "https://warehouse-visionai.googleapis.com/v1";
 
 // -------------------------------------------------------------------
 // 0) Build the serviceAccount object from environment variables.
@@ -29,7 +33,7 @@ const serviceAccount = {
 };
 
 const projectNumber = process.env.GCP_PROJECT_NUMBER;  // e.g., "123456789012"
-const bucketName = process.env.GCP_BUCKET_NAME;          // e.g., "my-bucket"
+const bucketName = process.env.GCP_BUCKET_NAME;         // e.g., "my-bucket"
 const locationId = process.env.GCP_LOCATION || "us-central1";
 
 if (!projectNumber) {
@@ -38,8 +42,6 @@ if (!projectNumber) {
 if (!bucketName) {
   console.error("Missing GCP_BUCKET_NAME environment variable!");
 }
-
-const WAREHOUSE_API_ROOT = "https://warehouse-visionai.googleapis.com/v1";
 
 // -------------------------------------------------------------------
 // 1) Auth for Warehouse using environment variables
@@ -67,6 +69,8 @@ const gcsStorage = new Storage({
 
 // Helper: Upload base64 image data to GCS and return a "gs://bucket/file" URI.
 async function uploadBase64ToGCS(base64Data, objectKey) {
+  // Ensure the string is in the format data:image/<type>;base64,<rawBase64>:
+  // e.g. "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAUA..."
   const match = base64Data.match(/^data:(?<mime>[^;]+);base64,(?<base64>.+)$/);
   if (!match || !match.groups) {
     throw new Error("Invalid base64 data URL");
@@ -132,15 +136,24 @@ exports.handler = async (event, context) => {
       case "uploadAndImport": {
         const { corpusName, assetId, base64Image } = body;
         if (!corpusName || !assetId || !base64Image) {
-          throw new Error("uploadAndImport requires corpusName, assetId, and base64Image");
+          throw new Error(
+            "uploadAndImport requires corpusName, assetId, and base64Image"
+          );
         }
+
+        // objectKey is how we'll name the file in the GCS bucket
         const objectKey = `tempAssets/${assetId}_${Date.now()}.jpg`;
+
+        // Attempt to upload to GCS. If the base64 data is missing the
+        // 'data:image/...;base64,' prefix, this will fail with an Error.
         const gsUri = await uploadBase64ToGCS(base64Image, objectKey);
         console.log("Uploaded to GCS =>", gsUri);
 
         const token = await getAccessToken();
-        const url = `${WAREHOUSE_API_ROOT}/${corpusName}/assets?asset_id=${encodeURIComponent(assetId)}`;
-        const reqBody = {};
+        const url = `${WAREHOUSE_API_ROOT}/${corpusName}/assets?asset_id=${encodeURIComponent(
+          assetId
+        )}`;
+        const reqBody = {}; // minimal body for createAsset request
 
         const resp = await fetch(url, {
           method: "POST",
@@ -152,11 +165,14 @@ exports.handler = async (event, context) => {
         });
         if (!resp.ok) {
           const txt = await resp.text();
-          throw new Error(`uploadAndImport: createAsset error: ${resp.status} => ${txt}`);
+          throw new Error(
+            `uploadAndImport: createAsset error: ${resp.status} => ${txt}`
+          );
         }
         const data = await resp.json();
         return json200({
-          message: "Asset creation request returned successfully. Check data for LRO or final resource.",
+          message:
+            "Asset creation request returned successfully. Check data for LRO or final resource.",
           gcsUri: gsUri,
           data: data
         });
@@ -219,7 +235,7 @@ exports.handler = async (event, context) => {
         return json200(data);
       }
 
-      // E) deployIndex: Create an index endpoint.
+      // E) deployIndex: Create an index endpoint (then you can deploy your index to it).
       case "deployIndex": {
         const { indexName } = body;
         if (!indexName) {
@@ -228,6 +244,7 @@ exports.handler = async (event, context) => {
         const token = await getAccessToken();
         const endpointUrl = `${WAREHOUSE_API_ROOT}/projects/${projectNumber}/locations/${locationId}/indexEndpoints`;
 
+        // Create an index endpoint resource
         const epResp = await fetch(endpointUrl, {
           method: "POST",
           headers: {
@@ -242,7 +259,8 @@ exports.handler = async (event, context) => {
         }
         const epData = await epResp.json();
         return json200({
-          message: "Index endpoint creation (LRO). Next step is deploying your index to it.",
+          message:
+            "Index endpoint creation (LRO). Next step is deploying your index to it.",
           epData: epData
         });
       }
@@ -261,6 +279,10 @@ exports.handler = async (event, context) => {
           reqBody.text_query = textQuery;
         }
         if (imageQueryBase64) {
+          // Must include 'data:image/...;base64,' for the regex in uploadBase64ToGCS, 
+          // but since we are not writing to GCS here, you simply pass the 
+          // full base64 string here if the API requires it for searching. 
+          // (Check the Vision Warehouse docs for exact format needed.)
           reqBody.image_query = { input_image: imageQueryBase64 };
         }
 
@@ -292,6 +314,9 @@ exports.handler = async (event, context) => {
   }
 };
 
+// -------------------------------------------------------------------
+// Helper methods
+// -------------------------------------------------------------------
 function json200(obj) {
   return { statusCode: 200, body: JSON.stringify(obj) };
 }
