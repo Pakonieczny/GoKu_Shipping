@@ -824,7 +824,6 @@ function resizeUserImage(dataUrl) {
 
 // =============================
 // REPLACE ONLY THIS PORTION OF sendAndMatch()
-// (Removes userImages from array ONLY if match ≥ 0.98 or 1.0 perfect match.)
 // =============================
 async function sendAndMatch() {
   if (userImagesArray.length === 0) {
@@ -836,12 +835,121 @@ async function sendAndMatch() {
     return;
   }
 
-  // Utility function to finalize the first-pass logic on a cell
+  ////////////////////////////////////////////////////////
+  // (A) passOne() => only matches ≥ 0.98, plus delta≥15%
+  ////////////////////////////////////////////////////////
+  async function passOne() {
+    // Gather unmatched cells
+    let unmatchedCells = [];
+    for (let i = 0; i < croppedImagesArray.length; i++) {
+      if (croppedImagesArray[i]) unmatchedCells.push(i);
+    }
+    if (!unmatchedCells.length) return;
+
+    // Build tasks: for each unmatched cell + each user image
+    let tasks = [];
+    unmatchedCells.forEach(cellIndex => {
+      userImagesArray.forEach((user, j) => {
+        tasks.push({ cellIndex, user, j });
+      });
+    });
+
+    // Compare them all in parallel, but stagger by j*100ms
+    const results = await Promise.all(
+      tasks.map(task =>
+        new Promise(resolve => {
+          setTimeout(() => {
+            compareImages(
+              task.user.data,
+              croppedImagesArray[task.cellIndex],
+              task.cellIndex,
+              task.user.name
+            )
+              .then(r => resolve({ cellIndex: task.cellIndex, user: task.user, result: r }))
+              .catch(err => {
+                console.error("PassOne compare error", task.cellIndex, task.user.name, err);
+                resolve({ cellIndex: task.cellIndex, user: task.user, result: { score: 0 } });
+              });
+          }, task.j * 100); // 100ms offset for each user
+        })
+      )
+    );
+
+    // Group results by cellIndex
+    const cellMap = {};
+    for (const item of results) {
+      if (!cellMap[item.cellIndex]) cellMap[item.cellIndex] = [];
+      cellMap[item.cellIndex].push(item);
+    }
+
+    // Finalize pass1 matches for each cell
+    for (const i of unmatchedCells) {
+      if (!croppedImagesArray[i]) continue; // matched by a sibling
+      finalizeCellPassOne(i, cellMap[i] || []);
+    }
+  }
+
+  ////////////////////////////////////////////////////////
+  // (B) passTwo() => second pass with multi-threshold logic
+  ////////////////////////////////////////////////////////
+  async function passTwo() {
+    let unmatchedCells = [];
+    for (let i = 0; i < croppedImagesArray.length; i++) {
+      if (croppedImagesArray[i]) unmatchedCells.push(i);
+    }
+    if (!unmatchedCells.length) return;
+
+    let tasks = [];
+    unmatchedCells.forEach(cellIndex => {
+      userImagesArray.forEach((user, j) => {
+        tasks.push({ cellIndex, user, j });
+      });
+    });
+    if (!tasks.length) return;
+
+    // Compare in parallel, offset by j*100ms
+    const results = await Promise.all(
+      tasks.map(task =>
+        new Promise(resolve => {
+          setTimeout(() => {
+            compareImages(
+              task.user.data,
+              croppedImagesArray[task.cellIndex],
+              task.cellIndex,
+              task.user.name
+            )
+              .then(r => resolve({ cellIndex: task.cellIndex, user: task.user, result: r }))
+              .catch(err => {
+                console.error("PassTwo compare error", task.cellIndex, task.user.name, err);
+                resolve({ cellIndex: task.cellIndex, user: task.user, result: { score: 0 } });
+              });
+          }, task.j * 100);
+        })
+      )
+    );
+
+    // Group pass2 results by cellIndex
+    const cellMap = {};
+    for (const item of results) {
+      if (!cellMap[item.cellIndex]) cellMap[item.cellIndex] = [];
+      cellMap[item.cellIndex].push(item);
+    }
+
+    // Finalize pass2 matches
+    for (const i of unmatchedCells) {
+      if (!croppedImagesArray[i]) continue;
+      finalizeCellPassTwo(i, cellMap[i] || []);
+    }
+  }
+
+  ////////////////////////////////////////////////////////
+  // (C) finalizeCellPassOne()
+  ////////////////////////////////////////////////////////
   function finalizeCellPassOne(cellIndex, results) {
     // Sort by descending similarity
     results.sort((a, b) => b.result.score - a.result.score);
 
-    // If nothing found or top is zero => skip
+    // If nothing or top=0 => skip
     if (!results.length || results[0].result.score === 0) {
       M.toast({ html: `Cell ${cellIndex}: No valid matches in first pass.` });
       return;
@@ -853,16 +961,14 @@ async function sendAndMatch() {
     const matchName = topCandidate.user.name.replace(/(\.jpg|\.png)$/i, "");
     const matchBox = document.getElementById("matchCell" + cellIndex);
 
-    // 1) Check delta
+    // 1) Delta check
     if (results.length > 1) {
       const secondScore = results[1].result.score;
       const delta = topScore - secondScore;
-      // If difference ≥ 0.15 (15%) AND top ≥ 0.88 => Accept immediately
       if (topScore >= 0.88 && delta >= 0.15) {
         M.toast({
-          html: `Cell ${cellIndex}: Delta ≥ 15% & top ≥ 88% => Accepting ${matchName} (${topScorePerc}%)`
+          html: `Cell ${cellIndex}: Delta≥15% & top≥88% => Accepting ${matchName} (${topScorePerc}%)`
         });
-        // Update UI
         if (matchBox) {
           matchBox.value = matchName;
           matchBox.style.fontWeight = "";
@@ -874,18 +980,16 @@ async function sendAndMatch() {
           userImage: topCandidate.user.data,
           score: topScore
         });
-        // Remove user image
         userImagesArray = userImagesArray.filter(u => u.name !== topCandidate.user.name);
-        // Mark cell matched
         croppedImagesArray[cellIndex] = null;
         return;
       }
     }
 
-    // 2) Standard first-pass threshold: topScore ≥ 0.98
+    // 2) Standard first-pass threshold: topScore≥0.98
     if (topScore >= 0.98) {
       M.toast({
-        html: `Cell ${cellIndex}: First-pass match ≥ 98% => ${matchName} (${topScorePerc}%)`
+        html: `Cell ${cellIndex}: First-pass match≥98% => ${matchName} (${topScorePerc}%)`
       });
       if (matchBox) {
         matchBox.value = matchName;
@@ -901,10 +1005,12 @@ async function sendAndMatch() {
       userImagesArray = userImagesArray.filter(u => u.name !== topCandidate.user.name);
       croppedImagesArray[cellIndex] = null;
     }
-    // else do nothing => fallback to second pass
+    // else => fallback to pass #2
   }
 
-  // Utility for second pass
+  ////////////////////////////////////////////////////////
+  // (D) finalizeCellPassTwo()
+  ////////////////////////////////////////////////////////
   function finalizeCellPassTwo(cellIndex, results) {
     results.sort((a, b) => b.result.score - a.result.score);
 
@@ -929,7 +1035,7 @@ async function sendAndMatch() {
       const delta = topScore - secondScore;
       if (topScore >= 0.88 && delta >= 0.15) {
         M.toast({
-          html: `Cell ${cellIndex}: Delta ≥ 15% & top ≥ 88% => Accepting ${matchName} (${topScorePerc}%)`
+          html: `Cell ${cellIndex}: Delta≥15% & top≥88% => Accepting ${matchName} (${topScorePerc}%)`
         });
         if (matchBox) {
           matchBox.value = matchName;
@@ -964,9 +1070,10 @@ async function sendAndMatch() {
       });
       userImagesArray = userImagesArray.filter(u => u.name !== topCandidate.user.name);
       croppedImagesArray[cellIndex] = null;
-    }
-    else if (topScore >= 0.98) {
-      // NEAR-PERFECT >= 0.98 => remove user image
+
+    } else if (topScore >= 0.98) {
+      // NEAR-PERFECT≥0.98 => remove user image
+      // If partial-matched, undo that first
       if (partialMatches[topCandidate.user.name]) {
         const oldCellIndex = partialMatches[topCandidate.user.name].cellIndex;
         const oldBox = document.getElementById("matchCell" + oldCellIndex);
@@ -984,7 +1091,7 @@ async function sendAndMatch() {
       }
 
       M.toast({
-        html: `Cell ${cellIndex}: NEAR-PERFECT (≥ 98%) => ${matchName} (${topScorePerc}%). Removing image.`
+        html: `Cell ${cellIndex}: NEAR-PERFECT (≥98%) => ${matchName} (${topScorePerc}%). Removing image.`
       });
       if (matchBox) {
         matchBox.value = matchName;
@@ -999,11 +1106,11 @@ async function sendAndMatch() {
       });
       userImagesArray = userImagesArray.filter(u => u.name !== topCandidate.user.name);
       croppedImagesArray[cellIndex] = null;
-    }
-    else if (topScore >= 0.88) {
-      // PARTIAL MATCH => keep user image in userImages
+
+    } else if (topScore >= 0.88) {
+      // PARTIAL MATCH => keep user image
       M.toast({
-        html: `Cell ${cellIndex}: PARTIAL MATCH >= 88% => ${matchName} (${topScorePerc}%).`
+        html: `Cell ${cellIndex}: PARTIAL MATCH >=88% => ${matchName} (${topScorePerc}%).`
       });
       if (matchBox) {
         matchBox.value = matchName;
@@ -1018,115 +1125,22 @@ async function sendAndMatch() {
       });
       croppedImagesArray[cellIndex] = null;
       partialMatches[topCandidate.user.name] = { cellIndex, score: topScore };
-    }
-    else {
-      // below 0.88 => no match
+
+    } else {
+      // <0.88 => no match
       M.toast({
-        html: `Cell ${cellIndex}: Score ${topScorePerc}% < 88%. No match.`
+        html: `Cell ${cellIndex}: Score ${topScorePerc}%<88%. No match.`
       });
     }
   }
 
-  // -------------------------------------------
-  // passOne(): big batch for all unmatched cells
-  // -------------------------------------------
-  async function passOne() {
-    let unmatchedCells = [];
-    for (let i = 0; i < croppedImagesArray.length; i++) {
-      if (croppedImagesArray[i]) unmatchedCells.push(i);
-    }
-    if (!unmatchedCells.length) return;
-
-    // Build tasks array: every (cell, user) pair in pass #1
-    let tasks = [];
-    unmatchedCells.forEach(cellIndex => {
-      userImagesArray.forEach((user, j) => {
-        tasks.push({ cellIndex, user, j });
-      });
-    });
-
-    // Run them all in parallel
-    const results = await Promise.all(
-      tasks.map(task =>
-        new Promise(resolve => {
-          setTimeout(() => {
-            compareImages(task.user.data, croppedImagesArray[task.cellIndex],
-              task.cellIndex, task.user.name
-            ).then(r => resolve({ cellIndex: task.cellIndex, user: task.user, result: r }));
-          }, task.j * 100); // keep your j*100ms offset per user
-        })
-      )
-    );
-
-    // Group the results by cell index
-    let cellMap = {};
-    for (const item of results) {
-      if (!cellMap[item.cellIndex]) cellMap[item.cellIndex] = [];
-      cellMap[item.cellIndex].push(item);
-    }
-
-    // Now finalize each cell
-    for (const i of unmatchedCells) {
-      // If cell was matched already by a sibling => skip
-      if (!croppedImagesArray[i]) continue;
-      const cellResults = cellMap[i] || [];
-      finalizeCellPassOne(i, cellResults);
-    }
-  }
-
-  // -------------------------------------------
-  // passTwo(): big batch for second pass
-  // -------------------------------------------
-  async function passTwo() {
-    let unmatchedCells = [];
-    for (let i = 0; i < croppedImagesArray.length; i++) {
-      if (croppedImagesArray[i]) unmatchedCells.push(i);
-    }
-    if (!unmatchedCells.length) return;
-
-    // Build tasks array
-    let tasks = [];
-    unmatchedCells.forEach(cellIndex => {
-      userImagesArray.forEach((user, j) => {
-        tasks.push({ cellIndex, user, j });
-      });
-    });
-    if (!tasks.length) return;
-
-    const results = await Promise.all(
-      tasks.map(task =>
-        new Promise(resolve => {
-          setTimeout(() => {
-            compareImages(task.user.data, croppedImagesArray[task.cellIndex],
-              task.cellIndex, task.user.name
-            ).then(r => resolve({ cellIndex: task.cellIndex, user: task.user, result: r }));
-          }, task.j * 100);
-        })
-      )
-    );
-
-    // Group by cell
-    let cellMap = {};
-    for (const item of results) {
-      if (!cellMap[item.cellIndex]) cellMap[item.cellIndex] = [];
-      cellMap[item.cellIndex].push(item);
-    }
-
-    // Finalize each cell
-    for (const i of unmatchedCells) {
-      if (!croppedImagesArray[i]) continue; // already matched
-      const cellResults = cellMap[i] || [];
-      finalizeCellPassTwo(i, cellResults);
-    }
-  }
-
-  // -------------------------------------------
-  // Execute pass #1, then pass #2
-  // -------------------------------------------
+  ////////////////////////////////////////
+  // (E) Execute pass #1, then pass #2
+  ////////////////////////////////////////
   await passOne();
   await passTwo();
 
-  M.toast({ html: "Finished matching passes with no pause between cells." });
+  M.toast({ html: "Finished matching passes with 100ms offset, no cell-by-cell pause!" });
 }
 
     // Modified compareImages: 
