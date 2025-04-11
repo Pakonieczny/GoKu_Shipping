@@ -1215,46 +1215,217 @@ async function sendAndMatch() {
 }
 // -----------------------------------------
 
-// -----------------------------------------
-// The openMatchPreviewModal function
-// -----------------------------------------
 function openMatchPreviewModal(cellIndex) {
+  // 1) Grab references to the modal + container
   const modalElem = document.getElementById("matchesModal");
   const container = document.getElementById("matchesGridContainer");
-  container.innerHTML = "";
+  container.innerHTML = ""; // Clear prior content
 
-  const matches = cellMatches[cellIndex] || [];
-  if (matches.length === 0) {
-    container.innerHTML = "<p>No matches found for this photo.</p>";
-  } else {
-    matches.forEach((match) => {
-      const box = document.createElement("div");
-      box.style.width = "100px";
-      box.style.height = "100px";
-      box.style.border = "1px solid #000";
-      box.style.display = "flex";
-      box.style.alignItems = "center";
-      box.style.justifyContent = "center";
-      box.style.overflow = "hidden";
+  // 2) Pull "matched" images for this cell
+  let matchedImages = cellMatches[cellIndex] || [];
 
-      const img = document.createElement("img");
-      img.src = match.userImage;
-      img.alt = "Match for cell " + cellIndex;
-      img.style.width = "100%";
-      img.style.height = "100%";
-      img.style.objectFit = "cover";
+  // 3) Build a local array of "unmatched" images
+  const unmatchedImages = userImagesArray.filter(uImg => {
+    if (partialMatches[uImg.name]) return false;
+    // Also exclude any that appear in matchedImages
+    const isMatched = matchedImages.some(m => m.userName === stripExtension(uImg.name));
+    return !isMatched;
+  });
 
-      box.appendChild(img);
-      container.appendChild(box);
-    });
-  }
+  // 4) Create a wrapper <div>, then two sub-sections:
+  const wrapper = document.createElement("div");
+  wrapper.style.display = "flex";
+  wrapper.style.flexDirection = "column";
 
+  // (A) Matched (100x100)
+  const matchedSection = document.createElement("div");
+  matchedSection.style.display = "flex";
+  matchedSection.style.flexWrap = "wrap";
+  matchedSection.style.gap = "10px";
+
+  matchedImages.forEach((mImg, index) => {
+    const box = document.createElement("div");
+    box.style.width = "100px";
+    box.style.height = "100px";
+    box.style.border = "1px solid #000";
+    box.style.display = "flex";
+    box.style.alignItems = "center";
+    box.style.justifyContent = "center";
+    box.style.overflow = "hidden";
+    box.style.position = "relative";
+
+    // Mark it as drop target
+    box.dataset.type = "matched";
+    box.dataset.index = index;
+
+    const img = document.createElement("img");
+    img.src = mImg.userImage;
+    img.alt = mImg.userName;
+    img.style.width = "100%";
+    img.style.height = "100%";
+    img.style.objectFit = "cover";
+
+    makeDropTarget(box);
+    box.appendChild(img);
+    matchedSection.appendChild(box);
+  });
+
+  // (B) Unmatched (66x66), 20px below
+  const unmatchedSection = document.createElement("div");
+  unmatchedSection.style.display = "flex";
+  unmatchedSection.style.flexWrap = "wrap";
+  unmatchedSection.style.gap = "5px";
+  unmatchedSection.style.marginTop = "20px"; // place 20px below matched
+
+  unmatchedImages.forEach((uImg, index) => {
+    const box = document.createElement("div");
+    box.style.width = "66px";
+    box.style.height = "66px";
+    box.style.border = "1px solid #000";
+    box.style.display = "flex";
+    box.style.alignItems = "center";
+    box.style.justifyContent = "center";
+    box.style.overflow = "hidden";
+    box.style.position = "relative";
+
+    box.dataset.type = "unmatched";
+    box.dataset.index = index;
+
+    const img = document.createElement("img");
+    img.src = uImg.data;
+    img.alt = uImg.name;
+    img.style.width = "100%";
+    img.style.height = "100%";
+    img.style.objectFit = "cover";
+
+    makeDraggable(box);
+    box.appendChild(img);
+    unmatchedSection.appendChild(box);
+  });
+
+  wrapper.appendChild(matchedSection);
+  wrapper.appendChild(unmatchedSection);
+  container.appendChild(wrapper);
+
+  // Finally open the modal
   const instance = M.Modal.getInstance(modalElem);
   if (instance) {
     instance.open();
   } else {
     M.Modal.init(modalElem);
     M.Modal.getInstance(modalElem).open();
+  }
+
+  // --- Helpers for drag & drop logic ---
+
+  function makeDraggable(elem) {
+    elem.setAttribute("draggable", true);
+    elem.addEventListener("dragstart", (ev) => {
+      ev.dataTransfer.setData("text/plain", JSON.stringify({
+        sourceType: elem.dataset.type,
+        sourceIndex: elem.dataset.index
+      }));
+    });
+  }
+
+  function makeDropTarget(elem) {
+    elem.addEventListener("dragover", (ev) => {
+      ev.preventDefault();
+    });
+    elem.addEventListener("drop", (ev) => {
+      ev.preventDefault();
+      const data = ev.dataTransfer.getData("text/plain");
+      if (!data) return;
+      let parsed;
+      try {
+        parsed = JSON.parse(data);
+      } catch (err) {
+        return;
+      }
+      if (parsed.sourceType === "unmatched" && elem.dataset.type === "matched") {
+        const unmatchedIndex = parseInt(parsed.sourceIndex, 10);
+        const matchedIndex = parseInt(elem.dataset.index, 10);
+
+        const unmatchedImg = unmatchedImages[unmatchedIndex];
+        const matchedImg   = matchedImages[matchedIndex];
+
+        // Swap them
+        matchedImages[matchedIndex] = {
+          userName: stripExtension(unmatchedImg.name),
+          userImage: unmatchedImg.data,
+          score: 0.0
+        };
+        unmatchedImages[unmatchedIndex] = {
+          name: matchedImg.userName + ".jpg",
+          data: matchedImg.userImage
+        };
+
+        // Re-render the entire modal to reflect the swap
+        container.innerHTML = "";
+        wrapper.innerHTML = "";
+        matchedSection.innerHTML = "";
+        unmatchedSection.innerHTML = "";
+
+        matchedImages.forEach((mImg, i) => {
+          const box = document.createElement("div");
+          box.style.width = "100px";
+          box.style.height = "100px";
+          box.style.border = "1px solid #000";
+          box.style.display = "flex";
+          box.style.alignItems = "center";
+          box.style.justifyContent = "center";
+          box.style.overflow = "hidden";
+          box.style.position = "relative";
+          box.dataset.type = "matched";
+          box.dataset.index = i;
+
+          const _img = document.createElement("img");
+          _img.src = mImg.userImage;
+          _img.alt = mImg.userName;
+          _img.style.width = "100%";
+          _img.style.height = "100%";
+          _img.style.objectFit = "cover";
+
+          makeDropTarget(box);
+          box.appendChild(_img);
+          matchedSection.appendChild(box);
+        });
+
+        unmatchedImages.forEach((uImg, i) => {
+          const box = document.createElement("div");
+          box.style.width = "66px";
+          box.style.height = "66px";
+          box.style.border = "1px solid #000";
+          box.style.display = "flex";
+          box.style.alignItems = "center";
+          box.style.justifyContent = "center";
+          box.style.overflow = "hidden";
+          box.style.position = "relative";
+          box.dataset.type = "unmatched";
+          box.dataset.index = i;
+
+          const _img = document.createElement("img");
+          _img.src = uImg.data;
+          _img.alt = uImg.name;
+          _img.style.width = "100%";
+          _img.style.height = "100%";
+          _img.style.objectFit = "cover";
+
+          makeDraggable(box);
+          box.appendChild(_img);
+          unmatchedSection.appendChild(box);
+        });
+
+        wrapper.appendChild(matchedSection);
+        unmatchedSection.style.marginTop = "20px";
+        wrapper.appendChild(unmatchedSection);
+        container.appendChild(wrapper);
+      }
+    });
+  }
+
+  function stripExtension(fileName) {
+    return fileName.replace(/\.\w+$/, "");
   }
 }
 
