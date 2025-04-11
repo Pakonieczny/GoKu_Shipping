@@ -1223,6 +1223,33 @@ function openMatchPreviewModal(cellIndex) {
   const container = document.getElementById("matchesGridContainer");
   container.innerHTML = "";
 
+// A) Insert a 100×100 Etsy-derived image in top-right corner
+  const etsyDerived = croppedImagesArray[cellIndex];
+  if (etsyDerived) {
+    const etsyBox = document.createElement("div");
+    etsyBox.style.position = "absolute";
+    etsyBox.style.top = "10px";
+    etsyBox.style.right = "10px";
+    etsyBox.style.width = "100px";
+    etsyBox.style.height = "100px";
+    etsyBox.style.border = "1px solid #000";
+    etsyBox.style.overflow = "hidden";
+
+    const etsyImg = document.createElement("img");
+    etsyImg.src = etsyDerived;
+    etsyImg.alt = `Etsy Photo for cell ${cellIndex}`;
+    etsyImg.style.width = "100%";
+    etsyImg.style.height = "100%";
+    etsyImg.style.objectFit = "cover";
+
+    etsyBox.appendChild(etsyImg);
+
+    const modalContent = modalElem.querySelector(".modal-content");
+    if (modalContent) {
+      modalContent.appendChild(etsyBox);
+    }
+  }
+
   // 1) Build local arrays for matched vs. unmatched images
   let matchedImages = cellMatches[cellIndex] || [];
   // "unmatched" => leftover images not partial or fully matched
