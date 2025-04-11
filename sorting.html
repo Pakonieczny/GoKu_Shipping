@@ -1427,29 +1427,41 @@ function openMatchPreviewModal(cellIndex) {
   }
 
   function makeDropTarget(elem) {
-    elem.addEventListener("dragover", (ev) => {
-      ev.preventDefault();
-    });
-    elem.addEventListener("drop", (ev) => {
-      ev.preventDefault();
-      const data = ev.dataTransfer.getData("text/plain");
-      if (!data) return;
-      let parsed;
-      try {
-        parsed = JSON.parse(data);
-      } catch (err) {
-        return;
-      }
+  elem.addEventListener("dragover", (ev) => {
+    ev.preventDefault();
+  });
+  elem.addEventListener("drop", (ev) => {
+    ev.preventDefault();
+    const data = ev.dataTransfer.getData("text/plain");
+    if (!data) return;
+    let parsed;
+    try {
+      parsed = JSON.parse(data);
+    } catch (err) {
+      return;
+    }
 
-      if (parsed.sourceType === "unmatched" && elem.dataset.type === "matched") {
-        // We are dropping an unmatched onto a matched => swap
-        const unmatchedIndex = parseInt(parsed.sourceIndex, 10);
-        const matchedIndex = parseInt(elem.dataset.index, 10);
+    // We only handle unmatched => matched drops
+    if (parsed.sourceType === "unmatched" && elem.dataset.type === "matched") {
+      const unmatchedIndex = parseInt(parsed.sourceIndex, 10);
+      const matchedIndex = parseInt(elem.dataset.index, 10);
 
-        const unmatchedImg = unmatchedImages[unmatchedIndex]; 
-        const matchedImg   = matchedImages[matchedIndex];
+      const unmatchedImg = unmatchedImages[unmatchedIndex];
+      const matchedImg   = matchedImages[matchedIndex];
 
-        // Swap them
+      // (A) If matchedImg.userImage is null => it's "No Match Found" placeholder
+      //     => we do a simple "assign" instead of a true swap
+      if (!matchedImg.userImage) {
+        // Copy the unmatched image to the matched slot
+        matchedImages[matchedIndex] = {
+          userName: stripExtension(unmatchedImg.name),
+          userImage: unmatchedImg.data,
+          score: 0.0
+        };
+        // Remove from unmatchedImages array
+        unmatchedImages.splice(unmatchedIndex, 1);
+      } else {
+        // (B) Else it's a normal matched image => do a swap
         matchedImages[matchedIndex] = {
           userName: stripExtension(unmatchedImg.name),
           userImage: unmatchedImg.data,
@@ -1459,12 +1471,13 @@ function openMatchPreviewModal(cellIndex) {
           name: matchedImg.userName + ".jpg",
           data: matchedImg.userImage
         };
-
-        // Re-render the local matched + unmatched sections 
-        refreshSections();
       }
-    });
-  }
+
+      // Re-render the local matched + unmatched sections
+      refreshSections();
+    }
+  });
+}
 
   function refreshSections() {
     container.innerHTML = "";
