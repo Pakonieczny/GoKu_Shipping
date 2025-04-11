@@ -1250,23 +1250,24 @@ function openMatchPreviewModal(cellIndex) {
     }
   }
 
-  // 1) Build local arrays for matched vs. unmatched images
+    // 1) Build local arrays for matched vs. unmatched images
   let matchedImages = cellMatches[cellIndex] || [];
-  // "unmatched" => leftover images not partial or fully matched
+
+  // Filter out partial or matched images
   let unmatchedImages = userImagesArray.filter((uImg) => {
-    // Exclude partial matches
     if (partialMatches[uImg.name]) return false;
-    // Exclude anything that appears in matchedImages:
     const isMatched = matchedImages.some((m) => m.userName === stripExtension(uImg.name));
     return !isMatched;
-    // If matchedImages is empty, insert a placeholder item
-    if (matchedImages.length === 0) {
-      matchedImages.push({
-        userName: "",       // or "placeholder"
-        userImage: null,    // indicates "No Match Found"
-        score: 0
-      });
-    }
+  }); // <-- close the arrow function here
+
+  // If matchedImages is empty, insert a placeholder item
+  if (matchedImages.length === 0) {
+    matchedImages.push({
+      userName: "",
+      userImage: null,
+      score: 0
+    });
+  }
 
   // 2) Create wrappers for 100×100 matched (top) + 66×66 unmatched (bottom)
   const wrapper = document.createElement("div");
