@@ -285,9 +285,16 @@
     // (HARD-CODED DEFAULT OFFSETS omitted as requested)
     // ---------------------------------------------------------------------
     
-    const configIDs = [
-      "connectEtsyBtn", "testOpenAIBtn", "openConfigBtn", "etsyOrderNumber",
-      "photoGridContainer", "configModal", "configTable", "saveConfigBtn"
+        const configIDs = [
+      "connectEtsyBtn",
+      "testOpenAIBtn",
+      "openConfigBtn",
+      "etsyOrderNumber",
+      "photoGridContainer",
+      "unmatchedContainer",       // <-- new
+      "configModal",
+      "configTable",
+      "saveConfigBtn"
     ];
     
     document.addEventListener("DOMContentLoaded", function() {
@@ -719,61 +726,66 @@
     }
     
     function loadPositions() {
-      configIDs.forEach(function(id) {
-        const el = document.getElementById(id);
-        if (!el) return;
-        const def = {};
-        const left = localStorage.getItem("pos-" + id + "-left") || def.left || 0;
-        const top  = localStorage.getItem("pos-" + id + "-top") || def.top || 0;
-        const w    = localStorage.getItem("pos-" + id + "-width") || def.width || 0;
-        const h    = localStorage.getItem("pos-" + id + "-height") || def.height || 0;
-        el.style.position = "absolute";
-        el.style.left = left + "px";
-        el.style.top = top + "px";
-        el.style.width = w + "px";
-        el.style.height = h + "px";
-      });
-    }
+  configIDs.forEach(function(id) {
+    const el = document.getElementById(id);
+    if (!el) return;
+    const def = {};
+    const left = localStorage.getItem("pos-" + id + "-left") || def.left || 0;
+    const top  = localStorage.getItem("pos-" + id + "-top")  || def.top  || 0;
+    const w    = localStorage.getItem("pos-" + id + "-width")  || def.width  || 0;
+    const h    = localStorage.getItem("pos-" + id + "-height") || def.height || 0;
+
+    el.style.position = "absolute";
+    el.style.left = left + "px";
+    el.style.top = top + "px";
+    if (parseInt(w, 10) > 0) el.style.width = w + "px";
+    if (parseInt(h, 10) > 0) el.style.height = h + "px";
+  });
+}
     loadPositions();
     
     function populateConfigTable() {
-      const tbody = document.querySelector("#configTable tbody");
-      tbody.innerHTML = "";
-      configIDs.forEach(function(id) {
-        const el = document.getElementById(id);
-        if (!el) return;
-        const cs = window.getComputedStyle(el);
-        const leftVal = parseInt(cs.left, 10) || 0;
-        const topVal = parseInt(cs.top, 10) || 0;
-        const widthVal = parseInt(cs.width, 10) || 0;
-        const heightVal = parseInt(cs.height, 10) || 0;
-        const row = document.createElement("tr");
-        row.innerHTML = `
-          <td>${id}</td>
-          <td><input type="number" value="${leftVal}" data-id="${id}" class="left-input"></td>
-          <td><input type="number" value="${topVal}" data-id="${id}" class="top-input"></td>
-          <td><input type="number" value="${widthVal}" data-id="${id}" class="width-input"></td>
-          <td><input type="number" value="${heightVal}" data-id="${id}" class="height-input"></td>
-        `;
-        tbody.appendChild(row);
-        row.querySelector(".left-input").addEventListener("input", function() {
-          const target = document.getElementById(this.dataset.id);
-          if (target) target.style.left = parseInt(this.value, 10) + "px";
-        });
-        row.querySelector(".top-input").addEventListener("input", function() {
-          const target = document.getElementById(this.dataset.id);
-          if (target) target.style.top = parseInt(this.value, 10) + "px";
-        });
-        row.querySelector(".width-input").addEventListener("input", function() {
-          const target = document.getElementById(this.dataset.id);
-          if (target) target.style.width = parseInt(this.value, 10) + "px";
-        });
-        row.querySelector(".height-input").addEventListener("input", function() {
-          const target = document.getElementById(this.dataset.id);
-          if (target) target.style.height = parseInt(this.value, 10) + "px";
-        });
-      });
-    }
+  const tbody = document.querySelector("#configTable tbody");
+  tbody.innerHTML = "";
+
+  configIDs.forEach(function(id) {
+    const el = document.getElementById(id);
+    if (!el) return;
+    const cs = window.getComputedStyle(el);
+    const leftVal = parseInt(cs.left, 10) || 0;
+    const topVal = parseInt(cs.top, 10) || 0;
+    const widthVal = parseInt(cs.width, 10) || 0;
+    const heightVal = parseInt(cs.height, 10) || 0;
+
+    const row = document.createElement("tr");
+    row.innerHTML = `
+      <td>${id}</td>
+      <td><input type="number" value="${leftVal}" data-id="${id}" class="left-input"></td>
+      <td><input type="number" value="${topVal}" data-id="${id}" class="top-input"></td>
+      <td><input type="number" value="${widthVal}" data-id="${id}" class="width-input"></td>
+      <td><input type="number" value="${heightVal}" data-id="${id}" class="height-input"></td>
+    `;
+    tbody.appendChild(row);
+
+    // Listeners to immediately update positions as user types
+    row.querySelector(".left-input").addEventListener("input", function() {
+      const target = document.getElementById(this.dataset.id);
+      if (target) target.style.left = parseInt(this.value, 10) + "px";
+    });
+    row.querySelector(".top-input").addEventListener("input", function() {
+      const target = document.getElementById(this.dataset.id);
+      if (target) target.style.top = parseInt(this.value, 10) + "px";
+    });
+    row.querySelector(".width-input").addEventListener("input", function() {
+      const target = document.getElementById(this.dataset.id);
+      if (target) target.style.width = parseInt(this.value, 10) + "px";
+    });
+    row.querySelector(".height-input").addEventListener("input", function() {
+      const target = document.getElementById(this.dataset.id);
+      if (target) target.style.height = parseInt(this.value, 10) + "px";
+    });
+  });
+}
     
     document.getElementById("openConfigBtn").addEventListener("click", function() {
       populateConfigTable();
