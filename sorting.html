@@ -859,7 +859,7 @@ async function sendAndMatch() {
               console.error("First-pass compare error:", i, user.name, err);
               resolve({ result: { score: 0 }, user });
             });
-        }, j * 100);
+        }, j * 25);
       });
     });
     const results = await Promise.all(comparisonPromises);
@@ -970,7 +970,7 @@ async function sendAndMatch() {
               console.error("Second-pass compare error:", i, user.name, err);
               resolve({ result: { score: 0 }, user });
             });
-        }, j * 100);
+        }, j * 25);
       });
     });
     const results = await Promise.all(comparisonPromises);
