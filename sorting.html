@@ -1259,7 +1259,14 @@ function openMatchPreviewModal(cellIndex) {
     // Exclude anything that appears in matchedImages:
     const isMatched = matchedImages.some((m) => m.userName === stripExtension(uImg.name));
     return !isMatched;
-  });
+    // If matchedImages is empty, insert a placeholder item
+    if (matchedImages.length === 0) {
+      matchedImages.push({
+        userName: "",       // or "placeholder"
+        userImage: null,    // indicates "No Match Found"
+        score: 0
+      });
+    }
 
   // 2) Create wrappers for 100×100 matched (top) + 66×66 unmatched (bottom)
   const wrapper = document.createElement("div");
@@ -1285,20 +1292,31 @@ function openMatchPreviewModal(cellIndex) {
     box.style.position = "relative";
 
     // Mark it as drop target
-    box.dataset.type = "matched";
-    box.dataset.index = index;
+  box.dataset.type = "matched";
+  box.dataset.index = index;
 
+  if (!mImg.userImage) {
+    // (A) If userImage is null => no match => show placeholder text
+    box.style.display = "flex";
+    box.style.alignItems = "center";
+    box.style.justifyContent = "center";
+    box.style.fontWeight = "bold";
+    box.innerHTML = "No Match Found";
+    makeDropTarget(box);
+  } else {
+    // (B) Otherwise, show the matched image
     const img = document.createElement("img");
     img.src = mImg.userImage;
     img.alt = mImg.userName;
     img.style.width = "100%";
     img.style.height = "100%";
     img.style.objectFit = "cover";
-
     makeDropTarget(box);
     box.appendChild(img);
-    matchedSection.appendChild(box);
-  });
+  }
+
+  matchedSection.appendChild(box);
+});
 
   // (B) Unmatched images section
   const unmatchedSection = document.createElement("div");
