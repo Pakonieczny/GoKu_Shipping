@@ -883,7 +883,7 @@ async function sendAndMatch() {
   }
 
   // --------------------------------------------------------------
-  // FIRST PASS: Accept only matches ≥ 0.98 (removes user image).
+  // FIRST PASS: Accept only matches ≥ 0.98 (removes user image from userImagesArray).
   // --------------------------------------------------------------
   let unmatchedCells = [];
   for (let i = 0; i < croppedImagesArray.length; i++) {
@@ -895,7 +895,7 @@ async function sendAndMatch() {
   for (const i of unmatchedCells) {
     const matchBox = document.getElementById("matchCell" + i);
 
-    // Compare all user images, staggered by j * 250
+    // Compare all user images, staggered by j*250
     const comparisonPromises = userImagesArray.map((user, j) => {
       return new Promise(resolve => {
         setTimeout(() => {
@@ -941,8 +941,11 @@ async function sendAndMatch() {
             userImage: topCandidate.user.data,
             score: topScore
           });
+          // Remove user image from userImagesArray
           userImagesArray = userImagesArray.filter(u => u.name !== topCandidate.user.name);
-          croppedImagesArray[i] = null;
+
+          // COMMENTED OUT (Option A):
+          // croppedImagesArray[i] = null;
         }
         // Otherwise, the standard first-pass threshold: top ≥ 0.98
         else if (topScore >= 0.98) {
@@ -960,8 +963,11 @@ async function sendAndMatch() {
             userImage: topCandidate.user.data,
             score: topScore
           });
+          // Remove user image from userImagesArray
           userImagesArray = userImagesArray.filter(u => u.name !== topCandidate.user.name);
-          croppedImagesArray[i] = null;
+
+          // COMMENTED OUT (Option A):
+          // croppedImagesArray[i] = null;
         }
       } else {
         // If there's only one result, just check if ≥ 0.98
@@ -980,8 +986,11 @@ async function sendAndMatch() {
             userImage: topCandidate.user.data,
             score: topScore
           });
+          // Remove user image from userImagesArray
           userImagesArray = userImagesArray.filter(u => u.name !== topCandidate.user.name);
-          croppedImagesArray[i] = null;
+
+          // COMMENTED OUT (Option A):
+          // croppedImagesArray[i] = null;
         }
       }
     }
@@ -1031,7 +1040,6 @@ async function sendAndMatch() {
       });
 
       if (results.length > 1) {
-        // There's a second candidate
         const secondScore = results[1].result.score;
         const delta = topScore - secondScore;
 
@@ -1050,8 +1058,11 @@ async function sendAndMatch() {
             userImage: topCandidate.user.data,
             score: topScore
           });
+          // Remove user image from userImagesArray
           userImagesArray = userImagesArray.filter(u => u.name !== topCandidate.user.name);
-          croppedImagesArray[i] = null;
+
+          // COMMENTED OUT (Option A):
+          // croppedImagesArray[i] = null;
         }
         else if (topScore === 1.0) {
           // EXACT 100%
@@ -1067,8 +1078,11 @@ async function sendAndMatch() {
             userImage: topCandidate.user.data,
             score: topScore
           });
+          // Remove user image from userImagesArray
           userImagesArray = userImagesArray.filter(u => u.name !== topCandidate.user.name);
-          croppedImagesArray[i] = null;
+
+          // COMMENTED OUT (Option A):
+          // croppedImagesArray[i] = null;
         }
         else if (topScore >= 0.98) {
           // NEAR-PERFECT => remove user image
@@ -1101,8 +1115,11 @@ async function sendAndMatch() {
             userImage: topCandidate.user.data,
             score: topScore
           });
+          // Remove user image from userImagesArray
           userImagesArray = userImagesArray.filter(u => u.name !== topCandidate.user.name);
-          croppedImagesArray[i] = null;
+
+          // COMMENTED OUT (Option A):
+          // croppedImagesArray[i] = null;
         }
         else if (topScore >= 0.88) {
           // PARTIAL MATCH => keep user image
@@ -1120,7 +1137,10 @@ async function sendAndMatch() {
             userImage: topCandidate.user.data,
             score: topScore
           });
-          croppedImagesArray[i] = null;
+
+          // COMMENTED OUT (Option A):
+          // croppedImagesArray[i] = null;
+
           partialMatches[topCandidate.user.name] = { cellIndex: i, score: topScore };
         } else {
           M.toast({ html: `Cell ${i}: Score ${topScorePerc}% < 88%. No match.` });
@@ -1140,8 +1160,11 @@ async function sendAndMatch() {
             userImage: topCandidate.user.data,
             score: topScore
           });
+          // Remove user image from userImagesArray
           userImagesArray = userImagesArray.filter(u => u.name !== topCandidate.user.name);
-          croppedImagesArray[i] = null;
+
+          // COMMENTED OUT (Option A):
+          // croppedImagesArray[i] = null;
         }
         else if (topScore >= 0.98) {
           M.toast({
@@ -1158,8 +1181,11 @@ async function sendAndMatch() {
             userImage: topCandidate.user.data,
             score: topScore
           });
+          // Remove user image from userImagesArray
           userImagesArray = userImagesArray.filter(u => u.name !== topCandidate.user.name);
-          croppedImagesArray[i] = null;
+
+          // COMMENTED OUT (Option A):
+          // croppedImagesArray[i] = null;
         }
         else if (topScore >= 0.88) {
           M.toast({
@@ -1176,7 +1202,10 @@ async function sendAndMatch() {
             userImage: topCandidate.user.data,
             score: topScore
           });
-          croppedImagesArray[i] = null;
+
+          // COMMENTED OUT (Option A):
+          // croppedImagesArray[i] = null;
+
           partialMatches[topCandidate.user.name] = { cellIndex: i, score: topScore };
         } else {
           M.toast({ html: `Cell ${i}: Score ${topScorePerc}% < 88%. No match.` });
@@ -1194,7 +1223,7 @@ async function sendAndMatch() {
       // Means cell i was never matched
       const previewBox = document.getElementById("previewCell" + i);
       if (previewBox) {
-        previewBox.style.border = "3px solid orangered";  // or "orangeade"
+        previewBox.style.border = "3px solid orangered";
       }
     }
   }
@@ -1209,11 +1238,6 @@ async function sendAndMatch() {
     });
   }
 
-  // (C) If leftover user images remain unmatched, create 66×66 previews
-  if (userImagesArray.length > 0) {
-    createUnmatchedUserImagesPreview();
-  }
-
   M.toast({ html: "Finished matching passes." });
 }
 // -----------------------------------------
@@ -1224,75 +1248,93 @@ function openMatchPreviewModal(cellIndex) {
   container.innerHTML = "";
 
 // A) Insert a 100×100 Etsy-derived image in top-right corner
-  const etsyDerived = croppedImagesArray[cellIndex];
-  if (etsyDerived) {
-    const etsyBox = document.createElement("div");
-    etsyBox.style.position = "absolute";
-    etsyBox.style.top = "10px";
-    etsyBox.style.right = "10px";
-    etsyBox.style.width = "100px";
-    etsyBox.style.height = "100px";
-    etsyBox.style.border = "1px solid #000";
-    etsyBox.style.overflow = "hidden";
+const etsyDerived = croppedImagesArray[cellIndex];
 
-    const etsyImg = document.createElement("img");
-    etsyImg.src = etsyDerived;
-    etsyImg.alt = `Etsy Photo for cell ${cellIndex}`;
-    etsyImg.style.width = "100%";
-    etsyImg.style.height = "100%";
-    etsyImg.style.objectFit = "cover";
+// We'll reference the modalContent so we can insert the "Etsy Photo:" label and the box
+const modalContent = modalElem.querySelector(".modal-content");
 
-    etsyBox.appendChild(etsyImg);
+// 1) Create a "Etsy Photo:" title near the top-right corner
+if (modalContent) {
+  const etsyLabel = document.createElement("div");
+  etsyLabel.textContent = "Etsy Photo:";
+  etsyLabel.style.position = "absolute";
+  etsyLabel.style.top = "10px";
+  etsyLabel.style.right = "120px";
+  etsyLabel.style.fontWeight = "bold";
+  modalContent.appendChild(etsyLabel);
+}
 
-    const modalContent = modalElem.querySelector(".modal-content");
-    if (modalContent) {
-      modalContent.appendChild(etsyBox);
-    }
-  }
+if (etsyDerived && modalContent) {
+  const etsyBox = document.createElement("div");
+  etsyBox.style.position = "absolute";
+  etsyBox.style.top = "10px";
+  etsyBox.style.right = "10px";
+  etsyBox.style.width = "100px";
+  etsyBox.style.height = "100px";
+  etsyBox.style.border = "1px solid #000";
+  etsyBox.style.overflow = "hidden";
 
-    // 1) Build local arrays for matched vs. unmatched images
-  let matchedImages = cellMatches[cellIndex] || [];
+  const etsyImg = document.createElement("img");
+  etsyImg.src = etsyDerived;
+  etsyImg.alt = `Etsy Photo for cell ${cellIndex}`;
+  etsyImg.style.width = "100%";
+  etsyImg.style.height = "100%";
+  etsyImg.style.objectFit = "cover";
 
-  // Filter out partial or matched images
-  let unmatchedImages = userImagesArray.filter((uImg) => {
-    if (partialMatches[uImg.name]) return false;
-    const isMatched = matchedImages.some((m) => m.userName === stripExtension(uImg.name));
-    return !isMatched;
-  }); // <-- close the arrow function here
+  etsyBox.appendChild(etsyImg);
+  modalContent.appendChild(etsyBox);
+}
 
-  // If matchedImages is empty, insert a placeholder item
-  if (matchedImages.length === 0) {
-    matchedImages.push({
-      userName: "",
-      userImage: null,
-      score: 0
-    });
-  }
+// 1) Build local arrays for matched vs. unmatched images
+let matchedImages = cellMatches[cellIndex] || [];
 
-  // 2) Create wrappers for 100×100 matched (top) + 66×66 unmatched (bottom)
-  const wrapper = document.createElement("div");
-  wrapper.style.display = "flex";
-  wrapper.style.flexDirection = "column";
+// Filter out partial or matched images
+let unmatchedImages = userImagesArray.filter((uImg) => {
+  if (partialMatches[uImg.name]) return false;
+  const isMatched = matchedImages.some((m) => m.userName === stripExtension(uImg.name));
+  return !isMatched;
+}); // <-- close the arrow function here
 
-  // (A) Matched images section
-  const matchedSection = document.createElement("div");
-  matchedSection.style.display = "flex";
-  matchedSection.style.flexWrap = "wrap";
-  matchedSection.style.gap = "10px";
+// If matchedImages is empty, insert a placeholder item
+if (matchedImages.length === 0) {
+  matchedImages.push({
+    userName: "",
+    userImage: null,
+    score: 0
+  });
+}
 
-  // Populate matched images as 100×100
-  matchedImages.forEach((mImg, index) => {
-    const box = document.createElement("div");
-    box.style.width = "100px";
-    box.style.height = "100px";
-    box.style.border = "1px solid #000";
-    box.style.display = "flex";
-    box.style.alignItems = "center";
-    box.style.justifyContent = "center";
-    box.style.overflow = "hidden";
-    box.style.position = "relative";
+// 2) Create wrappers for 100×100 matched (top) + 66×66 unmatched (bottom)
+const wrapper = document.createElement("div");
+wrapper.style.display = "flex";
+wrapper.style.flexDirection = "column";
 
-    // Mark it as drop target
+// (A) Matched images section
+const matchedSection = document.createElement("div");
+matchedSection.style.display = "flex";
+matchedSection.style.flexWrap = "wrap";
+matchedSection.style.gap = "10px";
+
+// ---- ADD "Matched User Photo:" title ----
+const matchedTitle = document.createElement("h6");
+matchedTitle.textContent = "Matched User Photo:";
+matchedTitle.style.fontWeight = "bold";
+matchedTitle.style.margin = "0 0 6px 0"; // small spacing
+matchedSection.appendChild(matchedTitle);
+
+// Populate matched images as 100×100
+matchedImages.forEach((mImg, index) => {
+  const box = document.createElement("div");
+  box.style.width = "100px";
+  box.style.height = "100px";
+  box.style.border = "1px solid #000";
+  box.style.display = "flex";
+  box.style.alignItems = "center";
+  box.style.justifyContent = "center";
+  box.style.overflow = "hidden";
+  box.style.position = "relative";
+
+  // Mark it as drop target
   box.dataset.type = "matched";
   box.dataset.index = index;
 
@@ -1319,114 +1361,121 @@ function openMatchPreviewModal(cellIndex) {
   matchedSection.appendChild(box);
 });
 
-  // (B) Unmatched images section
-  const unmatchedSection = document.createElement("div");
-  unmatchedSection.style.display = "flex";
-  unmatchedSection.style.flexWrap = "wrap";
-  unmatchedSection.style.gap = "5px";
-  unmatchedSection.style.marginTop = "20px"; // 20px below matched
+// (B) Unmatched images section
+const unmatchedSection = document.createElement("div");
+unmatchedSection.style.display = "flex";
+unmatchedSection.style.flexWrap = "wrap";
+unmatchedSection.style.gap = "5px";
+unmatchedSection.style.marginTop = "20px"; // 20px below matched
 
-  // Populate unmatched images as 66×66
-  unmatchedImages.forEach((uImg, index) => {
-    const box = document.createElement("div");
-    box.style.width = "66px";
-    box.style.height = "66px";
-    box.style.border = "1px solid #000";
-    box.style.display = "flex";
-    box.style.alignItems = "center";
-    box.style.justifyContent = "center";
-    box.style.overflow = "hidden";
-    box.style.position = "relative";
+// ---- ADD "Unmatched User Photos:" title ----
+const unmatchedTitle = document.createElement("h6");
+unmatchedTitle.textContent = "Unmatched User Photos:";
+unmatchedTitle.style.fontWeight = "bold";
+unmatchedTitle.style.margin = "0 0 6px 0";
+unmatchedSection.appendChild(unmatchedTitle);
 
-    // Mark as "unmatched"
-    box.dataset.type = "unmatched";
-    box.dataset.index = index;
+// Populate unmatched images as 66×66
+unmatchedImages.forEach((uImg, index) => {
+  const box = document.createElement("div");
+  box.style.width = "66px";
+  box.style.height = "66px";
+  box.style.border = "1px solid #000";
+  box.style.display = "flex";
+  box.style.alignItems = "center";
+  box.style.justifyContent = "center";
+  box.style.overflow = "hidden";
+  box.style.position = "relative";
 
-    const img = document.createElement("img");
-    img.src = uImg.data;
-    img.alt = uImg.name;
-    img.style.width = "100%";
-    img.style.height = "100%";
-    img.style.objectFit = "cover";
+  // Mark as "unmatched"
+  box.dataset.type = "unmatched";
+  box.dataset.index = index;
 
-    makeDraggable(box);
-    box.appendChild(img);
-    unmatchedSection.appendChild(box);
-  });
+  const img = document.createElement("img");
+  img.src = uImg.data;
+  img.alt = uImg.name;
+  img.style.width = "100%";
+  img.style.height = "100%";
+  img.style.objectFit = "cover";
 
-  // Assemble both sections
-  wrapper.appendChild(matchedSection);
-  wrapper.appendChild(unmatchedSection);
-  container.appendChild(wrapper);
+  makeDraggable(box);
+  box.appendChild(img);
+  unmatchedSection.appendChild(box);
+});
 
-  // 3) Initialize the modal with an onCloseEnd callback
-  //    so that when user clicks "Close", we push changes to global arrays.
-  const instance = M.Modal.init(modalElem, {
-    onCloseEnd: function() {
-      // (A) Save matchedImages array back to cellMatches
-      cellMatches[cellIndex] = matchedImages;
+// Assemble both sections
+wrapper.appendChild(matchedSection);
+wrapper.appendChild(unmatchedSection);
+container.appendChild(wrapper);
 
-      // (B) Rebuild userImagesArray to reflect the final unmatchedImages
-      //     We'll remove any images that appear in matchedImages
-      //     and then re-add unmatchedImages. That ensures a 1:1 sync.
-      const newUserArr = [...userImagesArray];
-      // Remove anything that is now matched
-      matchedImages.forEach((mImg) => {
-        // find a user image in newUserArr with .name that matches mImg.userName
-        // if found, remove it
-        const idx = newUserArr.findIndex((u) => stripExtension(u.name) === mImg.userName);
-        if (idx >= 0) newUserArr.splice(idx, 1);
-      });
-      // remove partial matches from the unmatched list if needed, or skip
-      // next, remove everything from unmatched that might also exist in newUserArr
-      // to avoid duplicates
-      unmatchedImages.forEach((u) => {
-        const dupIdx = newUserArr.findIndex((x) => x.name === u.name);
-        if (dupIdx >= 0) newUserArr.splice(dupIdx, 1);
-      });
-      // now add the final unmatched array items
-      unmatchedImages.forEach((u) => {
-        newUserArr.push(u);
-      });
+// 3) Initialize the modal with an onCloseEnd callback
+//    so that when user clicks "Close", we push changes to global arrays.
+const instance = M.Modal.init(modalElem, {
+  onCloseEnd: function() {
+    // (A) Save matchedImages array back to cellMatches
+    cellMatches[cellIndex] = matchedImages;
 
-      userImagesArray = newUserArr;
+    // (B) Rebuild userImagesArray to reflect the final unmatchedImages
+    //     We'll remove any images that appear in matchedImages
+    //     and then re-add unmatchedImages. That ensures a 1:1 sync.
+    const newUserArr = [...userImagesArray];
+    // Remove anything that is now matched
+    matchedImages.forEach((mImg) => {
+      // find a user image in newUserArr with .name that matches mImg.userName
+      // if found, remove it
+      const idx = newUserArr.findIndex((u) => stripExtension(u.name) === mImg.userName);
+      if (idx >= 0) newUserArr.splice(idx, 1);
+    });
+    // remove partial matches from the unmatched list if needed, or skip
+    // next, remove everything from unmatched that might also exist in newUserArr
+    // to avoid duplicates
+    unmatchedImages.forEach((u) => {
+      const dupIdx = newUserArr.findIndex((x) => x.name === u.name);
+      if (dupIdx >= 0) newUserArr.splice(dupIdx, 1);
+    });
+    // now add the final unmatched array items
+    unmatchedImages.forEach((u) => {
+      newUserArr.push(u);
+    });
 
-      // (C) Update the 4th read-only text box with the first matched image’s name (if any)
-      //     e.g., "matchCell" + cellIndex
-      const matchBox = document.getElementById("matchCell" + cellIndex);
-      if (matchBox) {
-        if (matchedImages.length > 0) {
-          // Use the first matched image's userName
-          matchBox.value = matchedImages[0].userName;
-          matchBox.style.fontWeight = "";  // optional reset
-          matchBox.style.color = "";
-        } else {
-          // No matches => empty
-          matchBox.value = "";
-        }
-      }
+    userImagesArray = newUserArr;
 
-      // (D) Re-run createUnmatchedUserImagesPreview() so the main 66x66 container updates
-      if (typeof createUnmatchedUserImagesPreview === "function") {
-        createUnmatchedUserImagesPreview();
+    // (C) Update the 4th read-only text box with the first matched image's name (if any)
+    //     e.g., "matchCell" + cellIndex
+    const matchBox = document.getElementById("matchCell" + cellIndex);
+    if (matchBox) {
+      if (matchedImages.length > 0) {
+        // Use the first matched image's userName
+        matchBox.value = matchedImages[0].userName;
+        matchBox.style.fontWeight = "";  // optional reset
+        matchBox.style.color = "";
+      } else {
+        // No matches => empty
+        matchBox.value = "";
       }
     }
-  });
-  // Finally open
-  instance.open();
 
-  // === Drag & Drop helpers ===
-  function makeDraggable(elem) {
-    elem.setAttribute("draggable", true);
-    elem.addEventListener("dragstart", (ev) => {
-      ev.dataTransfer.setData("text/plain", JSON.stringify({
-        sourceType: elem.dataset.type,
-        sourceIndex: elem.dataset.index
-      }));
-    });
+    // (D) Re-run createUnmatchedUserImagesPreview() so the main 66x66 container updates
+    if (typeof createUnmatchedUserImagesPreview === "function") {
+      createUnmatchedUserImagesPreview();
+    }
   }
+});
+// Finally open
+instance.open();
 
-  function makeDropTarget(elem) {
+// === Drag & Drop helpers ===
+function makeDraggable(elem) {
+  elem.setAttribute("draggable", true);
+  elem.addEventListener("dragstart", (ev) => {
+    ev.dataTransfer.setData("text/plain", JSON.stringify({
+      sourceType: elem.dataset.type,
+      sourceIndex: elem.dataset.index
+    }));
+  });
+}
+
+function makeDropTarget(elem) {
   elem.addEventListener("dragover", (ev) => {
     ev.preventDefault();
   });
@@ -1449,19 +1498,17 @@ function openMatchPreviewModal(cellIndex) {
       const unmatchedImg = unmatchedImages[unmatchedIndex];
       const matchedImg   = matchedImages[matchedIndex];
 
-      // (A) If matchedImg.userImage is null => it's "No Match Found" placeholder
-      //     => we do a simple "assign" instead of a true swap
+      // (A) If matchedImg.userImage is null => "No Match Found" placeholder => simple assign
       if (!matchedImg.userImage) {
-        // Copy the unmatched image to the matched slot
         matchedImages[matchedIndex] = {
           userName: stripExtension(unmatchedImg.name),
           userImage: unmatchedImg.data,
           score: 0.0
         };
-        // Remove from unmatchedImages array
+        // Remove from unmatched
         unmatchedImages.splice(unmatchedIndex, 1);
       } else {
-        // (B) Else it's a normal matched image => do a swap
+        // (B) Normal matched image => do a swap
         matchedImages[matchedIndex] = {
           userName: stripExtension(unmatchedImg.name),
           userImage: unmatchedImg.data,
@@ -1472,8 +1519,6 @@ function openMatchPreviewModal(cellIndex) {
           data: matchedImg.userImage
         };
       }
-
-      // Re-render the local matched + unmatched sections
       refreshSections();
     }
   });
