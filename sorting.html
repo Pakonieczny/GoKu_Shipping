@@ -1253,24 +1253,34 @@ function openMatchPreviewModal(cellIndex) {
 function createUnmatchedUserImagesPreview() {
   const unmatchedContainer = document.getElementById("unmatchedContainer");
   if (!unmatchedContainer) return;
+  unmatchedContainer.innerHTML = ""; // Clear old previews
 
-  unmatchedContainer.innerHTML = ""; // Clear old previews if any
+  // 1) Filter out any images that are partially matched:
+  //    If partialMatches has an entry keyed by userImg.name, that means partial match
+  const trulyUnmatchedImages = userImagesArray.filter(userImg => {
+    return !partialMatches[userImg.name];
+  });
 
-  // We'll do rows of 3, with the same spacing you used for the 100px boxes
+  // 2) Spacing: 66px box width + 5px gap = 71px total step horizontally & vertically
   const imagesPerRow = 3;
-  userImagesArray.forEach((userImg, i) => {
+  const boxSize = 66;
+  const gap = 5;
+  const step = boxSize + gap; // = 71
+
+  // 3) Create 66×66 previews for these leftover images
+  trulyUnmatchedImages.forEach((userImg, i) => {
     const row = Math.floor(i / imagesPerRow);
     const col = i % imagesPerRow;
-    const leftPx = col * 125;
-    const topPx = row * 165;
+    const leftPx = col * step;
+    const topPx = row * step;
 
     const previewBox = document.createElement("div");
-    previewBox.classList.add("preview-box"); // reusing same class if desired
+    previewBox.classList.add("preview-box");
     previewBox.style.position = "absolute";
     previewBox.style.left = leftPx + "px";
     previewBox.style.top = topPx + "px";
-    previewBox.style.width = "66px";
-    previewBox.style.height = "66px";
+    previewBox.style.width = boxSize + "px";
+    previewBox.style.height = boxSize + "px";
 
     // Insert the unmatched user image
     previewBox.innerHTML = `
@@ -1282,7 +1292,7 @@ function createUnmatchedUserImagesPreview() {
            style="width:100%; height:100%; object-fit:cover;" />
     `;
 
-    // Attach the same wheel-zoom, click-drag panning, single-click zoom, etc.
+    // Attach the same wheel-zoom, single-click zoom, & drag-panning
     attachPreviewBoxListeners(previewBox);
 
     unmatchedContainer.appendChild(previewBox);
