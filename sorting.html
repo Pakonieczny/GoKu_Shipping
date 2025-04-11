@@ -140,6 +140,25 @@
   #configTable .top-input,
   #configTable .width-input,
   #configTable .height-input { width: 80px !important; }
+  .modal {
+      opacity: 0 !important;
+      transform: translateY(20px) scale(0.95) !important;
+      will-change: opacity, transform;
+      transition: opacity 300ms ease, transform 300ms ease;
+    }
+    .modal.open {
+      opacity: 1 !important;
+      transform: translateY(0) scale(1) !important;
+    }
+
+    .modal-overlay {
+      opacity: 0;
+      will-change: opacity;
+      transition: opacity 300ms ease;
+    }
+    .modal-overlay.show {
+      opacity: 1;
+    }
 </style>
 </head>
 <body>
