@@ -1691,6 +1691,7 @@ function openMatchPreviewModal(cellIndex) {
   function stripExtension(fileName) {
     return fileName.replace(/\.\w+$/, "");
   }
+}
 
 // -----------------------------------------
 // The createUnmatchedUserImagesPreview function
@@ -1839,7 +1840,7 @@ async function compareImages(userImage, croppedGridImage, cellIndex, userImageNa
       window.cachedOrderItems = items;
       await fillPreviewBoxes(items);
     }
-   } 
+
   </script>
 </body>
 </html>
