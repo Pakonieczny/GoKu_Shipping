@@ -380,7 +380,7 @@
       croppedImagesArray = [];
       await cropAllImages();
       });
-    }
+    
       // Send & Match Button (Parallel)
       document.getElementById("sendMatchBtn").addEventListener("click", async function() {
         await sendAndMatch();
@@ -1756,7 +1756,7 @@ async function compareImages(userImage, croppedGridImage, cellIndex, userImageNa
       {
         role: "user",
         content: [
-          { 
+          {
             type: "text", 
             text: 
               "1. The Similarity Score is to be strictly measured on the similarity of the jewelry charm / pendant between the 2 images " +
@@ -1777,37 +1777,33 @@ async function compareImages(userImage, croppedGridImage, cellIndex, userImageNa
     max_tokens: 5000
   };
 
-    async function openAIAnalyzePhoto(base64Image) {
     try {
-      const response = await fetch(functionsBaseUrl + "/openaiProxy", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload)
-      });
-      const data = await response.json();
-
-      let text = data.choices[0].message.content.trim() || "{}";
-
-      // Remove any triple backticks and optional "json" fence
-      text = text.replace(/^```(\w+)?/, "").replace(/```$/, "").trim();
-
-      let parsed;
-      try {
-        parsed = JSON.parse(text);
-      } catch(e) {
-        console.warn("Failed to parse color/number from:", text);
-        parsed = {};
-      }
-
-      return { 
-        topRightNumber: parsed.topRightNumber || null, 
-        color: parsed.color || null 
-      };
-    } catch(e) {
-      console.error("Error analyzing photo with OpenAI:", e);
-      return { topRightNumber: null, color: null };
+    const response = await fetch(functionsBaseUrl + "/openaiProxy", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+      signal
+    });
+    if (!response.ok) {
+      throw new Error("OpenAI compareImages call failed with " + response.status);
     }
-  } // <-- This closing brace ends the function
+    const data = await response.json();
+
+    // The model's reply should be just the numeric similarity, e.g. "0.9132"
+    let similarityText = data.choices[0].message.content.trim();
+    // Strip out anything that's not part of a potential float
+    similarityText = similarityText.replace(/[^\d.]/g, "");
+    
+    let score = parseFloat(similarityText);
+    if (isNaN(score)) {
+      score = 0.0;
+    }
+    return { score };
+  } catch (err) {
+    console.error("Error comparing images with OpenAI:", err);
+    return { score: 0.0 };
+  }
+}
     
     // ---------------------------------------------------------
     // Pull Etsy order details and update grid details
