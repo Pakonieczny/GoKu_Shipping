@@ -894,34 +894,37 @@ async function openAIAnalyzePhoto(base64Image) {
         ]
       }
     ],
-    max_tokens: 300
+    max_tokens: 5000
   };
 
   try {
-    const response = await fetch(functionsBaseUrl + "/openaiProxy", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload)
-    });
-    const data = await response.json();
-    
-    let text = data.choices[0].message.content.trim() || "{}";
-    let parsed;
-    try {
-      parsed = JSON.parse(text);
-    } catch(e) {
-      console.warn("Failed to parse color/number from:", text);
-      parsed = {};
-    }
+  const response = await fetch(functionsBaseUrl + "/openaiProxy", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload)
+  });
+  const data = await response.json();
 
-    return { 
-      topRightNumber: parsed.topRightNumber || null, 
-      color: parsed.color || null 
-    };
+  let text = data.choices[0].message.content.trim() || "{}";
+
+  // Remove any triple backticks and optional "json" fence
+  text = text.replace(/^```(\w+)?/, "").replace(/```$/, "").trim();
+
+  let parsed;
+  try {
+    parsed = JSON.parse(text);
   } catch(e) {
-    console.error("Error analyzing photo with OpenAI:", e);
-    return { topRightNumber: null, color: null };
+    console.warn("Failed to parse color/number from:", text);
+    parsed = {};
   }
+
+  return { 
+    topRightNumber: parsed.topRightNumber || null, 
+    color: parsed.color || null 
+  };
+} catch(e) {
+  console.error("Error analyzing photo with OpenAI:", e);
+  return { topRightNumber: null, color: null };
 }
 
 // ------------------------------
