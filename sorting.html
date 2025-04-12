@@ -1776,39 +1776,37 @@ async function compareImages(userImage, croppedGridImage, cellIndex, userImageNa
     max_tokens: 5000
   };
 
-  try {
-    const response = await fetch(functionsBaseUrl + "/openaiProxy", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-      signal: signal
-    });
-    const data = await response.json();
-    console.log("Response for cell " + cellIndex + ", user image " + userImageName + ":", data);
+    async function openAIAnalyzePhoto(base64Image) {
+    try {
+      const response = await fetch(functionsBaseUrl + "/openaiProxy", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
+      });
+      const data = await response.json();
 
-    const scoreText = data.choices[0].message.content.trim();
-    const score = parseFloat(scoreText);
-    
-    if (isNaN(score)) {
-      console.error("Cell " + cellIndex + " (" + userImageName + "): Invalid score (" + scoreText + ")");
-      return { score: 0, name: null };
-    }
+      let text = data.choices[0].message.content.trim() || "{}";
 
-    // Optionally show a toast if it's ≥ 0.85
-    if (score >= 0.88) {
-      M.toast({ html: "Cell " + cellIndex + " (" + userImageName + "): Score " + score });
-    }
+      // Remove any triple backticks and optional "json" fence
+      text = text.replace(/^```(\w+)?/, "").replace(/```$/, "").trim();
 
-    return { score: score, name: (score >= 0.88) ? userImageName : null };
-  } catch (error) {
-    console.error("Error comparing cell " + cellIndex + " (" + userImageName + "):", error);
-    if (error.name === "AbortError") {
-      return { score: 0, name: null };
+      let parsed;
+      try {
+        parsed = JSON.parse(text);
+      } catch(e) {
+        console.warn("Failed to parse color/number from:", text);
+        parsed = {};
+      }
+
+      return { 
+        topRightNumber: parsed.topRightNumber || null, 
+        color: parsed.color || null 
+      };
+    } catch(e) {
+      console.error("Error analyzing photo with OpenAI:", e);
+      return { topRightNumber: null, color: null };
     }
-    M.toast({ html: "Cell " + cellIndex + " (" + userImageName + "): Comparison error" });
-    return { score: 0, name: null };
-  }
-}
+  } // <-- This closing brace ends the function
     
     // ---------------------------------------------------------
     // Pull Etsy order details and update grid details
