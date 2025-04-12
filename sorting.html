@@ -588,7 +588,7 @@
         ],
       },
     ],
-    max_tokens: 5000,
+    max_tokens: 3000,
   };
 
   console.log("Sending payload to OpenAI:", payload);
@@ -645,16 +645,19 @@
 }
 
     async function analyzeUserImagesViaOpenAI() {
-      // Filter for images that have not yet been analyzed.
-      const imagesToAnalyze = userImagesArray.filter(imgObj => !imgObj.analyzed);
+  // Filter for images that have not yet been analyzed.
+  const imagesToAnalyze = userImagesArray.filter(imgObj => !imgObj.analyzed);
 
-      if (imagesToAnalyze.length === 0) {
-        console.log("No new images to analyze.");
-        return;
-      }
+  if (imagesToAnalyze.length === 0) {
+    console.log("No new images to analyze.");
+    return;
+  }
 
-      const analysisPromises = imagesToAnalyze.map((imgObj) => {
-        return openAIAnalyzePhoto(imgObj.data)
+  // Stagger each call by (index * 250 ms)
+  const analysisPromises = imagesToAnalyze.map((imgObj, index) => {
+    return new Promise((resolve) => {
+      setTimeout(() => {
+        openAIAnalyzePhoto(imgObj.data)
           .then((result) => {
             const color = (result.color || "Unknown").toLowerCase();
             const number = result.topRightNumber || "XX";
@@ -669,13 +672,16 @@
             imgObj.name = `${finalColor}_${number}.jpg`;
             imgObj.analyzed = true;
             console.log("Analysis complete for image:", imgObj.name);
-            return imgObj;
+            resolve(imgObj);
           })
           .catch((err) => {
             console.warn("Analysis failed for an image:", err);
-            return imgObj; // keep unchanged if error occurred
+            // Keep the image unchanged if error occurred
+            resolve(imgObj);
           });
-      });
+      }, index * 200);
+    });
+  });
 
   // Wait for all analyses to finish.
   await Promise.all(analysisPromises);
