@@ -1303,27 +1303,8 @@ for (const i of unmatchedCells) {
       html: `Cell ${i}: Best candidate => ${matchName} (${topScorePerc}%)`
     });
 
-    // Example threshold checks
     if (topScore === 1.0) {
-      // PERFECT MATCH
-      if (matchBox) {
-        matchBox.value = matchName;
-        matchBox.style.fontWeight = "";
-        matchBox.style.color = "";
-      }
-      if (!cellMatches[i]) cellMatches[i] = [];
-      cellMatches[i].push({
-        userName: matchName,
-        userImage: topCandidate.user.data,
-        score: topScore
-      });
-
-      // Remove matched user + null out Etsy
-      userImagesArray = userImagesArray.filter(u => u.name !== topCandidate.user.name);
-      croppedImagesArray[i] = null;
-
-    } else if (topScore >= 0.98) {
-      // NEAR-PERFECT
+      // Perfect match
       if (matchBox) {
         matchBox.value = matchName;
         matchBox.style.fontWeight = "";
@@ -1338,9 +1319,26 @@ for (const i of unmatchedCells) {
 
       userImagesArray = userImagesArray.filter(u => u.name !== topCandidate.user.name);
       croppedImagesArray[i] = null;
+    }
+    else if (topScore >= 0.98) {
+      // Near-perfect
+      if (matchBox) {
+        matchBox.value = matchName;
+        matchBox.style.fontWeight = "";
+        matchBox.style.color = "";
+      }
+      if (!cellMatches[i]) cellMatches[i] = [];
+      cellMatches[i].push({
+        userName: matchName,
+        userImage: topCandidate.user.data,
+        score: topScore
+      });
 
-    } else if (topScore >= 0.88) {
-      // Partial or Delta logic
+      userImagesArray = userImagesArray.filter(u => u.name !== topCandidate.user.name);
+      croppedImagesArray[i] = null;
+    }
+    else if (topScore >= 0.88) {
+      // Partial or delta logic
       matchBox.value = matchName;
       matchBox.style.fontWeight = "bold";
       matchBox.style.color = "orangered";
@@ -1352,17 +1350,17 @@ for (const i of unmatchedCells) {
         score: topScore
       });
 
-      // Remove partial match so it's not "unmatched"
+      // Remove partial match from userImages + null out cell
       userImagesArray = userImagesArray.filter(u => u.name !== topCandidate.user.name);
       croppedImagesArray[i] = null;
-
-    } else {
+    }
+    else {
       M.toast({ html: `Cell ${i}: Score ${topScorePerc}% < 88%. No match.` });
     }
   }
 
-  // Short cooldown
-  await new Promise((resolve) => setTimeout(resolve, 2000));
+  // 2s cooldown
+  await new Promise(resolve => setTimeout(resolve, 2000));
 }
 
 // (A) Now highlight only cells that truly have NO matches
@@ -1385,6 +1383,7 @@ for (let i = 0; i < croppedImagesArray.length; i++) {
 }
 
 M.toast({ html: "Finished matching passes." });
+} // <-- Make sure this closes your sendAndMatch() function!
 
 
 // -----------------------------------------
