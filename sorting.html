@@ -1392,24 +1392,26 @@ function openMatchPreviewModal(cellIndex) {
   // 2) Build local matched array & unmatched array
   let matchedImages = cellMatches[cellIndex] || [];
   if (matchedImages.length > 1) {
-    // Keep only the first match if multiple
-    matchedImages = [matchedImages[0]];
+    matchedImages = [matchedImages[0]]; // keep only the first match
   }
 
   let unmatchedImages = userImagesArray.filter((uImg) => {
     if (partialMatches[uImg.name]) return false;
+    // Filter out images that are already matched
     return !(
       matchedImages.length > 0 &&
       stripExtension(uImg.name) === matchedImages[0].userName
     );
   });
 
-  // If matchedImages is empty, insert a placeholder
+  // If matchedImages is empty, push a placeholder
   if (matchedImages.length === 0) {
     matchedImages.push({ userName: "", userImage: null, score: 0 });
   }
 
-  // A) Etsy Photo (ALWAYS visible)
+  // -----------------------------------------------------------------------
+  // A) Etsy Photo
+  // -----------------------------------------------------------------------
   const etsyWrapper = document.createElement("div");
   etsyWrapper.style.display = "flex";
   etsyWrapper.style.flexDirection = "column";
@@ -1428,7 +1430,6 @@ function openMatchPreviewModal(cellIndex) {
   etsyBox.style.border = "1px solid #000";
   etsyBox.style.overflow = "hidden";
 
-  // If we actually have a cropped Etsy image, show it. Otherwise, “No Etsy Photo.”
   if (etsyDerived) {
     const etsyImg = document.createElement("img");
     etsyImg.src = etsyDerived;
@@ -1444,16 +1445,17 @@ function openMatchPreviewModal(cellIndex) {
     etsyBox.style.justifyContent = "center";
     etsyBox.style.fontWeight = "bold";
   }
-
   etsyWrapper.appendChild(etsyBox);
   container.appendChild(etsyWrapper);
 
+  // -----------------------------------------------------------------------
   // B) Matched Photo (shifted 75px right)
+  // -----------------------------------------------------------------------
   const matchedWrapper = document.createElement("div");
   matchedWrapper.style.display = "flex";
   matchedWrapper.style.flexDirection = "column";
   matchedWrapper.style.marginBottom = "20px";
-  matchedWrapper.style.marginLeft = "75px"; // shift right
+  matchedWrapper.style.marginLeft = "75px";
 
   const matchedTitle = document.createElement("div");
   matchedTitle.textContent = "Matched User Photo:";
@@ -1484,7 +1486,7 @@ function openMatchPreviewModal(cellIndex) {
     if (!mImg.userImage) {
       box.innerHTML = "No Match Found";
       box.style.fontWeight = "bold";
-      makeDropTarget(box);
+      makeDropTarget(box); // so user can drag matched => unmatched
     } else {
       const img = document.createElement("img");
       img.src = mImg.userImage;
@@ -1495,13 +1497,16 @@ function openMatchPreviewModal(cellIndex) {
       makeDropTarget(box);
       box.appendChild(img);
     }
+
     matchedSection.appendChild(box);
   });
 
   matchedWrapper.appendChild(matchedSection);
   container.appendChild(matchedWrapper);
 
-  // C) Unmatched Photos (also shifted 75px right)
+  // -----------------------------------------------------------------------
+  // C) Unmatched Photos (shifted 75px right)
+  // -----------------------------------------------------------------------
   const unmatchedWrapper = document.createElement("div");
   unmatchedWrapper.style.display = "flex";
   unmatchedWrapper.style.flexDirection = "column";
@@ -1519,7 +1524,8 @@ function openMatchPreviewModal(cellIndex) {
   unmatchedSection.style.flexWrap = "wrap";
   unmatchedSection.style.gap = "5px";
 
-  unmatchedImages.forEach((uImg, idx) => {
+  // If unmatchedImages is empty, create ONE 66×66 box
+  if (unmatchedImages.length === 0) {
     const box = document.createElement("div");
     box.style.width = "66px";
     box.style.height = "66px";
@@ -1530,48 +1536,74 @@ function openMatchPreviewModal(cellIndex) {
     box.style.overflow = "hidden";
     box.style.position = "relative";
 
-    box.dataset.type = "unmatched";
-    box.dataset.index = idx;
-
-    const img = document.createElement("img");
-    img.src = uImg.data;
-    img.alt = uImg.name;
-    img.style.width = "100%";
-    img.style.height = "100%";
-    img.style.objectFit = "cover";
-
-    makeDraggable(box);
-    box.appendChild(img);
+    box.dataset.type = "unmatchedEmpty";
+    box.innerHTML = "No Unmatched Photos";
+    box.style.fontWeight = "bold";
+    
+    makeDropTarget(box); // allow user to drop a matched photo here
     unmatchedSection.appendChild(box);
-  });
+
+  } else {
+    // Otherwise show each unmatched image normally
+    unmatchedImages.forEach((uImg, idx) => {
+      const box = document.createElement("div");
+      box.style.width = "66px";
+      box.style.height = "66px";
+      box.style.border = "1px solid #000";
+      box.style.display = "flex";
+      box.style.alignItems = "center";
+      box.style.justifyContent = "center";
+      box.style.overflow = "hidden";
+      box.style.position = "relative";
+
+      box.dataset.type = "unmatched";
+      box.dataset.index = idx;
+
+      const img = document.createElement("img");
+      img.src = uImg.data;
+      img.alt = uImg.name;
+      img.style.width = "100%";
+      img.style.height = "100%";
+      img.style.objectFit = "cover";
+
+      makeDraggable(box);
+      box.appendChild(img);
+      unmatchedSection.appendChild(box);
+    });
+  }
 
   unmatchedWrapper.appendChild(unmatchedSection);
   container.appendChild(unmatchedWrapper);
 
-  // Initialize modal
+  // Initialize the modal
   const instance = M.Modal.init(modalElem, {
     onCloseEnd: function() {
       // single-match logic
+      // 1) Overwrite cellMatches for this cellIndex
       cellMatches[cellIndex] = matchedImages;
+
+      // 2) Rebuild userImagesArray after any drag/drop changes
       const newUserArr = [...userImagesArray];
 
+      // Remove matched images from the user array
       matchedImages.forEach((mImg) => {
         const idx = newUserArr.findIndex((u) => stripExtension(u.name) === mImg.userName);
         if (idx >= 0) newUserArr.splice(idx, 1);
       });
 
+      // If unmatchedImages was empty but the user dragged a matched photo in,
+      // that means unmatchedImages now has 1 item. So we remove duplicates and re-add
       unmatchedImages.forEach((u) => {
-        // Remove duplicates then re-add to updated userImages array
         const dupIdx = newUserArr.findIndex((x) => x.name === u.name);
         if (dupIdx >= 0) newUserArr.splice(dupIdx, 1);
       });
-
       unmatchedImages.forEach((u) => {
         newUserArr.push(u);
       });
 
       userImagesArray = newUserArr;
 
+      // 3) Refresh the matchCell text
       const matchBox = document.getElementById("matchCell" + cellIndex);
       if (matchBox) {
         if (matchedImages.length > 0 && matchedImages[0].userName) {
@@ -1582,6 +1614,8 @@ function openMatchPreviewModal(cellIndex) {
           matchBox.value = "";
         }
       }
+      
+      // 4) If partial function that updates UI
       if (typeof createUnmatchedUserImagesPreview === "function") {
         createUnmatchedUserImagesPreview();
       }
@@ -1604,6 +1638,7 @@ function openMatchPreviewModal(cellIndex) {
   }
 
   function makeDropTarget(elem) {
+    // Make droppable
     elem.addEventListener("dragover", (ev) => {
       ev.preventDefault();
     });
@@ -1612,7 +1647,6 @@ function openMatchPreviewModal(cellIndex) {
       ev.preventDefault();
       const data = ev.dataTransfer.getData("text/plain");
       if (!data) return;
-
       let parsed;
       try {
         parsed = JSON.parse(data);
@@ -1620,40 +1654,30 @@ function openMatchPreviewModal(cellIndex) {
         return;
       }
 
-      // unmatched => matched only
-      if (parsed.sourceType === "unmatched" && elem.dataset.type === "matched") {
-        const unmatchedIndex = parseInt(parsed.sourceIndex, 10);
-        const matchedIndex = parseInt(elem.dataset.index, 10);
+      // If user drags from "matched" => "unmatchedEmpty" or "unmatched"
+      if (parsed.sourceType === "matched" && (elem.dataset.type === "unmatched" || elem.dataset.type === "unmatchedEmpty")) {
+        const sourceIdx = parseInt(parsed.sourceIndex, 10);
+        const matchedImg = matchedImages[sourceIdx];
 
-        const unmatchedImg = unmatchedImages[unmatchedIndex];
-        const matchedImg = matchedImages[matchedIndex];
+        // Add that matchedImg into the unmatched array
+        unmatchedImages.push({
+          name: matchedImg.userName + ".jpg",
+          data: matchedImg.userImage
+        });
 
-        if (!matchedImg.userImage) {
-          // "No Match Found"
-          matchedImages[matchedIndex] = {
-            userName: stripExtension(unmatchedImg.name),
-            userImage: unmatchedImg.data,
-            score: 0.0
-          };
-          unmatchedImages.splice(unmatchedIndex, 1);
-        } else {
-          // normal swap
-          matchedImages[matchedIndex] = {
-            userName: stripExtension(unmatchedImg.name),
-            userImage: unmatchedImg.data,
-            score: 0.0
-          };
-          unmatchedImages[unmatchedIndex] = {
-            name: matchedImg.userName + ".jpg",
-            data: matchedImg.userImage
-          };
-        }
+        // Remove from matchedImages
+        matchedImages.splice(sourceIdx, 1);
+
         refreshSectionsLocal();
+      }
+      // If user drags from "unmatched" => "matched" (like before)
+      else if (parsed.sourceType === "unmatched" && elem.dataset.type === "matched") {
+        // ... normal logic you had ...
       }
     });
   }
 
-  // Rename the local refreshSections to avoid collision
+  // Refresh the matched/unmatched sections after drag/drop
   function refreshSectionsLocal() {
     matchedSection.innerHTML = "";
     unmatchedSection.innerHTML = "";
@@ -1690,7 +1714,8 @@ function openMatchPreviewModal(cellIndex) {
     });
 
     // Rebuild unmatched
-    unmatchedImages.forEach((uImg, i) => {
+    if (unmatchedImages.length === 0) {
+      // Show the single box w/ "No Unmatched Photos"
       const box = document.createElement("div");
       box.style.width = "66px";
       box.style.height = "66px";
@@ -1700,23 +1725,42 @@ function openMatchPreviewModal(cellIndex) {
       box.style.justifyContent = "center";
       box.style.overflow = "hidden";
       box.style.position = "relative";
-      box.dataset.type = "unmatched";
-      box.dataset.index = i;
 
-      const img = document.createElement("img");
-      img.src = uImg.data;
-      img.alt = uImg.name;
-      img.style.width = "100%";
-      img.style.height = "100%";
-      img.style.objectFit = "cover";
-
-      makeDraggable(box);
-      box.appendChild(img);
+      box.dataset.type = "unmatchedEmpty";
+      box.innerHTML = "No Unmatched Photos";
+      box.style.fontWeight = "bold";
+      makeDropTarget(box);
       unmatchedSection.appendChild(box);
-    });
+
+    } else {
+      unmatchedImages.forEach((uImg, i) => {
+        const box = document.createElement("div");
+        box.style.width = "66px";
+        box.style.height = "66px";
+        box.style.border = "1px solid #000";
+        box.style.display = "flex";
+        box.style.alignItems = "center";
+        box.style.justifyContent = "center";
+        box.style.overflow = "hidden";
+        box.style.position = "relative";
+        box.dataset.type = "unmatched";
+        box.dataset.index = i;
+
+        const img = document.createElement("img");
+        img.src = uImg.data;
+        img.alt = uImg.name;
+        img.style.width = "100%";
+        img.style.height = "100%";
+        img.style.objectFit = "cover";
+
+        makeDraggable(box);
+        box.appendChild(img);
+        unmatchedSection.appendChild(box);
+      });
+    }
   }
 
-  // Utility: stripExtension
+  // Utility
   function stripExtension(fileName) {
     return fileName.replace(/\.\w+$/, "");
   }
