@@ -1416,7 +1416,7 @@ function openMatchPreviewModal(cellIndex) {
     matchedImages.push({ userName: "", userImage: null, score: 0 });
   }
 
-  // A) Etsy Photo
+  // A) Etsy Photo (ALWAYS visible)
   const etsyWrapper = document.createElement("div");
   etsyWrapper.style.display = "flex";
   etsyWrapper.style.flexDirection = "column";
@@ -1435,6 +1435,7 @@ function openMatchPreviewModal(cellIndex) {
   etsyBox.style.border = "1px solid #000";
   etsyBox.style.overflow = "hidden";
 
+  // If we actually have a cropped Etsy image, show it. Otherwise, “No Etsy Photo.”
   if (etsyDerived) {
     const etsyImg = document.createElement("img");
     etsyImg.src = etsyDerived;
@@ -1450,6 +1451,7 @@ function openMatchPreviewModal(cellIndex) {
     etsyBox.style.justifyContent = "center";
     etsyBox.style.fontWeight = "bold";
   }
+
   etsyWrapper.appendChild(etsyBox);
   container.appendChild(etsyWrapper);
 
