@@ -1069,7 +1069,64 @@ async function analyzeUserImagesViaOpenAI() {
       }
     }
 
-    async function sendAndMatch() {
+    /********************************************************
+     * compareImages, sendAndMatch, partialMatches, etc.
+     ********************************************************/
+    async function compareImages(userImage, croppedGridImage, cellIndex, userImageName, signal = undefined) {
+  const payload = {
+    model: "gpt-4o",
+    messages: [
+      {
+        role: "user",
+        content: [
+          {
+            type: "text",
+            text:
+              "1. The Similarity Score is to be strictly measured on the similarity of the jewelry charm / pendant between the 2 images " +
+              "2. Focus on the charm outline and silhouette and compare the cutouts or holes within the charm " +
+              "3. Focus on the engraving existance, design, shapes on top of the charm itself " +
+              "4. Return a similarity score that combines the outline and silhouette score + the similarity score for engraving size, existance, location, orientation etc.. " +
+              "5. If you detect an animal charm then strictly focus on the position, size and orientation of the head, eyes, beak, mouth, ears, legs, wings etc.. " +
+              "6. Ignore and disregard all background and accessories around and attached to charm such as necklaces, chains, hoops, rings, clothing, or skin " +
+              "7. Return a numeric similarity score between 0.0000 and 1.0000 with EXACTLY four decimal places, for example 0.8937, 0.9231, or 1.675, and no additional text " +
+              "8. Examine all details on top and inside each engraved charm " +
+              "9. Emphasize the pose and direction the charm is facing ",
+          },
+          { type: "image_url", image_url: { url: userImage, detail: "high" } },
+          { type: "image_url", image_url: { url: croppedGridImage, detail: "high" } },
+        ],
+      },
+    ],
+    max_tokens: 5000,
+  };
+
+  try {
+    const response = await fetch(functionsBaseUrl + "/openaiProxy", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+      signal,
+    });
+    if (!response.ok) {
+      throw new Error("OpenAI compareImages call failed with " + response.status);
+    }
+    const data = await response.json();
+
+    let similarityText = data.choices[0].message.content.trim();
+    similarityText = similarityText.replace(/[^\d.]/g, ""); // keep only digits & dots
+
+    let score = parseFloat(similarityText);
+    if (isNaN(score)) {
+      score = 0.0;
+    }
+    return { score };
+  } catch (err) {
+    console.error("Error comparing images with OpenAI:", err);
+    return { score: 0.0 };
+  }
+}
+
+async function sendAndMatch() {
   if (userImagesArray.length === 0) {
     M.toast({ html: "No user images available! Please drop user images first." });
     return;
@@ -1079,9 +1136,9 @@ async function analyzeUserImagesViaOpenAI() {
     return;
   }
 
-  // ---------------------------------------------------------------------
-// FIRST PASS: Accept only matches ≥ 0.98, or (≥0.88 && delta≥0.15)
-// ---------------------------------------------------------------------
+  //---------------------------------------------------------------------
+// FIRST PASS (Parallel, immediate removal if matched)
+//---------------------------------------------------------------------
 let unmatchedCells = [];
 for (let i = 0; i < croppedImagesArray.length; i++) {
   if (croppedImagesArray[i]) {
@@ -1089,13 +1146,28 @@ for (let i = 0; i < croppedImagesArray.length; i++) {
   }
 }
 
+// Two shared sets to mark which user images / cells are matched
+const matchedUserNames = new Set();
+const matchedCellIndices = new Set();
+
 for (const i of unmatchedCells) {
   const matchBox = document.getElementById("matchCell" + i);
 
-  // Compare all user images, staggered by j*250
+  // Already matched in the same pass? If yes, skip
+  if (matchedCellIndices.has(i)) {
+    continue;
+  }
+
+  // Compare all user images in parallel, staggered
   const comparisonPromises = userImagesArray.map((user, j) => {
     return new Promise((resolve) => {
       setTimeout(() => {
+        // If user or cell is already matched, skip
+        if (matchedUserNames.has(user.name) || matchedCellIndices.has(i)) {
+          // Return a score of 0 => effectively "no match"
+          return resolve({ result: { score: 0 }, user });
+        }
+
         compareImages(user.data, croppedImagesArray[i], i, user.name)
           .then((result) => resolve({ result, user }))
           .catch((err) => {
@@ -1107,172 +1179,197 @@ for (const i of unmatchedCells) {
   });
 
   const results = await Promise.all(comparisonPromises);
-  // Sort from best to worst
   results.sort((a, b) => b.result.score - a.result.score);
 
   if (!results.length || results[0].result.score === 0) {
     M.toast({ html: `Cell ${i}: No valid matches in first pass.` });
-    // Move on if no valid match
   } else {
-    // Top candidate
+    // Best candidate
     const topCandidate = results[0];
     const topScore = topCandidate.result.score;
-    // If there's no second candidate, secondScore = 0
-    const secondScore = results[1]?.result?.score ?? 0;
-    const delta = topScore - secondScore;
-
     const topScorePerc = (topScore * 100).toFixed(2);
     const matchName = topCandidate.user.name.replace(/(\.jpg|\.png)$/i, "");
 
-    // 1) Check ≥ 0.98
-    if (topScore >= 0.98) {
-      M.toast({
-        html: `Cell ${i}: First-pass match ≥ 98% => ${matchName} (${topScorePerc}%)`
-      });
-      if (matchBox) {
-        matchBox.value = matchName;
-        matchBox.style.fontWeight = "";
-        matchBox.style.color = "";
-      }
-      if (!cellMatches[i]) cellMatches[i] = [];
-      cellMatches[i].push({
-        userName: matchName,
-        userImage: topCandidate.user.data,
-        score: topScore
-      });
+    // If we get here, we re-check if they are matched – 
+    // because a different parallel callback might have matched them 2ms earlier
+    if (matchedUserNames.has(topCandidate.user.name) || matchedCellIndices.has(i)) {
+      // Another parallel callback matched them first => skip
+      // do nothing
+    } else {
+      // Not matched => proceed
+      const secondScore = results[1]?.result.score ?? 0;
+      const delta = topScore - secondScore;
 
-      // Remove matched user from userImages, null out the Etsy cell
-      userImagesArray = userImagesArray.filter(u => u.name !== topCandidate.user.name);
-      croppedImagesArray[i] = null;
-    }
-    // 2) Else if topScore ≥ 0.88 && delta ≥ 0.15
-    else if (topScore >= 0.88 && delta >= 0.15) {
-      M.toast({
-        html: `Cell ${i}: Delta ≥ 15% & top ≥ 88% => Accepting ${matchName} (${topScorePerc}%)`
-      });
-      if (matchBox) {
-        matchBox.value = matchName;
-        matchBox.style.fontWeight = "";
-        matchBox.style.color = "";
-      }
-      if (!cellMatches[i]) cellMatches[i] = [];
-      cellMatches[i].push({
-        userName: matchName,
-        userImage: topCandidate.user.data,
-        score: topScore
-      });
+      // For example, your same logic:
+      if (topScore >= 0.98) {
+        M.toast({
+          html: `Cell ${i}: First-pass match ≥ 98% => ${matchName} (${topScorePerc}%)`,
+        });
+        if (matchBox) {
+          matchBox.value = matchName;
+          matchBox.style.fontWeight = "";
+          matchBox.style.color = "";
+        }
+        if (!cellMatches[i]) cellMatches[i] = [];
+        cellMatches[i].push({
+          userName: matchName,
+          userImage: topCandidate.user.data,
+          score: topScore,
+        });
 
-      userImagesArray = userImagesArray.filter(u => u.name !== topCandidate.user.name);
-      croppedImagesArray[i] = null;
+        // Mark them matched right away
+        matchedUserNames.add(topCandidate.user.name);
+        matchedCellIndices.add(i);
+
+        // We won't remove from userImagesArray or set croppedImagesArray[i] to null
+        // until we finish the pass, or we can do it right here if we prefer:
+        userImagesArray = userImagesArray.filter(u => u.name !== topCandidate.user.name);
+        croppedImagesArray[i] = null;
+      }
+      else if (topScore >= 0.88 && delta >= 0.15) {
+        M.toast({
+          html: `Cell ${i}: Delta ≥ 15% & top ≥ 88% => Accepting ${matchName} (${topScorePerc}%)`
+        });
+        if (matchBox) {
+          matchBox.value = matchName;
+          matchBox.style.fontWeight = "";
+          matchBox.style.color = "";
+        }
+        if (!cellMatches[i]) cellMatches[i] = [];
+        cellMatches[i].push({
+          userName: matchName,
+          userImage: topCandidate.user.data,
+          score: topScore,
+        });
+
+        // Immediately mark them matched
+        matchedUserNames.add(topCandidate.user.name);
+        matchedCellIndices.add(i);
+
+        userImagesArray = userImagesArray.filter(u => u.name !== topCandidate.user.name);
+        croppedImagesArray[i] = null;
+      }
+      // else => no acceptance in first pass
     }
-    // Otherwise => do nothing in first pass
   }
 
   // 2s cooldown
   await new Promise((resolve) => setTimeout(resolve, 2000));
 }
 
-  // -----------------------------------------------------------------------
-  // SECOND PASS: For all cells still unmatched, do multi-branch if/else.
-  // -----------------------------------------------------------------------
-  unmatchedCells = [];
-  for (let i = 0; i < croppedImagesArray.length; i++) {
-    // Only keep Etsy images that haven't been nullified
-    if (croppedImagesArray[i] !== null) {
-      unmatchedCells.push(i);
-    }
+// -----------------------------------------------------------------------
+// SECOND PASS: For all cells still unmatched, do multi-branch if/else.
+// -----------------------------------------------------------------------
+unmatchedCells = [];
+for (let i = 0; i < croppedImagesArray.length; i++) {
+  // Only keep Etsy images that haven't been nullified
+  if (croppedImagesArray[i] !== null) {
+    unmatchedCells.push(i);
   }
+}
 
-  for (const i of unmatchedCells) {
-    const matchBox = document.getElementById("matchCell" + i);
+for (const i of unmatchedCells) {
+  const matchBox = document.getElementById("matchCell" + i);
 
-    // "userImagesArray" now only contains unmatched user images from the first pass
-    const unmatchedUserImages = userImagesArray;
+  // "userImagesArray" now only contains unmatched user images from the first pass
+  const unmatchedUserImages = userImagesArray;
 
-    // Compare all unmatched user images in parallel, staggered
-    const comparisonPromises = unmatchedUserImages.map((user, j) => {
-      return new Promise((resolve) => {
-        setTimeout(() => {
-          compareImages(user.data, croppedImagesArray[i], i, user.name)
-            .then((result) => resolve({ result, user }))
-            .catch((err) => {
-              console.error("Second-pass compare error:", i, user.name, err);
-              resolve({ result: { score: 0 }, user });
-            });
-        }, j * 250);
-      });
+  // Compare all unmatched user images in parallel, staggered
+  const comparisonPromises = unmatchedUserImages.map((user, j) => {
+    return new Promise((resolve) => {
+      setTimeout(() => {
+        compareImages(user.data, croppedImagesArray[i], i, user.name)
+          .then((result) => resolve({ result, user }))
+          .catch((err) => {
+            console.error("Second-pass compare error:", i, user.name, err);
+            resolve({ result: { score: 0 }, user });
+          });
+      }, j * 250);
+    });
+  });
+
+  const results = await Promise.all(comparisonPromises);
+  results.sort((a, b) => b.result.score - a.result.score);
+
+  if (!results.length || results[0].result.score === 0) {
+    M.toast({ html: `Cell ${i}: No valid matches found in second pass.` });
+  } else {
+    const topCandidate = results[0];
+    const topScore = topCandidate.result.score;
+    const topScorePerc = (topScore * 100).toFixed(2);
+    const matchName = topCandidate.user.name.replace(/(\.jpg|\.png)$/i, "");
+
+    M.toast({
+      html: `Cell ${i}: Best candidate => ${matchName} (${topScorePerc}%)`
     });
 
-    const results = await Promise.all(comparisonPromises);
-    results.sort((a, b) => b.result.score - a.result.score);
-
-    if (!results.length || results[0].result.score === 0) {
-      M.toast({ html: `Cell ${i}: No valid matches found in second pass.` });
-    } else {
-      const topCandidate = results[0];
-      const topScore = topCandidate.result.score;
-      const topScorePerc = (topScore * 100).toFixed(2);
-      const matchName = topCandidate.user.name.replace(/(\.jpg|\.png)$/i, "");
-
-      M.toast({
-        html: `Cell ${i}: Best candidate => ${matchName} (${topScorePerc}%)`,
+    // Example threshold checks
+    if (topScore === 1.0) {
+      // Perfect match
+      if (matchBox) {
+        matchBox.value = matchName;
+        matchBox.style.fontWeight = "";
+        matchBox.style.color = "";
+      }
+      if (!cellMatches[i]) cellMatches[i] = [];
+      cellMatches[i].push({
+        userName: matchName,
+        userImage: topCandidate.user.data,
+        score: topScore
       });
 
-      if (topScore === 1.0) {
-        // PERFECT MATCH => remove from userImages, null out Etsy
-        if (matchBox) {
-          matchBox.value = matchName;
-          matchBox.style.fontWeight = "";
-          matchBox.style.color = "";
-        }
-        if (!cellMatches[i]) cellMatches[i] = [];
-        cellMatches[i].push({
-          userName: matchName,
-          userImage: topCandidate.user.data,
-          score: topScore,
-        });
-        userImagesArray = userImagesArray.filter((u) => u.name !== topCandidate.user.name);
-        croppedImagesArray[i] = null;
-      }
-      else if (topScore >= 0.98) {
-        // NEAR-PERFECT => remove user + Etsy
-        if (matchBox) {
-          matchBox.value = matchName;
-          matchBox.style.fontWeight = "";
-          matchBox.style.color = "";
-        }
-        if (!cellMatches[i]) cellMatches[i] = [];
-        cellMatches[i].push({
-          userName: matchName,
-          userImage: topCandidate.user.data,
-          score: topScore,
-        });
-        userImagesArray = userImagesArray.filter((u) => u.name !== topCandidate.user.name);
-        croppedImagesArray[i] = null;
-      }
-      else if (topScore >= 0.88) {
-        // Partial/Delta logic. You decide whether to remove them or not.
-        if (matchBox) {
-          matchBox.value = matchName;
-          matchBox.style.fontWeight = "bold";
-          matchBox.style.color = "orangered";
-        }
-        if (!cellMatches[i]) cellMatches[i] = [];
-        cellMatches[i].push({
-          userName: matchName,
-          userImage: topCandidate.user.data,
-          score: topScore,
-        });
-        // Possibly keep the user image or remove it; up to you. 
-      }
-      else {
-        M.toast({ html: `Cell ${i}: Score ${topScorePerc}% < 88%. No match.` });
-      }
+      // Remove this user image from userImagesArray
+      userImagesArray = userImagesArray.filter(
+        (u) => u.name !== topCandidate.user.name
+      );
+      // Null out the Etsy image so it won't be rechecked
+      croppedImagesArray[i] = null;
     }
+    else if (topScore >= 0.98) {
+      // NEAR-PERFECT
+      if (matchBox) {
+        matchBox.value = matchName;
+        matchBox.style.fontWeight = "";
+        matchBox.style.color = "";
+      }
+      if (!cellMatches[i]) cellMatches[i] = [];
+      cellMatches[i].push({
+        userName: matchName,
+        userImage: topCandidate.user.data,
+        score: topScore
+      });
 
-    // 2s cooldown
-    await new Promise((resolve) => setTimeout(resolve, 2000));
+      userImagesArray = userImagesArray.filter(
+        (u) => u.name !== topCandidate.user.name
+      );
+      croppedImagesArray[i] = null;
+    }
+    else if (topScore >= 0.88) {
+      // Partial or Delta logic, etc...
+      // Depending on your logic, you might remove or not remove
+      // the user image. For example:
+      matchBox.value = matchName;
+      matchBox.style.fontWeight = "bold";
+      matchBox.style.color = "orangered";
+
+      if (!cellMatches[i]) cellMatches[i] = [];
+      cellMatches[i].push({
+        userName: matchName,
+        userImage: topCandidate.user.data,
+        score: topScore
+      });
+      // For partial matches, some code does NOT remove from userImagesArray
+      // Or you might store partialMatches[] and remove later.
+      // (You decide based on your logic.)
+    }
+    else {
+      M.toast({ html: `Cell ${i}: Score ${topScorePerc}% < 88%. No match.` });
+    }
   }
+
+  // Short cooldown
+  await new Promise((resolve) => setTimeout(resolve, 2000));
+}
 
   // (A) Now highlight only cells that truly have NO matches
   for (let i = 0; i < croppedImagesArray.length; i++) {
