@@ -517,33 +517,36 @@
       e.preventDefault();
     });
     photoDragDropElem.addEventListener("drop", function (e) {
-      e.preventDefault();
-      const files = e.dataTransfer.files;
-      for (let i = 0; i < files.length; i++) {
-        const file = files[i];
-        const reader = new FileReader();
-        reader.onload = async function (e) {
-        const imageData = e.target.result;
-        try {
-          // Resize the image before adding to userImagesArray
-          const resizedData = await resizeUserImage(imageData);
-          // When adding the file object, mark it as not analyzed yet
-          userImagesArray.push({ name: file.name, data: resizedData, analyzed: false });
-          M.toast({
-            html: "User image " + userImagesArray.length + " captured and resized."
-          });
-          if (userImagesArray.length === 1) {
-            const userImageElem = document.getElementById("userImage");
-            userImageElem.src = resizedData;
-            userImageElem.style.display = "inline-block";
-          }
-          // Process only newly added (not yet analyzed) photos
-          await analyzeUserImagesViaOpenAI();
-        } catch (err) {
-          console.error("Error resizing user image:", err);
-          M.toast({ html: "Error processing one of the user images." });
+  e.preventDefault();
+  const files = e.dataTransfer.files;
+  for (let i = 0; i < files.length; i++) {
+    const file = files[i];
+    const reader = new FileReader();
+    reader.onload = async function(e) {
+      const imageData = e.target.result;
+      try {
+        // Resize the image before adding to userImagesArray
+        const resizedData = await resizeUserImage(imageData);
+        userImagesArray.push({ name: file.name, data: resizedData, analyzed: false });
+        M.toast({
+          html: "User image " + userImagesArray.length + " captured and resized."
+        });
+        if (userImagesArray.length === 1) {
+          const userImageElem = document.getElementById("userImage");
+          userImageElem.src = resizedData;
+          userImageElem.style.display = "inline-block";
         }
-      };
+        // Process only newly added photos
+        await analyzeUserImagesViaOpenAI();
+      } catch (err) {
+        console.error("Error resizing user image:", err);
+        M.toast({ html: "Error processing one of the user images." });
+      }
+    }; // <-- This closing brace is the crucial fix!
+
+    reader.readAsDataURL(file);
+  }
+});
 
     function resizeUserImage(dataUrl) {
       return new Promise((resolve, reject) => {
