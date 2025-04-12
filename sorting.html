@@ -4,183 +4,177 @@
   <meta charset="UTF-8" />
   <title>Sorting - Single-Click Zoom</title>
   <!-- Materialize CSS -->
-  <link
-    rel="stylesheet"
-    href="https://cdnjs.cloudflare.com/ajax/libs/materialize/1.0.0/css/materialize.min.css"
-  />
-  <style>
-    body {
-      background-color: #fff;
-      margin: 0;
-      height: 100vh;
-      position: relative;
-      opacity: 0;
-      transition: opacity 0s;
-    }
+  <link rel="stylesheet" 
+        href="https://cdnjs.cloudflare.com/ajax/libs/materialize/1.0.0/css/materialize.min.css" />
+<style>
+  body {
+    background-color: #fff;
+    margin: 0;
+    height: 100vh;
+    position: relative;
+    opacity: 0;
+    transition: opacity 0s;
+  }
 
-    /* Main Buttons */
-    #connectEtsyBtn,
-    #testOpenAIBtn,
-    #openConfigBtn,
-    #cropImagesBtn,
-    #sendMatchBtn {
-      position: absolute;
-      left: 20px;
-      width: 140px;
-      height: 36px;
-    }
-    #connectEtsyBtn  { top: 20px; }
-    #testOpenAIBtn   { top: 70px; }
-    #openConfigBtn   { top: 120px; }
-    #cropImagesBtn   { top: 170px; }
-    #sendMatchBtn    { top: 220px; }
+  /* Main Buttons */
+  #connectEtsyBtn,
+  #testOpenAIBtn,
+  #openConfigBtn,
+  #cropImagesBtn,
+  #sendMatchBtn {
+    position: absolute;
+    left: 20px;
+    width: 140px;
+    height: 36px;
+  }
+  #connectEtsyBtn  { top: 20px; }
+  #testOpenAIBtn   { top: 70px; }
+  #openConfigBtn   { top: 120px; }
+  #cropImagesBtn   { top: 170px; }
+  #sendMatchBtn    { top: 220px; }
+  
+  /* Etsy Order Number input */
+  #etsyOrderNumber {
+    position: absolute;
+    left: 20px;
+    top: 270px;
+    width: 300px;
+    height: 30px;
+    border: 1px solid #999;
+    padding: 4px;
+    outline: none;
+    font-size: 0.9em;
+  }
+  
+  /* Image Comparison UI */
+  #imageComparisonContainer {
+    position: absolute;
+    left: 20px;
+    top: 310px;
+  }
+  #photoDragDrop {
+    width: 100px;
+    height: 100px;
+    border: 2px dashed #ccc;
+    text-align: center;
+    line-height: 100px;
+    display: inline-block;
+    margin-right: 10px;
+  }
+  #userImage {
+    width: 100px;
+    height: 100px;
+    border: 1px solid #000;
+    display: none;
+    vertical-align: top;
+  }
+  
+  /* Container for dynamically generated preview boxes and detail boxes */
+  #photoGridContainer {
+    position: relative;
+    width: 1200px;
+    max-height: 700px;
+    overflow-y: auto;
+    border-left: 1px dashed #ccc;
+    border-right: 1px dashed #ccc;
+    left: 350px;
+    top: 20px;
+  }
 
-    /* Etsy Order Number input */
-    #etsyOrderNumber {
-      position: absolute;
-      left: 20px;
-      top: 270px;
-      width: 300px;
-      height: 30px;
-      border: 1px solid #999;
-      padding: 4px;
-      outline: none;
-      font-size: 0.9em;
-    }
+  /* Preview box styling (110x110) */
+  .preview-box {
+    position: absolute;
+    width: 110px;
+    height: 110px;
+    border: 1px solid #000;
+    background: #fafafa;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+    user-select: none;
+    font-size: 0.7em;
+    text-align: center;
+  }
+  .preview-box img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    transform-origin: center center;
+    transition: transform 0.3s ease;
+  }
 
-    /* Image Comparison UI */
-    #imageComparisonContainer {
-      position: absolute;
-      left: 20px;
-      top: 310px;
-    }
-    #photoDragDrop {
-      width: 100px;
-      height: 100px;
-      border: 2px dashed #ccc;
-      text-align: center;
-      line-height: 100px;
-      display: inline-block;
-      margin-right: 10px;
-    }
-    #userImage {
-      width: 100px;
-      height: 100px;
-      border: 1px solid #000;
-      display: none;
-      vertical-align: top;
-    }
+  /* Detail text boxes: 55px x 7px */
+  .detail-box {
+    position: absolute;
+    width: 55px;
+    height: 7px;
+    font-size: 0.6em !important;
+    border: none !important;
+    outline: none !important;
+    -webkit-appearance: none !important;
+    -moz-appearance: none !important;
+    appearance: none !important;
+    background: #f0f0f0;
+    color: #333;
+    padding: 0;
+    margin: 0;
+    box-shadow: none !important;
+  }
 
-    /* Container for dynamically generated preview boxes and detail boxes */
-    #photoGridContainer {
-      position: relative;
-      width: 1200px;
-      max-height: 700px;
-      overflow-y: auto;
-      border-left: 1px dashed #ccc;
-      border-right: 1px dashed #ccc;
-      left: 350px;
-      top: 20px;
-    }
+  #unmatchedContainer {
+    position: absolute;
+    left: 20px;
+    top: 420px;
+    width: 600px;
+  }
 
-    /* Preview box styling (110x110) */
-    .preview-box {
-      position: absolute;
-      width: 110px;
-      height: 110px;
-      border: 1px solid #000;
-      background: #fafafa;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      overflow: hidden;
-      user-select: none;
-      font-size: 0.7em;
-      text-align: center;
-    }
-    .preview-box img {
-      width: 100%;
-      height: 100%;
-      object-fit: cover;
-      transform-origin: center center;
-      transition: transform 0.3s ease;
-    }
+  /* The crucial fix: pointer-events are now enabled on read-only inputs */
+  .detail-box:read-only {
+    pointer-events: auto !important;
+    cursor: pointer !important;
+  }
+  
+  /* Config Modal */
+  #configModal.modal {
+    position: fixed !important;
+    top: 50% !important;
+    left: 50% !important;
+    transform: translate(-50%, -50%) !important;
+    width: 250px !important;
+    height: 450px !important;
+    max-height: none !important;
+    overflow-y: auto !important;
+  }
+  #configTable thead tr th { font-size: 0.9em; }
+  #configTable tbody tr td { font-size: 0.8em; }
+  #configTable .left-input,
+  #configTable .top-input,
+  #configTable .width-input,
+  #configTable .height-input {
+    width: 80px !important;
+  }
 
-    /* Detail text boxes: 55px x 7px */
-    .detail-box {
-      position: absolute;
-      width: 55px;
-      height: 7px;
-      font-size: 0.6em !important;
-      border: none !important;
-      outline: none !important;
-      -webkit-appearance: none !important;
-      -moz-appearance: none !important;
-      appearance: none !important;
-      background: #f0f0f0;
-      color: #333;
-      padding: 0;
-      margin: 0;
-      box-shadow: none !important;
-    }
-
-    #unmatchedContainer {
-      position: absolute;
-      left: 20px;
-      top: 420px; 
-      width: 600px;
-    }
-
-    /* The crucial fix: pointer-events are now enabled on read-only inputs */
-    .detail-box:read-only {
-      pointer-events: auto !important;
-      cursor: pointer !important;
-    }
-
-    /* Config Modal */
-    #configModal.modal {
-      position: fixed !important;
-      top: 50% !important;
-      left: 50% !important;
-      transform: translate(-50%, -50%) !important;
-      width: 250px !important;
-      height: 450px !important;
-      max-height: none !important;
-      overflow-y: auto !important;
-    }
-    #configTable thead tr th {
-      font-size: 0.9em;
-    }
-    #configTable tbody tr td {
-      font-size: 0.8em;
-    }
-    #configTable .left-input,
-    #configTable .top-input,
-    #configTable .width-input,
-    #configTable .height-input {
-      width: 80px !important;
-    }
-
-    .modal {
+  .modal {
       opacity: 0 !important;
       transform: translateY(20px) scale(0.95) !important;
       will-change: opacity, transform;
       transition: opacity 300ms ease, transform 300ms ease;
-    }
-    .modal.open {
+  }
+  .modal.open {
       opacity: 1 !important;
       transform: translateY(0) scale(1) !important;
-    }
+  }
 
-    .modal-overlay {
+  .modal-overlay {
       opacity: 0;
       will-change: opacity;
       transition: opacity 300ms ease;
-    }
-    .modal-overlay.show {
+  }
+  .modal-overlay.show {
       opacity: 1;
-    }
-  </style>
+  }
+</style>
 </head>
 <body>
   <!-- Main Buttons -->
@@ -228,7 +222,7 @@
     </div>
   </div>
   
-  <!-- Matches Modal (Shared, but populated with cell-specific matches) -->
+  <!-- Matches Modal (Shared, but will be populated with cell-specific matches) -->
   <div id="matchesModal" class="modal">
     <div class="modal-content">
       <h5>Successful Image Matches</h5>
@@ -241,10 +235,10 @@
   
   <!-- jQuery & Materialize JS -->
   <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
-  <script 
-    src="https://cdnjs.cloudflare.com/ajax/libs/materialize/1.0.0/js/materialize.min.js">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/materialize/1.0.0/js/materialize.min.js"></script>
+  <script>
+    // your scripts here ...
   </script>
-  <!-- You can place minor scripts in here if needed -->
 </body>
 </html>
 
@@ -252,25 +246,28 @@
   // Base URL for Netlify functions
   const functionsBaseUrl = window.location.origin + "/.netlify/functions";
 
-  // >>>> IMPORTANT FIX <<<<
-  // configIDs must be defined BEFORE calling loadPositions()
-  const configIDs = [
-    "connectEtsyBtn",
-    "testOpenAIBtn",
-    "openConfigBtn",
-    "etsyOrderNumber",
-    "photoGridContainer",
-    "unmatchedContainer",
-    "configModal",
-    "configTable",
-    "saveConfigBtn"
-  ];
-
   // Global arrays
   let croppedImagesArray = [];
   let userImagesArray = []; // user-provided images
   let cellMatches = {};
   let partialMatches = {};
+
+    const configIDs = [
+    "connectEtsyBtn",
+    "testOpenAIBtn",
+    "openConfigBtn",
+    "cropImagesBtn",
+    "sendMatchBtn",
+    "etsyOrderNumber",
+    "imageComparisonContainer",
+    "photoDragDrop",
+    "userImage",
+    "photoGridContainer",
+    "unmatchedContainer",
+    "configModal",
+    "configTable",
+    "matchesModal"
+  ];
 
   document.addEventListener("DOMContentLoaded", function() {
     M.AutoInit();
@@ -281,467 +278,368 @@
 
     // Connect to Etsy
     document.getElementById("connectEtsyBtn").addEventListener("click", async function() {
-      // ... e.g. OAuth logic ...
+      // ...
     });
 
     // Test OpenAI
     document.getElementById("testOpenAIBtn").addEventListener("click", async function() {
-      // ... e.g. a simple test call ...
+      // ...
     });
 
-    // Handle Etsy order input (Enter key)
+    // Load multiple orders if user presses Enter
     const etsyOrderInput = document.getElementById("etsyOrderNumber");
     etsyOrderInput.addEventListener("keydown", async function(e) {
       if (e.key === "Enter") {
-        // e.g. parse orders => loadBatchEtsyOrders
+        // ...
       }
     });
 
-    // Crop Images button
+    // Crop Images Button
     document.getElementById("cropImagesBtn").addEventListener("click", async function() {
       croppedImagesArray = [];
       await cropAllImages();
     });
 
-    // Send & Match button
+    // Send & Match Button
     document.getElementById("sendMatchBtn").addEventListener("click", async function() {
       await sendAndMatch();
     });
   });
-
-  // -----------------------------------
-  // loadPositions uses configIDs
-  // -----------------------------------
-  function loadPositions() {
-    configIDs.forEach(function(id) {
-      const el = document.getElementById(id);
-      if (!el) return;
-      const def = {};
-      const left = localStorage.getItem("pos-" + id + "-left") || def.left || 0;
-      const top  = localStorage.getItem("pos-" + id + "-top")  || def.top  || 0;
-      const w    = localStorage.getItem("pos-" + id + "-width")  || def.width  || 0;
-      const h    = localStorage.getItem("pos-" + id + "-height") || def.height || 0;
-
-      el.style.position = "absolute";
-      el.style.left = left + "px";
-      el.style.top = top + "px";
-      if (parseInt(w, 10) > 0) el.style.width = w + "px";
-      if (parseInt(h, 10) > 0) el.style.height = h + "px";
-    });
-  }
-
-  // -----------------------------------
-  // openConfigBtn -> populate config table
-  // -----------------------------------
-  document.getElementById("openConfigBtn").addEventListener("click", function() {
-    populateConfigTable();
-    M.Modal.getInstance(document.getElementById("configModal")).open();
-  });
-
-  // -----------------------------------
-  // saveConfigBtn -> save positions
-  // -----------------------------------
-  document.getElementById("saveConfigBtn").addEventListener("click", function() {
-    configIDs.forEach(function(id) {
-      const el = document.getElementById(id);
-      if (!el) return;
-      const cs = window.getComputedStyle(el);
-      localStorage.setItem("pos-" + id + "-left", parseInt(cs.left, 10) || 0);
-      localStorage.setItem("pos-" + id + "-top", parseInt(cs.top, 10) || 0);
-      localStorage.setItem("pos-" + id + "-width", parseInt(cs.width, 10) || 0);
-      localStorage.setItem("pos-" + id + "-height", parseInt(cs.height, 10) || 0);
-    });
-    M.toast({ html: "Positions saved!" });
-  });
-
-  // -----------------------------------
-  // populateConfigTable function
-  // -----------------------------------
-  function populateConfigTable() {
-    const tbody = document.querySelector("#configTable tbody");
-    tbody.innerHTML = "";
-
-    configIDs.forEach(function(id) {
-      const el = document.getElementById(id);
-      if (!el) return;
-      const cs = window.getComputedStyle(el);
-      const leftVal = parseInt(cs.left, 10) || 0;
-      const topVal = parseInt(cs.top, 10) || 0;
-      const widthVal = parseInt(cs.width, 10) || 0;
-      const heightVal = parseInt(cs.height, 10) || 0;
-
-      const row = document.createElement("tr");
-      row.innerHTML = `
-        <td>${id}</td>
-        <td><input type="number" value="${leftVal}" data-id="${id}" class="left-input"></td>
-        <td><input type="number" value="${topVal}" data-id="${id}" class="top-input"></td>
-        <td><input type="number" value="${widthVal}" data-id="${id}" class="width-input"></td>
-        <td><input type="number" value="${heightVal}" data-id="${id}" class="height-input"></td>
-      `;
-      tbody.appendChild(row);
-
-      // Live updates as user types
-      row.querySelector(".left-input").addEventListener("input", function() {
-        const target = document.getElementById(this.dataset.id);
-        if (target) target.style.left = parseInt(this.value, 10) + "px";
-      });
-      row.querySelector(".top-input").addEventListener("input", function() {
-        const target = document.getElementById(this.dataset.id);
-        if (target) target.style.top = parseInt(this.value, 10) + "px";
-      });
-      row.querySelector(".width-input").addEventListener("input", function() {
-        const target = document.getElementById(this.dataset.id);
-        if (target) target.style.width = parseInt(this.value, 10) + "px";
-      });
-      row.querySelector(".height-input").addEventListener("input", function() {
-        const target = document.getElementById(this.dataset.id);
-        if (target) target.style.height = parseInt(this.value, 10) + "px";
-      });
-    });
-  }
-
-  // ---------------------------------------------------------
-  // Dynamically generate preview boxes and four detail boxes per item
-  // ---------------------------------------------------------
-  async function fillPreviewBoxes(items) {
-    const container = document.getElementById("photoGridContainer");
-    container.innerHTML = "";
-
-    // Store the items globally for later access
-    window.cachedOrderItems = items;
-
-    items.forEach((item, index) => {
-      // Use 9 boxes per row
-      const row = Math.floor(index / 9);
-      const col = index % 9;
-      const previewLeft = col * 125; // horizontal gap of 125px
-      const previewTop = row * 165;  // vertical gap: 110px preview + 55px for details
-
-      // Create preview box (110x110)
-      const previewBox = document.createElement("div");
-      previewBox.classList.add("preview-box");
-      previewBox.id = "previewCell" + index;
-      previewBox.style.position = "absolute";
-      previewBox.style.left = previewLeft + "px";
-      previewBox.style.top = previewTop + "px";
-      previewBox.style.width = "110px";
-      previewBox.style.height = "110px";
-      previewBox.innerHTML = "Loading...";
-
-      // Create detail boxes (1: Order #, 2: Qty, 3: Metal, 4: Match)
-      const orderInput = document.createElement("input");
-      orderInput.type = "text";
-      orderInput.readOnly = true;
-      orderInput.id = "orderCell" + index;
-      orderInput.classList.add("detail-box");
-      orderInput.style.left = previewLeft + "px";
-      orderInput.style.top = (previewTop + 95) + "px";
-      orderInput.value = item.receipt_id ? item.receipt_id : (item.orderNumber || "No Order #");
-      orderInput.style.fontWeight = "bold";
-
-      const qtyInput = document.createElement("input");
-      qtyInput.type = "text";
-      qtyInput.readOnly = true;
-      qtyInput.id = "quantityCell" + index;
-      qtyInput.classList.add("detail-box");
-      qtyInput.style.left = previewLeft + "px";
-      qtyInput.style.top = (previewTop + 107) + "px";
-      qtyInput.value = " Qty: " + (item.quantity != null ? item.quantity : 0);
-
-      const metalInput = document.createElement("input");
-      metalInput.type = "text";
-      metalInput.readOnly = true;
-      metalInput.id = "metalCell" + index;
-      metalInput.classList.add("detail-box");
-      metalInput.style.left = previewLeft + "px";
-      metalInput.style.top = (previewTop + 119) + "px";
-      let metalSel = "";
-      if (item.variations && Array.isArray(item.variations)) {
-        const acceptedMetalNames = ["metal", "metal choice", "metal - engraving", "metal colour", "color", "metal choice / engraving option"];
-        const metalVar = item.variations.find(v => v.formatted_name && acceptedMetalNames.includes(v.formatted_name.trim().toLowerCase()));
-        if (metalVar && metalVar.formatted_value) {
-          metalSel = metalVar.formatted_value;
-        }
-      }
-      metalInput.value = " Metal: " + (metalSel || "No Metal");
-
-      const matchInput = document.createElement("input");
-      matchInput.type = "text";
-      matchInput.readOnly = true;
-      matchInput.id = "matchCell" + index;
-      matchInput.classList.add("detail-box");
-      matchInput.style.left = previewLeft + "px";
-      matchInput.style.top = (previewTop + 131) + "px";
-      matchInput.value = "";
-
-      container.appendChild(previewBox);
-      container.appendChild(orderInput);
-      container.appendChild(qtyInput);
-      container.appendChild(metalInput);
-      container.appendChild(matchInput);
-
-      // Load image for the preview box
-      fetchListingImages(item.listing_id)
-        .then(imageData => {
-          if (imageData && imageData.length > 0) {
-            return getLocalImageData(imageData[0].url_fullxfull);
-          } else {
-            throw "No image data";
+    
+    // ---------------------------------------------------------
+    // Dynamically generate preview boxes and four detail boxes per item
+    // (Detail boxes: Order # (bold), Quantity, Metal, and a fourth (match) box initially empty)
+    // ---------------------------------------------------------
+    async function fillPreviewBoxes(items) {
+      const container = document.getElementById("photoGridContainer");
+      container.innerHTML = "";
+    
+      // Store the items globally for later access (e.g. in sendAndMatch)
+      window.cachedOrderItems = items;
+    
+      items.forEach((item, index) => {
+        // Use 9 boxes per row
+        const row = Math.floor(index / 9);
+        const col = index % 9;
+        const previewLeft = col * 125; // horizontal gap of 125px
+        const previewTop = row * 165;  // vertical gap: 110px preview + 55px for details
+    
+        // Create preview box (110x110)
+        const previewBox = document.createElement("div");
+        previewBox.classList.add("preview-box");
+        previewBox.id = "previewCell" + index;
+        previewBox.style.position = "absolute";
+        previewBox.style.left = previewLeft + "px";
+        previewBox.style.top = previewTop + "px";
+        previewBox.style.width = "110px";
+        previewBox.style.height = "110px";
+        previewBox.innerHTML = "Loading...";
+    
+        // Create first detail box: Order # (bold)
+        const orderInput = document.createElement("input");
+        orderInput.type = "text";
+        orderInput.readOnly = true;
+        orderInput.id = "orderCell" + index;
+        orderInput.classList.add("detail-box");
+        orderInput.style.left = previewLeft + "px";
+        orderInput.style.top = (previewTop + 95) + "px";
+        orderInput.value = item.receipt_id ? item.receipt_id : (item.orderNumber || "No Order #");
+        orderInput.style.fontWeight = "bold";
+    
+        // Create second detail box: Quantity
+        const qtyInput = document.createElement("input");
+        qtyInput.type = "text";
+        qtyInput.readOnly = true;
+        qtyInput.id = "quantityCell" + index;
+        qtyInput.classList.add("detail-box");
+        qtyInput.style.left = previewLeft + "px";
+        qtyInput.style.top = (previewTop + 107) + "px";
+        qtyInput.value = " Qty: " + (item.quantity != null ? item.quantity : 0);
+    
+        // Create third detail box: Metal
+        const metalInput = document.createElement("input");
+        metalInput.type = "text";
+        metalInput.readOnly = true;
+        metalInput.id = "metalCell" + index;
+        metalInput.classList.add("detail-box");
+        metalInput.style.left = previewLeft + "px";
+        metalInput.style.top = (previewTop + 119) + "px";
+        let metalSel = "";
+        if (item.variations && Array.isArray(item.variations)) {
+          const acceptedMetalNames = ["metal", "metal choice", "metal - engraving", "metal colour", "color", "metal choice / engraving option"];
+          const metalVar = item.variations.find(v => v.formatted_name && acceptedMetalNames.includes(v.formatted_name.trim().toLowerCase()));
+          if (metalVar && metalVar.formatted_value) {
+            metalSel = metalVar.formatted_value;
           }
-        })
-        .then(localImageData => {
-          previewBox.innerHTML = `
-            <img
-              src="${localImageData}"
-              alt="Listing ${item.listing_id}"
-              data-scale="1"
-              data-offsetX="0"
-              data-offsetY="0"
-            />
-          `;
-          attachPreviewBoxListeners(previewBox);
-        })
-        .catch(err => {
-          console.warn("Error loading image for cell " + index + ":", err);
-          previewBox.innerHTML = "Img Error";
-        });
-    });
-  }
-
-  // ---------------------------------------------------------
-  // Attach event listeners for wheel zoom, drag, single-click
-  // ---------------------------------------------------------
-  function attachPreviewBoxListeners(box) {
-    let isDragging = false;
-    let isMouseDown = false;
-    let dragStartX = 0, dragStartY = 0;
-    let lastX = 0, lastY = 0;
-    const dragThreshold = 3;
-
-    // Wheel zoom
-    box.addEventListener("wheel", function(ev) {
-      const img = box.querySelector("img");
-      if (!img) return;
-      ev.preventDefault();
-      let currentScale = parseFloat(img.dataset.scale) || 1;
-      let offX = parseFloat(img.dataset.offsetX) || 0;
-      let offY = parseFloat(img.dataset.offsetY) || 0;
-      if (ev.deltaY < 0) {
-        currentScale *= 1.1;
-      } else {
-        currentScale /= 1.1;
-        if (currentScale <= 1) {
-          currentScale = 1;
-          offX = 0;
-          offY = 0;
         }
-      }
-      if (currentScale > 8) currentScale = 8;
-      img.dataset.scale = currentScale;
-      img.dataset.offsetX = offX;
-      img.dataset.offsetY = offY;
-      img.style.transform = "translate(" + offX + "px, " + offY + "px) scale(" + currentScale + ")";
-    });
-
-    // Mouse down: start drag
-    box.addEventListener("mousedown", function(ev) {
-      const img = box.querySelector("img");
-      if (!img) return;
-      const scaleNow = parseFloat(img.dataset.scale) || 1;
-      if (scaleNow <= 1) return;
-      ev.preventDefault();
-      isMouseDown = true;
-      isDragging = false;
-      dragStartX = ev.clientX;
-      dragStartY = ev.clientY;
-      lastX = ev.clientX;
-      lastY = ev.clientY;
-    });
-
-    // Mouse move: panning if dragging
-    box.addEventListener("mousemove", function(ev) {
-      if (!isMouseDown) return;
-      ev.preventDefault();
-      const dxAll = Math.abs(ev.clientX - dragStartX);
-      const dyAll = Math.abs(ev.clientY - dragStartY);
-      if (dxAll > dragThreshold || dyAll > dragThreshold) isDragging = true;
-      const img = box.querySelector("img");
-      if (!img) return;
-      const scaleNow = parseFloat(img.dataset.scale) || 1;
-      let offX = parseFloat(img.dataset.offsetX) || 0;
-      let offY = parseFloat(img.dataset.offsetY) || 0;
-      const dx = ev.clientX - lastX;
-      const dy = ev.clientY - lastY;
-      offX += dx;
-      offY += dy;
-      img.dataset.offsetX = offX;
-      img.dataset.offsetY = offY;
-      img.style.transform = "translate(" + offX + "px, " + offY + "px) scale(" + scaleNow + ")";
-      lastX = ev.clientX;
-      lastY = ev.clientY;
-    });
-
-    // Mouse up / leave
-    box.addEventListener("mouseup",   function() { isMouseDown = false; });
-    box.addEventListener("mouseleave",function() { isMouseDown = false; });
-
-    // Single-click: Zoom if not dragging
-    box.addEventListener("click", function(ev) {
-      if (isDragging) {
-        isDragging = false;
-        return;
-      }
-      const img = box.querySelector("img");
-      if (!img) return;
-      const rect = box.getBoundingClientRect();
-      const boxCenterX = rect.left + box.clientWidth / 2;
-      const boxCenterY = rect.top + box.clientHeight / 2;
-      const dx = ev.clientX - boxCenterX;
-      const dy = ev.clientY - boxCenterY;
-      const scale = 5;
-      const fudgeY = 10;
-      const offsetX = -scale * dx;
-      const offsetY = -scale * dy + fudgeY;
-      img.dataset.scale = scale;
-      img.dataset.offsetX = offsetX;
-      img.dataset.offsetY = offsetY;
-      img.style.transform = "translate(" + offsetX + "px, " + offsetY + "px) scale(" + scale + ")";
-    });
-  }
-
-  // =====================================================
-  // (A) cropAllImages()
-  // =====================================================
-  async function cropAllImages() {
-    const previewBoxes = document.querySelectorAll(".preview-box");
-    for (let i = 0; i < previewBoxes.length; i++) {
-      const cell = previewBoxes[i];
-      const img = cell.querySelector("img");
-      if (img && img.src && img.src !== "") {
-        try {
-          const cropped = await cropImageFromPreview(cell, 512, 512);
-          croppedImagesArray[i] = cropped;
-          M.toast({ html: "Cell " + i + ": Cropped successfully." });
-        } catch (err) {
-          console.error("Cropping failed for cell", i, err);
-          M.toast({ html: "Cell " + i + ": Cropping error" });
-        }
-      }
-    }
-  }
-
-  // =====================================================
-  // (B) cropImageFromPreview()
-  // =====================================================
-  function cropImageFromPreview(cell, canvasWidth, canvasHeight) {
-    return new Promise((resolve, reject) => {
-      const imgElem = cell.querySelector("img");
-      if (!imgElem) {
-        reject("No image element found");
-        return;
-      }
-
-      const cellRect = cell.getBoundingClientRect();
-      const imgRect = imgElem.getBoundingClientRect();
-
-      const visibleLeft = Math.max(cellRect.left, imgRect.left);
-      const visibleTop = Math.max(cellRect.top, imgRect.top);
-      const visibleRight = Math.min(cellRect.right, imgRect.right);
-      const visibleBottom = Math.min(cellRect.bottom, imgRect.bottom);
-
-      if (visibleRight <= visibleLeft || visibleBottom <= visibleTop) {
-        reject("No visible intersection");
-        return;
-      }
-
-      const visibleWidth = visibleRight - visibleLeft;
-      const visibleHeight = visibleBottom - visibleTop;
-
-      const sourceImage = new Image();
-      sourceImage.crossOrigin = "Anonymous";
-      sourceImage.onload = function() {
-        const ratioX = sourceImage.naturalWidth / imgRect.width;
-        const ratioY = sourceImage.naturalHeight / imgRect.height;
-
-        const srcX = (visibleLeft - imgRect.left) * ratioX;
-        const srcY = (visibleTop - imgRect.top) * ratioY;
-        const srcWidth = visibleWidth * ratioX;
-        const srcHeight = visibleHeight * ratioY;
-
-        const canvas = document.createElement("canvas");
-        canvas.width = canvasWidth;
-        canvas.height = canvasHeight;
-        const ctx = canvas.getContext("2d");
-        ctx.drawImage(sourceImage, srcX, srcY, srcWidth, srcHeight, 0, 0, canvasWidth, canvasHeight);
-        resolve(canvas.toDataURL());
-      };
-      sourceImage.onerror = function(e) {
-        reject(e);
-      };
-      sourceImage.src = imgElem.src;
-    });
-  }
-
-  // ---------------------------------------------------------
-  // Load orders and fill preview boxes from Etsy data
-  // ---------------------------------------------------------
-  async function loadBatchEtsyOrders(orderNumbers) {
-    try {
-      M.toast({ html: "Loading " + orderNumbers.length + " order(s)..." });
-      const token = localStorage.getItem("access_token") || "";
-      let combinedItems = [];
-      for (let i = 0; i < orderNumbers.length; i++) {
-        const ord = orderNumbers[i];
-        const url = functionsBaseUrl + "/etsyOrderProxy?orderId=" + encodeURIComponent(ord);
-        const resp = await fetch(url, { headers: { "access-token": token } });
-        if (!resp.ok) {
-          console.warn("Order fetch failed for " + ord + ", status=" + resp.status);
-          continue;
-        }
-        const data = await resp.json();
-        if (data.transactions && Array.isArray(data.transactions)) {
-          combinedItems.push(...data.transactions);
-        } else {
-          console.warn("No transactions for order " + ord);
-        }
-      }
-      await fillPreviewBoxes(combinedItems);
-    } catch (err) {
-      console.error("Error loading batch orders:", err);
-      M.toast({ html: "Error: " + err.message });
-    }
-  }
-
-  // Fetch listing images
-  async function fetchListingImages(listingId) {
-    const token = localStorage.getItem("access_token") || "";
-    const resp = await fetch(functionsBaseUrl + "/etsyImages?listingId=" + listingId, {
-      headers: { "access-token": token }
-    });
-    if (!resp.ok) {
-      console.warn("Image fetch HTTP error:", resp.status);
-      return [];
-    }
-    const data = await resp.json();
-    return data.results || [];
-  }
-
-  // Proxy for local image data
-  async function getLocalImageData(imageUrl) {
-    try {
-      const response = await fetch(functionsBaseUrl + "/imageProxy?url=" + encodeURIComponent(imageUrl));
-      const blob = await response.blob();
-      return new Promise((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onload = () => resolve(reader.result);
-        reader.onerror = reject;
-        reader.readAsDataURL(blob);
+        metalInput.value = " Metal: " + (metalSel || "No Metal");
+    
+        // Create fourth detail box: Match info (initially empty)
+        const matchInput = document.createElement("input");
+        matchInput.type = "text";
+        matchInput.readOnly = true;
+        matchInput.id = "matchCell" + index;
+        matchInput.classList.add("detail-box");
+        matchInput.style.left = previewLeft + "px";
+        matchInput.style.top = (previewTop + 131) + "px";
+        matchInput.value = "";
+    
+        container.appendChild(previewBox);
+        container.appendChild(orderInput);
+        container.appendChild(qtyInput);
+        container.appendChild(metalInput);
+        container.appendChild(matchInput);
+    
+        // Load image for the preview box
+        fetchListingImages(item.listing_id)
+          .then(imageData => {
+            if (imageData && imageData.length > 0) {
+              return getLocalImageData(imageData[0].url_fullxfull);
+            } else {
+              throw "No image data";
+            }
+          })
+          .then(localImageData => {
+            previewBox.innerHTML = `<img src="${localImageData}" alt="Listing ${item.listing_id}" data-scale="1" data-offsetX="0" data-offsetY="0" />`;
+            // Attach event listeners to this preview box
+            attachPreviewBoxListeners(previewBox);
+          })
+          .catch(err => {
+            console.warn("Error loading image for cell " + index + ":", err);
+            previewBox.innerHTML = "Img Error";
+          });
       });
-    } catch (err) {
-      console.error("Error in getLocalImageData:", err);
-      throw err;
     }
-  }
+    
+    // ---------------------------------------------------------
+    // Attach event listeners for wheel zoom, drag, and single-click to a preview box
+    // ---------------------------------------------------------
+    function attachPreviewBoxListeners(box) {
+      let isDragging = false;
+      let isMouseDown = false;
+      let dragStartX = 0, dragStartY = 0;
+      let lastX = 0, lastY = 0;
+      const dragThreshold = 3;
+    
+      // Wheel zoom
+      box.addEventListener("wheel", function(ev) {
+        const img = box.querySelector("img");
+        if (!img) return;
+        ev.preventDefault();
+        let currentScale = parseFloat(img.dataset.scale) || 1;
+        let offX = parseFloat(img.dataset.offsetX) || 0;
+        let offY = parseFloat(img.dataset.offsetY) || 0;
+        if (ev.deltaY < 0) {
+          currentScale *= 1.1;
+        } else {
+          currentScale /= 1.1;
+          if (currentScale <= 1) {
+            currentScale = 1;
+            offX = 0;
+            offY = 0;
+          }
+        }
+        if (currentScale > 8) currentScale = 8;
+        img.dataset.scale = currentScale;
+        img.dataset.offsetX = offX;
+        img.dataset.offsetY = offY;
+        img.style.transform = "translate(" + offX + "px, " + offY + "px) scale(" + currentScale + ")";
+      });
+    
+      // Mouse down: start drag
+      box.addEventListener("mousedown", function(ev) {
+        const img = box.querySelector("img");
+        if (!img) return;
+        const scaleNow = parseFloat(img.dataset.scale) || 1;
+        if (scaleNow <= 1) return;
+        ev.preventDefault();
+        isMouseDown = true;
+        isDragging = false;
+        dragStartX = ev.clientX;
+        dragStartY = ev.clientY;
+        lastX = ev.clientX;
+        lastY = ev.clientY;
+      });
+    
+      // Mouse move: panning if dragging
+      box.addEventListener("mousemove", function(ev) {
+        if (!isMouseDown) return;
+        ev.preventDefault();
+        const dxAll = Math.abs(ev.clientX - dragStartX);
+        const dyAll = Math.abs(ev.clientY - dragStartY);
+        if (dxAll > dragThreshold || dyAll > dragThreshold) isDragging = true;
+        const img = box.querySelector("img");
+        if (!img) return;
+        const scaleNow = parseFloat(img.dataset.scale) || 1;
+        let offX = parseFloat(img.dataset.offsetX) || 0;
+        let offY = parseFloat(img.dataset.offsetY) || 0;
+        const dx = ev.clientX - lastX;
+        const dy = ev.clientY - lastY;
+        offX += dx;
+        offY += dy;
+        img.dataset.offsetX = offX;
+        img.dataset.offsetY = offY;
+        img.style.transform = "translate(" + offX + "px, " + offY + "px) scale(" + scaleNow + ")";
+        lastX = ev.clientX;
+        lastY = ev.clientY;
+      });
+    
+      // Mouse up / leave: end drag
+      box.addEventListener("mouseup", function() { isMouseDown = false; });
+      box.addEventListener("mouseleave", function() { isMouseDown = false; });
+    
+      // Single-click: Zoom if not dragging
+      box.addEventListener("click", function(ev) {
+        if (isDragging) { isDragging = false; return; }
+        const img = box.querySelector("img");
+        if (!img) return;
+        const rect = box.getBoundingClientRect();
+        const boxCenterX = rect.left + box.clientWidth / 2;
+        const boxCenterY = rect.top + box.clientHeight / 2;
+        const dx = ev.clientX - boxCenterX;
+        const dy = ev.clientY - boxCenterY;
+        const scale = 5;
+        const fudgeY = 10;
+        const offsetX = -scale * dx;
+        const offsetY = -scale * dy + fudgeY;
+        img.dataset.scale = scale;
+        img.dataset.offsetX = offsetX;
+        img.dataset.offsetY = offsetY;
+        img.style.transform = "translate(" + offsetX + "px, " + offsetY + "px) scale(" + scale + ")";
+      });
+    }
+    
+      // =====================================================
+      // (A) cropAllImages() 
+      // =====================================================
+      async function cropAllImages() {
+        const previewBoxes = document.querySelectorAll(".preview-box");
+        for (let i = 0; i < previewBoxes.length; i++) {
+          const cell = previewBoxes[i];
+          const img = cell.querySelector("img");
+          if (img && img.src && img.src !== "") {
+            try {
+              const cropped = await cropImageFromPreview(cell, 512, 512);
+              croppedImagesArray[i] = cropped;
+              M.toast({ html: "Cell " + i + ": Cropped successfully." });
+            } catch (err) {
+              console.error("Cropping failed for cell", i, err);
+              M.toast({ html: "Cell " + i + ": Cropping error" });
+            }
+          }
+        }
+      }
+
+      // =====================================================
+      // (B) cropImageFromPreview()
+      // =====================================================
+      function cropImageFromPreview(cell, canvasWidth, canvasHeight) {
+        return new Promise((resolve, reject) => {
+          const imgElem = cell.querySelector("img");
+          if (!imgElem) {
+            reject("No image element found");
+            return;
+          }
+          
+          const cellRect = cell.getBoundingClientRect();
+          const imgRect = imgElem.getBoundingClientRect();
+
+          const visibleLeft = Math.max(cellRect.left, imgRect.left);
+          const visibleTop = Math.max(cellRect.top, imgRect.top);
+          const visibleRight = Math.min(cellRect.right, imgRect.right);
+          const visibleBottom = Math.min(cellRect.bottom, imgRect.bottom);
+
+          if (visibleRight <= visibleLeft || visibleBottom <= visibleTop) {
+            reject("No visible intersection");
+            return;
+          }
+
+          const visibleWidth = visibleRight - visibleLeft;
+          const visibleHeight = visibleBottom - visibleTop;
+
+          const sourceImage = new Image();
+          sourceImage.crossOrigin = "Anonymous"; 
+          sourceImage.onload = function() {
+            const ratioX = sourceImage.naturalWidth / imgRect.width;
+            const ratioY = sourceImage.naturalHeight / imgRect.height;
+
+            const srcX = (visibleLeft - imgRect.left) * ratioX;
+            const srcY = (visibleTop - imgRect.top) * ratioY;
+            const srcWidth = visibleWidth * ratioX;
+            const srcHeight = visibleHeight * ratioY;
+
+            const canvas = document.createElement("canvas");
+            canvas.width = canvasWidth;
+            canvas.height = canvasHeight;
+            const ctx = canvas.getContext("2d");
+            ctx.drawImage(sourceImage, srcX, srcY, srcWidth, srcHeight, 0, 0, canvasWidth, canvasHeight);
+            resolve(canvas.toDataURL());
+          };
+          sourceImage.onerror = function(e) {
+            reject(e);
+          };
+          sourceImage.src = imgElem.src;
+        });
+      }
+
+    // ---------------------------------------------------------
+    // Load orders and fill preview boxes from Etsy data
+    // ---------------------------------------------------------
+    async function loadBatchEtsyOrders(orderNumbers) {
+      try {
+        M.toast({ html: "Loading " + orderNumbers.length + " order(s)..." });
+        const token = localStorage.getItem("access_token") || "";
+        let combinedItems = [];
+        for (let i = 0; i < orderNumbers.length; i++) {
+          const ord = orderNumbers[i];
+          const url = functionsBaseUrl + "/etsyOrderProxy?orderId=" + encodeURIComponent(ord);
+          const resp = await fetch(url, { headers: { "access-token": token } });
+          if (!resp.ok) {
+            console.warn("Order fetch failed for " + ord + ", status=" + resp.status);
+            continue;
+          }
+          const data = await resp.json();
+          if (data.transactions && Array.isArray(data.transactions)) {
+            combinedItems.push(...data.transactions);
+          } else {
+            console.warn("No transactions for order " + ord);
+          }
+        }
+        await fillPreviewBoxes(combinedItems);
+      } catch (err) {
+        console.error("Error loading batch orders:", err);
+        M.toast({ html: "Error: " + err.message });
+      }
+    }
+    
+    async function fetchListingImages(listingId) {
+      const token = localStorage.getItem("access_token") || "";
+      const resp = await fetch(functionsBaseUrl + "/etsyImages?listingId=" + listingId, {
+        headers: { "access-token": token }
+      });
+      if (!resp.ok) {
+        console.warn("Image fetch HTTP error:", resp.status);
+        return [];
+      }
+      const data = await resp.json();
+      return data.results || [];
+    }
+    
+    async function getLocalImageData(imageUrl) {
+      try {
+        const response = await fetch(functionsBaseUrl + "/imageProxy?url=" + encodeURIComponent(imageUrl));
+        const blob = await response.blob();
+        return new Promise((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = () => resolve(reader.result);
+          reader.onerror = reject;
+          reader.readAsDataURL(blob);
+        });
+      } catch (err) {
+        console.error("Error in getLocalImageData:", err);
+        throw err;
+      }
+    }
     
     function loadPositions() {
   configIDs.forEach(function(id) {
@@ -1771,67 +1669,68 @@ function createUnmatchedUserImagesPreview() {
 // Updated text instructions to request more precise similarity scores.
 
 async function compareImages(userImage, croppedGridImage, cellIndex, userImageName, signal = undefined) {
+  // The payload requesting a similarity score from OpenAI
   const payload = {
     model: "gpt-4o",
     messages: [
       {
         role: "user",
         content: [
-          { 
-            type: "text", 
-            text: 
-              "1. The Similarity Score is to be strictly measured on the similarity of the jewelry charm / pendant between the 2 images " +
-              "2. Focus on the charm outline and silhouette and compare the cutouts or holes within the charm " +
-              "3. Focus on the engraving existance, design, shapes on top of the charm itself " +
-              "4. Return a similarity score that combines the outline and silhouette score + the similarity score for engraving size, existance, location, orientation etc.. " + 
-              "5. If you detect an animal charm then strictly focus on the position, size and orientation of the head, eyes, beak, mouth, ears, legs, wings etc.. " +
-              "6. Ignore and disregard all background and accessories around and attached to charm such as necklaces, chains, hoops, rings, clothing, or skin " +
-              "7. Return a numeric similarity score between 0.0000 and 1.0000 with EXACTLY four decimal places, for example 0.8937, 0.9231, or 1.675, and no additional text " +
-              "8. Examine all details on top and inside each engraved charm " +
-              "9. Emphasize the pose and direction the charm is facing " 
+          {
+            type: "text",
+            text:
+              "1. The Similarity Score is to be strictly measured on the jewelry charm / pendant between the 2 images.\n" +
+              "2. Focus on the charm outline and silhouette and compare the cutouts or holes within the charm.\n" +
+              "3. Focus on the engraving existence, design, shapes on top of the charm itself.\n" +
+              "4. Return a similarity score that combines the outline and silhouette score + the similarity score for engraving size, existence, location, orientation, etc.\n" +
+              "5. If you detect an animal charm then strictly focus on the position, size, and orientation of the head, eyes, beak, mouth, ears, legs, wings, etc.\n" +
+              "6. Ignore and disregard all background and accessories around and attached to the charm such as necklaces, chains, hoops, rings, clothing, or skin.\n" +
+              "7. Return a numeric similarity score between 0.0000 and 1.0000 with EXACTLY four decimal places, for example 0.8937, 0.9231, or 1.0000, and no additional text.\n" +
+              "8. Examine all details on top and inside each engraved charm.\n" +
+              "9. Emphasize the pose and direction the charm is facing.\n"
           },
-          { type: "image_url", image_url: { url: userImage, detail: "high" } },
-          { type: "image_url", image_url: { url: croppedGridImage, detail: "high" } }
+          { 
+            type: "image_url", 
+            image_url: { url: userImage, detail: "high" } 
+          },
+          { 
+            type: "image_url", 
+            image_url: { url: croppedGridImage, detail: "high" } 
+          }
         ]
       }
     ],
     max_tokens: 5000
   };
 
-    async function openAIAnalyzePhoto(base64Image) {
-    try {
-      const response = await fetch(functionsBaseUrl + "/openaiProxy", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload)
-      });
-      const data = await response.json();
+  try {
+    // Call your openaiProxy:
+    const response = await fetch(functionsBaseUrl + "/openaiProxy", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+      signal
+    });
 
-      let text = data.choices[0].message.content.trim() || "{}";
+    const data = await response.json();
+    let text = data.choices[0].message.content.trim();
 
-      // Remove any triple backticks and optional "json" fence
-      text = text.replace(/^```(\w+)?/, "").replace(/```$/, "").trim();
+    // Remove any code fences if present:
+    text = text.replace(/^```(\w+)?/, "").replace(/```$/, "").trim();
 
-      let parsed;
-      try {
-        parsed = JSON.parse(text);
-      } catch(e) {
-        console.warn("Failed to parse color/number from:", text);
-        parsed = {};
-      }
-
-      return { 
-        topRightNumber: parsed.topRightNumber || null, 
-        color: parsed.color || null 
-      };
-    } catch(e) {
-      console.error("Error analyzing photo with OpenAI:", e);
-      return { topRightNumber: null, color: null };
+    // Attempt to parse the returned string as a float:
+    let score = parseFloat(text);
+    if (isNaN(score)) {
+      console.warn("Could not parse a valid float from OpenAI:", text);
+      score = 0.0;
     }
-  } // <-- This closing brace ends openAIAnalyzePhoto
 
-  // ...any additional logic inside compareImages...
-  
+    return { score };
+  } catch (err) {
+    console.error("Error in compareImages:", err);
+    // Return a fallback score of 0 on error
+    return { score: 0 };
+  }
 } // <--- NEW brace: now properly closes compareImages
 
 // ---------------------------------------------------------
