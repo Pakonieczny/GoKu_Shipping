@@ -1146,28 +1146,25 @@ for (let i = 0; i < croppedImagesArray.length; i++) {
   }
 }
 
-// Two shared sets to mark which user images / cells are matched
+// These sets track which user images + which Etsy cells got matched
 const matchedUserNames = new Set();
 const matchedCellIndices = new Set();
 
 for (const i of unmatchedCells) {
-  const matchBox = document.getElementById("matchCell" + i);
-
-  // Already matched in the same pass? If yes, skip
+  // Already matched? skip
   if (matchedCellIndices.has(i)) {
     continue;
   }
+  const matchBox = document.getElementById("matchCell" + i);
 
   // Compare all user images in parallel, staggered
   const comparisonPromises = userImagesArray.map((user, j) => {
     return new Promise((resolve) => {
       setTimeout(() => {
-        // If user or cell is already matched, skip
+        // If user/cell is matched, skip
         if (matchedUserNames.has(user.name) || matchedCellIndices.has(i)) {
-          // Return a score of 0 => effectively "no match"
           return resolve({ result: { score: 0 }, user });
         }
-
         compareImages(user.data, croppedImagesArray[i], i, user.name)
           .then((result) => resolve({ result, user }))
           .catch((err) => {
@@ -1184,26 +1181,22 @@ for (const i of unmatchedCells) {
   if (!results.length || results[0].result.score === 0) {
     M.toast({ html: `Cell ${i}: No valid matches in first pass.` });
   } else {
-    // Best candidate
     const topCandidate = results[0];
     const topScore = topCandidate.result.score;
     const topScorePerc = (topScore * 100).toFixed(2);
     const matchName = topCandidate.user.name.replace(/(\.jpg|\.png)$/i, "");
 
-    // If we get here, we re-check if they are matched – 
-    // because a different parallel callback might have matched them 2ms earlier
     if (matchedUserNames.has(topCandidate.user.name) || matchedCellIndices.has(i)) {
-      // Another parallel callback matched them first => skip
-      // do nothing
+      // Another parallel callback matched them first => do nothing
     } else {
-      // Not matched => proceed
+      // Not matched yet => proceed
       const secondScore = results[1]?.result.score ?? 0;
       const delta = topScore - secondScore;
 
-      // For example, your same logic:
       if (topScore >= 0.98) {
+        // Near-perfect or better
         M.toast({
-          html: `Cell ${i}: First-pass match ≥ 98% => ${matchName} (${topScorePerc}%)`,
+          html: `Cell ${i}: First-pass match ≥ 98% => ${matchName} (${topScorePerc}%)`
         });
         if (matchBox) {
           matchBox.value = matchName;
@@ -1214,19 +1207,17 @@ for (const i of unmatchedCells) {
         cellMatches[i].push({
           userName: matchName,
           userImage: topCandidate.user.data,
-          score: topScore,
+          score: topScore
         });
 
-        // Mark them matched right away
         matchedUserNames.add(topCandidate.user.name);
         matchedCellIndices.add(i);
 
-        // We won't remove from userImagesArray or set croppedImagesArray[i] to null
-        // until we finish the pass, or we can do it right here if we prefer:
+        // Remove user from userImages, but DON'T null out croppedImagesArray[i]
         userImagesArray = userImagesArray.filter(u => u.name !== topCandidate.user.name);
-        croppedImagesArray[i] = null;
       }
       else if (topScore >= 0.88 && delta >= 0.15) {
+        // 88% or better w/ 15% delta
         M.toast({
           html: `Cell ${i}: Delta ≥ 15% & top ≥ 88% => Accepting ${matchName} (${topScorePerc}%)`
         });
@@ -1239,45 +1230,45 @@ for (const i of unmatchedCells) {
         cellMatches[i].push({
           userName: matchName,
           userImage: topCandidate.user.data,
-          score: topScore,
+          score: topScore
         });
 
-        // Immediately mark them matched
         matchedUserNames.add(topCandidate.user.name);
         matchedCellIndices.add(i);
 
         userImagesArray = userImagesArray.filter(u => u.name !== topCandidate.user.name);
-        croppedImagesArray[i] = null;
       }
       // else => no acceptance in first pass
     }
   }
 
   // 2s cooldown
-  await new Promise((resolve) => setTimeout(resolve, 2000));
+  await new Promise(resolve => setTimeout(resolve, 2000));
 }
 
 // -----------------------------------------------------------------------
-// SECOND PASS: For all cells still unmatched, do multi-branch if/else.
+// SECOND PASS, skip matched cells (in matchedCellIndices), do not check them again
 // -----------------------------------------------------------------------
 unmatchedCells = [];
 for (let i = 0; i < croppedImagesArray.length; i++) {
-  // Only keep Etsy images that haven't been nullified
-  if (croppedImagesArray[i] !== null) {
+  // If cell i is matched, skip. Otherwise, we haven't nullified the image data
+  if (!matchedCellIndices.has(i)) {
     unmatchedCells.push(i);
   }
 }
 
 for (const i of unmatchedCells) {
   const matchBox = document.getElementById("matchCell" + i);
-
   // "userImagesArray" now only contains unmatched user images from the first pass
-  const unmatchedUserImages = userImagesArray;
 
-  // Compare all unmatched user images in parallel, staggered
-  const comparisonPromises = unmatchedUserImages.map((user, j) => {
+  const comparisonPromises = userImagesArray.map((user, j) => {
     return new Promise((resolve) => {
       setTimeout(() => {
+        // If user/cell got matched in second pass, skip
+        if (matchedUserNames.has(user.name) || matchedCellIndices.has(i)) {
+          return resolve({ result: { score: 0 }, user });
+        }
+
         compareImages(user.data, croppedImagesArray[i], i, user.name)
           .then((result) => resolve({ result, user }))
           .catch((err) => {
@@ -1304,7 +1295,6 @@ for (const i of unmatchedCells) {
     });
 
     if (topScore === 1.0) {
-      // Perfect match
       if (matchBox) {
         matchBox.value = matchName;
         matchBox.style.fontWeight = "";
@@ -1317,11 +1307,12 @@ for (const i of unmatchedCells) {
         score: topScore
       });
 
+      matchedUserNames.add(topCandidate.user.name);
+      matchedCellIndices.add(i);
+
       userImagesArray = userImagesArray.filter(u => u.name !== topCandidate.user.name);
-      croppedImagesArray[i] = null;
     }
     else if (topScore >= 0.98) {
-      // Near-perfect
       if (matchBox) {
         matchBox.value = matchName;
         matchBox.style.fontWeight = "";
@@ -1334,11 +1325,12 @@ for (const i of unmatchedCells) {
         score: topScore
       });
 
+      matchedUserNames.add(topCandidate.user.name);
+      matchedCellIndices.add(i);
+
       userImagesArray = userImagesArray.filter(u => u.name !== topCandidate.user.name);
-      croppedImagesArray[i] = null;
     }
     else if (topScore >= 0.88) {
-      // Partial or delta logic
       matchBox.value = matchName;
       matchBox.style.fontWeight = "bold";
       matchBox.style.color = "orangered";
@@ -1350,9 +1342,10 @@ for (const i of unmatchedCells) {
         score: topScore
       });
 
-      // Remove partial match from userImages + null out cell
+      matchedUserNames.add(topCandidate.user.name);
+      matchedCellIndices.add(i);
+
       userImagesArray = userImagesArray.filter(u => u.name !== topCandidate.user.name);
-      croppedImagesArray[i] = null;
     }
     else {
       M.toast({ html: `Cell ${i}: Score ${topScorePerc}% < 88%. No match.` });
