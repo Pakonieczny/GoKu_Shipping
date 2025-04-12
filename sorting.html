@@ -511,63 +511,99 @@
       });
     }
 
-    // --------------- (Your code for drag-and-drop logic, AI analysis, etc.) --------------
-    const photoDragDropElem = document.getElementById("photoDragDrop");
-    photoDragDropElem.addEventListener("dragover", function (e) {
-      e.preventDefault();
-    });
-    photoDragDropElem.addEventListener("drop", function (e) {
+    // --------------- Drag-and-drop logic ---------------
+const photoDragDropElem = document.getElementById("photoDragDrop");
+
+photoDragDropElem.addEventListener("dragover", function (e) {
+  e.preventDefault();
+});
+
+photoDragDropElem.addEventListener("drop", async function (e) {
   e.preventDefault();
   const files = e.dataTransfer.files;
+
+  // We'll track how many new images are actually added
+  let newlyAddedCount = 0;
+
   for (let i = 0; i < files.length; i++) {
     const file = files[i];
+
+    // Optional: skip if a file with this exact name is already in userImagesArray and is analyzed
+    // (Prevents re-dragging the same file from re-adding it)
+    if (
+      userImagesArray.some(
+        (imgObj) => imgObj.name === file.name && imgObj.analyzed === true
+      )
+    ) {
+      console.log("Skipping file already analyzed:", file.name);
+      continue;
+    }
+
     const reader = new FileReader();
-    reader.onload = async function(e) {
-      const imageData = e.target.result;
+    reader.onload = async function (ev) {
       try {
-        // Resize the image before adding to userImagesArray
-        const resizedData = await resizeUserImage(imageData);
-        userImagesArray.push({ name: file.name, data: resizedData, analyzed: false });
-        M.toast({
-          html: "User image " + userImagesArray.length + " captured and resized."
+        // 1) Resize the dropped image
+        const resizedData = await resizeUserImage(ev.target.result);
+
+        // 2) Add it to userImagesArray as "not analyzed yet"
+        userImagesArray.push({
+          name: file.name,
+          data: resizedData,
+          analyzed: false,
         });
+
+        newlyAddedCount++;
+        M.toast({
+          html: "User image " + userImagesArray.length + " captured and resized.",
+        });
+
+        // Show the first image as a small preview if you like
         if (userImagesArray.length === 1) {
           const userImageElem = document.getElementById("userImage");
           userImageElem.src = resizedData;
           userImageElem.style.display = "inline-block";
         }
-        // Process only newly added photos
-        await analyzeUserImagesViaOpenAI();
       } catch (err) {
         console.error("Error resizing user image:", err);
         M.toast({ html: "Error processing one of the user images." });
       }
-    }; // <-- This closing brace is the crucial fix!
-
+    };
+    // Begin reading the file
     reader.readAsDataURL(file);
   }
+
+  // After we've queued up all files for reading, wait a moment for them to finish
+  // reading/resizing, then call our analysis function exactly once.
+  setTimeout(async () => {
+    // If we actually added new images, analyze them
+    if (newlyAddedCount > 0) {
+      await analyzeUserImagesViaOpenAI();
+    }
+  }, 500);
 });
 
-    function resizeUserImage(dataUrl) {
-      return new Promise((resolve, reject) => {
-        const img = new Image();
-        img.crossOrigin = "Anonymous";
-        img.onload = function () {
-          const canvas = document.createElement("canvas");
-          canvas.width = 512;
-          canvas.height = 512;
-          const ctx = canvas.getContext("2d");
-          ctx.drawImage(img, 0, 0, 512, 512);
-          resolve(canvas.toDataURL());
-        };
-        img.onerror = function (err) {
-          reject(err);
-        };
-        img.src = dataUrl;
-      });
-    }
+// --------------- Resizing logic ---------------
+function resizeUserImage(dataUrl) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.crossOrigin = "Anonymous";
+    img.onload = function () {
+      const canvas = document.createElement("canvas");
+      canvas.width = 512;
+      canvas.height = 512;
+      const ctx = canvas.getContext("2d");
+      ctx.drawImage(img, 0, 0, 512, 512);
+      resolve(canvas.toDataURL());
+    };
+    img.onerror = function (err) {
+      reject(err);
+    };
+    img.src = dataUrl;
+  });
+}
 
-    async function openAIAnalyzePhoto(base64Image) {
+// --------------- Single-Photo Analysis ---------------
+async function openAIAnalyzePhoto(base64Image) {
   const payload = {
     model: "gpt-4o",
     messages: [
@@ -601,9 +637,7 @@
     });
     console.log("Received API response status:", response.status);
 
-    // If the response is not OK, log the error and throw
     if (!response.ok) {
-      // Log the response text (if any) for more debugging info.
       const errorText = await response.text();
       console.error("Error response text from API:", errorText);
       throw new Error(`Request failed with status ${response.status}`);
@@ -612,7 +646,6 @@
     const data = await response.json();
     console.log("OpenAI API response data:", data);
 
-    // Use optional chaining to avoid reading undefined fields.
     let rawText = data.choices?.[0]?.message?.content?.trim();
     if (!rawText) {
       console.error("API response does not contain a valid 'choices' array:", data);
@@ -636,16 +669,15 @@
       topRightNumber: parsed.topRightNumber || null,
       color: parsed.color || null,
     };
-
-  } catch (e) {
-    console.error("Error in openAIAnalyzePhoto API call:", e);
-    // Optionally, rethrow or return a fallback object.
+  } catch (err) {
+    console.error("Error in openAIAnalyzePhoto API call:", err);
     return { topRightNumber: null, color: null };
   }
 }
 
-    async function analyzeUserImagesViaOpenAI() {
-  // Filter for images that have not yet been analyzed.
+// --------------- Master Analysis Function ---------------
+async function analyzeUserImagesViaOpenAI() {
+  // Only pick images that have NOT yet been analyzed
   const imagesToAnalyze = userImagesArray.filter(imgObj => !imgObj.analyzed);
 
   if (imagesToAnalyze.length === 0) {
@@ -653,11 +685,9 @@
     return;
   }
 
-  // Process each image one at a time, waiting 250 ms before each call
+  // Process each image sequentially with a 250ms delay
   for (let i = 0; i < imagesToAnalyze.length; i++) {
     const imgObj = imagesToAnalyze[i];
-
-    // Delay 250 ms before calling openAIAnalyzePhoto()
     await new Promise(resolve => setTimeout(resolve, 250));
 
     try {
@@ -683,7 +713,7 @@
     }
   }
 
-  // After finishing all images, save to local storage
+  // Save final updates to local storage
   localStorage.setItem("userImagesArray", JSON.stringify(userImagesArray));
   M.toast({ html: "User Image Analysis Has Been Completed" });
 }
