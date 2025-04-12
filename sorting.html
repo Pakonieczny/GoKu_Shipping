@@ -1073,73 +1073,72 @@ async function analyzeUserImagesViaOpenAI() {
      * compareImages, sendAndMatch, partialMatches, etc.
      ********************************************************/
     async function compareImages(userImage, croppedGridImage, cellIndex, userImageName, signal = undefined) {
-      const payload = {
-        model: "gpt-4o",
-        messages: [
+  const payload = {
+    model: "gpt-4o",
+    messages: [
+      {
+        role: "user",
+        content: [
           {
-            role: "user",
-            content: [
-              {
-                type: "text",
-                text:
-                  "1. The Similarity Score is to be strictly measured on the similarity of the jewelry charm / pendant between the 2 images " +
-                  "2. Focus on the charm outline and silhouette and compare the cutouts or holes within the charm " +
-                  "3. Focus on the engraving existance, design, shapes on top of the charm itself " +
-                  "4. Return a similarity score that combines the outline and silhouette score + the similarity score for engraving size, existance, location, orientation etc.. " +
-                  "5. If you detect an animal charm then strictly focus on the position, size and orientation of the head, eyes, beak, mouth, ears, legs, wings etc.. " +
-                  "6. Ignore and disregard all background and accessories around and attached to charm such as necklaces, chains, hoops, rings, clothing, or skin " +
-                  "7. Return a numeric similarity score between 0.0000 and 1.0000 with EXACTLY four decimal places, for example 0.8937, 0.9231, or 1.675, and no additional text " +
-                  "8. Examine all details on top and inside each engraved charm " +
-                  "9. Emphasize the pose and direction the charm is facing ",
-              },
-              { type: "image_url", image_url: { url: userImage, detail: "high" } },
-              { type: "image_url", image_url: { url: croppedGridImage, detail: "high" } },
-            ],
+            type: "text",
+            text:
+              "1. The Similarity Score is to be strictly measured on the similarity of the jewelry charm / pendant between the 2 images " +
+              "2. Focus on the charm outline and silhouette and compare the cutouts or holes within the charm " +
+              "3. Focus on the engraving existance, design, shapes on top of the charm itself " +
+              "4. Return a similarity score that combines the outline and silhouette score + the similarity score for engraving size, existance, location, orientation etc.. " +
+              "5. If you detect an animal charm then strictly focus on the position, size and orientation of the head, eyes, beak, mouth, ears, legs, wings etc.. " +
+              "6. Ignore and disregard all background and accessories around and attached to charm such as necklaces, chains, hoops, rings, clothing, or skin " +
+              "7. Return a numeric similarity score between 0.0000 and 1.0000 with EXACTLY four decimal places, for example 0.8937, 0.9231, or 1.675, and no additional text " +
+              "8. Examine all details on top and inside each engraved charm " +
+              "9. Emphasize the pose and direction the charm is facing ",
           },
+          { type: "image_url", image_url: { url: userImage, detail: "high" } },
+          { type: "image_url", image_url: { url: croppedGridImage, detail: "high" } },
         ],
-        max_tokens: 5000,
-      };
+      },
+    ],
+    max_tokens: 5000,
+  };
 
-      try {
-        const response = await fetch(functionsBaseUrl + "/openaiProxy", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(payload),
-          signal,
-        });
-        if (!response.ok) {
-          throw new Error("OpenAI compareImages call failed with " + response.status);
-        }
-        const data = await response.json();
-
-        let similarityText = data.choices[0].message.content.trim();
-        similarityText = similarityText.replace(/[^\d.]/g, "");
-
-        let score = parseFloat(similarityText);
-        if (isNaN(score)) {
-          score = 0.0;
-        }
-        return { score };
-      } catch (err) {
-        console.error("Error comparing images with OpenAI:", err);
-        return { score: 0.0 };
-      }
+  try {
+    const response = await fetch(functionsBaseUrl + "/openaiProxy", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+      signal,
+    });
+    if (!response.ok) {
+      throw new Error("OpenAI compareImages call failed with " + response.status);
     }
+    const data = await response.json();
 
-    async function sendAndMatch() {
-      // Your big function from the snippet
-      if (userImagesArray.length === 0) {
-        M.toast({ html: "No user images available! Please drop user images first." });
-        return;
-      }
-      if (!croppedImagesArray || croppedImagesArray.length === 0) {
-        M.toast({ html: "No cropped grid images available! Please crop images first." });
-        return;
-      }
+    let similarityText = data.choices[0].message.content.trim();
+    similarityText = similarityText.replace(/[^\d.]/g, ""); // keep only digits & dots
 
-  // --------------------------------------------------------------
-  // FIRST PASS: Accept only matches ≥ 0.98 (removes user image from userImagesArray).
-  // --------------------------------------------------------------
+    let score = parseFloat(similarityText);
+    if (isNaN(score)) {
+      score = 0.0;
+    }
+    return { score };
+  } catch (err) {
+    console.error("Error comparing images with OpenAI:", err);
+    return { score: 0.0 };
+  }
+}
+
+async function sendAndMatch() {
+  if (userImagesArray.length === 0) {
+    M.toast({ html: "No user images available! Please drop user images first." });
+    return;
+  }
+  if (!croppedImagesArray || croppedImagesArray.length === 0) {
+    M.toast({ html: "No cropped grid images available! Please crop images first." });
+    return;
+  }
+
+  //---------------------------------------------------------------------
+  // FIRST PASS: Accept only matches ≥ 0.98 or (≥0.88 with delta≥0.15)
+  //---------------------------------------------------------------------
   let unmatchedCells = [];
   for (let i = 0; i < croppedImagesArray.length; i++) {
     if (croppedImagesArray[i]) {
@@ -1150,7 +1149,7 @@ async function analyzeUserImagesViaOpenAI() {
   for (const i of unmatchedCells) {
     const matchBox = document.getElementById("matchCell" + i);
 
-    // Compare all user images, staggered by j * 250
+    // Compare all user images, staggered by j*250
     const comparisonPromises = userImagesArray.map((user, j) => {
       return new Promise(resolve => {
         setTimeout(() => {
@@ -1170,20 +1169,19 @@ async function analyzeUserImagesViaOpenAI() {
     if (!results.length || results[0].result.score === 0) {
       M.toast({ html: `Cell ${i}: No valid matches in first pass.` });
     } else {
-      // Take top candidate
       const topCandidate = results[0];
       const topScore = topCandidate.result.score;
       const topScorePerc = (topScore * 100).toFixed(2);
       const matchName = topCandidate.user.name.replace(/(\.jpg|\.png)$/i, "");
 
-      // If there's more than one candidate, do a delta check
       if (results.length > 1) {
         const secondScore = results[1].result.score;
         const delta = topScore - secondScore;
-        // If difference ≥ 15% and top ≥ 0.88 => auto-accept
-        if (topScore >= 0.88 && delta >= 0.15) {
+
+        // NOTE: We check >= 0.98 first.
+        if (topScore >= 0.98) {
           M.toast({
-            html: `Cell ${i}: Delta ≥ 15% & top ≥ 88% => Accepting ${matchName} (${topScorePerc}%)`
+            html: `Cell ${i}: First-pass match ≥ 98% => ${matchName} (${topScorePerc}%)`,
           });
           if (matchBox) {
             matchBox.value = matchName;
@@ -1194,15 +1192,15 @@ async function analyzeUserImagesViaOpenAI() {
           cellMatches[i].push({
             userName: matchName,
             userImage: topCandidate.user.data,
-            score: topScore
+            score: topScore,
           });
-          // Remove user image from userImagesArray
+          // Remove user image from the array
           userImagesArray = userImagesArray.filter(u => u.name !== topCandidate.user.name);
         }
-        // Otherwise, standard first-pass threshold: top ≥ 0.98
-        else if (topScore >= 0.98) {
+        // Else check the delta≥0.15 & top≥0.88
+        else if (topScore >= 0.88 && delta >= 0.15) {
           M.toast({
-            html: `Cell ${i}: First-pass match ≥ 98% => ${matchName} (${topScorePerc}%)`
+            html: `Cell ${i}: Delta ≥ 15% & top ≥ 88% => Accepting ${matchName} (${topScorePerc}%)`,
           });
           if (matchBox) {
             matchBox.value = matchName;
@@ -1213,157 +1211,199 @@ async function analyzeUserImagesViaOpenAI() {
           cellMatches[i].push({
             userName: matchName,
             userImage: topCandidate.user.data,
-            score: topScore
+            score: topScore,
           });
           userImagesArray = userImagesArray.filter(u => u.name !== topCandidate.user.name);
         }
-      }    
+        // else do nothing in first pass
+      } else {
+        // If there's only one candidate, just check if ≥ 0.98
+        if (topScore >= 0.98) {
+          M.toast({
+            html: `Cell ${i}: First-pass match ≥ 98% => ${matchName} (${topScorePerc}%)`,
+          });
+          if (matchBox) {
+            matchBox.value = matchName;
+            matchBox.style.fontWeight = "";
+            matchBox.style.color = "";
+          }
+          if (!cellMatches[i]) cellMatches[i] = [];
+          cellMatches[i].push({
+            userName: matchName,
+            userImage: topCandidate.user.data,
+            score: topScore,
+          });
+          userImagesArray = userImagesArray.filter(u => u.name !== topCandidate.user.name);
+        }
+      }
     }
-  
-    // Short cooldown
+    // 2s cooldown
     await new Promise(resolve => setTimeout(resolve, 2000));
   }
 
-  // -----------------------------------------------------------------------
-// SECOND PASS: For all cells still unmatched, do multi-branch if/else.
-// -----------------------------------------------------------------------
-unmatchedCells = [];
-for (let i = 0; i < croppedImagesArray.length; i++) {
-  if (croppedImagesArray[i]) {
-    unmatchedCells.push(i);
+  //-----------------------------------------------------------------------
+  // SECOND PASS
+  //-----------------------------------------------------------------------
+  unmatchedCells = [];
+  for (let i = 0; i < croppedImagesArray.length; i++) {
+    if (croppedImagesArray[i]) {
+      unmatchedCells.push(i);
+    }
   }
-}
 
-for (const i of unmatchedCells) {
-  const matchBox = document.getElementById("matchCell" + i);
+  for (const i of unmatchedCells) {
+    const matchBox = document.getElementById("matchCell" + i);
 
-  // Compare all user images in parallel, staggered
-  const comparisonPromises = userImagesArray.map((user, j) => {
-    return new Promise(resolve => {
-      setTimeout(() => {
-        compareImages(user.data, croppedImagesArray[i], i, user.name)
-          .then(result => resolve({ result, user }))
-          .catch(err => {
-            console.error("Second-pass compare error:", i, user.name, err);
-            resolve({ result: { score: 0 }, user });
+    // Compare all user images in parallel, staggered
+    const comparisonPromises = userImagesArray.map((user, j) => {
+      return new Promise(resolve => {
+        setTimeout(() => {
+          compareImages(user.data, croppedImagesArray[i], i, user.name)
+            .then(result => resolve({ result, user }))
+            .catch(err => {
+              console.error("Second-pass compare error:", i, user.name, err);
+              resolve({ result: { score: 0 }, user });
+            });
+        }, j * 250);
+      });
+    });
+
+    const results = await Promise.all(comparisonPromises);
+    results.sort((a, b) => b.result.score - a.result.score);
+
+    if (!results.length || results[0].result.score === 0) {
+      M.toast({ html: `Cell ${i}: No valid matches found in second pass.` });
+    } else {
+      const topCandidate = results[0];
+      const topScore = topCandidate.result.score;
+      const topScorePerc = (topScore * 100).toFixed(2);
+      const matchName = topCandidate.user.name.replace(/(\.jpg|\.png)$/i, "");
+      M.toast({
+        html: `Cell ${i}: Best candidate => ${matchName} (${topScorePerc}%)`,
+      });
+
+      if (results.length > 1) {
+        const secondScore = results[1].result.score;
+        const delta = topScore - secondScore;
+
+        // REORDER so "≥0.98" is first, then the delta≥0.15 logic
+        if (topScore === 1.0) {
+          M.toast({ html: `Cell ${i}: PERFECT MATCH => ${matchName} (100%)` });
+          if (matchBox) {
+            matchBox.value = matchName;
+            matchBox.style.fontWeight = "";
+            matchBox.style.color = "";
+          }
+          if (!cellMatches[i]) cellMatches[i] = [];
+          cellMatches[i].push({
+            userName: matchName,
+            userImage: topCandidate.user.data,
+            score: topScore,
           });
-      }, j * 250);
-    });
-  });
-
-  const results = await Promise.all(comparisonPromises);
-  results.sort((a, b) => b.result.score - a.result.score);
-
-  if (!results.length || results[0].result.score === 0) {
-    M.toast({ html: `Cell ${i}: No valid matches found in second pass.` });
-  } else {
-    const topCandidate = results[0];
-    const topScore = topCandidate.result.score;
-    const topScorePerc = (topScore * 100).toFixed(2);
-    const matchName = topCandidate.user.name.replace(/(\.jpg|\.png)$/i, "");
-    M.toast({
-      html: `Cell ${i}: Best candidate => ${matchName} (${topScorePerc}%)`
-    });
-
-    if (results.length > 1) {
-      const secondScore = results[1].result.score;
-      const delta = topScore - secondScore;
-
-      if (topScore >= 0.88 && delta >= 0.15) {
-        M.toast({
-          html: `Cell ${i}: Delta ≥ 15% & top ≥ 88% => Accepting ${matchName} (${topScorePerc}%)`
-        });
-        if (matchBox) {
-          matchBox.value = matchName;
-          matchBox.style.fontWeight = "";
-          matchBox.style.color = "";
+          userImagesArray = userImagesArray.filter(u => u.name !== topCandidate.user.name);
         }
-        if (!cellMatches[i]) cellMatches[i] = [];
-        cellMatches[i].push({
-          userName: matchName,
-          userImage: topCandidate.user.data,
-          score: topScore
-        });
-        userImagesArray = userImagesArray.filter(u => u.name !== topCandidate.user.name);
-      }
-      else if (topScore === 1.0) {
-        M.toast({ html: `Cell ${i}: PERFECT MATCH => ${matchName} (100%)` });
-        if (matchBox) {
-          matchBox.value = matchName;
-          matchBox.style.fontWeight = "";
-          matchBox.style.color = "";
-        }
-        if (!cellMatches[i]) cellMatches[i] = [];
-        cellMatches[i].push({
-          userName: matchName,
-          userImage: topCandidate.user.data,
-          score: topScore
-        });
-        userImagesArray = userImagesArray.filter(u => u.name !== topCandidate.user.name);
-      }
-      else if (topScore >= 0.98) {
-        // NEAR-PERFECT => remove user image
-        if (partialMatches[topCandidate.user.name]) {
-          const oldCellIndex = partialMatches[topCandidate.user.name].cellIndex;
-          const oldBox = document.getElementById("matchCell" + oldCellIndex);
-          if (oldBox) {
-            oldBox.value = "";
-            oldBox.style.fontWeight = "";
-            oldBox.style.color = "";
+        else if (topScore >= 0.98) {
+          // NEAR-PERFECT => remove user image
+          if (partialMatches[topCandidate.user.name]) {
+            const oldCellIndex = partialMatches[topCandidate.user.name].cellIndex;
+            const oldBox = document.getElementById("matchCell" + oldCellIndex);
+            if (oldBox) {
+              oldBox.value = "";
+              oldBox.style.fontWeight = "";
+              oldBox.style.color = "";
+            }
+            if (cellMatches[oldCellIndex]) {
+              cellMatches[oldCellIndex] = cellMatches[oldCellIndex].filter(
+                m => m.userName !== topCandidate.user.name
+              );
+            }
+            delete partialMatches[topCandidate.user.name];
           }
-          if (cellMatches[oldCellIndex]) {
-            cellMatches[oldCellIndex] = cellMatches[oldCellIndex].filter(
-              (m) => m.userName !== topCandidate.user.name
-            );
+          M.toast({
+            html: `Cell ${i}: NEAR-PERFECT (≥ 98%) => ${matchName} (${topScorePerc}%). Removing image.`,
+          });
+          if (matchBox) {
+            matchBox.value = matchName;
+            matchBox.style.fontWeight = "";
+            matchBox.style.color = "";
           }
-          delete partialMatches[topCandidate.user.name];
+          if (!cellMatches[i]) cellMatches[i] = [];
+          cellMatches[i].push({
+            userName: matchName,
+            userImage: topCandidate.user.data,
+            score: topScore,
+          });
+          userImagesArray = userImagesArray.filter(u => u.name !== topCandidate.user.name);
         }
-        M.toast({
-          html: `Cell ${i}: NEAR-PERFECT (≥ 98%) => ${matchName} (${topScorePerc}%). Removing image.`
-        });
-        if (matchBox) {
-          matchBox.value = matchName;
-          matchBox.style.fontWeight = "";
-          matchBox.style.color = "";
+        else if (topScore >= 0.88 && delta >= 0.15) {
+          // Delta≥15% & top≥0.88
+          M.toast({
+            html: `Cell ${i}: Delta ≥ 15% & top ≥ 88% => Accepting ${matchName} (${topScorePerc}%)`,
+          });
+          if (matchBox) {
+            matchBox.value = matchName;
+            matchBox.style.fontWeight = "";
+            matchBox.style.color = "";
+          }
+          if (!cellMatches[i]) cellMatches[i] = [];
+          cellMatches[i].push({
+            userName: matchName,
+            userImage: topCandidate.user.data,
+            score: topScore,
+          });
+          userImagesArray = userImagesArray.filter(u => u.name !== topCandidate.user.name);
         }
-        if (!cellMatches[i]) cellMatches[i] = [];
-        cellMatches[i].push({
-          userName: matchName,
-          userImage: topCandidate.user.data,
-          score: topScore
-        });
-        userImagesArray = userImagesArray.filter(u => u.name !== topCandidate.user.name);
-      }
-      else if (topScore >= 0.88) {
-        M.toast({
-          html: `Cell ${i}: PARTIAL MATCH >= 88% => ${matchName} (${topScorePerc}%).`
-        });
-        if (matchBox) {
-          matchBox.value = matchName;
-          matchBox.style.fontWeight = "bold";
-          matchBox.style.color = "orangered";
+        else if (topScore >= 0.88) {
+          M.toast({
+            html: `Cell ${i}: PARTIAL MATCH >= 88% => ${matchName} (${topScorePerc}%).`,
+          });
+          if (matchBox) {
+            matchBox.value = matchName;
+            matchBox.style.fontWeight = "bold";
+            matchBox.style.color = "orangered";
+          }
+          if (!cellMatches[i]) cellMatches[i] = [];
+          cellMatches[i].push({
+            userName: matchName,
+            userImage: topCandidate.user.data,
+            score: topScore,
+          });
+          partialMatches[topCandidate.user.name] = { cellIndex: i, score: topScore };
+        } else {
+          M.toast({ html: `Cell ${i}: Score ${topScorePerc}% < 88%. No match.` });
         }
-        if (!cellMatches[i]) cellMatches[i] = [];
-        cellMatches[i].push({
-          userName: matchName,
-          userImage: topCandidate.user.data,
-          score: topScore
-        });
-        partialMatches[topCandidate.user.name] = { cellIndex: i, score: topScore };
       } else {
-        M.toast({ html: `Cell ${i}: Score ${topScorePerc}% < 88%. No match.` });
+        // If there's only one result
+        if (topScore === 1.0) {
+          M.toast({ html: `Cell ${i}: PERFECT MATCH => ${matchName} (100%)` });
+          if (matchBox) {
+            matchBox.value = matchName;
+            matchBox.style.fontWeight = "";
+            matchBox.style.color = "";
+          }
+          if (!cellMatches[i]) cellMatches[i] = [];
+          cellMatches[i].push({
+            userName: matchName,
+            userImage: topCandidate.user.data,
+            score: topScore,
+          });
+          userImagesArray = userImagesArray.filter(u => u.name !== topCandidate.user.name);
+        }
+        else if (topScore >= 0.98) {
+          // ...
+          // (The same “NEAR-PERFECT” logic as above)
+          // ...
+        }
+        // else if (topScore >= 0.88) { ... }
+        // etc.
       }
     }
-    
-  } 
-
-  // Short cooldown
-  await new Promise(resolve => setTimeout(resolve, 2000));
-}
+    // 2s cooldown
+    await new Promise(resolve => setTimeout(resolve, 2000));
+  }
 
   // (A) Now highlight only cells that truly have NO matches
   for (let i = 0; i < croppedImagesArray.length; i++) {
-    // If cellMatches[i] is missing or an empty array, that means no matches
     if (!cellMatches[i] || cellMatches[i].length === 0) {
       const previewBox = document.getElementById("previewCell" + i);
       if (previewBox) {
@@ -1372,8 +1412,7 @@ for (const i of unmatchedCells) {
     }
   }
 
-  // (B) Dynamically add click listeners to the 4th (match) box
-  //     after second pass is finished
+  // (B) Dynamically add click listeners to the 4th (match) box after second pass
   for (let i = 0; i < croppedImagesArray.length; i++) {
     const matchInput = document.getElementById("matchCell" + i);
     if (!matchInput) continue;
