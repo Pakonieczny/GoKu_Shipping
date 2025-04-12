@@ -588,7 +588,7 @@
     max_tokens: 5000,
   };
 
-  console.log("Sending payload to OpenAI:", payload); // Log outgoing payload
+  console.log("Sending payload to OpenAI:", payload);
 
   try {
     const response = await fetch(functionsBaseUrl + "/openaiProxy", {
@@ -598,19 +598,34 @@
     });
     console.log("Received API response status:", response.status);
 
+    // If the response is not OK, log the error and throw
+    if (!response.ok) {
+      // Log the response text (if any) for more debugging info.
+      const errorText = await response.text();
+      console.error("Error response text from API:", errorText);
+      throw new Error(`Request failed with status ${response.status}`);
+    }
+
     const data = await response.json();
-    console.log("OpenAI API response data:", data); // Log full response data
+    console.log("OpenAI API response data:", data);
 
-    let text = data.choices[0].message.content.trim() || "{}";
-    console.log("Raw API text response:", text); // Log raw text
+    // Use optional chaining to avoid reading undefined fields.
+    let rawText = data.choices?.[0]?.message?.content?.trim();
+    if (!rawText) {
+      console.error("API response does not contain a valid 'choices' array:", data);
+      return { topRightNumber: null, color: null };
+    }
 
-    text = text.replace(/^```(\w+)?/, "").replace(/```$/, "").trim();
+    console.log("Raw API text response:", rawText);
+
+    // Remove any markdown formatting
+    rawText = rawText.replace(/^```(\w+)?/, "").replace(/```$/, "").trim();
 
     let parsed;
     try {
-      parsed = JSON.parse(text);
+      parsed = JSON.parse(rawText);
     } catch (e) {
-      console.error("Error parsing JSON from API response:", text);
+      console.error("Error parsing JSON from API response:", rawText);
       parsed = {};
     }
 
@@ -618,9 +633,11 @@
       topRightNumber: parsed.topRightNumber || null,
       color: parsed.color || null,
     };
+
   } catch (e) {
     console.error("Error in openAIAnalyzePhoto API call:", e);
-    throw e;
+    // Optionally, rethrow or return a fallback object.
+    return { topRightNumber: null, color: null };
   }
 }
 
