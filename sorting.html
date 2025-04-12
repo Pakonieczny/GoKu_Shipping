@@ -252,23 +252,6 @@
   let cellMatches = {};
   let partialMatches = {};
 
-    const configIDs = [
-    "connectEtsyBtn",
-    "testOpenAIBtn",
-    "openConfigBtn",
-    "cropImagesBtn",
-    "sendMatchBtn",
-    "etsyOrderNumber",
-    "imageComparisonContainer",
-    "photoDragDrop",
-    "userImage",
-    "photoGridContainer",
-    "unmatchedContainer",
-    "configModal",
-    "configTable",
-    "matchesModal"
-  ];
-
   document.addEventListener("DOMContentLoaded", function() {
     M.AutoInit();
     setTimeout(function() {
@@ -1669,68 +1652,67 @@ function createUnmatchedUserImagesPreview() {
 // Updated text instructions to request more precise similarity scores.
 
 async function compareImages(userImage, croppedGridImage, cellIndex, userImageName, signal = undefined) {
-  // The payload requesting a similarity score from OpenAI
   const payload = {
     model: "gpt-4o",
     messages: [
       {
         role: "user",
         content: [
-          {
-            type: "text",
-            text:
-              "1. The Similarity Score is to be strictly measured on the jewelry charm / pendant between the 2 images.\n" +
-              "2. Focus on the charm outline and silhouette and compare the cutouts or holes within the charm.\n" +
-              "3. Focus on the engraving existence, design, shapes on top of the charm itself.\n" +
-              "4. Return a similarity score that combines the outline and silhouette score + the similarity score for engraving size, existence, location, orientation, etc.\n" +
-              "5. If you detect an animal charm then strictly focus on the position, size, and orientation of the head, eyes, beak, mouth, ears, legs, wings, etc.\n" +
-              "6. Ignore and disregard all background and accessories around and attached to the charm such as necklaces, chains, hoops, rings, clothing, or skin.\n" +
-              "7. Return a numeric similarity score between 0.0000 and 1.0000 with EXACTLY four decimal places, for example 0.8937, 0.9231, or 1.0000, and no additional text.\n" +
-              "8. Examine all details on top and inside each engraved charm.\n" +
-              "9. Emphasize the pose and direction the charm is facing.\n"
-          },
           { 
-            type: "image_url", 
-            image_url: { url: userImage, detail: "high" } 
+            type: "text", 
+            text: 
+              "1. The Similarity Score is to be strictly measured on the similarity of the jewelry charm / pendant between the 2 images " +
+              "2. Focus on the charm outline and silhouette and compare the cutouts or holes within the charm " +
+              "3. Focus on the engraving existance, design, shapes on top of the charm itself " +
+              "4. Return a similarity score that combines the outline and silhouette score + the similarity score for engraving size, existance, location, orientation etc.. " + 
+              "5. If you detect an animal charm then strictly focus on the position, size and orientation of the head, eyes, beak, mouth, ears, legs, wings etc.. " +
+              "6. Ignore and disregard all background and accessories around and attached to charm such as necklaces, chains, hoops, rings, clothing, or skin " +
+              "7. Return a numeric similarity score between 0.0000 and 1.0000 with EXACTLY four decimal places, for example 0.8937, 0.9231, or 1.675, and no additional text " +
+              "8. Examine all details on top and inside each engraved charm " +
+              "9. Emphasize the pose and direction the charm is facing " 
           },
-          { 
-            type: "image_url", 
-            image_url: { url: croppedGridImage, detail: "high" } 
-          }
+          { type: "image_url", image_url: { url: userImage, detail: "high" } },
+          { type: "image_url", image_url: { url: croppedGridImage, detail: "high" } }
         ]
       }
     ],
     max_tokens: 5000
   };
 
-  try {
-    // Call your openaiProxy:
-    const response = await fetch(functionsBaseUrl + "/openaiProxy", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-      signal
-    });
+    async function openAIAnalyzePhoto(base64Image) {
+    try {
+      const response = await fetch(functionsBaseUrl + "/openaiProxy", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
+      });
+      const data = await response.json();
 
-    const data = await response.json();
-    let text = data.choices[0].message.content.trim();
+      let text = data.choices[0].message.content.trim() || "{}";
 
-    // Remove any code fences if present:
-    text = text.replace(/^```(\w+)?/, "").replace(/```$/, "").trim();
+      // Remove any triple backticks and optional "json" fence
+      text = text.replace(/^```(\w+)?/, "").replace(/```$/, "").trim();
 
-    // Attempt to parse the returned string as a float:
-    let score = parseFloat(text);
-    if (isNaN(score)) {
-      console.warn("Could not parse a valid float from OpenAI:", text);
-      score = 0.0;
+      let parsed;
+      try {
+        parsed = JSON.parse(text);
+      } catch(e) {
+        console.warn("Failed to parse color/number from:", text);
+        parsed = {};
+      }
+
+      return { 
+        topRightNumber: parsed.topRightNumber || null, 
+        color: parsed.color || null 
+      };
+    } catch(e) {
+      console.error("Error analyzing photo with OpenAI:", e);
+      return { topRightNumber: null, color: null };
     }
+  } // <-- This closing brace ends openAIAnalyzePhoto
 
-    return { score };
-  } catch (err) {
-    console.error("Error in compareImages:", err);
-    // Return a fallback score of 0 on error
-    return { score: 0 };
-  }
+  // ...any additional logic inside compareImages...
+  
 } // <--- NEW brace: now properly closes compareImages
 
 // ---------------------------------------------------------
