@@ -4,8 +4,7 @@
   <meta charset="UTF-8" />
   <title>Sorting - Single-Click Zoom</title>
   <!-- Materialize CSS -->
-  <link rel="stylesheet" 
-        href="https://cdnjs.cloudflare.com/ajax/libs/materialize/1.0.0/css/materialize.min.css" />
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/materialize/1.0.0/css/materialize.min.css" />
 <style>
   body {
     background-color: #fff;
@@ -15,7 +14,6 @@
     opacity: 0;
     transition: opacity 0s;
   }
-
   /* Main Buttons */
   #connectEtsyBtn,
   #testOpenAIBtn,
@@ -27,11 +25,11 @@
     width: 140px;
     height: 36px;
   }
-  #connectEtsyBtn  { top: 20px; }
-  #testOpenAIBtn   { top: 70px; }
-  #openConfigBtn   { top: 120px; }
-  #cropImagesBtn   { top: 170px; }
-  #sendMatchBtn    { top: 220px; }
+  #connectEtsyBtn { top: 20px; }
+  #testOpenAIBtn { top: 70px; }
+  #openConfigBtn { top: 120px; }
+  #cropImagesBtn { top: 170px; }
+  #sendMatchBtn { top: 220px; }
   
   /* Etsy Order Number input */
   #etsyOrderNumber {
@@ -80,7 +78,6 @@
     left: 350px;
     top: 20px;
   }
-
   /* Preview box styling (110x110) */
   .preview-box {
     position: absolute;
@@ -103,7 +100,6 @@
     transform-origin: center center;
     transition: transform 0.3s ease;
   }
-
   /* Detail text boxes: 55px x 7px */
   .detail-box {
     position: absolute;
@@ -122,13 +118,14 @@
     box-shadow: none !important;
   }
 
-  #unmatchedContainer {
+    #unmatchedContainer {
     position: absolute;
     left: 20px;
-    top: 420px;
+    top: 420px; /* ~100px below the #photoDragDrop which starts at top:310px */
     width: 600px;
-  }
+    /* no fixed height; it will grow as new images are added */
 
+  }
   /* The crucial fix: pointer-events are now enabled on read-only inputs */
   .detail-box:read-only {
     pointer-events: auto !important;
@@ -151,29 +148,26 @@
   #configTable .left-input,
   #configTable .top-input,
   #configTable .width-input,
-  #configTable .height-input {
-    width: 80px !important;
-  }
-
+  #configTable .height-input { width: 80px !important; }
   .modal {
       opacity: 0 !important;
       transform: translateY(20px) scale(0.95) !important;
       will-change: opacity, transform;
       transition: opacity 300ms ease, transform 300ms ease;
-  }
-  .modal.open {
+    }
+    .modal.open {
       opacity: 1 !important;
       transform: translateY(0) scale(1) !important;
-  }
+    }
 
-  .modal-overlay {
+    .modal-overlay {
       opacity: 0;
       will-change: opacity;
       transition: opacity 300ms ease;
-  }
-  .modal-overlay.show {
+    }
+    .modal-overlay.show {
       opacity: 1;
-  }
+    }
 </style>
 </head>
 <body>
@@ -241,53 +235,157 @@
   </script>
 </body>
 </html>
+  <script>
+    // Base URL for Netlify functions
+    const functionsBaseUrl = window.location.origin + "/.netlify/functions";
+    
+    // Global arrays to store cropped grid images, user images (both resized to 512x512)
+    // And an object to store matches dedicated to each cell (key: cell index, value: array of match objects)
+    let croppedImagesArray = [];
+    let userImagesArray = []; // { name, data }
+    let cellMatches = {};
+    let partialMatches = {};
 
-<script>
-  // Base URL for Netlify functions
-  const functionsBaseUrl = window.location.origin + "/.netlify/functions";
-
-  // Global arrays
-  let croppedImagesArray = [];
-  let userImagesArray = []; // user-provided images
-  let cellMatches = {};
-  let partialMatches = {};
-
-  document.addEventListener("DOMContentLoaded", function() {
-    M.AutoInit();
-    setTimeout(function() {
-      loadPositions();
-      document.body.style.opacity = 1;
-    }, 200);
-
-    // Connect to Etsy
-    document.getElementById("connectEtsyBtn").addEventListener("click", async function() {
-      // ...
-    });
-
-    // Test OpenAI
-    document.getElementById("testOpenAIBtn").addEventListener("click", async function() {
-      // ...
-    });
-
-    // Load multiple orders if user presses Enter
-    const etsyOrderInput = document.getElementById("etsyOrderNumber");
-    etsyOrderInput.addEventListener("keydown", async function(e) {
-      if (e.key === "Enter") {
-        // ...
+    (function(){
+      const urlParams = new URLSearchParams(window.location.search);
+      const accessToken = urlParams.get("access_token");
+      if(accessToken){
+        localStorage.setItem("access_token", accessToken);
+        window.history.replaceState({}, document.title, window.location.pathname);
+        M.toast({html:"Connection Successful!"});
+        console.log("Access token received:", accessToken);
+      } else {
+        const authCode = urlParams.get("code");
+        if(authCode){
+          const storedCodeVerifier = localStorage.getItem("etsy_code_verifier");
+          if(storedCodeVerifier){
+            window.location.href =
+              "/.netlify/functions/exchangeToken?code=" +
+              encodeURIComponent(authCode) +
+              "&code_verifier=" +
+              encodeURIComponent(storedCodeVerifier);
+          } else {
+            console.error("No code verifier found in localStorage.");
+          }
+        }
       }
-    });
-
-    // Crop Images Button
-    document.getElementById("cropImagesBtn").addEventListener("click", async function() {
+    })();
+    
+    function generateRandomString(length) {
+      const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+      let text = "";
+      for (let i = 0; i < length; i++){
+        text += chars.charAt(Math.floor(Math.random() * chars.length));
+      }
+      return text;
+    }
+    
+    async function generateCodeChallenge(codeVerifier) {
+      const encoder = new TextEncoder();
+      const data = encoder.encode(codeVerifier);
+      const digest = await crypto.subtle.digest("SHA-256", data);
+      let base64String = btoa(String.fromCharCode(...new Uint8Array(digest)));
+      return base64String.replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+    }
+    
+    // ---------------------------------------------------------------------
+    // (HARD-CODED DEFAULT OFFSETS omitted as requested)
+    // ---------------------------------------------------------------------
+    
+        const configIDs = [
+      "connectEtsyBtn",
+      "testOpenAIBtn",
+      "openConfigBtn",
+      "etsyOrderNumber",
+      "photoGridContainer",
+      "unmatchedContainer",       // <-- new
+      "configModal",
+      "configTable",
+      "saveConfigBtn"
+    ];
+    
+    document.addEventListener("DOMContentLoaded", function() {
+      M.AutoInit();
+      setTimeout(function() {
+        loadPositions();
+        document.body.style.opacity = 1;
+      }, 200);
+    
+      // Connect to Etsy
+      document.getElementById("connectEtsyBtn").addEventListener("click", async function() {
+        try {
+          const codeVerifier = generateRandomString(64);
+          localStorage.setItem("etsy_code_verifier", codeVerifier);
+          const codeChallenge = await generateCodeChallenge(codeVerifier);
+          const CLIENT_ID = "k75zdspz4r99txpqdji7i2em";
+          const redirectUri = "https://sorting.goldenspike.app";
+          const state = "randomState123";
+          const scope = "listings_w listings_r transactions_r transactions_w";
+          const etsyAuthUrl =
+            "https://www.etsy.com/oauth/connect?response_type=code" +
+            "&client_id=" + CLIENT_ID +
+            "&redirect_uri=" + encodeURIComponent(redirectUri) +
+            "&scope=" + encodeURIComponent(scope) +
+            "&state=" + state +
+            "&code_challenge=" + encodeURIComponent(codeChallenge) +
+            "&code_challenge_method=S256";
+          window.location.href = etsyAuthUrl;
+        } catch (err) {
+          console.error("OAuth start error:", err);
+          M.toast({ html: "OAuth error: " + err.message });
+        }
+      });
+    
+      // Test OpenAI
+      document.getElementById("testOpenAIBtn").addEventListener("click", async function() {
+        try {
+          const testBody = {
+            model: "gpt-3.5-turbo",
+            messages: [{ role: "user", content: "Hello from the Sorting page!" }]
+          };
+          const resp = await fetch(functionsBaseUrl + "/openaiProxy", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(testBody)
+          });
+          if (!resp.ok) {
+            throw new Error("OpenAI test call failed with " + resp.status);
+          }
+          const data = await resp.json();
+          if (data.choices && data.choices[0] && data.choices[0].message) {
+            M.toast({ html: "OpenAI responded successfully." });
+          } else {
+            throw new Error("No valid response from OpenAI!");
+          }
+        } catch (err) {
+          M.toast({ html: "OpenAI test failed: " + err.message });
+        }
+      });
+    
+      // Load multiple orders when the user presses Enter
+      var etsyOrderInput = document.getElementById("etsyOrderNumber");
+      etsyOrderInput.addEventListener("keydown", async function(e) {
+        if (e.key === "Enter") {
+          var inputVal = etsyOrderInput.value.trim();
+          if (!inputVal) return;
+          var orderNumbers = inputVal.split(",").map(x => x.trim()).filter(x => x);
+          orderNumbers = orderNumbers.slice(0, 50);
+          await loadBatchEtsyOrders(orderNumbers);
+        }
+      });
+    
+      // Crop Images Button
+      document.getElementById("cropImagesBtn").addEventListener("click", async function() {
+      // Clear any old data and run the cropping process
       croppedImagesArray = [];
       await cropAllImages();
+      });
+    }
+      // Send & Match Button (Parallel)
+      document.getElementById("sendMatchBtn").addEventListener("click", async function() {
+        await sendAndMatch();
+      });
     });
-
-    // Send & Match Button
-    document.getElementById("sendMatchBtn").addEventListener("click", async function() {
-      await sendAndMatch();
-    });
-  });
     
     // ---------------------------------------------------------
     // Dynamically generate preview boxes and four detail boxes per item
@@ -1709,43 +1807,39 @@ async function compareImages(userImage, croppedGridImage, cellIndex, userImageNa
       console.error("Error analyzing photo with OpenAI:", e);
       return { topRightNumber: null, color: null };
     }
-  } // <-- This closing brace ends openAIAnalyzePhoto
-
-  // ...any additional logic inside compareImages...
-  
-} // <--- NEW brace: now properly closes compareImages
-
-// ---------------------------------------------------------
-// Pull Etsy order details and update grid details
-// ---------------------------------------------------------
-function pullEtsyOrderDetails(orderNumber) {
-  console.log("Pulling Etsy order details for order number:", orderNumber);
-  var token = localStorage.getItem("access_token");
-  return fetch(functionsBaseUrl + "/etsyOrderProxy?orderId=" + encodeURIComponent(orderNumber), {
-    headers: { "access-token": token }
-  })
-  .then(function(r) { return r.json(); })
-  .then(function(data) {
-    console.log("Etsy Order Data:", data);
-    return data;
-  })
-  .catch(function(err) {
-    console.error("Error fetching Etsy order details:", err);
-    return null;
-  });
-}
-
-// Example: update the grid details using pulled Etsy order details
-async function updateImageGrid(data) {
-  let items = [];
-  if (data.transactions && Array.isArray(data.transactions)) {
-    items = data.transactions;
-  } else if (Array.isArray(data)) {          
-    items = data;
-  }
-  window.cachedOrderItems = items;
-  await fillPreviewBoxes(items);
-}
+  } // <-- This closing brace ends the function
+    
+    // ---------------------------------------------------------
+    // Pull Etsy order details and update grid details
+    // ---------------------------------------------------------
+    function pullEtsyOrderDetails(orderNumber) {
+      console.log("Pulling Etsy order details for order number:", orderNumber);
+      var token = localStorage.getItem("access_token");
+      return fetch(functionsBaseUrl + "/etsyOrderProxy?orderId=" + encodeURIComponent(orderNumber), {
+        headers: { "access-token": token }
+      })
+      .then(function(r) { return r.json(); })
+      .then(function(data) {
+        console.log("Etsy Order Data:", data);
+        return data;
+      })
+      .catch(function(err) {
+        console.error("Error fetching Etsy order details:", err);
+        return null;
+      });
+    }
+    
+    // Example: update the grid details using pulled Etsy order details
+    async function updateImageGrid(data) {
+      let items = [];
+      if (data.transactions && Array.isArray(data.transactions)) {
+        items = data.transactions;
+      } else if (Array.isArray(data)) {          
+        items = data;
+      }
+      window.cachedOrderItems = items;
+      await fillPreviewBoxes(items);
+    }
 
   </script>
 </body>
