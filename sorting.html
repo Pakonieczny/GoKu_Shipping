@@ -1192,138 +1192,141 @@
   }
 
   // -----------------------------------------------------------------------
-  // SECOND PASS: For all cells still unmatched, do multi-branch if/else.
-  // -----------------------------------------------------------------------
-  unmatchedCells = [];
-  for (let i = 0; i < croppedImagesArray.length; i++) {
-    if (croppedImagesArray[i]) {
-      unmatchedCells.push(i);
-    }
+// SECOND PASS: For all cells still unmatched, do multi-branch if/else.
+// -----------------------------------------------------------------------
+unmatchedCells = [];
+for (let i = 0; i < croppedImagesArray.length; i++) {
+  if (croppedImagesArray[i]) {
+    unmatchedCells.push(i);
   }
+}
 
-  for (const i of unmatchedCells) {
-    const matchBox = document.getElementById("matchCell" + i);
+for (const i of unmatchedCells) {
+  const matchBox = document.getElementById("matchCell" + i);
 
-    // Compare all user images in parallel, staggered
-    const comparisonPromises = userImagesArray.map((user, j) => {
-      return new Promise(resolve => {
-        setTimeout(() => {
-          compareImages(user.data, croppedImagesArray[i], i, user.name)
-            .then(result => resolve({ result, user }))
-            .catch(err => {
-              console.error("Second-pass compare error:", i, user.name, err);
-              resolve({ result: { score: 0 }, user });
-            });
-        }, j * 250);
-      });
+  // Compare all user images in parallel, staggered
+  const comparisonPromises = userImagesArray.map((user, j) => {
+    return new Promise(resolve => {
+      setTimeout(() => {
+        compareImages(user.data, croppedImagesArray[i], i, user.name)
+          .then(result => resolve({ result, user }))
+          .catch(err => {
+            console.error("Second-pass compare error:", i, user.name, err);
+            resolve({ result: { score: 0 }, user });
+          });
+      }, j * 250);
+    });
+  });
+
+  const results = await Promise.all(comparisonPromises);
+  results.sort((a, b) => b.result.score - a.result.score);
+
+  if (!results.length || results[0].result.score === 0) {
+    M.toast({ html: `Cell ${i}: No valid matches found in second pass.` });
+  } else {
+    const topCandidate = results[0];
+    const topScore = topCandidate.result.score;
+    const topScorePerc = (topScore * 100).toFixed(2);
+    const matchName = topCandidate.user.name.replace(/(\.jpg|\.png)$/i, "");
+    M.toast({
+      html: `Cell ${i}: Best candidate => ${matchName} (${topScorePerc}%)`
     });
 
-    const results = await Promise.all(comparisonPromises);
-    results.sort((a, b) => b.result.score - a.result.score);
+    if (results.length > 1) {
+      const secondScore = results[1].result.score;
+      const delta = topScore - secondScore;
 
-    if (!results.length || results[0].result.score === 0) {
-      M.toast({ html: `Cell ${i}: No valid matches found in second pass.` });
-    } else {
-      const topCandidate = results[0];
-      const topScore = topCandidate.result.score;
-      const topScorePerc = (topScore * 100).toFixed(2);
-      const matchName = topCandidate.user.name.replace(/(\.jpg|\.png)$/i, "");
-      M.toast({
-        html: `Cell ${i}: Best candidate => ${matchName} (${topScorePerc}%)`
-      });
+      if (topScore >= 0.88 && delta >= 0.15) {
+        M.toast({
+          html: `Cell ${i}: Delta ≥ 15% & top ≥ 88% => Accepting ${matchName} (${topScorePerc}%)`
+        });
+        if (matchBox) {
+          matchBox.value = matchName;
+          matchBox.style.fontWeight = "";
+          matchBox.style.color = "";
+        }
+        if (!cellMatches[i]) cellMatches[i] = [];
+        cellMatches[i].push({
+          userName: matchName,
+          userImage: topCandidate.user.data,
+          score: topScore
+        });
+        userImagesArray = userImagesArray.filter(u => u.name !== topCandidate.user.name);
+      }
+      else if (topScore === 1.0) {
+        M.toast({ html: `Cell ${i}: PERFECT MATCH => ${matchName} (100%)` });
+        if (matchBox) {
+          matchBox.value = matchName;
+          matchBox.style.fontWeight = "";
+          matchBox.style.color = "";
+        }
+        if (!cellMatches[i]) cellMatches[i] = [];
+        cellMatches[i].push({
+          userName: matchName,
+          userImage: topCandidate.user.data,
+          score: topScore
+        });
+        userImagesArray = userImagesArray.filter(u => u.name !== topCandidate.user.name);
+      }
+      else if (topScore >= 0.98) {
+        // NEAR-PERFECT => remove user image
+        if (partialMatches[topCandidate.user.name]) {
+          const oldCellIndex = partialMatches[topCandidate.user.name].cellIndex;
+          const oldBox = document.getElementById("matchCell" + oldCellIndex);
+          if (oldBox) {
+            oldBox.value = "";
+            oldBox.style.fontWeight = "";
+            oldBox.style.color = "";
+          }
+          if (cellMatches[oldCellIndex]) {
+            cellMatches[oldCellIndex] = cellMatches[oldCellIndex].filter(
+              (m) => m.userName !== topCandidate.user.name
+            );
+          }
+          delete partialMatches[topCandidate.user.name];
+        }
+        M.toast({
+          html: `Cell ${i}: NEAR-PERFECT (≥ 98%) => ${matchName} (${topScorePerc}%). Removing image.`
+        });
+        if (matchBox) {
+          matchBox.value = matchName;
+          matchBox.style.fontWeight = "";
+          matchBox.style.color = "";
+        }
+        if (!cellMatches[i]) cellMatches[i] = [];
+        cellMatches[i].push({
+          userName: matchName,
+          userImage: topCandidate.user.data,
+          score: topScore
+        });
+        userImagesArray = userImagesArray.filter(u => u.name !== topCandidate.user.name);
+      }
+      else if (topScore >= 0.88) {
+        M.toast({
+          html: `Cell ${i}: PARTIAL MATCH >= 88% => ${matchName} (${topScorePerc}%).`
+        });
+        if (matchBox) {
+          matchBox.value = matchName;
+          matchBox.style.fontWeight = "bold";
+          matchBox.style.color = "orangered";
+        }
+        if (!cellMatches[i]) cellMatches[i] = [];
+        cellMatches[i].push({
+          userName: matchName,
+          userImage: topCandidate.user.data,
+          score: topScore
+        });
+        partialMatches[topCandidate.user.name] = { cellIndex: i, score: topScore };
+      } else {
+        M.toast({ html: `Cell ${i}: Score ${topScorePerc}% < 88%. No match.` });
+      }
+    }
+    
+  } 
 
-      if (results.length > 1) {
-        const secondScore = results[1].result.score;
-        const delta = topScore - secondScore;
-
-        if (topScore >= 0.88 && delta >= 0.15) {
-          M.toast({
-            html: `Cell ${i}: Delta ≥ 15% & top ≥ 88% => Accepting ${matchName} (${topScorePerc}%)`
-          });
-          if (matchBox) {
-            matchBox.value = matchName;
-            matchBox.style.fontWeight = "";
-            matchBox.style.color = "";
-          }
-          if (!cellMatches[i]) cellMatches[i] = [];
-          cellMatches[i].push({
-            userName: matchName,
-            userImage: topCandidate.user.data,
-            score: topScore
-          });
-          userImagesArray = userImagesArray.filter(u => u.name !== topCandidate.user.name);
-        }
-        else if (topScore === 1.0) {
-          M.toast({ html: `Cell ${i}: PERFECT MATCH => ${matchName} (100%)` });
-          if (matchBox) {
-            matchBox.value = matchName;
-            matchBox.style.fontWeight = "";
-            matchBox.style.color = "";
-          }
-          if (!cellMatches[i]) cellMatches[i] = [];
-          cellMatches[i].push({
-            userName: matchName,
-            userImage: topCandidate.user.data,
-            score: topScore
-          });
-          userImagesArray = userImagesArray.filter(u => u.name !== topCandidate.user.name);
-        }
-        else if (topScore >= 0.98) {
-          // NEAR-PERFECT => remove user image
-          if (partialMatches[topCandidate.user.name]) {
-            const oldCellIndex = partialMatches[topCandidate.user.name].cellIndex;
-            const oldBox = document.getElementById("matchCell" + oldCellIndex);
-            if (oldBox) {
-              oldBox.value = "";
-              oldBox.style.fontWeight = "";
-              oldBox.style.color = "";
-            }
-            if (cellMatches[oldCellIndex]) {
-              cellMatches[oldCellIndex] = cellMatches[oldCellIndex].filter(
-                (m) => m.userName !== topCandidate.user.name
-              );
-            }
-            delete partialMatches[topCandidate.user.name];
-          }
-          M.toast({
-            html: `Cell ${i}: NEAR-PERFECT (≥ 98%) => ${matchName} (${topScorePerc}%). Removing image.`
-          });
-          if (matchBox) {
-            matchBox.value = matchName;
-            matchBox.style.fontWeight = "";
-            matchBox.style.color = "";
-          }
-          if (!cellMatches[i]) cellMatches[i] = [];
-          cellMatches[i].push({
-            userName: matchName,
-            userImage: topCandidate.user.data,
-            score: topScore
-          });
-          userImagesArray = userImagesArray.filter(u => u.name !== topCandidate.user.name);
-        }
-        else if (topScore >= 0.88) {
-          M.toast({
-            html: `Cell ${i}: PARTIAL MATCH >= 88% => ${matchName} (${topScorePerc}%).`
-          });
-          if (matchBox) {
-            matchBox.value = matchName;
-            matchBox.style.fontWeight = "bold";
-            matchBox.style.color = "orangered";
-          }
-          if (!cellMatches[i]) cellMatches[i] = [];
-          cellMatches[i].push({
-            userName: matchName,
-            userImage: topCandidate.user.data,
-            score: topScore
-          });
-          partialMatches[topCandidate.user.name] = { cellIndex: i, score: topScore };
-        } else {
-          M.toast({ html: `Cell ${i}: Score ${topScorePerc}% < 88%. No match.` });
-        }
-        
-    // Short cooldown
-    await new Promise(resolve => setTimeout(resolve, 2000));
-  }
+  // Short cooldown
+  await new Promise(resolve => setTimeout(resolve, 2000));
+}
 
   // (A) Now highlight only cells that truly have NO matches
   for (let i = 0; i < croppedImagesArray.length; i++) {
