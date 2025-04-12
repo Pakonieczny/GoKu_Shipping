@@ -1427,27 +1427,27 @@ function openMatchPreviewModal(cellIndex) {
   // 1) Grab the Etsy-derived photo from croppedImagesArray
   const etsyDerived = croppedImagesArray[cellIndex];
 
-  // 2) Build local matched array (only 0 or 1 items) & unmatched array
+  // 2) Build local matched array & unmatched array
   let matchedImages = cellMatches[cellIndex] || [];
   if (matchedImages.length > 1) {
     // Keep only the first match if multiple
-    matchedImages = [ matchedImages[0] ];
+    matchedImages = [matchedImages[0]];
   }
-  let unmatchedImages = userImagesArray.filter(uImg => {
+
+  let unmatchedImages = userImagesArray.filter((uImg) => {
     if (partialMatches[uImg.name]) return false;
-    return !(matchedImages.length > 0 && stripExtension(uImg.name) === matchedImages[0].userName);
+    return !(
+      matchedImages.length > 0 &&
+      stripExtension(uImg.name) === matchedImages[0].userName
+    );
   });
 
   // If matchedImages is empty, insert a placeholder
   if (matchedImages.length === 0) {
-    matchedImages.push({
-      userName: "",
-      userImage: null,
-      score: 0
-    });
+    matchedImages.push({ userName: "", userImage: null, score: 0 });
   }
 
-  // A) Etsy Photo section in normal flow (unchanged)
+  // A) Etsy Photo
   const etsyWrapper = document.createElement("div");
   etsyWrapper.style.display = "flex";
   etsyWrapper.style.flexDirection = "column";
@@ -1489,9 +1489,7 @@ function openMatchPreviewModal(cellIndex) {
   matchedWrapper.style.display = "flex";
   matchedWrapper.style.flexDirection = "column";
   matchedWrapper.style.marginBottom = "20px";
-
-  // *** SHIFT 75px right ***
-  matchedWrapper.style.marginLeft = "75px";
+  matchedWrapper.style.marginLeft = "75px"; // shift right
 
   const matchedTitle = document.createElement("div");
   matchedTitle.textContent = "Matched User Photo:";
@@ -1535,6 +1533,7 @@ function openMatchPreviewModal(cellIndex) {
     }
     matchedSection.appendChild(box);
   });
+
   matchedWrapper.appendChild(matchedSection);
   container.appendChild(matchedWrapper);
 
@@ -1542,9 +1541,7 @@ function openMatchPreviewModal(cellIndex) {
   const unmatchedWrapper = document.createElement("div");
   unmatchedWrapper.style.display = "flex";
   unmatchedWrapper.style.flexDirection = "column";
-
-  // *** SHIFT 75px right ***
-  unmatchedWrapper.style.marginLeft = "75px";
+  unmatchedWrapper.style.marginLeft = "75px"; // shift right
 
   const unmatchedTitle = document.createElement("div");
   unmatchedTitle.textContent = "Unmatched User Photos:";
@@ -1583,26 +1580,32 @@ function openMatchPreviewModal(cellIndex) {
     box.appendChild(img);
     unmatchedSection.appendChild(box);
   });
+
   unmatchedWrapper.appendChild(unmatchedSection);
   container.appendChild(unmatchedWrapper);
 
-  // 4) Modal init with onCloseEnd
+  // Initialize modal
   const instance = M.Modal.init(modalElem, {
     onCloseEnd: function() {
       // single-match logic
       cellMatches[cellIndex] = matchedImages;
       const newUserArr = [...userImagesArray];
+
       matchedImages.forEach((mImg) => {
-        const idx = newUserArr.findIndex(u => stripExtension(u.name) === mImg.userName);
+        const idx = newUserArr.findIndex((u) => stripExtension(u.name) === mImg.userName);
         if (idx >= 0) newUserArr.splice(idx, 1);
       });
+
       unmatchedImages.forEach((u) => {
-        const dupIdx = newUserArr.findIndex(x => x.name === u.name);
+        // Remove duplicates then re-add to updated userImages array
+        const dupIdx = newUserArr.findIndex((x) => x.name === u.name);
         if (dupIdx >= 0) newUserArr.splice(dupIdx, 1);
       });
+
       unmatchedImages.forEach((u) => {
         newUserArr.push(u);
       });
+
       userImagesArray = newUserArr;
 
       const matchBox = document.getElementById("matchCell" + cellIndex);
@@ -1622,74 +1625,77 @@ function openMatchPreviewModal(cellIndex) {
   });
   instance.open();
 
-  // 5) local drag & drop
+  // DRAG & DROP HELPERS
   function makeDraggable(elem) {
     elem.setAttribute("draggable", true);
     elem.addEventListener("dragstart", (ev) => {
-      ev.dataTransfer.setData("text/plain", JSON.stringify({
-        sourceType: elem.dataset.type,
-        sourceIndex: elem.dataset.index
-      }));
+      ev.dataTransfer.setData(
+        "text/plain",
+        JSON.stringify({
+          sourceType: elem.dataset.type,
+          sourceIndex: elem.dataset.index
+        })
+      );
     });
   }
 
   function makeDropTarget(elem) {
-  elem.addEventListener("dragover", (ev) => {
-    ev.preventDefault();
-  });
+    elem.addEventListener("dragover", (ev) => {
+      ev.preventDefault();
+    });
 
-  elem.addEventListener("drop", (ev) => {
-    ev.preventDefault();
-    const data = ev.dataTransfer.getData("text/plain");
-    if (!data) return;
+    elem.addEventListener("drop", (ev) => {
+      ev.preventDefault();
+      const data = ev.dataTransfer.getData("text/plain");
+      if (!data) return;
 
-    let parsed;
-    try {
-      parsed = JSON.parse(data);
-    } catch (err) {
-      return;
-    }
-
-    // unmatched => matched only
-    if (parsed.sourceType === "unmatched" && elem.dataset.type === "matched") {
-      const unmatchedIndex = parseInt(parsed.sourceIndex, 10);
-      const matchedIndex = parseInt(elem.dataset.index, 10);
-
-      const unmatchedImg = unmatchedImages[unmatchedIndex];
-      const matchedImg = matchedImages[matchedIndex];
-
-      if (!matchedImg.userImage) {
-        // "No Match Found"
-        matchedImages[matchedIndex] = {
-          userName: stripExtension(unmatchedImg.name),
-          userImage: unmatchedImg.data,
-          score: 0.0
-        };
-        unmatchedImages.splice(unmatchedIndex, 1);
-      } else {
-        // normal swap
-        matchedImages[matchedIndex] = {
-          userName: stripExtension(unmatchedImg.name),
-          userImage: unmatchedImg.data,
-          score: 0.0
-        };
-        unmatchedImages[unmatchedIndex] = {
-          name: matchedImg.userName + ".jpg",
-          data: matchedImg.userImage
-        };
+      let parsed;
+      try {
+        parsed = JSON.parse(data);
+      } catch (err) {
+        return;
       }
 
-      refreshSections();
-    }
-  });
-}
+      // unmatched => matched only
+      if (parsed.sourceType === "unmatched" && elem.dataset.type === "matched") {
+        const unmatchedIndex = parseInt(parsed.sourceIndex, 10);
+        const matchedIndex = parseInt(elem.dataset.index, 10);
 
-  function refreshSections() {
+        const unmatchedImg = unmatchedImages[unmatchedIndex];
+        const matchedImg = matchedImages[matchedIndex];
+
+        if (!matchedImg.userImage) {
+          // "No Match Found"
+          matchedImages[matchedIndex] = {
+            userName: stripExtension(unmatchedImg.name),
+            userImage: unmatchedImg.data,
+            score: 0.0
+          };
+          unmatchedImages.splice(unmatchedIndex, 1);
+        } else {
+          // normal swap
+          matchedImages[matchedIndex] = {
+            userName: stripExtension(unmatchedImg.name),
+            userImage: unmatchedImg.data,
+            score: 0.0
+          };
+          unmatchedImages[unmatchedIndex] = {
+            name: matchedImg.userName + ".jpg",
+            data: matchedImg.userImage
+          };
+        }
+        refreshSectionsLocal();
+      }
+    });
+  }
+
+  // Rename the local refreshSections to avoid collision
+  function refreshSectionsLocal() {
     matchedSection.innerHTML = "";
     unmatchedSection.innerHTML = "";
 
     // Rebuild matched
-    matchedImages.forEach((mImg, idx) => {
+    matchedImages.forEach((mImg, i) => {
       const box = document.createElement("div");
       box.style.width = "100px";
       box.style.height = "100px";
@@ -1699,9 +1705,8 @@ function openMatchPreviewModal(cellIndex) {
       box.style.justifyContent = "center";
       box.style.overflow = "hidden";
       box.style.position = "relative";
-
       box.dataset.type = "matched";
-      box.dataset.index = idx;
+      box.dataset.index = i;
 
       if (!mImg.userImage) {
         box.innerHTML = "No Match Found";
@@ -1721,7 +1726,7 @@ function openMatchPreviewModal(cellIndex) {
     });
 
     // Rebuild unmatched
-    unmatchedImages.forEach((uImg, idx) => {
+    unmatchedImages.forEach((uImg, i) => {
       const box = document.createElement("div");
       box.style.width = "66px";
       box.style.height = "66px";
@@ -1731,9 +1736,8 @@ function openMatchPreviewModal(cellIndex) {
       box.style.justifyContent = "center";
       box.style.overflow = "hidden";
       box.style.position = "relative";
-
       box.dataset.type = "unmatched";
-      box.dataset.index = idx;
+      box.dataset.index = i;
 
       const img = document.createElement("img");
       img.src = uImg.data;
@@ -1748,75 +1752,7 @@ function openMatchPreviewModal(cellIndex) {
     });
   }
 
-
-  function refreshSections() {
-  // Instead of clearing the entire container:
-  // container.innerHTML = "";
-  // wrapper.innerHTML = "";
-  
-  // Clear only the sections that display images:
-  matchedSection.innerHTML = "";
-  unmatchedSection.innerHTML = "";
-
-  // Then rebuild matched images:
-  matchedImages.forEach((mImg, i) => {
-    const box = document.createElement("div");
-    box.style.width = "100px";
-    box.style.height = "100px";
-    box.style.border = "1px solid #000";
-    box.style.display = "flex";
-    box.style.alignItems = "center";
-    box.style.justifyContent = "center";
-    box.style.overflow = "hidden";
-    box.style.position = "relative";
-    box.dataset.type = "matched";
-    box.dataset.index = i;
-
-    const _img = document.createElement("img");
-    _img.src = mImg.userImage;
-    _img.alt = mImg.userName;
-    _img.style.width = "100%";
-    _img.style.height = "100%";
-    _img.style.objectFit = "cover";
-
-    makeDropTarget(box);
-    box.appendChild(_img);
-    matchedSection.appendChild(box);
-  });
-
-  // Rebuild unmatched images:
-  unmatchedImages.forEach((uImg, i) => {
-    const box = document.createElement("div");
-    box.style.width = "66px";
-    box.style.height = "66px";
-    box.style.border = "1px solid #000";
-    box.style.display = "flex";
-    box.style.alignItems = "center";
-    box.style.justifyContent = "center";
-    box.style.overflow = "hidden";
-    box.style.position = "relative";
-    box.dataset.type = "unmatched";
-    box.dataset.index = i;
-
-    const _img = document.createElement("img");
-    _img.src = uImg.data;
-    _img.alt = uImg.name;
-    _img.style.width = "100%";
-    _img.style.height = "100%";
-    _img.style.objectFit = "cover";
-
-    makeDraggable(box);
-    box.appendChild(_img);
-    unmatchedSection.appendChild(box);
-  });
-
-    wrapper.appendChild(matchedSection);
-    unmatchedSection.style.marginTop = "20px";
-    wrapper.appendChild(unmatchedSection);
-    container.appendChild(wrapper);
-  }
-
-  // Utility
+  // Utility: stripExtension
   function stripExtension(fileName) {
     return fileName.replace(/\.\w+$/, "");
   }
