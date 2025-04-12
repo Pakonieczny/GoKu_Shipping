@@ -653,40 +653,37 @@
     return;
   }
 
-  // Stagger each call by (index * 250 ms)
-  const analysisPromises = imagesToAnalyze.map((imgObj, index) => {
-    return new Promise((resolve) => {
-      setTimeout(() => {
-        openAIAnalyzePhoto(imgObj.data)
-          .then((result) => {
-            const color = (result.color || "Unknown").toLowerCase();
-            const number = result.topRightNumber || "XX";
+  // Process each image one at a time, waiting 250 ms before each call
+  for (let i = 0; i < imagesToAnalyze.length; i++) {
+    const imgObj = imagesToAnalyze[i];
 
-            let finalColor = "UnknownColor";
-            if (color.includes("yellow")) finalColor = "Gold";
-            else if (color.includes("pink")) finalColor = "RoseGold";
-            else if (color.includes("grey") || color.includes("silver")) finalColor = "Silver";
-            else if (color.includes("gold")) finalColor = "Gold";
+    // Delay 250 ms before calling openAIAnalyzePhoto()
+    await new Promise(resolve => setTimeout(resolve, 250));
 
-            // Build the new file name and mark as analyzed.
-            imgObj.name = `${finalColor}_${number}.jpg`;
-            imgObj.analyzed = true;
-            console.log("Analysis complete for image:", imgObj.name);
-            resolve(imgObj);
-          })
-          .catch((err) => {
-            console.warn("Analysis failed for an image:", err);
-            // Keep the image unchanged if error occurred
-            resolve(imgObj);
-          });
-      }, index * 500);
-    });
-  });
+    try {
+      const result = await openAIAnalyzePhoto(imgObj.data);
 
-  // Wait for all analyses to finish.
-  await Promise.all(analysisPromises);
+      const color = (result.color || "Unknown").toLowerCase();
+      const number = result.topRightNumber || "XX";
 
-  // Save the updated user images back to local storage.
+      let finalColor = "UnknownColor";
+      if (color.includes("yellow")) finalColor = "Gold";
+      else if (color.includes("pink")) finalColor = "RoseGold";
+      else if (color.includes("grey") || color.includes("silver")) finalColor = "Silver";
+      else if (color.includes("gold")) finalColor = "Gold";
+
+      // Build the new file name and mark as analyzed.
+      imgObj.name = `${finalColor}_${number}.jpg`;
+      imgObj.analyzed = true;
+      console.log("Analysis complete for image:", imgObj.name);
+
+    } catch (err) {
+      console.warn("Analysis failed for an image:", err);
+      // Keep the image unchanged if error occurred
+    }
+  }
+
+  // After finishing all images, save to local storage
   localStorage.setItem("userImagesArray", JSON.stringify(userImagesArray));
   M.toast({ html: "User Image Analysis Has Been Completed" });
 }
