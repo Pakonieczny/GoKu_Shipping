@@ -1634,51 +1634,55 @@ function openMatchPreviewModal(cellIndex) {
   }
 
   function makeDropTarget(elem) {
-    elem.addEventListener("dragover", (ev) => {
-      ev.preventDefault();
-    });
-    elem.addEventListener("drop", (ev) => {
-      ev.preventDefault();
-      const data = ev.dataTransfer.getData("text/plain");
-      if (!data) return;
-      let parsed;
-      try {
-        parsed = JSON.parse(data);
-      } catch (err) {
-        return;
-      }
-      // unmatched => matched only
-      if (parsed.sourceType === "unmatched" && elem.dataset.type === "matched") {
-        const unmatchedIndex = parseInt(parsed.sourceIndex, 10);
-        const matchedIndex = parseInt(elem.dataset.index, 10);
+  elem.addEventListener("dragover", (ev) => {
+    ev.preventDefault();
+  });
 
-        const unmatchedImg = unmatchedImages[unmatchedIndex];
-        const matchedImg = matchedImages[matchedIndex];
+  elem.addEventListener("drop", (ev) => {
+    ev.preventDefault();
+    const data = ev.dataTransfer.getData("text/plain");
+    if (!data) return;
 
-        if (!matchedImg.userImage) {
-          // "No Match Found"
-          matchedImages[matchedIndex] = {
-            userName: stripExtension(unmatchedImg.name),
-            userImage: unmatchedImg.data,
-            score: 0.0
-          };
-          unmatchedImages.splice(unmatchedIndex, 1);
-        } else {
-          // normal swap
-          matchedImages[matchedIndex] = {
-            userName: stripExtension(unmatchedImg.name),
-            userImage: unmatchedImg.data,
-            score: 0.0
-          };
-          unmatchedImages[unmatchedIndex] = {
-            name: matchedImg.userName + ".jpg",
-            data: matchedImg.userImage
-          };
-        }
-        refreshSections();
+    let parsed;
+    try {
+      parsed = JSON.parse(data);
+    } catch (err) {
+      return;
+    }
+
+    // unmatched => matched only
+    if (parsed.sourceType === "unmatched" && elem.dataset.type === "matched") {
+      const unmatchedIndex = parseInt(parsed.sourceIndex, 10);
+      const matchedIndex = parseInt(elem.dataset.index, 10);
+
+      const unmatchedImg = unmatchedImages[unmatchedIndex];
+      const matchedImg = matchedImages[matchedIndex];
+
+      if (!matchedImg.userImage) {
+        // "No Match Found"
+        matchedImages[matchedIndex] = {
+          userName: stripExtension(unmatchedImg.name),
+          userImage: unmatchedImg.data,
+          score: 0.0
+        };
+        unmatchedImages.splice(unmatchedIndex, 1);
+      } else {
+        // normal swap
+        matchedImages[matchedIndex] = {
+          userName: stripExtension(unmatchedImg.name),
+          userImage: unmatchedImg.data,
+          score: 0.0
+        };
+        unmatchedImages[unmatchedIndex] = {
+          name: matchedImg.userName + ".jpg",
+          data: matchedImg.userImage
+        };
       }
-    });
-  }
+
+      refreshSections();
+    }
+  });
+}
 
   function refreshSections() {
     matchedSection.innerHTML = "";
