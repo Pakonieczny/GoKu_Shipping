@@ -230,12 +230,12 @@
   <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/materialize/1.0.0/js/materialize.min.js"></script>
 
-  <!-- All your logic is together, inside one <script> -->
+  <!-- All your logic is in one place, including sendAndMatch -->
   <script>
     // Base URL for Netlify functions
     const functionsBaseUrl = window.location.origin + "/.netlify/functions";
     
-    // Global arrays to store cropped grid images, user images (both resized to 512x512), etc.
+    // Global arrays to store cropped grid images, user images (both resized), matches, etc.
     let croppedImagesArray = [];
     let userImagesArray = [];
     let cellMatches = {};
@@ -366,7 +366,7 @@
       });
 
       // --------------------
-      // Load multiple orders when pressing Enter
+      // Load multiple orders on Enter
       // --------------------
       const etsyOrderInput = document.getElementById("etsyOrderNumber");
       etsyOrderInput.addEventListener("keydown", async function(e) {
@@ -392,6 +392,8 @@
       // Send & Match Button
       // --------------------
       document.getElementById("sendMatchBtn").addEventListener("click", async function() {
+        // The fully bracketed function is declared below,
+        // so we can call it here with no reference errors.
         await sendAndMatch();
       });
     });
