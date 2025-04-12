@@ -565,60 +565,64 @@
     }
 
     async function openAIAnalyzePhoto(base64Image) {
-      const payload = {
-        model: "gpt-4o",
-        messages: [
+  const payload = {
+    model: "gpt-4o",
+    messages: [
+      {
+        role: "user",
+        content: [
           {
-            role: "user",
-            content: [
-              {
-                type: "text",
-                text:
-                  "1. There's a number in the TOP RIGHT CORNER of the image. Return that number as topRightNumber.\n" +
-                  "2. The charm color is either gold/yellow, silver/grey, or rose gold/pink. Return as color.\n" +
-                  '3. Return JSON only. E.g. {"topRightNumber":"42","color":"Gold"}',
-              },
-              {
-                type: "image_url",
-                image_url: { url: base64Image, detail: "high" },
-              },
-            ],
+            type: "text",
+            text:
+              "1. There's a number in the TOP RIGHT CORNER of the image. Return that number as topRightNumber.\n" +
+              "2. The charm color is either gold/yellow, silver/grey, or rose gold/pink. Return as color.\n" +
+              '3. Return JSON only. E.g. {"topRightNumber":"42","color":"Gold"}',
+          },
+          {
+            type: "image_url",
+            image_url: { url: base64Image, detail: "high" },
           },
         ],
-        max_tokens: 5000,
-      };
+      },
+    ],
+    max_tokens: 5000,
+  };
 
-      try {
-        const response = await fetch(functionsBaseUrl + "/openaiProxy", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(payload),
-        });
-        const data = await response.json();
+  console.log("Sending payload to OpenAI:", payload); // Log outgoing payload
 
-        let text = data.choices[0].message.content.trim() || "{}";
-        text = text
-          .replace(/^```(\w+)?/, "")
-          .replace(/```$/, "")
-          .trim();
+  try {
+    const response = await fetch(functionsBaseUrl + "/openaiProxy", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    console.log("Received API response status:", response.status);
 
-        let parsed;
-        try {
-          parsed = JSON.parse(text);
-        } catch (e) {
-          console.warn("Failed to parse color/number from:", text);
-          parsed = {};
-        }
+    const data = await response.json();
+    console.log("OpenAI API response data:", data); // Log full response data
 
-        return {
-          topRightNumber: parsed.topRightNumber || null,
-          color: parsed.color || null,
-        };
-      } catch (e) {
-        console.error("Error analyzing photo with OpenAI:", e);
-        return { topRightNumber: null, color: null };
-      }
+    let text = data.choices[0].message.content.trim() || "{}";
+    console.log("Raw API text response:", text); // Log raw text
+
+    text = text.replace(/^```(\w+)?/, "").replace(/```$/, "").trim();
+
+    let parsed;
+    try {
+      parsed = JSON.parse(text);
+    } catch (e) {
+      console.error("Error parsing JSON from API response:", text);
+      parsed = {};
     }
+
+    return {
+      topRightNumber: parsed.topRightNumber || null,
+      color: parsed.color || null,
+    };
+  } catch (e) {
+    console.error("Error in openAIAnalyzePhoto API call:", e);
+    throw e;
+  }
+}
 
     async function analyzeUserImagesViaOpenAI() {
       const analysisPromises = userImagesArray.map((imgObj, i) => {
@@ -1713,62 +1717,65 @@ function openMatchPreviewModal(cellIndex) {
 
 
   function refreshSections() {
-    container.innerHTML = "";
-    wrapper.innerHTML = "";
-    matchedSection.innerHTML = "";
-    unmatchedSection.innerHTML = "";
+  // Instead of clearing the entire container:
+  // container.innerHTML = "";
+  // wrapper.innerHTML = "";
+  
+  // Clear only the sections that display images:
+  matchedSection.innerHTML = "";
+  unmatchedSection.innerHTML = "";
 
-    // Rebuild matched (100x100)
-    matchedImages.forEach((mImg, i) => {
-      const box = document.createElement("div");
-      box.style.width = "100px";
-      box.style.height = "100px";
-      box.style.border = "1px solid #000";
-      box.style.display = "flex";
-      box.style.alignItems = "center";
-      box.style.justifyContent = "center";
-      box.style.overflow = "hidden";
-      box.style.position = "relative";
-      box.dataset.type = "matched";
-      box.dataset.index = i;
+  // Then rebuild matched images:
+  matchedImages.forEach((mImg, i) => {
+    const box = document.createElement("div");
+    box.style.width = "100px";
+    box.style.height = "100px";
+    box.style.border = "1px solid #000";
+    box.style.display = "flex";
+    box.style.alignItems = "center";
+    box.style.justifyContent = "center";
+    box.style.overflow = "hidden";
+    box.style.position = "relative";
+    box.dataset.type = "matched";
+    box.dataset.index = i;
 
-      const _img = document.createElement("img");
-      _img.src = mImg.userImage;
-      _img.alt = mImg.userName;
-      _img.style.width = "100%";
-      _img.style.height = "100%";
-      _img.style.objectFit = "cover";
+    const _img = document.createElement("img");
+    _img.src = mImg.userImage;
+    _img.alt = mImg.userName;
+    _img.style.width = "100%";
+    _img.style.height = "100%";
+    _img.style.objectFit = "cover";
 
-      makeDropTarget(box);
-      box.appendChild(_img);
-      matchedSection.appendChild(box);
-    });
+    makeDropTarget(box);
+    box.appendChild(_img);
+    matchedSection.appendChild(box);
+  });
 
-    // Rebuild unmatched (66x66)
-    unmatchedImages.forEach((uImg, i) => {
-      const box = document.createElement("div");
-      box.style.width = "66px";
-      box.style.height = "66px";
-      box.style.border = "1px solid #000";
-      box.style.display = "flex";
-      box.style.alignItems = "center";
-      box.style.justifyContent = "center";
-      box.style.overflow = "hidden";
-      box.style.position = "relative";
-      box.dataset.type = "unmatched";
-      box.dataset.index = i;
+  // Rebuild unmatched images:
+  unmatchedImages.forEach((uImg, i) => {
+    const box = document.createElement("div");
+    box.style.width = "66px";
+    box.style.height = "66px";
+    box.style.border = "1px solid #000";
+    box.style.display = "flex";
+    box.style.alignItems = "center";
+    box.style.justifyContent = "center";
+    box.style.overflow = "hidden";
+    box.style.position = "relative";
+    box.dataset.type = "unmatched";
+    box.dataset.index = i;
 
-      const _img = document.createElement("img");
-      _img.src = uImg.data;
-      _img.alt = uImg.name;
-      _img.style.width = "100%";
-      _img.style.height = "100%";
-      _img.style.objectFit = "cover";
+    const _img = document.createElement("img");
+    _img.src = uImg.data;
+    _img.alt = uImg.name;
+    _img.style.width = "100%";
+    _img.style.height = "100%";
+    _img.style.objectFit = "cover";
 
-      makeDraggable(box);
-      box.appendChild(_img);
-      unmatchedSection.appendChild(box);
-    });
+    makeDraggable(box);
+    box.appendChild(_img);
+    unmatchedSection.appendChild(box);
+  });
 
     wrapper.appendChild(matchedSection);
     unmatchedSection.style.marginTop = "20px";
