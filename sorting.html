@@ -380,12 +380,6 @@
       croppedImagesArray = [];
       await cropAllImages();
       });
-
-      // Crop Images Button
-      document.getElementById("cropImagesBtn").addEventListener("click", async function() {
-        croppedImagesArray = [];
-        await cropAllImages();
-      });
     
       // Send & Match Button (Parallel)
       document.getElementById("sendMatchBtn").addEventListener("click", async function() {
@@ -813,6 +807,10 @@
 /////////////////////////////
 
 // Drag & Drop setup for photoDragDrop supporting multiple files
+/////////////////////////////
+// 1) Drag-and-Drop + Resize Logic WITH AI ANALYSIS
+/////////////////////////////
+
 const photoDragDropElem = document.getElementById("photoDragDrop");
 
 // Allows dropping items onto photoDragDrop without the browser blocking the event.
@@ -830,18 +828,23 @@ photoDragDropElem.addEventListener("drop", function(e) {
     reader.onload = async function(e) {
       const imageData = e.target.result;
       try {
-        // Resize the image before adding it to userImagesArray
+        // 1) Resize the image before adding to userImagesArray
         const resizedData = await resizeUserImage(imageData);
-        userImagesArray.push({ name: file.name, data: resizedData });
 
+        // 2) Add to userImagesArray
+        userImagesArray.push({ name: file.name, data: resizedData });
         M.toast({ html: "User image " + userImagesArray.length + " captured and resized." });
 
-        // If it's the first user image, show a preview in #userImage
+        // 3) If it's the first user image, show preview in #userImage
         if (userImagesArray.length === 1) {
           const userImageElem = document.getElementById("userImage");
           userImageElem.src = resizedData;
           userImageElem.style.display = "inline-block";
         }
+
+        // 4) (NEW) Immediately analyze all user images in parallel
+        await analyzeUserImagesViaOpenAI();
+
       } catch(err) {
         console.error("Error resizing user image:", err);
         M.toast({ html: "Error processing one of the user images." });
@@ -867,6 +870,97 @@ function resizeUserImage(dataUrl) {
     img.onerror = function(err) { reject(err); };
     img.src = dataUrl;
   });
+}
+
+// ------------------------------
+// NEW HELPER #1: openAIAnalyzePhoto
+// ------------------------------
+// This function calls your openaiProxy to detect the top-right corner number + color.
+async function openAIAnalyzePhoto(base64Image) {
+  const payload = {
+    model: "gpt-4o",
+    messages: [
+      {
+        role: "user",
+        content: [
+          {
+            type: "text",
+            text:
+              "1. There's a number in the TOP RIGHT CORNER of the image. Return that number as topRightNumber.\n"+
+              "2. The charm color is either gold/yellow, silver/grey, or rose gold/pink. Return as color.\n"+
+              "3. Return JSON only. E.g. {\"topRightNumber\":\"42\",\"color\":\"Gold\"}"
+          },
+          { type: "image_url", image_url: { url: base64Image, detail: "high" } }
+        ]
+      }
+    ],
+    max_tokens: 300
+  };
+
+  try {
+    const response = await fetch(functionsBaseUrl + "/openaiProxy", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload)
+    });
+    const data = await response.json();
+    
+    let text = data.choices[0].message.content.trim() || "{}";
+    let parsed;
+    try {
+      parsed = JSON.parse(text);
+    } catch(e) {
+      console.warn("Failed to parse color/number from:", text);
+      parsed = {};
+    }
+
+    return { 
+      topRightNumber: parsed.topRightNumber || null, 
+      color: parsed.color || null 
+    };
+  } catch(e) {
+    console.error("Error analyzing photo with OpenAI:", e);
+    return { topRightNumber: null, color: null };
+  }
+}
+
+// ------------------------------
+// NEW HELPER #2: analyzeUserImagesViaOpenAI
+// ------------------------------
+// This function processes all user images in parallel. 
+// Each image is renamed e.g. "Gold_42.jpg" after the AI detects the color + top-right number.
+async function analyzeUserImagesViaOpenAI() {
+  const analysisPromises = userImagesArray.map((imgObj, i) => {
+    return openAIAnalyzePhoto(imgObj.data)
+      .then(result => {
+        const color = (result.color || "Unknown").toLowerCase();
+        const number = result.topRightNumber || "XX";
+        
+        // Clean synonyms
+        let finalColor = "UnknownColor";
+        if (color.includes("yellow")) finalColor = "Gold";
+        else if (color.includes("pink")) finalColor = "RoseGold";
+        else if (color.includes("grey") || color.includes("silver")) finalColor = "Silver";
+        else if (color.includes("gold")) finalColor = "Gold";
+
+        // e.g. "Gold_42.jpg"
+        const newName = `${finalColor}_${number}.jpg`;
+        
+        userImagesArray[i] = {
+          name: newName,
+          data: imgObj.data
+        };
+      })
+      .catch(err => {
+        console.warn("Analysis failed for index:", i, err);
+      });
+  });
+
+  // Wait for all parallel calls
+  await Promise.all(analysisPromises);
+  
+  // Then show success
+  M.toast({ html: "User Image Analysis Has Been Completed" });
 }
 
   // -----------------------------------------
