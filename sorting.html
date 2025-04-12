@@ -1305,7 +1305,7 @@ for (const i of unmatchedCells) {
 
     // Example threshold checks
     if (topScore === 1.0) {
-      // Perfect match
+      // PERFECT MATCH
       if (matchBox) {
         matchBox.value = matchName;
         matchBox.style.fontWeight = "";
@@ -1318,14 +1318,11 @@ for (const i of unmatchedCells) {
         score: topScore
       });
 
-      // Remove this user image from userImagesArray
-      userImagesArray = userImagesArray.filter(
-        (u) => u.name !== topCandidate.user.name
-      );
-      // Null out the Etsy image so it won't be rechecked
+      // Remove matched user + null out Etsy
+      userImagesArray = userImagesArray.filter(u => u.name !== topCandidate.user.name);
       croppedImagesArray[i] = null;
-    }
-    else if (topScore >= 0.98) {
+
+    } else if (topScore >= 0.98) {
       // NEAR-PERFECT
       if (matchBox) {
         matchBox.value = matchName;
@@ -1339,13 +1336,11 @@ for (const i of unmatchedCells) {
         score: topScore
       });
 
-      userImagesArray = userImagesArray.filter(
-        (u) => u.name !== topCandidate.user.name
-      );
+      userImagesArray = userImagesArray.filter(u => u.name !== topCandidate.user.name);
       croppedImagesArray[i] = null;
-    }
-    else if (topScore >= 0.88) {
-      // Partial or Delta logic, etc...
+
+    } else if (topScore >= 0.88) {
+      // Partial or Delta logic
       matchBox.value = matchName;
       matchBox.style.fontWeight = "bold";
       matchBox.style.color = "orangered";
@@ -1356,14 +1351,12 @@ for (const i of unmatchedCells) {
         userImage: topCandidate.user.data,
         score: topScore
       });
-      
-      // ***** NEW LINES: Remove partial match from user images & null out Etsy *****
-      userImagesArray = userImagesArray.filter(
-        (u) => u.name !== topCandidate.user.name
-      );
+
+      // Remove partial match so it's not "unmatched"
+      userImagesArray = userImagesArray.filter(u => u.name !== topCandidate.user.name);
       croppedImagesArray[i] = null;
-    }
-    else {
+
+    } else {
       M.toast({ html: `Cell ${i}: Score ${topScorePerc}% < 88%. No match.` });
     }
   }
