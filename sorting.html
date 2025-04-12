@@ -1346,8 +1346,6 @@ for (const i of unmatchedCells) {
     }
     else if (topScore >= 0.88) {
       // Partial or Delta logic, etc...
-      // Depending on your logic, you might remove or not remove
-      // the user image. For example:
       matchBox.value = matchName;
       matchBox.style.fontWeight = "bold";
       matchBox.style.color = "orangered";
@@ -1358,9 +1356,12 @@ for (const i of unmatchedCells) {
         userImage: topCandidate.user.data,
         score: topScore
       });
-      // For partial matches, some code does NOT remove from userImagesArray
-      // Or you might store partialMatches[] and remove later.
-      // (You decide based on your logic.)
+      
+      // ***** NEW LINES: Remove partial match from user images & null out Etsy *****
+      userImagesArray = userImagesArray.filter(
+        (u) => u.name !== topCandidate.user.name
+      );
+      croppedImagesArray[i] = null;
     }
     else {
       M.toast({ html: `Cell ${i}: Score ${topScorePerc}% < 88%. No match.` });
@@ -1371,27 +1372,26 @@ for (const i of unmatchedCells) {
   await new Promise((resolve) => setTimeout(resolve, 2000));
 }
 
-  // (A) Now highlight only cells that truly have NO matches
-  for (let i = 0; i < croppedImagesArray.length; i++) {
-    if (!cellMatches[i] || cellMatches[i].length === 0) {
-      const previewBox = document.getElementById("previewCell" + i);
-      if (previewBox) {
-        previewBox.style.border = "3px solid orangered";
-      }
+// (A) Now highlight only cells that truly have NO matches
+for (let i = 0; i < croppedImagesArray.length; i++) {
+  if (!cellMatches[i] || cellMatches[i].length === 0) {
+    const previewBox = document.getElementById("previewCell" + i);
+    if (previewBox) {
+      previewBox.style.border = "3px solid orangered";
     }
   }
-
-  // (B) Dynamically add click listeners to the 4th (match) box after second pass
-  for (let i = 0; i < croppedImagesArray.length; i++) {
-    const matchInput = document.getElementById("matchCell" + i);
-    if (!matchInput) continue;
-    matchInput.addEventListener("click", function() {
-      openMatchPreviewModal(i);
-    });
-  }
-
-  M.toast({ html: "Finished matching passes." });
 }
+
+// (B) Dynamically add click listeners to the 4th (match) box after second pass
+for (let i = 0; i < croppedImagesArray.length; i++) {
+  const matchInput = document.getElementById("matchCell" + i);
+  if (!matchInput) continue;
+  matchInput.addEventListener("click", function() {
+    openMatchPreviewModal(i);
+  });
+}
+
+M.toast({ html: "Finished matching passes." });
 
 
 // -----------------------------------------
