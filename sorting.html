@@ -523,27 +523,27 @@
         const file = files[i];
         const reader = new FileReader();
         reader.onload = async function (e) {
-          const imageData = e.target.result;
-          try {
-            const resizedData = await resizeUserImage(imageData);
-            userImagesArray.push({ name: file.name, data: resizedData });
-            M.toast({
-              html: "User image " + userImagesArray.length + " captured and resized.",
-            });
-            if (userImagesArray.length === 1) {
-              const userImageElem = document.getElementById("userImage");
-              userImageElem.src = resizedData;
-              userImageElem.style.display = "inline-block";
-            }
-            await analyzeUserImagesViaOpenAI();
-          } catch (err) {
-            console.error("Error resizing user image:", err);
-            M.toast({ html: "Error processing one of the user images." });
+        const imageData = e.target.result;
+        try {
+          // Resize the image before adding to userImagesArray
+          const resizedData = await resizeUserImage(imageData);
+          // When adding the file object, mark it as not analyzed yet
+          userImagesArray.push({ name: file.name, data: resizedData, analyzed: false });
+          M.toast({
+            html: "User image " + userImagesArray.length + " captured and resized."
+          });
+          if (userImagesArray.length === 1) {
+            const userImageElem = document.getElementById("userImage");
+            userImageElem.src = resizedData;
+            userImageElem.style.display = "inline-block";
           }
-        };
-        reader.readAsDataURL(file);
-      }
-    });
+          // Process only newly added (not yet analyzed) photos
+          await analyzeUserImagesViaOpenAI();
+        } catch (err) {
+          console.error("Error resizing user image:", err);
+          M.toast({ html: "Error processing one of the user images." });
+        }
+      };
 
     function resizeUserImage(dataUrl) {
       return new Promise((resolve, reject) => {
@@ -642,7 +642,15 @@
 }
 
     async function analyzeUserImagesViaOpenAI() {
-      const analysisPromises = userImagesArray.map((imgObj, i) => {
+      // Filter for images that have not yet been analyzed.
+      const imagesToAnalyze = userImagesArray.filter(imgObj => !imgObj.analyzed);
+
+      if (imagesToAnalyze.length === 0) {
+        console.log("No new images to analyze.");
+        return;
+      }
+
+      const analysisPromises = imagesToAnalyze.map((imgObj) => {
         return openAIAnalyzePhoto(imgObj.data)
           .then((result) => {
             const color = (result.color || "Unknown").toLowerCase();
@@ -651,24 +659,28 @@
             let finalColor = "UnknownColor";
             if (color.includes("yellow")) finalColor = "Gold";
             else if (color.includes("pink")) finalColor = "RoseGold";
-            else if (color.includes("grey") || color.includes("silver"))
-              finalColor = "Silver";
+            else if (color.includes("grey") || color.includes("silver")) finalColor = "Silver";
             else if (color.includes("gold")) finalColor = "Gold";
 
-            const newName = `${finalColor}_${number}.jpg`;
-            userImagesArray[i] = {
-              name: newName,
-              data: imgObj.data,
-            };
+            // Build the new file name and mark as analyzed.
+            imgObj.name = `${finalColor}_${number}.jpg`;
+            imgObj.analyzed = true;
+            console.log("Analysis complete for image:", imgObj.name);
+            return imgObj;
           })
           .catch((err) => {
-            console.warn("Analysis failed for index:", i, err);
+            console.warn("Analysis failed for an image:", err);
+            return imgObj; // keep unchanged if error occurred
           });
       });
 
-      await Promise.all(analysisPromises);
-      M.toast({ html: "User Image Analysis Has Been Completed" });
-    }
+  // Wait for all analyses to finish.
+  await Promise.all(analysisPromises);
+
+  // Save the updated user images back to local storage.
+  localStorage.setItem("userImagesArray", JSON.stringify(userImagesArray));
+  M.toast({ html: "User Image Analysis Has Been Completed" });
+}
 
     /********************************************************
      * fillPreviewBoxes, attachPreviewBoxListeners, etc.
