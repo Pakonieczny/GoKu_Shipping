@@ -579,7 +579,7 @@ photoDragDropElem.addEventListener("drop", async function (e) {
     if (newlyAddedCount > 0) {
       await analyzeUserImagesViaOpenAI();
     }
-  }, 500);
+  }, 150);
 });
 
 // --------------- Resizing logic ---------------
@@ -1241,46 +1241,50 @@ async function sendAndMatch() {
     await new Promise(resolve => setTimeout(resolve, 2000));
   }
 
-  //-----------------------------------------------------------------------
-  // SECOND PASS
-  //-----------------------------------------------------------------------
-  unmatchedCells = [];
-  for (let i = 0; i < croppedImagesArray.length; i++) {
-    if (croppedImagesArray[i]) {
-      unmatchedCells.push(i);
-    }
+// -----------------------------------------------------------------------
+// SECOND PASS: For all cells still unmatched, do multi-branch if/else.
+// -----------------------------------------------------------------------
+unmatchedCells = [];
+for (let i = 0; i < croppedImagesArray.length; i++) {
+  if (croppedImagesArray[i]) {
+    unmatchedCells.push(i);
   }
+}
 
-  for (const i of unmatchedCells) {
-    const matchBox = document.getElementById("matchCell" + i);
+for (const i of unmatchedCells) {
+  const matchBox = document.getElementById("matchCell" + i);
 
-    // Compare all user images in parallel, staggered
-    const comparisonPromises = userImagesArray.map((user, j) => {
-      return new Promise(resolve => {
-        setTimeout(() => {
-          compareImages(user.data, croppedImagesArray[i], i, user.name)
-            .then(result => resolve({ result, user }))
-            .catch(err => {
-              console.error("Second-pass compare error:", i, user.name, err);
-              resolve({ result: { score: 0 }, user });
-            });
-        }, j * 250);
-      });
+  // 1) Build a list of unmatched user images
+  //    (i.e., userImagesArray has had matched images removed in the first pass)
+  const unmatchedUserImages = userImagesArray;
+
+  // 2) Compare only these unmatched user images to the unmatched Etsy cell
+  const comparisonPromises = unmatchedUserImages.map((user, j) => {
+    return new Promise((resolve) => {
+      setTimeout(() => {
+        compareImages(user.data, croppedImagesArray[i], i, user.name)
+          .then((result) => resolve({ result, user }))
+          .catch((err) => {
+            console.error("Second-pass compare error:", i, user.name, err);
+            resolve({ result: { score: 0 }, user });
+          });
+      }, j * 250);
     });
+  });
 
-    const results = await Promise.all(comparisonPromises);
-    results.sort((a, b) => b.result.score - a.result.score);
+  const results = await Promise.all(comparisonPromises);
+  results.sort((a, b) => b.result.score - a.result.score);
 
-    if (!results.length || results[0].result.score === 0) {
-      M.toast({ html: `Cell ${i}: No valid matches found in second pass.` });
-    } else {
-      const topCandidate = results[0];
-      const topScore = topCandidate.result.score;
-      const topScorePerc = (topScore * 100).toFixed(2);
-      const matchName = topCandidate.user.name.replace(/(\.jpg|\.png)$/i, "");
-      M.toast({
-        html: `Cell ${i}: Best candidate => ${matchName} (${topScorePerc}%)`,
-      });
+  if (!results.length || results[0].result.score === 0) {
+    M.toast({ html: `Cell ${i}: No valid matches found in second pass.` });
+  } else {
+    const topCandidate = results[0];
+    const topScore = topCandidate.result.score;
+    const topScorePerc = (topScore * 100).toFixed(2);
+    const matchName = topCandidate.user.name.replace(/(\.jpg|\.png)$/i, "");
+    M.toast({
+      html: `Cell ${i}: Best candidate => ${matchName} (${topScorePerc}%)`
+    });
 
       if (results.length > 1) {
         const secondScore = results[1].result.score;
