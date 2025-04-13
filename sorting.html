@@ -1487,7 +1487,8 @@ function openMatchPreviewModal(cellIndex) {
     if (!mImg.userImage) {
       box.innerHTML = "No Match Found";
       box.style.fontWeight = "bold";
-      makeDropTarget(box); // so user can drag matched => unmatched
+      // Let user drop a new matched photo onto it
+      makeDropTarget(box);
     } else {
       const img = document.createElement("img");
       img.src = mImg.userImage;
@@ -1496,10 +1497,8 @@ function openMatchPreviewModal(cellIndex) {
       img.style.height = "100%";
       img.style.objectFit = "cover";
 
-      // *** ADDING DRAGGABLE for matched photo ***
-      makeDraggable(box);  
+      makeDraggable(box);
       makeDropTarget(box);
-
       box.appendChild(img);
     }
 
@@ -1689,6 +1688,11 @@ function openMatchPreviewModal(cellIndex) {
         // Remove from matchedImages
         matchedImages.splice(sourceIdx, 1);
 
+        // **NEW**: If matchedImages is now empty, add a placeholder
+        if (matchedImages.length === 0) {
+          matchedImages.push({ userName: "", userImage: null, score: 0 });
+        }
+
         refreshSectionsLocal();
       }
 
@@ -1762,10 +1766,8 @@ function openMatchPreviewModal(cellIndex) {
         img.style.height = "100%";
         img.style.objectFit = "cover";
 
-        // Again, make matched box draggable & droppable
         makeDraggable(box);
         makeDropTarget(box);
-
         box.appendChild(img);
       }
       matchedSection.appendChild(box);
