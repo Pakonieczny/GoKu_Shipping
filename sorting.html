@@ -251,9 +251,10 @@
       ></div>
     </div>
     <div class="modal-footer">
-      <a href="#!" class="modal-close waves-effect waves-green btn"
-        >Close</a
-      >
+      <!-- “Save” button that will perform the array updates and then close the modal -->
+      <a href="#!" id="saveMatchesBtn" class="waves-effect waves-green btn">Save</a>
+      <!-- “Cancel” button that closes the modal without saving changes -->
+      <a href="#!" class="modal-close waves-effect waves-red btn">Cancel</a>
     </div>
   </div>
 
@@ -1539,7 +1540,8 @@ function openMatchPreviewModal(cellIndex) {
     box.dataset.type = "unmatchedEmpty";
     box.innerHTML = "No Unmatched Photos";
     box.style.fontWeight = "bold";
-    
+    box.style.fontSize = "0.7em"; // adjust font size
+
     makeDropTarget(box); // allow user to drop a matched photo here
     unmatchedSection.appendChild(box);
 
@@ -1575,52 +1577,60 @@ function openMatchPreviewModal(cellIndex) {
   unmatchedWrapper.appendChild(unmatchedSection);
   container.appendChild(unmatchedWrapper);
 
-  // Initialize the modal
-  const instance = M.Modal.init(modalElem, {
-    onCloseEnd: function() {
-      // single-match logic
-      // 1) Overwrite cellMatches for this cellIndex
-      cellMatches[cellIndex] = matchedImages;
+  // -------------------------------------------------------------
+  // Initialize the modal WITHOUT onCloseEnd
+  // -------------------------------------------------------------
+  const instance = M.Modal.init(modalElem);
 
-      // 2) Rebuild userImagesArray after any drag/drop changes
-      const newUserArr = [...userImagesArray];
+  // -------------------------------------------------------------
+  // (A) "Save" button merges arrays & closes modal
+  // -------------------------------------------------------------
+  document.getElementById("saveMatchesBtn").addEventListener("click", () => {
+    // 1) Overwrite cellMatches for this cellIndex
+    cellMatches[cellIndex] = matchedImages;
 
-      // Remove matched images from the user array
-      matchedImages.forEach((mImg) => {
-        const idx = newUserArr.findIndex((u) => stripExtension(u.name) === mImg.userName);
-        if (idx >= 0) newUserArr.splice(idx, 1);
-      });
+    // 2) Rebuild userImagesArray after any drag/drop changes
+    const newUserArr = [...userImagesArray];
 
-      // If unmatchedImages was empty but the user dragged a matched photo in,
-      // that means unmatchedImages now has 1 item. So we remove duplicates and re-add
-      unmatchedImages.forEach((u) => {
-        const dupIdx = newUserArr.findIndex((x) => x.name === u.name);
-        if (dupIdx >= 0) newUserArr.splice(dupIdx, 1);
-      });
-      unmatchedImages.forEach((u) => {
-        newUserArr.push(u);
-      });
+    // Remove matched images from the user array
+    matchedImages.forEach((mImg) => {
+      const idx = newUserArr.findIndex((u) => stripExtension(u.name) === mImg.userName);
+      if (idx >= 0) newUserArr.splice(idx, 1);
+    });
 
-      userImagesArray = newUserArr;
+    // Also remove duplicates, then re-add unmatched images
+    unmatchedImages.forEach((u) => {
+      const dupIdx = newUserArr.findIndex((x) => x.name === u.name);
+      if (dupIdx >= 0) newUserArr.splice(dupIdx, 1);
+      newUserArr.push(u);
+    });
 
-      // 3) Refresh the matchCell text
-      const matchBox = document.getElementById("matchCell" + cellIndex);
-      if (matchBox) {
-        if (matchedImages.length > 0 && matchedImages[0].userName) {
-          matchBox.value = matchedImages[0].userName;
-          matchBox.style.fontWeight = "";
-          matchBox.style.color = "";
-        } else {
-          matchBox.value = "";
-        }
-      }
-      
-      // 4) If partial function that updates UI
-      if (typeof createUnmatchedUserImagesPreview === "function") {
-        createUnmatchedUserImagesPreview();
+    userImagesArray = newUserArr;
+
+    // 3) Refresh the matchCell text
+    const matchBox = document.getElementById("matchCell" + cellIndex);
+    if (matchBox) {
+      if (matchedImages.length > 0 && matchedImages[0].userName) {
+        matchBox.value = matchedImages[0].userName;
+        matchBox.style.fontWeight = "";
+        matchBox.style.color = "";
+      } else {
+        matchBox.value = "";
       }
     }
+
+    // 4) If a function refreshes unmatched user images in the main UI
+    if (typeof createUnmatchedUserImagesPreview === "function") {
+      createUnmatchedUserImagesPreview();
+    }
+
+    // 5) Close the modal
+    instance.close();
   });
+
+  // -------------------------------------------------------------
+  // (B) Finally, open the modal
+  // -------------------------------------------------------------
   instance.open();
 
   // DRAG & DROP HELPERS
@@ -1631,7 +1641,7 @@ function openMatchPreviewModal(cellIndex) {
         "text/plain",
         JSON.stringify({
           sourceType: elem.dataset.type,
-          sourceIndex: elem.dataset.index
+          sourceIndex: elem.dataset.index,
         })
       );
     });
@@ -1655,14 +1665,18 @@ function openMatchPreviewModal(cellIndex) {
       }
 
       // If user drags from "matched" => "unmatchedEmpty" or "unmatched"
-      if (parsed.sourceType === "matched" && (elem.dataset.type === "unmatched" || elem.dataset.type === "unmatchedEmpty")) {
+      if (
+        parsed.sourceType === "matched" &&
+        (elem.dataset.type === "unmatched" ||
+          elem.dataset.type === "unmatchedEmpty")
+      ) {
         const sourceIdx = parseInt(parsed.sourceIndex, 10);
         const matchedImg = matchedImages[sourceIdx];
 
         // Add that matchedImg into the unmatched array
         unmatchedImages.push({
           name: matchedImg.userName + ".jpg",
-          data: matchedImg.userImage
+          data: matchedImg.userImage,
         });
 
         // Remove from matchedImages
@@ -1715,7 +1729,6 @@ function openMatchPreviewModal(cellIndex) {
 
     // Rebuild unmatched
     if (unmatchedImages.length === 0) {
-      // Show the single box w/ "No Unmatched Photos"
       const box = document.createElement("div");
       box.style.width = "66px";
       box.style.height = "66px";
@@ -1726,9 +1739,12 @@ function openMatchPreviewModal(cellIndex) {
       box.style.overflow = "hidden";
       box.style.position = "relative";
 
+      box.style.fontWeight = "bold";
+      box.style.fontSize = "0.7em"; // adjust font size
+
       box.dataset.type = "unmatchedEmpty";
       box.innerHTML = "No Unmatched Photos";
-      box.style.fontWeight = "bold";
+
       makeDropTarget(box);
       unmatchedSection.appendChild(box);
 
