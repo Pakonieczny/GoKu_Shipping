@@ -1382,10 +1382,6 @@ M.toast({ html: "Finished matching passes." });
 
 // -----------------------------------------
 
-// -----------------------------------------
-
-// -----------------------------------------
-
 function openMatchPreviewModal(cellIndex) {
   const modalElem = document.getElementById("matchesModal");
   const container = document.getElementById("matchesGridContainer");
@@ -1499,7 +1495,11 @@ function openMatchPreviewModal(cellIndex) {
       img.style.width = "100%";
       img.style.height = "100%";
       img.style.objectFit = "cover";
+
+      // *** ADDING DRAGGABLE for matched photo ***
+      makeDraggable(box);  
       makeDropTarget(box);
+
       box.appendChild(img);
     }
 
@@ -1700,19 +1700,14 @@ function openMatchPreviewModal(cellIndex) {
         const sourceIdx = parseInt(parsed.sourceIndex, 10);
         const unmatchedImg = unmatchedImages[sourceIdx];
 
-        // ============================
         // SINGLE MATCH LOGIC:
-        // Remove existing matched image if it's real
-        // Move that old matched image to unmatched
-        // or remove "No Match Found" placeholder
-        // ============================
+        // Remove the existing matched image or placeholder
         if (matchedImages.length > 0) {
           // If the existing "matched" is just a placeholder, remove it
           if (!matchedImages[0].userImage) {
             matchedImages.splice(0, 1);
-          }
-          // Otherwise, push existing matched image back to unmatched
-          else {
+          } else {
+            // Otherwise push existing matched image to unmatched
             unmatchedImages.push({
               name: matchedImages[0].userName + ".jpg",
               data: matchedImages[0].userImage,
@@ -1722,7 +1717,7 @@ function openMatchPreviewModal(cellIndex) {
           }
         }
 
-        // Now add the newly dragged image as the single matched
+        // Now add the newly dragged image
         matchedImages.push({
           userName: stripExtension(unmatchedImg.name),
           userImage: unmatchedImg.data,
@@ -1766,7 +1761,11 @@ function openMatchPreviewModal(cellIndex) {
         img.style.width = "100%";
         img.style.height = "100%";
         img.style.objectFit = "cover";
+
+        // Again, make matched box draggable & droppable
+        makeDraggable(box);
         makeDropTarget(box);
+
         box.appendChild(img);
       }
       matchedSection.appendChild(box);
@@ -1815,6 +1814,7 @@ function openMatchPreviewModal(cellIndex) {
         img.style.objectFit = "cover";
 
         makeDraggable(box);
+        makeDropTarget(box);
         box.appendChild(img);
         unmatchedSection.appendChild(box);
       });
