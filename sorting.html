@@ -213,31 +213,57 @@
   </div>
 
   <!-- Config Modal -->
-  <div id="configModal" class="modal">
-    <div class="modal-content">
-      <table class="striped" id="configTable">
-        <thead>
-          <tr>
-            <th>Element</th>
-            <th>Left (px)</th>
-            <th>Top (px)</th>
-            <th>Width (px)</th>
-            <th>Height</th>
-          </tr>
-        </thead>
-        <tbody></tbody>
-      </table>
+<div id="configModal" class="modal">
+  <div class="modal-content">
+    <table class="striped" id="configTable">
+      <thead>
+        <tr>
+          <th>Element</th>
+          <th>Left (px)</th>
+          <th>Top (px)</th>
+          <th>Width (px)</th>
+          <th>Height</th>
+        </tr>
+      </thead>
+      <tbody></tbody>
+    </table>
+
+    <!-- ADDED: User Image Drag & Drop box inside the config modal -->
+    <h6 style="margin-top: 20px;">User Image Drag &amp; Drop</h6>
+    <div
+      id="photoDragDropInModal"
+      style="
+        width: 100px;
+        height: 100px;
+        border: 2px dashed #ccc;
+        text-align: center;
+        line-height: 100px;
+        margin-bottom: 20px;
+      "
+    >
+      Drag &amp; Drop
     </div>
-    <div class="modal-footer">
-      <a
-        href="#!"
-        id="saveConfigBtn"
-        class="modal-close waves-effect waves-green btn"
-      >
-        Save Config
-      </a>
-    </div>
+
+    <!-- ADDED: Send and Match button inside the config modal -->
+    <button
+      id="sendMatchBtnInModal"
+      class="waves-effect waves-light btn"
+      style="margin-bottom: 10px;"
+    >
+      Send &amp; Match
+    </button>
   </div>
+
+  <div class="modal-footer">
+    <a
+      href="#!"
+      id="saveConfigBtn"
+      class="modal-close waves-effect waves-green btn"
+    >
+      Save Config
+    </a>
+  </div>
+</div>
 
   <!-- Matches Modal -->
   <div id="matchesModal" class="modal">
