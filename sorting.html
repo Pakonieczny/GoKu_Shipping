@@ -1487,8 +1487,7 @@ function openMatchPreviewModal(cellIndex) {
     if (!mImg.userImage) {
       box.innerHTML = "No Match Found";
       box.style.fontWeight = "bold";
-      // Let user drop a new matched photo onto it
-      makeDropTarget(box);
+      makeDropTarget(box); // so user can drop a new matched photo here
     } else {
       const img = document.createElement("img");
       img.src = mImg.userImage;
@@ -1615,7 +1614,7 @@ function openMatchPreviewModal(cellIndex) {
     // C) Refresh the matchCell text
     const matchBox = document.getElementById("matchCell" + cellIndex);
     if (matchBox) {
-      if (matchedImages.length > 0 && matchedImages[0].userName) {
+      if (matchedImages.length > 0 && matchedImages[0].userImage) {
         matchBox.value = matchedImages[0].userName;
         matchBox.style.fontWeight = "";
         matchBox.style.color = "";
@@ -1624,7 +1623,18 @@ function openMatchPreviewModal(cellIndex) {
       }
     }
 
-    // D) If you have a function to refresh unmatched user images
+    // D) After saving, if the matched user photo has a real photo,
+    //    always change border to 1px black. Otherwise, set 3px orangered.
+    if (
+      matchedImages.length > 0 &&
+      matchedImages[0].userImage
+    ) {
+      setEtsyBorder(cellIndex, "1px", "black");
+    } else {
+      setEtsyBorder(cellIndex, "3px", "orangered");
+    }
+
+    // If you have a function to refresh unmatched user images
     if (typeof createUnmatchedUserImagesPreview === "function") {
       createUnmatchedUserImagesPreview();
     }
@@ -1639,7 +1649,7 @@ function openMatchPreviewModal(cellIndex) {
   instance.open();
 
   // -------------------------------------------------------------
-  // DRAG & DROP HELPERS
+  // 4) DRAG & DROP HELPERS
   // -------------------------------------------------------------
   function makeDraggable(elem) {
     elem.setAttribute("draggable", true);
@@ -1688,7 +1698,7 @@ function openMatchPreviewModal(cellIndex) {
         // Remove from matchedImages
         matchedImages.splice(sourceIdx, 1);
 
-        // **NEW**: If matchedImages is now empty, add a placeholder
+        // If matched is empty, add a placeholder
         if (matchedImages.length === 0) {
           matchedImages.push({ userName: "", userImage: null, score: 0 });
         }
@@ -1773,6 +1783,14 @@ function openMatchPreviewModal(cellIndex) {
       matchedSection.appendChild(box);
     });
 
+    // If matched box is currently empty => set border orangered 3px
+    // otherwise black 1px
+    if (!matchedImages[0].userImage) {
+      setEtsyBorder(cellIndex, "3px", "orangered");
+    } else {
+      setEtsyBorder(cellIndex, "1px", "black");
+    }
+
     // Rebuild unmatched
     if (unmatchedImages.length === 0) {
       const box = document.createElement("div");
@@ -1823,10 +1841,21 @@ function openMatchPreviewModal(cellIndex) {
     }
   }
 
-  // Utility
+  // Utility: set the Etsy-derived preview box border
+  function setEtsyBorder(cellIdx, thickness, color) {
+    const previewBox = document.getElementById("previewCell" + cellIdx);
+    if (previewBox) {
+      previewBox.style.border = thickness + " solid " + color;
+    }
+  }
+
+  // Another Utility
   function stripExtension(fileName) {
     return fileName.replace(/\.\w+$/, "");
   }
+
+  // Finally, ensure immediate drag-and-drop by calling refreshSectionsLocal
+  refreshSectionsLocal();
 }
 
 // -----------------------------------------
