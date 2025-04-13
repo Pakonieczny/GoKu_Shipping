@@ -213,57 +213,31 @@
   </div>
 
   <!-- Config Modal -->
-<div id="configModal" class="modal">
-  <div class="modal-content">
-    <table class="striped" id="configTable">
-      <thead>
-        <tr>
-          <th>Element</th>
-          <th>Left (px)</th>
-          <th>Top (px)</th>
-          <th>Width (px)</th>
-          <th>Height</th>
-        </tr>
-      </thead>
-      <tbody></tbody>
-    </table>
-
-    <!-- ADDED: User Image Drag & Drop box inside the config modal -->
-    <h6 style="margin-top: 20px;">User Image Drag &amp; Drop</h6>
-    <div
-      id="photoDragDropInModal"
-      style="
-        width: 100px;
-        height: 100px;
-        border: 2px dashed #ccc;
-        text-align: center;
-        line-height: 100px;
-        margin-bottom: 20px;
-      "
-    >
-      Drag &amp; Drop
+  <div id="configModal" class="modal">
+    <div class="modal-content">
+      <table class="striped" id="configTable">
+        <thead>
+          <tr>
+            <th>Element</th>
+            <th>Left (px)</th>
+            <th>Top (px)</th>
+            <th>Width (px)</th>
+            <th>Height</th>
+          </tr>
+        </thead>
+        <tbody></tbody>
+      </table>
     </div>
-
-    <!-- ADDED: Send and Match button inside the config modal -->
-    <button
-      id="sendMatchBtnInModal"
-      class="waves-effect waves-light btn"
-      style="margin-bottom: 10px;"
-    >
-      Send &amp; Match
-    </button>
+    <div class="modal-footer">
+      <a
+        href="#!"
+        id="saveConfigBtn"
+        class="modal-close waves-effect waves-green btn"
+      >
+        Save Config
+      </a>
+    </div>
   </div>
-
-  <div class="modal-footer">
-    <a
-      href="#!"
-      id="saveConfigBtn"
-      class="modal-close waves-effect waves-green btn"
-    >
-      Save Config
-    </a>
-  </div>
-</div>
 
   <!-- Matches Modal -->
   <div id="matchesModal" class="modal">
@@ -290,73 +264,76 @@
 
   <!-- Everything is in this single <script> block -->
   <script>
-    /********************************************************
-     * Base URL & Global Variables
-     ********************************************************/
-    const functionsBaseUrl = window.location.origin + "/.netlify/functions";
+/********************************************************
+ * Base URL & Global Variables
+ ********************************************************/
+const functionsBaseUrl = window.location.origin + "/.netlify/functions";
 
-    let croppedImagesArray = [];
-    let userImagesArray = [];
-    let cellMatches = {};
-    let partialMatches = {};
+let croppedImagesArray = [];
+let userImagesArray = [];
+let cellMatches = {};
+let partialMatches = {};
 
-    /********************************************************
-     * Etsy Auth, Code Challenge, configIDs
-     ********************************************************/
-    (function () {
-      const urlParams = new URLSearchParams(window.location.search);
-      const accessToken = urlParams.get("access_token");
-      if (accessToken) {
-        localStorage.setItem("access_token", accessToken);
-        window.history.replaceState({}, document.title, window.location.pathname);
-        M.toast({ html: "Connection Successful!" });
-        console.log("Access token received:", accessToken);
+/********************************************************
+ * Etsy Auth, Code Challenge, configIDs
+ ********************************************************/
+(function () {
+  const urlParams = new URLSearchParams(window.location.search);
+  const accessToken = urlParams.get("access_token");
+  if (accessToken) {
+    localStorage.setItem("access_token", accessToken);
+    window.history.replaceState({}, document.title, window.location.pathname);
+    M.toast({ html: "Connection Successful!" });
+    console.log("Access token received:", accessToken);
+  } else {
+    const authCode = urlParams.get("code");
+    if (authCode) {
+      const storedCodeVerifier = localStorage.getItem("etsy_code_verifier");
+      if (storedCodeVerifier) {
+        window.location.href =
+          "/.netlify/functions/exchangeToken?code=" +
+          encodeURIComponent(authCode) +
+          "&code_verifier=" +
+          encodeURIComponent(storedCodeVerifier);
       } else {
-        const authCode = urlParams.get("code");
-        if (authCode) {
-          const storedCodeVerifier = localStorage.getItem("etsy_code_verifier");
-          if (storedCodeVerifier) {
-            window.location.href =
-              "/.netlify/functions/exchangeToken?code=" +
-              encodeURIComponent(authCode) +
-              "&code_verifier=" +
-              encodeURIComponent(storedCodeVerifier);
-          } else {
-            console.error("No code verifier found in localStorage.");
-          }
-        }
+        console.error("No code verifier found in localStorage.");
       }
-    })();
-
-    function generateRandomString(length) {
-      const chars =
-        "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
-      let text = "";
-      for (let i = 0; i < length; i++) {
-        text += chars.charAt(Math.floor(Math.random() * chars.length));
-      }
-      return text;
     }
+  }
+})();
 
-    async function generateCodeChallenge(codeVerifier) {
-      const encoder = new TextEncoder();
-      const data = encoder.encode(codeVerifier);
-      const digest = await crypto.subtle.digest("SHA-256", data);
-      let base64String = btoa(String.fromCharCode(...new Uint8Array(digest)));
-      return base64String.replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
-    }
+function generateRandomString(length) {
+  const chars =
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+  let text = "";
+  for (let i = 0; i < length; i++) {
+    text += chars.charAt(Math.floor(Math.random() * chars.length));
+  }
+  return text;
+}
 
-    const configIDs = [
-      "connectEtsyBtn",
-      "testOpenAIBtn",
-      "openConfigBtn",
-      "etsyOrderNumber",
-      "photoGridContainer",
-      "unmatchedContainer",
-      "configModal",
-      "configTable",
-      "saveConfigBtn",
-    ];
+async function generateCodeChallenge(codeVerifier) {
+  const encoder = new TextEncoder();
+  const data = encoder.encode(codeVerifier);
+  const digest = await crypto.subtle.digest("SHA-256", data);
+  let base64String = btoa(String.fromCharCode(...new Uint8Array(digest)));
+  return base64String.replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+
+// ADDED these two lines so you can reposition/resize them in the Config modal
+const configIDs = [
+  "connectEtsyBtn",
+  "testOpenAIBtn",
+  "openConfigBtn",
+  "etsyOrderNumber",
+  "photoGridContainer",
+  "unmatchedContainer",
+  "configModal",
+  "configTable",
+  "saveConfigBtn",
+  "photoDragDrop",
+  "sendMatchBtn"
+];
 
     /********************************************************
      * DOMContentLoaded: attach button listeners
