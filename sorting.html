@@ -190,7 +190,6 @@
 <body>
   <!-- Main Buttons -->
   <button id="connectEtsyBtn" class="btn waves-effect waves-light">Connect to Etsy</button>
-  <button id="testOpenAIBtn" class="btn waves-effect waves-light">Test OpenAI</button>
   <button id="openConfigBtn" class="btn waves-effect waves-light">Open Config</button>
   <button id="cropImagesBtn" class="btn waves-effect waves-light">Crop Images</button>
   <button id="sendMatchBtn" class="btn waves-effect waves-light">Send & Match</button>
@@ -372,32 +371,6 @@
         } catch (err) {
           console.error("OAuth start error:", err);
           M.toast({ html: "OAuth error: " + err.message });
-        }
-      });
-
-      // Test OpenAI
-      document.getElementById("testOpenAIBtn").addEventListener("click", async function () {
-        try {
-          const testBody = {
-            model: "gpt-3.5-turbo",
-            messages: [{ role: "user", content: "Hello from the Sorting page!" }],
-          };
-          const resp = await fetch(functionsBaseUrl + "/openaiProxy", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(testBody),
-          });
-          if (!resp.ok) {
-            throw new Error("OpenAI test call failed with " + resp.status);
-          }
-          const data = await resp.json();
-          if (data.choices && data.choices[0] && data.choices[0].message) {
-            M.toast({ html: "OpenAI responded successfully." });
-          } else {
-            throw new Error("No valid response from OpenAI!");
-          }
-        } catch (err) {
-          M.toast({ html: "OpenAI test failed: " + err.message });
         }
       });
 
