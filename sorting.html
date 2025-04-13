@@ -1540,7 +1540,7 @@ function openMatchPreviewModal(cellIndex) {
     box.dataset.type = "unmatchedEmpty";
     box.innerHTML = "No Unmatched Photos";
     box.style.fontWeight = "bold";
-    box.style.fontSize = "0.7em"; // adjust font size
+    box.style.fontSize = "0.7em";
 
     makeDropTarget(box); // allow user to drop a matched photo here
     unmatchedSection.appendChild(box);
@@ -1578,27 +1578,29 @@ function openMatchPreviewModal(cellIndex) {
   container.appendChild(unmatchedWrapper);
 
   // -------------------------------------------------------------
-  // Initialize the modal WITHOUT onCloseEnd
+  // 1) Initialize the modal WITHOUT onCloseEnd
   // -------------------------------------------------------------
   const instance = M.Modal.init(modalElem);
 
   // -------------------------------------------------------------
-  // (A) "Save" button merges arrays & closes modal
+  // 2) "Save" button merges arrays & closes modal
   // -------------------------------------------------------------
   document.getElementById("saveMatchesBtn").addEventListener("click", () => {
-    // 1) Overwrite cellMatches for this cellIndex
+    // A) Overwrite cellMatches for this cellIndex
     cellMatches[cellIndex] = matchedImages;
 
-    // 2) Rebuild userImagesArray after any drag/drop changes
+    // B) Rebuild userImagesArray after any drag/drop changes
     const newUserArr = [...userImagesArray];
 
-    // Remove matched images from the user array
+    // 1) Remove matched images from user array
     matchedImages.forEach((mImg) => {
-      const idx = newUserArr.findIndex((u) => stripExtension(u.name) === mImg.userName);
+      const idx = newUserArr.findIndex(
+        (u) => stripExtension(u.name) === mImg.userName
+      );
       if (idx >= 0) newUserArr.splice(idx, 1);
     });
 
-    // Also remove duplicates, then re-add unmatched images
+    // 2) Re-add any newly unmatched images
     unmatchedImages.forEach((u) => {
       const dupIdx = newUserArr.findIndex((x) => x.name === u.name);
       if (dupIdx >= 0) newUserArr.splice(dupIdx, 1);
@@ -1607,7 +1609,7 @@ function openMatchPreviewModal(cellIndex) {
 
     userImagesArray = newUserArr;
 
-    // 3) Refresh the matchCell text
+    // C) Refresh the matchCell text
     const matchBox = document.getElementById("matchCell" + cellIndex);
     if (matchBox) {
       if (matchedImages.length > 0 && matchedImages[0].userName) {
@@ -1619,21 +1621,23 @@ function openMatchPreviewModal(cellIndex) {
       }
     }
 
-    // 4) If a function refreshes unmatched user images in the main UI
+    // D) If you have a function to refresh unmatched user images
     if (typeof createUnmatchedUserImagesPreview === "function") {
       createUnmatchedUserImagesPreview();
     }
 
-    // 5) Close the modal
+    // E) Close the modal
     instance.close();
   });
 
   // -------------------------------------------------------------
-  // (B) Finally, open the modal
+  // 3) Open the modal
   // -------------------------------------------------------------
   instance.open();
 
+  // -------------------------------------------------------------
   // DRAG & DROP HELPERS
+  // -------------------------------------------------------------
   function makeDraggable(elem) {
     elem.setAttribute("draggable", true);
     elem.addEventListener("dragstart", (ev) => {
@@ -1641,14 +1645,13 @@ function openMatchPreviewModal(cellIndex) {
         "text/plain",
         JSON.stringify({
           sourceType: elem.dataset.type,
-          sourceIndex: elem.dataset.index,
+          sourceIndex: elem.dataset.index
         })
       );
     });
   }
 
   function makeDropTarget(elem) {
-    // Make droppable
     elem.addEventListener("dragover", (ev) => {
       ev.preventDefault();
     });
@@ -1664,7 +1667,7 @@ function openMatchPreviewModal(cellIndex) {
         return;
       }
 
-      // If user drags from "matched" => "unmatchedEmpty" or "unmatched"
+      // 1) "matched" => "unmatched" or "unmatchedEmpty"
       if (
         parsed.sourceType === "matched" &&
         (elem.dataset.type === "unmatched" ||
@@ -1676,7 +1679,7 @@ function openMatchPreviewModal(cellIndex) {
         // Add that matchedImg into the unmatched array
         unmatchedImages.push({
           name: matchedImg.userName + ".jpg",
-          data: matchedImg.userImage,
+          data: matchedImg.userImage
         });
 
         // Remove from matchedImages
@@ -1684,14 +1687,27 @@ function openMatchPreviewModal(cellIndex) {
 
         refreshSectionsLocal();
       }
-      // If user drags from "unmatched" => "matched" (like before)
+
+      // 2) "unmatched" => "matched"
       else if (parsed.sourceType === "unmatched" && elem.dataset.type === "matched") {
-        // ... normal logic you had ...
+        const sourceIdx = parseInt(parsed.sourceIndex, 10);
+        const unmatchedImg = unmatchedImages[sourceIdx];
+
+        // Add that unmatchedImg into matchedImages
+        matchedImages.push({
+          userName: stripExtension(unmatchedImg.name),
+          userImage: unmatchedImg.data,
+          score: 0
+        });
+
+        // Remove from unmatchedImages
+        unmatchedImages.splice(sourceIdx, 1);
+
+        refreshSectionsLocal();
       }
     });
   }
 
-  // Refresh the matched/unmatched sections after drag/drop
   function refreshSectionsLocal() {
     matchedSection.innerHTML = "";
     unmatchedSection.innerHTML = "";
@@ -1740,7 +1756,7 @@ function openMatchPreviewModal(cellIndex) {
       box.style.position = "relative";
 
       box.style.fontWeight = "bold";
-      box.style.fontSize = "0.7em"; // adjust font size
+      box.style.fontSize = "0.7em";
 
       box.dataset.type = "unmatchedEmpty";
       box.innerHTML = "No Unmatched Photos";
