@@ -191,7 +191,6 @@
   <!-- Main Buttons -->
   <button id="connectEtsyBtn" class="btn waves-effect waves-light">Connect to Etsy</button>
   <button id="openConfigBtn" class="btn waves-effect waves-light">Open Config</button>
-  <button id="cropImagesBtn" class="btn waves-effect waves-light">Crop Images</button>
   <button id="sendMatchBtn" class="btn waves-effect waves-light">Send & Match</button>
 
   <!-- Etsy Order Number input -->
@@ -336,71 +335,68 @@
     /********************************************************
      * DOMContentLoaded: attach button listeners
      ********************************************************/
-    document.addEventListener("DOMContentLoaded", function () {
-      M.AutoInit();
+document.addEventListener("DOMContentLoaded", function () {
+  M.AutoInit();
 
-      setTimeout(function () {
-        loadPositions();
-        document.body.style.opacity = 1;
-      }, 200);
+  setTimeout(function () {
+    loadPositions();
+    document.body.style.opacity = 1;
+  }, 200);
 
-      // Connect Etsy
-      document.getElementById("connectEtsyBtn").addEventListener("click", async function () {
-        try {
-          const codeVerifier = generateRandomString(64);
-          localStorage.setItem("etsy_code_verifier", codeVerifier);
-          const codeChallenge = await generateCodeChallenge(codeVerifier);
-          const CLIENT_ID = "k75zdspz4r99txpqdji7i2em";
-          const redirectUri = "https://sorting.goldenspike.app";
-          const state = "randomState123";
-          const scope = "listings_w listings_r transactions_r transactions_w";
-          const etsyAuthUrl =
-            "https://www.etsy.com/oauth/connect?response_type=code" +
-            "&client_id=" +
-            CLIENT_ID +
-            "&redirect_uri=" +
-            encodeURIComponent(redirectUri) +
-            "&scope=" +
-            encodeURIComponent(scope) +
-            "&state=" +
-            state +
-            "&code_challenge=" +
-            encodeURIComponent(codeChallenge) +
-            "&code_challenge_method=S256";
-          window.location.href = etsyAuthUrl;
-        } catch (err) {
-          console.error("OAuth start error:", err);
-          M.toast({ html: "OAuth error: " + err.message });
-        }
-      });
+  // Connect Etsy
+  document.getElementById("connectEtsyBtn").addEventListener("click", async function () {
+    try {
+      const codeVerifier = generateRandomString(64);
+      localStorage.setItem("etsy_code_verifier", codeVerifier);
+      const codeChallenge = await generateCodeChallenge(codeVerifier);
+      const CLIENT_ID = "k75zdspz4r99txpqdji7i2em";
+      const redirectUri = "https://sorting.goldenspike.app";
+      const state = "randomState123";
+      const scope = "listings_w listings_r transactions_r transactions_w";
+      const etsyAuthUrl =
+        "https://www.etsy.com/oauth/connect?response_type=code" +
+        "&client_id=" + CLIENT_ID +
+        "&redirect_uri=" + encodeURIComponent(redirectUri) +
+        "&scope=" + encodeURIComponent(scope) +
+        "&state=" + state +
+        "&code_challenge=" + encodeURIComponent(codeChallenge) +
+        "&code_challenge_method=S256";
+      window.location.href = etsyAuthUrl;
+    } catch (err) {
+      console.error("OAuth start error:", err);
+      M.toast({ html: "OAuth error: " + err.message });
+    }
+  });
 
-      // Load multiple orders on Enter
-      const etsyOrderInput = document.getElementById("etsyOrderNumber");
-      etsyOrderInput.addEventListener("keydown", async function (e) {
-        if (e.key === "Enter") {
-          const inputVal = etsyOrderInput.value.trim();
-          if (!inputVal) return;
-          let orderNumbers = inputVal
-            .split(",")
-            .map((x) => x.trim())
-            .filter((x) => x);
-          orderNumbers = orderNumbers.slice(0, 50);
-          await loadBatchEtsyOrders(orderNumbers);
-        }
-      });
+  // Load multiple orders on Enter
+  const etsyOrderInput = document.getElementById("etsyOrderNumber");
+  etsyOrderInput.addEventListener("keydown", async function (e) {
+    if (e.key === "Enter") {
+      const inputVal = etsyOrderInput.value.trim();
+      if (!inputVal) return;
+      let orderNumbers = inputVal
+        .split(",")
+        .map((x) => x.trim())
+        .filter((x) => x);
+      orderNumbers = orderNumbers.slice(0, 50);
+      await loadBatchEtsyOrders(orderNumbers);
+    }
+  });
 
-      // Crop Images Button
-      document.getElementById("cropImagesBtn").addEventListener("click", async function () {
-        croppedImagesArray = [];
-        await cropAllImages();
-      });
-
-      // Send & Match Button
-      document.getElementById("sendMatchBtn").addEventListener("click", async function () {
-        // We define sendAndMatch() below, so it's in scope here
-        await sendAndMatch();
-      });
-    });
+  document.getElementById("sendMatchBtn").addEventListener("click", async function () {
+    try {
+      console.log("Starting to crop images...");
+      croppedImagesArray = [];
+      await cropAllImages();
+      console.log("Done cropping. Pausing 250ms...");
+      await new Promise(r => setTimeout(r, 250));
+      console.log("Now sending & matching...");
+      await sendAndMatch();
+    } catch (err) {
+      console.error("Error in combined Crop + Send & Match:", err);
+    }
+  });
+});
 
     /********************************************************
      * fillPreviewBoxes, attachPreviewBoxListeners,
