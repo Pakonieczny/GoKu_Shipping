@@ -1384,6 +1384,8 @@ M.toast({ html: "Finished matching passes." });
 
 // -----------------------------------------
 
+// -----------------------------------------
+
 function openMatchPreviewModal(cellIndex) {
   const modalElem = document.getElementById("matchesModal");
   const container = document.getElementById("matchesGridContainer");
@@ -1691,18 +1693,43 @@ function openMatchPreviewModal(cellIndex) {
       }
 
       // 2) "unmatched" => "matched"
-      else if (parsed.sourceType === "unmatched" && elem.dataset.type === "matched") {
+      else if (
+        parsed.sourceType === "unmatched" &&
+        elem.dataset.type === "matched"
+      ) {
         const sourceIdx = parseInt(parsed.sourceIndex, 10);
         const unmatchedImg = unmatchedImages[sourceIdx];
 
-        // Add that unmatchedImg into matchedImages
+        // ============================
+        // SINGLE MATCH LOGIC:
+        // Remove existing matched image if it's real
+        // Move that old matched image to unmatched
+        // or remove "No Match Found" placeholder
+        // ============================
+        if (matchedImages.length > 0) {
+          // If the existing "matched" is just a placeholder, remove it
+          if (!matchedImages[0].userImage) {
+            matchedImages.splice(0, 1);
+          }
+          // Otherwise, push existing matched image back to unmatched
+          else {
+            unmatchedImages.push({
+              name: matchedImages[0].userName + ".jpg",
+              data: matchedImages[0].userImage,
+              score: matchedImages[0].score || 0
+            });
+            matchedImages.splice(0, 1);
+          }
+        }
+
+        // Now add the newly dragged image as the single matched
         matchedImages.push({
           userName: stripExtension(unmatchedImg.name),
           userImage: unmatchedImg.data,
           score: 0
         });
 
-        // Remove from unmatchedImages
+        // Remove from unmatched
         unmatchedImages.splice(sourceIdx, 1);
 
         refreshSectionsLocal();
