@@ -1325,6 +1325,11 @@ async function compareImages(userImage, croppedGridImage, cellIndex, userImageNa
  * sendAndMatch with metal filter logic
  ********************************************************/
 async function sendAndMatch() {
+  // 1) Disable "Match & Print" at the start
+  const matchPrintBtn = document.getElementById("matchPrintBtn");
+  matchPrintBtn.disabled = true;
+  matchPrintBtn.style.opacity = "0.5"; // greyed out
+
   if (userImagesArray.length === 0) {
     M.toast({ html: "No user images available! Please drop user images first." });
     return;
@@ -1593,6 +1598,45 @@ async function sendAndMatch() {
   }
 
   M.toast({ html: "Finished matching passes." });
+
+  // (C) Re-enable "Match & Print" only if no orangered remains
+  const matchPrintBtn = document.getElementById("matchPrintBtn");
+  const anyOrangered = detectAnyOrangered();
+  if (!anyOrangered) {
+    matchPrintBtn.disabled = false;
+    matchPrintBtn.style.opacity = "1";
+  } else {
+    matchPrintBtn.disabled = true;
+    matchPrintBtn.style.opacity = "0.5";
+  }
+}
+
+/********************************************************
+ * detectAnyOrangered():
+ * Checks all previewBoxes for a “3px solid orangered” border,
+ * and all #matchCellX for “orangered” text color.
+ * Returns true if found, else false.
+ ********************************************************/
+function detectAnyOrangered() {
+  let foundOrangered = false;
+
+  // A) Check for 3px orangered border in .preview-box
+  const previewBoxes = document.querySelectorAll(".preview-box");
+  previewBoxes.forEach((pb) => {
+    if ((pb.style.border || "").includes("3px solid orangered")) {
+      foundOrangered = true;
+    }
+  });
+
+  // B) Check for orangered text color in matchCell
+  for (let i = 0; i < croppedImagesArray.length; i++) {
+    const matchBox = document.getElementById("matchCell" + i);
+    if (!matchBox) continue;
+    if (matchBox.style.color === "orangered") {
+      foundOrangered = true;
+    }
+  }
+  return foundOrangered;
 }
 
 /********************************************************
