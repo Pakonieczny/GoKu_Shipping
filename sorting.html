@@ -350,18 +350,18 @@ const configIDs = [
 document.addEventListener("DOMContentLoaded", function () {
   M.AutoInit();
 
-  // Disable "Match & Print" from the start
+  // Disable "Match & Print" + "Back" + "Next" from the start
   const matchPrintBtn = document.getElementById("matchPrintBtn");
   matchPrintBtn.disabled = true;
   matchPrintBtn.style.opacity = "0.5";
 
   const backBtn = document.getElementById("backBtn");
-  matchPrintBtn.disabled = true;
-  matchPrintBtn.style.opacity = "0.5";
+  backBtn.disabled = true;
+  backBtn.style.opacity = "0.5";
 
   const nextBtn = document.getElementById("nextBtn");
-  matchPrintBtn.disabled = true;
-  matchPrintBtn.style.opacity = "0.5";
+  nextBtn.disabled = true;
+  nextBtn.style.opacity = "0.5";
 
   setTimeout(function () {
     loadPositions();
