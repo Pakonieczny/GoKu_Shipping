@@ -442,35 +442,15 @@ document.getElementById("saveMatchesBtn")?.addEventListener("click", () => {
  * Disabling / Enabling “Send & Match”
  ********************************************************/
 function disableSendMatch() {
-  // Keep the Send & Match logic the same...
-  const sendMatchBtn = document.getElementById("sendMatchBtn");
-  sendMatchBtn.disabled = true;
-  sendMatchBtn.style.opacity = "0.5";
-
-  // ADD: also disable the Back & Next
-  const backBtn = document.getElementById("mpBackBtn");
-  backBtn.disabled = true;
-  backBtn.style.opacity = "0.5";
-
-  const nextBtn = document.getElementById("mpNextBtn");
-  nextBtn.disabled = true;
-  nextBtn.style.opacity = "0.5";
+  const btn = document.getElementById("sendMatchBtn");
+  btn.disabled = true;
+  btn.style.opacity = "0.5";
 }
-
 function enableSendMatch() {
-  // Keep the Send & Match logic the same...
-  const sendMatchBtn = document.getElementById("sendMatchBtn");
-  sendMatchBtn.disabled = false;
-  sendMatchBtn.style.opacity = "1";
-
-  // ADD: also enable the Back & Next
-  const backBtn = document.getElementById("mpBackBtn");
-  backBtn.disabled = false;
-  backBtn.style.opacity = "1";
-
-  const nextBtn = document.getElementById("mpNextBtn");
-  nextBtn.disabled = false;
-  nextBtn.style.opacity = "1";
+  const btn = document.getElementById("sendMatchBtn");
+  btn.disabled = false;
+  btn.style.opacity = "1";
+}
 
 
 /********************************************************
