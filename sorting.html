@@ -1961,61 +1961,69 @@ function openMatchPreviewModal(cellIndex) {
   // -------------------------------------------------------------
   // 2) "Save" button merges arrays & closes modal
   // -------------------------------------------------------------
-  document.getElementById("saveMatchesBtn").addEventListener("click", () => {
-    // A) Overwrite cellMatches for this cellIndex
-    cellMatches[cellIndex] = matchedImages;
+document.getElementById("saveMatchesBtn").addEventListener("click", () => {
+  // A) Overwrite cellMatches for this cellIndex
+  cellMatches[cellIndex] = matchedImages;
 
-    // B) Rebuild userImagesArray after any drag/drop changes
-    const newUserArr = [...userImagesArray];
+  // B) Rebuild userImagesArray after any drag/drop changes
+  const newUserArr = [...userImagesArray];
 
-    // 1) Remove matched images from user array
-    matchedImages.forEach((mImg) => {
-      const idx = newUserArr.findIndex(
-        (u) => stripExtension(u.name) === mImg.userName
-      );
-      if (idx >= 0) newUserArr.splice(idx, 1);
-    });
-
-    // 2) Re-add any newly unmatched images
-    unmatchedImages.forEach((u) => {
-      const dupIdx = newUserArr.findIndex((x) => x.name === u.name);
-      if (dupIdx >= 0) newUserArr.splice(dupIdx, 1);
-      newUserArr.push(u);
-    });
-
-    userImagesArray = newUserArr;
-
-    // C) Refresh the matchCell text
-    const matchBox = document.getElementById("matchCell" + cellIndex);
-    if (matchBox) {
-      if (matchedImages.length > 0 && matchedImages[0].userImage) {
-        matchBox.value = matchedImages[0].userName;
-        matchBox.style.fontWeight = "";
-        matchBox.style.color = "";
-      } else {
-        matchBox.value = "";
-      }
-    }
-
-    // D) After saving, if the matched user photo has a real photo,
-    //    always change border to 1px black. Otherwise, set 3px orangered.
-    if (
-      matchedImages.length > 0 &&
-      matchedImages[0].userImage
-    ) {
-      setEtsyBorder(cellIndex, "1px", "black");
-    } else {
-      setEtsyBorder(cellIndex, "3px", "orangered");
-    }
-
-    // If you have a function to refresh unmatched user images
-    if (typeof createUnmatchedUserImagesPreview === "function") {
-      createUnmatchedUserImagesPreview();
-    }
-
-    // E) Close the modal
-    instance.close();
+  // 1) Remove matched images from user array
+  matchedImages.forEach((mImg) => {
+    const idx = newUserArr.findIndex(
+      (u) => stripExtension(u.name) === mImg.userName
+    );
+    if (idx >= 0) newUserArr.splice(idx, 1);
   });
+
+  // 2) Re-add any newly unmatched images
+  unmatchedImages.forEach((u) => {
+    const dupIdx = newUserArr.findIndex((x) => x.name === u.name);
+    if (dupIdx >= 0) newUserArr.splice(dupIdx, 1);
+    newUserArr.push(u);
+  });
+
+  userImagesArray = newUserArr;
+
+  // C) Refresh the matchCell text
+  const matchBox = document.getElementById("matchCell" + cellIndex);
+  if (matchBox) {
+    if (matchedImages.length > 0 && matchedImages[0].userImage) {
+      matchBox.value = matchedImages[0].userName;
+      matchBox.style.fontWeight = "";
+      matchBox.style.color = "";
+    } else {
+      matchBox.value = "";
+    }
+  }
+
+  // D) After saving, if the matched user photo has a real photo,
+  //    always change border to 1px black. Otherwise, set 3px orangered.
+  if (
+    matchedImages.length > 0 &&
+    matchedImages[0].userImage
+  ) {
+    setEtsyBorder(cellIndex, "1px", "black");
+  } else {
+    setEtsyBorder(cellIndex, "3px", "orangered");
+  }
+
+  // If you have a function to refresh unmatched user images
+  if (typeof createUnmatchedUserImagesPreview === "function") {
+    createUnmatchedUserImagesPreview();
+  }
+
+  // (NEW) Check whether there's orangered and enable/disable the flow
+  const anyOrangered = detectAnyOrangered();
+  if (anyOrangered) {
+    disableMatchPrintFlow(); // disable "Match & Print," "Back," "Next"
+  } else {
+    enableMatchPrintFlow();  // enable them if no orangered
+  }
+
+  // E) Close the modal
+  instance.close();
+});
 
   // -------------------------------------------------------------
   // 3) Open the modal
@@ -2120,53 +2128,74 @@ function openMatchPreviewModal(cellIndex) {
     });
   }
 
-  function refreshSectionsLocal() {
-    matchedSection.innerHTML = "";
-    unmatchedSection.innerHTML = "";
+function refreshSectionsLocal() {
+  matchedSection.innerHTML = "";
+  unmatchedSection.innerHTML = "";
 
-    // Rebuild matched
-    matchedImages.forEach((mImg, i) => {
-      const box = document.createElement("div");
-      box.style.width = "100px";
-      box.style.height = "100px";
-      box.style.border = "1px solid #000";
-      box.style.display = "flex";
-      box.style.alignItems = "center";
-      box.style.justifyContent = "center";
-      box.style.overflow = "hidden";
-      box.style.position = "relative";
-      box.dataset.type = "matched";
-      box.dataset.index = i;
+  // Rebuild matched
+  matchedImages.forEach((mImg, i) => {
+    const box = document.createElement("div");
+    box.style.width = "100px";
+    box.style.height = "100px";
+    box.style.border = "1px solid #000";
+    box.style.display = "flex";
+    box.style.alignItems = "center";
+    box.style.justifyContent = "center";
+    box.style.overflow = "hidden";
+    box.style.position = "relative";
+    box.dataset.type = "matched";
+    box.dataset.index = i;
 
-      if (!mImg.userImage) {
-        box.innerHTML = "No Match Found";
-        box.style.fontWeight = "bold";
-        makeDropTarget(box);
-      } else {
-        const img = document.createElement("img");
-        img.src = mImg.userImage;
-        img.alt = mImg.userName;
-        img.style.width = "100%";
-        img.style.height = "100%";
-        img.style.objectFit = "cover";
-
-        makeDraggable(box);
-        makeDropTarget(box);
-        box.appendChild(img);
-      }
-      matchedSection.appendChild(box);
-    });
-
-    // If matched box is currently empty => set border orangered 3px
-    // otherwise black 1px
-    if (!matchedImages[0].userImage) {
-      setEtsyBorder(cellIndex, "3px", "orangered");
+    if (!mImg.userImage) {
+      box.innerHTML = "No Match Found";
+      box.style.fontWeight = "bold";
+      makeDropTarget(box);
     } else {
-      setEtsyBorder(cellIndex, "1px", "black");
-    }
+      const img = document.createElement("img");
+      img.src = mImg.userImage;
+      img.alt = mImg.userName;
+      img.style.width = "100%";
+      img.style.height = "100%";
+      img.style.objectFit = "cover";
 
-    // Rebuild unmatched
-    if (unmatchedImages.length === 0) {
+      makeDraggable(box);
+      makeDropTarget(box);
+      box.appendChild(img);
+    }
+    matchedSection.appendChild(box);
+  });
+
+  // If matched box is currently empty => set border orangered 3px
+  // otherwise black 1px
+  if (!matchedImages[0].userImage) {
+    setEtsyBorder(cellIndex, "3px", "orangered");
+  } else {
+    setEtsyBorder(cellIndex, "1px", "black");
+  }
+
+  // Rebuild unmatched
+  if (unmatchedImages.length === 0) {
+    const box = document.createElement("div");
+    box.style.width = "66px";
+    box.style.height = "66px";
+    box.style.border = "1px solid #000";
+    box.style.display = "flex";
+    box.style.alignItems = "center";
+    box.style.justifyContent = "center";
+    box.style.overflow = "hidden";
+    box.style.position = "relative";
+
+    box.style.fontWeight = "bold";
+    box.style.fontSize = "0.7em";
+
+    box.dataset.type = "unmatchedEmpty";
+    box.innerHTML = "No Unmatched Photos";
+
+    makeDropTarget(box);
+    unmatchedSection.appendChild(box);
+
+  } else {
+    unmatchedImages.forEach((uImg, i) => {
       const box = document.createElement("div");
       box.style.width = "66px";
       box.style.height = "66px";
@@ -2176,68 +2205,39 @@ function openMatchPreviewModal(cellIndex) {
       box.style.justifyContent = "center";
       box.style.overflow = "hidden";
       box.style.position = "relative";
+      box.dataset.type = "unmatched";
+      box.dataset.index = i;
 
-      box.style.fontWeight = "bold";
-      box.style.fontSize = "0.7em";
+      const img = document.createElement("img");
+      img.src = uImg.data;
+      img.alt = uImg.name;
+      img.style.width = "100%";
+      img.style.height = "100%";
+      img.style.objectFit = "cover";
 
-      box.dataset.type = "unmatchedEmpty";
-      box.innerHTML = "No Unmatched Photos";
-
+      makeDraggable(box);
       makeDropTarget(box);
+      box.appendChild(img);
       unmatchedSection.appendChild(box);
-
-    } else {
-      unmatchedImages.forEach((uImg, i) => {
-        const box = document.createElement("div");
-        box.style.width = "66px";
-        box.style.height = "66px";
-        box.style.border = "1px solid #000";
-        box.style.display = "flex";
-        box.style.alignItems = "center";
-        box.style.justifyContent = "center";
-        box.style.overflow = "hidden";
-        box.style.position = "relative";
-        box.dataset.type = "unmatched";
-        box.dataset.index = i;
-
-        const img = document.createElement("img");
-        img.src = uImg.data;
-        img.alt = uImg.name;
-        img.style.width = "100%";
-        img.style.height = "100%";
-        img.style.objectFit = "cover";
-
-        makeDraggable(box);
-        makeDropTarget(box);
-        box.appendChild(img);
-        unmatchedSection.appendChild(box);
-      });
-    }
-
-    // (NEW) After reconstructing matched/unmatched, check orangered:
-    const anyOrangered = detectAnyOrangered();
-    if (anyOrangered) {
-      disableMatchPrintFlow();  // all 3 get disabled
-    } else {
-      enableMatchPrintFlow();   // all 3 get enabled
-    }
+    });
   }
+}
 
-  // Utility: set the Etsy-derived preview box border
-  function setEtsyBorder(cellIdx, thickness, color) {
-    const previewBox = document.getElementById("previewCell" + cellIdx);
-    if (previewBox) {
-      previewBox.style.border = thickness + " solid " + color;
-    }
-  }
+ // Utility: set the Etsy-derived preview box border
+ function setEtsyBorder(cellIdx, thickness, color) {
+   const previewBox = document.getElementById("previewCell" + cellIdx);
+   if (previewBox) {
+     previewBox.style.border = thickness + " solid " + color;
+   }
+ }
 
-  // Another Utility
-  function stripExtension(fileName) {
-    return fileName.replace(/\.\w+$/, "");
-  }
+ // Another Utility
+ function stripExtension(fileName) {
+   return fileName.replace(/\.\w+$/, "");
+ }
 
-  // Finally, ensure immediate drag-and-drop by calling refreshSectionsLocal
-  refreshSectionsLocal();
+ // Finally, ensure immediate drag-and-drop by calling refreshSectionsLocal
+ refreshSectionsLocal();
 }
 
 /********************************************************
