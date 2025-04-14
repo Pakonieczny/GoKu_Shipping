@@ -1350,12 +1350,10 @@ async function sendAndMatch() {
 
     // If the metalVal includes "silver"
     if (metalLow.includes("silver")) {
-      // userName must contain "silver"
       return nameLow.includes("silver");
     }
     // If the metalVal includes "rosegold"
     else if (metalLow.includes("rosegold")) {
-      // userName must contain "rose" or "rosegold"
       return (nameLow.includes("rose") || nameLow.includes("rosegold"));
     }
     // If the metalVal includes "rose"
@@ -1364,7 +1362,6 @@ async function sendAndMatch() {
     }
     // If the metalVal includes "gold"
     else if (metalLow.includes("gold")) {
-      // userName must include "gold"
       return nameLow.includes("gold");
     }
     // Otherwise, no specific metal => allow any
@@ -1387,13 +1384,10 @@ async function sendAndMatch() {
 
   for (const i of unmatchedCells) {
     // Already matched? skip
-    if (matchedCellIndices.has(i)) {
-      continue;
-    }
+    if (matchedCellIndices.has(i)) continue;
     const matchBox = document.getElementById("matchCell" + i);
 
     // Grab the metal from the 3rd read-only text box
-    // e.g. "silver", "gold", "rose", "rosegold"
     const metalVal = document.getElementById("metalCell" + i).value || "";
 
     // Filter user images: keep only those that pass "metalFilterOk"
@@ -1451,7 +1445,7 @@ async function sendAndMatch() {
           matchedUserNames.add(topCandidate.user.name);
           matchedCellIndices.add(i);
 
-          // Remove user from userImages so it can't match again
+          // Remove user so it can't match again
           userImagesArray = userImagesArray.filter(u => u.name !== topCandidate.user.name);
 
         } else if (topScore >= 0.88 && delta >= 0.15) {
@@ -1495,9 +1489,7 @@ async function sendAndMatch() {
 
   for (const i of unmatchedCells) {
     const matchBox = document.getElementById("matchCell" + i);
-
     const metalVal = document.getElementById("metalCell" + i).value || "";
-    // Filter user images again based on metal
     const validUserImages = userImagesArray.filter((u) => metalFilterOk(metalVal, u.name));
 
     const comparisonPromises = validUserImages.map((user, j) => {
@@ -1570,7 +1562,6 @@ async function sendAndMatch() {
         M.toast({ html: `Cell ${i}: Score ${topScorePerc}% < 88%. No match.` });
       }
     }
-
     // 2s cooldown
     await new Promise(resolve => setTimeout(resolve, 2000));
   }
@@ -1599,7 +1590,7 @@ async function sendAndMatch() {
 
   M.toast({ html: "Finished matching passes." });
 
-  // (C) Re-enable "Match & Print" only if no orangered remains
+  // (C) Re-enable "Match & Print" ONLY if detectAnyOrangered() returns false
   const anyOrangered = detectAnyOrangered();
   if (!anyOrangered) {
     matchPrintBtn.disabled = false;
@@ -1612,14 +1603,14 @@ async function sendAndMatch() {
 
 /********************************************************
  * detectAnyOrangered():
- * Checks all previewBoxes for a “3px solid orangered” border,
+ * Checks all .preview-box for “3px solid orangered” border,
  * and all #matchCellX for “orangered” text color.
  * Returns true if found, else false.
  ********************************************************/
 function detectAnyOrangered() {
   let foundOrangered = false;
 
-  // A) Check for 3px orangered border in .preview-box
+  // A) Check 3px orangered border
   const previewBoxes = document.querySelectorAll(".preview-box");
   previewBoxes.forEach((pb) => {
     if ((pb.style.border || "").includes("3px solid orangered")) {
@@ -1627,7 +1618,7 @@ function detectAnyOrangered() {
     }
   });
 
-  // B) Check for orangered text color in matchCell
+  // B) Check orangered text color in matchCell
   for (let i = 0; i < croppedImagesArray.length; i++) {
     const matchBox = document.getElementById("matchCell" + i);
     if (!matchBox) continue;
