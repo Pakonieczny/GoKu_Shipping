@@ -427,10 +427,11 @@ document.addEventListener("DOMContentLoaded", function () {
  * issues are resolved.
  ********************************************************/
 document.getElementById("saveMatchesBtn")?.addEventListener("click", () => {
-  console.log("User changed matches => disabling Match & Print flow");
-  disableMatchPrintFlow();
+  // 1) The user changed something => so force them to fix orangered states again
+  disableMatchPrintFlow(); // disables "Match & Print," "Back," "Next"
   removeAllBlueHighlights();
-  // If no orangered remains => re-enable
+
+  // 2) If there's NO orangered, re-enable.
   const anyOrangered = detectAnyOrangered();
   if (!anyOrangered) {
     enableMatchPrintFlow();
@@ -459,19 +460,18 @@ function enableSendMatch() {
  ********************************************************/
 function disableMatchPrintFlow() {
   const matchPrintBtn = document.getElementById("matchPrintBtn");
-  const backBtn = document.getElementById("mpBackBtn");
-  const nextBtn = document.getElementById("mpNextBtn");
-
   matchPrintBtn.disabled = true;
   matchPrintBtn.style.opacity = "0.5";
 
+  const backBtn = document.getElementById("mpBackBtn");
   backBtn.disabled = true;
   backBtn.style.opacity = "0.5";
 
+  const nextBtn = document.getElementById("mpNextBtn");
   nextBtn.disabled = true;
   nextBtn.style.opacity = "0.5";
 
-  removeAllBlueHighlights();
+  //removeAllBlueHighlights();
 }
 
 function enableMatchPrintFlow() {
@@ -2212,6 +2212,14 @@ function openMatchPreviewModal(cellIndex) {
         box.appendChild(img);
         unmatchedSection.appendChild(box);
       });
+    }
+
+    // (NEW) After reconstructing matched/unmatched, check orangered:
+    const anyOrangered = detectAnyOrangered();
+    if (anyOrangered) {
+      disableMatchPrintFlow();  // all 3 get disabled
+    } else {
+      enableMatchPrintFlow();   // all 3 get enabled
     }
   }
 
