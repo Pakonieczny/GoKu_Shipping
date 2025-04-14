@@ -2,16 +2,17 @@
 <html>
 <head>
   <meta charset="utf-8" />
-  <title>High-Resolution QR Code (Scaled to 32px) + 3 Dots at 6px & 12px Spacing</title>
+  <title>High-Resolution QR Code – Integrated Single Item Print</title>
 
-  <!-- Load pdfmake (and its fonts) -->
+  <!-- pdfmake (and its fonts) -->
   <script src="https://cdn.jsdelivr.net/npm/pdfmake@0.2.7/build/pdfmake.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/pdfmake@0.2.7/build/vfs_fonts.js"></script>
 
-  <!-- Load qrcode.js (for generating QR) -->
+  <!-- qrcode.js (for generating QR) -->
   <script src="https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js"></script>
 
   <style>
+    /* Basic styling for the preview area */
     #qrPreview {
       margin-top: 20px;
     }
@@ -21,127 +22,234 @@
   </style>
 </head>
 <body>
+  <h3>High-Resolution QR Code (32px) – Single Listing Iframe Print</h3>
 
-  <h3>Generate a High-Resolution QR Code (32px) + 3 Dots (6px diameter) with 12px spacing</h3>
+  <!-- Fallback inputs, in case no listing is found in localStorage -->
   <label>
     Enter text for QR code:
-    <input type="text" id="qrValue" value="https://example.com" style="width:300px">
+    <input type="text" id="qrValue" value="fallback text" style="width:300px" />
   </label>
   <button id="generateBtn">Generate & Print</button>
 
+  <!-- A simple preview area for the QR code (optional) -->
   <div id="qrPreview"></div>
 
   <script>
-    // We'll create a hidden container for generating the QR code
+    /********************************************************
+     * DOM references
+     ********************************************************/
+    const qrInput = document.getElementById("qrValue");
+    const generateBtn = document.getElementById("generateBtn");
+    const previewContainer = document.getElementById("qrPreview");
+
+    // A hidden container to render the large QR code (for high-res)
     const hiddenQRContainer = document.createElement("div");
     hiddenQRContainer.style.display = "none";
     document.body.appendChild(hiddenQRContainer);
 
-    // For user preview
-    const previewContainer = document.getElementById("qrPreview");
-    const qrInput = document.getElementById("qrValue");
-    const generateBtn = document.getElementById("generateBtn");
-
+    /********************************************************
+     * "generateBtn" click => Single listing logic
+     ********************************************************/
     generateBtn.addEventListener("click", async () => {
-      const text = qrInput.value.trim();
-      if (!text) {
-        alert("Enter a value for the QR code!");
+      try {
+        // 1) Check localStorage for "qrPrintSingle"
+        const singleStr = localStorage.getItem("qrPrintSingle");
+        if (singleStr) {
+          // We have a single listing object => parse, build, print
+          const item = JSON.parse(singleStr);
+          if (item && item.receipt_id) {
+            await buildAndPrintLabelForItem(item);
+            return;
+          }
+        }
+
+        // 2) Otherwise fallback to user text
+        console.log("No single listing found, using fallback text from #qrValue...");
+        await fallbackQR();
+      } catch (err) {
+        console.error("Error generating or printing the single listing code:", err);
+        alert("Failed to generate or print. See console for details.");
+      }
+    });
+
+    /********************************************************
+     * Build & Print label for a single item
+     ********************************************************/
+    async function buildAndPrintLabelForItem(item) {
+      // item has: receipt_id => order number, keywords => for dot count
+      const orderNum = item.receipt_id || "UnknownOrder";
+      const dotCount = getDotCountForKeywords(item.keywords || []);
+
+      // A) Generate a large QR code for the orderNum
+      hiddenQRContainer.innerHTML = "";
+      await makeLargeQRCode(orderNum);
+
+      // B) Grab the rendered <img> from hiddenQRContainer
+      let qrImg = hiddenQRContainer.querySelector("img");
+      if (!qrImg) {
+        const qrCanvas = hiddenQRContainer.querySelector("canvas");
+        if (qrCanvas) {
+          qrImg = convertCanvasToImg(qrCanvas);
+        }
+      }
+      if (!qrImg) {
+        alert("No QR image found for listing " + (item.listing_id || "N/A"));
         return;
       }
 
-      try {
-        // 1) Clear any old QR code
-        hiddenQRContainer.innerHTML = "";
+      // Show a small preview (optional)
+      previewContainer.innerHTML = "";
+      const cloned = qrImg.cloneNode(true);
+      cloned.style.width = "128px";
+      cloned.style.height = "128px";
+      previewContainer.appendChild(cloned);
 
-        // 2) Generate a larger QR code in memory, e.g. 1024x1024
-        //    for high-resolution scaling
+      const dataUrl = qrImg.src;
+
+      // C) Build docDefinition with correct # of dots
+      const docDefinition = buildPDFDocWithDots(dataUrl, dotCount);
+
+      // D) Render the PDF in an <iframe>, then auto print
+      const pdfDocGenerator = pdfMake.createPdf(docDefinition);
+      pdfDocGenerator.getBlob((blob) => {
+        const blobUrl = URL.createObjectURL(blob);
+        // Clear body or place an iframe somewhere
+        document.body.innerHTML = "";
+        const iframe = document.createElement("iframe");
+        iframe.style.width = "100%";
+        iframe.style.height = "100%";
+        document.body.appendChild(iframe);
+        iframe.src = blobUrl;
+        setTimeout(() => {
+          iframe.contentWindow.print();
+        }, 500);
+      });
+    }
+
+    /********************************************************
+     * Fallback if no "qrPrintSingle" is found
+     ********************************************************/
+    async function fallbackQR() {
+      const text = qrInput.value.trim();
+      if (!text) {
+        alert("Enter a value for the fallback QR code!");
+        return;
+      }
+      hiddenQRContainer.innerHTML = "";
+      await makeLargeQRCode(text);
+
+      let qrImg = hiddenQRContainer.querySelector("img");
+      if (!qrImg) {
+        const qrCanvas = hiddenQRContainer.querySelector("canvas");
+        if (qrCanvas) {
+          qrImg = convertCanvasToImg(qrCanvas);
+        }
+      }
+      if (!qrImg) {
+        alert("No fallback QR found!");
+        return;
+      }
+
+      // Show a small preview
+      previewContainer.innerHTML = "";
+      const cloned = qrImg.cloneNode(true);
+      cloned.style.width = "128px";
+      cloned.style.height = "128px";
+      previewContainer.appendChild(cloned);
+
+      const dataUrl = qrImg.src;
+      const docDefinition = buildPDFDocWithDots(dataUrl, 1); // e.g. 1 dot fallback?
+
+      const pdfDocGenerator = pdfMake.createPdf(docDefinition);
+      pdfDocGenerator.getBlob((blob) => {
+        const blobUrl = URL.createObjectURL(blob);
+        document.body.innerHTML = "";
+        const iframe = document.createElement("iframe");
+        iframe.style.width = "100%";
+        iframe.style.height = "100%";
+        document.body.appendChild(iframe);
+        iframe.src = blobUrl;
+        setTimeout(() => {
+          iframe.contentWindow.print();
+        }, 500);
+      });
+    }
+
+    /********************************************************
+     * Dot Count Logic => 1 or 2 dots
+     ********************************************************/
+    function getDotCountForKeywords(keyArr) {
+      if (!Array.isArray(keyArr) || !keyArr.length) return 0;
+
+      // group A => 2 dots
+      const groupA = ["stud","stud earrings","earring","earrings","ring","rings"];
+      // group B => 1 dot
+      const groupB = [
+        "necklace","necklaces","huggie","huggies","huggie earrings",
+        "hoop","hoops","hoop earrings","bracelet","bracelets",
+        "extender","extenders","chain","chains"
+      ];
+
+      const lower = keyArr.map(k => k.toLowerCase());
+      if (lower.some(x => groupA.includes(x))) return 2;
+      if (lower.some(x => groupB.includes(x))) return 1;
+      return 0;
+    }
+
+    /********************************************************
+     * Build PDF docDefinition with the specified # of dots
+     ********************************************************/
+    function buildPDFDocWithDots(dataUrl, dotCount) {
+      // We'll place the QR at (x=80,y=30), 32px wide
+      // Each dot = 6px diameter => radius=3, spaced 12px
+      const dotEllipses = [];
+      if (dotCount > 0) {
+        const spacing = 12;
+        for (let i = 0; i < dotCount; i++) {
+          dotEllipses.push({
+            type: 'ellipse',
+            x: i*spacing, y: 0,
+            r1: 3, r2: 3,
+            color: 'black', fillOpacity: 1
+          });
+        }
+      }
+
+      return {
+        pageSize: { width: 288, height: 432 }, // 4x6
+        pageMargins: [0,0,0,0],
+        content: [
+          {
+            absolutePosition: { x:80, y:20 },
+            canvas: dotEllipses
+          },
+          {
+            image: dataUrl,
+            width: 32,
+            absolutePosition: { x:80, y:30 }
+          }
+        ]
+      };
+    }
+
+    /********************************************************
+     * Make a Large 1024×1024 QR => high-res
+     ********************************************************/
+    async function makeLargeQRCode(text) {
+      return new Promise(resolve => {
         new QRCode(hiddenQRContainer, {
           text: text,
           width: 1024,
           height: 1024,
           correctLevel: QRCode.CorrectLevel.H
         });
+        setTimeout(resolve, 300);
+      });
+    }
 
-        // 3) Wait a bit for the QR to render
-        await new Promise(r => setTimeout(r, 300));
-
-        // 4) The QR is rendered as <img> or <canvas>
-        let qrImg = hiddenQRContainer.querySelector("img");
-        if (!qrImg) {
-          const qrCanvas = hiddenQRContainer.querySelector("canvas");
-          if (qrCanvas) {
-            qrImg = convertCanvasToImg(qrCanvas);
-          }
-        }
-        if (!qrImg) {
-          throw new Error("Could not find a QR <img> or <canvas> after rendering.");
-        }
-
-        // Show it in preview (scaled down for the preview UI)
-        previewContainer.innerHTML = "";
-        qrImg.style.width = "128px"; 
-        qrImg.style.height = "128px";
-        previewContainer.appendChild(qrImg.cloneNode(true));
-
-        // Convert to dataURL (this is a 1024x1024 image under the hood)
-        const dataUrl = qrImg.src;
-
-        // 5) Build docDefinition for a 4×6 label
-        //    We'll place the code physically at 32px wide in the PDF
-        //    with 3 round dots (6px diam => radius=3) spaced 12px horizontally.
-        const docDefinition = {
-          pageSize: {
-            width: 288,  // 4" => 72 * 4
-            height: 432  // 6" => 72 * 6
-          },
-          pageMargins: [0, 0, 0, 0],
-          content: [
-            {
-              // The three 6px-diameter circles (radius=3)
-              // placed 5px above code’s top-left, spaced 12px horizontally
-              absolutePosition: { x: 83, y: 20 },
-              canvas: [
-                {
-                  type: 'ellipse',
-                  x: 0, y: 0,
-                  r1: 3, r2: 3,
-                  color: 'black', fillOpacity: 1
-                },
-                {
-                  type: 'ellipse',
-                  x: 12, y: 0,  // 12px from the first
-                  r1: 3, r2: 3,
-                  color: 'black', fillOpacity: 1
-                },
-                {
-                  type: 'ellipse',
-                  x: 24, y: 0,  // 12px from the second
-                  r1: 3, r2: 3,
-                  color: 'black', fillOpacity: 1
-                }
-              ]
-            },
-            {
-              // The “high-res” QR code image, scaled to 64px wide 
-              // in the final PDF
-              image: dataUrl,
-              width:64,
-              absolutePosition: { x: 80, y: 30 }
-            }
-          ]
-        };
-
-        // 6) Create & open PDF
-        const pdfDocGenerator = pdfMake.createPdf(docDefinition);
-        pdfDocGenerator.open();
-
-      } catch (err) {
-        console.error("Error generating or printing the high-res code:", err);
-        alert("Failed to generate or print. See console for details.");
-      }
-    });
-
-    // Helper: convert <canvas> to <img>
+    /********************************************************
+     * Convert a <canvas> to <img>
+     ********************************************************/
     function convertCanvasToImg(canvas) {
       const dataUrl = canvas.toDataURL("image/png");
       const imgEl = document.createElement("img");
