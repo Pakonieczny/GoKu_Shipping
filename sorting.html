@@ -345,23 +345,19 @@ const configIDs = [
 ];
 
 /********************************************************
- * DOMContentLoaded: attach button listeners
+ * DOMContentLoaded: Disable buttons & attach logic
  ********************************************************/
 document.addEventListener("DOMContentLoaded", function () {
   M.AutoInit();
 
-  // 1) Disable Match & Print, Back, Next from the start
+  // 1) Disable "Send & Match", "Match & Print", "Back", "Next" on app load
+  const sendMatchBtn = document.getElementById("sendMatchBtn");
   const matchPrintBtn = document.getElementById("matchPrintBtn");
-  matchPrintBtn.disabled = true;
-  matchPrintBtn.style.opacity = "0.5";
-
   const backBtn = document.getElementById("mpBackBtn");
-  backBtn.disabled = true;
-  backBtn.style.opacity = "0.5";
-
   const nextBtn = document.getElementById("mpNextBtn");
-  nextBtn.disabled = true;
-  nextBtn.style.opacity = "0.5";
+
+  disableSendMatch();
+  disableMatchPrintFlow();
 
   setTimeout(function () {
     loadPositions();
@@ -408,6 +404,17 @@ document.addEventListener("DOMContentLoaded", function () {
     }
   });
 
+  // Re-enable "Send & Match" after user images have been fully analyzed
+  // by the AI. e.g., after analyzeUserImagesViaOpenAI() finishes => call enableSendMatch()
+  // For instance, if you do something like:
+  //   analyzeUserImagesViaOpenAI().then(() => {
+  //     M.toast({html: "User Image Analysis Has Been Completed"});
+  //     enableSendMatch();
+  //   });
+
+  // Here, we just attach the sendMatchBtn logic that does "cropAllImages"
+  // etc., but remains disabled until user images are analyzed.
+  // Once analyzeUserImagesViaOpenAI() is done => we call enableSendMatch().
   document.getElementById("sendMatchBtn").addEventListener("click", async function () {
     try {
       console.log("Starting to crop images...");
@@ -421,63 +428,115 @@ document.addEventListener("DOMContentLoaded", function () {
       console.error("Error in combined Crop + Send & Match:", err);
     }
   });
+
+  // Attach the "Match & Print" button listener
+  matchPrintBtn.addEventListener("click", initMatchAndPrintFlow);
 });
 
+
 /********************************************************
- * If the user modifies a match in the "Successful Image Matches"
- * modal (e.g. removing or dropping a matched photo), then
- * after the user presses "Save", we call updateMatchPrintControls()
- * to re-check if orangered is present. If orangered => 
- * disable "Back"/"Next"/"Match & Print"; else enable them.
+ * If the user modifies a match in "Successful Image Matches"
+ * modal (removing a matched photo, etc.), we must:
+ *   i) disable Match & Print, Back, Next
+ *   ii) hide the Print button, 
+ *   iii) hide 3px blue border
+ *   until all orangered events cleared.
+ *
+ * We'll do that by calling "disableMatchPrintFlow()" plus
+ * removing any existing highlights, then re-check orangered
+ * after user corrects them. e.g.:
  ********************************************************/
-// For example, in your openMatchPreviewModal "saveMatchesBtn" logic:
 document.getElementById("saveMatchesBtn")?.addEventListener("click", () => {
-  // [ your existing code that merges arrays, updates userImagesArray, etc. ]
-  // ...
-  // Now re-check:
-  updateMatchPrintControls();
+  // after user presses Save in the “Successful Image Matches” modal:
+  console.log("User changed matches => disable Match & Print flow");
+  disableMatchPrintFlow();
+  removeAllBlueHighlights();
+  // The user must fix orangered => once it's cleared, we re-enable:
+  // For example, if we detect no orangered => enable it again:
+  const anyOrangered = detectAnyOrangered();
+  if (!anyOrangered) {
+    enableMatchPrintFlow();
+  }
 });
 
 
 /********************************************************
- * updateMatchPrintControls():
- * Disables or enables the Match & Print, Back, Next
- * depending on whether there's any orangered preview or text.
+ * sendMatchBtn utility: disable until user images are analyzed
  ********************************************************/
-function updateMatchPrintControls() {
+function disableSendMatch() {
+  const sendMatchBtn = document.getElementById("sendMatchBtn");
+  sendMatchBtn.disabled = true;
+  sendMatchBtn.style.opacity = "0.5";
+}
+
+function enableSendMatch() {
+  const sendMatchBtn = document.getElementById("sendMatchBtn");
+  sendMatchBtn.disabled = false;
+  sendMatchBtn.style.opacity = "1";
+}
+
+
+/********************************************************
+ * Match & Print flow (Back, Next, Match & Print)
+ * => enable/disable logic
+ ********************************************************/
+function disableMatchPrintFlow() {
   const matchPrintBtn = document.getElementById("matchPrintBtn");
+  matchPrintBtn.disabled = true;
+  matchPrintBtn.style.opacity = "0.5";
+
   const backBtn = document.getElementById("mpBackBtn");
+  backBtn.disabled = true;
+  backBtn.style.opacity = "0.5";
+
   const nextBtn = document.getElementById("mpNextBtn");
+  nextBtn.disabled = true;
+  nextBtn.style.opacity = "0.5";
 
-  const anyOrangered = detectAnyOrangered();
-  if (anyOrangered) {
-    // disable them all
-    matchPrintBtn.disabled = true;
-    matchPrintBtn.style.opacity = "0.5";
+  // Also remove/hide any existing Print button & blue borders
+  removeAllBlueHighlights();
+}
 
-    backBtn.disabled = true;
-    backBtn.style.opacity = "0.5";
+function enableMatchPrintFlow() {
+  const matchPrintBtn = document.getElementById("matchPrintBtn");
+  matchPrintBtn.disabled = false;
+  matchPrintBtn.style.opacity = "1";
 
-    nextBtn.disabled = true;
-    nextBtn.style.opacity = "0.5";
+  const backBtn = document.getElementById("mpBackBtn");
+  backBtn.disabled = false;
+  backBtn.style.opacity = "1";
 
-  } else {
-    // no orangered => user can do "Match & Print", "Back", "Next"
-    matchPrintBtn.disabled = false;
-    matchPrintBtn.style.opacity = "1";
-
-    backBtn.disabled = false;
-    backBtn.style.opacity = "1";
-
-    nextBtn.disabled = false;
-    nextBtn.style.opacity = "1";
-  }
+  const nextBtn = document.getElementById("mpNextBtn");
+  nextBtn.disabled = false;
+  nextBtn.style.opacity = "1";
 }
 
 /********************************************************
+ * removeAllBlueHighlights():
+ * Remove any 3px blue border & "Print" button overlay
+ * from the entire .preview-box set, revert them to default
+ ********************************************************/
+function removeAllBlueHighlights() {
+  const previewBoxes = document.querySelectorAll(".preview-box");
+  previewBoxes.forEach((pb, i) => {
+    pb.style.border = "1px solid #000"; // revert
+    const matchBox = document.getElementById("matchCell" + i);
+    if (matchBox) {
+      matchBox.style.fontWeight = "";
+    }
+  });
+  // If we have an existing "Print" button, remove it
+  const existingPrintBtn = document.querySelector("button.overlay-print-btn");
+  if (existingPrintBtn) {
+    existingPrintBtn.remove();
+  }
+}
+
+
+/********************************************************
  * detectAnyOrangered():
- * Return true if any .preview-box has a 3px orangered border,
- * or if any #matchCellX has orangered text color
+ * Returns true if any .preview-box is "3px solid orangered"
+ * or if any #matchCellX is style.color="orangered"
  ********************************************************/
 function detectAnyOrangered() {
   let foundOrangered = false;
@@ -501,14 +560,17 @@ function detectAnyOrangered() {
 
 
 /********************************************************
- * "Match & Print" main logic
+ * initMatchAndPrintFlow:
+ * Called when user clicks "Match & Print" (already enabled),
+ * we highlight each order in 3px blue and show 1 "Print" button
+ * per order, navigable via Back/Next
  ********************************************************/
-document.getElementById("matchPrintBtn").addEventListener("click", initMatchAndPrintFlow);
-
 function initMatchAndPrintFlow() {
   console.log("Match & Print pressed.");
 
-  // 1) We assume mpBackBtn & mpNextBtn exist in the HTML
+  // Also disable "Send & Match" while in Match & Print
+  disableSendMatch();
+
   const backBtn = document.getElementById("mpBackBtn");
   const nextBtn = document.getElementById("mpNextBtn");
 
@@ -516,7 +578,7 @@ function initMatchAndPrintFlow() {
   backBtn.onclick = null;
   nextBtn.onclick = null;
 
-  // Gather unique order numbers
+  // Gather unique orders from preview boxes
   const previewBoxes = document.querySelectorAll(".preview-box");
   const uniqueOrders = [];
   previewBoxes.forEach((pb, i) => {
@@ -528,6 +590,8 @@ function initMatchAndPrintFlow() {
 
   if (!uniqueOrders.length) {
     M.toast({ html: "No orders found to highlight." });
+    // Re-enable "Send & Match" if no orders
+    enableSendMatch();
     return;
   }
 
@@ -551,28 +615,28 @@ function initMatchAndPrintFlow() {
   function highlightOrder(orderNum) {
     removeHighlightsAndPrintButton();
 
-    let foundFirstItem = false;
+    let foundFirst = false;
     previewBoxes.forEach((pb, i) => {
       const orderCell = document.getElementById("orderCell" + i);
       if (orderCell && orderCell.value === orderNum) {
         pb.style.border = "3px solid blue";
-
         const matchBox = document.getElementById("matchCell" + i);
         if (matchBox) {
           matchBox.style.fontWeight = "bold";
         }
-        if (!foundFirstItem) {
-          foundFirstItem = true;
-          currentPrintBtn = createPrintButtonOverBox(pb, i);
+        if (!foundFirst) {
+          foundFirst = true;
+          currentPrintBtn = createPrintButton(pb, i);
         }
       }
     });
   }
 
-  function createPrintButtonOverBox(previewBox, cellIndex) {
+  function createPrintButton(previewBox, cellIndex) {
     const rect = previewBox.getBoundingClientRect();
     const btn = document.createElement("button");
     btn.textContent = "Print";
+    btn.classList.add("overlay-print-btn"); // so we can remove it easily
     btn.style.position = "absolute";
     btn.style.width = "50px";
     btn.style.height = "25px";
@@ -581,7 +645,7 @@ function initMatchAndPrintFlow() {
     btn.style.border = "none";
     btn.style.left = (rect.left + 30) + "px";
     btn.style.top = (rect.top + 40) + "px";
-    btn.style.zIndex = 9999;
+    btn.style.zIndex = "9999";
     btn.style.cursor = "pointer";
 
     btn.addEventListener("click", () => openIframePrinterForListing(cellIndex));
@@ -589,23 +653,20 @@ function initMatchAndPrintFlow() {
     return btn;
   }
 
-  // highlight first order
   highlightOrder(uniqueOrders[currentIndex]);
 
-  // "Next" logic
   nextBtn.onclick = () => {
     currentIndex++;
     if (currentIndex >= uniqueOrders.length) {
       M.toast({ html: "Congrats, You're Done!" });
       removeHighlightsAndPrintButton();
-      // Done => re-check orangered if user changes anything else
-      updateMatchPrintControls();
+      // Done => re-enable "Send & Match" after finishing
+      enableSendMatch();
       return;
     }
     highlightOrder(uniqueOrders[currentIndex]);
   };
 
-  // "Back" logic: do not allow going beyond 0
   backBtn.onclick = () => {
     if (currentIndex <= 0) {
       M.toast({ html: "Already at first order." });
@@ -615,6 +676,7 @@ function initMatchAndPrintFlow() {
     highlightOrder(uniqueOrders[currentIndex]);
   };
 }
+
 
 /********************************************************
  * openIframePrinterForListing(cellIndex)
@@ -635,7 +697,7 @@ function openIframePrinterForListing(cellIndex) {
 
   localStorage.setItem("qrPrintSingle", JSON.stringify(item));
 
-  // show iframe overlay
+  // show the iframe overlay
   const overlay = document.getElementById("qrPrinterOverlay");
   const iframe = document.getElementById("qrPrinterIframe");
   overlay.style.display = "flex";
