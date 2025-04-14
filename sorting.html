@@ -191,6 +191,9 @@
   <!-- Main Buttons -->
   <button id="connectEtsyBtn" class="btn waves-effect waves-light">Connect to Etsy</button>
   <button id="openConfigBtn" class="btn waves-effect waves-light">Open Config</button>
+  <!-- In your HTML, near your main buttons, add these two so they can be moved in Config -->
+  <button id="mpBackBtn" class="btn waves-effect waves-light">Back</button>
+  <button id="mpNextBtn" class="btn waves-effect waves-light">Next</button>
   <button id="sendMatchBtn" class="btn waves-effect waves-light">Send & Match</button>
   <!-- The new "Match & Print" button, 10px below "Send & Match" -->
   <button id="matchPrintBtn" class="btn waves-effect waves-light" style="top: 270px;">
@@ -328,6 +331,8 @@ const configIDs = [
   "connectEtsyBtn",
   "testOpenAIBtn",
   "openConfigBtn",
+  "mpBackBtn",
+  "mpNextBtn",
   "etsyOrderNumber",
   "photoGridContainer",
   "unmatchedContainer",
@@ -410,42 +415,20 @@ document.addEventListener("DOMContentLoaded", function () {
 });
 
 // 1) "Match & Print" event
-// 1) "Match & Print" event
 document.getElementById("matchPrintBtn").addEventListener("click", initMatchAndPrintFlow);
 
 function initMatchAndPrintFlow() {
   console.log("Match & Print pressed.");
 
-  // Remove any old back/next if they exist
-  let oldBack = document.getElementById("mpBackBtn");
-  let oldNext = document.getElementById("mpNextBtn");
-  if (oldBack) oldBack.remove();
-  if (oldNext) oldNext.remove();
+  // 1) We assume mpBackBtn & mpNextBtn exist in the HTML
+  const backBtn = document.getElementById("mpBackBtn");
+  const nextBtn = document.getElementById("mpNextBtn");
 
-  const matchPrintBtn = document.getElementById("matchPrintBtn");
-  const btnRect = matchPrintBtn.getBoundingClientRect();
-  const parent = matchPrintBtn.parentNode;
+  // Clear any leftover onclick
+  backBtn.onclick = null;
+  nextBtn.onclick = null;
 
-  const backBtn = document.createElement("button");
-  backBtn.id = "mpBackBtn";
-  backBtn.textContent = "Back";
-  backBtn.classList.add("btn");
-  backBtn.style.position = "absolute";
-  backBtn.style.left = (btnRect.left) + "px";
-  backBtn.style.top = (btnRect.bottom + 10) + "px";
-  backBtn.style.width = "70px";
-  parent.appendChild(backBtn);
-
-  const nextBtn = document.createElement("button");
-  nextBtn.id = "mpNextBtn";
-  nextBtn.textContent = "Next";
-  nextBtn.classList.add("btn");
-  nextBtn.style.position = "absolute";
-  nextBtn.style.left = (btnRect.left + 80) + "px";
-  nextBtn.style.top = (btnRect.bottom + 10) + "px";
-  nextBtn.style.width = "70px";
-  parent.appendChild(nextBtn);
-
+  // Gather unique order numbers from .preview-box
   const previewBoxes = document.querySelectorAll(".preview-box");
   const uniqueOrders = [];
   previewBoxes.forEach((pb, i) => {
@@ -461,78 +444,107 @@ function initMatchAndPrintFlow() {
   }
 
   let currentIndex = 0;
-  let currentPrintButtons = []; // to track newly generated "Print" buttons
 
-  function removeHighlightsAndPrintButtons() {
-    // Remove 3px borders
-    previewBoxes.forEach((pb) => {
-      pb.style.border = "1px solid #000";
+  // We'll track the single "Print" button to remove it on Next/Back
+  let currentPrintBtn = null;
+
+  function removeHighlightsAndPrintButton() {
+    // Remove old 3px borders
+    previewBoxes.forEach((pb, i) => {
+      pb.style.border = "1px solid #000"; // revert
+      // un-bold the 4th read-only text (#matchCell)
+      const matchBox = document.getElementById("matchCell" + i);
+      if (matchBox) {
+        matchBox.style.fontWeight = "";
+      }
     });
-    // Remove "Print" overlay buttons
-    currentPrintButtons.forEach(btn => btn.remove());
-    currentPrintButtons = [];
+    // Remove existing "Print" button
+    if (currentPrintBtn) {
+      currentPrintBtn.remove();
+      currentPrintBtn = null;
+    }
   }
 
   function highlightOrder(orderNum) {
-    // Clear old
-    removeHighlightsAndPrintButtons();
+    // Reset old highlights/bold text & remove old Print
+    removeHighlightsAndPrintButton();
 
-    // For each matching box => 3px border + "Print" button overlay
+    // We'll place a Print button only on the first item of the order
+    let foundFirstItem = false;
+
+    // For each matching box => 3px border, bold text,
+    // and if it's the first item => place "Print" button
     previewBoxes.forEach((pb, i) => {
       const orderCell = document.getElementById("orderCell" + i);
       if (orderCell && orderCell.value === orderNum) {
+        // 3px blue border
         pb.style.border = "3px solid blue";
 
-        // Create the “Print” button overlay
-        const rect = pb.getBoundingClientRect();
-        const printBtn = document.createElement("button");
-        printBtn.textContent = "Print";
-        printBtn.style.position = "absolute";
-        printBtn.style.width = "50px";
-        printBtn.style.height = "25px";
-        printBtn.style.background = "rgba(0,0,0,0.5)";
-        printBtn.style.color = "#fff";
-        printBtn.style.border = "none";
-        printBtn.style.left = (rect.left + 30) + "px";
-        printBtn.style.top = (rect.top + 40) + "px";
-        printBtn.style.zIndex = 9999;
-        printBtn.style.cursor = "pointer";
+        // bold the 4th read-only text => #matchCell
+        const matchBox = document.getElementById("matchCell" + i);
+        if (matchBox) {
+          matchBox.style.fontWeight = "bold";
+        }
 
-        // On click => open the QR printer for this listing
-        printBtn.addEventListener("click", () => openIframePrinterForListing(i));
-        document.body.appendChild(printBtn);
-        currentPrintButtons.push(printBtn);
+        // If we haven't placed the Print button, place it on this item
+        if (!foundFirstItem) {
+          foundFirstItem = true;
+          currentPrintBtn = createPrintButtonOverBox(pb, i);
+        }
       }
     });
   }
 
+  // Creates and returns a single "Print" button overlay
+  function createPrintButtonOverBox(previewBox, cellIndex) {
+    const rect = previewBox.getBoundingClientRect();
+    const btn = document.createElement("button");
+    btn.textContent = "Print";
+    btn.style.position = "absolute";
+    btn.style.width = "50px";
+    btn.style.height = "25px";
+    btn.style.background = "rgba(0,0,0,0.5)";
+    btn.style.color = "#fff";
+    btn.style.border = "none";
+    btn.style.left = (rect.left + 30) + "px";
+    btn.style.top = (rect.top + 40) + "px";
+    btn.style.zIndex = 9999;
+    btn.style.cursor = "pointer";
+
+    btn.addEventListener("click", () => openIframePrinterForListing(cellIndex));
+    document.body.appendChild(btn);
+    return btn;
+  }
+
+  // highlight the first order initially
   highlightOrder(uniqueOrders[currentIndex]);
 
-  nextBtn.addEventListener("click", () => {
+  // "Next" logic
+  nextBtn.onclick = () => {
     currentIndex++;
     if (currentIndex >= uniqueOrders.length) {
       M.toast({ html: "Congrats, You're Done!" });
-      removeHighlightsAndPrintButtons();
+      removeHighlightsAndPrintButton();
       return;
     }
     highlightOrder(uniqueOrders[currentIndex]);
-  });
+  };
 
-  backBtn.addEventListener("click", () => {
+  // "Back" logic
+  backBtn.onclick = () => {
     if (currentIndex <= 0) {
       M.toast({ html: "Already at first order." });
       return;
     }
     currentIndex--;
     highlightOrder(uniqueOrders[currentIndex]);
-  });
+  };
 }
 
 /********************************************************
  * openIframePrinterForListing(cellIndex):
  * For the listing associated with the given preview cell,
- * store the listing in localStorage and show the QR Printer
- * inside an iframe overlay (no new tab).
+ * store the listing in localStorage, open QR Printer
  ********************************************************/
 function openIframePrinterForListing(cellIndex) {
   console.log("Opening QR Printer for cell:", cellIndex);
@@ -548,16 +560,14 @@ function openIframePrinterForListing(cellIndex) {
     return;
   }
 
-  // store single listing in localStorage
   localStorage.setItem("qrPrintSingle", JSON.stringify(item));
 
-  // show the iframe overlay
+  // show iframe overlay
   const overlay = document.getElementById("qrPrinterOverlay");
   const iframe = document.getElementById("qrPrinterIframe");
   overlay.style.display = "flex";
   iframe.src = "QR Printer.html?single=1";
 
-  // close button
   const closeBtn = document.getElementById("qrPrinterCloseBtn");
   closeBtn.onclick = () => {
     overlay.style.display = "none";
