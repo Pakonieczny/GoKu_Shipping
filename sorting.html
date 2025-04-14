@@ -279,6 +279,7 @@ let croppedImagesArray = [];
 let userImagesArray = [];
 let cellMatches = {};
 let partialMatches = {};
+let matchPrintFlowInProgress = false;
 
 /********************************************************
  * Etsy Auth, Code Challenge, configIDs
@@ -353,6 +354,7 @@ document.addEventListener("DOMContentLoaded", function () {
   // Disable "Send & Match", "Match & Print", "Back", "Next" on app load
   disableSendMatch();
   disableMatchPrintFlow();
+  disableBackNext(); // so the user can't press them until they press “Match & Print.”
 
   setTimeout(function () {
     loadPositions();
@@ -542,12 +544,28 @@ document.getElementById("matchPrintBtn").addEventListener("click", initMatchAndP
 function initMatchAndPrintFlow() {
   console.log("Match & Print pressed.");
 
+  // (NEW) If already in progress, reset entire process to cell0
+  if (matchPrintFlowInProgress) {
+    console.log("Match & Print flow is already in progress => resetting progress to cell0");
+    currentIndex = 0;
+    removeHighlightsAndPrintButton();
+    highlightOrder(uniqueOrders[currentIndex]);
+    return; // do not re-init anything else
+  }
+
+  // Mark the flow as active
+  matchPrintFlowInProgress = true;
+
   // Also disable "Send & Match" while in Match & Print
   disableSendMatch();
+
+  // (NEW) Because user just pressed "Match & Print," we now allow Next & Back
+  enableBackNext();
 
   const backBtn = document.getElementById("mpBackBtn");
   const nextBtn = document.getElementById("mpNextBtn");
 
+  // Nullify any old onclick handlers
   backBtn.onclick = null;
   nextBtn.onclick = null;
 
@@ -567,6 +585,7 @@ function initMatchAndPrintFlow() {
     return;
   }
 
+  // We track which "order" index we're on
   let currentIndex = 0;
   let currentPrintBtn = null;
 
@@ -625,9 +644,10 @@ function initMatchAndPrintFlow() {
     return btn;
   }
 
-  // highlight first order
+  // Highlight the first order
   highlightOrder(uniqueOrders[currentIndex]);
 
+  // “Next” button logic
   nextBtn.onclick = () => {
     currentIndex++;
     if (currentIndex >= uniqueOrders.length) {
@@ -639,6 +659,7 @@ function initMatchAndPrintFlow() {
     highlightOrder(uniqueOrders[currentIndex]);
   };
 
+  // “Back” button logic
   backBtn.onclick = () => {
     if (currentIndex <= 0) {
       M.toast({ html: "Already at first order." });
