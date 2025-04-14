@@ -344,13 +344,14 @@ const configIDs = [
   "matchPrintBtn"
 ];
 
-    /********************************************************
-     * DOMContentLoaded: attach button listeners
-     ********************************************************/
+/********************************************************
+ * DOMContentLoaded: attach button listeners
+ ********************************************************/
 document.addEventListener("DOMContentLoaded", function () {
   M.AutoInit();
 
-    const matchPrintBtn = document.getElementById("matchPrintBtn");
+  // Disable "Match & Print" from the start
+  const matchPrintBtn = document.getElementById("matchPrintBtn");
   matchPrintBtn.disabled = true;
   matchPrintBtn.style.opacity = "0.5";
 
