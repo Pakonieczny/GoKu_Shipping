@@ -404,17 +404,13 @@ document.addEventListener("DOMContentLoaded", function () {
     }
   });
 
-  // Re-enable "Send & Match" after user images have been fully analyzed
-  // by the AI. e.g., after analyzeUserImagesViaOpenAI() finishes => call enableSendMatch()
-  // For instance, if you do something like:
-  //   analyzeUserImagesViaOpenAI().then(() => {
-  //     M.toast({html: "User Image Analysis Has Been Completed"});
-  //     enableSendMatch();
-  //   });
+  // Example: Once user image analysis is completed, re-enable Send & Match
+  // This might be called after some async AI analysis function
+  analyzeUserImagesViaOpenAI().then(() => {
+    M.toast({ html: "User Image Analysis Has Been Completed" });
+    enableSendMatch(); // <-- re-engage the button now that analysis is done
+  });
 
-  // Here, we just attach the sendMatchBtn logic that does "cropAllImages"
-  // etc., but remains disabled until user images are analyzed.
-  // Once analyzeUserImagesViaOpenAI() is done => we call enableSendMatch().
   document.getElementById("sendMatchBtn").addEventListener("click", async function () {
     try {
       console.log("Starting to crop images...");
@@ -428,11 +424,7 @@ document.addEventListener("DOMContentLoaded", function () {
       console.error("Error in combined Crop + Send & Match:", err);
     }
   });
-
-  // Attach the "Match & Print" button listener
-  matchPrintBtn.addEventListener("click", initMatchAndPrintFlow);
 });
-
 
 /********************************************************
  * If the user modifies a match in "Successful Image Matches"
@@ -441,24 +433,18 @@ document.addEventListener("DOMContentLoaded", function () {
  *   ii) hide the Print button, 
  *   iii) hide 3px blue border
  *   until all orangered events cleared.
- *
- * We'll do that by calling "disableMatchPrintFlow()" plus
- * removing any existing highlights, then re-check orangered
- * after user corrects them. e.g.:
  ********************************************************/
 document.getElementById("saveMatchesBtn")?.addEventListener("click", () => {
   // after user presses Save in the “Successful Image Matches” modal:
   console.log("User changed matches => disable Match & Print flow");
   disableMatchPrintFlow();
   removeAllBlueHighlights();
-  // The user must fix orangered => once it's cleared, we re-enable:
-  // For example, if we detect no orangered => enable it again:
+  // The user must fix orangered => once it's cleared, we re-enable if no orangered
   const anyOrangered = detectAnyOrangered();
   if (!anyOrangered) {
     enableMatchPrintFlow();
   }
 });
-
 
 /********************************************************
  * sendMatchBtn utility: disable until user images are analyzed
@@ -474,7 +460,6 @@ function enableSendMatch() {
   sendMatchBtn.disabled = false;
   sendMatchBtn.style.opacity = "1";
 }
-
 
 /********************************************************
  * Match & Print flow (Back, Next, Match & Print)
@@ -532,11 +517,10 @@ function removeAllBlueHighlights() {
   }
 }
 
-
 /********************************************************
  * detectAnyOrangered():
- * Returns true if any .preview-box is "3px solid orangered"
- * or if any #matchCellX is style.color="orangered"
+ * Return true if any .preview-box border=3px orangered
+ * or if #matchCellX has style.color="orangered"
  ********************************************************/
 function detectAnyOrangered() {
   let foundOrangered = false;
@@ -560,11 +544,10 @@ function detectAnyOrangered() {
 
 
 /********************************************************
- * initMatchAndPrintFlow:
- * Called when user clicks "Match & Print" (already enabled),
- * we highlight each order in 3px blue and show 1 "Print" button
- * per order, navigable via Back/Next
+ * "Match & Print" main logic
  ********************************************************/
+document.getElementById("matchPrintBtn").addEventListener("click", initMatchAndPrintFlow);
+
 function initMatchAndPrintFlow() {
   console.log("Match & Print pressed.");
 
@@ -578,7 +561,7 @@ function initMatchAndPrintFlow() {
   backBtn.onclick = null;
   nextBtn.onclick = null;
 
-  // Gather unique orders from preview boxes
+  // Gather unique order numbers
   const previewBoxes = document.querySelectorAll(".preview-box");
   const uniqueOrders = [];
   previewBoxes.forEach((pb, i) => {
@@ -590,7 +573,6 @@ function initMatchAndPrintFlow() {
 
   if (!uniqueOrders.length) {
     M.toast({ html: "No orders found to highlight." });
-    // Re-enable "Send & Match" if no orders
     enableSendMatch();
     return;
   }
@@ -660,8 +642,7 @@ function initMatchAndPrintFlow() {
     if (currentIndex >= uniqueOrders.length) {
       M.toast({ html: "Congrats, You're Done!" });
       removeHighlightsAndPrintButton();
-      // Done => re-enable "Send & Match" after finishing
-      enableSendMatch();
+      enableSendMatch(); // done => re-enable Send & Match
       return;
     }
     highlightOrder(uniqueOrders[currentIndex]);
@@ -676,7 +657,6 @@ function initMatchAndPrintFlow() {
     highlightOrder(uniqueOrders[currentIndex]);
   };
 }
-
 
 /********************************************************
  * openIframePrinterForListing(cellIndex)
