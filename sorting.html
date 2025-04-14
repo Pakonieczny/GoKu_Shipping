@@ -1325,7 +1325,7 @@ async function compareImages(userImage, croppedGridImage, cellIndex, userImageNa
  * sendAndMatch with metal filter logic
  ********************************************************/
 async function sendAndMatch() {
-  // 1) Disable "Match & Print" at the start
+  // (A) Disable "Match & Print" at the start
   const matchPrintBtn = document.getElementById("matchPrintBtn");
   matchPrintBtn.disabled = true;
   matchPrintBtn.style.opacity = "0.5"; // greyed out
@@ -1600,7 +1600,6 @@ async function sendAndMatch() {
   M.toast({ html: "Finished matching passes." });
 
   // (C) Re-enable "Match & Print" only if no orangered remains
-  const matchPrintBtn = document.getElementById("matchPrintBtn");
   const anyOrangered = detectAnyOrangered();
   if (!anyOrangered) {
     matchPrintBtn.disabled = false;
