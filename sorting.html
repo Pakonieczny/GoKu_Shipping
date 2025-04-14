@@ -452,6 +452,7 @@ function enableSendMatch() {
   btn.style.opacity = "1";
 }
 
+
 /********************************************************
  * Disabling / Enabling “Match & Print” Flow
  * (i.e. Match & Print button, plus Back and Next)
@@ -461,8 +462,13 @@ function disableMatchPrintFlow() {
   matchPrintBtn.disabled = true;
   matchPrintBtn.style.opacity = "0.5";
 
-  // Also disable Back and Next here
-  disableBackNext();
+  const backBtn = document.getElementById("mpBackBtn");
+  backBtn.disabled = true;
+  backBtn.style.opacity = "0.5";
+
+  const nextBtn = document.getElementById("mpNextBtn");
+  nextBtn.disabled = true;
+  nextBtn.style.opacity = "0.5";
 
   removeAllBlueHighlights();
 }
@@ -472,29 +478,13 @@ function enableMatchPrintFlow() {
   matchPrintBtn.disabled = false;
   matchPrintBtn.style.opacity = "1";
 
-  // Also enable Back and Next here
-  enableBackNext();
-}
-
-/********************************************************
- * Back/Next Enable/Disable (NEWLY ADDED)
- ********************************************************/
-function enableBackNext() {
   const backBtn = document.getElementById("mpBackBtn");
-  const nextBtn = document.getElementById("mpNextBtn");
   backBtn.disabled = false;
   backBtn.style.opacity = "1";
+
+  const nextBtn = document.getElementById("mpNextBtn");
   nextBtn.disabled = false;
   nextBtn.style.opacity = "1";
-}
-
-function disableBackNext() {
-  const backBtn = document.getElementById("mpBackBtn");
-  const nextBtn = document.getElementById("mpNextBtn");
-  backBtn.disabled = true;
-  backBtn.style.opacity = "0.5";
-  nextBtn.disabled = true;
-  nextBtn.style.opacity = "0.5";
 }
 
 
@@ -1014,16 +1004,9 @@ async function analyzeUserImagesViaOpenAI() {
 
   // Save final updates to local storage
   localStorage.setItem("userImagesArray", JSON.stringify(userImagesArray));
-
-  // Show a toast message
   M.toast({ html: "User Image Analysis Has Been Completed" });
-
-  // IMPORTANT: re-engage "Send & Match"
-  enableSendMatch();
-
-  // ALSO re-engage Back & Next (NEWLY ADDED)
-  enableBackNext();
 }
+
     /********************************************************
      * fillPreviewBoxes, attachPreviewBoxListeners, etc.
      ********************************************************/
@@ -2133,73 +2116,52 @@ function openMatchPreviewModal(cellIndex) {
   }
 
   function refreshSectionsLocal() {
-  matchedSection.innerHTML = "";
-  unmatchedSection.innerHTML = "";
+    matchedSection.innerHTML = "";
+    unmatchedSection.innerHTML = "";
 
-  // Rebuild matched
-  matchedImages.forEach((mImg, i) => {
-    const box = document.createElement("div");
-    box.style.width = "100px";
-    box.style.height = "100px";
-    box.style.border = "1px solid #000";
-    box.style.display = "flex";
-    box.style.alignItems = "center";
-    box.style.justifyContent = "center";
-    box.style.overflow = "hidden";
-    box.style.position = "relative";
-    box.dataset.type = "matched";
-    box.dataset.index = i;
+    // Rebuild matched
+    matchedImages.forEach((mImg, i) => {
+      const box = document.createElement("div");
+      box.style.width = "100px";
+      box.style.height = "100px";
+      box.style.border = "1px solid #000";
+      box.style.display = "flex";
+      box.style.alignItems = "center";
+      box.style.justifyContent = "center";
+      box.style.overflow = "hidden";
+      box.style.position = "relative";
+      box.dataset.type = "matched";
+      box.dataset.index = i;
 
-    if (!mImg.userImage) {
-      box.innerHTML = "No Match Found";
-      box.style.fontWeight = "bold";
-      makeDropTarget(box);
+      if (!mImg.userImage) {
+        box.innerHTML = "No Match Found";
+        box.style.fontWeight = "bold";
+        makeDropTarget(box);
+      } else {
+        const img = document.createElement("img");
+        img.src = mImg.userImage;
+        img.alt = mImg.userName;
+        img.style.width = "100%";
+        img.style.height = "100%";
+        img.style.objectFit = "cover";
+
+        makeDraggable(box);
+        makeDropTarget(box);
+        box.appendChild(img);
+      }
+      matchedSection.appendChild(box);
+    });
+
+    // If matched box is currently empty => set border orangered 3px
+    // otherwise black 1px
+    if (!matchedImages[0].userImage) {
+      setEtsyBorder(cellIndex, "3px", "orangered");
     } else {
-      const img = document.createElement("img");
-      img.src = mImg.userImage;
-      img.alt = mImg.userName;
-      img.style.width = "100%";
-      img.style.height = "100%";
-      img.style.objectFit = "cover";
-
-      makeDraggable(box);
-      makeDropTarget(box);
-      box.appendChild(img);
+      setEtsyBorder(cellIndex, "1px", "black");
     }
-    matchedSection.appendChild(box);
-  });
 
-  // If matched box is currently empty => set border orangered 3px
-  // otherwise black 1px
-  if (!matchedImages[0].userImage) {
-    setEtsyBorder(cellIndex, "3px", "orangered");
-  } else {
-    setEtsyBorder(cellIndex, "1px", "black");
-  }
-
-  // Rebuild unmatched
-  if (unmatchedImages.length === 0) {
-    const box = document.createElement("div");
-    box.style.width = "66px";
-    box.style.height = "66px";
-    box.style.border = "1px solid #000";
-    box.style.display = "flex";
-    box.style.alignItems = "center";
-    box.style.justifyContent = "center";
-    box.style.overflow = "hidden";
-    box.style.position = "relative";
-
-    box.style.fontWeight = "bold";
-    box.style.fontSize = "0.7em";
-
-    box.dataset.type = "unmatchedEmpty";
-    box.innerHTML = "No Unmatched Photos";
-
-    makeDropTarget(box);
-    unmatchedSection.appendChild(box);
-
-  } else {
-    unmatchedImages.forEach((uImg, i) => {
+    // Rebuild unmatched
+    if (unmatchedImages.length === 0) {
       const box = document.createElement("div");
       box.style.width = "66px";
       box.style.height = "66px";
@@ -2209,30 +2171,60 @@ function openMatchPreviewModal(cellIndex) {
       box.style.justifyContent = "center";
       box.style.overflow = "hidden";
       box.style.position = "relative";
-      box.dataset.type = "unmatched";
-      box.dataset.index = i;
 
-      const img = document.createElement("img");
-      img.src = uImg.data;
-      img.alt = uImg.name;
-      img.style.width = "100%";
-      img.style.height = "100%";
-      img.style.objectFit = "cover";
+      box.style.fontWeight = "bold";
+      box.style.fontSize = "0.7em";
 
-      makeDraggable(box);
+      box.dataset.type = "unmatchedEmpty";
+      box.innerHTML = "No Unmatched Photos";
+
       makeDropTarget(box);
-      box.appendChild(img);
       unmatchedSection.appendChild(box);
-    });
+
+    } else {
+      unmatchedImages.forEach((uImg, i) => {
+        const box = document.createElement("div");
+        box.style.width = "66px";
+        box.style.height = "66px";
+        box.style.border = "1px solid #000";
+        box.style.display = "flex";
+        box.style.alignItems = "center";
+        box.style.justifyContent = "center";
+        box.style.overflow = "hidden";
+        box.style.position = "relative";
+        box.dataset.type = "unmatched";
+        box.dataset.index = i;
+
+        const img = document.createElement("img");
+        img.src = uImg.data;
+        img.alt = uImg.name;
+        img.style.width = "100%";
+        img.style.height = "100%";
+        img.style.objectFit = "cover";
+
+        makeDraggable(box);
+        makeDropTarget(box);
+        box.appendChild(img);
+        unmatchedSection.appendChild(box);
+      });
+    }
   }
 
-  // (NEW) After reconstructing matched/unmatched, check for orangered
-  const anyOrangered = detectAnyOrangered();
-  if (!anyOrangered) {
-    enableMatchPrintFlow();   // re-enable “Match & Print”, “Back”, and “Next”
-  } else {
-    disableMatchPrintFlow();  // disable them if orangered remains
+  // Utility: set the Etsy-derived preview box border
+  function setEtsyBorder(cellIdx, thickness, color) {
+    const previewBox = document.getElementById("previewCell" + cellIdx);
+    if (previewBox) {
+      previewBox.style.border = thickness + " solid " + color;
+    }
   }
+
+  // Another Utility
+  function stripExtension(fileName) {
+    return fileName.replace(/\.\w+$/, "");
+  }
+
+  // Finally, ensure immediate drag-and-drop by calling refreshSectionsLocal
+  refreshSectionsLocal();
 }
 
 /********************************************************
@@ -2321,55 +2313,56 @@ function createUnmatchedUserImagesPreview() {
 
   </script>
 
-<!-- Iframe Overlay for QR Printer -->
-<div
-  id="qrPrinterOverlay"
-  style="
-    display: none;
-    position: fixed;
-    left: 0;
-    top: 0;
-    width: 100vw;
-    height: 100vh;
-    background: rgba(0, 0, 0, 0.4);
-    z-index: 9999;
-    align-items: center;
-    justify-content: center;
-  "
->
+  <!-- Iframe Overlay for QR Printer -->
   <div
+    id="qrPrinterOverlay"
     style="
-      position: relative;
-      width: 700px;
-      height: 600px;
-      background: #fff;
-      margin: auto;
+      display: none;
+      position: fixed;
+      left: 0;
+      top: 0;
+      width: 100vw;
+      height: 100vh;
+      background: rgba(0, 0, 0, 0.4);
+      z-index: 9999;
+      align-items: center;
+      justify-content: center;
     "
   >
-    <button
-      id="qrPrinterCloseBtn"
+    <div
       style="
-        position: absolute;
-        top: 5px;
-        right: 5px;
-        width: 60px;
-        height: 30px;
-        background: #ccc;
+        position: relative;
+        width: 700px;
+        height: 600px;
+        background: #fff;
+        margin: auto;
       "
     >
-      Close
-    </button>
-    <iframe
-      id="qrPrinterIframe"
-      src=""
-      style="
-        width: 100%;
-        height: 100%;
-        border: none;
-      "
-    ></iframe>
+      <button
+        id="qrPrinterCloseBtn"
+        style="
+          position: absolute;
+          top: 5px;
+          right: 5px;
+          width: 60px;
+          height: 30px;
+          background: #ccc;
+        "
+      >
+        Close
+      </button>
+      <iframe
+        id="qrPrinterIframe"
+        src=""
+        style="
+          width: 100%;
+          height: 100%;
+          border: none;
+        "
+      ></iframe>
+    </div>
   </div>
-</div>
-
+</body>
+</html>
 </body>
 </html>
