@@ -419,6 +419,8 @@ function initMatchAndPrintFlow() {
   if (oldNext) oldNext.remove();
 
   const matchPrintBtn = document.getElementById("matchPrintBtn");
+  matchPrintBtn.disabled = true;
+  matchPrintBtn.style.opacity = "0.8";
   const btnRect = matchPrintBtn.getBoundingClientRect();
   const parent = matchPrintBtn.parentNode;
 
@@ -2193,7 +2195,7 @@ function createUnmatchedUserImagesPreview() {
     }
 
   </script>
-  
+
   <!-- Iframe Overlay for QR Printer -->
   <div
     id="qrPrinterOverlay"
