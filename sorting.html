@@ -459,14 +459,15 @@ function enableSendMatch() {
  ********************************************************/
 function disableMatchPrintFlow() {
   const matchPrintBtn = document.getElementById("matchPrintBtn");
+  const backBtn = document.getElementById("mpBackBtn");
+  const nextBtn = document.getElementById("mpNextBtn");
+
   matchPrintBtn.disabled = true;
   matchPrintBtn.style.opacity = "0.5";
 
-  const backBtn = document.getElementById("mpBackBtn");
   backBtn.disabled = true;
   backBtn.style.opacity = "0.5";
 
-  const nextBtn = document.getElementById("mpNextBtn");
   nextBtn.disabled = true;
   nextBtn.style.opacity = "0.5";
 
@@ -475,14 +476,15 @@ function disableMatchPrintFlow() {
 
 function enableMatchPrintFlow() {
   const matchPrintBtn = document.getElementById("matchPrintBtn");
+  const backBtn = document.getElementById("mpBackBtn");
+  const nextBtn = document.getElementById("mpNextBtn");
+
   matchPrintBtn.disabled = false;
   matchPrintBtn.style.opacity = "1";
 
-  const backBtn = document.getElementById("mpBackBtn");
   backBtn.disabled = false;
   backBtn.style.opacity = "1";
 
-  const nextBtn = document.getElementById("mpNextBtn");
   nextBtn.disabled = false;
   nextBtn.style.opacity = "1";
 }
