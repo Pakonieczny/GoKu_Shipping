@@ -1718,13 +1718,11 @@ async function sendAndMatch() {
 
   // (C) Re-enable "Match & Print" ONLY if detectAnyOrangered() returns false
   const anyOrangered = detectAnyOrangered();
-  if (!anyOrangered) {
-    matchPrintBtn.disabled = false;
-    matchPrintBtn.style.opacity = "1";
-  } else {
-    matchPrintBtn.disabled = true;
-    matchPrintBtn.style.opacity = "0.5";
-  }
+if (!anyOrangered) {
+  enableMatchPrintFlow(); // this function sets all 3 buttons to enabled
+} else {
+  disableMatchPrintFlow(); // this function sets all 3 buttons to disabled
+}
 }
 
 /********************************************************
