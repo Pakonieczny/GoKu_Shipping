@@ -404,14 +404,14 @@ document.addEventListener("DOMContentLoaded", function () {
     }
   });
 
-  // The "Send & Match" button remains disabled until the user
-  // has completed "User Image Analysis" (e.g. via some other function).
-  // Example usage in your code:
-  //    analyzeUserImagesViaOpenAI().then(() => {
-  //      M.toast({ html: "User Image Analysis Has Been Completed" });
-  //      enableSendMatch(); // <-- call once analysis is done
-  //    });
+  // EXAMPLE: The user image analysis completes => re-enable "Send & Match"
+  // Make sure this is called once your actual analysis function completes
+  analyzeUserImagesViaOpenAI().then(() => {
+    M.toast({ html: "User Image Analysis Has Been Completed" });
+    enableSendMatch(); // <--- re-engage "Send & Match"
+  });
 
+  // The “Send & Match” button remains disabled until enableSendMatch() is called
   document.getElementById("sendMatchBtn").addEventListener("click", async function () {
     try {
       console.log("Starting to crop images...");
@@ -427,10 +427,11 @@ document.addEventListener("DOMContentLoaded", function () {
   });
 });
 
+
 /********************************************************
  * If the user modifies a match in "Successful Image Matches"
- * modal (e.g. removing a matched photo):
- *   i) disable Match & Print flow
+ * modal (e.g. removing a matched photo, etc.):
+ *   i) disable Match & Print, Back, Next
  *   ii) hide the Print button
  *   iii) hide any 3px blue outlines
  *   until no orangered remain
@@ -439,12 +440,12 @@ document.getElementById("saveMatchesBtn")?.addEventListener("click", () => {
   console.log("User changed matches => disable Match & Print flow");
   disableMatchPrintFlow();
   removeAllBlueHighlights();
-  // The user must correct orangered. Once orangered= false => re-enable flow:
   const anyOrangered = detectAnyOrangered();
   if (!anyOrangered) {
     enableMatchPrintFlow();
   }
 });
+
 
 /********************************************************
  * sendMatchBtn utility
@@ -460,6 +461,7 @@ function enableSendMatch() {
   sendMatchBtn.disabled = false;
   sendMatchBtn.style.opacity = "1";
 }
+
 
 /********************************************************
  * Match & Print (Back, Next, Match & Print) flow
@@ -493,6 +495,7 @@ function enableMatchPrintFlow() {
   nextBtn.disabled = false;
   nextBtn.style.opacity = "1";
 }
+
 
 /********************************************************
  * removeAllBlueHighlights():
@@ -536,8 +539,9 @@ function detectAnyOrangered() {
   return foundOrangered;
 }
 
+
 /********************************************************
- * Match & Print main logic
+ * "Match & Print" main logic
  ********************************************************/
 document.getElementById("matchPrintBtn").addEventListener("click", initMatchAndPrintFlow);
 
@@ -553,7 +557,7 @@ function initMatchAndPrintFlow() {
   backBtn.onclick = null;
   nextBtn.onclick = null;
 
-  // Gather unique orders from .preview-box
+  // Gather unique order numbers from .preview-box
   const previewBoxes = document.querySelectorAll(".preview-box");
   const uniqueOrders = [];
   previewBoxes.forEach((pb, i) => {
@@ -600,13 +604,13 @@ function initMatchAndPrintFlow() {
         }
         if (!foundFirst) {
           foundFirst = true;
-          currentPrintBtn = createPrintButton(pb, i);
+          currentPrintBtn = createPrintButtonOverBox(pb, i);
         }
       }
     });
   }
 
-  function createPrintButton(previewBox, cellIndex) {
+  function createPrintButtonOverBox(previewBox, cellIndex) {
     const rect = previewBox.getBoundingClientRect();
     const btn = document.createElement("button");
     btn.textContent = "Print";
@@ -669,6 +673,7 @@ function openIframePrinterForListing(cellIndex) {
 
   localStorage.setItem("qrPrintSingle", JSON.stringify(item));
 
+  // show the iframe overlay
   const overlay = document.getElementById("qrPrinterOverlay");
   const iframe = document.getElementById("qrPrinterIframe");
   overlay.style.display = "flex";
