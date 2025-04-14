@@ -406,12 +406,13 @@ document.addEventListener("DOMContentLoaded", function () {
 });
 
 // 1) "Match & Print" event
+// 1) "Match & Print" event
 document.getElementById("matchPrintBtn").addEventListener("click", initMatchAndPrintFlow);
 
 function initMatchAndPrintFlow() {
   console.log("Match & Print pressed.");
 
-  // Create or re-create "Back" & "Next" side by side
+  // Remove any old back/next if they exist
   let oldBack = document.getElementById("mpBackBtn");
   let oldNext = document.getElementById("mpNextBtn");
   if (oldBack) oldBack.remove();
@@ -441,7 +442,6 @@ function initMatchAndPrintFlow() {
   nextBtn.style.width = "70px";
   parent.appendChild(nextBtn);
 
-  // Gather unique order numbers from .preview-box and #orderCellX
   const previewBoxes = document.querySelectorAll(".preview-box");
   const uniqueOrders = [];
   previewBoxes.forEach((pb, i) => {
@@ -455,54 +455,110 @@ function initMatchAndPrintFlow() {
     M.toast({ html: "No orders found to highlight." });
     return;
   }
-  let currentIndex = 0;
 
-  function highlightOrder(ord) {
+  let currentIndex = 0;
+  let currentPrintButtons = []; // to track newly generated "Print" buttons
+
+  function removeHighlightsAndPrintButtons() {
+    // Remove 3px borders
+    previewBoxes.forEach((pb) => {
+      pb.style.border = "1px solid #000";
+    });
+    // Remove "Print" overlay buttons
+    currentPrintButtons.forEach(btn => btn.remove());
+    currentPrintButtons = [];
+  }
+
+  function highlightOrder(orderNum) {
     // Clear old
-    previewBoxes.forEach((pb) => (pb.style.border = "1px solid #000"));
-    // Add border to matches
+    removeHighlightsAndPrintButtons();
+
+    // For each matching box => 3px border + "Print" button overlay
     previewBoxes.forEach((pb, i) => {
       const orderCell = document.getElementById("orderCell" + i);
-      if (orderCell && orderCell.value === ord) {
+      if (orderCell && orderCell.value === orderNum) {
         pb.style.border = "3px solid blue";
+
+        // Create the “Print” button overlay
+        const rect = pb.getBoundingClientRect();
+        const printBtn = document.createElement("button");
+        printBtn.textContent = "Print";
+        printBtn.style.position = "absolute";
+        printBtn.style.width = "50px";
+        printBtn.style.height = "25px";
+        printBtn.style.background = "rgba(0,0,0,0.5)";
+        printBtn.style.color = "#fff";
+        printBtn.style.border = "none";
+        printBtn.style.left = (rect.left + 30) + "px";
+        printBtn.style.top = (rect.top + 40) + "px";
+        printBtn.style.zIndex = 9999;
+        printBtn.style.cursor = "pointer";
+
+        // On click => open the QR printer for this listing
+        printBtn.addEventListener("click", () => openIframePrinterForListing(i));
+        document.body.appendChild(printBtn);
+        currentPrintButtons.push(printBtn);
       }
     });
   }
 
   highlightOrder(uniqueOrders[currentIndex]);
 
-    nextBtn.addEventListener("click", () => {
-    // remove old highlight, increment currentIndex
+  nextBtn.addEventListener("click", () => {
     currentIndex++;
     if (currentIndex >= uniqueOrders.length) {
       M.toast({ html: "Congrats, You're Done!" });
-      // No call to openQRPrinterWithAllOrders() here anymore
+      removeHighlightsAndPrintButtons();
       return;
     }
     highlightOrder(uniqueOrders[currentIndex]);
   });
 
   backBtn.addEventListener("click", () => {
-    previewBoxes.forEach(pb => pb.style.border = "1px solid #000");
-    currentIndex--;
-    if (currentIndex < 0) {
-      currentIndex = 0;
+    if (currentIndex <= 0) {
       M.toast({ html: "Already at first order." });
-    } else {
-      highlightOrder(uniqueOrders[currentIndex]);
+      return;
     }
+    currentIndex--;
+    highlightOrder(uniqueOrders[currentIndex]);
   });
 }
 
-// 2) Example function bridging to QR Printer
-function openQRPrinterWithAllOrders() {
-  // We'll pass the entire cachedOrderItems to QR Printer
+/********************************************************
+ * openIframePrinterForListing(cellIndex):
+ * For the listing associated with the given preview cell,
+ * store the listing in localStorage and show the QR Printer
+ * inside an iframe overlay (no new tab).
+ ********************************************************/
+function openIframePrinterForListing(cellIndex) {
+  console.log("Opening QR Printer for cell:", cellIndex);
+
   if (!window.cachedOrderItems) {
-    console.warn("No cachedOrderItems to pass.");
+    console.warn("No cachedOrderItems found.");
     return;
   }
-  localStorage.setItem("qrPrintPayload", JSON.stringify(window.cachedOrderItems));
-  window.open("QR Printer.html", "_blank");
+
+  const item = window.cachedOrderItems[cellIndex];
+  if (!item) {
+    console.warn("No item found for cellIndex:", cellIndex);
+    return;
+  }
+
+  // store single listing in localStorage
+  localStorage.setItem("qrPrintSingle", JSON.stringify(item));
+
+  // show the iframe overlay
+  const overlay = document.getElementById("qrPrinterOverlay");
+  const iframe = document.getElementById("qrPrinterIframe");
+  overlay.style.display = "flex";
+  iframe.src = "QR Printer.html?single=1";
+
+  // close button
+  const closeBtn = document.getElementById("qrPrinterCloseBtn");
+  closeBtn.onclick = () => {
+    overlay.style.display = "none";
+    iframe.src = "";
+  };
 }
 
     /********************************************************
