@@ -452,7 +452,6 @@ function enableSendMatch() {
   btn.style.opacity = "1";
 }
 
-
 /********************************************************
  * Disabling / Enabling “Match & Print” Flow
  * (i.e. Match & Print button, plus Back and Next)
@@ -462,13 +461,8 @@ function disableMatchPrintFlow() {
   matchPrintBtn.disabled = true;
   matchPrintBtn.style.opacity = "0.5";
 
-  const backBtn = document.getElementById("mpBackBtn");
-  backBtn.disabled = true;
-  backBtn.style.opacity = "0.5";
-
-  const nextBtn = document.getElementById("mpNextBtn");
-  nextBtn.disabled = true;
-  nextBtn.style.opacity = "0.5";
+  // Also disable Back and Next here
+  disableBackNext();
 
   removeAllBlueHighlights();
 }
@@ -478,13 +472,29 @@ function enableMatchPrintFlow() {
   matchPrintBtn.disabled = false;
   matchPrintBtn.style.opacity = "1";
 
+  // Also enable Back and Next here
+  enableBackNext();
+}
+
+/********************************************************
+ * Back/Next Enable/Disable (NEWLY ADDED)
+ ********************************************************/
+function enableBackNext() {
   const backBtn = document.getElementById("mpBackBtn");
+  const nextBtn = document.getElementById("mpNextBtn");
   backBtn.disabled = false;
   backBtn.style.opacity = "1";
-
-  const nextBtn = document.getElementById("mpNextBtn");
   nextBtn.disabled = false;
   nextBtn.style.opacity = "1";
+}
+
+function disableBackNext() {
+  const backBtn = document.getElementById("mpBackBtn");
+  const nextBtn = document.getElementById("mpNextBtn");
+  backBtn.disabled = true;
+  backBtn.style.opacity = "0.5";
+  nextBtn.disabled = true;
+  nextBtn.style.opacity = "0.5";
 }
 
 
@@ -1008,10 +1018,12 @@ async function analyzeUserImagesViaOpenAI() {
   // Show a toast message
   M.toast({ html: "User Image Analysis Has Been Completed" });
 
-  // IMPORTANT: re-engage "Send & Match" here
+  // IMPORTANT: re-engage "Send & Match"
   enableSendMatch();
-}
 
+  // ALSO re-engage Back & Next (NEWLY ADDED)
+  enableBackNext();
+}
     /********************************************************
      * fillPreviewBoxes, attachPreviewBoxListeners, etc.
      ********************************************************/
@@ -2121,52 +2133,73 @@ function openMatchPreviewModal(cellIndex) {
   }
 
   function refreshSectionsLocal() {
-    matchedSection.innerHTML = "";
-    unmatchedSection.innerHTML = "";
+  matchedSection.innerHTML = "";
+  unmatchedSection.innerHTML = "";
 
-    // Rebuild matched
-    matchedImages.forEach((mImg, i) => {
-      const box = document.createElement("div");
-      box.style.width = "100px";
-      box.style.height = "100px";
-      box.style.border = "1px solid #000";
-      box.style.display = "flex";
-      box.style.alignItems = "center";
-      box.style.justifyContent = "center";
-      box.style.overflow = "hidden";
-      box.style.position = "relative";
-      box.dataset.type = "matched";
-      box.dataset.index = i;
+  // Rebuild matched
+  matchedImages.forEach((mImg, i) => {
+    const box = document.createElement("div");
+    box.style.width = "100px";
+    box.style.height = "100px";
+    box.style.border = "1px solid #000";
+    box.style.display = "flex";
+    box.style.alignItems = "center";
+    box.style.justifyContent = "center";
+    box.style.overflow = "hidden";
+    box.style.position = "relative";
+    box.dataset.type = "matched";
+    box.dataset.index = i;
 
-      if (!mImg.userImage) {
-        box.innerHTML = "No Match Found";
-        box.style.fontWeight = "bold";
-        makeDropTarget(box);
-      } else {
-        const img = document.createElement("img");
-        img.src = mImg.userImage;
-        img.alt = mImg.userName;
-        img.style.width = "100%";
-        img.style.height = "100%";
-        img.style.objectFit = "cover";
-
-        makeDraggable(box);
-        makeDropTarget(box);
-        box.appendChild(img);
-      }
-      matchedSection.appendChild(box);
-    });
-
-    // If matched box is currently empty => set border orangered 3px
-    // otherwise black 1px
-    if (!matchedImages[0].userImage) {
-      setEtsyBorder(cellIndex, "3px", "orangered");
+    if (!mImg.userImage) {
+      box.innerHTML = "No Match Found";
+      box.style.fontWeight = "bold";
+      makeDropTarget(box);
     } else {
-      setEtsyBorder(cellIndex, "1px", "black");
-    }
+      const img = document.createElement("img");
+      img.src = mImg.userImage;
+      img.alt = mImg.userName;
+      img.style.width = "100%";
+      img.style.height = "100%";
+      img.style.objectFit = "cover";
 
-    // Rebuild unmatched
-    if (unmatchedImages.length === 0) {
+      makeDraggable(box);
+      makeDropTarget(box);
+      box.appendChild(img);
+    }
+    matchedSection.appendChild(box);
+  });
+
+  // If matched box is currently empty => set border orangered 3px
+  // otherwise black 1px
+  if (!matchedImages[0].userImage) {
+    setEtsyBorder(cellIndex, "3px", "orangered");
+  } else {
+    setEtsyBorder(cellIndex, "1px", "black");
+  }
+
+  // Rebuild unmatched
+  if (unmatchedImages.length === 0) {
+    const box = document.createElement("div");
+    box.style.width = "66px";
+    box.style.height = "66px";
+    box.style.border = "1px solid #000";
+    box.style.display = "flex";
+    box.style.alignItems = "center";
+    box.style.justifyContent = "center";
+    box.style.overflow = "hidden";
+    box.style.position = "relative";
+
+    box.style.fontWeight = "bold";
+    box.style.fontSize = "0.7em";
+
+    box.dataset.type = "unmatchedEmpty";
+    box.innerHTML = "No Unmatched Photos";
+
+    makeDropTarget(box);
+    unmatchedSection.appendChild(box);
+
+  } else {
+    unmatchedImages.forEach((uImg, i) => {
       const box = document.createElement("div");
       box.style.width = "66px";
       box.style.height = "66px";
@@ -2176,60 +2209,30 @@ function openMatchPreviewModal(cellIndex) {
       box.style.justifyContent = "center";
       box.style.overflow = "hidden";
       box.style.position = "relative";
+      box.dataset.type = "unmatched";
+      box.dataset.index = i;
 
-      box.style.fontWeight = "bold";
-      box.style.fontSize = "0.7em";
+      const img = document.createElement("img");
+      img.src = uImg.data;
+      img.alt = uImg.name;
+      img.style.width = "100%";
+      img.style.height = "100%";
+      img.style.objectFit = "cover";
 
-      box.dataset.type = "unmatchedEmpty";
-      box.innerHTML = "No Unmatched Photos";
-
+      makeDraggable(box);
       makeDropTarget(box);
+      box.appendChild(img);
       unmatchedSection.appendChild(box);
-
-    } else {
-      unmatchedImages.forEach((uImg, i) => {
-        const box = document.createElement("div");
-        box.style.width = "66px";
-        box.style.height = "66px";
-        box.style.border = "1px solid #000";
-        box.style.display = "flex";
-        box.style.alignItems = "center";
-        box.style.justifyContent = "center";
-        box.style.overflow = "hidden";
-        box.style.position = "relative";
-        box.dataset.type = "unmatched";
-        box.dataset.index = i;
-
-        const img = document.createElement("img");
-        img.src = uImg.data;
-        img.alt = uImg.name;
-        img.style.width = "100%";
-        img.style.height = "100%";
-        img.style.objectFit = "cover";
-
-        makeDraggable(box);
-        makeDropTarget(box);
-        box.appendChild(img);
-        unmatchedSection.appendChild(box);
-      });
-    }
+    });
   }
 
-  // Utility: set the Etsy-derived preview box border
-  function setEtsyBorder(cellIdx, thickness, color) {
-    const previewBox = document.getElementById("previewCell" + cellIdx);
-    if (previewBox) {
-      previewBox.style.border = thickness + " solid " + color;
-    }
+  // (NEW) After reconstructing matched/unmatched, check for orangered
+  const anyOrangered = detectAnyOrangered();
+  if (!anyOrangered) {
+    enableMatchPrintFlow();   // re-enable “Match & Print”, “Back”, and “Next”
+  } else {
+    disableMatchPrintFlow();  // disable them if orangered remains
   }
-
-  // Another Utility
-  function stripExtension(fileName) {
-    return fileName.replace(/\.\w+$/, "");
-  }
-
-  // Finally, ensure immediate drag-and-drop by calling refreshSectionsLocal
-  refreshSectionsLocal();
 }
 
 /********************************************************
