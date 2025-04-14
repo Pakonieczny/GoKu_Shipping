@@ -1004,7 +1004,12 @@ async function analyzeUserImagesViaOpenAI() {
 
   // Save final updates to local storage
   localStorage.setItem("userImagesArray", JSON.stringify(userImagesArray));
+
+  // Show a toast message
   M.toast({ html: "User Image Analysis Has Been Completed" });
+
+  // IMPORTANT: re-engage "Send & Match" here
+  enableSendMatch();
 }
 
     /********************************************************
