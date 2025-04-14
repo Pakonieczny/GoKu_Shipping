@@ -1,0 +1,153 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>High-Resolution QR Code (Scaled to 32px) + 3 Dots at 6px & 12px Spacing</title>
+
+  <!-- Load pdfmake (and its fonts) -->
+  <script src="https://cdn.jsdelivr.net/npm/pdfmake@0.2.7/build/pdfmake.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/pdfmake@0.2.7/build/vfs_fonts.js"></script>
+
+  <!-- Load qrcode.js (for generating QR) -->
+  <script src="https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js"></script>
+
+  <style>
+    #qrPreview {
+      margin-top: 20px;
+    }
+    #qrPreview img {
+      border: 1px solid #000;
+    }
+  </style>
+</head>
+<body>
+
+  <h3>Generate a High-Resolution QR Code (32px) + 3 Dots (6px diameter) with 12px spacing</h3>
+  <label>
+    Enter text for QR code:
+    <input type="text" id="qrValue" value="https://example.com" style="width:300px">
+  </label>
+  <button id="generateBtn">Generate & Print</button>
+
+  <div id="qrPreview"></div>
+
+  <script>
+    // We'll create a hidden container for generating the QR code
+    const hiddenQRContainer = document.createElement("div");
+    hiddenQRContainer.style.display = "none";
+    document.body.appendChild(hiddenQRContainer);
+
+    // For user preview
+    const previewContainer = document.getElementById("qrPreview");
+    const qrInput = document.getElementById("qrValue");
+    const generateBtn = document.getElementById("generateBtn");
+
+    generateBtn.addEventListener("click", async () => {
+      const text = qrInput.value.trim();
+      if (!text) {
+        alert("Enter a value for the QR code!");
+        return;
+      }
+
+      try {
+        // 1) Clear any old QR code
+        hiddenQRContainer.innerHTML = "";
+
+        // 2) Generate a larger QR code in memory, e.g. 1024x1024
+        //    for high-resolution scaling
+        new QRCode(hiddenQRContainer, {
+          text: text,
+          width: 1024,
+          height: 1024,
+          correctLevel: QRCode.CorrectLevel.H
+        });
+
+        // 3) Wait a bit for the QR to render
+        await new Promise(r => setTimeout(r, 300));
+
+        // 4) The QR is rendered as <img> or <canvas>
+        let qrImg = hiddenQRContainer.querySelector("img");
+        if (!qrImg) {
+          const qrCanvas = hiddenQRContainer.querySelector("canvas");
+          if (qrCanvas) {
+            qrImg = convertCanvasToImg(qrCanvas);
+          }
+        }
+        if (!qrImg) {
+          throw new Error("Could not find a QR <img> or <canvas> after rendering.");
+        }
+
+        // Show it in preview (scaled down for the preview UI)
+        previewContainer.innerHTML = "";
+        qrImg.style.width = "128px"; 
+        qrImg.style.height = "128px";
+        previewContainer.appendChild(qrImg.cloneNode(true));
+
+        // Convert to dataURL (this is a 1024x1024 image under the hood)
+        const dataUrl = qrImg.src;
+
+        // 5) Build docDefinition for a 4×6 label
+        //    We'll place the code physically at 32px wide in the PDF
+        //    with 3 round dots (6px diam => radius=3) spaced 12px horizontally.
+        const docDefinition = {
+          pageSize: {
+            width: 288,  // 4" => 72 * 4
+            height: 432  // 6" => 72 * 6
+          },
+          pageMargins: [0, 0, 0, 0],
+          content: [
+            {
+              // The three 6px-diameter circles (radius=3)
+              // placed 5px above code’s top-left, spaced 12px horizontally
+              absolutePosition: { x: 83, y: 20 },
+              canvas: [
+                {
+                  type: 'ellipse',
+                  x: 0, y: 0,
+                  r1: 3, r2: 3,
+                  color: 'black', fillOpacity: 1
+                },
+                {
+                  type: 'ellipse',
+                  x: 12, y: 0,  // 12px from the first
+                  r1: 3, r2: 3,
+                  color: 'black', fillOpacity: 1
+                },
+                {
+                  type: 'ellipse',
+                  x: 24, y: 0,  // 12px from the second
+                  r1: 3, r2: 3,
+                  color: 'black', fillOpacity: 1
+                }
+              ]
+            },
+            {
+              // The “high-res” QR code image, scaled to 64px wide 
+              // in the final PDF
+              image: dataUrl,
+              width:64,
+              absolutePosition: { x: 80, y: 30 }
+            }
+          ]
+        };
+
+        // 6) Create & open PDF
+        const pdfDocGenerator = pdfMake.createPdf(docDefinition);
+        pdfDocGenerator.open();
+
+      } catch (err) {
+        console.error("Error generating or printing the high-res code:", err);
+        alert("Failed to generate or print. See console for details.");
+      }
+    });
+
+    // Helper: convert <canvas> to <img>
+    function convertCanvasToImg(canvas) {
+      const dataUrl = canvas.toDataURL("image/png");
+      const imgEl = document.createElement("img");
+      imgEl.src = dataUrl;
+      return imgEl;
+    }
+  </script>
+</body>
+</html>
