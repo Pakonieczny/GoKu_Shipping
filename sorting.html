@@ -544,10 +544,23 @@ document.getElementById("matchPrintBtn").addEventListener("click", initMatchAndP
 function initMatchAndPrintFlow() {
   console.log("Match & Print pressed.");
 
+  // (1) GATHER UNIQUE ORDERS (moved higher so it's accessible in the 'if' block below)
+  const previewBoxes = document.querySelectorAll(".preview-box");
+  const uniqueOrders = [];
+  previewBoxes.forEach((pb, i) => {
+    const orderCell = document.getElementById("orderCell" + i);
+    if (orderCell && orderCell.value && !uniqueOrders.includes(orderCell.value)) {
+      uniqueOrders.push(orderCell.value);
+    }
+  });
+
+  // (2) Declare currentIndex up here so we can reset to cell0 in the 'if' block
+  let currentIndex = 0;
+
   // (NEW) If user presses “Match & Print” again while flow is active => reset to cell0
   if (matchPrintFlowInProgress) {
     console.log("Match & Print already in progress => resetting progress to cell0");
-    currentIndex = 0;
+    currentIndex = 0; // ensure we start from the very first order again
     removeHighlightsAndPrintButton();
     highlightOrder(uniqueOrders[currentIndex]);
     return; // do not re-initialize everything
@@ -559,18 +572,8 @@ function initMatchAndPrintFlow() {
   // Also disable "Send & Match" while in Match & Print
   disableSendMatch();
 
-  // (NEW) Because user just pressed “Match & Print,” we now allow “Next”/“Back”
+  // Because user just pressed “Match & Print,” we allow “Next”/“Back”
   enableBackNext();
-
-  // GATHER UNIQUE ORDERS
-  const previewBoxes = document.querySelectorAll(".preview-box");
-  const uniqueOrders = [];
-  previewBoxes.forEach((pb, i) => {
-    const orderCell = document.getElementById("orderCell" + i);
-    if (orderCell && orderCell.value && !uniqueOrders.includes(orderCell.value)) {
-      uniqueOrders.push(orderCell.value);
-    }
-  });
 
   // If no orders found, exit
   if (!uniqueOrders.length) {
@@ -578,9 +581,6 @@ function initMatchAndPrintFlow() {
     enableSendMatch();
     return;
   }
-
-  // Index of which order # we’re highlighting
-  let currentIndex = 0;
 
   // We'll store the "Print" button so we can remove it each time we change orders
   let currentPrintBtn = null;
@@ -656,7 +656,7 @@ function initMatchAndPrintFlow() {
     return btn;
   }
 
-  // Now highlight the first order (cell0)
+  // Now highlight the first order => "cell0"
   highlightOrder(uniqueOrders[currentIndex]);
 
   // ------------------------------------------------------------------------
@@ -680,6 +680,7 @@ function initMatchAndPrintFlow() {
       M.toast({ html: "Congrats, You’re Done!" });
       removeHighlightsAndPrintButton();
       enableSendMatch();
+
       // Optionally set matchPrintFlowInProgress = false if we want the user
       // to be able to re-press “Match & Print” from the beginning
       matchPrintFlowInProgress = false;
