@@ -2,7 +2,7 @@
 <html>
 <head>
   <meta charset="utf-8" />
-  <title>Auto-Print QR Code for Single Listing</title>
+  <title>Auto-Print QR Code for Multiple Listings</title>
 
   <!-- pdfmake (and its fonts) -->
   <script src="https://cdn.jsdelivr.net/npm/pdfmake@0.2.7/build/pdfmake.min.js"></script>
@@ -23,85 +23,58 @@
 <body>
 <script>
 /********************************************************
- * On page load, automatically read 'qrPrintSingle' from
- * localStorage, build a 64×64 QR code for the listing's
- * order number, and attempt to print in an iframe.
+ * On page load, read 'qrPrintAll' from localStorage,
+ * gather the entire set of listings for that order,
+ * build a single 4×6 PDF label with:
+ *   1) a QR code for the order number
+ *   2) 0–2 black dot(s) depending on whether any item
+ *      in the entire order belongs to GroupA or GroupB
+ * Then auto-print that PDF in an iframe.
  ********************************************************/
 window.addEventListener("load", async () => {
   try {
-    const singleStr = localStorage.getItem("qrPrintSingle");
-    if (!singleStr) {
-      console.error("No 'qrPrintSingle' found in localStorage. Nothing to print.");
+    // 1) Load all items from localStorage
+    const allStr = localStorage.getItem("qrPrintAll");
+    if (!allStr) {
+      console.error("No 'qrPrintAll' found in localStorage. Nothing to print.");
       return;
     }
 
-    const item = JSON.parse(singleStr);
-    if (!item || !item.receipt_id) {
-      console.error("Invalid item object or missing receipt_id in 'qrPrintSingle'.");
+    // Must be an array of listings
+    const items = JSON.parse(allStr);
+    if (!Array.isArray(items) || !items.length) {
+      console.error("No array or empty array in 'qrPrintAll'.");
       return;
     }
 
-    // Build & print the label using the listing
-    await buildAndPrintLabelForItem(item);
+    // 2) Figure out an order number to embed in the QR
+    //    e.g. assume they share the same .receipt_id => take items[0].receipt_id
+    const orderNum = items[0].receipt_id || "UnknownOrder";
+
+    // 3) Compute the dot count cumulatively from all listings
+    //    If any listing => GroupA => 2 dots
+    //    Else if none are GroupA but at least one => GroupB => 1 dot
+    //    Else => 0
+    const dotCount = getCumulativeDotCount(items);
+
+    // 4) Build & print the PDF label
+    await buildAndPrintLabel(orderNum, dotCount);
+
   } catch (err) {
     console.error("Error in QR Printer auto-run:", err);
   }
 });
 
 /********************************************************
- * Build & Print label for a single item
+ * getCumulativeDotCount(listings):
+ * checks group A/B for each listing in the array.
+ * If any listing is group A => 2 dots
+ * else if any listing is group B => 1 dot
+ * else => 0
  ********************************************************/
-async function buildAndPrintLabelForItem(item) {
-  const orderNum = item.receipt_id || "UnknownOrder";
-  const dotCount = getDotCountForKeywords(item.keywords || []);
-
-  // 1) Generate a large QR code (1024×1024) for high-res
-  const hiddenQRContainer = document.createElement("div");
-  hiddenQRContainer.style.display = "none";
-  document.body.appendChild(hiddenQRContainer);
-
-  await makeLargeQRCode(orderNum, hiddenQRContainer);
-
-  let qrImg = hiddenQRContainer.querySelector("img");
-  if (!qrImg) {
-    const qrCanvas = hiddenQRContainer.querySelector("canvas");
-    if (qrCanvas) {
-      qrImg = convertCanvasToImg(qrCanvas);
-    }
-  }
-  if (!qrImg) {
-    console.error("No QR image rendered for order:", orderNum);
-    return;
-  }
-
-  // 2) Build docDefinition with a 64px QR code
-  const dataUrl = qrImg.src;
-  const docDefinition = buildPDFDocWithDots(dataUrl, dotCount);
-
-  // 3) Render PDF => embed => auto print
-  const pdfDocGenerator = pdfMake.createPdf(docDefinition);
-  pdfDocGenerator.getBlob((blob) => {
-    const blobUrl = URL.createObjectURL(blob);
-    // create a fullpage iframe, embed PDF
-    document.body.innerHTML = "";
-    const iframe = document.createElement("iframe");
-    iframe.style.width = "100%";
-    iframe.style.height = "100%";
-    document.body.appendChild(iframe);
-    iframe.src = blobUrl;
-
-    // auto print after a short delay
-    setTimeout(() => {
-      iframe.contentWindow.print();
-    }, 500);
-  });
-}
-
-/********************************************************
- * Dot Count => 1 or 2
- ********************************************************/
-function getDotCountForKeywords(keyArr) {
-  if (!Array.isArray(keyArr) || !keyArr.length) return 0;
+function getCumulativeDotCount(listings) {
+  let foundGroupA = false;
+  let foundGroupB = false;
 
   // group A => 2 dots
   const groupA = [
@@ -114,17 +87,77 @@ function getDotCountForKeywords(keyArr) {
     "extender","extenders","chain","chains"
   ];
 
-  const lower = keyArr.map(k => k.toLowerCase());
-  if (lower.some(x => groupA.includes(x))) return 2;
-  if (lower.some(x => groupB.includes(x))) return 1;
+  listings.forEach((listing) => {
+    const kw = Array.isArray(listing.keywords) ? listing.keywords : [];
+    const lower = kw.map(k => k.toLowerCase());
+
+    // If any keyword is in groupA => mark foundGroupA
+    if (lower.some(x => groupA.includes(x))) foundGroupA = true;
+    // If any keyword is in groupB => mark foundGroupB
+    if (lower.some(x => groupB.includes(x))) foundGroupB = true;
+  });
+
+  if (foundGroupA) return 2;
+  if (foundGroupB) return 1;
   return 0;
 }
 
 /********************************************************
- * Build PDF docDefinition => 64px QR, dotCount dots
+ * buildAndPrintLabel(orderNum, dotCount):
+ * 1) Generate a high-res (1024×1024) QR code
+ * 2) Build a 4×6 PDF => embed => auto-print
+ ********************************************************/
+async function buildAndPrintLabel(orderNum, dotCount) {
+  // 1) Generate a large QR code (1024×1024) for high-res
+  const hiddenQRContainer = document.createElement("div");
+  hiddenQRContainer.style.display = "none";
+  document.body.appendChild(hiddenQRContainer);
+
+  await makeLargeQRCode(orderNum, hiddenQRContainer);
+
+  // Try to grab the rendered <img> or else convert <canvas> to <img>
+  let qrImg = hiddenQRContainer.querySelector("img");
+  if (!qrImg) {
+    const qrCanvas = hiddenQRContainer.querySelector("canvas");
+    if (qrCanvas) {
+      qrImg = convertCanvasToImg(qrCanvas);
+    }
+  }
+  if (!qrImg) {
+    console.error("No QR image rendered for order:", orderNum);
+    return;
+  }
+
+  // 2) Build docDefinition with a 64px QR + dotCount dots
+  const dataUrl = qrImg.src;
+  const docDefinition = buildPDFDocWithDots(dataUrl, dotCount);
+
+  // 3) Render PDF => embed => auto-print
+  const pdfDocGenerator = pdfMake.createPdf(docDefinition);
+  pdfDocGenerator.getBlob((blob) => {
+    const blobUrl = URL.createObjectURL(blob);
+
+    // Clear the page, embed PDF in a fullpage <iframe>
+    document.body.innerHTML = "";
+    const iframe = document.createElement("iframe");
+    iframe.style.width = "100%";
+    iframe.style.height = "100%";
+    document.body.appendChild(iframe);
+    iframe.src = blobUrl;
+
+    // Auto print after a short delay
+    setTimeout(() => {
+      iframe.contentWindow.print();
+    }, 500);
+  });
+}
+
+/********************************************************
+ * buildPDFDocWithDots(dataUrl, dotCount):
+ * Places the QR code at (x=80,y=30), 64px wide,
+ * Dot(s) as small black circles at (x=0..12..24,y=0).
  ********************************************************/
 function buildPDFDocWithDots(dataUrl, dotCount) {
-  // We place the QR at (x=80,y=30), 64px wide
   // Dot = 6px diameter => radius=3, spaced 12px
   const dotEllipses = [];
   if (dotCount > 0) {
@@ -140,7 +173,7 @@ function buildPDFDocWithDots(dataUrl, dotCount) {
   }
 
   return {
-    pageSize: { width: 288, height: 432 }, // 4×6 label
+    pageSize: { width: 288, height: 432 }, // 4×6 label in points
     pageMargins: [0,0,0,0],
     content: [
       {
@@ -157,7 +190,8 @@ function buildPDFDocWithDots(dataUrl, dotCount) {
 }
 
 /********************************************************
- * Make Large 1024×1024 QR => high-res
+ * makeLargeQRCode(text, container)
+ * Renders a 1024×1024 high-res QR with qrcode.js
  ********************************************************/
 async function makeLargeQRCode(text, container) {
   return new Promise(resolve => {
@@ -172,7 +206,8 @@ async function makeLargeQRCode(text, container) {
 }
 
 /********************************************************
- * Convert <canvas> to <img>
+ * convertCanvasToImg(canvas)
+ * Takes a <canvas>, returns an <img> with the same image
  ********************************************************/
 function convertCanvasToImg(canvas) {
   const dataUrl = canvas.toDataURL("image/png");
