@@ -13,3 +13,9 @@
   to = "/sorting.html"
   status = 200
   force = true
+
+  [[redirects]]
+  from = "https://sort-scan.goldenspike.app"
+  to = "/sort-scan.html"
+  status = 200
+  force = true
