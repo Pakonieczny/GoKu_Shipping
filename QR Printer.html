@@ -178,8 +178,10 @@ function buildPDFDocWithDots(dataUrl, dotCount, dispatchDate) {
     for (let i = 0; i < dotCount; i++) {
       dotEllipses.push({
         type: 'ellipse',
-        x: i*spacing, y: 0,
-        r1: 3, r2: 3,
+        x: i * spacing,
+        y: 0,
+        r1: 3,
+        r2: 3,
         color: 'black',
         fillOpacity: 1
       });
@@ -188,7 +190,7 @@ function buildPDFDocWithDots(dataUrl, dotCount, dispatchDate) {
 
   return {
     pageSize: { width: 288, height: 432 }, // 4×6 label in points
-    pageMargins: [0,0,0,0],
+    pageMargins: [0, 0, 0, 0],
     content: [
       // Dot ellipse(s) near top
       {
@@ -201,9 +203,9 @@ function buildPDFDocWithDots(dataUrl, dotCount, dispatchDate) {
         width: 64,
         absolutePosition: { x:80, y:30 }
       },
-      // (NEW) dispatchDate 10px below the bottom of QR => y=104
+      // The Ship Date, 10px below the bottom of QR => y=104, left-justified with the QR code
       {
-        text: `Dispatch Date: ${dispatchDate || "N/A"}`,
+        text: `Ship Date: ${dispatchDate || "N/A"}`,
         fontSize: 10,
         absolutePosition: { x:80, y:104 }
       }

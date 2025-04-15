@@ -706,8 +706,7 @@ function openIframePrinterForListing(cellIndex) {
     return;
   }
 
-  // 2) Extract the dispatchDate from this item (or default to "N/A")
-  //    If your code places dispatch_date on each transaction, do:
+  // 2) Extract the dispatchDate (ship date) from this item (or default to "N/A")
   const dispatchDate = item.dispatch_date || "N/A";
 
   // 3) Filter window.cachedOrderItems so we only keep items
@@ -720,7 +719,7 @@ function openIframePrinterForListing(cellIndex) {
 
   // 4) Build an object that includes:
   //    (a) the subset array for just this one order
-  //    (b) the dispatchDate you want to print
+  //    (b) the ship date we want to print
   const dataToPrint = {
     dispatchDate: dispatchDate,
     items: itemsForOrder
@@ -1390,7 +1389,7 @@ async function analyzeUserImagesViaOpenAI() {
     /********************************************************
      * loadBatchEtsyOrders, fetchListingImages, getLocalImageData
      ********************************************************/
-// EXAMPLE snippet in loadBatchEtsyOrders:
+
 async function loadBatchEtsyOrders(orderNumbers) {
   try {
     M.toast({ html: "Loading " + orderNumbers.length + " order(s)..." });
@@ -1405,21 +1404,20 @@ async function loadBatchEtsyOrders(orderNumbers) {
         continue;
       }
       const data = await resp.json();
-      
-      // (NEW) Suppose `data.receipt.dispatch_date` or something similar
-      //  for a single order. We assume data.transactions is an array.
+
+      // -------------------- NEW LINES START --------------------
+      // If Etsy provides a "dispatch_date" (the ship date), attach it to each transaction
       if (data.receipt && data.receipt.dispatch_date) {
         const dispatchDate = data.receipt.dispatch_date; 
-        // e.g. "2023-08-15" or a Unix timestamp or whatever the Etsy returns
         console.log("Order", ord, "has dispatch date =", dispatchDate);
 
-        // Attach it to each transaction, so fillPreviewBoxes sees it
         if (Array.isArray(data.transactions)) {
           data.transactions.forEach((t) => {
-            t.dispatch_date = dispatchDate;
+            t.dispatch_date = dispatchDate; // store the ship date on each item
           });
         }
       }
+      // -------------------- NEW LINES END ----------------------
 
       if (data.transactions && Array.isArray(data.transactions)) {
         combinedItems.push(...data.transactions);
