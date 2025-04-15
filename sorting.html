@@ -706,40 +706,35 @@ function openIframePrinterForListing(cellIndex) {
     return;
   }
 
-  // 2) Extract the dispatchDate (ship date) from this item (or default to "N/A")
+  // 2) Extract the ship date (or default to "N/A")
   const dispatchDate = item.dispatch_date || "N/A";
 
-  // 3) Filter window.cachedOrderItems so we only keep items
-  //    that belong to this order's receipt_id
+  // 3) Filter out all items for this same order
   const orderID = item.receipt_id;
   console.log("Filtering items for order:", orderID);
   const itemsForOrder = window.cachedOrderItems.filter((one) => {
     return one.receipt_id === orderID;
   });
 
-  // 4) Build an object that includes:
-  //    (a) the subset array for just this one order
-  //    (b) the ship date we want to print
+  // 4) Build an object for QR Printer
   const dataToPrint = {
     dispatchDate: dispatchDate,
     items: itemsForOrder
   };
 
-  // 5) Save that object in localStorage under "qrPrintAll"
+  // 5) Save that object in localStorage
   localStorage.setItem("qrPrintAll", JSON.stringify(dataToPrint));
 
-  // 6) Show the QR Printer overlay
-  const overlay = document.getElementById("qrPrinterOverlay");
-  const iframe = document.getElementById("qrPrinterIframe");
-  overlay.style.display = "flex";
-  iframe.src = "QR Printer.html";
-
-  const closeBtn = document.getElementById("qrPrinterCloseBtn");
-  closeBtn.onclick = () => {
-    overlay.style.display = "none";
-    iframe.src = "";
-  };
-}
+  // 6) CREATE A HIDDEN 1×1 IFRAME (NO OVERLAY)
+  const hiddenIframe = document.createElement("iframe");
+  hiddenIframe.style.position = "absolute";
+  hiddenIframe.style.width = "1px";
+  hiddenIframe.style.height = "1px";
+  hiddenIframe.style.opacity = "0";
+  hiddenIframe.style.border = "0";
+  hiddenIframe.src = "QR Printer.html";
+  document.body.appendChild(hiddenIframe);
+  
     /********************************************************
      * fillPreviewBoxes, attachPreviewBoxListeners,
      * loadPositions, cropImageFromPreview, etc...
@@ -2415,55 +2410,5 @@ function createUnmatchedUserImagesPreview() {
     }
 
   </script>
-
-  <!-- Iframe Overlay for QR Printer -->
-  <div
-    id="qrPrinterOverlay"
-    style="
-      display: none;
-      position: fixed;
-      left: 0;
-      top: 0;
-      width: 100vw;
-      height: 100vh;
-      background: rgba(0, 0, 0, 0.4);
-      z-index: 9999;
-      align-items: center;
-      justify-content: center;
-    "
-  >
-    <div
-      style="
-        position: relative;
-        width: 700px;
-        height: 600px;
-        background: #fff;
-        margin: auto;
-      "
-    >
-      <button
-        id="qrPrinterCloseBtn"
-        style="
-          position: absolute;
-          top: 5px;
-          right: 5px;
-          width: 60px;
-          height: 30px;
-          background: #ccc;
-        "
-      >
-        Close
-      </button>
-      <iframe
-        id="qrPrinterIframe"
-        src=""
-        style="
-          width: 100%;
-          height: 100%;
-          border: none;
-        "
-      ></iframe>
-    </div>
-  </div>
 </body>
 </html>
