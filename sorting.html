@@ -452,6 +452,21 @@ function enableSendMatch() {
   btn.style.opacity = "1";
 }
 
+/********************************************************
+ * Enable Back and Next (NEW)
+ ********************************************************/
+function enableBackNext() {
+  const backBtn = document.getElementById("mpBackBtn");
+  const nextBtn = document.getElementById("mpNextBtn");
+  if (backBtn) {
+    backBtn.disabled = false;
+    backBtn.style.opacity = "1";
+  }
+  if (nextBtn) {
+    nextBtn.disabled = false;
+    nextBtn.style.opacity = "1";
+  }
+}
 
 /********************************************************
  * Disabling / Enabling “Match & Print” Flow
@@ -573,7 +588,7 @@ function initMatchAndPrintFlow() {
   enableBackNext();
 
   // If no orders found, exit
-  if (!uniqueOrders.length) {
+    if (!uniqueOrders.length) {
     M.toast({ html: "No orders found to highlight." });
     enableSendMatch();
     return;
