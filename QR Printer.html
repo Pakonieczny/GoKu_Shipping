@@ -25,14 +25,17 @@
 /********************************************************
  * On page load:
  * 1) Read "qrPrintAll" from localStorage, which is an object:
- *      { dispatchDate: "YYYY-MM-DD" or "N/A",
- *        items: [ array of transactions for this order ] }
+ *      {
+ *        dispatchDate: string like "25 Sep 2025" or "N/A",
+ *        items: [ array of transactions for this order ],
+ *        userTypedOrderNum: string (the typed Etsy order # from sorting.html)
+ *      }
  * 2) Gather the entire set of listings in items,
  *    build a single 4×6 PDF label with:
- *     - a QR code for the order number
+ *     - a QR code for the typed order number (or fallback: items[0].receipt_id)
  *     - 0–2 black dot(s) based on groupA / groupB
- *     - the dispatchDate 10px below the QR code, left-justified
- * Then auto-print that PDF in an iframe.
+ *     - the dispatchDate (just a bold date) ~10px below the QR code
+ * Then auto-print that PDF in a hidden iframe.
  ********************************************************/
 window.addEventListener("load", async () => {
   try {
@@ -43,29 +46,34 @@ window.addEventListener("load", async () => {
       return;
     }
 
-    // Must be an object { dispatchDate, items[] }:
+    // Must be an object { dispatchDate, items[], userTypedOrderNum? }
     const dataObj = JSON.parse(dataStr);
     if (!dataObj || !Array.isArray(dataObj.items) || !dataObj.items.length) {
       console.error("'qrPrintAll' missing items or is empty.");
       return;
     }
 
-    // (NEW) dispatchDate
+    // The date to show in bold
     const dispatchDate = dataObj.dispatchDate || "N/A";
-    // The array of listings
-    const items = dataObj.items;
 
-    // (LOG) see what we got
+    // The array of transactions
+    const items = dataObj.items;
     console.log("Loaded 'qrPrintAll' =>", dataObj);
     console.log("Dispatch date =>", dispatchDate);
     items.forEach((it, idx) => {
-      console.log(`Item #${idx} => receipt_id=${it.receipt_id}, title=${it.title}, keywords=${JSON.stringify(it.keywords)}`);
+      console.log(
+        `Item #${idx} => receipt_id=${it.receipt_id}, title=${it.title}, keywords=${JSON.stringify(it.keywords)}`
+      );
     });
 
-    // 2) Figure out an order number to embed in the QR
-    const orderNum = items[0].receipt_id || "UnknownOrder";
+    // 2) Figure out the order number to embed in the QR
+    //    Prefer the userTypedOrderNum (the one typed in sorting.html),
+    //    fallback to items[0].receipt_id if that’s missing.
+    const orderNum = dataObj.userTypedOrderNum
+                  || items[0].receipt_id
+                  || "UnknownOrder";
 
-    // 3) Compute the dot count cumulatively from all items
+    // 3) Compute how many black dot(s) to draw (0,1,2)
     const dotCount = getCumulativeDotCount(items);
 
     // 4) Build & print the PDF label
@@ -78,18 +86,16 @@ window.addEventListener("load", async () => {
 
 /********************************************************
  * getCumulativeDotCount(listings):
- * If ANY listing is groupA => 2 dots
- * else if ANY listing is groupB => 1 dot
- * else => 0
+ * If ANY listing has a groupA keyword => 2 dots,
+ * else if ANY listing has groupB => 1 dot,
+ * else => 0 dots.
  ********************************************************/
 function getCumulativeDotCount(listings) {
   let foundGroupA = false;
   let foundGroupB = false;
 
   // group A => 2 dots
-  const groupA = [
-    "stud","stud earrings","earring","earrings","ring","rings"
-  ];
+  const groupA = ["stud","stud earrings","earring","earrings","ring","rings"];
   // group B => 1 dot
   const groupB = [
     "necklace","necklaces","huggie","huggies","huggie earrings",
@@ -109,18 +115,18 @@ function getCumulativeDotCount(listings) {
     }
   });
 
-  // If any listing triggers groupA => 2
+  // If groupA => 2
   if (foundGroupA) return 2;
-  // else if no groupA, but groupB => 1
+  // Otherwise if groupB => 1
   if (foundGroupB) return 1;
-  // else => 0
+  // Otherwise => 0
   return 0;
 }
 
 /********************************************************
  * buildAndPrintLabel(orderNum, dotCount, dispatchDate):
  * 1) Generate a high-res (1024×1024) QR code
- * 2) Build a 4×6 PDF => embed => auto-print
+ * 2) Build a 4×6 PDF => place in hidden iframe => auto-print
  ********************************************************/
 async function buildAndPrintLabel(orderNum, dotCount, dispatchDate) {
   // 1) Generate a large QR code (1024×1024) for high-res
@@ -142,7 +148,7 @@ async function buildAndPrintLabel(orderNum, dotCount, dispatchDate) {
     return;
   }
 
-  // 2) Build docDefinition with the bold shipping date (no 'Ship Date:' label)
+  // 2) Build docDefinition with the bold shipping date (no label text, just the date)
   const dataUrl = qrImg.src;
   const docDefinition = buildPDFDocWithDots(dataUrl, dotCount, dispatchDate);
 
@@ -160,7 +166,7 @@ async function buildAndPrintLabel(orderNum, dotCount, dispatchDate) {
     hiddenIframe.style.height = "1px";
     document.body.appendChild(hiddenIframe);
 
-    // Once the PDF loads into the iframe, trigger print
+    // Once the PDF loads in the iframe, trigger print
     hiddenIframe.onload = function() {
       hiddenIframe.contentWindow.print();
     };
@@ -174,7 +180,7 @@ async function buildAndPrintLabel(orderNum, dotCount, dispatchDate) {
  * buildPDFDocWithDots(dataUrl, dotCount, dispatchDate):
  * Places the QR code at (x=80,y=30), 64px wide,
  * Dot(s) as small black circles at (x=0..12..24,y=0).
- * Then prints the dispatch date 10px below the QR code
+ * Then prints the bold date text 10px below the QR code
  * at y=104 (since the QR ends at ~y=94).
  ********************************************************/
 function buildPDFDocWithDots(dataUrl, dotCount, dispatchDate) {
@@ -210,7 +216,7 @@ function buildPDFDocWithDots(dataUrl, dotCount, dispatchDate) {
         width: 64,
         absolutePosition: { x:80, y:30 }
       },
-      // (NEW) Only show the date itself in bold, at x=80, y=104
+      // Bold date text at (x=80, y=104)
       {
         text: dispatchDate || "N/A",
         fontSize: 10,
@@ -233,6 +239,7 @@ async function makeLargeQRCode(text, container) {
       height: 1024,
       correctLevel: QRCode.CorrectLevel.H
     });
+    // qrcode.js may need a brief delay to finish drawing
     setTimeout(resolve, 300);
   });
 }

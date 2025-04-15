@@ -1402,8 +1402,27 @@ async function loadBatchEtsyOrders(orderNumbers) {
       }
 
       const data = await resp.json();
-
       console.log("Etsy Order Data:", data);
+
+      // -- NEW CODE: attach the typed order # to each transaction --
+      if (data.transactions && Array.isArray(data.transactions)) {
+        data.transactions.forEach((t) => {
+          t.typedOrderNumber = ord;
+        });
+        combinedItems.push(...data.transactions);
+      } else {
+        console.warn("No transactions for order " + ord);
+      }
+    }
+
+    // Show all combined items in your preview grid
+    await fillPreviewBoxes(combinedItems);
+
+  } catch (err) {
+    console.error("Error loading batch orders:", err);
+    M.toast({ html: "Error: " + err.message });
+  }
+}
 
       // ------------------------------------------------
       // APPLY THE SAME METHODOLOGY AS index.html
