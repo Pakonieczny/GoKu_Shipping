@@ -191,14 +191,11 @@
   <!-- Main Buttons -->
   <button id="connectEtsyBtn" class="btn waves-effect waves-light">Connect to Etsy</button>
   <button id="openConfigBtn" class="btn waves-effect waves-light">Open Config</button>
-  <!-- In your HTML, near your main buttons, add these two so they can be moved in Config -->
   <button id="mpBackBtn" class="btn waves-effect waves-light">Back</button>
   <button id="mpNextBtn" class="btn waves-effect waves-light">Next</button>
   <button id="sendMatchBtn" class="btn waves-effect waves-light">Send & Match</button>
-  <!-- The new "Match & Print" button, 10px below "Send & Match" -->
-  <button id="matchPrintBtn" class="btn waves-effect waves-light" style="top: 270px;">
-    Match & Print
-  </button>
+  <button id="matchPrintBtn" class="btn waves-effect waves-light" style="top: 270px;" 
+  onclick="initMatchAndPrintFlow()">Match & Print</button>
 
   <!-- Etsy Order Number input -->
   <input
