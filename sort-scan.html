@@ -50,6 +50,25 @@
       position: absolute;
       display: none;
     }
+    /* NEW “+” button, big plus sign (you can re-style as needed) */
+    #plusBtn {
+      position: absolute;
+      font-size: 150px !important;
+      line-height: 0.9;
+    }
+    /* NEW “Clear” button */
+    #clearBtn {
+      position: absolute;
+    }
+    /* NEW read-only text box: # of Scans (200×200) */
+    #scanCounter {
+      position: absolute;
+      width: 200px !important;
+      height: 200px !important;
+      font-size: 2em !important;
+      text-align: center !important;
+      background: #f9f9f9;
+    }
     /* Modal styling for config */
     .modal {
       position: fixed !important;
@@ -115,6 +134,15 @@
   <!-- "Send" button -->
   <button id="sendBtn" class="btn waves-effect waves-light">Send</button>
 
+  <!-- NEW: “+” button for appending codes, up to 3 max -->
+  <button id="plusBtn" class="btn waves-effect waves-light">+</button>
+
+  <!-- NEW: “Clear” button -->
+  <button id="clearBtn" class="btn waves-effect waves-light">Clear</button>
+
+  <!-- NEW: read-only "# of Scans" text box -->
+  <input type="text" id="scanCounter" value="0" readonly placeholder="# of Scans" />
+
   <!-- Config Modal -->
   <div id="configModalScanner" class="modal">
     <div class="modal-content">
@@ -179,6 +207,9 @@
     const beepSound = new Audio("./assets/scannerBeep.mp3");
     beepSound.preload = "auto";
     beepSound.load();
+
+    // NEW: For storing multiple scanned codes (up to 3)
+    let scannedCodes = [];
 
     /*************************************************************
      * 2) PLAY BEEP USING THE MP3 FILE WITH ADJUSTED PARAMETERS
@@ -294,7 +325,8 @@
     window.addEventListener("click", unlockAudio, { once: true });
 
     /*************************************************************
-     * 6) "SEND" BUTTON: Push scanned code to Firestore
+     * 6) "SEND" BUTTON: Push scanned code(s) to Firestore
+     * Also clears everything after sending.
      *************************************************************/
     const sendBtn = document.getElementById("sendBtn");
     sendBtn.addEventListener("click", async () => {
@@ -324,10 +356,50 @@
           throw new Error(result.error || "Unknown error from firebaseOrders function");
         }
         M.toast({ html: "Firestore updated: doc 'ScannedSortingOrder' => " + codeVal });
+
+        // After sending, clear everything
+        scannedCodes = [];
+        scannedInput.value = "";
+        document.getElementById("scanCounter").value = "0";
       } catch (err) {
         M.toast({ html: "Error: " + err.message });
         console.error("Error sending to Firestore:", err);
       }
+    });
+
+    /*************************************************************
+     * 6.1) “+” Button => Append up to 3 scans in the text box
+     *************************************************************/
+    const plusBtn = document.getElementById("plusBtn");
+    plusBtn.addEventListener("click", function() {
+      const codeVal = scannedInput.value.trim();
+      if (!codeVal) {
+        M.toast({ html: "No new code to add! Scan a code first." });
+        return;
+      }
+      // If we already have 3 codes, block adding a 4th
+      if (scannedCodes.length >= 3) {
+        M.toast({ html: "Maximum of 3 codes reached. Clear or Send first." });
+        return;
+      }
+      // If code is new, append it to scannedCodes
+      scannedCodes.push(codeVal);
+
+      // Update the text box => comma-delimited
+      document.getElementById("orderNumInput").value = scannedCodes.join(",");
+
+      // Update the # of Scans readout
+      document.getElementById("scanCounter").value = scannedCodes.length;
+    });
+
+    /*************************************************************
+     * 6.2) “Clear” Button => Reset everything
+     *************************************************************/
+    const clearBtn = document.getElementById("clearBtn");
+    clearBtn.addEventListener("click", function() {
+      scannedCodes = [];
+      scannedInput.value = "";
+      document.getElementById("scanCounter").value = "0";
     });
 
     /*************************************************************
@@ -341,8 +413,13 @@
       "qrcode",
       "video",
       "captureCanvas",
-      "sendBtn"
+      "sendBtn",
+      // NEWly added for config
+      "plusBtn",
+      "clearBtn",
+      "scanCounter"
     ];
+
     let scannerDefaultPositions = {
       openConfigBtnScanner: { left:1600, top:2600, width:141, height:36 },
       orderLabel:           { left:70,   top:2450, width:450, height:25 },
@@ -351,7 +428,11 @@
       qrcode:               { left:70,   top:3000, width:384, height:384 },
       video:                { left:0,    top:0,    width:1800, height:2400 },
       captureCanvas:        { left:400,  top:2600, width:300, height:200 },
-      sendBtn:              { left:1150, top:2820, width:550, height:225 }
+      sendBtn:              { left:1150, top:2820, width:550, height:225 },
+      // NEW defaults for plusBtn, clearBtn, scanCounter
+      plusBtn:              { left:100,  top:400,  width:250, height:250 },
+      clearBtn:             { left:400,  top:400,  width:150, height:50 },
+      scanCounter:          { left:100,  top:700,  width:200, height:200 }
     };
 
     function loadPositionsFromStorage() {
@@ -377,7 +458,7 @@
         }
       }
 
-      // **** Fallback to your default positions ****
+      // Fallback to default positions
       for (const id in scannerDefaultPositions) {
         const el = document.getElementById(id);
         if (!el) continue;
@@ -458,13 +539,14 @@
       // Start camera immediately
       startCamera();
 
-      // Open config modal
+      // “Open Config” modal
       document.getElementById("openConfigBtnScanner").addEventListener("click", function(){
         populateConfigTableScanner();
         const modalElem = document.getElementById("configModalScanner");
         const instance = M.Modal.getInstance(modalElem);
         instance.open();
       });
+
       document.getElementById("saveConfigBtnScanner").addEventListener("click", function(){
         savePositionsToStorage();
       });
