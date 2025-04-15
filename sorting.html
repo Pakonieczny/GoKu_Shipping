@@ -556,7 +556,7 @@ document.getElementById("matchPrintBtn").addEventListener("click", initMatchAndP
 function initMatchAndPrintFlow() {
   console.log("Match & Print pressed.");
 
-  // (1) GATHER UNIQUE ORDERS (moved higher so it's accessible in the 'if' block below)
+  // 1) Gather .preview-box elements and build uniqueOrders array
   const previewBoxes = document.querySelectorAll(".preview-box");
   const uniqueOrders = [];
   previewBoxes.forEach((pb, i) => {
@@ -566,74 +566,62 @@ function initMatchAndPrintFlow() {
     }
   });
 
-  // (2) Declare currentIndex up here so we can reset to cell0 in the 'if' block
-  let currentIndex = 0;
-
-  // (NEW) If user presses “Match & Print” again while flow is active => reset to cell0
-  if (matchPrintFlowInProgress) {
-    console.log("Match & Print already in progress => resetting progress to cell0");
-    currentIndex = 0; // ensure we start from the very first order again
-    removeHighlightsAndPrintButton();
-    highlightOrder(uniqueOrders[currentIndex]);
-    return; // do not re-initialize everything
-  }
-
-  // Mark the flow as active
-  matchPrintFlowInProgress = true;
-
-  // Also disable "Send & Match" while in Match & Print
-  disableSendMatch();
-
-  // Because user just pressed “Match & Print,” we allow “Next”/“Back”
-  enableBackNext();
-
-  // If no orders found, exit
-    if (!uniqueOrders.length) {
+  // 2) If there are no orders, bail out
+  if (!uniqueOrders.length) {
     M.toast({ html: "No orders found to highlight." });
-    enableSendMatch();
+    enableSendMatch();  // re-enable “Send & Match”
     return;
   }
 
-  // We'll store the "Print" button so we can remove it each time we change orders
+  // 3) Forcefully remove all old 3px blue outlines and old “Print” buttons
+  //    so we start fresh from cell0
+  removeAllHighlightsAndPrintButtons();
+
+  // 4) currentIndex => start at 0
+  let currentIndex = 0;
+
+  // 5) Also disable “Send & Match” while in “Match & Print”
+  disableSendMatch();
+
+  // 6) If you want “Back” and “Next” to be enabled now, do it here
+  //    e.g. enableMatchPrintFlow() or enableBackNext() if you have that
+  enableBackNext();
+
+  // 7) We'll store a reference to the “Print” button so we can remove it when switching orders
   let currentPrintBtn = null;
 
   // ------------------------------------------------------------------------
-  // Remove any leftover 3px blue outlines or leftover "Print" button
+  // removeAllHighlightsAndPrintButtons => forcibly remove leftover 3px lines + "Print" buttons
   // ------------------------------------------------------------------------
-  function removeHighlightsAndPrintButton() {
+  function removeAllHighlightsAndPrintButtons() {
     previewBoxes.forEach((pb, i) => {
-      pb.style.border = "1px solid #000"; // reset
+      pb.style.border = "1px solid #000"; // reset to black
       const matchBox = document.getElementById("matchCell" + i);
       if (matchBox) {
         matchBox.style.fontWeight = "";
       }
     });
-    if (currentPrintBtn) {
-      currentPrintBtn.remove();
-      currentPrintBtn = null;
-    }
+    // remove any leftover “Print” button in the DOM
+    const leftoverPrintBtns = document.querySelectorAll(".overlay-print-btn");
+    leftoverPrintBtns.forEach((btn) => btn.remove());
   }
 
   // ------------------------------------------------------------------------
-  // highlightOrder: highlight all cells belonging to the given orderNum
+  // highlightOrder => highlight all preview cells for a particular order
   // ------------------------------------------------------------------------
   function highlightOrder(orderNum) {
-    removeHighlightsAndPrintButton();
+    // always remove leftover highlights + leftover "Print" button first
+    removeAllHighlightsAndPrintButtons();
 
     let foundFirstCell = false;
     previewBoxes.forEach((pb, i) => {
       const orderCell = document.getElementById("orderCell" + i);
       if (orderCell && orderCell.value === orderNum) {
-        // highlight this cell in blue
         pb.style.border = "3px solid blue";
-
-        // make the match input text bold
         const matchBox = document.getElementById("matchCell" + i);
         if (matchBox) {
           matchBox.style.fontWeight = "bold";
         }
-
-        // The very first cell we encounter in this order => place “Print” button
         if (!foundFirstCell) {
           foundFirstCell = true;
           currentPrintBtn = createPrintButtonOverBox(pb, i);
@@ -643,8 +631,7 @@ function initMatchAndPrintFlow() {
   }
 
   // ------------------------------------------------------------------------
-  // createPrintButtonOverBox
-  // places the “Print” button on top of the given preview box
+  // createPrintButtonOverBox => place a “Print” button on top of the given preview box
   // ------------------------------------------------------------------------
   function createPrintButtonOverBox(previewBox, cellIndex) {
     const rect = previewBox.getBoundingClientRect();
@@ -662,13 +649,15 @@ function initMatchAndPrintFlow() {
     btn.style.zIndex = "9999";
     btn.style.cursor = "pointer";
 
-    // When user clicks “Print,” open the iframe printer
     btn.addEventListener("click", () => openIframePrinterForListing(cellIndex));
     document.body.appendChild(btn);
     return btn;
   }
 
-  // Now highlight the first order => "cell0"
+  // ------------------------------------------------------------------------
+  // Immediately highlight cell0 => “uniqueOrders[currentIndex]”
+  // so the user sees a 3px blue outline and a "Print" button on cell0 right away
+  // ------------------------------------------------------------------------
   highlightOrder(uniqueOrders[currentIndex]);
 
   // ------------------------------------------------------------------------
@@ -690,12 +679,8 @@ function initMatchAndPrintFlow() {
     currentIndex++;
     if (currentIndex >= uniqueOrders.length) {
       M.toast({ html: "Congrats, You’re Done!" });
-      removeHighlightsAndPrintButton();
-      enableSendMatch();
-
-      // Optionally set matchPrintFlowInProgress = false if we want the user
-      // to be able to re-press “Match & Print” from the beginning
-      matchPrintFlowInProgress = false;
+      removeAllHighlightsAndPrintButtons(); // remove leftover blue lines + “Print” button
+      enableSendMatch(); // re-enable “Send & Match” or do whatever you want here
       return;
     }
     highlightOrder(uniqueOrders[currentIndex]);
