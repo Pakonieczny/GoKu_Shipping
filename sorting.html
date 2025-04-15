@@ -718,7 +718,7 @@ function openIframePrinterForListing(cellIndex) {
   const dataToPrint = {
     dispatchDate,
     items: itemsForOrder,
-    userTypedOrderNum: ord // or whatever variable holds the typed Etsy order number
+    userTypedOrderNum: item.typedOrderNumber || "UnknownOrder" // or whatever variable holds the typed Etsy order number
   };
   
   localStorage.setItem("qrPrintAll", JSON.stringify(dataToPrint));
