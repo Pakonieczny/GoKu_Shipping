@@ -705,13 +705,13 @@ function openIframePrinterForListing(cellIndex) {
     return;
   }
 
-  localStorage.setItem("qrPrintSingle", JSON.stringify(item));
+  localStorage.setItem("qrPrintAll", JSON.stringify(window.cachedOrderItems));
 
   // show the iframe overlay
   const overlay = document.getElementById("qrPrinterOverlay");
   const iframe = document.getElementById("qrPrinterIframe");
   overlay.style.display = "flex";
-  iframe.src = "QR Printer.html?single=1";
+  iframe.src = "QR Printer.html";
 
   const closeBtn = document.getElementById("qrPrinterCloseBtn");
   closeBtn.onclick = () => {
