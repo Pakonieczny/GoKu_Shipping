@@ -23,48 +23,53 @@
 <body>
 <script>
 /********************************************************
- * On page load, read 'qrPrintAll' from localStorage,
- * gather the entire set of listings for that order,
- * build a single 4×6 PDF label with:
- *   1) a QR code for the order number
- *   2) 0–2 black dot(s) depending on whether any listing
- *      matches GroupA or GroupB
+ * On page load:
+ * 1) Read "qrPrintAll" from localStorage, which is an object:
+ *      { dispatchDate: "YYYY-MM-DD" or "N/A",
+ *        items: [ array of transactions for this order ] }
+ * 2) Gather the entire set of listings in items,
+ *    build a single 4×6 PDF label with:
+ *     - a QR code for the order number
+ *     - 0–2 black dot(s) based on groupA / groupB
+ *     - the dispatchDate 10px below the QR code, left-justified
  * Then auto-print that PDF in an iframe.
  ********************************************************/
 window.addEventListener("load", async () => {
   try {
-    // 1) Load the array of listings for this order from localStorage
-    const allStr = localStorage.getItem("qrPrintAll");
-    if (!allStr) {
+    // 1) Load from localStorage
+    const dataStr = localStorage.getItem("qrPrintAll");
+    if (!dataStr) {
       console.error("No 'qrPrintAll' found in localStorage. Nothing to print.");
       return;
     }
 
-    // Must be a non-empty array of listings
-    const items = JSON.parse(allStr);
-    if (!Array.isArray(items) || !items.length) {
-      console.error("No array or empty array in 'qrPrintAll'.");
+    // Must be an object { dispatchDate, items[] }:
+    const dataObj = JSON.parse(dataStr);
+    if (!dataObj || !Array.isArray(dataObj.items) || !dataObj.items.length) {
+      console.error("'qrPrintAll' missing items or is empty.");
       return;
     }
 
-    // (NEW LOGS) See exactly which listings were passed over from sorting.html
-    console.log("All items from sorting.html =>", items);
+    // (NEW) dispatchDate
+    const dispatchDate = dataObj.dispatchDate || "N/A";
+    // The array of listings
+    const items = dataObj.items;
+
+    // (LOG) see what we got
+    console.log("Loaded 'qrPrintAll' =>", dataObj);
+    console.log("Dispatch date =>", dispatchDate);
     items.forEach((it, idx) => {
-      console.log(
-        `Listing #${idx} => title: ${it.title || "(no title)"},
-         keywords: ${JSON.stringify(it.keywords || [])}`
-      );
+      console.log(`Item #${idx} => receipt_id=${it.receipt_id}, title=${it.title}, keywords=${JSON.stringify(it.keywords)}`);
     });
 
     // 2) Figure out an order number to embed in the QR
-    //    Typically, all these items share the same .receipt_id => use items[0].receipt_id
     const orderNum = items[0].receipt_id || "UnknownOrder";
 
-    // 3) Compute the dot count cumulatively across all items
+    // 3) Compute the dot count cumulatively from all items
     const dotCount = getCumulativeDotCount(items);
 
     // 4) Build & print the PDF label
-    await buildAndPrintLabel(orderNum, dotCount);
+    await buildAndPrintLabel(orderNum, dotCount, dispatchDate);
 
   } catch (err) {
     console.error("Error in QR Printer auto-run:", err);
@@ -104,7 +109,7 @@ function getCumulativeDotCount(listings) {
     }
   });
 
-  // If any item triggers groupA => 2
+  // If any listing triggers groupA => 2
   if (foundGroupA) return 2;
   // else if no groupA, but groupB => 1
   if (foundGroupB) return 1;
@@ -113,11 +118,11 @@ function getCumulativeDotCount(listings) {
 }
 
 /********************************************************
- * buildAndPrintLabel(orderNum, dotCount):
+ * buildAndPrintLabel(orderNum, dotCount, dispatchDate):
  * 1) Generate a high-res (1024×1024) QR code
  * 2) Build a 4×6 PDF => embed => auto-print
  ********************************************************/
-async function buildAndPrintLabel(orderNum, dotCount) {
+async function buildAndPrintLabel(orderNum, dotCount, dispatchDate) {
   // 1) Generate a large QR code (1024×1024) for high-res
   const hiddenQRContainer = document.createElement("div");
   hiddenQRContainer.style.display = "none";
@@ -137,9 +142,9 @@ async function buildAndPrintLabel(orderNum, dotCount) {
     return;
   }
 
-  // 2) Build docDefinition with a 64px QR + dotCount dots
+  // 2) Build docDefinition with a 64px QR + dotCount dots + dispatchDate
   const dataUrl = qrImg.src;
-  const docDefinition = buildPDFDocWithDots(dataUrl, dotCount);
+  const docDefinition = buildPDFDocWithDots(dataUrl, dotCount, dispatchDate);
 
   // 3) Render PDF => embed => auto-print
   const pdfDocGenerator = pdfMake.createPdf(docDefinition);
@@ -159,11 +164,13 @@ async function buildAndPrintLabel(orderNum, dotCount) {
 }
 
 /********************************************************
- * buildPDFDocWithDots(dataUrl, dotCount):
+ * buildPDFDocWithDots(dataUrl, dotCount, dispatchDate):
  * Places the QR code at (x=80,y=30), 64px wide,
  * Dot(s) as small black circles at (x=0..12..24,y=0).
+ * Then prints the dispatch date 10px below the QR code
+ * at y=104 (since the QR ends at ~y=94).
  ********************************************************/
-function buildPDFDocWithDots(dataUrl, dotCount) {
+function buildPDFDocWithDots(dataUrl, dotCount, dispatchDate) {
   // Dot = 6px diameter => radius=3, spaced 12px
   const dotEllipses = [];
   if (dotCount > 0) {
@@ -180,17 +187,25 @@ function buildPDFDocWithDots(dataUrl, dotCount) {
   }
 
   return {
-    pageSize: { width: 288, height: 432 }, // 4×6 label (in points)
+    pageSize: { width: 288, height: 432 }, // 4×6 label in points
     pageMargins: [0,0,0,0],
     content: [
+      // Dot ellipse(s) near top
       {
         absolutePosition: { x:80, y:20 },
         canvas: dotEllipses
       },
+      // QR code 64×64 at y=30..94
       {
         image: dataUrl,
         width: 64,
         absolutePosition: { x:80, y:30 }
+      },
+      // (NEW) dispatchDate 10px below the bottom of QR => y=104
+      {
+        text: `Dispatch Date: ${dispatchDate || "N/A"}`,
+        fontSize: 10,
+        absolutePosition: { x:80, y:104 }
       }
     ]
   };
