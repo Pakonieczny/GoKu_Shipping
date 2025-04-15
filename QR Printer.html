@@ -27,8 +27,8 @@
  * gather the entire set of listings for that order,
  * build a single 4×6 PDF label with:
  *   1) a QR code for the order number
- *   2) 0–2 black dot(s) depending on whether any item
- *      in the entire order belongs to GroupA or GroupB
+ *   2) 0–2 black dot(s) depending on whether any listing
+ *      matches GroupA or GroupB
  * Then auto-print that PDF in an iframe.
  ********************************************************/
 window.addEventListener("load", async () => {
@@ -47,14 +47,21 @@ window.addEventListener("load", async () => {
       return;
     }
 
+    // (NEW CONSOLE LOG) Display the entire array from sorting.html
+    console.debug("All items from sorting.html =>", items);
+    items.forEach((it, idx) => {
+      // (NEW CONSOLE LOG) Show each listing's title & keywords
+      console.debug(
+        `Listing #${idx} => title: ${it.title || "(no title)"},
+         keywords: ${JSON.stringify(it.keywords || [])}`
+      );
+    });
+
     // 2) Figure out an order number to embed in the QR
-    //    e.g. assume they share the same .receipt_id => take items[0].receipt_id
+    //    Typically, all items share the same .receipt_id => take the first
     const orderNum = items[0].receipt_id || "UnknownOrder";
 
     // 3) Compute the dot count cumulatively from all listings
-    //    If any listing => GroupA => 2 dots
-    //    Else if none are GroupA but at least one => GroupB => 1 dot
-    //    Else => 0
     const dotCount = getCumulativeDotCount(items);
 
     // 4) Build & print the PDF label
@@ -67,9 +74,8 @@ window.addEventListener("load", async () => {
 
 /********************************************************
  * getCumulativeDotCount(listings):
- * checks group A/B for each listing in the array.
- * If any listing is group A => 2 dots
- * else if any listing is group B => 1 dot
+ * If ANY listing is groupA => 2 dots
+ * else if ANY listing is groupB => 1 dot
  * else => 0
  ********************************************************/
 function getCumulativeDotCount(listings) {
@@ -91,10 +97,12 @@ function getCumulativeDotCount(listings) {
     const kw = Array.isArray(listing.keywords) ? listing.keywords : [];
     const lower = kw.map(k => k.toLowerCase());
 
-    // If any keyword is in groupA => mark foundGroupA
-    if (lower.some(x => groupA.includes(x))) foundGroupA = true;
-    // If any keyword is in groupB => mark foundGroupB
-    if (lower.some(x => groupB.includes(x))) foundGroupB = true;
+    if (lower.some(x => groupA.includes(x))) {
+      foundGroupA = true;
+    }
+    if (lower.some(x => groupB.includes(x))) {
+      foundGroupB = true;
+    }
   });
 
   if (foundGroupA) return 2;
@@ -115,7 +123,6 @@ async function buildAndPrintLabel(orderNum, dotCount) {
 
   await makeLargeQRCode(orderNum, hiddenQRContainer);
 
-  // Try to grab the rendered <img> or else convert <canvas> to <img>
   let qrImg = hiddenQRContainer.querySelector("img");
   if (!qrImg) {
     const qrCanvas = hiddenQRContainer.querySelector("canvas");
@@ -136,8 +143,6 @@ async function buildAndPrintLabel(orderNum, dotCount) {
   const pdfDocGenerator = pdfMake.createPdf(docDefinition);
   pdfDocGenerator.getBlob((blob) => {
     const blobUrl = URL.createObjectURL(blob);
-
-    // Clear the page, embed PDF in a fullpage <iframe>
     document.body.innerHTML = "";
     const iframe = document.createElement("iframe");
     iframe.style.width = "100%";
@@ -145,7 +150,6 @@ async function buildAndPrintLabel(orderNum, dotCount) {
     document.body.appendChild(iframe);
     iframe.src = blobUrl;
 
-    // Auto print after a short delay
     setTimeout(() => {
       iframe.contentWindow.print();
     }, 500);
