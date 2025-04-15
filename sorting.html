@@ -699,34 +699,42 @@ function openIframePrinterForListing(cellIndex) {
     return;
   }
 
+  // 1) Grab the clicked item
   const item = window.cachedOrderItems[cellIndex];
   if (!item) {
     console.warn("No item found for cellIndex:", cellIndex);
     return;
   }
 
-  // 1) Get this order's receipt_id
+  // 2) Extract the dispatchDate from this item (or default to "N/A")
+  //    If your code places dispatch_date on each transaction, do:
+  const dispatchDate = item.dispatch_date || "N/A";
+
+  // 3) Filter window.cachedOrderItems so we only keep items
+  //    that belong to this order's receipt_id
   const orderID = item.receipt_id;
   console.log("Filtering items for order:", orderID);
-
-  // 2) Filter so we only keep items for that same order
-  const itemsForOrder = window.cachedOrderItems.filter(one => {
+  const itemsForOrder = window.cachedOrderItems.filter((one) => {
     return one.receipt_id === orderID;
   });
 
-  // 3) Save ONLY those items to localStorage => "qrPrintAll"
-  localStorage.setItem("qrPrintAll", JSON.stringify(itemsForOrder));
+  // 4) Build an object that includes:
+  //    (a) the subset array for just this one order
+  //    (b) the dispatchDate you want to print
+  const dataToPrint = {
+    dispatchDate: dispatchDate,
+    items: itemsForOrder
+  };
 
-  // (Optional) Debug: show how many items we just stored
-  console.log("Stored", itemsForOrder.length, "items in 'qrPrintAll'", itemsForOrder);
+  // 5) Save that object in localStorage under "qrPrintAll"
+  localStorage.setItem("qrPrintAll", JSON.stringify(dataToPrint));
 
-  // 4) Now show the QR Printer overlay
+  // 6) Show the QR Printer overlay
   const overlay = document.getElementById("qrPrinterOverlay");
   const iframe = document.getElementById("qrPrinterIframe");
   overlay.style.display = "flex";
   iframe.src = "QR Printer.html";
 
-  // 5) Close logic
   const closeBtn = document.getElementById("qrPrinterCloseBtn");
   closeBtn.onclick = () => {
     overlay.style.display = "none";
@@ -1382,33 +1390,49 @@ async function analyzeUserImagesViaOpenAI() {
     /********************************************************
      * loadBatchEtsyOrders, fetchListingImages, getLocalImageData
      ********************************************************/
-    async function loadBatchEtsyOrders(orderNumbers) {
-      try {
-        M.toast({ html: "Loading " + orderNumbers.length + " order(s)..." });
-        const token = localStorage.getItem("access_token") || "";
-        let combinedItems = [];
-        for (let i = 0; i < orderNumbers.length; i++) {
-          const ord = orderNumbers[i];
-          const url =
-            functionsBaseUrl + "/etsyOrderProxy?orderId=" + encodeURIComponent(ord);
-          const resp = await fetch(url, { headers: { "access-token": token } });
-          if (!resp.ok) {
-            console.warn("Order fetch failed for " + ord + ", status=" + resp.status);
-            continue;
-          }
-          const data = await resp.json();
-          if (data.transactions && Array.isArray(data.transactions)) {
-            combinedItems.push(...data.transactions);
-          } else {
-            console.warn("No transactions for order " + ord);
-          }
+// EXAMPLE snippet in loadBatchEtsyOrders:
+async function loadBatchEtsyOrders(orderNumbers) {
+  try {
+    M.toast({ html: "Loading " + orderNumbers.length + " order(s)..." });
+    const token = localStorage.getItem("access_token") || "";
+    let combinedItems = [];
+    for (let i = 0; i < orderNumbers.length; i++) {
+      const ord = orderNumbers[i];
+      const url = functionsBaseUrl + "/etsyOrderProxy?orderId=" + encodeURIComponent(ord);
+      const resp = await fetch(url, { headers: { "access-token": token } });
+      if (!resp.ok) {
+        console.warn("Order fetch failed for " + ord + ", status=" + resp.status);
+        continue;
+      }
+      const data = await resp.json();
+      
+      // (NEW) Suppose `data.receipt.dispatch_date` or something similar
+      //  for a single order. We assume data.transactions is an array.
+      if (data.receipt && data.receipt.dispatch_date) {
+        const dispatchDate = data.receipt.dispatch_date; 
+        // e.g. "2023-08-15" or a Unix timestamp or whatever the Etsy returns
+        console.log("Order", ord, "has dispatch date =", dispatchDate);
+
+        // Attach it to each transaction, so fillPreviewBoxes sees it
+        if (Array.isArray(data.transactions)) {
+          data.transactions.forEach((t) => {
+            t.dispatch_date = dispatchDate;
+          });
         }
-        await fillPreviewBoxes(combinedItems);
-      } catch (err) {
-        console.error("Error loading batch orders:", err);
-        M.toast({ html: "Error: " + err.message });
+      }
+
+      if (data.transactions && Array.isArray(data.transactions)) {
+        combinedItems.push(...data.transactions);
+      } else {
+        console.warn("No transactions for order " + ord);
       }
     }
+    await fillPreviewBoxes(combinedItems);
+  } catch (err) {
+    console.error("Error loading batch orders:", err);
+    M.toast({ html: "Error: " + err.message });
+  }
+}
 
     async function fetchListingImages(listingId) {
       const token = localStorage.getItem("access_token") || "";
