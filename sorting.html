@@ -705,21 +705,34 @@ function openIframePrinterForListing(cellIndex) {
     return;
   }
 
-  localStorage.setItem("qrPrintAll", JSON.stringify(window.cachedOrderItems));
+  // 1) Get this order's receipt_id
+  const orderID = item.receipt_id;
+  console.log("Filtering items for order:", orderID);
 
-  // show the iframe overlay
+  // 2) Filter so we only keep items for that same order
+  const itemsForOrder = window.cachedOrderItems.filter(one => {
+    return one.receipt_id === orderID;
+  });
+
+  // 3) Save ONLY those items to localStorage => "qrPrintAll"
+  localStorage.setItem("qrPrintAll", JSON.stringify(itemsForOrder));
+
+  // (Optional) Debug: show how many items we just stored
+  console.log("Stored", itemsForOrder.length, "items in 'qrPrintAll'", itemsForOrder);
+
+  // 4) Now show the QR Printer overlay
   const overlay = document.getElementById("qrPrinterOverlay");
   const iframe = document.getElementById("qrPrinterIframe");
   overlay.style.display = "flex";
   iframe.src = "QR Printer.html";
 
+  // 5) Close logic
   const closeBtn = document.getElementById("qrPrinterCloseBtn");
   closeBtn.onclick = () => {
     overlay.style.display = "none";
     iframe.src = "";
   };
 }
-
     /********************************************************
      * fillPreviewBoxes, attachPreviewBoxListeners,
      * loadPositions, cropImageFromPreview, etc...
