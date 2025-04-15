@@ -33,35 +33,34 @@
  ********************************************************/
 window.addEventListener("load", async () => {
   try {
-    // 1) Load all items from localStorage
+    // 1) Load the array of listings for this order from localStorage
     const allStr = localStorage.getItem("qrPrintAll");
     if (!allStr) {
       console.error("No 'qrPrintAll' found in localStorage. Nothing to print.");
       return;
     }
 
-    // Must be an array of listings
+    // Must be a non-empty array of listings
     const items = JSON.parse(allStr);
     if (!Array.isArray(items) || !items.length) {
       console.error("No array or empty array in 'qrPrintAll'.");
       return;
     }
 
-    // (NEW CONSOLE LOG) Display the entire array from sorting.html
-    console.debug("All items from sorting.html =>", items);
+    // (NEW LOGS) See exactly which listings were passed over from sorting.html
+    console.log("All items from sorting.html =>", items);
     items.forEach((it, idx) => {
-      // (NEW CONSOLE LOG) Show each listing's title & keywords
-      console.debug(
+      console.log(
         `Listing #${idx} => title: ${it.title || "(no title)"},
          keywords: ${JSON.stringify(it.keywords || [])}`
       );
     });
 
     // 2) Figure out an order number to embed in the QR
-    //    Typically, all items share the same .receipt_id => take the first
+    //    Typically, all these items share the same .receipt_id => use items[0].receipt_id
     const orderNum = items[0].receipt_id || "UnknownOrder";
 
-    // 3) Compute the dot count cumulatively from all listings
+    // 3) Compute the dot count cumulatively across all items
     const dotCount = getCumulativeDotCount(items);
 
     // 4) Build & print the PDF label
@@ -105,8 +104,11 @@ function getCumulativeDotCount(listings) {
     }
   });
 
+  // If any item triggers groupA => 2
   if (foundGroupA) return 2;
+  // else if no groupA, but groupB => 1
   if (foundGroupB) return 1;
+  // else => 0
   return 0;
 }
 
@@ -171,13 +173,14 @@ function buildPDFDocWithDots(dataUrl, dotCount) {
         type: 'ellipse',
         x: i*spacing, y: 0,
         r1: 3, r2: 3,
-        color: 'black', fillOpacity: 1
+        color: 'black',
+        fillOpacity: 1
       });
     }
   }
 
   return {
-    pageSize: { width: 288, height: 432 }, // 4×6 label in points
+    pageSize: { width: 288, height: 432 }, // 4×6 label (in points)
     pageMargins: [0,0,0,0],
     content: [
       {
