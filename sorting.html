@@ -1395,6 +1395,7 @@ async function loadBatchEtsyOrders(orderNumbers) {
     M.toast({ html: "Loading " + orderNumbers.length + " order(s)..." });
     const token = localStorage.getItem("access_token") || "";
     let combinedItems = [];
+
     for (let i = 0; i < orderNumbers.length; i++) {
       const ord = orderNumbers[i];
       const url = functionsBaseUrl + "/etsyOrderProxy?orderId=" + encodeURIComponent(ord);
@@ -1403,29 +1404,45 @@ async function loadBatchEtsyOrders(orderNumbers) {
         console.warn("Order fetch failed for " + ord + ", status=" + resp.status);
         continue;
       }
+
       const data = await resp.json();
 
-      // -------------------- NEW LINES START --------------------
-      // If Etsy provides a "dispatch_date" (the ship date), attach it to each transaction
-      if (data.receipt && data.receipt.dispatch_date) {
-        const dispatchDate = data.receipt.dispatch_date; 
-        console.log("Order", ord, "has dispatch date =", dispatchDate);
+      console.log("Etsy Order Data:", data);
 
-        if (Array.isArray(data.transactions)) {
+      // ------------------------------------------------
+      // APPLY THE SAME METHODOLOGY AS index.html
+      // ------------------------------------------------
+      if (data.transactions && data.transactions.length > 0) {
+        const firstTrans = data.transactions[0];
+        if (firstTrans.expected_ship_date) {
+          // Convert from Unix to a nice, short date
+          const sTS = new Date(firstTrans.expected_ship_date * 1000);
+          const sDay = ("0" + sTS.getDate()).slice(-2);
+          const monthNamesF = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+          const sMonth = monthNamesF[sTS.getMonth()];
+          const sYear = sTS.getFullYear();
+
+          // e.g. "25 Sep 2025"
+          const formattedShipDate = sDay + " " + sMonth + " " + sYear;
+
+          // Attach this to ALL transactions, so our code sees `t.dispatch_date`
           data.transactions.forEach((t) => {
-            t.dispatch_date = dispatchDate; // store the ship date on each item
+            t.dispatch_date = formattedShipDate;
           });
         }
       }
-      // -------------------- NEW LINES END ----------------------
 
+      // If there’s an array of transactions, merge them in
       if (data.transactions && Array.isArray(data.transactions)) {
         combinedItems.push(...data.transactions);
       } else {
-        console.warn("No transactions for order " + ord);
+        console.warn("No transactions for order", ord);
       }
     }
+
+    // Then fill the UI with combined results
     await fillPreviewBoxes(combinedItems);
+
   } catch (err) {
     console.error("Error loading batch orders:", err);
     M.toast({ html: "Error: " + err.message });
