@@ -1382,9 +1382,9 @@ async function analyzeUserImagesViaOpenAI() {
       });
     }
 
-    /********************************************************
-     * loadBatchEtsyOrders, fetchListingImages, getLocalImageData
-     ********************************************************/
+/********************************************************
+ * loadBatchEtsyOrders, fetchListingImages, getLocalImageData
+ ********************************************************/
 
 async function loadBatchEtsyOrders(orderNumbers) {
   try {
@@ -1409,20 +1409,9 @@ async function loadBatchEtsyOrders(orderNumbers) {
         data.transactions.forEach((t) => {
           t.typedOrderNumber = ord;
         });
-        combinedItems.push(...data.transactions);
       } else {
         console.warn("No transactions for order " + ord);
       }
-    }
-
-    // Show all combined items in your preview grid
-    await fillPreviewBoxes(combinedItems);
-
-  } catch (err) {
-    console.error("Error loading batch orders:", err);
-    M.toast({ html: "Error: " + err.message });
-  }
-}
 
       // ------------------------------------------------
       // APPLY THE SAME METHODOLOGY AS index.html
@@ -1464,36 +1453,36 @@ async function loadBatchEtsyOrders(orderNumbers) {
   }
 }
 
-    async function fetchListingImages(listingId) {
-      const token = localStorage.getItem("access_token") || "";
-      const resp = await fetch(functionsBaseUrl + "/etsyImages?listingId=" + listingId, {
-        headers: { "access-token": token },
-      });
-      if (!resp.ok) {
-        console.warn("Image fetch HTTP error:", resp.status);
-        return [];
-      }
-      const data = await resp.json();
-      return data.results || [];
-    }
+async function fetchListingImages(listingId) {
+  const token = localStorage.getItem("access_token") || "";
+  const resp = await fetch(functionsBaseUrl + "/etsyImages?listingId=" + listingId, {
+    headers: { "access-token": token },
+  });
+  if (!resp.ok) {
+    console.warn("Image fetch HTTP error:", resp.status);
+    return [];
+  }
+  const data = await resp.json();
+  return data.results || [];
+}
 
-    async function getLocalImageData(imageUrl) {
-      try {
-        const response = await fetch(
-          functionsBaseUrl + "/imageProxy?url=" + encodeURIComponent(imageUrl)
-        );
-        const blob = await response.blob();
-        return new Promise((resolve, reject) => {
-          const reader = new FileReader();
-          reader.onload = () => resolve(reader.result);
-          reader.onerror = reject;
-          reader.readAsDataURL(blob);
-        });
-      } catch (err) {
-        console.error("Error in getLocalImageData:", err);
-        throw err;
-      }
-    }
+async function getLocalImageData(imageUrl) {
+  try {
+    const response = await fetch(
+      functionsBaseUrl + "/imageProxy?url=" + encodeURIComponent(imageUrl)
+    );
+    const blob = await response.blob();
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result);
+      reader.onerror = reject;
+      reader.readAsDataURL(blob);
+    });
+  } catch (err) {
+    console.error("Error in getLocalImageData:", err);
+    throw err;
+  }
+}
 
     /********************************************************
  * compareImages, sendAndMatch, partialMatches, etc.
