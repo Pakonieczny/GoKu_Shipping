@@ -712,9 +712,7 @@ function openIframePrinterForListing(cellIndex) {
   // 3) Filter out all items for this same order
   const orderID = item.receipt_id;
   console.log("Filtering items for order:", orderID);
-  const itemsForOrder = window.cachedOrderItems.filter((one) => {
-    return one.receipt_id === orderID;
-  });
+  const itemsForOrder = window.cachedOrderItems.filter(one => one.receipt_id === orderID);
 
   // 4) Build an object for QR Printer
   const dataToPrint = {
@@ -734,7 +732,7 @@ function openIframePrinterForListing(cellIndex) {
   hiddenIframe.style.border = "0";
   hiddenIframe.src = "QR Printer.html";
   document.body.appendChild(hiddenIframe);
-  
+}
     /********************************************************
      * fillPreviewBoxes, attachPreviewBoxListeners,
      * loadPositions, cropImageFromPreview, etc...
