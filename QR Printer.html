@@ -142,24 +142,31 @@ async function buildAndPrintLabel(orderNum, dotCount, dispatchDate) {
     return;
   }
 
-  // 2) Build docDefinition with a 64px QR + dotCount dots + dispatchDate
+  // 2) Build docDefinition with the bold shipping date (no 'Ship Date:' label)
   const dataUrl = qrImg.src;
   const docDefinition = buildPDFDocWithDots(dataUrl, dotCount, dispatchDate);
 
-  // 3) Render PDF => embed => auto-print
+  // 3) Render PDF => place into a hidden iframe => auto-print
   const pdfDocGenerator = pdfMake.createPdf(docDefinition);
   pdfDocGenerator.getBlob((blob) => {
     const blobUrl = URL.createObjectURL(blob);
-    document.body.innerHTML = "";
-    const iframe = document.createElement("iframe");
-    iframe.style.width = "100%";
-    iframe.style.height = "100%";
-    document.body.appendChild(iframe);
-    iframe.src = blobUrl;
 
-    setTimeout(() => {
-      iframe.contentWindow.print();
-    }, 500);
+    // Create a hidden iframe
+    const hiddenIframe = document.createElement("iframe");
+    hiddenIframe.style.position = "fixed";
+    hiddenIframe.style.visibility = "hidden";
+    hiddenIframe.style.right = "10000px";
+    hiddenIframe.style.width = "1px";
+    hiddenIframe.style.height = "1px";
+    document.body.appendChild(hiddenIframe);
+
+    // Once the PDF loads into the iframe, trigger print
+    hiddenIframe.onload = function() {
+      hiddenIframe.contentWindow.print();
+    };
+
+    // Point the iframe to the PDF blob
+    hiddenIframe.src = blobUrl;
   });
 }
 
@@ -203,10 +210,11 @@ function buildPDFDocWithDots(dataUrl, dotCount, dispatchDate) {
         width: 64,
         absolutePosition: { x:80, y:30 }
       },
-      // The Ship Date, 10px below the bottom of QR => y=104, left-justified with the QR code
+      // (NEW) Only show the date itself in bold, at x=80, y=104
       {
-        text: `Ship Date: ${dispatchDate || "N/A"}`,
+        text: dispatchDate || "N/A",
         fontSize: 10,
+        bold: true,
         absolutePosition: { x:80, y:104 }
       }
     ]
