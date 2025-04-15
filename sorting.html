@@ -259,10 +259,13 @@
     </div>
   </div>
 
+    <!-- 1) Firebase (compat mode) – must be above your main sorting code -->
+  <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
+
   <!-- jQuery & Materialize JS -->
   <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
-  <script
-    src="https://cdnjs.cloudflare.com/ajax/libs/materialize/1.0.0/js/materialize.min.js"
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/materialize/1.0.0/js/materialize.min.js"
   ></script>
 
   <!-- Everything is in this single <script> block -->
@@ -277,6 +280,21 @@ let userImagesArray = [];
 let cellMatches = {};
 let partialMatches = {};
 let matchPrintFlowInProgress = false;
+
+/********************************************************
+ * Firebase Initialization (REQUIRED)
+ ********************************************************/
+const firebaseConfig = {
+  apiKey: "YourApiKeyHere",
+  authDomain: "YourAuthDomainHere",
+  projectId: "gokudatabase",
+  storageBucket: "gokudatabase.firebasestorage.app",
+  messagingSenderId: "1078662308113",
+  appId: "1:1078662308113:web:41df0e5d229ff2af7a6cb0"
+};
+
+firebase.initializeApp(firebaseConfig);
+const db = firebase.firestore();
 
 /********************************************************
  * Etsy Auth, Code Challenge, configIDs
