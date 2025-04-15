@@ -354,6 +354,7 @@ document.addEventListener("DOMContentLoaded", function () {
   // Disable "Send & Match", "Match & Print", "Back", "Next" on app load
   disableSendMatch();
   disableMatchPrintFlow();
+  disableBackNext();
 
   setTimeout(function () {
     loadPositions();
@@ -543,7 +544,7 @@ document.getElementById("matchPrintBtn").addEventListener("click", initMatchAndP
 function initMatchAndPrintFlow() {
   console.log("Match & Print pressed.");
 
-  // 1) If user presses “Match & Print” again while flow is active => reset
+  // (NEW) If user presses “Match & Print” again while flow is active => reset to cell0
   if (matchPrintFlowInProgress) {
     console.log("Match & Print already in progress => resetting progress to cell0");
     currentIndex = 0;
@@ -558,8 +559,7 @@ function initMatchAndPrintFlow() {
   // Also disable "Send & Match" while in Match & Print
   disableSendMatch();
 
-  // Because user just pressed “Match & Print,” we allow “Next”/“Back”
-  // (If you want them disabled again at some point, do disableBackNext() as needed)
+  // (NEW) Because user just pressed “Match & Print,” we now allow “Next”/“Back”
   enableBackNext();
 
   // GATHER UNIQUE ORDERS
