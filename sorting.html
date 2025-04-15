@@ -716,9 +716,12 @@ function openIframePrinterForListing(cellIndex) {
 
   // 4) Build an object for QR Printer
   const dataToPrint = {
-    dispatchDate: dispatchDate,
-    items: itemsForOrder
+    dispatchDate,
+    items: itemsForOrder,
+    userTypedOrderNum: ord // or whatever variable holds the typed Etsy order number
   };
+  
+  localStorage.setItem("qrPrintAll", JSON.stringify(dataToPrint));
 
   // 5) Save that object in localStorage
   localStorage.setItem("qrPrintAll", JSON.stringify(dataToPrint));
