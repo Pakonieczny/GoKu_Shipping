@@ -4,7 +4,8 @@
   <meta charset="UTF-8">
   <title>Sort Scanner / Generator with Auto Camera & Touch-to-Unlock Audio</title>
   <!-- Materialize CSS (CDN) -->
-  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/materialize/1.0.0/css/materialize.min.css" />
+  <link rel="stylesheet" 
+        href="https://cdnjs.cloudflare.com/ajax/libs/materialize/1.0.0/css/materialize.min.css" />
   <style>
     html, body {
       margin: 0;
@@ -12,15 +13,30 @@
       height: 100%;
       font-family: sans-serif;
     }
+
+    /* Increase toast size by 300% */
+    .toast {
+      font-size: 300% !important;
+    }
+
     /* "Send" button: big for easy tapping */
     #sendBtn {
       position: absolute;
-      font-size: 600% !important;
+      font-size: 600% !important; /* same as before */
     }
+
+    /* "Clear" button: same size as “Send,” text colored red */
+    #clearBtn {
+      position: absolute;
+      font-size: 600% !important;
+      color: red !important;
+    }
+
     /* #qrcode: resizable by config */
     #qrcode {
       position: absolute;
     }
+
     /* Scanned QR Code text box: big font */
     #orderNumInput {
       position: absolute;
@@ -50,17 +66,8 @@
       position: absolute;
       display: none;
     }
-    /* NEW “+” button => large plus sign */
-    #plusBtn {
-      position: absolute;
-      font-size: 150px !important;
-      line-height: 0.9;
-    }
-    /* NEW “Clear” button */
-    #clearBtn {
-      position: absolute;
-    }
-    /* NEW read-only "# of Scans" text box => 150px font, bold */
+
+    /* The "# of Scans" read-only text box => 200×200, 150px font, bold */
     #scanCounter {
       position: absolute;
       width: 200px !important;
@@ -70,6 +77,7 @@
       text-align: center !important;
       background: #f9f9f9;
     }
+
     /* Modal styling for config */
     .modal {
       position: fixed !important;
@@ -135,13 +143,10 @@
   <!-- "Send" button -->
   <button id="sendBtn" class="btn waves-effect waves-light">Send</button>
 
-  <!-- NEW: “+” button for appending codes (up to 3) -->
-  <button id="plusBtn" class="btn waves-effect waves-light">+</button>
-
-  <!-- NEW: “Clear” button -->
+  <!-- "Clear" button -->
   <button id="clearBtn" class="btn waves-effect waves-light">Clear</button>
 
-  <!-- NEW: read-only "# of Scans" text box -->
+  <!-- "# of Scans" text box -->
   <input type="text" id="scanCounter" value="0" readonly placeholder="# of Scans" />
 
   <!-- Config Modal -->
@@ -176,7 +181,7 @@
   <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
   <script>
     /*************************************************************
-     * 0) FIREBASE CONFIG (Adjust if needed)
+     * 0) FIREBASE CONFIG
      *************************************************************/
     const firebaseConfig = {
       apiKey: "YourApiKeyHere",
@@ -195,25 +200,25 @@
     let stream = null;
     let scanningInterval = null;
     let lastScanned = "";
-    let audioUnlocked = false; // We'll beep only if this is true
-    let audioCtx = null;       // For Web Audio API
+    let audioUnlocked = false; // beep only if true
+    let audioCtx = null;       // Web Audio API
+    let scannedCodes = [];     // up to 3 codes
 
     const video        = document.getElementById("video");
     const canvas       = document.getElementById("captureCanvas");
     const ctx          = canvas.getContext("2d");
     const scannedInput = document.getElementById("orderNumInput");
     const qrcodeDiv    = document.getElementById("qrcode");
+    const clearBtn     = document.getElementById("clearBtn");
+    const sendBtn      = document.getElementById("sendBtn");
 
-    // Use your external MP3 beep from the assets folder
+    // beep MP3
     const beepSound = new Audio("./assets/scannerBeep.mp3");
     beepSound.preload = "auto";
     beepSound.load();
 
-    // Storing up to 3 scanned codes
-    let scannedCodes = [];
-
     /*************************************************************
-     * 2) PLAY BEEP USING THE MP3 FILE WITH ADJUSTED PARAMETERS
+     * 2) PLAY BEEP WITH ADJUSTED PARAMETERS
      *************************************************************/
     function playBeep() {
       if (audioCtx) {
@@ -259,12 +264,10 @@
     }
 
     /*************************************************************
-     * 4) HANDLE A NEW QR CODE SCAN
-     * => On the first scan in a session => auto-add to array
-     * => If user tries scanning >3, show a toast & ignore
+     * 4) HANDLE A NEW QR CODE SCAN => Increment up to 3
      *************************************************************/
     function handleScannedCode(codeText) {
-      // If it's the same code repeated, ignore
+      // If repeated code, ignore
       if (codeText === lastScanned) return;
       lastScanned = codeText;
 
@@ -272,25 +275,22 @@
         playBeep();
       }
 
-      // If we already have 3 scans, reject the new code
+      // If user tries scanning a 4th => reject
       if (scannedCodes.length >= 3) {
-        M.toast({ html: "Already have 3 codes in this session. Clear or Send first." });
+        M.toast({ html: "Max of 3 codes reached. Clear or Send first." });
         return;
       }
 
-      // If scannedCodes is empty => auto-add the first code
-      if (scannedCodes.length === 0) {
-        scannedCodes.push(codeText);
-        M.toast({ html: "First code automatically added." });
-      } else {
-        // Otherwise just show the code => user can press “+” to keep it if they want
-        M.toast({ html: "Scanned new code. Press + if you want to keep it." });
-      }
+      // Add code to array
+      scannedCodes.push(codeText);
 
-      // Show the last scanned code in the text box for reference
-      scannedInput.value = codeText;
+      // Show them all in the text box => comma-delimited
+      scannedInput.value = scannedCodes.join(",");
 
-      // Also update the QR preview
+      // Update # of Scans
+      document.getElementById("scanCounter").value = scannedCodes.length;
+
+      // Show QR code preview
       qrcodeDiv.innerHTML = "";
       const containerStyles = window.getComputedStyle(qrcodeDiv);
       const containerWidth  = parseInt(containerStyles.width, 10)  || 128;
@@ -301,11 +301,7 @@
         height: containerHeight
       });
 
-      // Rebuild the full comma-delimited string => to show auto-added codes
-      scannedInput.value = scannedCodes.join(",");
-
-      // Update the # of Scans text => scannedCodes.length
-      document.getElementById("scanCounter").value = scannedCodes.length;
+      M.toast({ html: "Scanned: " + codeText });
     }
 
     /*************************************************************
@@ -349,27 +345,26 @@
     window.addEventListener("click", unlockAudio, { once: true });
 
     /*************************************************************
-     * 6) "SEND" BUTTON => push ALL codes to Firestore
-     * Then reset everything
+     * 6) "SEND" => push all scans at once to Firestore
      *************************************************************/
-    const sendBtn = document.getElementById("sendBtn");
     sendBtn.addEventListener("click", async () => {
       try {
         if (!scannedCodes.length) {
-          M.toast({ html: "No QR codes in this session." });
+          M.toast({ html: "No codes to send. Scan first!" });
           return;
         }
-        // Use the entire array => comma-delimited
-        const allCodes = scannedCodes.join(",");
-        M.toast({ html: "Sending to Firestore doc 'ScannedSortingOrder': " + allCodes });
+        const combinedCodes = scannedCodes.join(",");
+        M.toast({ html: "Sending to Firestore doc 'ScannedSortingOrder': " + combinedCodes });
+
         const bodyData = {
           orderNumber: "ScannedSortingOrder",
-          orderNumField: allCodes, // all codes in one shot
+          orderNumField: combinedCodes, // all scans
           clientName: "SortScanner",
           britesMessages: "(Auto push from sort-scan.html)",
           shippingLabelTimestamps: new Date().toISOString(),
           employeeName: "SortScannerBot"
         };
+
         const response = await fetch("/.netlify/functions/firebaseOrders", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -379,9 +374,9 @@
         if (!response.ok) {
           throw new Error(result.error || "Unknown error from firebaseOrders function");
         }
-        M.toast({ html: "Firestore updated: doc 'ScannedSortingOrder' => " + allCodes });
+        M.toast({ html: "Firestore updated: " + combinedCodes });
 
-        // After sending, clear everything
+        // Clear after send
         scannedCodes = [];
         scannedInput.value = "";
         document.getElementById("scanCounter").value = "0";
@@ -392,38 +387,8 @@
     });
 
     /*************************************************************
-     * 6.1) “+” Button => add a newly scanned code if we have <3
+     * 6.1) “Clear” => reset everything
      *************************************************************/
-    const plusBtn = document.getElementById("plusBtn");
-    plusBtn.addEventListener("click", function() {
-      // If we already have 3 codes, block
-      if (scannedCodes.length >= 3) {
-        M.toast({ html: "Max of 3 codes. Clear or Send first." });
-        return;
-      }
-      // If there's a new code in scannedInput that wasn't auto-added => add it
-      const codeVal = scannedInput.value.trim();
-      if (!codeVal) {
-        M.toast({ html: "No new code to add! Scan a code first." });
-        return;
-      }
-      // If it's already in scannedCodes, do nothing
-      if (scannedCodes.includes(codeVal)) {
-        M.toast({ html: "That code is already stored." });
-        return;
-      }
-      // Otherwise push it
-      scannedCodes.push(codeVal);
-      document.getElementById("scanCounter").value = scannedCodes.length;
-      // Reflect full set in the input
-      scannedInput.value = scannedCodes.join(",");
-      M.toast({ html: "Code appended to session." });
-    });
-
-    /*************************************************************
-     * 6.2) “Clear” Button => resets everything
-     *************************************************************/
-    const clearBtn = document.getElementById("clearBtn");
     clearBtn.addEventListener("click", function() {
       scannedCodes = [];
       scannedInput.value = "";
@@ -443,8 +408,6 @@
       "video",
       "captureCanvas",
       "sendBtn",
-      // Newly added for config
-      "plusBtn",
       "clearBtn",
       "scanCounter"
     ];
@@ -459,7 +422,6 @@
       captureCanvas:        { left:400,  top:2600, width:300, height:200 },
       sendBtn:              { left:1150, top:3200, width:550, height:225 },
       // New defaults for the +, Clear, and # of Scans
-      plusBtn:              { left:1435,  top:2800,  width:250, height:250 },
       clearBtn:             { left:1137,  top:2800,  width:550, height:225 },
       scanCounter:          { left:1050,  top:2536,  width:200, height:200 }
     };
@@ -486,7 +448,7 @@
           console.warn("Error parsing stored positions:", err);
         }
       }
-      // Fallback to your default positions
+      // Fallback => default positions
       for (const id in scannerDefaultPositions) {
         const el = document.getElementById(id);
         if (!el) continue;
@@ -538,26 +500,26 @@
         `;
         tbody.appendChild(row);
 
-        row.querySelector(".left-input").addEventListener("input", function(){
+        row.querySelector(".left-input").addEventListener("input", function() {
           const tgt = document.getElementById(this.dataset.id);
           tgt.style.left = parseInt(this.value, 10) + "px";
         });
-        row.querySelector(".top-input").addEventListener("input", function(){
+        row.querySelector(".top-input").addEventListener("input", function() {
           const tgt = document.getElementById(this.dataset.id);
           tgt.style.top = parseInt(this.value, 10) + "px";
         });
-        row.querySelector(".width-input").addEventListener("input", function(){
+        row.querySelector(".width-input").addEventListener("input", function() {
           const tgt = document.getElementById(this.dataset.id);
           tgt.style.width = parseInt(this.value, 10) + "px";
         });
-        row.querySelector(".height-input").addEventListener("input", function(){
+        row.querySelector(".height-input").addEventListener("input", function() {
           const tgt = document.getElementById(this.dataset.id);
           tgt.style.height = parseInt(this.value, 10) + "px";
         });
       }
     }
 
-    document.addEventListener("DOMContentLoaded", function(){
+    document.addEventListener("DOMContentLoaded", function() {
       M.AutoInit();
       setTimeout(() => {
         loadPositionsFromStorage();
@@ -567,14 +529,15 @@
       // Start camera immediately
       startCamera();
 
-      // Open config modal
-      document.getElementById("openConfigBtnScanner").addEventListener("click", function(){
+      // “Open Config” modal
+      document.getElementById("openConfigBtnScanner").addEventListener("click", function() {
         populateConfigTableScanner();
         const modalElem = document.getElementById("configModalScanner");
         const instance = M.Modal.getInstance(modalElem);
         instance.open();
       });
-      document.getElementById("saveConfigBtnScanner").addEventListener("click", function(){
+
+      document.getElementById("saveConfigBtnScanner").addEventListener("click", function() {
         savePositionsToStorage();
       });
     });
