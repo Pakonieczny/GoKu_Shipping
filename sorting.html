@@ -490,11 +490,11 @@ function enableSendMatch() {
           return;
         }
         const docData = docSnap.data();
-        if (!docData["orderNumField"]) {
-          console.log("No orderNumField in 'ScannedSortingOrder' doc.");
+        if (!docData["Order Number"]) {
+          console.log("No 'Order Number' in 'ScannedSortingOrder' doc.");
           return;
         }
-        const scannedVal = docData["orderNumField"];
+        const scannedVal = docData["Order Number"];
         console.log("Scanned Sorting code =>", scannedVal);
 
         const input = document.getElementById("etsyOrderNumber");
