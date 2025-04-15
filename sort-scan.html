@@ -371,9 +371,22 @@
               el.style.height = pos.height + "px";
             }
           }
+          return; // done applying stored config
         } catch (err) {
           console.warn("Error parsing stored positions:", err);
         }
+      }
+
+      // **** Fallback to your default positions ****
+      for (const id in scannerDefaultPositions) {
+        const el = document.getElementById(id);
+        if (!el) continue;
+        const def = scannerDefaultPositions[id];
+        el.style.position = "absolute";
+        el.style.left = def.left + "px";
+        el.style.top = def.top + "px";
+        el.style.width = def.width + "px";
+        el.style.height = def.height + "px";
       }
     }
 
