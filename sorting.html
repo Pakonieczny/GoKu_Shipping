@@ -458,15 +458,13 @@ document.addEventListener("DOMContentLoaded", function () {
  * any 3px blue border or "Print" buttons, until the orangered
  * issues are resolved.
  ********************************************************/
+
 document.getElementById("saveMatchesBtn")?.addEventListener("click", () => {
   // 1) The user changed something => so force them to fix orangered states again
   disableMatchPrintFlow(); // disables "Match & Print," "Back," "Next"
-  removeAllBlueHighlights();
-
-  // 2) If there's NO orangered, re-enable.
   const anyOrangered = detectAnyOrangered();
   if (!anyOrangered) {
-    enableMatchPrintFlow();
+    enableMatchPrintFlow(); // If no orangered remains anywhere, re-enable “Match & Print,” “Back,” “Next”
   }
 });
 
