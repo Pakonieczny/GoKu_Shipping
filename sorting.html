@@ -2184,67 +2184,69 @@ function openMatchPreviewModal(cellIndex) {
     saveBtn.removeEventListener("click", currentSaveHandler);
   }
 
-// In openMatchPreviewModal(), update the end of currentSaveHandler to this full block:
-currentSaveHandler = function () {
-  window.currentCorrectedCellIndex = cellIndex;
+  // Define a fresh handler for THIS modal instance
+  currentSaveHandler = function () {
 
-  /* ---------------- original Save logic ---------------- */
-  // A) Overwrite cellMatches for this cellIndex
-  cellMatches[cellIndex] = matchedImages;
-  // B) Rebuild userImagesArray after any drag/drop changes
-  const newUserArr = [...userImagesArray];
-  matchedImages.forEach((mImg) => {
-    const idx = newUserArr.findIndex((u) => stripExtension(u.name) === mImg.userName);
-    if (idx >= 0) newUserArr.splice(idx, 1);
-  });
-  unmatchedImages.forEach((u) => {
-    const dupIdx = newUserArr.findIndex((x) => x.name === u.name);
-    if (dupIdx >= 0) newUserArr.splice(dupIdx, 1);
-    newUserArr.push(u);
-  });
-  userImagesArray = newUserArr;
-  // C) Refresh the 4th (match) text box
-  const matchBox = document.getElementById("matchCell" + cellIndex);
-  if (matchBox) {
-    if (matchedImages.length > 0 && matchedImages[0].userImage) {
-      matchBox.value = matchedImages[0].userName;
-      matchBox.style.fontWeight = "";
-      matchBox.style.color = "";
-    } else {
-      matchBox.value = "";
-    }
-  }
-  // D) Update border colour
-  if (matchedImages.length > 0 && matchedImages[0].userImage) {
-    setEtsyBorder(cellIndex, "1px", "black");
-  } else {
-    setEtsyBorder(cellIndex, "3px", "orangered");
-  }
-  // E) Refresh unmatched preview
-  if (typeof createUnmatchedUserImagesPreview === "function") {
-    createUnmatchedUserImagesPreview();
-  }
+    window.currentCorrectedCellIndex = cellIndex;
 
-  // F) Enable/disable Match‑&‑Print flow
-  const anyOrangered = detectAnyOrangered();
-  if (anyOrangered) {
-    // disable and clear any existing blue outline + Print button
-    disableMatchPrintFlow();
-    removeAllHighlightsAndPrintButtons();
-  } else {
-    // re‑enable and redraw the blue outline + Print button for current order
-    enableMatchPrintFlow();
-    if (window.matchPrintFlowInProgress) {
-      removeAllHighlightsAndPrintButtons();
-      window.highlightOrderGlobal(
-        window.matchPrintUniqueOrders[window.matchPrintCurrentIndex]
+    /* ---------------- original Save logic ---------------- */
+    // A) Overwrite cellMatches for this cellIndex
+    cellMatches[cellIndex] = matchedImages;
+
+    // B) Rebuild userImagesArray after any drag/drop changes
+    const newUserArr = [...userImagesArray];
+
+    //    1) remove matched images
+    matchedImages.forEach((mImg) => {
+      const idx = newUserArr.findIndex(
+        (u) => stripExtension(u.name) === mImg.userName
       );
-    }
-  }
+      if (idx >= 0) newUserArr.splice(idx, 1);
+    });
 
-  // G) Close the modal
-  instance.close();
-};
+    //    2) add newly unmatched images
+    unmatchedImages.forEach((u) => {
+      const dupIdx = newUserArr.findIndex((x) => x.name === u.name);
+      if (dupIdx >= 0) newUserArr.splice(dupIdx, 1);
+      newUserArr.push(u);
+    });
+    userImagesArray = newUserArr;
+
+    // C) Refresh the 4th (match) text box
+    const matchBox = document.getElementById("matchCell" + cellIndex);
+    if (matchBox) {
+      if (matchedImages.length > 0 && matchedImages[0].userImage) {
+        matchBox.value = matchedImages[0].userName;
+        matchBox.style.fontWeight = "";
+        matchBox.style.color = "";
+      } else {
+        matchBox.value = "";
+      }
+    }
+
+    // D) Update border colour
+    if (matchedImages.length > 0 && matchedImages[0].userImage) {
+      setEtsyBorder(cellIndex, "1px", "black");
+    } else {
+      setEtsyBorder(cellIndex, "3px", "orangered");
+    }
+
+    // E) Refresh unmatched preview
+    if (typeof createUnmatchedUserImagesPreview === "function") {
+      createUnmatchedUserImagesPreview();
+    }
+
+    // F) Enable/disable Match‑&‑Print flow
+    const anyOrangered = detectAnyOrangered();
+    if (anyOrangered) {
+      disableMatchPrintFlow();
+    } else {
+      enableMatchPrintFlow();
+    }
+
+    // G) Close the modal
+    instance.close();
+  };
 
   // Attach the fresh handler
   saveBtn.addEventListener("click", currentSaveHandler);
@@ -2547,9 +2549,7 @@ function createUnmatchedUserImagesPreview() {
       window.cachedOrderItems = items;
       await fillPreviewBoxes(items);
     }
-    
-  }
-    
+
   </script>
 </body>
 </html>
