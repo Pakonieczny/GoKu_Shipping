@@ -2237,6 +2237,10 @@ function openMatchPreviewModal(cellIndex) {
     const anyOrangered = detectAnyOrangered();
     if (anyOrangered) {
       disableMatchPrintFlow();
+      
+      /***** ▲ NEW: hide blue highlights + Print button *****/
+      hideMatchPrintUI();
+      
     } else {
       enableMatchPrintFlow();
     }
