@@ -404,12 +404,17 @@ document.addEventListener("DOMContentLoaded", function () {
   const etsyOrderInput = document.getElementById("etsyOrderNumber");
 etsyOrderInput.addEventListener("keydown", async function (e) {
   if (e.key === "Enter") {
-
     // Reset all arrays & states as if the app just opened
     croppedImagesArray = [];
     userImagesArray = [];
     cellMatches = {};
     partialMatches = {};
+
+    // NEW: reset global order items
+    window.cachedOrderItems = [];
+
+    // If you rely on matchPrintFlowInProgress, reset that too
+    matchPrintFlowInProgress = false;
 
     // Clear out the grid and unmatched container in the UI
     document.getElementById("photoGridContainer").innerHTML = "";
