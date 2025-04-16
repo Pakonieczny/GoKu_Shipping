@@ -2360,13 +2360,14 @@ function openMatchPreviewModal(cellIndex) {
   }
 
 function refreshSectionsLocal() {
-  matchedSection.innerHTML = "";
+  // Wipe previous modal thumbnails
+  matchedSection.innerHTML   = "";
   unmatchedSection.innerHTML = "";
 
-  // Rebuild matched
+  /* ---------- rebuild matched‑image thumbnails ---------- */
   matchedImages.forEach((mImg, i) => {
     const box = document.createElement("div");
-    box.style.width = "100px";
+    box.style.width  = "100px";
     box.style.height = "100px";
     box.style.border = "1px solid #000";
     box.style.display = "flex";
@@ -2374,7 +2375,7 @@ function refreshSectionsLocal() {
     box.style.justifyContent = "center";
     box.style.overflow = "hidden";
     box.style.position = "relative";
-    box.dataset.type = "matched";
+    box.dataset.type  = "matched";
     box.dataset.index = i;
 
     if (!mImg.userImage) {
@@ -2385,7 +2386,7 @@ function refreshSectionsLocal() {
       const img = document.createElement("img");
       img.src = mImg.userImage;
       img.alt = mImg.userName;
-      img.style.width = "100%";
+      img.style.width  = "100%";
       img.style.height = "100%";
       img.style.objectFit = "cover";
 
@@ -2396,30 +2397,20 @@ function refreshSectionsLocal() {
     matchedSection.appendChild(box);
   });
 
-  // If matched box is currently empty => set border orangered 3px
-  // otherwise black 1px
-  if (!matchedImages[0].userImage) {
-    setEtsyBorder(cellIndex, "3px", "orangered");
-  } else {
-    setEtsyBorder(cellIndex, "1px", "black");
-  }
-
-  // Rebuild unmatched
+  /* ---------- rebuild unmatched‑image thumbnails ---------- */
   if (unmatchedImages.length === 0) {
     const box = document.createElement("div");
-    box.style.width = "66px";
+    box.style.width  = "66px";
     box.style.height = "66px";
     box.style.border = "1px solid #000";
     box.style.display = "flex";
     box.style.alignItems = "center";
     box.style.justifyContent = "center";
-    box.style.overflow = "hidden";
-    box.style.position = "relative";
-
+    box.style.overflow  = "hidden";
+    box.style.position  = "relative";
+    box.dataset.type    = "unmatchedEmpty";
     box.style.fontWeight = "bold";
-    box.style.fontSize = "0.7em";
-
-    box.dataset.type = "unmatchedEmpty";
+    box.style.fontSize   = "0.7em";
     box.innerHTML = "No Unmatched Photos";
 
     makeDropTarget(box);
@@ -2428,7 +2419,7 @@ function refreshSectionsLocal() {
   } else {
     unmatchedImages.forEach((uImg, i) => {
       const box = document.createElement("div");
-      box.style.width = "66px";
+      box.style.width  = "66px";
       box.style.height = "66px";
       box.style.border = "1px solid #000";
       box.style.display = "flex";
@@ -2436,13 +2427,13 @@ function refreshSectionsLocal() {
       box.style.justifyContent = "center";
       box.style.overflow = "hidden";
       box.style.position = "relative";
-      box.dataset.type = "unmatched";
+      box.dataset.type  = "unmatched";
       box.dataset.index = i;
 
       const img = document.createElement("img");
       img.src = uImg.data;
       img.alt = uImg.name;
-      img.style.width = "100%";
+      img.style.width  = "100%";
       img.style.height = "100%";
       img.style.objectFit = "cover";
 
@@ -2452,7 +2443,6 @@ function refreshSectionsLocal() {
       unmatchedSection.appendChild(box);
     });
   }
-}
 
  // Utility: set the Etsy-derived preview box border
  function setEtsyBorder(cellIdx, thickness, color) {
