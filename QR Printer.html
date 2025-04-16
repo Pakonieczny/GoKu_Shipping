@@ -207,21 +207,21 @@ function buildPDFDocWithDots(dataUrl, dotCount, dispatchDate) {
     content: [
       // Dot ellipse(s) near top
       {
-        absolutePosition: { x:21, y:1 },
+        absolutePosition: { x:27, y:1 },
         canvas: dotEllipses
       },
       // QR code 64×64 at y=30..94
       {
         image: dataUrl,
         width: 12,
-        absolutePosition: { x:21, y:2 }
+        absolutePosition: { x:27, y:2 }
       },
       // Bold date text at (x=80, y=104)
       {
         text: dispatchDate || "N/A",
         fontSize: 2,
         bold: true,
-        absolutePosition: { x:21, y:15 }
+        absolutePosition: { x:27, y:13.5 }
       }
     ]
   };
