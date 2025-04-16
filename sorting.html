@@ -601,17 +601,23 @@ function removeAllBlueHighlights() {
 function removeHighlightForCell(cellIndex) {
   const previewBox = document.getElementById("previewCell" + cellIndex);
   if (previewBox) {
-    // If it’s orangered, revert to black:
-    if ((previewBox.style.border || "").includes("orangered")) {
+    // Reset any blue or orangered border back to 1 px black
+    if ((previewBox.style.border || "").includes("blue") ||
+        (previewBox.style.border || "").includes("orangered")) {
       previewBox.style.border = "1px solid #000";
     }
-    // If the matchCell text is orangered, revert it:
+
+    // Reset match‑cell text if it was orangered
     const matchBox = document.getElementById("matchCell" + cellIndex);
     if (matchBox && matchBox.style.color === "orangered") {
       matchBox.style.color = "";
       matchBox.style.fontWeight = "";
     }
   }
+
+  // NEW: remove the overlay “Print” button (there’s only ever one)
+  const overlayBtn = document.querySelector("button.overlay-print-btn");
+  if (overlayBtn) overlayBtn.remove();
 }
 
 
