@@ -14,18 +14,18 @@
       font-family: sans-serif;
     }
 
-    /* Increase toast size by 300% */
+    /* Increase toast size to 500% total */
     .toast {
-      font-size: 300% !important;
+      font-size: 500% !important;
     }
 
     /* "Send" button: big for easy tapping */
     #sendBtn {
       position: absolute;
-      font-size: 600% !important; /* same as before */
+      font-size: 600% !important; 
     }
 
-    /* "Clear" button: same size as “Send,” text colored red */
+    /* "Clear" button: same size as “Send,” text in red */
     #clearBtn {
       position: absolute;
       font-size: 600% !important;
@@ -200,9 +200,9 @@
     let stream = null;
     let scanningInterval = null;
     let lastScanned = "";
-    let audioUnlocked = false; // beep only if true
-    let audioCtx = null;       // Web Audio API
-    let scannedCodes = [];     // up to 3 codes
+    let audioUnlocked = false; 
+    let audioCtx = null;       
+    let scannedCodes = [];     // store up to 3 codes
 
     const video        = document.getElementById("video");
     const canvas       = document.getElementById("captureCanvas");
@@ -264,7 +264,7 @@
     }
 
     /*************************************************************
-     * 4) HANDLE A NEW QR CODE SCAN => Increment up to 3
+     * 4) HANDLE A NEW QR CODE SCAN => Up to 3
      *************************************************************/
     function handleScannedCode(codeText) {
       // If repeated code, ignore
@@ -345,7 +345,7 @@
     window.addEventListener("click", unlockAudio, { once: true });
 
     /*************************************************************
-     * 6) "SEND" => push all scans at once to Firestore
+     * 6) "SEND" => push all scans & clear
      *************************************************************/
     sendBtn.addEventListener("click", async () => {
       try {
@@ -356,15 +356,15 @@
         const combinedCodes = scannedCodes.join(",");
         M.toast({ html: "Sending to Firestore doc 'ScannedSortingOrder': " + combinedCodes });
 
+        // Send all codes at once
         const bodyData = {
           orderNumber: "ScannedSortingOrder",
-          orderNumField: combinedCodes, // all scans
+          orderNumField: combinedCodes,
           clientName: "SortScanner",
           britesMessages: "(Auto push from sort-scan.html)",
           shippingLabelTimestamps: new Date().toISOString(),
           employeeName: "SortScannerBot"
         };
-
         const response = await fetch("/.netlify/functions/firebaseOrders", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -376,10 +376,11 @@
         }
         M.toast({ html: "Firestore updated: " + combinedCodes });
 
-        // Clear after send
+        // Clear after send, including QR code image
         scannedCodes = [];
         scannedInput.value = "";
         document.getElementById("scanCounter").value = "0";
+        qrcodeDiv.innerHTML = "";
       } catch (err) {
         M.toast({ html: "Error: " + err.message });
         console.error("Error sending to Firestore:", err);
@@ -387,12 +388,13 @@
     });
 
     /*************************************************************
-     * 6.1) “Clear” => reset everything
+     * 6.1) “Clear” => reset everything, including QR code image
      *************************************************************/
     clearBtn.addEventListener("click", function() {
       scannedCodes = [];
       scannedInput.value = "";
       document.getElementById("scanCounter").value = "0";
+      qrcodeDiv.innerHTML = "";
       M.toast({ html: "Session cleared." });
     });
 
@@ -413,17 +415,16 @@
     ];
 
     let scannerDefaultPositions = {
-      openConfigBtnScanner: { left:1650, top:2400, width:140, height:35 },
+      openConfigBtnScanner: { left:1600, top:2600, width:141, height:36 },
       orderLabel:           { left:70,   top:2450, width:450, height:25 },
       orderNumInput:        { left:70,   top:2585, width:450, height:75 },
       qrPreviewTitle:       { left:70,   top:2850, width:350, height:25 },
       qrcode:               { left:70,   top:3000, width:384, height:384 },
       video:                { left:0,    top:0,    width:1800, height:2400 },
       captureCanvas:        { left:400,  top:2600, width:300, height:200 },
-      sendBtn:              { left:1150, top:3200, width:550, height:225 },
-      // New defaults for the +, Clear, and # of Scans
-      clearBtn:             { left:1137,  top:2800,  width:550, height:225 },
-      scanCounter:          { left:1050,  top:2536,  width:200, height:200 }
+      sendBtn:              { left:1150, top:2820, width:550, height:225 },
+      clearBtn:             { left:1150, top:3100, width:550, height:225 },
+      scanCounter:          { left:700,  top:3100, width:200, height:200 }
     };
 
     function loadPositionsFromStorage() {
@@ -443,7 +444,7 @@
               el.style.height = pos.height + "px";
             }
           }
-          return; // done applying stored config
+          return; 
         } catch (err) {
           console.warn("Error parsing stored positions:", err);
         }
@@ -529,7 +530,7 @@
       // Start camera immediately
       startCamera();
 
-      // “Open Config” modal
+      // "Open Config" modal
       document.getElementById("openConfigBtnScanner").addEventListener("click", function() {
         populateConfigTableScanner();
         const modalElem = document.getElementById("configModalScanner");
