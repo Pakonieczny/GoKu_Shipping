@@ -680,26 +680,37 @@ function initMatchAndPrintFlow() {
   // ------------------------------------------------------------------------
   // highlightOrder => highlight all preview cells for a particular order
   // ------------------------------------------------------------------------
-  function highlightOrder(orderNum) {
-    // always remove leftover highlights + leftover "Print" button first
-    removeAllHighlightsAndPrintButtons();
+function highlightOrder(orderNum) {
+  // Always remove leftover highlights + leftover “Print” button first
+  removeAllHighlightsAndPrintButtons();
 
-    let foundFirstCell = false;
-    previewBoxes.forEach((pb, i) => {
-      const orderCell = document.getElementById("orderCell" + i);
-      if (orderCell && orderCell.value === orderNum) {
-        pb.style.border = "3px solid blue";
-        const matchBox = document.getElementById("matchCell" + i);
-        if (matchBox) {
-          matchBox.style.fontWeight = "bold";
-        }
-        if (!foundFirstCell) {
-          foundFirstCell = true;
-          currentPrintBtn = createPrintButtonOverBox(pb, i);
-        }
+  // We'll keep track of which cell in this order gets the Print button
+  let chosenIndexForPrintBtn = -1;
+
+  // Loop over all preview boxes
+  previewBoxes.forEach((pb, i) => {
+    const orderCell = document.getElementById("orderCell" + i);
+    if (orderCell && orderCell.value === orderNum) {
+      pb.style.border = "3px solid blue";
+
+      const matchBox = document.getElementById("matchCell" + i);
+      if (matchBox) {
+        matchBox.style.fontWeight = "bold";
       }
-    });
+
+      // If we haven't assigned a print-button cell yet, assign it now
+      if (chosenIndexForPrintBtn < 0) {
+        chosenIndexForPrintBtn = i;
+      }
+    }
+  });
+
+  // AFTER the loop, we add a Print button only to whichever cell index we picked
+  if (chosenIndexForPrintBtn >= 0) {
+    const chosenBox = document.getElementById("previewCell" + chosenIndexForPrintBtn);
+    createPrintButtonOverBox(chosenBox, chosenIndexForPrintBtn);
   }
+}
 
   // ------------------------------------------------------------------------
   // createPrintButtonOverBox => place a “Print” button on top of the given preview box
