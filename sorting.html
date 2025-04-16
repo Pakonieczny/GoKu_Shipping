@@ -772,29 +772,26 @@ function highlightOrder(orderNum) {
   const backBtn = document.getElementById("mpBackBtn");
   const nextBtn = document.getElementById("mpNextBtn");
 
-backBtn.onclick = () => {
-  if (window.matchPrintCurrentIndex <= 0) {
-    M.toast({ html: "Already at the first order." });
-    return;
-  }
-  window.matchPrintCurrentIndex--;
-  window.highlightOrderGlobal(
-    window.matchPrintUniqueOrders[window.matchPrintCurrentIndex]
-  );
-};
+  backBtn.onclick = () => {
+    if (currentIndex <= 0) {
+      M.toast({ html: "Already at the first order." });
+      return;
+    }
+    currentIndex--;
+    highlightOrder(uniqueOrders[currentIndex]);
+  };
 
-nextBtn.onclick = () => {
-  window.matchPrintCurrentIndex++;
-  if (window.matchPrintCurrentIndex >= window.matchPrintUniqueOrders.length) {
-    M.toast({ html: "Congrats, You’re Done!" });
-    removeAllHighlightsAndPrintButtons(); // remove leftover blue lines + “Print” button
-    enableSendMatch(); // re-enable “Send & Match”
-    return;
-  }
-  window.highlightOrderGlobal(
-    window.matchPrintUniqueOrders[window.matchPrintCurrentIndex]
-  );
-};
+  nextBtn.onclick = () => {
+    currentIndex++;
+    if (currentIndex >= uniqueOrders.length) {
+      M.toast({ html: "Congrats, You’re Done!" });
+      removeAllHighlightsAndPrintButtons(); // remove leftover blue lines + “Print” button
+      enableSendMatch(); // re-enable “Send & Match” or do whatever you want here
+      return;
+    }
+    highlightOrder(uniqueOrders[currentIndex]);
+  };
+}
 
 
 /********************************************************
