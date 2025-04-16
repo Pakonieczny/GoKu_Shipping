@@ -457,17 +457,22 @@ etsyOrderInput.addEventListener("keydown", async function (e) {
     }
   });
 
-  // “Save” inside “Successful Image Matches” modal
-  document.getElementById("saveMatchesBtn")?.addEventListener("click", () => {
-    disableMatchPrintFlow();
-    if (typeof window.currentCorrectedCellIndex === "number") {
+// “Save” inside “Successful Image Matches” modal
+document.getElementById("saveMatchesBtn")?.addEventListener("click", () => {
+  // Disable Match‑&‑Print flow until we re‑check orangered status
+  disableMatchPrintFlow();
+
+  // Only clear the highlight for the cell the user just corrected
+  if (typeof window.currentCorrectedCellIndex === "number") {
     removeHighlightForCell(window.currentCorrectedCellIndex);
   }
-    const anyOrangered = detectAnyOrangered();
-    if (!anyOrangered) {
-      enableMatchPrintFlow();
-    }
-  });
+
+  // If no orangered cells remain, re‑enable Match‑&‑Print
+  const anyOrangered = detectAnyOrangered();
+  if (!anyOrangered) {
+    enableMatchPrintFlow();
+  }
+});
 
   // ===== NEW LINE: Start listening for QR scans from sort-scan.html =====
   startScannedSortingListener();
