@@ -437,21 +437,18 @@ document.addEventListener("DOMContentLoaded", function () {
     }
   });
 
-  // Partial snippet in the parent doc:
-document.getElementById("saveMatchesBtn")?.addEventListener("click", () => {
-  // Keep disabling “Match & Print” so the user must confirm no other issues
-  disableMatchPrintFlow();
+  // “Save” inside “Successful Image Matches” modal
+  document.getElementById("saveMatchesBtn")?.addEventListener("click", () => {
+    disableMatchPrintFlow();
+    removeAllBlueHighlights();
+    const anyOrangered = detectAnyOrangered();
+    if (!anyOrangered) {
+      enableMatchPrintFlow();
+    }
+  });
 
-  // [NEW: only remove highlight from the one corrected cell]
-  if (typeof window.currentCorrectedCellIndex === "number") {
-    removeHighlightForCell(window.currentCorrectedCellIndex);
-  }
-
-  // Then do the usual check for any orangered cells
-  const anyOrangered = detectAnyOrangered();
-  if (!anyOrangered) {
-    enableMatchPrintFlow();
-  }
+  // ===== NEW LINE: Start listening for QR scans from sort-scan.html =====
+  startScannedSortingListener();
 });
 
 
@@ -2493,7 +2490,7 @@ function createUnmatchedUserImagesPreview() {
       window.cachedOrderItems = items;
       await fillPreviewBoxes(items);
     }
-  });  
+
   </script>
 </body>
 </html>
