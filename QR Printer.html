@@ -187,7 +187,7 @@ function buildPDFDocWithDots(dataUrl, dotCount, dispatchDate) {
   // Dot = 6px diameter => radius=3, spaced 12px
   const dotEllipses = [];
   if (dotCount > 0) {
-    const spacing = 12;
+    const spacing = 2;
     for (let i = 0; i < dotCount; i++) {
       dotEllipses.push({
         type: 'ellipse',
