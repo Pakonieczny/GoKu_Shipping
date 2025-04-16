@@ -400,17 +400,24 @@ document.addEventListener("DOMContentLoaded", function () {
     }
   });
 
-  // Load multiple orders on Enter
+  // Load multiple orders on Enter (partial snippet)
   const etsyOrderInput = document.getElementById("etsyOrderNumber");
   etsyOrderInput.addEventListener("keydown", async function (e) {
     if (e.key === "Enter") {
+      // [NEW: reset states as if app just opened]
+      disableSendMatch();
+      disableMatchPrintFlow();
+      removeAllBlueHighlights();
+
       const inputVal = etsyOrderInput.value.trim();
       if (!inputVal) return;
+
       let orderNumbers = inputVal
         .split(",")
         .map((x) => x.trim())
         .filter((x) => x);
       orderNumbers = orderNumbers.slice(0, 50);
+
       await loadBatchEtsyOrders(orderNumbers);
     }
   });
@@ -479,36 +486,41 @@ function enableSendMatch() {
 }
 
 /********************************************************
-   * startScannedSortingListener (NEW)
-   ********************************************************/
-  async function startScannedSortingListener() {
-    try {
-      const docRef = db.collection("Brites_Orders").doc("ScannedSortingOrder");
-      docRef.onSnapshot((docSnap) => {
-        if (!docSnap.exists) {
-          console.log("No 'ScannedSortingOrder' doc in Firestore yet.");
-          return;
-        }
-        const docData = docSnap.data();
-        if (!docData["Order Number"]) {
-          console.log("No 'Order Number' in 'ScannedSortingOrder' doc.");
-          return;
-        }
-        const scannedVal = docData["Order Number"];
-        console.log("Scanned Sorting code =>", scannedVal);
+ * startScannedSortingListener (NEW partial snippet)
+ ********************************************************/
+async function startScannedSortingListener() {
+  try {
+    const docRef = db.collection("Brites_Orders").doc("ScannedSortingOrder");
+    docRef.onSnapshot((docSnap) => {
+      if (!docSnap.exists) {
+        console.log("No 'ScannedSortingOrder' doc in Firestore yet.");
+        return;
+      }
+      const docData = docSnap.data();
+      if (!docData["Order Number"]) {
+        console.log("No 'Order Number' in 'ScannedSortingOrder' doc.");
+        return;
+      }
+      const scannedVal = docData["Order Number"];
+      console.log("Scanned Sorting code =>", scannedVal);
 
-        const input = document.getElementById("etsyOrderNumber");
-        if (!input) return;
-        input.value = scannedVal;
+      const input = document.getElementById("etsyOrderNumber");
+      if (!input) return;
+      input.value = scannedVal;
 
-        // Programmatically fire an Enter key
-        const enterEvent = new KeyboardEvent("keydown", { key: "Enter" });
-        input.dispatchEvent(enterEvent);
-      });
-    } catch (err) {
-      console.error("Error starting scannedSortingListener:", err);
-    }
+      // [NEW: reset states as if app just opened]
+      disableSendMatch();
+      disableMatchPrintFlow();
+      removeAllBlueHighlights();
+
+      // Programmatically fire an Enter key
+      const enterEvent = new KeyboardEvent("keydown", { key: "Enter" });
+      input.dispatchEvent(enterEvent);
+    });
+  } catch (err) {
+    console.error("Error starting scannedSortingListener:", err);
   }
+}
 
 /********************************************************
  * Enable Back and Next (NEW)
