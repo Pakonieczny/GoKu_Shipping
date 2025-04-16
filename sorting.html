@@ -280,6 +280,7 @@ let userImagesArray = [];
 let cellMatches = {};
 let partialMatches = {};
 let matchPrintFlowInProgress = false;
+let pendingFetchControllers = [];
 
 /********************************************************
  * Firebase Initialization (REQUIRED)
@@ -404,19 +405,20 @@ document.addEventListener("DOMContentLoaded", function () {
   const etsyOrderInput = document.getElementById("etsyOrderNumber");
 etsyOrderInput.addEventListener("keydown", async function (e) {
   if (e.key === "Enter") {
+
+    // NEW: cancel any outstanding fetches from a previous run
+    pendingFetchControllers.forEach(ctrl => ctrl.abort());
+    pendingFetchControllers = [];   // fresh list for this run
+
     // Reset all arrays & states as if the app just opened
     croppedImagesArray = [];
     userImagesArray = [];
     cellMatches = {};
     partialMatches = {};
-
-    // NEW: reset global order items
     window.cachedOrderItems = [];
-
-    // If you rely on matchPrintFlowInProgress, reset that too
     matchPrintFlowInProgress = false;
 
-    // Clear out the grid and unmatched container in the UI
+    // Clear the UI
     document.getElementById("photoGridContainer").innerHTML = "";
     document.getElementById("unmatchedContainer").innerHTML = "";
 
@@ -1046,6 +1048,10 @@ function loadImage(dataUrl) {
 
 // --------------- Single-Photo Analysis ---------------
 async function openAIAnalyzePhoto(base64Image) {
+  // NEW: create an AbortController for this fetch
+  const controller = new AbortController();
+  pendingFetchControllers.push(controller);
+
   const payload = {
     model: "gpt-4o",
     messages: [
@@ -1076,6 +1082,7 @@ async function openAIAnalyzePhoto(base64Image) {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
+      signal: controller.signal               // NEW
     });
     console.log("Received API response status:", response.status);
 
@@ -1581,10 +1588,14 @@ async function getLocalImageData(imageUrl) {
   }
 }
 
-    /********************************************************
+/********************************************************
  * compareImages, sendAndMatch, partialMatches, etc.
  ********************************************************/
 async function compareImages(userImage, croppedGridImage, cellIndex, userImageName, signal = undefined) {
+  // NEW: create an AbortController for this fetch
+  const controller = new AbortController();
+  pendingFetchControllers.push(controller);
+
   const payload = {
     model: "gpt-4o",
     messages: [
@@ -1617,7 +1628,7 @@ async function compareImages(userImage, croppedGridImage, cellIndex, userImageNa
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
-      signal,
+      signal: controller.signal               // NEW
     });
     if (!response.ok) {
       throw new Error("OpenAI compareImages call failed with " + response.status);
