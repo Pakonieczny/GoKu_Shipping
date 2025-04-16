@@ -402,25 +402,34 @@ document.addEventListener("DOMContentLoaded", function () {
 
   // Load multiple orders on Enter (partial snippet)
   const etsyOrderInput = document.getElementById("etsyOrderNumber");
-  etsyOrderInput.addEventListener("keydown", async function (e) {
-    if (e.key === "Enter") {
-      // [NEW: reset states as if app just opened]
-      disableSendMatch();
-      disableMatchPrintFlow();
-      removeAllBlueHighlights();
+etsyOrderInput.addEventListener("keydown", async function (e) {
+  if (e.key === "Enter") {
 
-      const inputVal = etsyOrderInput.value.trim();
-      if (!inputVal) return;
+    // ── NEW: reset all arrays & states as if app just opened ──
+    croppedImagesArray = [];
+    userImagesArray = [];
+    cellMatches = {};
+    partialMatches = {};
+    
+    // Optionally also clear out the grid container in the UI
+    document.getElementById("photoGridContainer").innerHTML = "";
 
-      let orderNumbers = inputVal
-        .split(",")
-        .map((x) => x.trim())
-        .filter((x) => x);
-      orderNumbers = orderNumbers.slice(0, 50);
+    disableSendMatch();
+    disableMatchPrintFlow();
+    removeAllBlueHighlights();
 
-      await loadBatchEtsyOrders(orderNumbers);
-    }
-  });
+    const inputVal = etsyOrderInput.value.trim();
+    if (!inputVal) return;
+
+    let orderNumbers = inputVal
+      .split(",")
+      .map((x) => x.trim())
+      .filter((x) => x);
+    orderNumbers = orderNumbers.slice(0, 50);
+
+    await loadBatchEtsyOrders(orderNumbers);
+  }
+});
 
   // Attach "Send & Match" logic
   document.getElementById("sendMatchBtn").addEventListener("click", async function () {
