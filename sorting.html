@@ -282,6 +282,7 @@ let partialMatches = {};
 let matchPrintFlowInProgress = false;
 let pendingFetchControllers = [];
 let globalRunId = 0;
+let currentSaveHandler = null;      // tracks active “Save” listener
 
 /********************************************************
  * Firebase Initialization (REQUIRED)
@@ -1942,7 +1943,7 @@ for (const i of unmatchedCells) {
   M.toast({ html: "Finished matching passes." });
 
   if (runId !== globalRunId) return;   // NEW — abort if a newer run started
-  
+
   // (C) Re-enable "Match & Print" ONLY if detectAnyOrangered() returns false
   const anyOrangered = detectAnyOrangered();
 if (!anyOrangered) {
@@ -1981,32 +1982,25 @@ function detectAnyOrangered() {
 }
 
 /********************************************************
- * openMatchPreviewModal (unchanged except where noted)
+ * openMatchPreviewModal
  ********************************************************/
 function openMatchPreviewModal(cellIndex) {
   const modalElem = document.getElementById("matchesModal");
   const container = document.getElementById("matchesGridContainer");
   container.innerHTML = "";
 
-  // 1) Grab the Etsy-derived photo from croppedImagesArray
+  /* ---------- build modal content (unchanged) ---------- */
   const etsyDerived = croppedImagesArray[cellIndex];
 
-  // 2) Build local matched array & unmatched array
   let matchedImages = cellMatches[cellIndex] || [];
-  if (matchedImages.length > 1) {
-    matchedImages = [matchedImages[0]]; // keep only the first match
-  }
+  if (matchedImages.length > 1) matchedImages = [matchedImages[0]];
 
   let unmatchedImages = userImagesArray.filter((uImg) => {
     if (partialMatches[uImg.name]) return false;
-    // Filter out images that are already matched
-    return !(
-      matchedImages.length > 0 &&
-      stripExtension(uImg.name) === matchedImages[0].userName
-    );
+    return !(matchedImages.length > 0 &&
+             stripExtension(uImg.name) === matchedImages[0].userName);
   });
 
-  // If matchedImages is empty, push a placeholder
   if (matchedImages.length === 0) {
     matchedImages.push({ userName: "", userImage: null, score: 0 });
   }
@@ -2180,80 +2174,87 @@ function openMatchPreviewModal(cellIndex) {
   unmatchedWrapper.appendChild(unmatchedSection);
   container.appendChild(unmatchedWrapper);
 
-  // -------------------------------------------------------------
-  // 1) Initialize the modal WITHOUT onCloseEnd
+// -------------------------------------------------------------
+  // 1) Initialize the modal (MaterializeCSS)
   // -------------------------------------------------------------
   const instance = M.Modal.init(modalElem);
 
   // -------------------------------------------------------------
-  // 2) "Save" button merges arrays & closes modal
+  // 2) “Save” button merges arrays & closes modal
   // -------------------------------------------------------------
-document.getElementById("saveMatchesBtn").addEventListener("click", () => {
+  const saveBtn = document.getElementById("saveMatchesBtn");
+
+  // Remove the previously attached handler, if any
+  if (currentSaveHandler) {
+    saveBtn.removeEventListener("click", currentSaveHandler);
+  }
+
+  // Define a fresh handler for THIS modal instance
+  currentSaveHandler = function () {
 
     window.currentCorrectedCellIndex = cellIndex;
 
-  // A) Overwrite cellMatches for this cellIndex
-  cellMatches[cellIndex] = matchedImages;
+    /* ---------------- original Save logic ---------------- */
+    // A) Overwrite cellMatches for this cellIndex
+    cellMatches[cellIndex] = matchedImages;
 
-  // B) Rebuild userImagesArray after any drag/drop changes
-  const newUserArr = [...userImagesArray];
+    // B) Rebuild userImagesArray after any drag/drop changes
+    const newUserArr = [...userImagesArray];
 
-  // 1) Remove matched images from user array
-  matchedImages.forEach((mImg) => {
-    const idx = newUserArr.findIndex(
-      (u) => stripExtension(u.name) === mImg.userName
-    );
-    if (idx >= 0) newUserArr.splice(idx, 1);
-  });
+    //    1) remove matched images
+    matchedImages.forEach((mImg) => {
+      const idx = newUserArr.findIndex(
+        (u) => stripExtension(u.name) === mImg.userName
+      );
+      if (idx >= 0) newUserArr.splice(idx, 1);
+    });
 
-  // 2) Re-add any newly unmatched images
-  unmatchedImages.forEach((u) => {
-    const dupIdx = newUserArr.findIndex((x) => x.name === u.name);
-    if (dupIdx >= 0) newUserArr.splice(dupIdx, 1);
-    newUserArr.push(u);
-  });
+    //    2) add newly unmatched images
+    unmatchedImages.forEach((u) => {
+      const dupIdx = newUserArr.findIndex((x) => x.name === u.name);
+      if (dupIdx >= 0) newUserArr.splice(dupIdx, 1);
+      newUserArr.push(u);
+    });
+    userImagesArray = newUserArr;
 
-  userImagesArray = newUserArr;
-
-  // C) Refresh the matchCell text
-  const matchBox = document.getElementById("matchCell" + cellIndex);
-  if (matchBox) {
-    if (matchedImages.length > 0 && matchedImages[0].userImage) {
-      matchBox.value = matchedImages[0].userName;
-      matchBox.style.fontWeight = "";
-      matchBox.style.color = "";
-    } else {
-      matchBox.value = "";
+    // C) Refresh the 4th (match) text box
+    const matchBox = document.getElementById("matchCell" + cellIndex);
+    if (matchBox) {
+      if (matchedImages.length > 0 && matchedImages[0].userImage) {
+        matchBox.value = matchedImages[0].userName;
+        matchBox.style.fontWeight = "";
+        matchBox.style.color = "";
+      } else {
+        matchBox.value = "";
+      }
     }
-  }
 
-  // D) After saving, if the matched user photo has a real photo,
-  //    always change border to 1px black. Otherwise, set 3px orangered.
-  if (
-    matchedImages.length > 0 &&
-    matchedImages[0].userImage
-  ) {
-    setEtsyBorder(cellIndex, "1px", "black");
-  } else {
-    setEtsyBorder(cellIndex, "3px", "orangered");
-  }
+    // D) Update border colour
+    if (matchedImages.length > 0 && matchedImages[0].userImage) {
+      setEtsyBorder(cellIndex, "1px", "black");
+    } else {
+      setEtsyBorder(cellIndex, "3px", "orangered");
+    }
 
-  // If you have a function to refresh unmatched user images
-  if (typeof createUnmatchedUserImagesPreview === "function") {
-    createUnmatchedUserImagesPreview();
-  }
+    // E) Refresh unmatched preview
+    if (typeof createUnmatchedUserImagesPreview === "function") {
+      createUnmatchedUserImagesPreview();
+    }
 
-  // (NEW) Check whether there's orangered and enable/disable the flow
-  const anyOrangered = detectAnyOrangered();
-  if (anyOrangered) {
-    disableMatchPrintFlow(); // disable "Match & Print," "Back," "Next"
-  } else {
-    enableMatchPrintFlow();  // enable them if no orangered
-  }
+    // F) Enable/disable Match‑&‑Print flow
+    const anyOrangered = detectAnyOrangered();
+    if (anyOrangered) {
+      disableMatchPrintFlow();
+    } else {
+      enableMatchPrintFlow();
+    }
 
-  // E) Close the modal
-  instance.close();
-});
+    // G) Close the modal
+    instance.close();
+  };
+
+  // Attach the fresh handler
+  saveBtn.addEventListener("click", currentSaveHandler);
 
   // -------------------------------------------------------------
   // 3) Open the modal
