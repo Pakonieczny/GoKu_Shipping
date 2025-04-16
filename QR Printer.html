@@ -202,26 +202,26 @@ function buildPDFDocWithDots(dataUrl, dotCount, dispatchDate) {
   }
 
   return {
-    pageSize: { width: 72, height: 72 }, // 1×1 label in points
+    pageSize: { width: 125, height: 125 }, // 1×1 label in points
     pageMargins: [0, 0, 0, 0],
     content: [
       // Dot ellipse(s) near top
       {
-        absolutePosition: { x:20, y:-10 },
+        absolutePosition: { x:20, y:2 },
         canvas: dotEllipses
       },
       // QR code 64×64 at y=30..94
       {
         image: dataUrl,
         width: 10,
-        absolutePosition: { x:20, y:-5 }
+        absolutePosition: { x:20, y:6 }
       },
       // Bold date text at (x=80, y=104)
       {
         text: dispatchDate || "N/A",
         fontSize: 2,
         bold: true,
-        absolutePosition: { x:20, y:5 }
+        absolutePosition: { x:20, y:15 }
       }
     ]
   };
