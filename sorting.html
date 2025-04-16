@@ -281,6 +281,7 @@ let cellMatches = {};
 let partialMatches = {};
 let matchPrintFlowInProgress = false;
 let pendingFetchControllers = [];
+let globalRunId = 0;
 
 /********************************************************
  * Firebase Initialization (REQUIRED)
@@ -406,11 +407,13 @@ document.addEventListener("DOMContentLoaded", function () {
 etsyOrderInput.addEventListener("keydown", async function (e) {
   if (e.key === "Enter") {
 
-    // NEW: cancel any outstanding fetches from a previous run
+    // NEW: cancel *all* outstanding fetches / work from a previous run
     pendingFetchControllers.forEach(ctrl => ctrl.abort());
-    pendingFetchControllers = [];   // fresh list for this run
+    pendingFetchControllers = [];     // fresh list for this run
 
-    // Reset all arrays & states as if the app just opened
+    globalRunId++;                    // ← bump run ID so old tasks quit
+
+    // Reset arrays & state
     croppedImagesArray = [];
     userImagesArray = [];
     cellMatches = {};
@@ -418,7 +421,7 @@ etsyOrderInput.addEventListener("keydown", async function (e) {
     window.cachedOrderItems = [];
     matchPrintFlowInProgress = false;
 
-    // Clear the UI
+    // Clear UI
     document.getElementById("photoGridContainer").innerHTML = "";
     document.getElementById("unmatchedContainer").innerHTML = "";
 
@@ -1126,6 +1129,8 @@ async function openAIAnalyzePhoto(base64Image) {
 
 // --------------- Master Analysis Function ---------------
 async function analyzeUserImagesViaOpenAI() {
+  const runId = globalRunId;   // NEW – snapshot current run
+
   // Only pick images that have NOT yet been analyzed
   const imagesToAnalyze = userImagesArray.filter(imgObj => !imgObj.analyzed);
 
@@ -1134,8 +1139,11 @@ async function analyzeUserImagesViaOpenAI() {
     return;
   }
 
-  // Process each image sequentially with a 250ms delay
+  // Process each image sequentially with a 250 ms delay
   for (let i = 0; i < imagesToAnalyze.length; i++) {
+    // NEW – if user has started a newer run, stop immediately
+    if (runId !== globalRunId) return;
+
     const imgObj = imagesToAnalyze[i];
     await new Promise(resolve => setTimeout(resolve, 250));
 
@@ -1158,20 +1166,18 @@ async function analyzeUserImagesViaOpenAI() {
 
     } catch (err) {
       console.warn("Analysis failed for an image:", err);
-      // Keep the image unchanged if error occurred
     }
   }
 
-  // Save final updates to local storage
-  localStorage.setItem("userImagesArray", JSON.stringify(userImagesArray));
+  // NEW – abort if run changed while looping
+  if (runId !== globalRunId) return;
 
-  // Show a toast message
+  // Save final updates
+  localStorage.setItem("userImagesArray", JSON.stringify(userImagesArray));
   M.toast({ html: "User Image Analysis Has Been Completed" });
 
-  // IMPORTANT: re-engage "Send & Match" here
-  enableSendMatch();
+  enableSendMatch();   // re‑enable button
 }
-
     /********************************************************
      * fillPreviewBoxes, attachPreviewBoxListeners, etc.
      ********************************************************/
@@ -1653,6 +1659,7 @@ async function compareImages(userImage, croppedGridImage, cellIndex, userImageNa
  * sendAndMatch with metal filter logic
  ********************************************************/
 async function sendAndMatch() {
+  const runId = globalRunId;     // NEW — snapshot current run
   // (A) Disable "Match & Print" at the start
   const matchPrintBtn = document.getElementById("matchPrintBtn");
   matchPrintBtn.disabled = true;
@@ -1918,6 +1925,8 @@ async function sendAndMatch() {
 
   M.toast({ html: "Finished matching passes." });
 
+  if (runId !== globalRunId) return;   // NEW — abort if a newer run started
+  
   // (C) Re-enable "Match & Print" ONLY if detectAnyOrangered() returns false
   const anyOrangered = detectAnyOrangered();
 if (!anyOrangered) {
