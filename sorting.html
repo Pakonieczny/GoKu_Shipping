@@ -440,7 +440,9 @@ document.addEventListener("DOMContentLoaded", function () {
   // “Save” inside “Successful Image Matches” modal
   document.getElementById("saveMatchesBtn")?.addEventListener("click", () => {
     disableMatchPrintFlow();
-    removeAllBlueHighlights();
+    if (typeof window.currentCorrectedCellIndex === "number") {
+    removeHighlightForCell(window.currentCorrectedCellIndex);
+  }
     const anyOrangered = detectAnyOrangered();
     if (!anyOrangered) {
       enableMatchPrintFlow();
@@ -451,24 +453,6 @@ document.addEventListener("DOMContentLoaded", function () {
   startScannedSortingListener();
 });
 
-
-/********************************************************
- * When the user modifies a match in "Successful Image Matches"
- * modal, we disable the entire Match & Print flow plus remove
- * any 3px blue border or "Print" buttons, until the orangered
- * issues are resolved.
- ********************************************************/
-document.getElementById("saveMatchesBtn")?.addEventListener("click", () => {
-  // 1) The user changed something => so force them to fix orangered states again
-  disableMatchPrintFlow(); // disables "Match & Print," "Back," "Next"
-  removeAllBlueHighlights();
-
-  // 2) If there's NO orangered, re-enable.
-  const anyOrangered = detectAnyOrangered();
-  if (!anyOrangered) {
-    enableMatchPrintFlow();
-  }
-});
 
 
 /********************************************************
@@ -590,6 +574,23 @@ function removeAllBlueHighlights() {
   const existingPrintBtn = document.querySelector("button.overlay-print-btn");
   if (existingPrintBtn) {
     existingPrintBtn.remove();
+  }
+}
+
+// ───── PUT THE NEW HELPER FUNCTION HERE ─────
+function removeHighlightForCell(cellIndex) {
+  const previewBox = document.getElementById("previewCell" + cellIndex);
+  if (previewBox) {
+    // If it’s orangered, revert to black:
+    if ((previewBox.style.border || "").includes("orangered")) {
+      previewBox.style.border = "1px solid #000";
+    }
+    // If the matchCell text is orangered, revert it:
+    const matchBox = document.getElementById("matchCell" + cellIndex);
+    if (matchBox && matchBox.style.color === "orangered") {
+      matchBox.style.color = "";
+      matchBox.style.fontWeight = "";
+    }
   }
 }
 
