@@ -405,14 +405,15 @@ document.addEventListener("DOMContentLoaded", function () {
 etsyOrderInput.addEventListener("keydown", async function (e) {
   if (e.key === "Enter") {
 
-    // ── NEW: reset all arrays & states as if app just opened ──
+    // Reset all arrays & states as if the app just opened
     croppedImagesArray = [];
     userImagesArray = [];
     cellMatches = {};
     partialMatches = {};
-    
-    // Optionally also clear out the grid container in the UI
+
+    // Clear out the grid and unmatched container in the UI
     document.getElementById("photoGridContainer").innerHTML = "";
+    document.getElementById("unmatchedContainer").innerHTML = "";
 
     disableSendMatch();
     disableMatchPrintFlow();
