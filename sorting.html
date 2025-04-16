@@ -643,6 +643,9 @@ document.getElementById("matchPrintBtn").addEventListener("click", initMatchAndP
 function initMatchAndPrintFlow() {
   console.log("Match & Print pressed.");
 
+  // ↓ keep track globally that Match & Print is in progress
+  window.matchPrintFlowInProgress   = true;
+
   // 1) Gather .preview-box elements and build uniqueOrders array
   const previewBoxes = document.querySelectorAll("#photoGridContainer .preview-box");
   const uniqueOrders = [];
@@ -660,8 +663,14 @@ function initMatchAndPrintFlow() {
     return;
   }
 
+  // ↓ store the orders list & current index
+  window.matchPrintUniqueOrders = uniqueOrders;
+  window.matchPrintCurrentIndex  = 0;
+
+  // ↓ expose highlightOrder so we can call it later
+  window.highlightOrderGlobal     = highlightOrder;
+
   // 3) Forcefully remove all old 3px blue outlines and old “Print” buttons
-  //    so we start fresh from cell0
   removeAllHighlightsAndPrintButtons();
 
   // 4) currentIndex => start at 0
@@ -670,8 +679,7 @@ function initMatchAndPrintFlow() {
   // 5) Also disable “Send & Match” while in “Match & Print”
   disableSendMatch();
 
-  // 6) If you want “Back” and “Next” to be enabled now, do it here
-  //    e.g. enableMatchPrintFlow() or enableBackNext() if you have that
+  // 6) If you want “Back” and “Next” to be enabled now
   enableBackNext();
 
   // 7) We'll store a reference to the “Print” button so we can remove it when switching orders
@@ -764,26 +772,29 @@ function highlightOrder(orderNum) {
   const backBtn = document.getElementById("mpBackBtn");
   const nextBtn = document.getElementById("mpNextBtn");
 
-  backBtn.onclick = () => {
-    if (currentIndex <= 0) {
-      M.toast({ html: "Already at the first order." });
-      return;
-    }
-    currentIndex--;
-    highlightOrder(uniqueOrders[currentIndex]);
-  };
+backBtn.onclick = () => {
+  if (window.matchPrintCurrentIndex <= 0) {
+    M.toast({ html: "Already at the first order." });
+    return;
+  }
+  window.matchPrintCurrentIndex--;
+  window.highlightOrderGlobal(
+    window.matchPrintUniqueOrders[window.matchPrintCurrentIndex]
+  );
+};
 
-  nextBtn.onclick = () => {
-    currentIndex++;
-    if (currentIndex >= uniqueOrders.length) {
-      M.toast({ html: "Congrats, You’re Done!" });
-      removeAllHighlightsAndPrintButtons(); // remove leftover blue lines + “Print” button
-      enableSendMatch(); // re-enable “Send & Match” or do whatever you want here
-      return;
-    }
-    highlightOrder(uniqueOrders[currentIndex]);
-  };
-}
+nextBtn.onclick = () => {
+  window.matchPrintCurrentIndex++;
+  if (window.matchPrintCurrentIndex >= window.matchPrintUniqueOrders.length) {
+    M.toast({ html: "Congrats, You’re Done!" });
+    removeAllHighlightsAndPrintButtons(); // remove leftover blue lines + “Print” button
+    enableSendMatch(); // re-enable “Send & Match”
+    return;
+  }
+  window.highlightOrderGlobal(
+    window.matchPrintUniqueOrders[window.matchPrintCurrentIndex]
+  );
+};
 
 
 /********************************************************
@@ -2173,69 +2184,67 @@ function openMatchPreviewModal(cellIndex) {
     saveBtn.removeEventListener("click", currentSaveHandler);
   }
 
-  // Define a fresh handler for THIS modal instance
-  currentSaveHandler = function () {
+// In openMatchPreviewModal(), update the end of currentSaveHandler to this full block:
+currentSaveHandler = function () {
+  window.currentCorrectedCellIndex = cellIndex;
 
-    window.currentCorrectedCellIndex = cellIndex;
-
-    /* ---------------- original Save logic ---------------- */
-    // A) Overwrite cellMatches for this cellIndex
-    cellMatches[cellIndex] = matchedImages;
-
-    // B) Rebuild userImagesArray after any drag/drop changes
-    const newUserArr = [...userImagesArray];
-
-    //    1) remove matched images
-    matchedImages.forEach((mImg) => {
-      const idx = newUserArr.findIndex(
-        (u) => stripExtension(u.name) === mImg.userName
-      );
-      if (idx >= 0) newUserArr.splice(idx, 1);
-    });
-
-    //    2) add newly unmatched images
-    unmatchedImages.forEach((u) => {
-      const dupIdx = newUserArr.findIndex((x) => x.name === u.name);
-      if (dupIdx >= 0) newUserArr.splice(dupIdx, 1);
-      newUserArr.push(u);
-    });
-    userImagesArray = newUserArr;
-
-    // C) Refresh the 4th (match) text box
-    const matchBox = document.getElementById("matchCell" + cellIndex);
-    if (matchBox) {
-      if (matchedImages.length > 0 && matchedImages[0].userImage) {
-        matchBox.value = matchedImages[0].userName;
-        matchBox.style.fontWeight = "";
-        matchBox.style.color = "";
-      } else {
-        matchBox.value = "";
-      }
-    }
-
-    // D) Update border colour
+  /* ---------------- original Save logic ---------------- */
+  // A) Overwrite cellMatches for this cellIndex
+  cellMatches[cellIndex] = matchedImages;
+  // B) Rebuild userImagesArray after any drag/drop changes
+  const newUserArr = [...userImagesArray];
+  matchedImages.forEach((mImg) => {
+    const idx = newUserArr.findIndex((u) => stripExtension(u.name) === mImg.userName);
+    if (idx >= 0) newUserArr.splice(idx, 1);
+  });
+  unmatchedImages.forEach((u) => {
+    const dupIdx = newUserArr.findIndex((x) => x.name === u.name);
+    if (dupIdx >= 0) newUserArr.splice(dupIdx, 1);
+    newUserArr.push(u);
+  });
+  userImagesArray = newUserArr;
+  // C) Refresh the 4th (match) text box
+  const matchBox = document.getElementById("matchCell" + cellIndex);
+  if (matchBox) {
     if (matchedImages.length > 0 && matchedImages[0].userImage) {
-      setEtsyBorder(cellIndex, "1px", "black");
+      matchBox.value = matchedImages[0].userName;
+      matchBox.style.fontWeight = "";
+      matchBox.style.color = "";
     } else {
-      setEtsyBorder(cellIndex, "3px", "orangered");
+      matchBox.value = "";
     }
+  }
+  // D) Update border colour
+  if (matchedImages.length > 0 && matchedImages[0].userImage) {
+    setEtsyBorder(cellIndex, "1px", "black");
+  } else {
+    setEtsyBorder(cellIndex, "3px", "orangered");
+  }
+  // E) Refresh unmatched preview
+  if (typeof createUnmatchedUserImagesPreview === "function") {
+    createUnmatchedUserImagesPreview();
+  }
 
-    // E) Refresh unmatched preview
-    if (typeof createUnmatchedUserImagesPreview === "function") {
-      createUnmatchedUserImagesPreview();
+  // F) Enable/disable Match‑&‑Print flow
+  const anyOrangered = detectAnyOrangered();
+  if (anyOrangered) {
+    // disable and clear any existing blue outline + Print button
+    disableMatchPrintFlow();
+    removeAllHighlightsAndPrintButtons();
+  } else {
+    // re‑enable and redraw the blue outline + Print button for current order
+    enableMatchPrintFlow();
+    if (window.matchPrintFlowInProgress) {
+      removeAllHighlightsAndPrintButtons();
+      window.highlightOrderGlobal(
+        window.matchPrintUniqueOrders[window.matchPrintCurrentIndex]
+      );
     }
+  }
 
-    // F) Enable/disable Match‑&‑Print flow
-    const anyOrangered = detectAnyOrangered();
-    if (anyOrangered) {
-      disableMatchPrintFlow();
-    } else {
-      enableMatchPrintFlow();
-    }
-
-    // G) Close the modal
-    instance.close();
-  };
+  // G) Close the modal
+  instance.close();
+};
 
   // Attach the fresh handler
   saveBtn.addEventListener("click", currentSaveHandler);
