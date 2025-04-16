@@ -1723,36 +1723,35 @@ async function sendAndMatch() {
   const matchedUserNames = new Set();
   const matchedCellIndices = new Set();
 
-  for (const i of unmatchedCells) {
-    // Already matched? skip
-    if (matchedCellIndices.has(i)) continue;
-    const matchBox = document.getElementById("matchCell" + i);
+for (const i of unmatchedCells) {
+  if (runId !== globalRunId) return;         // abort if newer run
 
-    // Grab the metal from the 3rd read-only text box
-    const metalVal = document.getElementById("metalCell" + i).value || "";
+  if (matchedCellIndices.has(i)) continue;
+  const matchBox = document.getElementById("matchCell" + i);
+  const metalVal = document.getElementById("metalCell" + i).value || "";
 
-    // Filter user images: keep only those that pass "metalFilterOk"
-    const validUserImages = userImagesArray.filter((u) => metalFilterOk(metalVal, u.name));
+  const validUserImages = userImagesArray.filter((u) => metalFilterOk(metalVal, u.name));
 
-    // Compare all valid user images in parallel, staggered
-    const comparisonPromises = validUserImages.map((user, j) => {
-      return new Promise((resolve) => {
-        setTimeout(() => {
-          // If user/cell is matched, skip
-          if (matchedUserNames.has(user.name) || matchedCellIndices.has(i)) {
-            return resolve({ result: { score: 0 }, user });
-          }
-          compareImages(user.data, croppedImagesArray[i], i, user.name)
-            .then((result) => resolve({ result, user }))
-            .catch((err) => {
-              console.error("First-pass compare error:", i, user.name, err);
-              resolve({ result: { score: 0 }, user });
-            });
-        }, j * 250);
-      });
+  const comparisonPromises = validUserImages.map((user, j) => {
+    return new Promise((resolve) => {
+      setTimeout(() => {
+        if (runId !== globalRunId) return resolve({ result: { score: 0 }, user });
+        if (matchedUserNames.has(user.name) || matchedCellIndices.has(i)) {
+          return resolve({ result: { score: 0 }, user });
+        }
+        compareImages(user.data, croppedImagesArray[i], i, user.name)
+          .then((result) => resolve({ result, user }))
+          .catch((err) => {
+            console.error("First‑pass compare error:", i, user.name, err);
+            resolve({ result: { score: 0 }, user });
+          });
+      }, j * 250);
     });
+  });
 
-    const results = await Promise.all(comparisonPromises);
+  const results = await Promise.all(comparisonPromises);
+
+  if (runId !== globalRunId) return;        // NEW guard right after await
     results.sort((a, b) => b.result.score - a.result.score);
 
     if (!results.length || results[0].result.score === 0) {
@@ -1828,28 +1827,34 @@ async function sendAndMatch() {
     }
   }
 
-  for (const i of unmatchedCells) {
-    const matchBox = document.getElementById("matchCell" + i);
-    const metalVal = document.getElementById("metalCell" + i).value || "";
-    const validUserImages = userImagesArray.filter((u) => metalFilterOk(metalVal, u.name));
+for (const i of unmatchedCells) {
+  if (runId !== globalRunId) return;         // abort if newer run
 
-    const comparisonPromises = validUserImages.map((user, j) => {
-      return new Promise((resolve) => {
-        setTimeout(() => {
-          if (matchedUserNames.has(user.name) || matchedCellIndices.has(i)) {
-            return resolve({ result: { score: 0 }, user });
-          }
-          compareImages(user.data, croppedImagesArray[i], i, user.name)
-            .then((result) => resolve({ result, user }))
-            .catch((err) => {
-              console.error("Second-pass compare error:", i, user.name, err);
-              resolve({ result: { score: 0 }, user });
-            });
-        }, j * 250);
-      });
+  const matchBox = document.getElementById("matchCell" + i);
+  const metalVal = document.getElementById("metalCell" + i).value || "";
+  const validUserImages = userImagesArray.filter((u) => metalFilterOk(metalVal, u.name));
+
+  const comparisonPromises = validUserImages.map((user, j) => {
+    return new Promise((resolve) => {
+      setTimeout(() => {
+        if (runId !== globalRunId) return resolve({ result: { score: 0 }, user });
+        if (matchedUserNames.has(user.name) || matchedCellIndices.has(i)) {
+          return resolve({ result: { score: 0 }, user });
+        }
+        compareImages(user.data, croppedImagesArray[i], i, user.name)
+          .then((result) => resolve({ result, user }))
+          .catch((err) => {
+            console.error("Second‑pass compare error:", i, user.name, err);
+            resolve({ result: { score: 0 }, user });
+          });
+      }, j * 250);
     });
+  });
 
-    const results = await Promise.all(comparisonPromises);
+  const results = await Promise.all(comparisonPromises);
+
+  if (runId !== globalRunId) return;        // NEW guard right after await
+
     results.sort((a, b) => b.result.score - a.result.score);
 
     if (!results.length || results[0].result.score === 0) {
