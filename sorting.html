@@ -437,22 +437,39 @@ document.addEventListener("DOMContentLoaded", function () {
     }
   });
 
-  // Partial snippet in the parent doc:
+  // “Save” inside “Successful Image Matches” modal
+  document.getElementById("saveMatchesBtn")?.addEventListener("click", () => {
+    disableMatchPrintFlow();
+    removeAllBlueHighlights();
+    const anyOrangered = detectAnyOrangered();
+    if (!anyOrangered) {
+      enableMatchPrintFlow();
+    }
+  });
+
+  // ===== NEW LINE: Start listening for QR scans from sort-scan.html =====
+  startScannedSortingListener();
+});
+
+
+/********************************************************
+ * When the user modifies a match in "Successful Image Matches"
+ * modal, we disable the entire Match & Print flow plus remove
+ * any 3px blue border or "Print" buttons, until the orangered
+ * issues are resolved.
+ ********************************************************/
 document.getElementById("saveMatchesBtn")?.addEventListener("click", () => {
-  // Keep disabling “Match & Print” so the user must confirm no other issues
-  disableMatchPrintFlow();
+  // 1) The user changed something => so force them to fix orangered states again
+  disableMatchPrintFlow(); // disables "Match & Print," "Back," "Next"
+  removeAllBlueHighlights();
 
-  // [NEW: only remove highlight from the one corrected cell]
-  if (typeof window.currentCorrectedCellIndex === "number") {
-    removeHighlightForCell(window.currentCorrectedCellIndex);
-  }
-
-  // Then do the usual check for any orangered cells
+  // 2) If there's NO orangered, re-enable.
   const anyOrangered = detectAnyOrangered();
   if (!anyOrangered) {
     enableMatchPrintFlow();
   }
 });
+
 
 /********************************************************
  * Disabling / Enabling “Send & Match”
@@ -2473,7 +2490,7 @@ function createUnmatchedUserImagesPreview() {
       window.cachedOrderItems = items;
       await fillPreviewBoxes(items);
     }
-  });
+
   </script>
 </body>
 </html>
