@@ -463,7 +463,26 @@ etsyOrderInput.addEventListener("keydown", async function (e) {
   startScannedSortingListener();
 });
 
+/********************************************************
+ * hideMatchPrintUI(): strip all 3 px blue outlines & the
+ * floating “Print” button, but keep any orangered alerts
+ ********************************************************/
+function hideMatchPrintUI() {
+  // Remove blue borders only
+  document.querySelectorAll("#photoGridContainer .preview-box").forEach(pb => {
+    const b = pb.style.border || "";
+    if (b.includes("3px") && b.includes("blue")) {
+      pb.style.border = "1px solid #000";
+    }
+  });
 
+  // Remove the single overlay Print button (if present)
+  const overlayBtn = document.querySelector("button.overlay-print-btn");
+  if (overlayBtn) overlayBtn.remove();
+
+  // Mark the flow as interrupted
+  window.matchPrintFlowInProgress = false;
+}
 
 /********************************************************
  * Disabling / Enabling “Send & Match”
