@@ -744,37 +744,41 @@ function initMatchAndPrintFlow() {
   // ------------------------------------------------------------------------
   // highlightOrder => highlight all preview cells for a particular order
   // ------------------------------------------------------------------------
-function highlightOrder(orderNum) {
-  // Always remove leftover highlights + leftover “Print” button first
-  removeAllHighlightsAndPrintButtons();
+  function highlightOrder(orderNum) {
 
-  // We'll keep track of which cell in this order gets the Print button
-  let chosenIndexForPrintBtn = -1;
+    // 0) Wipe previous blue outlines + Print button
+    removeAllHighlightsAndPrintButtons();
 
-  // Loop over all preview boxes
-  previewBoxes.forEach((pb, i) => {
-    const orderCell = document.getElementById("orderCell" + i);
-    if (orderCell && orderCell.value === orderNum) {
-      pb.style.border = "3px solid blue";
-
-      const matchBox = document.getElementById("matchCell" + i);
-      if (matchBox) {
-        matchBox.style.fontWeight = "bold";
+    // 0.1) Re‑apply persistent 3 px GREEN borders for any skipped items
+    Object.keys(skipMatches).forEach(idx => {
+      if (skipMatches[idx]) {
+        toggleSkipBorder(parseInt(idx, 10), true);   // restores green border
       }
+    });
 
-      // If we haven't assigned a print-button cell yet, assign it now
-      if (chosenIndexForPrintBtn < 0) {
-        chosenIndexForPrintBtn = i;
+    // We'll keep track of which cell in this order gets the Print button
+    let chosenIndexForPrintBtn = -1;
+
+    // 1) Loop over all preview boxes for this order
+    previewBoxes.forEach((pb, i) => {
+      const orderCell = document.getElementById("orderCell" + i);
+      if (orderCell && orderCell.value === orderNum) {
+        pb.style.border = "3px solid blue";
+
+        const matchBox = document.getElementById("matchCell" + i);
+        if (matchBox) matchBox.style.fontWeight = "bold";
+
+        // choose first encountered cell for Print button
+        if (chosenIndexForPrintBtn < 0) chosenIndexForPrintBtn = i;
       }
+    });
+
+    // 2) Add overlay “Print” button to chosen cell
+    if (chosenIndexForPrintBtn >= 0) {
+      const chosenBox = document.getElementById("previewCell" + chosenIndexForPrintBtn);
+      createPrintButtonOverBox(chosenBox, chosenIndexForPrintBtn);
     }
-  });
-
-  // AFTER the loop, we add a Print button only to whichever cell index we picked
-  if (chosenIndexForPrintBtn >= 0) {
-    const chosenBox = document.getElementById("previewCell" + chosenIndexForPrintBtn);
-    createPrintButtonOverBox(chosenBox, chosenIndexForPrintBtn);
   }
-}
 
   // ------------------------------------------------------------------------
   // createPrintButtonOverBox => place a “Print” button on top of the given preview box
@@ -2437,13 +2441,15 @@ function openMatchPreviewModal(cellIndex) {
   }
 
 function refreshSectionsLocal() {
-  matchedSection.innerHTML = "";
+
+  /* --- rebuild Matched & Unmatched sections (unchanged) --- */
+  matchedSection.innerHTML   = "";
   unmatchedSection.innerHTML = "";
 
-  // Rebuild matched
+  /* ----- Matched (100 × 100) ----- */
   matchedImages.forEach((mImg, i) => {
     const box = document.createElement("div");
-    box.style.width = "100px";
+    box.style.width  = "100px";
     box.style.height = "100px";
     box.style.border = "1px solid #000";
     box.style.display = "flex";
@@ -2451,7 +2457,7 @@ function refreshSectionsLocal() {
     box.style.justifyContent = "center";
     box.style.overflow = "hidden";
     box.style.position = "relative";
-    box.dataset.type = "matched";
+    box.dataset.type  = "matched";
     box.dataset.index = i;
 
     if (!mImg.userImage) {
@@ -2460,12 +2466,11 @@ function refreshSectionsLocal() {
       makeDropTarget(box);
     } else {
       const img = document.createElement("img");
-      img.src = mImg.userImage;
-      img.alt = mImg.userName;
-      img.style.width = "100%";
+      img.src   = mImg.userImage;
+      img.alt   = mImg.userName;
+      img.style.width  = "100%";
       img.style.height = "100%";
       img.style.objectFit = "cover";
-
       makeDraggable(box);
       makeDropTarget(box);
       box.appendChild(img);
@@ -2473,15 +2478,8 @@ function refreshSectionsLocal() {
     matchedSection.appendChild(box);
   });
 
-  // If matched box is currently empty => set border orangered 3px
-  // otherwise black 1px
-  if (!matchedImages[0].userImage) {
-    setEtsyBorder(cellIndex, "3px", "orangered");
-  } else {
-    setEtsyBorder(cellIndex, "1px", "black");
-  }
-
-  // Rebuild unmatched
+  /* ----- Unmatched (66 × 66) ----- */
+  unmatchedSection.innerHTML = "";
   if (unmatchedImages.length === 0) {
     const box = document.createElement("div");
     box.style.width = "66px";
@@ -2492,16 +2490,12 @@ function refreshSectionsLocal() {
     box.style.justifyContent = "center";
     box.style.overflow = "hidden";
     box.style.position = "relative";
-
     box.style.fontWeight = "bold";
     box.style.fontSize = "0.7em";
-
     box.dataset.type = "unmatchedEmpty";
-    box.innerHTML = "No Unmatched Photos";
-
+    box.innerHTML    = "No Unmatched Photos";
     makeDropTarget(box);
     unmatchedSection.appendChild(box);
-
   } else {
     unmatchedImages.forEach((uImg, i) => {
       const box = document.createElement("div");
@@ -2513,16 +2507,15 @@ function refreshSectionsLocal() {
       box.style.justifyContent = "center";
       box.style.overflow = "hidden";
       box.style.position = "relative";
-      box.dataset.type = "unmatched";
+      box.dataset.type  = "unmatched";
       box.dataset.index = i;
 
       const img = document.createElement("img");
-      img.src = uImg.data;
-      img.alt = uImg.name;
-      img.style.width = "100%";
+      img.src   = uImg.data;
+      img.alt   = uImg.name;
+      img.style.width  = "100%";
       img.style.height = "100%";
       img.style.objectFit = "cover";
-
       makeDraggable(box);
       makeDropTarget(box);
       box.appendChild(img);
