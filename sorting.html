@@ -608,24 +608,26 @@ function enableMatchPrintFlow() {
 }
 
 
-/********************************************************
- * removeAllBlueHighlights():
- * remove any 3px blue border and the “Print” button overlay
- ********************************************************/
-function removeAllBlueHighlights() {
-  const previewBoxes = document.querySelectorAll(".preview-box");
-  previewBoxes.forEach((pb, i) => {
-    pb.style.border = "1px solid #000";
-    const matchBox = document.getElementById("matchCell" + i);
-    if (matchBox) {
-      matchBox.style.fontWeight = "";
-    }
-  });
-  const existingPrintBtn = document.querySelector("button.overlay-print-btn");
-  if (existingPrintBtn) {
-    existingPrintBtn.remove();
+  /********************************************************
+   * removeAllBlueHighlights (now clears green too)
+   * ‑ resets any 3 px blue OR green borders to 1 px black
+   * ‑ removes bold weight in matchCellX
+   * ‑ deletes the single overlay Print button
+   ********************************************************/
+  function removeAllBlueHighlights() {
+    const previewBoxes = document.querySelectorAll(".preview-box");
+    previewBoxes.forEach((pb, i) => {
+      const b = pb.style.border || "";
+      if (b.includes("3px") && (b.includes("blue") || b.includes("green"))) {
+        pb.style.border = "1px solid #000";
+      }
+      const matchBox = document.getElementById("matchCell" + i);
+      if (matchBox) matchBox.style.fontWeight = "";
+    });
+
+    const overlayBtn = document.querySelector("button.overlay-print-btn");
+    if (overlayBtn) overlayBtn.remove();
   }
-}
 
 // ───── PUT THE NEW HELPER FUNCTION HERE ─────
 function removeHighlightForCell(cellIndex) {
