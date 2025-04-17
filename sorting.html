@@ -1048,9 +1048,9 @@ photoDragDropElem.addEventListener("drop", async function (e) {
     // Convert the dropped file to a DataURL
     const fileDataUrl = await readAsDataURL(file);
 
-    // Always treat the entire file as a 2×2 composite
+    // Always treat the entire file as a 12×12 composite
     // => Extract four quadrants, crop each to 512×512, store them in userImagesArray
-    const subImages = await extractFourQuadrants(fileDataUrl);
+   const subImages = await extractSubImages144(fileDataUrl);
     for (let q = 0; q < subImages.length; q++) {
       const cropped = await cropTo512(subImages[q]);
 
@@ -1087,39 +1087,36 @@ async function readAsDataURL(file) {
   });
 }
 
-// extractFourQuadrants: always treat image as 2×2
-async function extractFourQuadrants(baseDataUrl) {
+// extractSubImages144: always slice a composite into 12×12 = 144 tiles
+async function extractSubImages144(baseDataUrl) {
   // 1) Load the DataURL into an <img>
   const img = await loadImage(baseDataUrl);
 
-  const w = img.naturalWidth;
-  const h = img.naturalHeight;
-  const halfW = w / 2;
-  const halfH = h / 2;
-
-  // Quadrants: top-left, top-right, bottom-left, bottom-right
-  const coords = [
-    { x: 0,       y: 0 },
-    { x: halfW,   y: 0 },
-    { x: 0,       y: halfH },
-    { x: halfW,   y: halfH }
-  ];
+  const fullW = img.naturalWidth;
+  const fullH = img.naturalHeight;
+  const cellW = fullW / 12;
+  const cellH = fullH / 12;
 
   const results = [];
-  for (let i = 0; i < coords.length; i++) {
-    const canvas = document.createElement("canvas");
-    canvas.width = halfW;
-    canvas.height = halfH;
+  for (let r = 0; r < 12; r++) {
+    for (let c = 0; c < 12; c++) {
+      const canvas = document.createElement("canvas");
+      canvas.width  = cellW;
+      canvas.height = cellH;
 
-    const ctx = canvas.getContext("2d");
-    ctx.drawImage(
-      img,
-      coords[i].x, coords[i].y, halfW, halfH,
-      0, 0, halfW, halfH
-    );
-    results.push(canvas.toDataURL("image/png"));
+      const ctx = canvas.getContext("2d");
+      ctx.drawImage(
+        img,
+        c * cellW,            // srcX
+        r * cellH,            // srcY
+        cellW, cellH,         // srcW, srcH
+        0, 0,                 // destX, destY
+        cellW, cellH          // destW, destH
+      );
+      results.push(canvas.toDataURL("image/png"));
+    }
   }
-  return results;
+  return results;     // 144 sub‑images
 }
 
 // cropTo512: forcibly resize each quadrant to 512×512
