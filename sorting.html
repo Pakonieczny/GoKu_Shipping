@@ -1233,6 +1233,12 @@ async function openAIAnalyzePhoto(base64Image) {
 
 // --------------- Master Analysis Function ---------------
 async function analyzeUserImagesViaOpenAI() {
+  /* -- make sure stripExtension exists in this scope -------- */
+  const stripExtension =
+    (typeof window.stripExtension === "function")
+      ? window.stripExtension
+      : (fn => (fn ? fn.replace(/\.\w+$/, "") : ""));
+
   const runId = globalRunId;   // snapshot current run
 
   const imagesToAnalyze = userImagesArray.filter(u => !u.analyzed);
@@ -1298,7 +1304,7 @@ async function analyzeUserImagesViaOpenAI() {
             purgeBaseName(stripExtension(obj.name));
           });
           M.toast({ html: "Stopped: 4 consecutive photos without charms." });
-          break;                                        // exit the for‑loop
+          break;                                        // terminate early
         }
       } else {
         noCharmStreak = 0;
