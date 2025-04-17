@@ -2037,11 +2037,23 @@ function openMatchPreviewModal(cellIndex) {
   skipTitle.style.marginBottom = "5px";
   skipWrapper.appendChild(skipTitle);
 
+  // --- Materialize checkbox wrapper ---
+  const label   = document.createElement("label");
+  label.style.cursor  = "pointer";
+  label.style.display = "flex";
+  label.style.alignItems = "center";
+
   const skipInput = document.createElement("input");
-  skipInput.type = "checkbox";
-  skipInput.id = "skipChk" + cellIndex;
+  skipInput.type  = "checkbox";
+  skipInput.id    = "skipChk" + cellIndex;
+  skipInput.classList.add("filled-in");   // makes the box visible
   skipInput.checked = !!skipMatches[cellIndex];
-  skipWrapper.appendChild(skipInput);
+
+  const chkSpan = document.createElement("span"); // renders the box outline
+
+  label.appendChild(skipInput);
+  label.appendChild(chkSpan);
+  skipWrapper.appendChild(label);
 
   container.appendChild(skipWrapper);
 
