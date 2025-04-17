@@ -1106,7 +1106,7 @@ async function openAIAnalyzePhoto(base64Image) {
   pendingFetchControllers.push(controller);
 
   const payload = {
-    model: "gpt-4o",
+    model: "gpt-4.1-mini",
     messages: [
       {
         role: "user",
@@ -1653,7 +1653,7 @@ async function compareImages(userImage, croppedGridImage, cellIndex, userImageNa
   pendingFetchControllers.push(controller);
 
   const payload = {
-    model: "gpt-4o",
+    model: "gpt-4.1-mini",
     messages: [
       {
         role: "user",
