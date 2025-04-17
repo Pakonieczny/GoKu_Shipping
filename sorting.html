@@ -1142,14 +1142,15 @@ function loadImage(dataUrl) {
 }
 
 
-// --------------- Single-Photo Analysis ---------------
+// --------------- Single‑Photo Analysis ---------------
 async function openAIAnalyzePhoto(base64Image) {
   // NEW: create an AbortController for this fetch
   const controller = new AbortController();
   pendingFetchControllers.push(controller);
 
+  /* ───────────────────────── payload ───────────────────────── */
   const payload = {
-    model: "gpt-4.1-mini",
+    model: "gpt-4o",                           // up‑level model
     messages: [
       {
         role: "user",
@@ -1157,28 +1158,29 @@ async function openAIAnalyzePhoto(base64Image) {
           {
             type: "text",
             text:
-              "1. There's a number in the TOP RIGHT CORNER of the image. Return that number as topRightNumber.\n" +
-              "2. The charm color is either gold/yellow, silver/grey, or rose gold/pink. Return as color.\n" +
-              '3. Return JSON only. E.g. {"topRightNumber":"42","color":"Gold"}',
+              // —— prompt now asks for CHARM PRESENCE too ——
+              "Return JSON EXACTLY like:\n" +
+              '  {"topRightNumber":"<number or blank>", "color":"<Gold|Silver|RoseGold|Unknown>", "charmPresent":"Yes|No"}\n' +
+              "• topRightNumber = number in the TOP‑RIGHT corner (blank if none).\n" +
+              "• color = dominant charm colour (gold/yellow, silver/grey, rose‑gold/pink, or Unknown).\n" +
+              "• charmPresent = \"Yes\" if a jewellery charm / pendant is clearly visible, otherwise \"No\"."
           },
-          {
-            type: "image_url",
-            image_url: { url: base64Image, detail: "high" },
-          },
-        ],
-      },
+          { type: "image_url",
+            image_url: { url: base64Image, detail: "high" } }
+        ]
+      }
     ],
-    max_tokens: 3000,
+    max_tokens: 3000
   };
 
   console.log("Sending payload to OpenAI:", payload);
-
+  /* ─────────────────────── API call ‑ unchanged ─────────────────────── */
   try {
     const response = await fetch(functionsBaseUrl + "/openaiProxy", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
-      signal: controller.signal               // NEW
+      signal: controller.signal
     });
     console.log("Received API response status:", response.status);
 
@@ -1194,12 +1196,12 @@ async function openAIAnalyzePhoto(base64Image) {
     let rawText = data.choices?.[0]?.message?.content?.trim();
     if (!rawText) {
       console.error("API response does not contain a valid 'choices' array:", data);
-      return { topRightNumber: null, color: null };
+      return { topRightNumber: null, color: null, charmPresent: "no" };
     }
 
     console.log("Raw API text response:", rawText);
 
-    // Remove any markdown formatting
+    // Remove any ```json blocks, trim whitespace
     rawText = rawText.replace(/^```(\w+)?/, "").replace(/```$/, "").trim();
 
     let parsed;
@@ -1210,70 +1212,93 @@ async function openAIAnalyzePhoto(base64Image) {
       parsed = {};
     }
 
+    /* ─── return now includes charmPresent (lower‑cased) ─── */
     return {
-      topRightNumber: parsed.topRightNumber || null,
-      color: parsed.color || null,
+      topRightNumber : parsed.topRightNumber || null,
+      color          : parsed.color          || null,
+      charmPresent   : (parsed.charmPresent  || "No").toLowerCase()   // "yes"|"no"
     };
   } catch (err) {
     console.error("Error in openAIAnalyzePhoto API call:", err);
-    return { topRightNumber: null, color: null };
+    return { topRightNumber: null, color: null, charmPresent: "no" };
   }
 }
 
-  // --------------- Master Analysis Function ---------------
-  async function analyzeUserImagesViaOpenAI() {
-    const runId = globalRunId;   // snapshot current run
+// --------------- Master Analysis Function ---------------
+async function analyzeUserImagesViaOpenAI() {
+  const runId = globalRunId;   // snapshot current run
 
-    const imagesToAnalyze = userImagesArray.filter(imgObj => !imgObj.analyzed);
-    const totalImages     = imagesToAnalyze.length;
+  const imagesToAnalyze = userImagesArray.filter(imgObj => !imgObj.analyzed);
+  const totalImages     = imagesToAnalyze.length;
+  if (totalImages === 0) {
+    console.log("No new images to analyze.");
+    return;
+  }
 
-    if (totalImages === 0) {
-      console.log("No new images to analyze.");
-      return;
-    }
+  /* --- progress modal --- */
+  showProgressModal("Image Analysis...", totalImages);
 
-    /* --- progress modal --- */
-     showProgressModal("Image Analysis...", totalImages);
+  let doneCount     = 0;
+  let noCharmStreak = 0;
+  const noCharmIdx  = [];                // track indices of “No‑charm” photos
 
-    let doneCount = 0;
-
-    for (let i = 0; i < totalImages; i++) {
-      if (runId !== globalRunId) { closeProgressModal(); return; }
-
-      const imgObj = imagesToAnalyze[i];
-      await new Promise(res => setTimeout(res, 250));   // pacing
-
-      try {
-        const result = await openAIAnalyzePhoto(imgObj.data);
-        // … (existing color/number logic unchanged) …
-        const color = (result.color || "Unknown").toLowerCase();
-        const number = result.topRightNumber || "XX";
-        let finalColor = "UnknownColor";
-        if (color.includes("yellow")) finalColor = "Gold";
-        else if (color.includes("pink"))   finalColor = "RoseGold";
-        else if (color.includes("grey") ||
-                 color.includes("silver")) finalColor = "Silver";
-        else if (color.includes("gold"))   finalColor = "Gold";
-
-        imgObj.name     = `${finalColor}_${number}.jpg`;
-        imgObj.analyzed = true;
-        console.log("Analysis complete:", imgObj.name);
-      } catch (err) {
-        console.warn("Analysis failed for an image:", err);
-      }
-
-      /* --- update progress --- */
-      doneCount++;
-      updateProgressModal(doneCount, totalImages);
-    }
-
+  for (let i = 0; i < totalImages; i++) {
     if (runId !== globalRunId) { closeProgressModal(); return; }
 
-    localStorage.setItem("userImagesArray", JSON.stringify(userImagesArray));
-    closeProgressModal();
-    M.toast({ html: "User Image Analysis Completed" });
-    enableSendMatch();
+    const imgObj = imagesToAnalyze[i];
+    await new Promise(res => setTimeout(res, 250));   // pacing
+
+    try {
+      const result = await openAIAnalyzePhoto(imgObj.data);
+
+      /* ---------- colour / number naming (unchanged) ---------- */
+      const color  = (result.color || "Unknown").toLowerCase();
+      const number = result.topRightNumber || "XX";
+      let finalColor = "UnknownColor";
+      if (color.includes("yellow"))               finalColor = "Gold";
+      else if (color.includes("pink"))            finalColor = "RoseGold";
+      else if (color.includes("grey") ||
+               color.includes("silver"))          finalColor = "Silver";
+      else if (color.includes("gold"))            finalColor = "Gold";
+
+      imgObj.name     = `${finalColor}_${number}.jpg`;
+      imgObj.analyzed = true;
+
+      /* ---------- charm‑present stop rule ---------- */
+      if (result.charmPresent === "no") {
+        noCharmStreak++;
+        noCharmIdx.push(userImagesArray.indexOf(imgObj));
+
+        if (noCharmStreak === 4) {
+          // delete the previous 3 “No‑charm” images from userImagesArray
+          const toRemove = noCharmIdx.slice(0, 3);
+          toRemove.sort((a, b) => b - a).forEach(idx => {
+            if (idx >= 0) userImagesArray.splice(idx, 1);
+          });
+          M.toast({ html: "Stopped: 4 consecutive photos without charms." });
+          break;                               // exit the for‑loop early
+        }
+      } else {
+        noCharmStreak = 0;
+        noCharmIdx.length = 0;
+      }
+
+      console.log("Analysis complete:", imgObj.name,
+                  "| charmPresent:", result.charmPresent);
+    } catch (err) {
+      console.warn("Analysis failed for an image:", err);
+    }
+
+    /* --- update progress --- */
+    doneCount++;
+    updateProgressModal(doneCount, totalImages);
   }
+
+  localStorage.setItem("userImagesArray", JSON.stringify(userImagesArray));
+  closeProgressModal();
+  M.toast({ html: "User Image Analysis Completed" });
+  enableSendMatch();
+}
     /********************************************************
      * fillPreviewBoxes, attachPreviewBoxListeners, etc.
      ********************************************************/
