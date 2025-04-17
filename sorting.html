@@ -1150,7 +1150,7 @@ async function openAIAnalyzePhoto(base64Image) {
 
   /* ───────────────────────── payload ───────────────────────── */
   const payload = {
-    model: "gpt-4o",                           // up‑level model
+    model: "gpt-41-mini",                           // up‑level model
     messages: [
       {
         role: "user",
@@ -1228,7 +1228,7 @@ async function openAIAnalyzePhoto(base64Image) {
 async function analyzeUserImagesViaOpenAI() {
   const runId = globalRunId;   // snapshot current run
 
-  const imagesToAnalyze = userImagesArray.filter(imgObj => !imgObj.analyzed);
+  const imagesToAnalyze = userImagesArray.filter(u => !u.analyzed);
   const totalImages     = imagesToAnalyze.length;
   if (totalImages === 0) {
     console.log("No new images to analyze.");
@@ -1240,7 +1240,17 @@ async function analyzeUserImagesViaOpenAI() {
 
   let doneCount     = 0;
   let noCharmStreak = 0;
-  const noCharmIdx  = [];                // track indices of “No‑charm” photos
+  const noCharmList = [];            // store refs to the latest “No‑charm” objects
+
+  // helper: scrub one baseName from cellMatches + partialMatches
+  function purgeBaseName(baseName) {
+    Object.keys(cellMatches).forEach(idx => {
+      cellMatches[idx] = (cellMatches[idx] || []).filter(
+        m => m.userName !== baseName
+      );
+    });
+    delete partialMatches[baseName + ".jpg"];       // full key in map
+  }
 
   for (let i = 0; i < totalImages; i++) {
     if (runId !== globalRunId) { closeProgressModal(); return; }
@@ -1251,37 +1261,41 @@ async function analyzeUserImagesViaOpenAI() {
     try {
       const result = await openAIAnalyzePhoto(imgObj.data);
 
-      /* ---------- colour / number naming (unchanged) ---------- */
-      const color  = (result.color || "Unknown").toLowerCase();
-      const number = result.topRightNumber || "XX";
+      /* ---------- colour / number naming ---------- */
+      const colorTxt = (result.color || "Unknown").toLowerCase();
+      const numTxt   = result.topRightNumber || "XX";
       let finalColor = "UnknownColor";
-      if (color.includes("yellow"))               finalColor = "Gold";
-      else if (color.includes("pink"))            finalColor = "RoseGold";
-      else if (color.includes("grey") ||
-               color.includes("silver"))          finalColor = "Silver";
-      else if (color.includes("gold"))            finalColor = "Gold";
+      if (colorTxt.includes("yellow"))              finalColor = "Gold";
+      else if (colorTxt.includes("pink"))           finalColor = "RoseGold";
+      else if (colorTxt.includes("grey") ||
+               colorTxt.includes("silver"))         finalColor = "Silver";
+      else if (colorTxt.includes("gold"))           finalColor = "Gold";
 
-      imgObj.name     = `${finalColor}_${number}.jpg`;
+      imgObj.name     = `${finalColor}_${numTxt}.jpg`;
       imgObj.analyzed = true;
+
+      const baseName = stripExtension(imgObj.name);
 
       /* ---------- charm‑present handling ---------- */
       if (result.charmPresent === "no") {
-        imgObj._removeMe = true;          // flag for deletion
+        imgObj.skipForCharm = true;        // flag but keep for now
+        noCharmList.push(imgObj);
         noCharmStreak++;
-        noCharmIdx.push(userImagesArray.indexOf(imgObj));
 
+        // 4‑in‑a‑row rule → remove the previous 3 flagged images
         if (noCharmStreak === 4) {
-          // delete the previous 3 “No‑charm” images immediately
-          const toRemove = noCharmIdx.slice(0, 3);
-          toRemove.sort((a, b) => b - a).forEach(idx => {
+          const toDelete = noCharmList.slice(0, 3);     // previous 3
+          toDelete.forEach(obj => {
+            const idx = userImagesArray.indexOf(obj);
             if (idx >= 0) userImagesArray.splice(idx, 1);
+            purgeBaseName(stripExtension(obj.name));
           });
           M.toast({ html: "Stopped: 4 consecutive photos without charms." });
-          break;                          // exit the for‑loop early
+          break;                                        // exit the for‑loop
         }
       } else {
         noCharmStreak = 0;
-        noCharmIdx.length = 0;
+        noCharmList.length = 0;
       }
 
       console.log("Analysis complete:", imgObj.name,
@@ -1295,21 +1309,9 @@ async function analyzeUserImagesViaOpenAI() {
     updateProgressModal(doneCount, totalImages);
   }
 
-  /* ----- final purge of ALL “No‑charm” photos ----- */
-  userImagesArray = userImagesArray.filter(u => !u._removeMe);
-
-  /* ----- scrub matches that referenced removed photos ----- */
-  Object.keys(cellMatches).forEach(idx => {
-    cellMatches[idx] = (cellMatches[idx] || []).filter(m =>
-      userImagesArray.some(u => stripExtension(u.name) === m.userName)
-    );
-  });
-
-  /* ----- NEW: purge partialMatches too ----- */
-  Object.keys(partialMatches).forEach(pName => {
-    if (!userImagesArray.some(u => u.name === pName)) {
-      delete partialMatches[pName];
-    }
+  /* ----- scrub matches referencing ALL flagged photos ----- */
+  userImagesArray.forEach(u => {
+    if (u.skipForCharm) purgeBaseName(stripExtension(u.name));
   });
 
   /* --- persist & finish --- */
