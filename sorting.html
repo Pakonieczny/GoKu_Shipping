@@ -1071,6 +1071,13 @@ photoDragDropElem.addEventListener("drop", async function (e) {
     });
   }
 
+  /********************************************************
+ * stripExtension("photo.jpg") → "photo"
+ ********************************************************/
+function stripExtension(fileName) {
+  return fileName.replace(/\.\w+$/, "");
+}
+
   // After we've processed all dropped files, analyze them if we got new images
   if (newlyAddedCount > 0) {
     await analyzeUserImagesViaOpenAI();
