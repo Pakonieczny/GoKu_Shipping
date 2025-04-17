@@ -297,12 +297,14 @@ function ensureProgressModal() {
     modal.innerHTML = `
       <div class="modal-content" style="text-align:center">
         <h6 id="progressTitle" style="margin-bottom:20px"></h6>
-        <div class="progress">
-          <div id="progressBar" class="determinate" style="width:0%"></div>
+        <div class="progress" style="height:8px;">
+          <div id="progressBar"
+               class="determinate"
+               style="width:0%; background-color:#2196f3;"></div>
         </div>
       </div>`;
     document.body.appendChild(modal);
-    M.Modal.init(modal, { dismissible: false });
+    M.Modal.init(modal, { dismissible:false });
   }
   return M.Modal.getInstance(modal);
 }
@@ -1229,7 +1231,7 @@ async function openAIAnalyzePhoto(base64Image) {
     }
 
     /* --- progress modal --- */
-    showProgressModal("Analyzing " + totalImages + " user image(s)…", totalImages);
+    showProgressModal("Image Analysis...", totalImages);
 
     let doneCount = 0;
 
@@ -1752,9 +1754,9 @@ async function compareImages(userImage, croppedGridImage, cellIndex, userImageNa
  ********************************************************/
 async function sendAndMatch() {
   /* --- progress setup --- */
-  let smTotal   = croppedImagesArray.filter(Boolean).length; // rough max
-  let smDone    = 0;
-  showProgressModal("Matching " + smTotal + " Etsy image(s)…", smTotal);
+  let smDone  = 0;
+  let smTotal = 0;    // we’ll add to this before each pass
+  showProgressModal("Matching Images...", 1);   // temp total=1 so bar shows
 
   const runId = globalRunId;     // NEW — snapshot current run
   // (A) Disable "Match & Print" at the start
@@ -1803,12 +1805,12 @@ async function sendAndMatch() {
   //---------------------------------------------------------------------
   // FIRST PASS
   //---------------------------------------------------------------------
-  let unmatchedCells = [];
+  unmatchedCells = [];
   for (let i = 0; i < croppedImagesArray.length; i++) {
-    if (croppedImagesArray[i]) {
-      unmatchedCells.push(i);
-    }
+    if (croppedImagesArray[i]) unmatchedCells.push(i);
   }
+
+  smTotal += unmatchedCells.length;          // ← NEW: count first‑pass items
 
   // These sets track matched user images & matched Etsy cells
   const matchedUserNames = new Set();
@@ -1917,10 +1919,10 @@ for (const i of unmatchedCells) {
   // -----------------------------------------------------------------------
   unmatchedCells = [];
   for (let i = 0; i < croppedImagesArray.length; i++) {
-    if (!matchedCellIndices.has(i)) {
-      unmatchedCells.push(i);
-    }
+    if (!matchedCellIndices.has(i)) unmatchedCells.push(i);
   }
+
+  smTotal += unmatchedCells.length;          // ← NEW: count second‑pass items
 
 for (const i of unmatchedCells) {
   if (runId !== globalRunId) return;         // abort if newer run
@@ -2007,7 +2009,7 @@ for (const i of unmatchedCells) {
     /* update Send & Match progress (second pass) */
     smDone++;
     updateProgressModal(smDone, smTotal);
-    
+
     // 2s cooldown
     await new Promise(resolve => setTimeout(resolve, 2000));
   }
@@ -2047,8 +2049,9 @@ for (const i of unmatchedCells) {
   }
 
   /* close progress modal */
+  updateProgressModal(smTotal, smTotal);   // snap to 100 %
   closeProgressModal();
-}   // ← end of sendAndMatch()
+}   // end of sendAndMatch()
 
 /********************************************************
  * detectAnyOrangered():
