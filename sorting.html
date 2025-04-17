@@ -2038,30 +2038,24 @@ function openMatchPreviewModal(cellIndex) {
   skipWrapper.appendChild(skipTitle);
 
   // --- Materialize checkbox wrapper ---
-  const label   = document.createElement("label");
-  label.style.cursor  = "pointer";
+  const label = document.createElement("label");
+  label.style.cursor = "pointer";
   label.style.display = "flex";
   label.style.alignItems = "center";
 
   const skipInput = document.createElement("input");
   skipInput.type  = "checkbox";
   skipInput.id    = "skipChk" + cellIndex;
-  skipInput.classList.add("filled-in");   // makes the box visible
+  skipInput.classList.add("filled-in");   // renders visible box
   skipInput.checked = !!skipMatches[cellIndex];
 
-  const chkSpan = document.createElement("span"); // renders the box outline
+  const chkSpan = document.createElement("span"); // draws square outline
 
   label.appendChild(skipInput);
   label.appendChild(chkSpan);
   skipWrapper.appendChild(label);
 
   container.appendChild(skipWrapper);
-
-  /* live‑update border on toggle */
-  skipInput.addEventListener("change", () => {
-    skipMatches[cellIndex] = skipInput.checked;
-    toggleSkipBorder(cellIndex, skipInput.checked);
-  });
 
   /* ---------- build modal content (unchanged) ---------- */
   const etsyDerived = croppedImagesArray[cellIndex];
@@ -2303,12 +2297,17 @@ function openMatchPreviewModal(cellIndex) {
       }
     }
 
-    // D) Update border colour
+        // D) Update border colour
     if (matchedImages.length > 0 && matchedImages[0].userImage) {
       setEtsyBorder(cellIndex, "1px", "black");
     } else {
       setEtsyBorder(cellIndex, "3px", "orangered");
     }
+
+    /*****  NEW – persist Skip status & set border  *****/
+    const skipChecked = !!document.getElementById("skipChk" + cellIndex)?.checked;
+    skipMatches[cellIndex] = skipChecked;
+    toggleSkipBorder(cellIndex, skipChecked);   // green or revert
 
     // E) Refresh unmatched preview
     if (typeof createUnmatchedUserImagesPreview === "function") {
@@ -2319,17 +2318,13 @@ function openMatchPreviewModal(cellIndex) {
     const anyOrangered = detectAnyOrangered();
     if (anyOrangered) {
       disableMatchPrintFlow();
-      
-      /***** ▲ NEW: hide blue highlights + Print button *****/
+
+      /***** hide blue highlights + Print button *****/
       hideMatchPrintUI();
-      
+
     } else {
       enableMatchPrintFlow();
     }
-
-    /* ▲ NEW: persist skip status & border */
-    skipMatches[cellIndex] = !!document.getElementById("skipChk" + cellIndex)?.checked;
-    toggleSkipBorder(cellIndex, skipMatches[cellIndex]);
 
     // G) Close the modal
     instance.close();
