@@ -283,6 +283,7 @@ let matchPrintFlowInProgress = false;
 let pendingFetchControllers = [];
 let globalRunId = 0;
 let currentSaveHandler = null;      // tracks active “Save” listener
+let skipMatches = {};   // { cellIndex: true }  
 
 /********************************************************
  * Firebase Initialization (REQUIRED)
@@ -462,6 +463,26 @@ etsyOrderInput.addEventListener("keydown", async function (e) {
   // ===== NEW LINE: Start listening for QR scans from sort-scan.html =====
   startScannedSortingListener();
 });
+
+/********************************************************
+ * toggleSkipBorder(cellIdx, isSkipped)
+ * ‑ 3 px green when skipped, otherwise re‑evaluate state
+ ********************************************************/
+function toggleSkipBorder(cellIdx, isSkipped) {
+  const pb = document.getElementById("previewCell" + cellIdx);
+  if (!pb) return;
+
+  if (isSkipped) {
+    pb.style.border = "3px solid green";
+  } else {
+    // if a real match exists → thin black, else orangered
+    if (cellMatches[cellIdx] && cellMatches[cellIdx][0]?.userImage) {
+      pb.style.border = "1px solid #000";
+    } else {
+      pb.style.border = "3px solid orangered";
+    }
+  }
+}
 
 /********************************************************
  * hideMatchPrintUI(): strip all 3 px blue outlines & the
@@ -2000,6 +2021,36 @@ function openMatchPreviewModal(cellIndex) {
   const container = document.getElementById("matchesGridContainer");
   container.innerHTML = "";
 
+  /* ‑‑‑ Skip‑matching UI (top‑right) ‑‑‑ */
+  const skipWrapper = document.createElement("div");
+  skipWrapper.style.position = "absolute";
+  skipWrapper.style.top = "10px";
+  skipWrapper.style.right = "15px";
+  skipWrapper.style.display = "flex";
+  skipWrapper.style.flexDirection = "column";
+  skipWrapper.style.alignItems = "flex-end";
+
+  const skipTitle = document.createElement("div");
+  skipTitle.textContent = "Skip Matching:";
+  skipTitle.style.fontWeight = "bold";
+  skipTitle.style.fontSize = "0.7em";
+  skipTitle.style.marginBottom = "5px";
+  skipWrapper.appendChild(skipTitle);
+
+  const skipInput = document.createElement("input");
+  skipInput.type = "checkbox";
+  skipInput.id = "skipChk" + cellIndex;
+  skipInput.checked = !!skipMatches[cellIndex];
+  skipWrapper.appendChild(skipInput);
+
+  container.appendChild(skipWrapper);
+
+  /* live‑update border on toggle */
+  skipInput.addEventListener("change", () => {
+    skipMatches[cellIndex] = skipInput.checked;
+    toggleSkipBorder(cellIndex, skipInput.checked);
+  });
+
   /* ---------- build modal content (unchanged) ---------- */
   const etsyDerived = croppedImagesArray[cellIndex];
 
@@ -2263,6 +2314,10 @@ function openMatchPreviewModal(cellIndex) {
     } else {
       enableMatchPrintFlow();
     }
+
+    /* ▲ NEW: persist skip status & border */
+    skipMatches[cellIndex] = !!document.getElementById("skipChk" + cellIndex)?.checked;
+    toggleSkipBorder(cellIndex, skipMatches[cellIndex]);
 
     // G) Close the modal
     instance.close();
