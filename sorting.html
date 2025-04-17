@@ -291,16 +291,21 @@ let skipMatches = {};   // { cellIndex: true }
 function ensureProgressModal() {
   let modal = document.getElementById("progressModal");
   if (!modal) {
-    modal = document.createElement("div");
-    modal.id = "progressModal";
-    modal.className = "modal";
+    modal            = document.createElement("div");
+    modal.id         = "progressModal";
+    modal.className  = "modal";
+    modal.style.maxWidth = "67%";                  // 33 % shorter
     modal.innerHTML = `
       <div class="modal-content" style="text-align:center">
         <h6 id="progressTitle" style="margin-bottom:20px"></h6>
-        <div class="progress" style="height:8px;">
-          <div id="progressBar"
-               class="determinate"
-               style="width:0%; background-color:#2196f3;"></div>
+        <div style="display:flex; justify-content:center">
+          <div class="progress" style="width:67%; height:12px;">   <!-- bar -33 % width -->
+            <div id="progressBar"
+                 class="determinate"
+                 style="width:0%; background-color:#2196f3;"></div>
+          </div>
+          <div id="progressPct"
+               style="min-width:45px; margin-left:8px; font-weight:bold;">0%</div>
         </div>
       </div>`;
     document.body.appendChild(modal);
@@ -319,11 +324,11 @@ function showProgressModal(title, totalCount) {
 function updateProgressModal(doneCount, totalCount) {
   const pct = totalCount ? Math.round((doneCount / totalCount) * 100) : 0;
   document.getElementById("progressBar").style.width = pct + "%";
+  document.getElementById("progressPct").textContent = pct + "%";
 }
 
 function closeProgressModal() {
-  const modal = document.getElementById("progressModal");
-  if (modal) ensureProgressModal().close();
+  ensureProgressModal().close();
 }
 
 /********************************************************
@@ -1231,7 +1236,7 @@ async function openAIAnalyzePhoto(base64Image) {
     }
 
     /* --- progress modal --- */
-    showProgressModal("Image Analysis...", totalImages);
+     showProgressModal("Image Analysis...", totalImages);
 
     let doneCount = 0;
 
@@ -1755,8 +1760,8 @@ async function compareImages(userImage, croppedGridImage, cellIndex, userImageNa
 async function sendAndMatch() {
   /* --- progress setup --- */
   let smDone  = 0;
-  let smTotal = 0;    // we’ll add to this before each pass
-  showProgressModal("Matching Images...", 1);   // temp total=1 so bar shows
+  let smTotal = 0;
+  showProgressModal("Matching Images... (First Pass)", 1);  // temp total=1
 
   const runId = globalRunId;     // NEW — snapshot current run
   // (A) Disable "Match & Print" at the start
@@ -1924,6 +1929,10 @@ for (const i of unmatchedCells) {
 
   smTotal += unmatchedCells.length;          // ← NEW: count second‑pass items
 
+  /* switch modal title for second pass */
+  document.getElementById("progressTitle").textContent =
+  "Matching Images... (Second Pass)";
+
 for (const i of unmatchedCells) {
   if (runId !== globalRunId) return;         // abort if newer run
 
@@ -2049,7 +2058,7 @@ for (const i of unmatchedCells) {
   }
 
   /* close progress modal */
-  updateProgressModal(smTotal, smTotal);   // snap to 100 %
+  updateProgressModal(smTotal, smTotal);   // force 100%
   closeProgressModal();
 }   // end of sendAndMatch()
 
