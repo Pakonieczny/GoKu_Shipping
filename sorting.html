@@ -294,12 +294,12 @@ function ensureProgressModal() {
     modal            = document.createElement("div");
     modal.id         = "progressModal";
     modal.className  = "modal";
-    modal.style.maxWidth = "67%";                  // 33 % shorter
+    modal.style.maxWidth = "47%";          
     modal.innerHTML = `
       <div class="modal-content" style="text-align:center">
         <h6 id="progressTitle" style="margin-bottom:20px"></h6>
         <div style="display:flex; justify-content:center">
-          <div class="progress" style="width:67%; height:12px;">   <!-- bar -33 % width -->
+          <div class="progress" style="width:40%; height:12px;">   <!-- bar -33% width -->
             <div id="progressBar"
                  class="determinate"
                  style="width:0%; background-color:#2196f3;"></div>
