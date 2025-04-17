@@ -2196,10 +2196,15 @@ function openMatchPreviewModal(cellIndex) {
   let matchedImages = cellMatches[cellIndex] || [];
   if (matchedImages.length > 1) matchedImages = [matchedImages[0]];
 
-  let unmatchedImages = userImagesArray.filter((uImg) => {
+    let unmatchedImages = userImagesArray.filter((uImg) => {
+    /* skip any photo flagged as charmless */
+    if (uImg.skipForCharm) return false;
+
     if (partialMatches[uImg.name]) return false;
-    return !(matchedImages.length > 0 &&
-             stripExtension(uImg.name) === matchedImages[0].userName);
+    return !(
+      matchedImages.length > 0 &&
+      stripExtension(uImg.name) === matchedImages[0].userName
+    );
   });
 
   if (matchedImages.length === 0) {
