@@ -1264,19 +1264,20 @@ async function analyzeUserImagesViaOpenAI() {
       imgObj.name     = `${finalColor}_${number}.jpg`;
       imgObj.analyzed = true;
 
-      /* ---------- charm‑present stop rule ---------- */
+      /* ---------- charm‑present handling ---------- */
       if (result.charmPresent === "no") {
+        imgObj._removeMe = true;          // flag for deletion
         noCharmStreak++;
         noCharmIdx.push(userImagesArray.indexOf(imgObj));
 
         if (noCharmStreak === 4) {
-          // delete the previous 3 “No‑charm” images from userImagesArray
+          // delete the previous 3 “No‑charm” images immediately
           const toRemove = noCharmIdx.slice(0, 3);
           toRemove.sort((a, b) => b - a).forEach(idx => {
             if (idx >= 0) userImagesArray.splice(idx, 1);
           });
           M.toast({ html: "Stopped: 4 consecutive photos without charms." });
-          break;                               // exit the for‑loop early
+          break;                          // exit the for‑loop early
         }
       } else {
         noCharmStreak = 0;
@@ -1294,6 +1295,17 @@ async function analyzeUserImagesViaOpenAI() {
     updateProgressModal(doneCount, totalImages);
   }
 
+  /* ----- final purge of ALL “No‑charm” photos ----- */
+  userImagesArray = userImagesArray.filter(u => !u._removeMe);
+
+  /* ----- scrub matches that referenced removed photos ----- */
+  Object.keys(cellMatches).forEach(idx => {
+    cellMatches[idx] = (cellMatches[idx] || []).filter(m =>
+      userImagesArray.some(u => stripExtension(u.name) === m.userName)
+    );
+  });
+
+  /* --- persist & finish --- */
   localStorage.setItem("userImagesArray", JSON.stringify(userImagesArray));
   closeProgressModal();
   M.toast({ html: "User Image Analysis Completed" });
