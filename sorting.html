@@ -1305,6 +1305,13 @@ async function analyzeUserImagesViaOpenAI() {
     );
   });
 
+  /* ----- NEW: purge partialMatches too ----- */
+  Object.keys(partialMatches).forEach(pName => {
+    if (!userImagesArray.some(u => u.name === pName)) {
+      delete partialMatches[pName];
+    }
+  });
+
   /* --- persist & finish --- */
   localStorage.setItem("userImagesArray", JSON.stringify(userImagesArray));
   closeProgressModal();
