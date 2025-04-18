@@ -1329,12 +1329,16 @@ async function analyzeUserImagesViaOpenAI() {
     if (u.skipForCharm) purgeBaseName(stripExtension(u.name));
   });
 
+  /* 🔥 PERMANENTLY delete all “no‑charm” photos from memory */
+  userImagesArray = userImagesArray.filter(u => !u.skipForCharm);
+
   /* --- persist & finish --- */
   localStorage.setItem("userImagesArray", JSON.stringify(userImagesArray));
   closeProgressModal();
   M.toast({ html: "User Image Analysis Completed" });
   enableSendMatch();
-}
+}   // END analyzeUserImagesViaOpenAI
+
     /********************************************************
      * fillPreviewBoxes, attachPreviewBoxListeners, etc.
      ********************************************************/
@@ -1822,6 +1826,10 @@ async function sendAndMatch() {
   showProgressModal("Matching Images... (First Pass)", 1);  // temp total=1
 
   const runId = globalRunId;     // NEW — snapshot current run
+
+  /* 🔥 Make absolutely certain no “no‑charm” photos survive */
+  userImagesArray = userImagesArray.filter(u => !u.skipForCharm);
+
   // (A) Disable "Match & Print" at the start
   const matchPrintBtn = document.getElementById("matchPrintBtn");
   matchPrintBtn.disabled = true;
@@ -1843,50 +1851,39 @@ async function sendAndMatch() {
   function metalFilterOk(metalVal, userName) {
     // Lowercase everything for consistent comparison
     const metalLow = metalVal.toLowerCase();
-    const nameLow = userName.toLowerCase();
+    const nameLow  = userName.toLowerCase();
 
-    // If the metalVal includes "silver"
-    if (metalLow.includes("silver")) {
-      return nameLow.includes("silver");
-    }
-    // If the metalVal includes "rosegold"
-    else if (metalLow.includes("rosegold")) {
-      return (nameLow.includes("rose") || nameLow.includes("rosegold"));
-    }
-    // If the metalVal includes "rose"
-    else if (metalLow.includes("rose")) {
-      return (nameLow.includes("rose") || nameLow.includes("rosegold"));
-    }
-    // If the metalVal includes "gold"
-    else if (metalLow.includes("gold")) {
-      return nameLow.includes("gold");
-    }
-    // Otherwise, no specific metal => allow any
-    return true;
+    if (metalLow.includes("silver"))     return nameLow.includes("silver");
+    else if (metalLow.includes("rosegold")) return (nameLow.includes("rose") || nameLow.includes("rosegold"));
+    else if (metalLow.includes("rose"))  return (nameLow.includes("rose") || nameLow.includes("rosegold"));
+    else if (metalLow.includes("gold"))  return nameLow.includes("gold");
+    return true;   // no metal specified → allow any
   }
 
-  //---------------------------------------------------------------------
+//---------------------------------------------------------------------
   // FIRST PASS
   //---------------------------------------------------------------------
-  unmatchedCells = [];
+  let unmatchedCells = [];
   for (let i = 0; i < croppedImagesArray.length; i++) {
     if (croppedImagesArray[i]) unmatchedCells.push(i);
   }
 
-  smTotal += unmatchedCells.length;          // ← NEW: count first‑pass items
+  smTotal += unmatchedCells.length;
 
-  // These sets track matched user images & matched Etsy cells
-  const matchedUserNames = new Set();
+  const matchedUserNames  = new Set();
   const matchedCellIndices = new Set();
 
-for (const i of unmatchedCells) {
-  if (runId !== globalRunId) return;         // abort if newer run
+  for (const i of unmatchedCells) {
+    if (runId !== globalRunId) return;
 
-  if (matchedCellIndices.has(i)) continue;
-  const matchBox = document.getElementById("matchCell" + i);
-  const metalVal = document.getElementById("metalCell" + i).value || "";
+    if (matchedCellIndices.has(i)) continue;
+    const matchBox = document.getElementById("matchCell" + i);
+    const metalVal = document.getElementById("metalCell" + i).value || "";
 
-  const validUserImages = userImagesArray.filter((u) => metalFilterOk(metalVal, u.name));
+    /* 🔥 Filter out skipForCharm as well */
+    const validUserImages = userImagesArray.filter(
+        (u) => !u.skipForCharm && metalFilterOk(metalVal, u.name)
+    );
 
   const comparisonPromises = validUserImages.map((user, j) => {
     return new Promise((resolve) => {
@@ -1977,7 +1974,7 @@ for (const i of unmatchedCells) {
     await new Promise(resolve => setTimeout(resolve, 2000));
   }
 
-  // -----------------------------------------------------------------------
+// -----------------------------------------------------------------------
   // SECOND PASS
   // -----------------------------------------------------------------------
   unmatchedCells = [];
@@ -1985,18 +1982,20 @@ for (const i of unmatchedCells) {
     if (!matchedCellIndices.has(i)) unmatchedCells.push(i);
   }
 
-  smTotal += unmatchedCells.length;          // ← NEW: count second‑pass items
-
-  /* switch modal title for second pass */
+  smTotal += unmatchedCells.length;
   document.getElementById("progressTitle").textContent =
-  "Matching Images... (Second Pass)";
+    "Matching Images... (Second Pass)";
 
-for (const i of unmatchedCells) {
-  if (runId !== globalRunId) return;         // abort if newer run
+  for (const i of unmatchedCells) {
+    if (runId !== globalRunId) return;
 
-  const matchBox = document.getElementById("matchCell" + i);
-  const metalVal = document.getElementById("metalCell" + i).value || "";
-  const validUserImages = userImagesArray.filter((u) => metalFilterOk(metalVal, u.name));
+    const matchBox = document.getElementById("matchCell" + i);
+    const metalVal = document.getElementById("metalCell" + i).value || "";
+
+    /* 🔥 Filter out skipForCharm here too */
+    const validUserImages = userImagesArray.filter(
+        (u) => !u.skipForCharm && metalFilterOk(metalVal, u.name)
+    );
 
   const comparisonPromises = validUserImages.map((user, j) => {
     return new Promise((resolve) => {
@@ -2687,10 +2686,9 @@ function createUnmatchedUserImagesPreview() {
   if (!unmatchedContainer) return;
   unmatchedContainer.innerHTML = ""; // Clear old previews
 
-  // 1) Filter out any images that are partially matched:
-  //    If partialMatches has an entry keyed by userImg.name, that means partial match
+  /* 🔥 Exclude both partial matches **and** any flagged “no‑charm” photos */
   const trulyUnmatchedImages = userImagesArray.filter(userImg => {
-    return !partialMatches[userImg.name];
+    return !userImg.skipForCharm && !partialMatches[userImg.name];
   });
 
   // 2) Spacing: 66px box width + 5px gap = 71px total step horizontally & vertically
@@ -2704,14 +2702,14 @@ function createUnmatchedUserImagesPreview() {
     const row = Math.floor(i / imagesPerRow);
     const col = i % imagesPerRow;
     const leftPx = col * step;
-    const topPx = row * step;
+    const topPx  = row * step;
 
     const previewBox = document.createElement("div");
     previewBox.classList.add("preview-box");
     previewBox.style.position = "absolute";
     previewBox.style.left = leftPx + "px";
-    previewBox.style.top = topPx + "px";
-    previewBox.style.width = boxSize + "px";
+    previewBox.style.top  = topPx  + "px";
+    previewBox.style.width  = boxSize + "px";
     previewBox.style.height = boxSize + "px";
 
     // Insert the unmatched user image
@@ -2724,9 +2722,7 @@ function createUnmatchedUserImagesPreview() {
            style="width:100%; height:100%; object-fit:cover;" />
     `;
 
-    // Attach the same wheel-zoom, single-click zoom, & drag-panning
     attachPreviewBoxListeners(previewBox);
-
     unmatchedContainer.appendChild(previewBox);
   });
 }
