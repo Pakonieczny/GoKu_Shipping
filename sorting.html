@@ -1020,9 +1020,7 @@ function openIframePrinterForListing(cellIndex) {
 // --------------- Drag‑and‑drop logic ---------------
 const photoDragDropElem = document.getElementById("photoDragDrop");
 
-photoDragDropElem.addEventListener("dragover", function (e) {
-  e.preventDefault();
-});
+photoDragDropElem.addEventListener("dragover", (e) => e.preventDefault());
 
 photoDragDropElem.addEventListener("drop", async function (e) {
   e.preventDefault();
@@ -1038,7 +1036,7 @@ photoDragDropElem.addEventListener("drop", async function (e) {
     // Convert the dropped file to a DataURL
     const fileDataUrl = await readAsDataURL(file);
 
-    // Always treat the entire file as a 12×12 composite -> 144 tiles
+    // Slice into 12×12 = 144 tiles
     const subImages = await extractSubImages144(fileDataUrl);
 
     for (let q = 0; q < subImages.length; q++) {
@@ -1052,17 +1050,14 @@ photoDragDropElem.addEventListener("drop", async function (e) {
     }
 
     M.toast({
-      html:
-        "File " +
-        file.name +
-        ": Extracted 144 quadrant images (each 512×512)."
+      html: `File ${file.name}: Extracted 144 quadrant images (each 512×512).`
     });
   }
 
   // Analyze every sub‑image; store only those with a charm
   await analyzeAndStoreSubImages(subImagesToAnalyze);
 
-  // Optional: refresh unmatched preview panel
+  // Refresh unmatched preview panel
   if (typeof createUnmatchedUserImagesPreview === "function") {
     createUnmatchedUserImagesPreview();
   }
@@ -1072,7 +1067,7 @@ photoDragDropElem.addEventListener("drop", async function (e) {
    analyzeAndStoreSubImages(list)
    • Sends each 512×512 quadrant to the AI.
    • Saves the photo into userImagesArray ONLY if charmPresent == "yes".
-   • Discards the image immediately otherwise.
+   • Aborts after 4 consecutive “No charm” images.
 ───────────────────────────────────────────────────────────── */
 async function analyzeAndStoreSubImages(imgObjs) {
   if (!imgObjs || imgObjs.length === 0) return;
@@ -1081,12 +1076,17 @@ async function analyzeAndStoreSubImages(imgObjs) {
 
   let done = 0;
   let savedCount = 0;
+  let noCharmStreak = 0;
 
-  for (const imgObj of imgObjs) {
+  for (let idx = 0; idx < imgObjs.length; idx++) {
+    const imgObj = imgObjs[idx];
     const result = await openAIAnalyzePhoto(imgObj.data);
 
     if ((result.charmPresent || "").toLowerCase() === "yes") {
-      /* Build the new AI‑assigned filename */
+      /* Reset streak */
+      noCharmStreak = 0;
+
+      /* Build the AI‑assigned filename */
       const clr = (result.color || "Unknown").toLowerCase();
       const num = result.topRightNumber || "XX";
       let finalColor = "UnknownColor";
@@ -1098,9 +1098,18 @@ async function analyzeAndStoreSubImages(imgObjs) {
       userImagesArray.push({
         name: `${finalColor}_${num}.jpg`,
         data: imgObj.data,
-        analyzed: true          // already vetted
+        analyzed: true
       });
       savedCount++;
+    } else {
+      /* Charmless image → increment streak */
+      noCharmStreak++;
+      if (noCharmStreak === 4) {
+        M.toast({ html: "Stopped: 4 consecutive photos without charms." });
+        done++;                           // count the current one
+        updateProgressModal(done, imgObjs.length);
+        break;                            // abort further analysis
+      }
     }
 
     done++;
@@ -1130,7 +1139,6 @@ async function readAsDataURL(file) {
 
 // extractSubImages144: always slice a composite into 12×12 = 144 tiles
 async function extractSubImages144(baseDataUrl) {
-  // 1) Load the DataURL into an <img>
   const img = await loadImage(baseDataUrl);
 
   const fullW = img.naturalWidth;
@@ -1148,11 +1156,8 @@ async function extractSubImages144(baseDataUrl) {
       const ctx = canvas.getContext("2d");
       ctx.drawImage(
         img,
-        c * cellW,            // srcX
-        r * cellH,            // srcY
-        cellW, cellH,         // srcW, srcH
-        0, 0,                 // destX, destY
-        cellW, cellH          // destW, destH
+        c * cellW, r * cellH, cellW, cellH,   // src
+        0, 0, cellW, cellH                    // dest
       );
       results.push(canvas.toDataURL("image/png"));
     }
