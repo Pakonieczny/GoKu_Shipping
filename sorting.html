@@ -2306,13 +2306,14 @@ function openMatchPreviewModal(cellIndex) {
 
   /* ---------- build modal content (unchanged) ---------- */
   const etsyDerived = croppedImagesArray[cellIndex];
+  const isEarring   = window.cachedOrderItems?.[cellIndex]?.isEarring === true;   // ← NEW
 
   let matchedImages = (cellMatches[cellIndex] || []).filter(
-  img => !userImagesArray.find(u => u.skipForCharm &&
-    stripExtension(u.name) === img.userName)
-);
+    img => !userImagesArray.find(u => u.skipForCharm &&
+      stripExtension(u.name) === img.userName)
+  );
 
-  if (matchedImages.length > 1) matchedImages = [matchedImages[0]];
+  if (!isEarring && matchedImages.length > 1) matchedImages = [matchedImages[0]]; // ← NEW
 
   let unmatchedImages = userImagesArray.filter((uImg) => {
     if (uImg.skipForCharm) return false;             // ← new
@@ -2397,7 +2398,6 @@ function openMatchPreviewModal(cellIndex) {
     box.style.justifyContent = "center";
     box.style.overflow = "hidden";
     box.style.position = "relative";
-
     box.dataset.type = "matched";
     box.dataset.index = idx;
 
@@ -2420,6 +2420,19 @@ function openMatchPreviewModal(cellIndex) {
 
     matchedSection.appendChild(box);
   });
+
+  /* --- NEW placeholder so earrings always have 2 slots --- */
+  if (isEarring && matchedImages.length < 2) {                                   // ← NEW
+    const ph = document.createElement("div");                                    // ← NEW
+    ph.style.width = "100px"; ph.style.height = "100px";                         // ← NEW
+    ph.style.border = "1px solid #000";                                          // ← NEW
+    ph.style.display = "flex"; ph.style.alignItems = "center";                   // ← NEW
+    ph.style.justifyContent = "center"; ph.style.fontWeight = "bold";            // ← NEW
+    ph.style.overflow = "hidden"; ph.style.position = "relative";                // ← NEW
+    ph.innerHTML = "Drag photo here";                                            // ← NEW
+    ph.dataset.type  = "matched"; ph.dataset.index = matchedImages.length;       // ← NEW
+    makeDropTarget(ph); matchedSection.appendChild(ph);                          // ← NEW
+  }
 
   matchedWrapper.appendChild(matchedSection);
   container.appendChild(matchedWrapper);
@@ -2697,7 +2710,7 @@ function refreshSectionsLocal() {
   matchedSection.innerHTML   = "";
   unmatchedSection.innerHTML = "";
 
-  /* ----- Matched (100 × 100) ----- */
+  /* ----- Matched (100×100) ----- */
   matchedImages.forEach((mImg, i) => {
     const box = document.createElement("div");
     box.style.width  = "100px";
