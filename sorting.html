@@ -1618,13 +1618,18 @@ async function analyzeUserImagesViaOpenAI() {
     }
 
     /********************************************************
-     * cropAllImages, cropImageFromPreview
+     * cropAllImages ‑‑ crop ONLY the Etsy‑grid preview boxes
      ********************************************************/
     async function cropAllImages() {
-      const previewBoxes = document.querySelectorAll(".preview-box");
+      /*  Grab boxes strictly inside the main grid container
+          so we ignore unmatched‑preview thumbnails.           */
+      const previewBoxes = document.querySelectorAll(
+        "#photoGridContainer .preview-box"
+      );
+
       for (let i = 0; i < previewBoxes.length; i++) {
         const cell = previewBoxes[i];
-        const img = cell.querySelector("img");
+        const img  = cell.querySelector("img");
         if (img && img.src && img.src !== "") {
           try {
             const cropped = await cropImageFromPreview(cell, 512, 512);
