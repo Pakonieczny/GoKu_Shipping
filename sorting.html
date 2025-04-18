@@ -1057,10 +1057,9 @@ photoDragDropElem.addEventListener("drop", async function (e) {
   // Analyze every sub‑image; store only those with a charm
   await analyzeAndStoreSubImages(subImagesToAnalyze);
 
-  // Refresh unmatched preview panel
-  if (typeof createUnmatchedUserImagesPreview === "function") {
-    createUnmatchedUserImagesPreview();
-  }
+  /* NOTE:
+     We do NOT refresh unmatchedContainer here.
+     That preview is shown ONLY after Send‑and‑Match finishes.  */
 });
 
 /* ─────────────────────────────────────────────────────────────
@@ -1872,17 +1871,17 @@ async function sendAndMatch() {
   /* --- progress setup --- */
   let smDone  = 0;
   let smTotal = 0;
-  showProgressModal("Matching Images... (First Pass)", 1);  // temp total=1
+  showProgressModal("Matching Images... (First Pass)", 1);
 
-  const runId = globalRunId;     // NEW — snapshot current run
+  const runId = globalRunId;     // snapshot current run
 
-  /* 🔥 Make absolutely certain no “no‑charm” photos survive */
+  /* Purge any residual skipForCharm photos */
   userImagesArray = userImagesArray.filter(u => !u.skipForCharm);
 
-  // (A) Disable "Match & Print" at the start
+  // Disable Match & Print at the start
   const matchPrintBtn = document.getElementById("matchPrintBtn");
   matchPrintBtn.disabled = true;
-  matchPrintBtn.style.opacity = "0.5"; // greyed out
+  matchPrintBtn.style.opacity = "0.5";
 
   if (userImagesArray.length === 0) {
     M.toast({ html: "No user images available! Please drop user images first." });
@@ -2163,10 +2162,18 @@ async function sendAndMatch() {
     disableMatchPrintFlow();         // keeps them disabled
   }
 
-  /* close progress modal */
-  updateProgressModal(smTotal, smTotal);   // force 100%
+    /* -- Finished matching -- */
+  updateProgressModal(smTotal, smTotal);
   closeProgressModal();
-}   // end of sendAndMatch()
+
+  /* NEW 🔥  Build the unmatched preview NOW */
+  if (typeof createUnmatchedUserImagesPreview === "function") {
+    createUnmatchedUserImagesPreview();
+  }
+
+  /* Re‑enable Send‑Match button for another run */
+  enableSendMatch();
+}   // END sendAndMatch
 
 /********************************************************
  * detectAnyOrangered():
