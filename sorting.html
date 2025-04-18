@@ -2193,13 +2193,15 @@ function openMatchPreviewModal(cellIndex) {
   /* ---------- build modal content (unchanged) ---------- */
   const etsyDerived = croppedImagesArray[cellIndex];
 
-  let matchedImages = cellMatches[cellIndex] || [];
+  let matchedImages = (cellMatches[cellIndex] || []).filter(
+  img => !userImagesArray.find(u => u.skipForCharm &&
+    stripExtension(u.name) === img.userName)
+);
+  
   if (matchedImages.length > 1) matchedImages = [matchedImages[0]];
 
-    let unmatchedImages = userImagesArray.filter((uImg) => {
-    /* skip any photo flagged as charmless */
-    if (uImg.skipForCharm) return false;
-
+  let unmatchedImages = userImagesArray.filter((uImg) => {
+    if (uImg.skipForCharm) return false;             // ← new
     if (partialMatches[uImg.name]) return false;
     return !(
       matchedImages.length > 0 &&
