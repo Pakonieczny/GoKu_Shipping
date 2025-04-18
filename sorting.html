@@ -1068,6 +1068,7 @@ photoDragDropElem.addEventListener("drop", async function (e) {
    • Sends each 512×512 quadrant to the AI.
    • Saves the photo into userImagesArray ONLY if charmPresent == "yes".
    • Aborts after 4 consecutive “No charm” images.
+   • Persists good images and enables “Send & Match”.
 ───────────────────────────────────────────────────────────── */
 async function analyzeAndStoreSubImages(imgObjs) {
   if (!imgObjs || imgObjs.length === 0) return;
@@ -1117,6 +1118,11 @@ async function analyzeAndStoreSubImages(imgObjs) {
   }
 
   closeProgressModal();
+
+  /* Persist vetted images & enable Send‑and‑Match */
+  localStorage.setItem("userImagesArray", JSON.stringify(userImagesArray));
+  enableSendMatch();
+
   M.toast({ html: `Analysis complete – saved ${savedCount} charm photos.` });
 }
 
