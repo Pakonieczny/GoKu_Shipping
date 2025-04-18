@@ -1294,6 +1294,8 @@ async function analyzeUserImagesViaOpenAI() {
         imgObj.skipForCharm = true;        // flag but keep for now
         noCharmList.push(imgObj);
         noCharmStreak++;
+        
+        purgeBaseName(baseName);           // ← NEW: scrub match refs now
 
         // 4‑in‑a‑row rule → remove the previous 3 flagged images
         if (noCharmStreak === 4) {
@@ -2197,7 +2199,7 @@ function openMatchPreviewModal(cellIndex) {
   img => !userImagesArray.find(u => u.skipForCharm &&
     stripExtension(u.name) === img.userName)
 );
-  
+
   if (matchedImages.length > 1) matchedImages = [matchedImages[0]];
 
   let unmatchedImages = userImagesArray.filter((uImg) => {
