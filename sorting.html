@@ -1017,7 +1017,7 @@ function openIframePrinterForListing(cellIndex) {
       });
     }
 
-// --------------- Drag-and-drop logic ---------------
+// --------------- Drag‑and‑drop logic ---------------
 const photoDragDropElem = document.getElementById("photoDragDrop");
 
 photoDragDropElem.addEventListener("dragover", function (e) {
@@ -1027,62 +1027,96 @@ photoDragDropElem.addEventListener("dragover", function (e) {
 photoDragDropElem.addEventListener("drop", async function (e) {
   e.preventDefault();
   const files = e.dataTransfer.files;
+  if (!files || files.length === 0) return;
 
-  // We'll track how many new quadrant images we actually add
-  let newlyAddedCount = 0;
+  /* Collect every 512×512 quadrant here for one‑time AI analysis */
+  const subImagesToAnalyze = [];
 
   for (let i = 0; i < files.length; i++) {
     const file = files[i];
 
-    // Optional: skip if a file with this exact name is already in userImagesArray and is analyzed
-    // (Prevents re-dragging the same file from re-adding it)
-    if (
-      userImagesArray.some(
-        (imgObj) => imgObj.name === file.name && imgObj.analyzed === true
-      )
-    ) {
-      console.log("Skipping file already analyzed:", file.name);
-      continue;
-    }
-
     // Convert the dropped file to a DataURL
     const fileDataUrl = await readAsDataURL(file);
 
-    // Always treat the entire file as a 12×12 composite
-    // => Extract four quadrants, crop each to 512×512, store them in userImagesArray
-   const subImages = await extractSubImages144(fileDataUrl);
+    // Always treat the entire file as a 12×12 composite -> 144 tiles
+    const subImages = await extractSubImages144(fileDataUrl);
+
     for (let q = 0; q < subImages.length; q++) {
       const cropped = await cropTo512(subImages[q]);
 
-      // Add each quadrant as its own entry in userImagesArray
-      userImagesArray.push({
-        name: file.name + "_Q" + q,
-        data: cropped,
-        analyzed: false,
+      // Push to temporary array; NOT yet stored in userImagesArray
+      subImagesToAnalyze.push({
+        origName: file.name + "_Q" + q,
+        data: cropped
       });
-      newlyAddedCount++;
     }
 
     M.toast({
       html:
         "File " +
         file.name +
-        ": Extracted 4 quadrant images (each 512×512)."
+        ": Extracted 144 quadrant images (each 512×512)."
     });
   }
 
-  /********************************************************
+  // Analyze every sub‑image; store only those with a charm
+  await analyzeAndStoreSubImages(subImagesToAnalyze);
+
+  // Optional: refresh unmatched preview panel
+  if (typeof createUnmatchedUserImagesPreview === "function") {
+    createUnmatchedUserImagesPreview();
+  }
+});
+
+/* ─────────────────────────────────────────────────────────────
+   analyzeAndStoreSubImages(list)
+   • Sends each 512×512 quadrant to the AI.
+   • Saves the photo into userImagesArray ONLY if charmPresent == "yes".
+   • Discards the image immediately otherwise.
+───────────────────────────────────────────────────────────── */
+async function analyzeAndStoreSubImages(imgObjs) {
+  if (!imgObjs || imgObjs.length === 0) return;
+
+  showProgressModal("Analyzing Photos...", imgObjs.length);
+
+  let done = 0;
+  let savedCount = 0;
+
+  for (const imgObj of imgObjs) {
+    const result = await openAIAnalyzePhoto(imgObj.data);
+
+    if ((result.charmPresent || "").toLowerCase() === "yes") {
+      /* Build the new AI‑assigned filename */
+      const clr = (result.color || "Unknown").toLowerCase();
+      const num = result.topRightNumber || "XX";
+      let finalColor = "UnknownColor";
+      if (clr.includes("yellow"))                              finalColor = "Gold";
+      else if (clr.includes("pink"))                           finalColor = "RoseGold";
+      else if (clr.includes("grey") || clr.includes("silver")) finalColor = "Silver";
+      else if (clr.includes("gold"))                           finalColor = "Gold";
+
+      userImagesArray.push({
+        name: `${finalColor}_${num}.jpg`,
+        data: imgObj.data,
+        analyzed: true          // already vetted
+      });
+      savedCount++;
+    }
+
+    done++;
+    updateProgressModal(done, imgObjs.length);
+  }
+
+  closeProgressModal();
+  M.toast({ html: `Analysis complete – saved ${savedCount} charm photos.` });
+}
+
+/********************************************************
  * stripExtension("photo.jpg") → "photo"
  ********************************************************/
 function stripExtension(fileName) {
   return fileName.replace(/\.\w+$/, "");
 }
-
-  // After we've processed all dropped files, analyze them if we got new images
-  if (newlyAddedCount > 0) {
-    await analyzeUserImagesViaOpenAI();
-  }
-});
 
 // Reads a File object into a DataURL
 async function readAsDataURL(file) {
@@ -1147,7 +1181,6 @@ function loadImage(dataUrl) {
     img.src = dataUrl;
   });
 }
-
 
 // --------------- Single‑Photo Analysis ---------------
 async function openAIAnalyzePhoto(base64Image) {
