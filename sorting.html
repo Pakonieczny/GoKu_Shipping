@@ -2513,8 +2513,6 @@ function addMatchedBox(slot, imgData, userName) {
   box.dataset.cell = cellIndex;
   box.style.width  = "100px";
   box.style.height = "100px";
-  box.style.minWidth  = "100px";           // NEW – keep box from collapsing
-  box.style.minHeight = "100px";           // NEW – keep box from collapsing
   box.style.border = "1px solid #000";
   box.style.display = "flex";
   box.style.alignItems = "center";
@@ -2528,19 +2526,18 @@ function addMatchedBox(slot, imgData, userName) {
   box.addEventListener("drop",      handleDrop);
 
   const img = document.createElement("img");
+  img.draggable = true;
   img.dataset.cell = cellIndex;
   img.dataset.slot = slot;
+  img.addEventListener("dragstart", handleDragStart);
 
   if (imgData) {                 // already matched
     img.src   = imgData;
     img.title = userName;
-    img.draggable = true;
-    img.addEventListener("dragstart", handleDragStart);
   } else {                       // empty slot
     img.src   = "placeholder.png";
     img.title = "";
     img.classList.add("placeholder");
-    img.draggable = false;       // NEW – placeholder itself shouldn’t drag
   }
 
   box.appendChild(img);
