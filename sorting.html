@@ -587,22 +587,28 @@ etsyOrderInput.addEventListener("keydown", async function (e) {
 });
 
 /********************************************************
- * toggleSkipBorder(cellIdx, isSkipped)
- * ‑ 3 px green when skipped, otherwise re‑evaluate state
+ * flip border colour after “Save” or Skip‑toggle  — UPDATED
  ********************************************************/
 function toggleSkipBorder(cellIdx, isSkipped) {
   const pb = document.getElementById("previewCell" + cellIdx);
   if (!pb) return;
 
+  /* Green outline for skipped rows */
   if (isSkipped) {
     pb.style.border = "3px solid green";
+    return;
+  }
+
+  /* Otherwise decide by *actual* match‑count */
+  const realCount = (cellMatches[cellIdx] || [])
+    .filter(m => m && m.userImage).length;
+
+  const needed = earringCells[cellIdx] ? 2 : 1;   // earrings need 2 photos
+
+  if (realCount >= needed) {
+    pb.style.border = "1px solid #000";          // everything matched
   } else {
-    // if a real match exists → thin black, else orangered
-    if (cellMatches[cellIdx] && cellMatches[cellIdx][0]?.userImage) {
-      pb.style.border = "1px solid #000";
-    } else {
-      pb.style.border = "3px solid orangered";
-    }
+    pb.style.border = "3px solid orangered";     // missing photo(s) ⇒ alert
   }
 }
 
