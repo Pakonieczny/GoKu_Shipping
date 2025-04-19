@@ -2319,13 +2319,15 @@ if (!matchedUserNames.has(topCandidate.user.name) &&
 function attachMatchCellListeners() {
   const matches = document.querySelectorAll("input[id^='matchCell']");
   matches.forEach((inp) => {
-    inp.removeEventListener("click", onMatchCellClick); // idempotent
-    inp.addEventListener("click",  onMatchCellClick);
+    /* clear any stale listener, then add the shared handler once */
+    inp.removeEventListener("click", matchCellHandler);
+    inp.addEventListener("click",  matchCellHandler);
   });
 }
 
-function onMatchCellClick(e) {
-  const idx = Number(e.currentTarget.id.replace("matchCell", ""));
+/* shared handler — extracts the X in "matchCellX" and opens the modal */
+function matchCellHandler(ev) {
+  const idx = parseInt(ev.currentTarget.id.slice("matchCell".length), 10);
   if (!isNaN(idx)) openMatchPreviewModal(idx);
 }
 
@@ -2336,26 +2338,26 @@ M.toast({ html: "Finished matching passes." });
 
 if (runId !== globalRunId) return;   // NEW — abort if a newer run started
 
-  // (C) Re‑enable "Match & Print" ONLY if detectAnyOrangered() returns false
-  const anyOrangered = detectAnyOrangered();
-  if (!anyOrangered) {
-    enableMatchPrintFlow();          // enables all 3 buttons
-  } else {
-    disableMatchPrintFlow();         // keeps them disabled
-  }
-
-  /* -- Finished matching -- */
-  updateProgressModal(smTotal, smTotal);
-  closeProgressModal();
-
-  /* NEW 🔥  Build the unmatched preview NOW */
-  if (typeof createUnmatchedUserImagesPreview === "function") {
-    createUnmatchedUserImagesPreview();
-  }
-
-  /* Re‑enable Send‑Match button for another run */
-  enableSendMatch();
+// (C) Re‑enable "Match & Print" ONLY if detectAnyOrangered() returns false
+const anyOrangered = detectAnyOrangered();
+if (!anyOrangered) {
+  enableMatchPrintFlow();          // enables all 3 buttons
+} else {
+  disableMatchPrintFlow();         // keeps them disabled
 }
+
+/* -- Finished matching -- */
+updateProgressModal(smTotal, smTotal);
+closeProgressModal();
+
+/* NEW 🔥  Build the unmatched preview NOW */
+if (typeof createUnmatchedUserImagesPreview === "function") {
+  createUnmatchedUserImagesPreview();
+}
+
+/* Re‑enable Send‑Match button for another run */
+enableSendMatch();
+}  // ← end of sendAndMatch()
 
 /********************************************************
  * openMatchPreviewModal
@@ -2402,6 +2404,19 @@ function openMatchPreviewModal(cellIndex) {
   container.appendChild(skipWrapper);
 
   /* ---------- build modal content (unchanged) ---------- */
+
+  // helper: create a 55px × 7px read‑only detail row
+function makeDetail(txt) {
+  const inp = document.createElement("input");
+  inp.type        = "text";
+  inp.readOnly    = true;
+  inp.classList.add("detail-box");
+  inp.style.width      = "100%";
+  inp.style.height     = "7px";
+  inp.style.fontSize   = "0.6em";
+  inp.value = txt;
+  return inp;
+}
   const etsyDerived = croppedImagesArray[cellIndex];
 
   /* ---------- build matchedImages with earring logic ---------- */
