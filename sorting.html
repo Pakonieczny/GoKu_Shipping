@@ -2464,85 +2464,108 @@ function openMatchPreviewModal(cellIndex) {
   }
   etsyWrapper.appendChild(etsyBox);
   container.appendChild(etsyWrapper);
+  etsyWrapper.appendChild(makeDetail(orderVal));   // Order number
+  etsyWrapper.appendChild(makeDetail(qtyVal));     // Qty
+  etsyWrapper.appendChild(makeDetail(metalVal));   // Metal
 
-// -----------------------------------------------------------------------
-// B) Matched Photo (shifted 75px right)   ←REPLACEMENT BLOCK
-// -----------------------------------------------------------------------
-const matchedWrapper = document.createElement("div");
-matchedWrapper.style.display = "flex";
-matchedWrapper.style.flexDirection = "column";
-matchedWrapper.style.marginBottom = "20px";
-matchedWrapper.style.marginLeft = "75px";
+  // -----------------------------------------------------------------------
+  // B) Matched Photo (shifted 75px right)   ← UPDATED BLOCK
+  // -----------------------------------------------------------------------
+  const matchedWrapper = document.createElement("div");
+  matchedWrapper.style.display = "flex";
+  matchedWrapper.style.flexDirection = "column";
+  matchedWrapper.style.marginBottom = "20px";
+  matchedWrapper.style.marginLeft = "75px";
 
-const matchedTitle = document.createElement("div");
-matchedTitle.textContent = "Matched User Photo:";
-matchedTitle.style.fontWeight = "bold";
-matchedTitle.style.fontSize  = "0.7em";
-matchedTitle.style.marginBottom = "7px";
-matchedWrapper.appendChild(matchedTitle);
+  const matchedTitle = document.createElement("div");
+  matchedTitle.textContent   = "Matched User Photo:";
+  matchedTitle.style.fontWeight = "bold";
+  matchedTitle.style.fontSize  = "0.7em";
+  matchedTitle.style.marginBottom = "7px";
+  matchedWrapper.appendChild(matchedTitle);
 
-/* ---------- build a fixed set of slots ---------- */
-const maxMatchesPerCell = earringCells[cellIndex] ? 2 : 1;
-const matchedSection = document.createElement("div");
-matchedSection.style.display   = "flex";
-matchedSection.style.flexWrap  = "wrap";
-matchedSection.style.gap       = "10px";
+  /* ---------- build a fixed set of slots ---------- */
+  const maxMatchesPerCell = earringCells[cellIndex] ? 2 : 1;
+  const matchedSection = document.createElement("div");
+  matchedSection.style.display   = "flex";
+  matchedSection.style.flexWrap  = "wrap";
+  matchedSection.style.gap       = "10px";
 
-/* helper to create one 100×100 slot */
-function addMatchedBox(slot, imgData, userName) {
-  const box = document.createElement("div");
-  box.className  = "match-box";
-  box.dataset.slot = slot;
-  box.style.order = slot;      // keep slot position fixed
-  box.dataset.cell = cellIndex;
-  box.style.width  = "100px";
-  box.style.height = "100px";
-  box.style.border = "1px solid #000";
-  box.style.display = "flex";
-  box.style.alignItems = "center";
-  box.style.justifyContent = "center";
-  box.style.overflow = "hidden";
-  box.style.position = "relative";
+  /* helper to create one 100×100 slot + filename */
+  function addMatchedBox(slot, imgData, userName) {
+    /* wrapper keeps box + label together */
+    const wrapper = document.createElement("div");
+    wrapper.style.display = "flex";
+    wrapper.style.flexDirection = "column";
+    wrapper.style.alignItems = "center";
+    wrapper.dataset.slot = slot;
+    wrapper.style.order  = slot;            // fixed slot position
 
-  box.addEventListener("dragover",  e => e.preventDefault());
-  box.addEventListener("dragenter", () => box.classList.add("droptarget"));
-  box.addEventListener("dragleave", () => box.classList.remove("droptarget"));
-  box.addEventListener("drop",      handleDrop);
+    /* 100×100 image box */
+    const box = document.createElement("div");
+    box.className  = "match-box";
+    box.dataset.cell = cellIndex;
+    box.dataset.slot = slot;
+    box.style.width  = "100px";
+    box.style.height = "100px";
+    box.style.border = "1px solid #000";
+    box.style.display = "flex";
+    box.style.alignItems = "center";
+    box.style.justifyContent = "center";
+    box.style.overflow = "hidden";
+    box.style.position = "relative";
 
-  const img = document.createElement("img");
-  img.draggable = true;
-  img.dataset.cell = cellIndex;
-  img.dataset.slot = slot;
-  img.addEventListener("dragstart", handleDragStart);
+    box.addEventListener("dragover",  e => e.preventDefault());
+    box.addEventListener("dragenter", () => box.classList.add("droptarget"));
+    box.addEventListener("dragleave", () => box.classList.remove("droptarget"));
+    box.addEventListener("drop",      handleDrop);
 
-  if (imgData) {                 // already matched
-    img.src   = imgData;
-    img.title = userName;
-  } else {                       // empty slot
-    img.src   = "placeholder.png";
-    img.title = "";
-    img.classList.add("placeholder");
+    const img = document.createElement("img");
+    img.draggable = true;
+    img.dataset.cell = cellIndex;
+    img.dataset.slot = slot;
+    img.addEventListener("dragstart", handleDragStart);
+
+    if (imgData) {
+      img.src   = imgData;
+      img.title = userName;
+    } else {
+      img.src   = "placeholder.png";
+      img.title = "";
+      img.classList.add("placeholder");
+    }
+
+    box.appendChild(img);
+    wrapper.appendChild(box);
+
+    /* ▼ filename label under the box ▼ */
+    const lbl = document.createElement("div");
+    lbl.textContent   = userName || "";
+    lbl.style.fontSize = "0.6em";
+    lbl.style.marginTop = "2px";
+    lbl.style.width   = "100%";
+    lbl.style.textAlign = "center";
+    wrapper.appendChild(lbl);
+    /* ▲ filename label ↑ */
+
+    matchedSection.appendChild(wrapper);
   }
 
-  box.appendChild(img);
-  matchedSection.appendChild(box);
-}
+  /* existing matches */
+  matchedImages.forEach((m, k) => addMatchedBox(k, m.userImage, m.userName));
 
-/* existing matches */
-matchedImages.forEach((m, k) => addMatchedBox(k, m.userImage, m.userName));
+  /* ensure all slots exist */
+  const maxSlots = earringCells[cellIndex] ? 2 : 1;       // 2 for earrings, 1 for others
+  for (let s = matchedImages.length; s < maxSlots; s++) {
+    addMatchedBox(s, null, "");
+  }
 
-/* ---------- ensure all slots exist ---------- */
-const maxSlots = earringCells[cellIndex] ? 2 : 1;        // 2 for earrings, 1 otherwise
-for (let s = matchedImages.length; s < maxSlots; s++) {  // add placeholders for missing slots
-  addMatchedBox(s, null, "");
-}
+  /* pad with empty slots if needed */
+  for (let s = matchedImages.length; s < maxMatchesPerCell; s++) {
+    addMatchedBox(s, null, "");
+  }
 
-/* pad with empty slots */
-for (let s = matchedImages.length; s < maxMatchesPerCell; s++) {
-  addMatchedBox(s, null, "");
-}
-
-matchedWrapper.appendChild(matchedSection);
+  matchedWrapper.appendChild(matchedSection);
 container.appendChild(matchedWrapper);       // ← keep this line
 
   // -----------------------------------------------------------------------
@@ -2813,7 +2836,7 @@ container.appendChild(matchedWrapper);       // ← keep this line
       }
     });
   }
-  
+
   function refreshSectionsLocal() {
     /* ---------------- Matched Section ---------------- */
     matchedSection.innerHTML = "";
