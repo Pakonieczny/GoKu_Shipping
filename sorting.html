@@ -1989,35 +1989,38 @@ async function sendAndMatch() {
     const matchBox = document.getElementById("matchCell" + i);
     const metalVal = document.getElementById("metalCell" + i).value || "";
 
-    /* 🔥 Filter out skipForCharm as well */
+    /* 🔥 Filter out skipForCharm as well */
     const validUserImages = userImagesArray.filter(
         (u) => !u.skipForCharm && metalFilterOk(metalVal, u.name)
     );
 
     let firstImg = null;   // remembers first earring photo for this cell
 
-  const comparisonPromises = validUserImages.map((user, j) => {
-    return new Promise((resolve) => {
-      setTimeout(() => {
-        if (runId !== globalRunId) return resolve({ result: { score: 0 }, user });
-        if (matchedUserNames.has(user.name) || matchedCellIndices.has(i)) {
-          return resolve({ result: { score: 0 }, user });
-        }
-        compareImages(user.data,
+    const comparisonPromises = validUserImages.map((user, j) => {
+      return new Promise((resolve) => {
+        setTimeout(() => {
+          if (runId !== globalRunId) return resolve({ result: { score: 0 }, user });
+          if (matchedUserNames.has(user.name) || matchedCellIndices.has(i)) {
+            return resolve({ result: { score: 0 }, user });
+          }
+          compareImages(
+              user.data,
               firstImg ? firstImg : croppedImagesArray[i],
-              i, user.name)
-          .then((result) => resolve({ result, user }))
-          .catch((err) => {
-            console.error("First‑pass compare error:", i, user.name, err);
-            resolve({ result: { score: 0 }, user });
-          });
-      }, j * 250);
+              i,
+              user.name
+            )
+            .then((result) => resolve({ result, user }))
+            .catch((err) => {
+              console.error("First‑pass compare error:", i, user.name, err);
+              resolve({ result: { score: 0 }, user });
+            });
+        }, j * 250);
+      });
     });
-  });
 
-  const results = await Promise.all(comparisonPromises);
+    const results = await Promise.all(comparisonPromises);
 
-  if (runId !== globalRunId) return;        // NEW guard right after await
+    if (runId !== globalRunId) return;        // NEW guard right after await
     results.sort((a, b) => b.result.score - a.result.score);
 
     if (!results.length || results[0].result.score === 0) {
@@ -2049,12 +2052,12 @@ async function sendAndMatch() {
           });
 
           if (earringCells[i]) {
-          if (!firstImg) {                          // FIRST half just matched
-            firstImg = topCandidate.user.data;
-            earringState[i].firstImg = firstImg;    // for Pass 2 fallback
-          } else if (cellMatches[i].length === 2) { // SECOND half now matched
-          }
-        }  
+            if (!firstImg) {                          // FIRST half just matched
+              firstImg = topCandidate.user.data;
+              earringState[i].firstImg = firstImg;    // for Pass 2 fallback
+            } else if (cellMatches[i].length === 2) { // SECOND half now matched
+            }
+          }  
 
           matchedUserNames.add(topCandidate.user.name);
           matchedCellIndices.add(i);
@@ -2082,42 +2085,46 @@ async function sendAndMatch() {
 
           userImagesArray = userImagesArray.filter(u => u.name !== topCandidate.user.name);
 
-    /* ========== MIRROR‑PAIR LOGIC (earrings) ========== */
-    if (earringCells[i] && cellMatches[i].length === 1) {
-      firstImg = topCandidate.user.data;        // store first half
-      earringState[i].firstImg = firstImg;
+          /* ========== MIRROR‑PAIR LOGIC (earrings) ========== */
+          if (earringCells[i] && cellMatches[i].length === 1) {
+            firstImg = topCandidate.user.data;        // store first half
+            earringState[i].firstImg = firstImg;
 
-      for (const cand of userImagesArray.slice()) { // iterate remaining photos
-        if (cand.skipForCharm) continue;
-        if (!metalFilterOk(metalVal, cand.name)) continue;
-        if (matchedUserNames.has(cand.name)) continue;
+            for (const cand of userImagesArray.slice()) { // iterate remaining photos
+              if (cand.skipForCharm) continue;
+              if (!metalFilterOk(metalVal, cand.name)) continue;
+              if (matchedUserNames.has(cand.name)) continue;
 
-        const { score } = await compareImages(cand.data, firstImg, i, cand.name);
-        if (!score) continue;
+              /* compare original and flipped candidate */
+              const { score: s1 } = await compareImages(cand.data, firstImg, i, cand.name);
+              const flipped       = await flipImageHorizontal(cand.data);
+              const { score: s2 } = await compareImages(flipped, firstImg, i, cand.name + "_mirror");
+              const score         = Math.max(s1, s2);
+              if (score < 0.88) continue;
 
-        const ok = score >= 0.98 || (score >= 0.88 && score >= 0.15);
-        if (!ok) continue;
+              const twinName = cand.name.replace(/(\.jpg|\.png)$/i, "");
+              cellMatches[i].push({ userName: twinName, userImage: cand.data, score });
 
-        const twinName = cand.name.replace(/(\.jpg|\.png)$/i, "");
-        cellMatches[i].push({ userName: twinName, userImage: cand.data, score });
+              matchedUserNames.add(cand.name);
+              matchedCellIndices.add(i);
+              userImagesArray = userImagesArray.filter(u => u.name !== cand.name);
 
-        matchedUserNames.add(cand.name);
-        matchedCellIndices.add(i);
-        userImagesArray = userImagesArray.filter(u => u.name !== cand.name);
+              if (matchBox) matchBox.value += `, ${twinName}`;
 
-        if (matchBox) matchBox.value += `, ${twinName}`;
-
-        M.toast({ html: `Cell ${i}: Mirror match found ⇒ ${twinName}` });
+              M.toast({ html: `Cell ${i}: Mirror match found ⇒ ${twinName}` });
+              break;   // twin found
+            }
+          }
+        }
       }
     }
 
     /* update Send&Match progress (first pass) */
-        smDone++;
-        updateProgressModal(smDone, smTotal);
+    smDone++;
+    updateProgressModal(smDone, smTotal);
 
     // 2s cooldown
     await new Promise(resolve => setTimeout(resolve, 2000));
-    }
   }
 }
 
