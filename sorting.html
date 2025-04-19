@@ -2731,96 +2731,92 @@ container.appendChild(matchedWrapper);       // ← keep this line
       ev.dataTransfer.setData(
         "text/plain",
         JSON.stringify({
-          sourceType: elem.dataset.type,
-          sourceIndex: elem.dataset.index
+          sourceType : elem.dataset.type,   // "matched" | "unmatched"
+          sourceIndex: elem.dataset.index,  // index in its array
+          slot       : elem.dataset.slot || null  // slot for matched rows
         })
       );
     });
   }
 
+  /* -------------------------------------------------------------
+   * makeDropTarget (revised 2025‑04‑19)
+   * – keeps slot order fixed for multi‑match rows (earrings)
+   * – prevents photos disappearing or sliding into wrong boxes
+   * ----------------------------------------------------------- */
   function makeDropTarget(elem) {
-    elem.addEventListener("dragover", (ev) => {
-      ev.preventDefault();
-    });
+    /* Allow drop */
+    elem.addEventListener("dragover", (ev) => ev.preventDefault());
 
     elem.addEventListener("drop", (ev) => {
       ev.preventDefault();
-      const data = ev.dataTransfer.getData("text/plain");
-      if (!data) return;
-      let parsed;
-      try {
-        parsed = JSON.parse(data);
-      } catch (err) {
+      const dataText = ev.dataTransfer.getData("text/plain");
+      if (!dataText) return;
+
+      let payload;
+      try { payload = JSON.parse(dataText); } catch { return; }
+
+      const sourceType  = payload.sourceType;            // "matched" | "unmatched"
+      const sourceIndex = Number(payload.sourceIndex);   // index in its array
+      const targetType  = elem.dataset.type;             // "matched" | "unmatched" | "unmatchedEmpty"
+      const targetSlot  = Number(elem.dataset.slot);     // exact slot for matched boxes
+
+      /* -------------------------------------------------
+         A) matched  →  unmatched / unmatchedEmpty
+         ------------------------------------------------- */
+      if (
+        sourceType === "matched" &&
+        (targetType === "unmatched" || targetType === "unmatchedEmpty")
+      ) {
+        const mImg = matchedImages[sourceIndex];
+
+        /* Move the old match back to unmatched */
+        if (mImg && mImg.userImage) {
+          unmatchedImages.push({
+            name : mImg.userName + ".jpg",
+            data : mImg.userImage,
+            score: mImg.score || 0
+          });
+        }
+
+        /* Leave placeholder so array length & slot order stay intact */
+        matchedImages[sourceIndex] = { userName:"", userImage:null, score:0 };
+
+        refreshSectionsLocal();
         return;
       }
 
-      // 1) "matched" => "unmatched" or "unmatchedEmpty"
-      if (
-        parsed.sourceType === "matched" &&
-        (elem.dataset.type === "unmatched" ||
-          elem.dataset.type === "unmatchedEmpty")
-      ) {
-        const sourceIdx = parseInt(parsed.sourceIndex, 10);
-        const matchedImg = matchedImages[sourceIdx];
+      /* -------------------------------------------------
+         B) unmatched  →  matched  (slot‑specific)
+         ------------------------------------------------- */
+      if (sourceType === "unmatched" && targetType === "matched") {
+        const uImg = unmatchedImages[sourceIndex];
 
-        // Add that matchedImg into the unmatched array
-        unmatchedImages.push({
-          name: matchedImg.userName + ".jpg",
-          data: matchedImg.userImage
-        });
-
-        // Remove from matchedImages
-        matchedImages.splice(sourceIdx, 1);
-
-        /* ---------- NEW: keep the correct slot count ---------- */
-        const maxSlots = earringCells[cellIndex] ? 2 : 1;   // 2 for earrings, 1 otherwise
-        while (matchedImages.length < maxSlots) {
-          matchedImages.push({ userName: "", userImage: null, score: 0 });
+        /* If target slot already filled, push that image back to unmatched */
+        const existing = matchedImages[targetSlot];
+        if (existing && existing.userImage) {
+          unmatchedImages.push({
+            name : existing.userName + ".jpg",
+            data : existing.userImage,
+            score: existing.score || 0
+          });
         }
 
-        refreshSectionsLocal();
-      }
+        /* Place dragged image into the precise slot */
+        matchedImages[targetSlot] = {
+          userName : stripExtension(uImg.name),
+          userImage: uImg.data,
+          score    : 0
+        };
 
-      // 2) "unmatched" => "matched"
-      else if (
-        parsed.sourceType === "unmatched" &&
-        elem.dataset.type === "matched"
-      ) {
-        const sourceIdx = parseInt(parsed.sourceIndex, 10);
-        const unmatchedImg = unmatchedImages[sourceIdx];
-
-        // SINGLE MATCH LOGIC:
-        // Remove the existing matched image or placeholder
-        if (!earringCells[cellIndex] && matchedImages.length > 0) {
-          // If the existing "matched" is just a placeholder, remove it
-          if (!matchedImages[0].userImage) {
-            matchedImages.splice(0, 1);
-          } else {
-            // Otherwise push existing matched image to unmatched
-            unmatchedImages.push({
-              name: matchedImages[0].userName + ".jpg",
-              data: matchedImages[0].userImage,
-              score: matchedImages[0].score || 0
-            });
-            matchedImages.splice(0, 1);
-          }
-        }
-
-        // Now add the newly dragged image
-        matchedImages.push({
-          userName: stripExtension(unmatchedImg.name),
-          userImage: unmatchedImg.data,
-          score: 0
-        });
-
-        // Remove from unmatched
-        unmatchedImages.splice(sourceIdx, 1);
+        /* Remove from unmatched list */
+        unmatchedImages.splice(sourceIndex, 1);
 
         refreshSectionsLocal();
+        return;
       }
     });
   }
-
 function refreshSectionsLocal() {
 
   /* --- rebuild Matched & Unmatched sections (unchanged) --- */
