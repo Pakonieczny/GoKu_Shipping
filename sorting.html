@@ -2090,39 +2090,39 @@ async function sendAndMatch() {
         }
       }  
           /* ========== MIRROR‑PAIR LOGIC (earrings) ========== */
-          if (earringCells[i] && cellMatches[i].length === 1) {
-            const firstImg = cellMatches[i][0].userImage;     // first half already saved
-            if (!earringState[i]) earringState[i] = {};
-            earringState[i].firstImg = firstImg;
+      if (earringCells[i] && cellMatches[i] && cellMatches[i].length === 1) {
+        const firstImg = cellMatches[i][0].userImage;     // first half already saved
+        if (!earringState[i]) earringState[i] = {};
+        earringState[i].firstImg = firstImg;
 
-            /* look through remaining user photos */
-            for (const cand of userImagesArray.slice()) {
-              if (cand.skipForCharm) continue;
-              if (!metalFilterOk(metalVal, cand.name)) continue;
-              if (matchedUserNames.has(cand.name)) continue;
+        /* look through remaining user photos */
+        for (const cand of userImagesArray.slice()) {
+          if (cand.skipForCharm) continue;
+          if (!metalFilterOk(metalVal, cand.name)) continue;
+          if (matchedUserNames.has(cand.name)) continue;
 
-              /* compare original & flipped candidate */
-              const { score: s1 } = await compareImages(cand.data, firstImg, i, cand.name);
-              const flipped       = await flipImageHorizontal(cand.data);
-              const { score: s2 } = await compareImages(flipped, firstImg, i, cand.name + "_mirror");
-              const bestScore     = Math.max(s1, s2);
-              if (bestScore < 0.88) continue;                // threshold for twin
+          /* compare original & flipped candidate */
+          const { score: s1 } = await compareImages(cand.data, firstImg, i, cand.name);
+          const flipped       = await flipImageHorizontal(cand.data);
+          const { score: s2 } = await compareImages(flipped, firstImg, i, cand.name + "_mirror");
+          const bestScore     = Math.max(s1, s2);
+          if (bestScore < 0.88) continue;                // threshold for twin
 
-              /* accept twin */
-              const twinName = cand.name.replace(/(\.jpg|\.png)$/i, "");
-              cellMatches[i].push({ userName: twinName, userImage: cand.data, score: bestScore });
+          /* accept twin */
+          const twinName = cand.name.replace(/(\.jpg|\.png)$/i, "");
+          cellMatches[i].push({ userName: twinName, userImage: cand.data, score: bestScore });
 
-              matchedUserNames.add(cand.name);
-              matchedCellIndices.add(i);
-              userImagesArray = userImagesArray.filter(u => u.name !== cand.name);
+          matchedUserNames.add(cand.name);
+          matchedCellIndices.add(i);
+          userImagesArray = userImagesArray.filter(u => u.name !== cand.name);
 
-              const matchBox = document.getElementById("matchCell" + i);
-              if (matchBox) matchBox.value += `, ${twinName}`;
+          const matchBox = document.getElementById("matchCell" + i);
+          if (matchBox) matchBox.value += `, ${twinName}`;
 
-                  M.toast({ html: `Cell ${i}: Mirror match found ⇒ ${twinName}` });
-                  break;  
-              }
-            }
+          M.toast({ html: `Cell ${i}: Mirror match found ⇒ ${twinName}` });
+          break;
+        }
+      }   // closes mirror‑pair IF
           
         /* update Send&Match progress (first pass) */
         smDone++;
