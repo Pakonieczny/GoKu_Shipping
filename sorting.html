@@ -587,23 +587,31 @@ etsyOrderInput.addEventListener("keydown", async function (e) {
 });
 
 /********************************************************
- * toggleSkipBorder(cellIdx, isSkipped)
- * ‑ 3px green when skipped, otherwise re‑evaluate state
+ * Unified border logic – replaces old toggleSkipBorder
  ********************************************************/
-function toggleSkipBorder(cellIdx, isSkipped) {
+function evaluateBorder(cellIdx) {
   const pb = document.getElementById("previewCell" + cellIdx);
   if (!pb) return;
 
-  if (isSkipped) {
+  /* A) permanent green outline if skipped */
+  if (skipMatches[cellIdx]) {
     pb.style.border = "3px solid green";
-  } else {
-    // if a real match exists → thin black, else orangered
-    if (cellMatches[cellIdx] && cellMatches[cellIdx][0]?.userImage) {
-      pb.style.border = "1px solid #000";
-    } else {
-      pb.style.border = "3px solid orangered";
-    }
+    return;
   }
+
+  /* B) count ONLY real images, ignore placeholders */
+  const realCount = (cellMatches[cellIdx] || [])
+    .filter(m => m && m.userImage).length;
+  const needed = earringCells[cellIdx] ? 2 : 1;   // earrings need 2
+
+  pb.style.border = realCount >= needed
+    ? "1px solid #000"          // complete
+    : "3px solid orangered";    // incomplete
+}
+
+function toggleSkipBorder(cellIdx, isSkipped) {
+  skipMatches[cellIdx] = isSkipped;
+  evaluateBorder(cellIdx);
 }
 
 /********************************************************
@@ -2301,21 +2309,7 @@ if (!matchedUserNames.has(topCandidate.user.name) &&
 
   /* ---------- HIGHLIGHT unmatched cells ---------- */
   for (let i = 0; i < croppedImagesArray.length; i++) {
-    const previewBox = document.getElementById("previewCell" + i);
-    if (!previewBox) continue;
-
-    // count ONLY real images, ignore empty placeholders
-    const count = cellMatches[i]
-        ? cellMatches[i].filter(m => m && m.userImage).length
-        : 0;
-
-    const ok =
-      (!earringCells[i] && count === 1) ||   // non‑earring: need exactly one
-      (earringCells[i]  && count === 2);     // earrings: need both halves
-
-    previewBox.style.border = ok
-      ? "1px solid #000"          // all requirements met
-      : "3px solid orangered";    // missing photo(s) → alert
+    evaluateBorder(i);
   }
 
   // (B) Add click listeners for the 4th (match) box after second pass
@@ -2686,11 +2680,7 @@ container.appendChild(matchedWrapper);       // ← keep this line
     }
 
     // D) Update border colour  —— UPDATED
-    if (realCount >= needed) {
-      setEtsyBorder(cellIndex, "1px", "black");      // matched ✅
-    } else {
-      setEtsyBorder(cellIndex, "3px", "orangered");  // incomplete ⚠️
-    }
+    evaluateBorder(cellIndex);                       // unified border logic
 
     /*****  NEW – persist Skip status & set border  *****/
     const skipChecked = !!document.getElementById("skipChk" + cellIndex)?.checked;
