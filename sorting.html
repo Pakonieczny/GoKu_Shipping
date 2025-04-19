@@ -2054,10 +2054,13 @@ async function sendAndMatch() {
           if (earringCells[i]) {
             if (!firstImg) {                          // FIRST half just matched
               firstImg = topCandidate.user.data;
-              earringState[i].firstImg = firstImg;    // for Pass 2 fallback
-            } else if (cellMatches[i].length === 2) { // SECOND half now matched
+
+              if (!earringState[i]) earringState[i] = {};   // initialise map entry
+              earringState[i].firstImg = firstImg;          // save first half
+            } else if (cellMatches[i].length === 2) {
+              /* second half now matched */
             }
-          }  
+          }
 
           matchedUserNames.add(topCandidate.user.name);
           matchedCellIndices.add(i);
@@ -2088,9 +2091,10 @@ async function sendAndMatch() {
           /* ========== MIRROR‑PAIR LOGIC (earrings) ========== */
           if (earringCells[i] && cellMatches[i].length === 1) {
             firstImg = topCandidate.user.data;        // store first half
+            if (!earringState[i]) earringState[i] = {};
             earringState[i].firstImg = firstImg;
 
-            for (const cand of userImagesArray.slice()) { // iterate remaining photos
+            for (const cand of userImagesArray.slice()) {
               if (cand.skipForCharm) continue;
               if (!metalFilterOk(metalVal, cand.name)) continue;
               if (matchedUserNames.has(cand.name)) continue;
