@@ -2083,98 +2083,82 @@ async function sendAndMatch() {
       const topScorePerc = (topScore * 100).toFixed(2);
       const matchName = topCandidate.user.name.replace(/(\.jpg|\.png)$/i, "");
 
-      if (!matchedUserNames.has(topCandidate.user.name) && !matchedCellIndices.has(i)) {
+if (!matchedUserNames.has(topCandidate.user.name) &&
+          !matchedCellIndices.has(i)) {
+
         const secondScore = results[1]?.result.score ?? 0;
-        const delta = topScore - secondScore;
+        const delta       = topScore - secondScore;
 
+        /* ---------- branchA: score ≥98% ---------- */
         if (topScore >= 0.98) {
-          M.toast({
-            html: `Cell ${i}: First-pass match ≥ 98% => ${matchName} (${topScorePerc}%)`
-          });
+          M.toast({ html: `Cell ${i}: First‑pass match ≥98% → ${matchName} (${topScorePerc}%)` });
           if (matchBox) {
-            matchBox.value = matchName;
+            matchBox.value        = matchName;
             matchBox.style.fontWeight = "";
-            matchBox.style.color = "";
+            matchBox.style.color  = "";
           }
           if (!cellMatches[i]) cellMatches[i] = [];
-          cellMatches[i].push({
-            userName: matchName,
-            userImage: topCandidate.user.data,
-            score: topScore
-          });
+          cellMatches[i].push({ userName: matchName, userImage: topCandidate.user.data, score: topScore });
 
-          if (earringCells[i]) {
-            if (!firstImg) {                          // FIRST half just matched
-              firstImg = topCandidate.user.data;
-
-              if (!earringState[i]) earringState[i] = {};   // initialise map entry
-              earringState[i].firstImg = firstImg;          // save first half
-            } else if (cellMatches[i].length === 2) {
-              /* second half now matched */
-            }
+          /* remember first half if this is an earring cell */
+          if (earringCells[i] && !firstImg) {
+            firstImg = topCandidate.user.data;
+            if (!earringState[i]) earringState[i] = {};
+            earringState[i].firstImg = firstImg;
           }
 
           matchedUserNames.add(topCandidate.user.name);
           matchedCellIndices.add(i);
-
           userImagesArray = userImagesArray.filter(u => u.name !== topCandidate.user.name);
 
+        /* ---------- branchB: score ≥88%andΔ≥15% ---------- */
         } else if (topScore >= 0.88 && delta >= 0.15) {
-          M.toast({
-            html: `Cell ${i}: Delta ≥ 15% & top ≥ 88% => Accepting ${matchName} (${topScorePerc}%)`
-          });
+          M.toast({ html: `Cell ${i}: Δ≥15% & top≥88% → ${matchName} (${topScorePerc}%)` });
           if (matchBox) {
-            matchBox.value = matchName;
+            matchBox.value        = matchName;
             matchBox.style.fontWeight = "";
-            matchBox.style.color = "";
+            matchBox.style.color  = "";
           }
           if (!cellMatches[i]) cellMatches[i] = [];
-          cellMatches[i].push({
-            userName: matchName,
-            userImage: topCandidate.user.data,
-            score: topScore
-          });
+          cellMatches[i].push({ userName: matchName, userImage: topCandidate.user.data, score: topScore });
 
           matchedUserNames.add(topCandidate.user.name);
           matchedCellIndices.add(i);
-
           userImagesArray = userImagesArray.filter(u => u.name !== topCandidate.user.name);
-        
-      }  
-          /* ========== MIRROR‑PAIR LOGIC (earrings) ========== */
-      if (earringCells[i] && cellMatches[i] && cellMatches[i].length === 1) {
-        const firstImg = cellMatches[i][0].userImage;     // first half already saved
-        if (!earringState[i]) earringState[i] = {};
-        earringState[i].firstImg = firstImg;
-
-        /* look through remaining user photos */
-        for (const cand of userImagesArray.slice()) {
-          if (cand.skipForCharm) continue;
-          if (!metalFilterOk(metalVal, cand.name)) continue;
-          if (matchedUserNames.has(cand.name)) continue;
-
-          /* compare original & flipped candidate */
-          const { score: s1 } = await compareImages(cand.data, firstImg, i, cand.name);
-          const flipped       = await flipImageHorizontal(cand.data);
-          const { score: s2 } = await compareImages(flipped, firstImg, i, cand.name + "_mirror");
-          const bestScore     = Math.max(s1, s2);
-          if (bestScore < 0.88) continue;                // threshold for twin
-
-          /* accept twin */
-          const twinName = cand.name.replace(/(\.jpg|\.png)$/i, "");
-          cellMatches[i].push({ userName: twinName, userImage: cand.data, score: bestScore });
-
-          matchedUserNames.add(cand.name);
-          matchedCellIndices.add(i);
-          userImagesArray = userImagesArray.filter(u => u.name !== cand.name);
-
-          const matchBox = document.getElementById("matchCell" + i);
-          if (matchBox) matchBox.value += `, ${twinName}`;
-
-          M.toast({ html: `Cell ${i}: Mirror match found ⇒ ${twinName}` });
-          break;
         }
-      }   // closes mirror‑pair IF  
+
+        /* ==============================================================
+           MIRROR‑PAIR LOGIC – runs for ANY accepted earring half
+        ============================================================== */
+        if (earringCells[i] && cellMatches[i] && cellMatches[i].length === 1) {
+          const firstImgFixed = cellMatches[i][0].userImage;
+          if (!earringState[i]) earringState[i] = {};
+          earringState[i].firstImg = firstImgFixed;
+
+          for (const cand of userImagesArray.slice()) {
+            if (cand.skipForCharm) continue;
+            if (!metalFilterOk(metalVal, cand.name)) continue;
+            if (matchedUserNames.has(cand.name)) continue;
+
+            const { score: s1 } = await compareImages(cand.data, firstImgFixed, i, cand.name);
+            const flipped       = await flipImageHorizontal(cand.data);
+            const { score: s2 } = await compareImages(flipped, firstImgFixed, i, cand.name + "_mirror");
+            const bestScore     = Math.max(s1, s2);
+            if (bestScore < 0.88) continue;          // twin threshold
+
+            const twinName = cand.name.replace(/(\.jpg|\.png)$/i, "");
+            cellMatches[i].push({ userName: twinName, userImage: cand.data, score: bestScore });
+
+            matchedUserNames.add(cand.name);
+            matchedCellIndices.add(i);
+            userImagesArray = userImagesArray.filter(u => u.name !== cand.name);
+
+            if (matchBox) matchBox.value += `, ${twinName}`;
+            M.toast({ html: `Cell ${i}: Mirror match found ⇒ ${twinName}` });
+            break;
+          }
+        }
+      }   /* ← closes the !matchedUserNames / !matchedCellIndices wrapper */
           
         /* update Send&Match progress (first pass) */
         smDone++;
