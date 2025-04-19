@@ -2722,7 +2722,7 @@ container.appendChild(matchedWrapper);       // ← keep this line
   // -------------------------------------------------------------
   instance.open();
 
-  // -------------------------------------------------------------
+    // -------------------------------------------------------------
   // 4) DRAG & DROP HELPERS
   // -------------------------------------------------------------
   function makeDraggable(elem) {
@@ -2731,21 +2731,21 @@ container.appendChild(matchedWrapper);       // ← keep this line
       ev.dataTransfer.setData(
         "text/plain",
         JSON.stringify({
-          sourceType : elem.dataset.type,   // "matched" | "unmatched"
-          sourceIndex: elem.dataset.index,  // index in its array
-          slot       : elem.dataset.slot || null  // slot for matched rows
+          sourceType : elem.dataset.type,      // "matched" | "unmatched"
+          sourceIndex: elem.dataset.index,     // index in its array
+          slot       : elem.dataset.slot || null
         })
       );
     });
   }
 
   /* -------------------------------------------------------------
-   * makeDropTarget (revised 2025‑04‑19)
-   * – keeps slot order fixed for multi‑match rows (earrings)
-   * – prevents photos disappearing or sliding into wrong boxes
+   * makeDropTarget  (re‑rev 2025‑04‑19)
+   * – treats ANY element with class "match-box" as a matched target,
+   *   even if data‑attributes weren’t set on first render
+   * – fixes issue where 2nd slot ignored drops
    * ----------------------------------------------------------- */
   function makeDropTarget(elem) {
-    /* Allow drop */
     elem.addEventListener("dragover", (ev) => ev.preventDefault());
 
     elem.addEventListener("drop", (ev) => {
@@ -2757,9 +2757,11 @@ container.appendChild(matchedWrapper);       // ← keep this line
       try { payload = JSON.parse(dataText); } catch { return; }
 
       const sourceType  = payload.sourceType;            // "matched" | "unmatched"
-      const sourceIndex = Number(payload.sourceIndex);   // index in its array
-      const targetType  = elem.dataset.type;             // "matched" | "unmatched" | "unmatchedEmpty"
-      const targetSlot  = Number(elem.dataset.slot);     // exact slot for matched boxes
+      const sourceIndex = Number(payload.sourceIndex);   // origin index
+      const targetType  = elem.dataset.type;             // may be undefined on first render
+      const targetSlot  = Number(elem.dataset.slot);     // slot for matched boxes
+      const isMatchedTarget =
+        targetType === "matched" || elem.classList.contains("match-box");
 
       /* -------------------------------------------------
          A) matched  →  unmatched / unmatchedEmpty
@@ -2770,7 +2772,6 @@ container.appendChild(matchedWrapper);       // ← keep this line
       ) {
         const mImg = matchedImages[sourceIndex];
 
-        /* Move the old match back to unmatched */
         if (mImg && mImg.userImage) {
           unmatchedImages.push({
             name : mImg.userName + ".jpg",
@@ -2779,9 +2780,7 @@ container.appendChild(matchedWrapper);       // ← keep this line
           });
         }
 
-        /* Leave placeholder so array length & slot order stay intact */
         matchedImages[sourceIndex] = { userName:"", userImage:null, score:0 };
-
         refreshSectionsLocal();
         return;
       }
@@ -2789,11 +2788,12 @@ container.appendChild(matchedWrapper);       // ← keep this line
       /* -------------------------------------------------
          B) unmatched  →  matched  (slot‑specific)
          ------------------------------------------------- */
-      if (sourceType === "unmatched" && targetType === "matched") {
+      if (sourceType === "unmatched" && isMatchedTarget) {
         const uImg = unmatchedImages[sourceIndex];
+        const slot = isNaN(targetSlot) ? 0 : targetSlot;    // fallback to 0
 
-        /* If target slot already filled, push that image back to unmatched */
-        const existing = matchedImages[targetSlot];
+        /* If slot already occupied, send existing back to unmatched */
+        const existing = matchedImages[slot];
         if (existing && existing.userImage) {
           unmatchedImages.push({
             name : existing.userName + ".jpg",
@@ -2802,21 +2802,18 @@ container.appendChild(matchedWrapper);       // ← keep this line
           });
         }
 
-        /* Place dragged image into the precise slot */
-        matchedImages[targetSlot] = {
+        matchedImages[slot] = {
           userName : stripExtension(uImg.name),
           userImage: uImg.data,
           score    : 0
         };
 
-        /* Remove from unmatched list */
         unmatchedImages.splice(sourceIndex, 1);
-
         refreshSectionsLocal();
-        return;
       }
     });
   }
+  
 function refreshSectionsLocal() {
 
   /* --- rebuild Matched & Unmatched sections (unchanged) --- */
