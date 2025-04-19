@@ -2776,8 +2776,14 @@ container.appendChild(matchedWrapper);       // ← keep this line
           data: matchedImg.userImage
         });
 
-        // Turn source slot into a placeholder (keeps array length)
-        matchedImages[sourceIdx] = { userName: "", userImage: null, score: 0 };
+        // Remove from matchedImages
+        matchedImages.splice(sourceIdx, 1);
+
+        /* ---------- NEW: keep the correct slot count ---------- */
+        const maxSlots = earringCells[cellIndex] ? 2 : 1;   // 2 for earrings, 1 otherwise
+        while (matchedImages.length < maxSlots) {
+          matchedImages.push({ userName: "", userImage: null, score: 0 });
+        }
 
         refreshSectionsLocal();
       }
