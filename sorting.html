@@ -2791,7 +2791,7 @@ container.appendChild(matchedWrapper);       // ← keep this line
 
         // SINGLE MATCH LOGIC:
         // Remove the existing matched image or placeholder
-        if (matchedImages.length > 0) {
+        if (!earringCells[cellIndex] && matchedImages.length > 0) {
           // If the existing "matched" is just a placeholder, remove it
           if (!matchedImages[0].userImage) {
             matchedImages.splice(0, 1);
