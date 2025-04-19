@@ -775,48 +775,41 @@ function removeHighlightForCell(cellIndex) {
 }
 
 
-        /********************************************************
-     * detectAnyOrangered():
-     *  – Checks border + text colour (original logic).
-     *  – Counts only real images (src not containing "placeholder").
-     *    • Non‑earring: needs ≥ 1 real image.
-     *    • Earring: needs 2 real images.
-     ********************************************************/
-    function detectAnyOrangered() {
-      let foundOrangered = false;
+         /********************************************************
+   * detectAnyOrangered():
+   *  – Original border/text‑colour checks.
+   *  – Uses the same non‑null match count as your highlight loop:
+   *      • Non‑earring cells need ≥ 1 non‑null entry.
+   *      • Earring cells need exactly 2 non‑null entries.
+   ********************************************************/
+  function detectAnyOrangered() {
+    let foundOrangered = false;
 
-      /* (A) 3 px orangered border on preview boxes */
-      document.querySelectorAll(".preview-box").forEach(pb => {
-        if ((pb.style.border || "").includes("3px solid orangered")) {
-          foundOrangered = true;
-        }
-      });
-
-      /* (B) colour + image‑count rules */
-      for (let i = 0; i < croppedImagesArray.length; i++) {
-        const matchBox = document.getElementById("matchCell" + i);
-        if (!matchBox) continue;
-
-        if (matchBox.style.color === "orangered") foundOrangered = true;
-
-        /* count real user images (skip nulls and placeholders) */
-        const realCount = cellMatches[i]
-          ? cellMatches[i].filter(
-              m =>
-                m &&
-                m.userImage &&
-                !m.userImage.includes("placeholder")
-            ).length
-          : 0;
-
-        if (earringCells[i]) {
-          if (realCount < 2) foundOrangered = true;   // need both halves
-        } else {
-          if (realCount < 1) foundOrangered = true;   // need at least one
-        }
+    /* (A) 3 px orangered border on preview boxes */
+    document.querySelectorAll(".preview-box").forEach(pb => {
+      if ((pb.style.border || "").includes("3px solid orangered")) {
+        foundOrangered = true;
       }
-      return foundOrangered;
+    });
+
+    /* (B) colour + non‑null match‑count rules */
+    for (let i = 0; i < croppedImagesArray.length; i++) {
+      const matchBox = document.getElementById("matchCell" + i);
+      if (!matchBox) continue;
+
+      if (matchBox.style.color === "orangered") foundOrangered = true;
+
+      /* count only non‑null entries (same rule as highlight loop) */
+      const have = cellMatches[i] ? cellMatches[i].filter(Boolean).length : 0;
+
+      if (earringCells[i]) {
+        if (have < 2) foundOrangered = true;   // earrings need two real matches
+      } else {
+        if (have < 1) foundOrangered = true;   // others need at least one
+      }
     }
+    return foundOrangered;
+  }
 
 
 /********************************************************
