@@ -2493,6 +2493,7 @@ function addMatchedBox(slot, imgData, userName) {
   const box = document.createElement("div");
   box.className  = "match-box";
   box.dataset.slot = slot;
+  box.style.order = slot;      // keep slot position fixed
   box.dataset.cell = cellIndex;
   box.style.width  = "100px";
   box.style.height = "100px";
