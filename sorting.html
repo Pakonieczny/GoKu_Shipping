@@ -370,6 +370,58 @@ const firebaseConfig = {
 firebase.initializeApp(firebaseConfig);
 const db = firebase.firestore();
 
+/* ==============================================================
+   UNIVERSAL drag‑and‑drop handlers for the Match Preview modal
+   ==============================================================*/
+let dragInfo = null;
+
+function handleDragStart(e) {
+  const img = e.target;
+  dragInfo = {
+    cell : img.dataset.cell,
+    slot : img.dataset.slot,
+    src  : img.src,
+    name : img.title || ""
+  };
+  e.dataTransfer.setData("text/plain", "x"); // Firefox fix
+}
+
+function handleDrop(e) {
+  e.preventDefault();
+  e.currentTarget.classList.remove("droptarget");
+
+  if (!dragInfo) return;
+  const targetBox = e.currentTarget;
+  const tCell = targetBox.dataset.cell;
+  const tSlot = targetBox.dataset.slot;
+  const tImg  = targetBox.querySelector("img");
+
+  /* 1. place dragged image into target slot */
+  tImg.src  = dragInfo.src;
+  tImg.title = dragInfo.name;
+  tImg.classList.remove("placeholder");
+
+  if (!cellMatches[tCell]) cellMatches[tCell] = [];
+  cellMatches[tCell][tSlot] = { userImage: dragInfo.src, userName: dragInfo.name };
+
+  /* 2. clear the source slot, or remove from unmatched */
+  if (dragInfo.cell !== undefined) {
+    /* came from another matched box */
+    const srcBox = document.querySelector(
+      `.match-box[data-cell='${dragInfo.cell}'][data-slot='${dragInfo.slot}'] img`
+    );
+    srcBox.src   = "placeholder.png";
+    srcBox.title = "";
+    srcBox.classList.add("placeholder");
+    if (cellMatches[dragInfo.cell]) cellMatches[dragInfo.cell][dragInfo.slot] = null;
+  } else {
+    /* came from unmatched list */
+    e.dataTransfer.clearData();         // unmatched list already visually updated
+  }
+
+  dragInfo = null;
+}
+
 /********************************************************
  * Etsy Auth, Code Challenge, configIDs
  ********************************************************/
@@ -2430,63 +2482,78 @@ function openMatchPreviewModal(cellIndex) {
   etsyWrapper.appendChild(etsyBox);
   container.appendChild(etsyWrapper);
 
-  // -----------------------------------------------------------------------
-  // B) Matched Photo (shifted 75px right)
-  // -----------------------------------------------------------------------
-  const matchedWrapper = document.createElement("div");
-  matchedWrapper.style.display = "flex";
-  matchedWrapper.style.flexDirection = "column";
-  matchedWrapper.style.marginBottom = "20px";
-  matchedWrapper.style.marginLeft = "75px";
+// -----------------------------------------------------------------------
+// B) Matched Photo (shifted 75px right)   ←REPLACEMENT BLOCK
+// -----------------------------------------------------------------------
+const matchedWrapper = document.createElement("div");
+matchedWrapper.style.display = "flex";
+matchedWrapper.style.flexDirection = "column";
+matchedWrapper.style.marginBottom = "20px";
+matchedWrapper.style.marginLeft = "75px";
 
-  const matchedTitle = document.createElement("div");
-  matchedTitle.textContent = "Matched User Photo:";
-  matchedTitle.style.fontWeight = "bold";
-  matchedTitle.style.fontSize = "0.7em";
-  matchedTitle.style.marginBottom = "7px";
-  matchedWrapper.appendChild(matchedTitle);
+const matchedTitle = document.createElement("div");
+matchedTitle.textContent = "Matched User Photo:";
+matchedTitle.style.fontWeight = "bold";
+matchedTitle.style.fontSize  = "0.7em";
+matchedTitle.style.marginBottom = "7px";
+matchedWrapper.appendChild(matchedTitle);
 
-  const matchedSection = document.createElement("div");
-  matchedSection.style.display = "flex";
-  matchedSection.style.flexWrap = "wrap";
-  matchedSection.style.gap = "10px";
+/* ---------- build a fixed set of slots ---------- */
+const maxMatchesPerCell = earringCells[cellIndex] ? 2 : 1;
+const matchedSection = document.createElement("div");
+matchedSection.style.display   = "flex";
+matchedSection.style.flexWrap  = "wrap";
+matchedSection.style.gap       = "10px";
 
-  matchedImages.forEach((mImg, idx) => {
-    const box = document.createElement("div");
-    box.style.width = "100px";
-    box.style.height = "100px";
-    box.style.border = "1px solid #000";
-    box.style.display = "flex";
-    box.style.alignItems = "center";
-    box.style.justifyContent = "center";
-    box.style.overflow = "hidden";
-    box.style.position = "relative";
+/* helper to create one 100×100 slot */
+function addMatchedBox(slot, imgData, userName) {
+  const box = document.createElement("div");
+  box.className  = "match-box";
+  box.dataset.slot = slot;
+  box.dataset.cell = cellIndex;
+  box.style.width  = "100px";
+  box.style.height = "100px";
+  box.style.border = "1px solid #000";
+  box.style.display = "flex";
+  box.style.alignItems = "center";
+  box.style.justifyContent = "center";
+  box.style.overflow = "hidden";
+  box.style.position = "relative";
 
-    box.dataset.type = "matched";
-    box.dataset.index = idx;
+  box.addEventListener("dragover",  e => e.preventDefault());
+  box.addEventListener("dragenter", () => box.classList.add("droptarget"));
+  box.addEventListener("dragleave", () => box.classList.remove("droptarget"));
+  box.addEventListener("drop",      handleDrop);
 
-    if (!mImg.userImage) {
-      box.innerHTML = "No Match Found";
-      box.style.fontWeight = "bold";
-      makeDropTarget(box); // so user can drop a new matched photo here
-    } else {
-      const img = document.createElement("img");
-      img.src = mImg.userImage;
-      img.alt = mImg.userName;
-      img.style.width = "100%";
-      img.style.height = "100%";
-      img.style.objectFit = "cover";
+  const img = document.createElement("img");
+  img.draggable = true;
+  img.dataset.cell = cellIndex;
+  img.dataset.slot = slot;
+  img.addEventListener("dragstart", handleDragStart);
 
-      makeDraggable(box);
-      makeDropTarget(box);
-      box.appendChild(img);
-    }
+  if (imgData) {                 // already matched
+    img.src   = imgData;
+    img.title = userName;
+  } else {                       // empty slot
+    img.src   = "placeholder.png";
+    img.title = "";
+    img.classList.add("placeholder");
+  }
 
-    matchedSection.appendChild(box);
-  });
+  box.appendChild(img);
+  matchedSection.appendChild(box);
+}
 
-  matchedWrapper.appendChild(matchedSection);
-  container.appendChild(matchedWrapper);
+/* existing matches */
+matchedImages.forEach((m, k) => addMatchedBox(k, m.userImage, m.userName));
+
+/* pad with empty slots */
+for (let s = matchedImages.length; s < maxMatchesPerCell; s++) {
+  addMatchedBox(s, null, "");
+}
+
+matchedWrapper.appendChild(matchedSection);
+container.appendChild(matchedWrapper);       // ← keep this line
 
   // -----------------------------------------------------------------------
   // C) Unmatched Photos (shifted 75px right)
