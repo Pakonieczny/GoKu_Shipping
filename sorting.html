@@ -2304,9 +2304,11 @@ if (!matchedUserNames.has(topCandidate.user.name) &&
     const previewBox = document.getElementById("previewCell" + i);
     if (!previewBox) continue;
 
+    const count = cellMatches[i] ? cellMatches[i].filter(Boolean).length : 0;
+
     const ok =
-      (!earringCells[i] && cellMatches[i] && cellMatches[i].length > 0) ||
-      (earringCells[i]  && cellMatches[i] && cellMatches[i].length === 2);
+      (!earringCells[i] && count === 1) ||   // non‑earring: need exactly one
+      (earringCells[i]  && count === 2);     // earrings: need both halves
 
     previewBox.style.border = ok
       ? "1px solid #000"          // matched (all requirements met)
