@@ -2660,21 +2660,24 @@ container.appendChild(matchedWrapper);       // ← keep this line
     userImagesArray = newUserArr;
 
     // C) Refresh the 4th (match) text box  —— UPDATED
-    const matchBox  = document.getElementById("matchCell" + cellIndex);
-    const realCount = matchedImages.filter(m => m && m.userImage).length;
-    const needed    = earringCells[cellIndex] ? 2 : 1;   // earrings need 2, others 1
-
     if (matchBox) {
       matchBox.value = matchedImages
         .filter(m => m && m.userImage)
         .map(m => m.userName)
         .join(", ");
 
-    if (realCount < needed) {
-      if (!earringCells[cellIndex]) {        // non‑earring rows keep orangered text
-        matchBox.style.fontWeight = "bold";
-        matchBox.style.color      = "orangered";
-      } else {                               // earrings: leave text normal
+      const realCount = matchedImages.filter(m => m && m.userImage).length;
+      const needed    = earringCells[cellIndex] ? 2 : 1;
+
+      if (realCount < needed) {                 // still incomplete
+        if (!earringCells[cellIndex]) {         // << non‑earring rows: show orangered text
+          matchBox.style.fontWeight = "bold";
+          matchBox.style.color      = "orangered";
+        } else {                                // << earrings: leave text normal
+          matchBox.style.fontWeight = "";
+          matchBox.style.color      = "";
+        }
+      } else {                                  // requirement met
         matchBox.style.fontWeight = "";
         matchBox.style.color      = "";
       }
