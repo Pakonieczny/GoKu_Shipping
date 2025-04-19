@@ -2120,20 +2120,20 @@ if (!matchedUserNames.has(topCandidate.user.name) &&
           userImagesArray = userImagesArray.filter(u => u.name !== topCandidate.user.name);
 
         /* ---------- branchB: score ≥88%andΔ≥15% ---------- */
-        } else if (topScore >= 0.88 && delta >= 0.15) {
-          M.toast({ html: `Cell ${i}: Δ≥15% & top≥88% → ${matchName} (${topScorePerc}%)` });
-          if (matchBox) {
-            matchBox.value        = matchName;
-            matchBox.style.fontWeight = "";
-            matchBox.style.color  = "";
-          }
-          if (!cellMatches[i]) cellMatches[i] = [];
-          cellMatches[i].push({ userName: matchName, userImage: topCandidate.user.data, score: topScore });
+          } else if (topScore >= 0.88) {          // ← NEW weak‑partial branch
+            // accept, but mark as partial (orangered)
+            if (matchBox) {
+              matchBox.value        = matchName;
+              matchBox.style.fontWeight = "bold";
+              matchBox.style.color  = "orangered";
+            }
+            if (!cellMatches[i]) cellMatches[i] = [];
+            cellMatches[i].push({ userName: matchName, userImage: topCandidate.user.data, score: topScore });
 
-          matchedUserNames.add(topCandidate.user.name);
-          matchedCellIndices.add(i);
-          userImagesArray = userImagesArray.filter(u => u.name !== topCandidate.user.name);
-        }
+            matchedUserNames.add(topCandidate.user.name);
+            matchedCellIndices.add(i);
+            userImagesArray = userImagesArray.filter(u => u.name !== topCandidate.user.name);
+          }
 
         /* ==============================================================
            MIRROR‑PAIR LOGIC – runs for ANY accepted earring half
