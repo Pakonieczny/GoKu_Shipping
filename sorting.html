@@ -2449,6 +2449,11 @@ function makeDetail(txt) {
     return !matchedNames.includes(stripExtension(uImg.name));
   });
 
+  /* --- live grid values pulled from main screen --- */
+  const orderVal = document.getElementById("orderCell"   + cellIndex)?.value || "";
+  const qtyVal   = document.getElementById("quantityCell"+ cellIndex)?.value || "";
+  const metalVal = document.getElementById("metalCell"   + cellIndex)?.value || "";
+  
   // -----------------------------------------------------------------------
   // A) Etsy Photo
   // -----------------------------------------------------------------------
