@@ -2547,6 +2547,12 @@ function addMatchedBox(slot, imgData, userName) {
 /* existing matches */
 matchedImages.forEach((m, k) => addMatchedBox(k, m.userImage, m.userName));
 
+/* ---------- ensure all slots exist ---------- */
+const maxSlots = earringCells[cellIndex] ? 2 : 1;        // 2 for earrings, 1 otherwise
+for (let s = matchedImages.length; s < maxSlots; s++) {  // add placeholders for missing slots
+  addMatchedBox(s, null, "");
+}
+
 /* pad with empty slots */
 for (let s = matchedImages.length; s < maxMatchesPerCell; s++) {
   addMatchedBox(s, null, "");
