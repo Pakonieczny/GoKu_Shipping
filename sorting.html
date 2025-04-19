@@ -370,54 +370,65 @@ const firebaseConfig = {
 firebase.initializeApp(firebaseConfig);
 const db = firebase.firestore();
 
+/********************************************************
+ * turn a matched slot back into a placeholder
+ ********************************************************/
+function clearMatchedSlot(cell, slot) {
+  const img = document.querySelector(
+    `.match-box[data-cell='${cell}'][data-slot='${slot}'] img`
+  );
+  if (!img) return;                // slot might not exist yet
+  img.src   = "placeholder.png";
+  img.title = "";
+  img.classList.add("placeholder");
+
+  if (cellMatches[cell]) cellMatches[cell][slot] = null;
+}
+
 /* ==============================================================
    UNIVERSAL drag‑and‑drop handlers for the Match Preview modal
    ==============================================================*/
 let dragInfo = null;
 
+/* start dragging from either a matched box or the unmatched list */
 function handleDragStart(e) {
   const img = e.target;
   dragInfo = {
-    cell : img.dataset.cell,
-    slot : img.dataset.slot,
+    cell : img.dataset.cell ?? null,   // number or null
+    slot : img.dataset.slot ?? null,
     src  : img.src,
     name : img.title || ""
   };
-  e.dataTransfer.setData("text/plain", "x"); // Firefox fix
+  e.dataTransfer.setData("text/plain", "x");   // Firefox fix
 }
 
+/* drop onto a matched slot OR anywhere inside the unmatched list */
 function handleDrop(e) {
   e.preventDefault();
   e.currentTarget.classList.remove("droptarget");
-
   if (!dragInfo) return;
-  const targetBox = e.currentTarget;
-  const tCell = targetBox.dataset.cell;
-  const tSlot = targetBox.dataset.slot;
-  const tImg  = targetBox.querySelector("img");
 
-  /* 1. place dragged image into target slot */
-  tImg.src  = dragInfo.src;
-  tImg.title = dragInfo.name;
-  tImg.classList.remove("placeholder");
+  /* ---------- 1. identify drop target ---------- */
+  const targetBox = e.currentTarget.closest(".match-box");
+  if (targetBox) {
+    /* dropped onto another matched slot */
+    const tCell = targetBox.dataset.cell;
+    const tSlot = targetBox.dataset.slot;
+    const tImg  = targetBox.querySelector("img");
 
-  if (!cellMatches[tCell]) cellMatches[tCell] = [];
-  cellMatches[tCell][tSlot] = { userImage: dragInfo.src, userName: dragInfo.name };
+    tImg.src   = dragInfo.src;
+    tImg.title = dragInfo.name;
+    tImg.classList.remove("placeholder");
 
-  /* 2. clear the source slot, or remove from unmatched */
-  if (dragInfo.cell !== undefined) {
-    /* came from another matched box */
-    const srcBox = document.querySelector(
-      `.match-box[data-cell='${dragInfo.cell}'][data-slot='${dragInfo.slot}'] img`
-    );
-    srcBox.src   = "placeholder.png";
-    srcBox.title = "";
-    srcBox.classList.add("placeholder");
-    if (cellMatches[dragInfo.cell]) cellMatches[dragInfo.cell][dragInfo.slot] = null;
+    if (!cellMatches[tCell]) cellMatches[tCell] = [];
+    cellMatches[tCell][tSlot] = { userImage: dragInfo.src, userName: dragInfo.name };
   } else {
-    /* came from unmatched list */
-    e.dataTransfer.clearData();         // unmatched list already visually updated
+    /* dropped into the unmatched area → just add thumbnail there */
+    addUnmatchedThumbnail(dragInfo.src, dragInfo.name);   // your existing helper
   }
+
+  /* ---------- 2. clear the source slot if it came from a matched box ---------- */
+  if (dragInfo.cell !== null) clearMatchedSlot(dragInfo.cell, dragInfo.slot);
 
   dragInfo = null;
 }
