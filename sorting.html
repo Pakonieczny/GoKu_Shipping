@@ -2670,10 +2670,11 @@ container.appendChild(matchedWrapper);       // ← keep this line
         .map(m => m.userName)
         .join(", ");
 
-      if (realCount < needed) {            // still incomplete ⇒ warning style
+    if (realCount < needed) {
+      if (!earringCells[cellIndex]) {        // non‑earring rows keep orangered text
         matchBox.style.fontWeight = "bold";
         matchBox.style.color      = "orangered";
-      } else {                             // requirement met ⇒ normal style
+      } else {                               // earrings: leave text normal
         matchBox.style.fontWeight = "";
         matchBox.style.color      = "";
       }
