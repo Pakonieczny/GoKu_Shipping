@@ -2635,6 +2635,7 @@ container.appendChild(matchedWrapper);       // ← keep this line
   currentSaveHandler = function () {
 
     window.currentCorrectedCellIndex = cellIndex;
+    const matchBox = document.getElementById("matchCell" + cellIndex);
 
     /* ---------------- original Save logic ---------------- */
     // A) Overwrite cellMatches for this cellIndex
