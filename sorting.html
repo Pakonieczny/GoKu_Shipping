@@ -2312,21 +2312,29 @@ if (!matchedUserNames.has(topCandidate.user.name) &&
     evaluateBorder(i);
   }
 
-  // (B) Add click listeners for the 4th (match) box after second pass
-  for (let i = 0; i < croppedImagesArray.length; i++) {
-    const matchInput = document.getElementById("matchCell" + i);
-    if (!matchInput) continue;
-    matchInput.removeEventListener("click", onMatchClick);
-    matchInput.addEventListener("click", onMatchClick);
+// -------------------------------------------------------------
+// (B) Attach / re‑attach click listeners to every "matchCellX"
+//     Works even after the DOM is rebuilt by refreshSectionsLocal
+// -------------------------------------------------------------
+function attachMatchCellListeners() {
+  const matches = document.querySelectorAll("input[id^='matchCell']");
+  matches.forEach((inp) => {
+    inp.removeEventListener("click", onMatchCellClick); // idempotent
+    inp.addEventListener("click",  onMatchCellClick);
+  });
+}
 
-    function onMatchClick() {
-      openMatchPreviewModal(i);
-    }
-  }
+function onMatchCellClick(e) {
+  const idx = Number(e.currentTarget.id.replace("matchCell", ""));
+  if (!isNaN(idx)) openMatchPreviewModal(idx);
+}
 
-  M.toast({ html: "Finished matching passes." });
+/* call the helper once the second‑pass loop is done */
+attachMatchCellListeners();
 
-  if (runId !== globalRunId) return;   // NEW — abort if a newer run started
+M.toast({ html: "Finished matching passes." });
+
+if (runId !== globalRunId) return;   // NEW — abort if a newer run started
 
   // (C) Re‑enable "Match & Print" ONLY if detectAnyOrangered() returns false
   const anyOrangered = detectAnyOrangered();
