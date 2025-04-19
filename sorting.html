@@ -776,48 +776,49 @@ function removeHighlightForCell(cellIndex) {
 
 
     /********************************************************
- * detectAnyOrangered()  – original version
- *   • Uses 3 px orangered border + text‑colour check
- *   • Completeness by simple array length:
- *       – Earrings: need 2 entries
- *       – Others : need ≥1 entry
- ********************************************************/
-function detectAnyOrangered() {
-  let foundOrangered = false;
+     * detectAnyOrangered():
+     *  – Keeps your original checks (3 px orangered border +
+     *    orangered text colour).
+     *  – ADDS robust match‑count logic:
+     *      • Regular cells are clear when they have ≥ 1 real match.
+     *      • Earring cells are clear only when they have 2 real matches.
+     ********************************************************/
+    function detectAnyOrangered() {
+      let foundOrangered = false;
 
-  /* (A) 3 px orangered border on preview boxes */
-  const previewBoxes = document.querySelectorAll(".preview-box");
-  previewBoxes.forEach((pb) => {
-    if ((pb.style.border || "").includes("3px solid orangered")) {
-      foundOrangered = true;
-    }
-  });
+      /* (A) 3 px orangered border on preview boxes */
+      const previewBoxes = document.querySelectorAll(".preview-box");
+      previewBoxes.forEach((pb) => {
+        if ((pb.style.border || "").includes("3px solid orangered")) {
+          foundOrangered = true;
+        }
+      });
 
-  /* (B) orangered text colour in match‑cells + length rules */
-  for (let i = 0; i < croppedImagesArray.length; i++) {
-    const matchBox = document.getElementById("matchCell" + i);
-    if (!matchBox) continue;
+      /* (B) orangered text colour in match‑cells + match‑count rules */
+      for (let i = 0; i < croppedImagesArray.length; i++) {
+        const matchBox = document.getElementById("matchCell" + i);
+        if (!matchBox) continue;
 
-    /* text‑colour check */
-    if (matchBox.style.color === "orangered") {
-      foundOrangered = true;
-    }
+        /* original colour check */
+        if (matchBox.style.color === "orangered") {
+          foundOrangered = true;
+        }
 
-    /* length‑based completeness */
-    if (earringCells[i]) {
-      // EARRINGS need TWO matches
-      if (!cellMatches[i] || cellMatches[i].length < 2) {
-        foundOrangered = true;
+        /* NEW: verify required number of **real** matches */
+        const realCount = cellMatches[i]
+          ? cellMatches[i].filter(m => m && m.userImage).length   // skip placeholders
+          : 0;
+
+        if (earringCells[i]) {
+          // EARRINGS need TWO user‑image matches
+          if (realCount < 2) foundOrangered = true;
+        } else {
+          // Regular items need ONE match
+          if (realCount < 1) foundOrangered = true;
+        }
       }
-    } else {
-      // Regular items need ONE match
-      if (!cellMatches[i] || cellMatches[i].length === 0) {
-        foundOrangered = true;
-      }
+      return foundOrangered;
     }
-  }
-  return foundOrangered;
-}
 
 
 /********************************************************
