@@ -2186,9 +2186,9 @@ async function sendAndMatch() {
       });
     });
 
-  const results = await Promise.all(comparisonPromises);
+    const results = await Promise.all(comparisonPromises);
 
-  if (runId !== globalRunId) return;        // NEW guard right after await
+    if (runId !== globalRunId) return;        // NEW guard right after await
 
     results.sort((a, b) => b.result.score - a.result.score);
 
@@ -2206,7 +2206,12 @@ async function sendAndMatch() {
 
       if (topScore === 1.0 || topScore >= 0.98) {
         if (matchBox) {
-          matchBox.value = matchName;
+          /* ✨ append instead of overwrite if this is the missing twin */
+          if (earringCells[i] && cellMatches[i] && cellMatches[i].length === 1) {
+            matchBox.value += `, ${matchName}`;
+          } else {
+            matchBox.value  =  matchName;
+          }
           matchBox.style.fontWeight = "";
           matchBox.style.color = "";
         }
@@ -2223,9 +2228,16 @@ async function sendAndMatch() {
         userImagesArray = userImagesArray.filter(u => u.name !== topCandidate.user.name);
 
       } else if (topScore >= 0.88) {
-        matchBox.value = matchName;
-        matchBox.style.fontWeight = "bold";
-        matchBox.style.color = "orangered";
+        /* --------‑ same append logic for the ≥88 % branch -------- */
+        if (matchBox) {
+          if (earringCells[i] && cellMatches[i] && cellMatches[i].length === 1) {
+            matchBox.value += `, ${matchName}`;
+          } else {
+            matchBox.value  =  matchName;
+          }
+          matchBox.style.fontWeight = "bold";
+          matchBox.style.color = "orangered";
+        }
 
         if (!cellMatches[i]) cellMatches[i] = [];
         cellMatches[i].push({
@@ -2290,7 +2302,7 @@ async function sendAndMatch() {
     disableMatchPrintFlow();         // keeps them disabled
   }
 
-    /* -- Finished matching -- */
+  /* -- Finished matching -- */
   updateProgressModal(smTotal, smTotal);
   closeProgressModal();
 
@@ -2301,9 +2313,6 @@ async function sendAndMatch() {
 
   /* Re‑enable Send‑Match button for another run */
   enableSendMatch();
-
-
-}   // END sendAndMatch
 
 
 /********************************************************
