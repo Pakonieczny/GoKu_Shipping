@@ -2662,23 +2662,31 @@ container.appendChild(matchedWrapper);       // ← keep this line
     });
     userImagesArray = newUserArr;
 
-    // C) Refresh the 4th (match) text box
-    const matchBox = document.getElementById("matchCell" + cellIndex);
+    // C) Refresh the 4th (match) text box  —— UPDATED
+    const matchBox  = document.getElementById("matchCell" + cellIndex);
+    const realCount = matchedImages.filter(m => m && m.userImage).length;
+    const needed    = earringCells[cellIndex] ? 2 : 1;   // earrings need 2, others 1
+
     if (matchBox) {
-      if (matchedImages.length > 0 && matchedImages[0].userImage) {
-        matchBox.value = matchedImages[0].userName;
+      matchBox.value = matchedImages
+        .filter(m => m && m.userImage)
+        .map(m => m.userName)
+        .join(", ");
+
+      if (realCount < needed) {            // still incomplete ⇒ warning style
+        matchBox.style.fontWeight = "bold";
+        matchBox.style.color      = "orangered";
+      } else {                             // requirement met ⇒ normal style
         matchBox.style.fontWeight = "";
-        matchBox.style.color = "";
-      } else {
-        matchBox.value = "";
+        matchBox.style.color      = "";
       }
     }
 
-        // D) Update border colour
-    if (matchedImages.length > 0 && matchedImages[0].userImage) {
-      setEtsyBorder(cellIndex, "1px", "black");
+    // D) Update border colour  —— UPDATED
+    if (realCount >= needed) {
+      setEtsyBorder(cellIndex, "1px", "black");      // matched ✅
     } else {
-      setEtsyBorder(cellIndex, "3px", "orangered");
+      setEtsyBorder(cellIndex, "3px", "orangered");  // incomplete ⚠️
     }
 
     /*****  NEW – persist Skip status & set border  *****/
