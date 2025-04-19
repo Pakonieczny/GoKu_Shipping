@@ -2139,7 +2139,7 @@ async function sendAndMatch() {
           matchedCellIndices.add(i);
 
           userImagesArray = userImagesArray.filter(u => u.name !== topCandidate.user.name);
-        }
+        
       }  
           /* ========== MIRROR‑PAIR LOGIC (earrings) ========== */
       if (earringCells[i] && cellMatches[i] && cellMatches[i].length === 1) {
@@ -2174,7 +2174,7 @@ async function sendAndMatch() {
           M.toast({ html: `Cell ${i}: Mirror match found ⇒ ${twinName}` });
           break;
         }
-      }   // closes mirror‑pair IF
+      }   // closes mirror‑pair IF  
           
         /* update Send&Match progress (first pass) */
         smDone++;
