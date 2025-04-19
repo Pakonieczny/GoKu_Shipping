@@ -2483,43 +2483,38 @@ function openMatchPreviewModal(cellIndex) {
   container.appendChild(etsyWrapper);
 
 // -----------------------------------------------------------------------
-// B) Matched Photo (shifted 75px right)   ← REPLACE previous block
+// B) Matched Photo (shifted 75px right)   ←REPLACEMENT BLOCK
 // -----------------------------------------------------------------------
 const matchedWrapper = document.createElement("div");
 matchedWrapper.style.display = "flex";
 matchedWrapper.style.flexDirection = "column";
-matchedWrapper.style.marginBottom  = "20px";
-matchedWrapper.style.marginLeft    = "75px";
+matchedWrapper.style.marginBottom = "20px";
+matchedWrapper.style.marginLeft = "75px";
 
 const matchedTitle = document.createElement("div");
-matchedTitle.textContent  = "Matched User Photo:";
+matchedTitle.textContent = "Matched User Photo:";
 matchedTitle.style.fontWeight = "bold";
-matchedTitle.style.fontSize   = "0.7em";
+matchedTitle.style.fontSize  = "0.7em";
 matchedTitle.style.marginBottom = "7px";
 matchedWrapper.appendChild(matchedTitle);
 
-const matchedSection = document.createElement("div");
-matchedSection.style.display  = "flex";
-matchedSection.style.flexWrap = "wrap";
-matchedSection.style.gap      = "10px";
-
+/* ---------- build a fixed set of slots ---------- */
 const maxMatchesPerCell = earringCells[cellIndex] ? 2 : 1;
-/* Ensure array exists and always has maxMatchesPerCell slots */
-if (!cellMatches[cellIndex]) cellMatches[cellIndex] = Array(maxMatchesPerCell).fill(null);
-if (cellMatches[cellIndex].length < maxMatchesPerCell) {
-  cellMatches[cellIndex].length = maxMatchesPerCell;
-}
+const matchedSection = document.createElement("div");
+matchedSection.style.display   = "flex";
+matchedSection.style.flexWrap  = "wrap";
+matchedSection.style.gap       = "10px";
 
-/* build one fixed slot per index 0…max‑1 */
-for (let slot = 0; slot < maxMatchesPerCell; slot++) {
-  const m = cellMatches[cellIndex][slot];   // may be null
-
+/* helper to create one 100×100 slot */
+function addMatchedBox(slot, imgData, userName) {
   const box = document.createElement("div");
-  box.className = "match-box";
-  box.dataset.cell = cellIndex;
+  box.className  = "match-box";
   box.dataset.slot = slot;
+  box.dataset.cell = cellIndex;
   box.style.width  = "100px";
   box.style.height = "100px";
+  box.style.minWidth  = "100px";           // NEW – keep box from collapsing
+  box.style.minHeight = "100px";           // NEW – keep box from collapsing
   box.style.border = "1px solid #000";
   box.style.display = "flex";
   box.style.alignItems = "center";
@@ -2533,26 +2528,35 @@ for (let slot = 0; slot < maxMatchesPerCell; slot++) {
   box.addEventListener("drop",      handleDrop);
 
   const img = document.createElement("img");
-  img.draggable   = true;
   img.dataset.cell = cellIndex;
   img.dataset.slot = slot;
-  img.addEventListener("dragstart", handleDragStart);
 
-  if (m) {                    // already matched
-    img.src   = m.userImage;
-    img.title = m.userName;
-  } else {                    // empty placeholder
+  if (imgData) {                 // already matched
+    img.src   = imgData;
+    img.title = userName;
+    img.draggable = true;
+    img.addEventListener("dragstart", handleDragStart);
+  } else {                       // empty slot
     img.src   = "placeholder.png";
     img.title = "";
     img.classList.add("placeholder");
+    img.draggable = false;       // NEW – placeholder itself shouldn’t drag
   }
 
   box.appendChild(img);
   matchedSection.appendChild(box);
 }
 
+/* existing matches */
+matchedImages.forEach((m, k) => addMatchedBox(k, m.userImage, m.userName));
+
+/* pad with empty slots */
+for (let s = matchedImages.length; s < maxMatchesPerCell; s++) {
+  addMatchedBox(s, null, "");
+}
+
 matchedWrapper.appendChild(matchedSection);
-container.appendChild(matchedWrapper);    // keep this line
+container.appendChild(matchedWrapper);       // ← keep this line
 
   // -----------------------------------------------------------------------
   // C) Unmatched Photos (shifted 75px right)
