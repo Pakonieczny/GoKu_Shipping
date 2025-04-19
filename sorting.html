@@ -2087,7 +2087,8 @@ async function sendAndMatch() {
           matchedCellIndices.add(i);
 
           userImagesArray = userImagesArray.filter(u => u.name !== topCandidate.user.name);
-
+        }
+      }  
           /* ========== MIRROR‑PAIR LOGIC (earrings) ========== */
           if (earringCells[i] && cellMatches[i].length === 1) {
             const firstImg = cellMatches[i][0].userImage;     // first half already saved
@@ -2118,20 +2119,19 @@ async function sendAndMatch() {
               const matchBox = document.getElementById("matchCell" + i);
               if (matchBox) matchBox.value += `, ${twinName}`;
 
-              M.toast({ html: `Cell ${i}: Mirror match found ⇒ ${twinName}` });
-              break;  
-          }
-        }
+                  M.toast({ html: `Cell ${i}: Mirror match found ⇒ ${twinName}` });
+                  break;  
+              }
+            }
+          
+        /* update Send&Match progress (first pass) */
+        smDone++;
+        updateProgressModal(smDone, smTotal);
+
+        // 2s cooldown
+        await new Promise(resolve => setTimeout(resolve, 2000));
       }
-
-    /* update Send&Match progress (first pass) */
-    smDone++;
-    updateProgressModal(smDone, smTotal);
-
-    // 2s cooldown
-    await new Promise(resolve => setTimeout(resolve, 2000));
-  }
-}
+    }
 
 // -----------------------------------------------------------------------
   // SECOND PASS
