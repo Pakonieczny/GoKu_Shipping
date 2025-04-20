@@ -1160,6 +1160,8 @@ photoDragDropElem.addEventListener("drop", async function (e) {
     });
   }
 
+  localStorage.removeItem("userImagesArray");
+
   // Analyze every sub‑image; store only those with a charm
   await analyzeAndStoreSubImages(subImagesToAnalyze);
 
@@ -1224,8 +1226,18 @@ async function analyzeAndStoreSubImages(imgObjs) {
 
   closeProgressModal();
 
-  /* Persist vetted images & enable Send‑and‑Match */
-  localStorage.setItem("userImagesArray", JSON.stringify(userImagesArray));
+    /* Persist vetted images & enable Send‑and‑Match */
+    /* ---------- store ONLY lightweight metadata ---------- */
+    try {
+      const slimCopy = userImagesArray.map(({ name, skipForCharm = false }) => ({
+        name,
+        skipForCharm
+      }));
+      localStorage.setItem("userImagesArray", JSON.stringify(slimCopy));
+    } catch (err) {
+      console.warn("localStorage quota exceeded:", err.message);
+      // optional: fall back to sessionStorage, or simply skip persistence
+    }
   enableSendMatch();
 
   M.toast({ html: `Analysis complete – saved ${savedCount} charm photos.` });
