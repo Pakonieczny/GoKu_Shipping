@@ -2536,7 +2536,8 @@ function openMatchPreviewModal(cellIndex) {
     row.style.overflow   = "hidden";
     row.style.textOverflow = "ellipsis";
     row.style.whiteSpace = "nowrap";
-    row.style.fontWeight = isBold ? "700" : "400";  // ← same pattern as makeDetail
+    row.style.setProperty("font-weight", isBold ? "700" : "400", "important"); // ← forces bold
+
     return row;
   }
 
@@ -2584,7 +2585,7 @@ function openMatchPreviewModal(cellIndex) {
     wrapper.appendChild(box);
 
     /* filename row (plain text, 100px wide) */
-    const nameRow = makeNameRow(userName || "", 100);
+    const nameRow = makeNameRow(userName || "", 100, true);   // bold = true
     nameRow.style.setProperty("font-weight", "700", "important");  // always bold
     wrapper.appendChild(nameRow);
 
