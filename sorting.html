@@ -2091,70 +2091,70 @@ async function sendAndMatch() {
       const topScorePerc = (topScore * 100).toFixed(2);
       const matchName = topCandidate.user.name.replace(/(\.jpg|\.png)$/i, "");
 
-if (!matchedUserNames.has(topCandidate.user.name) &&
+    if (!matchedUserNames.has(topCandidate.user.name) &&
           !matchedCellIndices.has(i)) {
 
         /* Pre‑computed values already in your loop */
-      const topScore    = resp.scores[0].score;
-      const secondScore = resp.scores[1] ? resp.scores[1].score : 0;
-      const scoreDelta  = topScore - secondScore;
-      const matchName   = stripExtension(resp.scores[0].user.name);
-      const matchBox    = document.getElementById("matchCell" + i);
+        const secondScore = results[1] ? results[1].result.score : 0;
+        const scoreDelta  = topScore - secondScore;
 
-      /* ---------- branchA: score ≥ 0.95 ---------- */
-      if (topScore >= 0.95) {
-        // perfect match
-        if (matchBox) {
-          matchBox.value        = matchName;
-          matchBox.style.fontWeight = "bold";
-          matchBox.style.color  = "black";
-        }
-        if (!cellMatches[i]) cellMatches[i] = [];
-        cellMatches[i].push({
-          userName  : matchName,
-          userImage : resp.scores[0].user.data,
-          score     : topScore
-        });
-        matchedUserNames.add(resp.scores[0].user.name);
-        matchedCellIndices.add(i);
-        userImagesArray = userImagesArray.filter(u => u.name !== resp.scores[0].user.name);
+        /* ---------- branchA: score ≥ 0.95 ---------- */
+        if (topScore >= 0.95) {
+          if (matchBox) {
+            matchBox.value        = matchName;
+            matchBox.style.fontWeight = "bold";
+            matchBox.style.color  = "black";
+          }
+          if (!cellMatches[i]) cellMatches[i] = [];
+          cellMatches[i].push({
+            userName  : matchName,
+            userImage : topCandidate.user.data,   // ← use topCandidate
+            score     : topScore
+          });
+          matchedUserNames.add(topCandidate.user.name);
+          matchedCellIndices.add(i);
+          userImagesArray = userImagesArray.filter(
+            u => u.name !== topCandidate.user.name
+          );
 
-      /* ---------- branchB: score ≥ 0.88  AND  Δ ≥ 0.15 ---------- */
-      } else if (topScore >= 0.88 && scoreDelta >= 0.15) {
-        // delta‑perfect match (no orangered)
-        if (matchBox) {
-          matchBox.value        = matchName;
-          matchBox.style.fontWeight = "bold";
-          matchBox.style.color  = "black";
-        }
-        if (!cellMatches[i]) cellMatches[i] = [];
-        cellMatches[i].push({
-          userName  : matchName,
-          userImage : resp.scores[0].user.data,
-          score     : topScore
-        });
-        matchedUserNames.add(resp.scores[0].user.name);
-        matchedCellIndices.add(i);
-        userImagesArray = userImagesArray.filter(u => u.name !== resp.scores[0].user.name);
+        /* ---------- branchB: score ≥ 0.88  AND  Δ ≥ 0.15 ---------- */
+        } else if (topScore >= 0.88 && scoreDelta >= 0.15) {
+          if (matchBox) {
+            matchBox.value        = matchName;
+            matchBox.style.fontWeight = "bold";
+            matchBox.style.color  = "black";
+          }
+          if (!cellMatches[i]) cellMatches[i] = [];
+          cellMatches[i].push({
+            userName  : matchName,
+            userImage : topCandidate.user.data,
+            score     : topScore
+          });
+          matchedUserNames.add(topCandidate.user.name);
+          matchedCellIndices.add(i);
+          userImagesArray = userImagesArray.filter(
+            u => u.name !== topCandidate.user.name
+          );
 
-      /* ---------- branchC: score ≥ 0.88 (partial) ---------- */
-      } else if (topScore >= 0.88) {
-        // partial match – highlight orangered
-        if (matchBox) {
-          matchBox.value        = matchName;
-          matchBox.style.fontWeight = "bold";
-          matchBox.style.color  = "orangered";
+        /* ---------- branchC: score ≥ 0.88 (partial) ---------- */
+        } else if (topScore >= 0.88) {
+          if (matchBox) {
+            matchBox.value        = matchName;
+            matchBox.style.fontWeight = "bold";
+            matchBox.style.color  = "orangered";
+          }
+          if (!cellMatches[i]) cellMatches[i] = [];
+          cellMatches[i].push({
+            userName  : matchName,
+            userImage : topCandidate.user.data,
+            score     : topScore
+          });
+          matchedUserNames.add(topCandidate.user.name);
+          matchedCellIndices.add(i);
+          userImagesArray = userImagesArray.filter(
+            u => u.name !== topCandidate.user.name
+          );
         }
-        if (!cellMatches[i]) cellMatches[i] = [];
-        cellMatches[i].push({
-          userName  : matchName,
-          userImage : resp.scores[0].user.data,
-          score     : topScore
-        });
-        matchedUserNames.add(resp.scores[0].user.name);
-        matchedCellIndices.add(i);
-        userImagesArray = userImagesArray.filter(u => u.name !== resp.scores[0].user.name);
-      }
 
         /* ==============================================================
            MIRROR‑PAIR LOGIC – runs for ANY accepted earring half
