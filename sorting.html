@@ -2583,8 +2583,9 @@ function openMatchPreviewModal(cellIndex) {
     box.appendChild(img);
     wrapper.appendChild(box);
 
-    /* filename row (plain text, 100 px wide) */
+    /* filename row (plain text, 100px wide) */
     const nameRow = makeNameRow(userName || "", 100);
+    nameRow.style.fontWeight = "700";   // bold for matched
     wrapper.appendChild(nameRow);
 
     matchedSection.appendChild(wrapper);
