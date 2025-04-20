@@ -2102,7 +2102,7 @@ async function sendAndMatch() {
         if (topScore >= 0.95) {
           if (matchBox) {
             matchBox.value        = matchName;
-            matchBox.style.fontWeight = "bold";
+            matchBox.style.fontWeight = "400";
             matchBox.style.color  = "black";
           }
           if (!cellMatches[i]) cellMatches[i] = [];
@@ -2121,7 +2121,7 @@ async function sendAndMatch() {
         } else if (topScore >= 0.88 && scoreDelta >= 0.15) {
           if (matchBox) {
             matchBox.value        = matchName;
-            matchBox.style.fontWeight = "bold";
+            matchBox.style.fontWeight = "400";
             matchBox.style.color  = "black";
           }
           if (!cellMatches[i]) cellMatches[i] = [];
