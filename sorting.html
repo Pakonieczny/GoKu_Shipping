@@ -2890,28 +2890,25 @@ container.appendChild(matchedWrapper);       // ← keep this line
     });
   }
 
-  /* ============================================================
-   * refreshSectionsLocal  (adds filename rows that were missing)
-   * ========================================================== */
   function refreshSectionsLocal() {
     /* ---------------- Matched Section ---------------- */
     matchedSection.innerHTML = "";
 
     matchedImages.forEach((mImg, i) => {
-      /* wrapper keeps 100×100 box + name together */
+      /* wrapper keeps 100×100 box + filename together */
       const wrap = document.createElement("div");
       wrap.style.display = "flex";
       wrap.style.flexDirection = "column";
       wrap.style.alignItems = "center";
       wrap.style.width = "100px";
       wrap.style.order = i;
-      wrap.dataset.type  = "matched";
-      wrap.dataset.index = i;
-      wrap.dataset.slot  = i;
 
-      /* 100×100 image box */
+      /* 100×100 image box = actual drag/drop target */
       const box = document.createElement("div");
-      box.className = "match-box";
+      box.className  = "match-box";
+      box.dataset.type  = "matched";
+      box.dataset.index = i;
+      box.dataset.slot  = i;            // ★ restore slot id
       box.style.width  = "100px";
       box.style.height = "100px";
       box.style.border = "1px solid #000";
@@ -2928,17 +2925,14 @@ container.appendChild(matchedWrapper);       // ← keep this line
         box.style.fontWeight = "bold";
       } else {
         const img = document.createElement("img");
-        img.src   = mImg.userImage;
-        img.alt   = mImg.userName;
-        img.draggable = true;
-        img.dataset.cell = cellIndex;
-        img.dataset.slot = i;
-        img.addEventListener("dragstart", handleDragStart);
+        img.src  = mImg.userImage;
+        img.alt  = mImg.userName;
         img.style.width  = "100%";
         img.style.height = "100%";
         img.style.objectFit = "cover";
         box.appendChild(img);
       }
+
       wrap.appendChild(box);
 
       /* filename row */
@@ -2952,7 +2946,7 @@ container.appendChild(matchedWrapper);       // ← keep this line
     unmatchedSection.innerHTML = "";
 
     if (unmatchedImages.length === 0) {
-      // one placeholder when none left
+      /* one placeholder when none left */
       const box = document.createElement("div");
       box.dataset.type = "unmatchedEmpty";
       box.style.width  = "66px";
@@ -2968,16 +2962,9 @@ container.appendChild(matchedWrapper);       // ← keep this line
       unmatchedSection.appendChild(box);
     } else {
       unmatchedImages.forEach((uImg, i) => {
-        const wrap = document.createElement("div");
-        wrap.style.display = "flex";
-        wrap.style.flexDirection = "column";
-        wrap.style.alignItems = "center";
-        wrap.style.width = "66px";
-        wrap.dataset.type  = "unmatched";
-        wrap.dataset.index = i;
-
-        /* 66×66 image box */
         const box = document.createElement("div");
+        box.dataset.type  = "unmatched";
+        box.dataset.index = i;
         box.style.width  = "66px";
         box.style.height = "66px";
         box.style.border = "1px solid #000";
@@ -2985,6 +2972,7 @@ container.appendChild(matchedWrapper);       // ← keep this line
         box.style.alignItems = "center";
         box.style.justifyContent = "center";
         box.style.overflow = "hidden";
+        box.style.position = "relative";
 
         const img = document.createElement("img");
         img.src   = uImg.data;
@@ -2993,16 +2981,10 @@ container.appendChild(matchedWrapper);       // ← keep this line
         img.style.height = "100%";
         img.style.objectFit = "cover";
 
-        makeDraggable(wrap);
-        makeDropTarget(wrap);
+        makeDraggable(box);
+        makeDropTarget(box);
         box.appendChild(img);
-        wrap.appendChild(box);
-
-        /* filename row */
-        const nameRow = makeNameRow(stripExtension(uImg.name), 66);
-        wrap.appendChild(nameRow);
-
-        unmatchedSection.appendChild(wrap);
+        unmatchedSection.appendChild(box);
       });
     }
   }
