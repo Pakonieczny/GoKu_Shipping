@@ -2408,22 +2408,17 @@ function openMatchPreviewModal(cellIndex) {
 
   // helper: create a 55×7 read‑only row that sits in normal flow
   function makeDetail(txt, isBold = false) {
-    const inp = document.createElement("input");
-    inp.type       = "text";
-    inp.readOnly   = true;
-    inp.classList.add("detail-box");
-
-    /* override global rule */
-    inp.style.setProperty("position",   "static");
-    inp.style.setProperty("width",      "100px");
-    inp.style.setProperty("height",     "8px");
-    inp.style.setProperty("font-size",  "0.6em");
-    inp.style.setProperty("margin-top", "3px", "important");   // ← 3px gap
-    inp.style.setProperty("font-weight", isBold ? "700" : "400");
-
-    inp.value = txt;
-    return inp;
+    const row = document.createElement("div");
+    row.textContent   = txt;
+    row.style.width   = "100px";
+    row.style.height  = "8px";
+    row.style.fontSize = "0.6em";
+    row.style.marginTop = "3px";          // 3 px between rows
+    row.style.fontWeight = isBold ? "700" : "400";
+    row.style.overflow = "hidden";        // keeps long text inside 100 px
+    return row;
   }
+  
   const etsyDerived = croppedImagesArray[cellIndex];
 
   /* ---------- build matchedImages with earring logic ---------- */
