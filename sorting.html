@@ -2890,27 +2890,36 @@ container.appendChild(matchedWrapper);       // ← keep this line
     });
   }
 
+  /* ============================================================
+   * refreshSectionsLocal  (adds filename rows that were missing)
+   * ========================================================== */
   function refreshSectionsLocal() {
     /* ---------------- Matched Section ---------------- */
     matchedSection.innerHTML = "";
 
     matchedImages.forEach((mImg, i) => {
+      /* wrapper keeps 100×100 box + name together */
+      const wrap = document.createElement("div");
+      wrap.style.display = "flex";
+      wrap.style.flexDirection = "column";
+      wrap.style.alignItems = "center";
+      wrap.style.width = "100px";
+      wrap.style.order = i;
+      wrap.dataset.type  = "matched";
+      wrap.dataset.index = i;
+      wrap.dataset.slot  = i;
+
+      /* 100×100 image box */
       const box = document.createElement("div");
       box.className = "match-box";
-      box.dataset.type  = "matched";
-      box.dataset.index = i;     // index in the matchedImages array
-      box.dataset.slot  = i;     // *** keep slot fixed for drag logic
-      box.style.order   = i;     // *** preserves left‑to‑right order
-      box.style.width   = "100px";
-      box.style.height  = "100px";
-      box.style.border  = "1px solid #000";
+      box.style.width  = "100px";
+      box.style.height = "100px";
+      box.style.border = "1px solid #000";
       box.style.display = "flex";
       box.style.alignItems = "center";
       box.style.justifyContent = "center";
       box.style.overflow = "hidden";
-      box.style.position = "relative";
 
-      /* Make this box both draggable and droppable */
       makeDraggable(box);
       makeDropTarget(box);
 
@@ -2921,19 +2930,29 @@ container.appendChild(matchedWrapper);       // ← keep this line
         const img = document.createElement("img");
         img.src   = mImg.userImage;
         img.alt   = mImg.userName;
+        img.draggable = true;
+        img.dataset.cell = cellIndex;
+        img.dataset.slot = i;
+        img.addEventListener("dragstart", handleDragStart);
         img.style.width  = "100%";
         img.style.height = "100%";
         img.style.objectFit = "cover";
         box.appendChild(img);
       }
-      matchedSection.appendChild(box);
+      wrap.appendChild(box);
+
+      /* filename row */
+      const nameRow = makeNameRow(mImg.userName || "", 100);
+      wrap.appendChild(nameRow);
+
+      matchedSection.appendChild(wrap);
     });
 
     /* ---------------- Unmatched Section ---------------- */
     unmatchedSection.innerHTML = "";
 
     if (unmatchedImages.length === 0) {
-      /* one placeholder when none left */
+      // one placeholder when none left
       const box = document.createElement("div");
       box.dataset.type = "unmatchedEmpty";
       box.style.width  = "66px";
@@ -2949,9 +2968,16 @@ container.appendChild(matchedWrapper);       // ← keep this line
       unmatchedSection.appendChild(box);
     } else {
       unmatchedImages.forEach((uImg, i) => {
+        const wrap = document.createElement("div");
+        wrap.style.display = "flex";
+        wrap.style.flexDirection = "column";
+        wrap.style.alignItems = "center";
+        wrap.style.width = "66px";
+        wrap.dataset.type  = "unmatched";
+        wrap.dataset.index = i;
+
+        /* 66×66 image box */
         const box = document.createElement("div");
-        box.dataset.type  = "unmatched";
-        box.dataset.index = i;
         box.style.width  = "66px";
         box.style.height = "66px";
         box.style.border = "1px solid #000";
@@ -2959,7 +2985,6 @@ container.appendChild(matchedWrapper);       // ← keep this line
         box.style.alignItems = "center";
         box.style.justifyContent = "center";
         box.style.overflow = "hidden";
-        box.style.position = "relative";
 
         const img = document.createElement("img");
         img.src   = uImg.data;
@@ -2968,10 +2993,16 @@ container.appendChild(matchedWrapper);       // ← keep this line
         img.style.height = "100%";
         img.style.objectFit = "cover";
 
-        makeDraggable(box);
-        makeDropTarget(box);
+        makeDraggable(wrap);
+        makeDropTarget(wrap);
         box.appendChild(img);
-        unmatchedSection.appendChild(box);
+        wrap.appendChild(box);
+
+        /* filename row */
+        const nameRow = makeNameRow(stripExtension(uImg.name), 66);
+        wrap.appendChild(nameRow);
+
+        unmatchedSection.appendChild(wrap);
       });
     }
   }
