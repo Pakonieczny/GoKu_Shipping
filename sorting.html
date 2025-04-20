@@ -2411,16 +2411,15 @@ function openMatchPreviewModal(cellIndex) {
     const inp = document.createElement("input");
     inp.type  = "text";
     inp.readOnly = true;
-    inp.classList.add("detail-box");
 
-    /* override global rules */
-    inp.style.setProperty("position",   "static");
-    inp.style.setProperty("display",    "block", "important");  // ← NEW
-    inp.style.setProperty("width",      "100px");
-    inp.style.setProperty("height",     "8px");
-    inp.style.setProperty("font-size",  "0.6em");
-    inp.style.setProperty("margin-top", "3px",  "important");   // 3 px gap
-    inp.style.setProperty("font-weight", isBold ? "700" : "400");
+    /* ── INLINE styles override the global .detail‑box rule ── */
+    inp.style.position   = "relative";   // not absolute, so it stacks
+    inp.style.display    = "block";
+    inp.style.width      = "100px";
+    inp.style.height     = "8px";
+    inp.style.fontSize   = "0.6em";
+    inp.style.marginTop  = "3px";        // 3 px between rows
+    inp.style.fontWeight = isBold ? "700" : "400";
 
     inp.value = txt;
     return inp;
