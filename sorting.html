@@ -1930,7 +1930,7 @@ async function compareImages(userImage, croppedGridImage, cellIndex, userImageNa
   pendingFetchControllers.push(controller);
 
   const payload = {
-    model: "gpt-4.1-mini",
+    model: "gpt-4.1",
     messages: [
       {
         role: "user",
@@ -2413,7 +2413,7 @@ function openMatchPreviewModal(cellIndex) {
     row.style.width   = "100px";
     row.style.height  = "12px";
     row.style.fontSize = "0.6em";
-    row.style.marginTop = "0.5px";          // 0.5px between rows
+    row.style.marginTop = "0px";          // 0px between rows
     row.style.fontWeight = isBold ? "700" : "400";
     row.style.overflow = "hidden";        // keeps long text inside 100px
     return row;
@@ -2494,7 +2494,7 @@ function openMatchPreviewModal(cellIndex) {
     etsyBox.style.fontWeight = "bold";
   }
   etsyWrapper.appendChild(etsyBox);
-  etsyBox.style.marginBottom = "1.5px";   // 2.5px space under the image
+  etsyBox.style.marginBottom = "0.5px";   // 0.5px space under the image
   container.appendChild(etsyWrapper);
   etsyWrapper.appendChild(makeDetail(orderVal));   // Order number
   etsyWrapper.appendChild(makeDetail(qtyVal));     // Qty
