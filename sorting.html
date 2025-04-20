@@ -2405,18 +2405,19 @@ function openMatchPreviewModal(cellIndex) {
 
   /* ---------- build modal content (unchanged) ---------- */
 
-  // helper: create a 55px × 7px read‑only detail row
-function makeDetail(txt) {
-  const inp = document.createElement("input");
-  inp.type        = "text";
-  inp.readOnly    = true;
-  inp.classList.add("detail-box");
-  inp.style.width      = "100%";
-  inp.style.height     = "7px";
-  inp.style.fontSize   = "0.6em";
-  inp.value = txt;
-  return inp;
-}
+
+  // helper: create a 55px x 7 detail row sized to 100px photo width
+  function makeDetail(txt) {
+    const inp = document.createElement("input");
+    inp.type       = "text";
+    inp.readOnly   = true;
+    inp.classList.add("detail-box");
+    inp.style.width  = "100px";   // ► fixed to photo width
+    inp.style.height = "7px";
+    inp.style.fontSize = "0.6em";
+    inp.value = txt;
+    return inp;
+  }
   const etsyDerived = croppedImagesArray[cellIndex];
 
   /* ---------- build matchedImages with earring logic ---------- */
@@ -2453,7 +2454,7 @@ function makeDetail(txt) {
   const orderVal = document.getElementById("orderCell"   + cellIndex)?.value || "";
   const qtyVal   = document.getElementById("quantityCell"+ cellIndex)?.value || "";
   const metalVal = document.getElementById("metalCell"   + cellIndex)?.value || "";
-  
+
   // -----------------------------------------------------------------------
   // A) Etsy Photo
   // -----------------------------------------------------------------------
@@ -2526,6 +2527,7 @@ function makeDetail(txt) {
     wrapper.style.display = "flex";
     wrapper.style.flexDirection = "column";
     wrapper.style.alignItems = "center";
+    wrapper.style.width = "100px";      // ► keeps label centered under box
     wrapper.dataset.slot = slot;
     wrapper.style.order  = slot;            // fixed slot position
 
@@ -2571,7 +2573,7 @@ function makeDetail(txt) {
     lbl.textContent   = userName || "";
     lbl.style.fontSize = "0.6em";
     lbl.style.marginTop = "2px";
-    lbl.style.width   = "100%";
+    lbl.style.width   = "100px";
     lbl.style.textAlign = "center";
     wrapper.appendChild(lbl);
     /* ▲ filename label ↑ */
@@ -2639,8 +2641,18 @@ container.appendChild(matchedWrapper);       // ← keep this line
   } else {
     // Otherwise show each unmatched image normally
     unmatchedImages.forEach((uImg, idx) => {
+      /* wrapper keeps 66×66 box + filename together */
+      const outer = document.createElement("div");
+      outer.style.display = "flex";
+      outer.style.flexDirection = "column";
+      outer.style.alignItems = "center";
+      outer.style.width = "66px";            // ► align label
+      outer.dataset.type  = "unmatched";
+      outer.dataset.index = idx;
+
+      /* 66×66 image box */
       const box = document.createElement("div");
-      box.style.width = "66px";
+      box.style.width  = "66px";
       box.style.height = "66px";
       box.style.border = "1px solid #000";
       box.style.display = "flex";
@@ -2649,19 +2661,28 @@ container.appendChild(matchedWrapper);       // ← keep this line
       box.style.overflow = "hidden";
       box.style.position = "relative";
 
-      box.dataset.type = "unmatched";
-      box.dataset.index = idx;
-
       const img = document.createElement("img");
-      img.src = uImg.data;
-      img.alt = uImg.name;
-      img.style.width = "100%";
+      img.src   = uImg.data;
+      img.alt   = uImg.name;
+      img.style.width  = "100%";
       img.style.height = "100%";
       img.style.objectFit = "cover";
 
-      makeDraggable(box);
+      makeDraggable(outer);
+      makeDropTarget(outer);
       box.appendChild(img);
-      unmatchedSection.appendChild(box);
+      outer.appendChild(box);
+
+      /* filename label */
+      const lbl = document.createElement("div");
+      lbl.textContent   = stripExtension(uImg.name);
+      lbl.style.fontSize = "0.6em";
+      lbl.style.marginTop = "2px";
+      lbl.style.width   = "66px";
+      lbl.style.textAlign = "center";
+      outer.appendChild(lbl);
+
+      unmatchedSection.appendChild(outer);
     });
   }
 
