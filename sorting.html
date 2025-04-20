@@ -2416,9 +2416,9 @@ function openMatchPreviewModal(cellIndex) {
     /* override global rule */
     inp.style.setProperty("position",   "static");
     inp.style.setProperty("width",      "100px");
-    inp.style.setProperty("height",     "7px");
+    inp.style.setProperty("height",     "8px");
     inp.style.setProperty("font-size",  "0.6em");
-    inp.style.setProperty("margin-top", "3px", "important");   // ← 3 px gap
+    inp.style.setProperty("margin-top", "3px", "important");   // ← 3px gap
     inp.style.setProperty("font-weight", isBold ? "700" : "400");
 
     inp.value = txt;
@@ -2468,6 +2468,7 @@ function openMatchPreviewModal(cellIndex) {
   etsyWrapper.style.display = "flex";
   etsyWrapper.style.flexDirection = "column";
   etsyWrapper.style.marginBottom = "20px";
+  etsyWrapper.style.rowGap = "3px";        // ⇠ 3px between every detail row
 
   const etsyLabel = document.createElement("div");
   etsyLabel.textContent = "Etsy Photo:";
