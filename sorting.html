@@ -2465,10 +2465,10 @@ function openMatchPreviewModal(cellIndex) {
   // A) Etsy Photo
   // -----------------------------------------------------------------------
   const etsyWrapper = document.createElement("div");
-  etsyWrapper.style.display = "grid";        // ► switch to grid
-  etsyWrapper.style.rowGap  = "3px";         // ► 3px between rows
-  etsyWrapper.style.marginBottom = "20px";   // (keep existing)
-  etsyBox.style.marginBottom   = "4px";      // (keep existing)
+  etsyWrapper.style.display = "flex";
+  etsyWrapper.style.flexDirection = "column";
+  etsyWrapper.style.marginBottom = "20px";
+  etsyWrapper.style.gap = "3px";        // ⇠ 3px between every detail row
 
   const etsyLabel = document.createElement("div");
   etsyLabel.textContent = "Etsy Photo:";
