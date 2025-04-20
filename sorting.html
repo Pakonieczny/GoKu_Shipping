@@ -2406,16 +2406,17 @@ function openMatchPreviewModal(cellIndex) {
   /* ---------- build modal content (unchanged) ---------- */
 
 
-  // helper: create a 55 × 7 read‑only row that sits in normal flow
+  // helper: create a 55×7 read‑only row that sits in normal flow
   function makeDetail(txt) {
     const inp = document.createElement("input");
     inp.type       = "text";
     inp.readOnly   = true;
     inp.classList.add("detail-box");
-    inp.style.position = "static";   // ← overrides global “absolute”
+    inp.style.position  = "static";
     inp.style.width     = "100px";
     inp.style.height    = "7px";
     inp.style.fontSize  = "0.6em";
+    inp.style.marginTop = "3px";      // 3px between rows
     inp.value = txt;
     return inp;
   }
@@ -2493,10 +2494,11 @@ function openMatchPreviewModal(cellIndex) {
     etsyBox.style.fontWeight = "bold";
   }
   etsyWrapper.appendChild(etsyBox);
+  etsyBox.style.marginBottom = "4px";   // 4px space under the image
   container.appendChild(etsyWrapper);
   etsyWrapper.appendChild(makeDetail(orderVal));   // Order number
   etsyWrapper.appendChild(makeDetail(qtyVal));     // Qty
-  etsyWrapper.appendChild(makeDetail(metalVal));   // Metal
+  etsyWrapper.appendChild(makeDetail(metalVal, true));  // ► bold Metal
 
   // -----------------------------------------------------------------------
   // B) Matched Photo (shifted 75px right)   ← UPDATED BLOCK
