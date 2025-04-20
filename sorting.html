@@ -2938,7 +2938,7 @@ container.appendChild(matchedWrapper);       // ← keep this line
       wrap.appendChild(box);
 
       /* filename row */
-      const nameRow = makeNameRow(mImg.userName || "", 100);
+      const nameRow = makeNameRow(mImg.userName || "", 100, true);   // bold = true
       wrap.appendChild(nameRow);
 
       matchedSection.appendChild(wrap);
