@@ -2523,9 +2523,28 @@ function openMatchPreviewModal(cellIndex) {
   matchedSection.style.flexWrap  = "wrap";
   matchedSection.style.gap       = "10px";
 
-    /* helper: create one 100×100 slot with filename row */
-    function addMatchedBox(slot, imgData, userName) {
-    /* wrapper keeps box + filename together */
+  /* ============================================================
+   * helper: center‑aligned filename row with NO border or box
+   * ========================================================== */
+  function makeNameRow(text, pxWidth) {
+    const row = document.createElement("div");
+    row.textContent      = text;
+    row.style.width      = pxWidth + "px";
+    row.style.fontSize   = "0.6em";
+    row.style.lineHeight = "1.2em";
+    row.style.marginTop  = "3px";     // 3 px gap below image
+    row.style.textAlign  = "center";
+    row.style.overflow   = "hidden";
+    row.style.textOverflow = "ellipsis";
+    row.style.whiteSpace = "nowrap";
+    return row;
+  }
+
+  /* ============================================================
+   * helper: create one 100×100 matched slot + filename row
+   * ========================================================== */
+  function addMatchedBox(slot, imgData, userName) {
+    /* wrapper = image + name */
     const wrapper = document.createElement("div");
     wrapper.style.display = "flex";
     wrapper.style.flexDirection = "column";
@@ -2536,7 +2555,7 @@ function openMatchPreviewModal(cellIndex) {
 
     /* 100×100 image box */
     const box = document.createElement("div");
-    box.className  = "match-box";
+    box.className = "match-box";
     box.dataset.cell = cellIndex;
     box.dataset.slot = slot;
     box.style.width  = "100px";
@@ -2560,17 +2579,12 @@ function openMatchPreviewModal(cellIndex) {
       img.src   = "placeholder.png";
       img.classList.add("placeholder");
     }
+
     box.appendChild(img);
     wrapper.appendChild(box);
 
-    /* filename row under 100×100 box */
-    const nameRow = document.createElement("div");
-    nameRow.textContent   = userName || "";
-    nameRow.style.width   = "100px";
-    nameRow.style.fontSize = "0.6em";
-    nameRow.style.lineHeight = "1.2em";
-    nameRow.style.marginTop  = "3px";
-    nameRow.style.textAlign  = "center";
+    /* filename row (plain text, 100 px wide) */
+    const nameRow = makeNameRow(userName || "", 100);
     wrapper.appendChild(nameRow);
 
     matchedSection.appendChild(wrapper);
@@ -2635,7 +2649,7 @@ container.appendChild(matchedWrapper);       // ← keep this line
     unmatchedSection.appendChild(box);
 
   } else {
-    // --- every real unmatched image ---
+    // Otherwise show each unmatched image normally
     unmatchedImages.forEach((uImg, idx) => {
       /* wrapper keeps 66×66 box + filename together */
       const wrapper = document.createElement("div");
@@ -2668,14 +2682,8 @@ container.appendChild(matchedWrapper);       // ← keep this line
       box.appendChild(img);
       wrapper.appendChild(box);
 
-      /* filename row under the 66×66 box */
-      const nameRow = document.createElement("div");
-      nameRow.textContent   = stripExtension(uImg.name);
-      nameRow.style.width   = "66px";
-      nameRow.style.fontSize = "0.6em";
-      nameRow.style.lineHeight = "1.2em";
-      nameRow.style.marginTop  = "3px";   // 3 px gap
-      nameRow.style.textAlign  = "center";
+      /* filename row (plain text, 66 px wide) */
+      const nameRow = makeNameRow(stripExtension(uImg.name), 66);
       wrapper.appendChild(nameRow);
 
       unmatchedSection.appendChild(wrapper);
