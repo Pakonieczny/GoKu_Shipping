@@ -2407,16 +2407,17 @@ function openMatchPreviewModal(cellIndex) {
 
 
   // helper: create a 55×7 read‑only row that sits in normal flow
-  function makeDetail(txt) {
+  function makeDetail(txt, isBold = false) {
     const inp = document.createElement("input");
     inp.type       = "text";
     inp.readOnly   = true;
     inp.classList.add("detail-box");
     inp.style.position  = "static";
     inp.style.width     = "100px";
-    inp.style.height    = "7px";
+    inp.style.height    = "5px";
     inp.style.fontSize  = "0.6em";
-    inp.style.marginTop = "3px";      // 3px between rows
+    inp.style.marginTop = "2px";                // 2px between rows
+    inp.style.fontWeight = isBold ? "700" : "400";  // ← explicit weight
     inp.value = txt;
     return inp;
   }
