@@ -2523,20 +2523,20 @@ function openMatchPreviewModal(cellIndex) {
   matchedSection.style.flexWrap  = "wrap";
   matchedSection.style.gap       = "10px";
 
-  /* ============================================================
-   * helper: center‑aligned filename row with NO border or box
-   * ========================================================== */
-  function makeNameRow(text, pxWidth) {
+  /* helper: plain filename row, optional bold (matches makeDetail) */
+  function makeNameRow(text, pxWidth, isBold = false) {
     const row = document.createElement("div");
-    row.textContent      = text;
-    row.style.width      = pxWidth + "px";
-    row.style.fontSize   = "0.6em";
+    row.textContent   = text;
+    row.style.width   = pxWidth + "px";
+    row.style.fontSize = "0.6em";
     row.style.lineHeight = "1.2em";
-    row.style.marginTop  = "3px";     // 3 px gap below image
+    row.style.marginTop  = "3px";
     row.style.textAlign  = "center";
+    row.style.color      = "#000";
     row.style.overflow   = "hidden";
     row.style.textOverflow = "ellipsis";
     row.style.whiteSpace = "nowrap";
+    row.style.fontWeight = isBold ? "700" : "400";  // ← same pattern as makeDetail
     return row;
   }
 
@@ -2585,7 +2585,7 @@ function openMatchPreviewModal(cellIndex) {
 
     /* filename row (plain text, 100px wide) */
     const nameRow = makeNameRow(userName || "", 100);
-    nameRow.style.fontWeight = "700";   // bold for matched
+    nameRow.style.setProperty("font-weight", "700", "important");  // always bold
     wrapper.appendChild(nameRow);
 
     matchedSection.appendChild(wrapper);
@@ -2683,7 +2683,7 @@ container.appendChild(matchedWrapper);       // ← keep this line
       box.appendChild(img);
       wrapper.appendChild(box);
 
-      /* filename row (plain text, 66 px wide) */
+      /* filename row (plain text, 66px wide) */
       const nameRow = makeNameRow(stripExtension(uImg.name), 66);
       wrapper.appendChild(nameRow);
 
