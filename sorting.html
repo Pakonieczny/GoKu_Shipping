@@ -759,75 +759,95 @@ function enableMatchPrintFlow() {
     if (overlayBtn) overlayBtn.remove();
   }
 
-// ───── PUT THE NEW HELPER FUNCTION HERE ─────
-function removeHighlightForCell(cellIndex) {
-  const previewBox = document.getElementById("previewCell" + cellIndex);
-  if (previewBox) {
-    // Reset any blue or orangered border back to 1 px black
-    if ((previewBox.style.border || "").includes("blue") ||
-        (previewBox.style.border || "").includes("orangered")) {
-      previewBox.style.border = "1px solid #000";
-    }
+  /* ============================================================
+   *  classifyMetalHue(avgR, avgG, avgB)  → "YG" | "RG" | "SS"
+   *  tuned for your lighting: adjust hue ranges if needed
+   * ========================================================== */
+  function classifyMetalHue(r, g, b) {
+    // RGB → HSV
+    const max = Math.max(r, g, b) / 255;
+    const min = Math.min(r, g, b) / 255;
+    const delta = max - min;
+    let hue = 0;
 
-    // Reset match‑cell text if it was orangered
-    const matchBox = document.getElementById("matchCell" + cellIndex);
-    if (matchBox && matchBox.style.color === "orangered") {
-      matchBox.style.color = "";
-      matchBox.style.fontWeight = "";
-    }
+    if (delta === 0) hue = 0;
+    else if (max === r / 255) hue = ((g / 255 - b / 255) / delta) % 6;
+    else if (max === g / 255) hue = (b / 255 - r / 255) / delta + 2;
+    else hue = (r / 255 - g / 255) / delta + 4;
+
+    hue = Math.round(hue * 60);          // 0‑360°
+    if (hue < 0) hue += 360;
+
+    /* --- empirical hue windows --- */
+    if (hue >= 35 && hue <= 60)   return "YG";  // Yellow‑Gold
+    if (hue >= 10 && hue < 35)    return "RG";  // Rose‑Gold / Pink
+    return "SS";                                 // default Silver/Other
   }
 
-  // NEW: remove the overlay “Print” button (there’s only ever one)
-  const overlayBtn = document.querySelector("button.overlay-print-btn");
-  if (overlayBtn) overlayBtn.remove();
+  function removeHighlightForCell(cellIndex) {
+    const previewBox = document.getElementById("previewCell" + cellIndex);
+    if (previewBox) {
+      // Reset any blue or orangered border back to 1 px black
+      if ((previewBox.style.border || "").includes("blue") ||
+          (previewBox.style.border || "").includes("orangered")) {
+        previewBox.style.border = "1px solid #000";
+      }
+
+      // Reset match‑cell text if it was orangered
+      const matchBox = document.getElementById("matchCell" + cellIndex);
+      if (matchBox && matchBox.style.color === "orangered") {
+        matchBox.style.color = "";
+        matchBox.style.fontWeight = "";
+      }
+    }
+
+    // NEW: remove the overlay “Print” button (there’s only ever one)
+    const overlayBtn = document.querySelector("button.overlay-print-btn");
+    if (overlayBtn) overlayBtn.remove();
 }
 
 
-    /********************************************************
-     * detectAnyOrangered():
-     *  – Keeps your original checks (3px orangered border +
-     *    orangered text colour).
-     *  – ADDS robust match‑count logic:
-     *      • Regular cells are clear when they have ≥1 real match.
-     *      • Earring cells are clear only when they have 2 real matches.
-     ********************************************************/
-    function detectAnyOrangered() {
-      let foundOrangered = false;
+/********************************************************
+ * detectAnyOrangered()
+ *  – returns TRUE only if a non‑skipped cell is still
+ *    incomplete or visibly marked orangered.
+ *  – every cell listed in skipMatches is ignored.
+ ********************************************************/
+  function detectAnyOrangered() {
+    let found = false;
 
-      /* (A) 3 px orangered border on preview boxes */
-      const previewBoxes = document.querySelectorAll(".preview-box");
-      previewBoxes.forEach((pb) => {
-        if ((pb.style.border || "").includes("3px solid orangered")) {
-          foundOrangered = true;
-        }
-      });
-
-      /* (B) orangered text colour in match‑cells + match‑count rules */
-      for (let i = 0; i < croppedImagesArray.length; i++) {
-        const matchBox = document.getElementById("matchCell" + i);
-        if (!matchBox) continue;
-
-        /* original colour check */
-        if (matchBox.style.color === "orangered") {
-          foundOrangered = true;
-        }
-
-        /* NEW: verify required number of **real** matches */
-        const realCount = cellMatches[i]
-          ? cellMatches[i].filter(m => m && m.userImage).length   // skip placeholders
-          : 0;
-
-        if (earringCells[i]) {
-          // EARRINGS need TWO user‑image matches
-          if (realCount < 2) foundOrangered = true;
-        } else {
-          // Regular items need ONE match
-          if (realCount < 1) foundOrangered = true;
-        }
+    /* (A) 3 px orangered border on preview boxes */
+    const previewBoxes = document.querySelectorAll("#photoGridContainer .preview-box");
+    previewBoxes.forEach((pb) => {
+      const idx = Number(pb.id.replace("previewCell", ""));
+      if (skipMatches[idx]) return;                       // ← ignore skipped cells
+      if ((pb.style.border || "").includes("3px solid orangered")) {
+        found = true;
       }
-      return foundOrangered;
+    });
+
+    /* (B) orangered text colour or missing matches */
+    for (let i = 0; i < croppedImagesArray.length; i++) {
+      if (skipMatches[i]) continue;                       // ← ignore skipped cells
+
+      const matchBox = document.getElementById("matchCell" + i);
+      if (!matchBox) continue;
+
+      /* 1) old orangered text */
+      if (matchBox.style.color === "orangered") {
+        found = true;
+      }
+
+      /* 2) not enough real matches */
+      const realCount = cellMatches[i]
+        ? cellMatches[i].filter(m => m && m.userImage).length
+        : 0;
+      const needed = earringCells[i] ? 2 : 1;
+      if (realCount < needed) found = true;
     }
 
+    return found;
+  }
 
 /********************************************************
  * “Match & Print” main logic
