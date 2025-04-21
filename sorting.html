@@ -1524,6 +1524,15 @@ async function fillPreviewBoxes(items) {
     "hoop","hoops","hoop earrings"
   ];
 
+  /* helper: true only when a title contains one phrase as a whole word */
+  function isEarringTitle(title = "") {
+    const lower = title.toLowerCase();
+    return EARRING_PHRASES.some((phrase) => {
+      const pattern = "\\b" + phrase.replace(/\s+/g, "\\s+") + "\\b"; // word‑boundaries
+      return new RegExp(pattern, "i").test(lower);
+    });
+  }
+
   items.forEach((item, index) => {
     /* --- keyword arrays kept for your existing UI purposes --- */
     item.keywords = [];
@@ -1533,12 +1542,12 @@ async function fillPreviewBoxes(items) {
       groupB.forEach(p => { if (lowerTitle.includes(p)) item.keywords.push(p); });
 
       /* ---------- NEW: flag this row if it’s an earring ---------- */
-      if (EARRING_PHRASES.some(p => lowerTitle.includes(p))) {
-        item.isEarring      = true;                 // flag on the item
-        earringCells[index] = true;                 // mark this grid cell
-        earringState[index] = { firstImg: null };   // cache for first match
-      } else {
-        item.isEarring = false;
+    if (isEarringTitle(item.title)) {
+      item.isEarring      = true;
+      earringCells[index] = true;
+      earringState[index] = { firstImg: null }; // keep your existing setup
+    } else {
+      item.isEarring = false;
       }
     }
 
