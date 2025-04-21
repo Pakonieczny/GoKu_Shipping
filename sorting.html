@@ -1215,19 +1215,21 @@ async function analyzeAndStoreSubImages(imgObjs) {
       noCharmStreak = 0;
 
       /* Build the AI‑assigned filename */
-      const clr = (result.color || "Unknown").toLowerCase();
-      const num = result.topRightNumber || "XX";
+      const clr = (result.color || "Unknown").toLowerCase();   // AI‑reported colour
+      const num = result.topRightNumber || "XX";               // AI‑reported number
+
       let finalColor = "UnknownColor";
-      if (colorTxt.includes("yellow"))                              finalColor = "Gold";
-      else if (colorTxt.includes("rose")   || colorTxt.includes("pink"))  finalColor = "RoseGold";
-      else if (colorTxt.includes("grey")   || colorTxt.includes("silver")) finalColor = "Silver";
-      else if (colorTxt.includes("gold"))                              finalColor = "Gold";
+      if      (clr.includes("yellow"))                               finalColor = "Gold";
+      else if (clr.includes("rose")   || clr.includes("pink"))       finalColor = "RoseGold";
+      else if (clr.includes("grey")   || clr.includes("silver"))     finalColor = "Silver";
+      else if (clr.includes("gold"))                                 finalColor = "Gold";
 
       userImagesArray.push({
         name: `${finalColor}_${num}.jpg`,
         data: imgObj.data,
         analyzed: true
       });
+      
       savedCount++;
     } else {
       /* Charmless image → increment streak */
@@ -1458,11 +1460,12 @@ async function analyzeUserImagesViaOpenAI() {
       /* ---------- colour / number naming ---------- */
       const colorTxt = (result.color || "Unknown").toLowerCase();
       const numTxt   = result.topRightNumber || "XX";
+
       let finalColor = "UnknownColor";
-      if (colorTxt.includes("yellow"))                    finalColor = "Gold";
-      else if (colorTxt.includes("rose") || colorTxt.includes("pink"))  finalColor = "RoseGold";
+      if      (colorTxt.includes("yellow"))                          finalColor = "Gold";
+      else if (colorTxt.includes("rose") || colorTxt.includes("pink")) finalColor = "RoseGold";
       else if (colorTxt.includes("grey") || colorTxt.includes("silver")) finalColor = "Silver";
-      else if (colorTxt.includes("gold"))                 finalColor = "Gold";
+      else if (colorTxt.includes("gold"))                           finalColor = "Gold";
 
       imgObj.name     = `${finalColor}_${numTxt}.jpg`;
       imgObj.analyzed = true;
