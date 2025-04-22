@@ -759,27 +759,35 @@ function enableMatchPrintFlow() {
     if (overlayBtn) overlayBtn.remove();
   }
 
-// ───── PUT THE NEW HELPER FUNCTION HERE ─────
-function removeHighlightForCell(cellIndex) {
-  const previewBox = document.getElementById("previewCell" + cellIndex);
-  if (previewBox) {
-    // Reset any blue or orangered border back to 1 px black
-    if ((previewBox.style.border || "").includes("blue") ||
-        (previewBox.style.border || "").includes("orangered")) {
-      previewBox.style.border = "1px solid #000";
-    }
-
-    // Reset match‑cell text if it was orangered
-    const matchBox = document.getElementById("matchCell" + cellIndex);
-    if (matchBox && matchBox.style.color === "orangered") {
-      matchBox.style.color = "";
-      matchBox.style.fontWeight = "";
-    }
+  /* =========================================================
+     expectedSlots(item)
+     – Returns Qty × (2 if earring, else 1)
+     =======================================================*/
+  function expectedSlots(item = {}) {
+    const qty = Number(item.qty || item.quantity || 1) || 1;   // safety default 1
+    return qty * (item.isEarring ? 2 : 1);
   }
 
-  // NEW: remove the overlay “Print” button (there’s only ever one)
-  const overlayBtn = document.querySelector("button.overlay-print-btn");
-  if (overlayBtn) overlayBtn.remove();
+  function removeHighlightForCell(cellIndex) {
+    const previewBox = document.getElementById("previewCell" + cellIndex);
+    if (previewBox) {
+      // Reset any blue or orangered border back to 1 px black
+      if ((previewBox.style.border || "").includes("blue") ||
+          (previewBox.style.border || "").includes("orangered")) {
+        previewBox.style.border = "1px solid #000";
+      }
+
+      // Reset match‑cell text if it was orangered
+      const matchBox = document.getElementById("matchCell" + cellIndex);
+      if (matchBox && matchBox.style.color === "orangered") {
+        matchBox.style.color = "";
+        matchBox.style.fontWeight = "";
+      }
+    }
+
+    // NEW: remove the overlay “Print” button (there’s only ever one)
+    const overlayBtn = document.querySelector("button.overlay-print-btn");
+    if (overlayBtn) overlayBtn.remove();
 }
 
 
@@ -3060,15 +3068,6 @@ container.appendChild(matchedWrapper);       // ← keep this line
  function stripExtension(fileName) {
    return fileName.replace(/\.\w+$/, "");
  }
-
- /* =========================================================
-   expectedSlots(item)
-   – Returns Qty × (2 if earring, else 1)
-   =======================================================*/
-function expectedSlots(item = {}) {
-  const qty = Number(item.qty || item.quantity || 1) || 1;   // safety default 1
-  return qty * (item.isEarring ? 2 : 1);
-}
 
  // Finally, ensure immediate drag-and-drop by calling refreshSectionsLocal
  refreshSectionsLocal();
