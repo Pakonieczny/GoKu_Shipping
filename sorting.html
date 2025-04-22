@@ -1190,20 +1190,16 @@ async function analyzeAndStoreSubImages(imgObjs) {
       /* Reset streak */
       noCharmStreak = 0;
 
-      /* Build the AI‑assigned filename */
-      const clr = (result.color || "Unknown").toLowerCase();
-      const num = result.topRightNumber || "XX";
-      let finalColor = "UnknownColor";
-      if (clr.includes("yellow"))                              finalColor = "Gold";
-      else if (clr.includes("pink"))                           finalColor = "RoseGold";
-      else if (clr.includes("grey") || clr.includes("silver")) finalColor = "Silver";
-      else if (clr.includes("gold"))                           finalColor = "Gold";
+    /* ---------- colour / number naming ---------- */
+    const finalColor = result.color || "UnknownColor";       // Gold | RoseGold | Silver | Unknown
+    const num        = result.topRightNumber || "XX";
 
-      userImagesArray.push({
-        name: `${finalColor}_${num}.jpg`,
-        data: imgObj.data,
-        analyzed: true
-      });
+    userImagesArray.push({
+      name    : `${finalColor}_${num}.jpg`,
+      data    : imgObj.data,
+      analyzed: true
+    });
+    
       savedCount++;
     } else {
       /* Charmless image → increment streak */
@@ -1460,20 +1456,14 @@ async function analyzeUserImagesViaOpenAI() {
     try {
       const result = await openAIAnalyzePhoto(imgObj.data);
 
-      /* ---------- colour / number naming ---------- */
-      const colorTxt = (result.color || "Unknown").toLowerCase();
-      const numTxt   = result.topRightNumber || "XX";
-      let finalColor = "UnknownColor";
-      if (colorTxt.includes("yellow"))              finalColor = "Gold";
-      else if (colorTxt.includes("pink"))           finalColor = "RoseGold";
-      else if (colorTxt.includes("grey") ||
-               colorTxt.includes("silver"))         finalColor = "Silver";
-      else if (colorTxt.includes("gold"))           finalColor = "Gold";
+    /* ---------- colour / number naming ---------- */
+    const finalColor = result.color || "UnknownColor";   // Gold | RoseGold | Silver | Unknown
+    const numTxt     = result.topRightNumber || "XX";
 
-      imgObj.name     = `${finalColor}_${numTxt}.jpg`;
-      imgObj.analyzed = true;
+    imgObj.name     = `${finalColor}_${numTxt}.jpg`;
+    imgObj.analyzed = true;
 
-      const baseName = stripExtension(imgObj.name);
+    const baseName  = stripExtension(imgObj.name);       // keep this line
 
       /* ---------- charm‑present handling ---------- */
       if (result.charmPresent === "no") {
