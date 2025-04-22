@@ -2585,9 +2585,13 @@ function openMatchPreviewModal(cellIndex) {
   /* ---------- build a fixed set of slots ---------- */
   const maxSlots = needSlots;
   const matchedSection = document.createElement("div");
-  matchedSection.style.display   = "flex";
-  matchedSection.style.flexWrap  = "wrap";
-  matchedSection.style.gap       = "10px";
+  matchedSection.style.display      = "flex";
+  matchedSection.style.flexWrap     = "wrap";
+  matchedSection.style.gap          = "10px";
+  /* NEW: cap the row at 5 × 100px + 4 × 10px gap = 540px */
+  matchedSection.style.maxWidth     = "540px";
+  /* keep items left‑aligned so they start a fresh line neatly */
+  matchedSection.style.alignContent = "flex-start";
 
   /* helper: plain filename row, optional bold (matches makeDetail) */
   function makeNameRow(text, pxWidth, isBold = false) {
