@@ -1306,14 +1306,13 @@ function loadImage(dataUrl) {
   });
 }
 
-// --------------- Single‑Photo Analysis ---------------
+// --------------- Single‑Photo Analysis (TWO‑PASS hue→label) ---------------
 async function openAIAnalyzePhoto(base64Image) {
-  // NEW: create an AbortController for this fetch
-  const controller = new AbortController();
-  pendingFetchControllers.push(controller);
+  /* 1) FIRST PASS — get hue + number + charm‑present  */
+  const ctrlHue = new AbortController();
+  pendingFetchControllers.push(ctrlHue);
 
-  /* ───────────────────────── payload ───────────────────────── */
-  const payload = {
+  const huePayload = {
     model: "gpt-4.1-mini",
     messages: [
       {
@@ -1322,18 +1321,13 @@ async function openAIAnalyzePhoto(base64Image) {
           {
             type: "text",
             text:
-              // ── LEVEL‑1 REFERENCE SWATCH + forced labels ──
+              // -------- first‑pass instructions --------
               "Return JSON EXACTLY like:\n" +
-              '  {"topRightNumber":"<number or blank>", "color":"<Gold|Silver|RoseGold|Unknown>", "charmPresent":"Yes|No"}\n\n' +
-              "SYSTEM: You are an expert jeweler. Classify the charm metal colour precisely." +
-              "ASSISTANT CONTEXT (reference swatch for metal colour):" +
-              "Gold (YG)      █████  RGB≈255,220,130\n" +
-              "RoseGold (RG)  █████  RGB≈220,143,120\n" +
-              "Silver (SS)    █████  RGB≈200,200,210\n\n" +
-              "• topRightNumber = number in the TOP‑RIGHT corner (leave blank if none).\n" +
-              "• colour          = choose ONLY one of Gold, RoseGold, Silver, Unknown.\n" +
-              "• charmPresent   = \"Yes\" if a jewellery charm / pendant is clearly visible, otherwise \"No\".\n" +
-              "Respond with JSON only — no additional text."
+              '  {"hue":"<≤10‑word description>", "topRightNumber":"<number or blank>", "charmPresent":"Yes|No"}\n\n' +
+              "TASK 1 — Describe the dominant metal HUE of the jewellery piece in ≤10 words (e.g. warm yellow‑gold, pale silver‑grey, rosy pink‑gold).\n" +
+              "TASK 2 — Write any number you see in the TOP‑RIGHT corner (blank if none).\n" +
+              "TASK 3 — State if a jewellery charm / pendant is clearly visible (Yes|No).\n" +
+              "Respond with JSON only — no additional text."
           },
           {
             type: "image_url",
@@ -1342,59 +1336,79 @@ async function openAIAnalyzePhoto(base64Image) {
         ]
       }
     ],
-    max_tokens: 3000
+    max_tokens: 200
   };
 
-  console.log("Sending payload to OpenAI:", payload);
-  
-  /* ─────────────────────── API call ‑ unchanged ─────────────────────── */
+  let hueText   = "";
+  let topNumber = null;
+  let charmFlag = "no";
+
   try {
-    const response = await fetch(functionsBaseUrl + "/openaiProxy", {
-      method: "POST",
+    const r1 = await fetch(functionsBaseUrl + "/openaiProxy", {
+      method:  "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-      signal: controller.signal
+      body:    JSON.stringify(huePayload),
+      signal:  ctrlHue.signal
     });
-    console.log("Received API response status:", response.status);
+    if (!r1.ok) throw new Error(`Hue pass failed (${r1.status})`);
+    const d1 = await r1.json();
 
-    if (!response.ok) {
-      const errorText = await response.text();
-      console.error("Error response text from API:", errorText);
-      throw new Error(`Request failed with status ${response.status}`);
-    }
+    let raw1 = d1.choices?.[0]?.message?.content?.trim() || "";
+    raw1 = raw1.replace(/^```(\w+)?/, "").replace(/```$/, "").trim();
 
-    const data = await response.json();
-    console.log("OpenAI API response data:", data);
-
-    let rawText = data.choices?.[0]?.message?.content?.trim();
-    if (!rawText) {
-      console.error("API response does not contain a valid 'choices' array:", data);
-      return { topRightNumber: null, color: null, charmPresent: "no" };
-    }
-
-    console.log("Raw API text response:", rawText);
-
-    // Remove any ```json blocks, trim whitespace
-    rawText = rawText.replace(/^```(\w+)?/, "").replace(/```$/, "").trim();
-
-    let parsed;
-    try {
-      parsed = JSON.parse(rawText);
-    } catch (e) {
-      console.error("Error parsing JSON from API response:", rawText);
-      parsed = {};
-    }
-
-    /* ─── return now includes charmPresent (lower‑cased) ─── */
-    return {
-      topRightNumber : parsed.topRightNumber || null,
-      color          : parsed.color          || null,
-      charmPresent   : (parsed.charmPresent  || "No").toLowerCase()   // "yes"|"no"
-    };
+    const obj1 = JSON.parse(raw1);
+    hueText   = obj1.hue            || "";
+    topNumber = obj1.topRightNumber || null;
+    charmFlag = (obj1.charmPresent  || "No").toLowerCase();   // "yes"|"no"
   } catch (err) {
-    console.error("Error in openAIAnalyzePhoto API call:", err);
-    return { topRightNumber: null, color: null, charmPresent: "no" };
+    console.error("First‑pass (hue) error:", err);
+    return { topRightNumber:null, color:null, charmPresent:"no" };
   }
+
+  /* 2) SECOND PASS — turn hue into fixed Gold / RoseGold / Silver / Unknown */
+  const ctrlLabel = new AbortController();
+  pendingFetchControllers.push(ctrlLabel);
+
+  const labelPrompt =
+    `Based solely on the hue description below, choose the single closest label:\n` +
+    `• Gold\n• RoseGold\n• Silver\n\n` +
+    `Respond with exactly one of those words (or "Unknown" if unclear).\n` +
+    `\nHUE DESCRIPTION: "${hueText}"`;
+
+  const labelPayload = {
+    model: "gpt-4.1-mini",
+    messages: [
+      { role: "user", content: labelPrompt }
+    ],
+    max_tokens: 10
+  };
+
+  let finalColor = null;
+  try {
+    const r2 = await fetch(functionsBaseUrl + "/openaiProxy", {
+      method:  "POST",
+      headers: { "Content-Type": "application/json" },
+      body:    JSON.stringify(labelPayload),
+      signal:  ctrlLabel.signal
+    });
+    if (!r2.ok) throw new Error(`Label pass failed (${r2.status})`);
+    const d2 = await r2.json();
+
+    finalColor = d2.choices?.[0]?.message?.content?.trim() || "";
+    finalColor = finalColor.replace(/[^A-Za-z]/g, "");      // keep word only
+    const valid = ["Gold","RoseGold","Silver"];
+    if (!valid.includes(finalColor)) finalColor = "Unknown";
+  } catch (err) {
+    console.error("Second‑pass (label) error:", err);
+    finalColor = "Unknown";
+  }
+
+  /* 3) RETURN consolidated result (same signature as before) */
+  return {
+    topRightNumber : topNumber,
+    color          : finalColor,
+    charmPresent   : charmFlag            // already lower‑cased
+  };
 }
 
 // --------------- Master Analysis Function ---------------
