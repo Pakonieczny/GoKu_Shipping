@@ -784,10 +784,10 @@ function enableMatchPrintFlow() {
 
       /* ------- classification rules ------- */
       /* RoseGold: orange hue AND noticeably more red than green */
-      if (hue >= 3 && hue < 15 && rgRatio > 1.15)    return "RG";
+      if (hue >= 15 && hue < 25 && rgRatio > 1.20)    return "RG";
 
       /* Yellow Gold : yellow hue, red ≈ green */
-      if (hue >= 15 && hue <= 65)                     return "YG";
+      if (hue >= 25 && hue <= 65)                     return "YG";
 
       /* default Silver / other */
       return "SS";
