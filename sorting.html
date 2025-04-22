@@ -1306,46 +1306,66 @@ function loadImage(dataUrl) {
   });
 }
 
-// --------------- Single‑Photo Analysis ---------------
-async function openAIAnalyzePhoto(base64Image) {
-  // NEW: create an AbortController for this fetch
-  const controller = new AbortController();
-  pendingFetchControllers.push(controller);
+  // --------------- Single‑Photo Analysis ---------------
+  async function openAIAnalyzePhoto(base64Image) {
+    /* NEW: AbortController remains the same */
+    const controller = new AbortController();
+    pendingFetchControllers.push(controller);
 
-  /* ───────────────────────── payload ───────────────────────── */
-  const payload = {
-    model: "gpt-4.1-mini",
-    messages: [
-      {
-        role: "user",
-        content: [
-          {
-            type: "text",
-            text:
-              // ── LEVEL‑1 REFERENCE SWATCH + forced labels ──
-              "Return JSON EXACTLY like:\n" +
-              '  {"topRightNumber":"<number or blank>", "color":"<Gold|Silver|RoseGold|Unknown>", "charmPresent":"Yes|No"}\n\n' +
-              "SYSTEM: You are an expert jeweler. Classify the charm metal colour precisely." +
-              "ASSISTANT CONTEXT (reference swatch for metal colour):" +
-              "Gold (YG)      █████  RGB≈255,220,130\n" +
-              "RoseGold (RG)  █████  RGB≈220,143,120\n" +
-              "Silver (SS)    █████  RGB≈200,200,210\n\n" +
-              "• topRightNumber = number in the TOP‑RIGHT corner (leave blank if none).\n" +
-              "• colour          = choose ONLY one of Gold, RoseGold, Silver, Unknown.\n" +
-              "• charmPresent   = \"Yes\" if a jewellery charm / pendant is clearly visible, otherwise \"No\".\n" +
-              "Respond with JSON only — no additional text."
-          },
-          {
-            type: "image_url",
-            image_url: { url: base64Image, detail: "high" }
-          }
-        ]
-      }
-    ],
-    max_tokens: 3000
-  };
+    /* -------- PASS A  —  describe hue -------- */
+    const descPayload = {
+      model: "gpt-4.1-mini",
+      messages: [
+        {
+          role: "user",
+          content: [
+            { type: "text",
+              text: "Describe the dominant metal hue in ≤10 words." },
+            { type: "image_url",
+              image_url: { url: base64Image, detail: "high" } }
+          ]
+        }
+      ],
+      max_tokens: 1000
+    };
 
-  console.log("Sending payload to OpenAI:", payload);
+    const descResp = await fetch(functionsBaseUrl + "/openaiProxy", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(descPayload),
+      signal: controller.signal
+    }).then(r => r.json());
+
+    const description = descResp.choices?.[0]?.message?.content?.trim() || "";
+
+    /* -------- PASS B  —  forced label -------- */
+    const labelPayload = {
+      model: "gpt-4.1-mini",
+      messages: [
+        { role: "system",
+          content:
+            "You are a jeweler. Based ONLY on the description provided, " +
+            'return JSON exactly like: {"topRightNumber":"<number or blank>", "color":"<Gold|RoseGold|Silver|Unknown>", "charmPresent":"Yes|No"} ' +
+            "Respond with JSON only." },
+        { role: "user",
+          content: `Description: "${description}"` }
+      ],
+      max_tokens: 1000
+    };
+
+    const labelResp = await fetch(functionsBaseUrl + "/openaiProxy", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(labelPayload),
+      signal: controller.signal
+    }).then(r => r.json());
+
+    /* remove controller from pending list */
+    pendingFetchControllers = pendingFetchControllers.filter(c => c !== controller);
+
+    /* return parsed JSON object */
+    return JSON.parse(labelResp.choices?.[0]?.message?.content || "{}");
+  }
   /* ─────────────────────── API call ‑ unchanged ─────────────────────── */
   try {
     const response = await fetch(functionsBaseUrl + "/openaiProxy", {
