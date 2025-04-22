@@ -3014,6 +3014,34 @@ container.appendChild(matchedWrapper);       // ← keep this line
     });
 
     /* ---------------- Unmatched Section ---------------- */
+    // NEW wrapper to align with "Matched" row
+    const unmatchedWrapper = document.createElement("div");
+    unmatchedWrapper.style.display       = "flex";
+    unmatchedWrapper.style.flexDirection = "column";
+    unmatchedWrapper.style.marginLeft    = "75px";   // same offset
+
+    // Header
+    const unTitle = document.createElement("div");
+    unTitle.textContent      = "Unmatched User Photos:";
+    unTitle.style.fontWeight = "bold";
+    unTitle.style.fontSize   = "0.7em";
+    unTitle.style.margin     = "20px 0 7px 0";       // top gap
+    unmatchedWrapper.appendChild(unTitle);
+
+    // Make unmatchedSection flex so thumbs wrap nicely
+    unmatchedSection.style.display  = "flex";
+    unmatchedSection.style.flexWrap = "wrap";
+    unmatchedSection.style.gap      = "10px";
+
+    // Append section to wrapper *before* we start filling it
+    unmatchedWrapper.appendChild(unmatchedSection);
+    // Finally add the wrapper to the modal container
+    container.appendChild(unmatchedWrapper);
+
+    // (keep the next line – we’re about to refill unmatchedSection)
+    unmatchedSection.innerHTML = "";
+
+    /* ---------------- Unmatched Section ---------------- */
     unmatchedSection.innerHTML = "";
 
     if (unmatchedImages.length === 0) {
