@@ -602,7 +602,7 @@ function evaluateBorder(cellIdx) {
   /* B) count ONLY real images, ignore placeholders */
   const realCount = (cellMatches[cellIdx] || [])
     .filter(m => m && m.userImage).length;
-  const needed = earringCells[cellIdx] ? 2 : 1;   // earrings need 2
+  const needed    = expectedSlots(window.cachedOrderItems[cellIdx]);
 
   pb.style.border = realCount >= needed
     ? "1px solid #000"          // complete
@@ -818,7 +818,7 @@ function removeHighlightForCell(cellIndex) {
       const realCount = cellMatches[i]
         ? cellMatches[i].filter(m => m && m.userImage).length
         : 0;
-      const needed = earringCells[i] ? 2 : 1;
+      const needed = expectedSlots(window.cachedOrderItems[i]);
       if (realCount < needed) found = true;
     }
 
@@ -1199,7 +1199,7 @@ async function analyzeAndStoreSubImages(imgObjs) {
       data    : imgObj.data,
       analyzed: true
     });
-    
+
       savedCount++;
     } else {
       /* Charmless image → increment streak */
@@ -1549,6 +1549,8 @@ async function fillPreviewBoxes(items) {
   }
 
   items.forEach((item, index) => {
+  item.qty = Number(item.quantity) || 1;     // ← NEW memo of purchased Qty
+
     /* --- keyword arrays kept for your existing UI purposes --- */
     item.keywords = [];
     if (item.title) {
@@ -2485,24 +2487,15 @@ function openMatchPreviewModal(cellIndex) {
   }
 
   const etsyDerived = croppedImagesArray[cellIndex];
+  const needSlots = expectedSlots(window.cachedOrderItems[cellIndex]);   // NEW
 
-  /* ---------- build matchedImages with earring logic ---------- */
+  /* ---------- build matchedImages sized to needSlots ---------- */
   let matchedImages = cellMatches[cellIndex]
-    ? [...cellMatches[cellIndex]]        // copy already‑matched photos
+    ? [...cellMatches[cellIndex]]
     : [];
-
-  if (earringCells[cellIndex]) {
-    /* EARRING row → ensure *exactly two* slots */
-    matchedImages = matchedImages.slice(0, 2);        // keep at most 2
-    while (matchedImages.length < 2) {                // pad if fewer than 2
-      matchedImages.push({ userName:"", userImage:null, score:0 });
-    }
-  } else {
-    /* REGULAR row → keep first match, guarantee one slot */
-    if (matchedImages.length > 1) matchedImages = [matchedImages[0]];
-    if (matchedImages.length === 0) {
-      matchedImages.push({ userName:"", userImage:null, score:0 });
-    }
+  matchedImages = matchedImages.slice(0, needSlots);
+  while (matchedImages.length < needSlots) {
+    matchedImages.push({ userName:"", userImage:null, score:0 });
   }
 
   /* ---------- build unmatchedImages (exclude every matched name) ---------- */
@@ -2582,7 +2575,7 @@ function openMatchPreviewModal(cellIndex) {
   matchedWrapper.appendChild(matchedTitle);
 
   /* ---------- build a fixed set of slots ---------- */
-  const maxMatchesPerCell = earringCells[cellIndex] ? 2 : 1;
+  const maxSlots = needSlots;
   const matchedSection = document.createElement("div");
   matchedSection.style.display   = "flex";
   matchedSection.style.flexWrap  = "wrap";
@@ -2661,7 +2654,7 @@ function openMatchPreviewModal(cellIndex) {
   matchedImages.forEach((m, k) => addMatchedBox(k, m.userImage, m.userName));
 
   /* ensure all slots exist */
-  const maxSlots = earringCells[cellIndex] ? 2 : 1;       // 2 for earrings, 1 for others
+  const maxSlots = needSlots;
   for (let s = matchedImages.length; s < maxSlots; s++) {
     addMatchedBox(s, null, "");
   }
@@ -2812,7 +2805,7 @@ container.appendChild(matchedWrapper);       // ← keep this line
         .join(", ");
 
       const realCount = matchedImages.filter(m => m && m.userImage).length;
-      const needed    = earringCells[cellIndex] ? 2 : 1;
+      const needed    = expectedSlots(window.cachedOrderItems[cellIndex]);
 
       if (realCount < needed) {                 // still incomplete
         if (!earringCells[cellIndex]) {         // << non‑earring rows: show orangered text
@@ -3068,6 +3061,15 @@ container.appendChild(matchedWrapper);       // ← keep this line
  function stripExtension(fileName) {
    return fileName.replace(/\.\w+$/, "");
  }
+
+ /* =========================================================
+   expectedSlots(item)
+   – Returns Qty × (2 if earring, else 1)
+   =======================================================*/
+function expectedSlots(item = {}) {
+  const qty = Number(item.qty || item.quantity || 1) || 1;   // safety default 1
+  return qty * (item.isEarring ? 2 : 1);
+}
 
  // Finally, ensure immediate drag-and-drop by calling refreshSectionsLocal
  refreshSectionsLocal();
