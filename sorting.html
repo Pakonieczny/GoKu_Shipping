@@ -788,12 +788,12 @@ function enableMatchPrintFlow() {
 
       /* ------- decision rules ------- */
       /* Rose Gold: orange hue, red‑heavy, reasonably saturated */
-      if (hue >= 10 && hue <= 30 && rgRatio > 1.30 && sat > 0.30) {
+      if (hue >= 5 && hue <= 10 && rgRatio > 1.25 && sat > 0.25) {
         return "RoseGold";
       }
 
       /* Yellow Gold: yellow hue, red≈green */
-      if (hue >= 30 && hue <= 70 && rgRatio <= 1.30) {
+      if (hue >= 10 && hue <= 70 && rgRatio <= 1.30) {
         return "Gold";
       }
 
