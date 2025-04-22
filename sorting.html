@@ -1253,15 +1253,20 @@ async function analyzeAndStoreSubImages(imgObjs) {
       /* Reset streak */
       noCharmStreak = 0;
 
-      /* Build the AI‑assigned filename */
-      const clr = (result.color || "Unknown").toLowerCase();   // AI‑reported colour
-      const num = result.topRightNumber || "XX";               // AI‑reported number
+      /* ---------- colour / number naming ---------- */
+      const [avgR, avgG, avgB] = await getAverageRGB(imgObj.data);   // ← NEW (await!)
+      let finalColor = classifyMetalHue(avgR, avgG, avgB);           // hue first
 
-      let finalColor = "UnknownColor";
-      if      (clr.includes("yellow"))                               finalColor = "Gold";
-      else if (clr.includes("rose")   || clr.includes("pink"))       finalColor = "RoseGold";
-      else if (clr.includes("grey")   || clr.includes("silver"))     finalColor = "Silver";
-      else if (clr.includes("gold"))                                 finalColor = "Gold";
+      /* fallback to AI text only if hue test yields Silver / Unknown */
+      if (finalColor === "Silver" || finalColor === "UnknownColor") {
+        const clr = (result.color || "Unknown").toLowerCase();
+        if      (clr.includes("yellow"))                               finalColor = "Gold";
+        else if (clr.includes("rose") || clr.includes("pink"))         finalColor = "RoseGold";
+        else if (clr.includes("grey") || clr.includes("silver"))       finalColor = "Silver";
+        else if (clr.includes("gold"))                                 finalColor = "Gold";
+      }
+
+      const num = result.topRightNumber || "XX";
 
       userImagesArray.push({
         name: `${finalColor}_${num}.jpg`,
