@@ -1308,7 +1308,7 @@ function loadImage(dataUrl) {
 
   // --------------- Single‑Photo Analysis ---------------
   async function openAIAnalyzePhoto(base64Image) {
-
+    
     /* NEW: AbortController remains the same */
     const controller = new AbortController();
     pendingFetchControllers.push(controller);
@@ -1387,35 +1387,30 @@ function loadImage(dataUrl) {
     const data = await response.json();
     console.log("OpenAI API response data:", data);
 
-    let rawText = data.choices?.[0]?.message?.content?.trim();
-    if (!rawText) {
-      console.error("API response does not contain a valid 'choices' array:", data);
-      return { topRightNumber: null, color: null, charmPresent: "no" };
-    }
-
+    let rawText = data.choices?.[0]?.message?.content?.trim() || "";
     console.log("Raw API text response:", rawText);
 
-    // Remove any ```json blocks, trim whitespace
+    // Strip ```json fences if present, then trim
     rawText = rawText.replace(/^```(\w+)?/, "").replace(/```$/, "").trim();
 
-    let parsed;
+    let parsed = {};
     try {
       parsed = JSON.parse(rawText);
     } catch (e) {
       console.error("Error parsing JSON from API response:", rawText);
-      parsed = {};
     }
 
     /* ─── return now includes charmPresent (lower‑cased) ─── */
     return {
       topRightNumber : parsed.topRightNumber || null,
       color          : parsed.color          || null,
-      charmPresent   : (parsed.charmPresent  || "No").toLowerCase()   // "yes"|"no"
+      charmPresent   : (parsed.charmPresent || "No").toLowerCase() // "yes" | "no"
     };
+
   } catch (err) {
     console.error("Error in openAIAnalyzePhoto API call:", err);
     return { topRightNumber: null, color: null, charmPresent: "no" };
-  }
+  }   // ← single closing brace; no extra brace after this
 
 // --------------- Master Analysis Function ---------------
 async function analyzeUserImagesViaOpenAI() {
