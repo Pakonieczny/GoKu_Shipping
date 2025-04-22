@@ -1306,115 +1306,95 @@ function loadImage(dataUrl) {
   });
 }
 
-  // --------------- Single‑Photo Analysis ---------------
+// --------------- Single‑Photo Analysis ---------------
 async function openAIAnalyzePhoto(base64Image) {
-
-  /* NEW: AbortController so in‑flight calls can be cancelled */
+  // NEW: create an AbortController for this fetch
   const controller = new AbortController();
   pendingFetchControllers.push(controller);
 
-  /* --------------------------------------------------
-   * PASS A  – get a short metal‑hue description
-   * -------------------------------------------------- */
-  const descPayload = {
+  /* ───────────────────────── payload ───────────────────────── */
+  const payload = {
     model: "gpt-4.1-mini",
     messages: [
       {
         role: "user",
         content: [
-          { type: "text",
-            text: "Describe the dominant metal hue in ≤10 words." },
-          { type: "image_url",
-            image_url: { url: base64Image, detail: "high" } }
+          {
+            type: "text",
+            text:
+              // ── LEVEL‑1 REFERENCE SWATCH + forced labels ──
+              "Return JSON EXACTLY like:\n" +
+              '  {"topRightNumber":"<number or blank>", "color":"<Gold|Silver|RoseGold|Unknown>", "charmPresent":"Yes|No"}\n\n' +
+              "SYSTEM: You are an expert jeweler. Classify the charm metal colour precisely." +
+              "ASSISTANT CONTEXT (reference swatch for metal colour):" +
+              "Gold (YG)      █████  RGB≈255,220,130\n" +
+              "RoseGold (RG)  █████  RGB≈220,143,120\n" +
+              "Silver (SS)    █████  RGB≈200,200,210\n\n" +
+              "• topRightNumber = number in the TOP‑RIGHT corner (leave blank if none).\n" +
+              "• colour          = choose ONLY one of Gold, RoseGold, Silver, Unknown.\n" +
+              "• charmPresent   = \"Yes\" if a jewellery charm / pendant is clearly visible, otherwise \"No\".\n" +
+              "Respond with JSON only — no additional text."
+          },
+          {
+            type: "image_url",
+            image_url: { url: base64Image, detail: "high" }
+          }
         ]
       }
     ],
-    max_tokens: 1000
+    max_tokens: 3000
   };
 
-  let description = "";
+  console.log("Sending payload to OpenAI:", payload);
+  
+  /* ─────────────────────── API call ‑ unchanged ─────────────────────── */
   try {
-    const descResp = await fetch(functionsBaseUrl + "/openaiProxy", {
-      method  : "POST",
-      headers : { "Content-Type": "application/json" },
-      body    : JSON.stringify(descPayload),
-      signal  : controller.signal
+    const response = await fetch(functionsBaseUrl + "/openaiProxy", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+      signal: controller.signal
     });
-    console.log("PASS A status:", descResp.status);
+    console.log("Received API response status:", response.status);
 
-    if (!descResp.ok) {
-      const errTxt = await descResp.text();
-      console.error("PASS A error:", errTxt);
-      throw new Error(`PASS A failed (${descResp.status})`);
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error("Error response text from API:", errorText);
+      throw new Error(`Request failed with status ${response.status}`);
     }
 
-    const descData = await descResp.json();
-    description = descData.choices?.[0]?.message?.content?.trim() || "";
-  } catch (err) {
-    console.error("PASS A fetch problem:", err);
-    description = "";         // fall back to empty string
-  }
+    const data = await response.json();
+    console.log("OpenAI API response data:", data);
 
-  /* --------------------------------------------------
-   * PASS B  – structured JSON label from the description
-   * -------------------------------------------------- */
-  const labelPayload = {
-    model: "gpt-4.1-mini",
-    messages: [
-      { role: "system",
-        content:
-          'You are a jeweler. Based ONLY on the description provided, ' +
-          'return JSON exactly like: {"topRightNumber":"<number or blank>", ' +
-          '"color":"<Gold|RoseGold|Silver|Unknown>", "charmPresent":"Yes|No"}. ' +
-          "Respond with JSON only." },
-      { role: "user", content: `Description: "${description}"` }
-    ],
-    max_tokens: 1000
-  };
-
-  let parsed = {};
-  try {
-    const labelResp = await fetch(functionsBaseUrl + "/openaiProxy", {
-      method  : "POST",
-      headers : { "Content-Type": "application/json" },
-      body    : JSON.stringify(labelPayload),
-      signal  : controller.signal
-    });
-    console.log("PASS B status:", labelResp.status);
-
-    if (!labelResp.ok) {
-      const errTxt = await labelResp.text();
-      console.error("PASS B error:", errTxt);
-      throw new Error(`PASS B failed (${labelResp.status})`);
+    let rawText = data.choices?.[0]?.message?.content?.trim();
+    if (!rawText) {
+      console.error("API response does not contain a valid 'choices' array:", data);
+      return { topRightNumber: null, color: null, charmPresent: "no" };
     }
 
-    const labelData = await labelResp.json();
+    console.log("Raw API text response:", rawText);
 
-    /* -- raw assistant text → strip ``` fences, then JSON.parse -- */
-    let rawText = labelData.choices?.[0]?.message?.content?.trim() || "";
+    // Remove any ```json blocks, trim whitespace
     rawText = rawText.replace(/^```(\w+)?/, "").replace(/```$/, "").trim();
 
+    let parsed;
     try {
       parsed = JSON.parse(rawText);
-    } catch (parseErr) {
-      console.error("JSON parse error for PASS B:", rawText);
+    } catch (e) {
+      console.error("Error parsing JSON from API response:", rawText);
       parsed = {};
     }
-  } catch (err) {
-    console.error("PASS B fetch problem:", err);
-  } finally {
-    /* Remove this controller from the global list */
-    pendingFetchControllers = pendingFetchControllers.filter(c => c !== controller);
-  }
 
-  /* --------------------------------------------------
-   * Standardised return object
-   * -------------------------------------------------- */
-  return {
-    topRightNumber : parsed.topRightNumber || null,
-    color          : parsed.color          || null,
-    charmPresent   : (parsed.charmPresent || "No").toLowerCase()   // "yes" | "no"
-  };
+    /* ─── return now includes charmPresent (lower‑cased) ─── */
+    return {
+      topRightNumber : parsed.topRightNumber || null,
+      color          : parsed.color          || null,
+      charmPresent   : (parsed.charmPresent  || "No").toLowerCase()   // "yes"|"no"
+    };
+  } catch (err) {
+    console.error("Error in openAIAnalyzePhoto API call:", err);
+    return { topRightNumber: null, color: null, charmPresent: "no" };
+  }
 }
 
 // --------------- Master Analysis Function ---------------
