@@ -1306,9 +1306,9 @@ function loadImage(dataUrl) {
   });
 }
 
-// --------------- Single‑Photo Analysis (TWO‑PASS hue→label) ---------------
+// --------------- Single‑Photo Analysis (TWO‑PASS hue→label + verbose logs) ---------------
 async function openAIAnalyzePhoto(base64Image) {
-  /* 1) FIRST PASS — get hue + number + charm‑present  */
+  /* ───────────────────── PASS 1 : hue / number / charm ───────────────────── */
   const ctrlHue = new AbortController();
   pendingFetchControllers.push(ctrlHue);
 
@@ -1321,23 +1321,21 @@ async function openAIAnalyzePhoto(base64Image) {
           {
             type: "text",
             text:
-              // -------- first‑pass instructions --------
               "Return JSON EXACTLY like:\n" +
               '  {"hue":"<≤10‑word description>", "topRightNumber":"<number or blank>", "charmPresent":"Yes|No"}\n\n' +
-              "TASK 1 — Describe the dominant metal HUE of the jewellery piece in ≤10 words (e.g. warm yellow‑gold, pale silver‑grey, rosy pink‑gold).\n" +
-              "TASK 2 — Write any number you see in the TOP‑RIGHT corner (blank if none).\n" +
-              "TASK 3 — State if a jewellery charm / pendant is clearly visible (Yes|No).\n" +
-              "Respond with JSON only — no additional text."
+              "TASK 1 – Describe the dominant metal hue (≤10 words).\n" +
+              "TASK 2 – Top‑right number (blank if none).\n" +
+              "TASK 3 – Is a jewellery charm clearly visible? (Yes|No).\n" +
+              "Respond with JSON only."
           },
-          {
-            type: "image_url",
-            image_url: { url: base64Image, detail: "high" }
-          }
+          { type: "image_url", image_url: { url: base64Image, detail: "high" } }
         ]
       }
     ],
     max_tokens: 200
   };
+
+  console.log("%c[openAIAnalyzePhoto] PASS 1 payload:", "color:#03A9F4", huePayload);
 
   let hueText   = "";
   let topNumber = null;
@@ -1345,27 +1343,32 @@ async function openAIAnalyzePhoto(base64Image) {
 
   try {
     const r1 = await fetch(functionsBaseUrl + "/openaiProxy", {
-      method:  "POST",
+      method : "POST",
       headers: { "Content-Type": "application/json" },
-      body:    JSON.stringify(huePayload),
-      signal:  ctrlHue.signal
+      body   : JSON.stringify(huePayload),
+      signal : ctrlHue.signal
     });
-    if (!r1.ok) throw new Error(`Hue pass failed (${r1.status})`);
     const d1 = await r1.json();
-
     let raw1 = d1.choices?.[0]?.message?.content?.trim() || "";
-    raw1 = raw1.replace(/^```(\w+)?/, "").replace(/```$/, "").trim();
+    console.log("%c[openAIAnalyzePhoto] PASS 1 raw response:", "color:#03A9F4", raw1);
 
+    raw1 = raw1.replace(/^```(\w+)?/, "").replace(/```$/, "").trim();
     const obj1 = JSON.parse(raw1);
+
     hueText   = obj1.hue            || "";
     topNumber = obj1.topRightNumber || null;
-    charmFlag = (obj1.charmPresent  || "No").toLowerCase();   // "yes"|"no"
+    charmFlag = (obj1.charmPresent  || "No").toLowerCase();
+
+    console.log(
+      "%c[openAIAnalyzePhoto] PASS 1 → hue:", "color:#03A9F4;font-weight:bold",
+      `"${hueText}"  |  topRightNumber: ${topNumber}  |  charmPresent: ${charmFlag}`
+    );
   } catch (err) {
-    console.error("First‑pass (hue) error:", err);
+    console.error("[openAIAnalyzePhoto] PASS 1 error:", err);
     return { topRightNumber:null, color:null, charmPresent:"no" };
   }
 
-  /* 2) SECOND PASS — turn hue into fixed Gold / RoseGold / Silver / Unknown */
+  /* ───────────────────── PASS 2 : hue ⇒ fixed label ───────────────────── */
   const ctrlLabel = new AbortController();
   pendingFetchControllers.push(ctrlLabel);
 
@@ -1377,37 +1380,40 @@ async function openAIAnalyzePhoto(base64Image) {
 
   const labelPayload = {
     model: "gpt-4.1-mini",
-    messages: [
-      { role: "user", content: labelPrompt }
-    ],
+    messages: [{ role: "user", content: labelPrompt }],
     max_tokens: 10
   };
+
+  console.log("%c[openAIAnalyzePhoto] PASS 2 payload:", "color:#8E24AA", labelPayload);
 
   let finalColor = null;
   try {
     const r2 = await fetch(functionsBaseUrl + "/openaiProxy", {
-      method:  "POST",
+      method : "POST",
       headers: { "Content-Type": "application/json" },
-      body:    JSON.stringify(labelPayload),
-      signal:  ctrlLabel.signal
+      body   : JSON.stringify(labelPayload),
+      signal : ctrlLabel.signal
     });
-    if (!r2.ok) throw new Error(`Label pass failed (${r2.status})`);
     const d2 = await r2.json();
+    let raw2 = d2.choices?.[0]?.message?.content?.trim() || "";
+    console.log("%c[openAIAnalyzePhoto] PASS 2 raw response:", "color:#8E24AA", raw2);
 
-    finalColor = d2.choices?.[0]?.message?.content?.trim() || "";
-    finalColor = finalColor.replace(/[^A-Za-z]/g, "");      // keep word only
-    const valid = ["Gold","RoseGold","Silver"];
-    if (!valid.includes(finalColor)) finalColor = "Unknown";
+    raw2       = raw2.replace(/[^A-Za-z]/g, "");
+    finalColor = ["Gold", "RoseGold", "Silver"].includes(raw2) ? raw2 : "Unknown";
+    console.log(
+      "%c[openAIAnalyzePhoto] PASS 2 → final metal label:", "color:#8E24AA;font-weight:bold",
+      finalColor
+    );
   } catch (err) {
-    console.error("Second‑pass (label) error:", err);
+    console.error("[openAIAnalyzePhoto] PASS 2 error:", err);
     finalColor = "Unknown";
   }
 
-  /* 3) RETURN consolidated result (same signature as before) */
+  /* ───────────────────── RETURN consolidated result ───────────────────── */
   return {
     topRightNumber : topNumber,
     color          : finalColor,
-    charmPresent   : charmFlag            // already lower‑cased
+    charmPresent   : charmFlag
   };
 }
 
