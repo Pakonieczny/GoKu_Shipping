@@ -1314,7 +1314,7 @@ async function openAIAnalyzePhoto(base64Image) {
 
   /* ───────────────────────── payload ───────────────────────── */
   const payload = {
-    model: "gpt-4.1-mini",                        
+    model: "gpt-4.1-mini",
     messages: [
       {
         role: "user",
@@ -1322,15 +1322,23 @@ async function openAIAnalyzePhoto(base64Image) {
           {
             type: "text",
             text:
-              // —— prompt now asks for CHARM PRESENCE too ——
+              // ── LEVEL‑1 REFERENCE SWATCH + forced labels ──
               "Return JSON EXACTLY like:\n" +
-              '  {"topRightNumber":"<number or blank>", "color":"<Gold|Silver|RoseGold|Unknown>", "charmPresent":"Yes|No"}\n' +
-              "• topRightNumber= number in the TOP‑RIGHT corner (blank if none).\n" +
-              "• color = dominant charm colour (gold/yellow, silver/grey, rose‑gold/pink, or Unknown).\n" +
-              "• charmPresent = \"Yes\" if a jewellery charm / pendant is clearly visible, otherwise \"No\"."
+              '  {"topRightNumber":"<number or blank>", "color":"<Gold|Silver|RoseGold|Unknown>", "charmPresent":"Yes|No"}\n\n' +
+              "SYSTEM: You are an expert jeweler. Classify the charm metal colour precisely." +
+              "ASSISTANT CONTEXT (reference swatch for metal colour):" +
+              "Gold (YG)      █████  RGB≈255,220,130\n" +
+              "RoseGold (RG)  █████  RGB≈220,143,120\n" +
+              "Silver (SS)    █████  RGB≈200,200,210\n\n" +
+              "• topRightNumber = number in the TOP‑RIGHT corner (leave blank if none).\n" +
+              "• colour          = choose ONLY one of Gold, RoseGold, Silver, Unknown.\n" +
+              "• charmPresent   = \"Yes\" if a jewellery charm / pendant is clearly visible, otherwise \"No\".\n" +
+              "Respond with JSON only — no additional text."
           },
-          { type: "image_url",
-            image_url: { url: base64Image, detail: "high" } }
+          {
+            type: "image_url",
+            image_url: { url: base64Image, detail: "high" }
+          }
         ]
       }
     ],
