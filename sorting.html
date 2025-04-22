@@ -3020,14 +3020,6 @@ container.appendChild(matchedWrapper);       // ← keep this line
     unmatchedWrapper.style.flexDirection = "column";
     unmatchedWrapper.style.marginLeft    = "75px";   // same offset
 
-    // Header
-    const unTitle = document.createElement("div");
-    unTitle.textContent      = "Unmatched User Photos:";
-    unTitle.style.fontWeight = "bold";
-    unTitle.style.fontSize   = "0.7em";
-    unTitle.style.margin     = "20px 0 7px 0";       // top gap
-    unmatchedWrapper.appendChild(unTitle);
-
     // Make unmatchedSection flex so thumbs wrap nicely
     unmatchedSection.style.display  = "flex";
     unmatchedSection.style.flexWrap = "wrap";
