@@ -801,6 +801,28 @@ function enableMatchPrintFlow() {
       return "Silver";
     }
 
+    /* ============================================================
+     *  getAverageRGB(dataURL) → [avgR, avgG, avgB]
+     *    – draws an 80×80 thumb to keep it fast
+     * ========================================================== */
+    async function getAverageRGB(dataURL) {
+      const img    = await loadImage(dataURL);       // loadImage already exists
+      const canvas = document.createElement("canvas");
+      const ctx    = canvas.getContext("2d");
+      const W = 80, H = 80;
+      canvas.width = W;  canvas.height = H;
+
+      ctx.drawImage(img, 0, 0, W, H);
+      const { data } = ctx.getImageData(0, 0, W, H);
+
+      let r = 0, g = 0, b = 0;
+      for (let i = 0; i < data.length; i += 4) {
+        r += data[i];   g += data[i + 1];   b += data[i + 2];
+      }
+      const px = data.length / 4;
+      return [r / px, g / px, b / px];
+    }
+
   function removeHighlightForCell(cellIndex) {
     const previewBox = document.getElementById("previewCell" + cellIndex);
     if (previewBox) {
@@ -1475,19 +1497,23 @@ async function analyzeUserImagesViaOpenAI() {
       const result = await openAIAnalyzePhoto(imgObj.data);
 
       /* ---------- colour / number naming ---------- */
-      const colorTxt = (result.color || "Unknown").toLowerCase();
-      const numTxt   = result.topRightNumber || "XX";
+      const [avgR, avgG, avgB] = await getAverageRGB(imgObj.data);   // NEW
+      let finalColor = classifyMetalHue(avgR, avgG, avgB);           // hue first
 
-      let finalColor = "UnknownColor";
-      if      (colorTxt.includes("yellow"))                          finalColor = "Gold";
-      else if (colorTxt.includes("rose") || colorTxt.includes("pink")) finalColor = "RoseGold";
-      else if (colorTxt.includes("grey") || colorTxt.includes("silver")) finalColor = "Silver";
-      else if (colorTxt.includes("gold"))                           finalColor = "Gold";
+      if (finalColor === "Silver" || finalColor === "UnknownColor") {
+        const colorTxt = (result.color || "Unknown").toLowerCase();
+        if      (colorTxt.includes("yellow"))                         finalColor = "Gold";
+        else if (colorTxt.includes("rose") || colorTxt.includes("pink")) finalColor = "RoseGold";
+        else if (colorTxt.includes("grey") || colorTxt.includes("silver")) finalColor = "Silver";
+        else if (colorTxt.includes("gold"))                           finalColor = "Gold";
+      }
 
-      imgObj.name     = `${finalColor}_${numTxt}.jpg`;
-      imgObj.analyzed = true;
-
-      const baseName = stripExtension(imgObj.name);
+      const num  = result.topRightNumber || "XX";
+      userImagesArray.push({
+        name    : `${finalColor}_${num}.jpg`,
+        data    : imgObj.data,
+        analyzed: true
+      });
 
       /* ---------- charm‑present handling ---------- */
       if (result.charmPresent === "no") {
