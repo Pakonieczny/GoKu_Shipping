@@ -760,17 +760,18 @@ function enableMatchPrintFlow() {
   }
 
     /* ============================================================
-     * classifyMetalHue(r,g,b)  → "YG" | "RG" | "SS"
-     *  – uses both HSV hue  and  red‑to‑green ratio
+     *  classifyMetalHue(r,g,b)  → "YG" | "RG" | "SS"
+     *    – uses H (0‑360°), S (0‑1), and R/G ratio
      * ========================================================== */
     function classifyMetalHue(r, g, b) {
-      /* --- RGB → HSV (0‑360°) --- */
+      /* --- RGB → HSV --- */
       const rf = r / 255, gf = g / 255, bf = b / 255;
       const max = Math.max(rf, gf, bf);
       const min = Math.min(rf, gf, bf);
       const delta = max - min;
-      let hue = 0;
 
+      /* Hue */
+      let hue = 0;
       if (delta !== 0) {
         if (max === rf)       hue = ((gf - bf) / delta) % 6;
         else if (max === gf)  hue = (bf - rf) / delta + 2;
@@ -779,18 +780,25 @@ function enableMatchPrintFlow() {
         if (hue < 0) hue += 360;
       }
 
-      /* --- extra red‑to‑green ratio --- */
-      const rgRatio = (r + 1) / (g + 1);        // +1 avoids divide‑by‑0
+      /* Saturation (avoid divide‑by‑0) */
+      const sat = max === 0 ? 0 : delta / max;
 
-      /* ------- classification rules ------- */
-      /* RoseGold: orange hue AND noticeably more red than green */
-      if (hue >= 15 && hue < 25 && rgRatio > 1.4)    return "RG";
+      /* Extra red‑green ratio */
+      const rgRatio = (r + 1) / (g + 1);   // +1 avoids /0
 
-      /* Yellow Gold : yellow hue, red ≈ green */
-      if (hue >= 25 && hue <= 65)                     return "YG";
+      /* ------- decision rules ------- */
+      /* Rose Gold: orange hue, red‑heavy, reasonably saturated */
+      if (hue >= 8 && hue <= 36 && rgRatio > 1.20 && sat > 0.25) {
+        return "RoseGold";
+      }
+
+      /* Yellow Gold: yellow hue, red≈green */
+      if (hue >= 36 && hue <= 70 && rgRatio <= 1.20) {
+        return "Gold";
+      }
 
       /* default Silver / other */
-      return "SS";
+      return "Silver";
     }
 
   function removeHighlightForCell(cellIndex) {
