@@ -779,8 +779,8 @@ function enableMatchPrintFlow() {
     if (hue < 0) hue += 360;
 
     /* --- empirical hue windows --- */
-    if (hue >= 10 && hue <= 55)   return "YG";  // Yellow‑Gold
-    if (hue >= 1 && hue < 10)    return "RG";  // Rose‑Gold / Pink
+    if (hue >= 3 && hue <= 55)   return "YG";  // Yellow‑Gold
+    if (hue >= 1 && hue < 3)    return "RG";  // Rose‑Gold / Pink
     return "SS";                                 // default Silver/Other
   }
 
