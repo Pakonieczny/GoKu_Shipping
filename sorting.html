@@ -1539,11 +1539,11 @@ async function fillPreviewBoxes(items) {
     "hoop","hoops","hoop earrings"
   ];
 
-  /* helper: true only when a title contains one phrase as a whole word */
-  function isEarringTitle(title = "") {
-    const lower = title.toLowerCase();
-    return EARRING_PHRASES.some((phrase) => {
-      const pattern = "\\b" + phrase.replace(/\s+/g, "\\s+") + "\\b"; // word‑boundaries
+  /* ---------- unified earring detector (title + chosen variations) ---------- */
+  function isEarringString(str = "") {
+    const lower = str.toLowerCase();
+    return EARRING_PHRASES.some(ph => {
+      const pattern = "\\b" + ph.replace(/\s+/g, "\\s+") + "\\b";
       return new RegExp(pattern, "i").test(lower);
     });
   }
@@ -1555,23 +1555,31 @@ async function fillPreviewBoxes(items) {
       const lowerTitle = item.title.toLowerCase();
       groupA.forEach(p => { if (lowerTitle.includes(p)) item.keywords.push(p); });
       groupB.forEach(p => { if (lowerTitle.includes(p)) item.keywords.push(p); });
+    }
 
-      /* ---------- NEW: flag this row if it’s an earring ---------- */
-    if (isEarringTitle(item.title)) {
-      item.isEarring      = true;
-      earringCells[index] = true;
-      earringState[index] = { firstImg: null }; // keep your existing setup
-    } else {
-      item.isEarring = false;
+    /* ----- EARRING LOGIC: title OR any chosen variation value ----- */
+    let earringFound = false;
+
+    // 1) title
+    if (item.title && isEarringString(item.title)) {
+      earringFound = true;
+    }
+
+    // 2) buyer‑chosen variation values
+    if (!earringFound && Array.isArray(item.variations)) {
+      for (const v of item.variations) {
+        if (v && v.formatted_value && isEarringString(v.formatted_value)) {
+          earringFound = true;
+          break;
+        }
       }
     }
 
-    /* ───── identify earrings & register ───── */
-    const lowerTitleFull = (item.title || "").toLowerCase();
-    item.isEarring = EARRING_PHRASES.some(p => lowerTitleFull.includes(p));
-    if (item.isEarring) {
-      earringCells[index]  = true;
-      earringState[index]  = { firstImg: null };
+    // 3) store & register
+    item.isEarring = earringFound;
+    if (earringFound) {
+      earringCells[index] = true;
+      earringState[index] = { firstImg: null };
     }
 
     /* --- position calculations (unchanged) --- */
