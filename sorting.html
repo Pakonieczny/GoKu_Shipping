@@ -759,90 +759,27 @@ function enableMatchPrintFlow() {
     if (overlayBtn) overlayBtn.remove();
   }
 
-    /* ============================================================
-     *  classifyMetalHue(r,g,b)  → "YG" | "RG" | "SS"
-     *    – uses H (0‑360°), S (0‑1), and R/G ratio
-     * ========================================================== */
-    function classifyMetalHue(r, g, b) {
-      /* --- RGB → HSV --- */
-      const rf = r / 255, gf = g / 255, bf = b / 255;
-      const max = Math.max(rf, gf, bf);
-      const min = Math.min(rf, gf, bf);
-      const delta = max - min;
-
-      /* Hue */
-      let hue = 0;
-      if (delta !== 0) {
-        if (max === rf)       hue = ((gf - bf) / delta) % 6;
-        else if (max === gf)  hue = (bf - rf) / delta + 2;
-        else                  hue = (rf - gf) / delta + 4;
-        hue *= 60;
-        if (hue < 0) hue += 360;
-      }
-
-      /* Saturation (avoid divide‑by‑0) */
-      const sat = max === 0 ? 0 : delta / max;
-
-      /* Extra red‑green ratio */
-      const rgRatio = (r + 1) / (g + 1);   // +1 avoids /0
-
-      /* ------- decision rules ------- */
-      /* Rose Gold: orange hue, red‑heavy, reasonably saturated */
-      if (hue >= 5 && hue <= 10 && rgRatio > 1.25 && sat > 0.25) {
-        return "RoseGold";
-      }
-
-      /* Yellow Gold: yellow hue, red≈green */
-      if (hue >= 10 && hue <= 70 && rgRatio <= 1.30) {
-        return "Gold";
-      }
-
-      /* default Silver / other */
-      return "Silver";
+// ───── PUT THE NEW HELPER FUNCTION HERE ─────
+function removeHighlightForCell(cellIndex) {
+  const previewBox = document.getElementById("previewCell" + cellIndex);
+  if (previewBox) {
+    // Reset any blue or orangered border back to 1 px black
+    if ((previewBox.style.border || "").includes("blue") ||
+        (previewBox.style.border || "").includes("orangered")) {
+      previewBox.style.border = "1px solid #000";
     }
 
-    /* ============================================================
-     *  getAverageRGB(dataURL) → [avgR, avgG, avgB]
-     *    – draws an 80×80 thumb to keep it fast
-     * ========================================================== */
-    async function getAverageRGB(dataURL) {
-      const img    = await loadImage(dataURL);       // loadImage already exists
-      const canvas = document.createElement("canvas");
-      const ctx    = canvas.getContext("2d");
-      const W = 80, H = 80;
-      canvas.width = W;  canvas.height = H;
-
-      ctx.drawImage(img, 0, 0, W, H);
-      const { data } = ctx.getImageData(0, 0, W, H);
-
-      let r = 0, g = 0, b = 0;
-      for (let i = 0; i < data.length; i += 4) {
-        r += data[i];   g += data[i + 1];   b += data[i + 2];
-      }
-      const px = data.length / 4;
-      return [r / px, g / px, b / px];
+    // Reset match‑cell text if it was orangered
+    const matchBox = document.getElementById("matchCell" + cellIndex);
+    if (matchBox && matchBox.style.color === "orangered") {
+      matchBox.style.color = "";
+      matchBox.style.fontWeight = "";
     }
+  }
 
-  function removeHighlightForCell(cellIndex) {
-    const previewBox = document.getElementById("previewCell" + cellIndex);
-    if (previewBox) {
-      // Reset any blue or orangered border back to 1 px black
-      if ((previewBox.style.border || "").includes("blue") ||
-          (previewBox.style.border || "").includes("orangered")) {
-        previewBox.style.border = "1px solid #000";
-      }
-
-      // Reset match‑cell text if it was orangered
-      const matchBox = document.getElementById("matchCell" + cellIndex);
-      if (matchBox && matchBox.style.color === "orangered") {
-        matchBox.style.color = "";
-        matchBox.style.fontWeight = "";
-      }
-    }
-
-    // NEW: remove the overlay “Print” button (there’s only ever one)
-    const overlayBtn = document.querySelector("button.overlay-print-btn");
-    if (overlayBtn) overlayBtn.remove();
+  // NEW: remove the overlay “Print” button (there’s only ever one)
+  const overlayBtn = document.querySelector("button.overlay-print-btn");
+  if (overlayBtn) overlayBtn.remove();
 }
 
 
@@ -1253,27 +1190,20 @@ async function analyzeAndStoreSubImages(imgObjs) {
       /* Reset streak */
       noCharmStreak = 0;
 
-      /* ---------- colour / number naming ---------- */
-      const [avgR, avgG, avgB] = await getAverageRGB(imgObj.data);   // ← NEW (await!)
-      let finalColor = classifyMetalHue(avgR, avgG, avgB);           // hue first
-
-      /* fallback to AI text only if hue test yields Silver / Unknown */
-      if (finalColor === "Silver" || finalColor === "UnknownColor") {
-        const clr = (result.color || "Unknown").toLowerCase();
-        if      (clr.includes("yellow"))                               finalColor = "Gold";
-        else if (clr.includes("rose") || clr.includes("pink"))         finalColor = "RoseGold";
-        else if (clr.includes("grey") || clr.includes("silver"))       finalColor = "Silver";
-        else if (clr.includes("gold"))                                 finalColor = "Gold";
-      }
-
+      /* Build the AI‑assigned filename */
+      const clr = (result.color || "Unknown").toLowerCase();
       const num = result.topRightNumber || "XX";
+      let finalColor = "UnknownColor";
+      if (clr.includes("yellow"))                              finalColor = "Gold";
+      else if (clr.includes("pink"))                           finalColor = "RoseGold";
+      else if (clr.includes("grey") || clr.includes("silver")) finalColor = "Silver";
+      else if (clr.includes("gold"))                           finalColor = "Gold";
 
       userImagesArray.push({
         name: `${finalColor}_${num}.jpg`,
         data: imgObj.data,
         analyzed: true
       });
-
       savedCount++;
     } else {
       /* Charmless image → increment streak */
@@ -1502,23 +1432,19 @@ async function analyzeUserImagesViaOpenAI() {
       const result = await openAIAnalyzePhoto(imgObj.data);
 
       /* ---------- colour / number naming ---------- */
-      const [avgR, avgG, avgB] = await getAverageRGB(imgObj.data);   // NEW
-      let finalColor = classifyMetalHue(avgR, avgG, avgB);           // hue first
+      const colorTxt = (result.color || "Unknown").toLowerCase();
+      const numTxt   = result.topRightNumber || "XX";
+      let finalColor = "UnknownColor";
+      if (colorTxt.includes("yellow"))              finalColor = "Gold";
+      else if (colorTxt.includes("pink"))           finalColor = "RoseGold";
+      else if (colorTxt.includes("grey") ||
+               colorTxt.includes("silver"))         finalColor = "Silver";
+      else if (colorTxt.includes("gold"))           finalColor = "Gold";
 
-      if (finalColor === "Silver" || finalColor === "UnknownColor") {
-        const colorTxt = (result.color || "Unknown").toLowerCase();
-        if      (colorTxt.includes("yellow"))                         finalColor = "Gold";
-        else if (colorTxt.includes("rose") || colorTxt.includes("pink")) finalColor = "RoseGold";
-        else if (colorTxt.includes("grey") || colorTxt.includes("silver")) finalColor = "Silver";
-        else if (colorTxt.includes("gold"))                           finalColor = "Gold";
-      }
+      imgObj.name     = `${finalColor}_${numTxt}.jpg`;
+      imgObj.analyzed = true;
 
-      const num  = result.topRightNumber || "XX";
-      userImagesArray.push({
-        name    : `${finalColor}_${num}.jpg`,
-        data    : imgObj.data,
-        analyzed: true
-      });
+      const baseName = stripExtension(imgObj.name);
 
       /* ---------- charm‑present handling ---------- */
       if (result.charmPresent === "no") {
