@@ -72,12 +72,13 @@
       display: inline-block;
       margin-right: 10px;
 
-      /* highlight on drag-hover */
-      #photoDragDrop.drag-hover {
-        border-color:#2196F3;     /* blue */
       }
 
-    }
+      /* highlight on drag-hover */
+      #photoDragDrop.drag-hover {
+        border: 2px dashed #2196F3 !important;   /* blue dashed outline */
+      }
+    
     #userImage {
       width: 100px;
       height: 100px;
@@ -1179,22 +1180,23 @@ function openIframePrinterForListing(cellIndex) {
       });
     }
 
-  // --------------- Drag-and-drop logic ---------------          /* ⇢ anchor */
-  const photoDragDropElem = document.getElementById("photoDragDrop");
+    // --------------- Drag-and-drop logic ---------------    /* ⇢ anchor */
+    const photoDragDropElem = document.getElementById("photoDragDrop");
 
-  /* keep cursor-allow-drop */
-  photoDragDropElem.addEventListener("dragover", (e) => e.preventDefault());
+    /* allow dropping */
+    photoDragDropElem.addEventListener("dragover", (e) => {
+      e.preventDefault();                        // must keep
+      photoDragDropElem.classList.add("drag-hover");   // ★ add every frame
+    });
 
-  /* ── NEW: blue-border highlight while hovering with a file ── */
-  photoDragDropElem.addEventListener("dragenter", () =>
-    photoDragDropElem.classList.add("drag-hover"));
-  photoDragDropElem.addEventListener("dragleave", () =>
-    photoDragDropElem.classList.remove("drag-hover"));
-  /* ──────────────────────────────────────────────────────────── */
+    /* keep blue only while inside */
+    photoDragDropElem.addEventListener("dragleave", () =>
+      photoDragDropElem.classList.remove("drag-hover"));
 
-  photoDragDropElem.addEventListener("drop", async function (e) {
-    e.preventDefault();
-    photoDragDropElem.classList.remove("drag-hover");   /* NEW */
+    photoDragDropElem.addEventListener("drop", async function (e) {
+      e.preventDefault();
+      photoDragDropElem.classList.remove("drag-hover");   // remove after drop
+      
 
     const files = e.dataTransfer.files;
     if (!files || files.length === 0) return;
