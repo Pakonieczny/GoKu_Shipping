@@ -596,22 +596,6 @@ etsyOrderInput.addEventListener("keydown", async function (e) {
   startScannedSortingListener();
 });
 
-/* =========================================================
-   quickOpenMatchesModal()
-   – opens the Matches modal for the first valid cell
-   =======================================================*/
-function quickOpenMatchesModal() {
-  if (!window.cachedOrderItems || !window.cachedOrderItems.length) return;
-
-  // choose the first cell that isn't skipped
-  let firstIdx = 0;
-  for (let i = 0; i < window.cachedOrderItems.length; i++) {
-    if (!skipMatches[i]) { firstIdx = i; break; }
-  }
-  openMatchPreviewModal(firstIdx);
-}
-
-
 /********************************************************
  * Unified border logic – replaces old toggleSkipBorder
  ********************************************************/
@@ -1959,9 +1943,10 @@ async function loadBatchEtsyOrders(orderNumbers) {
       }
     }
 
-    // Then fill the UI with combined results
-    await fillPreviewBoxes(combinedItems);
-    quickOpenMatchesModal();      // ← open Matches modal right away
+      // Then fill the UI with combined results
+      await fillPreviewBoxes(combinedItems);
+      enableSendMatch();
+      attachMatchCellListeners();          // NEW
 
   } catch (err) {
     console.error("Error loading batch orders:", err);
