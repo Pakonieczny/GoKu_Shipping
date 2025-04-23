@@ -2683,6 +2683,93 @@ function openMatchPreviewModal(cellIndex) {
   matchedWrapper.appendChild(matchedSection);
 container.appendChild(matchedWrapper);       // ← keep this line
 
+  // -----------------------------------------------------------------------
+  // C) Unmatched Photos (shifted 75px right)
+  // -----------------------------------------------------------------------
+  const unmatchedWrapper = document.createElement("div");
+  unmatchedWrapper.id = "unmatchedWrapper";        // ← add this line
+  unmatchedWrapper.style.display = "flex";
+  unmatchedWrapper.style.flexDirection = "column";
+  unmatchedWrapper.style.marginLeft = "75px"; // shift right
+
+  const unmatchedTitle = document.createElement("div");
+  unmatchedTitle.textContent = "Unmatched User Photos:";
+  unmatchedTitle.style.fontWeight = "bold";
+  unmatchedTitle.style.fontSize = "0.7em";
+  unmatchedTitle.style.marginBottom = "7px";
+  unmatchedWrapper.appendChild(unmatchedTitle);
+
+  const unmatchedSection = document.createElement("div");
+  unmatchedSection.style.display = "flex";
+  unmatchedSection.style.flexWrap = "wrap";
+  unmatchedSection.style.gap = "5px";
+
+  /* -------------------------------------------------------------
+   * Either one placeholder, or all unmatched images with filename
+   * ----------------------------------------------------------- */
+  if (unmatchedImages.length === 0) {
+    // --- single placeholder box ---
+    const box = document.createElement("div");
+    box.style.width  = "66px";
+    box.style.height = "66px";
+    box.style.border = "1px solid #000";
+    box.style.display = "flex";
+    box.style.alignItems = "center";
+    box.style.justifyContent = "center";
+    box.style.overflow = "hidden";
+    box.dataset.type = "unmatchedEmpty";
+    box.innerHTML = "No Unmatched Photos";
+    box.style.fontWeight = "bold";
+    box.style.fontSize  = "0.7em";
+
+    makeDropTarget(box);               // allow drop into placeholder
+    unmatchedSection.appendChild(box);
+
+  } else {
+    // Otherwise show each unmatched image normally
+    unmatchedImages.forEach((uImg, idx) => {
+      /* wrapper keeps 66×66 box + filename together */
+      const wrapper = document.createElement("div");
+      wrapper.style.display = "flex";
+      wrapper.style.flexDirection = "column";
+      wrapper.style.alignItems = "center";
+      wrapper.style.width = "66px";
+      wrapper.dataset.type  = "unmatched";
+      wrapper.dataset.index = idx;
+
+      /* 66×66 image box */
+      const box = document.createElement("div");
+      box.style.width  = "66px";
+      box.style.height = "66px";
+      box.style.border = "1px solid #000";
+      box.style.display = "flex";
+      box.style.alignItems = "center";
+      box.style.justifyContent = "center";
+      box.style.overflow = "hidden";
+
+      const img = document.createElement("img");
+      img.src   = uImg.data;
+      img.alt   = uImg.name;
+      img.style.width  = "100%";
+      img.style.height = "100%";
+      img.style.objectFit = "cover";
+
+      makeDraggable(wrapper);
+      makeDropTarget(wrapper);
+      box.appendChild(img);
+      wrapper.appendChild(box);
+
+      /* filename row (plain text, 66px wide) */
+      const nameRow = makeNameRow(stripExtension(uImg.name), 66);
+      wrapper.appendChild(nameRow);
+
+      unmatchedSection.appendChild(wrapper);
+    });
+  }  // ← closes the outer else‑branch
+
+  unmatchedWrapper.appendChild(unmatchedSection);
+  container.appendChild(unmatchedWrapper);
+
 // -------------------------------------------------------------
   // 1) Initialize the modal (MaterializeCSS)
   // -------------------------------------------------------------
