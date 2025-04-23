@@ -1264,9 +1264,20 @@ async function analyzeAndStoreSubImages(imgObjs) {
       console.warn("localStorage quota exceeded:", err.message);
       // optional: fall back to sessionStorage, or simply skip persistence
     }
-  enableSendMatch();
 
-  M.toast({ html: `Analysis complete – saved ${savedCount} charm photos.` });
+    /* 🔥 PERMANENTLY delete all “no-charm” photos from memory */
+    userImagesArray = userImagesArray.filter(u => !u.skipForCharm);
+
+    /* --- persist & finish --- */
+    localStorage.setItem("userImagesArray", JSON.stringify(userImagesArray));
+    closeProgressModal();
+
+    /* 👇  NEW: one-time description pass for all vetted user photos */
+    await ensureAllDescriptions();
+
+    M.toast({ html: "User Image Analysis Completed" });
+    enableSendMatch();
+
 }
 
 /********************************************************
@@ -1961,6 +1972,10 @@ async function loadBatchEtsyOrders(orderNumbers) {
 
       // Then fill the UI with combined results
       await fillPreviewBoxes(combinedItems);
+
+      /* Describe every Etsy crop once (no network calls if already cached) */
+      await ensureAllDescriptions();  
+
       enableSendMatch();
       attachMatchCellListeners();          // NEW
 
@@ -2084,7 +2099,7 @@ async function describeCharmImage(base64Img, abortSignal = undefined) {
     }],
     max_tokens: 500
   };
-  
+
   console.log("[Describe] → sending img:", base64Img.slice(0, 60) + "...");
 
     const rsp  = await fetch(functionsBaseUrl + "/openaiProxy", {
@@ -2170,8 +2185,6 @@ async function sendAndMatch() {
 
   /* — reset earring maps for this run — */
   earringState  = {};
-
-  await ensureAllDescriptions();
 
   const runId = globalRunId;     // snapshot current run
 
