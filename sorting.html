@@ -2440,6 +2440,11 @@ enableSendMatch();
 function openMatchPreviewModal(cellIndex) {
   const modalElem = document.getElementById("matchesModal");
   const container = document.getElementById("matchesGridContainer");
+
+  /* ——— clear previous unmatched wrapper so header doesn’t duplicate ——— */
+  const oldWrapper = container.querySelector("#unmatchedWrapper");
+  if (oldWrapper) oldWrapper.remove();
+  
   container.innerHTML = "";
 
   /* ‑‑‑ Skip‑matching UI (top‑right) ‑‑‑ */
