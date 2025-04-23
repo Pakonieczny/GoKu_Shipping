@@ -1353,9 +1353,9 @@ async function openAIAnalyzePhoto(base64Image) {
             text:
               "Return JSON EXACTLY like:\n" +
               '  {"hue":"<≤10‑word description>", "topRightNumber":"<number or blank>", "charmPresent":"Yes|No"}\n\n' +
-              "TASK 1 – Describe the dominant metal hue (≤10 words).\n" +
-              "TASK 2 – Top‑right number (blank if none).\n" +
-              "TASK 3 – Is a jewellery charm clearly visible? (Yes|No).\n" +
+              "TASK 1 – Describe the dominant metal hue (≤10 words).\n" +
+              "TASK 2 – Top‑right number (blank if none).\n" +
+              "TASK 3 – Is a jewellery charm clearly visible? (Yes|No).\n" +
               "Respond with JSON only."
           },
           { type: "image_url", image_url: { url: base64Image, detail: "high" } }
@@ -1365,7 +1365,7 @@ async function openAIAnalyzePhoto(base64Image) {
     max_tokens: 200
   };
 
-  console.log("%c[openAIAnalyzePhoto] PASS 1 payload:", "color:#03A9F4", huePayload);
+  console.log("%c[openAIAnalyzePhoto] PASS 1 payload:", "color:#03A9F4", huePayload);
 
   let hueText   = "";
   let topNumber = null;
@@ -2001,65 +2001,82 @@ async function getLocalImageData(imageUrl) {
   }
 }
 
-/********************************************************
- * compareImages, sendAndMatch, partialMatches, etc.
- ********************************************************/
-async function compareImages(userImage, croppedGridImage, cellIndex, userImageName, signal = undefined) {
-  // NEW: create an AbortController for this fetch
-  const controller = new AbortController();
-  pendingFetchControllers.push(controller);
+/* ===============================================
+   TEXT-BASED MATCHING HELPERS  (2025-04-23)
+   ===============================================*/
+const etsyDescriptions = {};   // { cellIdx : "10-12-word phrase" }
+const userDescriptions = {};   // { fileName : "10-12-word phrase" }
 
+/* 1) describeCharmImage → 10-12-word phrase */
+async function describeCharmImage(base64Img, abortSignal = undefined) {
   const payload = {
-    model: "gpt-4.1",
-    messages: [
-      {
-        role: "user",
-        content: [
-          {
-            type: "text",
-            text:
-              "1. The Similarity Score is to be strictly measured on the similarity of the jewelry charm / pendant between the 2 images " +
-              "2. Focus on the charm outline and silhouette and compare the cutouts or holes within the charm " +
-              "3. Focus on the engraving existance, design, shapes on top of the charm itself " +
-              "4. Return a similarity score that combines the outline and silhouette score + the similarity score for engraving size, existance, location, orientation etc.. " +
-              "5. If you detect an animal charm then strictly focus on the position, size and orientation of the head, eyes, beak, mouth, ears, legs, wings etc.. " +
-              "6. Ignore and disregard all background and accessories around and attached to charm such as necklaces, chains, hoops, rings, clothing, or skin " +
-              "7. Return a numeric similarity score between 0.0000 and 1.0000 with EXACTLY four decimal places, for example 0.8937, 0.9231, or 1.675, and no additional text " +
-              "8. Examine all details on top and inside each engraved charm " +
-              "9. Emphasize the pose and direction the charm is facing ",
-          },
-          { type: "image_url", image_url: { url: userImage, detail: "high" } },
-          { type: "image_url", image_url: { url: croppedGridImage, detail: "high" } },
-        ],
-      },
-    ],
-    max_tokens: 5000,
+    model: "gpt-4.1-mini",
+    messages: [{
+      role: "user",
+      content: [
+        { type:"text",
+          text:"Describe the single jewellery charm in ≤15 words. Ignore chains, hoops, background."
+        },
+        { type:"image_url", image_url:{ url: base64Img, detail:"low" } }
+      ]
+    }],
+    max_tokens: 500
   };
+  const rsp  = await fetch(functionsBaseUrl + "/openaiProxy", {
+    method:"POST", headers:{ "Content-Type":"application/json" },
+    body: JSON.stringify(payload), signal: abortSignal
+  });
+  const data = await rsp.json();
+  return (data.choices?.[0]?.message?.content || "")
+           .trim().replace(/\s+/g," ").slice(0,130);
+}
 
-  try {
-    const response = await fetch(functionsBaseUrl + "/openaiProxy", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-      signal: controller.signal               // NEW
-    });
-    if (!response.ok) {
-      throw new Error("OpenAI compareImages call failed with " + response.status);
-    }
-    const data = await response.json();
+/* 2) similarityScore → 0.0000-1.0000 (4 decimals) */
+async function similarityScore(descA, descB, abortSignal = undefined) {
+  const prompt =
+    `Descriptions:\nA) ${descA}\nB) ${descB}\n\n` +
+    `Return ONLY a numeric similarity score (0.0000-1.0000, 4 decimals).`;
+  const payload = { model:"gpt-4.1-mini",
+    messages:[{ role:"user", content:prompt }], max_tokens:50 };
+  const rsp  = await fetch(functionsBaseUrl + "/openaiProxy", {
+    method:"POST", headers:{ "Content-Type":"application/json" },
+    body: JSON.stringify(payload), signal: abortSignal
+  });
+  const raw  = (await rsp.json()).choices?.[0]?.message?.content || "0";
+  const num  = parseFloat(raw.replace(/[^\d.]+/g,""));
+  return isNaN(num) ? 0.0 : num;
+}
 
-    let similarityText = data.choices[0].message.content.trim();
-    similarityText = similarityText.replace(/[^\d.]/g, ""); // keep only digits & dots
+/* 3) ensureAllDescriptions – builds both caches once per run */
+async function ensureAllDescriptions() {
+  const todo = [];
 
-    let score = parseFloat(similarityText);
-    if (isNaN(score)) {
-      score = 0.0;
-    }
-    return { score };
-  } catch (err) {
-    console.error("Error comparing images with OpenAI:", err);
-    return { score: 0.0 };
+  croppedImagesArray.forEach((data, idx) => {
+    if (data && !etsyDescriptions[idx])
+      todo.push(describeCharmImage(data).then(d=>etsyDescriptions[idx]=d));
+  });
+
+  userImagesArray.forEach(u => {
+    if (!u.skipForCharm && !userDescriptions[u.name])
+      todo.push(describeCharmImage(u.data).then(d=>userDescriptions[u.name]=d));
+  });
+
+  if (todo.length) {
+    showProgressModal("Generating Charm Descriptions...", todo.length);
+    let done=0;
+    todo.forEach(p=>p.then(()=>updateProgressModal(++done,todo.length)));
+    await Promise.all(todo);
+    closeProgressModal();
   }
+}
+
+/* 4) compareDescriptions – drop-in replacement for compareImages */
+async function compareDescriptions(userObj, cellIdx) {
+  await ensureAllDescriptions();
+  const descUser = userDescriptions[userObj.name] || "";
+  const descEtsy = etsyDescriptions[cellIdx]     || "";
+  const score    = await similarityScore(descUser, descEtsy);
+  return { score };
 }
 
 /********************************************************
@@ -2073,6 +2090,8 @@ async function sendAndMatch() {
 
   /* — reset earring maps for this run — */
   earringState  = {};
+
+  await ensureAllDescriptions();
 
   const runId = globalRunId;     // snapshot current run
 
@@ -2143,12 +2162,9 @@ async function sendAndMatch() {
           if (matchedUserNames.has(user.name) || matchedCellIndices.has(i)) {
             return resolve({ result: { score: 0 }, user });
           }
-          compareImages(
-              user.data,
-              firstImg ? firstImg : croppedImagesArray[i],
-              i,
-              user.name
-            )
+          
+            compareDescriptions(user, i)
+
             .then((result) => resolve({ result, user }))
             .catch((err) => {
               console.error("First‑pass compare error:", i, user.name, err);
@@ -2320,7 +2336,7 @@ async function sendAndMatch() {
           if (matchedUserNames.has(user.name) || matchedCellIndices.has(i)) {
             return resolve({ result: { score: 0 }, user });
           }
-          compareImages(user.data, compareTarget, i, user.name)
+          compareDescriptions(user, i)
             .then((result) => resolve({ result, user }))
             .catch((err) => {
               console.error("Second‑pass compare error:", i, user.name, err);
