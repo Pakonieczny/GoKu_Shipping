@@ -2062,8 +2062,7 @@ const userDescriptions = {};   // { fileName : "10-12-word phrase" }
 
 /* 1) describeCharmImage → 10-12-word phrase */
 async function describeCharmImage(base64Img, abortSignal = undefined) {
-  /* --- NEW LOG: show which image we’re sending (first 60 chars only) --- */
-  console.log("[Describe] → sending img:", base64Img.slice(0, 60) + "...");
+  /* -- STRICT: ask for JSON, then parse ------------- */
   const payload = {
     model: "gpt-4.1-mini",
     messages: [{
@@ -2085,17 +2084,28 @@ async function describeCharmImage(base64Img, abortSignal = undefined) {
     }],
     max_tokens: 500
   };
-  const rsp  = await fetch(functionsBaseUrl + "/openaiProxy", {
-    method:"POST", headers:{ "Content-Type":"application/json" },
-    body: JSON.stringify(payload), signal: abortSignal
-  });
-  const data = await rsp.json();
-  return (data.choices?.[0]?.message?.content || "")
-           .trim().replace(/\s+/g," ").slice(0,400);
+  
+  console.log("[Describe] → sending img:", base64Img.slice(0, 60) + "...");
 
-              /* --- NEW LOG: show returned phrase --- */
-              console.log("[Describe] ← phrase:", `"${phrase}"`);
-}
+    const rsp  = await fetch(functionsBaseUrl + "/openaiProxy", {
+      method:"POST", headers:{ "Content-Type":"application/json" },
+      body: JSON.stringify(payload), signal: abortSignal
+    });
+    const data = await rsp.json();
+
+    let raw = (data.choices?.[0]?.message?.content || "")
+                .replace(/^```(\w+)?|```$/g,"").trim();
+    let phrase = "";
+    try {
+      phrase = JSON.parse(raw).desc || "";
+    } catch {       // fallback: keep raw text but strip trailing numbers
+      phrase = raw.replace(/\b\d+\.\d{3,4}\b/g,"");
+    }
+    phrase = phrase.replace(/\s+/g," ").slice(0,400);   // safety cap
+
+    console.log("[Describe] ← phrase:", `"${phrase}"`);
+    return phrase;
+  }
 
 /* 2) similarityScore → 0.0000-1.0000 (4 decimals) */
 async function similarityScore(descA, descB, abortSignal = undefined) {
