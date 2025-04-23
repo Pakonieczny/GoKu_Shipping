@@ -2133,6 +2133,7 @@ async function describeCharmImage(base64Img, abortSignal) {
       /* stash under both caches using the hash key */
       etsyDescriptions[hash]  = phrase;
       userDescriptions[hash]  = phrase;
+      if (!phrase) phrase = "no-description";   // prevent undefined entries
       return phrase;
     }
 
@@ -2158,12 +2159,16 @@ async function ensureAllDescriptions() {
 
   croppedImagesArray.forEach((data, idx) => {
     if (data && !etsyDescriptions[idx])
-      todo.push(describeCharmImage(data).then(d=>etsyDescriptions[idx]=d));
+      todo.push(describeCharmImage(data).then(p => {
+      etsyDescriptions[idx] = p;                 // ← key the way matcher needs
+     }));
   });
 
   userImagesArray.forEach(u => {
     if (!u.skipForCharm && !userDescriptions[u.name])
-      todo.push(describeCharmImage(u.data).then(d=>userDescriptions[u.name]=d));
+       todo.push(describeCharmImage(u.data).then(p => {
+       userDescriptions[u.name] = p;              // ← key by file-name
+     }));
   });
 
   if (todo.length) {
