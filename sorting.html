@@ -550,6 +550,8 @@ etsyOrderInput.addEventListener("keydown", async function (e) {
     // Reset arrays & state
     croppedImagesArray = [];
     userImagesArray = [];
+    etsyDescriptions  = {};
+    userDescriptions  = {};
     cellMatches = {};
     partialMatches = {};
     window.cachedOrderItems = [];
@@ -2072,12 +2074,17 @@ async function compareImages(userImage, croppedGridImage, cellIndex, userImageNa
 /* ===============================================
    TEXT-BASED MATCHING HELPERS  (2025-04-23)
    ===============================================*/
-const etsyDescriptions = {};   // { cellIdx : "10-12-word phrase" }
-const userDescriptions = {};   // { fileName : "10-12-word phrase" }
+const etsyDescriptions = {};   // { cellIdx : "30 word phrase" }
+const userDescriptions = {};   // { fileName : "30 word phrase" }
 
-/* 1) describeCharmImage → 10-12-word phrase */
-async function describeCharmImage(base64Img, abortSignal = undefined) {
-  /* -- STRICT: ask for JSON, then parse ------------- */
+/* 1) describeCharmImage → 30 word phrase */
+async function describeCharmImage(base64Img, abortSignal) {
+  const hash = base64Img.slice(0, 400);        // short fingerprint
+  if (etsyDescriptions[hash] || userDescriptions[hash]) {
+    /* phrase already stored under either cache → reuse */
+    return etsyDescriptions[hash] || userDescriptions[hash];
+  }
+
   const payload = {
     model: "gpt-4.1-mini",
     messages: [{
@@ -2100,27 +2107,36 @@ async function describeCharmImage(base64Img, abortSignal = undefined) {
     max_tokens: 500
   };
 
-  console.log("[Describe] → sending img:", base64Img.slice(0, 60) + "...");
+    console.log("[Describe] → IMG64:", base64Img.slice(0, 60) + "…");
 
-    const rsp  = await fetch(functionsBaseUrl + "/openaiProxy", {
-      method:"POST", headers:{ "Content-Type":"application/json" },
-      body: JSON.stringify(payload), signal: abortSignal
-    });
-    const data = await rsp.json();
+      const rsp  = await fetch(functionsBaseUrl + "/openaiProxy", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body:   JSON.stringify(payload),
+        signal: abortSignal
+      });
+      const raw  = (await rsp.json()).choices?.[0]?.message?.content || "";
 
-    let raw = (data.choices?.[0]?.message?.content || "")
-                .replace(/^```(\w+)?|```$/g,"").trim();
-    let phrase = "";
-    try {
-      phrase = JSON.parse(raw).desc || "";
-    } catch {       // fallback: keep raw text but strip trailing numbers
-      phrase = raw.replace(/\b\d+\.\d{3,4}\b/g,"");
+      /* strip ``` fences & parse */
+      const clean = raw.replace(/^```[\s\S]*?\n/, "").replace(/```$/, "").trim()
+                       .replace(/“|”/g, '"');      // smart-quote fix
+      let phrase = "";
+      try {
+        phrase = JSON.parse(clean).desc || "";
+      } catch { phrase = clean; }
+
+      phrase = phrase.replace(/similarity score\s*:.*$/i, "")
+                     .replace(/\s+/g, " ")
+                     .trim()
+                     .slice(0, 400);                // hard cap
+
+      console.log('[Describe] ← PHRASE:', `"${phrase}"`);
+
+      /* stash under both caches using the hash key */
+      etsyDescriptions[hash]  = phrase;
+      userDescriptions[hash]  = phrase;
+      return phrase;
     }
-    phrase = phrase.replace(/\s+/g," ").slice(0,400);   // safety cap
-
-    console.log("[Describe] ← phrase:", `"${phrase}"`);
-    return phrase;
-  }
 
 /* 2) similarityScore → 0.0000-1.0000 (4 decimals) */
 async function similarityScore(descA, descB, abortSignal = undefined) {
@@ -2163,14 +2179,14 @@ async function ensureAllDescriptions() {
 
 /* 4) compareDescriptions – drop-in replacement for compareImages */
 async function compareDescriptions(userObj, cellIdx) {
-  await ensureAllDescriptions();
-  const descUser = userDescriptions[userObj.name] || "";
-  const descEtsy = etsyDescriptions[cellIdx]     || "";
-  const score    = await similarityScore(descUser, descEtsy);
-
-  /* --- NEW LOG: phrases + score --- */
-  console.log(`[SimScore] user="${descUser}"  |  etsy="${descEtsy}"  →  ${score.toFixed(4)}`);
-
+  const descUser = userDescriptions[userObj.name];
+  const descEtsy = etsyDescriptions[cellIdx];
+  if (!descUser || !descEtsy) {
+    console.warn("[SimScore] missing phrase", {user:userObj.name, etsy:cellIdx});
+    return { score: 0 };
+  }
+  const score = await similarityScore(descUser, descEtsy);
+  console.log(`[SimScore] "${descUser}" | "${descEtsy}" → ${score.toFixed(4)}`);
   return { score };
 }
 
