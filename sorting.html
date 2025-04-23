@@ -185,6 +185,16 @@
     .modal-overlay.show {
       opacity: 1;
     }
+
+    /* === custom button colour (outline blue) ================= */
+    :root { --outlineBlue:#2196F3; }      /* material-blue-500 */
+
+    #matchPrintBtn,
+    #mpBackBtn,
+    #mpNextBtn {
+      background-color:var(--outlineBlue) !important;
+      color:#fff !important;
+    }
   </style>
 </head>
 <body>
@@ -585,6 +595,22 @@ etsyOrderInput.addEventListener("keydown", async function (e) {
   // ===== NEW LINE: Start listening for QR scans from sort-scan.html =====
   startScannedSortingListener();
 });
+
+/* =========================================================
+   quickOpenMatchesModal()
+   – opens the Matches modal for the first valid cell
+   =======================================================*/
+function quickOpenMatchesModal() {
+  if (!window.cachedOrderItems || !window.cachedOrderItems.length) return;
+
+  // choose the first cell that isn't skipped
+  let firstIdx = 0;
+  for (let i = 0; i < window.cachedOrderItems.length; i++) {
+    if (!skipMatches[i]) { firstIdx = i; break; }
+  }
+  openMatchPreviewModal(firstIdx);
+}
+
 
 /********************************************************
  * Unified border logic – replaces old toggleSkipBorder
@@ -1935,6 +1961,7 @@ async function loadBatchEtsyOrders(orderNumbers) {
 
     // Then fill the UI with combined results
     await fillPreviewBoxes(combinedItems);
+    quickOpenMatchesModal();      // ← open Matches modal right away
 
   } catch (err) {
     console.error("Error loading batch orders:", err);
@@ -2688,7 +2715,7 @@ container.appendChild(matchedWrapper);       // ← keep this line
   unmatchedWrapper.id = "unmatchedWrapper";        // ← add this line
   unmatchedWrapper.style.display = "flex";
   unmatchedWrapper.style.flexDirection = "column";
-  unmatchedWrapper.style.marginLeft = "175px"; // shift right
+  unmatchedWrapper.style.marginLeft = "190px"; // shift right
 
   const unmatchedTitle = document.createElement("div");
   unmatchedTitle.textContent = "Unmatched User Photos:";
@@ -3026,7 +3053,7 @@ container.appendChild(matchedWrapper);       // ← keep this line
       unmatchedWrapper.id               = "unmatchedWrapper";
       unmatchedWrapper.style.display       = "flex";
       unmatchedWrapper.style.flexDirection = "column";
-      unmatchedWrapper.style.marginLeft    = "175px";           // same offset
+      unmatchedWrapper.style.marginLeft    = "190px";           // same offset
 
       /* header */
       const unTitle = document.createElement("div");
