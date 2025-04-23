@@ -71,6 +71,12 @@
       line-height: 100px;
       display: inline-block;
       margin-right: 10px;
+
+      /* highlight on drag-hover */
+      #photoDragDrop.drag-hover {
+        border-color:#2196F3;     /* blue */
+      }
+
     }
     #userImage {
       width: 100px;
@@ -1173,52 +1179,62 @@ function openIframePrinterForListing(cellIndex) {
       });
     }
 
-// --------------- Drag‑and‑drop logic ---------------
-const photoDragDropElem = document.getElementById("photoDragDrop");
+  // --------------- Drag-and-drop logic ---------------          /* ⇢ anchor */
+  const photoDragDropElem = document.getElementById("photoDragDrop");
 
-photoDragDropElem.addEventListener("dragover", (e) => e.preventDefault());
+  /* keep cursor-allow-drop */
+  photoDragDropElem.addEventListener("dragover", (e) => e.preventDefault());
 
-photoDragDropElem.addEventListener("drop", async function (e) {
-  e.preventDefault();
-  const files = e.dataTransfer.files;
-  if (!files || files.length === 0) return;
+  /* ── NEW: blue-border highlight while hovering with a file ── */
+  photoDragDropElem.addEventListener("dragenter", () =>
+    photoDragDropElem.classList.add("drag-hover"));
+  photoDragDropElem.addEventListener("dragleave", () =>
+    photoDragDropElem.classList.remove("drag-hover"));
+  /* ──────────────────────────────────────────────────────────── */
 
-  /* Collect every 512×512 quadrant here for one‑time AI analysis */
-  const subImagesToAnalyze = [];
+  photoDragDropElem.addEventListener("drop", async function (e) {
+    e.preventDefault();
+    photoDragDropElem.classList.remove("drag-hover");   /* NEW */
 
-  for (let i = 0; i < files.length; i++) {
-    const file = files[i];
+    const files = e.dataTransfer.files;
+    if (!files || files.length === 0) return;
 
-    // Convert the dropped file to a DataURL
-    const fileDataUrl = await readAsDataURL(file);
+    /* Collect every 512×512 quadrant here for one-time AI analysis */
+    const subImagesToAnalyze = [];
 
-    // Slice into 12×12 = 144 tiles
-    const subImages = await extractSubImages144(fileDataUrl);
+    for (let i = 0; i < files.length; i++) {
+      const file = files[i];
 
-    for (let q = 0; q < subImages.length; q++) {
-      const cropped = await cropTo512(subImages[q]);
+      // Convert the dropped file to a DataURL
+      const fileDataUrl = await readAsDataURL(file);
 
-      // Push to temporary array; NOT yet stored in userImagesArray
-      subImagesToAnalyze.push({
-        origName: file.name + "_Q" + q,
-        data: cropped
+      // Slice into 12×12 = 144 tiles
+      const subImages = await extractSubImages144(fileDataUrl);
+
+      for (let q = 0; q < subImages.length; q++) {
+        const cropped = await cropTo512(subImages[q]);
+
+        // Push to temporary array; NOT yet stored in userImagesArray
+        subImagesToAnalyze.push({
+          origName: file.name + "_Q" + q,
+          data: cropped
+        });
+      }
+
+      M.toast({
+        html: `File ${file.name}: Extracted 144 quadrant images (each 512×512).`
       });
     }
 
-    M.toast({
-      html: `File ${file.name}: Extracted 144 quadrant images (each 512×512).`
-    });
-  }
+    localStorage.removeItem("userImagesArray");
 
-  localStorage.removeItem("userImagesArray");
+    // Analyze every sub-image; store only those with a charm
+    await analyzeAndStoreSubImages(subImagesToAnalyze);
 
-  // Analyze every sub‑image; store only those with a charm
-  await analyzeAndStoreSubImages(subImagesToAnalyze);
-
-  /* NOTE:
-     We do NOT refresh unmatchedContainer here.
-     That preview is shown ONLY after Send‑and‑Match finishes.  */
-});
+    /* NOTE:
+       We do NOT refresh unmatchedContainer here.
+       That preview is shown ONLY after Send-and-Match finishes.  */
+  });
 
 /* ─────────────────────────────────────────────────────────────
    analyzeAndStoreSubImages(list)
