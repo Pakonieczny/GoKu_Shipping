@@ -3015,10 +3015,15 @@ container.appendChild(matchedWrapper);       // ← keep this line
 
     /* ---------------- Unmatched Section ---------------- */
     // NEW wrapper to align with "Matched" row
+    // — remove any previous wrapper so the header isn't duplicated
+    const oldWrapper = container.querySelector("#unmatchedWrapper");
+    if (oldWrapper) oldWrapper.remove();
+
     const unmatchedWrapper = document.createElement("div");
+    unmatchedWrapper.id               = "unmatchedWrapper";   // ← key: gives us one-time ID
     unmatchedWrapper.style.display       = "flex";
     unmatchedWrapper.style.flexDirection = "column";
-    unmatchedWrapper.style.marginLeft    = "75px";   // same offset
+    unmatchedWrapper.style.marginLeft    = "75px";            // same offset
 
     // Header
     const unTitle = document.createElement("div");
