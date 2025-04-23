@@ -95,13 +95,11 @@ function getCumulativeDotCount(listings) {
   let foundGroupB = false;
 
   // group A => 2 dots
-  const groupA = ["stud","stud earrings","earring","earrings","ring","rings"];
+  const groupA = ["stud","studs","stud earrings","ring","rings"];
   // group B => 1 dot
-  const groupB = [
-    "necklace","necklaces","huggie","huggies","huggie earrings",
+  const groupB = ["necklace","necklaces","huggie","huggies","huggie earrings",
     "hoop","hoops","hoop earrings","bracelet","bracelets",
-    "extender","extenders","chain","chains"
-  ];
+    "extender","extenders","chain","chains"];
 
   listings.forEach((listing) => {
     const kw = Array.isArray(listing.keywords) ? listing.keywords : [];

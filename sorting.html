@@ -1533,12 +1533,10 @@ async function fillPreviewBoxes(items) {
   window.cachedOrderItems = items;  // store globally
 
   /* keyword helpers already used for other UI colouring */
-  const groupA = ["stud","studs","stud earrings","earring","earrings","ring","rings"];
-  const groupB = [
-    "necklace","necklaces","huggie","huggies","huggie earrings",
+  const groupA = ["stud","studs","stud earrings","ring","rings"];
+  const groupB = ["necklace","necklaces","huggie","huggies","huggie earrings",
     "hoop","hoops","hoop earrings","bracelet","bracelets",
-    "extender","extenders","chain","chains"
-  ];
+    "extender","extenders","chain","chains"];
 
   /* list that DEFINES an earring */
   const EARRING_PHRASES = [
