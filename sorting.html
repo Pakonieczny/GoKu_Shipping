@@ -1264,20 +1264,9 @@ async function analyzeAndStoreSubImages(imgObjs) {
       console.warn("localStorage quota exceeded:", err.message);
       // optional: fall back to sessionStorage, or simply skip persistence
     }
+  enableSendMatch();
 
-    /* 🔥 PERMANENTLY delete all “no-charm” photos from memory */
-    userImagesArray = userImagesArray.filter(u => !u.skipForCharm);
-
-    /* --- persist & finish --- */
-    localStorage.setItem("userImagesArray", JSON.stringify(userImagesArray));
-    closeProgressModal();
-
-    /* 👇  NEW: one-time description pass for all vetted user photos */
-    await ensureAllDescriptions();
-
-    M.toast({ html: "User Image Analysis Completed" });
-    enableSendMatch();
-
+  M.toast({ html: `Analysis complete – saved ${savedCount} charm photos.` });
 }
 
 /********************************************************
@@ -1364,9 +1353,9 @@ async function openAIAnalyzePhoto(base64Image) {
             text:
               "Return JSON EXACTLY like:\n" +
               '  {"hue":"<≤10‑word description>", "topRightNumber":"<number or blank>", "charmPresent":"Yes|No"}\n\n' +
-              "TASK 1 – Describe the dominant metal hue (≤10 words).\n" +
-              "TASK 2 – Top‑right number (blank if none).\n" +
-              "TASK 3 – Is a jewellery charm clearly visible? (Yes|No).\n" +
+              "TASK 1 – Describe the dominant metal hue (≤10 words).\n" +
+              "TASK 2 – Top‑right number (blank if none).\n" +
+              "TASK 3 – Is a jewellery charm clearly visible? (Yes|No).\n" +
               "Respond with JSON only."
           },
           { type: "image_url", image_url: { url: base64Image, detail: "high" } }
@@ -1376,7 +1365,7 @@ async function openAIAnalyzePhoto(base64Image) {
     max_tokens: 200
   };
 
-  console.log("%c[openAIAnalyzePhoto] PASS 1 payload:", "color:#03A9F4", huePayload);
+  console.log("%c[openAIAnalyzePhoto] PASS 1 payload:", "color:#03A9F4", huePayload);
 
   let hueText   = "";
   let topNumber = null;
@@ -1972,10 +1961,6 @@ async function loadBatchEtsyOrders(orderNumbers) {
 
       // Then fill the UI with combined results
       await fillPreviewBoxes(combinedItems);
-
-      /* Describe every Etsy crop once (no network calls if already cached) */
-      await ensureAllDescriptions();  
-
       enableSendMatch();
       attachMatchCellListeners();          // NEW
 
@@ -2017,180 +2002,64 @@ async function getLocalImageData(imageUrl) {
 }
 
 /********************************************************
- * compareImages  – ORIGINAL BITMAP VERSION
- * (Only the twin-earring code still calls this.)
+ * compareImages, sendAndMatch, partialMatches, etc.
  ********************************************************/
 async function compareImages(userImage, croppedGridImage, cellIndex, userImageName, signal = undefined) {
+  // NEW: create an AbortController for this fetch
   const controller = new AbortController();
   pendingFetchControllers.push(controller);
 
   const payload = {
     model: "gpt-4.1",
-    messages: [{
-      role: "user",
-      content: [
-        { type:"text",
-          text:
-            "1. The Similarity Score is to be strictly measured on the similarity of the jewellery charm / pendant between the 2 images " +
-            "2. Focus on the charm outline and silhouette and compare the cutouts or holes within the charm " +
-            "3. Focus on the engraving existence, design, shapes on top of the charm itself " +
-            "4. Return a similarity score that combines the outline and silhouette score + the similarity score for engraving size, existence, location, orientation etc. " +
-            "5. If you detect an animal charm then strictly focus on the position, size and orientation of the head, eyes, beak, mouth, ears, legs, wings etc. " +
-            "6. Ignore and disregard all background and accessories around and attached to charm such as necklaces, chains, hoops, rings, clothing, or skin " +
-            "7. Return a numeric similarity score between 0.0000 and 1.0000 with EXACTLY four decimal places, for example 0.8937, 0.9231, or 1.0000, and no additional text " +
-            "8. Examine all details on top and inside each engraved charm " +
-            "9. Emphasise the pose and direction the charm is facing "
-        },
-        { type:"image_url", image_url:{ url:userImage,        detail:"high" } },
-        { type:"image_url", image_url:{ url:croppedGridImage, detail:"high" } }
-      ]
-    }],
-    max_tokens: 2000
+    messages: [
+      {
+        role: "user",
+        content: [
+          {
+            type: "text",
+            text:
+              "1. The Similarity Score is to be strictly measured on the similarity of the jewelry charm / pendant between the 2 images " +
+              "2. Focus on the charm outline and silhouette and compare the cutouts or holes within the charm " +
+              "3. Focus on the engraving existance, design, shapes on top of the charm itself " +
+              "4. Return a similarity score that combines the outline and silhouette score + the similarity score for engraving size, existance, location, orientation etc.. " +
+              "5. If you detect an animal charm then strictly focus on the position, size and orientation of the head, eyes, beak, mouth, ears, legs, wings etc.. " +
+              "6. Ignore and disregard all background and accessories around and attached to charm such as necklaces, chains, hoops, rings, clothing, or skin " +
+              "7. Return a numeric similarity score between 0.0000 and 1.0000 with EXACTLY four decimal places, for example 0.8937, 0.9231, or 1.675, and no additional text " +
+              "8. Examine all details on top and inside each engraved charm " +
+              "9. Emphasize the pose and direction the charm is facing ",
+          },
+          { type: "image_url", image_url: { url: userImage, detail: "high" } },
+          { type: "image_url", image_url: { url: croppedGridImage, detail: "high" } },
+        ],
+      },
+    ],
+    max_tokens: 5000,
   };
 
   try {
     const response = await fetch(functionsBaseUrl + "/openaiProxy", {
-      method:"POST",
-      headers:{ "Content-Type":"application/json" },
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
-      signal: controller.signal
+      signal: controller.signal               // NEW
     });
-    if (!response.ok) throw new Error("OpenAI compareImages call failed: "+response.status);
-
+    if (!response.ok) {
+      throw new Error("OpenAI compareImages call failed with " + response.status);
+    }
     const data = await response.json();
-    let similarityText = (data.choices?.[0]?.message?.content || "").trim()
-                            .replace(/[^\d.]/g, "");
+
+    let similarityText = data.choices[0].message.content.trim();
+    similarityText = similarityText.replace(/[^\d.]/g, ""); // keep only digits & dots
+
     let score = parseFloat(similarityText);
-    if (isNaN(score)) score = 0.0;
+    if (isNaN(score)) {
+      score = 0.0;
+    }
     return { score };
   } catch (err) {
     console.error("Error comparing images with OpenAI:", err);
     return { score: 0.0 };
   }
-}
-
-/* ===============================================
-   TEXT-BASED MATCHING HELPERS  (2025-04-23)
-   ===============================================*/
-const etsyDescriptions = {};   // { cellIdx : "30 word phrase" }
-const userDescriptions = {};   // { fileName : "30 word phrase" }
-
-/* 1) describeCharmImage → 30 word phrase */
-async function describeCharmImage(base64Img, abortSignal) {
-  const hash = base64Img.slice(0, 400);        // short fingerprint
-  if (etsyDescriptions[hash] || userDescriptions[hash]) {
-    /* phrase already stored under either cache → reuse */
-    return etsyDescriptions[hash] || userDescriptions[hash];
-  }
-
-  const payload = {
-    model: "gpt-4.1-mini",
-    messages: [{
-      role: "user",
-      content: [
-        { type:"text",
-          text: "Describe the single jewellery charm in ≤30 words. Ignore chains, hoops, background." +
-            "1. Focus on the charm outline and silhouette and compare the cutouts or holes within the charm " +
-            "2. Focus on the engraving existence, design, shapes on top of the charm itself " +
-            "3. Return a similarity score that combines the outline and silhouette score + the similarity score for engraving size, existence, location, orientation etc. " +
-            "4. If you detect an animal charm then strictly focus on the position, size and orientation of the head, eyes, beak, mouth, ears, legs, wings etc. " +
-            "5. Ignore and disregard all background and accessories around and attached to charm such as necklaces, chains, hoops, rings, clothing, or skin " +
-            "6. Return a numeric similarity score between 0.0000 and 1.0000 with EXACTLY four decimal places, for example 0.8937, 0.9231, or 1.0000, and no additional text " +
-            "7. Examine all details on top and inside each engraved charm " +
-            "8. Emphasise the pose and direction the charm is facing "
-        },
-        { type:"image_url", image_url:{ url: base64Img, detail:"low" } }
-      ]
-    }],
-    max_tokens: 500
-  };
-
-    console.log("[Describe] → IMG64:", base64Img.slice(0, 60) + "…");
-
-      const rsp  = await fetch(functionsBaseUrl + "/openaiProxy", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body:   JSON.stringify(payload),
-        signal: abortSignal
-      });
-      const raw  = (await rsp.json()).choices?.[0]?.message?.content || "";
-
-      /* strip ``` fences & parse */
-      const clean = raw.replace(/^```[\s\S]*?\n/, "").replace(/```$/, "").trim()
-                       .replace(/“|”/g, '"');      // smart-quote fix
-      let phrase = "";
-      try {
-        phrase = JSON.parse(clean).desc || "";
-      } catch { phrase = clean; }
-
-      phrase = phrase.replace(/similarity score\s*:.*$/i, "")
-                     .replace(/\s+/g, " ")
-                     .trim()
-                     .slice(0, 400);                // hard cap
-
-      console.log('[Describe] ← PHRASE:', `"${phrase}"`);
-
-      /* stash under both caches using the hash key */
-      etsyDescriptions[hash]  = phrase;
-      userDescriptions[hash]  = phrase;
-      if (!phrase) phrase = "no-description";   // prevent undefined entries
-      return phrase;
-    }
-
-/* 2) similarityScore → 0.0000-1.0000 (4 decimals) */
-async function similarityScore(descA, descB, abortSignal = undefined) {
-  const prompt =
-    `Descriptions:\nA) ${descA}\nB) ${descB}\n\n` +
-    `Return ONLY a numeric similarity score (0.0000-1.0000, 4 decimals).`;
-  const payload = { model:"gpt-4.1-mini",
-    messages:[{ role:"user", content:prompt }], max_tokens:50 };
-  const rsp  = await fetch(functionsBaseUrl + "/openaiProxy", {
-    method:"POST", headers:{ "Content-Type":"application/json" },
-    body: JSON.stringify(payload), signal: abortSignal
-  });
-  const raw  = (await rsp.json()).choices?.[0]?.message?.content || "0";
-  const num  = parseFloat(raw.replace(/[^\d.]+/g,""));
-  return isNaN(num) ? 0.0 : num;
-}
-
-/* 3) ensureAllDescriptions – builds both caches once per run */
-async function ensureAllDescriptions() {
-  const todo = [];
-
-  croppedImagesArray.forEach((data, idx) => {
-    if (data && !etsyDescriptions[idx])
-      todo.push(describeCharmImage(data).then(p => {
-      etsyDescriptions[idx] = p;                 // ← key the way matcher needs
-     }));
-  });
-
-  userImagesArray.forEach(u => {
-    if (!u.skipForCharm && !userDescriptions[u.name])
-       todo.push(describeCharmImage(u.data).then(p => {
-       userDescriptions[u.name] = p;              // ← key by file-name
-     }));
-  });
-
-  if (todo.length) {
-    showProgressModal("Generating Charm Descriptions...", todo.length);
-    let done=0;
-    todo.forEach(p=>p.then(()=>updateProgressModal(++done,todo.length)));
-    await Promise.all(todo);
-    closeProgressModal();
-  }
-}
-
-/* 4) compareDescriptions – drop-in replacement for compareImages */
-async function compareDescriptions(userObj, cellIdx) {
-  const descUser = userDescriptions[userObj.name];
-  const descEtsy = etsyDescriptions[cellIdx];
-  if (!descUser || !descEtsy) {
-    console.warn("[SimScore] missing phrase", {user:userObj.name, etsy:cellIdx});
-    return { score: 0 };
-  }
-  const score = await similarityScore(descUser, descEtsy);
-  console.log(`[SimScore] "${descUser}" | "${descEtsy}" → ${score.toFixed(4)}`);
-  return { score };
 }
 
 /********************************************************
@@ -2204,10 +2073,6 @@ async function sendAndMatch() {
 
   /* — reset earring maps for this run — */
   earringState  = {};
-
-  /* be sure EVERY new photo has a phrase before matching */
-  await ensureAllDescriptions();     // ← add this line only once
-
 
   const runId = globalRunId;     // snapshot current run
 
@@ -2278,9 +2143,12 @@ async function sendAndMatch() {
           if (matchedUserNames.has(user.name) || matchedCellIndices.has(i)) {
             return resolve({ result: { score: 0 }, user });
           }
-          
-            compareDescriptions(user, i)
-
+          compareImages(
+              user.data,
+              firstImg ? firstImg : croppedImagesArray[i],
+              i,
+              user.name
+            )
             .then((result) => resolve({ result, user }))
             .catch((err) => {
               console.error("First‑pass compare error:", i, user.name, err);
@@ -2294,10 +2162,6 @@ async function sendAndMatch() {
 
     if (runId !== globalRunId) return;        // NEW guard right after await
     results.sort((a, b) => b.result.score - a.result.score);
-    console.log(`Cell ${i}  top2 →`,
-      results[0] ? `${results[0].user.name}:${results[0].result.score.toFixed(4)}` : "none",
-      results[1] ? `${results[1].user.name}:${results[1].result.score.toFixed(4)}` : "none"
-    );
 
     if (!results.length || results[0].result.score === 0) {
       M.toast({ html: `Cell ${i}: No valid matches in first pass.` });
@@ -2456,7 +2320,7 @@ async function sendAndMatch() {
           if (matchedUserNames.has(user.name) || matchedCellIndices.has(i)) {
             return resolve({ result: { score: 0 }, user });
           }
-          compareDescriptions(user, i)
+          compareImages(user.data, compareTarget, i, user.name)
             .then((result) => resolve({ result, user }))
             .catch((err) => {
               console.error("Second‑pass compare error:", i, user.name, err);
@@ -2471,10 +2335,6 @@ async function sendAndMatch() {
     if (runId !== globalRunId) return;        // NEW guard right after await
 
     results.sort((a, b) => b.result.score - a.result.score);
-    console.log(`Cell ${i}  top2 →`,
-      results[0] ? `${results[0].user.name}:${results[0].result.score.toFixed(4)}` : "none",
-      results[1] ? `${results[1].user.name}:${results[1].result.score.toFixed(4)}` : "none"
-    );
 
     if (!results.length || results[0].result.score === 0) {
       M.toast({ html: `Cell ${i}: No valid matches found in second pass.` });
