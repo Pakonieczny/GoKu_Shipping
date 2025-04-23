@@ -3018,37 +3018,36 @@ container.appendChild(matchedWrapper);       // ← keep this line
       matchedSection.appendChild(wrap);
     });
 
-    /* ---------------- Unmatched Section ---------------- */
-    // NEW wrapper to align with "Matched" row
-    // — remove any previous wrapper so the header isn't duplicated
-    const oldWrapper = container.querySelector("#unmatchedWrapper");
-    if (oldWrapper) oldWrapper.remove();
+    /* ---------- Unmatched wrapper (create once, then reuse) ---------- */
+    let unmatchedWrapper = container.querySelector("#unmatchedWrapper");
 
-    const unmatchedWrapper = document.createElement("div");
-    unmatchedWrapper.id               = "unmatchedWrapper";   // ← key: gives us one-time ID
-    unmatchedWrapper.style.display       = "flex";
-    unmatchedWrapper.style.flexDirection = "column";
-    unmatchedWrapper.style.marginLeft    = "75px";            // same offset
+    if (!unmatchedWrapper) {
+      /* build it the FIRST time only */
+      unmatchedWrapper = document.createElement("div");
+      unmatchedWrapper.id               = "unmatchedWrapper";
+      unmatchedWrapper.style.display       = "flex";
+      unmatchedWrapper.style.flexDirection = "column";
+      unmatchedWrapper.style.marginLeft    = "75px";           // same offset
 
-    // Header
-    const unTitle = document.createElement("div");
-    unTitle.textContent      = "Unmatched User Photos:";
-    unTitle.style.fontWeight = "bold";
-    unTitle.style.fontSize   = "0.7em";
-    unTitle.style.margin     = "20px 0 7px 0";       // top gap
-    unmatchedWrapper.appendChild(unTitle);
+      /* header */
+      const unTitle = document.createElement("div");
+      unTitle.textContent      = "Unmatched User Photos:";
+      unTitle.style.fontWeight = "bold";
+      unTitle.style.fontSize   = "0.7em";
+      unTitle.style.marginBottom = "7px";
+      unmatchedWrapper.appendChild(unTitle);
 
-    // Make unmatchedSection flex so thumbs wrap nicely
-    unmatchedSection.style.display  = "flex";
-    unmatchedSection.style.flexWrap = "wrap";
-    unmatchedSection.style.gap      = "10px";
+      /* flex grid container */
+      unmatchedSection.style.display  = "flex";
+      unmatchedSection.style.flexWrap = "wrap";
+      unmatchedSection.style.gap      = "10px";
+      unmatchedWrapper.appendChild(unmatchedSection);
 
-    // Append section to wrapper *before* we start filling it
-    unmatchedWrapper.appendChild(unmatchedSection);
-    // Finally add the wrapper to the modal container
-    container.appendChild(unmatchedWrapper);
+      /* attach once */
+      container.appendChild(unmatchedWrapper);
+    }
 
-    // (keep the next line – we’re about to refill unmatchedSection)
+    /* always clear the grid before repopulating */
     unmatchedSection.innerHTML = "";
 
     /* ---------------- Unmatched Section ---------------- */
