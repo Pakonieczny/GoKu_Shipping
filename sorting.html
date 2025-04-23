@@ -2070,7 +2070,15 @@ async function describeCharmImage(base64Img, abortSignal = undefined) {
       role: "user",
       content: [
         { type:"text",
-          text:"Describe the single jewellery charm in ≤15 words. Ignore chains, hoops, background."
+          text: "Describe the single jewellery charm in ≤30 words. Ignore chains, hoops, background." +
+            "1. Focus on the charm outline and silhouette and compare the cutouts or holes within the charm " +
+            "2. Focus on the engraving existence, design, shapes on top of the charm itself " +
+            "3. Return a similarity score that combines the outline and silhouette score + the similarity score for engraving size, existence, location, orientation etc. " +
+            "4. If you detect an animal charm then strictly focus on the position, size and orientation of the head, eyes, beak, mouth, ears, legs, wings etc. " +
+            "5. Ignore and disregard all background and accessories around and attached to charm such as necklaces, chains, hoops, rings, clothing, or skin " +
+            "6. Return a numeric similarity score between 0.0000 and 1.0000 with EXACTLY four decimal places, for example 0.8937, 0.9231, or 1.0000, and no additional text " +
+            "7. Examine all details on top and inside each engraved charm " +
+            "8. Emphasise the pose and direction the charm is facing "
         },
         { type:"image_url", image_url:{ url: base64Img, detail:"low" } }
       ]
@@ -2083,7 +2091,7 @@ async function describeCharmImage(base64Img, abortSignal = undefined) {
   });
   const data = await rsp.json();
   return (data.choices?.[0]?.message?.content || "")
-           .trim().replace(/\s+/g," ").slice(0,130);
+           .trim().replace(/\s+/g," ").slice(0,400);
 
               /* --- NEW LOG: show returned phrase --- */
               console.log("[Describe] ← phrase:", `"${phrase}"`);
