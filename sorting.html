@@ -2200,6 +2200,10 @@ async function sendAndMatch() {
   /* — reset earring maps for this run — */
   earringState  = {};
 
+  /* be sure EVERY new photo has a phrase before matching */
+  await ensureAllDescriptions();     // ← add this line only once
+
+
   const runId = globalRunId;     // snapshot current run
 
   /* Purge any residual skipForCharm photos */
