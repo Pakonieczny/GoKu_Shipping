@@ -2686,6 +2686,13 @@ container.appendChild(matchedWrapper);       // ← keep this line
   unmatchedWrapper.style.flexDirection = "column";
   unmatchedWrapper.style.marginLeft = "75px"; // shift right
 
+  const unmatchedTitle = document.createElement("div");
+  unmatchedTitle.textContent = "Unmatched User Photos:";
+  unmatchedTitle.style.fontWeight = "bold";
+  unmatchedTitle.style.fontSize = "0.7em";
+  unmatchedTitle.style.marginBottom = "7px";
+  unmatchedWrapper.appendChild(unmatchedTitle);
+
   const unmatchedSection = document.createElement("div");
   unmatchedSection.style.display = "flex";
   unmatchedSection.style.flexWrap = "wrap";
