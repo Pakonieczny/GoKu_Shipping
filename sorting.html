@@ -2001,6 +2001,59 @@ async function getLocalImageData(imageUrl) {
   }
 }
 
+/********************************************************
+ * compareImages  – ORIGINAL BITMAP VERSION
+ * (Only the twin-earring code still calls this.)
+ ********************************************************/
+async function compareImages(userImage, croppedGridImage, cellIndex, userImageName, signal = undefined) {
+  const controller = new AbortController();
+  pendingFetchControllers.push(controller);
+
+  const payload = {
+    model: "gpt-4.1",
+    messages: [{
+      role: "user",
+      content: [
+        { type:"text",
+          text:
+            "1. The Similarity Score is to be strictly measured on the similarity of the jewellery charm / pendant between the 2 images " +
+            "2. Focus on the charm outline and silhouette and compare the cutouts or holes within the charm " +
+            "3. Focus on the engraving existence, design, shapes on top of the charm itself " +
+            "4. Return a similarity score that combines the outline and silhouette score + the similarity score for engraving size, existence, location, orientation etc. " +
+            "5. If you detect an animal charm then strictly focus on the position, size and orientation of the head, eyes, beak, mouth, ears, legs, wings etc. " +
+            "6. Ignore and disregard all background and accessories around and attached to charm such as necklaces, chains, hoops, rings, clothing, or skin " +
+            "7. Return a numeric similarity score between 0.0000 and 1.0000 with EXACTLY four decimal places, for example 0.8937, 0.9231, or 1.0000, and no additional text " +
+            "8. Examine all details on top and inside each engraved charm " +
+            "9. Emphasise the pose and direction the charm is facing "
+        },
+        { type:"image_url", image_url:{ url:userImage,        detail:"high" } },
+        { type:"image_url", image_url:{ url:croppedGridImage, detail:"high" } }
+      ]
+    }],
+    max_tokens: 2000
+  };
+
+  try {
+    const response = await fetch(functionsBaseUrl + "/openaiProxy", {
+      method:"POST",
+      headers:{ "Content-Type":"application/json" },
+      body: JSON.stringify(payload),
+      signal: controller.signal
+    });
+    if (!response.ok) throw new Error("OpenAI compareImages call failed: "+response.status);
+
+    const data = await response.json();
+    let similarityText = (data.choices?.[0]?.message?.content || "").trim()
+                            .replace(/[^\d.]/g, "");
+    let score = parseFloat(similarityText);
+    if (isNaN(score)) score = 0.0;
+    return { score };
+  } catch (err) {
+    console.error("Error comparing images with OpenAI:", err);
+    return { score: 0.0 };
+  }
+}
+
 /* ===============================================
    TEXT-BASED MATCHING HELPERS  (2025-04-23)
    ===============================================*/
@@ -2009,6 +2062,8 @@ const userDescriptions = {};   // { fileName : "10-12-word phrase" }
 
 /* 1) describeCharmImage → 10-12-word phrase */
 async function describeCharmImage(base64Img, abortSignal = undefined) {
+  /* --- NEW LOG: show which image we’re sending (first 60 chars only) --- */
+  console.log("[Describe] → sending img:", base64Img.slice(0, 60) + "...");
   const payload = {
     model: "gpt-4.1-mini",
     messages: [{
@@ -2029,6 +2084,9 @@ async function describeCharmImage(base64Img, abortSignal = undefined) {
   const data = await rsp.json();
   return (data.choices?.[0]?.message?.content || "")
            .trim().replace(/\s+/g," ").slice(0,130);
+
+              /* --- NEW LOG: show returned phrase --- */
+              console.log("[Describe] ← phrase:", `"${phrase}"`);
 }
 
 /* 2) similarityScore → 0.0000-1.0000 (4 decimals) */
@@ -2076,6 +2134,10 @@ async function compareDescriptions(userObj, cellIdx) {
   const descUser = userDescriptions[userObj.name] || "";
   const descEtsy = etsyDescriptions[cellIdx]     || "";
   const score    = await similarityScore(descUser, descEtsy);
+
+  /* --- NEW LOG: phrases + score --- */
+  console.log(`[SimScore] user="${descUser}"  |  etsy="${descEtsy}"  →  ${score.toFixed(4)}`);
+
   return { score };
 }
 
@@ -2178,6 +2240,10 @@ async function sendAndMatch() {
 
     if (runId !== globalRunId) return;        // NEW guard right after await
     results.sort((a, b) => b.result.score - a.result.score);
+    console.log(`Cell ${i}  top2 →`,
+      results[0] ? `${results[0].user.name}:${results[0].result.score.toFixed(4)}` : "none",
+      results[1] ? `${results[1].user.name}:${results[1].result.score.toFixed(4)}` : "none"
+    );
 
     if (!results.length || results[0].result.score === 0) {
       M.toast({ html: `Cell ${i}: No valid matches in first pass.` });
@@ -2351,6 +2417,10 @@ async function sendAndMatch() {
     if (runId !== globalRunId) return;        // NEW guard right after await
 
     results.sort((a, b) => b.result.score - a.result.score);
+    console.log(`Cell ${i}  top2 →`,
+      results[0] ? `${results[0].user.name}:${results[0].result.score.toFixed(4)}` : "none",
+      results[1] ? `${results[1].user.name}:${results[1].result.score.toFixed(4)}` : "none"
+    );
 
     if (!results.length || results[0].result.score === 0) {
       M.toast({ html: `Cell ${i}: No valid matches found in second pass.` });
