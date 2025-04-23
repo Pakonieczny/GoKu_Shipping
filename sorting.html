@@ -596,6 +596,22 @@ etsyOrderInput.addEventListener("keydown", async function (e) {
   startScannedSortingListener();
 });
 
+/* ==========================================================
+   Global helper – click any matchCellX to open the modal
+   ==========================================================*/
+function attachMatchCellListeners() {
+  const matches = document.querySelectorAll("input[id^='matchCell']");
+  matches.forEach((inp) => {
+    inp.removeEventListener("click", matchCellHandler);  // clear stale
+    inp.addEventListener("click",  matchCellHandler);    // add fresh
+  });
+}
+
+function matchCellHandler(ev) {
+  const idx = parseInt(ev.currentTarget.id.slice("matchCell".length), 10);
+  if (!isNaN(idx)) openMatchPreviewModal(idx);
+}
+
 /********************************************************
  * Unified border logic – replaces old toggleSkipBorder
  ********************************************************/
@@ -1382,7 +1398,7 @@ async function openAIAnalyzePhoto(base64Image) {
     return { topRightNumber:null, color:null, charmPresent:"no" };
   }
 
-  /* ───────────────────── PASS 2 : hue ⇒ fixed label ───────────────────── */
+  /* ───────────────────── PASS2 : hue ⇒ fixed label ───────────────────── */
   const ctrlLabel = new AbortController();
   pendingFetchControllers.push(ctrlLabel);
 
@@ -1398,7 +1414,7 @@ async function openAIAnalyzePhoto(base64Image) {
     max_tokens: 10
   };
 
-  console.log("%c[openAIAnalyzePhoto] PASS 2 payload:", "color:#8E24AA", labelPayload);
+  console.log("%c[openAIAnalyzePhoto] PASS 2 payload:", "color:#8E24AA", labelPayload);
 
   let finalColor = null;
   try {
@@ -2396,25 +2412,6 @@ async function sendAndMatch() {
   for (let i = 0; i < croppedImagesArray.length; i++) {
     evaluateBorder(i);
   }
-
-// -------------------------------------------------------------
-// (B) Attach / re‑attach click listeners to every "matchCellX"
-//     Works even after the DOM is rebuilt by refreshSectionsLocal
-// -------------------------------------------------------------
-function attachMatchCellListeners() {
-  const matches = document.querySelectorAll("input[id^='matchCell']");
-  matches.forEach((inp) => {
-    /* clear any stale listener, then add the shared handler once */
-    inp.removeEventListener("click", matchCellHandler);
-    inp.addEventListener("click",  matchCellHandler);
-  });
-}
-
-/* shared handler — extracts the X in "matchCellX" and opens the modal */
-function matchCellHandler(ev) {
-  const idx = parseInt(ev.currentTarget.id.slice("matchCell".length), 10);
-  if (!isNaN(idx)) openMatchPreviewModal(idx);
-}
 
 /* call the helper once the second‑pass loop is done */
 attachMatchCellListeners();
