@@ -137,14 +137,8 @@ function getCumulativeDotCount(listings) {
   } else {
     foundB = true;           // fallback: treat as Group B
   }
-    
-  });
 
-  /* decide dot count */
-  if (hitsA === 0 && hitsB === 0) return 0;   // no relevant words at all
-  if (hitsA >= hitsB) return 2;               // tie or more A ⇒ Group A
-  return 1;                                   // otherwise Group B
-}
+  });
 
 /********************************************************
  * buildAndPrintLabel(orderNum, dotCount, dispatchDate):
