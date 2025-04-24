@@ -1475,7 +1475,7 @@ async function openAIAnalyzePhoto(base64Image) {
   const labelPayload = {
     model: "gpt-4.1-mini",
     messages: [{ role: "user", content: labelPrompt }],
-    max_tokens: 10
+    max_tokens: 30
   };
 
   console.log("%c[openAIAnalyzePhoto] PASS 2 payload:", "color:#8E24AA", labelPayload);
@@ -1627,6 +1627,19 @@ async function fillPreviewBoxes(items) {
   const groupB = ["necklace","necklaces","huggie","huggies","huggie earrings",
     "hoop","hoops","hoop earrings","bracelet","bracelets",
     "extender","extenders","chain","chains"];
+
+    /* ---------- collect keywords from the item title ---------- */
+    item.keywords = [];
+    if (item.title) {
+      const lowerTitle = item.title.toLowerCase();
+      groupA.forEach(p => { if (lowerTitle.includes(p)) item.keywords.push(p); });
+      groupB.forEach(p => { if (lowerTitle.includes(p)) item.keywords.push(p); });
+    }
+
+/* NEW: default everything *not* matched above to Group B */
+if (item.keywords.length === 0) {
+  item.keywords.push("groupB");     /* ← forces non-A items into B */
+}
 
   /* list that DEFINES an earring */
   const EARRING_PHRASES = [
