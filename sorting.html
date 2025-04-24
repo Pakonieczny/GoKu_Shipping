@@ -1628,20 +1628,19 @@ async function fillPreviewBoxes(items) {
     "hoop","hoops","hoop earrings","bracelet","bracelets",
     "extender","extenders","chain","chains"];
 
-      /* ---------- collect keywords from the title ---------- */
-      const kw = [];
-      if (item.title) {
-        const lower = item.title.toLowerCase();
-        groupA.forEach(p => { if (lower.includes(p)) kw.push(p); });
-        groupB.forEach(p => { if (lower.includes(p)) kw.push(p); });
-      }
-      /* default anything that matched nothing into group B */
-      if (kw.length === 0) kw.push("groupB");
-      item.keywords = kw;
+  /* ---------- collect keywords from the title ---------- */
+  items.forEach((item, index) => {
+    item.qty = Number(item.quantity) || 1;     // memo of purchased Qty
 
-/* NEW: default everything *not* matched above to Group B */
-if (item.keywords.length === 0) {
-  item.keywords.push("groupB");     /* ← forces non-A items into B */
+  /* ---------- Group-A / Group-B keyword tagging ---------- */
+  let keywords = [];
+  if (item.title) {
+    const lower = item.title.toLowerCase();
+    groupA.forEach(p => { if (lower.includes(p)) keywords.push(p); });
+    groupB.forEach(p => { if (lower.includes(p)) keywords.push(p); });
+  }
+  if (keywords.length === 0) keywords.push("groupB");   // fallback
+  item.keywords = keywords;
 }
 
   /* list that DEFINES an earring */
