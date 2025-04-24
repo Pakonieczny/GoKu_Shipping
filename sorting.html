@@ -1628,13 +1628,16 @@ async function fillPreviewBoxes(items) {
     "hoop","hoops","hoop earrings","bracelet","bracelets",
     "extender","extenders","chain","chains"];
 
-    /* ---------- collect keywords from the item title ---------- */
-    item.keywords = [];
-    if (item.title) {
-      const lowerTitle = item.title.toLowerCase();
-      groupA.forEach(p => { if (lowerTitle.includes(p)) item.keywords.push(p); });
-      groupB.forEach(p => { if (lowerTitle.includes(p)) item.keywords.push(p); });
-    }
+      /* ---------- collect keywords from the title ---------- */
+      const kw = [];
+      if (item.title) {
+        const lower = item.title.toLowerCase();
+        groupA.forEach(p => { if (lower.includes(p)) kw.push(p); });
+        groupB.forEach(p => { if (lower.includes(p)) kw.push(p); });
+      }
+      /* default anything that matched nothing into group B */
+      if (kw.length === 0) kw.push("groupB");
+      item.keywords = kw;
 
 /* NEW: default everything *not* matched above to Group B */
 if (item.keywords.length === 0) {
@@ -1660,13 +1663,6 @@ if (item.keywords.length === 0) {
   items.forEach((item, index) => {
   item.qty = Number(item.quantity) || 1;     // ← NEW memo of purchased Qty
 
-    /* --- keyword arrays kept for your existing UI purposes --- */
-    item.keywords = [];
-    if (item.title) {
-      const lowerTitle = item.title.toLowerCase();
-      groupA.forEach(p => { if (lowerTitle.includes(p)) item.keywords.push(p); });
-      groupB.forEach(p => { if (lowerTitle.includes(p)) item.keywords.push(p); });
-    }
 
     /* ----- EARRING LOGIC: title OR any chosen variation value ----- */
     let earringFound = false;
