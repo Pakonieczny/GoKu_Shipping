@@ -128,6 +128,16 @@ function getCumulativeDotCount(listings) {
     /* 🔷 TEMP DEBUG */
     console.log(`#${idx} «${listing.title}»
         A-hits: [${matchesA.join(", ")}]   B-hits: [${matchesB.join(", ")}]`);
+
+      /* decide dot count */
+  if (matchesA.length) {
+    foundA = true;
+  } else if (matchesB.length) {
+    foundB = true;
+  } else {
+    foundB = true;           // fallback: treat as Group B
+  }
+    
   });
 
   /* decide dot count */
