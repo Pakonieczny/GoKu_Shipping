@@ -85,40 +85,36 @@ window.addEventListener("load", async () => {
 });
 
 /********************************************************
- * getCumulativeDotCount(listings):
- * If ANY listing has a groupA keyword => 2 dots,
- * else if ANY listing has groupB => 1 dot,
- * else => 0 dots.
+ * getCumulativeDotCount(listings)
+ * Logic:
+ *   • Any item whose keywords include a Group-A term ⇒ 2 dots
+ *   • Else any item with a Group-B term ⇒ 1 dot
+ *   • If an item has neither Group-A nor Group-B ⇒ treat it as Group-B
  ********************************************************/
 function getCumulativeDotCount(listings) {
+  const groupA = ["stud","studs","stud earrings","ring","rings"];      // 2 dots
+  const groupB = ["necklace","necklaces","huggie","huggies","huggie earrings",
+    "hoop","hoops","hoop earrings","bracelet","bracelets",
+    "extender","extenders","chain","chains"];                          // 1 dot
+
   let foundGroupA = false;
   let foundGroupB = false;
 
-  // group A => 2 dots
-  const groupA = ["stud","studs","stud earrings","ring","rings"];
-  // group B => 1 dot
-  const groupB = ["necklace","necklaces","huggie","huggies","huggie earrings",
-    "hoop","hoops","hoop earrings","bracelet","bracelets",
-    "extender","extenders","chain","chains"];
-
-  listings.forEach((listing) => {
+  listings.forEach(listing => {
     const kw = Array.isArray(listing.keywords) ? listing.keywords : [];
     const lower = kw.map(k => k.toLowerCase());
 
-    if (lower.some(x => groupA.includes(x))) {
-      foundGroupA = true;
-    }
-    if (lower.some(x => groupB.includes(x))) {
-      foundGroupB = true;
-    }
+    const hasA = lower.some(x => groupA.includes(x));
+    const hasB = lower.some(x => groupB.includes(x));
+
+    if (hasA) foundGroupA = true;
+    // treat “neither A nor B” as B (fallback → 1 dot)
+    if (hasB || (!hasA && !hasB)) foundGroupB = true;
   });
 
-  // If groupA => 2
-  if (foundGroupA) return 2;
-  // Otherwise if groupB => 1
-  if (foundGroupB) return 1;
-  // Otherwise => 0
-  return 0;
+  if (foundGroupA) return 2;   // priority: 2 dots if any A item
+  if (foundGroupB) return 1;   // otherwise 1 dot if any (B or fallback) item
+  return 0;                    // else 0 dots
 }
 
 /********************************************************
