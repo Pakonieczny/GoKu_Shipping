@@ -1635,6 +1635,12 @@ async function fillPreviewBoxes(items) {
     "hoop","hoops","hoop earrings"
   ];
 
+  /* helper: check if str contains *exact* phrase (word-bounded) */
+    function containsPhrase(str = "", phrase = "") {
+      const re = new RegExp("\\b" + phrase.replace(/\s+/g, "\\s+") + "\\b", "i");
+      return re.test(str.toLowerCase());
+    }
+
   /* helper: check if a string mentions earrings */
   function isEarringString(str = "") {
     const lower = str.toLowerCase();
@@ -1652,8 +1658,8 @@ async function fillPreviewBoxes(items) {
     let keywords = [];
     if (item.title) {
       const lower = item.title.toLowerCase();
-      groupA.forEach(p => { if (lower.includes(p)) keywords.push(p); });
-      groupB.forEach(p => { if (lower.includes(p)) keywords.push(p); });
+      groupA.forEach(p => { if (containsPhrase(item.title, p)) keywords.push(p); });
+      groupB.forEach(p => { if (containsPhrase(item.title, p)) keywords.push(p); });
     }
     if (keywords.length === 0) keywords.push("groupB");   // fallback
     item.keywords = keywords;
