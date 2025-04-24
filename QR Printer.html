@@ -84,12 +84,17 @@ window.addEventListener("load", async () => {
   }
 });
 
+/* helper: true word-/phrase match (no “ring” in “earrings”) */
+function containsPhrase(str = "", phrase = "") {
+  const re = new RegExp("\\b" + phrase.replace(/\s+/g, "\\s+") + "\\b", "i");
+  return re.test(str.toLowerCase());
+}
+
 /********************************************************
  * getCumulativeDotCount(listings)
- * Logic:
- *   • Any item whose keywords include a Group-A term ⇒ 2 dots
- *   • Else any item with a Group-B term ⇒ 1 dot
- *   • If an item has neither Group-A nor Group-B ⇒ treat it as Group-B
+ * Any title that contains a Group-A phrase → 2 dots
+ * else if the title contains a Group-B phrase → 1 dot
+ * else (no A or B) → treat as Group B (1 dot)
  ********************************************************/
 function getCumulativeDotCount(listings) {
   const groupA = ["stud","studs","stud earrings","ring","rings"];      // 2 dots
@@ -97,24 +102,22 @@ function getCumulativeDotCount(listings) {
     "hoop","hoops","hoop earrings","bracelet","bracelets",
     "extender","extenders","chain","chains"];                          // 1 dot
 
-  let foundGroupA = false;
-  let foundGroupB = false;
+  let foundA = false;
+  let foundB = false;
 
   listings.forEach(listing => {
-    const kw = Array.isArray(listing.keywords) ? listing.keywords : [];
-    const lower = kw.map(k => k.toLowerCase());
+    const title = (listing.title || "").toLowerCase();
 
-    const hasA = lower.some(x => groupA.includes(x));
-    const hasB = lower.some(x => groupB.includes(x));
+    if (groupA.some(p => containsPhrase(title, p))) foundA = true;
+    if (groupB.some(p => containsPhrase(title, p))) foundB = true;
 
-    if (hasA) foundGroupA = true;
-    // treat “neither A nor B” as B (fallback → 1 dot)
-    if (hasB || (!hasA && !hasB)) foundGroupB = true;
+    /* fallback: if neither A nor B phrase is present, mark as B */
+    if (!foundA && !foundB) foundB = true;
   });
 
-  if (foundGroupA) return 2;   // priority: 2 dots if any A item
-  if (foundGroupB) return 1;   // otherwise 1 dot if any (B or fallback) item
-  return 0;                    // else 0 dots
+  if (foundA) return 2;
+  if (foundB) return 1;
+  return 0;
 }
 
 /********************************************************
