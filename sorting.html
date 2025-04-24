@@ -1625,22 +1625,8 @@ async function fillPreviewBoxes(items) {
   /* keyword helpers already used for other UI colouring */
   const groupA = ["stud","studs","stud earrings","ring","rings"];
   const groupB = ["necklace","necklaces","huggie","huggies","huggie earrings",
-    "hoop","hoops","hoop earrings","bracelet","bracelets",
-    "extender","extenders","chain","chains"];
-
-  /* ---------- collect keywords from the title ---------- */
-  items.forEach((item, index) => {
-    item.qty = Number(item.quantity) || 1;     // memo of purchased Qty
-
-  /* ---------- Group-A / Group-B keyword tagging ---------- */
-  let keywords = [];
-  if (item.title) {
-    const lower = item.title.toLowerCase();
-    groupA.forEach(p => { if (lower.includes(p)) keywords.push(p); });
-    groupB.forEach(p => { if (lower.includes(p)) keywords.push(p); });
-  }
-  if (keywords.length === 0) keywords.push("groupB");   // fallback
-  item.keywords = keywords;
+                  "hoop","hoops","hoop earrings","bracelet","bracelets",
+                  "extender","extenders","chain","chains"];
 
   /* list that DEFINES an earring */
   const EARRING_PHRASES = [
@@ -1649,28 +1635,38 @@ async function fillPreviewBoxes(items) {
     "hoop","hoops","hoop earrings"
   ];
 
-  /* ---------- unified earring detector (title + chosen variations) ---------- */
+  /* helper: check if a string mentions earrings */
   function isEarringString(str = "") {
     const lower = str.toLowerCase();
-    return EARRING_PHRASES.some(ph => {
-      const pattern = "\\b" + ph.replace(/\s+/g, "\\s+") + "\\b";
-      return new RegExp(pattern, "i").test(lower);
-    });
+    return EARRING_PHRASES.some(ph =>
+      new RegExp("\\b" + ph.replace(/\s+/g, "\\s+") + "\\b", "i").test(lower)
+    );
   }
 
+  /* ---------- MAIN LOOP: one preview row per transaction ---------- */
   items.forEach((item, index) => {
-  item.qty = Number(item.quantity) || 1;     // ← NEW memo of purchased Qty
+    /* --- qty memo ------------------------------------------------- */
+    item.qty = Number(item.quantity) || 1;
 
+    /* --- Group-A / Group-B keyword tagging ------------------------ */
+    let keywords = [];
+    if (item.title) {
+      const lower = item.title.toLowerCase();
+      groupA.forEach(p => { if (lower.includes(p)) keywords.push(p); });
+      groupB.forEach(p => { if (lower.includes(p)) keywords.push(p); });
+    }
+    if (keywords.length === 0) keywords.push("groupB");   // fallback
+    item.keywords = keywords;
 
-    /* ----- EARRING LOGIC: title OR any chosen variation value ----- */
+    /* --- unified earring detector (title + chosen variations) ----- */
     let earringFound = false;
 
-    // 1) title
+    /* 1 / title */
     if (item.title && isEarringString(item.title)) {
       earringFound = true;
     }
 
-    // 2) buyer‑chosen variation values
+    /* 2 / buyer-chosen variations */
     if (!earringFound && Array.isArray(item.variations)) {
       for (const v of item.variations) {
         if (v && v.formatted_value && isEarringString(v.formatted_value)) {
@@ -1680,25 +1676,26 @@ async function fillPreviewBoxes(items) {
       }
     }
 
-    // 3) store & register
+    /* 3 / store & register */
     item.isEarring = earringFound;
     if (earringFound) {
       earringCells[index] = true;
-      earringState[index] = { firstImg: null };
+      earringState[index] = { firstImg:null };
     }
 
-    /* --- position calculations (unchanged) --- */
-    const row        = Math.floor(index / 9);
-    const col        = index % 9;
+    /* --- POSITION CALCULATIONS (unchanged from your file) -------- */
+    const row  = Math.floor(index / 9);
+    const col  = index % 9;
     const previewLeft = col * 125;
     const previewTop  = row * 165;
 
+    /* --- build preview box + the 5 detail rows ------------------- */
     const previewBox = document.createElement("div");
     previewBox.classList.add("preview-box");
     previewBox.id = "previewCell" + index;
     previewBox.style.position = "absolute";
     previewBox.style.left   = previewLeft + "px";
-    previewBox.style.top    = previewTop + "px";
+    previewBox.style.top    = previewTop  + "px";
     previewBox.style.width  = "110px";
     previewBox.style.height = "110px";
     previewBox.innerHTML = "Loading...";
@@ -1709,7 +1706,7 @@ async function fillPreviewBoxes(items) {
     orderInput.id = "orderCell" + index;
     orderInput.classList.add("detail-box");
     orderInput.style.left = previewLeft + "px";
-    orderInput.style.top  = previewTop + 95 + "px";
+    orderInput.style.top  = previewTop  + 95 + "px";
     orderInput.value = item.receipt_id
       ? item.receipt_id
       : item.orderNumber || "No Order #";
@@ -1721,7 +1718,7 @@ async function fillPreviewBoxes(items) {
     qtyInput.id = "quantityCell" + index;
     qtyInput.classList.add("detail-box");
     qtyInput.style.left = previewLeft + "px";
-    qtyInput.style.top  = previewTop + 107 + "px";
+    qtyInput.style.top  = previewTop  + 107 + "px";
     qtyInput.value = " Qty: " + (item.quantity != null ? item.quantity : 0);
 
     const metalInput = document.createElement("input");
@@ -1730,7 +1727,7 @@ async function fillPreviewBoxes(items) {
     metalInput.id = "metalCell" + index;
     metalInput.classList.add("detail-box");
     metalInput.style.left = previewLeft + "px";
-    metalInput.style.top  = previewTop + 119 + "px";
+    metalInput.style.top  = previewTop  + 119 + "px";
     let metalSel = "";
     if (item.variations && Array.isArray(item.variations)) {
       const acceptedMetalNames = [
@@ -1753,16 +1750,17 @@ async function fillPreviewBoxes(items) {
     matchInput.id = "matchCell" + index;
     matchInput.classList.add("detail-box");
     matchInput.style.left = previewLeft + "px";
-    matchInput.style.top  = previewTop + 131 + "px";
+    matchInput.style.top  = previewTop  + 131 + "px";
     matchInput.value = "";
 
+    /* --- add boxes to container ---------------------------------- */
     container.appendChild(previewBox);
     container.appendChild(orderInput);
     container.appendChild(qtyInput);
     container.appendChild(metalInput);
     container.appendChild(matchInput);
 
-    /* --- fetch & display listing image (unchanged) --- */
+    /* --- fetch & display listing image (unchanged) ---------------- */
     fetchListingImages(item.listing_id)
       .then(imageData => {
         if (imageData && imageData.length > 0) {
@@ -1782,7 +1780,7 @@ async function fillPreviewBoxes(items) {
         previewBox.innerHTML = "Img Error";
       });
   });  // end items.forEach
-}
+}  // ← end fillPreviewBoxes
 
     function attachPreviewBoxListeners(box) {
       let isDragging = false;
