@@ -1097,27 +1097,53 @@ function openIframePrinterForListing(cellIndex) {
   hiddenIframe.src = "QR Printer.html";
   document.body.appendChild(hiddenIframe);
 }
-    /********************************************************
-     * fillPreviewBoxes, attachPreviewBoxListeners,
-     * loadPositions, cropImageFromPreview, etc...
-     ********************************************************/
-    function loadPositions() {
-      configIDs.forEach(function (id) {
-        const el = document.getElementById(id);
-        if (!el) return;
-        const def = {};
-        const left = localStorage.getItem("pos-" + id + "-left") || def.left || 0;
-        const top = localStorage.getItem("pos-" + id + "-top") || def.top || 0;
-        const w = localStorage.getItem("pos-" + id + "-width") || def.width || 0;
-        const h = localStorage.getItem("pos-" + id + "-height") || def.height || 0;
 
-        el.style.position = "absolute";
-        el.style.left = left + "px";
-        el.style.top = top + "px";
-        if (parseInt(w, 10) > 0) el.style.width = w + "px";
-        if (parseInt(h, 10) > 0) el.style.height = h + "px";
-      });
-    }
+    /* ===== Hard-coded fallback positions & sizes (no calculations) ===== */
+    const defaultPos = {
+      configModal:              { left:711, top:387, width:250, height:450 },
+      configTable:              { left:27,  top:7,   width:525, height:1392 },
+      connectEtsyBtn:           { left:1239,top:14,  width:170, height:35 },
+      cropImagesBtn:            { left:20,  top:215, width:140, height:35 },
+      etsyOrderNumber:          { left:20,  top:25,  width:200, height:30 },
+      imageComparisonContainer: { left:0,   top:0,   width:0,   height:0 },
+      matchPrintBtn:            { left:20,  top:315, width:210, height:35 },
+      matchesModal:             { left:0,   top:0,   width:55,  height:0 },
+      mpBackBtn:                { left:720, top:15,  width:100, height:35 },
+      mpNextBtn:                { left:850, top:15,  width:100, height:35 },
+      openConfigBtn:            { left:1270,top:729, width:140, height:35 },
+      photoDragDrop:            { left:0,   top:-195,width:210, height:100 },
+      photoGridContainer:       { left:270, top:68,  width:1140,height:650 },
+      titleEtsyOrderNumber:     { left:20,  top:2,   width:145, height:20 },
+      titleImageMatrixDrop:     { left:20,  top:91,  width:145, height:20 },
+      titleUnmatchedImages:     { left:21,  top:437, width:145, height:20 },
+      unmatchedContainer:       { left:0,   top:152, width:600, height:0 },
+      userImage:                { left:0,   top:0,   width:100, height:100 },
+      saveConfigBtn:            { left:10,  top:3,   width:85,  height:35 },
+      sendMatchBtn:             { left:20,  top:255, width:210, height:35 },
+      testOpenAIBtn:            { left:20,  top:65,  width:140, height:35 }
+    };
+
+      /********************************************************
+       * loadPositions -- apply stored values or hard defaults
+       ********************************************************/
+      function loadPositions() {
+        configIDs.forEach((id) => {
+          const el = document.getElementById(id);
+          if (!el) return;
+
+          const def = defaultPos[id] || {};
+          const left   = parseInt(localStorage.getItem(`pos-${id}-left`), 10)   || def.left   || 0;
+          const top    = parseInt(localStorage.getItem(`pos-${id}-top`), 10)    || def.top    || 0;
+          const width  = parseInt(localStorage.getItem(`pos-${id}-width`), 10)  || def.width  || 0;
+          const height = parseInt(localStorage.getItem(`pos-${id}-height`), 10) || def.height || 0;
+
+          el.style.position = "absolute";
+          el.style.left   = left   + "px";
+          el.style.top    = top    + "px";
+          if (width  > 0) el.style.width  = width  + "px";
+          if (height > 0) el.style.height = height + "px";
+        });
+      }
 
     // --------------- (Your code for config table, openConfigBtn, saveConfigBtn, etc.) --------------
     document.getElementById("openConfigBtn").addEventListener("click", function () {
