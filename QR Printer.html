@@ -95,49 +95,45 @@ function containsPhrase(str = "", phrase = "") {
 }
 
 /********************************************************
- * getCumulativeDotCount(listings)   ⟶  now with DEBUG LOG
+ * getCumulativeDotCount(listings)   (v2: “more-hits” rule)
+ * • Count every Group-A and Group-B phrase hit
+ * • If only A ⇒ 2 dots
+ *   If only B ⇒ 1 dot
+ *   If both A & B ⇒ pick whichever has *more* hits
+ *     (tie → Group A, still 2 dots)
+ *   If neither ⇒ 0 dots
  ********************************************************/
 function getCumulativeDotCount(listings) {
-  const groupA = ["stud","studs","stud earrings","ring","rings","earrings"];      // 2 dots
+  const groupA = ["stud","studs","stud earrings","ring","rings","earrings"];    // 2 dots
   const groupB = ["necklace","necklaces","huggie","huggies","huggie earrings",
     "hoop","hoops","hoop earrings","bracelet","bracelets",
-    "extender","extenders","chain","chains"];                          // 1 dot
+    "extender","extenders","chain","chains"];                        // 1 dot
 
-  let foundA = false;
-  let foundB = false;
+  let hitsA = 0;
+  let hitsB = 0;
 
   listings.forEach((listing, idx) => {
-
-    /* ---------- 1) Use keywords if present ---------- */
-    let matchesA = [];
-    let matchesB = [];
+    /* 1) grab keywords (if any) */
     const kw = Array.isArray(listing.keywords) ? listing.keywords.map(k=>k.toLowerCase()) : [];
 
-    if (kw.length) {
-      matchesA = kw.filter(x => groupA.includes(x));
-      matchesB = kw.filter(x => groupB.includes(x));
+    /* 2) phrase matches either from keywords or title fallback */
+    const src = kw.length ? kw.join(" ") : (listing.title || "").toLowerCase();
 
-      if (matchesA.length) foundA = true;
-      else if (matchesB.length) foundB = true;
-      else foundB = true;        // keywords exist but none in A/B → treat as B
-    } else {
-      /* ---------- 2) Fallback: scan the title ---------- */
-      const title = (listing.title || "").toLowerCase();
-      matchesA = groupA.filter(p => containsPhrase(title, p));
-      matchesB = groupB.filter(p => containsPhrase(title, p));
+    const matchesA = groupA.filter(p => containsPhrase(src, p));
+    const matchesB = groupB.filter(p => containsPhrase(src, p));
 
-      if (matchesA.length) foundA = true;
-      else if (matchesB.length) foundB = true;
-      else foundB = true;        // no A/B phrase → treat as B
-    }
+    hitsA += matchesA.length;
+    hitsB += matchesB.length;
 
-    /* 🔵 TEMP DEBUG LOG ----------------------------- */
+    /* 🔷 TEMP DEBUG */
     console.log(`#${idx} «${listing.title}»
-      keywords: ${JSON.stringify(kw)}
-      A-hits: [${matchesA.join(", ")}]   B-hits: [${matchesB.join(", ")}]`);
+        A-hits: [${matchesA.join(", ")}]   B-hits: [${matchesB.join(", ")}]`);
   });
 
-  return foundA ? 2 : (foundB ? 1 : 0);
+  /* decide dot count */
+  if (hitsA === 0 && hitsB === 0) return 0;   // no relevant words at all
+  if (hitsA >= hitsB) return 2;               // tie or more A ⇒ Group A
+  return 1;                                   // otherwise Group B
 }
 
 /********************************************************
