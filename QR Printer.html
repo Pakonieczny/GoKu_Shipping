@@ -96,32 +96,39 @@ function containsPhrase(str = "", phrase = "") {
 
 /********************************************************
  * getCumulativeDotCount(listings)
- * Any title that contains a Group-A phrase → 2 dots
- * else if the title contains a Group-B phrase → 1 dot
- * else (no A or B) → treat as Group B (1 dot)
+ * Logic:
+ *   1) First look at listing.keywords (pre-computed in sorting.html)
+ *      • Any A keyword → 2 dots
+ *      • Else any B keyword → 1 dot
+ *   2) If keywords array is empty/missing, scan the TITLE once
+ *      with containsPhrase() to decide A or B
  ********************************************************/
 function getCumulativeDotCount(listings) {
-  const groupA = ["stud","studs","stud earrings","ring","rings"];      // 2 dots
+  const groupA = ["stud","studs","stud earrings","ring","rings"];    // 2 dots
   const groupB = ["necklace","necklaces","huggie","huggies","huggie earrings",
     "hoop","hoops","hoop earrings","bracelet","bracelets",
-    "extender","extenders","chain","chains"];                          // 1 dot
+    "extender","extenders","chain","chains"];                        // 1 dot
 
   let foundA = false;
   let foundB = false;
 
-  listings.forEach(listing => {
-    const title = (listing.title || "").toLowerCase();
+  listings.forEach((listing, idx) => {
 
-    if (groupA.some(p => containsPhrase(title, p))) foundA = true;
-    if (groupB.some(p => containsPhrase(title, p))) foundB = true;
-
-    /* fallback: if neither A nor B phrase is present, mark as B */
-    if (!foundA && !foundB) foundB = true;
+    /* ---------- 1) Use keywords if present ---------- */
+    const kw = Array.isArray(listing.keywords) ? listing.keywords.map(k=>k.toLowerCase()) : [];
+    if (kw.length) {
+      if (kw.some(x => groupA.includes(x))) foundA = true;
+      if (kw.some(x => groupB.includes(x))) foundB = true;
+    } else {
+      /* ---------- 2) Fallback: scan the title ---------- */
+      const title = (listing.title || "").toLowerCase();
+      if (groupA.some(p => containsPhrase(title, p))) foundA = true;
+      else if (groupB.some(p => containsPhrase(title, p))) foundB = true;
+      else foundB = true;                   // treat “neither” as Group B
+    }
   });
 
-  if (foundA) return 2;
-  if (foundB) return 1;
-  return 0;
+  return foundA ? 2 : (foundB ? 1 : 0);
 }
 
 /********************************************************
