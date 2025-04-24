@@ -95,29 +95,26 @@ function containsPhrase(str = "", phrase = "") {
 }
 
 /********************************************************
- * getCumulativeDotCount(listings)   (v2: “more-hits” rule)
- * • Count every Group-A and Group-B phrase hit
- * • If only A ⇒ 2 dots
- *   If only B ⇒ 1 dot
- *   If both A & B ⇒ pick whichever has *more* hits
- *     (tie → Group A, still 2 dots)
- *   If neither ⇒ 0 dots
+ * getCumulativeDotCount(listings)   (v3: global-count + fallback-to-B)
+ * • Tally every phrase hit across ALL listings
+ * • If only A hits → 2 dots
+ *   If only B hits → 1 dot
+ *   If both A & B  → choose side with MORE hits (ties → A)
+ *   If neither     → 1 dot  (treat entire batch as Group B)
  ********************************************************/
 function getCumulativeDotCount(listings) {
-  const groupA = ["stud","studs","stud earrings","ring","rings","earrings"];    // 2 dots
+  const groupA = ["stud","studs","stud earrings","ring","rings"];      // 2 dots
   const groupB = ["necklace","necklaces","huggie","huggies","huggie earrings",
     "hoop","hoops","hoop earrings","bracelet","bracelets",
-    "extender","extenders","chain","chains"];                        // 1 dot
+    "extender","extenders","chain","chains"];                          // 1 dot
 
   let hitsA = 0;
   let hitsB = 0;
 
   listings.forEach((listing, idx) => {
-    /* 1) grab keywords (if any) */
-    const kw = Array.isArray(listing.keywords) ? listing.keywords.map(k=>k.toLowerCase()) : [];
-
-    /* 2) phrase matches either from keywords or title fallback */
-    const src = kw.length ? kw.join(" ") : (listing.title || "").toLowerCase();
+    /* text source: keywords if present, else title */
+    const kwArr = Array.isArray(listing.keywords) ? listing.keywords.map(k=>k.toLowerCase()) : [];
+    const src   = kwArr.length ? kwArr.join(" ") : (listing.title || "");
 
     const matchesA = groupA.filter(p => containsPhrase(src, p));
     const matchesB = groupB.filter(p => containsPhrase(src, p));
@@ -125,20 +122,16 @@ function getCumulativeDotCount(listings) {
     hitsA += matchesA.length;
     hitsB += matchesB.length;
 
-    /* 🔷 TEMP DEBUG */
+    /* 🟦 TEMP DEBUG LOG — remove when satisfied */
     console.log(`#${idx} «${listing.title}»
         A-hits: [${matchesA.join(", ")}]   B-hits: [${matchesB.join(", ")}]`);
-
-      /* decide dot count */
-  if (matchesA.length) {
-    foundA = true;
-  } else if (matchesB.length) {
-    foundB = true;
-  } else {
-    foundB = true;           // fallback: treat as Group B
-  }
-
   });
+
+  /* --- final decision ------------------------------------------ */
+  if (hitsA === 0 && hitsB === 0) return 1;          // no phrases → default B
+  if (hitsA >= hitsB)           return 2;            // more (or tie) A hits
+  return 1;                                          // more B hits
+}
 
 /********************************************************
  * buildAndPrintLabel(orderNum, dotCount, dispatchDate):
