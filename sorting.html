@@ -1196,7 +1196,7 @@ function openIframePrinterForListing(cellIndex) {
     photoDragDropElem.addEventListener("drop", async function (e) {
       e.preventDefault();
       photoDragDropElem.classList.remove("drag-hover");   // remove after drop
-      
+
 
     const files = e.dataTransfer.files;
     if (!files || files.length === 0) return;
@@ -1999,7 +1999,7 @@ async function loadBatchEtsyOrders(orderNumbers) {
 
       // Then fill the UI with combined results
       await fillPreviewBoxes(combinedItems);
-      enableSendMatch();
+
       attachMatchCellListeners();          // NEW
 
   } catch (err) {
