@@ -84,10 +84,14 @@ window.addEventListener("load", async () => {
   }
 });
 
-/* helper: true word-/phrase match (no “ring” in “earrings”) */
+/* true phrase matcher – handles spaces, dashes, slashes, commas … */
 function containsPhrase(str = "", phrase = "") {
-  const re = new RegExp("\\b" + phrase.replace(/\s+/g, "\\s+") + "\\b", "i");
-  return re.test(str.toLowerCase());
+  // turn "stud earrings" → /\bstud[\s\W]+earrings\b/i
+  const pattern = "\\b" + phrase
+    .trim()
+    .replace(/\s+/g, "[\\s\\W]+")   // any run of NON-alphanumerics
+    + "\\b";
+  return new RegExp(pattern, "i").test(str.toLowerCase());
 }
 
 /********************************************************

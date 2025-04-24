@@ -1635,11 +1635,15 @@ async function fillPreviewBoxes(items) {
     "hoop","hoops","hoop earrings"
   ];
 
-  /* helper: check if str contains *exact* phrase (word-bounded) */
-    function containsPhrase(str = "", phrase = "") {
-      const re = new RegExp("\\b" + phrase.replace(/\s+/g, "\\s+") + "\\b", "i");
-      return re.test(str.toLowerCase());
-    }
+  /* true phrase matcher – handles spaces, dashes, slashes, commas … */
+  function containsPhrase(str = "", phrase = "") {
+    // turn "stud earrings" → /\bstud[\s\W]+earrings\b/i
+    const pattern = "\\b" + phrase
+      .trim()
+      .replace(/\s+/g, "[\\s\\W]+")   // any run of NON-alphanumerics
+      + "\\b";
+    return new RegExp(pattern, "i").test(str.toLowerCase());
+  }
 
   /* helper: check if a string mentions earrings */
   function isEarringString(str = "") {
