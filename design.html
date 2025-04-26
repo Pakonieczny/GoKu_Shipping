@@ -58,11 +58,17 @@
       height: 36px;
     }
 
-    /* --- Container & boxes for new orders --- */
+    /* --- Container that holds the stacked “newOrder” boxes --- */
     #newOrderContainer {
       position: absolute;
       left: 20px;
-      top: 325px;           /* 25 px below #etsyOrderNumber (at 270px) */
+      top: 236px;          /* 30 px below the 206 px bottom of Update-Order button */
+      width: 270px;
+      height: 800px;       /* scrollable window */
+      overflow-y: auto;
+      border: 1px dashed #bbb;
+      padding: 4px;
+      background: #fafafa;
     }
 
     .new-order-box {
@@ -547,7 +553,8 @@ const defaultPos = {
   userImage:                { left:0,   top:0,   width:100, height:100 },
   saveConfigBtn:            { left:10,  top:3,   width:85,  height:35 },
   sendMatchBtn:             { left:20,  top:255, width:210, height:35 },
-  testOpenAIBtn:            { left:20,  top:65,  width:140, height:35 }
+  testOpenAIBtn:            { left:20,  top:65,  width:140, height:35 },
+  newOrderContainer:        { left:20, top:236, width:270, height:800 }
 };
 
 /********************************************************
