@@ -49,6 +49,40 @@
       top: 310px;
     }
 
+    /* --- Update-Order-List button --- */
+    #updateOrderListBtn {
+      position: absolute;
+      left: 20px;
+      top: 170px;           /* 50 px below “Open Config” */
+      width: 160px;
+      height: 36px;
+    }
+
+    /* --- Container & boxes for new orders --- */
+    #newOrderContainer {
+      position: absolute;
+      left: 20px;
+      top: 325px;           /* 25 px below #etsyOrderNumber (at 270px) */
+    }
+
+    .new-order-box {
+      position: relative;
+      width: 250px;
+      height: 30px;
+      margin-bottom: 5px;
+      display: flex;
+      align-items: center;
+      font-size: 0.8em;
+      border: 1px solid #999;
+      padding-left: 4px;
+      background: #f5f5f5;
+    }
+    .new-order-box input[type="checkbox"] {
+      position: absolute;
+      right: 6px;
+      top: 6px;
+    }
+
     /* Container for dynamically generated preview boxes and detail boxes */
     #photoGridContainer {
       position: relative;
@@ -144,21 +178,17 @@
 </head>
 <body>
   <!-- Main Buttons -->
-  <button id="connectEtsyBtn" class="btn waves-effect waves-light">Connect to Etsy</button>
-  <button id="openConfigBtn" class="btn waves-effect waves-light">Open Config</button>
+<button id="connectEtsyBtn" class="btn waves-effect waves-light">Connect to Etsy</button>
+<button id="openConfigBtn"   class="btn waves-effect waves-light">Open Config</button>
 
-  <!-- Etsy Order Number input -->
-  <input
-    type="text"
-    id="etsyOrderNumber"
-    placeholder="Comma-delimited Etsy Order Numbers"
-  />
+<!-- NEW -->
+<button id="updateOrderListBtn" class="btn waves-effect waves-light">Update Order List</button>
 
-  <!-- Image Comparison UI -->
-  <div id="imageComparisonContainer">
-    <div id="photoDragDrop">Drag & Drop</div>
-    <div id="unmatchedContainer"></div>
-  </div>
+<!-- Etsy Order Number input -->
+<input  … />
+
+<!-- NEW container that will hold the stacked boxes -->
+<div id="newOrderContainer"></div>
 
   <!-- Container for dynamically generated preview boxes and detail boxes -->
   <div id="photoGridContainer">
@@ -283,11 +313,13 @@ async function generateCodeChallenge(codeVerifier) {
 const configIDs = [
   "connectEtsyBtn",
   "openConfigBtn",
+  "updateOrderListBtn",      // ← NEW
   "etsyOrderNumber",
   "photoGridContainer",
   "configModal",
   "configTable",
-  "saveConfigBtn"
+  "saveConfigBtn",
+  "newOrderContainer"        // ← NEW
 ];
 
 /********************************************************
@@ -324,6 +356,23 @@ document.addEventListener("DOMContentLoaded", function () {
       console.error("OAuth start error:", err);
       M.toast({ html: "OAuth error: " + err.message });
     }
+  });
+
+  /* --- Update-Order-List button --- */
+  document.getElementById("updateOrderListBtn")
+    .addEventListener("click", async function () {
+      try {
+        this.disabled = true;
+        this.innerText = "Loading…";
+        await buildNewOrderList();
+        this.disabled = false;
+        this.innerText = "Update Order List";
+      } catch (err) {
+        console.error("Order-list fetch error:", err);
+        M.toast({ html: "Order-list error: " + err.message });
+        this.disabled = false;
+        this.innerText = "Update Order List";
+      }
   });
 
   // Load multiple orders on Enter (partial snippet)
@@ -364,6 +413,44 @@ document.addEventListener("DOMContentLoaded", function () {
       await loadBatchEtsyOrders(orderNumbers);
     }
   });
+
+  /********************************************************
+ * buildNewOrderList – pulls latest Etsy orders & draws boxes
+ ********************************************************/
+async function buildNewOrderList() {
+  const token = localStorage.getItem("access_token") || "";
+  if (!token) {
+    M.toast({ html: "Connect to Etsy first!" });
+    return;
+  }
+
+  // --- call your Netlify proxy that returns most-recent orders ---
+  const resp = await fetch(functionsBaseUrl + "/etsyProxy?fn=open-orders", {
+    headers: { "access-token": token }
+  });
+  if (!resp.ok) throw new Error("HTTP " + resp.status);
+  const orders = await resp.json();   // assume an array of order objects
+
+  const container = document.getElementById("newOrderContainer");
+  container.innerHTML = "";           // clear old list
+
+  orders.forEach((ord, idx) => {
+    // compute total quantity across all transactions
+    const totalQty = (ord.transactions || []).reduce(
+      (sum, t) => sum + (Number(t.quantity) || 0), 0
+    );
+
+    const box = document.createElement("div");
+    box.className = "new-order-box";
+    box.id = "newOrder" + idx;
+    box.innerHTML =
+      `${ord.order_number || ord.receipt_id || "?"}  | 
+       ${ord.dispatch_date || "N/A"}  | 
+       Qty ${totalQty}
+       <input type="checkbox" class="addToDesignChk" title="Add to Design">`;
+    container.appendChild(box);
+  });
+}
 
 /********************************************************
  * startScannedSortingListener (NEW partial snippet)
@@ -717,7 +804,7 @@ function attachPreviewBoxListeners(box) {
         offY = 0;
       }
     }
-    if (currentScale > 8) currentScale = 8;
+    if (currentScale > 7) currentScale = 7;
     img.dataset.scale = currentScale;
     img.dataset.offsetX = offX;
     img.dataset.offsetY = offY;
