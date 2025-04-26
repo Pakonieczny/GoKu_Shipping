@@ -295,7 +295,7 @@ document.addEventListener("DOMContentLoaded", function () {
       localStorage.setItem("etsy_code_verifier", codeVerifier);
       const codeChallenge = await generateCodeChallenge(codeVerifier);
       const CLIENT_ID = "k75zdspz4r99txpqdji7i2em";
-      const redirectUri = "https://design.goldenspike.app/";
+      const redirectUri = "https://design.goldenspike.app";
       const state = "randomState123";
       const scope = "listings_w listings_r transactions_r transactions_w";
       const etsyAuthUrl =
