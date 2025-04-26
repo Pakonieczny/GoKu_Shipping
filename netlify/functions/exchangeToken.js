@@ -10,6 +10,7 @@ const crypto = require("crypto");
 // We only allow these two final domains:
 const SORTING_DOMAIN      = "https://sorting.goldenspike.app";
 const GOLDENSPIKE_DOMAIN  = "https://goldenspike.app";
+const DESIGN_DOMAIN  = "https://design.goldenspike.app";
 
 // Helpers for PKCE:
 function generateRandomString(length) {
@@ -46,6 +47,10 @@ function pickDomainFromHost(event) {
     console.log("Overriding domain: user specified ?redirect_domain=goldenspike");
     return GOLDENSPIKE_DOMAIN;
   }
+    else if (param === "design") {
+    console.log("Overriding domain: user specified ?redirect_domain=design");
+    return DESIGN_DOMAIN;
+  }  
 
   // If no param => auto detect from host
   if (host.includes("sorting.goldenspike.app")) {
@@ -55,6 +60,11 @@ function pickDomainFromHost(event) {
   else if (host.includes("goldenspike.app")) {
     console.log("Auto-detected goldenspike domain from host");
     return GOLDENSPIKE_DOMAIN;
+
+  } 
+  else if (host.includes("design.goldenspike.app")) {
+    console.log("Auto-detected design domain from host");
+    return DESIGN_DOMAIN;
   }
 
   // If we can't detect, pick a default. Let's default to goldenspike:
