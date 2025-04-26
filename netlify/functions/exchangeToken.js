@@ -57,14 +57,16 @@ function pickDomainFromHost(event) {
     console.log("Auto-detected sorting domain from host");
     return SORTING_DOMAIN;
   } 
-  else if (host.includes("design.goldenspike.app")) {
-    console.log("Auto-detected design domain from host");
-    return DESIGN_DOMAIN;
-  }  
-  else if (host.includes("goldenspike.app")) {
+
+    else if (host.includes("goldenspike.app")) {
     console.log("Auto-detected goldenspike domain from host");
     return GOLDENSPIKE_DOMAIN;
   }
+  
+  else if (host.includes("design.goldenspike.app/")) {
+    console.log("Auto-detected design domain from host");
+    return DESIGN_DOMAIN;
+  }  
 
   // If we can't detect, pick a default. Let's default to goldenspike:
   console.log("Host doesn't match either domain => defaulting to goldenspike");
