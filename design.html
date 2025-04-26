@@ -61,6 +61,19 @@
       top: 20px;
     }
 
+    /* === keep images square & clipped inside preview boxes === */
+    .preview-box {
+      width: 100px;          /* box itself */
+      height: 100px;
+      overflow: hidden;      /* clip anything that spills */
+    }
+
+    .preview-box img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;     /* center-crop to square */
+    }  
+
     /* Detail text boxes: 55px x 7px */
     .detail-box {
       position: absolute;
@@ -592,8 +605,8 @@ async function fillPreviewBoxes(items) {
     previewBox.style.position = "absolute";
     previewBox.style.left   = previewLeft + "px";
     previewBox.style.top    = previewTop  + "px";
-    previewBox.style.width  = "110px";
-    previewBox.style.height = "110px";
+    previewBox.style.width  = "100px";
+    previewBox.style.height = "100px";
     previewBox.innerHTML = "Loading...";
 
     const orderInput = document.createElement("input");
