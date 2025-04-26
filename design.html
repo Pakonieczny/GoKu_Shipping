@@ -445,11 +445,22 @@ async function buildNewOrderList() {
     /* a) order number (fallback to receipt_id) */
     const orderNum = r.order_number || r.receipt_id || "—";
 
-    /* b) dispatch / expected-ship date (formatted) */
+    /* b) Ship-by date (match index.html logic)
+    ──────────────────────────────────────
+    Use expected_ship_date from the FIRST transaction if present,
+    otherwise fall back to receipt.dispatch_date, then ship_by_date. */
     let shipStr = "N/A";
-    const ts = r.dispatch_date || r.expected_ship_date || r.ship_by_date;
+    let ts = null;
+
+    if (Array.isArray(r.transactions) && r.transactions.length > 0) {
+      const firstT = r.transactions[0];
+      if (firstT.expected_ship_date) ts = firstT.expected_ship_date;
+    }
+
+    if (!ts) ts = r.dispatch_date || r.ship_by_date;
+
     if (ts) {
-      const d = new Date(ts * 1000);                // Etsy timestamps are Unix seconds
+      const d = new Date(ts * 1000);            // Unix-seconds → JS date
       const dd = ("0" + d.getDate()).slice(-2);
       const mm = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"][d.getMonth()];
       shipStr  = `${dd} ${mm} ${d.getFullYear()}`;
