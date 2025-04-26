@@ -19,3 +19,15 @@
   to = "/sort-scan.html"
   status = 200
   force = true
+
+  [[redirects]]
+  from = "https://design.goldenspike.app"
+  to = "/design.html"
+  status = 200
+  force = true
+
+  [[redirects]]
+  from = "https://design-scan.goldenspike.app"
+  to = "/design-scan.html"
+  status = 200
+  force = true
