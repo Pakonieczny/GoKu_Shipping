@@ -4,10 +4,7 @@
   <meta charset="UTF-8" />
   <title>Sorting - Single-Click Zoom</title>
   <!-- Materialize CSS -->
-  <link
-    rel="stylesheet"
-    href="https://cdnjs.cloudflare.com/ajax/libs/materialize/1.0.0/css/materialize.min.css"
-  />
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/materialize/1.0.0/css/materialize.min.css" />
   <style>
     body {
       background-color: #fff;
@@ -136,10 +133,6 @@
   <!-- Main Buttons -->
   <button id="connectEtsyBtn" class="btn waves-effect waves-light">Connect to Etsy</button>
   <button id="openConfigBtn" class="btn waves-effect waves-light">Open Config</button>
-  onclick="initMatchAndPrintFlow()">Match & Print</button>
-
- 
-<!-- ===== NEW TITLE ELEMENTS (END) ===== -->
 
   <!-- Etsy Order Number input -->
   <input
@@ -186,14 +179,13 @@
     </div>
   </div>
 
-    <!-- 1) Firebase (compat mode) – must be above your main sorting code -->
+  <!-- 1) Firebase (compat mode) – must be above your main sorting code -->
   <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
 
   <!-- jQuery & Materialize JS -->
   <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/materialize/1.0.0/js/materialize.min.js"
-  ></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/materialize/1.0.0/js/materialize.min.js"></script>
 
   <!-- Everything is in this single <script> block -->
   <script>
@@ -213,7 +205,6 @@ let skipMatches = {};   // { cellIndex: true }
 let earringCells  = {};            // { cellIdx : true }
 let earringState  = {};            // { cellIdx : { firstImg:null } }
 
-
 /********************************************************
  * Firebase Initialization (REQUIRED)
  ********************************************************/
@@ -228,7 +219,6 @@ const firebaseConfig = {
 
 firebase.initializeApp(firebaseConfig);
 const db = firebase.firestore();
-
 
 /********************************************************
  * Etsy Auth, Code Challenge, configIDs
@@ -325,43 +315,42 @@ document.addEventListener("DOMContentLoaded", function () {
 
   // Load multiple orders on Enter (partial snippet)
   const etsyOrderInput = document.getElementById("etsyOrderNumber");
-etsyOrderInput.addEventListener("keydown", async function (e) {
-  if (e.key === "Enter") {
+  etsyOrderInput.addEventListener("keydown", async function (e) {
+    if (e.key === "Enter") {
 
-    // NEW: cancel *all* outstanding fetches / work from a previous run
-    pendingFetchControllers.forEach(ctrl => ctrl.abort());
-    pendingFetchControllers = [];     // fresh list for this run
+      // NEW: cancel *all* outstanding fetches / work from a previous run
+      pendingFetchControllers.forEach(ctrl => ctrl.abort());
+      pendingFetchControllers = [];     // fresh list for this run
 
-    globalRunId++;                    // ← bump run ID so old tasks quit
+      globalRunId++;                    // ← bump run ID so old tasks quit
 
-    // Reset arrays & state
-    croppedImagesArray = [];
-    userImagesArray = [];
-    cellMatches = {};
-    window.cachedOrderItems = [];
-    matchPrintFlowInProgress = false;
+      // Reset arrays & state
+      croppedImagesArray = [];
+      userImagesArray = [];
+      cellMatches = {};
+      window.cachedOrderItems = [];
+      matchPrintFlowInProgress = false;
 
-    // Clear UI
-    document.getElementById("photoGridContainer").innerHTML = "";
-    document.getElementById("unmatchedContainer").innerHTML = "";
+      // Clear UI
+      document.getElementById("photoGridContainer").innerHTML = "";
+      document.getElementById("unmatchedContainer").innerHTML = "";
 
-    disableSendMatch();
-    disableMatchPrintFlow();
-    removeAllBlueHighlights();
+      disableSendMatch();
+      disableMatchPrintFlow();
+      removeAllBlueHighlights();
 
-    const inputVal = etsyOrderInput.value.trim();
-    if (!inputVal) return;
+      const inputVal = etsyOrderInput.value.trim();
+      if (!inputVal) return;
 
-    let orderNumbers = inputVal
-      .split(",")
-      .map((x) => x.trim())
-      .filter((x) => x);
-    orderNumbers = orderNumbers.slice(0, 50);
+      let orderNumbers = inputVal
+        .split(",")
+        .map((x) => x.trim())
+        .filter((x) => x);
+      orderNumbers = orderNumbers.slice(0, 50);
 
-    await loadBatchEtsyOrders(orderNumbers);
-  }
-});
-
+      await loadBatchEtsyOrders(orderNumbers);
+    }
+  });
 
 /********************************************************
  * startScannedSortingListener (NEW partial snippet)
@@ -400,116 +389,116 @@ async function startScannedSortingListener() {
   }
 }
 
+});        /* ←––––––––– CLOSED DOMContentLoaded LISTENER */
 
-    /* ===== Hard-coded fallback positions & sizes (no calculations) ===== */
-    const defaultPos = {
-      configModal:              { left:711, top:387, width:250, height:450 },
-      configTable:              { left:27,  top:7,   width:525, height:1392 },
-      connectEtsyBtn:           { left:1239,top:14,  width:170, height:35 },
-      cropImagesBtn:            { left:20,  top:215, width:140, height:35 },
-      etsyOrderNumber:          { left:20,  top:25,  width:200, height:30 },
-      imageComparisonContainer: { left:0,   top:0,   width:0,   height:0 },
-      matchPrintBtn:            { left:20,  top:315, width:210, height:35 },
-      matchesModal:             { left:0,   top:0,   width:55,  height:0 },
-      mpBackBtn:                { left:720, top:15,  width:100, height:35 },
-      mpNextBtn:                { left:850, top:15,  width:100, height:35 },
-      openConfigBtn:            { left:1270,top:729, width:140, height:35 },
-      photoDragDrop:            { left:0,   top:-195,width:210, height:100 },
-      photoGridContainer:       { left:270, top:68,  width:1140,height:650 },
-      titleEtsyOrderNumber:     { left:20,  top:2,   width:145, height:20 },
-      titleImageMatrixDrop:     { left:20,  top:91,  width:145, height:20 },
-      titleUnmatchedImages:     { left:21,  top:437, width:145, height:20 },
-      unmatchedContainer:       { left:0,   top:152, width:600, height:0 },
-      userImage:                { left:0,   top:0,   width:100, height:100 },
-      saveConfigBtn:            { left:10,  top:3,   width:85,  height:35 },
-      sendMatchBtn:             { left:20,  top:255, width:210, height:35 },
-      testOpenAIBtn:            { left:20,  top:65,  width:140, height:35 }
-    };
+/* ===== Hard-coded fallback positions & sizes (no calculations) ===== */
+const defaultPos = {
+  configModal:              { left:711, top:387, width:250, height:450 },
+  configTable:              { left:27,  top:7,   width:525, height:1392 },
+  connectEtsyBtn:           { left:1239,top:14,  width:170, height:35 },
+  cropImagesBtn:            { left:20,  top:215, width:140, height:35 },
+  etsyOrderNumber:          { left:20,  top:25,  width:200, height:30 },
+  imageComparisonContainer: { left:0,   top:0,   width:0,   height:0 },
+  matchPrintBtn:            { left:20,  top:315, width:210, height:35 },
+  matchesModal:             { left:0,   top:0,   width:55,  height:0 },
+  mpBackBtn:                { left:720, top:15,  width:100, height:35 },
+  mpNextBtn:                { left:850, top:15,  width:100, height:35 },
+  openConfigBtn:            { left:1270,top:729, width:140, height:35 },
+  photoDragDrop:            { left:0,   top:-195,width:210, height:100 },
+  photoGridContainer:       { left:270, top:68,  width:1140,height:650 },
+  titleEtsyOrderNumber:     { left:20,  top:2,   width:145, height:20 },
+  titleImageMatrixDrop:     { left:20,  top:91,  width:145, height:20 },
+  titleUnmatchedImages:     { left:21,  top:437, width:145, height:20 },
+  unmatchedContainer:       { left:0,   top:152, width:600, height:0 },
+  userImage:                { left:0,   top:0,   width:100, height:100 },
+  saveConfigBtn:            { left:10,  top:3,   width:85,  height:35 },
+  sendMatchBtn:             { left:20,  top:255, width:210, height:35 },
+  testOpenAIBtn:            { left:20,  top:65,  width:140, height:35 }
+};
 
-      /********************************************************
-       * loadPositions -- apply stored values or hard defaults
-       ********************************************************/
-      function loadPositions() {
-        configIDs.forEach((id) => {
-          const el = document.getElementById(id);
-          if (!el) return;
+/********************************************************
+ * loadPositions -- apply stored values or hard defaults
+ ********************************************************/
+function loadPositions() {
+  configIDs.forEach((id) => {
+    const el = document.getElementById(id);
+    if (!el) return;
 
-          const def = defaultPos[id] || {};
-          const left   = parseInt(localStorage.getItem(`pos-${id}-left`), 10)   || def.left   || 0;
-          const top    = parseInt(localStorage.getItem(`pos-${id}-top`), 10)    || def.top    || 0;
-          const width  = parseInt(localStorage.getItem(`pos-${id}-width`), 10)  || def.width  || 0;
-          const height = parseInt(localStorage.getItem(`pos-${id}-height`), 10) || def.height || 0;
+    const def = defaultPos[id] || {};
+    const left   = parseInt(localStorage.getItem(`pos-${id}-left`), 10)   || def.left   || 0;
+    const top    = parseInt(localStorage.getItem(`pos-${id}-top`), 10)    || def.top    || 0;
+    const width  = parseInt(localStorage.getItem(`pos-${id}-width`), 10)  || def.width  || 0;
+    const height = parseInt(localStorage.getItem(`pos-${id}-height`), 10) || def.height || 0;
 
-          el.style.position = "absolute";
-          el.style.left   = left   + "px";
-          el.style.top    = top    + "px";
-          if (width  > 0) el.style.width  = width  + "px";
-          if (height > 0) el.style.height = height + "px";
-        });
-      }
+    el.style.position = "absolute";
+    el.style.left   = left   + "px";
+    el.style.top    = top    + "px";
+    if (width  > 0) el.style.width  = width  + "px";
+    if (height > 0) el.style.height = height + "px";
+  });
+}
 
-    // --------------- (Your code for config table, openConfigBtn, saveConfigBtn, etc.) --------------
-    document.getElementById("openConfigBtn").addEventListener("click", function () {
-      populateConfigTable();
-      M.Modal.getInstance(document.getElementById("configModal")).open();
+// --------------- (Your code for config table, openConfigBtn, saveConfigBtn, etc.) --------------
+document.getElementById("openConfigBtn").addEventListener("click", function () {
+  populateConfigTable();
+  M.Modal.getInstance(document.getElementById("configModal")).open();
+});
+
+document.getElementById("saveConfigBtn").addEventListener("click", function () {
+  configIDs.forEach(function (id) {
+    const el = document.getElementById(id);
+    if (!el) return;
+    const cs = window.getComputedStyle(el);
+    localStorage.setItem("pos-" + id + "-left", parseInt(cs.left, 10) || 0);
+    localStorage.setItem("pos-" + id + "-top", parseInt(cs.top, 10) || 0);
+    localStorage.setItem("pos-" + id + "-width", parseInt(cs.width, 10) || 0);
+    localStorage.setItem("pos-" + id + "-height", parseInt(cs.height, 10) || 0);
+  });
+  M.toast({ html: "Positions saved!" });
+});
+
+function populateConfigTable() {
+  const tbody = document.querySelector("#configTable tbody");
+  tbody.innerHTML = "";
+
+  configIDs.forEach(function (id) {
+    const el = document.getElementById(id);
+    if (!el) return;
+    const cs = window.getComputedStyle(el);
+    const leftVal = parseInt(cs.left, 10) || 0;
+    const topVal = parseInt(cs.top, 10) || 0;
+    const widthVal = parseInt(cs.width, 10) || 0;
+    const heightVal = parseInt(cs.height, 10) || 0;
+
+    const row = document.createElement("tr");
+    row.innerHTML = `
+      <td>${id}</td>
+      <td><input type="number" value="${leftVal}" data-id="${id}" class="left-input"></td>
+      <td><input type="number" value="${topVal}" data-id="${id}" class="top-input"></td>
+      <td><input type="number" value="${widthVal}" data-id="${id}" class="width-input"></td>
+      <td><input type="number" value="${heightVal}" data-id="${id}" class="height-input"></td>
+    `;
+    tbody.appendChild(row);
+
+    row.querySelector(".left-input").addEventListener("input", function () {
+      const target = document.getElementById(this.dataset.id);
+      if (target) target.style.left = parseInt(this.value, 10) + "px";
     });
-
-    document.getElementById("saveConfigBtn").addEventListener("click", function () {
-      configIDs.forEach(function (id) {
-        const el = document.getElementById(id);
-        if (!el) return;
-        const cs = window.getComputedStyle(el);
-        localStorage.setItem("pos-" + id + "-left", parseInt(cs.left, 10) || 0);
-        localStorage.setItem("pos-" + id + "-top", parseInt(cs.top, 10) || 0);
-        localStorage.setItem("pos-" + id + "-width", parseInt(cs.width, 10) || 0);
-        localStorage.setItem("pos-" + id + "-height", parseInt(cs.height, 10) || 0);
-      });
-      M.toast({ html: "Positions saved!" });
+    row.querySelector(".top-input").addEventListener("input", function () {
+      const target = document.getElementById(this.dataset.id);
+      if (target) target.style.top = parseInt(this.value, 10) + "px";
     });
+    row.querySelector(".width-input").addEventListener("input", function () {
+      const target = document.getElementById(this.dataset.id);
+      if (target) target.style.width = parseInt(this.value, 10) + "px";
+    });
+    row.querySelector(".height-input").addEventListener("input", function () {
+      const target = document.getElementById(this.dataset.id);
+      if (target) target.style.height = parseInt(this.value, 10) + "px";
+    });
+  });
+}
 
-    function populateConfigTable() {
-      const tbody = document.querySelector("#configTable tbody");
-      tbody.innerHTML = "";
-
-      configIDs.forEach(function (id) {
-        const el = document.getElementById(id);
-        if (!el) return;
-        const cs = window.getComputedStyle(el);
-        const leftVal = parseInt(cs.left, 10) || 0;
-        const topVal = parseInt(cs.top, 10) || 0;
-        const widthVal = parseInt(cs.width, 10) || 0;
-        const heightVal = parseInt(cs.height, 10) || 0;
-
-        const row = document.createElement("tr");
-        row.innerHTML = `
-          <td>${id}</td>
-          <td><input type="number" value="${leftVal}" data-id="${id}" class="left-input"></td>
-          <td><input type="number" value="${topVal}" data-id="${id}" class="top-input"></td>
-          <td><input type="number" value="${widthVal}" data-id="${id}" class="width-input"></td>
-          <td><input type="number" value="${heightVal}" data-id="${id}" class="height-input"></td>
-        `;
-        tbody.appendChild(row);
-
-        row.querySelector(".left-input").addEventListener("input", function () {
-          const target = document.getElementById(this.dataset.id);
-          if (target) target.style.left = parseInt(this.value, 10) + "px";
-        });
-        row.querySelector(".top-input").addEventListener("input", function () {
-          const target = document.getElementById(this.dataset.id);
-          if (target) target.style.top = parseInt(this.value, 10) + "px";
-        });
-        row.querySelector(".width-input").addEventListener("input", function () {
-          const target = document.getElementById(this.dataset.id);
-          if (target) target.style.width = parseInt(this.value, 10) + "px";
-        });
-        row.querySelector(".height-input").addEventListener("input", function () {
-          const target = document.getElementById(this.dataset.id);
-          if (target) target.style.height = parseInt(this.value, 10) + "px";
-        });
-      });
-    }
-
-    
 /******************************************************************
  * fillPreviewBoxes(items)
  ******************************************************************/
@@ -551,7 +540,7 @@ async function fillPreviewBoxes(items) {
   }
 
   /* ---------- MAIN LOOP: one preview row per transaction ---------- */
-    items.forEach((item, index) => {
+  items.forEach((item, index) => {
     /* --- qty memo ------------------------------------------------- */
     item.qty = Number(item.quantity) || 1;
 
@@ -689,109 +678,108 @@ async function fillPreviewBoxes(items) {
   });  // end items.forEach
 }  // ← end fillPreviewBoxes
 
-    function attachPreviewBoxListeners(box) {
-      let isDragging = false;
-      let isMouseDown = false;
-      let dragStartX = 0,
-        dragStartY = 0;
-      let lastX = 0,
-        lastY = 0;
-      const dragThreshold = 3;
+function attachPreviewBoxListeners(box) {
+  let isDragging = false;
+  let isMouseDown = false;
+  let dragStartX = 0,
+      dragStartY = 0;
+  let lastX = 0,
+      lastY = 0;
+  const dragThreshold = 3;
 
-      box.addEventListener("wheel", function (ev) {
-        const img = box.querySelector("img");
-        if (!img) return;
-        ev.preventDefault();
-        let currentScale = parseFloat(img.dataset.scale) || 1;
-        let offX = parseFloat(img.dataset.offsetX) || 0;
-        let offY = parseFloat(img.dataset.offsetY) || 0;
-        if (ev.deltaY < 0) {
-          currentScale *= 1.1;
-        } else {
-          currentScale /= 1.1;
-          if (currentScale <= 1) {
-            currentScale = 1;
-            offX = 0;
-            offY = 0;
-          }
-        }
-        if (currentScale > 8) currentScale = 8;
-        img.dataset.scale = currentScale;
-        img.dataset.offsetX = offX;
-        img.dataset.offsetY = offY;
-        img.style.transform = `translate(${offX}px, ${offY}px) scale(${currentScale})`;
-      });
-
-      box.addEventListener("mousedown", function (ev) {
-        const img = box.querySelector("img");
-        if (!img) return;
-        const scaleNow = parseFloat(img.dataset.scale) || 1;
-        if (scaleNow <= 1) return;
-        ev.preventDefault();
-        isMouseDown = true;
-        isDragging = false;
-        dragStartX = ev.clientX;
-        dragStartY = ev.clientY;
-        lastX = ev.clientX;
-        lastY = ev.clientY;
-      });
-
-      box.addEventListener("mousemove", function (ev) {
-        if (!isMouseDown) return;
-        ev.preventDefault();
-        const dxAll = Math.abs(ev.clientX - dragStartX);
-        const dyAll = Math.abs(ev.clientY - dragStartY);
-        if (dxAll > dragThreshold || dyAll > dragThreshold) isDragging = true;
-        const img = box.querySelector("img");
-        if (!img) return;
-        const scaleNow = parseFloat(img.dataset.scale) || 1;
-        let offX = parseFloat(img.dataset.offsetX) || 0;
-        let offY = parseFloat(img.dataset.offsetY) || 0;
-        const dx = ev.clientX - lastX;
-        const dy = ev.clientY - lastY;
-        offX += dx;
-        offY += dy;
-        img.dataset.offsetX = offX;
-        img.dataset.offsetY = offY;
-        img.style.transform = `translate(${offX}px, ${offY}px) scale(${scaleNow})`;
-        lastX = ev.clientX;
-        lastY = ev.clientY;
-      });
-
-      box.addEventListener("mouseup", function () {
-        isMouseDown = false;
-      });
-      box.addEventListener("mouseleave", function () {
-        isMouseDown = false;
-      });
-
-      box.addEventListener("click", function (ev) {
-        if (isDragging) {
-          isDragging = false;
-          return;
-        }
-        const img = box.querySelector("img");
-        if (!img) return;
-        const rect = box.getBoundingClientRect();
-        const boxCenterX = rect.left + box.clientWidth / 2;
-        const boxCenterY = rect.top + box.clientHeight / 2;
-        const dx = ev.clientX - boxCenterX;
-        const dy = ev.clientY - boxCenterY;
-        const scale = 5;
-        const fudgeY = 10;
-        const offsetX = -scale * dx;
-        const offsetY = -scale * dy + fudgeY;
-        img.dataset.scale = scale;
-        img.dataset.offsetX = offsetX;
-        img.dataset.offsetY = offsetY;
-        img.style.transform = `translate(${offsetX}px, ${offsetY}px) scale(${scale})`;
-      });
+  box.addEventListener("wheel", function (ev) {
+    const img = box.querySelector("img");
+    if (!img) return;
+    ev.preventDefault();
+    let currentScale = parseFloat(img.dataset.scale) || 1;
+    let offX = parseFloat(img.dataset.offsetX) || 0;
+    let offY = parseFloat(img.dataset.offsetY) || 0;
+    if (ev.deltaY < 0) {
+      currentScale *= 1.1;
+    } else {
+      currentScale /= 1.1;
+      if (currentScale <= 1) {
+        currentScale = 1;
+        offX = 0;
+        offY = 0;
+      }
     }
+    if (currentScale > 8) currentScale = 8;
+    img.dataset.scale = currentScale;
+    img.dataset.offsetX = offX;
+    img.dataset.offsetY = offY;
+    img.style.transform = `translate(${offX}px, ${offY}px) scale(${currentScale})`;
+  });
+
+  box.addEventListener("mousedown", function (ev) {
+    const img = box.querySelector("img");
+    if (!img) return;
+    const scaleNow = parseFloat(img.dataset.scale) || 1;
+    if (scaleNow <= 1) return;
+    ev.preventDefault();
+    isMouseDown = true;
+    isDragging = false;
+    dragStartX = ev.clientX;
+    dragStartY = ev.clientY;
+    lastX = ev.clientX;
+    lastY = ev.clientY;
+  });
+
+  box.addEventListener("mousemove", function (ev) {
+    if (!isMouseDown) return;
+    ev.preventDefault();
+    const dxAll = Math.abs(ev.clientX - dragStartX);
+    const dyAll = Math.abs(ev.clientY - dragStartY);
+    if (dxAll > dragThreshold || dyAll > dragThreshold) isDragging = true;
+    const img = box.querySelector("img");
+    if (!img) return;
+    const scaleNow = parseFloat(img.dataset.scale) || 1;
+    let offX = parseFloat(img.dataset.offsetX) || 0;
+    let offY = parseFloat(img.dataset.offsetY) || 0;
+    const dx = ev.clientX - lastX;
+    const dy = ev.clientY - lastY;
+    offX += dx;
+    offY += dy;
+    img.dataset.offsetX = offX;
+    img.dataset.offsetY = offY;
+    img.style.transform = `translate(${offX}px, ${offY}px) scale(${scaleNow})`;
+    lastX = ev.clientX;
+    lastY = ev.clientY;
+  });
+
+  box.addEventListener("mouseup", function () {
+    isMouseDown = false;
+  });
+  box.addEventListener("mouseleave", function () {
+    isMouseDown = false;
+  });
+
+  box.addEventListener("click", function (ev) {
+    if (isDragging) {
+      isDragging = false;
+      return;
+    }
+    const img = box.querySelector("img");
+    if (!img) return;
+    const rect = box.getBoundingClientRect();
+    const boxCenterX = rect.left + box.clientWidth / 2;
+    const boxCenterY = rect.top + box.clientHeight / 2;
+    const dx = ev.clientX - boxCenterX;
+    const dy = ev.clientY - boxCenterY;
+    const scale = 5;
+    const fudgeY = 10;
+    const offsetX = -scale * dx;
+    const offsetY = -scale * dy + fudgeY;
+    img.dataset.scale = scale;
+    img.dataset.offsetX = offsetX;
+    img.dataset.offsetY = offsetY;
+    img.style.transform = `translate(${offsetX}px, ${offsetY}px) scale(${scale})`;
+  });
+}
 
 /********************************************************
  * loadBatchEtsyOrders, fetchListingImages, getLocalImageData
  ********************************************************/
-
 async function loadBatchEtsyOrders(orderNumbers) {
   try {
     M.toast({ html: "Loading " + orderNumbers.length + " order(s)..." });
@@ -850,10 +838,10 @@ async function loadBatchEtsyOrders(orderNumbers) {
       }
     }
 
-      // Then fill the UI with combined results
-      await fillPreviewBoxes(combinedItems);
+    // Then fill the UI with combined results
+    await fillPreviewBoxes(combinedItems);
 
-      attachMatchCellListeners();          // NEW
+    attachMatchCellListeners();          // NEW
 
   } catch (err) {
     console.error("Error loading batch orders:", err);
@@ -891,38 +879,43 @@ async function getLocalImageData(imageUrl) {
     throw err;
   }
 }
-    
-    // ---------------------------------------------------------
-    // Pull Etsy order details and update grid details
-    // ---------------------------------------------------------
-    function pullEtsyOrderDetails(orderNumber) {
-      console.log("Pulling Etsy order details for order number:", orderNumber);
-      var token = localStorage.getItem("access_token");
-      return fetch(functionsBaseUrl + "/etsyOrderProxy?orderId=" + encodeURIComponent(orderNumber), {
-        headers: { "access-token": token }
-      })
-      .then(function(r) { return r.json(); })
-      .then(function(data) {
-        console.log("Etsy Order Data:", data);
-        return data;
-      })
-      .catch(function(err) {
-        console.error("Error fetching Etsy order details:", err);
-        return null;
-      });
-    }
-    
-    // Example: update the grid details using pulled Etsy order details
-    async function updateImageGrid(data) {
-      let items = [];
-      if (data.transactions && Array.isArray(data.transactions)) {
-        items = data.transactions;
-      } else if (Array.isArray(data)) {          
-        items = data;
-      }
-      window.cachedOrderItems = items;
-      await fillPreviewBoxes(items);
-    }
+
+// ---------------------------------------------------------
+// Pull Etsy order details and update grid details
+// ---------------------------------------------------------
+function pullEtsyOrderDetails(orderNumber) {
+  console.log("Pulling Etsy order details for order number:", orderNumber);
+  var token = localStorage.getItem("access_token");
+  return fetch(functionsBaseUrl + "/etsyOrderProxy?orderId=" + encodeURIComponent(orderNumber), {
+    headers: { "access-token": token }
+  })
+  .then(function(r) { return r.json(); })
+  .then(function(data) {
+    console.log("Etsy Order Data:", data);
+    return data;
+  })
+  .catch(function(err) {
+    console.error("Error fetching Etsy order details:", err);
+    return null;
+  });
+}
+
+// Example: update the grid details using pulled Etsy order details
+async function updateImageGrid(data) {
+  let items = [];
+  if (data.transactions && Array.isArray(data.transactions)) {
+    items = data.transactions;
+  } else if (Array.isArray(data)) {          
+    items = data;
+  }
+  window.cachedOrderItems = items;
+  await fillPreviewBoxes(items);
+}
+
+/* ---- stubbed out empty functions ---- */
+function disableSendMatch() {}
+function disableMatchPrintFlow() {}
+function removeAllBlueHighlights() {}
 
   </script>
 </body>
