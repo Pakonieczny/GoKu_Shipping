@@ -63,14 +63,14 @@
 
     /* === keep images square & clipped inside preview boxes === */
     .preview-box {
-      width: 100px;          /* box itself */
-      height: 100px;
+      width: 110px;          /* box itself */
+      height: 110px;
       overflow: hidden;      /* clip anything that spills */
     }
 
     .preview-box img {
-      width: 100%;
-      height: 100%;
+      width: 110%;
+      height: 110%;
       object-fit: cover;     /* center-crop to square */
     }  
 
@@ -605,8 +605,8 @@ async function fillPreviewBoxes(items) {
     previewBox.style.position = "absolute";
     previewBox.style.left   = previewLeft + "px";
     previewBox.style.top    = previewTop  + "px";
-    previewBox.style.width  = "100px";
-    previewBox.style.height = "100px";
+    previewBox.style.width  = "110px";
+    previewBox.style.height = "110px";
     previewBox.innerHTML = "Loading...";
 
     const orderInput = document.createElement("input");
