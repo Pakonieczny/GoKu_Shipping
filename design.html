@@ -483,7 +483,6 @@ debugger;                 // ← this halts script execution here */
 
 
 
-
 /* 3) prepare the container */
 const container = document.getElementById("newOrderContainer");
 container.innerHTML = "";               // clear old stack
@@ -529,9 +528,7 @@ displayReceipts.forEach((r, idx) => {
 });
 
 /* 5) return how many rows we rendered (for Next-Page logic) */
-const gotRaw = receipts.length;         // raw rows in this slice
-const total  = payload.count;           // total open receipts Etsy reports
-return { gotRaw, total };               // send both back
+return displayReceipts.length;  // correct row count
 }
 
 /********************************************************
