@@ -1,12 +1,13 @@
-// netlify/functions/listOpenOrders.js
-// Returns ALL open receipts (unfulfilled orders) for your shop.
-// Walks through Etsy's cursor-based pagination until next_cursor === null.
+/**
+ * listOpenOrders.js  –  returns EVERY open receipt for your shop.
+ * Works by walking Etsy's offset-based pagination until next_offset === null.
+ */
 
 const fetch = require("node-fetch");
 
 exports.handler = async (event) => {
   try {
-    /* 1) access token must come from front-end header */
+    /* 1.  OAuth token from front-end header */
     const accessToken =
       event.headers["access-token"] || event.headers["Access-Token"];
     if (!accessToken) {
@@ -16,9 +17,9 @@ exports.handler = async (event) => {
       };
     }
 
-    /* 2) required env vars */
-    const SHOP_ID    = process.env.SHOP_ID;
-    const CLIENT_ID  = process.env.CLIENT_ID;  // Etsy app keystring
+    /* 2.  Required env vars */
+    const SHOP_ID   = process.env.SHOP_ID;      // numeric ID of your Etsy shop
+    const CLIENT_ID = process.env.CLIENT_ID;    // Etsy app key string
     if (!SHOP_ID || !CLIENT_ID) {
       return {
         statusCode: 500,
@@ -26,17 +27,17 @@ exports.handler = async (event) => {
       };
     }
 
-    /* 3) loop through pages until next_offset is null */
+    /* 3.  Loop through pages using offset pagination */
     const allReceipts = [];
     let offset = 0;
 
     do {
       const qs = new URLSearchParams({
-        status      : "open",
-        sort_on     : "created",
-        sort_order  : "desc",
-        limit       : "100",
-        offset      : offset.toString()
+        status     : "open",
+        limit      : "100",    // page size
+        offset     : offset.toString(),
+        sort_on    : "created",
+        sort_order : "desc"
       });
 
       const url =
@@ -46,26 +47,27 @@ exports.handler = async (event) => {
       const resp = await fetch(url, {
         method: "GET",
         headers: {
-          Authorization : `Bearer ${accessToken}`,
-          "x-api-key"   : CLIENT_ID,
-          "Content-Type": "application/json"
+          "Authorization": `Bearer ${accessToken}`,
+          "x-api-key"    : CLIENT_ID,
+          "Content-Type" : "application/json"
         }
       });
 
       if (!resp.ok) {
-        const errText = await resp.text();
-        return { statusCode: resp.status, body: errText };
+        const txt = await resp.text();
+        return { statusCode: resp.status, body: txt };
       }
 
       const data = await resp.json();
       if (Array.isArray(data.results)) allReceipts.push(...data.results);
 
-      /* ─── offset pagination (null means “no more pages”) ─── */
+      /* ---- find next offset (Etsy returns null when done) ---- */
       const next = (data.pagination || {}).next_offset;
       offset = next === null || next === undefined ? null : next;
 
     } while (offset !== null);
 
+    /* 4.  Return the merged list */
     return {
       statusCode: 200,
       body: JSON.stringify({ results: allReceipts })
