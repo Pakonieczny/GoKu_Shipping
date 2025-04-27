@@ -470,7 +470,7 @@ const resp = await fetch(`${functionsBaseUrl}/listOpenOrders?offset=${offset}`, 
 });
 if (!resp.ok) throw new Error("HTTP " + resp.status);
 const payload  = await resp.json();     // Etsy returns { results: [...], pagination: {...} }
-const receipts = (payload.results || []).filter(r => r.status !== "completed");
+const receipts = payload.results || [];     // let one filter do the work
 
 /* 3) prepare the container */
 const container = document.getElementById("newOrderContainer");
@@ -478,14 +478,14 @@ container.innerHTML = "";               // clear old stack
 
 /* 4) build one 250×30 box per receipt (skip shipped & digital) */
 const displayReceipts = receipts.filter(
-  r => r.status === "open" && !r.was_shipped && !r.is_digital
+  r => r.status !== "completed" && !r.was_shipped && !r.is_digital
 );
 
 displayReceipts.forEach((r, idx) => {
   /* a) order number (fallback to receipt_id) */
   const orderNum = r.order_number || r.receipt_id || "—";
 
-  /* b) Ship-by date (same logic as before) */
+  /* b) Ship-by date (same logic as index.html) */
   let shipStr = "N/A";
   let ts = null;
   if (Array.isArray(r.transactions) && r.transactions.length > 0) {
@@ -496,8 +496,7 @@ displayReceipts.forEach((r, idx) => {
   if (ts) {
     const d  = new Date(ts * 1000);
     const dd = ("0" + d.getDate()).slice(-2);
-    const mm = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug",
-                "Sep","Oct","Nov","Dec"][d.getMonth()];
+    const mm = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"][d.getMonth()];
     shipStr  = `${dd} ${mm} ${d.getFullYear()}`;
   }
 
@@ -518,7 +517,7 @@ displayReceipts.forEach((r, idx) => {
 });
 
 /* 5) return how many rows we rendered (for Next-Page logic) */
-return receipts.length;
+return displayReceipts.length;  // correct row count
 }
 
 /********************************************************
