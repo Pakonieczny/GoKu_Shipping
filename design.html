@@ -477,7 +477,7 @@ async function buildNewOrderList(offset = 0) {
 
   /* 2) Keep fetching until we have *at least* 100 usable rows
         or Etsy returns no more pages                           */
-  while (displayReceipts.length < 100 && !reachedEnd) {
+  while (displayReceipts.length < 100 && nextOffset !== null) {
     const resp = await fetch(
       `${functionsBaseUrl}/listOpenOrders?offset=${nextOffset}`,
       { headers: { "access-token": token } }
@@ -491,8 +491,7 @@ async function buildNewOrderList(offset = 0) {
     displayReceipts.push(...usable);
 
     const apiNext  = payload.pagination?.next_offset;
-    reachedEnd     = ((payload.results || []).length < 100) || (apiNext == null);
-    nextOffset     = apiNext ?? null;
+    nextOffset      = apiNext ?? null;          // keep what Etsy gives us
   }
 
   /* 3) Separate this page (first 100) from any overflow */
