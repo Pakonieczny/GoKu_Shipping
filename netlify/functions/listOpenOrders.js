@@ -29,7 +29,7 @@ exports.handler = async (event) => {
 
     /* 3.  Loop through pages using offset pagination */
     const allReceipts = [];
-    let offset = 0;
+    let offset = Number(event.queryStringParameters.offset || 0);  // ← updated
 
     do {
       const qs = new URLSearchParams({
@@ -47,9 +47,9 @@ exports.handler = async (event) => {
       const resp = await fetch(url, {
         method: "GET",
         headers: {
-          "Authorization": `Bearer ${accessToken}`,
-          "x-api-key"    : CLIENT_ID,
-          "Content-Type" : "application/json"
+          Authorization : `Bearer ${accessToken}`,
+          "x-api-key"   : CLIENT_ID,
+          "Content-Type": "application/json"
         }
       });
 
