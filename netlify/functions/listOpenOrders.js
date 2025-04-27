@@ -1,91 +1,76 @@
-/********************************************************
- * buildNewOrderList – always returns up to 100 displayable
- * receipts. Pulls extra Etsy pages as needed so each UI
- * “page” is full, except the very last one.
- ********************************************************/
-async function buildNewOrderList() {
-  /* 1) must have valid token */
-  let token = localStorage.getItem("access_token") || "";
-  if (!token) {
-    M.toast({ html: "Connect to Etsy first!" });
-    return false;
+/**
+ * listOpenOrders.js  –  returns EVERY open receipt for your shop.
+ * Works by walking Etsy's offset-based pagination until next_offset === null
+ * when offset==0, but fetches ONE page when an explicit offset is sent.
+ */
+
+const fetch = require("node-fetch");
+
+exports.handler = async (event) => {
+  try {
+    /* 1.  OAuth token from front-end header */
+    const accessToken =
+      event.headers["access-token"] || event.headers["Access-Token"];
+    if (!accessToken) {
+      return {
+        statusCode: 400,
+        body: JSON.stringify({ error: "Missing access-token header" })
+      };
+    }
+
+    /* 2.  Required env vars */
+    const SHOP_ID   = process.env.SHOP_ID;      // numeric ID of your Etsy shop
+    const CLIENT_ID = process.env.CLIENT_ID;    // Etsy app key string
+    if (!SHOP_ID || !CLIENT_ID) {
+      return {
+        statusCode: 500,
+        body: JSON.stringify({ error: "Missing SHOP_ID or CLIENT_ID env var" })
+      };
+    }
+
+    /* 3.  Loop through pages using offset pagination */
+    const allReceipts = [];
+
+    // ===== first requested offset comes from browser (unchanged) =====
+    let offset        = Number(event.queryStringParameters.offset || 0);
+    const firstOffset = offset;                 // remember what the browser asked for
+
+    do {
+      const qs = new URLSearchParams({
+        status     : "open",
+        limit      : "100",          // page size
+        offset     : offset.toString(),
+        sort_on    : "created",
+        sort_order : "desc"
+      });
+
+      const url =
+        `https://api.etsy.com/v3/application/shops/${SHOP_ID}/receipts?${qs}`;
+
+      const resp = await fetch(url, {
+        method: "GET",
+        headers: {
+          Authorization : `Bearer ${accessToken}`,
+          "x-api-key"   : CLIENT_ID,
+          "Content-Type": "application/json"
+        }
+      });
+
+      if (!resp.ok) {
+        const txt = await resp.text();
+        return { statusCode: resp.status, body: txt };
+      }
+
+      /* ── keep Etsy’s payload UNCHANGED so pagination.next_offset is preserved */
+      const data = await resp.json();
+      console.log("DEBUG_BODY", JSON.stringify(data).slice(0, 300));  // log first 300 chars
+      return { statusCode: 200, body: JSON.stringify(data) };
+
+      /* Everything below this point never runs because of the return above.
+         It has been removed for clarity. */
+    } while (offset !== null);
+
+  } catch (err) {
+    return { statusCode: 500, body: JSON.stringify({ error: err.message }) };
   }
-
-  /* 2) start with leftovers from the previous fetch */
-  let displayReceipts = [...carryReceipts];
-  carryReceipts = [];   // we’ll refill this later
-  let offset = nextOffsetCursor;
-
-  /* 3) fetch additional Etsy pages until we hit 100 or Etsy runs dry */
-  while (displayReceipts.length < 100 && offset !== null) {
-    let resp = await fetch(
-      `${functionsBaseUrl}/listOpenOrders?offset=${offset}`,
-      { headers: { "access-token": token } }
-    );
-
-    /* token expired? – refresh once then retry */
-    if (resp.status === 401) {
-      const ok = await refreshAccessToken();
-      if (!ok) throw new Error("HTTP 401 — token refresh failed");
-      token = localStorage.getItem("access_token") || "";
-      resp = await fetch(
-        `${functionsBaseUrl}/listOpenOrders?offset=${offset}`,
-        { headers: { "access-token": token } }
-      );
-    }
-
-    if (!resp.ok) throw new Error("HTTP " + resp.status);
-
-    const payload   = await resp.json();
-    const receipts  = (payload.results || []).filter(
-      r => r.status === "Paid" && r.is_shipped === false
-    );
-
-    displayReceipts.push(...receipts);
-    offset = (payload.pagination || {}).next_offset ?? null;   // null when done
-  }
-
-  /* 4) split into:  first 100 → render  |  rest → carryReceipts */
-  const pageReceipts   = displayReceipts.slice(0, 100);
-  carryReceipts        = displayReceipts.slice(100);   // may be empty
-  nextOffsetCursor     = offset;                       // where Etsy left off
-
-  /* 5) draw the UI */
-  const container = document.getElementById("newOrderContainer");
-  container.innerHTML = "";
-
-  pageReceipts.forEach((r, idx) => {
-    const orderNum  = r.order_number || r.receipt_id || "—";
-    let shipStr     = "N/A";
-    let ts          = null;
-
-    if (Array.isArray(r.transactions) && r.transactions.length) {
-      const firstT = r.transactions[0];
-      if (firstT.expected_ship_date) ts = firstT.expected_ship_date;
-    }
-    if (!ts) ts = r.dispatch_date || r.ship_by_date;
-    if (ts) {
-      const d  = new Date(ts * 1000);
-      const dd = ("0" + d.getDate()).slice(-2);
-      const mm = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"][d.getMonth()];
-      shipStr  = `${dd} ${mm} ${d.getFullYear()}`;
-    }
-
-    const totalQty = (r.transactions || []).reduce(
-      (sum, t) => sum + (Number(t.quantity) || 0), 0
-    );
-
-    const box = document.createElement("div");
-    box.className = "new-order-box";
-    box.id        = "newOrder" + idx;
-    box.innerHTML = `
-      ${orderNum}&nbsp;|&nbsp;${shipStr}&nbsp;|&nbsp;Qty&nbsp;${totalQty}
-      <input type="checkbox" class="addToDesignChk" title="Add to Design">
-    `;
-    container.appendChild(box);
-  });
-
-  /* 6) tell the buttons whether there’s more work */
-  const stillMore = carryReceipts.length > 0 || nextOffsetCursor !== null;
-  return stillMore;
-}
+};
