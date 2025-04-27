@@ -452,86 +452,71 @@ document.addEventListener("DOMContentLoaded", function () {
     }
   });
 
- /********************************************************
- * buildNewOrderList – pull NEW (unfulfilled) Etsy orders
- * and draw stacked 250 × 30 text boxes:
- *   Order-#,  Ship-/Dispatch Date,  Total Qty,  [✓]
+/********************************************************
+ * buildNewOrderList – fetch ONE 100-row slice from Etsy
+ * and render it. Returns the raw row count (0-100).
  ********************************************************/
 async function buildNewOrderList(offset = 0) {
-  /* 1) ensure we already have a valid OAuth token */
+  /* 1) OAuth token already stored by Connect-to-Etsy flow */
   const token = localStorage.getItem("access_token") || "";
   if (!token) {
     M.toast({ html: "Connect to Etsy first!" });
-    return;
+    return 0;
   }
 
-/* 2) call the Netlify helper that wraps
-      GET /v3/application/shops/{shop_id}/receipts?status=open */
-const resp = await fetch(`${functionsBaseUrl}/listOpenOrders?offset=${offset}`,   // ← must include offset
-  { headers: { "access-token": token }
-});
-if (!resp.ok) throw new Error("HTTP " + resp.status);
-const payload  = await resp.json();     // Etsy returns { results: [...], pagination: {...} }
-const receipts = payload.results || [];     // let one filter do the work
+  /* 2) call Netlify helper that fetches exactly one page */
+  const resp = await fetch(
+    `${functionsBaseUrl}/listOpenOrders?offset=${offset}`,
+    { headers: { "access-token": token } }
+  );
+  if (!resp.ok) throw new Error("HTTP " + resp.status);
 
+  const payload  = await resp.json();        // { results: [...], pagination:{…} }
+  const receipts = payload.results || [];
 
+  /* 3) clear and rebuild the stacked 250×30 boxes */
+  const container = document.getElementById("newOrderContainer");
+  container.innerHTML = "";
 
-
-/*
-console.log("ONE RAW RECEIPT", JSON.stringify(receipts[0], null, 2));
-
-console.log("Sample receipt:", receipts[0]);
-debugger;                 // ← this halts script execution here */
-
-
-
-
-/* 3) prepare the container */
-const container = document.getElementById("newOrderContainer");
-container.innerHTML = "";               // clear old stack
-
-/* 4) build one 250×30 box per receipt (skip shipped & digital) */
-const displayReceipts = receipts.filter(
-  r => r.status === "Paid" && r.is_shipped === false
-);
-
-displayReceipts.forEach((r, idx) => {
-  /* a) order number (fallback to receipt_id) */
-  const orderNum = r.order_number || r.receipt_id || "—";
-
-  /* b) Ship-by date (same logic as index.html) */
-  let shipStr = "N/A";
-  let ts = null;
-  if (Array.isArray(r.transactions) && r.transactions.length > 0) {
-    const firstT = r.transactions[0];
-    if (firstT.expected_ship_date) ts = firstT.expected_ship_date;
-  }
-  if (!ts) ts = r.dispatch_date || r.ship_by_date;
-  if (ts) {
-    const d  = new Date(ts * 1000);
-    const dd = ("0" + d.getDate()).slice(-2);
-    const mm = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"][d.getMonth()];
-    shipStr  = `${dd} ${mm} ${d.getFullYear()}`;
-  }
-
-  /* c) total quantity across all line-items */
-  const totalQty = (r.transactions || []).reduce(
-    (sum, t) => sum + (Number(t.quantity) || 0), 0
+  const displayReceipts = receipts.filter(
+    r => r.status === "Paid" && r.is_shipped === false    // skip shipped/completed
   );
 
-  /* d) build the DOM node */
-  const box = document.createElement("div");
-  box.className = "new-order-box";
-  box.id = "newOrder" + idx;
-  box.innerHTML = `
-      ${orderNum}&nbsp;|&nbsp;${shipStr}&nbsp;|&nbsp;Qty&nbsp;${totalQty}
-      <input type="checkbox" class="addToDesignChk" title="Add to Design">
-  `;
-  container.appendChild(box);
-});
+  displayReceipts.forEach((r, idx) => {
+    /* order # */
+    const orderNum = r.order_number || r.receipt_id || "—";
 
-/* 5) return how many rows Etsy *actually* sent (0-100) */
-return receipts.length;          // ← NOT displayReceipts.length
+    /* ship-by date */
+    let shipStr = "N/A";
+    let ts = null;
+    if (Array.isArray(r.transactions) && r.transactions.length) {
+      const t0 = r.transactions[0];
+      if (t0.expected_ship_date) ts = t0.expected_ship_date;
+    }
+    if (!ts) ts = r.dispatch_date || r.ship_by_date;
+    if (ts) {
+      const d  = new Date(ts * 1000);
+      const dd = ("0" + d.getDate()).slice(-2);
+      const mm = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"][d.getMonth()];
+      shipStr  = `${dd} ${mm} ${d.getFullYear()}`;
+    }
+
+    /* total qty */
+    const qty = (r.transactions || []).reduce((s, t) => s + (+t.quantity || 0), 0);
+
+    /* DOM node */
+    const box = document.createElement("div");
+    box.className = "new-order-box";
+    box.id        = "newOrder" + idx;
+    box.innerHTML = `
+      ${orderNum}&nbsp;|&nbsp;${shipStr}&nbsp;|&nbsp;Qty&nbsp;${qty}
+      <input type="checkbox" class="addToDesignChk" title="Add to Design">
+    `;
+    container.appendChild(box);
+  });
+
+  /* 4) return the RAW page size (0-100) for button logic */
+  return receipts.length;
 }
 
 /********************************************************
