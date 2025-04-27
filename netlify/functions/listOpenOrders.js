@@ -1,4 +1,5 @@
-/**
+/**async function buildNewOrderList(startOffset = 0) {
+
  * listOpenOrders.js  –  returns EVERY open receipt for your shop.
  * Works by walking Etsy's offset-based pagination until next_offset === null
  * when offset==0, but fetches ONE page when an explicit offset is sent.

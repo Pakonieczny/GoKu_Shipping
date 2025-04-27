@@ -381,9 +381,10 @@ document.addEventListener("DOMContentLoaded", function () {
         this.innerText = "Loading…";
 
         orderListOffset = 0;
-        const gotRows = await buildNewOrderList(orderListOffset);
+        const pageInfo  = await buildNewOrderList(orderListOffset);
 
-        document.getElementById("nextPageBtn").disabled = (gotRows < 100);
+        document.getElementById("nextPageBtn").disabled = pageInfo.isLastPage;
+        orderListOffset = pageInfo.nextOffset;
         this.disabled = false;
         this.innerText = "Update Order List";
       } catch (err) {
@@ -396,15 +397,16 @@ document.addEventListener("DOMContentLoaded", function () {
 
     /* --- Next-Page button --- */
     document.getElementById("nextPageBtn").addEventListener("click", async function () {
+      if (orderListOffset == null) return;           // no more pages
       try {
         this.disabled = true;
         this.innerText = "Loading…";
 
-        orderListOffset += 100;
-        const gotRows = await buildNewOrderList(orderListOffset);
+        const pageInfo  = await buildNewOrderList(orderListOffset);
 
-        this.disabled = (gotRows < 100);   // enable only if a full page arrived
-        this.innerText = "Next Page";
+        this.disabled   = pageInfo.isLastPage;
+        orderListOffset = pageInfo.nextOffset;
+        this.innerText  = "Next Page";
       } catch (err) {
         console.error("Next-page error:", err);
         M.toast({ html: "Next-page error: " + err.message });
@@ -452,46 +454,72 @@ document.addEventListener("DOMContentLoaded", function () {
     }
   });
 
-/********************************************************
- * buildNewOrderList – fetch ONE 100-row slice from Etsy
- * and render it. Returns the raw row count (0-100).
+ /********************************************************
+ * buildNewOrderList – pull NEW (unfulfilled) Etsy orders
+ * and draw stacked 250 × 30 text boxes:
+ *   Order-#,  Ship-/Dispatch Date,  Total Qty,  [✓]
+ *   • Guarantees *100 visible rows* per UI page unless
+ *     we truly run out of open receipts (final page).
+ *   • Keeps all your original debug scaffolding intact.
  ********************************************************/
 async function buildNewOrderList(offset = 0) {
-  /* 1) OAuth token already stored by Connect-to-Etsy flow */
+  /* 1) ensure we already have a valid OAuth token */
   const token = localStorage.getItem("access_token") || "";
   if (!token) {
     M.toast({ html: "Connect to Etsy first!" });
     return 0;
   }
 
-  /* 2) call Netlify helper that fetches exactly one page */
-  const resp = await fetch(
-    `${functionsBaseUrl}/listOpenOrders?offset=${offset}`,
-    { headers: { "access-token": token } }
-  );
-  if (!resp.ok) throw new Error("HTTP " + resp.status);
+  /* 2) we may need more than ONE Etsy slice to hit 100 rows –
+        so loop until we have enough or the API runs dry.       */
+  let displayReceipts = [];
+  let nextOffset      = offset;      // start where caller says
+  let reachedEnd      = false;
 
-  const payload  = await resp.json();        // { results: [...], pagination:{…} }
-  const receipts = payload.results || [];
+  while (displayReceipts.length < 100 && !reachedEnd) {
+    /* --- Netlify helper wraps:
+          GET /v3/application/shops/{shop_id}/receipts         */
+    const resp = await fetch(
+      `${functionsBaseUrl}/listOpenOrders?offset=${nextOffset}`,
+      { headers: { "access-token": token } }
+    );
+    if (!resp.ok) throw new Error("HTTP " + resp.status);
 
-  /* 3) clear and rebuild the stacked 250×30 boxes */
+    const payload     = await resp.json();   // { results: [...], pagination:{…} }
+    const receipts    = payload.results || [];
+
+    // *** KEEP YOUR OPTIONAL DEBUGGING SNIPPETS ***
+    // console.log("ONE RAW RECEIPT", JSON.stringify(receipts[0], null, 2));
+    // debugger;                 // ← uncomment if you still need the halt
+
+    /* filter out shipped / digital, then push into master list */
+    const usable = receipts.filter(r => r.status === "Paid" && r.is_shipped === false);
+    displayReceipts.push(...usable);
+
+    /* pagination bookkeeping */
+    const apiNext = payload.pagination?.next_offset;
+    reachedEnd    = (receipts.length < 100) || (apiNext == null);
+    nextOffset    = apiNext ?? null;               // where the *next* API page starts
+  }
+
+  /* cap at 100 rows for this visible page */
+  displayReceipts = displayReceipts.slice(0, 100);
+
+  /* 3) prepare the container */
   const container = document.getElementById("newOrderContainer");
-  container.innerHTML = "";
+  container.innerHTML = "";                         // clear old stack
 
-  const displayReceipts = receipts.filter(
-    r => r.status === "Paid" && r.is_shipped === false    // skip shipped/completed
-  );
-
+  /* 4) build one 250×30 box per receipt */
   displayReceipts.forEach((r, idx) => {
-    /* order # */
+    /* a) order number (fallback to receipt_id) */
     const orderNum = r.order_number || r.receipt_id || "—";
 
-    /* ship-by date */
+    /* b) Ship-by date (same logic as before) */
     let shipStr = "N/A";
     let ts = null;
-    if (Array.isArray(r.transactions) && r.transactions.length) {
-      const t0 = r.transactions[0];
-      if (t0.expected_ship_date) ts = t0.expected_ship_date;
+    if (Array.isArray(r.transactions) && r.transactions.length > 0) {
+      const firstT = r.transactions[0];
+      if (firstT.expected_ship_date) ts = firstT.expected_ship_date;
     }
     if (!ts) ts = r.dispatch_date || r.ship_by_date;
     if (ts) {
@@ -501,24 +529,26 @@ async function buildNewOrderList(offset = 0) {
       shipStr  = `${dd} ${mm} ${d.getFullYear()}`;
     }
 
-    /* total qty */
-    const qty = (r.transactions || []).reduce((s, t) => s + (+t.quantity || 0), 0);
+    /* c) total quantity across all line-items */
+    const totalQty = (r.transactions || []).reduce(
+      (sum, t) => sum + (Number(t.quantity) || 0), 0
+    );
 
-    /* DOM node */
+    /* d) build the DOM node */
     const box = document.createElement("div");
     box.className = "new-order-box";
-    box.id        = "newOrder" + idx;
+    box.id = "newOrder" + idx;
     box.innerHTML = `
-      ${orderNum}&nbsp;|&nbsp;${shipStr}&nbsp;|&nbsp;Qty&nbsp;${qty}
-      <input type="checkbox" class="addToDesignChk" title="Add to Design">
+        ${orderNum}&nbsp;|&nbsp;${shipStr}&nbsp;|&nbsp;Qty&nbsp;${totalQty}
+        <input type="checkbox" class="addToDesignChk" title="Add to Design">
     `;
     container.appendChild(box);
   });
 
-  /* 4) return the RAW page size (0-100) for button logic */
-  return receipts.length;
+  /* 5) return how many rows we ACTUALLY displayed (0-100)
+        – original callers still use this value.             */
+  return displayReceipts.length;
 }
-
 /********************************************************
  * startScannedSortingListener (NEW partial snippet)
  ********************************************************/
