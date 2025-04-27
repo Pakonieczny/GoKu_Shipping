@@ -58,6 +58,15 @@
       height: 36px;
     }
 
+    /* --- Next-Page button --- */
+    #nextPageBtn {
+      position: absolute;
+      left: 190px;     /* to the right of Update button */
+      top: 170px;      /* same vertical line */
+      width: 120px;
+      height: 36px;
+    }
+
     /* --- Container that holds the stacked “newOrder” boxes --- */
     #newOrderContainer {
       position: absolute;
@@ -186,9 +195,8 @@
   <!-- Main Buttons -->
 <button id="connectEtsyBtn" class="btn waves-effect waves-light">Connect to Etsy</button>
 <button id="openConfigBtn"   class="btn waves-effect waves-light">Open Config</button>
-
-<!-- NEW -->
 <button id="updateOrderListBtn" class="btn waves-effect waves-light">Update Order List</button>
+<button id="nextPageBtn" class="btn waves-effect waves-light">Next Page</button>
 
 <!-- Etsy Order Number input -->
 <input  … />
@@ -253,6 +261,7 @@ let currentSaveHandler = null;      // tracks active “Save” listener
 let skipMatches = {};   // { cellIndex: true }  
 let earringCells  = {};            // { cellIdx : true }
 let earringState  = {};            // { cellIdx : { firstImg:null } }
+let orderListOffset = 0;      // 0, 100, 200…
 
 /********************************************************
  * Firebase Initialization (REQUIRED)
@@ -319,13 +328,14 @@ async function generateCodeChallenge(codeVerifier) {
 const configIDs = [
   "connectEtsyBtn",
   "openConfigBtn",
-  "updateOrderListBtn",      // ← NEW
+  "updateOrderListBtn",
+  "nextPageBtn",            // ← NEW
   "etsyOrderNumber",
   "photoGridContainer",
   "configModal",
   "configTable",
   "saveConfigBtn",
-  "newOrderContainer"        // ← NEW
+  "newOrderContainer"
 ];
 
 /********************************************************
@@ -370,7 +380,8 @@ document.addEventListener("DOMContentLoaded", function () {
       try {
         this.disabled = true;
         this.innerText = "Loading…";
-        await buildNewOrderList();
+        orderListOffset = 0;                     // reset to first page
+        await buildNewOrderList(orderListOffset);
         this.disabled = false;
         this.innerText = "Update Order List";
       } catch (err) {
@@ -378,6 +389,25 @@ document.addEventListener("DOMContentLoaded", function () {
         M.toast({ html: "Order-list error: " + err.message });
         this.disabled = false;
         this.innerText = "Update Order List";
+      }
+  });
+
+  /* --- Next-Page button --- */
+  document.getElementById("nextPageBtn")
+    .addEventListener("click", async function () {
+      try {
+        this.disabled = true;
+        this.innerText = "Loading…";
+        orderListOffset += 100;
+        const gotRows = await buildNewOrderList(orderListOffset);
+        if (gotRows < 100) this.disabled = true;   // no more pages
+        else               this.disabled = false;
+        this.innerText = "Next Page";
+      } catch (err) {
+        console.error("Next-page error:", err);
+        M.toast({ html: "Next-page error: " + err.message });
+        this.disabled = false;
+        this.innerText = "Next Page";
       }
   });
 
@@ -425,7 +455,7 @@ document.addEventListener("DOMContentLoaded", function () {
  * and draw stacked 250 × 30 text boxes:
  *   Order-#,  Ship-/Dispatch Date,  Total Qty,  [✓]
  ********************************************************/
-async function buildNewOrderList() {
+async function buildNewOrderList(offset = 0) {
   /* 1) ensure we already have a valid OAuth token */
   const token = localStorage.getItem("access_token") || "";
   if (!token) {
@@ -433,63 +463,57 @@ async function buildNewOrderList() {
     return;
   }
 
-  /* 2) call the Netlify helper that wraps
-        GET /v3/application/shops/{shop_id}/receipts?status=open */
-  const resp = await fetch(functionsBaseUrl + "/listOpenOrders", {
-    headers: { "access-token": token }
-  });
-  if (!resp.ok) throw new Error("HTTP " + resp.status);
-  const payload = await resp.json();          // Etsy returns { results: [...], pagination: {...} }
-  const receipts = payload.results || [];
+/* 2) call the Netlify helper that wraps
+      GET /v3/application/shops/{shop_id}/receipts?status=open */
+const resp = await fetch(`${functionsBaseUrl}/listOpenOrders?offset=${offset}`, {
+  headers: { "access-token": token }
+});
+if (!resp.ok) throw new Error("HTTP " + resp.status);
+const payload  = await resp.json();     // Etsy returns { results: [...], pagination: {...} }
+const receipts = payload.results || [];
 
-  /* 3) prepare the container */
-  const container = document.getElementById("newOrderContainer");
-  container.innerHTML = "";                   // clear old stack
+/* 3) prepare the container */
+const container = document.getElementById("newOrderContainer");
+container.innerHTML = "";               // clear old stack
 
-  /* 4) build one 250×30 box per receipt */
-  receipts.forEach((r, idx) => {
-    /* a) order number (fallback to receipt_id) */
-    const orderNum = r.order_number || r.receipt_id || "—";
+/* 4) build one 250×30 box per receipt */
+receipts.forEach((r, idx) => {
+  /* a) order number (fallback to receipt_id) */
+  const orderNum = r.order_number || r.receipt_id || "—";
 
-    /* b) Ship-by date (match index.html logic)
-    ──────────────────────────────────────
-    Use expected_ship_date from the FIRST transaction if present,
-    otherwise fall back to receipt.dispatch_date, then ship_by_date. */
-    let shipStr = "N/A";
-    let ts = null;
+  /* b) Ship-by date (same logic as index.html) */
+  let shipStr = "N/A";
+  let ts = null;
+  if (Array.isArray(r.transactions) && r.transactions.length > 0) {
+    const firstT = r.transactions[0];
+    if (firstT.expected_ship_date) ts = firstT.expected_ship_date;
+  }
+  if (!ts) ts = r.dispatch_date || r.ship_by_date;
+  if (ts) {
+    const d  = new Date(ts * 1000);
+    const dd = ("0" + d.getDate()).slice(-2);
+    const mm = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"][d.getMonth()];
+    shipStr  = `${dd} ${mm} ${d.getFullYear()}`;
+  }
 
-    if (Array.isArray(r.transactions) && r.transactions.length > 0) {
-      const firstT = r.transactions[0];
-      if (firstT.expected_ship_date) ts = firstT.expected_ship_date;
-    }
+  /* c) total quantity across all line-items */
+  const totalQty = (r.transactions || []).reduce(
+    (sum, t) => sum + (Number(t.quantity) || 0), 0
+  );
 
-    if (!ts) ts = r.dispatch_date || r.ship_by_date;
+  /* d) build the DOM node */
+  const box = document.createElement("div");
+  box.className = "new-order-box";
+  box.id = "newOrder" + idx;
+  box.innerHTML = `
+      ${orderNum}&nbsp;|&nbsp;${shipStr}&nbsp;|&nbsp;Qty&nbsp;${totalQty}
+      <input type="checkbox" class="addToDesignChk" title="Add to Design">
+  `;
+  container.appendChild(box);
+});
 
-    if (ts) {
-      const d = new Date(ts * 1000);            // Unix-seconds → JS date
-      const dd = ("0" + d.getDate()).slice(-2);
-      const mm = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"][d.getMonth()];
-      shipStr  = `${dd} ${mm} ${d.getFullYear()}`;
-    }
-
-    /* c) total quantity across all line-items */
-    const totalQty = (r.transactions || []).reduce(
-      (sum, t) => sum + (Number(t.quantity) || 0), 0
-    );
-
-    /* d) build the DOM node */
-    const box = document.createElement("div");
-    box.className = "new-order-box";
-    box.id = "newOrder" + idx;
-    box.innerHTML = `
-        ${orderNum}&nbsp;|&nbsp;${shipStr}&nbsp;|&nbsp;Qty&nbsp;${totalQty}
-        <input type="checkbox" class="addToDesignChk" title="Add to Design">
-    `;
-    container.appendChild(box);
-  });
-
-  /* 5) scroll the page just a bit so the list is in view (optional) */
-  // container.scrollIntoView({ behavior: "smooth", block: "nearest" });
+/* 5) return how many rows we rendered (for Next-Page logic) */
+return receipts.length;
 }
 
 /********************************************************
@@ -554,7 +578,8 @@ const defaultPos = {
   saveConfigBtn:            { left:10,  top:3,   width:85,  height:35 },
   sendMatchBtn:             { left:20,  top:255, width:210, height:35 },
   testOpenAIBtn:            { left:20,  top:65,  width:140, height:35 },
-  newOrderContainer:        { left:20, top:236, width:270, height:800 }
+  newOrderContainer:        { left:20, top:236, width:270, height:800 },
+  nextPageBtn:              { left:190, top:170, width:120, height:36 }
 };
 
 /********************************************************
