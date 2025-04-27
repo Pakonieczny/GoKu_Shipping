@@ -481,8 +481,6 @@ const displayReceipts = receipts.filter(r => r.status !== "completed");
 displayReceipts.forEach((r, idx) => {
   /* a) order number (fallback to receipt_id) */
   const orderNum = r.order_number || r.receipt_id || "—";
-  /* a) order number (fallback to receipt_id) */
-  const orderNum = r.order_number || r.receipt_id || "—";
 
   /* b) Ship-by date (same logic as index.html) */
   let shipStr = "N/A";
