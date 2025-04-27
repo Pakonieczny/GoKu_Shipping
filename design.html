@@ -476,13 +476,16 @@ const receipts = (payload.results || []).filter(r => r.status !== "completed");
 const container = document.getElementById("newOrderContainer");
 container.innerHTML = "";               // clear old stack
 
-/* 4) build one 250×30 box per receipt (skip completed) */
-const displayReceipts = receipts.filter(r => r.status !== "completed");
+/* 4) build one 250×30 box per receipt (skip shipped & digital) */
+const displayReceipts = receipts.filter(
+  r => r.status === "open" && !r.was_shipped && !r.is_digital
+);
+
 displayReceipts.forEach((r, idx) => {
   /* a) order number (fallback to receipt_id) */
   const orderNum = r.order_number || r.receipt_id || "—";
 
-  /* b) Ship-by date (same logic as index.html) */
+  /* b) Ship-by date (same logic as before) */
   let shipStr = "N/A";
   let ts = null;
   if (Array.isArray(r.transactions) && r.transactions.length > 0) {
@@ -493,7 +496,8 @@ displayReceipts.forEach((r, idx) => {
   if (ts) {
     const d  = new Date(ts * 1000);
     const dd = ("0" + d.getDate()).slice(-2);
-    const mm = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"][d.getMonth()];
+    const mm = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug",
+                "Sep","Oct","Nov","Dec"][d.getMonth()];
     shipStr  = `${dd} ${mm} ${d.getFullYear()}`;
   }
 
