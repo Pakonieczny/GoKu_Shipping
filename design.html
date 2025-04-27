@@ -381,9 +381,8 @@ document.addEventListener("DOMContentLoaded", function () {
         this.innerText = "Loading…";
 
         orderListOffset = 0;
-        const gotRows = await buildNewOrderList(orderListOffset);
-
-        document.getElementById("nextPageBtn").disabled = (gotRows < 100);
+        const { count, hasMore } = await buildNewOrderList(orderListOffset);
+        document.getElementById("nextPageBtn").disabled = !hasMore;
         this.disabled = false;
         this.innerText = "Update Order List";
       } catch (err) {
@@ -401,9 +400,8 @@ document.addEventListener("DOMContentLoaded", function () {
         this.innerText = "Loading…";
 
         orderListOffset += 100;
-        const gotRows = await buildNewOrderList(orderListOffset);
-
-        this.disabled = (gotRows < 100);   // enable only if a full page arrived
+        const { count, hasMore } = await buildNewOrderList(orderListOffset);
+        this.disabled = !hasMore;
         this.innerText = "Next Page";
       } catch (err) {
         console.error("Next-page error:", err);
@@ -530,9 +528,11 @@ displayReceipts.forEach((r, idx) => {
   container.appendChild(box);
 });
 
-/* 5) return how many rows Etsy *actually* sent (0-100) */
-return receipts.length;          // ← NOT displayReceipts.length
-}
+/* 5) return {count, hasMore} instead of just a number */
+return {
+  count   : receipts.length,
+  hasMore : payload.pagination?.next_offset !== null
+};
 
 /********************************************************
  * startScannedSortingListener (NEW partial snippet)
