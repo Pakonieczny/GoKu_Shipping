@@ -61,14 +61,32 @@ exports.handler = async (event) => {
         return { statusCode: resp.status, body: txt };
       }
 
-      /* ── keep Etsy’s payload UNCHANGED so pagination.next_offset is preserved */
       const data = await resp.json();
-      console.log("DEBUG_BODY", JSON.stringify(data).slice(0, 300));  // log first 300 chars
+
+      /* -- log keys and pagination so we can see them in Netlify logs -- */
+      console.log("DEBUG_KEYS", Object.keys(data));
+      console.log("DEBUG_PAGINATION", data.pagination);
+
+      /* keep Etsy’s payload UNCHANGED so pagination.next_offset is preserved */
+      if (Array.isArray(data.results)) allReceipts.push(...data.results);
+
+      /* ---- find next offset (Etsy returns null when done) ---- */
+      const next = (data.pagination || {}).next_offset;
+      offset = next === null || next === undefined ? null : next;
+
+      // ===== break after ONE page when browser passed an explicit offset ======
+      if (firstOffset !== 0) offset = null;
+
+      /* send this single page back to the browser */
       return { statusCode: 200, body: JSON.stringify(data) };
 
-      /* Everything below this point never runs because of the return above.
-         It has been removed for clarity. */
     } while (offset !== null);
+
+    /* 4.  (Only reached when initial offset === 0 and loop walks every page) */
+    return {
+      statusCode: 200,
+      body: JSON.stringify({ results: allReceipts })
+    };
 
   } catch (err) {
     return { statusCode: 500, body: JSON.stringify({ error: err.message }) };
