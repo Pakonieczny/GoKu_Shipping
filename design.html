@@ -465,12 +465,12 @@ async function buildNewOrderList(offset = 0) {
 
 /* 2) call the Netlify helper that wraps
       GET /v3/application/shops/{shop_id}/receipts?status=open */
-const resp = await fetch(`${functionsBaseUrl}/listOpenOrders?offset=${offset}`, {
-  headers: { "access-token": token }
+const resp = await fetch(`${functionsBaseUrl}/listOpenOrders?offset=${offset}`,   // ← must include offset
+  { headers: { "access-token": token }
 });
 if (!resp.ok) throw new Error("HTTP " + resp.status);
 const payload  = await resp.json();     // Etsy returns { results: [...], pagination: {...} }
-const receipts = payload.results || [];
+const receipts = (payload.results || []).filter(r => r.status !== "completed");
 
 /* 3) prepare the container */
 const container = document.getElementById("newOrderContainer");
