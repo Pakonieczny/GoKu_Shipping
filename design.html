@@ -501,8 +501,10 @@ debugger;                 // ← this halts script execution here */
 const container = document.getElementById("newOrderContainer");
 container.innerHTML = "";               // clear old stack
 
-/* 4) server already sent ONLY paid + unshipped → no extra filter */
-const displayReceipts = receipts;      // keep every row
+/* 4) build one 250×30 box per receipt (skip shipped & digital) */
+const displayReceipts = receipts.filter(
+  r => r.status === "Paid" && r.is_shipped === false
+);
 
 displayReceipts.forEach((r, idx) => {
   /* a) order number (fallback to receipt_id) */

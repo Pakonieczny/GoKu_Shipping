@@ -38,13 +38,14 @@ exports.handler = async (event) => {
     do {
       /* ───── QUERY PARAMS (PRE-FILTERED) ───── */
       const qs = new URLSearchParams({
-        status      : "open",   // still “open” receipts
-        was_paid    : "true",   // ← ONLY paid
-        was_shipped : "false",  // ← ONLY unshipped
-        limit       : "100",    // page size
-        offset      : offset.toString(),
-        sort_on     : "created",
-        sort_order  : "desc"
+        status       : "open",     // still pulling “open” orders
+        was_paid     : "true",     // only paid
+        was_shipped  : "false",    // not yet shipped
+        was_canceled : "false",    // ← NEW • exclude every cancelled receipt
+        limit        : "100",
+        offset       : offset.toString(),
+        sort_on      : "created",
+        sort_order   : "desc"
       });
 
       const url =
