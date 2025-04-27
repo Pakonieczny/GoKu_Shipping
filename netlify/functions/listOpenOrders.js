@@ -1,6 +1,7 @@
 /**
  * listOpenOrders.js  –  returns EVERY open receipt for your shop.
- * Works by walking Etsy's offset-based pagination until next_offset === null.
+ * Works by walking Etsy's offset-based pagination until next_offset === null
+ * when offset==0, but fetches ONE page when an explicit offset is sent.
  */
 
 const fetch = require("node-fetch");
@@ -29,8 +30,10 @@ exports.handler = async (event) => {
 
     /* 3.  Loop through pages using offset pagination */
     const allReceipts = [];
+
+    // ====== first requested offset comes from browser (UPDATED) ======
     let offset        = Number(event.queryStringParameters.offset || 0);
-    const firstOffset = offset;               // remember what the browser asked for
+    const firstOffset = offset;                 // remember what the browser asked for
 
     do {
       const qs = new URLSearchParams({
@@ -65,7 +68,9 @@ exports.handler = async (event) => {
       /* ---- find next offset (Etsy returns null when done) ---- */
       const next = (data.pagination || {}).next_offset;
       offset = next === null || next === undefined ? null : next;
-      if (firstOffset !== 0) offset = null;   // break after one pass
+
+      // ====== break after ONE page when browser passed an explicit offset ======
+      if (firstOffset !== 0) offset = null;
 
     } while (offset !== null);
 
