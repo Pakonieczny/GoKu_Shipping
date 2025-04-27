@@ -26,29 +26,29 @@ exports.handler = async (event) => {
       };
     }
 
-    /* 3) loop through pages until next_cursor == null */
+    /* 3) loop through pages until next_offset is null */
     const allReceipts = [];
-    let cursor = null;
+    let offset = 0;
 
     do {
       const qs = new URLSearchParams({
-        status: "open",
-        sort_on: "created",
-        sort_order: "desc",
-        limit: "100"              // max allowed; pagination removes the cap
+        status      : "open",
+        sort_on     : "created",
+        sort_order  : "desc",
+        limit       : "100",
+        offset      : offset.toString()
       });
-      if (cursor) qs.append("cursor", cursor);
 
       const url =
         `https://api.etsy.com/v3/application/shops/${SHOP_ID}/receipts?` +
         qs.toString();
 
       const resp = await fetch(url, {
-        method:  "GET",
+        method: "GET",
         headers: {
-          "Authorization": `Bearer ${accessToken}`,
-          "x-api-key":     CLIENT_ID,
-          "Content-Type":  "application/json"
+          Authorization : `Bearer ${accessToken}`,
+          "x-api-key"   : CLIENT_ID,
+          "Content-Type": "application/json"
         }
       });
 
@@ -59,9 +59,12 @@ exports.handler = async (event) => {
 
       const data = await resp.json();
       if (Array.isArray(data.results)) allReceipts.push(...data.results);
-      cursor = (data.pagination || {}).next_cursor || null;
 
-    } while (cursor);
+      /* ─── offset pagination (null means “no more pages”) ─── */
+      const next = (data.pagination || {}).next_offset;
+      offset = next === null || next === undefined ? null : next;
+
+    } while (offset !== null);
 
     return {
       statusCode: 200,
