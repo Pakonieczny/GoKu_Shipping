@@ -31,7 +31,7 @@ exports.handler = async (event) => {
     /* 3.  Loop through pages using offset pagination */
     const allReceipts = [];
 
-    // ====== first requested offset comes from browser (UPDATED) ======
+    // ====== first requested offset comes from browser (unchanged) ======
     let offset        = Number(event.queryStringParameters.offset || 0);
     const firstOffset = offset;                 // remember what the browser asked for
 
@@ -76,8 +76,7 @@ exports.handler = async (event) => {
 
     } while (offset !== null);
 
-    /* (The loop now exits after the return above; this block is unreachable
-       but kept to preserve your original structure.) */
+    /* (Unreachable now, kept to preserve your original structure) */
     return {
       statusCode: 200,
       body: JSON.stringify({ results: allReceipts })
