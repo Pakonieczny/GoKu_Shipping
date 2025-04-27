@@ -472,6 +472,8 @@ if (!resp.ok) throw new Error("HTTP " + resp.status);
 const payload  = await resp.json();     // Etsy returns { results: [...], pagination: {...} }
 const receipts = payload.results || [];     // let one filter do the work
 
+console.log("Sample receipt:", receipts[0]);
+
 /* 3) prepare the container */
 const container = document.getElementById("newOrderContainer");
 container.innerHTML = "";               // clear old stack
