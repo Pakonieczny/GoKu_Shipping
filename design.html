@@ -264,8 +264,6 @@ let earringState  = {};            // { cellIdx : { firstImg:null } }
 let orderListOffset = 0;      // 0, 100, 200…
 let carryReceipts   = [];   // leftovers from a previous fetch
 let nextOffsetCursor = 0;   // where the next Etsy API call should start
-let cachedOpenReceipts = [];   // every open receipt (shipped + unshipped)
-let pageCursor         = 0;    // index of first receipt on the next page
 
 /********************************************************
  * Firebase Initialization (REQUIRED)
@@ -378,19 +376,14 @@ document.addEventListener("DOMContentLoaded", function () {
     }
   });
 
-    /* --- Update-Order-List ---------------------------------------- */
-    document.getElementById("updateOrderListBtn").addEventListener("click", async function () {
+  /* --- Update-Order-List button --- */
+  document.getElementById("updateOrderListBtn")
+    .addEventListener("click", async function () {
       try {
         this.disabled = true;
         this.innerText = "Loading…";
-
-        cachedOpenReceipts = [];
-        pageCursor         = 0;
-
-        await fetchAllOpenReceipts();       // <— single API hit
-        const hasMore = buildOnePage();     // draws page 0
-
-        document.getElementById("nextPageBtn").disabled = !hasMore;
+        orderListOffset = 0;                     // reset to first page
+        await buildNewOrderList(orderListOffset);
         this.disabled = false;
         this.innerText = "Update Order List";
       } catch (err) {
@@ -399,13 +392,26 @@ document.addEventListener("DOMContentLoaded", function () {
         this.disabled = false;
         this.innerText = "Update Order List";
       }
-    });
+  });
 
-    /* --- Next-Page ------------------------------------------------- */
-    document.getElementById("nextPageBtn").addEventListener("click", function () {
-      const hasMore = buildOnePage();               // just slices the cache
-      this.disabled = !hasMore;
-    });
+  /* --- Next-Page button --- */
+  document.getElementById("nextPageBtn")
+    .addEventListener("click", async function () {
+      try {
+        this.disabled = true;
+        this.innerText = "Loading…";
+        orderListOffset += 100;
+        const gotRows = await buildNewOrderList(orderListOffset);
+        if (gotRows < 100) this.disabled = true;   // no more pages
+        else               this.disabled = false;
+        this.innerText = "Next Page";
+      } catch (err) {
+        console.error("Next-page error:", err);
+        M.toast({ html: "Next-page error: " + err.message });
+        this.disabled = false;
+        this.innerText = "Next Page";
+      }
+  });
 
   // Load multiple orders on Enter (partial snippet)
   const etsyOrderInput = document.getElementById("etsyOrderNumber");
@@ -445,55 +451,6 @@ document.addEventListener("DOMContentLoaded", function () {
       await loadBatchEtsyOrders(orderNumbers);
     }
   });
-
-  /* === refresh Etsy access_token using stored refresh_token === */
-async function refreshAccessToken() {
-  const rt = localStorage.getItem("refresh_token") || "";
-  if (!rt) return false;
-  try {
-    const resp = await fetch(
-      "/.netlify/functions/refreshToken?refresh_token=" +
-      encodeURIComponent(rt)
-    );
-    if (!resp.ok) return false;
-    const data = await resp.json();
-    if (data.access_token) {
-      localStorage.setItem("access_token", data.access_token);
-      if (data.refresh_token) localStorage.setItem("refresh_token", data.refresh_token);
-      console.log("Obtained new access_token via refresh");
-      return true;
-    }
-  } catch (err) {
-    console.warn("Token-refresh failed:", err);
-  }
-  return false;
-}
-
-/* === FETCH EVERY OPEN RECEIPT ONCE (new helper) ============== */
-async function fetchAllOpenReceipts() {
-  const token = localStorage.getItem("access_token") || "";
-  if (!token) {
-    M.toast({ html: "Connect to Etsy first!" });
-    throw "No token";
-  }
-
-  /* one call with offset=0 – Netlify walks every page internally */
-  const resp = await fetch(
-    `${functionsBaseUrl}/listOpenOrders?offset=0`,
-    { headers: { "access-token": token } }
-  );
-
-  if (resp.status === 401) {               // token expired → refresh once
-    await refreshAccessToken();
-    return fetchAllOpenReceipts();         // retry after refresh
-  }
-  if (!resp.ok) throw new Error("HTTP " + resp.status);
-
-  const payload      = await resp.json();
-  cachedOpenReceipts = payload.results || [];
-}
-
-
 
  /********************************************************
  * buildNewOrderList – pull NEW (unfulfilled) Etsy orders
@@ -1140,63 +1097,6 @@ async function updateImageGrid(data) {
   window.cachedOrderItems = items;
   await fillPreviewBoxes(items);
 }
-
-/* ==============================================================
- * LOCAL PAGING HELPERS  – insert these right above the stubs
- * ==============================================================*/
-function buildOnePage() {
-  /* slice the next 100 unshipped / unpaid */
-  const page = [];
-  while (page.length < 100 && pageCursor < cachedOpenReceipts.length) {
-    const r = cachedOpenReceipts[pageCursor++];
-    if (!r.is_shipped && r.status === "Paid") page.push(r);
-  }
-
-  /* draw */
-  const container = document.getElementById("newOrderContainer");
-  container.innerHTML = "";
-  page.forEach((r, idx) => {
-    const orderNum = r.order_number || r.receipt_id || "—";
-    let ts = r.dispatch_date || r.ship_by_date;
-    if (!ts &&
-        Array.isArray(r.transactions) &&
-        r.transactions[0]?.expected_ship_date) {
-      ts = r.transactions[0].expected_ship_date;
-    }
-    let shipStr = "N/A";
-    if (ts) {
-      const d  = new Date(ts * 1000);
-      const mm = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"][d.getMonth()];
-      shipStr  = `${("0" + d.getDate()).slice(-2)} ${mm} ${d.getFullYear()}`;
-    }
-    const totalQty = (r.transactions || []).reduce(
-      (s, t) => s + (+t.quantity || 0), 0
-    );
-
-    const box = document.createElement("div");
-    box.className = "new-order-box";
-    box.innerHTML =
-      `${orderNum}&nbsp;|&nbsp;${shipStr}&nbsp;|&nbsp;Qty&nbsp;${totalQty}
-       <input type="checkbox" class="addToDesignChk" title="Add to Design">`;
-    container.appendChild(box);
-  });
-
-  /* enable “Next” only if more candidates exist */
-  return getRemainingCount() > 0;
-}
-
-function getRemainingCount() {
-  for (let i = pageCursor; i < cachedOpenReceipts.length; i++) {
-    const r = cachedOpenReceipts[i];
-    if (!r.is_shipped && r.status === "Paid") {
-      return cachedOpenReceipts.length - i;
-    }
-  }
-  return 0;
-}
-
-/* ---- stubbed out empty functions ---- */
-function disableSendMatch() {}
 
 /* ---- stubbed out empty functions ---- */
 function disableSendMatch() {}
