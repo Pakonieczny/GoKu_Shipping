@@ -65,9 +65,8 @@ exports.handler = async (event) => {
       const data = await resp.json();
       if (Array.isArray(data.results)) allReceipts.push(...data.results);
 
-      /* ---- find next offset (Etsy returns null when done) ---- */
-      const next = (data.pagination || {}).next_offset;
-      offset = next === null || next === undefined ? null : next;
+      /* Always stop after FIRST page — paging is handled by the browser */
+      offset = null;
 
       // ====== break after ONE page when browser passed an explicit offset ======
       if (firstOffset !== 0) offset = null;
