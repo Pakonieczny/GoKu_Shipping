@@ -31,22 +31,21 @@ exports.handler = async (event) => {
     /* 3.  Loop through pages using offset pagination */
     const allReceipts = [];
 
-    // ====== first requested offset comes from browser (unchanged) ======
+    // ===== first requested offset comes from browser (unchanged) =====
     let offset        = Number(event.queryStringParameters.offset || 0);
     const firstOffset = offset;                 // remember what the browser asked for
 
     do {
       const qs = new URLSearchParams({
         status     : "open",
-        limit      : "100",    // page size
+        limit      : "100",          // page size
         offset     : offset.toString(),
         sort_on    : "created",
         sort_order : "desc"
       });
 
       const url =
-        `https://api.etsy.com/v3/application/shops/${SHOP_ID}/receipts?` +
-        qs.toString();
+        `https://api.etsy.com/v3/application/shops/${SHOP_ID}/receipts?${qs}`;
 
       const resp = await fetch(url, {
         method: "GET",
@@ -62,25 +61,14 @@ exports.handler = async (event) => {
         return { statusCode: resp.status, body: txt };
       }
 
+      /* ── keep Etsy’s payload UNCHANGED so pagination.next_offset is preserved */
       const data = await resp.json();
-      if (Array.isArray(data.results)) allReceipts.push(...data.results);
-
-      /* Always stop after FIRST page — paging is handled by the browser */
-      offset = null;
-
-      // ====== break after ONE page when browser passed an explicit offset ======
-      if (firstOffset !== 0) offset = null;
-
-      /* 4.  Return Etsy’s payload UNCHANGED so pagination.next_offset is preserved */
+      console.log("DEBUG_BODY", JSON.stringify(data).slice(0, 300));  // log first 300 chars
       return { statusCode: 200, body: JSON.stringify(data) };
 
+      /* Everything below this point never runs because of the return above.
+         It has been removed for clarity. */
     } while (offset !== null);
-
-    /* (Unreachable now, kept to preserve your original structure) */
-    return {
-      statusCode: 200,
-      body: JSON.stringify({ results: allReceipts })
-    };
 
   } catch (err) {
     return { statusCode: 500, body: JSON.stringify({ error: err.message }) };
