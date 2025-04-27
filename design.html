@@ -262,7 +262,6 @@ let skipMatches = {};   // { cellIndex: true }
 let earringCells  = {};            // { cellIdx : true }
 let earringState  = {};            // { cellIdx : { firstImg:null } }
 let orderListOffset = 0;      // 0, 100, 200…
-let orderOverflow = [];   // holds rows that spill past the current 100
 
 /********************************************************
  * Firebase Initialization (REQUIRED)
@@ -381,12 +380,10 @@ document.addEventListener("DOMContentLoaded", function () {
         this.disabled = true;
         this.innerText = "Loading…";
 
-        orderListOffset = 0;        // hard reset
-        orderOverflow   = [];       // clear any leftovers
-        const info      = await buildNewOrderList(orderListOffset);
+        orderListOffset = 0;
+        const gotRows = await buildNewOrderList(orderListOffset);
 
-        document.getElementById("nextPageBtn").disabled = info.isLastPage;
-        orderListOffset = info.nextOffset;   // where NEXT fetch begins
+        document.getElementById("nextPageBtn").disabled = (gotRows < 100);
         this.disabled = false;
         this.innerText = "Update Order List";
       } catch (err) {
@@ -399,17 +396,15 @@ document.addEventListener("DOMContentLoaded", function () {
 
     /* --- Next-Page button --- */
     document.getElementById("nextPageBtn").addEventListener("click", async function () {
-      if (orderOverflow.length === 0 && orderListOffset == null) return;   // truly no more pages
-
       try {
         this.disabled = true;
         this.innerText = "Loading…";
 
-        const info = await buildNewOrderList(orderListOffset);
+        orderListOffset += 100;
+        const gotRows = await buildNewOrderList(orderListOffset);
 
-        this.disabled   = info.isLastPage;
-        orderListOffset = info.nextOffset;
-        this.innerText  = "Next Page";
+        this.disabled = (gotRows < 100);   // enable only if a full page arrived
+        this.innerText = "Next Page";
       } catch (err) {
         console.error("Next-page error:", err);
         M.toast({ html: "Next-page error: " + err.message });
@@ -457,92 +452,88 @@ document.addEventListener("DOMContentLoaded", function () {
     }
   });
 
-/********************************************************
- * buildNewOrderList – guarantees 100 visible rows per UI
- * page (or fewer only on the true last page).
- * RETURNS { displayCount, nextOffset, isLastPage }
+ /********************************************************
+ * buildNewOrderList – pull NEW (unfulfilled) Etsy orders
+ * and draw stacked 250 × 30 text boxes:
+ *   Order-#,  Ship-/Dispatch Date,  Total Qty,  [✓]
  ********************************************************/
 async function buildNewOrderList(offset = 0) {
+  /* 1) ensure we already have a valid OAuth token */
   const token = localStorage.getItem("access_token") || "";
   if (!token) {
     M.toast({ html: "Connect to Etsy first!" });
-    return { displayCount: 0, nextOffset: null, isLastPage: true };
+    return;
   }
 
-  /* 1) Start with whatever spilled over from the previous call */
-  let displayReceipts = orderOverflow;
-  orderOverflow = [];                          // will refill below
-  let nextOffset   = offset;
-  let reachedEnd   = false;
+/* 2) call the Netlify helper that wraps
+      GET /v3/application/shops/{shop_id}/receipts?status=open */
+const resp = await fetch(`${functionsBaseUrl}/listOpenOrders?offset=${offset}`,   // ← must include offset
+  { headers: { "access-token": token }
+});
+if (!resp.ok) throw new Error("HTTP " + resp.status);
+const payload  = await resp.json();     // Etsy returns { results: [...], pagination: {...} }
+const receipts = payload.results || [];     // let one filter do the work
 
-  /* 2) Keep fetching until we have *at least* 100 usable rows
-        or Etsy returns no more pages                           */
-  while (displayReceipts.length < 100 && nextOffset !== null) {
-    const resp = await fetch(
-      `${functionsBaseUrl}/listOpenOrders?offset=${nextOffset}`,
-      { headers: { "access-token": token } }
-    );
-    if (!resp.ok) throw new Error("HTTP " + resp.status);
 
-    const payload  = await resp.json();
-    const usable   = (payload.results || []).filter(
-      r => r.status === "Paid" && !r.is_shipped
-    );
-    displayReceipts.push(...usable);
 
-    const apiNext  = payload.pagination?.next_offset;
-    nextOffset      = apiNext ?? null;          // keep what Etsy gives us
+
+/*
+console.log("ONE RAW RECEIPT", JSON.stringify(receipts[0], null, 2));
+
+console.log("Sample receipt:", receipts[0]);
+debugger;                 // ← this halts script execution here */
+
+
+
+
+/* 3) prepare the container */
+const container = document.getElementById("newOrderContainer");
+container.innerHTML = "";               // clear old stack
+
+/* 4) build one 250×30 box per receipt (skip shipped & digital) */
+const displayReceipts = receipts.filter(
+  r => r.status === "Paid" && r.is_shipped === false
+);
+
+displayReceipts.forEach((r, idx) => {
+  /* a) order number (fallback to receipt_id) */
+  const orderNum = r.order_number || r.receipt_id || "—";
+
+  /* b) Ship-by date (same logic as index.html) */
+  let shipStr = "N/A";
+  let ts = null;
+  if (Array.isArray(r.transactions) && r.transactions.length > 0) {
+    const firstT = r.transactions[0];
+    if (firstT.expected_ship_date) ts = firstT.expected_ship_date;
+  }
+  if (!ts) ts = r.dispatch_date || r.ship_by_date;
+  if (ts) {
+    const d  = new Date(ts * 1000);
+    const dd = ("0" + d.getDate()).slice(-2);
+    const mm = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"][d.getMonth()];
+    shipStr  = `${dd} ${mm} ${d.getFullYear()}`;
   }
 
-  /* 3) Separate this page (first 100) from any overflow */
-  const pageReceipts  = displayReceipts.slice(0, 100);
-  orderOverflow       = displayReceipts.slice(100);   // keep for next click
+  /* c) total quantity across all line-items */
+  const totalQty = (r.transactions || []).reduce(
+    (sum, t) => sum + (Number(t.quantity) || 0), 0
+  );
 
-  /* 4) Draw the stack exactly like before (unchanged) */
-  const container = document.getElementById("newOrderContainer");
-  container.innerHTML = "";
+  /* d) build the DOM node */
+  const box = document.createElement("div");
+  box.className = "new-order-box";
+  box.id = "newOrder" + idx;
+  box.innerHTML = `
+      ${orderNum}&nbsp;|&nbsp;${shipStr}&nbsp;|&nbsp;Qty&nbsp;${totalQty}
+      <input type="checkbox" class="addToDesignChk" title="Add to Design">
+  `;
+  container.appendChild(box);
+});
 
-  pageReceipts.forEach((r, idx) => {
-    const orderNum = r.order_number || r.receipt_id || "—";
-
-    let shipStr = "N/A";
-    let ts = null;
-    if (Array.isArray(r.transactions) && r.transactions.length) {
-      const t0 = r.transactions[0];
-      if (t0.expected_ship_date) ts = t0.expected_ship_date;
-    }
-    if (!ts) ts = r.dispatch_date || r.ship_by_date;
-    if (ts) {
-      const d  = new Date(ts * 1000);
-      const dd = ("0" + d.getDate()).slice(-2);
-      const mm = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"][d.getMonth()];
-      shipStr  = `${dd} ${mm} ${d.getFullYear()}`;
-    }
-
-    const totalQty = (r.transactions || []).reduce(
-      (s, t) => s + (Number(t.quantity) || 0), 0
-    );
-
-    const box = document.createElement("div");
-    box.className = "new-order-box";
-    box.id        = "newOrder" + idx;
-    box.innerHTML = `
-        ${orderNum}&nbsp;|&nbsp;${shipStr}&nbsp;|&nbsp;Qty&nbsp;${totalQty}
-        <input type="checkbox" class="addToDesignChk" title="Add to Design">
-    `;
-    container.appendChild(box);
-  });
-
-  /* 5) Disable “Next Page” only if we have neither overflow
-        nor a further Etsy offset.                           */
-  const isLastPage = (orderOverflow.length === 0 && nextOffset == null);
-
-  return {
-    displayCount : pageReceipts.length,
-    nextOffset,
-    isLastPage
-  };
+/* 5) return how many rows Etsy *actually* sent (0-100) */
+return receipts.length;          // ← NOT displayReceipts.length
 }
+
 /********************************************************
  * startScannedSortingListener (NEW partial snippet)
  ********************************************************/
