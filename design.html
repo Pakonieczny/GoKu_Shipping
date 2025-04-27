@@ -262,6 +262,7 @@ let skipMatches = {};   // { cellIndex: true }
 let earringCells  = {};            // { cellIdx : true }
 let earringState  = {};            // { cellIdx : { firstImg:null } }
 let orderListOffset = 0;      // 0, 100, 200…
+let orderOverflow = [];   // holds rows that spill past the current 100
 
 /********************************************************
  * Firebase Initialization (REQUIRED)
@@ -380,11 +381,12 @@ document.addEventListener("DOMContentLoaded", function () {
         this.disabled = true;
         this.innerText = "Loading…";
 
-        orderListOffset = 0;                       // reset to start
+        orderListOffset = 0;        // hard reset
+        orderOverflow   = [];       // clear any leftovers
         const info      = await buildNewOrderList(orderListOffset);
 
         document.getElementById("nextPageBtn").disabled = info.isLastPage;
-        orderListOffset = info.nextOffset;         // where NEXT click begins
+        orderListOffset = info.nextOffset;   // where NEXT fetch begins
         this.disabled = false;
         this.innerText = "Update Order List";
       } catch (err) {
@@ -397,15 +399,16 @@ document.addEventListener("DOMContentLoaded", function () {
 
     /* --- Next-Page button --- */
     document.getElementById("nextPageBtn").addEventListener("click", async function () {
-      if (orderListOffset == null) return;           // no more pages
+      if (orderOverflow.length === 0 && orderListOffset == null) return;   // truly no more pages
+
       try {
         this.disabled = true;
         this.innerText = "Loading…";
 
-        const info      = await buildNewOrderList(orderListOffset);
+        const info = await buildNewOrderList(orderListOffset);
 
         this.disabled   = info.isLastPage;
-        orderListOffset = info.nextOffset;           // advance pointer
+        orderListOffset = info.nextOffset;
         this.innerText  = "Next Page";
       } catch (err) {
         console.error("Next-page error:", err);
@@ -455,27 +458,25 @@ document.addEventListener("DOMContentLoaded", function () {
   });
 
 /********************************************************
- * buildNewOrderList – pull NEW (unfulfilled) Etsy orders
- * and draw stacked 250 × 30 text boxes:
- *   Order-#,  Ship-/Dispatch Date,  Total Qty,  [✓]
- *   • Guarantees 100 visible rows per page unless the
- *     queue actually ends (final page).
+ * buildNewOrderList – guarantees 100 visible rows per UI
+ * page (or fewer only on the true last page).
  * RETURNS { displayCount, nextOffset, isLastPage }
  ********************************************************/
 async function buildNewOrderList(offset = 0) {
-  /* 1) OAuth check */
   const token = localStorage.getItem("access_token") || "";
   if (!token) {
     M.toast({ html: "Connect to Etsy first!" });
     return { displayCount: 0, nextOffset: null, isLastPage: true };
   }
 
-  /* 2) keep fetching slices until we have 100 usable rows
-        or Etsy runs out of data                               */
-  let displayReceipts = [];
-  let nextOffset      = offset;
-  let reachedEnd      = false;
+  /* 1) Start with whatever spilled over from the previous call */
+  let displayReceipts = orderOverflow;
+  orderOverflow = [];                          // will refill below
+  let nextOffset   = offset;
+  let reachedEnd   = false;
 
+  /* 2) Keep fetching until we have *at least* 100 usable rows
+        or Etsy returns no more pages                           */
   while (displayReceipts.length < 100 && !reachedEnd) {
     const resp = await fetch(
       `${functionsBaseUrl}/listOpenOrders?offset=${nextOffset}`,
@@ -483,30 +484,33 @@ async function buildNewOrderList(offset = 0) {
     );
     if (!resp.ok) throw new Error("HTTP " + resp.status);
 
-    const payload   = await resp.json();
-    const receipts  = payload.results || [];
-    const usable    = receipts.filter(r => r.status === "Paid" && !r.is_shipped);
+    const payload  = await resp.json();
+    const usable   = (payload.results || []).filter(
+      r => r.status === "Paid" && !r.is_shipped
+    );
     displayReceipts.push(...usable);
 
-    const apiNext   = payload.pagination?.next_offset;
-    reachedEnd      = (receipts.length < 100) || (apiNext == null);
-    nextOffset      = apiNext ?? null;
+    const apiNext  = payload.pagination?.next_offset;
+    reachedEnd     = ((payload.results || []).length < 100) || (apiNext == null);
+    nextOffset     = apiNext ?? null;
   }
 
-  displayReceipts = displayReceipts.slice(0, 100);   // hard cap for UI
+  /* 3) Separate this page (first 100) from any overflow */
+  const pageReceipts  = displayReceipts.slice(0, 100);
+  orderOverflow       = displayReceipts.slice(100);   // keep for next click
 
-  /* 3) draw the stack */
+  /* 4) Draw the stack exactly like before (unchanged) */
   const container = document.getElementById("newOrderContainer");
   container.innerHTML = "";
 
-  displayReceipts.forEach((r, idx) => {
+  pageReceipts.forEach((r, idx) => {
     const orderNum = r.order_number || r.receipt_id || "—";
 
     let shipStr = "N/A";
     let ts = null;
     if (Array.isArray(r.transactions) && r.transactions.length) {
-      const firstT = r.transactions[0];
-      if (firstT.expected_ship_date) ts = firstT.expected_ship_date;
+      const t0 = r.transactions[0];
+      if (t0.expected_ship_date) ts = t0.expected_ship_date;
     }
     if (!ts) ts = r.dispatch_date || r.ship_by_date;
     if (ts) {
@@ -530,10 +534,14 @@ async function buildNewOrderList(offset = 0) {
     container.appendChild(box);
   });
 
+  /* 5) Disable “Next Page” only if we have neither overflow
+        nor a further Etsy offset.                           */
+  const isLastPage = (orderOverflow.length === 0 && nextOffset == null);
+
   return {
-    displayCount : displayReceipts.length,
-    nextOffset   : reachedEnd ? null : nextOffset,
-    isLastPage   : reachedEnd
+    displayCount : pageReceipts.length,
+    nextOffset,
+    isLastPage
   };
 }
 /********************************************************
