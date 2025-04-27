@@ -483,6 +483,7 @@ debugger;                 // ← this halts script execution here */
 
 
 
+
 /* 3) prepare the container */
 const container = document.getElementById("newOrderContainer");
 container.innerHTML = "";               // clear old stack
@@ -527,8 +528,10 @@ displayReceipts.forEach((r, idx) => {
   container.appendChild(box);
 });
 
-/* 5) return how many rows we rendered (for Next-Page logic) */
-return displayReceipts.length;  // correct row count
+/* 5) return page info for Next-Page logic */
+const hasMore = (payload.pagination || {}).next_offset !== null &&
+                (payload.pagination || {}).next_offset !== undefined;
+return { rows: displayReceipts.length, hasMore };
 }
 
 /********************************************************
