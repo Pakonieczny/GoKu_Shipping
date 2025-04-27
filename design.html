@@ -477,8 +477,8 @@ const container = document.getElementById("newOrderContainer");
 container.innerHTML = "";               // clear old stack
 
 /* 4) build one 250×30 box per receipt (skip shipped & digital) */
-const displayReceipts = receipts.filter(
-  r => r.status === "open" && String(r.was_shipped) !== "true"
+const displayReceipts = receipts.filter(r =>
+  r.status === "open" && (r.was_shipped === false || r.was_shipped === "false" || r.was_shipped == null)
 );
 
 displayReceipts.forEach((r, idx) => {
