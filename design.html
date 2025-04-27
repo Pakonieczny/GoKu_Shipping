@@ -392,24 +392,26 @@ document.addEventListener("DOMContentLoaded", function () {
       }
   });
 
-  /* --- Next-Page button --- */
-  document.getElementById("nextPageBtn")
-    .addEventListener("click", async function () {
-      try {
-        this.disabled = true;
-        this.innerText = "Loading…";
-        orderListOffset += 100;
-        const gotRows = await buildNewOrderList(orderListOffset);
-        if (gotRows < 100) this.disabled = true;   // no more pages
-        else               this.disabled = false;
-        this.innerText = "Next Page";
-      } catch (err) {
-        console.error("Next-page error:", err);
-        M.toast({ html: "Next-page error: " + err.message });
-        this.disabled = false;
-        this.innerText = "Next Page";
-      }
-  });
+    /* --- Next-Page button --- */
+    document.getElementById("nextPageBtn")
+      .addEventListener("click", async function () {
+        try {
+          this.disabled = true;
+          this.innerText = "Loading…";
+
+          orderListOffset += 100;                       // bump offset
+          const { rows, hasMore } = await buildNewOrderList(orderListOffset);
+
+          /* enable again only if Etsy reports a next page */
+          this.disabled = !hasMore;
+          this.innerText = "Next Page";
+        } catch (err) {
+          console.error("Next-page error:", err);
+          M.toast({ html: "Next-page error: " + err.message });
+          this.disabled = false;
+          this.innerText = "Next Page";
+        }
+    });
 
   // Load multiple orders on Enter (partial snippet)
   const etsyOrderInput = document.getElementById("etsyOrderNumber");
@@ -528,8 +530,10 @@ displayReceipts.forEach((r, idx) => {
   container.appendChild(box);
 });
 
-/* 5) return how many rows we rendered (for Next-Page logic) */
-return displayReceipts.length;  // correct row count
+/* 5) return page info for Next-Page logic */
+const hasMore = (payload.pagination || {}).next_offset !== null &&
+                (payload.pagination || {}).next_offset !== undefined;
+return { rows: displayReceipts.length, hasMore };
 }
 
 /********************************************************
