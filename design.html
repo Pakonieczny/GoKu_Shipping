@@ -262,8 +262,6 @@ let skipMatches = {};   // { cellIndex: true }
 let earringCells  = {};            // { cellIdx : true }
 let earringState  = {};            // { cellIdx : { firstImg:null } }
 let orderListOffset = 0;      // 0, 100, 200…
-let carryReceipts   = [];   // leftovers from a previous fetch
-let nextOffsetCursor = 0;   // where the next Etsy API call should start
 
 /********************************************************
  * Firebase Initialization (REQUIRED)
@@ -530,10 +528,10 @@ displayReceipts.forEach((r, idx) => {
   container.appendChild(box);
 });
 
-/* 5) return page info for Next-Page logic */
-const hasMore = (payload.pagination || {}).next_offset !== null &&
-                (payload.pagination || {}).next_offset !== undefined;
-return { rows: displayReceipts.length, hasMore };
+/* 5) return how many rows we rendered (for Next-Page logic) */
+const gotRaw = receipts.length;         // raw rows in this slice
+const total  = payload.count;           // total open receipts Etsy reports
+return { gotRaw, total };               // send both back
 }
 
 /********************************************************
