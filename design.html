@@ -262,6 +262,8 @@ let skipMatches = {};   // { cellIndex: true }
 let earringCells  = {};            // { cellIdx : true }
 let earringState  = {};            // { cellIdx : { firstImg:null } }
 let orderListOffset = 0;      // 0, 100, 200…
+let carryReceipts   = [];   // leftovers from a previous fetch
+let nextOffsetCursor = 0;   // where the next Etsy API call should start
 
 /********************************************************
  * Firebase Initialization (REQUIRED)
@@ -374,14 +376,17 @@ document.addEventListener("DOMContentLoaded", function () {
     }
   });
 
-  /* --- Update-Order-List button --- */
-  document.getElementById("updateOrderListBtn")
-    .addEventListener("click", async function () {
+    /* --- Update-Order-List button --- */
+    document.getElementById("updateOrderListBtn").addEventListener("click", async function () {
       try {
         this.disabled = true;
         this.innerText = "Loading…";
-        orderListOffset = 0;                     // reset to first page
-        await buildNewOrderList(orderListOffset);
+
+        carryReceipts    = [];          // reset paging buffers
+        nextOffsetCursor = 0;
+        const hasMore = await buildNewOrderList();
+
+        document.getElementById("nextPageBtn").disabled = !hasMore;
         this.disabled = false;
         this.innerText = "Update Order List";
       } catch (err) {
@@ -390,18 +395,17 @@ document.addEventListener("DOMContentLoaded", function () {
         this.disabled = false;
         this.innerText = "Update Order List";
       }
-  });
+    });
 
-  /* --- Next-Page button --- */
-  document.getElementById("nextPageBtn")
-    .addEventListener("click", async function () {
+    /* --- Next-Page button --- */
+    document.getElementById("nextPageBtn").addEventListener("click", async function () {
       try {
         this.disabled = true;
         this.innerText = "Loading…";
-        orderListOffset += 100;
-        const gotRows = await buildNewOrderList(orderListOffset);
-        if (gotRows < 100) this.disabled = true;   // no more pages
-        else               this.disabled = false;
+
+        const hasMore = await buildNewOrderList();
+
+        this.disabled = !hasMore;       // enable only if something still queued
         this.innerText = "Next Page";
       } catch (err) {
         console.error("Next-page error:", err);
@@ -409,7 +413,7 @@ document.addEventListener("DOMContentLoaded", function () {
         this.disabled = false;
         this.innerText = "Next Page";
       }
-  });
+    });
 
   // Load multiple orders on Enter (partial snippet)
   const etsyOrderInput = document.getElementById("etsyOrderNumber");
