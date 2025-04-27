@@ -472,6 +472,8 @@ if (!resp.ok) throw new Error("HTTP " + resp.status);
 const payload  = await resp.json();     // Etsy returns { results: [...], pagination: {...} }
 const receipts = payload.results || [];     // let one filter do the work
 
+console.log("ONE RAW RECEIPT", JSON.stringify(receipts[0], null, 2));
+
 console.log("Sample receipt:", receipts[0]);
 debugger;                 // ← this halts script execution here
 
