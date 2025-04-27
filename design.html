@@ -380,9 +380,12 @@ document.addEventListener("DOMContentLoaded", function () {
         this.disabled = true;
         this.innerText = "Loading…";
 
-        orderListOffset = 0;
-        const { count, hasMore } = await buildNewOrderList(orderListOffset);
-        document.getElementById("nextPageBtn").disabled = !hasMore;
+        orderListOffset = 0;                 // reset to first page
+        const gotRows = await buildNewOrderList(orderListOffset);
+
+        /* enable “Next Page” if we got a full 100-row slice */
+        document.getElementById("nextPageBtn").disabled = (gotRows < 100);
+
         this.disabled = false;
         this.innerText = "Update Order List";
       } catch (err) {
@@ -399,9 +402,11 @@ document.addEventListener("DOMContentLoaded", function () {
         this.disabled = true;
         this.innerText = "Loading…";
 
-        orderListOffset += 100;
-        const { count, hasMore } = await buildNewOrderList(orderListOffset);
-        this.disabled = !hasMore;
+        orderListOffset += 100;               // simple offset jump
+        const gotRows = await buildNewOrderList(orderListOffset);
+
+        /* stay enabled only if another full slice came back */
+        this.disabled = (gotRows < 100);
         this.innerText = "Next Page";
       } catch (err) {
         console.error("Next-page error:", err);
@@ -528,12 +533,9 @@ displayReceipts.forEach((r, idx) => {
   container.appendChild(box);
 });
 
-/* 5) return {count, hasMore} instead of just a number */
-return {
-  count   : receipts.length,
-  hasMore : payload.pagination?.next_offset !== null
-};          // ← semicolon finishes the return
-}           // ← closes buildNewOrderList
+/* 5) return how many rows Etsy *actually* sent (0-100) */
+return receipts.length;          // ← NOT displayReceipts.length
+}
 
 /********************************************************
  * startScannedSortingListener (NEW partial snippet)
