@@ -29,7 +29,8 @@ exports.handler = async (event) => {
 
     /* 3.  Loop through pages using offset pagination */
     const allReceipts = [];
-    let offset = Number(event.queryStringParameters.offset || 0);  // ← updated
+    let offset        = Number(event.queryStringParameters.offset || 0);
+    const firstOffset = offset;               // remember what the browser asked for
 
     do {
       const qs = new URLSearchParams({
@@ -64,6 +65,7 @@ exports.handler = async (event) => {
       /* ---- find next offset (Etsy returns null when done) ---- */
       const next = (data.pagination || {}).next_offset;
       offset = next === null || next === undefined ? null : next;
+      if (firstOffset !== 0) offset = null;   // break after one pass
 
     } while (offset !== null);
 
