@@ -374,47 +374,55 @@ document.addEventListener("DOMContentLoaded", function () {
     }
   });
 
-    /* --- Update-Order-List button --- */
-    document.getElementById("updateOrderListBtn").addEventListener("click", async function () {
-      try {
-        this.disabled = true;
-        this.innerText = "Loading…";
+      /* ────────────────── Update-Order-List button ────────────────── */
+      document.getElementById("updateOrderListBtn").addEventListener("click", async function () {
+        try {
+          this.disabled = true;
+          this.innerText = "Loading…";
 
-        orderListOffset = 0;                 // reset to first page
-        const gotRows = await buildNewOrderList(orderListOffset);
+          orderListOffset = 0;                 // reset to first page
+          const gotRows = await buildNewOrderList(orderListOffset);
 
-        /* enable “Next Page” if we got a full 100-row slice */
-        document.getElementById("nextPageBtn").disabled = (gotRows < 100);
+          /* NEW → log visible order count */
+          const displayedCount = document.getElementById("newOrderContainer").children.length;
+          console.log(`Orders displayed (offset ${orderListOffset}):`, displayedCount);
 
-        this.disabled = false;
-        this.innerText = "Update Order List";
-      } catch (err) {
-        console.error("Order-list fetch error:", err);
-        M.toast({ html: "Order-list error: " + err.message });
-        this.disabled = false;
-        this.innerText = "Update Order List";
-      }
-    });
+          /* enable “Next Page” if we got a full 100-row slice */
+          document.getElementById("nextPageBtn").disabled = (gotRows < 100);
 
-    /* --- Next-Page button --- */
-    document.getElementById("nextPageBtn").addEventListener("click", async function () {
-      try {
-        this.disabled = true;
-        this.innerText = "Loading…";
+          this.disabled = false;
+          this.innerText = "Update Order List";
+        } catch (err) {
+          console.error("Order-list fetch error:", err);
+          M.toast({ html: "Order-list error: " + err.message });
+          this.disabled = false;
+          this.innerText = "Update Order List";
+        }
+      });
 
-        orderListOffset += 100;               // simple offset jump
-        const gotRows = await buildNewOrderList(orderListOffset);
+      /* ──────────────────────── Next-Page button ─────────────────────── */
+      document.getElementById("nextPageBtn").addEventListener("click", async function () {
+        try {
+          this.disabled = true;
+          this.innerText = "Loading…";
 
-        /* stay enabled only if another full slice came back */
-        this.disabled = (gotRows < 100);
-        this.innerText = "Next Page";
-      } catch (err) {
-        console.error("Next-page error:", err);
-        M.toast({ html: "Next-page error: " + err.message });
-        this.disabled = false;
-        this.innerText = "Next Page";
-      }
-    });
+          orderListOffset += 100;              // simple offset jump
+          const gotRows = await buildNewOrderList(orderListOffset);
+
+          /* NEW → log visible order count */
+          const displayedCount = document.getElementById("newOrderContainer").children.length;
+          console.log(`Orders displayed (offset ${orderListOffset}):`, displayedCount);
+
+          /* stay enabled only if another full slice came back */
+          this.disabled = (gotRows < 100);
+          this.innerText = "Next Page";
+        } catch (err) {
+          console.error("Next-page error:", err);
+          M.toast({ html: "Next-page error: " + err.message });
+          this.disabled = false;
+          this.innerText = "Next Page";
+        }
+      });
 
   // Load multiple orders on Enter (partial snippet)
   const etsyOrderInput = document.getElementById("etsyOrderNumber");
