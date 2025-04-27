@@ -532,7 +532,8 @@ displayReceipts.forEach((r, idx) => {
 return {
   count   : receipts.length,
   hasMore : payload.pagination?.next_offset !== null
-};
+};          // ← semicolon finishes the return
+}           // ← closes buildNewOrderList
 
 /********************************************************
  * startScannedSortingListener (NEW partial snippet)
