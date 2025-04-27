@@ -476,8 +476,11 @@ const receipts = (payload.results || []).filter(r => r.status !== "completed");
 const container = document.getElementById("newOrderContainer");
 container.innerHTML = "";               // clear old stack
 
-/* 4) build one 250×30 box per receipt */
-receipts.forEach((r, idx) => {
+/* 4) build one 250×30 box per receipt (skip completed) */
+const displayReceipts = receipts.filter(r => r.status !== "completed");
+displayReceipts.forEach((r, idx) => {
+  /* a) order number (fallback to receipt_id) */
+  const orderNum = r.order_number || r.receipt_id || "—";
   /* a) order number (fallback to receipt_id) */
   const orderNum = r.order_number || r.receipt_id || "—";
 
