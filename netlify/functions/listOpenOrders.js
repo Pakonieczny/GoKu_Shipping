@@ -71,9 +71,13 @@ exports.handler = async (event) => {
       // ====== break after ONE page when browser passed an explicit offset ======
       if (firstOffset !== 0) offset = null;
 
+      /* 4.  Return Etsy’s payload UNCHANGED so pagination.next_offset is preserved */
+      return { statusCode: 200, body: JSON.stringify(data) };
+
     } while (offset !== null);
 
-    /* 4.  Return the merged list */
+    /* (The loop now exits after the return above; this block is unreachable
+       but kept to preserve your original structure.) */
     return {
       statusCode: 200,
       body: JSON.stringify({ results: allReceipts })
