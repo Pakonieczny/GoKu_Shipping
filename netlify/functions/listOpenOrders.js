@@ -36,12 +36,15 @@ exports.handler = async (event) => {
     const firstOffset = offset;                 // remember what the browser asked for
 
     do {
+      /* ───── QUERY PARAMS (PRE-FILTERED) ───── */
       const qs = new URLSearchParams({
-        status     : "open",
-        limit      : "100",          // page size
-        offset     : offset.toString(),
-        sort_on    : "created",
-        sort_order : "desc"
+        status      : "open",   // still “open” receipts
+        was_paid    : "true",   // ← ONLY paid
+        was_shipped : "false",  // ← ONLY unshipped
+        limit       : "100",    // page size
+        offset      : offset.toString(),
+        sort_on     : "created",
+        sort_order  : "desc"
       });
 
       const url =
