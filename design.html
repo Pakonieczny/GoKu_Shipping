@@ -374,14 +374,16 @@ document.addEventListener("DOMContentLoaded", function () {
     }
   });
 
-  /* --- Update-Order-List button --- */
-  document.getElementById("updateOrderListBtn")
-    .addEventListener("click", async function () {
+    /* --- Update-Order-List button --- */
+    document.getElementById("updateOrderListBtn").addEventListener("click", async function () {
       try {
         this.disabled = true;
         this.innerText = "Loading…";
-        orderListOffset = 0;                     // reset to first page
-        await buildNewOrderList(orderListOffset);
+
+        orderListOffset = 0;
+        const gotRows = await buildNewOrderList(orderListOffset);
+
+        document.getElementById("nextPageBtn").disabled = (gotRows < 100);
         this.disabled = false;
         this.innerText = "Update Order List";
       } catch (err) {
@@ -390,18 +392,18 @@ document.addEventListener("DOMContentLoaded", function () {
         this.disabled = false;
         this.innerText = "Update Order List";
       }
-  });
+    });
 
-  /* --- Next-Page button --- */
-  document.getElementById("nextPageBtn")
-    .addEventListener("click", async function () {
+    /* --- Next-Page button --- */
+    document.getElementById("nextPageBtn").addEventListener("click", async function () {
       try {
         this.disabled = true;
         this.innerText = "Loading…";
+
         orderListOffset += 100;
         const gotRows = await buildNewOrderList(orderListOffset);
-        if (gotRows < 100) this.disabled = true;   // no more pages
-        else               this.disabled = false;
+
+        this.disabled = (gotRows < 100);   // enable only if a full page arrived
         this.innerText = "Next Page";
       } catch (err) {
         console.error("Next-page error:", err);
@@ -409,7 +411,7 @@ document.addEventListener("DOMContentLoaded", function () {
         this.disabled = false;
         this.innerText = "Next Page";
       }
-  });
+    });
 
   // Load multiple orders on Enter (partial snippet)
   const etsyOrderInput = document.getElementById("etsyOrderNumber");
@@ -528,10 +530,8 @@ displayReceipts.forEach((r, idx) => {
   container.appendChild(box);
 });
 
-/* 5) return how many rows we rendered (for Next-Page logic) */
-const gotRaw = receipts.length;         // raw rows in this slice
-const total  = payload.count;           // total open receipts Etsy reports
-return { gotRaw, total };               // send both back
+/* 5) return how many rows Etsy *actually* sent (0-100) */
+return receipts.length;          // ← NOT displayReceipts.length
 }
 
 /********************************************************
