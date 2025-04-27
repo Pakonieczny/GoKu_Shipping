@@ -473,6 +473,7 @@ const payload  = await resp.json();     // Etsy returns { results: [...], pagina
 const receipts = payload.results || [];     // let one filter do the work
 
 console.log("Sample receipt:", receipts[0]);
+debugger;                 // ← this halts script execution here
 
 /* 3) prepare the container */
 const container = document.getElementById("newOrderContainer");
