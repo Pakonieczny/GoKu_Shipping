@@ -72,7 +72,7 @@
       position: absolute;
       left: 20px;
       top: 236px;          /* 30 px below the 206 px bottom of Update-Order button */
-      width: 270px;
+      width: 318px;
       height: 800px;       /* scrollable window */
       overflow-y: auto;
       border: 1px dashed #bbb;
@@ -84,7 +84,10 @@
       position: relative;
       width: 290px;
       height: 35px;
-      margin-bottom: 5px;
+      margin-bottom: 10px;
+      display: grid;
+      grid-template-columns: 80px 90px 30px 30px 30px 30px;  /* tweak each width */
+      column-gap: 12px; /* overall breathing room */
       display: flex;
       align-items: center;
       font-size: 0.9em;
@@ -489,9 +492,14 @@ document.addEventListener("DOMContentLoaded", function () {
       const s = r._metalCounts.Silver   || 0;
       const rG= r._metalCounts["Rose G"]|| 0;
       const k = r._metalCounts["14K"]   || 0;
-      box.innerHTML =
-        `${orderNum}&nbsp;|&nbsp;${shipStr}&nbsp;|&nbsp;` +
-        `${g}/${s}/${rG}/${k}`;
+      box.innerHTML = `
+        <span class="col-order">${orderNum}</span>
+        <span class="col-ship">${shipStr}</span>
+        <span class="col-g">${g}</span>
+        <span class="col-s">${s}</span>
+        <span class="col-r">${rG}</span>
+        <span class="col-k">${k}</span>
+      `;
       container.appendChild(box);
     });
   }
@@ -501,15 +509,15 @@ document.addEventListener("DOMContentLoaded", function () {
   bar.id = "orderHeaderBar";
   bar.style.cssText =
     "position:absolute;left:20px;top:206px;width:285px;height:23px;" +
-    "display:flex;gap:4px;background:#626262;color:#fff;font-size:0.6em;" +
+    "display:flex;gap:4px;background:#626262;color:#fff;font-size:0.7em;" +
     "align-items:center;user-select:none;z-index:9999;";
 
   const COLS = [
     { key:"order",  label:"Order"   , flex:"1" },
     { key:"ship" ,  label:"Date" , flex:"1.2" },
-    { key:"gold" ,  label:"Gold"      , flex:"0.8" },
-    { key:"silver", label:"Silver"    , flex:"0.9" },
-    { key:"rose" ,  label:"Rose"   , flex:"1" },
+    { key:"gold" ,  label:"G"      , flex:"0.8" },
+    { key:"silver", label:"S"    , flex:"0.9" },
+    { key:"rose" ,  label:"RG"   , flex:"1" },
     { key:"14k"  ,  label:"14K" , flex:"1.1" }
   ];
 
@@ -742,7 +750,7 @@ const defaultPos = {
   saveConfigBtn:            { left:10,  top:3,   width:85,  height:35 },
   sendMatchBtn:             { left:20,  top:255, width:210, height:35 },
   testOpenAIBtn:            { left:20,  top:65,  width:140, height:35 },
-  newOrderContainer:        { left:20, top:236, width:270, height:800 },
+  newOrderContainer:        { left:20, top:236, width:318, height:800 },
   nextPageBtn:              { left:482, top:0, width:120, height:36 },
   orderHeaderBar:           { left:0, top:23, width:290, height:23 }
 };
