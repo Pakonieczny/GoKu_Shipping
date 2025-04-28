@@ -500,17 +500,17 @@ document.addEventListener("DOMContentLoaded", function () {
   const bar = document.createElement("div");
   bar.id = "orderHeaderBar";
   bar.style.cssText =
-    "position:absolute;left:20px;top:206px;width:300px;height:30px;" +
-    "display:flex;gap:4px;background:#424242;color:#fff;font-size:0.5em;" +
+    "position:absolute;left:20px;top:206px;width:285px;height:23px;" +
+    "display:flex;gap:4px;background:#626262;color:#fff;font-size:0.6em;" +
     "align-items:center;user-select:none;z-index:9999;";
 
   const COLS = [
-    { key:"order",  label:"Order #"   , flex:"1" },
-    { key:"ship" ,  label:"Ship Date" , flex:"1.2" },
+    { key:"order",  label:"Order"   , flex:"1" },
+    { key:"ship" ,  label:"Date" , flex:"1.2" },
     { key:"gold" ,  label:"Gold"      , flex:"0.8" },
     { key:"silver", label:"Silver"    , flex:"0.9" },
-    { key:"rose" ,  label:"Rose G."   , flex:"1" },
-    { key:"14k"  ,  label:"14K Solid" , flex:"1.1" }
+    { key:"rose" ,  label:"Rose"   , flex:"1" },
+    { key:"14k"  ,  label:"14K" , flex:"1.1" }
   ];
 
   COLS.forEach(col => {
