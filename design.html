@@ -549,7 +549,10 @@ document.addEventListener("DOMContentLoaded", function () {
     div.className = "hdr";
     div.dataset.key = col.key;
     div.style.cssText = `flex:${col.flex};text-align:center;cursor:pointer;`;
-    div.innerHTML = `${col.label}<span class="chev">▲<br>▼</span>`;
+    div.innerHTML =
+    `${col.label}<span class="chev">` +
+      `<span class="up">▲</span><br><span class="down">▼</span>` +
+    `</span>`;
     bar.appendChild(div);
   });
 
@@ -631,47 +634,44 @@ document.addEventListener("DOMContentLoaded", function () {
         }
 
         /* 2. metal counts */
-        if (!r._metalCounts) {
-          const mc = { Gold:0, Silver:0, "Rose G":0, "14K":0 };
-          (r.transactions || []).forEach(t => {
-            const m = (t.variations || [])
-              .find(v => /metal/i.test(v.formatted_name || ""))?.formatted_value || "";
-            if (/14k/i.test(m))         mc["14K"]   += t.quantity || 1;
-            else if (/rose/i.test(m))   mc["Rose G"]+= t.quantity || 1;
-            else if (/silver/i.test(m)) mc.Silver   += t.quantity || 1;
-            else if (/gold/i.test(m))   mc.Gold     += t.quantity || 1;
-          });
-          r._metalCounts = mc;
-        }
-      });
-
-      /* make all chevrons white, then tint the default one */
-      bar.querySelectorAll(".chev").forEach(c => c.style.color = "#ffffff");
-      bar.querySelector(`[data-key="${sortKey}"] .chev`).style.color =
-        (sortDir === 1 ? "#2196F3" : "#ffffff");
-
-      /* ─── default sort by Order # (desc) on first load ─── */
-      if (!sortKey) { sortKey = "order"; sortDir = -1; }
-
-      /* reset every chevron to white */
-      bar.querySelectorAll(".chev").forEach(c => {
-        c.innerHTML = "▲<br>▼";
-        c.style.color = "#ffffff";          // ← white
-      });
-
-      /* colour-code the active sort */
-      hdr.querySelector(".chev").style.color =
-        (sortDir === 1 ? "#2196F3" : "#ffffff");   // blue for ASC, white for DESC
-
-      /* execute sort */
-      currentReceipts.sort(
-        (a, b) => (b.order_number || b.receipt_id) - (a.order_number || a.receipt_id)
-      );
-
-      renderOrderBoxes(currentReceipts);
-    }
+if (!r._metalCounts) {
+  const mc = { Gold:0, Silver:0, "Rose G":0, "14K":0 };
+  (r.transactions || []).forEach(t => {
+    const m = (t.variations || [])
+      .find(v => /metal/i.test(v.formatted_name || ""))?.formatted_value || "";
+    if (/14k/i.test(m))         mc["14K"]   += t.quantity || 1;
+    else if (/rose/i.test(m))   mc["Rose G"]+= t.quantity || 1;
+    else if (/silver/i.test(m)) mc.Silver   += t.quantity || 1;
+    else if (/gold/i.test(m))   mc.Gold     += t.quantity || 1;
   });
-  observer.observe(document.getElementById("newOrderContainer"), { childList: true });
+  r._metalCounts = mc;
+}
+});
+
+/* ─── default sort by Order # (desc) on first load ─── */
+if (!sortKey) { sortKey = "order"; sortDir = -1; }
+
+/* ─── colour the correct arrow (▲ for asc, ▼ for desc) ─── */
+/*   every arrow is now <span class="up">▲</span><br><span class="down">▼</span> */
+bar.querySelectorAll(".chev .up, .chev .down")
+   .forEach(el => (el.style.color = "#ffffff"));        // reset all to white
+
+const activeChev = bar.querySelector(`[data-key="${sortKey}"] .chev`);
+if (sortDir === 1) {
+  activeChev.querySelector(".up").style.color   = "#2196F3"; // blue up-arrow (ASC)
+} else {
+  activeChev.querySelector(".down").style.color = "#2196F3"; // blue down-arrow (DESC)
+}
+
+/* execute initial sort */
+currentReceipts.sort(
+  (a, b) => (b.order_number || b.receipt_id) - (a.order_number || a.receipt_id)
+);
+
+renderOrderBoxes(currentReceipts);
+}
+});
+observer.observe(document.getElementById("newOrderContainer"), { childList: true });
 
 })();   /* ─── END SORT HEADER MODULE ─── */
 
