@@ -466,12 +466,11 @@ document.addEventListener("DOMContentLoaded", function () {
 
   /* ──────────────────────────────────────────────────────────────
  *  ORDER-LIST SORT HEADER  –  adds UI & sorting for #newOrderContainer
- *  (drop this inside your main <script> block in design.html)
  * ────────────────────────────────────────────────────────────── */
 (() => {
 
   /* 0.  GLOBAL HOOKS ----------------------------------------------------- */
-  let currentReceipts = [];            // populated by buildNewOrderList()
+  let currentReceipts = [];            // populated each time buildNewOrderList() runs
   let sortKey   = null;                // "order", "ship", "gold", ...
   let sortDir   = 1;                   // 1 = asc, -1 = desc
 
@@ -490,8 +489,7 @@ document.addEventListener("DOMContentLoaded", function () {
       const rG= r._metalCounts["Rose G"]|| 0;
       const k = r._metalCounts["14K"]   || 0;
       box.innerHTML =
-        `${orderNum}&nbsp;|&nbsp;${shipStr}&nbsp;|&nbsp;` +
-        `${g}/${s}/${rG}/${k}`;
+        `${orderNum}&nbsp;|&nbsp;${shipStr}&nbsp;|&nbsp;${g}/${s}/${rG}/${k}`;
       container.appendChild(box);
     });
   }
@@ -505,25 +503,25 @@ document.addEventListener("DOMContentLoaded", function () {
     "align-items:center;user-select:none;z-index:9999;";
 
   const COLS = [
-    { key:"order",  label:"Order #"   , flex:"1" },
-    { key:"ship" ,  label:"Ship Date" , flex:"1.2" },
-    { key:"gold" ,  label:"Gold"      , flex:"0.8" },
-    { key:"silver", label:"Silver"    , flex:"0.9" },
-    { key:"rose" ,  label:"Rose G."   , flex:"1" },
-    { key:"14k"  ,  label:"14K Solid" , flex:"1.1" }
+    { key:"order",  label:"Order #",   flex:"1"   },
+    { key:"ship",   label:"Ship Date", flex:"1.2" },
+    { key:"gold",   label:"Gold",      flex:"0.8" },
+    { key:"silver", label:"Silver",    flex:"0.9" },
+    { key:"rose",   label:"Rose G.",   flex:"1"   },
+    { key:"14k",    label:"14K Solid", flex:"1.1" }
   ];
 
   COLS.forEach(col => {
     const div = document.createElement("div");
-    div.className = "hdr";
+    div.className   = "hdr";
     div.dataset.key = col.key;
     div.style.cssText = `flex:${col.flex};text-align:center;cursor:pointer;`;
-    div.innerHTML = `${col.label}<span class="chev">▲▼</span>`;
+    div.innerHTML   = `${col.label}<span class="chev">▲▼</span>`;
     bar.appendChild(div);
   });
 
   document.body.appendChild(bar);
-  loadPositions();   // ← re-apply positions now that #orderHeaderBar exists
+  loadPositions();      // place the bar using saved/default coords
 
   /* 2.  SORT ROUTINE ---------------------------------------------------- */
   bar.addEventListener("click", ev => {
@@ -531,7 +529,7 @@ document.addEventListener("DOMContentLoaded", function () {
     if (!hdr) return;
     const key = hdr.dataset.key;
 
-    /* toggle direction if clicking same column */
+    /* toggle direction if clicking the same column */
     sortDir = (sortKey === key) ? -sortDir : 1;
     sortKey = key;
 
@@ -550,29 +548,19 @@ document.addEventListener("DOMContentLoaded", function () {
     renderOrderBoxes(currentReceipts);
   });
 
-  /* 3.  HOOK INTO buildNewOrderList() ----------------------------------- */
+  /* 3.  HOOK INTO buildNewOrderList() ---------------------------------- */
   const originalBuild = buildNewOrderList;
-  buildNewOrderList = async function(offset=0) {
-    const rawReceipts = await originalBuild.call(this, offset);   // returns count
-    /* rebuild currentReceipts from DOM (we have no direct array) */
-    // but we *do* have the receipts inside original function’s scope → expose them:
-    return rawReceipts;
-  };
+  buildNewOrderList   = async function(offset = 0) {
 
-  /* Monkey-patch the original function to stash its array ---------- */
-  const origFuncTxt = buildNewOrderList.toString();
-  if (!origFuncTxt.includes("window._lastDisplayReceipts")) {
-    console.warn("Patch buildNewOrderList manually to expose displayReceipts:\n" +
-       "Inside buildNewOrderList(), just after you define displayReceipts, add:\n" +
-       '    window._lastDisplayReceipts = displayReceipts;');
-  }
-  /** After adding that line, this watcher will pick up the array */
-  const observer = new MutationObserver(() => {
-    if (window._lastDisplayReceipts && window._lastDisplayReceipts !== currentReceipts) {
-      currentReceipts = window._lastDisplayReceipts.slice();  // clone
-      /* make helper fields for sort */
+    /* call the original function (draws the boxes) */
+    const rawRows = await originalBuild.call(this, offset);
+
+    /* NEW → grab the array the original function just exposed */
+    if (window._lastDisplayReceipts && Array.isArray(window._lastDisplayReceipts)) {
+      currentReceipts = window._lastDisplayReceipts.slice();
+
+      /* attach helper fields (once per receipt) */
       currentReceipts.forEach(r => {
-        /* ship date → numeric timestamp */
         if (!r._shipTS) {
           let ts = null;
           if (Array.isArray(r.transactions) && r.transactions[0]?.expected_ship_date) {
@@ -581,23 +569,33 @@ document.addEventListener("DOMContentLoaded", function () {
           r._shipTS  = ts || 0;
           r._shipStr = ts ? new Date(ts*1000).toLocaleDateString("en-US",{month:"short",day:"2-digit"}) : "N/A";
         }
-        /* metal counts */
         if (!r._metalCounts) {
           const mc = {Gold:0,Silver:0,"Rose G":0,"14K":0};
-          (r.transactions||[]).forEach(t => {
+          (r.transactions || []).forEach(t => {
             const m = (t.variations||[]).find(v=>/metal/i.test(v.formatted_name||""))?.formatted_value||"";
-            if (/14k/i.test(m))        mc["14K"] += t.quantity||1;
-            else if (/rose/i.test(m))  mc["Rose G"] += t.quantity||1;
-            else if (/silver/i.test(m))mc.Silver += t.quantity||1;
-            else if (/gold/i.test(m))  mc.Gold   += t.quantity||1;
+            if (/14k/i.test(m))        mc["14K"]   += t.quantity||1;
+            else if (/rose/i.test(m))  mc["Rose G"]+= t.quantity||1;
+            else if (/silver/i.test(m))mc.Silver   += t.quantity||1;
+            else if (/gold/i.test(m))  mc.Gold     += t.quantity||1;
           });
           r._metalCounts = mc;
         }
       });
-      /* default sort by Order # desc on first load */
+
+      /* default: Order # desc on first load */
       if (!sortKey) { sortKey="order"; sortDir=-1; }
-      bar.querySelector(`[data-key="${sortKey}"] .chev`).textContent = (sortDir===1?"▲▼":"▼▲");
       currentReceipts.sort((a,b)=>(b.order_number||b.receipt_id)-(a.order_number||a.receipt_id));
+
+      renderOrderBoxes(currentReceipts);
+    }
+
+    return rawRows;   // keep original behaviour
+  };
+
+  /* 4.  MONITOR NEW PAGES (observer remains for safety) --------------- */
+  const observer = new MutationObserver(() => {
+    if (window._lastDisplayReceipts && window._lastDisplayReceipts !== currentReceipts) {
+      currentReceipts = window._lastDisplayReceipts.slice();
       renderOrderBoxes(currentReceipts);
     }
   });
