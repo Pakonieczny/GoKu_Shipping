@@ -67,6 +67,14 @@
       height: 36px;
     }
 
+    /* ─── Header-bar chevrons ─── */
+    #orderHeaderBar .chev{
+      font-size:66%;          /* 33 % smaller */
+      line-height:0.85em;
+      display:inline-block;
+      vertical-align:middle;
+    }
+
     /* --- Container that holds the stacked “newOrder” boxes --- */
     #newOrderContainer {
       position: absolute;
@@ -87,7 +95,7 @@
       display: grid;                 /* 🔸 REPLACES display:flex */
 
       /* 2 ▸ give each column its exact width */
-      grid-template-columns: 70px 50px 20px 20px 20px 20px;
+      grid-template-columns: 103px 67px 25px 25px 25px 25px;
 
       /* optional overall breathing room between columns */
       column-gap: 5px;              /* tweak this to taste */
@@ -535,7 +543,7 @@ document.addEventListener("DOMContentLoaded", function () {
     div.className = "hdr";
     div.dataset.key = col.key;
     div.style.cssText = `flex:${col.flex};text-align:center;cursor:pointer;`;
-    div.innerHTML = `${col.label}<span class="chev">▲▼</span>`;
+    div.innerHTML = `${col.label}<span class="chev">▲<br>▼</span>`;
     bar.appendChild(div);
   });
 
