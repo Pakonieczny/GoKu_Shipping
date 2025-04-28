@@ -569,7 +569,7 @@ document.addEventListener("DOMContentLoaded", function () {
   /** After adding that line, this watcher will pick up the array */
   const observer = new MutationObserver(() => {
     if (window._lastDisplayReceipts && window._lastDisplayReceipts !== currentReceipts) {
-      currentReceipts = window._lastDisplayReceipts.slice();  // clone
+      currentReceipts = window._lastDisplayReceipts;  // clone
       /* make helper fields for sort */
       currentReceipts.forEach(r => {
         /* ship date → numeric timestamp */
