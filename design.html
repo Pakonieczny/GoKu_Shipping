@@ -617,7 +617,9 @@ async function buildNewOrderList(offset = 0) {
   }
 
   /* 2) call the Netlify helper that wraps
-        GET /v3/application/shops/{shop_id}/receipts?status=open */
+        GET /v3/application/shops/{shop_id}/receipts?status=open
+        (server-side query already includes was_paid=true, was_shipped=false,
+         was_canceled=false, so only actionable rows come back)               */
   const resp = await fetch(
     `${functionsBaseUrl}/listOpenOrders?offset=${offset}`,
     { headers: { "access-token": token } }
@@ -628,21 +630,18 @@ async function buildNewOrderList(offset = 0) {
 
   /* 3) prepare the container */
   const container = document.getElementById("newOrderContainer");
-  container.innerHTML = "";
+  container.innerHTML = "";   // clear old stack
 
-  /* 4) build one 250×30 box per receipt (skip shipped & digital) */
-  const displayReceipts = receipts.filter(
-    r => r.status === "Paid" && r.is_shipped === false
-  );
-
-  /* ── NEW: expose this array so the header can sort it ── */
-  window._lastDisplayReceipts = displayReceipts;    // <<<  ADD THIS LINE
+  /* 4) keep every receipt the server sent (no extra front-end filter) */
+  const displayReceipts = receipts;
+  window._lastDisplayReceipts = displayReceipts;   // expose to header sorter
 
   displayReceipts.forEach((r, idx) => {
+
     /* a) order number (fallback to receipt_id) */
     const orderNum = r.order_number || r.receipt_id || "—";
 
-    /* b) Ship-by date */
+    /* b) Ship-by date (unix → short date) */
     let shipStr = "N/A";
     let ts = null;
     if (Array.isArray(r.transactions) && r.transactions.length > 0) {
