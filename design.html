@@ -566,17 +566,29 @@ document.addEventListener("DOMContentLoaded", function () {
     sortDir = (sortKey === key) ? -sortDir : 1;
     sortKey = key;
 
-    currentReceipts.sort((a,b) => {
+    /* run the sort */
+    currentReceipts.sort((a, b) => {
       switch (key) {
-        case "order": return  sortDir * ((a.order_number||a.receipt_id) - (b.order_number||b.receipt_id));
-        case "ship" : return  sortDir * ((a._shipTS||0) - (b._shipTS||0));
-        case "gold" : return  sortDir * ((a._metalCounts.Gold||0)   - (b._metalCounts.Gold||0));
-        case "silver":return  sortDir * ((a._metalCounts.Silver||0) - (b._metalCounts.Silver||0));
-        case "rose" : return  sortDir * ((a._metalCounts["Rose G"]||0) - (b._metalCounts["Rose G"]||0));
-        case "14k"  : return  sortDir * ((a._metalCounts["14K"]||0) - (b._metalCounts["14K"]||0));
+        case "order":  return sortDir * ((a.order_number || a.receipt_id) - (b.order_number || b.receipt_id));
+        case "ship":   return sortDir * ((a._shipTS || 0)                - (b._shipTS || 0));
+        case "gold":   return sortDir * ((a._metalCounts.Gold || 0)      - (b._metalCounts.Gold || 0));
+        case "silver": return sortDir * ((a._metalCounts.Silver || 0)    - (b._metalCounts.Silver || 0));
+        case "rose":   return sortDir * ((a._metalCounts["Rose G"] || 0) - (b._metalCounts["Rose G"] || 0));
+        case "14k":    return sortDir * ((a._metalCounts["14K"] || 0)    - (b._metalCounts["14K"] || 0));
       }
       return 0;
     });
+
+    /* ─── chevron colour-swap logic ─── */
+    /* 1. reset every chevron to white & ensure stacked markup */
+    bar.querySelectorAll(".chev").forEach(c => {
+      c.innerHTML = "▲<br>▼";
+      c.style.color = "#ffffff";
+    });
+
+    /* 2. colour the active column’s chevron */
+    hdr.querySelector(".chev").style.color =
+      (sortDir === 1 ? "#2196F3" : "#ffffff");   // blue when ASC, white when DESC
 
     renderOrderBoxes(currentReceipts);
   });
