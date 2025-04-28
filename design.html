@@ -102,7 +102,7 @@
 
       /* 3 ▸ let the row size itself, or set an explicit width that
              matches your columns + gaps (80+90+30*4 + 10*5 = 320 px).   */
-      width: 320px;                  /* or simply remove width:… */
+      width: 290px;                  /* or simply remove width:… */
 
       height: 35px;
       margin-bottom: 10px;
@@ -597,6 +597,7 @@ document.addEventListener("DOMContentLoaded", function () {
        "Inside buildNewOrderList(), just after you define displayReceipts, add:\n" +
        '    window._lastDisplayReceipts = displayReceipts;');
   }
+
     /** After adding that line, this watcher will pick up the array */
   const observer = new MutationObserver(() => {
     if (window._lastDisplayReceipts && window._lastDisplayReceipts !== currentReceipts) {
@@ -632,11 +633,23 @@ document.addEventListener("DOMContentLoaded", function () {
         }
       });
 
+      /* make all chevrons white, then tint the default one */
+      bar.querySelectorAll(".chev").forEach(c => c.style.color = "#ffffff");
+      bar.querySelector(`[data-key="${sortKey}"] .chev`).style.color =
+        (sortDir === 1 ? "#2196F3" : "#ffffff");
+
       /* ─── default sort by Order # (desc) on first load ─── */
       if (!sortKey) { sortKey = "order"; sortDir = -1; }
 
-      /* reset + orient stacked chevrons */
-      bar.querySelectorAll(".chev").forEach(c => (c.innerHTML = "▲<br>▼"));
+      /* reset every chevron to white */
+      bar.querySelectorAll(".chev").forEach(c => {
+        c.innerHTML = "▲<br>▼";
+        c.style.color = "#ffffff";          // ← white
+      });
+
+      /* colour-code the active sort */
+      hdr.querySelector(".chev").style.color =
+        (sortDir === 1 ? "#2196F3" : "#ffffff");   // blue for ASC, white for DESC
 
       /* execute sort */
       currentReceipts.sort(
