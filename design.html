@@ -549,9 +549,10 @@ document.addEventListener("DOMContentLoaded", function () {
     div.className = "hdr";
     div.dataset.key = col.key;
     div.style.cssText = `flex:${col.flex};text-align:center;cursor:pointer;`;
-    div.innerHTML =
+    /* inside the COLS.forEach loop that builds the bar */
+  div.innerHTML =
     `${col.label}<span class="chev">` +
-      `<span class="up">▲</span><br><span class="down">▼</span>` +
+    `<span class="up">▲</span><br><span class="down">▼</span>` +
     `</span>`;
     bar.appendChild(div);
   });
@@ -563,9 +564,9 @@ document.addEventListener("DOMContentLoaded", function () {
   bar.addEventListener("click", ev => {
     const hdr = ev.target.closest(".hdr");
     if (!hdr) return;
-    const key = hdr.dataset.key;
 
-    /* toggle direction if clicking same column */
+    /* toggle dir / remember key */
+    const key = hdr.dataset.key;
     sortDir = (sortKey === key) ? -sortDir : 1;
     sortKey = key;
 
@@ -582,16 +583,17 @@ document.addEventListener("DOMContentLoaded", function () {
       return 0;
     });
 
-    /* ─── chevron colour-swap logic ─── */
-    /* 1. reset every chevron to white & ensure stacked markup */
-    bar.querySelectorAll(".chev").forEach(c => {
-      c.innerHTML = "▲<br>▼";
-      c.style.color = "#ffffff";
-    });
+    /* ----  arrow colour logic  ---- */
+    /* 1) make every arrow white */
+    bar.querySelectorAll(".chev .up, .chev .down")
+       .forEach(el => (el.style.color = "#ffffff"));
 
-    /* 2. colour the active column’s chevron */
-    hdr.querySelector(".chev").style.color =
-      (sortDir === 1 ? "#2196F3" : "#ffffff");   // blue when ASC, white when DESC
+    /* 2) colour only the active arrow */
+    if (sortDir === 1) {
+      hdr.querySelector(".chev .up").style.color = "#2196F3";     // ASC → blue ▲
+    } else {
+      hdr.querySelector(".chev .down").style.color = "#2196F3";   // DESC → blue ▼
+    }
 
     renderOrderBoxes(currentReceipts);
   });
