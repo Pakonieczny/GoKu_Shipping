@@ -488,7 +488,6 @@ document.addEventListener("DOMContentLoaded", function () {
       const s  = r._metalCounts?.Silver    ?? 0;
       const rG = r._metalCounts?.["Rose G"]?? 0;
       const k  = r._metalCounts?.["14K"]   ?? 0;
-            box.innerHTML =
         `${orderNum}&nbsp;|&nbsp;${shipStr}&nbsp;|&nbsp;${g}/${s}/${rG}/${k}`;
       container.appendChild(box);
     });
@@ -603,7 +602,7 @@ document.addEventListener("DOMContentLoaded", function () {
 
 })();   /* ─── END SORT HEADER MODULE ─── */
 
-/********************************************************
+ /********************************************************
  * buildNewOrderList – pull NEW (unfulfilled) Etsy orders
  * and draw stacked 250 × 30 text boxes:
  *   Order-#,  Ship-/Dispatch Date,  Total Qty,  [✓]
@@ -616,64 +615,67 @@ async function buildNewOrderList(offset = 0) {
     return;
   }
 
-  /* 2) call the Netlify helper that wraps
-        GET /v3/application/shops/{shop_id}/receipts?status=open
-        (server-side query already includes was_paid=true, was_shipped=false,
-         was_canceled=false, so only actionable rows come back)               */
-  const resp = await fetch(
-    `${functionsBaseUrl}/listOpenOrders?offset=${offset}`,
-    { headers: { "access-token": token } }
+
+/* 2) call the Netlify helper that wraps
+      GET /v3/application/shops/{shop_id}/receipts?status=open */
+const resp = await fetch(`${functionsBaseUrl}/listOpenOrders?offset=${offset}`,   // ← must include offset
+  { headers: { "access-token": token }
+});
+if (!resp.ok) throw new Error("HTTP " + resp.status);
+const payload  = await resp.json();     // Etsy returns { results: [...], pagination: {...} }
+const receipts = payload.results || [];     // let one filter do the work
+
+
+/* 3) prepare the container */
+const container = document.getElementById("newOrderContainer");
+container.innerHTML = "";               // clear old stack
+
+
+/* 4) build one 250×30 box per receipt (skip shipped & digital) */
+const displayReceipts = receipts.filter(
+  r => r.status === "Paid" && r.is_shipped === false
+);
+
+/* NEW → let the header module see the current slice */
+window._lastDisplayReceipts = displayReceipts;      // ← add this line
+
+displayReceipts.forEach((r, idx) => {
+  /* a) order number (fallback to receipt_id) */
+  const orderNum = r.order_number || r.receipt_id || "—";
+
+  /* b) Ship-by date (same logic as index.html) */
+  let shipStr = "N/A";
+  let ts = null;
+  if (Array.isArray(r.transactions) && r.transactions.length > 0) {
+    const firstT = r.transactions[0];
+    if (firstT.expected_ship_date) ts = firstT.expected_ship_date;
+  }
+  if (!ts) ts = r.dispatch_date || r.ship_by_date;
+  if (ts) {
+    const d  = new Date(ts * 1000);
+    const dd = ("0" + d.getDate()).slice(-2);
+    const mm = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"][d.getMonth()];
+    shipStr  = `${dd} ${mm} ${d.getFullYear()}`;
+  }
+
+  /* c) total quantity across all line-items */
+  const totalQty = (r.transactions || []).reduce(
+    (sum, t) => sum + (Number(t.quantity) || 0), 0
   );
-  if (!resp.ok) throw new Error("HTTP " + resp.status);
-  const payload  = await resp.json();
-  const receipts = payload.results || [];
 
-  /* 3) prepare the container */
-  const container = document.getElementById("newOrderContainer");
-  container.innerHTML = "";   // clear old stack
+  /* d) build the DOM node */
+  const box = document.createElement("div");
+  box.className = "new-order-box";
+  box.id = "newOrder" + idx;
+  box.innerHTML = `
+      ${orderNum}&nbsp;|&nbsp;${shipStr}&nbsp;|&nbsp;Qty&nbsp;${totalQty}
+      <input type="checkbox" class="addToDesignChk" title="Add to Design">
+  `;
+  container.appendChild(box);
+});
 
-  /* 4) keep every receipt the server sent (no extra front-end filter) */
-  const displayReceipts = receipts;
-  window._lastDisplayReceipts = displayReceipts;   // expose to header sorter
-
-  displayReceipts.forEach((r, idx) => {
-
-    /* a) order number (fallback to receipt_id) */
-    const orderNum = r.order_number || r.receipt_id || "—";
-
-    /* b) Ship-by date (unix → short date) */
-    let shipStr = "N/A";
-    let ts = null;
-    if (Array.isArray(r.transactions) && r.transactions.length > 0) {
-      const firstT = r.transactions[0];
-      if (firstT.expected_ship_date) ts = firstT.expected_ship_date;
-    }
-    if (!ts) ts = r.dispatch_date || r.ship_by_date;
-    if (ts) {
-      const d  = new Date(ts * 1000);
-      const dd = ("0" + d.getDate()).slice(-2);
-      const mm = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"][d.getMonth()];
-      shipStr  = `${dd} ${mm} ${d.getFullYear()}`;
-    }
-
-    /* c) total quantity across all line-items */
-    const totalQty = (r.transactions || []).reduce(
-      (sum, t) => sum + (Number(t.quantity) || 0), 0
-    );
-
-    /* d) build the DOM node */
-    const box = document.createElement("div");
-    box.className = "new-order-box";
-    box.id = "newOrder" + idx;
-    box.innerHTML = `
-        ${orderNum}&nbsp;|&nbsp;${shipStr}&nbsp;|&nbsp;Qty&nbsp;${totalQty}
-        <input type="checkbox" class="addToDesignChk" title="Add to Design">
-    `;
-    container.appendChild(box);
-  });
-
-  /* 5) return how many rows Etsy actually sent (0-100) */
-  return receipts.length;
+/* 5) return how many rows Etsy *actually* sent (0-100) */
+return receipts.length;          // ← NOT displayReceipts.length
 }
 
 /********************************************************
