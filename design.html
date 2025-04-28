@@ -639,6 +639,8 @@ const displayReceipts = receipts.filter(
   r => r.status === "Paid" && r.is_shipped === false
 );
 
+window._lastDisplayReceipts = displayReceipts;
+
 displayReceipts.forEach((r, idx) => {
   /* a) order number (fallback to receipt_id) */
   const orderNum = r.order_number || r.receipt_id || "—";
