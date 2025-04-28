@@ -591,45 +591,60 @@ document.addEventListener("DOMContentLoaded", function () {
        "Inside buildNewOrderList(), just after you define displayReceipts, add:\n" +
        '    window._lastDisplayReceipts = displayReceipts;');
   }
-  /** After adding that line, this watcher will pick up the array */
+    /** After adding that line, this watcher will pick up the array */
   const observer = new MutationObserver(() => {
     if (window._lastDisplayReceipts && window._lastDisplayReceipts !== currentReceipts) {
-      currentReceipts = window._lastDisplayReceipts;  // clone
-      /* make helper fields for sort */
+      /* keep the same reference to avoid feedback-loops */
+      currentReceipts = window._lastDisplayReceipts;
+
+      /* ─── helper fields for sorting ─── */
       currentReceipts.forEach(r => {
-        /* ship date → numeric timestamp */
+        /* 1. ship-date → numeric timestamp + short string */
         if (!r._shipTS) {
           let ts = null;
           if (Array.isArray(r.transactions) && r.transactions[0]?.expected_ship_date) {
             ts = r.transactions[0].expected_ship_date;
           }
           r._shipTS  = ts || 0;
-          r._shipStr = ts ? new Date(ts*1000).toLocaleDateString("en-US",{month:"short",day:"2-digit"}) : "N/A";
+          r._shipStr = ts
+            ? new Date(ts * 1000).toLocaleDateString("en-US", { month:"short", day:"2-digit" })
+            : "N/A";
         }
-        /* metal counts */
+
+        /* 2. metal counts */
         if (!r._metalCounts) {
-          const mc = {Gold:0,Silver:0,"Rose G":0,"14K":0};
-          (r.transactions||[]).forEach(t => {
-            const m = (t.variations||[]).find(v=>/metal/i.test(v.formatted_name||""))?.formatted_value||"";
-            if (/14k/i.test(m))        mc["14K"] += t.quantity||1;
-            else if (/rose/i.test(m))  mc["Rose G"] += t.quantity||1;
-            else if (/silver/i.test(m))mc.Silver += t.quantity||1;
-            else if (/gold/i.test(m))  mc.Gold   += t.quantity||1;
+          const mc = { Gold:0, Silver:0, "Rose G":0, "14K":0 };
+          (r.transactions || []).forEach(t => {
+            const m = (t.variations || [])
+              .find(v => /metal/i.test(v.formatted_name || ""))?.formatted_value || "";
+            if (/14k/i.test(m))         mc["14K"]   += t.quantity || 1;
+            else if (/rose/i.test(m))   mc["Rose G"]+= t.quantity || 1;
+            else if (/silver/i.test(m)) mc.Silver   += t.quantity || 1;
+            else if (/gold/i.test(m))   mc.Gold     += t.quantity || 1;
           });
           r._metalCounts = mc;
         }
       });
-      /* default sort by Order # desc on first load */
-      if (!sortKey) { sortKey="order"; sortDir=-1; }
-      bar.querySelector(`[data-key="${sortKey}"] .chev`).textContent = (sortDir===1?"▲▼":"▼▲");
-      currentReceipts.sort((a,b)=>(b.order_number||b.receipt_id)-(a.order_number||a.receipt_id));
+
+      /* ─── default sort by Order # (desc) on first load ─── */
+      if (!sortKey) { sortKey = "order"; sortDir = -1; }
+
+      /* reset + orient stacked chevrons */
+      bar.querySelectorAll(".chev").forEach(c => (c.innerHTML = "▲<br>▼"));
+      bar.querySelector(`[data-key="${sortKey}"] .chev`).innerHTML =
+        (sortDir === 1 ? "▲<br>▼" : "▼<br>▲");
+
+      /* execute sort */
+      currentReceipts.sort(
+        (a, b) => (b.order_number || b.receipt_id) - (a.order_number || a.receipt_id)
+      );
+
       renderOrderBoxes(currentReceipts);
     }
   });
-  observer.observe(document.getElementById("newOrderContainer"), { childList:true });
+  observer.observe(document.getElementById("newOrderContainer"), { childList: true });
 
 })();   /* ─── END SORT HEADER MODULE ─── */
-
  /********************************************************
  * buildNewOrderList – pull NEW (unfulfilled) Etsy orders
  * and draw stacked 250 × 30 text boxes:
