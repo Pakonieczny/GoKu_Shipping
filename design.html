@@ -631,8 +631,6 @@ document.addEventListener("DOMContentLoaded", function () {
 
       /* reset + orient stacked chevrons */
       bar.querySelectorAll(".chev").forEach(c => (c.innerHTML = "▲<br>▼"));
-      bar.querySelector(`[data-key="${sortKey}"] .chev`).innerHTML =
-        (sortDir === 1 ? "▲<br>▼" : "▼<br>▲");
 
       /* execute sort */
       currentReceipts.sort(
@@ -645,6 +643,7 @@ document.addEventListener("DOMContentLoaded", function () {
   observer.observe(document.getElementById("newOrderContainer"), { childList: true });
 
 })();   /* ─── END SORT HEADER MODULE ─── */
+
  /********************************************************
  * buildNewOrderList – pull NEW (unfulfilled) Etsy orders
  * and draw stacked 250 × 30 text boxes:
