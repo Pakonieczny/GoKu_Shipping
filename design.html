@@ -484,11 +484,11 @@ document.addEventListener("DOMContentLoaded", function () {
       box.id        = "newOrder" + idx;
       const orderNum = r.order_number || r.receipt_id || "—";
       const shipStr  = r._shipStr || "N/A";
-      const g = r._metalCounts.Gold     || 0;
-      const s = r._metalCounts.Silver   || 0;
-      const rG= r._metalCounts["Rose G"]|| 0;
-      const k = r._metalCounts["14K"]   || 0;
-      box.innerHTML =
+      const g  = r._metalCounts?.Gold      ?? 0;
+      const s  = r._metalCounts?.Silver    ?? 0;
+      const rG = r._metalCounts?.["Rose G"]?? 0;
+      const k  = r._metalCounts?.["14K"]   ?? 0;
+            box.innerHTML =
         `${orderNum}&nbsp;|&nbsp;${shipStr}&nbsp;|&nbsp;${g}/${s}/${rG}/${k}`;
       container.appendChild(box);
     });
