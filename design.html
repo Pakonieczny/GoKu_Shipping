@@ -332,11 +332,11 @@ const configIDs = [
   "nextPageBtn",            // ← NEW
   "etsyOrderNumber",
   "photoGridContainer",
+  "orderHeaderBar",
   "configModal",
   "configTable",
   "saveConfigBtn",
-  "newOrderContainer",
-  "orderHeaderBar"
+  "newOrderContainer"
 ];
 
 /********************************************************
@@ -523,6 +523,7 @@ document.addEventListener("DOMContentLoaded", function () {
   });
 
   document.body.appendChild(bar);
+  loadPositions();   // ← re-apply positions now that #orderHeaderBar exists
 
   /* 2.  SORT ROUTINE ---------------------------------------------------- */
   bar.addEventListener("click", ev => {
@@ -741,7 +742,7 @@ const defaultPos = {
   testOpenAIBtn:            { left:20,  top:65,  width:140, height:35 },
   newOrderContainer:        { left:20, top:236, width:270, height:800 },
   nextPageBtn:              { left:482, top:0, width:120, height:36 },
-  orderHeaderBar:           { left:20, top:206, width:1140, height:30 },
+  orderHeaderBar:           { left:20, top:206, width:1140, height:30 }
 };
 
 /********************************************************
