@@ -42,12 +42,20 @@
       font-size: 0.9em;
     }
 
-    /* ─── 14 px circular spinner for buttons ─── */
-    @keyframes btnSpin{100%{transform:rotate(360deg)}}
+    .loadingTxt{
+      color:#2196F3;          /* same blue as spinner + hover outline */
+    }
+
+    /* ── Spinner tweak: 33 % larger + brand-blue color ── */
     .spinner{
-      display:inline-block;width:14px;height:14px;margin-right:6px;
-      border:2px solid transparent;border-top-color:#fff;border-radius:50%;
-      animation:btnSpin .7s linear infinite;vertical-align:middle;
+      width:18px;             
+      height:18px;            
+      border:3px solid transparent;        
+      border-top-color:#2196F3;            
+      border-radius:50%;
+      animation:btnSpin .7s linear infinite;
+      margin-right:6px;
+      vertical-align:middle;
     }
 
     /* Image Comparison UI */
@@ -429,7 +437,7 @@ document.addEventListener("DOMContentLoaded", function () {
       document.getElementById("updateOrderListBtn").addEventListener("click", async function () {
         try {
           this.disabled = true;
-          this.innerHTML = '<span class="spinner"></span>Loading…';
+          this.innerHTML = '<span class="spinner"></span><span class="loadingTxt">Loading…</span>';
 
           orderListOffset = 0;                 // reset to first page
           const gotRows = await buildNewOrderList(orderListOffset);
