@@ -537,7 +537,7 @@ document.addEventListener("DOMContentLoaded", function () {
     }
   });
 
-  /* ──────────────────────────────────────────────────────────────
+/* ──────────────────────────────────────────────────────────────
  *  ORDER-LIST SORT HEADER  –  adds UI & sorting for #newOrderContainer
  *  (drop this inside your main <script> block in design.html)
  * ────────────────────────────────────────────────────────────── */
@@ -553,63 +553,72 @@ document.addEventListener("DOMContentLoaded", function () {
     const container = document.getElementById("newOrderContainer");
     container.innerHTML = "";
     arr.forEach(async (r, idx) => {
+
       /* build the DOM node */
-      /* build the DOM node */
-    const box = document.createElement("div");
-    box.className = "new-order-box";
-    box.id        = "newOrder" + idx;
+      const box = document.createElement("div");
+      box.className = "new-order-box";
+      box.id        = "newOrder" + idx;
 
-    /* click → toggle highlight + (de)load images */
-    box.addEventListener("click", async () => {
-      const receiptId = r.receipt_id;
+      /* click → toggle highlight + (de)load images ---------------------- */
+      box.addEventListener("click", async () => {
+        const receiptId = r.receipt_id;
 
-      /* ── 1. toggle selected state ─────────────────────────────── */
-      if (selectedOrders.has(receiptId)) {
-        /* deselect */
-        selectedOrders.delete(receiptId);
-        box.classList.remove("selected");
-      } else {
-        /* select */
-        selectedOrders.add(receiptId);
-        box.classList.add("selected");
+        /* ── 1. toggle selected state ─────────────────────────── */
+        if (selectedOrders.has(receiptId)) {
+          /* deselect */
+          selectedOrders.delete(receiptId);
+          box.classList.remove("selected");
+        } else {
+          /* select */
+          selectedOrders.add(receiptId);
+          box.classList.add("selected");
 
-        /* cache miss → fetch once */
-        if (!orderCache[receiptId]) {
-          const ord = await pullEtsyOrderDetails(receiptId);
-          orderCache[receiptId] = ord?.transactions || [];
+          /* cache miss → fetch once */
+          if (!orderCache[receiptId]) {
+            const ord = await pullEtsyOrderDetails(receiptId);
+            orderCache[receiptId] = ord?.transactions || [];
+          }
         }
-      }
 
-      /* ── 2. build combined list from all active orders ───────── */
-      let combined = [];
-      selectedOrders.forEach(id => {
-        const tx = orderCache[id] || [];
-        combined.push(...tx);
-      });
+        /* ── 2. build combined list from all active orders ────── */
+        let combined = [];
+        selectedOrders.forEach(id => {
+          const tx = orderCache[id] || [];
+          combined.push(...tx);
+        });
 
-      /* ── 3. (de)render the grid ──────────────────────────────── */
-      if (combined.length === 0) {
-        document.getElementById("photoGridContainer").innerHTML = "";
-      } else {
-        await fillPreviewBoxes(combined);     // existing 100 × 100 builder
-      }
-    });
+        /* ── 3. (de)render the grid — incremental append version ─ */
+        const grid = document.getElementById("photoGridContainer");
 
-    const orderNum = r.order_number || r.receipt_id || "—";
-    const shipStr  = r._shipStr || "N/A";
-    const g = r._metalCounts.Gold     || 0;
-    const s = r._metalCounts.Silver   || 0;
-    const rG= r._metalCounts["Rose G"]|| 0;
-    const k = r._metalCounts["14K"]   || 0;
-    box.innerHTML = `
-      <span class="col-order">${orderNum}</span>
-      <span class="col-ship">${shipStr}</span>
-      <span class="col-g">${g}</span>
-      <span class="col-s">${s}</span>
-      <span class="col-r">${rG}</span>
-      <span class="col-k">${k}</span>
-    `;
-    container.appendChild(box);
+        if (combined.length === 0) {                 // nothing selected
+          grid.innerHTML = "";
+          gridElements.clear();
+          earringCells  = {};
+          earringState  = {};
+        } else {
+          combined.forEach(tx => {                   // only add new ones
+            if (!tx._inGrid) addPreviewBox(tx);
+          });
+        }
+      });   /* ← closes box.addEventListener("click", … ) */
+
+      /* order-row content ----------------------------------------------- */
+      const orderNum = r.order_number || r.receipt_id || "—";
+      const shipStr  = r._shipStr || "N/A";
+      const g  = r._metalCounts.Gold     || 0;
+      const s  = r._metalCounts.Silver   || 0;
+      const rG = r._metalCounts["Rose G"]|| 0;
+      const k  = r._metalCounts["14K"]   || 0;
+
+      box.innerHTML = `
+        <span class="col-order">${orderNum}</span>
+        <span class="col-ship">${shipStr}</span>
+        <span class="col-g">${g}</span>
+        <span class="col-s">${s}</span>
+        <span class="col-r">${rG}</span>
+        <span class="col-k">${k}</span>
+      `;
+      container.appendChild(box);
     });
   }
 
@@ -622,12 +631,12 @@ document.addEventListener("DOMContentLoaded", function () {
     "align-items:center;user-select:none;z-index:9999;";
 
   const COLS = [
-    { key:"order",  label:"Order"   , flex:"1.55" },
-    { key:"ship" ,  label:"Date" , flex:"1.25" },
-    { key:"gold" ,  label:"G"      , flex:"0.45" },
-    { key:"silver", label:"S"    , flex:"0.45" },
-    { key:"rose" ,  label:"R"   , flex:"0.45" },
-    { key:"14k"  ,  label:"14" , flex:"0.45" }
+    { key:"order",  label:"Order", flex:"1.55" },
+    { key:"ship",   label:"Date",  flex:"1.25" },
+    { key:"gold",   label:"G",     flex:"0.45" },
+    { key:"silver", label:"S",     flex:"0.45" },
+    { key:"rose",   label:"R",     flex:"0.45" },
+    { key:"14k",    label:"14",    flex:"0.45" }
   ];
 
   COLS.forEach(col => {
@@ -635,7 +644,6 @@ document.addEventListener("DOMContentLoaded", function () {
     div.className = "hdr";
     div.dataset.key = col.key;
     div.style.cssText = `flex:${col.flex};text-align:center;cursor:pointer;`;
-    /* inside the COLS.forEach loop that builds the bar */
     div.innerHTML =
       `${col.label}<span class="chev">` +
       `<span class="up">▲</span><br><span class="down">▼</span>` +
@@ -644,7 +652,7 @@ document.addEventListener("DOMContentLoaded", function () {
   });
 
   document.body.appendChild(bar);
-  loadPositions();   // ← re-apply positions now that #orderHeaderBar exists
+  loadPositions();   // re-apply positions now that #orderHeaderBar exists
 
   /* 2.  SORT ROUTINE ---------------------------------------------------- */
   bar.addEventListener("click", ev => {
@@ -660,25 +668,23 @@ document.addEventListener("DOMContentLoaded", function () {
     currentReceipts.sort((a, b) => {
       switch (key) {
         case "order":  return sortDir * ((a.order_number || a.receipt_id) - (b.order_number || b.receipt_id));
-        case "ship":   return sortDir * ((a._shipTS || 0)                - (b._shipTS || 0));
-        case "gold":   return sortDir * ((a._metalCounts.Gold || 0)      - (b._metalCounts.Gold || 0));
-        case "silver": return sortDir * ((a._metalCounts.Silver || 0)    - (b._metalCounts.Silver || 0));
+        case "ship":   return sortDir * ((a._shipTS || 0) - (b._shipTS || 0));
+        case "gold":   return sortDir * ((a._metalCounts.Gold || 0) - (b._metalCounts.Gold || 0));
+        case "silver": return sortDir * ((a._metalCounts.Silver || 0) - (b._metalCounts.Silver || 0));
         case "rose":   return sortDir * ((a._metalCounts["Rose G"] || 0) - (b._metalCounts["Rose G"] || 0));
-        case "14k":    return sortDir * ((a._metalCounts["14K"] || 0)    - (b._metalCounts["14K"] || 0));
+        case "14k":    return sortDir * ((a._metalCounts["14K"] || 0)   - (b._metalCounts["14K"] || 0));
       }
       return 0;
     });
 
-    /* ----  arrow colour logic  ---- */
-    /* 1) make every arrow white */
+    /* arrow colour logic ------------------------------------------- */
     bar.querySelectorAll(".chev .up, .chev .down")
-       .forEach(el => (el.style.color = "#ffffff"));
+       .forEach(el => (el.style.color = "#ffffff"));        // reset all
 
-    /* 2) colour only the active arrow */
     if (sortDir === 1) {
-      hdr.querySelector(".chev .up").style.color = "#2196F3";     // ASC → blue ▲
+      hdr.querySelector(".chev .up").style.color   = "#2196F3";  // ASC
     } else {
-      hdr.querySelector(".chev .down").style.color = "#2196F3";   // DESC → blue ▼
+      hdr.querySelector(".chev .down").style.color = "#2196F3";  // DESC
     }
 
     renderOrderBoxes(currentReceipts);
@@ -686,42 +692,38 @@ document.addEventListener("DOMContentLoaded", function () {
 
   /* 3.  HOOK INTO buildNewOrderList() ----------------------------------- */
   const originalBuild = buildNewOrderList;
-  buildNewOrderList = async function(offset=0) {
+  buildNewOrderList = async function(offset = 0) {
     const rawReceipts = await originalBuild.call(this, offset);   // returns count
-    /* rebuild currentReceipts from DOM (we have no direct array) */
-    // but we *do* have the receipts inside original function’s scope → expose them:
     return rawReceipts;
   };
 
-  /* Monkey-patch the original function to stash its array ---------- */
+  /* Monkey-patch to expose display array for observer ------------------- */
   const origFuncTxt = buildNewOrderList.toString();
   if (!origFuncTxt.includes("window._lastDisplayReceipts")) {
-    console.warn("Patch buildNewOrderList manually to expose displayReceipts:\n" +
-       "Inside buildNewOrderList(), just after you define displayReceipts, add:\n" +
-       '    window._lastDisplayReceipts = displayReceipts;');
+    console.warn(
+      "Patch buildNewOrderList manually to expose displayReceipts:\n" +
+      "Inside buildNewOrderList(), after you define displayReceipts, add:\n" +
+      "    window._lastDisplayReceipts = displayReceipts;"
+    );
   }
 
-    /** After adding that line, this watcher will pick up the array */
+  /** observer detects page changes and triggers initial render ---------- */
   const observer = new MutationObserver(() => {
     if (window._lastDisplayReceipts && window._lastDisplayReceipts !== currentReceipts) {
-      /* keep the same reference to avoid feedback-loops */
       currentReceipts = window._lastDisplayReceipts;
 
-      /* ─── helper fields for sorting ─── */
+      /* helper fields for sorting ----------------------------- */
       currentReceipts.forEach(r => {
-        /* 1. ship-date → numeric timestamp + short string */
+        /* ship timestamp + pretty string */
         if (!r._shipTS) {
-          let ts = null;
-          if (Array.isArray(r.transactions) && r.transactions[0]?.expected_ship_date) {
-            ts = r.transactions[0].expected_ship_date;
-          }
-          r._shipTS  = ts || 0;
+          let ts = r.transactions?.[0]?.expected_ship_date || 0;
+          r._shipTS  = ts;
           r._shipStr = ts
             ? new Date(ts * 1000).toLocaleDateString("en-US", { month:"short", day:"2-digit" })
             : "N/A";
         }
 
-        /* 2. metal counts */
+        /* metal counts */
         if (!r._metalCounts) {
           const mc = { Gold:0, Silver:0, "Rose G":0, "14K":0 };
           (r.transactions || []).forEach(t => {
@@ -736,13 +738,12 @@ document.addEventListener("DOMContentLoaded", function () {
         }
       });
 
-      /* ─── default sort by Order # (desc) on first load ─── */
+      /* default sort (first load) ----------------------------- */
       if (!sortKey) { sortKey = "order"; sortDir = -1; }
 
-      /* ─── colour the correct arrow (▲ for asc, ▼ for desc) ─── */
+      /* arrow colour on first load ---------------------------- */
       bar.querySelectorAll(".chev .up, .chev .down")
-         .forEach(el => (el.style.color = "#ffffff"));        // reset all
-
+         .forEach(el => (el.style.color = "#ffffff"));
       const activeChev = bar.querySelector(`[data-key="${sortKey}"] .chev`);
       if (sortDir === 1) {
         activeChev.querySelector(".up").style.color   = "#2196F3";
@@ -750,11 +751,10 @@ document.addEventListener("DOMContentLoaded", function () {
         activeChev.querySelector(".down").style.color = "#2196F3";
       }
 
-      /* execute initial sort */
+      /* execute initial sort & render ------------------------- */
       currentReceipts.sort(
         (a, b) => (b.order_number || b.receipt_id) - (a.order_number || a.receipt_id)
       );
-
       renderOrderBoxes(currentReceipts);
     }
   });
@@ -1145,6 +1145,13 @@ function makePreviewNode(item){
   const idx = gridElements.size;           // next position
   const row = Math.floor(idx / 9);
   const col = idx % 9;
+
+  // === helper: append ONE preview without rebuilding the whole grid ===
+  function addPreviewBox(item){
+    const wrap = makePreviewNode(item);          // wrapper auto-appends itself
+    gridElements.set(gridElements.size, wrap);   // keep index in sync
+    return wrap;
+  }
 
   /* base offsets for this cell */
   const previewLeft = col * 125;
