@@ -553,13 +553,30 @@ document.addEventListener("DOMContentLoaded", function () {
     const container = document.getElementById("newOrderContainer");
     container.innerHTML = "";
 
+    /* ── 1. build one row per receipt ───────────────────────────── */
     arr.forEach((r, idx) => {
-      /* build the DOM node */
       const box = document.createElement("div");
       box.className = "new-order-box";
       box.id        = "newOrder" + idx;
 
-      /* click → toggle highlight + (de)load images */
+      /* row content */
+      const orderNum = r.order_number || r.receipt_id || "—";
+      const shipStr  = r._shipStr || "N/A";
+      const g  = r._metalCounts.Gold    || 0;
+      const s  = r._metalCounts.Silver  || 0;
+      const rG = r._metalCounts["Rose G"] || 0;
+      const k  = r._metalCounts["14K"]   || 0;
+
+      box.innerHTML = `
+        <span class="col-order">${orderNum}</span>
+        <span class="col-ship">${shipStr}</span>
+        <span class="col-g">${g}</span>
+        <span class="col-s">${s}</span>
+        <span class="col-r">${rG}</span>
+        <span class="col-k">${k}</span>
+      `;
+
+      /* click → toggle selection + refresh grid */
       box.addEventListener("click", async () => {
         const id = r.receipt_id;
 
@@ -575,40 +592,25 @@ document.addEventListener("DOMContentLoaded", function () {
           }
         }
 
-        syncPreviewGrid();   // incremental update (no await)
+        syncPreviewGrid();                 // incremental update
       });
 
-      /* ── 2. build combined list from all active orders ───────── */
-      let combined = [];
-      selectedOrders.forEach(id => {
-        const tx = orderCache[id] || [];
-        combined.push(...tx);
-      });
-
-      /* ── 3. (de)render the grid ──────────────────────────────── */
-      if (combined.length === 0) {
-        document.getElementById("photoGridContainer").innerHTML = "";
-      } else {
-        fillPreviewBoxes(combined);     // existing 100 × 100 builder (no await)
-      }
-
-      const orderNum = r.order_number || r.receipt_id || "—";
-      const shipStr  = r._shipStr || "N/A";
-      const g  = r._metalCounts.Gold    || 0;
-      const s  = r._metalCounts.Silver  || 0;
-      const rG = r._metalCounts["Rose G"] || 0;
-      const k  = r._metalCounts["14K"]   || 0;
-      box.innerHTML = `
-        <span class="col-order">${orderNum}</span>
-        <span class="col-ship">${shipStr}</span>
-        <span class="col-g">${g}</span>
-        <span class="col-s">${s}</span>
-        <span class="col-r">${rG}</span>
-        <span class="col-k">${k}</span>
-      `;
       container.appendChild(box);
+    });                                     // ← closes forEach
+
+    /* ── 2. build combined list & render grid once after rows exist ── */
+    let combined = [];
+    selectedOrders.forEach(id => {
+      const tx = orderCache[id] || [];
+      combined.push(...tx);
     });
-  }
+
+    if (combined.length === 0) {
+      document.getElementById("photoGridContainer").innerHTML = "";
+    } else {
+      fillPreviewBoxes(combined);           // existing 100×100 builder
+    }
+  }                                         // ← end renderOrderBoxes
 
   /** 1.  HEADER BAR  +  EVENT LISTENERS ------------------------------- */
   const bar = document.createElement("div");
