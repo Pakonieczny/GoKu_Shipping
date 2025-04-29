@@ -707,7 +707,7 @@ async function fetchOpenOrdersSequential() {
     const next = payload.pagination?.next_offset;
     if (next == null) break;          // exhausted
     offset = next;
-    await sleep(250);                 // 250 ms pause
+    await sleep(5000);                 // 250 ms pause
   }
   return all;
 }
