@@ -537,10 +537,69 @@ document.addEventListener("DOMContentLoaded", function () {
     }
   });
 
-/* ──────────────────────────────────────────────────────────────
- *  ORDER-LIST SORT HEADER  –  adds UI & sorting for #newOrderContainer
- *  (drop this inside your main <script> block in design.html)
- * ────────────────────────────────────────────────────────────── */
+  /* ===================================================================
+   * GLOBAL PREVIEW HELPERS  – accessible from any click-handler
+   * =================================================================== */
+
+  /* append ONE preview without rebuilding the grid */
+  function addPreviewBox(item){
+    const wrap = makePreviewNode(item);          // build + auto-append
+    gridElements.set(gridElements.size, wrap);   // update index map
+    item._inGrid = true;                         // mark so we don’t re-add
+    return wrap;
+  }
+
+  /* build a preview row (image + 4 tiny detail inputs) */
+  function makePreviewNode(item){
+    const idx = gridElements.size;
+    const row = Math.floor(idx / 9);
+    const col = idx % 9;
+
+    /* wrapper positioned inside #photoGridContainer */
+    const wrap = document.createElement("div");
+    wrap.style.cssText = `position:absolute;left:${col*125}px;top:${row*165}px;`;
+
+    /* preview image………………………………………………………………………………… */
+    const box = document.createElement("div");
+    box.className = "preview-box";
+    box.innerHTML = "Loading…";
+    wrap.appendChild(box);
+    attachPreviewBoxListeners(box);
+
+    /* four detail fields………………………………………………………………………… */
+    const addDetail = (id, y, val)=>{
+      const inp = document.createElement("input");
+      inp.type = "text";  inp.readOnly = true;
+      inp.id = id + idx;  inp.className = "detail-box";
+      inp.style.cssText = `left:0px;top:${y}px;`;
+      inp.value = val;
+      wrap.appendChild(inp);
+    };
+    addDetail("orderCell"   ,  95, item.receipt_id || item.orderNumber || "No Order #");
+    addDetail("quantityCell", 107, " Qty: "  + (item.quantity ?? 0));
+
+    let metal = "";
+    if (Array.isArray(item.variations)){
+      const ok = ["metal","metal choice","metal - engraving","metal colour",
+                  "color","metal choice / engraving option"];
+      const v  = item.variations.find(v =>
+                 v.formatted_name && ok.includes(v.formatted_name.trim().toLowerCase()));
+      if (v?.formatted_value) metal = v.formatted_value;
+    }
+    addDetail("metalCell", 119, " Metal: " + (metal || "No Metal"));
+    addDetail("matchCell", 131, "");
+
+    /* attach wrapper & load thumbnail……………………………………… */
+    document.getElementById("photoGridContainer").appendChild(wrap);
+    fetchListingImages(item.listing_id)
+      .then(imgs => getLocalImageData(imgs[0].url_fullxfull))
+      .then(data => { box.innerHTML = `<img src="${data}" style="width:110%;height:110%;object-fit:cover;">`; })
+      .catch(()=>{ box.innerHTML = "Img Err"; });
+
+    return wrap;
+  }
+
+  
 (() => {
 
   /* 0.  GLOBAL HOOKS ----------------------------------------------------- */
@@ -1139,83 +1198,6 @@ function fillPreviewBoxes(items){
       earringCells[index] = true;
       earringState[index] = { firstImg:null };
     }
-
-/* ================================================================
- * GLOBAL preview-append helper  (must be outside any other function)
- * ================================================================ */
-function addPreviewBox(item){
-  const wrap = makePreviewNode(item);          // build + auto-append
-  gridElements.set(gridElements.size, wrap);   // keep index counter
-  item._inGrid = true;                         // duplicate-guard flag
-  return wrap;
-}
-
-/* 2️⃣  makePreviewNode — unchanged positioning + four detail inputs */
-function makePreviewNode(item){
-  const idx = gridElements.size;                 // next slot #
-  const row = Math.floor(idx / 9);
-  const col = idx % 9;
-
-  const wrap = document.createElement("div");
-  wrap.style.cssText =
-    `position:absolute;left:${col*125}px;top:${row*165}px;`;
-
-  /* preview image --------------------------------------------------- */
-  const previewBox = document.createElement("div");
-  previewBox.className = "preview-box";
-  previewBox.innerHTML = "Loading…";
-  wrap.appendChild(previewBox);
-  attachPreviewBoxListeners(previewBox);
-
-  /* tiny helper for detail inputs ---------------------------------- */
-  const mk = (id,y,txt)=>{
-    const inp = document.createElement("input");
-    inp.type  = "text";
-    inp.readOnly = true;
-    inp.id    = id + idx;
-    inp.className = "detail-box";
-    inp.style.cssText = `left:0px;top:${y}px;`;
-    inp.value = txt;
-    wrap.appendChild(inp);
-  };
-
-  mk("orderCell"   ,  95, item.receipt_id || item.orderNumber || "No Order #");
-  mk("quantityCell", 107, " Qty: "  + (item.quantity ?? 0));
-
-  /* simple metal lookup -------------------------------------------- */
-  let metalSel = "";
-  if (Array.isArray(item.variations)){
-    const ok = ["metal","metal choice","metal - engraving","metal colour",
-                "color","metal choice / engraving option"];
-    const v  = item.variations.find(v =>
-              v.formatted_name && ok.includes(v.formatted_name.trim().toLowerCase()));
-    if (v?.formatted_value) metalSel = v.formatted_value;
-  }
-  mk("metalCell", 119, " Metal: " + (metalSel || "No Metal"));
-  mk("matchCell", 131, "");
-
-  /* attach to grid + load thumbnail ------------------------------- */
-  document.getElementById("photoGridContainer").appendChild(wrap);
-
-  fetchListingImages(item.listing_id)
-    .then(imgs => getLocalImageData(imgs[0].url_fullxfull))
-    .then(data => {
-      previewBox.innerHTML =
-        `<img src="${data}" style="width:110%;height:110%;object-fit:cover;" />`;
-    })
-    .catch(()=>{ previewBox.innerHTML = "Img Err"; });
-
-  return wrap;                                   // bookkeeping
-}
-
-
-    /* NEW: build one preview row + wire up listeners */
-    const wrapEl = makePreviewNode(item);
-    gridElements.set(index, wrapEl);                            // bookkeeping
-
-  });                                // ← closes items.forEach loop
-
-}                                    // ← closes fillPreviewBoxes
 
 function attachPreviewBoxListeners(box) {
   let isDragging = false;
