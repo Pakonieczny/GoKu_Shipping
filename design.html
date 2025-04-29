@@ -552,30 +552,31 @@ document.addEventListener("DOMContentLoaded", function () {
   function renderOrderBoxes(arr) {
     const container = document.getElementById("newOrderContainer");
     container.innerHTML = "";
+
     arr.forEach((r, idx) => {
-    /* build the DOM node */
-    const box = document.createElement("div");
-    box.className = "new-order-box";
-    box.id        = "newOrder" + idx;
+      /* build the DOM node */
+      const box = document.createElement("div");
+      box.className = "new-order-box";
+      box.id        = "newOrder" + idx;
 
-    /* click → toggle highlight + (de)load images */
-    box.addEventListener("click", async () => {
-      const id = r.receipt_id;
+      /* click → toggle highlight + (de)load images */
+      box.addEventListener("click", async () => {
+        const id = r.receipt_id;
 
-      if (selectedOrders.has(id)){
-        selectedOrders.delete(id);
-        box.classList.remove("selected");
-      } else {
-        selectedOrders.add(id);
-        box.classList.add("selected");
-        if (!orderCache[id]){
-          const ord = await pullEtsyOrderDetails(id);
-          orderCache[id] = ord?.transactions || [];
+        if (selectedOrders.has(id)) {
+          selectedOrders.delete(id);
+          box.classList.remove("selected");
+        } else {
+          selectedOrders.add(id);
+          box.classList.add("selected");
+          if (!orderCache[id]) {
+            const ord = await pullEtsyOrderDetails(id);
+            orderCache[id] = ord?.transactions || [];
+          }
         }
-      }
 
-      await syncPreviewGrid();   // incremental update
-    });
+        syncPreviewGrid();   // incremental update (no await)
+      });
 
       /* ── 2. build combined list from all active orders ───────── */
       let combined = [];
@@ -588,25 +589,24 @@ document.addEventListener("DOMContentLoaded", function () {
       if (combined.length === 0) {
         document.getElementById("photoGridContainer").innerHTML = "";
       } else {
-        await fillPreviewBoxes(combined);     // existing 100 × 100 builder
+        fillPreviewBoxes(combined);     // existing 100 × 100 builder (no await)
       }
-    });
 
-    const orderNum = r.order_number || r.receipt_id || "—";
-    const shipStr  = r._shipStr || "N/A";
-    const g = r._metalCounts.Gold     || 0;
-    const s = r._metalCounts.Silver   || 0;
-    const rG= r._metalCounts["Rose G"]|| 0;
-    const k = r._metalCounts["14K"]   || 0;
-    box.innerHTML = `
-      <span class="col-order">${orderNum}</span>
-      <span class="col-ship">${shipStr}</span>
-      <span class="col-g">${g}</span>
-      <span class="col-s">${s}</span>
-      <span class="col-r">${rG}</span>
-      <span class="col-k">${k}</span>
-    `;
-    container.appendChild(box);
+      const orderNum = r.order_number || r.receipt_id || "—";
+      const shipStr  = r._shipStr || "N/A";
+      const g  = r._metalCounts.Gold    || 0;
+      const s  = r._metalCounts.Silver  || 0;
+      const rG = r._metalCounts["Rose G"] || 0;
+      const k  = r._metalCounts["14K"]   || 0;
+      box.innerHTML = `
+        <span class="col-order">${orderNum}</span>
+        <span class="col-ship">${shipStr}</span>
+        <span class="col-g">${g}</span>
+        <span class="col-s">${s}</span>
+        <span class="col-r">${rG}</span>
+        <span class="col-k">${k}</span>
+      `;
+      container.appendChild(box);
     });
   }
 
@@ -1262,7 +1262,7 @@ async function fillPreviewBoxes(items) {
       i++;
     });
   }
-  
+
 function attachPreviewBoxListeners(box) {
   let isDragging = false;
   let isMouseDown = false;
