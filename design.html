@@ -1264,103 +1264,104 @@ async function fillPreviewBoxes(items) {
     });
   }
 
-function attachPreviewBoxListeners(box) {
-  let isDragging = false;
-  let isMouseDown = false;
-  let dragStartX = 0,
-      dragStartY = 0;
-  let lastX = 0,
-      lastY = 0;
-  const dragThreshold = 3;
+  function attachPreviewBoxListeners(box) {
+    let isDragging = false;
+    let isMouseDown = false;
+    let dragStartX = 0,
+        dragStartY = 0;
+    let lastX = 0,
+        lastY = 0;
+    const dragThreshold = 3;
 
-  box.addEventListener("wheel", function (ev) {
-    const img = box.querySelector("img");
-    if (!img) return;
-    ev.preventDefault();
-    let currentScale = parseFloat(img.dataset.scale) || 1;
-    let offX = parseFloat(img.dataset.offsetX) || 0;
-    let offY = parseFloat(img.dataset.offsetY) || 0;
-    if (ev.deltaY < 0) {
-      currentScale *= 1.1;
-    } else {
-      currentScale /= 1.1;
-      if (currentScale <= 1) {
-        currentScale = 1;
-        offX = 0;
-        offY = 0;
+    box.addEventListener("wheel", function (ev) {
+      const img = box.querySelector("img");
+      if (!img) return;
+      ev.preventDefault();
+      let currentScale = parseFloat(img.dataset.scale) || 1;
+      let offX = parseFloat(img.dataset.offsetX) || 0;
+      let offY = parseFloat(img.dataset.offsetY) || 0;
+      if (ev.deltaY < 0) {
+        currentScale *= 1.1;
+      } else {
+        currentScale /= 1.1;
+        if (currentScale <= 1) {
+          currentScale = 1;
+          offX = 0;
+          offY = 0;
+        }
       }
-    }
-    if (currentScale > 7) currentScale = 7;
-    img.dataset.scale = currentScale;
-    img.dataset.offsetX = offX;
-    img.dataset.offsetY = offY;
-    img.style.transform = `translate(${offX}px, ${offY}px) scale(${currentScale})`;
-  });
+      if (currentScale > 7) currentScale = 7;
+      img.dataset.scale = currentScale;
+      img.dataset.offsetX = offX;
+      img.dataset.offsetY = offY;
+      img.style.transform = `translate(${offX}px, ${offY}px) scale(${currentScale})`;
+    });
 
-  box.addEventListener("mousedown", function (ev) {
-    const img = box.querySelector("img");
-    if (!img) return;
-    const scaleNow = parseFloat(img.dataset.scale) || 1;
-    if (scaleNow <= 1) return;
-    ev.preventDefault();
-    isMouseDown = true;
-    isDragging = false;
-    dragStartX = ev.clientX;
-    dragStartY = ev.clientY;
-    lastX = ev.clientX;
-    lastY = ev.clientY;
-  });
-
-  box.addEventListener("mousemove", function (ev) {
-    if (!isMouseDown) return;
-    ev.preventDefault();
-    const dxAll = Math.abs(ev.clientX - dragStartX);
-    const dyAll = Math.abs(ev.clientY - dragStartY);
-    if (dxAll > dragThreshold || dyAll > dragThreshold) isDragging = true;
-    const img = box.querySelector("img");
-    if (!img) return;
-    const scaleNow = parseFloat(img.dataset.scale) || 1;
-    let offX = parseFloat(img.dataset.offsetX) || 0;
-    let offY = parseFloat(img.dataset.offsetY) || 0;
-    const dx = ev.clientX - lastX;
-    const dy = ev.clientY - lastY;
-    offX += dx;
-    offY += dy;
-    img.dataset.offsetX = offX;
-    img.dataset.offsetY = offY;
-    img.style.transform = `translate(${offX}px, ${offY}px) scale(${scaleNow})`;
-    lastX = ev.clientX;
-    lastY = ev.clientY;
-  });
-
-  box.addEventListener("mouseup", function () {
-    isMouseDown = false;
-  });
-  box.addEventListener("mouseleave", function () {
-    isMouseDown = false;
-  });
-
-  box.addEventListener("click", function (ev) {
-    if (isDragging) {
+    box.addEventListener("mousedown", function (ev) {
+      const img = box.querySelector("img");
+      if (!img) return;
+      const scaleNow = parseFloat(img.dataset.scale) || 1;
+      if (scaleNow <= 1) return;
+      ev.preventDefault();
+      isMouseDown = true;
       isDragging = false;
-      return;
-    }
-    const img = box.querySelector("img");
-    if (!img) return;
-    const rect = box.getBoundingClientRect();
-    const boxCenterX = rect.left + box.clientWidth / 2;
-    const boxCenterY = rect.top + box.clientHeight / 2;
-    const dx = ev.clientX - boxCenterX;
-    const dy = ev.clientY - boxCenterY;
-    const scale = 5;
-    const fudgeY = 10;
-    const offsetX = -scale * dx;
-    const offsetY = -scale * dy + fudgeY;
-    img.dataset.scale = scale;
-    img.dataset.offsetX = offsetX;
-    img.dataset.offsetY = offsetY;
-    img.style.transform = `translate(${offsetX}px, ${offsetY}px) scale(${scale})`;
-  });
+      dragStartX = ev.clientX;
+      dragStartY = ev.clientY;
+      lastX = ev.clientX;
+      lastY = ev.clientY;
+    });
+
+    box.addEventListener("mousemove", function (ev) {
+      if (!isMouseDown) return;
+      ev.preventDefault();
+      const dxAll = Math.abs(ev.clientX - dragStartX);
+      const dyAll = Math.abs(ev.clientY - dragStartY);
+      if (dxAll > dragThreshold || dyAll > dragThreshold) isDragging = true;
+      const img = box.querySelector("img");
+      if (!img) return;
+      const scaleNow = parseFloat(img.dataset.scale) || 1;
+      let offX = parseFloat(img.dataset.offsetX) || 0;
+      let offY = parseFloat(img.dataset.offsetY) || 0;
+      const dx = ev.clientX - lastX;
+      const dy = ev.clientY - lastY;
+      offX += dx;
+      offY += dy;
+      img.dataset.offsetX = offX;
+      img.dataset.offsetY = offY;
+      img.style.transform = `translate(${offX}px, ${offY}px) scale(${scaleNow})`;
+      lastX = ev.clientX;
+      lastY = ev.clientY;
+    });
+
+    box.addEventListener("mouseup", function () {
+      isMouseDown = false;
+    });
+    box.addEventListener("mouseleave", function () {
+      isMouseDown = false;
+    });
+
+    box.addEventListener("click", function (ev) {
+      if (isDragging) {
+        isDragging = false;
+        return;
+      }
+      const img = box.querySelector("img");
+      if (!img) return;
+      const rect = box.getBoundingClientRect();
+      const boxCenterX = rect.left + box.clientWidth / 2;
+      const boxCenterY = rect.top + box.clientHeight / 2;
+      const dx = ev.clientX - boxCenterX;
+      const dy = ev.clientY - boxCenterY;
+      const scale = 5;
+      const fudgeY = 10;
+      const offsetX = -scale * dx;
+      const offsetY = -scale * dy + fudgeY;
+      img.dataset.scale = scale;
+      img.dataset.offsetX = offsetX;
+      img.dataset.offsetY = offsetY;
+      img.style.transform = `translate(${offsetX}px, ${offsetY}px) scale(${scale})`;
+    });
+  }
 }
 
 /********************************************************
