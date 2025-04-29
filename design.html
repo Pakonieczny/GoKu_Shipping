@@ -1117,87 +1117,57 @@ function populateConfigTable() {
 }
 
 /******************************************************************
- * fillPreviewBoxes(items)
+ * fillPreviewBoxes(items)      ⬇️  <------------- REPLACE THIS WHOLE FUNCTION
  ******************************************************************/
 function fillPreviewBoxes(items){
-  gridElements.clear();          // ← resets index back to 0 each rebuild
-  earringCells  = {};
-  earringState  = {};
+  /* reset state ----------------------------------------------- */
+  gridElements.clear();
+  earringCells = {};
+  earringState = {};
   const container = document.getElementById("photoGridContainer");
   container.innerHTML = "";
 
-  window.cachedOrderItems = items;  // store globally
+  window.cachedOrderItems = items;        // global cache
 
-  /* keyword helpers already used for other UI colouring */
+  /* helper phrase lists (unchanged) --------------------------- */
   const groupA = ["stud","studs","stud earrings","ring","rings","earrings"];
   const groupB = ["necklace","necklaces","huggie","huggies","huggie earrings",
                   "hoop","hoops","hoop earrings","bracelet","bracelets",
                   "extender","extenders","chain","chains"];
-
-  /* list that DEFINES an earring */
   const EARRING_PHRASES = [
     "stud","stud earrings","earring","earrings",
-    "huggie","huggies","huggie earrings",
-    "hoop","hoops","hoop earrings"
+    "huggie","huggies","huggie earrings","hoop","hoops","hoop earrings"
   ];
+  const containsPhrase = (str="",ph="")=>{
+    const pat="\\b"+ph.trim().replace(/\s+/g,"[\\s\\W]+")+"\\b";
+    return new RegExp(pat,"i").test(str.toLowerCase());
+  };
+  const isEarringString = str =>
+    EARRING_PHRASES.some(ph=>new RegExp("\\b"+ph.replace(/\s+/g,"\\s+")+"\\b","i").test(str.toLowerCase()));
 
-  /* true phrase matcher – handles spaces, dashes, slashes, commas … */
-  function containsPhrase(str = "", phrase = "") {
-    // turn "stud earrings" → /\bstud[\s\W]+earrings\b/i
-    const pattern = "\\b" + phrase
-      .trim()
-      .replace(/\s+/g, "[\\s\\W]+")   // any run of NON-alphanumerics
-      + "\\b";
-    return new RegExp(pattern, "i").test(str.toLowerCase());
-  }
-
-  /* helper: check if a string mentions earrings */
-  function isEarringString(str = "") {
-    const lower = str.toLowerCase();
-    return EARRING_PHRASES.some(ph =>
-      new RegExp("\\b" + ph.replace(/\s+/g, "\\s+") + "\\b", "i").test(lower)
-    );
-  }
-
-  /* ---------- MAIN LOOP: one preview row per transaction ---------- */
-  items.forEach((item, index) => {
-    /* --- qty memo ------------------------------------------------- */
-    item.qty = Number(item.quantity) || 1;
-
-    /* --- Group-A / Group-B keyword tagging ------------------------ */
-    let keywords = [];
-    if (item.title) {
-      const lower = item.title.toLowerCase();
-      groupA.forEach(p => { if (containsPhrase(item.title, p)) keywords.push(p); });
-      groupB.forEach(p => { if (containsPhrase(item.title, p)) keywords.push(p); });
+  /* main loop: one preview per transaction -------------------- */
+  items.forEach(item=>{
+    /* keyword tagging */
+    item.keywords=[];
+    if(item.title){
+      groupA.forEach(p=>{if(containsPhrase(item.title,p)) item.keywords.push(p);});
+      groupB.forEach(p=>{if(containsPhrase(item.title,p)) item.keywords.push(p);});
     }
-    if (keywords.length === 0) keywords.push("groupB");   // fallback
-    item.keywords = keywords;
+    if(item.keywords.length===0) item.keywords.push("groupB");
 
-    /* --- unified earring detector (title + chosen variations) ----- */
-    let earringFound = false;
-
-    /* 1 / title */
-    if (item.title && isEarringString(item.title)) {
-      earringFound = true;
+    /* earring detector */
+    item.isEarring = isEarringString(item.title||"") ||
+                     (item.variations||[]).some(v=>v.formatted_value && isEarringString(v.formatted_value));
+    if(item.isEarring){
+      const idx = gridElements.size;
+      earringCells[idx]=true;
+      earringState[idx]={firstImg:null};
     }
 
-    /* 2 / buyer-chosen variations */
-    if (!earringFound && Array.isArray(item.variations)) {
-      for (const v of item.variations) {
-        if (v && v.formatted_value && isEarringString(v.formatted_value)) {
-          earringFound = true;
-          break;
-        }
-      }
-    }
-
-    /* 3 / store & register */
-    item.isEarring = earringFound;
-    if (earringFound) {
-      earringCells[index] = true;
-      earringState[index] = { firstImg:null };
-    }
+    /* build + append preview row */
+    addPreviewBox(item);
+  });
+}  /* ---------------------------- END fillPreviewBoxes -------- */
 
 function attachPreviewBoxListeners(box) {
   let isDragging = false;
