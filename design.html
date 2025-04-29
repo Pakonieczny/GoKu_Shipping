@@ -46,19 +46,21 @@
       color:#2196F3;          /* same blue as spinner + hover outline */
     }
 
-    /* ── Spinner tweak: 33 % larger + brand-blue color ── */
-    @keyframes btnSpin{100%{transform:rotate(360deg)}}
-
-    .spinner{
-      display:inline-block;
-      width:18px;height:18px;            /* 33 % larger */
-      margin-right:6px;
-      border:3px solid transparent;      /* thicker rim */
-      border-top-color:#2196F3;          /* brand blue */
-      border-radius:50%;
-      animation:btnSpin .7s linear infinite !important;  /* keeps it spinning */
-      vertical-align:middle;
+    /* wrapper holds spinner + text and centres them */
+    .loadingWrap{
+      display:inline-flex;
+      align-items:center;      /* vertical centring */
+      gap:6px;                 /* keeps the space you had */
     }
+
+    /* spinner keeps its blue look & spin */
+    @keyframes btnSpin{100%{transform:rotate(360deg)}}
+    .spinner{
+      width:18px;height:18px;
+      border:3px solid transparent;border-top-color:#2196F3;border-radius:50%;
+      animation:btnSpin .7s linear infinite;
+    }
+    .loadingTxt{color:#2196F3;}
 
     /* Image Comparison UI */
     #imageComparisonContainer {
@@ -439,7 +441,10 @@ document.addEventListener("DOMContentLoaded", function () {
       document.getElementById("updateOrderListBtn").addEventListener("click", async function () {
         try {
           this.disabled = true;
-          this.innerHTML = '<span class="spinner"></span><span class="loadingTxt">Loading…</span>';
+          this.innerHTML = '<span class="loadingWrap">' +
+         '  <span class="spinner"></span>' +
+         '  <span class="loadingTxt">Loading…</span>' +
+         '</span>';'<span class="spinner"></span><span class="loadingTxt">Loading…</span>';
 
           orderListOffset = 0;                 // reset to first page
           const gotRows = await buildNewOrderList(orderListOffset);
