@@ -599,8 +599,45 @@ document.addEventListener("DOMContentLoaded", function () {
     return wrap;
   }
 
-  
+
 (() => {
+
+
+    /* =========================================================
+     * DYNAMIC-REMOVE HELPERS
+     * ========================================================= */
+
+    /* remove every preview row that belongs to one receipt */
+    function removePreviewBoxesForOrder(receiptId){
+      const txs = orderCache[receiptId] || [];
+      txs.forEach(tx => {
+        if (tx._wrapEl) {
+          tx._wrapEl.remove();                       // yank from DOM
+          /* drop from gridElements map */
+          for (const [k,v] of gridElements.entries()){
+            if (v === tx._wrapEl){ gridElements.delete(k); break; }
+          }
+          tx._inGrid = false;
+          tx._wrapEl = null;
+        }
+      });
+    }
+
+    /* close up the gaps: re-index & move every wrapper */
+    function realignGrid(){
+      let idx = 0;
+      const wraps = Array.from(gridElements.values());  // current order
+      gridElements.clear();                             // rebuild map
+      wraps.forEach(wrap => {
+        const row = Math.floor(idx / 9);
+        const col = idx % 9;
+        wrap.style.left = (col * 125) + "px";
+        wrap.style.top  = (row * 165) + "px";
+        gridElements.set(idx, wrap);                    // new key
+        idx++;
+      });
+    }    
+
 
   /* 0.  GLOBAL HOOKS ----------------------------------------------------- */
   let currentReceipts = [];            // populated by buildNewOrderList()
@@ -624,11 +661,15 @@ document.addEventListener("DOMContentLoaded", function () {
 
         /* ── 1. toggle selected state ─────────────────────────── */
         if (selectedOrders.has(receiptId)) {
-          /* deselect */
+          /* ─── DESELECT ─── */
           selectedOrders.delete(receiptId);
           box.classList.remove("selected");
+
+          /* ✂️  remove its previews & close the gap */
+          removePreviewBoxesForOrder(receiptId);
+          realignGrid();                     // left-shift remaining boxes
         } else {
-          /* select */
+          /* ─── SELECT ─── */
           selectedOrders.add(receiptId);
           box.classList.add("selected");
 
