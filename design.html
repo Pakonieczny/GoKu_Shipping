@@ -1140,15 +1140,13 @@ function fillPreviewBoxes(items){
       earringState[index] = { firstImg:null };
     }
 
-/* ===================================================================
- * PREVIEW HELPERS  — addPreviewBox must be GLOBAL (not nested!)
- * =================================================================== */
-
-/* 1️⃣  single-append wrapper — builds one preview & tracks its index */
+/* ================================================================
+ * GLOBAL preview-append helper  (must be outside any other function)
+ * ================================================================ */
 function addPreviewBox(item){
   const wrap = makePreviewNode(item);          // build + auto-append
   gridElements.set(gridElements.size, wrap);   // keep index counter
-  item._inGrid = true;                         // dup-guard flag
+  item._inGrid = true;                         // duplicate-guard flag
   return wrap;
 }
 
