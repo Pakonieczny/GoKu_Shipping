@@ -316,6 +316,8 @@
  * Base URL & Global Variables
  ********************************************************/
 const functionsBaseUrl = window.location.origin + "/.netlify/functions";
+const selectedOrders = new Set();          // receipt_id strings
+const orderCache     = {};                 // receipt_id → transactions[]
 
 let croppedImagesArray = [];
 let userImagesArray = [];
@@ -555,18 +557,39 @@ document.addEventListener("DOMContentLoaded", function () {
     box.className = "new-order-box";
     box.id        = "newOrder" + idx;
 
-    /* click → highlight + load listing images */
+    /* click → toggle highlight + (de)load images */
     box.addEventListener("click", async () => {
-      /* 1.  highlight */
-      document.querySelectorAll(".new-order-box")
-              .forEach(b => b.classList.remove("selected"));
-      box.classList.add("selected");
+      const receiptId = r.receipt_id;
 
-      /* 2.  pull order details & render images */
-      const orderId = r.receipt_id;
-      const order   = await pullEtsyOrderDetails(orderId);   // you already have this helper
-      if (order && order.transactions) {
-        await fillPreviewBoxes(order.transactions);          // existing 100×100 grid builder
+      /* ── 1. toggle selected state ─────────────────────────────── */
+      if (selectedOrders.has(receiptId)) {
+        /* deselect */
+        selectedOrders.delete(receiptId);
+        box.classList.remove("selected");
+      } else {
+        /* select */
+        selectedOrders.add(receiptId);
+        box.classList.add("selected");
+
+        /* cache miss → fetch once */
+        if (!orderCache[receiptId]) {
+          const ord = await pullEtsyOrderDetails(receiptId);
+          orderCache[receiptId] = ord?.transactions || [];
+        }
+      }
+
+      /* ── 2. build combined list from all active orders ───────── */
+      let combined = [];
+      selectedOrders.forEach(id => {
+        const tx = orderCache[id] || [];
+        combined.push(...tx);
+      });
+
+      /* ── 3. (de)render the grid ──────────────────────────────── */
+      if (combined.length === 0) {
+        document.getElementById("photoGridContainer").innerHTML = "";
+      } else {
+        await fillPreviewBoxes(combined);     // existing 100 × 100 builder
       }
     });
 
