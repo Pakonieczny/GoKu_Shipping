@@ -553,33 +553,29 @@ document.addEventListener("DOMContentLoaded", function () {
     const container = document.getElementById("newOrderContainer");
     container.innerHTML = "";
     arr.forEach((r, idx) => {
-    /* build the DOM node */
-    const box = document.createElement("div");
-    box.className = "new-order-box";
-    box.id        = "newOrder" + idx;
+      /* build the DOM node */
+      const box = document.createElement("div");
+      box.className = "new-order-box";
+      box.id        = "newOrder" + idx;
 
-    /* click → toggle highlight + (de)load images */
-    box.addEventListener("click", async () => {
-      const receiptId = r.receipt_id;
-
-      /* ── 1. toggle selected state ─────────────────────────────── */
+      /* click → toggle highlight + (de)load images  ← UPDATED ONLY THIS */
       box.addEventListener("click", async () => {
         const id = r.receipt_id;
 
-        /* toggle selection */
-        if (selectedOrders.has(id)){
+        /* ── toggle selected state ── */
+        if (selectedOrders.has(id)) {
           selectedOrders.delete(id);
           box.classList.remove("selected");
         } else {
           selectedOrders.add(id);
           box.classList.add("selected");
-          if (!orderCache[id]){
+          if (!orderCache[id]) {
             const ord = await pullEtsyOrderDetails(id);
             orderCache[id] = ord?.transactions || [];
           }
         }
 
-        /* incrementally update the grid */
+        /* ── re-render preview grid ── */
         await syncPreviewGrid();
       });
 
@@ -600,10 +596,10 @@ document.addEventListener("DOMContentLoaded", function () {
 
     const orderNum = r.order_number || r.receipt_id || "—";
     const shipStr  = r._shipStr || "N/A";
-    const g = r._metalCounts.Gold     || 0;
-    const s = r._metalCounts.Silver   || 0;
-    const rG= r._metalCounts["Rose G"]|| 0;
-    const k = r._metalCounts["14K"]   || 0;
+    const g  = r._metalCounts.Gold      || 0;
+    const s  = r._metalCounts.Silver    || 0;
+    const rG = r._metalCounts["Rose G"] || 0;
+    const k  = r._metalCounts["14K"]    || 0;
     box.innerHTML = `
       <span class="col-order">${orderNum}</span>
       <span class="col-ship">${shipStr}</span>
@@ -639,10 +635,10 @@ document.addEventListener("DOMContentLoaded", function () {
     div.dataset.key = col.key;
     div.style.cssText = `flex:${col.flex};text-align:center;cursor:pointer;`;
     /* inside the COLS.forEach loop that builds the bar */
-  div.innerHTML =
-    `${col.label}<span class="chev">` +
-    `<span class="up">▲</span><br><span class="down">▼</span>` +
-    `</span>`;
+    div.innerHTML =
+      `${col.label}<span class="chev">` +
+      `<span class="up">▲</span><br><span class="down">▼</span>` +
+      `</span>`;
     bar.appendChild(div);
   });
 
@@ -725,44 +721,43 @@ document.addEventListener("DOMContentLoaded", function () {
         }
 
         /* 2. metal counts */
-if (!r._metalCounts) {
-  const mc = { Gold:0, Silver:0, "Rose G":0, "14K":0 };
-  (r.transactions || []).forEach(t => {
-    const m = (t.variations || [])
-      .find(v => /metal/i.test(v.formatted_name || ""))?.formatted_value || "";
-    if (/14k/i.test(m))         mc["14K"]   += t.quantity || 1;
-    else if (/rose/i.test(m))   mc["Rose G"]+= t.quantity || 1;
-    else if (/silver/i.test(m)) mc.Silver   += t.quantity || 1;
-    else if (/gold/i.test(m))   mc.Gold     += t.quantity || 1;
+        if (!r._metalCounts) {
+          const mc = { Gold:0, Silver:0, "Rose G":0, "14K":0 };
+          (r.transactions || []).forEach(t => {
+            const m = (t.variations || [])
+              .find(v => /metal/i.test(v.formatted_name || ""))?.formatted_value || "";
+            if (/14k/i.test(m))         mc["14K"]   += t.quantity || 1;
+            else if (/rose/i.test(m))   mc["Rose G"]+= t.quantity || 1;
+            else if (/silver/i.test(m)) mc.Silver   += t.quantity || 1;
+            else if (/gold/i.test(m))   mc.Gold     += t.quantity || 1;
+          });
+          r._metalCounts = mc;
+        }
+      });
+
+      /* ─── default sort by Order # (desc) on first load ─── */
+      if (!sortKey) { sortKey = "order"; sortDir = -1; }
+
+      /* ─── colour the correct arrow (▲ for asc, ▼ for desc) ─── */
+      bar.querySelectorAll(".chev .up, .chev .down")
+         .forEach(el => (el.style.color = "#ffffff"));        // reset all
+
+      const activeChev = bar.querySelector(`[data-key="${sortKey}"] .chev`);
+      if (sortDir === 1) {
+        activeChev.querySelector(".up").style.color   = "#2196F3";
+      } else {
+        activeChev.querySelector(".down").style.color = "#2196F3";
+      }
+
+      /* execute initial sort */
+      currentReceipts.sort(
+        (a, b) => (b.order_number || b.receipt_id) - (a.order_number || a.receipt_id)
+      );
+
+      renderOrderBoxes(currentReceipts);
+    }
   });
-  r._metalCounts = mc;
-}
-});
-
-/* ─── default sort by Order # (desc) on first load ─── */
-if (!sortKey) { sortKey = "order"; sortDir = -1; }
-
-/* ─── colour the correct arrow (▲ for asc, ▼ for desc) ─── */
-/*   every arrow is now <span class="up">▲</span><br><span class="down">▼</span> */
-bar.querySelectorAll(".chev .up, .chev .down")
-   .forEach(el => (el.style.color = "#ffffff"));        // reset all to white
-
-const activeChev = bar.querySelector(`[data-key="${sortKey}"] .chev`);
-if (sortDir === 1) {
-  activeChev.querySelector(".up").style.color   = "#2196F3"; // blue up-arrow (ASC)
-} else {
-  activeChev.querySelector(".down").style.color = "#2196F3"; // blue down-arrow (DESC)
-}
-
-/* execute initial sort */
-currentReceipts.sort(
-  (a, b) => (b.order_number || b.receipt_id) - (a.order_number || a.receipt_id)
-);
-
-renderOrderBoxes(currentReceipts);
-}
-});
-observer.observe(document.getElementById("newOrderContainer"), { childList: true });
+  observer.observe(document.getElementById("newOrderContainer"), { childList: true });
 
 })();   /* ─── END SORT HEADER MODULE ─── */
 
@@ -1337,7 +1332,7 @@ function attachPreviewBoxListeners(box) {
     img.dataset.offsetY = offsetY;
     img.style.transform = `translate(${offsetX}px, ${offsetY}px) scale(${scale})`;
   });
-  
+
 }
 
 /********************************************************
