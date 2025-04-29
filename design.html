@@ -1216,11 +1216,11 @@ async function fillPreviewBoxes(items) {
     matchInput.value = "";
 
     /* --- add boxes to container ---------------------------------- */
-    container.appendChild(previewBox);
-    container.appendChild(orderInput);
-    container.appendChild(qtyInput);
-    container.appendChild(metalInput);
-    container.appendChild(matchInput);
+      wrap.appendChild(previewBox);
+      wrap.appendChild(orderInput);
+      wrap.appendChild(qtyInput);
+      wrap.appendChild(metalInput);
+      wrap.appendChild(matchInput);
 
     /* fetch image */
     fetchListingImages(item.listing_id)
