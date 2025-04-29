@@ -1140,82 +1140,74 @@ function fillPreviewBoxes(items){
       earringState[index] = { firstImg:null };
     }
 
-/* --- POSITION CALCULATIONS (unchanged from your file) -------- */
+/* ===================================================================
+ * PREVIEW HELPERS  — addPreviewBox must be GLOBAL (not nested!)
+ * =================================================================== */
+
+/* 1️⃣  single-append wrapper — builds one preview & tracks its index */
+function addPreviewBox(item){
+  const wrap = makePreviewNode(item);          // build + auto-append
+  gridElements.set(gridElements.size, wrap);   // keep index counter
+  item._inGrid = true;                         // dup-guard flag
+  return wrap;
+}
+
+/* 2️⃣  makePreviewNode — unchanged positioning + four detail inputs */
 function makePreviewNode(item){
-  const idx = gridElements.size;           // next position
+  const idx = gridElements.size;                 // next slot #
   const row = Math.floor(idx / 9);
   const col = idx % 9;
 
-  // === helper: append ONE preview without rebuilding the whole grid ===
-  function addPreviewBox(item){
-    const wrap = makePreviewNode(item);          // wrapper auto-appends itself
-    gridElements.set(gridElements.size, wrap);   // keep index in sync
-    return wrap;
-  }
-
-  /* base offsets for this cell */
-  const previewLeft = col * 125;
-  const previewTop  = row * 165;
-
-  /* wrapper: one absolutely-positioned island for EVERYTHING */
   const wrap = document.createElement("div");
-  wrap.style.position = "absolute";
-  wrap.style.left  = previewLeft + "px";
-  wrap.style.top   = previewTop  + "px";
+  wrap.style.cssText =
+    `position:absolute;left:${col*125}px;top:${row*165}px;`;
 
-  /* --- preview image box --- */
+  /* preview image --------------------------------------------------- */
   const previewBox = document.createElement("div");
-  previewBox.classList.add("preview-box");
-  previewBox.style.width  = "110px";
-  previewBox.style.height = "110px";
-  previewBox.innerHTML    = "Loading…";
-  wrap.appendChild(previewBox);            // ✅ inside wrapper
-
-  /* attach wheel / drag / zoom */
+  previewBox.className = "preview-box";
+  previewBox.innerHTML = "Loading…";
+  wrap.appendChild(previewBox);
   attachPreviewBoxListeners(previewBox);
 
-  /* helper to build tiny detail inputs at y-offsets 95-131 px */
-  function makeDetail(id, y, txt){
-    const inp  = document.createElement("input");
-    inp.type   = "text";
+  /* tiny helper for detail inputs ---------------------------------- */
+  const mk = (id,y,txt)=>{
+    const inp = document.createElement("input");
+    inp.type  = "text";
     inp.readOnly = true;
-    inp.id     = id + idx;
-    inp.classList.add("detail-box");
-    inp.style.left = "0px";
-    inp.style.top  = y + "px";
-    inp.value  = txt;
-    wrap.appendChild(inp);                 // ✅ inside wrapper
-    return inp;
-  }
+    inp.id    = id + idx;
+    inp.className = "detail-box";
+    inp.style.cssText = `left:0px;top:${y}px;`;
+    inp.value = txt;
+    wrap.appendChild(inp);
+  };
 
-  makeDetail("orderCell" ,  95, item.receipt_id || item.orderNumber || "No Order #");
-  makeDetail("quantityCell",107, " Qty: "  + (item.quantity ?? 0));
+  mk("orderCell"   ,  95, item.receipt_id || item.orderNumber || "No Order #");
+  mk("quantityCell", 107, " Qty: "  + (item.quantity ?? 0));
 
-  /* simple metal lookup left intact */
+  /* simple metal lookup -------------------------------------------- */
   let metalSel = "";
   if (Array.isArray(item.variations)){
-    const accepted = ["metal","metal choice","metal - engraving","metal colour",
-                      "color","metal choice / engraving option"];
-    const metalVar = item.variations.find(v => 
-       v.formatted_name && accepted.includes(v.formatted_name.trim().toLowerCase()));
-    if (metalVar?.formatted_value) metalSel = metalVar.formatted_value;
+    const ok = ["metal","metal choice","metal - engraving","metal colour",
+                "color","metal choice / engraving option"];
+    const v  = item.variations.find(v =>
+              v.formatted_name && ok.includes(v.formatted_name.trim().toLowerCase()));
+    if (v?.formatted_value) metalSel = v.formatted_value;
   }
-  makeDetail("metalCell",119, " Metal: " + (metalSel || "No Metal"));
-  makeDetail("matchCell",131, "");
+  mk("metalCell", 119, " Metal: " + (metalSel || "No Metal"));
+  mk("matchCell", 131, "");
 
-  /* finally, drop the whole wrapper into the grid */
+  /* attach to grid + load thumbnail ------------------------------- */
   document.getElementById("photoGridContainer").appendChild(wrap);
 
-  /* fetch & load the thumbnail */
   fetchListingImages(item.listing_id)
     .then(imgs => getLocalImageData(imgs[0].url_fullxfull))
     .then(data => {
       previewBox.innerHTML =
         `<img src="${data}" style="width:110%;height:110%;object-fit:cover;" />`;
     })
-    .catch(()=>{ previewBox.innerHTML="Img Err"; });
+    .catch(()=>{ previewBox.innerHTML = "Img Err"; });
 
-  return wrap;                             // bookkeeping
+  return wrap;                                   // bookkeeping
 }
 
 
