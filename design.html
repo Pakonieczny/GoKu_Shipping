@@ -554,16 +554,53 @@ document.addEventListener("DOMContentLoaded", function () {
     container.innerHTML = "";
     arr.forEach(async (r, idx) => {
       /* build the DOM node */
-      const box = document.createElement("div");
-      box.className = "new-order-box";
-      box.id        = "newOrder" + idx;
+      /* build the DOM node */
+    const box = document.createElement("div");
+    box.className = "new-order-box";
+    box.id        = "newOrder" + idx;
+
+    /* click → toggle highlight + (de)load images */
+    box.addEventListener("click", async () => {
+      const receiptId = r.receipt_id;
+
+      /* ── 1. toggle selected state ─────────────────────────────── */
+      if (selectedOrders.has(receiptId)) {
+        /* deselect */
+        selectedOrders.delete(receiptId);
+        box.classList.remove("selected");
+      } else {
+        /* select */
+        selectedOrders.add(receiptId);
+        box.classList.add("selected");
+
+        /* cache miss → fetch once */
+        if (!orderCache[receiptId]) {
+          const ord = await pullEtsyOrderDetails(receiptId);
+          orderCache[receiptId] = ord?.transactions || [];
+        }
+      }
+
+      /* ── 2. build combined list from all active orders ───────── */
+      let combined = [];
+      selectedOrders.forEach(id => {
+        const tx = orderCache[id] || [];
+        combined.push(...tx);
+      });
+
+      /* ── 3. (de)render the grid ──────────────────────────────── */
+      if (combined.length === 0) {
+        document.getElementById("photoGridContainer").innerHTML = "";
+      } else {
+        await fillPreviewBoxes(combined);     // existing 100 × 100 builder
+      }
+    });
 
     const orderNum = r.order_number || r.receipt_id || "—";
     const shipStr  = r._shipStr || "N/A";
-    const g  = r._metalCounts.Gold      || 0;
-    const s  = r._metalCounts.Silver    || 0;
-    const rG = r._metalCounts["Rose G"] || 0;
-    const k  = r._metalCounts["14K"]    || 0;
+    const g = r._metalCounts.Gold     || 0;
+    const s = r._metalCounts.Silver   || 0;
+    const rG= r._metalCounts["Rose G"]|| 0;
+    const k = r._metalCounts["14K"]   || 0;
     box.innerHTML = `
       <span class="col-order">${orderNum}</span>
       <span class="col-ship">${shipStr}</span>
