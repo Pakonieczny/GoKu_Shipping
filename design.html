@@ -1167,8 +1167,8 @@ async function fillPreviewBoxes(items) {
     orderInput.readOnly = true;
     orderInput.id = "orderCell" + index;
     orderInput.classList.add("detail-box");
-    orderInput.style.left = previewLeft + "px";
-    orderInput.style.top  = previewTop  + 95 + "px";
+    orderInput.style.left = "0px";
+    orderInput.style.top  = "95px";
     orderInput.value = item.receipt_id
       ? item.receipt_id
       : item.orderNumber || "No Order #";
@@ -1179,8 +1179,8 @@ async function fillPreviewBoxes(items) {
     qtyInput.readOnly = true;
     qtyInput.id = "quantityCell" + index;
     qtyInput.classList.add("detail-box");
-    qtyInput.style.left = previewLeft + "px";
-    qtyInput.style.top  = previewTop  + 107 + "px";
+    qtyInput.style.left = "0px";
+    qtyInput.style.top  = "107px";
     qtyInput.value = " Qty: " + (item.quantity != null ? item.quantity : 0);
 
     const metalInput = document.createElement("input");
@@ -1188,8 +1188,8 @@ async function fillPreviewBoxes(items) {
     metalInput.readOnly = true;
     metalInput.id = "metalCell" + index;
     metalInput.classList.add("detail-box");
-    metalInput.style.left = previewLeft + "px";
-    metalInput.style.top  = previewTop  + 119 + "px";
+    metalInput.style.left = "0px";
+    metalInput.style.top  = "119px";
     let metalSel = "";
     if (item.variations && Array.isArray(item.variations)) {
       const acceptedMetalNames = [
@@ -1211,16 +1211,15 @@ async function fillPreviewBoxes(items) {
     matchInput.readOnly = true;
     matchInput.id = "matchCell" + index;
     matchInput.classList.add("detail-box");
-    matchInput.style.left = previewLeft + "px";
-    matchInput.style.top  = previewTop  + 131 + "px";
+    matchInput.style.left = "0px";
+    matchInput.style.top  = "131px";
     matchInput.value = "";
 
     /* --- add boxes to container ---------------------------------- */
-      wrap.appendChild(previewBox);
-      wrap.appendChild(orderInput);
-      wrap.appendChild(qtyInput);
-      wrap.appendChild(metalInput);
-      wrap.appendChild(matchInput);
+    wrap.appendChild(orderInput);
+    wrap.appendChild(qtyInput);
+    wrap.appendChild(metalInput);
+    wrap.appendChild(matchInput);
 
     /* fetch image */
     fetchListingImages(item.listing_id)
