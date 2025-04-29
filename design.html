@@ -452,7 +452,7 @@ document.addEventListener("DOMContentLoaded", function () {
           this.innerHTML = '<span class="loadingWrap">' +
          '  <span class="spinner"></span>' +
          '  <span class="loadingTxt">Loading…</span>' +
-         '</span>';
+         '</span>';'<span class="spinner"></span><span class="loadingTxt">Loading…</span>';
 
           orderListOffset = 0;                 // reset to first page
           const gotRows = await buildNewOrderList(orderListOffset);
@@ -552,65 +552,69 @@ document.addEventListener("DOMContentLoaded", function () {
   function renderOrderBoxes(arr) {
     const container = document.getElementById("newOrderContainer");
     container.innerHTML = "";
-
-    /* ── 1. build one row per receipt ───────────────────────────── */
     arr.forEach((r, idx) => {
-      const box = document.createElement("div");
-      box.className = "new-order-box";
-      box.id        = "newOrder" + idx;
+    /* build the DOM node */
+    const box = document.createElement("div");
+    box.className = "new-order-box";
+    box.id        = "newOrder" + idx;
 
-      /* row content */
-      const orderNum = r.order_number || r.receipt_id || "—";
-      const shipStr  = r._shipStr || "N/A";
-      const g  = r._metalCounts.Gold    || 0;
-      const s  = r._metalCounts.Silver  || 0;
-      const rG = r._metalCounts["Rose G"] || 0;
-      const k  = r._metalCounts["14K"]   || 0;
+    /* click → toggle highlight + (de)load images */
+    box.addEventListener("click", async () => {
+      const receiptId = r.receipt_id;
 
-      box.innerHTML = `
-        <span class="col-order">${orderNum}</span>
-        <span class="col-ship">${shipStr}</span>
-        <span class="col-g">${g}</span>
-        <span class="col-s">${s}</span>
-        <span class="col-r">${rG}</span>
-        <span class="col-k">${k}</span>
-      `;
-
-      /* click → toggle selection + refresh grid */
+      /* ── 1. toggle selected state ─────────────────────────────── */
       box.addEventListener("click", async () => {
         const id = r.receipt_id;
 
-        if (selectedOrders.has(id)) {
+        /* toggle selection */
+        if (selectedOrders.has(id)){
           selectedOrders.delete(id);
           box.classList.remove("selected");
         } else {
           selectedOrders.add(id);
           box.classList.add("selected");
-          if (!orderCache[id]) {
+          if (!orderCache[id]){
             const ord = await pullEtsyOrderDetails(id);
             orderCache[id] = ord?.transactions || [];
           }
         }
 
-        syncPreviewGrid();                 // incremental update
+        /* incrementally update the grid */
+        await syncPreviewGrid();
       });
 
-      container.appendChild(box);
-    });                                     // ← closes forEach
+      /* ── 2. build combined list from all active orders ───────── */
+      let combined = [];
+      selectedOrders.forEach(id => {
+        const tx = orderCache[id] || [];
+        combined.push(...tx);
+      });
 
-    /* ── 2. build combined list & render grid once after rows exist ── */
-    let combined = [];
-    selectedOrders.forEach(id => {
-      const tx = orderCache[id] || [];
-      combined.push(...tx);
+      /* ── 3. (de)render the grid ──────────────────────────────── */
+      if (combined.length === 0) {
+        document.getElementById("photoGridContainer").innerHTML = "";
+      } else {
+        await fillPreviewBoxes(combined);     // existing 100 × 100 builder
+      }
     });
 
-    if (combined.length === 0) {
-      document.getElementById("photoGridContainer").innerHTML = "";
-    } else {
-      fillPreviewBoxes(combined);           // existing 100×100 builder
-    }
-  }                                         // ← end renderOrderBoxes
+    const orderNum = r.order_number || r.receipt_id || "—";
+    const shipStr  = r._shipStr || "N/A";
+    const g = r._metalCounts.Gold     || 0;
+    const s = r._metalCounts.Silver   || 0;
+    const rG= r._metalCounts["Rose G"]|| 0;
+    const k = r._metalCounts["14K"]   || 0;
+    box.innerHTML = `
+      <span class="col-order">${orderNum}</span>
+      <span class="col-ship">${shipStr}</span>
+      <span class="col-g">${g}</span>
+      <span class="col-s">${s}</span>
+      <span class="col-r">${rG}</span>
+      <span class="col-k">${k}</span>
+    `;
+    container.appendChild(box);
+    });
+  }
 
   /** 1.  HEADER BAR  +  EVENT LISTENERS ------------------------------- */
   const bar = document.createElement("div");
@@ -759,7 +763,6 @@ renderOrderBoxes(currentReceipts);
 }
 });
 observer.observe(document.getElementById("newOrderContainer"), { childList: true });
-
 
 })();   /* ─── END SORT HEADER MODULE ─── */
 
@@ -944,6 +947,7 @@ async function startScannedSortingListener() {
   }
 }
 
+});        /* ←––––––––– CLOSED DOMContentLoaded LISTENER */
 
 /* ===== Hard-coded fallback positions & sizes (no calculations) ===== */
 const defaultPos = {
@@ -1232,138 +1236,104 @@ async function fillPreviewBoxes(items) {
     return wrap;
   }
 
-  /* ───────────────── syncPreviewGrid ───────────────── */
-  function syncPreviewGrid(){
-    /* 1. desired transactions from all active orders */
-    let want = [];
-    selectedOrders.forEach(id => orderCache[id] && want.push(...orderCache[id]));
+function attachPreviewBoxListeners(box) {
+  let isDragging = false;
+  let isMouseDown = false;
+  let dragStartX = 0,
+      dragStartY = 0;
+  let lastX = 0,
+      lastY = 0;
+  const dragThreshold = 3;
 
-    /* 2. remove thumbnails no longer wanted */
-    gridElements.forEach((node, key) => {
-      if (!want.some(t => t.transaction_id === key)){
-        node.remove();
-        gridElements.delete(key);
-      }
-    });
-
-    /* 3. add thumbnails we don’t have yet */
-    for (const t of want){
-      const key = t.transaction_id;
-      if (!gridElements.has(key)){
-        gridElements.set(key, makePreviewNode(t));
+  box.addEventListener("wheel", function (ev) {
+    const img = box.querySelector("img");
+    if (!img) return;
+    ev.preventDefault();
+    let currentScale = parseFloat(img.dataset.scale) || 1;
+    let offX = parseFloat(img.dataset.offsetX) || 0;
+    let offY = parseFloat(img.dataset.offsetY) || 0;
+    if (ev.deltaY < 0) {
+      currentScale *= 1.1;
+    } else {
+      currentScale /= 1.1;
+      if (currentScale <= 1) {
+        currentScale = 1;
+        offX = 0;
+        offY = 0;
       }
     }
+    if (currentScale > 7) currentScale = 7;
+    img.dataset.scale = currentScale;
+    img.dataset.offsetX = offX;
+    img.dataset.offsetY = offY;
+    img.style.transform = `translate(${offX}px, ${offY}px) scale(${currentScale})`;
+  });
 
-    /* 4. re-pack so there are no holes */
-    let i = 0;
-    gridElements.forEach(node => {
-      const row = Math.floor(i / 9);
-      const col = i % 9;
-      node.style.left = `${col * 125}px`;
-      node.style.top  = `${row * 165}px`;
-      i++;
-    });
-  }
+  box.addEventListener("mousedown", function (ev) {
+    const img = box.querySelector("img");
+    if (!img) return;
+    const scaleNow = parseFloat(img.dataset.scale) || 1;
+    if (scaleNow <= 1) return;
+    ev.preventDefault();
+    isMouseDown = true;
+    isDragging = false;
+    dragStartX = ev.clientX;
+    dragStartY = ev.clientY;
+    lastX = ev.clientX;
+    lastY = ev.clientY;
+  });
 
-  function attachPreviewBoxListeners(box) {
-    let isDragging = false;
-    let isMouseDown = false;
-    let dragStartX = 0,
-        dragStartY = 0;
-    let lastX = 0,
-        lastY = 0;
-    const dragThreshold = 3;
+  box.addEventListener("mousemove", function (ev) {
+    if (!isMouseDown) return;
+    ev.preventDefault();
+    const dxAll = Math.abs(ev.clientX - dragStartX);
+    const dyAll = Math.abs(ev.clientY - dragStartY);
+    if (dxAll > dragThreshold || dyAll > dragThreshold) isDragging = true;
+    const img = box.querySelector("img");
+    if (!img) return;
+    const scaleNow = parseFloat(img.dataset.scale) || 1;
+    let offX = parseFloat(img.dataset.offsetX) || 0;
+    let offY = parseFloat(img.dataset.offsetY) || 0;
+    const dx = ev.clientX - lastX;
+    const dy = ev.clientY - lastY;
+    offX += dx;
+    offY += dy;
+    img.dataset.offsetX = offX;
+    img.dataset.offsetY = offY;
+    img.style.transform = `translate(${offX}px, ${offY}px) scale(${scaleNow})`;
+    lastX = ev.clientX;
+    lastY = ev.clientY;
+  });
 
-    box.addEventListener("wheel", function (ev) {
-      const img = box.querySelector("img");
-      if (!img) return;
-      ev.preventDefault();
-      let currentScale = parseFloat(img.dataset.scale) || 1;
-      let offX = parseFloat(img.dataset.offsetX) || 0;
-      let offY = parseFloat(img.dataset.offsetY) || 0;
-      if (ev.deltaY < 0) {
-        currentScale *= 1.1;
-      } else {
-        currentScale /= 1.1;
-        if (currentScale <= 1) {
-          currentScale = 1;
-          offX = 0;
-          offY = 0;
-        }
-      }
-      if (currentScale > 7) currentScale = 7;
-      img.dataset.scale = currentScale;
-      img.dataset.offsetX = offX;
-      img.dataset.offsetY = offY;
-      img.style.transform = `translate(${offX}px, ${offY}px) scale(${currentScale})`;
-    });
+  box.addEventListener("mouseup", function () {
+    isMouseDown = false;
+  });
+  box.addEventListener("mouseleave", function () {
+    isMouseDown = false;
+  });
 
-    box.addEventListener("mousedown", function (ev) {
-      const img = box.querySelector("img");
-      if (!img) return;
-      const scaleNow = parseFloat(img.dataset.scale) || 1;
-      if (scaleNow <= 1) return;
-      ev.preventDefault();
-      isMouseDown = true;
+  box.addEventListener("click", function (ev) {
+    if (isDragging) {
       isDragging = false;
-      dragStartX = ev.clientX;
-      dragStartY = ev.clientY;
-      lastX = ev.clientX;
-      lastY = ev.clientY;
-    });
-
-    box.addEventListener("mousemove", function (ev) {
-      if (!isMouseDown) return;
-      ev.preventDefault();
-      const dxAll = Math.abs(ev.clientX - dragStartX);
-      const dyAll = Math.abs(ev.clientY - dragStartY);
-      if (dxAll > dragThreshold || dyAll > dragThreshold) isDragging = true;
-      const img = box.querySelector("img");
-      if (!img) return;
-      const scaleNow = parseFloat(img.dataset.scale) || 1;
-      let offX = parseFloat(img.dataset.offsetX) || 0;
-      let offY = parseFloat(img.dataset.offsetY) || 0;
-      const dx = ev.clientX - lastX;
-      const dy = ev.clientY - lastY;
-      offX += dx;
-      offY += dy;
-      img.dataset.offsetX = offX;
-      img.dataset.offsetY = offY;
-      img.style.transform = `translate(${offX}px, ${offY}px) scale(${scaleNow})`;
-      lastX = ev.clientX;
-      lastY = ev.clientY;
-    });
-
-    box.addEventListener("mouseup", function () {
-      isMouseDown = false;
-    });
-    box.addEventListener("mouseleave", function () {
-      isMouseDown = false;
-    });
-
-    box.addEventListener("click", function (ev) {
-      if (isDragging) {
-        isDragging = false;
-        return;
-      }
-      const img = box.querySelector("img");
-      if (!img) return;
-      const rect = box.getBoundingClientRect();
-      const boxCenterX = rect.left + box.clientWidth / 2;
-      const boxCenterY = rect.top + box.clientHeight / 2;
-      const dx = ev.clientX - boxCenterX;
-      const dy = ev.clientY - boxCenterY;
-      const scale = 5;
-      const fudgeY = 10;
-      const offsetX = -scale * dx;
-      const offsetY = -scale * dy + fudgeY;
-      img.dataset.scale = scale;
-      img.dataset.offsetX = offsetX;
-      img.dataset.offsetY = offsetY;
-      img.style.transform = `translate(${offsetX}px, ${offsetY}px) scale(${scale})`;
-    });
-  }
-  
+      return;
+    }
+    const img = box.querySelector("img");
+    if (!img) return;
+    const rect = box.getBoundingClientRect();
+    const boxCenterX = rect.left + box.clientWidth / 2;
+    const boxCenterY = rect.top + box.clientHeight / 2;
+    const dx = ev.clientX - boxCenterX;
+    const dy = ev.clientY - boxCenterY;
+    const scale = 5;
+    const fudgeY = 10;
+    const offsetX = -scale * dx;
+    const offsetY = -scale * dy + fudgeY;
+    img.dataset.scale = scale;
+    img.dataset.offsetX = offsetX;
+    img.dataset.offsetY = offsetY;
+    img.style.transform = `translate(${offsetX}px, ${offsetY}px) scale(${scale})`;
+  });
+}
 
 /********************************************************
  * loadBatchEtsyOrders, fetchListingImages, getLocalImageData
@@ -1505,9 +1475,6 @@ function disableSendMatch() {}
 function disableMatchPrintFlow() {}
 function removeAllBlueHighlights() {}
 function attachMatchCellListeners() {}  
-
-}   /* ←-- add this */
-}   /* ←-- add this */
 
   </script>
 </body>
