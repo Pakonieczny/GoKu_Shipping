@@ -138,6 +138,11 @@
       top: 6px;
     }
 
+    /* put right after your .new-order-box rule */
+    .new-order-box.selected{
+      background:#FFE2B5;   /* soft orange */
+    }
+
     /* ─── Hover outline for each order row ─── */
     .new-order-box:hover{
       outline:3px solid #2196F3;   /* vivid blue circumference */
@@ -545,24 +550,41 @@ document.addEventListener("DOMContentLoaded", function () {
     const container = document.getElementById("newOrderContainer");
     container.innerHTML = "";
     arr.forEach((r, idx) => {
-      const box = document.createElement("div");
-      box.className = "new-order-box";
-      box.id        = "newOrder" + idx;
-      const orderNum = r.order_number || r.receipt_id || "—";
-      const shipStr  = r._shipStr || "N/A";
-      const g = r._metalCounts.Gold     || 0;
-      const s = r._metalCounts.Silver   || 0;
-      const rG= r._metalCounts["Rose G"]|| 0;
-      const k = r._metalCounts["14K"]   || 0;
-      box.innerHTML = `
-        <span class="col-order">${orderNum}</span>
-        <span class="col-ship">${shipStr}</span>
-        <span class="col-g">${g}</span>
-        <span class="col-s">${s}</span>
-        <span class="col-r">${rG}</span>
-        <span class="col-k">${k}</span>
-      `;
-      container.appendChild(box);
+    /* build the DOM node */
+    const box = document.createElement("div");
+    box.className = "new-order-box";
+    box.id        = "newOrder" + idx;
+
+    /* click → highlight + load listing images */
+    box.addEventListener("click", async () => {
+      /* 1.  highlight */
+      document.querySelectorAll(".new-order-box")
+              .forEach(b => b.classList.remove("selected"));
+      box.classList.add("selected");
+
+      /* 2.  pull order details & render images */
+      const orderId = r.receipt_id;
+      const order   = await pullEtsyOrderDetails(orderId);   // you already have this helper
+      if (order && order.transactions) {
+        await fillPreviewBoxes(order.transactions);          // existing 100×100 grid builder
+      }
+    });
+
+    const orderNum = r.order_number || r.receipt_id || "—";
+    const shipStr  = r._shipStr || "N/A";
+    const g = r._metalCounts.Gold     || 0;
+    const s = r._metalCounts.Silver   || 0;
+    const rG= r._metalCounts["Rose G"]|| 0;
+    const k = r._metalCounts["14K"]   || 0;
+    box.innerHTML = `
+      <span class="col-order">${orderNum}</span>
+      <span class="col-ship">${shipStr}</span>
+      <span class="col-g">${g}</span>
+      <span class="col-s">${s}</span>
+      <span class="col-r">${rG}</span>
+      <span class="col-k">${k}</span>
+    `;
+    container.appendChild(box);
     });
   }
 
