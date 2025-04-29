@@ -1232,6 +1232,12 @@ async function fillPreviewBoxes(items) {
     return wrap;                     // end makePreviewNode
   }                                  // ← closes makePreviewNode
 
+
+    /* NEW: build one preview row + wire up listeners */
+    const wrapEl = makePreviewNode(item);                       // create DOM
+    attachPreviewBoxListeners(wrapEl.querySelector(".preview-box"));
+    gridElements.set(index, wrapEl);                            // bookkeeping
+
   });                                // ← closes items.forEach loop
 
 }                                    // ← closes fillPreviewBoxes
