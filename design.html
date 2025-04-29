@@ -1060,7 +1060,10 @@ function populateConfigTable() {
 /******************************************************************
  * fillPreviewBoxes(items)
  ******************************************************************/
-async function fillPreviewBoxes(items) {
+function fillPreviewBoxes(items){
+  gridElements.clear();          // ← resets index back to 0 each rebuild
+  earringCells  = {};
+  earringState  = {};
   const container = document.getElementById("photoGridContainer");
   container.innerHTML = "";
 
