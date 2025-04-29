@@ -65,11 +65,6 @@ exports.handler = async (event) => {
         return { statusCode: resp.status, body: txt };
       }
 
-      /* ── keep Etsy’s payload UNCHANGED so pagination.next_offset is preserved */
-      const data = await resp.json();
-      console.log("DEBUG_BODY", JSON.stringify(data).slice(0, 300));  // log first 300 chars
-      return { statusCode: 200, body: JSON.stringify(data) };
-
       /* Everything below this point never runs because of the return above.
          It has been removed for clarity. */
     } while (offset !== null);
