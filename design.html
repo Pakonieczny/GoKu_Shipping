@@ -552,7 +552,7 @@ document.addEventListener("DOMContentLoaded", function () {
   function renderOrderBoxes(arr) {
     const container = document.getElementById("newOrderContainer");
     container.innerHTML = "";
-    arr.forEach((r, idx) => {
+    arr.forEach(async (r, idx) => {
       /* build the DOM node */
       const box = document.createElement("div");
       box.className = "new-order-box";
