@@ -1232,9 +1232,13 @@ async function fillPreviewBoxes(items) {
       })
       .catch(()=>{ previewBox.innerHTML="Img Err"; });
 
-    document.getElementById("photoGridContainer").appendChild(wrap);
-    return wrap;
-  }
+        document.getElementById("photoGridContainer").appendChild(wrap);
+    return wrap;                     // end makePreviewNode
+  }                                  // ← closes makePreviewNode
+
+  });                                // ← closes items.forEach loop
+
+}                                    // ← closes fillPreviewBoxes
 
 function attachPreviewBoxListeners(box) {
   let isDragging = false;
@@ -1333,6 +1337,7 @@ function attachPreviewBoxListeners(box) {
     img.dataset.offsetY = offsetY;
     img.style.transform = `translate(${offsetX}px, ${offsetY}px) scale(${scale})`;
   });
+  
 }
 
 /********************************************************
