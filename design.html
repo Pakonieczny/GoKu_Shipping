@@ -763,6 +763,9 @@ async function buildNewOrderList(offset = 0) {
   /* ❷ slice requested page */
   const page = allOpenReceipts.slice(offset, offset + 100);
 
+  /* 🔸 ADD this line so the header module can grab it */
+  window._lastDisplayReceipts = page;           // expose current page
+
   /******** render stacked boxes (unchanged widths) ********/
   const container = document.getElementById("newOrderContainer");
   container.innerHTML = "";
