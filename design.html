@@ -452,7 +452,7 @@ document.addEventListener("DOMContentLoaded", function () {
           this.innerHTML = '<span class="loadingWrap">' +
          '  <span class="spinner"></span>' +
          '  <span class="loadingTxt">Loading…</span>' +
-         '</span>';'<span class="spinner"></span><span class="loadingTxt">Loading…</span>';
+         '</span>';
 
           orderListOffset = 0;                 // reset to first page
           const gotRows = await buildNewOrderList(orderListOffset);
@@ -1362,7 +1362,6 @@ async function fillPreviewBoxes(items) {
       img.style.transform = `translate(${offsetX}px, ${offsetY}px) scale(${scale})`;
     });
   }
-}
 
 /********************************************************
  * loadBatchEtsyOrders, fetchListingImages, getLocalImageData
