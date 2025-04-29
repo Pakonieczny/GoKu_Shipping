@@ -316,9 +316,11 @@
  * Base URL & Global Variables
  ********************************************************/
 const functionsBaseUrl = window.location.origin + "/.netlify/functions";
-const selectedOrders = new Set();      // receipt_id strings
-const orderCache     = {};             // receipt_id → transactions[]
-const gridElements   = new Map();      // transaction_id → wrapper DOM
+const selectedOrders = new Set();          // receipt_id strings
+const orderCache     = {};                 // receipt_id → transactions[]
+const selectedOrders   = new Set();        // receipt_id strings
+const orderCache       = {};               // receipt_id → transactions[]
+const gridElements     = new Map();        // key → DOM node  (one per txn)
 
 let croppedImagesArray = [];
 let userImagesArray = [];
