@@ -1159,6 +1159,9 @@ async function fillPreviewBoxes(items) {
       previewBox.innerHTML    = "Loading…";
       wrap.appendChild(previewBox);
 
+      /* wire up wheel/drag/zoom listeners */
+      attachPreviewBoxListeners(previewBox);
+
     const orderInput = document.createElement("input");
     orderInput.type = "text";
     orderInput.readOnly = true;
@@ -1234,8 +1237,7 @@ async function fillPreviewBoxes(items) {
 
 
     /* NEW: build one preview row + wire up listeners */
-    const wrapEl = makePreviewNode(item);                       // create DOM
-    attachPreviewBoxListeners(wrapEl.querySelector(".preview-box"));
+    const wrapEl = makePreviewNode(item);
     gridElements.set(index, wrapEl);                            // bookkeeping
 
   });                                // ← closes items.forEach loop
