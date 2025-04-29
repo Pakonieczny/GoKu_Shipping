@@ -47,14 +47,16 @@
     }
 
     /* ── Spinner tweak: 33 % larger + brand-blue color ── */
+    @keyframes btnSpin{100%{transform:rotate(360deg)}}
+
     .spinner{
-      width:18px;             
-      height:18px;            
-      border:3px solid transparent;        
-      border-top-color:#2196F3;            
-      border-radius:50%;
-      animation:btnSpin .7s linear infinite;
+      display:inline-block;
+      width:18px;height:18px;            /* 33 % larger */
       margin-right:6px;
+      border:3px solid transparent;      /* thicker rim */
+      border-top-color:#2196F3;          /* brand blue */
+      border-radius:50%;
+      animation:btnSpin .7s linear infinite !important;  /* keeps it spinning */
       vertical-align:middle;
     }
 
