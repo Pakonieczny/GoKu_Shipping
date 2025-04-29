@@ -760,6 +760,7 @@ renderOrderBoxes(currentReceipts);
 });
 observer.observe(document.getElementById("newOrderContainer"), { childList: true });
 
+
 })();   /* ─── END SORT HEADER MODULE ─── */
 
 /********************************************************
@@ -1362,6 +1363,7 @@ async function fillPreviewBoxes(items) {
       img.style.transform = `translate(${offsetX}px, ${offsetY}px) scale(${scale})`;
     });
   }
+}
 
 /********************************************************
  * loadBatchEtsyOrders, fetchListingImages, getLocalImageData
