@@ -553,63 +553,41 @@ document.addEventListener("DOMContentLoaded", function () {
     const container = document.getElementById("newOrderContainer");
     container.innerHTML = "";
     arr.forEach(async (r, idx) => {
-      /* build the DOM node */
-      /* build the DOM node */
-    const box = document.createElement("div");
-    box.className = "new-order-box";
-    box.id        = "newOrder" + idx;
+/* build the DOM node */
+const box = document.createElement("div");
+box.className = "new-order-box";
+box.id        = "newOrder" + idx;
 
-    /* click → toggle highlight + (de)load images */
-    box.addEventListener("click", async () => {
-      const receiptId = r.receipt_id;
+/* click → highlight + load listing images */
+box.addEventListener("click", async () => {
+  /* 1.  highlight */
+  document.querySelectorAll(".new-order-box")
+          .forEach(b => b.classList.remove("selected"));
+  box.classList.add("selected");
 
-      /* ── 1. toggle selected state ─────────────────────────────── */
-      if (selectedOrders.has(receiptId)) {
-        /* deselect */
-        selectedOrders.delete(receiptId);
-        box.classList.remove("selected");
-      } else {
-        /* select */
-        selectedOrders.add(receiptId);
-        box.classList.add("selected");
+  /* 2.  pull order details & render images */
+  const orderId = r.receipt_id;
+  const order   = await pullEtsyOrderDetails(orderId);   // you already have this helper
+  if (order && order.transactions) {
+    await fillPreviewBoxes(order.transactions);          // existing 100×100 grid builder
+  }
+});
 
-        /* cache miss → fetch once */
-        if (!orderCache[receiptId]) {
-          const ord = await pullEtsyOrderDetails(receiptId);
-          orderCache[receiptId] = ord?.transactions || [];
-        }
-      }
-
-      /* ── 2. build combined list from all active orders ───────── */
-      let combined = [];
-      selectedOrders.forEach(id => {
-        const tx = orderCache[id] || [];
-        combined.push(...tx);
-      });
-
-      /* ── 3. (de)render the grid ──────────────────────────────── */
-      if (combined.length === 0) {
-        document.getElementById("photoGridContainer").innerHTML = "";
-      } else {
-        await fillPreviewBoxes(combined);     // existing 100 × 100 builder
-      }
-    });
-
-    const orderNum = r.order_number || r.receipt_id || "—";
-    const shipStr  = r._shipStr || "N/A";
-    const g = r._metalCounts.Gold     || 0;
-    const s = r._metalCounts.Silver   || 0;
-    const rG= r._metalCounts["Rose G"]|| 0;
-    const k = r._metalCounts["14K"]   || 0;
-    box.innerHTML = `
-      <span class="col-order">${orderNum}</span>
-      <span class="col-ship">${shipStr}</span>
-      <span class="col-g">${g}</span>
-      <span class="col-s">${s}</span>
-      <span class="col-r">${rG}</span>
-      <span class="col-k">${k}</span>
-    `;
-    container.appendChild(box);
+const orderNum = r.order_number || r.receipt_id || "—";
+const shipStr  = r._shipStr || "N/A";
+const g = r._metalCounts.Gold     || 0;
+const s = r._metalCounts.Silver   || 0;
+const rG= r._metalCounts["Rose G"]|| 0;
+const k = r._metalCounts["14K"]   || 0;
+box.innerHTML = `
+  <span class="col-order">${orderNum}</span>
+  <span class="col-ship">${shipStr}</span>
+  <span class="col-g">${g}</span>
+  <span class="col-s">${s}</span>
+  <span class="col-r">${rG}</span>
+  <span class="col-k">${k}</span>
+`;
+container.appendChild(box);
     });
   }
 
@@ -1167,8 +1145,8 @@ async function fillPreviewBoxes(items) {
     orderInput.readOnly = true;
     orderInput.id = "orderCell" + index;
     orderInput.classList.add("detail-box");
-    orderInput.style.left = "0px";
-    orderInput.style.top  = "95px";
+    orderInput.style.left = previewLeft + "px";
+    orderInput.style.top  = previewTop  + 95 + "px";
     orderInput.value = item.receipt_id
       ? item.receipt_id
       : item.orderNumber || "No Order #";
@@ -1179,8 +1157,8 @@ async function fillPreviewBoxes(items) {
     qtyInput.readOnly = true;
     qtyInput.id = "quantityCell" + index;
     qtyInput.classList.add("detail-box");
-    qtyInput.style.left = "0px";
-    qtyInput.style.top  = "107px";
+    qtyInput.style.left = previewLeft + "px";
+    qtyInput.style.top  = previewTop  + 107 + "px";
     qtyInput.value = " Qty: " + (item.quantity != null ? item.quantity : 0);
 
     const metalInput = document.createElement("input");
@@ -1188,8 +1166,8 @@ async function fillPreviewBoxes(items) {
     metalInput.readOnly = true;
     metalInput.id = "metalCell" + index;
     metalInput.classList.add("detail-box");
-    metalInput.style.left = "0px";
-    metalInput.style.top  = "119px";
+    metalInput.style.left = previewLeft + "px";
+    metalInput.style.top  = previewTop  + 119 + "px";
     let metalSel = "";
     if (item.variations && Array.isArray(item.variations)) {
       const acceptedMetalNames = [
@@ -1211,15 +1189,16 @@ async function fillPreviewBoxes(items) {
     matchInput.readOnly = true;
     matchInput.id = "matchCell" + index;
     matchInput.classList.add("detail-box");
-    matchInput.style.left = "0px";
-    matchInput.style.top  = "131px";
+    matchInput.style.left = previewLeft + "px";
+    matchInput.style.top  = previewTop  + 131 + "px";
     matchInput.value = "";
 
     /* --- add boxes to container ---------------------------------- */
-    wrap.appendChild(orderInput);
-    wrap.appendChild(qtyInput);
-    wrap.appendChild(metalInput);
-    wrap.appendChild(matchInput);
+    container.appendChild(previewBox);
+    container.appendChild(orderInput);
+    container.appendChild(qtyInput);
+    container.appendChild(metalInput);
+    container.appendChild(matchInput);
 
     /* fetch image */
     fetchListingImages(item.listing_id)
