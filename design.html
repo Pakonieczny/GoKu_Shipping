@@ -116,6 +116,12 @@
       background: #fafafa;
     }
 
+    /* 3-px orangered flag for personalization / buyer-message */
+    .preview-attn{
+      outline:3px solid orangered;
+      outline-offset:-1px;
+    }
+
     .new-order-box {
       position: relative;
 
@@ -706,29 +712,35 @@ document.addEventListener("DOMContentLoaded", function () {
     addDetail("orderCell"   ,  95, item.receipt_id || item.orderNumber || "No Order #");
     addDetail("quantityCell", 107, " Qty: " + (item.quantity ?? 0));
 
-    /* ===== metal lookup + dataset tags ================================ */
+    /* ===== metal lookup, SKU, attention flag ========================== */
     let metalSel = "";
-    if (Array.isArray(item.variations)){
-      const ok = ["metal","metal choice","metal - engraving","metal colour",
-                  "color","metal choice / engraving option"];
-      const v  = item.variations.find(v =>
-                v.formatted_name && ok.includes(v.formatted_name.trim().toLowerCase()));
-      if (v?.formatted_value) metalSel = v.formatted_value;
+    if(Array.isArray(item.variations)){
+      const ok=["metal","metal choice","metal - engraving","metal colour",
+                "color","metal choice / engraving option"];
+      const v=item.variations.find(v=>v.formatted_name &&
+                ok.includes(v.formatted_name.trim().toLowerCase()));
+      if(v?.formatted_value) metalSel = v.formatted_value;
     }
 
-    /* normalise to four simple keys */
-    let metalKey = "";
-    if (/14k/i.test(metalSel))         metalKey = "14k";
-    else if (/rose/i.test(metalSel))   metalKey = "rose";
-    else if (/silver/i.test(metalSel)) metalKey = "silver";
-    else if (/gold/i.test(metalSel))   metalKey = "gold";
+    /* simple metal key */
+    let metalKey="";
+    if (/14k/i.test(metalSel))         metalKey="14k";
+    else if (/rose/i.test(metalSel))   metalKey="rose";
+    else if (/silver/i.test(metalSel)) metalKey="silver";
+    else if (/gold/i.test(metalSel))   metalKey="gold";
 
-    addDetail("metalCell",119," Metal: " + (metalSel || "No Metal"));
-    addDetail("skuCell" ,131," SKU: "  + (item.sku  || "N/A"));
+    /* does this listing need manual attention? */
+    const needsAttn = !!(item.message_from_buyer) ||
+                      !!(item.personalization     && item.personalization.length);
+
+    /* detail boxes */
+    addDetail("metalCell",119," Metal: "+(metalSel||"No Metal"));
+    addDetail("skuCell" ,131," SKU: "+(item.sku||"N/A"));
     addDetail("matchCell",143,"");
 
-    wrap.dataset.metal = metalKey;                     // ← string key
-    wrap.dataset.qty   = item.quantity ?? 1;           // ← numeric qty
+    wrap.dataset.metal = metalKey;
+    wrap.dataset.qty   = item.quantity ?? 1;
+    if (needsAttn) wrap.classList.add("preview-attn");   // ← ORANGERED!
 
     /* attach wrapper & load thumbnail……………………………………… */
     document.getElementById("photoGridContainer").appendChild(wrap);
@@ -1508,13 +1520,13 @@ async function loadBatchEtsyOrders(orderNumbers) {
       const data = await resp.json();
       console.log("Etsy Order Data:", data);
 
-      // -- NEW CODE: attach the typed order # to each transaction --
       if (data.transactions && Array.isArray(data.transactions)) {
+        const buyerMsg = data.receipt?.message_from_buyer || "";
         data.transactions.forEach((t) => {
-          t.typedOrderNumber = ord;
+          t.typedOrderNumber   = ord;          // already there
+          t.message_from_buyer = buyerMsg;     // NEW
+          /* t.personalization comes from API automatically if it exists */
         });
-      } else {
-        console.warn("No transactions for order " + ord);
       }
 
       // ------------------------------------------------
@@ -1602,6 +1614,15 @@ function pullEtsyOrderDetails(orderNumber) {
   .then(function(r) { return r.json(); })
   .then(function(data) {
     console.log("Etsy Order Data:", data);
+    return data;
+    .then(function(data) {
+    console.log("Etsy Order Data:", data);
+
+    const buyerMsg = data.receipt?.message_from_buyer || "";
+    (data.transactions||[]).forEach(t=>{
+      t.message_from_buyer = buyerMsg;            // NEW
+    });
+
     return data;
   })
   .catch(function(err) {
