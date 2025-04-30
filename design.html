@@ -117,8 +117,8 @@
     }
 
     /* 3-px orangered flag for personalization / buyer-message */
-    .preview-attn{
-      outline:3px solid orangered;
+     .preview-attn{
+      outline:3px solid orangered !important;
       outline-offset:-1px;
     }
 
@@ -673,6 +673,9 @@ document.addEventListener("DOMContentLoaded", function () {
 
   function addPreviewBox(item){
     const wrap = makePreviewNode(item);          // build + auto-append
+    if (wrapEl.classList.contains("preview-attn")){
+    console.log("ATTN:", item.listing_id, item.personalization, item.message_from_buyer);
+  }
     gridElements.set(gridElements.size, wrap);   // index bookkeeping
 
     item._inGrid  = true;                        // duplicate guard
@@ -730,8 +733,11 @@ document.addEventListener("DOMContentLoaded", function () {
     else if (/gold/i.test(metalSel))   metalKey="gold";
 
     /* does this listing need manual attention? */
-    const needsAttn = !!(item.message_from_buyer) ||
-                      !!(item.personalization     && item.personalization.length);
+    const needsAttn =
+      (Array.isArray(item.personalization) && item.personalization.length) ||
+      (item.message_from_buyer && item.message_from_buyer.trim().length);
+
+    if (needsAttn) wrap.classList.add("preview-attn");
 
     /* detail boxes */
     addDetail("metalCell",119," Metal: "+(metalSel||"No Metal"));
@@ -1521,11 +1527,15 @@ async function loadBatchEtsyOrders(orderNumbers) {
       console.log("Etsy Order Data:", data);
 
       if (data.transactions && Array.isArray(data.transactions)) {
-        const buyerMsg = data.receipt?.message_from_buyer || "";
-        data.transactions.forEach((t) => {
-          t.typedOrderNumber   = ord;          // already there
-          t.message_from_buyer = buyerMsg;     // NEW
-          /* t.personalization comes from API automatically if it exists */
+        const buyerMsg      = data.receipt?.message_from_buyer || "";
+        const personalizationMap = (data.receipt?.personalizations || []).reduce((acc,p)=>{
+          acc[p.listing_id] = p.personalization; return acc;
+        },{});
+
+        data.transactions.forEach(t => {
+          t.typedOrderNumber   = ord;
+          t.message_from_buyer = buyerMsg;                     // 🆕
+          t.personalization    = personalizationMap[t.listing_id] || [];
         });
       }
 
@@ -1616,14 +1626,17 @@ function pullEtsyOrderDetails(orderNumber){
   .then(r => r.json())
   .then(data => {
     console.log("Etsy Order Data:", data);
-
-    /* copy buyer-message onto every transaction for easy access */
     const buyerMsg = data.receipt?.message_from_buyer || "";
+    const personalizationMap = (data.receipt?.personalizations || []).reduce((acc,p)=>{
+      acc[p.listing_id] = p.personalization; return acc;
+    },{});
+
     (data.transactions || []).forEach(t => {
-      t.message_from_buyer = buyerMsg;      // ← used for orangered outline
+      t.message_from_buyer = buyerMsg;                     // 🆕
+      t.personalization    = personalizationMap[t.listing_id] || [];
     });
 
-    return data;                            // pass clean object upward
+    return data;
   })
   .catch(err => {
     console.error("Error fetching Etsy order details:", err);
