@@ -149,6 +149,12 @@
       outline-offset:-1px;         /* keeps outline snug inside row */
     }
 
+    /* highlight around matching preview boxes */
+    .preview-highlight{
+      outline:3px solid #2196F3;      /* same blue as row hover */
+      outline-offset:-1px;
+    }
+
     /* Container for dynamically generated preview boxes and detail boxes */
     #photoGridContainer {
       position: relative;
@@ -558,8 +564,10 @@ document.addEventListener("DOMContentLoaded", function () {
     const row = Math.floor(idx / 9);
     const col = idx % 9;
 
-    /* wrapper positioned inside #photoGridContainer */
+    /* wrapper keeps receipt ID for easy lookup */
     const wrap = document.createElement("div");
+    wrap.className = "wrap-preview";                 // <— NEW class
+    wrap.dataset.receipt = item.receipt_id;          // <— NEW data-tag
     wrap.style.cssText = `position:absolute;left:${col*125}px;top:${row*165}px;`;
 
     /* preview image………………………………………………………………………………… */
@@ -704,6 +712,19 @@ document.addEventListener("DOMContentLoaded", function () {
           });
         }
       });   /* ← closes box.addEventListener("click", … ) */
+
+      /* ── HOVER → outline matching preview boxes ───────────────────── */
+      box.addEventListener("mouseenter", () => {
+        if (!box.classList.contains("selected")) return;           // orange rows only
+        const rec = r.receipt_id;
+        document.querySelectorAll(`#photoGridContainer .wrap-preview[data-receipt="${rec}"]`)
+                .forEach(w => w.classList.add("preview-highlight"));
+      });
+      box.addEventListener("mouseleave", () => {
+        const rec = r.receipt_id;
+        document.querySelectorAll(`#photoGridContainer .wrap-preview[data-receipt="${rec}"]`)
+                .forEach(w => w.classList.remove("preview-highlight"));
+      });
 
       /* order-row content ----------------------------------------------- */
       const orderNum = r.order_number || r.receipt_id || "—";
