@@ -543,6 +543,49 @@ document.addEventListener("DOMContentLoaded", function () {
     }
   });
 
+  /* =====================================================================
+   *  LOCAL-STORAGE PERSISTENCE  —  selected orders + their transactions
+   * ===================================================================== */
+  const STORAGE_KEY = "savedSelection";
+
+  /* write current orange receipts + their cached txs */
+  function persistSelection(){
+    const data = {
+      selected: [ ...selectedOrders ],
+      cache   : {}
+    };
+    data.selected.forEach(id => { data.cache[id] = orderCache[id] || []; });
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+  }
+
+  /* read from localStorage → repopulate sets and previews */
+  function restoreSelections(){
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if(!raw) return;
+    let data;
+    try{ data = JSON.parse(raw); }catch(e){ return; }
+
+    /* 1️⃣  revive sets / cache ----------------------------------- */
+    selectedOrders.clear();
+    (data.selected||[]).forEach(id => selectedOrders.add(id));
+    Object.entries(data.cache||{}).forEach(([id,txs]) => { orderCache[id] = txs; });
+
+    /* 2️⃣  rebuild grid ------------------------------------------ */
+    gridElements.clear();
+    document.getElementById("photoGridContainer").innerHTML = "";
+    const combined = [];
+    selectedOrders.forEach(id => combined.push(...(orderCache[id]||[])));
+    combined.forEach(tx => addPreviewBox(tx));
+
+    /* 3️⃣  mark rows orange after they exist --------------------- */
+    setTimeout(() => {
+      selectedOrders.forEach(id => {
+        const row = document.querySelector(`.new-order-box[data-receipt="${id}"]`);
+        if(row) row.classList.add("selected");
+      });
+    }, 0);
+  }
+
   /* ===================================================================
    * GLOBAL PREVIEW HELPERS  – accessible from any click-handler
    * =================================================================== */
@@ -675,20 +718,19 @@ document.addEventListener("DOMContentLoaded", function () {
           /* ─── DESELECT ─── */
           selectedOrders.delete(receiptId);
           box.classList.remove("selected");
-
-          /* ✂️  remove its previews & close the gap */
           removePreviewBoxesForOrder(receiptId);
-          realignGrid();                     // left-shift remaining boxes
+          realignGrid();
+          persistSelection();                       // 🔸 NEW
         } else {
           /* ─── SELECT ─── */
           selectedOrders.add(receiptId);
           box.classList.add("selected");
-
-          /* cache miss → fetch once */
           if (!orderCache[receiptId]) {
             const ord = await pullEtsyOrderDetails(receiptId);
             orderCache[receiptId] = ord?.transactions || [];
           }
+          orderCache[receiptId].forEach(tx => { if (!tx._inGrid) addPreviewBox(tx); });
+          persistSelection();                       // 🔸 NEW
         }
 
         /* ── 2. build combined list from all active orders ────── */
@@ -1066,6 +1108,9 @@ async function startScannedSortingListener() {
     console.error("Error starting scannedSortingListener:", err);
   }
 }
+
+/* === Restore saved orange selections === */
+  restoreSelections();            // ← add this line
 
 });        /* ←––––––––– CLOSED DOMContentLoaded LISTENER */
 
