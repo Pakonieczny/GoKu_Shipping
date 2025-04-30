@@ -1056,10 +1056,17 @@ async function buildNewOrderList(offset = 0) {
   container.innerHTML = "";
   page.forEach((r, idx) => {
 
-  const box = document.createElement("div");
-  box.className = "new-order-box";
-  box.id        = "newOrder" + (offset + idx);
-  box.dataset.receipt = r.receipt_id;      // ← NEW data-tag
+    const box = document.createElement("div");
+    box.className = "new-order-box";
+    box.id        = "newOrder" + (offset + idx);
+
+    /* 🔸 keep receipt-id on every row for recolouring */
+    box.dataset.receipt = r.receipt_id;
+
+    /* ✨ recolour the row immediately if it was saved */
+    if (selectedOrders.has(r.receipt_id)) {
+      box.classList.add("selected");
+    }
 
     const orderNum = r.order_number || r.receipt_id || "—";
     const shipStr  = r._shipStr || "N/A";
@@ -1077,9 +1084,9 @@ async function buildNewOrderList(offset = 0) {
       <span class="col-k">${k}</span>
     `;
     container.appendChild(box);
-  });
+  });                                // ← closes page.forEach
 
-  highlightSavedRows();        // ← colour saved rows on every page load
+  highlightSavedRows();              // ← NEW: colour rows on every page load
 
   /* return page size (0-100) so buttons enable/disable correctly */
   return page.length;
