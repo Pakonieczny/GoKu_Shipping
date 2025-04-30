@@ -140,7 +140,7 @@
 
     /* put right after your .new-order-box rule */
     .new-order-box.selected{
-      background:#FFE2B5;   /* soft orange */
+      background:#FFE2B5 !important;   /* force-override any other bg */
     }
 
     /* ─── Hover outline for each order row ─── */
@@ -794,9 +794,12 @@ document.addEventListener("DOMContentLoaded", function () {
         <span class="col-r">${rG}</span>
         <span class="col-k">${k}</span>
       `;
-      container.appendChild(box);
-    });
-  }
+      container.appendChild(box);      // last line inside arr.forEach
+    });                                // closes arr.forEach
+
+    highlightSavedRows();              // ← NEW: paint saved rows
+
+  }           
 
   /** 1.  HEADER BAR  +  EVENT LISTENERS ------------------------------- */
   const bar = document.createElement("div");
