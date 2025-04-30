@@ -612,28 +612,27 @@ document.addEventListener("DOMContentLoaded", function () {
     selectedOrders.forEach(id => {
       const row = document.querySelector(`.new-order-box[data-receipt="${id}"]`);
       if (row) row.classList.add("selected");
-
-    /* =========================================================
-     *  LIVE COUNTER updater
-     * ========================================================= */
-    function updateCounters(){
-      let g=0, s=0, r=0, k=0;
-      gridElements.forEach(wrap=>{
-        const qty = Number(wrap.dataset.qty) || 1;
-        switch (wrap.dataset.metal){
-          case "gold":   g += qty; break;
-          case "silver": s += qty; break;
-          case "rose":   r += qty; break;
-          case "14k":    k += qty; break;
-        }
-      });
-      document.getElementById("goldCounter").innerText   = "Gold: "       + g;
-      document.getElementById("silverCounter").innerText = "Silver: "     + s;
-      document.getElementById("roseCounter").innerText   = "Rose Gold: "  + r;
-      document.getElementById("solidCounter").innerText  = "14K Solid: "  + k;
-    }
-
     });
+  }
+
+  /* =========================================================
+   *  LIVE COUNTER updater   (GLOBAL)
+   * ========================================================= */
+  function updateCounters(){
+    let g=0, s=0, r=0, k=0;
+    gridElements.forEach(wrap=>{
+      const qty = Number(wrap.dataset.qty) || 1;
+      switch (wrap.dataset.metal){
+        case "gold":   g += qty; break;
+        case "silver": s += qty; break;
+        case "rose":   r += qty; break;
+        case "14k":    k += qty; break;
+      }
+    });
+    document.getElementById("goldCounter").innerText   = "Gold: "      + g;
+    document.getElementById("silverCounter").innerText = "Silver: "    + s;
+    document.getElementById("roseCounter").innerText   = "Rose Gold: " + r;
+    document.getElementById("solidCounter").innerText  = "14K Solid: " + k;
   }
 
   /* ===================================================================
