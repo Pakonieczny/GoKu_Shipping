@@ -586,6 +586,14 @@ document.addEventListener("DOMContentLoaded", function () {
     }, 0);
   }
 
+  /* highlight every row whose receipt_id is in selectedOrders */
+  function highlightSavedRows(){
+    selectedOrders.forEach(id => {
+      const row = document.querySelector(`.new-order-box[data-receipt="${id}"]`);
+      if (row) row.classList.add("selected");
+    });
+  }
+
   /* ===================================================================
    * GLOBAL PREVIEW HELPERS  – accessible from any click-handler
    * =================================================================== */
@@ -708,6 +716,7 @@ document.addEventListener("DOMContentLoaded", function () {
       const box = document.createElement("div");
       box.className = "new-order-box";
       box.id        = "newOrder" + idx;
+      box.dataset.receipt = r.receipt_id;      // ← NEW data-tag
 
       /* click → toggle highlight + (de)load images ---------------------- */
       box.addEventListener("click", async () => {
@@ -1046,9 +1055,11 @@ async function buildNewOrderList(offset = 0) {
   const container = document.getElementById("newOrderContainer");
   container.innerHTML = "";
   page.forEach((r, idx) => {
-    const box = document.createElement("div");
-    box.className = "new-order-box";
-    box.id        = "newOrder" + (offset + idx);
+
+  const box = document.createElement("div");
+  box.className = "new-order-box";
+  box.id        = "newOrder" + (offset + idx);
+  box.dataset.receipt = r.receipt_id;      // ← NEW data-tag
 
     const orderNum = r.order_number || r.receipt_id || "—";
     const shipStr  = r._shipStr || "N/A";
@@ -1067,6 +1078,8 @@ async function buildNewOrderList(offset = 0) {
     `;
     container.appendChild(box);
   });
+
+  highlightSavedRows();        // ← colour saved rows on every page load
 
   /* return page size (0-100) so buttons enable/disable correctly */
   return page.length;
