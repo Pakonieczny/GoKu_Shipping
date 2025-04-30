@@ -671,16 +671,21 @@ document.addEventListener("DOMContentLoaded", function () {
    * GLOBAL PREVIEW HELPERS  – accessible from any click-handler
    * =================================================================== */
 
+  /* append ONE preview without rebuilding the entire grid */
   function addPreviewBox(item){
     const wrap = makePreviewNode(item);          // build + auto-append
-    if (wrapEl.classList.contains("preview-attn")){
-    console.log("ATTN:", item.listing_id, item.personalization, item.message_from_buyer);
-  }
     gridElements.set(gridElements.size, wrap);   // index bookkeeping
 
-    item._inGrid  = true;                        // duplicate guard
-    item._wrapEl = wrap;
-    updateCounters();                  // 🔸 NEW
+    item._inGrid  = true;
+    item._wrapEl  = wrap;
+
+    // optional debug — keep or remove as you like
+    // if (wrap.classList.contains("preview-attn")){
+    //   console.log("ATTN:", item.listing_id,
+    //               item.personalization, item.message_from_buyer);
+    // }
+
+    updateCounters();                            // refresh top counters
     return wrap;
   }
 
