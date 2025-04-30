@@ -54,13 +54,12 @@
     }
 
     .metal-counter{
-    position:absolute;
-    font-weight:bold;
-    font-size:1.0em;
-    background:#fff9c4;
-    padding:4px 8px;
-    border:1px solid #999;
-  }
+      position:absolute;
+      font-size:0.8em;             /* ← 0 .8 em */
+      background:#fff9c4;
+      padding:4px 8px;
+      border:1px solid #999;
+    }
 
     /* spinner keeps its blue look & spin */
     @keyframes btnSpin{100%{transform:rotate(360deg)}}
@@ -618,19 +617,20 @@ document.addEventListener("DOMContentLoaded", function () {
      *  LIVE COUNTER updater
      * ========================================================= */
     function updateCounters(){
-      let g=0,s=0,r=0,k=0;
-      gridElements.forEach(w=>{
-        const qty = Number(w.dataset.qty)||1;
-        const m   = (w.dataset.metal||"").toLowerCase();
-        if(/14k/.test(m))         k+=qty;
-        else if(/rose/.test(m))   r+=qty;
-        else if(/silver/.test(m)) s+=qty;
-        else if(/gold/.test(m))   g+=qty;
+      let g=0, s=0, r=0, k=0;
+      gridElements.forEach(wrap=>{
+        const qty = Number(wrap.dataset.qty) || 1;
+        switch (wrap.dataset.metal){
+          case "gold":   g += qty; break;
+          case "silver": s += qty; break;
+          case "rose":   r += qty; break;
+          case "14k":    k += qty; break;
+        }
       });
-      document.getElementById("goldCounter").innerText   = "Gold: "+g;
-      document.getElementById("silverCounter").innerText = "Silver: "+s;
-      document.getElementById("roseCounter").innerText   = "Rose Gold: "+r;
-      document.getElementById("solidCounter").innerText  = "14K Solid: "+k;
+      document.getElementById("goldCounter").innerText   = "Gold: "       + g;
+      document.getElementById("silverCounter").innerText = "Silver: "     + s;
+      document.getElementById("roseCounter").innerText   = "Rose Gold: "  + r;
+      document.getElementById("solidCounter").innerText  = "14K Solid: "  + k;
     }
 
     });
@@ -681,26 +681,29 @@ document.addEventListener("DOMContentLoaded", function () {
     addDetail("orderCell"   ,  95, item.receipt_id || item.orderNumber || "No Order #");
     addDetail("quantityCell", 107, " Qty: " + (item.quantity ?? 0));
 
-    /* metal & qty tags saved for counters */
-    let metal="";
-    if(Array.isArray(item.variations)){
-      const ok=["metal","metal choice","metal - engraving","metal colour",
-                "color","metal choice / engraving option"];
-      const v=item.variations.find(v=>v.formatted_name &&
-                ok.includes(v.formatted_name.trim().toLowerCase()));
-      if(v?.formatted_value) metal=v.formatted_value;
+    /* ===== metal lookup + dataset tags ================================ */
+    let metalSel = "";
+    if (Array.isArray(item.variations)){
+      const ok = ["metal","metal choice","metal - engraving","metal colour",
+                  "color","metal choice / engraving option"];
+      const v  = item.variations.find(v =>
+                v.formatted_name && ok.includes(v.formatted_name.trim().toLowerCase()));
+      if (v?.formatted_value) metalSel = v.formatted_value;
     }
-    addDetail("metalCell",119," Metal: "+(metal||"No Metal"));
 
-    /* NEW: listing SKU in 4th box (y = 131) */
-    addDetail("skuCell" ,131," SKU: "+(item.sku || "N/A"));
+    /* normalise to four simple keys */
+    let metalKey = "";
+    if (/14k/i.test(metalSel))         metalKey = "14k";
+    else if (/rose/i.test(metalSel))   metalKey = "rose";
+    else if (/silver/i.test(metalSel)) metalKey = "silver";
+    else if (/gold/i.test(metalSel))   metalKey = "gold";
 
-    /* matchCell moved to y = 143 to keep spacing */
+    addDetail("metalCell",119," Metal: " + (metalSel || "No Metal"));
+    addDetail("skuCell" ,131," SKU: "  + (item.sku  || "N/A"));
     addDetail("matchCell",143,"");
 
-    /* save tags for live counters */
-    wrap.dataset.metal = metal.toLowerCase();     // "gold" | "silver" | …
-    wrap.dataset.qty   = item.quantity ?? 1;
+    wrap.dataset.metal = metalKey;                     // ← string key
+    wrap.dataset.qty   = item.quantity ?? 1;           // ← numeric qty
 
     /* attach wrapper & load thumbnail……………………………………… */
     document.getElementById("photoGridContainer").appendChild(wrap);
@@ -1355,7 +1358,7 @@ function fillPreviewBoxes(items){
   });
 
     updateCounters();                  // ← NEW: recalc counters
-    
+
 }  /* ---------------------------- END fillPreviewBoxes -------- */
 
 function attachPreviewBoxListeners(box) {
