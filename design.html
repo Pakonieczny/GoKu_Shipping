@@ -53,6 +53,15 @@
       gap:6px;                 /* keeps the space you had */
     }
 
+    .metal-counter{
+    position:absolute;
+    font-weight:bold;
+    font-size:1.0em;
+    background:#fff9c4;
+    padding:4px 8px;
+    border:1px solid #999;
+  }
+
     /* spinner keeps its blue look & spin */
     @keyframes btnSpin{100%{transform:rotate(360deg)}}
     .spinner{
@@ -276,6 +285,12 @@
 <!-- Page-jump buttons will appear here -->
 <div id="pageButtonsContainer"></div>
 
+<!-- Live metal counters (draggable via Config modal) -->
+<div id="goldCounter"   class="metal-counter">Gold: 0</div>
+<div id="silverCounter" class="metal-counter">Silver: 0</div>
+<div id="roseCounter"   class="metal-counter">Rose Gold: 0</div>
+<div id="solidCounter"  class="metal-counter">14K Solid: 0</div>
+
   <!-- Container for dynamically generated preview boxes and detail boxes -->
   <div id="photoGridContainer">
     <!-- Preview boxes and detail boxes will be created dynamically -->
@@ -412,7 +427,11 @@ const configIDs = [
   "configTable",
   "saveConfigBtn",
   "newOrderContainer",
-  "pageButtonsContainer"
+  "pageButtonsContainer",
+  "goldCounter",
+  "silverCounter",
+  "roseCounter",
+  "solidCounter"
 ];
 
 /********************************************************
@@ -585,6 +604,8 @@ document.addEventListener("DOMContentLoaded", function () {
         if(row) row.classList.add("selected");
       });
     }, 0);
+
+    updateCounters();                  // ← NEW: refresh metal totals
   }
 
   /* highlight every row whose receipt_id is in selectedOrders */
@@ -592,6 +613,26 @@ document.addEventListener("DOMContentLoaded", function () {
     selectedOrders.forEach(id => {
       const row = document.querySelector(`.new-order-box[data-receipt="${id}"]`);
       if (row) row.classList.add("selected");
+
+    /* =========================================================
+     *  LIVE COUNTER updater
+     * ========================================================= */
+    function updateCounters(){
+      let g=0,s=0,r=0,k=0;
+      gridElements.forEach(w=>{
+        const qty = Number(w.dataset.qty)||1;
+        const m   = (w.dataset.metal||"").toLowerCase();
+        if(/14k/.test(m))         k+=qty;
+        else if(/rose/.test(m))   r+=qty;
+        else if(/silver/.test(m)) s+=qty;
+        else if(/gold/.test(m))   g+=qty;
+      });
+      document.getElementById("goldCounter").innerText   = "Gold: "+g;
+      document.getElementById("silverCounter").innerText = "Silver: "+s;
+      document.getElementById("roseCounter").innerText   = "Rose Gold: "+r;
+      document.getElementById("solidCounter").innerText  = "14K Solid: "+k;
+    }
+
     });
   }
 
@@ -604,9 +645,8 @@ document.addEventListener("DOMContentLoaded", function () {
     gridElements.set(gridElements.size, wrap);   // index bookkeeping
 
     item._inGrid  = true;                        // duplicate guard
-    item._wrapEl  = wrap;        /* ← NEW: store wrapper on the txn */
-                                 /* so removePreviewBoxesForOrder()  */
-                                 /* can yank it out immediately     */
+    item._wrapEl = wrap;
+    updateCounters();                  // 🔸 NEW
     return wrap;
   }
 
@@ -629,28 +669,38 @@ document.addEventListener("DOMContentLoaded", function () {
     wrap.appendChild(box);
     attachPreviewBoxListeners(box);
 
-    /* four detail fields………………………………………………………………………… */
-    const addDetail = (id, y, val)=>{
+    /* 4 detail inputs ------------------------------------------------ */
+    const addDetail = (id,y,val)=>{
       const inp = document.createElement("input");
-      inp.type = "text";  inp.readOnly = true;
-      inp.id = id + idx;  inp.className = "detail-box";
-      inp.style.cssText = `left:0px;top:${y}px;`;
-      inp.value = val;
+      inp.type="text"; inp.readOnly=true;
+      inp.id=id+idx;   inp.className="detail-box";
+      inp.style.cssText=`left:0px;top:${y}px;`;
+      inp.value=val;
       wrap.appendChild(inp);
     };
     addDetail("orderCell"   ,  95, item.receipt_id || item.orderNumber || "No Order #");
-    addDetail("quantityCell", 107, " Qty: "  + (item.quantity ?? 0));
+    addDetail("quantityCell", 107, " Qty: " + (item.quantity ?? 0));
 
-    let metal = "";
-    if (Array.isArray(item.variations)){
-      const ok = ["metal","metal choice","metal - engraving","metal colour",
-                  "color","metal choice / engraving option"];
-      const v  = item.variations.find(v =>
-                 v.formatted_name && ok.includes(v.formatted_name.trim().toLowerCase()));
-      if (v?.formatted_value) metal = v.formatted_value;
+    /* metal & qty tags saved for counters */
+    let metal="";
+    if(Array.isArray(item.variations)){
+      const ok=["metal","metal choice","metal - engraving","metal colour",
+                "color","metal choice / engraving option"];
+      const v=item.variations.find(v=>v.formatted_name &&
+                ok.includes(v.formatted_name.trim().toLowerCase()));
+      if(v?.formatted_value) metal=v.formatted_value;
     }
-    addDetail("metalCell", 119, " Metal: " + (metal || "No Metal"));
-    addDetail("matchCell", 131, "");
+    addDetail("metalCell",119," Metal: "+(metal||"No Metal"));
+
+    /* NEW: listing SKU in 4th box (y = 131) */
+    addDetail("skuCell" ,131," SKU: "+(item.sku || "N/A"));
+
+    /* matchCell moved to y = 143 to keep spacing */
+    addDetail("matchCell",143,"");
+
+    /* save tags for live counters */
+    wrap.dataset.metal = metal.toLowerCase();     // "gold" | "silver" | …
+    wrap.dataset.qty   = item.quantity ?? 1;
 
     /* attach wrapper & load thumbnail……………………………………… */
     document.getElementById("photoGridContainer").appendChild(wrap);
@@ -731,6 +781,8 @@ document.addEventListener("DOMContentLoaded", function () {
           removePreviewBoxesForOrder(receiptId);
           realignGrid();
           persistSelection();                       // 🔸 NEW
+          updateCounters();                  // 🔸 NEW
+
         } else {
           /* ─── SELECT ─── */
           selectedOrders.add(receiptId);
@@ -1301,6 +1353,9 @@ function fillPreviewBoxes(items){
     /* build + append preview row */
     addPreviewBox(item);
   });
+
+    updateCounters();                  // ← NEW: recalc counters
+    
 }  /* ---------------------------- END fillPreviewBoxes -------- */
 
 function attachPreviewBoxListeners(box) {
