@@ -1605,27 +1605,27 @@ async function getLocalImageData(imageUrl) {
 // ---------------------------------------------------------
 // Pull Etsy order details and update grid details
 // ---------------------------------------------------------
-function pullEtsyOrderDetails(orderNumber) {
-  console.log("Pulling Etsy order details for order number:", orderNumber);
-  var token = localStorage.getItem("access_token");
-  return fetch(functionsBaseUrl + "/etsyOrderProxy?orderId=" + encodeURIComponent(orderNumber), {
-    headers: { "access-token": token }
-  })
-  .then(function(r) { return r.json(); })
-  .then(function(data) {
-    console.log("Etsy Order Data:", data);
-    return data;
-    .then(function(data) {
+function pullEtsyOrderDetails(orderNumber){
+  console.log("Pulling Etsy order details for:", orderNumber);
+  const token = localStorage.getItem("access_token") || "";
+
+  return fetch(
+    functionsBaseUrl + "/etsyOrderProxy?orderId=" + encodeURIComponent(orderNumber),
+    { headers:{ "access-token": token } }
+  )
+  .then(r => r.json())
+  .then(data => {
     console.log("Etsy Order Data:", data);
 
+    /* copy buyer-message onto every transaction for easy access */
     const buyerMsg = data.receipt?.message_from_buyer || "";
-    (data.transactions||[]).forEach(t=>{
-      t.message_from_buyer = buyerMsg;            // NEW
+    (data.transactions || []).forEach(t => {
+      t.message_from_buyer = buyerMsg;      // ← used for orangered outline
     });
 
-    return data;
+    return data;                            // pass clean object upward
   })
-  .catch(function(err) {
+  .catch(err => {
     console.error("Error fetching Etsy order details:", err);
     return null;
   });
