@@ -273,6 +273,7 @@
 <button id="connectEtsyBtn" class="btn waves-effect waves-light">Connect to Etsy</button>
 <button id="openConfigBtn"   class="btn waves-effect waves-light">Open Config</button>
 <button id="updateOrderListBtn" class="btn waves-effect waves-light">Update Order List</button>
+<button id="clearBtn" class="btn red lighten-1">Clear</button>
 <button id="nextPageBtn" class="btn waves-effect waves-light">Next Page</button>
 
 <!-- Etsy Order Number input -->
@@ -419,6 +420,7 @@ const configIDs = [
   "openConfigBtn",
   "updateOrderListBtn",
   "nextPageBtn",            // ← NEW
+  "clearBtn",
   "etsyOrderNumber",
   "photoGridContainer",
   "orderHeaderBar",
@@ -431,6 +433,7 @@ const configIDs = [
   "silverCounter",
   "roseCounter",
   "solidCounter"
+
 ];
 
 /********************************************************
@@ -520,6 +523,29 @@ document.addEventListener("DOMContentLoaded", function () {
           this.disabled = false;
           this.innerText = "Next Page";
         }
+      });
+
+      /* ───────────────────── Clear button ───────────────────── */
+      document.getElementById("clearBtn").addEventListener("click", () => {
+        /* 1. wipe localStorage record */
+        localStorage.removeItem(STORAGE_KEY);
+
+        /* 2. clear in-memory sets & cache */
+        selectedOrders.clear();
+        Object.keys(orderCache).forEach(k => delete orderCache[k]);
+
+        /* 3. remove orange rows + highlights */
+        document.querySelectorAll(".new-order-box.selected")
+                .forEach(row => row.classList.remove("selected"));
+
+        /* 4. purge the photo grid */
+        gridElements.clear();
+        document.getElementById("photoGridContainer").innerHTML = "";
+
+        /* 5. reset counters */
+        updateCounters();
+
+        M.toast({ html:"Selection cleared" });
       });
 
   // Load multiple orders on Enter (partial snippet)
@@ -1219,6 +1245,7 @@ const defaultPos = {
   nextPageBtn:              { left:482, top:0, width:120, height:36 },
   orderHeaderBar:           { left:0, top:23, width:290, height:23 },
   pageButtonsContainer:     { left:20, top:20, width:270, height:25 }
+  clearBtn:                 { left:820, top:0, width:120, height:35 },
 };
 
 /********************************************************
