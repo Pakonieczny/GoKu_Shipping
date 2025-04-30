@@ -546,6 +546,7 @@ document.addEventListener("DOMContentLoaded", function () {
   /* =====================================================================
    *  LOCAL-STORAGE PERSISTENCE  —  selected orders + their transactions
    * ===================================================================== */
+  const idStr = id => String(id);             // ← helper: always use string ids
   const STORAGE_KEY = "savedSelection";
 
   /* write current orange receipts + their cached txs */
@@ -720,7 +721,7 @@ document.addEventListener("DOMContentLoaded", function () {
 
       /* click → toggle highlight + (de)load images ---------------------- */
       box.addEventListener("click", async () => {
-        const receiptId = r.receipt_id;
+        const receiptId = idStr(r.receipt_id);      // ← always string
 
         /* ── 1. toggle selected state ─────────────────────────── */
         if (selectedOrders.has(receiptId)) {
@@ -1060,11 +1061,11 @@ async function buildNewOrderList(offset = 0) {
     box.className = "new-order-box";
     box.id        = "newOrder" + (offset + idx);
 
-    /* 🔸 keep receipt-id on every row for recolouring */
-    box.dataset.receipt = r.receipt_id;
+    const rid = idStr(r.receipt_id);            // ← use string everywhere
+    box.dataset.receipt = rid;
 
-    /* ✨ recolour the row immediately if it was saved */
-    if (selectedOrders.has(r.receipt_id)) {
+    /* colour immediately if it was saved */
+    if (selectedOrders.has(rid)) {
       box.classList.add("selected");
     }
 
