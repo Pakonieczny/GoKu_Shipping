@@ -739,10 +739,21 @@ document.addEventListener("DOMContentLoaded", function () {
 
     /* does this listing need manual attention? */
     const hasPersonalization =
+      // array version → [ {...}, ... ]
       (Array.isArray(item.personalization) && item.personalization.length) ||
-      (!Array.isArray(item.personalization) &&
-       item.personalization &&
-       Object.keys(item.personalization).length);
+
+      // object version → { text:"…" }
+      (item.personalization &&
+       typeof item.personalization === "object" &&
+       !Array.isArray(item.personalization) &&
+       Object.keys(item.personalization).length) ||
+
+      // string version → "Please engrave…"
+      (typeof item.personalization === "string" &&
+       item.personalization.trim().length) ||
+
+      // boolean flag Etsy sometimes sends
+      item.is_personalized === true;
 
     const needsAttn =
       hasPersonalization ||
