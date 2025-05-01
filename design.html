@@ -1691,7 +1691,13 @@ function pullEtsyOrderDetails(orderNumber){
       /* NEW → lift the “Personalization” variation into its own field */
       const engrave = (t.variations||[])
                         .find(v=>/personalization/i.test(v.formatted_name||""))?.formatted_value || "";
-      t.personalization = engrave ? [ engrave.trim() ] : [];
+
+      const clean = engrave.trim();
+      if (clean && !/not requested/i.test(clean)) {
+        t.personalization = [ clean ];
+      } else {
+        t.personalization = [];            // treat as “no personalization”
+      }
 
       console.log("PERSONALIZATION DEBUG:", t.transaction_id, t.personalization, typeof t.personalization);
       if (idx === 0) {                       // dump only the first transaction
