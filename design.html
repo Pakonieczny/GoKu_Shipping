@@ -798,7 +798,14 @@ document.addEventListener("DOMContentLoaded", function () {
     document.getElementById("photoGridContainer").appendChild(wrap);
     fetchListingImages(item.listing_id)
       .then(imgs => getLocalImageData(imgs[0].url_fullxfull))
-      .then(data => { box.innerHTML = `<img src="${data}" style="width:110%;height:110%;object-fit:cover;">`; })
+      .then(data => {
+        /* set preview */
+        box.innerHTML =
+          `<img src="${data}" style="width:110%;height:110%;object-fit:cover;">`;
+
+        /* NEW → cache the image so the modal can show it */
+        item.image = data;
+      })
       .catch(()=>{ box.innerHTML = "Img Err"; });
 
     return wrap;
@@ -1828,7 +1835,8 @@ function reflowGrid(){
 
       /* 1. title & image */
       document.getElementById("modalListingTitle").textContent =
-          "Listing #" + item.listing_id;
+      "Order #" + (item.receipt_id || item.orderNumber || "N/A");
+      
       document.getElementById("modalListingImg").src = item.image;
 
       /* 2. notes  */
