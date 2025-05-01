@@ -738,11 +738,15 @@ document.addEventListener("DOMContentLoaded", function () {
     else if (/gold/i.test(metalSel))   metalKey="gold";
 
     /* does this listing need manual attention? */
-    const needsAttn =
+    const hasPersonalization =
       (Array.isArray(item.personalization) && item.personalization.length) ||
-      (item.message_from_buyer && item.message_from_buyer.trim().length);
+      (!Array.isArray(item.personalization) &&
+       item.personalization &&
+       Object.keys(item.personalization).length);
 
-    if (needsAttn) wrap.classList.add("preview-attn");
+    const needsAttn =
+      hasPersonalization ||
+      (item.message_from_buyer && item.message_from_buyer.trim().length);
 
     /* detail boxes */
     addDetail("metalCell",119," Metal: "+(metalSel||"No Metal"));
@@ -1544,8 +1548,14 @@ async function loadBatchEtsyOrders(orderNumbers) {
           t.typedOrderNumber   = ord;
           t.message_from_buyer = buyerMsg;
 
-          /* make sure personalization is always an array */
-          if (!Array.isArray(t.personalization)) t.personalization = [];
+        /* normalize personalization ---------------------------------- */
+        if (t.personalization) {
+          if (!Array.isArray(t.personalization)) {
+            t.personalization = [ t.personalization ];
+          }
+        } else {
+          t.personalization = [];
+        }
 
           /* DEBUG: log if any personalization exists */
           if (t.personalization.length) {
@@ -1637,8 +1647,14 @@ function pullEtsyOrderDetails(orderNumber){
     (data.transactions || []).forEach(t => {
       t.message_from_buyer = buyerMsg;
 
-      /* ensure `t.personalization` is always an array */
-      if (!Array.isArray(t.personalization)) t.personalization = [];
+      /* normalize personalization ---------------------------------- */
+      if (t.personalization) {
+        if (!Array.isArray(t.personalization)) {
+          t.personalization = [ t.personalization ];
+        }
+      } else {
+        t.personalization = [];
+      }
 
       /* DEBUG: log any transaction that has personalization text */
       if (t.personalization.length) {
