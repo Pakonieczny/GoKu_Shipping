@@ -37,7 +37,7 @@ exports.handler = async function(event, context) {
     }
     
     // Construct the Etsy receipts URL (which represents order details).
-    const etsyUrl = `https://api.etsy.com/v3/application/shops/${shopId}/receipts/${orderId}`;
+    const url = `/v3/application/shops/${shopId}/receipts/${receiptId}/transactions?includes=personalization`;
     
     // Make the GET request to Etsy with the required headers.
     const response = await fetch(etsyUrl, {
