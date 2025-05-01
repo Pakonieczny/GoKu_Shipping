@@ -1535,22 +1535,21 @@ async function loadBatchEtsyOrders(orderNumbers) {
       console.log("Etsy Order Data:", data);
 
       /* -----------------------------------------------------------
-       * attach buyer-message + personalization to every transaction
+       * attach buyer-message & keep Etsy's transaction.personalization
        * ----------------------------------------------------------- */
       if (Array.isArray(data.transactions)) {
         const buyerMsg = data.receipt?.message_from_buyer || "";
-        const personalizationMap =
-          (data.receipt?.personalizations || []).reduce((acc, p) => {
-            acc[p.listing_id] = p.personalization;
-            return acc;
-          }, {});
 
         data.transactions.forEach(t => {
           t.typedOrderNumber   = ord;
           t.message_from_buyer = buyerMsg;
 
-          if (!t.personalization || t.personalization.length === 0) {
-            t.personalization = personalizationMap[t.listing_id] || [];
+          /* make sure personalization is always an array */
+          if (!Array.isArray(t.personalization)) t.personalization = [];
+
+          /* DEBUG: log if any personalization exists */
+          if (t.personalization.length) {
+            console.log("⟹ Personalization TX", t.transaction_id, t.personalization);
           }
         });
 
@@ -1626,28 +1625,28 @@ function pullEtsyOrderDetails(orderNumber){
 
   return fetch(
     functionsBaseUrl + "/etsyOrderProxy?orderId=" + encodeURIComponent(orderNumber),
-    { headers:{ "access-token": token } }
+    { headers: { "access-token": token } }
   )
   .then(r => r.json())
   .then(data => {
     console.log("Etsy Order Data:", data);
 
-    /* ── attach buyer-message & personalization to every txn ── */
+    /* ── attach buyer-message & guarantee personalization array ── */
     const buyerMsg = data.receipt?.message_from_buyer || "";
-    const personalizationMap =
-      (data.receipt?.personalizations || []).reduce((acc, p) => {
-        acc[p.listing_id] = p.personalization;
-        return acc;
-      }, {});
-
-      console.log("⟹ Personalizations for on-demand order", orderNumber, personalizationMap); // ← NEW
 
     (data.transactions || []).forEach(t => {
-      t.message_from_buyer = buyerMsg;                       // NEW
-      t.personalization    = personalizationMap[t.listing_id] || [];
+      t.message_from_buyer = buyerMsg;
+
+      /* ensure `t.personalization` is always an array */
+      if (!Array.isArray(t.personalization)) t.personalization = [];
+
+      /* DEBUG: log any transaction that has personalization text */
+      if (t.personalization.length) {
+        console.log("⟹ Personalization TX", t.transaction_id, t.personalization);
+      }
     });
 
-    return data;                                             // pass cleaned object
+    return data;                       // hand the cleaned object upward
   })
   .catch(err => {
     console.error("Error fetching Etsy order details:", err);
