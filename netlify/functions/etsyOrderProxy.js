@@ -1,4 +1,4 @@
-// etsyOrderProxy.js  ⬇️  DROP-IN REPLACEMENT
+// etsyOrderProxy.js  – DROP-IN REPLACEMENT
 const fetch = require("node-fetch");
 
 exports.handler = async function (event) {
@@ -17,12 +17,11 @@ exports.handler = async function (event) {
     if (!clientId)     return { statusCode: 500, body: JSON.stringify({ error: "Missing CLIENT_ID environment variable" }) };
 
     /* ------------------------------------------------------------------
-     * 2.  BUILD URL  — one call returns BOTH receipt + transactions
-     *     ?includes=Transactions,Transactions.personalization
+     * 2.  BUILD URL  — one call returns receipt + transactions
      * ------------------------------------------------------------------ */
-    const etsyUrl = `https://openapi.etsy.com/v3/application/shops/${shopId}` +
-                    `/receipts/${encodeURIComponent(orderId)}` +
-                    `?includes=Transactions,Transactions.personalization`;
+    const etsyUrl =
+      `https://openapi.etsy.com/v3/application/shops/${shopId}` +
+      `/receipts/${orderId}?includes=Transactions,Transactions.personalization`;
 
     /* ------------------------------------------------------------------
      * 3.  MAKE REQUEST
