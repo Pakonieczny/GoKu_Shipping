@@ -1162,6 +1162,8 @@ async function fetchOpenOrdersSequential() {
         (r.transactions || []).forEach(t => {
           t.message_from_buyer = buyerMsg;
 
+          t.personalization = (t.variations || []).find(v => /personalization/i.test(v.formatted_name || ""))?.formatted_value ? [ (t.variations.find(v => /personalization/i.test(v.formatted_name || ""))).formatted_value.trim() ] : [];
+
           // always make personalization an array
           if (t.personalization) {
             if (!Array.isArray(t.personalization)) {
