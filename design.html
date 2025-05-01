@@ -116,9 +116,12 @@
       background: #fafafa;
     }
 
+    /* active metal counter = blue 3 px outline */
+    .metal-counter.active{ outline:3px solid #2196f3; }
+
     /* 3-px orangered flag for personalization / buyer-message */
      .preview-attn{
-      outline:3px solid orangered !important;
+      outline:4px solid orangered !important;
       outline-offset:-1px;
     }
 
@@ -292,10 +295,10 @@
 <div id="pageButtonsContainer"></div>
 
 <!-- Live metal counters (draggable via Config modal) -->
-<div id="goldCounter"   class="metal-counter">Gold: 0</div>
-<div id="silverCounter" class="metal-counter">Silver: 0</div>
-<div id="roseCounter"   class="metal-counter">Rose Gold: 0</div>
-<div id="solidCounter"  class="metal-counter">14K Solid: 0</div>
+<div id="goldCounter"   class="metal-counter active" data-metal="gold">Gold: 0</div>
+<div id="silverCounter" class="metal-counter active" data-metal="silver">Silver: 0</div>
+<div id="roseCounter"   class="metal-counter active" data-metal="rose">Rose Gold: 0</div>
+<div id="solidCounter"  class="metal-counter active" data-metal="14k">14K Solid: 0</div>
 
   <!-- Container for dynamically generated preview boxes and detail boxes -->
   <div id="photoGridContainer">
@@ -1744,6 +1747,35 @@ function disableSendMatch() {}
 function disableMatchPrintFlow() {}
 function removeAllBlueHighlights() {}
 function attachMatchCellListeners() {}  
+
+/* ─── METAL FILTER INITIALISER ─── */
+(function () {
+  /* click-toggle each counter */
+  document.querySelectorAll(".metal-counter").forEach(box => {
+    box.addEventListener("click", () => {
+      box.classList.toggle("active");      // blue outline via CSS
+      applyMetalFilter();
+    });
+  });
+
+  /* run once on load to honour the initial “active” class */
+  applyMetalFilter();
+
+  function applyMetalFilter() {
+    /* 1. collect the metals that are ON */
+    const active = new Set(
+      Array.from(document.querySelectorAll(".metal-counter.active"))
+           .map(b => b.dataset.metal)
+    );
+
+    /* 2. show / hide preview wrappers */
+    document.querySelectorAll("#photoGridContainer .wrap-preview")
+            .forEach(wrap => {
+              wrap.style.display =
+                active.has(wrap.dataset.metal) ? "" : "none";
+            });
+  }
+})();
 
   </script>
 </body>
