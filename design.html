@@ -103,6 +103,30 @@
       vertical-align:middle;
     }
 
+    /* listing-detail modal layout */
+    .modal-flex-row{
+      display:flex;
+      align-items:flex-start;
+    }
+
+    /* fixed thumbnail size, border stays */
+    #modalListingImg{
+      width:200px;
+      height:200px;
+      object-fit:cover;
+      border:1px solid #ccc;
+    }
+
+    /* message box sits 20 px to the right, grows with content */
+    #modalListingNotes{
+      white-space:pre-wrap;
+      margin:0 0 0 20px;     /* ↑ left margin = 20 px */
+      background:#f5f5f5;
+      padding:8px;
+      border-radius:4px;
+      flex:1;
+    }
+
     /* --- Container that holds the stacked “newOrder” boxes --- */
     #newOrderContainer {
       position: absolute;
@@ -1836,7 +1860,7 @@ function reflowGrid(){
       /* 1. title & image */
       document.getElementById("modalListingTitle").textContent =
       "Order #" + (item.receipt_id || item.orderNumber || "N/A");
-      
+
       document.getElementById("modalListingImg").src = item.image;
 
       /* 2. notes  */
@@ -1859,11 +1883,10 @@ function reflowGrid(){
   <div id="listingModal" class="modal">
     <div class="modal-content">
       <h5 id="modalListingTitle"></h5>
-      <img id="modalListingImg"  style="max-width:100%;border:1px solid #ccc"/>
-      <pre id="modalListingNotes"
-           style="white-space:pre-wrap;margin-top:12px;
-                  background:#f5f5f5;padding:8px;border-radius:4px"></pre>
-    </div>
+      <div class="modal-flex-row">
+        <img id="modalListingImg"/>
+        <pre id="modalListingNotes"></pre>
+      </div>
     <div class="modal-footer">
       <a href="#!" class="modal-close btn-flat">Close</a>
     </div>
