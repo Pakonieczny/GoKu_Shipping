@@ -251,6 +251,17 @@
       box-shadow: none !important;
     }
 
+    /* four little fields under the notes (7 px gap) */
+    .modal-detail-row{
+      margin-top:7px;
+      display:flex;
+      gap:10px;
+    }
+    .modal-detail-row input{
+      width:160px;          /* tweak if you like */
+      font-size:0.85em;
+    }
+
     /* pointer-events enabled on read-only inputs */
     .detail-box:read-only {
       pointer-events: auto !important;
@@ -1874,6 +1885,23 @@ function reflowGrid(){
       document.getElementById("modalListingNotes").textContent =
           lines.length ? lines.join("\n\n") : "— No notes —";
 
+      /* ----- build the 4 read-only fields ----- */
+      const detRow = document.getElementById("modalListingDetails");
+      detRow.innerHTML = "";                            // reset
+
+      const mkInput = (lbl,val) => {
+        const inp = document.createElement("input");
+        inp.type = "text";
+        inp.readOnly = true;
+        inp.value = `${lbl}: ${val}`;
+        detRow.appendChild(inp);
+      };
+
+      mkInput("Order", item.receipt_id || item.orderNumber || "N/A");
+      mkInput("Qty"  , item.quantity  ?? "0");
+      mkInput("Metal", item.metal     || "N/A");
+      mkInput("SKU"  , item.sku       || "N/A");
+
       listingModal.open();
     }
 
@@ -1887,6 +1915,7 @@ function reflowGrid(){
         <img id="modalListingImg"/>
         <pre id="modalListingNotes"></pre>
       </div>
+      <div id="modalListingDetails" class="modal-detail-row"></div>
     <div class="modal-footer">
       <a href="#!" class="modal-close btn-flat">Close</a>
     </div>
