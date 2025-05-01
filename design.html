@@ -684,6 +684,12 @@ document.addEventListener("DOMContentLoaded", function () {
     const wrap = makePreviewNode(item);          // build + auto-append
     gridElements.set(gridElements.size, wrap);   // index bookkeeping
 
+    /* keep cachedOrderItems in the same order as gridElements */
+    if (!Array.isArray(window.cachedOrderItems)) window.cachedOrderItems = [];
+    window.cachedOrderItems.push(item);          // ← NEW
+
+    wrap.dataset.idx = window.cachedOrderItems.length - 1;   // sync idx
+
     item._inGrid  = true;
     item._wrapEl  = wrap;
 
@@ -785,7 +791,7 @@ document.addEventListener("DOMContentLoaded", function () {
 
     wrap.dataset.metal = metalKey;
     wrap.dataset.qty   = item.quantity ?? 1;
-    wrap.dataset.idx   = idx;        // ← NEW
+
     if (needsAttn) wrap.classList.add("preview-attn");   // ← ORANGERED!
 
     /* attach wrapper & load thumbnail……………………………………… */
