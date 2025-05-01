@@ -448,8 +448,13 @@ const configIDs = [
 /********************************************************
  * DOMContentLoaded: Disable buttons & attach logic
  ********************************************************/
+let listingModal;                     // ← NEW ➊  (declare up-top)
+
 document.addEventListener("DOMContentLoaded", function () {
   M.AutoInit();
+
+  /* NEW ➋: cache the listing-detail modal so helpers can open it */
+  listingModal = M.Modal.init(document.getElementById("listingModal"));
 
   setTimeout(function () {
     loadPositions();
@@ -712,12 +717,22 @@ document.addEventListener("DOMContentLoaded", function () {
     attachPreviewBoxListeners(box);
 
     /* 4 detail inputs ------------------------------------------------ */
-    const addDetail = (id,y,val)=>{
+    const addDetail = (id, y, val) => {
       const inp = document.createElement("input");
-      inp.type="text"; inp.readOnly=true;
-      inp.id=id+idx;   inp.className="detail-box";
-      inp.style.cssText=`left:0px;top:${y}px;`;
-      inp.value=val;
+      inp.type       = "text";
+      inp.readOnly   = true;
+      inp.id         = id + idx;
+      inp.className  = "detail-box";
+      inp.dataset.idx= idx;               // ← NEW for modal lookup
+      inp.style.cssText = `left:0px;top:${y}px;`;
+      inp.value      = val;
+
+      /* NEW – open listing-detail modal when any detail box is clicked */
+      inp.addEventListener("click", e => {
+        e.stopPropagation();
+        openListingModal(Number(e.currentTarget.dataset.idx));
+      });
+
       wrap.appendChild(inp);
     };
     addDetail("orderCell"   ,  95, item.receipt_id || item.orderNumber || "No Order #");
@@ -1799,6 +1814,44 @@ function reflowGrid(){
   }
 })();
 
+    function openListingModal(cellIdx){
+      const item = window.cachedOrderItems[cellIdx];
+      if(!item){ return; }
+
+      /* 1. title & image */
+      document.getElementById("modalListingTitle").textContent =
+          "Listing #" + item.listing_id;
+      document.getElementById("modalListingImg").src = item.image;
+
+      /* 2. notes  */
+      const lines = [];
+      if(item.personalization && item.personalization.length){
+        lines.push("Personalization:\n" + item.personalization.join("\n"));
+      }
+      if(item.message_from_buyer){
+        lines.push("Buyer Message:\n" + item.message_from_buyer.trim());
+      }
+      document.getElementById("modalListingNotes").textContent =
+          lines.length ? lines.join("\n\n") : "— No notes —";
+
+      listingModal.open();
+    }
+
   </script>
+
+    <!-- ─── Listing-detail modal ─── -->
+  <div id="listingModal" class="modal">
+    <div class="modal-content">
+      <h5 id="modalListingTitle"></h5>
+      <img id="modalListingImg"  style="max-width:100%;border:1px solid #ccc"/>
+      <pre id="modalListingNotes"
+           style="white-space:pre-wrap;margin-top:12px;
+                  background:#f5f5f5;padding:8px;border-radius:4px"></pre>
+    </div>
+    <div class="modal-footer">
+      <a href="#!" class="modal-close btn-flat">Close</a>
+    </div>
+  </div>
+
 </body>
 </html>
