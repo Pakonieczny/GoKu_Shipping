@@ -680,10 +680,10 @@ document.addEventListener("DOMContentLoaded", function () {
     item._wrapEl  = wrap;
 
     // optional debug — keep or remove as you like
-    // if (wrap.classList.contains("preview-attn")){
-    //   console.log("ATTN:", item.listing_id,
-    //               item.personalization, item.message_from_buyer);
-    // }
+    if (wrap.classList.contains("preview-attn")){
+    console.log("ATTN:", item.listing_id,
+    item.personalization, item.message_from_buyer);
+    }
 
     updateCounters();                            // refresh top counters
     return wrap;
