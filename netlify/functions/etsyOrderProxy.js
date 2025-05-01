@@ -1,64 +1,48 @@
-// etsyOrderProxy.js
+// etsyOrderProxy.js  ⬇️  DROP-IN REPLACEMENT
 const fetch = require("node-fetch");
 
-exports.handler = async function(event, context) {
+exports.handler = async function (event) {
   try {
-    // Retrieve orderId from query parameters.
-    const orderId = event.queryStringParameters.orderId;
-    // Retrieve access token from request headers.
-    const accessToken = event.headers['access-token'] || event.headers['Access-Token'];
-    if (!orderId) {
-      return { 
-        statusCode: 400, 
-        body: JSON.stringify({ error: "Missing orderId parameter" }) 
-      };
-    }
-    if (!accessToken) {
-      return { 
-        statusCode: 400, 
-        body: JSON.stringify({ error: "Missing access token" }) 
-      };
-    }
-    
-    // Retrieve your shop ID and CLIENT_ID from environment variables.
-    const shopId = process.env.SHOP_ID;
-    const clientId = process.env.CLIENT_ID;
-    if (!shopId) {
-      return {
-        statusCode: 500,
-        body: JSON.stringify({ error: "Missing SHOP_ID environment variable" })
-      };
-    }
-    if (!clientId) {
-      return {
-        statusCode: 500,
-        body: JSON.stringify({ error: "Missing CLIENT_ID environment variable" })
-      };
-    }
-    
-    // Construct the Etsy receipts URL (which represents order details).
-    const url = `/v3/application/shops/${shopId}/receipts/${receiptId}/transactions?includes=personalization`;
-    
-    // Make the GET request to Etsy with the required headers.
+    /* ------------------------------------------------------------------
+     * 1.  INPUTS & ENV
+     * ------------------------------------------------------------------ */
+    const orderId     = event.queryStringParameters.orderId;          // Etsy “receipt_id”
+    const accessToken = event.headers["access-token"] || event.headers["Access-Token"];
+    const shopId      = process.env.SHOP_ID;
+    const clientId    = process.env.CLIENT_ID;
+
+    if (!orderId)      return { statusCode: 400, body: JSON.stringify({ error: "Missing orderId parameter" }) };
+    if (!accessToken)  return { statusCode: 400, body: JSON.stringify({ error: "Missing access token" }) };
+    if (!shopId)       return { statusCode: 500, body: JSON.stringify({ error: "Missing SHOP_ID environment variable" }) };
+    if (!clientId)     return { statusCode: 500, body: JSON.stringify({ error: "Missing CLIENT_ID environment variable" }) };
+
+    /* ------------------------------------------------------------------
+     * 2.  BUILD URL  — one call returns BOTH receipt + transactions
+     *     ?includes=Transactions,Transactions.personalization
+     * ------------------------------------------------------------------ */
+    const etsyUrl = `https://openapi.etsy.com/v3/application/shops/${shopId}` +
+                    `/receipts/${encodeURIComponent(orderId)}` +
+                    `?includes=Transactions,Transactions.personalization`;
+
+    /* ------------------------------------------------------------------
+     * 3.  MAKE REQUEST
+     * ------------------------------------------------------------------ */
     const response = await fetch(etsyUrl, {
       method: "GET",
       headers: {
-        "Authorization": `Bearer ${accessToken}`,
-        "Content-Type": "application/json",
-        "x-api-key": clientId  // Include your CLIENT_ID as the API key.
+        Authorization: `Bearer ${accessToken}`,
+        "x-api-key": clientId,
+        "Content-Type": "application/json"
       }
     });
-    
-    const data = await response.json();
+
+    const payload = await response.json();
     return {
       statusCode: response.status,
-      body: JSON.stringify(data)
+      body: JSON.stringify(payload)
     };
-    
-  } catch (error) {
-    return {
-      statusCode: 500,
-      body: JSON.stringify({ error: error.message })
-    };
+
+  } catch (err) {
+    return { statusCode: 500, body: JSON.stringify({ error: err.message }) };
   }
 };
