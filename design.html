@@ -1455,6 +1455,7 @@ function fillPreviewBoxes(items){
   });
 
     updateCounters();                  // ← NEW: recalc counters
+    reflowGrid();
 
 }  /* ---------------------------- END fillPreviewBoxes -------- */
 
@@ -1748,6 +1749,25 @@ function disableMatchPrintFlow() {}
 function removeAllBlueHighlights() {}
 function attachMatchCellListeners() {}  
 
+
+/* ─── grid reflow after filter ─── */
+function reflowGrid(){
+  const wraps = Array.from(document.querySelectorAll("#photoGridContainer .wrap-preview"))
+                     .filter(w => w.style.display !== "none");
+
+  wraps.forEach((wrap, idx) => {
+    const row = Math.floor(idx / 9);      // 9 cols per row
+    const col = idx % 9;
+    wrap.style.left = (col * 125) + "px";
+    wrap.style.top  = (row * 165) + "px";
+  });
+
+  /* optional: grow the container so you can scroll all rows */
+  const grid = document.getElementById("photoGridContainer");
+  const totalRows = Math.ceil(wraps.length / 9);
+  grid.style.height = (totalRows * 165) + "px";
+}
+
 /* ─── METAL FILTER INITIALISER ─── */
 (function () {
   /* click-toggle each counter */
@@ -1774,6 +1794,8 @@ function attachMatchCellListeners() {}
               wrap.style.display =
                 active.has(wrap.dataset.metal) ? "" : "none";
             });
+
+    reflowGrid();        // ← NEW
   }
 })();
 
