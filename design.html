@@ -251,15 +251,23 @@
       box-shadow: none !important;
     }
 
-    /* four little fields under the notes (7 px gap) */
+    /* --- adjust the detail‐row layout --- */
     .modal-detail-row{
       margin-top:7px;
       display:flex;
-      gap:10px;
+      flex-direction:column;   /* ← vertical stack */
+      gap:4px;                 /* space between boxes */
     }
+
+    /* --- style of each read-only field --- */
     .modal-detail-row input{
-      width:160px;          /* tweak if you like */
-      font-size:0.85em;
+      width:100%;
+      font-size:0.5em;           /* ← 1.0 em text */
+      border:none;             /* remove Materialize underline */
+      border-bottom:none;
+      box-shadow:none;
+      background:transparent;
+      padding:0;
     }
 
     /* pointer-events enabled on read-only inputs */
@@ -1897,7 +1905,6 @@ function reflowGrid(){
         detRow.appendChild(inp);
       };
 
-      mkInput("Order", item.receipt_id || item.orderNumber || "N/A");
       mkInput("Qty"  , item.quantity  ?? "0");
       mkInput("Metal", item.metal     || "N/A");
       mkInput("SKU"  , item.sku       || "N/A");
