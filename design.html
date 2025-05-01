@@ -1171,7 +1171,7 @@ async function fetchOpenOrdersSequential() {
     }
 
     /* … remainder of buildNewOrderList() unchanged … */
-  }
+
 
     allOpenReceipts.sort((a, b) => {
       if (a._shipTS === 0 && b._shipTS === 0) return 0;
@@ -1179,7 +1179,7 @@ async function fetchOpenOrdersSequential() {
       if (b._shipTS === 0) return -1;
       return a._shipTS - b._shipTS;          // oldest → newest
     });
-  }
+  
 
   /* ❷ slice requested page */
   const page = allOpenReceipts.slice(offset, offset + 100);
