@@ -730,7 +730,8 @@ document.addEventListener("DOMContentLoaded", function () {
       /* NEW – open listing-detail modal when any detail box is clicked */
       inp.addEventListener("click", e => {
         e.stopPropagation();
-        openListingModal(Number(e.currentTarget.dataset.idx));
+        const parentWrap = e.currentTarget.closest(".wrap-preview");
+        openListingModal(Number(parentWrap.dataset.idx));
       });
 
       wrap.appendChild(inp);
