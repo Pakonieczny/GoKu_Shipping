@@ -1157,12 +1157,12 @@ async function fetchOpenOrdersSequential() {
           r._metalCounts = mc;
         }
 
-        /* ── NEW: attach buyer-message + keep personalizations as array ── */
+        /* ── NEW: attach buyer-message + keep personalization as array ── */
         const buyerMsg = r.message_from_buyer || "";
         (r.transactions || []).forEach(t => {
           t.message_from_buyer = buyerMsg;
 
-          // always make personalizations an array
+          // always make personalization an array
           if (t.personalization) {
             if (!Array.isArray(t.personalization)) {
               t.personalization = [ t.personalization ];
@@ -1685,6 +1685,8 @@ function pullEtsyOrderDetails(orderNumber){
 
     (data.transactions || []).forEach(t => {
       t.message_from_buyer = buyerMsg;
+
+      console.log("PERSONALIZATION DEBUG:", t.transaction_id, t.personalization, typeof t.personalization);
 
       /* normalize personalization ---------------------------------- */
       if (t.personalization) {
