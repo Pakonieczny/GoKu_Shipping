@@ -1640,6 +1640,8 @@ function pullEtsyOrderDetails(orderNumber){
         return acc;
       }, {});
 
+      console.log("⟹ Personalizations for on-demand order", orderNumber, personalizationMap); // ← NEW
+
     (data.transactions || []).forEach(t => {
       t.message_from_buyer = buyerMsg;                       // NEW
       t.personalization    = personalizationMap[t.listing_id] || [];
