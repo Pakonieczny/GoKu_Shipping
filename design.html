@@ -784,6 +784,7 @@ document.addEventListener("DOMContentLoaded", function () {
 
     wrap.dataset.metal = metalKey;
     wrap.dataset.qty   = item.quantity ?? 1;
+    wrap.dataset.idx   = idx;        // ← NEW
     if (needsAttn) wrap.classList.add("preview-attn");   // ← ORANGERED!
 
     /* attach wrapper & load thumbnail……………………………………… */
