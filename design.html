@@ -663,44 +663,52 @@ document.addEventListener("DOMContentLoaded", function () {
   const idStr = id => String(id);             // ← helper: always use string ids
   const STORAGE_KEY = "savedSelection";
 
-  /* write current orange receipts + their cached txs */
+  /* write current orange receipts ONLY (no transactions) */
   function persistSelection(){
-    const data = {
-      selected: [ ...selectedOrders ],
-      cache   : {}
+    try{
+      const data = {
+        selected: [ ...selectedOrders ]   // simple string/number array
     };
-    data.selected.forEach(id => { data.cache[id] = orderCache[id] || []; });
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+    }catch(err){
+      console.warn("localStorage quota hit — selection not saved:", err.message);
+    }
   }
 
-  /* read from localStorage → repopulate sets and previews */
+  /* read the saved receipt-ID list and rebuild from scratch */
   function restoreSelections(){
     const raw = localStorage.getItem(STORAGE_KEY);
-    if(!raw) return;
-    let data;
-    try{ data = JSON.parse(raw); }catch(e){ return; }
+    if (!raw) return;
 
-    /* 1️⃣  revive sets / cache ----------------------------------- */
+    let data;  try{ data = JSON.parse(raw); } catch(e){ return; }
+
+    /* 1️⃣  revive the set of selected order IDs ------------------ */
     selectedOrders.clear();
-    (data.selected||[]).forEach(id => selectedOrders.add(id));
-    Object.entries(data.cache||{}).forEach(([id,txs]) => { orderCache[id] = txs; });
+    (data.selected || []).forEach(id => selectedOrders.add(id));
 
-    /* 2️⃣  rebuild grid ------------------------------------------ */
+    /* 2️⃣  wipe existing cache + grid ---------------------------- */
+    Object.keys(orderCache).forEach(k => delete orderCache[k]);
     gridElements.clear();
     document.getElementById("photoGridContainer").innerHTML = "";
-    const combined = [];
-    selectedOrders.forEach(id => combined.push(...(orderCache[id]||[])));
-    combined.forEach(tx => addPreviewBox(tx));
 
-    /* 3️⃣  mark rows orange after they exist --------------------- */
+    /* 3️⃣  fetch each order again and rebuild previews ----------- */
+    selectedOrders.forEach(async id => {
+      const ord = await pullEtsyOrderDetails(id);   // fresh call to Etsy
+      if (!ord) return;
+
+      orderCache[id] = ord.transactions || [];
+      orderCache[id].forEach(tx => addPreviewBox(tx));
+    });
+
+    /* 4️⃣  after boxes exist, colour the corresponding rows orange */
     setTimeout(() => {
       selectedOrders.forEach(id => {
         const row = document.querySelector(`.new-order-box[data-receipt="${id}"]`);
-        if(row) row.classList.add("selected");
+        if (row) row.classList.add("selected");
       });
     }, 0);
 
-    updateCounters();                  // ← NEW: refresh metal totals
+    updateCounters();                    // refresh metal totals
   }
 
   /* highlight every row whose receipt_id is in selectedOrders */
