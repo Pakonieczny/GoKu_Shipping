@@ -919,13 +919,20 @@ document.addEventListener("DOMContentLoaded", () => {
     localStorage.setItem(LAST_PURGE_KEY, nowKey);
   }
 
-  /* highlight every row whose receipt_id is in selectedOrders */
+  /* -----------------------------------------------------------------
+     Paint orange rows, but NEVER repaint something that is already
+     marked completed (green).  This guarantees green always wins,
+     even if an ID-type mismatch exists between the two Sets.
+  ------------------------------------------------------------------*/
   function highlightSavedRows(){
     selectedOrders.forEach(id => {
-      if (completedOrders.has(id)) return;          // skip rows that are green
       const row = document.querySelector(
-            `.new-order-box[data-receipt="${id}"]`);
-      if (row) row.classList.add("selected");
+            `.new-order-box[data-receipt='${id}']`);
+
+      if (!row) return;                      // row not on this page
+      if (row.classList.contains("completed")) return;  // already green
+
+      row.classList.add("selected");         // paint orange only once
     });
   }
 
