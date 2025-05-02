@@ -879,21 +879,20 @@ document.addEventListener("DOMContentLoaded", () => {
     if (!raw) return;
     const obj = JSON.parse(raw);
 
-    Object.values(obj).flat().forEach(id => completedOrders.add(id));
+    /* convert every ID to string before adding to the Set */
+    Object.values(obj).flat().forEach(id => completedOrders.add(String(id)));
 
-    /* colour any matching boxes already in the DOM */
+    /* the rest of the function is unchanged */
     completedOrders.forEach(id=>{
       const box = document.querySelector(`.new-order-box[data-receipt="${id}"]`);
       if (box){
         box.classList.remove("selected");
         box.classList.add("completed");
       }
-      /* also be sure their previews are gone */
       removePreviewBoxesForOrder(id);
-
     });
 
-    realignGrid();     // ← NEW (still inside restoreCompleted)
+    realignGrid();
   }
 
   /* ── purge buckets older than 2 months (run once per load) ───── */
