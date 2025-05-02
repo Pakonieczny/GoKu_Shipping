@@ -1296,6 +1296,7 @@ document.addEventListener("DOMContentLoaded", () => {
     });                                // closes arr.forEach
 
     highlightSavedRows();              // ← NEW: paint saved rows
+    requestAnimationFrame(highlightCompletedRows);   // green wins after paint
 
   }           
 
