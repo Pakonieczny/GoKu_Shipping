@@ -341,11 +341,11 @@
 </head>
 <body>
   <!-- Main Buttons -->
-<button id="connectEtsyBtn" class="btn waves-effect waves-light">Connect to Etsy</button>
-<button id="openConfigBtn"   class="btn waves-effect waves-light">Open Config</button>
-<button id="updateOrderListBtn" class="btn waves-effect waves-light">Update Order List</button>
-<button id="clearBtn" class="btn red lighten-1">Clear</button>
-<button id="nextPageBtn" class="btn waves-effect waves-light">Next Page</button>
+<button id="connectEtsyBtn"    class="btn waves-effect waves-light">Connect to Etsy</button>
+<button id="openConfigBtn"     class="btn waves-effect waves-light">Open Config</button>
+<button id="updateOrderListBtn"class="btn waves-effect waves-light">Update Order List</button>
+<button id="clearBtn"          class="btn red lighten-1">Clear</button>
+<button id="nextPageBtn"       class="btn waves-effect waves-light">Next Page</button>
 
 <!-- Etsy Order Number input -->
 <input id="etsyOrderNumber" type="text" />
@@ -362,48 +362,53 @@
 <div id="roseCounter"   class="metal-counter active" data-metal="rose">Rose Gold: 0</div>
 <div id="solidCounter"  class="metal-counter active" data-metal="14k">14K Solid: 0</div>
 
-  <!-- Container for dynamically generated preview boxes and detail boxes -->
-  <div id="photoGridContainer">
-    <!-- Preview boxes and detail boxes will be created dynamically -->
+<!-- Container for dynamically generated preview boxes and detail boxes -->
+<div id="photoGridContainer">
+  <!-- Preview boxes and detail boxes will be created dynamically -->
+</div>
+
+<!-- Config Modal -->
+<div id="configModal" class="modal">
+  <div class="modal-content">
+    <table class="striped" id="configTable">
+      <thead>
+        <tr>
+          <th>Element</th>
+          <th>Left&nbsp;(px)</th>
+          <th>Top&nbsp;(px)</th>
+          <th>Width&nbsp;(px)</th>
+          <th>Height</th>
+        </tr>
+      </thead>
+      <tbody></tbody>
+    </table>
+
+    <!-- NEW green “Complete !” button (drag-positionable inside the modal) -->
+    <button id="completeBtn"
+            class="btn green"
+            style="position:absolute;left:20px;top:220px;width:140px;height:36px;">
+      Complete&nbsp;!
+    </button>
   </div>
 
-  <!-- Config Modal -->
-  <div id="configModal" class="modal">
-    <div class="modal-content">
-      <table class="striped" id="configTable">
-        <thead>
-          <tr>
-            <th>Element</th>
-            <th>Left (px)</th>
-            <th>Top (px)</th>
-            <th>Width (px)</th>
-            <th>Height</th>
-          </tr>
-        </thead>
-        <tbody></tbody>
-      </table>
-    </div>
-    <div class="modal-footer">
-      <a
-        href="#!"
-        id="saveConfigBtn"
-        class="modal-close waves-effect waves-green btn"
-      >
-        Save Config
-      </a>
-    </div>
+  <div class="modal-footer">
+    <a href="#!" id="saveConfigBtn"
+       class="modal-close waves-effect waves-green btn">
+      Save Config
+    </a>
   </div>
+</div>
 
-  <!-- 1) Firebase (compat mode) – must be above your main sorting code -->
-  <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
-  <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
+<!-- 1) Firebase (compat mode) – must be above your main sorting code -->
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
 
-  <!-- jQuery & Materialize JS -->
-  <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/materialize/1.0.0/js/materialize.min.js"></script>
+<!-- jQuery & Materialize JS -->
+<script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/materialize/1.0.0/js/materialize.min.js"></script>
 
-  <!-- Everything is in this single <script> block -->
-  <script>
+<!-- Everything is in this single <script> block -->
+<script>
 /********************************************************
  * Base URL & Global Variables
  ********************************************************/
