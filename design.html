@@ -763,6 +763,10 @@ document.addEventListener("DOMContentLoaded", () => {
       box.classList.add("completed");     // add green
     });
 
+    /* remove previews for each completed receipt */
+    greenIDs.forEach(id => removePreviewBoxesForOrder(id));
+    realignGrid();                                   // close gaps
+
     /* remove corresponding preview wrappers */
     document.querySelectorAll(`#photoGridContainer .wrap-preview[data-metal="${metalKey}"]`)
             .forEach(wrap=>wrap.remove());
@@ -800,7 +804,12 @@ document.addEventListener("DOMContentLoaded", () => {
         box.classList.remove("selected");
         box.classList.add("completed");
       }
+      /* also be sure their previews are gone */
+      removePreviewBoxesForOrder(id);
+      
     });
+
+    realignGrid();     // ← NEW (still inside restoreCompleted)
   }
 
   /* ── purge buckets older than 2 months (run once per load) ───── */
@@ -861,6 +870,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
   /* append ONE preview without rebuilding the entire grid */
   function addPreviewBox(item){
+    if (completedOrders.has(String(item.receipt_id))) return;   // ← NEW
     const wrap = makePreviewNode(item);          // build + auto-append
     gridElements.set(gridElements.size, wrap);   // index bookkeeping
 
@@ -1049,6 +1059,8 @@ document.addEventListener("DOMContentLoaded", () => {
       box.className = "new-order-box";
       box.id        = "newOrder" + idx;
       box.dataset.receipt = r.receipt_id;      // ← NEW data-tag
+      /* metal key so Complete ! can target the row */
+      box.dataset.metal = rowMetal;            // ← NEW
 
       /* click → toggle highlight + (de)load images ---------------------- */
       box.addEventListener("click", async () => {
@@ -1118,6 +1130,14 @@ document.addEventListener("DOMContentLoaded", () => {
       const s  = r._metalCounts.Silver   || 0;
       const rG = r._metalCounts["Rose G"]|| 0;
       const k  = r._metalCounts["14K"]   || 0;
+
+      /* assign one metal key to the whole order for filtering */
+      let rowMetal = "";
+      if     (k)        rowMetal = "14k";
+      else if(rG)       rowMetal = "rose";
+      else if(s)        rowMetal = "silver";
+      else if(g)        rowMetal = "gold";
+      box.dataset.metal = rowMetal;              // ← NEW
 
       box.innerHTML = `
         <span class="col-order">${orderNum}</span>
@@ -2051,6 +2071,24 @@ function reflowGrid(){
 
       listingModal.open();
     }
+
+    /* remove all preview wrappers for one receipt -------------------- */
+    function removePreviewBoxesForOrder(receiptID){
+      document.querySelectorAll(
+        `#photoGridContainer .wrap-preview[data-receipt='${receiptID}']`
+      ).forEach(w => w.remove());
+    }
+
+    /* pack remaining previews after removals ------------------------ */
+    function realignGrid(){
+      const wraps = Array.from(document.querySelectorAll("#photoGridContainer .wrap-preview"));
+      wraps.forEach((w, idx) => {
+        const row = Math.floor(idx / 9);
+        const col = idx % 9;
+        w.style.left = (col * 125) + "px";
+        w.style.top  = (row * 165) + "px";
+      });
+    }  
 
   </script>
 
