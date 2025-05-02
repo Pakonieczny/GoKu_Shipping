@@ -253,21 +253,27 @@
 
     /* --- adjust the detail‐row layout --- */
     .modal-detail-row{
-      margin-top:7px;
+      margin-top:7px !important;
       display:flex;
       flex-direction:column;   /* ← vertical stack */
-      gap:4px;                 /* space between boxes */
+      gap:4px !important;                 /* space between boxes */
     }
 
-    /* --- style of each read-only field --- */
+    /* overwrite Materialize’s input styling */
     .modal-detail-row input{
       width:100%;
-      font-size:0.5em;           /* ← 1.0 em text */
-      border:none;             /* remove Materialize underline */
-      border-bottom:none;
-      box-shadow:none;
+      font-size:0.8em !important;            /* ensure 1 em */
+      border:none !important;              /* kill underline */
+      border-bottom:none !important;       /* kill underline */
+      box-shadow:none !important;          /* kill underline glow */
       background:transparent;
       padding:0;
+    }
+
+    /* also suppress the focus underline */
+    .modal-detail-row input:focus{
+      border-bottom:none !important;
+      box-shadow:none !important;
     }
 
     /* pointer-events enabled on read-only inputs */
