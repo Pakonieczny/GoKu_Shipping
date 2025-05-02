@@ -790,12 +790,20 @@ document.addEventListener("DOMContentLoaded", () => {
     greenIDs.forEach(id => removePreviewBoxesForOrder(id));
     realignGrid();                                   // close gaps
 
+    /* reset the chosen metal counter to 0 (UI only) */
+    const counterEl = document.querySelector(`.metal-counter[data-metal='${metalKey}']`);
+    if (counterEl) {
+      const label = counterEl.textContent.split(":")[0];   // "Gold", "Silver", …
+      counterEl.textContent = `${label}: 0`;
+    }
+
     /* remove corresponding preview wrappers */
     document.querySelectorAll(`#photoGridContainer .wrap-preview[data-metal="${metalKey}"]`)
             .forEach(wrap=>wrap.remove());
 
     if (greenIDs.length){
       persistCompleted();                 // update localStorage
+      persistSelection();                        // ← NEW save trimmed orange list
       updateCounters();
     }else{
       M.toast({ html:"No orders matched that metal." });
@@ -1491,11 +1499,10 @@ async function fetchOpenOrdersSequential() {
     box.dataset.receipt = rid;
 
     /* colour immediately if it was saved */
-    if (selectedOrders.has(rid)) {
-      box.classList.add("selected");
-      }
-    if (completedOrders.has(rid)) {        // ← NEW: keep row green
+    if (completedOrders.has(rid)) {        // green first
       box.classList.add("completed");
+    } else if (selectedOrders.has(rid)) {  // orange only if not green
+      box.classList.add("selected");
     }
 
     const orderNum = r.order_number || r.receipt_id || "—";
