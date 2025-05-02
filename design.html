@@ -289,6 +289,12 @@
       cursor: pointer !important;
     }
 
+    /* finished orders in the side list */
+    .new-order-box.completed{
+      background:#4caf50 !important;   /* Materialize green-500 */
+      color:#fff;
+    }
+
     /* Config Modal */
     #configModal.modal {
       position: fixed !important;
@@ -405,6 +411,10 @@ const functionsBaseUrl = window.location.origin + "/.netlify/functions";
 const selectedOrders = new Set();      // receipt_id strings
 const orderCache     = {};             // receipt_id → transactions[]
 const gridElements   = new Map();      // transaction_id → wrapper DOM
+/* storage keys */
+const COMPLETED_KEY = "completedOrders";   // green-list
+const LAST_PURGE_KEY = "completed_last_purge"; // ISO month stamp
+const completedOrders = new Set();   // IDs that are already green
 
 let croppedImagesArray = [];
 let userImagesArray = [];
@@ -508,6 +518,15 @@ let listingModal;                     // ← NEW ➊  (declare up-top)
 
 document.addEventListener("DOMContentLoaded", function () {
   M.AutoInit();
+
+  /* ❶  wire "Complete !" button */
+  document.getElementById("completeBtn").addEventListener("click", handleCompleteClick);
+
+  /* ❷  load completed list and colour rows */
+  restoreCompleted();
+
+  /* ❸  run monthly purge */
+  purgeOldCompleted();
 
   /* NEW ➋: cache the listing-detail modal so helpers can open it */
   listingModal = M.Modal.init(document.getElementById("listingModal"));
@@ -709,6 +728,92 @@ document.addEventListener("DOMContentLoaded", function () {
     }, 0);
 
     updateCounters();                    // refresh metal totals
+  }
+
+  /* ── click handler ────────────────────────────────────────────── */
+  function handleCompleteClick(){
+    const activeMetals = Array.from(document.querySelectorAll(".metal-counter.active"))
+                               .map(b => b.dataset.metal);
+    if (activeMetals.length !== 1){
+      M.toast({ html:"Please choose only 1 metal filter at a time" });
+      return;
+    }
+    const metalKey = activeMetals[0];
+
+    /* collect all visible boxes with that metal */
+    const greenIDs = [];
+    document.querySelectorAll(`.new-order-box[data-metal="${metalKey}"]`).forEach(box=>{
+      const id = box.dataset.receipt;
+      if (!completedOrders.has(id)){
+        completedOrders.add(id);
+        greenIDs.push(id);
+      }
+      box.classList.remove("selected");   // remove orange
+      box.classList.add("completed");     // add green
+    });
+
+    /* remove corresponding preview wrappers */
+    document.querySelectorAll(`#photoGridContainer .wrap-preview[data-metal="${metalKey}"]`)
+            .forEach(wrap=>wrap.remove());
+
+    if (greenIDs.length){
+      persistCompleted();                 // update localStorage
+      updateCounters();
+    }else{
+      M.toast({ html:"No orders matched that metal." });
+    }
+  }
+
+  /* ── save completed list ──────────────────────────────────────── */
+  function persistCompleted(){
+    const nowMonth = new Date().toISOString().slice(0,7);      // "YYYY-MM"
+    const raw = localStorage.getItem(COMPLETED_KEY) || "{}";
+    const obj = JSON.parse(raw);
+
+    obj[nowMonth] = [ ...completedOrders ];                    // overwrite bucket
+    localStorage.setItem(COMPLETED_KEY, JSON.stringify(obj));
+  }
+
+  /* ── restore completed list on load ──────────────────────────── */
+  function restoreCompleted(){
+    const raw = localStorage.getItem(COMPLETED_KEY);
+    if (!raw) return;
+    const obj = JSON.parse(raw);
+
+    Object.values(obj).flat().forEach(id => completedOrders.add(id));
+
+    /* colour any matching boxes already in the DOM */
+    completedOrders.forEach(id=>{
+      const box = document.querySelector(`.new-order-box[data-receipt="${id}"]`);
+      if (box){
+        box.classList.remove("selected");
+        box.classList.add("completed");
+      }
+    });
+  }
+
+  /* ── purge buckets older than 2 months (run once per load) ───── */
+  function purgeOldCompleted(){
+    const now = new Date();
+    const last   = localStorage.getItem(LAST_PURGE_KEY) || "";
+    const nowKey = now.toISOString().slice(0,7);               // "YYYY-MM"
+
+    /* if we already purged this month, skip */
+    if (last === nowKey) return;
+
+    const raw = localStorage.getItem(COMPLETED_KEY) || "{}";
+    const obj = JSON.parse(raw);
+
+    /* drop buckets older than 2 months */
+    Object.keys(obj).forEach(ym=>{
+      const [y,m] = ym.split("-").map(n=>parseInt(n,10));
+      const dt = new Date(y, m-1);                   // first of that month
+      const diff = (now.getFullYear()-dt.getFullYear())*12 + (now.getMonth()-dt.getMonth());
+      if (diff > 1) delete obj[ym];                 // keep 0 or 1 months ago
+    });
+
+    localStorage.setItem(COMPLETED_KEY, JSON.stringify(obj));
+    localStorage.setItem(LAST_PURGE_KEY, nowKey);
   }
 
   /* highlight every row whose receipt_id is in selectedOrders */
