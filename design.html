@@ -749,22 +749,24 @@ document.addEventListener("DOMContentLoaded", () => {
     updateCounters();                    // refresh metal totals
   }
 
-  /* ── click handler ────────────────────────────────────────────── */
+    /* ── click handler ────────────────────────────────────────────── */
   function handleCompleteClick(){
-    const activeMetals = Array.from(document.querySelectorAll(".metal-counter.active"))
-                               .map(b => b.dataset.metal);
+    const activeMetals = Array.from(
+          document.querySelectorAll(".metal-counter.active"))
+          .map(b => b.dataset.metal);
+
     if (activeMetals.length !== 1){
       M.toast({ html:"Please choose only 1 metal filter at a time" });
       return;
     }
     const metalKey = activeMetals[0];
 
-    /* 1️⃣  look at the grid → receipts that are BOTH visible & match the metal */
+    /* 1️⃣  receipts that are VISIBLE and match the active metal */
     const greenIDs = [];
     document.querySelectorAll("#photoGridContainer .wrap-preview")
             .forEach(wrap => {
-              if (wrap.style.display === "none") return;             // filtered out
-              if (wrap.dataset.metal !== metalKey)  return;          // wrong metal
+              if (wrap.style.display === "none") return;        // filtered out
+              if (wrap.dataset.metal !== metalKey) return;      // wrong metal
               greenIDs.push(wrap.dataset.receipt);
             });
 
@@ -773,43 +775,35 @@ document.addEventListener("DOMContentLoaded", () => {
       return;
     }
 
-    /* 2️⃣  mark sidebar rows + memory */
+    /* 2️⃣  colour rows & update memory */
     greenIDs.forEach(id => {
-      completedOrders.add(id);                                       // track ID
-      selectedOrders.delete(id);             // ← NEW: stop it turning orange again
-      const box = document.querySelector(`.new-order-box[data-receipt='${id}']`);
-      if (box){
-        box.classList.remove("selected");
-        box.classList.add("completed");
+      completedOrders.add(id);               // track as finished
+      selectedOrders.delete(id);             // remove from orange set
+
+      const row = document.querySelector(
+                  `.new-order-box[data-receipt='${id}']`);
+      if (row){
+        row.classList.remove("selected");
+        row.classList.add("completed");
       }
     });
 
-    /* 3️⃣  remove only those previews & realign grid */
+    /* 3️⃣  remove previews that belong to these receipts */
     greenIDs.forEach(id => removePreviewBoxesForOrder(id));
-    realignGrid();
+    realignGrid();                           // close any gaps
 
-    /* remove previews for each completed receipt */
-    greenIDs.forEach(id => removePreviewBoxesForOrder(id));
-    realignGrid();                                   // close gaps
-
-    /* reset the chosen metal counter to 0 (UI only) */
-    const counterEl = document.querySelector(`.metal-counter[data-metal='${metalKey}']`);
-    if (counterEl) {
-      const label = counterEl.textContent.split(":")[0];   // "Gold", "Silver", …
+    /* 4️⃣  reset the chosen metal counter to 0 */
+    const counterEl = document.querySelector(
+          `.metal-counter[data-metal='${metalKey}']`);
+    if (counterEl){
+      const label = counterEl.textContent.split(":")[0];  // “Gold”, …
       counterEl.textContent = `${label}: 0`;
     }
 
-    /* remove corresponding preview wrappers */
-    document.querySelectorAll(`#photoGridContainer .wrap-preview[data-metal="${metalKey}"]`)
-            .forEach(wrap=>wrap.remove());
-
-    if (greenIDs.length){
-      persistCompleted();                 // update localStorage
-      persistSelection();                        // ← NEW save trimmed orange list
-      updateCounters();
-    }else{
-      M.toast({ html:"No orders matched that metal." });
-    }
+    /* 5️⃣  persist new state & refresh totals */
+    persistCompleted();        // green list
+    updateCounters();          // counter now shows 0
+    persistSelection();        // orange list (already trimmed) 🔸 moved
   }
 
   /* ── save completed list ──────────────────────────────────────── */
