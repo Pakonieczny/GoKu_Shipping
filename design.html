@@ -251,31 +251,36 @@
       box-shadow: none !important;
     }
 
-    /* --- adjust the detail‐row layout --- */
+    //* ─── listing-detail modal: stacked info boxes ───────────────────── */
+
+    /* container for the three read-only boxes */
     .modal-detail-row{
+      /* sits 7 px below the notes */
       margin-top:7px;
-      display:flex;
-      flex-direction:column;   /* ← vertical stack */
-      gap:4px;                 /* space between boxes */
+
+      /* regular block flow so inputs stack top→bottom */
+      display:block;
     }
 
-    /* overwrite Materialize’s input styling */
+    /* individual read-only box */
     .modal-detail-row input{
-      width:100%;
-      font-size:0.8em !important;            /* ensure 1 em */
-      border:none !important;              /* kill underline */
-      border-bottom:none !important;       /* kill underline */
-      box-shadow:none !important;          /* kill underline glow */
+      display:block !important;   /* one per line */
+      width:200px;                /* tweak if you prefer full width */
+      font-size:0.9em !important;   /* 1 em text */
+
+      /* kill Materialize underline & glow */
+      border:none !important;
+      border-bottom:none !important;
+      box-shadow:none !important;
+
       background:transparent;
       padding:0;
+
+      /* vertical spacing: 8 px below each box */
+      margin:0 0 8px 0 !important;
     }
 
-    /* add 6 px space above every input except the first */
-    .modal-detail-row input + input{
-      margin-top:6px !important;          /* adjust to taste */
-    }
-
-    /* also suppress the focus underline */
+    /* ensure focus state doesn’t reintroduce underline */
     .modal-detail-row input:focus{
       border-bottom:none !important;
       box-shadow:none !important;
