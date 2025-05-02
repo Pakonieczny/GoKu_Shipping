@@ -516,8 +516,13 @@ const configIDs = [
  ********************************************************/
 let listingModal;                     // ← NEW ➊  (declare up-top)
 
-document.addEventListener("DOMContentLoaded", function () {
+document.addEventListener("DOMContentLoaded", () => {
   M.AutoInit();
+
+  const completeBtn = document.getElementById("completeBtn");
+  if (completeBtn) {
+    completeBtn.addEventListener("click", handleCompleteClick);
+  }
 
   /* ❶  wire "Complete !" button */
   document.getElementById("completeBtn").addEventListener("click", handleCompleteClick);
