@@ -422,6 +422,18 @@ const COMPLETED_KEY = "completedOrders";   // green-list
 const LAST_PURGE_KEY = "completed_last_purge"; // ISO month stamp
 const completedOrders = new Set();   // IDs that are already green
 
+/* ===== revive completed set from localStorage (runs immediately) ===== */
+(() => {
+  const raw = localStorage.getItem("completedOrders");
+  if (!raw) return;
+  try {
+    const obj = JSON.parse(raw);
+    Object.values(obj).flat().forEach(id => completedOrders.add(String(id).trim()));
+  } catch (err) {
+    console.warn("Couldn’t parse saved completed list:", err);
+  }
+})();
+
 /* ------------------------------------------------------------------
  *  INIT - make sure completedOrders is filled BEFORE any UI action
  * ------------------------------------------------------------------*/
@@ -599,6 +611,10 @@ document.addEventListener("DOMContentLoaded", () => {
 
           orderListOffset = 0;                 // reset to first page
           const gotRows = await buildNewOrderList(orderListOffset);
+
+
+          /* —— FORCE a second green-pass after new rows exist —— */
+          highlightCompletedRows();                  // <-- NEW LINE
 
           /* NEW → log visible order count */
           const displayedCount = document.getElementById("newOrderContainer").children.length;
