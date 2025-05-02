@@ -818,6 +818,8 @@ document.addEventListener("DOMContentLoaded", function () {
     else if (/silver/i.test(metalSel)) metalKey="silver";
     else if (/gold/i.test(metalSel))   metalKey="gold";
 
+    item.metalLabel = metalSel || "No Metal";   // ← NEW
+
     /* does this listing need manual attention? */
     const hasPersonalization =
       // array version → [ {...}, ... ]
@@ -1919,7 +1921,7 @@ function reflowGrid(){
       };
 
       mkInput("Qty"  , item.quantity  ?? "0");
-      mkInput("Metal", item.metal     || "N/A");
+      mkInput("Metal", item.metalLabel || "N/A");
       mkInput("SKU"  , item.sku       || "N/A");
 
       listingModal.open();
