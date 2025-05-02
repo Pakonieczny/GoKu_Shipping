@@ -346,6 +346,7 @@
 <button id="updateOrderListBtn"class="btn waves-effect waves-light">Update Order List</button>
 <button id="clearBtn"          class="btn red lighten-1">Clear</button>
 <button id="nextPageBtn"       class="btn waves-effect waves-light">Next Page</button>
+<button id="clearCompletedBtn" class="btn orange lighten-1">Clear Completed</button>
 
 <!-- NEW green “Complete !” button (drag-positionable inside the modal) -->
 <button id="completeBtn"
@@ -645,8 +646,14 @@ document.addEventListener("DOMContentLoaded", () => {
         /* 5. reset counters */
         updateCounters();
 
-        M.toast({ html:"Selection cleared" });
+        M.toast({ html: "Selection cleared" });
       });
+
+      /* ────────── Clear Completed (green) button  ─────────── */
+      const clrCompBtn = document.getElementById("clearCompletedBtn");
+      if (clrCompBtn) {
+        clrCompBtn.addEventListener("click", clearCompleted);   // ← NEW
+      }
 
   // Load multiple orders on Enter (partial snippet)
   const etsyOrderInput = document.getElementById("etsyOrderNumber");
@@ -787,6 +794,25 @@ document.addEventListener("DOMContentLoaded", () => {
 
     obj[nowMonth] = [ ...completedOrders ];                    // overwrite bucket
     localStorage.setItem(COMPLETED_KEY, JSON.stringify(obj));
+  }
+
+  /* -------------------------------------------------------------
+   Clear all completed-order memory & remove green highlights
+  ------------------------------------------------------------- */
+  function clearCompleted(){
+    /* 1. purge localStorage */
+    localStorage.removeItem(COMPLETED_KEY);
+    localStorage.removeItem(LAST_PURGE_KEY);
+
+    /* 2. reset in-memory set */
+    completedOrders.clear();
+
+    /* 3. strip green class from sidebar rows */
+    document.querySelectorAll(".new-order-box.completed")
+            .forEach(box => box.classList.remove("completed"));
+
+    /* 4. toast confirmation */
+    M.toast({ html:"Completed orders cleared" });
   }
 
   /* ── restore completed list on load ──────────────────────────── */
