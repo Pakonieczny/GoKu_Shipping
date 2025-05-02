@@ -739,10 +739,11 @@ document.addEventListener("DOMContentLoaded", () => {
 
     /* 4️⃣  after boxes exist, colour the corresponding rows orange */
     setTimeout(() => {
-      selectedOrders.forEach(id => {
-        const row = document.querySelector(`.new-order-box[data-receipt="${id}"]`);
-        if (row) row.classList.add("selected");
-      });
+    selectedOrders.forEach(id => {
+      if (completedOrders.has(id)) return;        // ← NEW: skip green rows
+      const row = document.querySelector(`.new-order-box[data-receipt='${id}']`);
+      if (row) row.classList.add("selected");
+    });
     }, 0);
 
     updateCounters();                    // refresh metal totals
@@ -1508,10 +1509,18 @@ async function fetchOpenOrdersSequential() {
 
     const orderNum = r.order_number || r.receipt_id || "—";
     const shipStr  = r._shipStr || "N/A";
-    const g  = r._metalCounts.Gold    || 0;
-    const s  = r._metalCounts.Silver  || 0;
-    const rG = r._metalCounts["Rose G"] || 0;
-    const k  = r._metalCounts["14K"]  || 0;
+    const g  = r._metalCounts.Gold     || 0;
+    const s  = r._metalCounts.Silver   || 0;
+    const rG = r._metalCounts["Rose G"]|| 0;
+    const k  = r._metalCounts["14K"]   || 0;
+
+    /* NEW ▸ decide the metal key for this entire order */
+    let rowMetal = "";
+    if     (k)   rowMetal = "14k";
+    else if(rG)  rowMetal = "rose";
+    else if(s)   rowMetal = "silver";
+    else if(g)   rowMetal = "gold";
+    box.dataset.metal = rowMetal;              // ← NEW
 
     box.innerHTML = `
       <span class="col-order">${orderNum}</span>
@@ -1524,7 +1533,7 @@ async function fetchOpenOrdersSequential() {
     container.appendChild(box);
   });                                // ← closes page.forEach
 
-  highlightSavedRows();              // ← NEW: colour rows on every page load
+  highlightSavedRows();              // ← colour rows on every page load
 
   /* return page size (0-100) so buttons enable/disable correctly */
   return page.length;
