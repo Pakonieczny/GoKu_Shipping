@@ -968,13 +968,14 @@ document.addEventListener("DOMContentLoaded", () => {
   }
 
   /* colour every row whose receipt_id is in completedOrders */
-  function highlightCompletedRows(){
-    completedOrders.forEach(id => {
-      const row = document.querySelector(
-            `.new-order-box[data-receipt="${id}"]`);
-      if (row){
-        row.classList.remove("selected");  // never leave orange
-        row.classList.add("completed");    // paint green
+  function highlightCompletedRows() {
+    document.querySelectorAll(".new-order-box").forEach(box => {
+      const rid = box.dataset.receipt;
+      if (completedOrders.has(rid)) {
+        box.classList.remove("selected");  // make sure orange never sticks
+        box.classList.add("completed");    // paint (or re-paint) green
+      } else {
+        box.classList.remove("completed"); // remove green if no longer done
       }
     });
   }
