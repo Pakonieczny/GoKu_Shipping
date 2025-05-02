@@ -775,6 +775,7 @@ document.addEventListener("DOMContentLoaded", () => {
     /* 2️⃣  mark sidebar rows + memory */
     greenIDs.forEach(id => {
       completedOrders.add(id);                                       // track ID
+      selectedOrders.delete(id);             // ← NEW: stop it turning orange again
       const box = document.querySelector(`.new-order-box[data-receipt='${id}']`);
       if (box){
         box.classList.remove("selected");
@@ -2124,9 +2125,19 @@ function reflowGrid(){
 
     /* remove all preview wrappers for one receipt -------------------- */
     function removePreviewBoxesForOrder(receiptID){
+      /* yank wrappers from the DOM */
       document.querySelectorAll(
         `#photoGridContainer .wrap-preview[data-receipt='${receiptID}']`
-      ).forEach(w => w.remove());
+      ).forEach(wrap => {
+        wrap.remove();
+
+        /* also delete the entry from gridElements map */
+        for (const [k,v] of gridElements.entries()){
+          if (v === wrap){ gridElements.delete(k); break; }
+        }
+      });
+
+      updateCounters();          // counter truly hits 0 now
     }
 
     /* pack remaining previews after removals ------------------------ */
