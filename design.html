@@ -251,36 +251,33 @@
       box-shadow: none !important;
     }
 
-    //* ─── listing-detail modal: stacked info boxes ───────────────────── */
-
     /* container for the three read-only boxes */
     .modal-detail-row{
-      /* sits 7 px below the notes */
       margin-top:7px;
-
-      /* regular block flow so inputs stack top→bottom */
-      display:block;
+      display:block;               /* stack vertically */
     }
 
     /* individual read-only box */
     .modal-detail-row input{
-      display:block !important;   /* one per line */
-      width:200px;                /* tweak if you prefer full width */
-      font-size:0.9em !important;   /* 1 em text */
+      display:block !important;    /* one per line */
+      width:160px;
+      height:20px;                 /* ← fixed height 20 px */
+      line-height:20px;            /* keep text vertically centered */
 
-      /* kill Materialize underline & glow */
+      font-size:0.9em !important;
+
+      /* remove Materialize underline & glow */
       border:none !important;
       border-bottom:none !important;
       box-shadow:none !important;
 
       background:transparent;
-      padding:0;
+      padding:0 4px;               /* small left/right inset */
 
-      /* vertical spacing: 8 px below each box */
-      margin:0 0 8px 0 !important;
+      margin:0 0 4px 0 !important; /* 8 px gap below each box */
     }
 
-    /* ensure focus state doesn’t reintroduce underline */
+    /* prevent focus style from re-adding underline */
     .modal-detail-row input:focus{
       border-bottom:none !important;
       box-shadow:none !important;
