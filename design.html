@@ -1618,8 +1618,10 @@ async function buildNewOrderList(offset = 0) {
     container.appendChild(box);
   });                                         // ← closes page.forEach
 
-  highlightSavedRows();        // orange rows (selectedOrders)
-  highlightCompletedRows();    // ✅ GREEN rows (completedOrders) – runs every build!
+   highlightSavedRows();        // orange first…
+ 
+   /* run the GREEN pass one frame later so nothing else can overwrite it */
+   requestAnimationFrame(highlightCompletedRows);
 
   /* return page size (0-100) so buttons enable/disable correctly */
   return page.length;
