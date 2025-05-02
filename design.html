@@ -806,7 +806,7 @@ document.addEventListener("DOMContentLoaded", () => {
       }
       /* also be sure their previews are gone */
       removePreviewBoxesForOrder(id);
-      
+
     });
 
     realignGrid();     // ← NEW (still inside restoreCompleted)
@@ -1059,8 +1059,6 @@ document.addEventListener("DOMContentLoaded", () => {
       box.className = "new-order-box";
       box.id        = "newOrder" + idx;
       box.dataset.receipt = r.receipt_id;      // ← NEW data-tag
-      /* metal key so Complete ! can target the row */
-      box.dataset.metal = rowMetal;            // ← NEW
 
       /* click → toggle highlight + (de)load images ---------------------- */
       box.addEventListener("click", async () => {
@@ -1137,7 +1135,7 @@ document.addEventListener("DOMContentLoaded", () => {
       else if(rG)       rowMetal = "rose";
       else if(s)        rowMetal = "silver";
       else if(g)        rowMetal = "gold";
-      box.dataset.metal = rowMetal;              // ← NEW
+      box.dataset.metal = rowMetal;            // ← moved here
 
       box.innerHTML = `
         <span class="col-order">${orderNum}</span>
