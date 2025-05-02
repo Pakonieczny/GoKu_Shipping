@@ -1451,6 +1451,9 @@ async function fetchOpenOrdersSequential() {
     /* colour immediately if it was saved */
     if (selectedOrders.has(rid)) {
       box.classList.add("selected");
+      }
+    if (completedOrders.has(rid)) {        // ← NEW: keep row green
+      box.classList.add("completed");
     }
 
     const orderNum = r.order_number || r.receipt_id || "—";
