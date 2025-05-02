@@ -758,17 +758,33 @@ document.addEventListener("DOMContentLoaded", () => {
     }
     const metalKey = activeMetals[0];
 
-    /* collect all visible boxes with that metal */
+    /* 1️⃣  look at the grid → receipts that are BOTH visible & match the metal */
     const greenIDs = [];
-    document.querySelectorAll(`.new-order-box[data-metal="${metalKey}"]`).forEach(box=>{
-      const id = box.dataset.receipt;
-      if (!completedOrders.has(id)){
-        completedOrders.add(id);
-        greenIDs.push(id);
+    document.querySelectorAll("#photoGridContainer .wrap-preview")
+            .forEach(wrap => {
+              if (wrap.style.display === "none") return;             // filtered out
+              if (wrap.dataset.metal !== metalKey)  return;          // wrong metal
+              greenIDs.push(wrap.dataset.receipt);
+            });
+
+    if (!greenIDs.length){
+      M.toast({ html:"No orders matched that metal." });
+      return;
+    }
+
+    /* 2️⃣  mark sidebar rows + memory */
+    greenIDs.forEach(id => {
+      completedOrders.add(id);                                       // track ID
+      const box = document.querySelector(`.new-order-box[data-receipt='${id}']`);
+      if (box){
+        box.classList.remove("selected");
+        box.classList.add("completed");
       }
-      box.classList.remove("selected");   // remove orange
-      box.classList.add("completed");     // add green
     });
+
+    /* 3️⃣  remove only those previews & realign grid */
+    greenIDs.forEach(id => removePreviewBoxesForOrder(id));
+    realignGrid();
 
     /* remove previews for each completed receipt */
     greenIDs.forEach(id => removePreviewBoxesForOrder(id));
