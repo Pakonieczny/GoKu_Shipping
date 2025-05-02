@@ -1010,26 +1010,33 @@ document.addEventListener("DOMContentLoaded", () => {
 
   /* append ONE preview without rebuilding the entire grid */
   function addPreviewBox(item){
-    if (completedOrders.has(String(item.receipt_id))) return;   // ← NEW
+    if (completedOrders.has(String(item.receipt_id))) return;   // skip finished
+
     const wrap = makePreviewNode(item);          // build + auto-append
-    gridElements.set(gridElements.size, wrap);   // index bookkeeping
+    gridElements.set(gridElements.size, wrap);   // bookkeeping
 
     /* keep cachedOrderItems in the same order as gridElements */
     if (!Array.isArray(window.cachedOrderItems)) window.cachedOrderItems = [];
-    window.cachedOrderItems.push(item);          // ← NEW
-
-    wrap.dataset.idx = window.cachedOrderItems.length - 1;   // sync idx
+    window.cachedOrderItems.push(item);
+    wrap.dataset.idx = window.cachedOrderItems.length - 1;      // sync idx
 
     item._inGrid  = true;
     item._wrapEl  = wrap;
 
-    // optional debug — keep or remove as you like
     if (wrap.classList.contains("preview-attn")){
-    console.log("ATTN:", item.listing_id,
-    item.personalization, item.message_from_buyer);
+      console.log("ATTN:", item.listing_id,
+                  item.personalization, item.message_from_buyer);
     }
 
-    updateCounters();                            // refresh top counters
+    updateCounters();                              // refresh top counters
+
+    /* ── NEW: hide the box immediately if its metal isn’t active ── */
+    const activeMetals = new Set(
+      Array.from(document.querySelectorAll(".metal-counter.active"))
+           .map(b => b.dataset.metal)
+    );
+    wrap.style.display = activeMetals.has(wrap.dataset.metal) ? "" : "none";
+
     return wrap;
   }
 
