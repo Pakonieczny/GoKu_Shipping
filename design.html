@@ -923,10 +923,22 @@ document.addEventListener("DOMContentLoaded", () => {
   /* highlight every row whose receipt_id is in selectedOrders */
   function highlightSavedRows(){
     selectedOrders.forEach(id => {
-      if (completedOrders.has(id)) return;          // ← NEW: skip green rows
+      if (completedOrders.has(id)) return;          // skip rows that are green
       const row = document.querySelector(
-                   `.new-order-box[data-receipt="${id}"]`);
+            `.new-order-box[data-receipt="${id}"]`);
       if (row) row.classList.add("selected");
+    });
+  }
+
+  /* colour every row whose receipt_id is in completedOrders */
+  function highlightCompletedRows(){
+    completedOrders.forEach(id => {
+      const row = document.querySelector(
+            `.new-order-box[data-receipt="${id}"]`);
+      if (row){
+        row.classList.remove("selected");  // never leave orange
+        row.classList.add("completed");    // paint green
+      }
     });
   }
 
@@ -1568,7 +1580,8 @@ async function fetchOpenOrdersSequential() {
     container.appendChild(box);
   });                                // ← closes page.forEach
 
-  highlightSavedRows();              // ← colour rows on every page load
+  highlightSavedRows();              // colour orange rows on load
+  highlightCompletedRows();          // ← NEW: colour green rows too
 
   /* return page size (0-100) so buttons enable/disable correctly */
   return page.length;
