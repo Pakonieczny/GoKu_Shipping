@@ -2129,23 +2129,6 @@ function reflowGrid(){
       listingModal.open();
     }
 
-    /* remove all preview wrappers for one receipt -------------------- */
-    function removePreviewBoxesForOrder(receiptID){
-      /* yank wrappers from the DOM */
-      document.querySelectorAll(
-        `#photoGridContainer .wrap-preview[data-receipt='${receiptID}']`
-      ).forEach(wrap => {
-        wrap.remove();
-
-        /* also delete the entry from gridElements map */
-        for (const [k,v] of gridElements.entries()){
-          if (v === wrap){ gridElements.delete(k); break; }
-        }
-      });
-
-      updateCounters();          // counter truly hits 0 now
-    }
-
     /* pack remaining previews after removals ------------------------ */
     function realignGrid(){
       const wraps = Array.from(document.querySelectorAll("#photoGridContainer .wrap-preview"));
