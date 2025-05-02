@@ -253,10 +253,10 @@
 
     /* --- adjust the detail‐row layout --- */
     .modal-detail-row{
-      margin-top:7px !important;
+      margin-top:7px;
       display:flex;
       flex-direction:column;   /* ← vertical stack */
-      gap:4px !important;                 /* space between boxes */
+      gap:4px;                 /* space between boxes */
     }
 
     /* overwrite Materialize’s input styling */
@@ -268,6 +268,11 @@
       box-shadow:none !important;          /* kill underline glow */
       background:transparent;
       padding:0;
+    }
+
+    /* add 6 px space above every input except the first */
+    .modal-detail-row input + input{
+      margin-top:6px !important;          /* adjust to taste */
     }
 
     /* also suppress the focus underline */
