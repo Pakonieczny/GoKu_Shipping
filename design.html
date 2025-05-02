@@ -422,6 +422,21 @@ const COMPLETED_KEY = "completedOrders";   // green-list
 const LAST_PURGE_KEY = "completed_last_purge"; // ISO month stamp
 const completedOrders = new Set();   // IDs that are already green
 
+/* ------------------------------------------------------------------
+ *  INIT - make sure completedOrders is filled BEFORE any UI action
+ * ------------------------------------------------------------------*/
+(function initCompletedSet(){
+  const raw = localStorage.getItem(COMPLETED_KEY);
+  if (!raw) return;
+  try{
+    const obj = JSON.parse(raw);                 // { "YYYY-MM":[…] … }
+    Object.values(obj).flat()
+      .forEach(id => completedOrders.add(String(id)));
+  }catch(e){
+    console.warn("Completed-list parse error:", e);
+  }
+})();
+
 let croppedImagesArray = [];
 let userImagesArray = [];
 let cellMatches = {};
