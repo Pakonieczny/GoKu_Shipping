@@ -891,7 +891,9 @@ document.addEventListener("DOMContentLoaded", () => {
   /* highlight every row whose receipt_id is in selectedOrders */
   function highlightSavedRows(){
     selectedOrders.forEach(id => {
-      const row = document.querySelector(`.new-order-box[data-receipt="${id}"]`);
+      if (completedOrders.has(id)) return;          // ← NEW: skip green rows
+      const row = document.querySelector(
+                   `.new-order-box[data-receipt="${id}"]`);
       if (row) row.classList.add("selected");
     });
   }
@@ -902,7 +904,8 @@ document.addEventListener("DOMContentLoaded", () => {
   function updateCounters(){
     let g=0, s=0, r=0, k=0;
     gridElements.forEach(wrap=>{
-      const qty = Number(wrap.dataset.qty) || 1;
+    if (wrap.style.display === "none") return;   // ← NEW: skip hidden rows
+    const qty = Number(wrap.dataset.qty) || 1;
       switch (wrap.dataset.metal){
         case "gold":   g += qty; break;
         case "silver": s += qty; break;
