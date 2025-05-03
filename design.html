@@ -826,53 +826,7 @@ document.addEventListener("DOMContentLoaded", () => {
     updateCounters();                    // refresh metal totals
   }
 
-    /* remove all preview wrappers + grid bookkeeping for a receipt */
-    function removePreviewBoxesForOrder(receiptID){
-      document.querySelectorAll(
-        `#photoGridContainer .wrap-preview[data-receipt='${receiptID}']`
-      ).forEach(wrap => {
-        wrap.remove();
 
-        /* also delete the entry from gridElements map */
-        for (const [k,v] of gridElements.entries()){
-          if (v === wrap){ gridElements.delete(k); break; }
-        }
-      });
-
-      updateCounters();          // refresh metal totals
-    }
-
-    /* remove every preview row that belongs to one receipt
-   (hoisted – available before handleCompleteClick executes) */
-    function removePreviewBoxesForOrder(receiptId){
-     /* 1️⃣ try the elegant cache-based path first */
-     const txs = orderCache[receiptId] || [];
-     if (txs.length) {
-       txs.forEach(tx => {
-         if (tx._wrapEl){
-           tx._wrapEl.remove();
-           for (const [k,v] of gridElements.entries()){
-             if (v === tx._wrapEl){ gridElements.delete(k); break; }
-           }
-           tx._inGrid = false;
-           tx._wrapEl = null;
-         }
-       });
-     }
-   
-     /* 2️⃣ cache might be missing → fall back to raw DOM lookup */
-     document.querySelectorAll(
-       `#photoGridContainer .wrap-preview[data-receipt='${receiptId}']`
-     ).forEach(wrap => {
-       wrap.remove();
-       for (const [k,v] of gridElements.entries()){
-         if (v === wrap){ gridElements.delete(k); break; }
-       }
-     });
-   
-     updateCounters();   // keep the badges right
-     realignGrid();      // reseat the remaining boxes
-    }
 
     /* ── click handler ────────────────────────────────────────────── */
   function handleCompleteClick(){
@@ -1229,18 +1183,29 @@ document.addEventListener("DOMContentLoaded", () => {
 
     /* remove every preview row that belongs to one receipt */
     function removePreviewBoxesForOrder(receiptId){
-      const txs = orderCache[receiptId] || [];
-      txs.forEach(tx => {
-        if (tx._wrapEl) {
-          tx._wrapEl.remove();                       // yank from DOM
-          /* drop from gridElements map */
-          for (const [k,v] of gridElements.entries()){
-            if (v === tx._wrapEl){ gridElements.delete(k); break; }
-          }
-          tx._inGrid = false;
-          tx._wrapEl = null;
+      /* skip removals for completed (green) orders */
+      if (completedOrders.has(receiptId)) return;
+
+      /* 1 ▸ delete every wrap belonging to this receipt */
+      document.querySelectorAll(
+        `#photoGridContainer .wrap-preview[data-receipt='${receiptId}']`
+      ).forEach(wrap => {
+        wrap.remove();
+        /* drop from gridElements map */
+        for (const [k,v] of gridElements.entries()){
+          if (v === wrap){ gridElements.delete(k); break; }
         }
       });
+
+      /* 2 ▸ scrub caches */
+      delete orderCache[receiptId];
+      processedTxIds.forEach(txid=>{
+        if (txid.startsWith(receiptId)) processedTxIds.delete(txid);
+      });
+
+      /* 3 ▸ UI tidy */
+      reflowGrid();
+      updateCounters();
     }
 
     /* close up the gaps: re-index & move every wrapper */
@@ -1755,22 +1720,7 @@ async function startScannedSortingListener() {
   }
 }
 
-/* ————————————————————————————————————————————————
- * Ensure every still-selected order has its previews.
- * Called after filter toggles & the red CLEAR button.
- * ———————————————————————————————————————————————— */
-async function ensureOrangeIntegrity(){
-  const need = [];
-  selectedOrders.forEach(id=>{
-    if(!document.querySelector(`.wrap-preview[data-receipt='${id}']`)){
-      need.push(id);
-    }
-  });
-  if(need.length) await loadBatchEtsyOrders(need);
-  reflowGrid();
-  updateCounters();
-}
-window.ensureOrangeIntegrity = ensureOrangeIntegrity;   // expose
+
 
 /* === Restore saved orange selections === */
   restoreSelections();            // ← add this line
@@ -2076,16 +2026,16 @@ async function loadBatchEtsyOrders(orderNumbers) {
        * attach buyer-message & keep Etsy's transaction.personalization
        * ----------------------------------------------------------- */
       if (Array.isArray(data.transactions)) {
-                const buyerMsg     = data.receipt?.message_from_buyer || "";
-        const receiptPers  = data.receipt?.personalization    || "";   // NEW
+        const buyerMsg    = data.receipt?.message_from_buyer || "";
+        const receiptPers = data.receipt?.personalization    || "";
 
         data.transactions.forEach(t => {
           t.typedOrderNumber   = ord;
           t.message_from_buyer = buyerMsg;
 
-                    /* NEW — inherit personalization from the receipt if the tx lacks its own */
+          /* inherit receipt-level personalization if tx lacks its own */
           if (
-              receiptPers &&                                    // ← only if non-empty
+              receiptPers &&
               (
                 !t.personalization ||
                 (Array.isArray(t.personalization) && !t.personalization.length)
@@ -2094,18 +2044,12 @@ async function loadBatchEtsyOrders(orderNumbers) {
             t.personalization = receiptPers;
           }
 
-        /* normalize personalization ---------------------------------- */
-        if (t.personalization) {
+          /* normalize + trim blanks */
           if (!Array.isArray(t.personalization)) {
             t.personalization = [ t.personalization ];
           }
-        } else {
-          t.personalization = [];
-        }
+          t.personalization = t.personalization.filter(txt => txt && txt.trim());
 
-            t.personalization = t.personalization.filter(txt => txt && txt.trim());
-
-          /* DEBUG: log if any personalization exists */
           if (t.personalization.length) {
             console.log("⟹ Personalization TX", t.transaction_id, t.personalization);
           }
@@ -2311,19 +2255,27 @@ function reflowGrid(){
      * ensureCompletedPreviews – make sure every completed receipt
      *                           has at least one wrap in the grid
      * -------------------------------------------------------------*/
-    async function ensureCompletedPreviews() {
-      const need = [];
-      completedOrders.forEach(rid => {
-        // Already have a wrap for this receipt?
-        const found = document.querySelector(
-          `.wrap-preview[data-receipt="${rid}"]`
-        );
-        if (!found) need.push(rid);
+    function ensureCompletedPreviews(){
+      const needReceipts = [];
+
+      /* reveal existing wraps + collect truly-missing ones */
+      completedOrders.forEach(id => {
+        const wrap = document.querySelector(`.wrap-preview[data-receipt='${id}']`);
+        if (wrap){
+          wrap.style.display = "";
+        }else{
+          needReceipts.push(id);
+        }
       });
 
-      if (need.length) {
-        console.log("Loading previews for completed orders:", need);
-        await loadBatchEtsyOrders(need);   // existing helper
+      /* fetch only the missing ones */
+      if (needReceipts.length){
+        loadBatchEtsyOrders(needReceipts)
+          .then(()=>{ reflowGrid(); updateCounters(); })
+          .catch(err => console.error("Completed sync error:", err));
+      }else{
+        reflowGrid();
+        updateCounters();
       }
     }
 
