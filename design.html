@@ -341,11 +341,10 @@
 </head>
 <body>
   <!-- Main Buttons -->
-<button id="connectEtsyBtn"    class="btn waves-effect waves-light">Connect to Etsy</button>
+<button id="connectEtsyBtn"    class="btn waves-effect waves-light">Connect</button>
 <button id="openConfigBtn"     class="btn waves-effect waves-light">Open Config</button>
-<button id="updateOrderListBtn"class="btn waves-effect waves-light">Update Order List</button>
+<button id="updateOrderListBtn"class="btn waves-effect waves-light">Update</button>
 <button id="clearBtn"          class="btn red lighten-1">Clear</button>
-<button id="nextPageBtn"       class="btn waves-effect waves-light">Next Page</button>
 <button id="clearCompletedBtn" class="btn orange lighten-1">Clear Completed</button>
 
 <!-- NEW green “Complete !” button (drag-positionable inside the modal) -->
@@ -2192,7 +2191,7 @@ function reflowGrid(){
 /* ─── METAL FILTER INITIALISER ─── */
 (function () {
   /* click-toggle each counter */
-  document.querySelectorAll(".metal-counter").forEach(box => {
+  document.querySelectorAll('.metal-counter:not([data-metal="completed"])').forEach(box => {
     box.addEventListener("click", () => {
       box.classList.toggle("active");      // blue outline via CSS
       applyMetalFilter();
