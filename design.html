@@ -1070,6 +1070,11 @@ document.addEventListener("DOMContentLoaded", () => {
   /* append ONE preview without rebuilding the entire grid */
   function addPreviewBox(item){
 
+    /* if this receipt is already chosen, give outline up-front */
+    if (selectedOrders.has(String(item.receipt_id))) {
+      wrap.classList.add("selected");
+    }
+
     /* already have this TX? — skip duplicate */
     if (document.querySelector(
         `.wrap-preview[data-tx='${item.transaction_id}']`)) return;
@@ -2077,6 +2082,10 @@ async function loadBatchEtsyOrders(orderNumbers) {
         data.transactions.forEach(t => {
           t.typedOrderNumber   = ord;
           t.message_from_buyer = buyerMsg;
+
+          if (!Array.isArray(t.personalization)) {
+          t.personalization = [];
+         }
 
         /* normalize personalization ---------------------------------- */
         if (t.personalization) {
