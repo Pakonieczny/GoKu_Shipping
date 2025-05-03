@@ -722,7 +722,6 @@ document.addEventListener("DOMContentLoaded", () => {
         reflowGrid();            // closes photo-grid gaps
         updateCounters();        // top counters
         window.applyMetalFilter(); /* keeps current filter state */
-        ensureOrangeIntegrity();
 
         M.toast({ html: "Selection cleared" });
       });
@@ -2077,15 +2076,23 @@ async function loadBatchEtsyOrders(orderNumbers) {
        * attach buyer-message & keep Etsy's transaction.personalization
        * ----------------------------------------------------------- */
       if (Array.isArray(data.transactions)) {
-        const buyerMsg = data.receipt?.message_from_buyer || "";
+                const buyerMsg     = data.receipt?.message_from_buyer || "";
+        const receiptPers  = data.receipt?.personalization    || "";   // NEW
 
         data.transactions.forEach(t => {
           t.typedOrderNumber   = ord;
           t.message_from_buyer = buyerMsg;
 
-          if (!Array.isArray(t.personalization)) {
-          t.personalization = [];
-         }
+                    /* NEW — inherit personalization from the receipt if the tx lacks its own */
+          if (
+              receiptPers &&                                    // ← only if non-empty
+              (
+                !t.personalization ||
+                (Array.isArray(t.personalization) && !t.personalization.length)
+              )
+          ){
+            t.personalization = receiptPers;
+          }
 
         /* normalize personalization ---------------------------------- */
         if (t.personalization) {
@@ -2095,6 +2102,8 @@ async function loadBatchEtsyOrders(orderNumbers) {
         } else {
           t.personalization = [];
         }
+
+            t.personalization = t.personalization.filter(txt => txt && txt.trim());
 
           /* DEBUG: log if any personalization exists */
           if (t.personalization.length) {
