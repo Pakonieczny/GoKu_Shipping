@@ -2189,43 +2189,36 @@ function reflowGrid(){
 }
 
   /* ─── METAL FILTER INITIALISER ─── */
-  (function () {
+  document.addEventListener("DOMContentLoaded", () => {
 
-    /* cached pointer to the Completed button */
     const completedBtn = document.getElementById("completedCounter");
 
-    /* click-toggle each counter (all BUT Completed) */
+    /* click-toggle for the FOUR metal buttons (skip Completed) */
     document
       .querySelectorAll('.metal-counter:not([data-metal="completed"])')
-      .forEach(box => {
-        box.addEventListener("click", () => {
-          // flip this metal on/off
-          box.classList.toggle("active");
-          // clicking any metal always disables Completed
-          completedBtn.classList.remove("active");
+      .forEach(btn => {
+        btn.addEventListener("click", () => {
+          btn.classList.toggle("active");          // blue outline
+          completedBtn.classList.remove("active"); // Completed must turn off
           applyMetalFilter();
         });
       });
 
-    /********************************************************
-     * Completed filter – exclusivity logic
-     ********************************************************/
+    /* exclusivity toggle for Completed */
     completedBtn.addEventListener("click", () => {
       const isNowActive = completedBtn.classList.toggle("active");
 
-      /* flip the four metal buttons to the opposite state */
+      /* flip the four metal buttons */
       document
         .querySelectorAll(
           '.metal-counter[data-metal]:not([data-metal="completed"])'
         )
         .forEach(btn => btn.classList.toggle("active", !isNowActive));
 
-      applyMetalFilter();          // refresh grid
+      applyMetalFilter();
     });
 
-    /********************************************************
-     * applyMetalFilter – show/hide preview boxes
-     ********************************************************/
+    /* filter helper --------------------------------------------------- */
     function applyMetalFilter() {
       /* 1️⃣ Completed ON → show only green previews */
       if (completedBtn.classList.contains("active")) {
@@ -2237,7 +2230,7 @@ function reflowGrid(){
         return;
       }
 
-      /* 2️⃣ Otherwise filter by whichever metals are active */
+      /* 2️⃣ Otherwise, filter by whichever metals are active */
       const activeMetals = new Set(
         Array.from(document.querySelectorAll(".metal-counter.active"))
              .map(btn => btn.dataset.metal)
@@ -2250,10 +2243,10 @@ function reflowGrid(){
       reflowGrid();
     }
 
-    /* run once on load to honour the initial .active states */
+    /* first run honours the initial .active states */
     applyMetalFilter();
 
-  })();   /* ─── END METAL FILTER INITIALISER ─── */
+  });  /* ─── END METAL FILTER INITIALISER ─── */
 
     function openListingModal(cellIdx){
       const item = window.cachedOrderItems[cellIdx];
