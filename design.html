@@ -1063,74 +1063,46 @@ document.addEventListener("DOMContentLoaded", () => {
    // expose the helper so fillPreviewBoxes() can call it
    window.updateCounters = updateCounters;
 
-  /* ===================================================================
-   * GLOBAL PREVIEW HELPERS  – accessible from any click-handler
-   * =================================================================== */
+    /* =======================================================
+     * GLOBAL PREVIEW HELPERS – accessible from any click-handler
+     * ======================================================= */
 
-  /* append ONE preview without rebuilding the entire grid */
-  function addPreviewBox(item){
+    /* append ONE preview without rebuilding the entire grid */
+    function addPreviewBox(item){
 
-    /* if this receipt is already chosen, give outline up-front */
-    if (selectedOrders.has(String(item.receipt_id))) {
-      wrap.classList.add("selected");
+      /* already have this TX? — skip duplicate */
+      if (document.querySelector(
+            `.wrap-preview[data-tx='${item.transaction_id}']`)) return;
+
+      /* build DOM node + auto-append */
+      const wrap = makePreviewNode(item);
+      gridElements.set(gridElements.size, wrap);   // bookkeeping
+
+      /* outline if order already orange-selected */
+      if (selectedOrders.has(String(item.receipt_id))) {
+        wrap.classList.add("selected");
+      }
+
+      /* maintain cache & indices */
+      if (!Array.isArray(window.cachedOrderItems)) window.cachedOrderItems = [];
+      window.cachedOrderItems.push(item);
+      wrap.dataset.idx = window.cachedOrderItems.length - 1;
+
+      /* back-references on the item itself */
+      item._inGrid = true;
+      item._wrapEl = wrap;
+
+      /* log attention-flagged listings */
+      if (wrap.classList.contains("preview-attn")){
+        console.log("ATTN:", item.listing_id,
+                    item.personalization, item.message_from_buyer);
+      }
+
+      updateCounters();          // refresh metal counters
+      window.applyMetalFilter(); // honour current filter state
+      return wrap;
     }
-
-    /* already have this TX? — skip duplicate */
-    if (document.querySelector(
-        `.wrap-preview[data-tx='${item.transaction_id}']`)) return;
-
-    const wrap = makePreviewNode(item);          // build + auto-append
-    gridElements.set(gridElements.size, wrap);   // bookkeeping
-
-    /* keep cachedOrderItems in the same order as gridElements */
-    if (!Array.isArray(window.cachedOrderItems)) window.cachedOrderItems = [];
-    window.cachedOrderItems.push(item);
-    wrap.dataset.idx = window.cachedOrderItems.length - 1;      // sync idx
-
-    item._inGrid  = true;
-    item._wrapEl  = wrap;
-
-    if (wrap.classList.contains("preview-attn")){
-      console.log("ATTN:", item.listing_id,
-                  item.personalization, item.message_from_buyer);
-    }
-
-    updateCounters();                              // refresh top counters
-
-    /* make sure new tiles respect the current filter state */
-      window.applyMetalFilter();
-
-     /* 1️⃣ check if “Completed” is the only active filter -------- */
-     const completedOn = document
-           .getElementById("completedCounter")
-           .classList.contains("active");
-   
-     if (completedOn) {
-       gridElements.forEach(wrap => {
-         const rid = wrap.dataset.receipt;
-         wrap.style.display = completedOrders.has(rid) ? "" : "none";
-       });
-       return;          // done — no metal logic when Completed is on
-     }
-   
-     /* 2️⃣ otherwise use the active-metal list just like before ---- */
-     const activeMetals = new Set(
-       Array.from(document.querySelectorAll(".metal-counter.active"))
-            .map(btn => btn.dataset.metal)
-     );
-   
-     gridElements.forEach(wrap => {
-       wrap.style.display =
-         activeMetals.has(wrap.dataset.metal) ? "" : "none";
-     });
-
-      /* if this receipt is in the orange Set, give it the outline */
-      if (selectedOrders.has(String(item.receipt_id))) wrap.classList.add("selected");  
-
-     return wrap;
-   }
-
-   window.addPreviewBox = addPreviewBox;   // expose to outer helpers
+    window.addPreviewBox = addPreviewBox;   // keep global handle
 
   /* build a preview row (image + 4 tiny detail inputs) */
   function makePreviewNode(item){
