@@ -1026,6 +1026,34 @@ document.addEventListener("DOMContentLoaded", () => {
      * GLOBAL PREVIEW HELPERS – accessible from any click-handler
      * ======================================================= */
 
+    /* ===== removePreviewBoxesForOrder — GLOBAL VERSION ===== */
+    function removePreviewBoxesForOrder(receiptId){
+      /* skip removals for completed (green) orders */
+      if (completedOrders.has(receiptId)) return;
+
+      /* 1 ▸ delete every wrap belonging to this receipt */
+      document.querySelectorAll(
+        `#photoGridContainer .wrap-preview[data-receipt='${receiptId}']`
+      ).forEach(wrap => {
+        wrap.remove();
+        /* drop from gridElements map */
+        for (const [k,v] of gridElements.entries()){
+          if (v === wrap){ gridElements.delete(k); break; }
+        }
+      });
+
+      /* 2 ▸ scrub caches */
+      delete orderCache[receiptId];
+      processedTxIds.forEach(txid=>{
+        if (txid.startsWith(receiptId)) processedTxIds.delete(txid);
+      });
+
+      /* 3 ▸ UI tidy */
+      reflowGrid();
+      updateCounters();
+    }
+    window.removePreviewBoxesForOrder = removePreviewBoxesForOrder;   // expose
+
     /* append ONE preview without rebuilding the entire grid */
     function addPreviewBox(item){
 
@@ -1180,33 +1208,6 @@ document.addEventListener("DOMContentLoaded", () => {
     /* =========================================================
      * DYNAMIC-REMOVE HELPERS
      * ========================================================= */
-
-    /* remove every preview row that belongs to one receipt */
-    function removePreviewBoxesForOrder(receiptId){
-      /* skip removals for completed (green) orders */
-      if (completedOrders.has(receiptId)) return;
-
-      /* 1 ▸ delete every wrap belonging to this receipt */
-      document.querySelectorAll(
-        `#photoGridContainer .wrap-preview[data-receipt='${receiptId}']`
-      ).forEach(wrap => {
-        wrap.remove();
-        /* drop from gridElements map */
-        for (const [k,v] of gridElements.entries()){
-          if (v === wrap){ gridElements.delete(k); break; }
-        }
-      });
-
-      /* 2 ▸ scrub caches */
-      delete orderCache[receiptId];
-      processedTxIds.forEach(txid=>{
-        if (txid.startsWith(receiptId)) processedTxIds.delete(txid);
-      });
-
-      /* 3 ▸ UI tidy */
-      reflowGrid();
-      updateCounters();
-    }
 
     /* close up the gaps: re-index & move every wrapper */
     function realignGrid(){
