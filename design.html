@@ -2350,24 +2350,29 @@ function reflowGrid(){
              .map(btn => btn.dataset.metal)
       );
 
-      gridElements.forEach(wrap => {
+        gridElements.forEach(wrap => {
         const show =
           activeMetals.has(wrap.dataset.metal) &&          // metal is active
           !completedOrders.has(wrap.dataset.receipt);       // and NOT completed
         wrap.style.display = show ? "" : "none";
       });
 
-      /* restore 3 px orange outline on all selected previews */
+      /* ── restore 3-px orangered outline and orange rows ─────────── */
       selectedOrders.forEach(rid => {
-        document.querySelectorAll(`#photoGridContainer .wrap-preview[data-receipt='${rid}']`)
-                .forEach(w => w.classList.add("selected"));
+        /* preview boxes */
+        document.querySelectorAll(
+          `#photoGridContainer .wrap-preview[data-receipt='${rid}']`
+        ).forEach(wrap => wrap.classList.add("selected"));
+
+        /* left-column rows */
+        const row = document.querySelector(
+          `.new-order-box[data-receipt='${rid}']`
+        );
+        if (row) row.classList.add("selected");
       });
 
-        if (typeof highlightSavedRows === "function") highlightSavedRows();
-
       reflowGrid();
-      updateCounters();                 // keep top counters in sync
-    }
+      updateCounters();              // keep top counters in sync
 
     // make it callable from addPreviewBox and other global helpers
     window.applyMetalFilter = applyMetalFilter;
