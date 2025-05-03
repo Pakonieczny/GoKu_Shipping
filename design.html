@@ -1286,7 +1286,15 @@ document.addEventListener("DOMContentLoaded", () => {
           /* ─── DESELECT ─── */
           selectedOrders.delete(receiptId);
           box.classList.remove("selected");
-          window.applyMetalFilter(); // 🔸 NEW → re-sync grid & counters
+
+          /* clean up previews & bookkeeping */
+          removePreviewBoxesForOrder(receiptId);  // drop every wrap
+          realignGrid();                          // close gaps
+          updateCounters();                       // badge totals
+          persistSelection();                     // save smaller Set
+
+          /* re-evaluate visibility after the removals */
+          window.applyMetalFilter();
 
         } else {
           /* ─── SELECT ─── */
