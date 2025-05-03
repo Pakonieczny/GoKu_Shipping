@@ -716,6 +716,7 @@ document.addEventListener("DOMContentLoaded", () => {
         reflowGrid();            // closes photo-grid gaps
         updateCounters();        // top counters
         window.applyMetalFilter(); /* keeps current filter state */
+        ensureOrangeIntegrity();
 
         M.toast({ html: "Selection cleared" });
       });
@@ -2282,7 +2283,7 @@ function reflowGrid(){
        if (isNowActive) {
          await ensureCompletedPreviews();     // when turning Completed ON
        } else {
-         await ensureSelectedPreviews();      // when turning it OFF again
+         await ensureOrangeIntegrity();      // brings orange back cleanly
        }
 
       applyMetalFilter();                 // refresh grid
@@ -2327,8 +2328,40 @@ function reflowGrid(){
       }
     }
 
+    /* =================================================================
+     * ensureOrangeIntegrity
+     *   • Restores .selected class to every orange row & preview
+     *   • Creates any missing preview wraps
+     *   • Guarantees only one wrap per transaction
+     * =================================================================*/
+    async function ensureOrangeIntegrity() {
+      const missingReceipts = [];
+
+      selectedOrders.forEach(rid => {
+        /* row */
+        const row = document.querySelector(
+          `.new-order-box[data-receipt='${rid}']`);
+        if (row) row.classList.add("selected");
+
+        /* preview? */
+        const anyWrap = document.querySelector(
+          `#photoGridContainer .wrap-preview[data-receipt='${rid}']`);
+        if (!anyWrap) missingReceipts.push(rid);
+      });
+
+      /* pull missing previews once */
+      if (missingReceipts.length) await loadBatchEtsyOrders(missingReceipts);
+
+      /* add outline to every visible preview belonging to an orange receipt */
+      selectedOrders.forEach(rid => {
+        document.querySelectorAll(
+          `#photoGridContainer .wrap-preview[data-receipt='${rid}']`
+        ).forEach(wrap => wrap.classList.add("selected"));
+      });
+    }
+
     /* filter helper --------------------------------------------------- */
-    function applyMetalFilter() {
+    async function applyMetalFilter() {
 
       const completedOn = completedBtn.classList.contains("active");
 
@@ -2336,8 +2369,8 @@ function reflowGrid(){
       document.querySelectorAll(".new-order-box").forEach(row => {
         const isGreen = row.classList.contains("completed");
         row.style.display =
-          completedOn ? (isGreen ? "" : "none")          // show only greens
-                      : (isGreen ? "none" : "");         // hide greens
+          completedOn ? (isGreen ? "" : "none")            // show only greens
+                      : (isGreen ? "none" : "");           // hide greens
       });
 
       /* 1️⃣  Completed ON → show only green previews ------------------ */
@@ -2346,8 +2379,9 @@ function reflowGrid(){
           wrap.style.display =
             completedOrders.has(wrap.dataset.receipt) ? "" : "none";
         });
+        await ensureOrangeIntegrity();     // keep orange lists tidy
         reflowGrid();
-        updateCounters();           // counters stay metal-only
+        updateCounters();                  // counters stay metal-only
         return;
       }
 
@@ -2359,43 +2393,22 @@ function reflowGrid(){
 
       gridElements.forEach(wrap => {
         const show =
-          activeMetals.has(wrap.dataset.metal) &&          // metal is active
-          !completedOrders.has(wrap.dataset.receipt);       // and NOT completed
+          activeMetals.has(wrap.dataset.metal) &&            // metal is active
+          !completedOrders.has(wrap.dataset.receipt);         // and NOT completed
         wrap.style.display = show ? "" : "none";
       });
 
-      /* ── restore 3-px orangered outline and orange rows ─────────── */
-      selectedOrders.forEach(rid => {
-        /* preview boxes */
-        document.querySelectorAll(
-          `#photoGridContainer .wrap-preview[data-receipt='${rid}']`
-        ).forEach(wrap => wrap.classList.add("selected"));
-
-        /* left-column rows */
-        const row = document.querySelector(
-          `.new-order-box[data-receipt='${rid}']`
-        );
-        if (row) row.classList.add("selected");
-      });
+      /* 3️⃣  Restore orange outlines & missing previews --------------- */
+      await ensureOrangeIntegrity();
 
       reflowGrid();
-      updateCounters();             // keep top counters in sync
-
-       /* one more pass in the next frame — guarantees nothing strips the outline */
-       requestAnimationFrame(() => {
-         selectedOrders.forEach(rid => {
-           document.querySelectorAll(
-             `#photoGridContainer .wrap-preview[data-receipt='${rid}']`
-           ).forEach(w => w.classList.add("selected"));
-         });
-       });
-
+      updateCounters();                  // top counters in sync
     }   /* ← end applyMetalFilter */
 
-    /* make it callable from addPreviewBox and other helpers */
+    /* expose helper for addPreviewBox etc. */
     window.applyMetalFilter = applyMetalFilter;
 
-    /* first run honours the initial .active states */
+    /* first run honours initial .active states */
     applyMetalFilter();
 
     });  /* ─── END METAL FILTER INITIALISER ─── */
