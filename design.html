@@ -2325,12 +2325,12 @@ function reflowGrid(){
 
       const completedOn = completedBtn.classList.contains("active");
 
-      /* 0️⃣  Always handle the left-column order rows ------------------ */
+      /* 0️⃣  Handle left-column order rows ---------------------------- */
       document.querySelectorAll(".new-order-box").forEach(row => {
         const isGreen = row.classList.contains("completed");
         row.style.display =
-          completedOn ? (isGreen ? "" : "none")      // show only greens
-                      : (isGreen ? "none" : "");     // hide greens
+          completedOn ? (isGreen ? "" : "none")          // show only greens
+                      : (isGreen ? "none" : "");         // hide greens
       });
 
       /* 1️⃣  Completed ON → show only green previews ------------------ */
@@ -2340,7 +2340,7 @@ function reflowGrid(){
             completedOrders.has(wrap.dataset.receipt) ? "" : "none";
         });
         reflowGrid();
-        updateCounters();                 // counters stay metal-only
+        updateCounters();           // counters stay metal-only
         return;
       }
 
@@ -2350,7 +2350,7 @@ function reflowGrid(){
              .map(btn => btn.dataset.metal)
       );
 
-        gridElements.forEach(wrap => {
+      gridElements.forEach(wrap => {
         const show =
           activeMetals.has(wrap.dataset.metal) &&          // metal is active
           !completedOrders.has(wrap.dataset.receipt);       // and NOT completed
@@ -2372,9 +2372,10 @@ function reflowGrid(){
       });
 
       reflowGrid();
-      updateCounters();              // keep top counters in sync
+      updateCounters();             // keep top counters in sync
+    }   /* ← end applyMetalFilter */
 
-    // make it callable from addPreviewBox and other global helpers
+    /* make it callable from addPreviewBox and other helpers */
     window.applyMetalFilter = applyMetalFilter;
 
     /* first run honours the initial .active states */
