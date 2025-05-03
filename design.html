@@ -1021,8 +1021,8 @@ document.addEventListener("DOMContentLoaded", () => {
  
    document.getElementById("goldCounter").innerText   = "Gold: "      + g;
    document.getElementById("silverCounter").innerText = "Silver: "    + s;
-   document.getElementById("roseCounter").innerText   = "Rose Gold: " + r;
-   document.getElementById("solidCounter").innerText  = "14K Solid: " + k;
+   document.getElementById("roseCounter").innerText   = "Rose: " + r;
+   document.getElementById("solidCounter").innerText  = "14K: " + k;
  }
 
    // expose the helper so fillPreviewBoxes() can call it
@@ -2310,8 +2310,8 @@ function reflowGrid(){
       reflowGrid();
     }
 
-    +// make it callable from addPreviewBox and other global helpers
-    +window.applyMetalFilter = applyMetalFilter;
+    // make it callable from addPreviewBox and other global helpers
+    window.applyMetalFilter = applyMetalFilter;
 
     updateCounters();   // keep top counters in sync with the view
 
