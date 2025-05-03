@@ -1014,6 +1014,9 @@ document.addEventListener("DOMContentLoaded", () => {
    document.getElementById("solidCounter").innerText  = "14K Solid: " + k;
  }
 
+   // expose the helper so fillPreviewBoxes() can call it
+   window.updateCounters = updateCounters;
+
   /* ===================================================================
    * GLOBAL PREVIEW HELPERS  – accessible from any click-handler
    * =================================================================== */
