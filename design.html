@@ -683,7 +683,8 @@ document.addEventListener("DOMContentLoaded", () => {
         if (!selectedOrders.size) return;
 
         /* 1️⃣ remove browser persistence */
-        localStorage.removeItem(SELECTED_KEY);          // e.g. "selectedOrders"
+        localStorage.removeItem(SELECTED_KEY);          // legacy key
+        localStorage.removeItem(STORAGE_KEY);           // current key "savedSelection"
 
         /* 2️⃣ loop through every receipt in the orange Set */
         selectedOrders.forEach(rid => {
