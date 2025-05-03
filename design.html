@@ -1100,6 +1100,10 @@ document.addEventListener("DOMContentLoaded", () => {
        wrap.style.display =
          activeMetals.has(wrap.dataset.metal) ? "" : "none";
      });
+
+      /* if this receipt is in the orange Set, give it the outline */
+      if (selectedOrders.has(String(item.receipt_id))) wrap.classList.add("selected");  
+
      return wrap;
    }
 
