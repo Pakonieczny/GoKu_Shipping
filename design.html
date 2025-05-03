@@ -625,7 +625,8 @@ document.addEventListener("DOMContentLoaded", () => {
 
           /* —— FORCE a second green-pass after new rows exist —— */
           highlightCompletedRows();                  // <-- NEW LINE
-
+            window.applyMetalFilter();   // re-run filters immediately
+            
           /* NEW → log visible order count */
           const displayedCount = document.getElementById("newOrderContainer").children.length;
           console.log(`Orders displayed (offset ${orderListOffset}):`, displayedCount);
