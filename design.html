@@ -1020,7 +1020,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
   /* append ONE preview without rebuilding the entire grid */
   function addPreviewBox(item){
-    if (completedOrders.has(String(item.receipt_id))) return;   // skip finished
+
 
     const wrap = makePreviewNode(item);          // build + auto-append
     gridElements.set(gridElements.size, wrap);   // bookkeeping
@@ -2264,8 +2264,10 @@ function reflowGrid(){
       );
 
       gridElements.forEach(wrap => {
-        wrap.style.display =
-          activeMetals.has(wrap.dataset.metal) ? "" : "none";
+       const show =
+         activeMetals.has(wrap.dataset.metal) &&   // metal is active
+         !completedOrders.has(wrap.dataset.receipt); // but NOT completed
+       wrap.style.display = show ? "" : "none";
       });
       reflowGrid();
     }
