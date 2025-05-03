@@ -345,7 +345,6 @@
 <button id="openConfigBtn"     class="btn waves-effect waves-light">Open Config</button>
 <button id="updateOrderListBtn"class="btn waves-effect waves-light">Update</button>
 <button id="clearBtn"          class="btn red lighten-1">Clear</button>
-<button id="nextPageBtn"       class="btn waves-effect waves-light">Next Page</button>
 <button id="clearCompletedBtn" class="btn orange lighten-1">Clear Completed</button>
 
 <!-- NEW green “Complete !” button (drag-positionable inside the modal) -->
@@ -2189,54 +2188,62 @@ function reflowGrid(){
   grid.style.height = (totalRows * 165) + "px";
 }
 
-/* ─── METAL FILTER INITIALISER ─── */
-(function () {
-  /* click-toggle each counter */
-  document.querySelectorAll('.metal-counter:not([data-metal="completed"])').forEach(box => {
-    box.addEventListener("click", () => {
-      box.classList.toggle("active");      // blue outline via CSS
-      applyMetalFilter();
+  /* ─── METAL FILTER INITIALISER ─── */
+  (function () {
+    /* click-toggle each counter (all BUT Completed) */
+    document.querySelectorAll('.metal-counter:not([data-metal="completed"])')
+            .forEach(box => {
+              box.addEventListener("click", () => {
+                box.classList.toggle("active");    // blue outline via CSS
+                applyMetalFilter();
+              });
+            });
+
+    /********************************************************
+     * Completed filter – exclusivity logic
+     ********************************************************/
+    const completedBtn = document.getElementById("completedCounter");
+    completedBtn.addEventListener("click", () => {
+      const isNowActive = !completedBtn.classList.contains("active");
+
+      /* Toggle Completed itself */
+      completedBtn.classList.toggle("active", isNowActive);
+
+      /* Flip the four metal buttons */
+      document.querySelectorAll(
+        '.metal-counter[data-metal]:not([data-metal="completed"])'
+      ).forEach(btn => btn.classList.toggle("active", !isNowActive));
+
+      applyMetalFilter();          // refresh grid
     });
-  });
-
-  /********************************************************
-   * Completed filter – exclusivity logic
-   ********************************************************/
-  document.getElementById("completedCounter").addEventListener("click", function () {
-    const completedBtn = this;
-    const isNowActive  = !completedBtn.classList.contains("active");
-
-    /* toggle Completed */
-    completedBtn.classList.toggle("active", isNowActive);
-
-    /* all other metal buttons */
-    const metalBtns = document.querySelectorAll(
-          '.metal-counter[data-metal]:not([data-metal="completed"])');
-
-    metalBtns.forEach(btn => btn.classList.toggle("active", !isNowActive));
-
-    applyMetalFilter();         // refresh the grid with the new state
-  });
-
+  }
   /* run once on load to honour the initial “active” class */
   applyMetalFilter();
 
-  function applyMetalFilter() {
-    /* 1. collect the metals that are ON */
-    const active = new Set(
-      Array.from(document.querySelectorAll(".metal-counter.active"))
-           .map(b => b.dataset.metal)
-    );
+    function applyMetalFilter() {
+      /* 1️⃣ Is “Completed” active?  -> show only green previews */
+      const completedOn = completedBtn.classList.contains("active");
 
-    /* 2. show / hide preview wrappers */
-    document.querySelectorAll("#photoGridContainer .wrap-preview")
-            .forEach(wrap => {
-              wrap.style.display =
-                active.has(wrap.dataset.metal) ? "" : "none";
-            });
+      if (completedOn) {
+        gridElements.forEach(wrap => {
+          const rid = wrap.dataset.receipt;
+          wrap.style.display = completedOrders.has(rid) ? "" : "none";
+        });
+        reflowGrid();
+        return;
+      }
 
-    reflowGrid();        // ← NEW
-  }
+      /* 2️⃣ Otherwise filter by whichever metals are ON */
+      const activeMetals = new Set(
+        Array.from(document.querySelectorAll(".metal-counter.active"))
+             .map(btn => btn.dataset.metal)
+      );
+
+      gridElements.forEach(wrap => {
+        wrap.style.display = activeMetals.has(wrap.dataset.metal) ? "" : "none";
+      });
+      reflowGrid();
+    }
 })();
 
     function openListingModal(cellIdx){
