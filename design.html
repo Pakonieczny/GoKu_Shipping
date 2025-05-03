@@ -1066,6 +1066,8 @@ document.addEventListener("DOMContentLoaded", () => {
      return wrap;
    }
 
+   window.addPreviewBox = addPreviewBox;   // expose to outer helpers
+
   /* build a preview row (image + 4 tiny detail inputs) */
   function makePreviewNode(item){
     const idx = gridElements.size;
