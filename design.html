@@ -1020,7 +1020,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
   /* append ONE preview without rebuilding the entire grid */
   function addPreviewBox(item){
-    if (item._inGrid) return item._wrapEl || null;  // just ignore duplicates   // skip finished
+    if (completedOrders.has(String(item.receipt_id))) return;   // skip finished
 
     const wrap = makePreviewNode(item);          // build + auto-append
     gridElements.set(gridElements.size, wrap);   // bookkeeping
@@ -2206,7 +2206,7 @@ function reflowGrid(){
       });
 
     /* exclusivity toggle for Completed */
-    completedBtn.addEventListener("click", () => {
+    completedBtn.addEventListener("click", async () => {
       const isNowActive = completedBtn.classList.toggle("active");
 
       /* flip the four metal buttons */
@@ -2216,8 +2216,32 @@ function reflowGrid(){
         )
         .forEach(btn => btn.classList.toggle("active", !isNowActive));
 
-      applyMetalFilter();
+      if (isNowActive) {
+        await ensureCompletedPreviews();   // <-- NEW
+      }
+
+      applyMetalFilter();                 // refresh grid
     });
+
+    /* -------------------------------------------------------------
+     * ensureCompletedPreviews – make sure every completed receipt
+     *                           has at least one wrap in the grid
+     * -------------------------------------------------------------*/
+    async function ensureCompletedPreviews() {
+      const need = [];
+      completedOrders.forEach(rid => {
+        // Already have a wrap for this receipt?
+        const found = document.querySelector(
+          `.wrap-preview[data-receipt="${rid}"]`
+        );
+        if (!found) need.push(rid);
+      });
+
+      if (need.length) {
+        console.log("Loading previews for completed orders:", need);
+        await loadBatchEtsyOrders(need);   // existing helper
+      }
+    }
 
     /* filter helper --------------------------------------------------- */
     function applyMetalFilter() {
