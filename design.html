@@ -427,6 +427,7 @@ const functionsBaseUrl = window.location.origin + "/.netlify/functions";
 const selectedOrders = new Set();      // receipt_id strings
 const orderCache     = {};             // receipt_id → transactions[]
 const gridElements   = new Map();      // transaction_id → wrapper DOM
+const processedTxIds = new Set();   // guards against duplicate preview tiles
 /* storage keys */
 const COMPLETED_KEY = "completedOrders";   // green-list
 const SELECTED_KEY = "selectedOrders";   // orange-list key
