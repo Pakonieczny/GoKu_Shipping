@@ -672,33 +672,43 @@ document.addEventListener("DOMContentLoaded", () => {
       /* ───────────────────── Clear button ───────────────────── */
       document.getElementById("clearBtn").addEventListener("click", () => {
 
-        if (!selectedOrders.size) return;          // nothing orange to clear
+        /* store current orange IDs once */
+        const toClear = Array.from(selectedOrders);
+        if (!toClear.length) return;                       // nothing to do
 
-        /* 1️⃣  wipe localStorage record that stores the ORANGE list */
-        localStorage.removeItem(SELECTED_KEY);
+        /* 1️⃣ wipe localStorage → ORANGE list only */
+        localStorage.removeItem(SELECTED_KEY);             // "selectedOrders"
 
-        /* 2️⃣  clear in-memory set & related cache entries */
-        selectedOrders.forEach(rid => { delete orderCache[rid]; });
+        /* 2️⃣ walk each orange receipt ---------------------------------- */
+        toClear.forEach(rid => {
+
+          /* A. remove row highlight */
+          const row = document.querySelector(
+            `.new-order-box[data-receipt='${rid}']`);
+          if (row) row.classList.remove("selected");
+
+          /* B. remove preview wraps */
+          document.querySelectorAll(
+            `#photoGridContainer .wrap-preview.selected[data-receipt='${rid}']`
+          ).forEach(wrap => {
+            wrap.remove();                                 // drop from DOM
+            /* also drop from gridElements map */
+            for (const [k,v] of gridElements.entries()){
+              if (v === wrap){ gridElements.delete(k); break; }
+            }
+          });
+
+          /* C. purge this receipt from caches */
+          delete orderCache[rid];
+        });
+
+        /* 3️⃣ empty the in-memory Set */
         selectedOrders.clear();
 
-        /* 3️⃣  remove orange classes from left-column rows */
-        document.querySelectorAll(".new-order-box.selected")
-                .forEach(row => row.classList.remove("selected"));
-
-        /* 4️⃣  remove ONLY the orange preview wraps (keep green) */
-        document.querySelectorAll("#photoGridContainer .wrap-preview.selected")
-                .forEach(wrap => {
-                  wrap.remove();
-                  /* drop from gridElements map */
-                  for (const [k,v] of gridElements.entries()){
-                    if (v === wrap){ gridElements.delete(k); break; }
-                  }
-                });
-
-        /* 5️⃣  reflow + counters */
-        reflowGrid();
-        updateCounters();
-        window.applyMetalFilter();     // re-hide greens if Completed is off
+        /* 4️⃣ refresh layout & counters */
+        reflowGrid();          // closes holes in the photo grid
+        updateCounters();      // top badges
+        window.applyMetalFilter();   // re-apply current filter state
 
         M.toast({ html: "Selection cleared" });
       });
