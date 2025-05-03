@@ -2222,9 +2222,11 @@ function reflowGrid(){
         )
         .forEach(btn => btn.classList.toggle("active", !isNowActive));
 
-      if (isNowActive) {
-        await ensureCompletedPreviews();   // <-- NEW
-      }
+       if (isNowActive) {
+         await ensureCompletedPreviews();     // when turning Completed ON
+       } else {
+         await ensureSelectedPreviews();      // when turning it OFF again
+       }
 
       applyMetalFilter();                 // refresh grid
     });
@@ -2246,6 +2248,25 @@ function reflowGrid(){
       if (need.length) {
         console.log("Loading previews for completed orders:", need);
         await loadBatchEtsyOrders(need);   // existing helper
+      }
+    }
+
+    /* -------------------------------------------------------------
+     * ensureSelectedPreviews – make sure every orange (selected)
+     *   receipt that is NOT completed has a preview in the grid
+     * -------------------------------------------------------------*/
+    async function ensureSelectedPreviews() {
+      const need = [];
+      selectedOrders.forEach(rid => {
+        if (completedOrders.has(rid)) return;                // skip greens
+        const found = document.querySelector(
+          `.wrap-preview[data-receipt="${rid}"]`
+        );
+        if (!found) need.push(rid);
+      });
+      if (need.length) {
+        console.log("Loading previews for selected orders:", need);
+        await loadBatchEtsyOrders(need);
       }
     }
 
