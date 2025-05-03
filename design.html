@@ -626,7 +626,7 @@ document.addEventListener("DOMContentLoaded", () => {
           /* —— FORCE a second green-pass after new rows exist —— */
           highlightCompletedRows();                  // <-- NEW LINE
             window.applyMetalFilter();   // re-run filters immediately
-            
+
           /* NEW → log visible order count */
           const displayedCount = document.getElementById("newOrderContainer").children.length;
           console.log(`Orders displayed (offset ${orderListOffset}):`, displayedCount);
@@ -894,6 +894,10 @@ document.addEventListener("DOMContentLoaded", () => {
     persistCompleted();        // green list
     updateCounters();          // counter now shows 0
     persistSelection();        // orange list (already trimmed) 🔸 moved
+
+     /* re-run row & preview filtering right away */
+     window.applyMetalFilter();
+
   }
 
   /* ── save completed list ──────────────────────────────────────── */
@@ -1343,6 +1347,9 @@ document.addEventListener("DOMContentLoaded", () => {
 
     highlightSavedRows();              // ← NEW: paint saved rows
     requestAnimationFrame(highlightCompletedRows);   // green wins after paint
+
+     /* keep greens hidden unless Completed filter is on */
+     requestAnimationFrame(window.applyMetalFilter);
 
   }           
 
