@@ -2357,6 +2357,14 @@ function reflowGrid(){
         wrap.style.display = show ? "" : "none";
       });
 
+      /* restore 3 px orange outline on all selected previews */
+      selectedOrders.forEach(rid => {
+        document.querySelectorAll(`#photoGridContainer .wrap-preview[data-receipt='${rid}']`)
+                .forEach(w => w.classList.add("selected"));
+      });
+
+        highlightSavedRows();          // re-apply orange to page-1 rows  
+
       reflowGrid();
       updateCounters();                 // keep top counters in sync
     }
