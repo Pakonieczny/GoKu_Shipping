@@ -1054,6 +1054,9 @@ document.addEventListener("DOMContentLoaded", () => {
 
     updateCounters();                              // refresh top counters
 
+    /* make sure new tiles respect the current filter state */
+      window.applyMetalFilter();
+
      /* 1️⃣ check if “Completed” is the only active filter -------- */
      const completedOn = document
            .getElementById("completedCounter")
@@ -2299,20 +2302,23 @@ function reflowGrid(){
       );
 
       gridElements.forEach(wrap => {
-       const show =
-         activeMetals.has(wrap.dataset.metal) &&   // metal is active
-         !completedOrders.has(wrap.dataset.receipt); // but NOT completed
-       wrap.style.display = show ? "" : "none";
+        const show =
+          activeMetals.has(wrap.dataset.metal) &&          // metal is active
+          !completedOrders.has(wrap.dataset.receipt);       // but NOT completed
+        wrap.style.display = show ? "" : "none";
       });
       reflowGrid();
     }
+
+    +// make it callable from addPreviewBox and other global helpers
+    +window.applyMetalFilter = applyMetalFilter;
 
     updateCounters();   // keep top counters in sync with the view
 
     /* first run honours the initial .active states */
     applyMetalFilter();
 
-  });  /* ─── END METAL FILTER INITIALISER ─── */
+    });  /* ─── END METAL FILTER INITIALISER ─── */
 
     function openListingModal(cellIdx){
       const item = window.cachedOrderItems[cellIdx];
