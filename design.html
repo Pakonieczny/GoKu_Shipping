@@ -1020,7 +1020,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
   /* append ONE preview without rebuilding the entire grid */
   function addPreviewBox(item){
-    if (completedOrders.has(String(item.receipt_id))) return;   // skip finished
+    if (item._inGrid) return item._wrapEl || null;  // just ignore duplicates   // skip finished
 
     const wrap = makePreviewNode(item);          // build + auto-append
     gridElements.set(gridElements.size, wrap);   // bookkeeping
