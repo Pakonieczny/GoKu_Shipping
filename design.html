@@ -2363,7 +2363,7 @@ function reflowGrid(){
                 .forEach(w => w.classList.add("selected"));
       });
 
-        highlightSavedRows();          // re-apply orange to page-1 rows  
+        if (typeof highlightSavedRows === "function") highlightSavedRows();
 
       reflowGrid();
       updateCounters();                 // keep top counters in sync
