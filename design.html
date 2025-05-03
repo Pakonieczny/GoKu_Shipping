@@ -295,6 +295,12 @@
       color:#fff;
     }
 
+    /* ——— 3-px outline for every SELECTED preview ——— */
+    .wrap-preview.selected{
+      outline:3px solid #ff5722;   /* same hue as the list rows */
+      outline-offset:-1px;
+    }
+
     /* Config Modal */
     #configModal.modal {
       position: fixed !important;
@@ -1280,10 +1286,7 @@ document.addEventListener("DOMContentLoaded", () => {
           /* ─── DESELECT ─── */
           selectedOrders.delete(receiptId);
           box.classList.remove("selected");
-          removePreviewBoxesForOrder(receiptId);
-          realignGrid();
-          persistSelection();                       // 🔸 NEW
-          updateCounters();                  // 🔸 NEW
+          window.applyMetalFilter(); // 🔸 NEW → re-sync grid & counters
 
         } else {
           /* ─── SELECT ─── */
@@ -2335,6 +2338,8 @@ function reflowGrid(){
       /* C. load missing previews (if any) */
       if (needReceipts.length) {
         await loadBatchEtsyOrders(needReceipts);     // uses addPreviewBox
+          reflowGrid();            // 🆕 pack the grid tightly
+          updateCounters();        // 🆕 keep the badges honest
       }
 
       /* D. mark every visible wrap for a selected receipt */
