@@ -672,27 +672,33 @@ document.addEventListener("DOMContentLoaded", () => {
       /* ───────────────────── Clear button ───────────────────── */
       document.getElementById("clearBtn").addEventListener("click", () => {
 
-        /* 1. wipe localStorage record that stores the orange list */
-        localStorage.removeItem(SELECTED_KEY);        // ← use the same key you save with
+        if (!selectedOrders.size) return;          // nothing orange to clear
 
-        /* 2. clear in-memory sets & cache */
+        /* 1️⃣  wipe localStorage record that stores the ORANGE list */
+        localStorage.removeItem(SELECTED_KEY);
+
+        /* 2️⃣  clear in-memory set & related cache entries */
+        selectedOrders.forEach(rid => { delete orderCache[rid]; });
         selectedOrders.clear();
-        Object.keys(orderCache).forEach(k => delete orderCache[k]);
 
-        /* 3. remove orange classes from rows and preview wraps */
+        /* 3️⃣  remove orange classes from left-column rows */
         document.querySelectorAll(".new-order-box.selected")
-                .forEach(row  => row.classList.remove("selected"));
+                .forEach(row => row.classList.remove("selected"));
 
+        /* 4️⃣  remove ONLY the orange preview wraps (keep green) */
         document.querySelectorAll("#photoGridContainer .wrap-preview.selected")
-                .forEach(wrap => wrap.classList.remove("selected"));
+                .forEach(wrap => {
+                  wrap.remove();
+                  /* drop from gridElements map */
+                  for (const [k,v] of gridElements.entries()){
+                    if (v === wrap){ gridElements.delete(k); break; }
+                  }
+                });
 
-        /* 4. purge the photo grid (keeps layout consistent) */
-        gridElements.clear();
-        document.getElementById("photoGridContainer").innerHTML = "";
-
-        /* 5. refresh counters and re-apply filters */
+        /* 5️⃣  reflow + counters */
+        reflowGrid();
         updateCounters();
-        window.applyMetalFilter();
+        window.applyMetalFilter();     // re-hide greens if Completed is off
 
         M.toast({ html: "Selection cleared" });
       });
@@ -1046,6 +1052,9 @@ document.addEventListener("DOMContentLoaded", () => {
   /* append ONE preview without rebuilding the entire grid */
   function addPreviewBox(item){
 
+    /* already have this TX? — skip duplicate */
+    if (document.querySelector(
+        `.wrap-preview[data-tx='${item.transaction_id}']`)) return;
 
     const wrap = makePreviewNode(item);          // build + auto-append
     gridElements.set(gridElements.size, wrap);   // bookkeeping
