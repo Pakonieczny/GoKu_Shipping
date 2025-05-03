@@ -901,21 +901,57 @@ document.addEventListener("DOMContentLoaded", () => {
   }
 
   /* -------------------------------------------------------------
-   Clear all completed-order memory & remove green highlights
+     Clear all completed-order memory & remove green highlights
   ------------------------------------------------------------- */
   function clearCompleted(){
-    /* 1. purge localStorage */
-    localStorage.removeItem(COMPLETED_KEY);
-    localStorage.removeItem(LAST_PURGE_KEY);
 
-    /* 2. reset in-memory set */
+    /* snapshot IDs before we wipe the Set */
+    const greens = [ ...completedOrders ];
+
+    /* 1 ▸ purge localStorage buckets */
+    localStorage.removeItem(COMPLETED_KEY);    // ID buckets
+    localStorage.removeItem(LAST_PURGE_KEY);   // last-purge stamp
+
+    /* 2 ▸ reset in-memory tracking */
     completedOrders.clear();
 
-    /* 3. strip green class from sidebar rows */
-    document.querySelectorAll(".new-order-box.completed")
-            .forEach(box => box.classList.remove("completed"));
+    /* 3 ▸ remove every green row & its previews */
+    greens.forEach(rid => {
 
-    /* 4. toast confirmation */
+      /* A. sidebar row */
+      document.querySelectorAll(
+        `.new-order-box[data-receipt='${rid}']`
+      ).forEach(row => row.classList.remove("completed"));
+
+      /* B. photo-grid wraps */
+      document.querySelectorAll(
+        `#photoGridContainer .wrap-preview[data-receipt='${rid}']`
+      ).forEach(wrap => {
+        for (const [k,v] of gridElements.entries()){
+          if (v === wrap){ gridElements.delete(k); break; }
+        }
+        wrap.remove();
+      });
+
+      /* C. caches */
+      delete orderCache[rid];
+      processedTxIds.forEach(txid=>{
+        if (txid.startsWith(rid)) processedTxIds.delete(txid);
+      });
+    });
+
+    /* D. trim the global item cache (if it exists) */
+    if (Array.isArray(window.cachedOrderItems)){
+      window.cachedOrderItems =
+        window.cachedOrderItems.filter(it =>
+          !greens.includes(String(it.receipt_id)));
+    }
+
+    /* 4 ▸ UI tidy */
+    reflowGrid();
+    updateCounters();
+    window.applyMetalFilter();
+
     M.toast({ html:"Completed orders cleared" });
   }
 
