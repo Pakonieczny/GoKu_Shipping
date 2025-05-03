@@ -999,6 +999,7 @@ document.addEventListener("DOMContentLoaded", () => {
    let g = 0, s = 0, r = 0, k = 0;
  
    gridElements.forEach(wrap => {
+    if (completedOrders.has(wrap.dataset.receipt)) return;
      const qty = Number(wrap.dataset.qty) || 1;
      switch (wrap.dataset.metal){
        case "gold":   g += qty; break;
@@ -2274,6 +2275,8 @@ function reflowGrid(){
       });
       reflowGrid();
     }
+
+    updateCounters();   // keep top counters in sync with the view
 
     /* first run honours the initial .active states */
     applyMetalFilter();
