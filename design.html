@@ -295,9 +295,9 @@
       color:#fff;
     }
 
-    /* ——— 3-px outline for every SELECTED preview ——— */
-    .wrap-preview.selected{
-      outline:3px solid #ff5722;   /* same hue as the list rows */
+    /* ——— 3-px outline ONLY for previews that need attention ——— */
+    .wrap-preview.preview-attn{
+      outline:3px solid #ff5722;
       outline-offset:-1px;
     }
 
@@ -1755,6 +1755,23 @@ async function startScannedSortingListener() {
     console.error("Error starting scannedSortingListener:", err);
   }
 }
+
+/* ————————————————————————————————————————————————
+ * Ensure every still-selected order has its previews.
+ * Called after filter toggles & the red CLEAR button.
+ * ———————————————————————————————————————————————— */
+async function ensureOrangeIntegrity(){
+  const need = [];
+  selectedOrders.forEach(id=>{
+    if(!document.querySelector(`.wrap-preview[data-receipt='${id}']`)){
+      need.push(id);
+    }
+  });
+  if(need.length) await loadBatchEtsyOrders(need);
+  reflowGrid();
+  updateCounters();
+}
+window.ensureOrangeIntegrity = ensureOrangeIntegrity;   // expose
 
 /* === Restore saved orange selections === */
   restoreSelections();            // ← add this line
