@@ -809,23 +809,33 @@ document.addEventListener("DOMContentLoaded", () => {
     /* remove every preview row that belongs to one receipt
    (hoisted – available before handleCompleteClick executes) */
     function removePreviewBoxesForOrder(receiptId){
-      const txs = orderCache[receiptId] || [];
-      txs.forEach(tx => {
-        if (tx._wrapEl){
-          tx._wrapEl.remove();                    // yank from DOM
-
-          /* drop from gridElements map */
-          for (const [k,v] of gridElements.entries()){
-            if (v === tx._wrapEl){ gridElements.delete(k); break; }
-          }
-
-          tx._inGrid = false;
-          tx._wrapEl = null;
-        }
-      });
-
-      updateCounters();                           // counters stay accurate
-      realignGrid();                              // close visual gaps
+     /* 1️⃣ try the elegant cache-based path first */
+     const txs = orderCache[receiptId] || [];
+     if (txs.length) {
+       txs.forEach(tx => {
+         if (tx._wrapEl){
+           tx._wrapEl.remove();
+           for (const [k,v] of gridElements.entries()){
+             if (v === tx._wrapEl){ gridElements.delete(k); break; }
+           }
+           tx._inGrid = false;
+           tx._wrapEl = null;
+         }
+       });
+     }
+   
+     /* 2️⃣ cache might be missing → fall back to raw DOM lookup */
+     document.querySelectorAll(
+       `#photoGridContainer .wrap-preview[data-receipt='${receiptId}']`
+     ).forEach(wrap => {
+       wrap.remove();
+       for (const [k,v] of gridElements.entries()){
+         if (v === wrap){ gridElements.delete(k); break; }
+       }
+     });
+   
+     updateCounters();   // keep the badges right
+     realignGrid();      // reseat the remaining boxes
     }
 
     /* ── click handler ────────────────────────────────────────────── */
