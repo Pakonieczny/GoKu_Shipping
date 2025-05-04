@@ -2332,6 +2332,14 @@ function reflowGrid(){
 
        if (isNowActive) {
          await ensureCompletedPreviews();     // when turning Completed ON
+
+         /* NEW ► repopulate sidebar with *all* green orders */
+         renderOrderBoxes(
+           Array.from(completedOrders).map(id =>
+             allOpenReceipts.find(r => idStr(r.receipt_id) === id)  // look-up once
+           ).filter(Boolean)                                          // guard nulls
+         );
+
        } else {
          await ensureOrangeIntegrity();      // brings orange back cleanly
        }
