@@ -427,6 +427,8 @@ const functionsBaseUrl = window.location.origin + "/.netlify/functions";
 const selectedOrders = new Set();      // receipt_id strings
 const orderCache     = {};             // receipt_id → transactions[]
 const gridElements   = new Map();      // transaction_id → wrapper DOM
+/* ==== SEARCH SNAPSHOT (for restoring UI) ==== */
+let searchSnapshot = null;             // { orderHTML, gridHTML, gridMap }
 const processedTxIds = new Set();      // guards against duplicate preview tiles
 
 /* storage keys */
@@ -785,6 +787,89 @@ document.addEventListener("DOMContentLoaded", () => {
       await loadBatchEtsyOrders(orderNumbers);
     }
   });
+
+  /* ==============================================================
+ *  Single-order SEARCH via #etsyOrderNumber
+ * ============================================================*/
+(function attachSearch(){
+  const input = document.getElementById("etsyOrderNumber");
+  if(!input) return;
+
+  /* ENTER → run search when no commas are present */
+  input.addEventListener("keydown", async e=>{
+    if(e.key!=="Enter") return;
+    const raw = input.value.trim();
+    if(!raw || raw.includes(",")) return;   // let multi-order handler do its job
+
+    e.preventDefault();
+    e.stopImmediatePropagation();           // cancel the other Enter listener
+
+    try{
+      /* 1️⃣ snapshot current UI (only first time) */
+      if(!searchSnapshot){
+        searchSnapshot = {
+          orderHTML : document.getElementById("newOrderContainer").innerHTML,
+          gridHTML  : document.getElementById("photoGridContainer").innerHTML,
+          gridMap   : new Map(gridElements)      // deep copy
+        };
+      }
+
+      /* 2️⃣ clear current containers & map */
+      document.getElementById("newOrderContainer").innerHTML  = "";
+      document.getElementById("photoGridContainer").innerHTML = "";
+      gridElements.clear();
+
+      /* 3️⃣ fetch + render */
+      M.toast({html:"Searching "+raw+"…"});
+
+      const data   = await fetchEtsyOrder(raw);
+      const txs    = data.transactions || [];
+      const receipt= data.receipt     || {};
+
+      /* —— sidebar row —— */
+      const row = document.createElement("div");
+      row.className = "new-order-box";
+      row.dataset.receipt = receipt.receipt_id || raw;
+      row.innerHTML = `
+        <span class="col-order">${receipt.order_number||raw}</span>
+        <span class="col-ship">${receipt.dispatch_date||"N/A"}</span>
+        <span class="col-g">0</span><span class="col-s">0</span>
+        <span class="col-r">0</span><span class="col-k">0</span>`;
+      document.getElementById("newOrderContainer").appendChild(row);
+
+      /* —— preview tiles —— */
+      txs.forEach(addPreviewBox);
+
+      reflowGrid();
+      updateCounters();
+      applyMetalFilter();
+      M.toast({html:"Search complete ("+txs.length+" items)"});
+
+    }catch(err){
+      console.error(err);
+      M.toast({html:"Order not found"});
+    }
+  });
+
+  /* Empty box → instant restore */
+  input.addEventListener("input", ()=>{
+    if(input.value.trim()!=="") return;
+    if(!searchSnapshot)        return;
+
+    document.getElementById("newOrderContainer").innerHTML  = searchSnapshot.orderHTML;
+    document.getElementById("photoGridContainer").innerHTML = searchSnapshot.gridHTML;
+
+    gridElements.clear();
+    for(const [k,v] of searchSnapshot.gridMap) gridElements.set(k,v);
+
+    reflowGrid();
+    updateCounters();
+    applyMetalFilter();
+
+    searchSnapshot = null;
+    M.toast({html:"Search cleared"});
+  });
+})();
 
   /* =====================================================================
    *  LOCAL-STORAGE PERSISTENCE  —  selected orders + their transactions
@@ -2185,6 +2270,18 @@ function attachPreviewBoxListeners(box) {
     img.style.transform = `translate(${offsetX}px, ${offsetY}px) scale(${scale})`;
   });
 
+}
+
+/* ------------------------------------------------------------------
+ * fetchEtsyOrder(orderNum) → full Etsy payload for ONE order
+ * -----------------------------------------------------------------*/
+async function fetchEtsyOrder(orderNum){
+  const token = localStorage.getItem("access_token") || "";
+  const url   = functionsBaseUrl +
+                "/etsyOrderProxy?orderId=" + encodeURIComponent(orderNum);
+  const resp  = await fetch(url,{ headers:{ "access-token": token }});
+  if(!resp.ok) throw new Error("HTTP "+resp.status);
+  return await resp.json();            // { receipt, transactions, … }
 }
 
 /********************************************************
