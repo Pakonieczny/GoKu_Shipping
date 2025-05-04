@@ -1142,15 +1142,8 @@ document.addEventListener("DOMContentLoaded", () => {
       window.applyMetalFilter(); // honour current filter state
       return wrap;
     }
-    window.addPreviewBox = addPreviewBox;   // keep global handle
 
-      console.log(
-      "%cADD-PREVIEW done",
-      "color:#00c853",
-      "-- wrap:", wrap ? "OK" : "null",
-      "display:", wrap?.style.display,
-      "classes:", wrap?.className
-    );
+    window.addPreviewBox = addPreviewBox;   // keep global handle
 
   /* build a preview row (image + 4 tiny detail inputs) */
   function makePreviewNode(item){
@@ -1162,7 +1155,7 @@ document.addEventListener("DOMContentLoaded", () => {
     const wrap = document.createElement("div");
     wrap.className = "wrap-preview";                 // <— NEW class
     wrap.dataset.receipt = item.receipt_id;          // <— NEW data-tag
-    wrap.dataset.tx      = item.transaction_id;   // NEW — enables duplicate guard
+    wrap.dataset.tx = item.transaction_id;   // NEW — enables duplicate guard
     wrap.style.cssText = `position:absolute;left:${col*125}px;top:${row*165}px;`;
 
     /* preview image………………………………………………………………………………… */
