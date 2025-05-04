@@ -1297,11 +1297,9 @@ document.addEventListener("DOMContentLoaded", () => {
       /* click → toggle highlight + (de)load images ---------------------- */
       box.addEventListener("click", async () => {
 
-        /* LOG #1 – the instant you click */
-        console.log("%cROW-CLICK","color:#ab47bc;font-weight:bold",
-              "receipt:", r.receipt_id,
-              "selected:", selectedOrders.has(String(r.receipt_id)));
-
+                /* LOG #2 – detected metal colour */
+        console.log("%cMETAL","color:#ff9100;font-weight:bold",
+              "metal:", box.dataset.metal || "N/A");
 
         const receiptId = idStr(r.receipt_id);      // ← always string
 
@@ -1368,7 +1366,6 @@ document.addEventListener("DOMContentLoaded", () => {
     updateCounters();
     window.applyMetalFilter();
 
-    /* this single bracket/paren pair closes the click handler */
     });   /* ← closes box.addEventListener("click", … ) */
 
     /* ── HOVER → outline matching preview boxes ───────────────────── */
