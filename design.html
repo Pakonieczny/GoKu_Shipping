@@ -436,6 +436,15 @@ const gridElements   = new Map();      // transaction_id → wrapper DOM
 const processedTxIds = new Set();   // guards against duplicate preview tiles
 /* storage keys */
 const COMPLETED_KEY = "completedOrders";   // green-list
+
+/* ─── helper: recount items and update the little badge ───────────── */
+function refreshRowCount(receiptId){
+  const box = document.querySelector(`.new-order-box[data-receipt='${receiptId}']`);
+  if (!box) return;
+  const cntEl = box.querySelector(".badge-count");     // ← badge <span>
+  if (!cntEl) return;
+  cntEl.textContent = (orderCache[receiptId] || []).length;
+}
 const SELECTED_KEY = "selectedOrders";   // orange-list key
 const LAST_PURGE_KEY = "completed_last_purge"; // ISO month stamp
 const completedOrders = new Set();   // IDs that are already green
