@@ -86,14 +86,6 @@
       height: 36px;
     }
 
-    /* --- Next-Page button --- */
-    #nextPageBtn {
-      position: absolute;
-      left: 190px;     /* to the right of Update button */
-      top: 170px;      /* same vertical line */
-      width: 120px;
-      height: 36px;
-    }
 
     /* ─── Header-bar chevrons ─── */
     #orderHeaderBar .chev{
@@ -343,6 +335,9 @@
       opacity: 1;
     }
 
+    /* UI-only: hide the Completed metal counter */
+    #completedCounter{display:none!important;}
+
   </style>
 </head>
 <body>
@@ -351,7 +346,6 @@
 <button id="openConfigBtn"     class="btn waves-effect waves-light">Open Config</button>
 <button id="updateOrderListBtn"class="btn waves-effect waves-light">Update</button>
 <button id="clearBtn"          class="btn red lighten-1">Clear</button>
-<button id="nextPageBtn"       class="btn waves-effect waves-light">Next Page</button>
 <button id="clearCompletedBtn" class="btn orange lighten-1">Clear Completed</button>
 
 <!-- NEW green “Complete !” button (drag-positionable inside the modal) -->
@@ -685,9 +679,6 @@ document.addEventListener("DOMContentLoaded", () => {
           const displayedCount = document.getElementById("newOrderContainer").children.length;
           console.log(`Orders displayed (offset ${orderListOffset}):`, displayedCount);
 
-          /* enable “Next Page” if we got a full 100-row slice */
-          document.getElementById("nextPageBtn").disabled = (gotRows < 100);
-
           this.disabled = false;
           this.innerHTML = "Update Order List";
         } catch (err) {
@@ -698,29 +689,6 @@ document.addEventListener("DOMContentLoaded", () => {
         }
       });
 
-      /* ──────────────────────── Next-Page button ─────────────────────── */
-      document.getElementById("nextPageBtn").addEventListener("click", async function () {
-        try {
-          this.disabled = true;
-          this.innerText = "Loading…";
-
-          orderListOffset += 100;              // simple offset jump
-          const gotRows = await buildNewOrderList(orderListOffset);
-
-          /* NEW → log visible order count */
-          const displayedCount = document.getElementById("newOrderContainer").children.length;
-          console.log(`Orders displayed (offset ${orderListOffset}):`, displayedCount);
-
-          /* stay enabled only if another full slice came back */
-          this.disabled = (gotRows < 100);
-          this.innerText = "Next Page";
-        } catch (err) {
-          console.error("Next-page error:", err);
-          M.toast({ html: "Next-page error: " + err.message });
-          this.disabled = false;
-          this.innerText = "Next Page";
-        }
-      });
 
       /* ───────────────────── Clear button ───────────────────── */
       document.getElementById("clearBtn").addEventListener("click", () => {
@@ -875,66 +843,64 @@ document.addEventListener("DOMContentLoaded", () => {
 
 
 
-    /* ── click handler ────────────────────────────────────────────── */
-  function handleCompleteClick(){
-    const activeMetals = Array.from(
-          document.querySelectorAll(".metal-counter.active"))
-          .map(b => b.dataset.metal);
+/* ───────────────────── handleCompleteClick — REPLACE ENTIRE FUNCTION ───────────────────── */
+function handleCompleteClick() {
+  /* 1️⃣  require ALL four metal counters to be ON (gold + silver + rose + 14k) */
+  const REQUIRED = ["gold", "silver", "rose", "14k"];
+  const activeMetals = Array.from(
+    document.querySelectorAll('.metal-counter.active:not([data-metal="completed"])')
+  ).map(btn => btn.dataset.metal);
 
-    if (activeMetals.length !== 1){
-      M.toast({ html:"Please choose only 1 metal filter at a time" });
-      return;
-    }
-    const metalKey = activeMetals[0];
-
-    /* 1️⃣  receipts that are VISIBLE and match the active metal */
-    const greenIDs = [];
-    document.querySelectorAll("#photoGridContainer .wrap-preview")
-            .forEach(wrap => {
-              if (wrap.style.display === "none") return;        // filtered out
-              if (wrap.dataset.metal !== metalKey) return;      // wrong metal
-              greenIDs.push(wrap.dataset.receipt);
-            });
-
-    if (!greenIDs.length){
-      M.toast({ html:"No orders matched that metal." });
-      return;
-    }
-
-    /* 2️⃣  colour rows & update memory */
-    greenIDs.forEach(id => {
-      completedOrders.add(id);               // track as finished
-      selectedOrders.delete(id);             // remove from orange set
-
-      const row = document.querySelector(
-                  `.new-order-box[data-receipt='${id}']`);
-      if (row){
-
-        row.classList.add("completed");
-      }
-    });
-
-    /* 3️⃣  remove previews that belong to these receipts */
-    greenIDs.forEach(id => removePreviewBoxesForOrder(id));
-    realignGrid();                           // close any gaps
-
-    /* 4️⃣  reset the chosen metal counter to 0 */
-    const counterEl = document.querySelector(
-          `.metal-counter[data-metal='${metalKey}']`);
-    if (counterEl){
-      const label = counterEl.textContent.split(":")[0];  // “Gold”, …
-      counterEl.textContent = `${label}: 0`;
-    }
-
-    /* 5️⃣  persist new state & refresh totals */
-    persistCompleted();        // green list
-    updateCounters();          // counter now shows 0
-    persistSelection();        // orange list (already trimmed) 🔸 moved
-
-     /* re-run row & preview filtering right away */
-     window.applyMetalFilter();
-
+  if (activeMetals.length !== 4 || !REQUIRED.every(m => activeMetals.includes(m))) {
+    M.toast({ html: "Enable Gold, Silver, Rose, and 14K filters before completing orders" });
+    return;
   }
+
+  /* 2️⃣  collect every RECEIPT whose visible wrap belongs to the 4 metals */
+  const greenIDs = new Set();
+  gridElements.forEach(wrap => {
+    if (wrap.style.display === "none") return;               // skip hidden-by-filter
+    if (!REQUIRED.includes(wrap.dataset.metal)) return;      // skip non-metal / other
+    greenIDs.add(wrap.dataset.receipt);
+  });
+
+  if (!greenIDs.size) {
+    M.toast({ html: "No matching orders found" });
+    return;
+  }
+
+  /* 3️⃣  mark rows green, un-orange them, and drop their previews */
+  greenIDs.forEach(id => {
+    completedOrders.add(id);            // track as finished
+    selectedOrders.delete(id);          // remove any orange state
+
+    /* sidebar row */
+    const row = document.querySelector(`.new-order-box[data-receipt='${id}']`);
+    if (row) row.classList.add("completed");
+
+    /* remove previews */
+    removePreviewBoxesForOrder(id);
+  });
+
+  realignGrid();                         // close gaps after removals
+
+  /* 4️⃣  reset all four metal counters to 0 (text only) */
+  REQUIRED.forEach(m => {
+    const el = document.querySelector(`.metal-counter[data-metal='${m}']`);
+    if (el) {
+      const label = el.textContent.split(":")[0];
+      el.textContent = `${label}: 0`;
+    }
+  });
+
+  /* 5️⃣  persist + refresh UI */
+  persistCompleted();        // save green set
+  updateCounters();          // recalc live totals
+  persistSelection();        // save orange set (now trimmed)
+  window.applyMetalFilter(); // honour current filter state
+
+  M.toast({ html: "Completed orders moved to GREEN status" });
+}
 
   /* ── save completed list ──────────────────────────────────────── */
   function persistCompleted(){
