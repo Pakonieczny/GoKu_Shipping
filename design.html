@@ -1063,10 +1063,17 @@ document.addEventListener("DOMContentLoaded", () => {
      * GLOBAL PREVIEW HELPERS – accessible from any click-handler
      * ======================================================= */
 
-    /* ===== removePreviewBoxesForOrder — GLOBAL VERSION ===== */
-    function removePreviewBoxesForOrder(receiptId){
-      /* skip removals for completed (green) orders */
-      if (completedOrders.has(receiptId)) return;
+      /* ===== removePreviewBoxesForOrder — GLOBAL VERSION ===== */
+      function removePreviewBoxesForOrder(receiptId){
+        /* skip removals for completed (green) orders */
+        if (completedOrders.has(receiptId)) return;
+
+        /* PATCH ▸ allow this order to be re-added next time */
+     (orderCache[receiptId] || []).forEach(tx => {
+       tx._inGrid = false;        // flip the guard-flag
+       delete tx._wrapEl;         // drop stale DOM ref
+     });
+ 
 
       /* 1 ▸ delete every wrap belonging to this receipt */
       document.querySelectorAll(
@@ -1093,6 +1100,15 @@ document.addEventListener("DOMContentLoaded", () => {
 
     /* append ONE preview without rebuilding the entire grid */
     function addPreviewBox(item){
+
+        console.log(
+        "%cADD-PREVIEW start",
+        "color:#29b6f6",
+        "TX:", item.transaction_id,
+        "receipt:", item.receipt_id,
+        "pers:", item.personalization?.length,
+        "buyerMsg:", !!item.message_from_buyer
+      );
 
       /* already have this TX? — skip duplicate */
       if (document.querySelector(
@@ -1128,6 +1144,14 @@ document.addEventListener("DOMContentLoaded", () => {
     }
     window.addPreviewBox = addPreviewBox;   // keep global handle
 
+      console.log(
+      "%cADD-PREVIEW done",
+      "color:#00c853",
+      "-- wrap:", wrap ? "OK" : "null",
+      "display:", wrap?.style.display,
+      "classes:", wrap?.className
+    );
+
   /* build a preview row (image + 4 tiny detail inputs) */
   function makePreviewNode(item){
     const idx = gridElements.size;
@@ -1138,6 +1162,7 @@ document.addEventListener("DOMContentLoaded", () => {
     const wrap = document.createElement("div");
     wrap.className = "wrap-preview";                 // <— NEW class
     wrap.dataset.receipt = item.receipt_id;          // <— NEW data-tag
+    wrap.dataset.tx      = item.transaction_id;   // NEW — enables duplicate guard
     wrap.style.cssText = `position:absolute;left:${col*125}px;top:${row*165}px;`;
 
     /* preview image………………………………………………………………………………… */
