@@ -1357,11 +1357,11 @@ document.addEventListener("DOMContentLoaded", () => {
       persistSelection();                     // 🔸 keep after caching
     }
 
-    /* ── 2. build combined list from all active orders ────── */
+        //* ── 2. build combined list from all active orders ────── */
     let combined = [];
     selectedOrders.forEach(id => {
-      const tx = orderCache[id] || [];
-      combined.push(...tx);
+      const txs = orderCache[id] || [];
+      combined.push(...txs);
     });
 
     /* ── 3. (de)render the grid — incremental append version ─ */
@@ -1376,7 +1376,15 @@ document.addEventListener("DOMContentLoaded", () => {
       combined.forEach(tx => {                 // only add new ones
         if (!tx._inGrid) addPreviewBox(tx);
       });
-    }            /* ← closes box.addEventListener("click", … ) */
+    }
+
+    /* ── 4. housekeeping after grid changes ──────────────── */
+    realignGrid();
+    updateCounters();
+    window.applyMetalFilter();
+
+    /* this single bracket/paren pair closes the click handler */
+    });   /* ← closes box.addEventListener("click", … ) */
 
     /* ── HOVER → outline matching preview boxes ───────────────────── */
     box.addEventListener("mouseenter", () => {
