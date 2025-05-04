@@ -1329,11 +1329,14 @@ document.addEventListener("DOMContentLoaded", () => {
         orderCache[receiptId] = ord?.transactions || [];
       }
 
+        /* — check transactions array before we try to add previews — */
+        console.log("%cTX-ARRAY","color:#ff1744;font-weight:bold",
+              "order:", receiptId,
+              "tx count:", orderCache[receiptId]?.length,
+              orderCache[receiptId]);
+
       /* iterate each transaction exactly once */
       orderCache[receiptId].forEach(tx => {
-        console.log("%cTX-CHECK","color:#26c6da",
-                    "tx:", tx.transaction_id,
-                    "_inGrid:", !!tx._inGrid);
         if (!tx._inGrid) addPreviewBox(tx);
       });
 
