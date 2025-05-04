@@ -433,7 +433,8 @@ const functionsBaseUrl = window.location.origin + "/.netlify/functions";
 const selectedOrders = new Set();      // receipt_id strings
 const orderCache     = {};             // receipt_id → transactions[]
 const gridElements   = new Map();      // transaction_id → wrapper DOM
-const processedTxIds = new Set();   // guards against duplicate preview tiles
+const processedTxIds = new Set();      // guards against duplicate preview tiles
+
 /* storage keys */
 const COMPLETED_KEY = "completedOrders";   // green-list
 
@@ -441,17 +442,53 @@ const COMPLETED_KEY = "completedOrders";   // green-list
 function refreshRowCount(receiptId){
   const box = document.querySelector(`.new-order-box[data-receipt='${receiptId}']`);
   if (!box) return;
-  const cntEl = box.querySelector(".badge-count");     // ← badge <span>
+  const cntEl = box.querySelector(".badge-count");
   if (!cntEl) return;
   cntEl.textContent = (orderCache[receiptId] || []).length;
 }
-const SELECTED_KEY = "selectedOrders";   // orange-list key
-const LAST_PURGE_KEY = "completed_last_purge"; // ISO month stamp
-const completedOrders = new Set();   // IDs that are already green
+
+/* ─── helper: recalc metal counts for one row ───────────────────────── */
+function refreshRowMetalCounts(receiptId){
+  const row = document.querySelector(`.new-order-box[data-receipt='${receiptId}']`);
+  if (!row) return;
+
+  let g = 0, s = 0, rG = 0, k = 0;
+  (orderCache[receiptId] || []).forEach(tx => {
+    let m = tx._wrapEl?.dataset.metal || tx._metalKey || "";
+
+    if (!m && Array.isArray(tx.variations)) {
+      for (const v of tx.variations) {
+        if (!v?.formatted_name || !v?.formatted_value) continue;
+        if (/metal|color|colour/i.test(v.formatted_name.trim())) {
+          m = v.formatted_value.toLowerCase();
+          break;
+        }
+      }
+    }
+
+    const q = tx.quantity || 1;
+    if (/14k/.test(m))         k  += q;
+    else if (/rose/.test(m))   rG += q;
+    else if (/silver/.test(m)) s  += q;
+    else if (/gold/.test(m))   g  += q;
+  });
+
+  row.querySelector(".col-g").textContent = g;
+  row.querySelector(".col-s").textContent = s;
+  row.querySelector(".col-r").textContent = rG;
+  row.querySelector(".col-k").textContent = k;
+
+  const rowMetal = k ? "14k" : rG ? "rose" : s ? "silver" : g ? "gold" : "";
+  if (rowMetal) row.dataset.metal = rowMetal;
+}
+
+const SELECTED_KEY   = "selectedOrders";         // orange-list
+const LAST_PURGE_KEY = "completed_last_purge";   // ISO month stamp
+const completedOrders = new Set();               // IDs that are already green
 
 /* ===== revive completed set from localStorage (runs immediately) ===== */
 (() => {
-  const raw = localStorage.getItem("completedOrders");
+  const raw = localStorage.getItem(COMPLETED_KEY);
   if (!raw) return;
   try {
     const obj = JSON.parse(raw);
@@ -1355,6 +1392,7 @@ document.addEventListener("DOMContentLoaded", () => {
         orderCache[receiptId] = ord?.transactions || [];
 
         refreshRowCount(receiptId);          // ← NEW: badge updates instantly
+        refreshRowMetalCounts(receiptId); // ← NEW: per-metal numbers
       }
 
       /* — check transactions array before we try to add previews — */
