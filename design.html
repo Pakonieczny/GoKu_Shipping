@@ -2566,10 +2566,11 @@ function reflowGrid(){
       );
 
       gridElements.forEach(wrap => {
-        const show =
-          activeMetals.has(wrap.dataset.metal) &&          // metal is active
-          !completedOrders.has(wrap.dataset.receipt);       // and NOT completed
-        wrap.style.display = show ? "" : "none";
+      const show =
+        ( !wrap.dataset.metal ||                        // no metal → always show
+          activeMetals.has(wrap.dataset.metal) ) &&     // or metal is active
+        !completedOrders.has(wrap.dataset.receipt);     // and NOT completed
+              wrap.style.display = show ? "" : "none";
 
         /* ★ PROBE-B: is this wrap ghost-completed? */
             console.log("%cCOMPLETED?","color:#ff9100;font-weight:bold",
