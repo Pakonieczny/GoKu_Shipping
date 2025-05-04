@@ -1276,20 +1276,6 @@ document.addEventListener("DOMContentLoaded", () => {
      * DYNAMIC-REMOVE HELPERS
      * ========================================================= */
 
-    /* close up the gaps: re-index & move every wrapper */
-    function realignGrid(){
-      let idx = 0;
-      const wraps = Array.from(gridElements.values());  // current order
-      gridElements.clear();                             // rebuild map
-      wraps.forEach(wrap => {
-        const row = Math.floor(idx / 9);
-        const col = idx % 9;
-        wrap.style.left = (col * 125) + "px";
-        wrap.style.top  = (row * 165) + "px";
-        gridElements.set(idx, wrap);                    // new key
-        idx++;
-      });
-    }    
 
 
   /* 0.  GLOBAL HOOKS ----------------------------------------------------- */
