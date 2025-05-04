@@ -1269,12 +1269,11 @@ document.addEventListener("DOMContentLoaded", () => {
 
       /* scan every variation */
       item.variations.forEach(v => {
-        if (!v?.formatted_name || !v?.formatted_value) return;
-        const name = v.formatted_name.trim().toLowerCase();
-        if (!ok.includes(name)) return;
+        if (!v?.formatted_value) return;          // value required only
 
-        if (!metalSel) metalSel = v.formatted_value;      // label
-        const val = v.formatted_value.toLowerCase();      // value
+        if (!metalSel) metalSel = v.formatted_value;   // first label wins
+        const val = v.formatted_value.toLowerCase();
+
         if (!metalKey) {
           if (/14k/.test(val))         metalKey = "14k";
           else if (/rose/.test(val))   metalKey = "rose";
@@ -1318,6 +1317,10 @@ document.addEventListener("DOMContentLoaded", () => {
 
     /* attach wrapper & load thumbnail……………………………………… */
     document.getElementById("photoGridContainer").appendChild(wrap);
+
+    /* keep the parent row’s counts in sync */
+    refreshRowMetalCounts(String(item.receipt_id));
+
     fetchListingImages(item.listing_id)
       .then(imgs => getLocalImageData(imgs[0].url_fullxfull))
       .then(data => {
@@ -1609,10 +1612,8 @@ document.addEventListener("DOMContentLoaded", () => {
 
             if (Array.isArray(t.variations)) {
               t.variations.forEach(v => {
-                if (!v?.formatted_name || !v?.formatted_value) return;
-                if (/metal|color|colour/i.test(v.formatted_name.trim())) {
-                  if (!metalStr) metalStr = v.formatted_value;   // first hit wins
-                }
+                if (!v?.formatted_value) return;
+                if (!metalStr) metalStr = v.formatted_value;   // first label wins
               });
             }
 
