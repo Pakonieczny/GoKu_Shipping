@@ -1763,15 +1763,33 @@ async function buildNewOrderList(offset = 0) {
           : "N/A";
       }
 
-      /* one-time metal counts */
+      /* one-time metal counts — scan EVERY variation value + fallback tag */
       if (!r._metalCounts) {
         const mc = { Gold:0, Silver:0, "Rose G":0, "14K":0 };
+
         (r.transactions || []).forEach(t => {
-          const m = (t.variations || []).find(v => /metal/i.test(v.formatted_name || ""))?.formatted_value || "";
-          if (/14k/i.test(m))         mc["14K"]   += t.quantity || 1;
-          else if (/rose/i.test(m))   mc["Rose G"]+= t.quantity || 1;
-          else if (/silver/i.test(m)) mc.Silver   += t.quantity || 1;
-          else if (/gold/i.test(m))   mc.Gold     += t.quantity || 1;
+          const q = t.quantity || 1;
+
+          /* add counts from every variation value */
+          if (Array.isArray(t.variations)) {
+            t.variations.forEach(v => {
+              const val = (v?.formatted_value || "").toLowerCase();
+              if (/14k/.test(val))         mc["14K"]    += q;
+              else if (/rose/.test(val))   mc["Rose G"] += q;
+              else if (/silver/.test(val)) mc.Silver    += q;
+              else if (/gold/.test(val))   mc.Gold      += q;
+            });
+          }
+
+          /* if still zero, use the propagated _metalKey */
+          if (!mc.Gold && !mc.Silver && !mc["Rose G"] && !mc["14K"] && t._metalKey) {
+            switch (t._metalKey) {
+              case "14k":    mc["14K"]    += q; break;
+              case "rose":   mc["Rose G"] += q; break;
+              case "silver": mc.Silver    += q; break;
+              case "gold":   mc.Gold      += q; break;
+            }
+          }
         });
         r._metalCounts = mc;
       }
