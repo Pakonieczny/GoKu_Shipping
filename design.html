@@ -1242,7 +1242,7 @@ document.addEventListener("DOMContentLoaded", () => {
       (item.message_from_buyer && item.message_from_buyer.trim().length);
 
     /* detail boxes */
-    addDetail("metalCell",119," Metal: "+(metalSel||"No Metal"));
+    addDetail("metalCell", 119, " Metal: " + (item.metalLabel || "No Metal"));
     addDetail("skuCell" ,131," SKU: "+(item.sku||"N/A"));
     addDetail("matchCell",143,"");
 
@@ -1341,8 +1341,8 @@ document.addEventListener("DOMContentLoaded", () => {
       /* iterate each transaction exactly once */
       orderCache[receiptId].forEach(tx => {
 
-      /* NEW — pass the metal value from the row down to each tx */
-      tx._metalKey = box.dataset.metal;
+        /* NEW — hand the row’s metal value to the transaction */
+        tx._metalKey = box.dataset.metal;
 
         if (!tx._inGrid) addPreviewBox(tx);
       });
