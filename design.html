@@ -1569,32 +1569,11 @@ document.addEventListener("DOMContentLoaded", () => {
     renderOrderBoxes(currentReceipts);
   });
 
-    /* 3.  HOOK INTO buildNewOrderList() — now pre-hydrates every receipt ----- */
+/* 3.  HOOK INTO buildNewOrderList() — simple pass-through -------------- */
 const originalBuild = buildNewOrderList;
-buildNewOrderList = async function(offset = 0) {
-
-  /* (1) get the lightweight list exactly as before */
-  const rawReceipts = await originalBuild.call(this, offset);   // ← array
-
-  /* (2) fetch full detail for EACH receipt so variations are present */
-  await Promise.all(
-    rawReceipts.map(async r => {
-      const id = String(r.receipt_id);
-      if (!orderCache[id]) {
-        try {
-          const ord = await pullEtsyOrderDetails(id);           // heavy call
-          orderCache[id] = ord?.transactions || [];
-        } catch (err) {
-          console.warn("Detail pull failed for", id, err);
-          orderCache[id] = [];                                  // keep placeholder
-        }
-      }
-      /* (3) attach hydrated transactions so renderOrderBoxes sees them */
-      r.transactions = orderCache[id];
-    })
-  );
-
-  return rawReceipts;   // now fully-hydrated
+buildNewOrderList = async function (offset = 0) {
+  /* just forward to the stock function; hydration happens in the observer */
+  return await originalBuild.call(this, offset);
 };
 
 /* Monkey-patch to expose display array for observer -------------------- */
@@ -1610,9 +1589,9 @@ if (!origFuncTxt.includes("window._lastDisplayReceipts")) {
 /** observer detects page changes and triggers initial render ----------- */
 const observer = new MutationObserver(async () => {
   if (window._lastDisplayReceipts && window._lastDisplayReceipts !== currentReceipts) {
-    currentReceipts = window._lastDisplayReceipts;   // ← full array
+    currentReceipts = window._lastDisplayReceipts;   // lightweight list
 
-    /* (1) hydrate every receipt before we touch counts / render */
+    /* (1) hydrate every receipt before counts / render ---------------- */
     await Promise.all(
       currentReceipts.map(async r => {
         const id = String(r.receipt_id);
@@ -1625,7 +1604,7 @@ const observer = new MutationObserver(async () => {
             orderCache[id] = [];
           }
         }
-        r.transactions = orderCache[id];                      // attach
+        r.transactions = orderCache[id];                      // attach full data
       })
     );
 
