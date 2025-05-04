@@ -1120,9 +1120,8 @@ document.addEventListener("DOMContentLoaded", () => {
         /* already have this TX? — skip duplicate */
         if (document.querySelector(
                 `.wrap-preview[data-tx='${item.transaction_id}']`)) {
-          console.log("%cSKIP-DUP","color:#ef5350",
-                      "tx:", item.transaction_id,
-                      "reason: element already in DOM");
+            console.log("%cDUP-CHECK","color:#ef5350",
+            "tx", item.transaction_id, "wrapped → SKIPPED");
           return;
         }
 
@@ -1246,7 +1245,10 @@ document.addEventListener("DOMContentLoaded", () => {
     addDetail("skuCell" ,131," SKU: "+(item.sku||"N/A"));
     addDetail("matchCell",143,"");
 
+    /* ★ FIX-C: trim + lower metal key, then log */
+    metalKey = (metalKey || "").trim().toLowerCase();
     wrap.dataset.metal = metalKey;
+    console.log("%cMETAL-TAG","color:#29b6f6","assigned →", `[${wrap.dataset.metal}]`);
     wrap.dataset.qty   = item.quantity ?? 1;
 
     if (needsAttn) wrap.classList.add("preview-attn");   // ← ORANGERED!
@@ -2458,6 +2460,11 @@ function reflowGrid(){
           activeMetals.has(wrap.dataset.metal) &&          // metal is active
           !completedOrders.has(wrap.dataset.receipt);       // and NOT completed
         wrap.style.display = show ? "" : "none";
+
+        /* ★ PROBE-B: is this wrap ghost-completed? */
+            console.log("%cCOMPLETED?","color:#ff9100;font-weight:bold",
+            wrap.dataset.receipt, completedOrders.has(wrap.dataset.receipt));
+
       });
 
       /* ── restore 3-px orangered outline and orange rows ─────────── */
