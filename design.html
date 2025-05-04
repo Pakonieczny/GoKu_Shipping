@@ -845,62 +845,56 @@ document.addEventListener("DOMContentLoaded", () => {
 
   /* ───────────────────── handleCompleteClick — FULL REPLACEMENT ───────────────────── */
   function handleCompleteClick() {
-    /* 1️⃣  require ALL four metal counters to be ON */
+    /* 1️⃣  ALL four metal filters must be active */
     const REQUIRED = ["gold", "silver", "rose", "14k"];
-    const activeMetals = Array.from(
+    const active = Array.from(
       document.querySelectorAll('.metal-counter.active:not([data-metal="completed"])')
-    ).map(btn => btn.dataset.metal);
+    ).map(b => b.dataset.metal);
 
-    if (activeMetals.length !== 4 || !REQUIRED.every(m => activeMetals.includes(m))) {
-      M.toast({ html: "Enable Gold, Silver, Rose, and 14K filters before completing orders" });
+    if (active.length !== 4 || !REQUIRED.every(m => active.includes(m))) {
+      M.toast({ html: "Turn ON Gold, Silver, Rose, and 14K before completing orders" });
       return;
     }
 
-    /* 2️⃣  collect every RECEIPT whose visible wrap belongs to the 4 metals */
+    /* 2️⃣  Gather every visible preview that matches those metals */
     const greenIDs = new Set();
-    gridElements.forEach(wrap => {
-      if (wrap.style.display === "none") return;              // skip hidden-by-filter
-      if (!REQUIRED.includes(wrap.dataset.metal)) return;     // skip other metals
+    document.querySelectorAll("#photoGridContainer .wrap-preview").forEach(wrap => {
+      if (wrap.style.display === "none") return;              // hidden by filters
+      if (!REQUIRED.includes(wrap.dataset.metal)) return;     // not one of the four
       greenIDs.add(wrap.dataset.receipt);
     });
 
     if (!greenIDs.size) {
-      M.toast({ html: "No matching orders found" });
+      M.toast({ html: "No orders match the selected metals" });
       return;
     }
 
-    /* 3️⃣  mark as complete, then REMOVE sidebar rows + previews */
+    /* 3️⃣  Mark as completed, remove side-bar rows + previews */
     greenIDs.forEach(id => {
-      completedOrders.add(id);            // track as finished
-      selectedOrders.delete(id);          // drop any orange state
+      completedOrders.add(id);
+      selectedOrders.delete(id);            // drop any orange state
 
-      /* sidebar row → remove from DOM + local arrays */
-      const row = document.querySelector(`.new-order-box[data-receipt='${id}']`);
-      if (row) row.remove();
-
-      currentReceipts  = currentReceipts.filter(r => String(r.receipt_id) !== id);
-      allOpenReceipts  = allOpenReceipts.filter(r => String(r.receipt_id) !== id);
+      /* sidebar rows */
+      document.querySelectorAll(`.new-order-box[data-receipt='${id}']`)
+              .forEach(row => row.remove());
 
       /* previews */
       removePreviewBoxesForOrder(id);
     });
 
-    realignGrid();                         // close gaps after removals
+    realignGrid();                          // close grid gaps
 
-    /* 4️⃣  reset all four metal counters to 0  */
+    /* 4️⃣  Reset the on-screen metal counts to zero */
     REQUIRED.forEach(m => {
       const el = document.querySelector(`.metal-counter[data-metal='${m}']`);
-      if (el) {
-        const label = el.textContent.split(":")[0];
-        el.textContent = `${label}: 0`;
-      }
+      if (el) el.textContent = `${m.charAt(0).toUpperCase() + m.slice(1)}: 0`;
     });
 
-    /* 5️⃣  persist + refresh UI */
+    /* 5️⃣  Persist + refresh */
     persistCompleted();
-    updateCounters();
     persistSelection();
-    window.applyMetalFilter();
+    updateCounters();
+    applyMetalFilter();
 
     M.toast({ html: "Completed orders moved off the list" });
   }
