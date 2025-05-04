@@ -1488,6 +1488,8 @@ document.addEventListener("DOMContentLoaded", () => {
     renderOrderBoxes(currentReceipts);
   });
 
+  window.renderOrderBoxes = renderOrderBoxes;   // expose to other modules
+
   /* 3.  HOOK INTO buildNewOrderList() ----------------------------------- */
   const originalBuild = buildNewOrderList;
   buildNewOrderList = async function(offset = 0) {
