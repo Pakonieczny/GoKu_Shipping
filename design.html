@@ -843,61 +843,69 @@ document.addEventListener("DOMContentLoaded", () => {
 
 
 
-  /* ───────────────────── handleCompleteClick — FULL REPLACEMENT ───────────────────── */
-  function handleCompleteClick() {
-    /* 1️⃣  ALL four metal filters must be active */
+  /* ─────────────────── handleCompleteClick — FULL REPLACEMENT ─────────────────── */
+  async function handleCompleteClick() {
+    /* require ALL four metal filters */
     const REQUIRED = ["gold", "silver", "rose", "14k"];
-    const active = Array.from(
+    const active   = Array.from(
       document.querySelectorAll('.metal-counter.active:not([data-metal="completed"])')
     ).map(b => b.dataset.metal);
 
     if (active.length !== 4 || !REQUIRED.every(m => active.includes(m))) {
-      M.toast({ html: "Turn ON Gold, Silver, Rose, and 14K before completing orders" });
+      M.toast({ html: "Turn ON Gold Silver Rose 14K before completing" });
       return;
     }
 
-    /* 2️⃣  Gather every visible preview that matches those metals */
+    /* collect every visible preview that matches those metals */
     const greenIDs = new Set();
-    document.querySelectorAll("#photoGridContainer .wrap-preview").forEach(wrap => {
-      if (wrap.style.display === "none") return;              // hidden by filters
-      if (!REQUIRED.includes(wrap.dataset.metal)) return;     // not one of the four
-      greenIDs.add(wrap.dataset.receipt);
+    document.querySelectorAll("#photoGridContainer .wrap-preview").forEach(w => {
+      if (w.style.display === "none")               return;  // hidden
+      if (!REQUIRED.includes(w.dataset.metal))      return;  // wrong metal
+      greenIDs.add(w.dataset.receipt);
     });
 
     if (!greenIDs.size) {
-      M.toast({ html: "No orders match the selected metals" });
+      M.toast({ html: "No matching orders" });
       return;
     }
 
-    /* 3️⃣  Mark as completed, remove side-bar rows + previews */
+    /* mark completed + purge DOM & caches */
     greenIDs.forEach(id => {
       completedOrders.add(id);
-      selectedOrders.delete(id);            // drop any orange state
+      selectedOrders.delete(id);
 
-      /* sidebar rows */
       document.querySelectorAll(`.new-order-box[data-receipt='${id}']`)
-              .forEach(row => row.remove());
-
-      /* previews */
-      removePreviewBoxesForOrder(id);
+              .forEach(r => r.remove());            // sidebar rows
+      removePreviewBoxesForOrder(id);               // preview tiles
     });
 
-    realignGrid();                          // close grid gaps
+    /* scrub master arrays */
+    allOpenReceipts  = allOpenReceipts .filter(r => !greenIDs.has(String(r.receipt_id)));
+    currentReceipts  = currentReceipts.filter(r => !greenIDs.has(String(r.receipt_id)));
 
-    /* 4️⃣  Reset the on-screen metal counts to zero */
+    /* recompute paging */
+    const totalPages = Math.ceil(allOpenReceipts.length / 100) || 1;
+    if (orderListOffset >= allOpenReceipts.length) {
+      orderListOffset = (totalPages - 1) * 100;
+    }
+
+    await buildNewOrderList(orderListOffset);       // redraw rows + buttons
+    realignGrid();                                  // tighten grid
+
+    /* reset on-screen metal counters */
     REQUIRED.forEach(m => {
       const el = document.querySelector(`.metal-counter[data-metal='${m}']`);
       if (el) el.textContent = `${m.charAt(0).toUpperCase() + m.slice(1)}: 0`;
     });
 
-    /* 5️⃣  Persist + refresh */
     persistCompleted();
     persistSelection();
     updateCounters();
     applyMetalFilter();
 
-    M.toast({ html: "Completed orders moved off the list" });
+    M.toast({ html: "Completed orders removed — pages recalculated" });
   }
+
 
   /* ── save completed list ──────────────────────────────────────── */
   function persistCompleted(){
@@ -1794,12 +1802,12 @@ async function buildNewOrderList(offset = 0) {
     return a._shipTS - b._shipTS;            // oldest → newest
   });
 
-  /* ❷ slice requested page */
-  const page = allOpenReceipts.slice(offset, offset + 100);
-  window._lastDisplayReceipts = page;        // expose current page
+  /* ❷ slice requested page – skip receipts already completed */
+  const filtered     = allOpenReceipts.filter(r => !completedOrders.has(String(r.receipt_id)));
+  const page         = filtered.slice(offset, offset + 100);
+  window._lastDisplayReceipts = page;            // expose current page
 
-  /* 🔸 NEW: build page buttons */
-  const totalPages   = Math.ceil(allOpenReceipts.length / 100);
+  const totalPages   = Math.ceil(filtered.length / 100);
   const currentPage  = Math.floor(offset / 100) + 1;
   updatePageButtons(totalPages, currentPage);
 
