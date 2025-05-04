@@ -1277,7 +1277,6 @@ document.addEventListener("DOMContentLoaded", () => {
      * ========================================================= */
 
 
-
   /* 0.  GLOBAL HOOKS ----------------------------------------------------- */
   let currentReceipts = [];            // populated by buildNewOrderList()
   let sortKey   = null;                // "order", "ship", "gold", ...
@@ -1487,8 +1486,6 @@ document.addEventListener("DOMContentLoaded", () => {
 
     renderOrderBoxes(currentReceipts);
   });
-
-  window.renderOrderBoxes = renderOrderBoxes;   // expose to other modules
 
   /* 3.  HOOK INTO buildNewOrderList() ----------------------------------- */
   const originalBuild = buildNewOrderList;
@@ -2334,14 +2331,6 @@ function reflowGrid(){
 
        if (isNowActive) {
          await ensureCompletedPreviews();     // when turning Completed ON
-
-         /* NEW ► repopulate sidebar with *all* green orders */
-         renderOrderBoxes(
-           Array.from(completedOrders).map(id =>
-             allOpenReceipts.find(r => idStr(r.receipt_id) === id)  // look-up once
-           ).filter(Boolean)                                          // guard nulls
-         );
-
        } else {
          await ensureOrangeIntegrity();      // brings orange back cleanly
        }
