@@ -1121,6 +1121,15 @@ document.addEventListener("DOMContentLoaded", () => {
       if (document.querySelector(
             `.wrap-preview[data-tx='${item.transaction_id}']`)) return;
 
+        /* already have this TX? — skip duplicate */
+        if (document.querySelector(
+                `.wrap-preview[data-tx='${item.transaction_id}']`)) {
+          console.log("%cSKIP-DUP","color:#ef5350",
+                      "tx:", item.transaction_id,
+                      "reason: element already in DOM");
+          return;
+        }
+
       /* build DOM node + auto-append */
       const wrap = makePreviewNode(item);
       gridElements.set(gridElements.size, wrap);   // bookkeeping
@@ -1306,6 +1315,13 @@ document.addEventListener("DOMContentLoaded", () => {
 
       /* click → toggle highlight + (de)load images ---------------------- */
       box.addEventListener("click", async () => {
+
+        /* LOG #1 – the instant you click */
+        console.log("%cROW-CLICK","color:#ab47bc;font-weight:bold",
+              "receipt:", r.receipt_id,
+              "selected:", selectedOrders.has(String(r.receipt_id)));
+
+
         const receiptId = idStr(r.receipt_id);      // ← always string
 
         /* ── 1. toggle selected state ─────────────────────────── */
@@ -1332,6 +1348,12 @@ document.addEventListener("DOMContentLoaded", () => {
             orderCache[receiptId] = ord?.transactions || [];
           }
           orderCache[receiptId].forEach(tx => { if (!tx._inGrid) addPreviewBox(tx); });
+          /* LOG #2 – every transaction we loop over */
+          console.log("%cTX-CHECK","color:#26c6da",
+                "tx:", tx.transaction_id,
+                "_inGrid:", !!tx._inGrid);
+          if (!tx._inGrid) addPreviewBox(tx);
+
           persistSelection();                       // 🔸 NEW
         }
 
