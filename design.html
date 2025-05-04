@@ -1620,24 +1620,32 @@ const observer = new MutationObserver(async () => {
           : "N/A";
       }
 
-      /* metal counts (scan ALL variations + fallback) */
+      /* metal counts (look at EVERY variation value + fallback tag) */
       const mc = { Gold:0, Silver:0, "Rose G":0, "14K":0 };
-      (r.transactions || []).forEach(t => {
-        let metalStr = "";
 
+      (r.transactions || []).forEach(t => {
+        const q = t.quantity || 1;
+
+        /* 1 ▸ add counts from every variation value */
         if (Array.isArray(t.variations)) {
           t.variations.forEach(v => {
-            if (!v?.formatted_value) return;
-            if (!metalStr) metalStr = v.formatted_value;   // first label wins
+            const val = (v?.formatted_value || "").toLowerCase();
+            if (/14k/.test(val))         mc["14K"]    += q;
+            else if (/rose/.test(val))   mc["Rose G"] += q;
+            else if (/silver/.test(val)) mc.Silver    += q;
+            else if (/gold/.test(val))   mc.Gold      += q;
           });
         }
-        if (!metalStr && t._metalKey) metalStr = t._metalKey;
 
-        const q = t.quantity || 1;
-        if (/14k/i.test(metalStr))         mc["14K"]    += q;
-        else if (/rose/i.test(metalStr))   mc["Rose G"] += q;
-        else if (/silver/i.test(metalStr)) mc.Silver    += q;
-        else if (/gold/i.test(metalStr))   mc.Gold      += q;
+        /* 2 ▸ if still zero, use the propagated _metalKey */
+        if (!mc.Gold && !mc.Silver && !mc["Rose G"] && !mc["14K"] && t._metalKey) {
+          switch (t._metalKey) {
+            case "14k":    mc["14K"]    += q; break;
+            case "rose":   mc["Rose G"] += q; break;
+            case "silver": mc.Silver    += q; break;
+            case "gold":   mc.Gold      += q; break;
+          }
+        }
       });
       r._metalCounts = mc;
     });
