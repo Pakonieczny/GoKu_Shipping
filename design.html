@@ -1569,89 +1569,110 @@ document.addEventListener("DOMContentLoaded", () => {
     renderOrderBoxes(currentReceipts);
   });
 
-    /* 3.  HOOK INTO buildNewOrderList() ----------------------------------- */
-  const originalBuild = buildNewOrderList;
-  buildNewOrderList = async function(offset = 0) {
-    const rawReceipts = await originalBuild.call(this, offset);   // returns count
-    return rawReceipts;
-  };
+    /* 3.  HOOK INTO buildNewOrderList() — now pre-hydrates every receipt ----- */
+const originalBuild = buildNewOrderList;
+buildNewOrderList = async function(offset = 0) {
 
-  /* Monkey-patch to expose display array for observer ------------------- */
-  const origFuncTxt = buildNewOrderList.toString();
-  if (!origFuncTxt.includes("window._lastDisplayReceipts")) {
-    console.warn(
-      "Patch buildNewOrderList manually to expose displayReceipts:\n" +
-      "Inside buildNewOrderList(), after you define displayReceipts, add:\n" +
-      "    window._lastDisplayReceipts = displayReceipts;"
-    );
-  }
+  /* (1) get the lightweight list exactly as before */
+  const rawReceipts = await originalBuild.call(this, offset);   // ← array
 
-  /** observer detects page changes and triggers initial render ---------- */
-  const observer = new MutationObserver(() => {
-    if (window._lastDisplayReceipts && window._lastDisplayReceipts !== currentReceipts) {
-      currentReceipts = window._lastDisplayReceipts;
-
-      /* helper fields for sorting ----------------------------- */
-      currentReceipts.forEach(r => {
-        /* ship timestamp + pretty string */
-        if (!r._shipTS) {
-          let ts = r.transactions?.[0]?.expected_ship_date || 0;
-          r._shipTS  = ts;
-          r._shipStr = ts
-            ? new Date(ts * 1000).toLocaleDateString("en-US", { month:"short", day:"2-digit" })
-            : "N/A";
+  /* (2) fetch full detail for EACH receipt so variations are present */
+  await Promise.all(
+    rawReceipts.map(async r => {
+      const id = String(r.receipt_id);
+      if (!orderCache[id]) {
+        try {
+          const ord = await pullEtsyOrderDetails(id);           // heavy call
+          orderCache[id] = ord?.transactions || [];
+        } catch (err) {
+          console.warn("Detail pull failed for", id, err);
+          orderCache[id] = [];                                  // keep placeholder
         }
+      }
+      /* (3) attach hydrated transactions so renderOrderBoxes sees them */
+      r.transactions = orderCache[id];
+    })
+  );
 
-        /* metal counts (scan ALL variations + fallback) */
-        if (!r._metalCounts) {
-          const mc = { Gold:0, Silver:0, "Rose G":0, "14K":0 };
+  return rawReceipts;   // now fully-hydrated
+};
 
-          (r.transactions || []).forEach(t => {
-            /* gather metal from every variation */
-            let metalStr = "";
+/* Monkey-patch to expose display array for observer -------------------- */
+const origFuncTxt = buildNewOrderList.toString();
+if (!origFuncTxt.includes("window._lastDisplayReceipts")) {
+  console.warn(
+    "Patch buildNewOrderList manually to expose displayReceipts:\n" +
+    "Inside buildNewOrderList(), after you define displayReceipts, add:\n" +
+    "    window._lastDisplayReceipts = displayReceipts;"
+  );
+}
 
-            if (Array.isArray(t.variations)) {
-              t.variations.forEach(v => {
-                if (!v?.formatted_value) return;
-                if (!metalStr) metalStr = v.formatted_value;   // first label wins
-              });
-            }
+/** observer detects page changes and triggers initial render ----------- */
+const observer = new MutationObserver(() => {
+  if (window._lastDisplayReceipts && window._lastDisplayReceipts !== currentReceipts) {
+    currentReceipts = window._lastDisplayReceipts;
 
-            /* fallback to propagated tag if still empty */
-            if (!metalStr && t._metalKey) metalStr = t._metalKey;
-
-            /* bump counts */
-            const q = t.quantity || 1;
-            if (/14k/i.test(metalStr))         mc["14K"]    += q;
-            else if (/rose/i.test(metalStr))   mc["Rose G"] += q;
-            else if (/silver/i.test(metalStr)) mc.Silver    += q;
-            else if (/gold/i.test(metalStr))   mc.Gold      += q;
-          });
-          r._metalCounts = mc;
-        }
-      });
-
-      /* default sort (first load) ----------------------------- */
-      if (!sortKey) { sortKey = "order"; sortDir = -1; }
-
-      /* arrow colour on first load ---------------------------- */
-      bar.querySelectorAll(".chev .up, .chev .down")
-         .forEach(el => (el.style.color = "#ffffff"));
-      const activeChev = bar.querySelector(`[data-key="${sortKey}"] .chev`);
-      if (sortDir === 1) {
-        activeChev.querySelector(".up").style.color   = "#2196F3";
-      } else {
-        activeChev.querySelector(".down").style.color = "#2196F3";
+    /* helper fields for sorting ----------------------------- */
+    currentReceipts.forEach(r => {
+      /* ship timestamp + pretty string */
+      if (!r._shipTS) {
+        let ts = r.transactions?.[0]?.expected_ship_date || 0;
+        r._shipTS  = ts;
+        r._shipStr = ts
+          ? new Date(ts * 1000).toLocaleDateString("en-US", { month:"short", day:"2-digit" })
+          : "N/A";
       }
 
-      /* execute initial sort & render ------------------------- */
-      currentReceipts.sort(
-        (a, b) => (b.order_number || b.receipt_id) - (a.order_number || a.receipt_id)
-      );
-      renderOrderBoxes(currentReceipts);
+      /* metal counts (scan ALL variations + fallback) */
+      if (!r._metalCounts) {
+        const mc = { Gold:0, Silver:0, "Rose G":0, "14K":0 };
+
+        (r.transactions || []).forEach(t => {
+          /* gather metal from every variation */
+          let metalStr = "";
+
+          if (Array.isArray(t.variations)) {
+            t.variations.forEach(v => {
+              if (!v?.formatted_value) return;
+              if (!metalStr) metalStr = v.formatted_value;   // first label wins
+            });
+          }
+
+          /* fallback to propagated tag if still empty */
+          if (!metalStr && t._metalKey) metalStr = t._metalKey;
+
+          /* bump counts */
+          const q = t.quantity || 1;
+          if (/14k/i.test(metalStr))         mc["14K"]    += q;
+          else if (/rose/i.test(metalStr))   mc["Rose G"] += q;
+          else if (/silver/i.test(metalStr)) mc.Silver    += q;
+          else if (/gold/i.test(metalStr))   mc.Gold      += q;
+        });
+        r._metalCounts = mc;
+      }
+    });
+
+    /* default sort (first load) ----------------------------- */
+    if (!sortKey) { sortKey = "order"; sortDir = -1; }
+
+    /* arrow colour on first load ---------------------------- */
+    bar.querySelectorAll(".chev .up, .chev .down")
+       .forEach(el => (el.style.color = "#ffffff"));
+    const activeChev = bar.querySelector(`[data-key="${sortKey}"] .chev`);
+    if (sortDir === 1) {
+      activeChev.querySelector(".up").style.color   = "#2196F3";
+    } else {
+      activeChev.querySelector(".down").style.color = "#2196F3";
     }
-  });
-  observer.observe(document.getElementById("newOrderContainer"), { childList: true });
+
+    /* execute initial sort & render ------------------------- */
+    currentReceipts.sort(
+      (a, b) => (b.order_number || b.receipt_id) - (a.order_number || a.receipt_id)
+    );
+    renderOrderBoxes(currentReceipts);
+  }
+});
+observer.observe(document.getElementById("newOrderContainer"), { childList: true });
 
 })();   /* ─── END SORT HEADER MODULE ─── */
 
