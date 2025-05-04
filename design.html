@@ -1201,40 +1201,47 @@ document.addEventListener("DOMContentLoaded", () => {
 
     /* ===== metal lookup, SKU, attention flag ========================== */
     let metalSel = "";
-    if(Array.isArray(item.variations)){
-      const ok=["metal","metal choice","metal - engraving","metal colour",
-                "color","metal choice / engraving option"];
-      const v=item.variations.find(v=>v.formatted_name &&
-                ok.includes(v.formatted_name.trim().toLowerCase()));
-      if(v?.formatted_value) metalSel = v.formatted_value;
-    }
+    let metalKey = "";
 
-    /* simple metal key */
-    let metalKey="";
-    if (/14k/i.test(metalSel))         metalKey="14k";
-    else if (/rose/i.test(metalSel))   metalKey="rose";
-    else if (/silver/i.test(metalSel)) metalKey="silver";
-    else if (/gold/i.test(metalSel))   metalKey="gold";
+    if (Array.isArray(item.variations)) {
+      const ok = [
+        "metal",
+        "metal choice",
+        "metal - engraving",
+        "metal colour",
+        "color",
+        "metal choice / engraving option"
+      ];
+
+      /* scan every variation */
+      item.variations.forEach(v => {
+        if (!v?.formatted_name || !v?.formatted_value) return;
+        const name = v.formatted_name.trim().toLowerCase();
+        if (!ok.includes(name)) return;
+
+        if (!metalSel) metalSel = v.formatted_value;      // label
+        const val = v.formatted_value.toLowerCase();      // value
+        if (!metalKey) {
+          if (/14k/.test(val))         metalKey = "14k";
+          else if (/rose/.test(val))   metalKey = "rose";
+          else if (/silver/.test(val)) metalKey = "silver";
+          else if (/gold/.test(val))   metalKey = "gold";
+        }
+      });
+    }
 
     /* NEW – if missing, borrow the key we just detected for the row */
     item.metalLabel = metalSel || item._metalKey || metalKey || "No Metal";
 
     /* does this listing need manual attention? */
     const hasPersonalization =
-      // array version → [ {...}, ... ]
       (Array.isArray(item.personalization) && item.personalization.length) ||
-
-      // object version → { text:"…" }
       (item.personalization &&
        typeof item.personalization === "object" &&
        !Array.isArray(item.personalization) &&
        Object.keys(item.personalization).length) ||
-
-      // string version → "Please engrave…"
       (typeof item.personalization === "string" &&
        item.personalization.trim().length) ||
-
-      // boolean flag Etsy sometimes sends
       item.is_personalized === true;
 
     const needsAttn =
@@ -1249,23 +1256,20 @@ document.addEventListener("DOMContentLoaded", () => {
     /* ★ FIX-C: trim + lower metal key, then log */
     metalKey = (metalKey || item._metalKey || "").trim().toLowerCase();
     wrap.dataset.metal = metalKey;
-    item._metalKey     = metalKey;          // ← NEW: remember final tag
+    item._metalKey     = metalKey;          // remember final tag
     console.log("%cMETAL-TAG","color:#29b6f6","assigned →", `[${wrap.dataset.metal}]`);
     wrap.dataset.qty   = item.quantity ?? 1;
 
-    if (needsAttn) wrap.classList.add("preview-attn");   // ← ORANGERED!
+    if (needsAttn) wrap.classList.add("preview-attn");   // ORANGERED!
 
     /* attach wrapper & load thumbnail……………………………………… */
     document.getElementById("photoGridContainer").appendChild(wrap);
     fetchListingImages(item.listing_id)
       .then(imgs => getLocalImageData(imgs[0].url_fullxfull))
       .then(data => {
-        /* set preview */
         box.innerHTML =
           `<img src="${data}" style="width:110%;height:110%;object-fit:cover;">`;
-
-        /* NEW → cache the image so the modal can show it */
-        item.image = data;
+        item.image = data;                 // cache for modal
       })
       .catch(()=>{ box.innerHTML = "Img Err"; });
 
