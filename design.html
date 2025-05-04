@@ -1528,7 +1528,7 @@ document.addEventListener("DOMContentLoaded", () => {
     renderOrderBoxes(currentReceipts);
   });
 
-  /* 3.  HOOK INTO buildNewOrderList() ----------------------------------- */
+    /* 3.  HOOK INTO buildNewOrderList() ----------------------------------- */
   const originalBuild = buildNewOrderList;
   buildNewOrderList = async function(offset = 0) {
     const rawReceipts = await originalBuild.call(this, offset);   // returns count
@@ -1561,21 +1561,35 @@ document.addEventListener("DOMContentLoaded", () => {
             : "N/A";
         }
 
-        /* metal counts */
+        /* metal counts (scan ALL variations + fallback) */
         if (!r._metalCounts) {
           const mc = { Gold:0, Silver:0, "Rose G":0, "14K":0 };
+
           (r.transactions || []).forEach(t => {
-            const m = (t.variations || [])
-              .find(v => /metal/i.test(v.formatted_name || ""))?.formatted_value || "";
-            if (/14k/i.test(m))         mc["14K"]   += t.quantity || 1;
-            else if (/rose/i.test(m))   mc["Rose G"]+= t.quantity || 1;
-            else if (/silver/i.test(m)) mc.Silver   += t.quantity || 1;
-            else if (/gold/i.test(m))   mc.Gold     += t.quantity || 1;
+            /* gather metal from every variation */
+            let metalStr = "";
+
+            if (Array.isArray(t.variations)) {
+              t.variations.forEach(v => {
+                if (!v?.formatted_name || !v?.formatted_value) return;
+                if (/metal|color|colour/i.test(v.formatted_name.trim())) {
+                  if (!metalStr) metalStr = v.formatted_value;   // first hit wins
+                }
+              });
+            }
+
+            /* fallback to propagated tag if still empty */
+            if (!metalStr && t._metalKey) metalStr = t._metalKey;
+
+            /* bump counts */
+            const q = t.quantity || 1;
+            if (/14k/i.test(metalStr))         mc["14K"]    += q;
+            else if (/rose/i.test(metalStr))   mc["Rose G"] += q;
+            else if (/silver/i.test(metalStr)) mc.Silver    += q;
+            else if (/gold/i.test(metalStr))   mc.Gold      += q;
           });
           r._metalCounts = mc;
         }
-
-
       });
 
       /* default sort (first load) ----------------------------- */
