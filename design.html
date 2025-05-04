@@ -1576,7 +1576,7 @@ buildNewOrderList = async function (offset = 0) {
   return await originalBuild.call(this, offset);
 };
 
-/* Monkey-patch to expose display array for observer -------------------- */
+/* Monkey-patch to expose display array for observer ------------------ */
 const origFuncTxt = buildNewOrderList.toString();
 if (!origFuncTxt.includes("window._lastDisplayReceipts")) {
   console.warn(
@@ -1586,19 +1586,19 @@ if (!origFuncTxt.includes("window._lastDisplayReceipts")) {
   );
 }
 
-/** observer detects page changes and triggers initial render ----------- */
+/** observer detects page changes and triggers initial render --------- */
 const observer = new MutationObserver(async () => {
   if (window._lastDisplayReceipts && window._lastDisplayReceipts !== currentReceipts) {
     /* lightweight receipts landed — hydrate them BEFORE we draw rows */
     currentReceipts = window._lastDisplayReceipts;
 
-    /* —— FULL HYDRATE: pull transactions for EVERY receipt ——————— */
+    /* FULL HYDRATE: pull transactions for EVERY receipt -------------- */
     await Promise.all(
       currentReceipts.map(async r => {
         const id = String(r.receipt_id);
         if (!orderCache[id]) {
           try {
-            const ord = await pullEtsyOrderDetails(id);   // heavy call, once per receipt
+            const ord = await pullEtsyOrderDetails(id);   // heavy call
             orderCache[id] = ord?.transactions || [];
           } catch (err) {
             console.warn("Detail pull failed for", id, err);
@@ -1609,24 +1609,24 @@ const observer = new MutationObserver(async () => {
       })
     );
 
-    /* helper fields for sorting + metal counts ------------------------ */
+    /* helper fields for sorting + metal counts ----------------------- */
     currentReceipts.forEach(r => {
       /* ship timestamp + pretty string */
       if (!r._shipTS) {
-        let ts = r.transactions?.[0]?.expected_ship_date || 0;
+        const ts = r.transactions?.[0]?.expected_ship_date || 0;
         r._shipTS  = ts;
         r._shipStr = ts
           ? new Date(ts * 1000).toLocaleDateString("en-US", { month:"short", day:"2-digit" })
           : "N/A";
       }
 
-      /* metal counts (look at EVERY variation value + fallback tag) */
+      /* metal counts (check EVERY variation value + fallback tag) */
       const mc = { Gold:0, Silver:0, "Rose G":0, "14K":0 };
 
       (r.transactions || []).forEach(t => {
         const q = t.quantity || 1;
 
-        /* 1 ▸ add counts from every variation value */
+        /* add counts from every variation value */
         if (Array.isArray(t.variations)) {
           t.variations.forEach(v => {
             const val = (v?.formatted_value || "").toLowerCase();
@@ -1637,7 +1637,7 @@ const observer = new MutationObserver(async () => {
           });
         }
 
-        /* 2 ▸ if still zero, use the propagated _metalKey */
+        /* fallback to propagated _metalKey if all counts still zero */
         if (!mc.Gold && !mc.Silver && !mc["Rose G"] && !mc["14K"] && t._metalKey) {
           switch (t._metalKey) {
             case "14k":    mc["14K"]    += q; break;
@@ -1648,12 +1648,19 @@ const observer = new MutationObserver(async () => {
         }
       });
       r._metalCounts = mc;
+
+      /* derive a single row-level metal tag (may stay blank) */
+      if      (mc["14K"])    r._rowMetal = "14k";
+      else if (mc["Rose G"]) r._rowMetal = "rose";
+      else if (mc.Silver)    r._rowMetal = "silver";
+      else if (mc.Gold)      r._rowMetal = "gold";
+      else                   r._rowMetal = "";         // no metal detected
     });
 
-    /* initial sort direction ----------------------------------------- */
+    /* initial sort direction ---------------------------------------- */
     if (!sortKey) { sortKey = "order"; sortDir = -1; }
 
-    /* arrow colours --------------------------------------------------- */
+    /* arrow colours ------------------------------------------------- */
     bar.querySelectorAll(".chev .up, .chev .down")
        .forEach(el => (el.style.color = "#ffffff"));
     const activeChev = bar.querySelector(`[data-key="${sortKey}"] .chev`);
@@ -1662,7 +1669,7 @@ const observer = new MutationObserver(async () => {
       : activeChev.querySelector(".down")
     ).style.color = "#2196F3";
 
-    /* render fully–hydrated rows -------------------------------------- */
+    /* render fully-hydrated rows ------------------------------------ */
     currentReceipts.sort(
       (a, b) => (b.order_number || b.receipt_id) - (a.order_number || a.receipt_id)
     );
