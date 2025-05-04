@@ -845,9 +845,9 @@ document.addEventListener("DOMContentLoaded", () => {
 
   /* ─────────────────── handleCompleteClick — FULL REPLACEMENT ─────────────────── */
   async function handleCompleteClick() {
-    /* require ALL four metal filters */
+    /* 1️⃣  require ALL four metal filters */
     const REQUIRED = ["gold", "silver", "rose", "14k"];
-    const active   = Array.from(
+    const active = Array.from(
       document.querySelectorAll('.metal-counter.active:not([data-metal="completed"])')
     ).map(b => b.dataset.metal);
 
@@ -856,11 +856,11 @@ document.addEventListener("DOMContentLoaded", () => {
       return;
     }
 
-    /* collect every visible preview that matches those metals */
+    /* 2️⃣  collect every visible preview that matches those metals */
     const greenIDs = new Set();
     document.querySelectorAll("#photoGridContainer .wrap-preview").forEach(w => {
-      if (w.style.display === "none")               return;  // hidden
-      if (!REQUIRED.includes(w.dataset.metal))      return;  // wrong metal
+      if (w.style.display === "none")          return;               // hidden
+      if (!REQUIRED.includes(w.dataset.metal)) return;               // wrong metal
       greenIDs.add(w.dataset.receipt);
     });
 
@@ -869,35 +869,39 @@ document.addEventListener("DOMContentLoaded", () => {
       return;
     }
 
-    /* mark completed + purge DOM & caches */
+    /* 3️⃣  mark completed + purge DOM & master cache */
     greenIDs.forEach(id => {
       completedOrders.add(id);
       selectedOrders.delete(id);
 
+      /* sidebar rows */
       document.querySelectorAll(`.new-order-box[data-receipt='${id}']`)
-              .forEach(r => r.remove());            // sidebar rows
-      removePreviewBoxesForOrder(id);               // preview tiles
+              .forEach(r => r.remove());
+
+      /* preview tiles */
+      removePreviewBoxesForOrder(id);
     });
 
-    /* scrub master arrays */
-    allOpenReceipts  = allOpenReceipts .filter(r => !greenIDs.has(String(r.receipt_id)));
-    currentReceipts  = currentReceipts.filter(r => !greenIDs.has(String(r.receipt_id)));
+    /* scrub master array only (currentReceipts may not exist globally) */
+    allOpenReceipts = allOpenReceipts.filter(r => !greenIDs.has(String(r.receipt_id)));
 
-    /* recompute paging */
+    /* 4️⃣  recompute paging */
+    if (typeof orderListOffset === "undefined") window.orderListOffset = 0;
     const totalPages = Math.ceil(allOpenReceipts.length / 100) || 1;
     if (orderListOffset >= allOpenReceipts.length) {
       orderListOffset = (totalPages - 1) * 100;
     }
 
-    await buildNewOrderList(orderListOffset);       // redraw rows + buttons
-    realignGrid();                                  // tighten grid
+    await buildNewOrderList(orderListOffset);     // redraw rows + buttons
+    realignGrid();                                // tighten grid gaps
 
-    /* reset on-screen metal counters */
+    /* 5️⃣  reset on-screen metal counters */
     REQUIRED.forEach(m => {
       const el = document.querySelector(`.metal-counter[data-metal='${m}']`);
       if (el) el.textContent = `${m.charAt(0).toUpperCase() + m.slice(1)}: 0`;
     });
 
+    /* 6️⃣  persist + refresh */
     persistCompleted();
     persistSelection();
     updateCounters();
