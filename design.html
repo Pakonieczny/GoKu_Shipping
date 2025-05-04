@@ -380,6 +380,11 @@
 <div id="solidCounter"  class="metal-counter active" data-metal="14k">14K: 0
 </div>
 
+<!-- ▼▼ SEARCH-MODE CONTAINERS ▼▼ -->
+<div id="searchOrderContainer"  style="display:none;"></div>
+<div id="searchGridContainer"   style="display:none;"  class="photo-grid"></div>
+<!-- ▲▲ END SEARCH-MODE CONTAINERS ▲▲ -->
+
 <!-- Container for dynamically generated preview boxes and detail boxes -->
 <div id="photoGridContainer">
   <!-- Preview boxes and detail boxes will be created dynamically -->
@@ -777,6 +782,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
       const inputVal = etsyOrderInput.value.trim();
       if (!inputVal) return;
+      if (!inputVal.includes(",")) return;   // 👈 skip bulk loader for single-order search
 
       let orderNumbers = inputVal
         .split(",")
@@ -788,88 +794,103 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   });
 
-  /* ==============================================================
- *  Single-order SEARCH via #etsyOrderNumber
- * ============================================================*/
-(function attachSearch(){
-  const input = document.getElementById("etsyOrderNumber");
-  if(!input) return;
+    /* ==============================================================
+   *  Single-order SEARCH via #etsyOrderNumber
+   * ============================================================*/
+  (function attachSearch(){
+    const input = document.getElementById("etsyOrderNumber");
+    if (!input) return;
 
-  /* ENTER → run search when no commas are present */
-  input.addEventListener("keydown", async e=>{
-    if(e.key!=="Enter") return;
-    const raw = input.value.trim();
-    if(!raw || raw.includes(",")) return;   // let multi-order handler do its job
+    /* key DOM refs once */
+    const oc  = document.getElementById("newOrderContainer");    // original rows
+    const pc  = document.getElementById("photoGridContainer");   // original grid
+    const soc = document.getElementById("searchOrderContainer"); // search rows
+    const sgc = document.getElementById("searchGridContainer");  // search grid
 
-    e.preventDefault();
-    e.stopImmediatePropagation();           // cancel the other Enter listener
+    /* ENTER — run search for a *single* order number (no commas) */
+    input.addEventListener("keydown", async e => {
+      if (e.key !== "Enter") return;
+      const raw = input.value.trim();
+      if (!raw || raw.includes(",")) return;          // bulk loader handles commas
 
-    try{
-      /* 1️⃣ snapshot current UI (only first time) */
-      if(!searchSnapshot){
-        searchSnapshot = {
-          orderHTML : document.getElementById("newOrderContainer").innerHTML,
-          gridHTML  : document.getElementById("photoGridContainer").innerHTML,
-          gridMap   : new Map(gridElements)      // deep copy
-        };
+      e.preventDefault();
+      e.stopImmediatePropagation();                   // block bulk loader
+
+      try {
+        /* 1️⃣ snapshot + hide originals (first search only) */
+        if (!searchSnapshot) {
+          searchSnapshot = {
+            gridMap: new Map(gridElements)            // preserve full map
+          };
+          oc.style.display = "none";
+          pc.style.display = "none";
+          soc.style.display = "";
+          sgc.style.display = "";
+        }
+
+        /* 2️⃣ clear previous search results */
+        soc.innerHTML = "";
+        sgc.innerHTML = "";
+        /* prune previous search wraps from gridElements */
+        for (const [tid, wrap] of gridElements) {
+          if (wrap.closest("#searchGridContainer")) gridElements.delete(tid);
+        }
+
+        M.toast({ html: `Searching ${raw}…` });
+
+        /* 3️⃣ fetch + render */
+        const data    = await fetchEtsyOrder(raw);
+        const txs     = data.transactions || [];
+        const receipt = data.receipt     || {};
+
+        /* sidebar row (reuse helper) */
+        const row = makeOrderRow(receipt);
+        soc.appendChild(row);
+
+        /* preview tiles */
+        txs.forEach(tx => {
+          const wrap = makePreviewNode(tx);  // auto-appends to pc, then move
+          sgc.appendChild(wrap);
+        });
+
+        reflowGrid();
+        updateCounters();
+        applyMetalFilter();
+        M.toast({ html: `Search complete (${txs.length} items)` });
+
+      } catch (err) {
+        console.error(err);
+        M.toast({ html: "Order not found" });
       }
+    });
 
-      /* 2️⃣ clear current containers & map */
-      document.getElementById("newOrderContainer").innerHTML  = "";
-      document.getElementById("photoGridContainer").innerHTML = "";
+    /* empty box → restore originals immediately */
+    input.addEventListener("input", () => {
+      if (input.value.trim() !== "") return;
+      if (!searchSnapshot)             return;
+
+      /* show originals / hide search */
+      soc.style.display = "none";
+      sgc.style.display = "none";
+      oc.style.display  = "";
+      pc.style.display  = "";
+
+      /* wipe search DOM */
+      soc.innerHTML = "";
+      sgc.innerHTML = "";
+
+      /* restore original Map */
       gridElements.clear();
-
-      /* 3️⃣ fetch + render */
-      M.toast({html:"Searching "+raw+"…"});
-
-      const data   = await fetchEtsyOrder(raw);
-      const txs    = data.transactions || [];
-      const receipt= data.receipt     || {};
-
-      /* —— sidebar row —— */
-      const row = document.createElement("div");
-      row.className = "new-order-box";
-      row.dataset.receipt = receipt.receipt_id || raw;
-      row.innerHTML = `
-        <span class="col-order">${receipt.order_number||raw}</span>
-        <span class="col-ship">${receipt.dispatch_date||"N/A"}</span>
-        <span class="col-g">0</span><span class="col-s">0</span>
-        <span class="col-r">0</span><span class="col-k">0</span>`;
-      document.getElementById("newOrderContainer").appendChild(row);
-
-      /* —— preview tiles —— */
-      txs.forEach(addPreviewBox);
+      for (const [k, v] of searchSnapshot.gridMap) gridElements.set(k, v);
 
       reflowGrid();
       updateCounters();
       applyMetalFilter();
-      M.toast({html:"Search complete ("+txs.length+" items)"});
 
-    }catch(err){
-      console.error(err);
-      M.toast({html:"Order not found"});
-    }
-  });
-
-  /* Empty box → instant restore */
-  input.addEventListener("input", ()=>{
-    if(input.value.trim()!=="") return;
-    if(!searchSnapshot)        return;
-
-    document.getElementById("newOrderContainer").innerHTML  = searchSnapshot.orderHTML;
-    document.getElementById("photoGridContainer").innerHTML = searchSnapshot.gridHTML;
-
-    gridElements.clear();
-    for(const [k,v] of searchSnapshot.gridMap) gridElements.set(k,v);
-
-    reflowGrid();
-    updateCounters();
-    applyMetalFilter();
-
-    searchSnapshot = null;
-    M.toast({html:"Search cleared"});
-  });
-})();
+      searchSnapshot = null;
+      M.toast({ html: "Search cleared" });
+    });
+  })();
 
   /* =====================================================================
    *  LOCAL-STORAGE PERSISTENCE  —  selected orders + their transactions
