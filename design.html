@@ -1246,7 +1246,7 @@ document.addEventListener("DOMContentLoaded", () => {
     addDetail("matchCell",143,"");
 
     /* ★ FIX-C: trim + lower metal key, then log */
-    metalKey = (metalKey || "").trim().toLowerCase();
+    metalKey = (metalKey || item._metalKey || "").trim().toLowerCase();
     wrap.dataset.metal = metalKey;
     console.log("%cMETAL-TAG","color:#29b6f6","assigned →", `[${wrap.dataset.metal}]`);
     wrap.dataset.qty   = item.quantity ?? 1;
@@ -1339,6 +1339,10 @@ document.addEventListener("DOMContentLoaded", () => {
 
       /* iterate each transaction exactly once */
       orderCache[receiptId].forEach(tx => {
+
+      /* NEW — pass the metal value from the row down to each tx */
+      tx._metalKey = box.dataset.metal;
+  
         if (!tx._inGrid) addPreviewBox(tx);
       });
 
