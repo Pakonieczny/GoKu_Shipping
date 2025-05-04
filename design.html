@@ -1080,6 +1080,14 @@ document.addEventListener("DOMContentLoaded", () => {
        delete tx._wrapEl;         // drop stale DOM ref
      });
  
+      /* ─── helper: recount items and update the little badge ───────────── */
+      function refreshRowCount(receiptId){
+        const box = document.querySelector(`.new-order-box[data-receipt='${receiptId}']`);
+        if (!box) return;
+        const cntEl = box.querySelector(".badge-count");     // ← your badge span
+        if (!cntEl) return;
+        cntEl.textContent = (orderCache[receiptId] || []).length;
+      }
 
       /* 1 ▸ delete every wrap belonging to this receipt */
       document.querySelectorAll(
@@ -1336,6 +1344,8 @@ document.addEventListener("DOMContentLoaded", () => {
       if (!orderCache[receiptId]) {
         const ord = await pullEtsyOrderDetails(receiptId);
         orderCache[receiptId] = ord?.transactions || [];
+
+        refreshRowCount(receiptId);          // ← NEW: badge updates instantly
       }
 
       /* — check transactions array before we try to add previews — */
