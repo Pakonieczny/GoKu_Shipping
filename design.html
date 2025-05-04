@@ -1216,7 +1216,8 @@ document.addEventListener("DOMContentLoaded", () => {
     else if (/silver/i.test(metalSel)) metalKey="silver";
     else if (/gold/i.test(metalSel))   metalKey="gold";
 
-    item.metalLabel = metalSel || "No Metal";   // ← NEW
+    /* NEW – if missing, borrow the key we just detected for the row */
+    item.metalLabel = metalSel || item._metalKey || metalKey || "No Metal";
 
     /* does this listing need manual attention? */
     const hasPersonalization =
@@ -1342,7 +1343,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
       /* NEW — pass the metal value from the row down to each tx */
       tx._metalKey = box.dataset.metal;
-  
+
         if (!tx._inGrid) addPreviewBox(tx);
       });
 
