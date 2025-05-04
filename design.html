@@ -1065,6 +1065,12 @@ document.addEventListener("DOMContentLoaded", () => {
 
       /* ===== removePreviewBoxesForOrder — GLOBAL VERSION ===== */
       function removePreviewBoxesForOrder(receiptId){
+
+        console.log("%cREMOVE", "color:#d500f9",
+            "receipt:", receiptId,
+            "wraps in grid before:", document.querySelectorAll(
+              `.wrap-preview[data-receipt='${receiptId}']`).length);
+        
         /* skip removals for completed (green) orders */
         if (completedOrders.has(receiptId)) return;
 
@@ -1106,6 +1112,7 @@ document.addEventListener("DOMContentLoaded", () => {
         "color:#29b6f6",
         "TX:", item.transaction_id,
         "receipt:", item.receipt_id,
+        "_inGrid:", !!item._inGrid
         "pers:", item.personalization?.length,
         "buyerMsg:", !!item.message_from_buyer
       );
@@ -2070,12 +2077,22 @@ async function loadBatchEtsyOrders(orderNumbers) {
       const url  = functionsBaseUrl + "/etsyOrderProxy?orderId=" + encodeURIComponent(ord);
       const resp = await fetch(url, { headers: { "access-token": token } });
 
+      /* DEBUG ⬇︎ record every payload */
+      console.log("%cFETCH ✓", "color:#00c853",
+            "receipt:", ord,
+            "status:", resp.status);
+
       if (!resp.ok) {
         console.warn("Order fetch failed for " + ord + ", status=" + resp.status);
         continue;
       }
 
       const data = await resp.json();
+
+      console.log("%cCACHE", "color:#ff9100",
+            "receipt:", ord,
+            "TX ids:", data.transactions.map(t => t.transaction_id));
+
       console.log("Etsy Order Data:", data);
 
       /* -----------------------------------------------------------
