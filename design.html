@@ -1117,10 +1117,6 @@ document.addEventListener("DOMContentLoaded", () => {
         "buyerMsg:", !!item.message_from_buyer
       );
 
-      /* already have this TX? — skip duplicate */
-      if (document.querySelector(
-            `.wrap-preview[data-tx='${item.transaction_id}']`)) return;
-
         /* already have this TX? — skip duplicate */
         if (document.querySelector(
                 `.wrap-preview[data-tx='${item.transaction_id}']`)) {
@@ -1324,99 +1320,102 @@ document.addEventListener("DOMContentLoaded", () => {
 
         const receiptId = idStr(r.receipt_id);      // ← always string
 
-        /* ── 1. toggle selected state ─────────────────────────── */
-        if (selectedOrders.has(receiptId)) {
-          /* ─── DESELECT ─── */
-          selectedOrders.delete(receiptId);
-          box.classList.remove("selected");
+    /* ── 1. toggle selected state ─────────────────────────── */
+    if (selectedOrders.has(receiptId)) {
+      /* ─── DESELECT ─── */
+      selectedOrders.delete(receiptId);
+      box.classList.remove("selected");
 
-          /* clean up previews & bookkeeping */
-          removePreviewBoxesForOrder(receiptId);  // drop every wrap
-          realignGrid();                          // close gaps
-          updateCounters();                       // badge totals
-          persistSelection();                     // save smaller Set
+      /* clean up previews & bookkeeping */
+      removePreviewBoxesForOrder(receiptId);  // drop every wrap
+      realignGrid();                          // close gaps
+      updateCounters();                       // badge totals
+      persistSelection();                     // save smaller Set
 
-          /* re-evaluate visibility after the removals */
-          window.applyMetalFilter();
+      /* re-evaluate visibility after the removals */
+      window.applyMetalFilter();
 
-        } else {
-          /* ─── SELECT ─── */
-          selectedOrders.add(receiptId);
-          box.classList.add("selected");
-          if (!orderCache[receiptId]) {
-            const ord = await pullEtsyOrderDetails(receiptId);
-            orderCache[receiptId] = ord?.transactions || [];
-          }
-          orderCache[receiptId].forEach(tx => { if (!tx._inGrid) addPreviewBox(tx); });
-          /* LOG #2 – every transaction we loop over */
-          console.log("%cTX-CHECK","color:#26c6da",
-                "tx:", tx.transaction_id,
-                "_inGrid:", !!tx._inGrid);
-          if (!tx._inGrid) addPreviewBox(tx);
+    } else {
+      /* ─── SELECT ─── */
+      selectedOrders.add(receiptId);
+      box.classList.add("selected");
 
-          persistSelection();                       // 🔸 NEW
-        }
+      /* pull + cache if first time */
+      if (!orderCache[receiptId]) {
+        const ord = await pullEtsyOrderDetails(receiptId);
+        orderCache[receiptId] = ord?.transactions || [];
+      }
 
-        /* ── 2. build combined list from all active orders ────── */
-        let combined = [];
-        selectedOrders.forEach(id => {
-          const tx = orderCache[id] || [];
-          combined.push(...tx);
-        });
-
-        /* ── 3. (de)render the grid — incremental append version ─ */
-        const grid = document.getElementById("photoGridContainer");
-
-        if (combined.length === 0) {                 // nothing selected
-          grid.innerHTML = "";
-          gridElements.clear();
-          earringCells  = {};
-          earringState  = {};
-        } else {
-          combined.forEach(tx => {                   // only add new ones
-            if (!tx._inGrid) addPreviewBox(tx);
-          });
-        }
-      });   /* ← closes box.addEventListener("click", … ) */
-
-      /* ── HOVER → outline matching preview boxes ───────────────────── */
-      box.addEventListener("mouseenter", () => {
-        if (!box.classList.contains("selected")) return;           // orange rows only
-        const rec = r.receipt_id;
-        document.querySelectorAll(`#photoGridContainer .wrap-preview[data-receipt="${rec}"]`)
-                .forEach(w => w.classList.add("preview-highlight"));
-      });
-      box.addEventListener("mouseleave", () => {
-        const rec = r.receipt_id;
-        document.querySelectorAll(`#photoGridContainer .wrap-preview[data-receipt="${rec}"]`)
-                .forEach(w => w.classList.remove("preview-highlight"));
+      /* iterate each transaction exactly once */
+      orderCache[receiptId].forEach(tx => {
+        console.log("%cTX-CHECK","color:#26c6da",
+                    "tx:", tx.transaction_id,
+                    "_inGrid:", !!tx._inGrid);
+        if (!tx._inGrid) addPreviewBox(tx);
       });
 
-      /* order-row content ----------------------------------------------- */
-      const orderNum = r.order_number || r.receipt_id || "—";
-      const shipStr  = r._shipStr || "N/A";
-      const g  = r._metalCounts.Gold     || 0;
-      const s  = r._metalCounts.Silver   || 0;
-      const rG = r._metalCounts["Rose G"]|| 0;
-      const k  = r._metalCounts["14K"]   || 0;
+      persistSelection();                     // 🔸 keep after caching
+    }
 
-      /* assign one metal key to the whole order for filtering */
-      let rowMetal = "";
-      if     (k)        rowMetal = "14k";
-      else if(rG)       rowMetal = "rose";
-      else if(s)        rowMetal = "silver";
-      else if(g)        rowMetal = "gold";
-      box.dataset.metal = rowMetal;            // ← moved here
+    /* ── 2. build combined list from all active orders ────── */
+    let combined = [];
+    selectedOrders.forEach(id => {
+      const tx = orderCache[id] || [];
+      combined.push(...tx);
+    });
 
-      box.innerHTML = `
-        <span class="col-order">${orderNum}</span>
-        <span class="col-ship">${shipStr}</span>
-        <span class="col-g">${g}</span>
-        <span class="col-s">${s}</span>
-        <span class="col-r">${rG}</span>
-        <span class="col-k">${k}</span>
-      `;
-      container.appendChild(box);      // last line inside arr.forEach
+    /* ── 3. (de)render the grid — incremental append version ─ */
+    const grid = document.getElementById("photoGridContainer");
+
+    if (combined.length === 0) {               // nothing selected
+      grid.innerHTML = "";
+      gridElements.clear();
+      earringCells  = {};
+      earringState  = {};
+    } else {
+      combined.forEach(tx => {                 // only add new ones
+        if (!tx._inGrid) addPreviewBox(tx);
+      });
+    }            /* ← closes box.addEventListener("click", … ) */
+
+    /* ── HOVER → outline matching preview boxes ───────────────────── */
+    box.addEventListener("mouseenter", () => {
+      if (!box.classList.contains("selected")) return;    // orange rows only
+      const rec = r.receipt_id;
+      document.querySelectorAll(`#photoGridContainer .wrap-preview[data-receipt="${rec}"]`)
+              .forEach(w => w.classList.add("preview-highlight"));
+    });
+    box.addEventListener("mouseleave", () => {
+      const rec = r.receipt_id;
+      document.querySelectorAll(`#photoGridContainer .wrap-preview[data-receipt="${rec}"]`)
+              .forEach(w => w.classList.remove("preview-highlight"));
+    });
+
+    /* order-row content ----------------------------------------------- */
+    const orderNum = r.order_number || r.receipt_id || "—";
+    const shipStr  = r._shipStr || "N/A";
+    const g  = r._metalCounts.Gold     || 0;
+    const s  = r._metalCounts.Silver   || 0;
+    const rG = r._metalCounts["Rose G"]|| 0;
+    const k  = r._metalCounts["14K"]   || 0;
+
+    /* assign one metal key to the whole order for filtering */
+    let rowMetal = "";
+    if     (k)        rowMetal = "14k";
+    else if(rG)       rowMetal = "rose";
+    else if(s)        rowMetal = "silver";
+    else if(g)        rowMetal = "gold";
+    box.dataset.metal = rowMetal;          // ← moved here
+
+    box.innerHTML = `
+      <span class="col-order">${orderNum}</span>
+      <span class="col-ship">${shipStr}</span>
+      <span class="col-g">${g}</span>
+      <span class="col-s">${s}</span>
+      <span class="col-r">${rG}</span>
+      <span class="col-k">${k}</span>
+    `;
+    container.appendChild(box);            // last line inside arr.forEach
     });                                // closes arr.forEach
 
     highlightSavedRows();              // ← NEW: paint saved rows
