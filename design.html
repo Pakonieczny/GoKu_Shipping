@@ -1070,7 +1070,7 @@ document.addEventListener("DOMContentLoaded", () => {
             "receipt:", receiptId,
             "wraps in grid before:", document.querySelectorAll(
               `.wrap-preview[data-receipt='${receiptId}']`).length);
-        
+
         /* skip removals for completed (green) orders */
         if (completedOrders.has(receiptId)) return;
 
@@ -1112,7 +1112,7 @@ document.addEventListener("DOMContentLoaded", () => {
         "color:#29b6f6",
         "TX:", item.transaction_id,
         "receipt:", item.receipt_id,
-        "_inGrid:", !!item._inGrid
+        "_inGrid:", !!item._inGrid,
         "pers:", item.personalization?.length,
         "buyerMsg:", !!item.message_from_buyer
       );
