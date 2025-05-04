@@ -1608,9 +1608,26 @@ if (!origFuncTxt.includes("window._lastDisplayReceipts")) {
 }
 
 /** observer detects page changes and triggers initial render ----------- */
-const observer = new MutationObserver(() => {
+const observer = new MutationObserver(async () => {
   if (window._lastDisplayReceipts && window._lastDisplayReceipts !== currentReceipts) {
-    currentReceipts = window._lastDisplayReceipts;
+    currentReceipts = window._lastDisplayReceipts;   // ← full array
+
+    /* (1) hydrate every receipt before we touch counts / render */
+    await Promise.all(
+      currentReceipts.map(async r => {
+        const id = String(r.receipt_id);
+        if (!orderCache[id]) {
+          try {
+            const ord = await pullEtsyOrderDetails(id);       // heavy call
+            orderCache[id] = ord?.transactions || [];
+          } catch (err) {
+            console.warn("Detail pull failed for", id, err);
+            orderCache[id] = [];
+          }
+        }
+        r.transactions = orderCache[id];                      // attach
+      })
+    );
 
     /* helper fields for sorting ----------------------------- */
     currentReceipts.forEach(r => {
@@ -1628,7 +1645,6 @@ const observer = new MutationObserver(() => {
         const mc = { Gold:0, Silver:0, "Rose G":0, "14K":0 };
 
         (r.transactions || []).forEach(t => {
-          /* gather metal from every variation */
           let metalStr = "";
 
           if (Array.isArray(t.variations)) {
@@ -1637,11 +1653,8 @@ const observer = new MutationObserver(() => {
               if (!metalStr) metalStr = v.formatted_value;   // first label wins
             });
           }
-
-          /* fallback to propagated tag if still empty */
           if (!metalStr && t._metalKey) metalStr = t._metalKey;
 
-          /* bump counts */
           const q = t.quantity || 1;
           if (/14k/i.test(metalStr))         mc["14K"]    += q;
           else if (/rose/i.test(metalStr))   mc["Rose G"] += q;
