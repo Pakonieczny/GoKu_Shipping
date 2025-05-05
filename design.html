@@ -466,7 +466,7 @@ function refreshRowMetalCounts(receiptId){
     }
 
     const q = tx.quantity || 1;
-    if (/14\\s*k\\s*solid/i.test(m))  k  += q;
+    if (/14\s*k\s*solid/i.test(m))         k  += q;
     else if (/rose/.test(m))   rG += q;
     else if (/silv(?:er|r)/.test(m)) s  += q;
     else if (/gold/.test(m))   g  += q;
@@ -1439,7 +1439,7 @@ document.addEventListener("DOMContentLoaded", () => {
         const val = v.formatted_value.toLowerCase();
 
         if (!metalKey) {
-          if (/14\\s*k\\s*solid/i.test(val))  metalKey = "14k";
+          if (/14\s*k\s*solid/i.test(val))         metalKey = "14k";
           else if (/rose/.test(val))   metalKey = "rose";
           else if (/silv(?:er|r)/.test(val)) metalKey = "silver";
           else if (/gold/.test(val))   metalKey = "gold";
@@ -1794,7 +1794,7 @@ const observer = new MutationObserver(async () => {
         if (Array.isArray(t.variations)) {
           t.variations.forEach(v => {
             const val = (v?.formatted_value || "").toLowerCase();
-            if (/14\\s*k\\s*solid/i.test(val))  mc["14K"]    += q;
+            if (/14\s*k\s*solid/i.test(val))         mc["14K"]    += q;
             else if (/rose/.test(val))   mc["Rose G"] += q;
             else if (/silv(?:er|r)/.test(val)) mc.Silver    += q;
             else if (/gold/.test(val))   mc.Gold      += q;
@@ -1938,7 +1938,7 @@ async function buildNewOrderList(offset = 0) {
           if (Array.isArray(t.variations)) {
             t.variations.forEach(v => {
               const val = (v?.formatted_value || "").toLowerCase();
-              if (/14\\s*k\\s*solid/i.test(val))   mc["14K"]    += q;
+              if (/14\s*k\s*solid/i.test(val))         mc["14K"]    += q;
               else if (/rose/.test(val))   mc["Rose G"] += q;
               else if (/silv(?:er|r)/.test(val)) mc.Silver    += q;
               else if (/gold/.test(val))   mc.Gold      += q;
