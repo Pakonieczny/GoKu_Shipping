@@ -800,32 +800,32 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   });
 
-     /* ==============================================================
+  /* ==============================================================
    *  Single-order SEARCH via #etsyOrderNumber
    * ============================================================*/
-    (function attachSearch(){
-      const input = document.getElementById("etsyOrderNumber");
-      if (!input) return;
+  (function attachSearch(){
+    const input = document.getElementById("etsyOrderNumber");
+    if (!input) return;
 
-      /* ENTER → run single-order search when no commas are present */
-      input.addEventListener("keydown", async e => {
-        searchActive = true;
+    /* ENTER → run single-order search when no commas are present */
+    input.addEventListener("keydown", async e => {
+      searchActive = true;
       if (e.key !== "Enter") return;
       const raw = input.value.trim();
-      if (!raw || raw.includes(",")) return;   // let bulk loader handle comma lists
+      if (!raw || raw.includes(",")) return;   // bulk loader handles lists
       e.preventDefault();
       e.stopImmediatePropagation();
 
       try {
-        /* 1️⃣ snapshot current UI (only first time) */
+        /* 1️⃣ snapshot UI (first time only) */
         const pg = document.getElementById("pageButtonsContainer");
-        if (pg) pg.hidden = true;      // hide page buttons during searchduring search
+        if (pg) pg.hidden = true;
 
-        if (!searchSnapshot) {
+        if (!searchSnapshot){
           searchSnapshot = {
-            orderHTML: document.getElementById("newOrderContainer").innerHTML,
-            gridHTML:  document.getElementById("photoGridContainer").innerHTML,
-            gridMap:   new Map(gridElements)
+            orderHTML : document.getElementById("newOrderContainer").innerHTML,
+            gridHTML  : document.getElementById("photoGridContainer").innerHTML,
+            gridMap   : new Map(gridElements)
           };
         }
 
@@ -842,23 +842,20 @@ document.addEventListener("DOMContentLoaded", () => {
         const receipt = data.receipt     || {};
         const rid     = String(receipt.receipt_id || raw);
 
-        /*  ── derive a readable “Ship By” string ─────────────── */
+        /* ── derive a readable “Ship By” string ─────────── */
         let shipDate = "N/A";
         const tsRaw =
-                receipt.expected_ship_date    ??  // some receipts have this
-                receipt.dispatch_date         ??  // UNIX-seconds
-                receipt.ship_by_date          ??  // UNIX-seconds
-                txs[0]?.expected_ship_date    ??
-                txs[0]?.dispatch_date         ??
-                txs[0]?.ship_by_date          ?? 0;
+                receipt.expected_ship_date ??
+                receipt.dispatch_date      ??
+                receipt.ship_by_date       ??
+                txs[0]?.expected_ship_date ??
+                txs[0]?.dispatch_date      ??
+                txs[0]?.ship_by_date       ?? 0;
 
-        /* numeric → convert from seconds → “Apr 05” */
         if (typeof tsRaw === "number" && tsRaw > 86400) {
           const d = new Date(tsRaw * 1000);
           shipDate = d.toLocaleDateString("en-US", { month: "short", day: "2-digit" });
-        }
-        /* non-empty string (Etsy sometimes returns a formatted date) */
-        else if (typeof tsRaw === "string" && tsRaw.trim()) {
+        } else if (typeof tsRaw === "string" && tsRaw.trim()) {
           shipDate = tsRaw;
         }
 
@@ -909,16 +906,17 @@ document.addEventListener("DOMContentLoaded", () => {
           box.dataset.wired = "1";
 
           /* CLICK → toggle select */
-          box.addEventListener("click", async e => {
-            
+          box.addEventListener("click", async () => {
             const rid = String(box.dataset.receipt);
-            if (selectedOrders.has(rid)) {        /* — DESELECT — */
+
+            if (selectedOrders.has(rid)) {          /* — DESELECT — */
               selectedOrders.delete(rid);
               box.classList.remove("selected");
               removePreviewBoxesForOrder(rid);
               realignGrid(); updateCounters(); persistSelection(); applyMetalFilter();
               return;
             }
+
             /* — SELECT — */
             selectedOrders.add(rid);
             box.classList.add("selected");
@@ -940,57 +938,37 @@ document.addEventListener("DOMContentLoaded", () => {
           });
         })(row);
 
-          /* ==============================================================
-           *  Ctrl-click  =  range-select between anchor ⇢ current
-           * ============================================================*/
-          document.getElementById("newOrderContainer")
-                  .addEventListener("click", e => {
-            if (!e.ctrlKey) return;                 // only on Ctrl
-            const box  = e.target.closest(".new-order-box");
-            if (!box) return;
+        /* ==============================================================
+         *  Ctrl-click  =  range-select between anchor ⇢ current
+         * ============================================================*/
+        document.getElementById("newOrderContainer")
+                .addEventListener("click", e => {
+          if (!e.ctrlKey) return;                 // only on Ctrl
+          const box  = e.target.closest(".new-order-box");
+          if (!box) return;
 
-            const rows = [...document.querySelectorAll("#newOrderContainer .new-order-box")];
-            const curr = rows.indexOf(box);
-            if (curr === -1) return;
+          const rows = [...document.querySelectorAll("#newOrderContainer .new-order-box")];
+          const curr = rows.indexOf(box);
+          if (curr === -1) return;
 
-            /* ── FIRST Ctrl-click → select row + set anchor ── */
-            if (lastCtrlIdx === null) {
-              rows[curr].click();       // trigger the normal toggle once
-              lastCtrlIdx = curr;
-              return;
-            }
+          /* ── FIRST Ctrl-click → select row + set anchor ── */
+          if (lastCtrlIdx === null) {
+            rows[curr].click();                   // normal toggle once
+            lastCtrlIdx = curr;
+            return;
+          }
 
-            /* ── SECOND Ctrl-click → select whole range ── */
-            const [from, to] = curr > lastCtrlIdx ? [lastCtrlIdx, curr] : [curr, lastCtrlIdx];
-            for (let i = from; i <= to; i++) {
-              const row = rows[i];
-              const rid = String(row.dataset.receipt);
-              if (selectedOrders.has(rid)) continue;   // already orange
-
-              selectedOrders.add(rid);
-              row.classList.add("selected");
-              orderCache[rid]?.forEach(tx => { if (!tx._inGrid) addPreviewBox(tx); });
-            }
-            realignGrid();
-            updateCounters();
-            persistSelection();
-            applyMetalFilter();
-
-            lastCtrlIdx = curr;                        // reset anchor
-          });
-
-          /* ----- select every row between anchor and current ----- */
+          /* ── SECOND Ctrl-click → select whole range ── */
           const [from, to] = curr > lastCtrlIdx ? [lastCtrlIdx, curr] : [curr, lastCtrlIdx];
           for (let i = from; i <= to; i++) {
-            const row = rows[i];
-            const rid = String(row.dataset.receipt);
-            if (selectedOrders.has(rid)) continue; // already orange
+            const rowSel = rows[i];
+            const ridSel = String(rowSel.dataset.receipt);
 
-            selectedOrders.add(rid);
-            row.classList.add("selected");
-
-            /* inject missing preview tiles */
-            orderCache[rid]?.forEach(tx => { if (!tx._inGrid) addPreviewBox(tx); });
+            if (!selectedOrders.has(ridSel)) {
+              selectedOrders.add(ridSel);
+              rowSel.classList.add("selected");
+              orderCache[ridSel]?.forEach(tx => { if (!tx._inGrid) addPreviewBox(tx); });
+            }
           }
 
           realignGrid();
@@ -998,18 +976,19 @@ document.addEventListener("DOMContentLoaded", () => {
           persistSelection();
           applyMetalFilter();
 
-          lastCtrlIdx = curr;                      // anchor for next range
+          lastCtrlIdx = curr;                     // set new anchor
         });
+
 
         /* 9️⃣ final tidy-up */
         reflowGrid();
         updateCounters();
         applyMetalFilter();
-        M.toast({ html: `Search complete (${txs.length} item${txs.length!==1?"s":""})` });
+        M.toast({ html:`Search complete (${txs.length} item${txs.length!==1?"s":""})` });
 
-      } catch (err) {
+      } catch(err){
         console.error(err);
-        M.toast({ html: "Order not found" });
+        M.toast({ html:"Order not found" });
       }
     });
 
@@ -1020,10 +999,9 @@ document.addEventListener("DOMContentLoaded", () => {
       searchActive = false;
 
       const pg = document.getElementById("pageButtonsContainer");
-      if (pg) pg.hidden = false;   // show page buttons again
+      if (pg) pg.hidden = false;
 
-      /* 1️⃣  Restore markup */
-
+      /* 1️⃣ restore markup */
       document.getElementById("newOrderContainer").innerHTML  = searchSnapshot.orderHTML;
       document.getElementById("photoGridContainer").innerHTML = searchSnapshot.gridHTML;
 
@@ -1122,18 +1100,18 @@ document.addEventListener("DOMContentLoaded", () => {
         });
       });
 
-      /* 4️⃣  Final tidy-up */
+      /* 4️⃣ final tidy-up */
       reflowGrid();
       updateCounters();
       applyMetalFilter();
-      highlightCompletedRows();   // keep greens intact
-      highlightSavedRows();       // restore oranges
+      highlightCompletedRows();
+      highlightSavedRows();
 
-      /* reset snapshot + notify */
       searchSnapshot = null;
-      M.toast({ html: "Search cleared" });
-    });   /* ← closes the input listener */
-  })();
+      M.toast({ html:"Search cleared" });
+    });
+
+  })();   /* ← single, final close of attachSearch */
 
   /* =====================================================================
    *  LOCAL-STORAGE PERSISTENCE  —  selected orders + their transactions
