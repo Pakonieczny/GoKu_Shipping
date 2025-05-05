@@ -811,7 +811,8 @@ document.addEventListener("DOMContentLoaded", () => {
 
       try {
         /* 1️⃣ snapshot current UI (only first time) */
-        const pg = document.getElementById("pageButtonsContainer");<br>if (pg) pg.hidden = true;      // hide page buttons during search
+        const pg = document.getElementById("pageButtonsContainer");
+        if (pg) pg.hidden = true;      // hide page buttons during searchduring search
 
         if (!searchSnapshot) {
           searchSnapshot = {
