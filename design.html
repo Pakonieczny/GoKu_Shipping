@@ -466,7 +466,7 @@ function refreshRowMetalCounts(receiptId){
     }
 
     const q = tx.quantity || 1;
-    if (/14k solid/.test(m))         k  += q;
+    if (/14\\s*k\\s*solid/i.test(m))         k  += q;
     else if (/rose/.test(m))   rG += q;
     else if (/silv(?:er|r)/.test(m)) s  += q;
     else if (/gold/.test(m))   g  += q;
@@ -1256,7 +1256,7 @@ document.addEventListener("DOMContentLoaded", () => {
        case "gold":   g += qty; break;
        case "silver": s += qty; break;
        case "rose":   r += qty; break;
-       case "14k":    k += qty; break;
+       case "14k solid":    k += qty; break;
      }
    });
  
@@ -1439,7 +1439,7 @@ document.addEventListener("DOMContentLoaded", () => {
         const val = v.formatted_value.toLowerCase();
 
         if (!metalKey) {
-          if (/14k solid/.test(val))   metalKey = "14k";
+          if (/14\\s*k\\s*solid/i.test(val))         metalKey = "14k";
           else if (/rose/.test(val))   metalKey = "rose";
           else if (/silv(?:er|r)/.test(val)) metalKey = "silver";
           else if (/gold/.test(val))   metalKey = "gold";
@@ -1715,7 +1715,7 @@ document.addEventListener("DOMContentLoaded", () => {
         case "gold":   return sortDir * ((a._metalCounts.Gold || 0) - (b._metalCounts.Gold || 0));
         case "silver": return sortDir * ((a._metalCounts.Silver || 0) - (b._metalCounts.Silver || 0));
         case "rose":   return sortDir * ((a._metalCounts["Rose G"] || 0) - (b._metalCounts["Rose G"] || 0));
-        case "14k":    return sortDir * ((a._metalCounts["14K"] || 0)   - (b._metalCounts["14K"] || 0));
+        case "14k solid":    return sortDir * ((a._metalCounts["14K"] || 0)   - (b._metalCounts["14K"] || 0));
       }
       return 0;
     });
@@ -1794,7 +1794,7 @@ const observer = new MutationObserver(async () => {
         if (Array.isArray(t.variations)) {
           t.variations.forEach(v => {
             const val = (v?.formatted_value || "").toLowerCase();
-            if (/14k solid/.test(val))         mc["14K"]    += q;
+            if (/14\\s*k\\s*solid/i.test(val))         mc["14K"]    += q;
             else if (/rose/.test(val))   mc["Rose G"] += q;
             else if (/silv(?:er|r)/.test(val)) mc.Silver    += q;
             else if (/gold/.test(val))   mc.Gold      += q;
@@ -1804,7 +1804,7 @@ const observer = new MutationObserver(async () => {
         /* fallback to propagated _metalKey if all counts still zero */
         if (!mc.Gold && !mc.Silver && !mc["Rose G"] && !mc["14K"] && t._metalKey) {
           switch (t._metalKey) {
-            case "14k":    mc["14K"]    += q; break;
+            case "14k solid":    mc["14K"]    += q; break;
             case "rose":   mc["Rose G"] += q; break;
             case "silver": mc.Silver    += q; break;
             case "gold":   mc.Gold      += q; break;
@@ -1938,7 +1938,7 @@ async function buildNewOrderList(offset = 0) {
           if (Array.isArray(t.variations)) {
             t.variations.forEach(v => {
               const val = (v?.formatted_value || "").toLowerCase();
-              if (/14k solid/.test(val))         mc["14K"]    += q;
+              if (/14\\s*k\\s*solid/i.test(val))         mc["14K"]    += q;
               else if (/rose/.test(val))   mc["Rose G"] += q;
               else if (/silv(?:er|r)/.test(val)) mc.Silver    += q;
               else if (/gold/.test(val))   mc.Gold      += q;
@@ -1948,7 +1948,7 @@ async function buildNewOrderList(offset = 0) {
           /* if still zero, use the propagated _metalKey */
           if (!mc.Gold && !mc.Silver && !mc["Rose G"] && !mc["14K"] && t._metalKey) {
             switch (t._metalKey) {
-              case "14k":    mc["14K"]    += q; break;
+              case "14k solid":    mc["14K"]    += q; break;
               case "rose":   mc["Rose G"] += q; break;
               case "silver": mc.Silver    += q; break;
               case "gold":   mc.Gold      += q; break;
