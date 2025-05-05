@@ -835,11 +835,25 @@ document.addEventListener("DOMContentLoaded", () => {
         const receipt = data.receipt     || {};
         const rid     = String(receipt.receipt_id || raw);
 
-        // pick the best date we can find and format YYYY-MM-DD
-        const shipDate = receipt.dispatch_date ||
-                 (receipt.ship_date ? new Date(receipt.ship_date*1000).toISOString().slice(0,10) : null) ||
-                 txs[0]?.dispatch_date ||
-                 "N/A";
+        /*  ── derive a readable “Ship By” string ─────────────── */
+        let shipDate = "N/A";
+        const tsRaw =
+                receipt.expected_ship_date    ??  // some receipts have this
+                receipt.dispatch_date         ??  // UNIX-seconds
+                receipt.ship_by_date          ??  // UNIX-seconds
+                txs[0]?.expected_ship_date    ??
+                txs[0]?.dispatch_date         ??
+                txs[0]?.ship_by_date          ?? 0;
+
+        /* numeric → convert from seconds → “Apr 05” */
+        if (typeof tsRaw === "number" && tsRaw > 86400) {
+          const d = new Date(tsRaw * 1000);
+          shipDate = d.toLocaleDateString("en-US", { month: "short", day: "2-digit" });
+        }
+        /* non-empty string (Etsy sometimes returns a formatted date) */
+        else if (typeof tsRaw === "string" && tsRaw.trim()) {
+          shipDate = tsRaw;
+        }
 
         /* 4️⃣ cache transactions so click-handlers work */
         orderCache[rid] = txs;
