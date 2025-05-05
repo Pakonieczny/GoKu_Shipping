@@ -889,6 +889,15 @@ document.addEventListener("DOMContentLoaded", () => {
           }
         });
 
+          /* Ensure orange rows show their previews */
+          selectedOrders.forEach(rid => {
+          const list = orderCache[rid];
+          if (!Array.isArray(list)) return;          // nothing cached
+          list.forEach(tx => {                       // inject any missing tiles
+            if (!tx._inGrid) addPreviewBox(tx);
+          });
+        });
+
       /* 3️⃣  Re-attach click / hover logic to every order row */
       document.querySelectorAll(".new-order-box").forEach(box => delete box.dataset.wired);  // reset flag
       document.querySelectorAll(".new-order-box").forEach(box => {
