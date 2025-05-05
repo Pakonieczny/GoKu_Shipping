@@ -136,9 +136,9 @@
     .metal-counter.active{ outline:3px solid #2196f3; }
 
     /* 3-px orangered flag for personalization / buyer-message */
-     .preview-attn{
-      outline:4px solid orangered !important;
-      outline-offset:-1px;
+    .preview-attn{
+      outline:none !important;
+      box-shadow:0 0 0 4px orangered !important;
     }
 
     .new-order-box {
@@ -283,10 +283,17 @@
       color:#fff;
     }
 
-    /* ——— 3-px outline ONLY for previews that need attention ——— */
+    /* ——— 4-px red-orange ring (box-shadow) ——— */
     .wrap-preview.preview-attn{
-      outline:3px solid #ff5722;
-      outline-offset:-1px;
+      outline:none;                       /* remove competing outline  */
+      box-shadow:0 0 0 4px orangered;     /* 4 px warning ring         */
+    }
+
+    /* ——— universal 3-px blue hover ring ——— */
+    #photoGridContainer .wrap-preview:hover{
+      outline:3px solid #2196F3;          /* vivid blue */
+      outline-offset:-1px;                /* sits just inside red ring */
+      z-index:10;                         /* keeps it on top */
     }
 
     /* Config Modal */
@@ -903,7 +910,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
           /* CLICK → toggle select */
           box.addEventListener("click", async e => {
-            if (e.ctrlKey) return;          // range-select handler will take over
+            
             const rid = String(box.dataset.receipt);
             if (selectedOrders.has(rid)) {        /* — DESELECT — */
               selectedOrders.delete(rid);
@@ -933,28 +940,44 @@ document.addEventListener("DOMContentLoaded", () => {
           });
         })(row);
 
-        /* ==============================================================
-         *  Ctrl-click range-selection for order rows
-         * ============================================================*/
-        let lastCtrlIdx = null;                    // previous Ctrl-click anchor
+          /* ==============================================================
+           *  Ctrl-click  =  range-select between anchor ⇢ current
+           * ============================================================*/
+          document.getElementById("newOrderContainer")
+                  .addEventListener("click", e => {
+            if (!e.ctrlKey) return;                 // only on Ctrl
+            const box  = e.target.closest(".new-order-box");
+            if (!box) return;
 
-        document.getElementById("newOrderContainer")
-                .addEventListener("click", e => {
-          if (!e.ctrlKey) return;                  // only run on Ctrl-clicks
+            const rows = [...document.querySelectorAll("#newOrderContainer .new-order-box")];
+            const curr = rows.indexOf(box);
+            if (curr === -1) return;
 
-          const box  = e.target.closest(".new-order-box");
-          if (!box) return;                        // clicked outside a row
+            /* ── FIRST Ctrl-click → select row + set anchor ── */
+            if (lastCtrlIdx === null) {
+              rows[curr].click();       // trigger the normal toggle once
+              lastCtrlIdx = curr;
+              return;
+            }
 
-          const rows = [...document.querySelectorAll(
-                          "#newOrderContainer .new-order-box")];
-          const curr = rows.indexOf(box);
-          if (curr === -1) return;
+            /* ── SECOND Ctrl-click → select whole range ── */
+            const [from, to] = curr > lastCtrlIdx ? [lastCtrlIdx, curr] : [curr, lastCtrlIdx];
+            for (let i = from; i <= to; i++) {
+              const row = rows[i];
+              const rid = String(row.dataset.receipt);
+              if (selectedOrders.has(rid)) continue;   // already orange
 
-          /* first Ctrl-click just stores the anchor */
-          if (lastCtrlIdx === null) {
-            lastCtrlIdx = curr;
-            return;
-          }
+              selectedOrders.add(rid);
+              row.classList.add("selected");
+              orderCache[rid]?.forEach(tx => { if (!tx._inGrid) addPreviewBox(tx); });
+            }
+            realignGrid();
+            updateCounters();
+            persistSelection();
+            applyMetalFilter();
+
+            lastCtrlIdx = curr;                        // reset anchor
+          });
 
           /* ----- select every row between anchor and current ----- */
           const [from, to] = curr > lastCtrlIdx ? [lastCtrlIdx, curr] : [curr, lastCtrlIdx];
