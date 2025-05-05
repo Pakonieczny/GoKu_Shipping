@@ -811,8 +811,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
       try {
         /* 1️⃣ snapshot current UI (only first time) */
-        const pg = document.getElementById("pageButtonsContainer");
-        if (pg) pg.hidden = true;              // hide page buttons during search
+        const pg = document.getElementById("pageButtonsContainer");<br>if (pg) pg.hidden = true;      // hide page buttons during search
 
         if (!searchSnapshot) {
           searchSnapshot = {
@@ -933,7 +932,8 @@ document.addEventListener("DOMContentLoaded", () => {
 
       /* 1️⃣  Restore markup */
 
-      javascript\nconst pg = document.getElementById("pageButtonsContainer");\nif (pg) pg.style.display = "";
+      const pg = document.getElementById("pageButtonsContainer");
+      if (pg) pg.hidden = false;   // show page buttons again
 
       document.getElementById("newOrderContainer").innerHTML  = searchSnapshot.orderHTML;
       document.getElementById("photoGridContainer").innerHTML = searchSnapshot.gridHTML;
