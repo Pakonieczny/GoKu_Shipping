@@ -889,12 +889,21 @@ document.addEventListener("DOMContentLoaded", () => {
           }
         });
 
-          /* Ensure orange rows show their previews */
-          selectedOrders.forEach(rid => {
+        /* ------- Ensure orange rows show their previews  (FULL REPLACE) ------- */
+        selectedOrders.forEach(rid => {
           const list = orderCache[rid];
-          if (!Array.isArray(list)) return;          // nothing cached
-          list.forEach(tx => {                       // inject any missing tiles
-            if (!tx._inGrid) addPreviewBox(tx);
+          if (!Array.isArray(list)) return;        // no cache for this receipt
+
+          list.forEach(tx => {
+            /* already have this TX wrap? */
+            const wrapPresent = document.querySelector(
+              `#photoGridContainer .wrap-preview[data-tx='${tx.transaction_id}']`
+            );
+            if (wrapPresent) return;
+
+            /* flag reset & inject a fresh tile */
+            tx._inGrid = false;                    // mark as absent
+            addPreviewBox(tx);                     // re-adds + updates gridElements
           });
         });
 
