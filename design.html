@@ -906,7 +906,8 @@ document.addEventListener("DOMContentLoaded", () => {
           box.dataset.wired = "1";
 
           /* CLICK → toggle select */
-          box.addEventListener("click", async () => {
+          box.addEventListener("click", async e => {
+            if (e.ctrlKey) return;          // range-select handler will take over
             const rid = String(box.dataset.receipt);
             if (selectedOrders.has(rid)) {        /* — DESELECT — */
               selectedOrders.delete(rid);
@@ -935,6 +936,51 @@ document.addEventListener("DOMContentLoaded", () => {
                     .forEach(w => w.classList.remove("preview-highlight"));
           });
         })(row);
+
+        /* ==============================================================
+         *  Ctrl-click range-selection for order rows
+         * ============================================================*/
+        let lastCtrlIdx = null;                    // previous Ctrl-click anchor
+
+        document.getElementById("newOrderContainer")
+                .addEventListener("click", e => {
+          if (!e.ctrlKey) return;                  // only run on Ctrl-clicks
+
+          const box  = e.target.closest(".new-order-box");
+          if (!box) return;                        // clicked outside a row
+
+          const rows = [...document.querySelectorAll(
+                          "#newOrderContainer .new-order-box")];
+          const curr = rows.indexOf(box);
+          if (curr === -1) return;
+
+          /* first Ctrl-click just stores the anchor */
+          if (lastCtrlIdx === null) {
+            lastCtrlIdx = curr;
+            return;
+          }
+
+          /* ----- select every row between anchor and current ----- */
+          const [from, to] = curr > lastCtrlIdx ? [lastCtrlIdx, curr] : [curr, lastCtrlIdx];
+          for (let i = from; i <= to; i++) {
+            const row = rows[i];
+            const rid = String(row.dataset.receipt);
+            if (selectedOrders.has(rid)) continue; // already orange
+
+            selectedOrders.add(rid);
+            row.classList.add("selected");
+
+            /* inject missing preview tiles */
+            orderCache[rid]?.forEach(tx => { if (!tx._inGrid) addPreviewBox(tx); });
+          }
+
+          realignGrid();
+          updateCounters();
+          persistSelection();
+          applyMetalFilter();
+
+          lastCtrlIdx = curr;                      // anchor for next range
+        });
 
         /* 9️⃣ final tidy-up */
         reflowGrid();
