@@ -341,6 +341,14 @@
     /* UI-only: hide the Completed metal counter */
     #completedCounter{display:none!important;}
 
+    /* ——— BLUE hover ring always sits INSIDE the 4-px orangered ring ——— */
+    #photoGridContainer .wrap-preview:hover,
+    #photoGridContainer .wrap-preview.preview-attn:hover{
+      outline:3px solid #2196F3 !important;   /* override earlier !important */
+      outline-offset:-1px;                    /* inside the red ring         */
+      z-index:20;
+    }
+
   </style>
 </head>
 <body>
@@ -939,45 +947,49 @@ document.addEventListener("DOMContentLoaded", () => {
         })(row);
 
         /* ==============================================================
-         *  Ctrl-click  =  range-select between anchor ⇢ current
+         *  Ctrl/⌘-click  =  range-select between anchor ⇢ current
          * ============================================================*/
-        document.getElementById("newOrderContainer")
-                .addEventListener("click", e => {
-          if (!e.ctrlKey) return;                 // only on Ctrl
-          const box  = e.target.closest(".new-order-box");
-          if (!box) return;
+        const orderContainer = document.getElementById("newOrderContainer");
+        if (!orderContainer.dataset.rangeWired){             // avoid duplicate hooks
+          orderContainer.dataset.rangeWired = "1";
 
-          const rows = [...document.querySelectorAll("#newOrderContainer .new-order-box")];
-          const curr = rows.indexOf(box);
-          if (curr === -1) return;
+          orderContainer.addEventListener("click", e => {
+            if (!(e.ctrlKey || e.metaKey)) return;           // ⌘ for Mac, Ctrl elsewhere
+            const box = e.target.closest(".new-order-box");
+            if (!box) return;
+            e.preventDefault();
 
-          /* ── FIRST Ctrl-click → select row + set anchor ── */
-          if (lastCtrlIdx === null) {
-            rows[curr].click();                   // normal toggle once
-            lastCtrlIdx = curr;
-            return;
-          }
+            const rows = [...orderContainer.querySelectorAll(".new-order-box")];
+            const curr = rows.indexOf(box);
+            if (curr === -1) return;
 
-          /* ── SECOND Ctrl-click → select whole range ── */
-          const [from, to] = curr > lastCtrlIdx ? [lastCtrlIdx, curr] : [curr, lastCtrlIdx];
-          for (let i = from; i <= to; i++) {
-            const rowSel = rows[i];
-            const ridSel = String(rowSel.dataset.receipt);
-
-            if (!selectedOrders.has(ridSel)) {
-              selectedOrders.add(ridSel);
-              rowSel.classList.add("selected");
-              orderCache[ridSel]?.forEach(tx => { if (!tx._inGrid) addPreviewBox(tx); });
+            /* FIRST Ctrl-/⌘-click → set anchor */
+            if (lastCtrlIdx === null) {
+              rows[curr].click();                            // reuse normal toggle
+              lastCtrlIdx = curr;
+              return;
             }
-          }
 
-          realignGrid();
-          updateCounters();
-          persistSelection();
-          applyMetalFilter();
+            /* SECOND Ctrl-/⌘-click → select full range */
+            const [from, to] = curr > lastCtrlIdx ? [lastCtrlIdx, curr] : [curr, lastCtrlIdx];
+            for (let i = from; i <= to; i++) {
+              const row = rows[i];
+              const rid = String(row.dataset.receipt);
+              if (!selectedOrders.has(rid)) {
+                selectedOrders.add(rid);
+                row.classList.add("selected");
+                orderCache[rid]?.forEach(tx => { if (!tx._inGrid) addPreviewBox(tx); });
+              }
+            }
 
-          lastCtrlIdx = curr;                     // set new anchor
-        });
+            realignGrid();
+            updateCounters();
+            persistSelection();
+            applyMetalFilter();
+
+            lastCtrlIdx = curr;                              // reset anchor
+          });
+        }
 
 
         /* 9️⃣ final tidy-up */
