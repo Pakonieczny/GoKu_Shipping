@@ -789,155 +789,155 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   });
 
-  /* ==============================================================
- *  Single-order SEARCH via #etsyOrderNumber
- * ============================================================*/
-(function attachSearch(){
-  const input = document.getElementById("etsyOrderNumber");
-  if(!input) return;
+    /* ==============================================================
+   *  Single-order SEARCH via #etsyOrderNumber
+   * ============================================================*/
+  (function attachSearch(){
+    const input = document.getElementById("etsyOrderNumber");
+    if(!input) return;
 
-  /* ENTER → run search when no commas are present */
-  input.addEventListener("keydown", async e=>{
-    if(e.key!=="Enter") return;
-    const raw = input.value.trim();
-    if(!raw || raw.includes(",")) return;   // let multi-order handler do its job
+    /* ENTER → run search when no commas are present */
+    input.addEventListener("keydown", async e=>{
+      if(e.key!=="Enter") return;
+      const raw = input.value.trim();
+      if(!raw || raw.includes(",")) return;   // let bulk loader handle comma lists
 
-    e.preventDefault();
-    e.stopImmediatePropagation();           // cancel the other Enter listener
+      e.preventDefault();
+      e.stopImmediatePropagation();           // cancel the other Enter listener
 
-    try{
-      /* 1️⃣ snapshot current UI (only first time) */
-      if(!searchSnapshot){
-        searchSnapshot = {
-          orderHTML : document.getElementById("newOrderContainer").innerHTML,
-          gridHTML  : document.getElementById("photoGridContainer").innerHTML,
-          gridMap   : new Map(gridElements)      // deep copy
-        };
+      try{
+        /* 1️⃣ snapshot current UI (only first time) */
+        if(!searchSnapshot){
+          searchSnapshot = {
+            orderHTML : document.getElementById("newOrderContainer").innerHTML,
+            gridHTML  : document.getElementById("photoGridContainer").innerHTML,
+            gridMap   : new Map(gridElements)      // deep copy
+          };
+        }
+
+        /* 2️⃣ clear current containers & map */
+        document.getElementById("newOrderContainer").innerHTML  = "";
+        document.getElementById("photoGridContainer").innerHTML = "";
+        gridElements.clear();
+
+        /* 3️⃣ fetch + render */
+        M.toast({html:`Searching ${raw}…`});
+
+        const data    = await fetchEtsyOrder(raw);
+        const txs     = data.transactions || [];
+        const receipt = data.receipt     || {};
+
+        /* —— sidebar row —— */
+        const row = document.createElement("div");
+        row.className = "new-order-box";
+        row.dataset.receipt = receipt.receipt_id || raw;
+        row.innerHTML = `
+          <span class="col-order">${receipt.order_number||raw}</span>
+          <span class="col-ship">${receipt.dispatch_date||"N/A"}</span>
+          <span class="col-g">0</span><span class="col-s">0</span>
+          <span class="col-r">0</span><span class="col-k">0</span>`;
+        document.getElementById("newOrderContainer").appendChild(row);
+
+        /* —— preview tiles —— */
+        txs.forEach(addPreviewBox);
+
+        reflowGrid();
+        updateCounters();
+        applyMetalFilter();
+        M.toast({html:`Search complete (${txs.length} items)`});
+
+      }catch(err){
+        console.error(err);
+        M.toast({html:"Order not found"});
       }
+    });
 
-      /* 2️⃣ clear current containers & map */
-      document.getElementById("newOrderContainer").innerHTML  = "";
-      document.getElementById("photoGridContainer").innerHTML = "";
+    /* Empty box → instant restore (FULL REPLACEMENT) */
+    input.addEventListener("input", async () => {
+      if (input.value.trim() !== "") return;
+      if (!searchSnapshot)            return;
+
+      /* 1️⃣  Restore markup */
+      document.getElementById("newOrderContainer").innerHTML  = searchSnapshot.orderHTML;
+      document.getElementById("photoGridContainer").innerHTML = searchSnapshot.gridHTML;
+
+      /* 2️⃣  Rebuild gridElements + re-hook preview listeners */
       gridElements.clear();
+      document
+        .querySelectorAll("#photoGridContainer .wrap-preview")
+        .forEach(wrap => {
+          const key = Number(wrap.dataset.idx) || gridElements.size;
+          gridElements.set(key, wrap);
 
-      /* 3️⃣ fetch + render */
-      M.toast({html:"Searching "+raw+"…"});
+          /* zoom / pan / click handlers */
+          const boxEl = wrap.querySelector(".preview-box");
+          if (boxEl) attachPreviewBoxListeners(boxEl);
+        });
 
-      const data   = await fetchEtsyOrder(raw);
-      const txs    = data.transactions || [];
-      const receipt= data.receipt     || {};
+      /* 3️⃣  Re-attach click / hover logic to every order row */
+      document.querySelectorAll(".new-order-box").forEach(box => {
+        if (box.dataset.wired) return;       // prevent duplicate wiring
+        box.dataset.wired = "1";
 
-      /* —— sidebar row —— */
-      const row = document.createElement("div");
-      row.className = "new-order-box";
-      row.dataset.receipt = receipt.receipt_id || raw;
-      row.innerHTML = `
-        <span class="col-order">${receipt.order_number||raw}</span>
-        <span class="col-ship">${receipt.dispatch_date||"N/A"}</span>
-        <span class="col-g">0</span><span class="col-s">0</span>
-        <span class="col-r">0</span><span class="col-k">0</span>`;
-      document.getElementById("newOrderContainer").appendChild(row);
+        /* CLICK → toggle orange selection & preview sync */
+        box.addEventListener("click", async () => {
+          const rid = String(box.dataset.receipt);
 
-      /* —— preview tiles —— */
-      txs.forEach(addPreviewBox);
+          if (selectedOrders.has(rid)) {     /* — DESELECT — */
+            selectedOrders.delete(rid);
+            box.classList.remove("selected");
+            removePreviewBoxesForOrder(rid);
+            realignGrid();
+            updateCounters();
+            persistSelection();
+            applyMetalFilter();
+            return;
+          }
 
-      reflowGrid();
-      updateCounters();
-      applyMetalFilter();
-      M.toast({html:"Search complete ("+txs.length+" items)"});
+          /* — SELECT — */
+          selectedOrders.add(rid);
+          box.classList.add("selected");
 
-    }catch(err){
-      console.error(err);
-      M.toast({html:"Order not found"});
-    }
-  });
+          if (!orderCache[rid]) {
+            const ord = await pullEtsyOrderDetails(rid);
+            orderCache[rid] = ord?.transactions || [];
+            refreshRowCount(rid);
+            refreshRowMetalCounts(rid);
+          }
+          orderCache[rid].forEach(tx => { if (!tx._inGrid) addPreviewBox(tx); });
 
-  /* Empty box → instant restore (FULL REPLACEMENT) */
-  input.addEventListener("input", async () => {
-    if (input.value.trim() !== "") return;
-    if (!searchSnapshot)            return;
-
-    /* 1️⃣  Restore markup */
-    document.getElementById("newOrderContainer").innerHTML  = searchSnapshot.orderHTML;
-    document.getElementById("photoGridContainer").innerHTML = searchSnapshot.gridHTML;
-
-    /* 2️⃣  Rebuild gridElements + re-hook preview listeners */
-    gridElements.clear();
-    document
-      .querySelectorAll("#photoGridContainer .wrap-preview")
-      .forEach(wrap => {
-        const key = Number(wrap.dataset.idx) || gridElements.size;
-        gridElements.set(key, wrap);
-
-        /* zoom / pan / click handlers */
-        const boxEl = wrap.querySelector(".preview-box");
-        if (boxEl) attachPreviewBoxListeners(boxEl);
-      });
-
-    /* 3️⃣  Re-attach click / hover logic to every order row */
-    document.querySelectorAll(".new-order-box").forEach(box => {
-      if (box.dataset.wired) return;          // prevent duplicate wiring
-      box.dataset.wired = "1";
-
-      /* CLICK → toggle orange selection & preview sync */
-      box.addEventListener("click", async () => {
-        const rid = String(box.dataset.receipt);
-
-        if (selectedOrders.has(rid)) {            /* — DESELECT — */
-          selectedOrders.delete(rid);
-          box.classList.remove("selected");
-          removePreviewBoxesForOrder(rid);
           realignGrid();
           updateCounters();
           persistSelection();
           applyMetalFilter();
-          return;
-        }
+        });
 
-        /* — SELECT — */
-        selectedOrders.add(rid);
-        box.classList.add("selected");
-
-        if (!orderCache[rid]) {
-          const ord = await pullEtsyOrderDetails(rid);
-          orderCache[rid] = ord?.transactions || [];
-          refreshRowCount(rid);
-          refreshRowMetalCounts(rid);
-        }
-        orderCache[rid].forEach(tx => { if (!tx._inGrid) addPreviewBox(tx); });
-
-        realignGrid();
-        updateCounters();
-        persistSelection();
-        applyMetalFilter();
+        /* HOVER → outline concurrent previews */
+        box.addEventListener("mouseenter", () => {
+          if (!box.classList.contains("selected")) return;
+          const rec = box.dataset.receipt;
+          document
+            .querySelectorAll(`#photoGridContainer .wrap-preview[data-receipt='${rec}']`)
+            .forEach(w => w.classList.add("preview-highlight"));
+        });
+        box.addEventListener("mouseleave", () => {
+          const rec = box.dataset.receipt;
+          document
+            .querySelectorAll(`#photoGridContainer .wrap-preview[data-receipt='${rec}']`)
+            .forEach(w => w.classList.remove("preview-highlight"));
+        });
       });
 
-      /* HOVER → outline concurrent previews */
-      box.addEventListener("mouseenter", () => {
-        if (!box.classList.contains("selected")) return;
-        const rec = box.dataset.receipt;
-        document
-          .querySelectorAll(`#photoGridContainer .wrap-preview[data-receipt='${rec}']`)
-          .forEach(w => w.classList.add("preview-highlight"));
-      });
-      box.addEventListener("mouseleave", () => {
-        const rec = box.dataset.receipt;
-        document
-          .querySelectorAll(`#photoGridContainer .wrap-preview[data-receipt='${rec}']`)
-          .forEach(w => w.classList.remove("preview-highlight"));
-      });
+      /* 4️⃣  Final tidy-up */
+      reflowGrid();
+      updateCounters();
+      applyMetalFilter();
+      highlightCompletedRows();   // keep greens intact
+      highlightSavedRows();       // restore oranges
+
+      searchSnapshot = null;
+      M.toast({ html: "Search cleared" });
     });
-
-    /* 4️⃣  Final tidy-up */
-    reflowGrid();
-    updateCounters();
-    applyMetalFilter();
-    highlightCompletedRows();   // keep greens intact
-    highlightSavedRows();      // restore oranges
-
-    searchSnapshot = null;
-    M.toast({ html: "Search cleared" });
-  });
   })();
 
   /* =====================================================================
