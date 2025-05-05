@@ -835,6 +835,12 @@ document.addEventListener("DOMContentLoaded", () => {
         const receipt = data.receipt     || {};
         const rid     = String(receipt.receipt_id || raw);
 
+        // pick the best date we can find and format YYYY-MM-DD
+        const shipDate = receipt.dispatch_date ||
+                 (receipt.ship_date ? new Date(receipt.ship_date*1000).toISOString().slice(0,10) : null) ||
+                 txs[0]?.dispatch_date ||
+                 "N/A";
+
         /* 4️⃣ cache transactions so click-handlers work */
         orderCache[rid] = txs;
 
@@ -862,7 +868,7 @@ document.addEventListener("DOMContentLoaded", () => {
         row.dataset.metal   = rowMetal;
         row.innerHTML = `
           <span class="col-order">${receipt.order_number || raw}</span>
-          <span class="col-ship">${txs[0]?.dispatch_date || receipt.dispatch_date || "N/A"}</span>
+          <span class="col-ship">${shipDate}</span>
           <span class="col-g">${cnt.g}</span>
           <span class="col-s">${cnt.s}</span>
           <span class="col-r">${cnt.r}</span>
