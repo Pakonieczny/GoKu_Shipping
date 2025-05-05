@@ -859,6 +859,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
     /* Empty box → instant restore (FULL REPLACEMENT) */
     input.addEventListener("input", async () => {
+      /* exit if the box still has text or no snapshot exists */
       if (input.value.trim() !== "") return;
       if (!searchSnapshot)            return;
 
@@ -866,39 +867,39 @@ document.addEventListener("DOMContentLoaded", () => {
       document.getElementById("newOrderContainer").innerHTML  = searchSnapshot.orderHTML;
       document.getElementById("photoGridContainer").innerHTML = searchSnapshot.gridHTML;
 
-      /* 2️⃣  Rebuild gridElements + re-hook preview listeners  (REPLACE THIS WHOLE BLOCK) */
+      /* 2️⃣  Rebuild gridElements + re-hook preview listeners */
       gridElements.clear();
       document
         .querySelectorAll("#photoGridContainer .wrap-preview")
-        .forEach(wrap => {
-          const key = Number(wrap.dataset.idx) || gridElements.size;
+        .forEach((wrap, idx) => {
+          const key = Number(wrap.dataset.idx) || idx;
           gridElements.set(key, wrap);
 
           /* preview zoom / pan / click */
           const boxEl = wrap.querySelector(".preview-box");
           if (boxEl) attachPreviewBoxListeners(boxEl);
 
-          /* restore tx pointers */
-          const idx = Number(wrap.dataset.idx);
-          if (idx >= 0 && window.cachedOrderItems?.[idx]) {
-            window.cachedOrderItems[idx]._inGrid = true;
-            window.cachedOrderItems[idx]._wrapEl = wrap;
+          /* restore TX pointers if cachedOrderItems exists */
+          const itemIdx = Number(wrap.dataset.idx);
+          if (Array.isArray(window.cachedOrderItems) &&
+              itemIdx >= 0 &&
+              window.cachedOrderItems[itemIdx]) {
+            window.cachedOrderItems[itemIdx]._inGrid  = true;
+            window.cachedOrderItems[itemIdx]._wrapEl  = wrap;
           }
         });
 
-      /* 3️⃣  Re-attach click / hover logic to every order row  (ADD THESE TWO LINES, THEN KEEP THE REST) */
-      document.querySelectorAll(".new-order-box").forEach(box => delete box.dataset.wired);
+      /* 3️⃣  Re-attach click / hover logic to every order row */
+      document.querySelectorAll(".new-order-box").forEach(box => delete box.dataset.wired);  // reset flag
       document.querySelectorAll(".new-order-box").forEach(box => {
-        if (box.dataset.wired) return;
+        if (box.dataset.wired) return;      // prevent duplicate wiring
         box.dataset.wired = "1";
-        /* ...existing click / hover listeners unchanged... */
-      });
 
         /* CLICK → toggle orange selection & preview sync */
         box.addEventListener("click", async () => {
           const rid = String(box.dataset.receipt);
 
-          if (selectedOrders.has(rid)) {     /* — DESELECT — */
+          if (selectedOrders.has(rid)) {    /* — DESELECT — */
             selectedOrders.delete(rid);
             box.classList.remove("selected");
             removePreviewBoxesForOrder(rid);
@@ -950,9 +951,10 @@ document.addEventListener("DOMContentLoaded", () => {
       highlightCompletedRows();   // keep greens intact
       highlightSavedRows();       // restore oranges
 
+      /* reset snapshot + notify */
       searchSnapshot = null;
       M.toast({ html: "Search cleared" });
-    });
+    });   /* ← closes the input listener */
   })();
 
   /* =====================================================================
