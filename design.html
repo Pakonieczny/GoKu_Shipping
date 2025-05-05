@@ -466,7 +466,7 @@ function refreshRowMetalCounts(receiptId){
     }
 
     const q = tx.quantity || 1;
-    if (/14\s*k\s*solid/i.test(m))         k  += q;
+    if (m === "14k" || /14\s*k\s*solid/i.test(m))  k += q;   // accept row key “14k” too
     else if (/rose/.test(m))   rG += q;
     else if (/silv(?:er|r)/.test(m)) s  += q;
     else if (/gold/.test(m))   g  += q;
