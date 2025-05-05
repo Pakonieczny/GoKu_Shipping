@@ -380,6 +380,9 @@
 <div id="solidCounter"  class="metal-counter active" data-metal="14k">14K: 0
 </div>
 
+<!-- Container that will hold temporarily unmatched images -->
+<div id="unmatchedContainer"></div>
+
 <!-- Container for dynamically generated preview boxes and detail boxes -->
 <div id="photoGridContainer">
   <!-- Preview boxes and detail boxes will be created dynamically -->
@@ -767,9 +770,11 @@ document.addEventListener("DOMContentLoaded", () => {
       window.cachedOrderItems = [];
       matchPrintFlowInProgress = false;
 
+  
       // Clear UI
       document.getElementById("photoGridContainer").innerHTML = "";
-      document.getElementById("unmatchedContainer").innerHTML = "";
+      const unmatchedEl = document.getElementById("unmatchedContainer");
+      if (unmatchedEl) unmatchedEl.innerHTML = "";
 
       disableSendMatch();
       disableMatchPrintFlow();
