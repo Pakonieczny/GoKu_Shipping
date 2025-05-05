@@ -852,25 +852,93 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   });
 
-  /* Empty box → instant restore */
-  input.addEventListener("input", ()=>{
-    if(input.value.trim()!=="") return;
-    if(!searchSnapshot)        return;
+  /* Empty box → instant restore (FULL REPLACEMENT) */
+  input.addEventListener("input", async () => {
+    if (input.value.trim() !== "") return;
+    if (!searchSnapshot)            return;
 
+    /* 1️⃣  Restore markup */
     document.getElementById("newOrderContainer").innerHTML  = searchSnapshot.orderHTML;
     document.getElementById("photoGridContainer").innerHTML = searchSnapshot.gridHTML;
 
+    /* 2️⃣  Rebuild gridElements + re-hook preview listeners */
     gridElements.clear();
-    for(const [k,v] of searchSnapshot.gridMap) gridElements.set(k,v);
+    document
+      .querySelectorAll("#photoGridContainer .wrap-preview")
+      .forEach(wrap => {
+        const key = Number(wrap.dataset.idx) || gridElements.size;
+        gridElements.set(key, wrap);
 
+        /* zoom / pan / click handlers */
+        const boxEl = wrap.querySelector(".preview-box");
+        if (boxEl) attachPreviewBoxListeners(boxEl);
+      });
+
+    /* 3️⃣  Re-attach click / hover logic to every order row */
+    document.querySelectorAll(".new-order-box").forEach(box => {
+      if (box.dataset.wired) return;          // prevent duplicate wiring
+      box.dataset.wired = "1";
+
+      /* CLICK → toggle orange selection & preview sync */
+      box.addEventListener("click", async () => {
+        const rid = String(box.dataset.receipt);
+
+        if (selectedOrders.has(rid)) {            /* — DESELECT — */
+          selectedOrders.delete(rid);
+          box.classList.remove("selected");
+          removePreviewBoxesForOrder(rid);
+          realignGrid();
+          updateCounters();
+          persistSelection();
+          applyMetalFilter();
+          return;
+        }
+
+        /* — SELECT — */
+        selectedOrders.add(rid);
+        box.classList.add("selected");
+
+        if (!orderCache[rid]) {
+          const ord = await pullEtsyOrderDetails(rid);
+          orderCache[rid] = ord?.transactions || [];
+          refreshRowCount(rid);
+          refreshRowMetalCounts(rid);
+        }
+        orderCache[rid].forEach(tx => { if (!tx._inGrid) addPreviewBox(tx); });
+
+        realignGrid();
+        updateCounters();
+        persistSelection();
+        applyMetalFilter();
+      });
+
+      /* HOVER → outline concurrent previews */
+      box.addEventListener("mouseenter", () => {
+        if (!box.classList.contains("selected")) return;
+        const rec = box.dataset.receipt;
+        document
+          .querySelectorAll(`#photoGridContainer .wrap-preview[data-receipt='${rec}']`)
+          .forEach(w => w.classList.add("preview-highlight"));
+      });
+      box.addEventListener("mouseleave", () => {
+        const rec = box.dataset.receipt;
+        document
+          .querySelectorAll(`#photoGridContainer .wrap-preview[data-receipt='${rec}']`)
+          .forEach(w => w.classList.remove("preview-highlight"));
+      });
+    });
+
+    /* 4️⃣  Final tidy-up */
     reflowGrid();
     updateCounters();
     applyMetalFilter();
+    highlightCompletedRows();   // keep greens intact
+    highlightSavedRows();      // restore oranges
 
     searchSnapshot = null;
-    M.toast({html:"Search cleared"});
+    M.toast({ html: "Search cleared" });
   });
-})();
+  })();
 
   /* =====================================================================
    *  LOCAL-STORAGE PERSISTENCE  —  selected orders + their transactions
