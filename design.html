@@ -811,6 +811,9 @@ document.addEventListener("DOMContentLoaded", () => {
 
     try {
       /* 1️⃣ snapshot current UI (only first time) */
+
+      javascript const pg = document.getElementById("pageButtonsContainer"); if (pg) pg.style.display = "none";
+
       if (!searchSnapshot) {
         searchSnapshot = {
           orderHTML: document.getElementById("newOrderContainer").innerHTML,
@@ -928,6 +931,9 @@ document.addEventListener("DOMContentLoaded", () => {
       if (!searchSnapshot)            return;
 
       /* 1️⃣  Restore markup */
+      
+      javascript const pg = document.getElementById("pageButtonsContainer"); if (pg) pg.style.display = "";
+
       document.getElementById("newOrderContainer").innerHTML  = searchSnapshot.orderHTML;
       document.getElementById("photoGridContainer").innerHTML = searchSnapshot.gridHTML;
 
