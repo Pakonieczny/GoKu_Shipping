@@ -797,12 +797,12 @@ document.addEventListener("DOMContentLoaded", () => {
      /* ==============================================================
    *  Single-order SEARCH via #etsyOrderNumber
    * ============================================================*/
-  (function attachSearch(){
-    const input = document.getElementById("etsyOrderNumber");
-    if (!input) return;
+    (function attachSearch(){
+      const input = document.getElementById("etsyOrderNumber");
+      if (!input) return;
 
-    /* ENTER → run single-order search when no commas are present */
-    input.addEventListener("keydown", async e => {
+      /* ENTER → run single-order search when no commas are present */
+      input.addEventListener("keydown", async e => {
       if (e.key !== "Enter") return;
       const raw = input.value.trim();
       if (!raw || raw.includes(",")) return;   // let bulk loader handle comma lists
@@ -923,18 +923,17 @@ document.addEventListener("DOMContentLoaded", () => {
         M.toast({ html: "Order not found" });
       }
     });
-  })();
+  ();
 
-    /* Empty box → instant restore (FULL REPLACEMENT) */
+    /* Empty box → instant restore */
     input.addEventListener("input", async () => {
-      /* exit if the box still has text or no snapshot exists */
       if (input.value.trim() !== "") return;
-      if (!searchSnapshot)            return;
-
-      /* 1️⃣  Restore markup */
+      if (!searchSnapshot) return;
 
       const pg = document.getElementById("pageButtonsContainer");
       if (pg) pg.hidden = false;   // show page buttons again
+
+      /* 1️⃣  Restore markup */
 
       document.getElementById("newOrderContainer").innerHTML  = searchSnapshot.orderHTML;
       document.getElementById("photoGridContainer").innerHTML = searchSnapshot.gridHTML;
