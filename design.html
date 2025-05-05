@@ -466,9 +466,9 @@ function refreshRowMetalCounts(receiptId){
     }
 
     const q = tx.quantity || 1;
-    if (/14k/.test(m))         k  += q;
+    if (/14k\\s*solid/.test(m))  k  += q;
     else if (/rose/.test(m))   rG += q;
-    else if (/silver/.test(m)) s  += q;
+    else if (/silv(?:er|r)/.test(m)) s  += q;
     else if (/gold/.test(m))   g  += q;
   });
 
@@ -889,23 +889,23 @@ document.addEventListener("DOMContentLoaded", () => {
           }
         });
 
-        /* ------- Ensure orange rows show their previews  (FULL REPLACE) ------- */
-        selectedOrders.forEach(rid => {
-          const list = orderCache[rid];
-          if (!Array.isArray(list)) return;        // no cache for this receipt
+      /* ------- Ensure orange rows show their previews  (FULL REPLACE) ------- */
+      selectedOrders.forEach(rid => {
+        const list = orderCache[rid];
+        if (!Array.isArray(list)) return;        // no cache for this receipt
 
-          list.forEach(tx => {
-            /* already have this TX wrap? */
-            const wrapPresent = document.querySelector(
-              `#photoGridContainer .wrap-preview[data-tx='${tx.transaction_id}']`
-            );
-            if (wrapPresent) return;
+        list.forEach(tx => {
+          /* already have this TX wrap? */
+          const wrapPresent = document.querySelector(
+            `#photoGridContainer .wrap-preview[data-tx='${tx.transaction_id}']`
+          );
+          if (wrapPresent) return;
 
-            /* flag reset & inject a fresh tile */
-            tx._inGrid = false;                    // mark as absent
-            addPreviewBox(tx);                     // re-adds + updates gridElements
-          });
+          /* flag reset & inject a fresh tile */
+          tx._inGrid = false;                    // mark as absent
+          addPreviewBox(tx);                     // re-adds + updates gridElements
         });
+      });
 
       /* 3️⃣  Re-attach click / hover logic to every order row */
       document.querySelectorAll(".new-order-box").forEach(box => delete box.dataset.wired);  // reset flag
@@ -1439,9 +1439,9 @@ document.addEventListener("DOMContentLoaded", () => {
         const val = v.formatted_value.toLowerCase();
 
         if (!metalKey) {
-          if (/14k/.test(val))         metalKey = "14k";
+          if (/14k\\s*solid/.test(val))   metalKey = "14k";
           else if (/rose/.test(val))   metalKey = "rose";
-          else if (/silver/.test(val)) metalKey = "silver";
+          else if (/silv(?:er|r)/.test(val)) metalKey = "silver";
           else if (/gold/.test(val))   metalKey = "gold";
         }
       });
@@ -1794,9 +1794,9 @@ const observer = new MutationObserver(async () => {
         if (Array.isArray(t.variations)) {
           t.variations.forEach(v => {
             const val = (v?.formatted_value || "").toLowerCase();
-            if (/14k/.test(val))         mc["14K"]    += q;
+            if (/14k\\s*solid/.test(val))         mc["14K"]    += q;
             else if (/rose/.test(val))   mc["Rose G"] += q;
-            else if (/silver/.test(val)) mc.Silver    += q;
+            else if (/silv(?:er|r)/.test(val)) mc.Silver    += q;
             else if (/gold/.test(val))   mc.Gold      += q;
           });
         }
@@ -1938,9 +1938,9 @@ async function buildNewOrderList(offset = 0) {
           if (Array.isArray(t.variations)) {
             t.variations.forEach(v => {
               const val = (v?.formatted_value || "").toLowerCase();
-              if (/14k/.test(val))         mc["14K"]    += q;
+              if (/14k\\s*solid/.test(val))         mc["14K"]    += q;
               else if (/rose/.test(val))   mc["Rose G"] += q;
-              else if (/silver/.test(val)) mc.Silver    += q;
+              else if (/silv(?:er|r)/.test(val)) mc.Silver    += q;
               else if (/gold/.test(val))   mc.Gold      += q;
             });
           }
