@@ -423,6 +423,9 @@
 
 <!-- Everything is in this single <script> block -->
 <script>
+
+let searchActive = false;     // true ⇢ we’re inside single-order search
+
 /********************************************************
  * Base URL & Global Variables
  ********************************************************/
@@ -803,6 +806,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
       /* ENTER → run single-order search when no commas are present */
       input.addEventListener("keydown", async e => {
+        searchActive = true;
       if (e.key !== "Enter") return;
       const raw = input.value.trim();
       if (!raw || raw.includes(",")) return;   // let bulk loader handle comma lists
@@ -948,6 +952,7 @@ document.addEventListener("DOMContentLoaded", () => {
     input.addEventListener("input", async () => {
       if (input.value.trim() !== "") return;
       if (!searchSnapshot) return;
+      searchActive = false;
 
       const pg = document.getElementById("pageButtonsContainer");
       if (pg) pg.hidden = false;   // show page buttons again
@@ -2834,9 +2839,8 @@ function reflowGrid(){
       /* 0️⃣  Handle left-column order rows ---------------------------- */
       document.querySelectorAll(".new-order-box").forEach(row => {
         const isGreen = row.classList.contains("completed");
-        row.style.display =
-          completedOn ? (isGreen ? "" : "none")          // show only greens
-                      : (isGreen ? "none" : "");         // hide greens
+        const hideGreens = !searchActive && !completedOn;
+        row.style.display = hideGreens && isGreen ? "none" : "";
       });
 
       /* 1️⃣  Completed ON → show only green previews ------------------ */
@@ -2857,10 +2861,10 @@ function reflowGrid(){
       );
 
       gridElements.forEach(wrap => {
+      const hideGreens = !searchActive && !completedOn;
       const show =
-        ( !wrap.dataset.metal ||                        // no metal → always show
-          activeMetals.has(wrap.dataset.metal) ) &&     // or metal is active
-        !completedOrders.has(wrap.dataset.receipt);     // and NOT completed
+        ( !wrap.dataset.metal || activeMetals.has(wrap.dataset.metal) ) &&
+        !(hideGreens && completedOrders.has(wrap.dataset.receipt));
               wrap.style.display = show ? "" : "none";
 
         /* ★ PROBE-B: is this wrap ghost-completed? */
