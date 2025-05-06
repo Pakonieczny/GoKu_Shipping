@@ -288,9 +288,10 @@
       box-shadow:0 0 0 4px orangered;   /* 4-px warning ring */
     }
 
-    /* ——— universal 3-px blue hover ring (inset) ——— */
+    /* —— 3-px BLUE hover ring (outer) —— */
     #photoGridContainer .wrap-preview:hover{
-      box-shadow: inset 0 0 0 3px #2196F3 !important;   /* ← wins every time */
+      box-shadow: 0 0 0 3px #2196F3 !important;  /* outer blue ring */
+      outline:0;                                 /* never suppressed */
       z-index:10;
     }
 
@@ -656,12 +657,8 @@ document.addEventListener("DOMContentLoaded", () => {
       const curr = rows.indexOf(box);
       if (curr === -1) return;
 
-      /* first Ctrl/⌘-click → toggle + anchor */
-      if (lastCtrlIdx === null){
-        rows[curr].click();
-        lastCtrlIdx = curr;
-        return;
-      }
+      /* abort if no anchor has been set with a plain click */
+      if (lastCtrlIdx === null) return;
 
       /* second Ctrl/⌘-click → select full range */
       const [from, to] = curr > lastCtrlIdx ? [lastCtrlIdx, curr] : [curr, lastCtrlIdx];
@@ -686,9 +683,9 @@ document.addEventListener("DOMContentLoaded", () => {
         /* ensure every transaction has a preview tile */
         orderCache[rid].forEach(tx => { if (!tx._inGrid) addPreviewBox(tx); });
       }
-      
+
       realignGrid(); updateCounters(); persistSelection(); applyMetalFilter();
-      lastCtrlIdx = curr;
+
     });
   }
 
@@ -980,6 +977,9 @@ document.addEventListener("DOMContentLoaded", () => {
             /* — SELECT — */
             selectedOrders.add(rid);
             box.classList.add("selected");
+            /* set range-anchor on plain click */
+            lastCtrlIdx = [...document.querySelectorAll("#newOrderContainer .new-order-box")]
+                      .indexOf(box);
             orderCache[rid].forEach(tx => { if (!tx._inGrid) addPreviewBox(tx); });
             realignGrid(); updateCounters(); persistSelection(); applyMetalFilter();
           });
@@ -1711,6 +1711,10 @@ document.addEventListener("DOMContentLoaded", () => {
       /* ─── SELECT ─── */
       selectedOrders.add(receiptId);
       box.classList.add("selected");
+
+      /* set range-anchor on plain click */
+      lastCtrlIdx = [...document.querySelectorAll("#newOrderContainer .new-order-box")]
+                      .indexOf(box);
 
       /* pull + cache if first time */
       if (!orderCache[receiptId]) {
