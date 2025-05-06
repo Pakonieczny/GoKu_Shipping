@@ -349,11 +349,9 @@
     /* =========================================================
      * Hover helper — 3-px BLUE ring for rows + previews
      * ========================================================*/
-
     .hover-blue.new-order-box{
-      outline:0;                                  /* remove old outline  */
-      box-shadow:0 0 0 4px #ff5722,               /* existing orange ring */
-                 inset 0 0 0 3px #2196F3;         /* inner blue hover     */
+      outline:3px solid #2196F3;
+      outline-offset:-2px;           /* keeps it inside the row */
       z-index:10;
     }
 
@@ -1151,6 +1149,20 @@ document.addEventListener("DOMContentLoaded", () => {
           document
             .querySelectorAll(`#photoGridContainer .wrap-preview[data-receipt='${rec}']`)
             .forEach(w => w.classList.remove("preview-highlight"));
+        });
+
+        /* HOVER → blue ring on row + all its previews */
+        box.addEventListener("mouseenter", () => {
+          box.classList.add("hover-blue");
+          document
+            .querySelectorAll(`#photoGridContainer .wrap-preview[data-receipt='${box.dataset.receipt}']`)
+            .forEach(w => w.classList.add("hover-blue"));
+        });
+        box.addEventListener("mouseleave", () => {
+          box.classList.remove("hover-blue");
+          document
+            .querySelectorAll(`#photoGridContainer .wrap-preview[data-receipt='${box.dataset.receipt}']`)
+            .forEach(w => w.classList.remove("hover-blue"));
         });
 
         /* ▼▼  PASTE THE NEW BLOCK RIGHT HERE  ▼▼ */
