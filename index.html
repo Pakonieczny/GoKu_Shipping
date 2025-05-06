@@ -119,16 +119,15 @@
     }
 
     /* ====== PREVIEW-BOX OUTLINES ==================================== */
-    /* Hover → 3 px blue ring (but only when the box is NOT already selected) */
-    .preview-box:not(.selected):hover{
+    /* Hover  → 3 px blue ring (always, even on a selected tile) */
+    .preview-box:hover{
       outline:3px solid dodgerblue;
-      outline-offset:-3px;          /* sit flush with the inner edge */
+      outline-offset:-3px;          /* hugs the inner edge */
     }
 
-    /* Clicked / selected → 3 px orangered ring (persists until another box is chosen) */
+    /* Clicked / selected  → 3 px orangered ring that sits **inside** the blue one */
     .preview-box.selected{
-      outline:3px solid orangered;
-      outline-offset:-3px;
+      box-shadow:0 0 0 3px orangered inset;   /* inset keeps it under the blue outline */
     }
 
     .preview-box img {
