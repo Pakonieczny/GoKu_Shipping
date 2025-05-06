@@ -349,9 +349,11 @@
     /* =========================================================
      * Hover helper — 3-px BLUE ring for rows + previews
      * ========================================================*/
+
     .hover-blue.new-order-box{
-      outline:3px solid #2196F3;
-      outline-offset:-2px;           /* keeps it inside the row */
+      outline:0;                                  /* remove old outline  */
+      box-shadow:0 0 0 4px #ff5722,               /* existing orange ring */
+                 inset 0 0 0 3px #2196F3;         /* inner blue hover     */
       z-index:10;
     }
 
