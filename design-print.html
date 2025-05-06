@@ -24,8 +24,6 @@
  *                { gold:[], silver:[], rose:[], "14k":[] }
  *  • LEGACY    : Sorting page stashes `qrPrintAll`
  *                { dispatchDate, items[], userTypedOrderNum }
- *
- *  The page auto-detects which payload is present.
  ********************************************************/
 window.addEventListener("load", async () => {
   const metalJSON = localStorage.getItem("metalOrderLists");
@@ -48,7 +46,7 @@ window.addEventListener("load", async () => {
  *  NEW FLOW  – one QR per metal-specific bundle
  * ────────────────────────────────────────────────────────── */
 async function handleMetalBundles(lists) {
-  // 1️⃣  full-file dedupe across bundles
+  /* 1️⃣  de-dupe across bundles */
   const seen = new Set();
   Object.keys(lists).forEach(m => {
     lists[m] = (lists[m] || []).filter(id => {
@@ -57,21 +55,20 @@ async function handleMetalBundles(lists) {
     });
   });
 
-  // 2️⃣  print each non-empty bundle
+  /* 2️⃣  print each non-empty bundle */
   for (const [metal, arr] of Object.entries(lists)) {
     if (!arr.length) continue;
 
-    const payload = arr.join(",");                         // encode list
-    const imgData = await makeQRDataURL(payload);
-
-    const docDef = {
-      pageSize   : { width:72, height:72 },                // 1" × 1"
+    const imgData = await makeQRDataURL(arr.join(","));
+    const docDef  = {
+      pageSize   : { width:72, height:72 },          // 1″ × 1″
       pageMargins: [0,0,0,0],
       content : [
-        { image: imgData, width:60, absolutePosition:{ x:6, y:6 } },
+        /* ↓↓↓  MATCHES QR Printer.html sizing/position ↓↓↓ */
+        { image: imgData, width:12, absolutePosition:{ x:27.5, y:2 } },
         { text : `${metal.toUpperCase()} (${arr.length})`,
-          fontSize:4, bold:true,
-          absolutePosition:{ x:6, y:65 } }
+          fontSize:2, bold:true,
+          absolutePosition:{ x:27.5, y:13.75 } }
       ]
     };
     await autoPrint(docDef);
@@ -79,7 +76,7 @@ async function handleMetalBundles(lists) {
 }
 
 /* ──────────────────────────────────────────────────────────
- *  LEGACY FLOW  – single order QR (unchanged behaviour)
+ *  LEGACY FLOW  – single order QR (unchanged)
  * ────────────────────────────────────────────────────────── */
 async function handleLegacy(dataObj){
   if (!dataObj || !Array.isArray(dataObj.items) || !dataObj.items.length) {
@@ -91,9 +88,8 @@ async function handleLegacy(dataObj){
                     || "UnknownOrder";
 
   const imgData = await makeQRDataURL(orderNum);
-
-  const docDef = {
-    pageSize   : { width:72, height:72 },                  // 1" × 1"
+  const docDef  = {
+    pageSize   : { width:72, height:72 },          // 1″ × 1″
     pageMargins: [0,0,0,0],
     content : [
       { image: imgData, width:12, absolutePosition:{ x:27.5, y:2 } },
@@ -116,23 +112,22 @@ async function makeQRDataURL(text){
   new QRCode(holder, {
     text, width:1024, height:1024, correctLevel:QRCode.CorrectLevel.H
   });
-  await new Promise(r => setTimeout(r, 300));
+  await new Promise(r => setTimeout(r, 300));      // allow render
 
   const img = holder.querySelector("img")
          || holder.querySelector("canvas")?.toDataURL("image/png");
-  if (img.tagName) return img.src;         // <img>
-  return img;                              // dataURL from canvas
+  return img.tagName ? img.src : img;              // normalize
 }
 
 async function autoPrint(docDefinition){
   return new Promise(res => {
     pdfMake.createPdf(docDefinition).getBlob(blob => {
       const url = URL.createObjectURL(blob);
-      const iframe = document.createElement("iframe");
-      iframe.style.visibility = "hidden";
-      iframe.src = url;
-      iframe.onload = () => { iframe.contentWindow.print(); res(); };
-      document.body.appendChild(iframe);
+      const frame = document.createElement("iframe");
+      frame.style.visibility = "hidden";
+      frame.src = url;
+      frame.onload = () => { frame.contentWindow.print(); res(); };
+      document.body.appendChild(frame);
     });
   });
 }
