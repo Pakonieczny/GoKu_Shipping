@@ -137,8 +137,8 @@
 
     /* 3-px orangered flag for personalization / buyer-message */
     .preview-attn{
-      outline:none !important;
-      box-shadow:0 0 0 4px orangered !important;
+      outline:none;
+      box-shadow:0 0 0 4px orangered;
     }
 
     .new-order-box {
@@ -283,17 +283,15 @@
       color:#fff;
     }
 
-    /* ——— 4-px red-orange ring (box-shadow) ——— */
     .wrap-preview.preview-attn{
-      outline:none;                       /* remove competing outline  */
-      box-shadow:0 0 0 4px orangered;     /* 4 px warning ring         */
+      outline:none;                     /* (no !important) so hover can override */
+      box-shadow:0 0 0 4px orangered;   /* 4-px warning ring */
     }
 
-    /* ——— universal 3-px blue hover ring ——— */
+    /* ——— universal 3-px blue hover ring (inset) ——— */
     #photoGridContainer .wrap-preview:hover{
-      outline:3px solid #2196F3;          /* vivid blue */
-      outline-offset:-1px;                /* sits just inside red ring */
-      z-index:10;                         /* keeps it on top */
+      box-shadow: inset 0 0 0 3px #2196F3;
+      z-index:10;
     }
 
     /* Config Modal */
@@ -342,11 +340,9 @@
     #completedCounter{display:none!important;}
 
     /* ——— BLUE hover ring always sits INSIDE the 4-px orangered ring ——— */
-    #photoGridContainer .wrap-preview:hover,
     #photoGridContainer .wrap-preview.preview-attn:hover{
-      outline:3px solid #2196F3 !important;   /* override earlier !important */
-      outline-offset:-1px;                    /* inside the red ring         */
-      z-index:20;
+      box-shadow: 0 0 0 4px orangered,      /* outer warning ring  */
+                  inset 0 0 0 3px #2196F3;  /* inner blue ring     */
     }
 
   </style>
@@ -437,6 +433,7 @@
 
 let searchActive = false;     // true ⇢ we’re inside single-order search
 
+
 /********************************************************
  * Base URL & Global Variables
  ********************************************************/
@@ -444,6 +441,7 @@ const functionsBaseUrl = window.location.origin + "/.netlify/functions";
 const selectedOrders = new Set();      // receipt_id strings
 const orderCache     = {};             // receipt_id → transactions[]
 const gridElements   = new Map();      // transaction_id → wrapper DOM
+let   lastCtrlIdx    = null;           // ⬅️  anchor for Ctrl/⌘ range-select
 /* ==== SEARCH SNAPSHOT (for restoring UI) ==== */
 let searchSnapshot = null;             // { orderHTML, gridHTML, gridMap }
 const processedTxIds = new Set();      // guards against duplicate preview tiles
@@ -640,6 +638,46 @@ document.addEventListener("DOMContentLoaded", () => {
 
   /* ❷  load completed list and colour rows */
   restoreCompleted();
+
+  /* ==============================================================
+   *  Ctrl/⌘-click  =  range-select between anchor ⇢ current
+   * ============================================================*/
+  const orderContainer = document.getElementById("newOrderContainer");
+  if (!orderContainer.dataset.rangeWired){
+    orderContainer.dataset.rangeWired = "1";
+
+    orderContainer.addEventListener("click", e => {
+      if (!(e.ctrlKey || e.metaKey)) return;          // Ctrl (Win) or ⌘ (Mac)
+      const box = e.target.closest(".new-order-box");
+      if (!box) return;
+      e.preventDefault();
+
+      const rows = [...orderContainer.querySelectorAll(".new-order-box")];
+      const curr = rows.indexOf(box);
+      if (curr === -1) return;
+
+      /* first Ctrl/⌘-click → toggle + anchor */
+      if (lastCtrlIdx === null){
+        rows[curr].click();
+        lastCtrlIdx = curr;
+        return;
+      }
+
+      /* second Ctrl/⌘-click → range */
+      const [from, to] = curr > lastCtrlIdx ? [lastCtrlIdx, curr] : [curr, lastCtrlIdx];
+      for (let i = from; i <= to; i++){
+        const row = rows[i];
+        const rid = String(row.dataset.receipt);
+        if (!selectedOrders.has(rid)){
+          selectedOrders.add(rid);
+          row.classList.add("selected");
+          orderCache[rid]?.forEach(tx => { if (!tx._inGrid) addPreviewBox(tx); });
+        }
+      }
+      realignGrid(); updateCounters(); persistSelection(); applyMetalFilter();
+      lastCtrlIdx = curr;
+    });
+  }
 
   /* ❸  run monthly purge */
   purgeOldCompleted();
@@ -914,7 +952,8 @@ document.addEventListener("DOMContentLoaded", () => {
           box.dataset.wired = "1";
 
           /* CLICK → toggle select */
-          box.addEventListener("click", async () => {
+          box.addEventListener("click", async e => {
+          if (e.ctrlKey || e.metaKey) return;   // range-selector handles these
             const rid = String(box.dataset.receipt);
 
             if (selectedOrders.has(rid)) {          /* — DESELECT — */
@@ -945,51 +984,6 @@ document.addEventListener("DOMContentLoaded", () => {
                     .forEach(w => w.classList.remove("preview-highlight"));
           });
         })(row);
-
-        /* ==============================================================
-         *  Ctrl/⌘-click  =  range-select between anchor ⇢ current
-         * ============================================================*/
-        const orderContainer = document.getElementById("newOrderContainer");
-        if (!orderContainer.dataset.rangeWired){             // avoid duplicate hooks
-          orderContainer.dataset.rangeWired = "1";
-
-          orderContainer.addEventListener("click", e => {
-            if (!(e.ctrlKey || e.metaKey)) return;           // ⌘ for Mac, Ctrl elsewhere
-            const box = e.target.closest(".new-order-box");
-            if (!box) return;
-            e.preventDefault();
-
-            const rows = [...orderContainer.querySelectorAll(".new-order-box")];
-            const curr = rows.indexOf(box);
-            if (curr === -1) return;
-
-            /* FIRST Ctrl-/⌘-click → set anchor */
-            if (lastCtrlIdx === null) {
-              rows[curr].click();                            // reuse normal toggle
-              lastCtrlIdx = curr;
-              return;
-            }
-
-            /* SECOND Ctrl-/⌘-click → select full range */
-            const [from, to] = curr > lastCtrlIdx ? [lastCtrlIdx, curr] : [curr, lastCtrlIdx];
-            for (let i = from; i <= to; i++) {
-              const row = rows[i];
-              const rid = String(row.dataset.receipt);
-              if (!selectedOrders.has(rid)) {
-                selectedOrders.add(rid);
-                row.classList.add("selected");
-                orderCache[rid]?.forEach(tx => { if (!tx._inGrid) addPreviewBox(tx); });
-              }
-            }
-
-            realignGrid();
-            updateCounters();
-            persistSelection();
-            applyMetalFilter();
-
-            lastCtrlIdx = curr;                              // reset anchor
-          });
-        }
 
 
         /* 9️⃣ final tidy-up */
@@ -1064,7 +1058,8 @@ document.addEventListener("DOMContentLoaded", () => {
         box.dataset.wired = "1";
 
         /* CLICK → toggle orange selection & preview sync */
-        box.addEventListener("click", async () => {
+        box.addEventListener("click", async e => {
+        if (e.ctrlKey || e.metaKey) return;   // range-selector handles these
           const rid = String(box.dataset.receipt);
 
           if (selectedOrders.has(rid)) {    /* — DESELECT — */
@@ -1675,7 +1670,8 @@ document.addEventListener("DOMContentLoaded", () => {
       box.dataset.receipt = r.receipt_id;      // ← NEW data-tag
 
       /* click → toggle highlight + (de)load images ---------------------- */
-      box.addEventListener("click", async () => {
+      box.addEventListener("click", async e => {
+      if (e.ctrlKey || e.metaKey) return;   // range-selector handles these
 
                 /* LOG #2 – detected metal colour */
         console.log("%cMETAL","color:#ff9100;font-weight:bold",
