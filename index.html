@@ -499,7 +499,7 @@
       /* light up the newly clicked box */
       if(box) box.classList.add("selected");
     }
-    
+
     window.isEmployeeLoggedIn = false; // We'll use this to guard the real-time listener
 
     /* === NEW helper: manage selected-outline state ================ */
@@ -992,93 +992,45 @@
         });
       });
 
-      var goBtn = document.getElementById('goScreenTwoBtn');
-      if(goBtn){
-        goBtn.addEventListener('click', async function(){
-          try {
-            var etsyOrderInput = document.getElementById("etsyOrderNumber");
-            var orderNumberVal = etsyOrderInput.value.trim();
-            var orderFromVal = window.orderName || "";
-            var userMsgsVal = document.getElementById("customerMessageHistory").value.trim();
-            var nowDate = new Date();
-            var shippingTS = nowDate.toISOString();
-            var empNameVal = document.getElementById("employeeName").value.trim();
-            var bodyData = {
-              orderNumber: orderNumberVal,
-              orderNumField: orderNumberVal,
-              clientName: orderFromVal,
-              britesMessages: userMsgsVal,
-              shippingLabelTimestamps: shippingTS,
-              employeeName: empNameVal
-            };
-            var responseCF = await fetch("/.netlify/functions/firebaseOrders", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify(bodyData)
-            });
-            var resultCF = await responseCF.json();
-            if(!responseCF.ok){
-              throw new Error(resultCF.error || "Unknown error from firebaseOrders function");
-            }
-            console.log("Successfully saved data to Firestore:", resultCF);
-          } catch(errCF){
-            M.toast({ html: "Error: " + errCF.message });
-            console.error("Failed to save data to Firestore:", errCF);
+    /* =========================================================
+     *  Save & Update  –  write Brites Messages directly to Firestore
+     *  (no more screenTwo.html navigation)
+     * =======================================================*/
+    var goBtn = document.getElementById('goScreenTwoBtn');
+    if (goBtn) {
+      goBtn.addEventListener('click', async function () {
+        try {
+          /* --- collect current form data ----------------------- */
+          const orderNumberVal = document.getElementById('etsyOrderNumber').value.trim();
+          if (!orderNumberVal) {
+            M.toast({ html: 'No order number entered!' });
+            return;
           }
-          loadScreenTwo();
-        });
-      }
-    });
+          const britesMsgs  = document.getElementById('customerMessageHistory').value.trim();
+          const employeeVal = document.getElementById('employeeName').value.trim();
 
-    async function loadScreenTwo(){
-      try {
-        console.log("loadScreenTwo() called");
-        var responseST = await fetch("screenTwo.html");
-        var screenTwoHTML = await responseST.text();
-        console.log("Fetched screenTwo.html content:", screenTwoHTML);
-        var parserST = new DOMParser();
-        var docST = parserST.parseFromString(screenTwoHTML, "text/html");
-        var scriptElsST = docST.querySelectorAll("script");
-        console.log("Found " + scriptElsST.length + " <script> tags in screenTwo.html");
-        scriptElsST.forEach(function(scriptEl){ scriptEl.remove(); });
-        var finalHTMLst = docST.body.innerHTML;
-        var containerST = document.getElementById("secondaryContainer");
-        containerST.innerHTML = finalHTMLst;
-        var screenOneDivST = document.getElementById("screenOne");
-        if(screenOneDivST){
-          screenOneDivST.style.display = "none";
-        } else {
-          console.warn("No #screenOne found in DOM");
+          /* --- realtime write to Firestore --------------------- */
+          await window.db
+            .collection('orders')
+            .doc(orderNumberVal)
+            .set(
+              {
+                'Brites Messages' : britesMsgs,
+                'Employee Name'   : employeeVal,
+                'Last Updated'    : firebase.firestore.FieldValue.serverTimestamp()
+              },
+              { merge: true }
+            );
+
+          M.toast({ html: 'Brites Messages saved to Firestore!' });
+          console.log('Saved Brites Messages for', orderNumberVal);
+        } catch (err) {
+          console.error('Firestore save error:', err);
+          M.toast({ html: 'Error: ' + err.message });
         }
-        var screenTwoDivST = document.getElementById("screenTwo");
-        if(screenTwoDivST){
-          screenTwoDivST.style.display = "block";
-        } else {
-          console.warn("No #screenTwo found in injected HTML");
-        }
-        scriptElsST.forEach(function(oldScript, indexST){
-          var newScriptST = document.createElement("script");
-          if(oldScript.src){
-            newScriptST.src = oldScript.src;
-            console.log("Re-appending script from src:", oldScript.src);
-          } else {
-            newScriptST.textContent = oldScript.textContent;
-            console.log("Re-appending inline script #" + indexST);
-          }
-          document.body.appendChild(newScriptST);
-        });
-        setTimeout(function(){
-          if(typeof window.initScreenTwo === "function"){
-            console.log("Calling initScreenTwo() after scripts appended");
-            window.initScreenTwo();
-          } else {
-            console.log("No global initScreenTwo() found.");
-          }
-        }, 100);
-      } catch(errST){
-        console.error("Error loading screenTwo:", errST);
-      }
+      });
     }
+
 
     async function updateImageGrid(data){
       var items = [];
