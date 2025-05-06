@@ -290,7 +290,7 @@
 
     /* ——— universal 3-px blue hover ring (inset) ——— */
     #photoGridContainer .wrap-preview:hover{
-      box-shadow: inset 0 0 0 3px #2196F3;
+      box-shadow: inset 0 0 0 3px #2196F3 !important;   /* ← wins every time */
       z-index:10;
     }
 
@@ -646,7 +646,7 @@ document.addEventListener("DOMContentLoaded", () => {
   if (!orderContainer.dataset.rangeWired){
     orderContainer.dataset.rangeWired = "1";
 
-    orderContainer.addEventListener("click", e => {
+    orderContainer.addEventListener("click", async e => {
       if (!(e.ctrlKey || e.metaKey)) return;          // Ctrl (Win) or ⌘ (Mac)
       const box = e.target.closest(".new-order-box");
       if (!box) return;
@@ -663,17 +663,30 @@ document.addEventListener("DOMContentLoaded", () => {
         return;
       }
 
-      /* second Ctrl/⌘-click → range */
+      /* second Ctrl/⌘-click → select full range */
       const [from, to] = curr > lastCtrlIdx ? [lastCtrlIdx, curr] : [curr, lastCtrlIdx];
       for (let i = from; i <= to; i++){
         const row = rows[i];
         const rid = String(row.dataset.receipt);
+
+        /* ⬇️  pull order details if we’ve never loaded this receipt */
+        if (!orderCache[rid]){
+          const ord = await pullEtsyOrderDetails(rid);
+          orderCache[rid] = ord?.transactions || [];
+          refreshRowCount(rid);
+          refreshRowMetalCounts(rid);
+        }
+
+        /* mark row + Set */
         if (!selectedOrders.has(rid)){
           selectedOrders.add(rid);
           row.classList.add("selected");
-          orderCache[rid]?.forEach(tx => { if (!tx._inGrid) addPreviewBox(tx); });
         }
+
+        /* ensure every transaction has a preview tile */
+        orderCache[rid].forEach(tx => { if (!tx._inGrid) addPreviewBox(tx); });
       }
+      
       realignGrid(); updateCounters(); persistSelection(); applyMetalFilter();
       lastCtrlIdx = curr;
     });
