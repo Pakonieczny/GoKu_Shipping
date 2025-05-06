@@ -993,39 +993,43 @@
       });
 
     /* =========================================================
-     *  Save & Update  –  write Brites Messages directly to Firestore
-     *  (no more screenTwo.html navigation)
+     *  Save & Update – send Brites Messages to Netlify function
      * =======================================================*/
     var goBtn = document.getElementById('goScreenTwoBtn');
     if (goBtn) {
       goBtn.addEventListener('click', async function () {
         try {
-          /* --- collect current form data ----------------------- */
           const orderNumberVal = document.getElementById('etsyOrderNumber').value.trim();
+          const britesMsgs     = document.getElementById('customerMessageHistory').value.trim();
+          const employeeVal    = document.getElementById('employeeName').value.trim();
+
           if (!orderNumberVal) {
             M.toast({ html: 'No order number entered!' });
             return;
           }
-          const britesMsgs  = document.getElementById('customerMessageHistory').value.trim();
-          const employeeVal = document.getElementById('employeeName').value.trim();
 
-          /* --- realtime write to Firestore --------------------- */
-          await window.db
-            .collection('orders')
-            .doc(orderNumberVal)
-            .set(
-              {
-                'Brites Messages' : britesMsgs,
-                'Employee Name'   : employeeVal,
-                'Last Updated'    : firebase.firestore.FieldValue.serverTimestamp()
-              },
-              { merge: true }
-            );
+          /* --- POST to /.netlify/functions/firebaseOrders ------------ */
+          const resp = await fetch('/.netlify/functions/firebaseOrders', {
+            method : 'POST',
+            headers: { 'Content-Type':'application/json' },
+            body   : JSON.stringify({
+              orderNumber          : orderNumberVal,   // doc ID
+              orderNumField        : orderNumberVal,   // "Order Number" field
+              britesMessages       : britesMsgs,
+              employeeName         : employeeVal
+            })
+          });
+
+          const resJson = await resp.json();
+          if (!resp.ok || !resJson.success) {
+            throw new Error(resJson.error || 'Unknown error from function');
+          }
 
           M.toast({ html: 'Brites Messages saved to Firestore!' });
-          console.log('Saved Brites Messages for', orderNumberVal);
+          console.log('Server reply:', resJson.message);
+
         } catch (err) {
-          console.error('Firestore save error:', err);
+          console.error('Save error:', err);
           M.toast({ html: 'Error: ' + err.message });
         }
       });
