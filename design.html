@@ -346,6 +346,25 @@
                   inset 0 0 0 3px #2196F3;  /* inner blue ring     */
     }
 
+    /* =========================================================
+     * Hover helper — 3-px BLUE ring for rows + previews
+     * ========================================================*/
+    .hover-blue.new-order-box{
+      outline:3px solid #2196F3;
+      outline-offset:-2px;           /* keeps it inside the row */
+      z-index:10;
+    }
+
+    .hover-blue.wrap-preview{
+      box-shadow:0 0 0 3px #2196F3;  /* blue ring (outside)     */
+      z-index:10;
+    }
+
+    .hover-blue.preview-attn{
+      box-shadow:0 0 0 4px orangered,   /* keep red/orange ring */
+                 inset 0 0 0 3px #2196F3;
+    }
+
   </style>
 </head>
 <body>
@@ -1043,6 +1062,19 @@ document.addEventListener("DOMContentLoaded", () => {
               window.cachedOrderItems[itemIdx]) {
             window.cachedOrderItems[itemIdx]._inGrid  = true;
             window.cachedOrderItems[itemIdx]._wrapEl  = wrap;
+          
+          /* HOVER → blue ring on preview + its row */
+          wrap.addEventListener("mouseenter", () => {
+            wrap.classList.add("hover-blue");
+            const row = document.querySelector(`.new-order-box[data-receipt='${wrap.dataset.receipt}']`);
+            if (row) row.classList.add("hover-blue");
+          });
+          wrap.addEventListener("mouseleave", () => {
+            wrap.classList.remove("hover-blue");
+            const row = document.querySelector(`.new-order-box[data-receipt='${wrap.dataset.receipt}']`);
+            if (row) row.classList.remove("hover-blue");
+          });
+
           }
         });
 
@@ -1118,6 +1150,21 @@ document.addEventListener("DOMContentLoaded", () => {
             .querySelectorAll(`#photoGridContainer .wrap-preview[data-receipt='${rec}']`)
             .forEach(w => w.classList.remove("preview-highlight"));
         });
+
+        /* ▼▼  PASTE THE NEW BLOCK RIGHT HERE  ▼▼ */
+        box.addEventListener("mouseenter", () => {
+          box.classList.add("hover-blue");
+          document
+            .querySelectorAll(`#photoGridContainer .wrap-preview[data-receipt='${box.dataset.receipt}']`)
+            .forEach(w => w.classList.add("hover-blue"));
+        });
+        box.addEventListener("mouseleave", () => {
+          box.classList.remove("hover-blue");
+          document
+            .querySelectorAll(`#photoGridContainer .wrap-preview[data-receipt='${box.dataset.receipt}']`)
+            .forEach(w => w.classList.remove("hover-blue"));
+        });
+
       });
 
       /* 4️⃣ final tidy-up */
@@ -1791,6 +1838,20 @@ document.addEventListener("DOMContentLoaded", () => {
       const rec = r.receipt_id;
       document.querySelectorAll(`#photoGridContainer .wrap-preview[data-receipt="${rec}"]`)
               .forEach(w => w.classList.remove("preview-highlight"));
+    });
+
+    /* ▼▼  PASTE THE SAME NEW BLOCK HERE  ▼▼ */
+    box.addEventListener("mouseenter", () => {
+      box.classList.add("hover-blue");
+      document
+        .querySelectorAll(`#photoGridContainer .wrap-preview[data-receipt='${box.dataset.receipt}']`)
+        .forEach(w => w.classList.add("hover-blue"));
+    });
+    box.addEventListener("mouseleave", () => {
+      box.classList.remove("hover-blue");
+      document
+        .querySelectorAll(`#photoGridContainer .wrap-preview[data-receipt='${box.dataset.receipt}']`)
+        .forEach(w => w.classList.remove("hover-blue"));
     });
 
     /* order-row content ----------------------------------------------- */
