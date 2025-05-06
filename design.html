@@ -1251,9 +1251,9 @@ document.addEventListener("DOMContentLoaded", () => {
 
 
 
-  /* ─────────────────── handleCompleteClick — FULL REPLACEMENT ─────────────────── */
+  /* ─────────────────── handleCompleteClick — UPDATED ─────────────────── */
   async function handleCompleteClick() {
-    /* 1️⃣  require ALL four metal filters */
+    /* 1️⃣  require ALL four metal filters (unchanged) */
     const REQUIRED = ["gold", "silver", "rose", "14k"];
     const active = Array.from(
       document.querySelectorAll('.metal-counter.active:not([data-metal="completed"])')
@@ -1265,11 +1265,19 @@ document.addEventListener("DOMContentLoaded", () => {
     }
 
     /* 2️⃣  collect every visible preview that matches those metals */
+    const listsByMetal = { gold: [], silver: [], rose: [], "14k": [] };   // 🆕
     const greenIDs = new Set();
+
     document.querySelectorAll("#photoGridContainer .wrap-preview").forEach(w => {
       if (w.style.display === "none")          return;               // hidden
-      if (!REQUIRED.includes(w.dataset.metal)) return;               // wrong metal
-      greenIDs.add(w.dataset.receipt);
+      const metal = w.dataset.metal;                                  // ← keep once
+      if (!REQUIRED.includes(metal))          return;               // wrong metal
+
+      const rid = w.dataset.receipt;
+      greenIDs.add(rid);
+      if (listsByMetal[metal] && !listsByMetal[metal].includes(rid)) { // 🆕
+        listsByMetal[metal].push(rid);                                 // 🆕
+      }                                                                // 🆕
     });
 
     if (!greenIDs.size) {
@@ -1277,7 +1285,7 @@ document.addEventListener("DOMContentLoaded", () => {
       return;
     }
 
-    /* 3️⃣  mark completed + purge DOM & master cache */
+    /* 3️⃣  mark completed + purge DOM & master cache (unchanged) */
     greenIDs.forEach(id => {
       completedOrders.add(id);
       selectedOrders.delete(id);
@@ -1290,10 +1298,9 @@ document.addEventListener("DOMContentLoaded", () => {
       removePreviewBoxesForOrder(id);
     });
 
-    /* scrub master array only (currentReceipts may not exist globally) */
     allOpenReceipts = allOpenReceipts.filter(r => !greenIDs.has(String(r.receipt_id)));
 
-    /* 4️⃣  recompute paging */
+    /* 4️⃣  recompute paging (unchanged) */
     if (typeof orderListOffset === "undefined") window.orderListOffset = 0;
     const totalPages = Math.ceil(allOpenReceipts.length / 100) || 1;
     if (orderListOffset >= allOpenReceipts.length) {
@@ -1303,17 +1310,24 @@ document.addEventListener("DOMContentLoaded", () => {
     await buildNewOrderList(orderListOffset);     // redraw rows + buttons
     realignGrid();                                // tighten grid gaps
 
-    /* 5️⃣  reset on-screen metal counters */
+    /* 5️⃣  reset on-screen metal counters (unchanged) */
     REQUIRED.forEach(m => {
       const el = document.querySelector(`.metal-counter[data-metal='${m}']`);
       if (el) el.textContent = `${m.charAt(0).toUpperCase() + m.slice(1)}: 0`;
     });
 
-    /* 6️⃣  persist + refresh */
+    /* 6️⃣  persist + refresh (unchanged) */
     persistCompleted();
     persistSelection();
     updateCounters();
     applyMetalFilter();
+
+    /* 🆕 7️⃣  hand off sorted lists to print-scan.html */
+    const hasBundles = Object.values(listsByMetal).some(arr => arr.length);
+    if (hasBundles) {
+      localStorage.setItem("metalOrderLists", JSON.stringify(listsByMetal)); // 🆕
+      window.open("print-scan.html", "_blank");                              // 🆕
+    }
 
     M.toast({ html: "Completed orders removed — pages recalculated" });
   }

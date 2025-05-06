@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>QR Print Station</title>
+
+  <!-- pdfmake (and its fonts) -->
+  <script src="https://cdn.jsdelivr.net/npm/pdfmake@0.2.7/build/pdfmake.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/pdfmake@0.2.7/build/vfs_fonts.js"></script>
+
+  <!-- qrcode.js (for generating QR) -->
+  <script src="https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js"></script>
+
+  <style>
+    html, body { margin:0; padding:0; }
+  </style>
+</head>
+<body>
+<script>
+/********************************************************
+ *  COMPAT MODE SWITCH
+ *  ─────────────────────────────────────────────────────
+ *  • NEW FLOW  : design.html stashes `metalOrderLists`
+ *                { gold:[], silver:[], rose:[], "14k":[] }
+ *  • LEGACY    : Sorting page stashes `qrPrintAll`
+ *                { dispatchDate, items[], userTypedOrderNum }
+ *
+ *  The page auto-detects which payload is present.
+ ********************************************************/
+window.addEventListener("load", async () => {
+  const metalJSON = localStorage.getItem("metalOrderLists");
+  if (metalJSON) {
+    await handleMetalBundles(JSON.parse(metalJSON));
+    localStorage.removeItem("metalOrderLists");   // one-shot transfer
+    return;
+  }
+
+  const legacyJSON = localStorage.getItem("qrPrintAll");
+  if (legacyJSON) {
+    await handleLegacy(JSON.parse(legacyJSON));
+    return;
+  }
+
+  console.error("Nothing to print: no metalOrderLists or qrPrintAll found.");
+});
+
+/* ──────────────────────────────────────────────────────────
+ *  NEW FLOW  – one QR per metal-specific bundle
+ * ────────────────────────────────────────────────────────── */
+async function handleMetalBundles(lists) {
+  // 1️⃣  full-file dedupe across bundles
+  const seen = new Set();
+  Object.keys(lists).forEach(m => {
+    lists[m] = (lists[m] || []).filter(id => {
+      if (seen.has(id)) return false;
+      seen.add(id); return true;
+    });
+  });
+
+  // 2️⃣  print each non-empty bundle
+  for (const [metal, arr] of Object.entries(lists)) {
+    if (!arr.length) continue;
+
+    const payload = arr.join(",");                         // encode list
+    const imgData = await makeQRDataURL(payload);
+
+    const docDef = {
+      pageSize   : { width:72, height:72 },                // 1" × 1"
+      pageMargins: [0,0,0,0],
+      content : [
+        { image: imgData, width:60, absolutePosition:{ x:6, y:6 } },
+        { text : `${metal.toUpperCase()} (${arr.length})`,
+          fontSize:4, bold:true,
+          absolutePosition:{ x:6, y:65 } }
+      ]
+    };
+    await autoPrint(docDef);
+  }
+}
+
+/* ──────────────────────────────────────────────────────────
+ *  LEGACY FLOW  – single order QR (unchanged behaviour)
+ * ────────────────────────────────────────────────────────── */
+async function handleLegacy(dataObj){
+  if (!dataObj || !Array.isArray(dataObj.items) || !dataObj.items.length) {
+    console.error("'qrPrintAll' payload malformed."); return;
+  }
+  const dispatchDate = dataObj.dispatchDate || "N/A";
+  const orderNum     = dataObj.userTypedOrderNum
+                    || dataObj.items[0].receipt_id
+                    || "UnknownOrder";
+
+  const imgData = await makeQRDataURL(orderNum);
+
+  const docDef = {
+    pageSize   : { width:72, height:72 },                  // 1" × 1"
+    pageMargins: [0,0,0,0],
+    content : [
+      { image: imgData, width:12, absolutePosition:{ x:27.5, y:2 } },
+      { text : dispatchDate,
+        fontSize:2, bold:true,
+        absolutePosition:{ x:27.5, y:13.75 } }
+    ]
+  };
+  await autoPrint(docDef);
+}
+
+/* ──────────────────────────────────────────────────────────
+ *  HELPERS
+ * ────────────────────────────────────────────────────────── */
+async function makeQRDataURL(text){
+  const holder = document.createElement("div");
+  holder.style.display = "none";
+  document.body.appendChild(holder);
+
+  new QRCode(holder, {
+    text, width:1024, height:1024, correctLevel:QRCode.CorrectLevel.H
+  });
+  await new Promise(r => setTimeout(r, 300));
+
+  const img = holder.querySelector("img")
+         || holder.querySelector("canvas")?.toDataURL("image/png");
+  if (img.tagName) return img.src;         // <img>
+  return img;                              // dataURL from canvas
+}
+
+async function autoPrint(docDefinition){
+  return new Promise(res => {
+    pdfMake.createPdf(docDefinition).getBlob(blob => {
+      const url = URL.createObjectURL(blob);
+      const iframe = document.createElement("iframe");
+      iframe.style.visibility = "hidden";
+      iframe.src = url;
+      iframe.onload = () => { iframe.contentWindow.print(); res(); };
+      document.body.appendChild(iframe);
+    });
+  });
+}
+</script>
+</body>
+</html>
