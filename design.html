@@ -1251,7 +1251,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
 
 
-  /* ─────────────────── handleCompleteClick — UPDATED ─────────────────── */
+  /* ─────────────────── handleCompleteClick — URL-SAFE VERSION ─────────────────── */
   async function handleCompleteClick() {
     /* 1️⃣  require ALL four metal filters (unchanged) */
     const REQUIRED = ["gold", "silver", "rose", "14k"];
@@ -1265,19 +1265,17 @@ document.addEventListener("DOMContentLoaded", () => {
     }
 
     /* 2️⃣  collect every visible preview that matches those metals */
-    const listsByMetal = { gold: [], silver: [], rose: [], "14k": [] };   // 🆕
+    const listsByMetal = { gold: [], silver: [], rose: [], "14k": [] };
     const greenIDs = new Set();
 
     document.querySelectorAll("#photoGridContainer .wrap-preview").forEach(w => {
       if (w.style.display === "none")          return;               // hidden
-      const metal = w.dataset.metal;                                  // ← keep once
-      if (!REQUIRED.includes(metal))          return;               // wrong metal
+      const metal = w.dataset.metal;
+      if (!REQUIRED.includes(metal))           return;               // wrong metal
 
       const rid = w.dataset.receipt;
       greenIDs.add(rid);
-      if (listsByMetal[metal] && !listsByMetal[metal].includes(rid)) { // 🆕
-        listsByMetal[metal].push(rid);                                 // 🆕
-      }                                                                // 🆕
+      if (!listsByMetal[metal].includes(rid)) listsByMetal[metal].push(rid);
     });
 
     if (!greenIDs.size) {
@@ -1297,7 +1295,6 @@ document.addEventListener("DOMContentLoaded", () => {
       /* preview tiles */
       removePreviewBoxesForOrder(id);
     });
-
     allOpenReceipts = allOpenReceipts.filter(r => !greenIDs.has(String(r.receipt_id)));
 
     /* 4️⃣  recompute paging (unchanged) */
@@ -1322,11 +1319,19 @@ document.addEventListener("DOMContentLoaded", () => {
     updateCounters();
     applyMetalFilter();
 
-    /* 🆕 7️⃣  hand off sorted lists to print-scan.html */
+    /* 7️⃣  hand off to design-print.html via HIDDEN iframe (no URL change) */
     const hasBundles = Object.values(listsByMetal).some(arr => arr.length);
     if (hasBundles) {
-      localStorage.setItem("metalOrderLists", JSON.stringify(listsByMetal));   // unchanged
-      window.open("design-print.html", "_blank");   // ← open the existing file
+      localStorage.setItem("metalOrderLists", JSON.stringify(listsByMetal));
+
+      const printFrame = document.createElement("iframe");
+      printFrame.style.position   = "fixed";
+      printFrame.style.visibility = "hidden";
+      printFrame.style.right      = "9999px";
+      printFrame.style.width      = "1px";
+      printFrame.style.height     = "1px";
+      printFrame.src = "design-print.html";      // loads silently, prints inside
+      document.body.appendChild(printFrame);
     }
 
     M.toast({ html: "Completed orders removed — pages recalculated" });
