@@ -118,16 +118,17 @@
       user-select: none;
     }
 
-    /* ====== PREVIEW-BOX OUTLINES ==================================== */
-    /* Hover  → 3 px blue ring (always, even on a selected tile) */
-    .preview-box:hover{
-      outline:3px solid dodgerblue;
-      outline-offset:-3px;          /* hugs the inner edge */
+    /* ====== PREVIEW-BOX OUTLINES (final) ============================= */
+
+    /* Persistent selection → 3 px orangered ring (sits just inside) */
+    .preview-box.selected{
+      outline:3px solid orangered;
+      outline-offset:-3px;        /* hugs inner edge */
     }
 
-    /* Clicked / selected  → 3 px orangered ring that sits **inside** the blue one */
-    .preview-box.selected{
-      box-shadow:0 0 0 3px orangered inset;   /* inset keeps it under the blue outline */
+    /* Hover  → 3 px blue ring (always, even on selected tiles) */
+    .preview-box:hover{
+      box-shadow:0 0 0 3px dodgerblue;   /* outer ring rides outside the outline */
     }
 
     .preview-box img {
