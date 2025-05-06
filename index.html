@@ -117,6 +117,20 @@
       position: relative;
       user-select: none;
     }
+
+    /* ====== PREVIEW-BOX OUTLINES ==================================== */
+    /* Hover → 3 px blue ring (but only when the box is NOT already selected) */
+    .preview-box:not(.selected):hover{
+      outline:3px solid dodgerblue;
+      outline-offset:-3px;          /* sit flush with the inner edge */
+    }
+
+    /* Clicked / selected → 3 px orangered ring (persists until another box is chosen) */
+    .preview-box.selected{
+      outline:3px solid orangered;
+      outline-offset:-3px;
+    }
+
     .preview-box img {
       width: 100%;
       height: 100%;
@@ -298,6 +312,10 @@
   height: auto !important;
   width: auto !important;
 }
+
+/* ⤵️ hard-hide the signature box */
+#signatureBox { display:none !important; }
+
   </style>
 </head>
 
@@ -474,6 +492,13 @@
     window.currentCarrier = null;
     window.isEmployeeLoggedIn = false; // We'll use this to guard the real-time listener
 
+    /* === NEW helper: manage selected-outline state ================ */
+    function highlightSelectedPreview(cell){
+      document.querySelectorAll(".preview-box.selected")
+              .forEach(el => el.classList.remove("selected"));
+      if(cell) cell.classList.add("selected");
+    }
+
     (function(){
       var urlParams = new URLSearchParams(window.location.search);
       var accessToken = urlParams.get("access_token");
@@ -529,7 +554,7 @@
       "titleOrderDate","titleOrderDate2","titleShipDate",
       "titleOrderCompletedOn","titleOrderCompletedBy","titleSignedInAs",
       "titleOrderDetails","titleBritesMessages","titlePurchasedItems","titleOrderNumber",
-      "goScreenTwoBtn","signatureBox",
+      "goScreenTwoBtn",
       /* Existing modal references */
       "userLoginModal",
       /* Newly added for positioning the login elements */
@@ -1087,9 +1112,10 @@
             }
             cell.style.cursor = "pointer";
             (function(idx){
-              cell.onclick = function(){
-                showItemDetails(idx);
-              };
+            cell.onclick = function(){
+              highlightSelectedPreview(cell);   // NEW → 3 px orangered outline
+              showItemDetails(idx);             // existing behaviour
+            };
             })(i);
             if(qtyBox){
               var actualQty = (item.quantity != null) ? item.quantity : 0;
@@ -1123,6 +1149,7 @@
         }
       }
       if(items.length > 0){
+        highlightSelectedPreview(document.getElementById("previewCell0")); // NEW
         showItemDetails(0);
       } else {
         document.getElementById("orderDetails").value = " ORDER DETAILS:\n\nNo items found.";
