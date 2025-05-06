@@ -490,6 +490,16 @@
     window.orderShipments = [];
     window.currentTracking = null;
     window.currentCarrier = null;
+
+    /* ─── helper: keep only one .selected box ─── */
+    function highlightSelectedPreview(box){
+      /* remove an earlier selection, if any */
+      document.querySelectorAll(".preview-box.selected")
+              .forEach(el => el.classList.remove("selected"));
+      /* light up the newly clicked box */
+      if(box) box.classList.add("selected");
+    }
+    
     window.isEmployeeLoggedIn = false; // We'll use this to guard the real-time listener
 
     /* === NEW helper: manage selected-outline state ================ */
@@ -1112,10 +1122,10 @@
             }
             cell.style.cursor = "pointer";
             (function(idx){
-            cell.onclick = function(){
-              highlightSelectedPreview(cell);   // NEW → 3 px orangered outline
-              showItemDetails(idx);             // existing behaviour
-            };
+              cell.onclick = function(){
+                highlightSelectedPreview(this); // NEW → 3 px orangered outline
+                showItemDetails(idx);           // existing detail pop-up
+              };
             })(i);
             if(qtyBox){
               var actualQty = (item.quantity != null) ? item.quantity : 0;
