@@ -1325,8 +1325,8 @@ document.addEventListener("DOMContentLoaded", () => {
     /* 🆕 7️⃣  hand off sorted lists to print-scan.html */
     const hasBundles = Object.values(listsByMetal).some(arr => arr.length);
     if (hasBundles) {
-      localStorage.setItem("metalOrderLists", JSON.stringify(listsByMetal)); // 🆕
-      window.open("print-scan.html", "_blank");                              // 🆕
+      localStorage.setItem("metalOrderLists", JSON.stringify(listsByMetal));   // unchanged
+      window.open("design-print.html", "_blank");   // ← open the existing file
     }
 
     M.toast({ html: "Completed orders removed — pages recalculated" });
