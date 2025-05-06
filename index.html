@@ -100,9 +100,6 @@
       grid-template-rows: repeat(2, auto);
       gap: 35px 5px;
     }
-
-    #photoGridBlock { position: absolute; }
-
     .grid-cell {
       display: flex;
       flex-direction: column;
@@ -323,24 +320,37 @@
     <!-- Etsy Order Fields -->
     <input type="text" id="etsyOrderNumber" placeholder="Etsy Order Number" />
 
-    <!---- START photoGridBlock WRAPPER (new) ---->
-    <div id="photoGridBlock" class="configurable">
-    <!-- existing grid ========================================= -->
+    <!-- Photo Grid -->
     <div id="Photo_Grid">
       <div id="photoGridContainer">
-        <!-- previewCell0-7 unchanged -->
-        <div class="grid-cell"><div class="preview-box" id="previewCell0">Empty</div></div>
-        <div class="grid-cell"><div class="preview-box" id="previewCell1">Empty</div></div>
-        <div class="grid-cell"><div class="preview-box" id="previewCell2">Empty</div></div>
-        <div class="grid-cell"><div class="preview-box" id="previewCell3">Empty</div></div>
-        <div class="grid-cell"><div class="preview-box" id="previewCell4">Empty</div></div>
-        <div class="grid-cell"><div class="preview-box" id="previewCell5">Empty</div></div>
-        <div class="grid-cell"><div class="preview-box" id="previewCell6">Empty</div></div>
-        <div class="grid-cell"><div class="preview-box" id="previewCell7">Empty</div></div>
+        <div class="grid-cell">
+          <div class="preview-box" id="previewCell0">Empty</div>
+        </div>
+        <div class="grid-cell">
+          <div class="preview-box" id="previewCell1">Empty</div>
+        </div>
+        <div class="grid-cell">
+          <div class="preview-box" id="previewCell2">Empty</div>
+        </div>
+        <div class="grid-cell">
+          <div class="preview-box" id="previewCell3">Empty</div>
+        </div>
+        <div class="grid-cell">
+          <div class="preview-box" id="previewCell4">Empty</div>
+        </div>
+        <div class="grid-cell">
+          <div class="preview-box" id="previewCell5">Empty</div>
+        </div>
+        <div class="grid-cell">
+          <div class="preview-box" id="previewCell6">Empty</div>
+        </div>
+        <div class="grid-cell">
+          <div class="preview-box" id="previewCell7">Empty</div>
+        </div>
       </div>
     </div>
 
-    <!-- quantity inputs (absolute inside wrapper) -------------- -->
+    <!-- 16 text-box-absolute elements -->
     <input type="text" id="quantityCell0" class="text-box-absolute" readonly />
     <input type="text" id="quantityCell1" class="text-box-absolute" readonly />
     <input type="text" id="quantityCell2" class="text-box-absolute" readonly />
@@ -350,7 +360,6 @@
     <input type="text" id="quantityCell6" class="text-box-absolute" readonly />
     <input type="text" id="quantityCell7" class="text-box-absolute" readonly />
 
-    <!-- metal inputs ------------------------------------------- -->
     <input type="text" id="metalCell0" class="text-box-absolute" readonly />
     <input type="text" id="metalCell1" class="text-box-absolute" readonly />
     <input type="text" id="metalCell2" class="text-box-absolute" readonly />
@@ -510,7 +519,7 @@
      * Incorporate the new login modal elements in the config array so they're adjustable.
      */
     var configComponentIDs = [
-      "connectEtsyBtn","openConfigBtn","orderLinkBtn","trackingLinkBtn","etsyOrderNumber", "photoGridBlock",
+      "connectEtsyBtn","openConfigBtn","orderLinkBtn","trackingLinkBtn","etsyOrderNumber",
       "Photo_Grid","quantityCell0","quantityCell1","quantityCell2","quantityCell3",
       "quantityCell4","quantityCell5","quantityCell6","quantityCell7",
       "metalCell0","metalCell1","metalCell2","metalCell3",
@@ -540,7 +549,6 @@
       trackingLinkBtn:      { left: 134,  top: 248,  width: 15,  height: 16 },
       etsyOrderNumber:      { left: 11,   top: 7,    width: 282, height: 45 },
       Photo_Grid:           { left: 535,  top: 115,  width: 633, height: 274 },
-      photoGridBlock:       { left: 535, top: 115, width: 754, height: 466 },
 
       quantityCell0:        { left: 536,  top: 307,  width: 153, height: 42 },
       quantityCell1:        { left: 737,  top: 305,  width: 153, height: 45 },
