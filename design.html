@@ -346,6 +346,11 @@
                   inset 0 0 0 3px #2196F3;  /* inner blue ring     */
     }
 
+    /* subtle grey placeholder, 40 % opacity */
+    #etsyOrderNumber::placeholder {
+      color: rgba(128,128,128,0.4);   /* grey at 40 % */
+    }
+
     /* =========================================================
      * Hover helper — 3-px BLUE ring for rows + previews
      * ========================================================*/
@@ -383,7 +388,8 @@
 </button>
 
 <!-- Etsy Order Number input -->
-<input id="etsyOrderNumber" type="text" />
+<input id="etsyOrderNumber"
+       placeholder="Search Order Number" />
 
 <!-- NEW container that will hold the stacked boxes -->
 <div id="newOrderContainer"></div>
