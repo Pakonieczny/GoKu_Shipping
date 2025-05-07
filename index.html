@@ -548,7 +548,8 @@
                                  hour:"2-digit", minute:"2-digit" });
 
                 /* staff ⇒ right align, customer ⇒ left align */
-                const align = (d.senderRole === "staff") ? "right" : "left";
+                const emp   = (document.getElementById("employeeName").value || "").trim().toLowerCase();
+                const align = (d.senderName && d.senderName.trim().toLowerCase() === emp) ? "right" : "left";
 
                 html += `<div class="msg" style="text-align:${align};">
                            <span class="meta">${d.senderName} • ${dt}</span><br>
