@@ -274,6 +274,21 @@
       overflow-y: scroll !important;
     }
 
+    /* ====== Brites chat stream =================================== */
+    .msg-box{
+      position:absolute;
+      border:1px solid #000;
+      background:#fafafa;
+      font:14px/1.4 Arial, sans-serif;
+      overflow-y:auto;
+      white-space:pre-wrap;
+      padding:6px;
+    }
+    .msg{margin:4px 0;}
+    .msg .meta{display:block;font-size:11px;opacity:.7;}
+    .msg.sent    {text-align:right;color:#1565c0;}
+    .msg.received{text-align:left; color:#333;}
+
     /* "Signature Box" */
     #signatureBox {
       position: absolute;
@@ -388,7 +403,8 @@
     <input type="text" id="metalCell7" class="text-box-absolute" readonly />
 
     <textarea id="orderDetails" readonly></textarea>
-    <textarea id="customerMessageHistory"></textarea>
+    <div id="customerMessageHistory" class="msg-box"></div>
+    <input id="newBritesMsg" placeholder="Type a Brites message…" style="position:absolute;">
 
     <div id="titleOrderDate">Order Date:</div>
     <div id="titleOrderDate2" style="font-weight:bold;"></div>
@@ -498,6 +514,40 @@
               .forEach(el => el.classList.remove("selected"));
       /* light up the newly clicked box */
       if(box) box.classList.add("selected");
+    }
+
+    /* ─── realtime Brites chat listener ─────────────────────────── */
+    let chatUnsub = null;
+    function startBritesListener(orderId){
+      if(chatUnsub) chatUnsub();          // switch orders → kill previous watch
+      chatUnsub = db
+        .collection("Brites_Orders")
+        .doc(orderId)
+        .collection("messages")
+        .orderBy("timestamp","asc")
+        .onSnapshot(snap=>{
+          const box = document.getElementById("customerMessageHistory");
+          if(!box) return;
+          let html = "";
+          snap.forEach(doc=>{
+            const d  = doc.data();
+            const dt = (d.timestamp?.toDate()||new Date())
+                         .toLocaleString("en-CA",{year:"2-digit",month:"short",day:"2-digit",
+                                                  hour:"2-digit",minute:"2-digit"});
+            const cls = d.senderRole==="staff" ? "received" : "sent";
+            html += `<div class="msg ${cls}">
+                       <span class="meta">${d.senderName} • ${dt}</span>
+                       ${escapeHtml(d.text)}
+                     </div>`;
+          });
+          box.innerHTML = html;
+          box.scrollTop = box.scrollHeight;
+        });
+    }
+    /* basic XSS guard */
+    function escapeHtml(str=""){
+      return str.replace(/[&<>"']/g,m=>({"&":"&amp;","<":"&lt;",">":"&gt;",
+                                         "\"":"&quot;","'":"&#039;"}[m]));
     }
 
     window.isEmployeeLoggedIn = false; // We'll use this to guard the real-time listener
@@ -826,6 +876,7 @@
             const orderData = await pullEtsyOrderDetails(orderNumber);
             if(orderData){
               await updateImageGrid(orderData);
+              startBritesListener(orderNumber);
             }
             try {
               const respPD = await fetch("/.netlify/functions/firebaseOrders?orderId=" + encodeURIComponent(orderNumber));
@@ -993,44 +1044,36 @@
       });
 
     /* =========================================================
-     *  Save & Update – send Brites Messages to Netlify function
+     *  Send Brites Msg – create a chat doc in /messages
      * =======================================================*/
-    var goBtn = document.getElementById('goScreenTwoBtn');
-    if (goBtn) {
-      goBtn.addEventListener('click', async function () {
-        try {
-          const orderNumberVal = document.getElementById('etsyOrderNumber').value.trim();
-          const britesMsgs     = document.getElementById('customerMessageHistory').value.trim();
-          const employeeVal    = document.getElementById('employeeName').value.trim();
+    const sendBtn   = document.getElementById("goScreenTwoBtn");
+    const newMsgInp = document.getElementById("newBritesMsg");
 
-          if (!orderNumberVal) {
-            M.toast({ html: 'No order number entered!' });
+    if(sendBtn){
+      sendBtn.addEventListener("click", async ()=>{
+        try{
+          const orderId = document.getElementById("etsyOrderNumber").value.trim();
+          const msgTxt  = (newMsgInp.value||"").trim();
+          const staff   = (document.getElementById("employeeName").value||"Staff").trim();
+          if(!orderId || !msgTxt){
+            M.toast({html:"Enter order # and message."});
             return;
           }
 
-          /* --- POST to /.netlify/functions/firebaseOrders ------------ */
-          const resp = await fetch('/.netlify/functions/firebaseOrders', {
-            method : 'POST',
-            headers: { 'Content-Type':'application/json' },
-            body   : JSON.stringify({
-              orderNumber          : orderNumberVal,   // doc ID
-              orderNumField        : orderNumberVal,   // "Order Number" field
-              britesMessages       : britesMsgs,
-              employeeName         : employeeVal
-            })
-          });
+          await db.collection("Brites_Orders")
+                  .doc(orderId)
+                  .collection("messages")
+                  .add({
+                    text       : msgTxt,
+                    senderName : staff,
+                    senderRole : "staff",
+                    timestamp  : firebase.firestore.FieldValue.serverTimestamp()
+                  });
 
-          const resJson = await resp.json();
-          if (!resp.ok || !resJson.success) {
-            throw new Error(resJson.error || 'Unknown error from function');
-          }
-
-          M.toast({ html: 'Brites Messages saved to Firestore!' });
-          console.log('Server reply:', resJson.message);
-
-        } catch (err) {
-          console.error('Save error:', err);
-          M.toast({ html: 'Error: ' + err.message });
+          newMsgInp.value = "";
+        }catch(err){
+          console.error("Send error:",err);
+          M.toast({html:"Error: "+err.message});
         }
       });
     }
@@ -1292,9 +1335,8 @@
           var y4 = d4.getFullYear();
           titleDate2.textContent = "Shipped On: " + day4 + " " + mStr4 + " " + y4;
         }
-        var msgBox = document.getElementById("customerMessageHistory");
-        if(data.message_from_buyer){
-          msgBox.value = data.message_from_buyer + "\n";
+        var msgBox = document.getElementById("customerMessageHistory").innerText =
+        data.message_from_buyer ? data.message_from_buyer+"\n" : "";
         } else {
           msgBox.value = "";
         }
