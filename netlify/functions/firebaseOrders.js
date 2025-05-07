@@ -25,7 +25,7 @@ exports.handler = async (event, context) => {
         clientName,
         britesMessages,
         shippingLabelTimestamps,
-        employeeName
+        employeeName,
         newMessage                    // ← 🆕 incoming chat text (optional)
       } = body;
 
@@ -44,7 +44,7 @@ exports.handler = async (event, context) => {
           .doc(orderNumber)
           .collection("messages")
           .add({
-            text       : newMessage,
+            text       : newMessage.trim(),
             senderName : employeeName || "Staff",
             senderRole : "staff",
             timestamp  : admin.firestore.FieldValue.serverTimestamp()
@@ -53,19 +53,27 @@ exports.handler = async (event, context) => {
         return { statusCode: 200, body: JSON.stringify({ success: true, message: "Chat doc added." }) };
       }
 
-     // Build the data object only with fields that are actually present
-     const dataToStore = {};
-     if (orderNumField               !== undefined) dataToStore["Order Number"]                = orderNumField;
-     if (clientName                  !== undefined) dataToStore["Client Name"]                 = clientName;
-     if (britesMessages              !== undefined) dataToStore["Brites Messages"]             = britesMessages;
-     if (shippingLabelTimestamps     !== undefined) dataToStore["Shipping Label Timestamps"]   = shippingLabelTimestamps;
-     if (employeeName                !== undefined) dataToStore["Employee Name"]               = employeeName;
+      // Build the data object only with fields that are actually present
+      const dataToStore = {};
+      if (orderNumField           !== undefined) dataToStore["Order Number"]              = orderNumField;
+      if (clientName              !== undefined) dataToStore["Client Name"]               = clientName;
+      if (britesMessages          !== undefined) dataToStore["Brites Messages"]           = britesMessages;
+      if (shippingLabelTimestamps !== undefined) dataToStore["Shipping Label Timestamps"] = shippingLabelTimestamps;
+      if (employeeName            !== undefined) dataToStore["Employee Name"]             = employeeName;
 
+      /* Bail early if there's truly nothing to write */
+      if (Object.keys(dataToStore).length === 0) {
+        return {
+          statusCode: 200,
+          body: JSON.stringify({ success: true, message: "Nothing to update." })
+        };
+      }
 
-      // Insert or merge into the "Brites_Orders" collection
-      await db.collection("Brites_Orders")
-              .doc(orderNumber)
-              .set(dataToStore, { merge: true });
+      /* Merge the remaining fields into Brites_Orders/{orderNumber} */
+      await db
+        .collection("Brites_Orders")
+        .doc(orderNumber)
+        .set(dataToStore, { merge: true });
 
       return {
         statusCode: 200,
@@ -75,48 +83,47 @@ exports.handler = async (event, context) => {
         })
       };
 
-    } else if (method === "GET") {
-      // For GET requests, we expect ?orderId=someValue
-      const { orderId } = event.queryStringParameters || {};
+      } else if (method === "GET") {
+        // For GET requests, we expect ?orderId=someValue
+        const { orderId } = event.queryStringParameters || {};
 
-      if (!orderId) {
+        if (!orderId) {
+          return {
+            statusCode: 400,
+            body: JSON.stringify({ error: "No orderId query param provided" })
+          };
+        }
+
+        // Retrieve the Firestore doc with the given ID
+        const docRef = db.collection("Brites_Orders").doc(orderId);
+        const docSnap = await docRef.get();
+
+        if (!docSnap.exists) {
+          return {
+            statusCode: 404,
+            body: JSON.stringify({ error: `Order ${orderId} not found.` })
+          };
+        }
+
+        const docData = docSnap.data();
+
         return {
-          statusCode: 400,
-          body: JSON.stringify({ error: "No orderId query param provided" })
+          statusCode: 200,
+          body: JSON.stringify({ success: true, data: docData })
+        };
+
+      } else {
+        // If not POST or GET, we return 405
+        return {
+          statusCode: 405,
+          body: JSON.stringify({ error: "Method Not Allowed" })
         };
       }
 
-      // Retrieve the Firestore doc with the given ID
-      const docRef = db.collection("Brites_Orders").doc(orderId);
-      const docSnap = await docRef.get();
-
-      if (!docSnap.exists) {
+      } catch (error) {
+        console.error("Error in firebaseOrders function:", error);
         return {
-          statusCode: 404,
-          body: JSON.stringify({ error: `Order ${orderId} not found.` })
+          statusCode: 500,
+          body: JSON.stringify({ error: error.message })
         };
       }
-
-      const docData = docSnap.data();
-
-      return {
-        statusCode: 200,
-        body: JSON.stringify({ success: true, data: docData })
-      };
-
-    } else {
-      // If not POST or GET, we return 405
-      return {
-        statusCode: 405,
-        body: JSON.stringify({ error: "Method Not Allowed" })
-      };
-    }
-
-  } catch (error) {
-    console.error("Error in firebaseOrders function:", error);
-    return {
-      statusCode: 500,
-      body: JSON.stringify({ error: error.message })
-    };
-  }
-};
