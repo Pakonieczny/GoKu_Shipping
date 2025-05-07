@@ -540,17 +540,21 @@
                           ${escapeHtml(window.buyerMessageText)}
                         </div>`;
              }
-          snap.forEach(doc=>{
-            const d  = doc.data();
-            const dt = (d.timestamp?.toDate()||new Date())
-                         .toLocaleString("en-CA",{year:"2-digit",month:"short",day:"2-digit",
-                                                  hour:"2-digit",minute:"2-digit"});
-            const cls = d.senderRole === "staff" ? "sent" : "received";
-            html += `<div class="msg ${cls}">
-                       <span class="meta">${d.senderName} • ${dt}</span>
-                       ${escapeHtml(d.text)}
-                     </div>`;
-          });
+              snap.forEach(doc => {
+                const d  = doc.data();
+                const dt = (d.timestamp?.toDate() || new Date())
+                             .toLocaleString("en-CA",
+                               { year:"2-digit", month:"short", day:"2-digit",
+                                 hour:"2-digit", minute:"2-digit" });
+
+                /* staff ⇒ right align, customer ⇒ left align */
+                const align = (d.senderRole === "staff") ? "right" : "left";
+
+                html += `<div class="msg" style="text-align:${align};">
+                           <span class="meta">${d.senderName} • ${dt}</span><br>
+                           ${escapeHtml(d.text)}
+                         </div>`;
+              });
           box.innerHTML = html;
           box.scrollTop = box.scrollHeight;
         });
