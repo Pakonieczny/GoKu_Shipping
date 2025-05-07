@@ -530,6 +530,16 @@
           const box = document.getElementById("customerMessageHistory");
           if(!box) return;
           let html = "";
+             /* 🆕 first bubble = buyer’s original note, if any */
+             if (window.buyerMessageText && window.buyerMessageText.length) {
+               const ts = new Date().toLocaleString("en-CA",
+                           {year:"2-digit",month:"short",day:"2-digit",
+                            hour:"2-digit",minute:"2-digit"});
+               html += `<div class="msg received">
+                          <span class="meta">Customer • ${ts}</span>
+                          ${escapeHtml(window.buyerMessageText)}
+                        </div>`;
+             }
           snap.forEach(doc=>{
             const d  = doc.data();
             const dt = (d.timestamp?.toDate()||new Date())
@@ -1299,6 +1309,9 @@
         console.log("Etsy Order Data:", data);
         window.receiptIsGift = (typeof data.is_gift !== "undefined") ? data.is_gift : null;
         window.receiptGiftMessage = data.gift_message || "";
+
+        /* 🆕 store buyer note so the chat listener can render it */
+        window.buyerMessageText  = (data.message_from_buyer || "").trim();
         window.orderShipments = data.shipments || [];
         var titleDate2 = document.getElementById("titleOrderDate2");
         titleDate2.textContent = "";
