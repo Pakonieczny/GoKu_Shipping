@@ -552,8 +552,8 @@
                 const align = (d.senderName && d.senderName.trim().toLowerCase() === emp) ? "right" : "left";
 
                 html += `<div class="msg" style="text-align:${align};">
-                           <span class="meta">${d.senderName} • ${dt}</span><br>
-                           ${escapeHtml(d.text)}
+                           <span class="meta" style="display:block;">${d.senderName} • ${dt}</span>
+                           <span style="display:block;">${escapeHtml(d.text)}</span>
                          </div>`;
               });
           box.innerHTML = html;
