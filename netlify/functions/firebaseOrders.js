@@ -26,6 +26,7 @@ exports.handler = async (event, context) => {
         britesMessages,
         shippingLabelTimestamps,
         employeeName
+        newMessage                    // ← 🆕 incoming chat text (optional)
       } = body;
 
       // We must have an orderNumber to know which Firestore doc to update
@@ -36,14 +37,30 @@ exports.handler = async (event, context) => {
         };
       }
 
-      // Build the data object for Firestore
-      const dataToStore = {
-        "Order Number": orderNumField || "",
-        "Client Name": clientName || "",
-        "Brites Messages": britesMessages || "",
-        "Shipping Label Timestamps": shippingLabelTimestamps || "",
-        "Employee Name": employeeName || ""
-      };
+      /* ───────── handle chat message write ───────── */
+      if (typeof newMessage === "string" && newMessage.trim() !== "") {
+        await db
+          .collection("Brites_Orders")
+          .doc(orderNumber)
+          .collection("messages")
+          .add({
+            text       : newMessage,
+            senderName : employeeName || "Staff",
+            senderRole : "staff",
+            timestamp  : admin.firestore.FieldValue.serverTimestamp()
+          });
+ 
+        return { statusCode: 200, body: JSON.stringify({ success: true, message: "Chat doc added." }) };
+      }
+
+     // Build the data object only with fields that are actually present
+     const dataToStore = {};
+     if (orderNumField               !== undefined) dataToStore["Order Number"]                = orderNumField;
+     if (clientName                  !== undefined) dataToStore["Client Name"]                 = clientName;
+     if (britesMessages              !== undefined) dataToStore["Brites Messages"]             = britesMessages;
+     if (shippingLabelTimestamps     !== undefined) dataToStore["Shipping Label Timestamps"]   = shippingLabelTimestamps;
+     if (employeeName                !== undefined) dataToStore["Employee Name"]               = employeeName;
+
 
       // Insert or merge into the "Brites_Orders" collection
       await db.collection("Brites_Orders")
