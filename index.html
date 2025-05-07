@@ -526,6 +526,7 @@
         .collection("messages")
         .orderBy("timestamp","asc")
         .onSnapshot(snap=>{
+          console.log("messages snapshot size:", snap.size);   // ◄ debug
           const box = document.getElementById("customerMessageHistory");
           if(!box) return;
           let html = "";
