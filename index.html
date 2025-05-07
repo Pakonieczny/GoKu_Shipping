@@ -799,10 +799,12 @@
               M.toast({html: "Please enter a valid 3-digit Employee Number!"});
               return;
             }
-            var responseEN = await fetch(
-              "/.netlify/functions/firebaseOrders?orderId=" +
-              encodeURIComponent("Employee Numbers")
-            if(!responseEN.ok){
+              var responseEN = await fetch(
+                "/.netlify/functions/firebaseOrders?orderId=" +
+                encodeURIComponent("Employee Numbers")
+              );                         // ← closes fetch( … )
+
+              if (!responseEN.ok) {
               M.toast({ html: "Error fetching Employee Numbers doc!" });
               return;
             }
