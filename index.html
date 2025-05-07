@@ -326,8 +326,8 @@
       white-space:pre-wrap;
       padding:1px;
     }
-    .msg{margin:1px 0 !important; }
-    .msg .meta{display:block;font-size:11px;opacity:.7;margin-bottom:2px !important; }
+    
+    .msg .meta{display:block;font-size:11px;opacity:.7;}
     .msg.sent    {text-align:right;color:#1565c0;}
     .msg.received{text-align:left; color:#333;}
 
@@ -535,10 +535,12 @@
                const ts = new Date().toLocaleString("en-CA",
                            {year:"2-digit",month:"short",day:"2-digit",
                             hour:"2-digit",minute:"2-digit"});
-               html += `<div class="msg received">
-                          <span class="meta">Customer • ${ts}</span>
-                          ${escapeHtml(window.buyerMessageText)}
-                        </div>`;
+                html += `<div class="msg received" style="margin:5px 0;">
+                           <span class="meta" style="display:block; margin-bottom:3px;">
+                             Customer • ${ts}
+                           </span>
+                           <span style="display:block;">${escapeHtml(window.buyerMessageText)}</span>
+                         </div>`;
              }
               snap.forEach(doc => {
                 const d  = doc.data();
@@ -551,14 +553,14 @@
                 const emp   = (document.getElementById("employeeName").value || "").trim().toLowerCase();
                 const align = (d.senderName && d.senderName.trim().toLowerCase() === emp) ? "right" : "left";
 
-                  html += `<div class="msg"
-                               style="text-align:${align}; margin:5px 0 !important;">
-                             <span class="meta"
-                                   style="display:block; margin-bottom:3px !important;">
-                               ${d.senderName} • ${dt}
-                             </span>
-                             <span style="display:block;">${escapeHtml(d.text)}</span>
-                           </div>`;
+                html += `<div class="msg"
+                             style="text-align:${align}; margin:5px 0;">
+                           <span class="meta"
+                                 style="display:block; margin-bottom:3px;">
+                             ${d.senderName} • ${dt}
+                           </span>
+                           <span style="display:block;">${escapeHtml(d.text)}</span>
+                         </div>`;
               });
           box.innerHTML = html;
           box.scrollTop = box.scrollHeight;
