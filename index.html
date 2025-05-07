@@ -552,13 +552,6 @@
 
     window.isEmployeeLoggedIn = false; // We'll use this to guard the real-time listener
 
-    /* === NEW helper: manage selected-outline state ================ */
-    function highlightSelectedPreview(cell){
-      document.querySelectorAll(".preview-box.selected")
-              .forEach(el => el.classList.remove("selected"));
-      if(cell) cell.classList.add("selected");
-    }
-
     (function(){
       var urlParams = new URLSearchParams(window.location.search);
       var accessToken = urlParams.get("access_token");
@@ -902,10 +895,10 @@
                 return;
               }
               if(typeof docDataPD["Brites Messages"] === "string"){
-                document.getElementById("customerMessageHistory").value = docDataPD["Brites Messages"];
+                document.getElementById("customerMessageHistory").innerText = docDataPD["Brites Messages"];
                 M.toast({ html: "Brites Messages loaded!" });
               } else {
-                document.getElementById("customerMessageHistory").value = "";
+                document.getElementById("customerMessageHistory").innerText = "";
               }
               if(docDataPD["Shipping Label Timestamps"]){
                 const dt = new Date(docDataPD["Shipping Label Timestamps"]);
@@ -1335,11 +1328,7 @@
           var y4 = d4.getFullYear();
           titleDate2.textContent = "Shipped On: " + day4 + " " + mStr4 + " " + y4;
         }
-        var msgBox = document.getElementById("customerMessageHistory").innerText =
-        data.message_from_buyer ? data.message_from_buyer+"\n" : "";
-        } else {
-          msgBox.value = "";
-        }
+
         if(data.transactions && data.transactions.length > 0){
           var firstTrans = data.transactions[0];
           var monthNamesF = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
