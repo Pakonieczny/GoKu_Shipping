@@ -551,10 +551,14 @@
                 const emp   = (document.getElementById("employeeName").value || "").trim().toLowerCase();
                 const align = (d.senderName && d.senderName.trim().toLowerCase() === emp) ? "right" : "left";
 
-                html += `<div class="msg" style="text-align:${align};">
-                           <span class="meta" style="display:block;">${d.senderName} • ${dt}</span>
-                           <span style="display:block;">${escapeHtml(d.text)}</span>
-                         </div>`;
+                  html += `<div class="msg"
+                               style="text-align:${align}; margin:5px 0 !important;">
+                             <span class="meta"
+                                   style="display:block; margin-bottom:3px !important;">
+                               ${d.senderName} • ${dt}
+                             </span>
+                             <span style="display:block;">${escapeHtml(d.text)}</span>
+                           </div>`;
               });
           box.innerHTML = html;
           box.scrollTop = box.scrollHeight;
