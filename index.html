@@ -1038,36 +1038,38 @@
       });
 
     /* =========================================================
-     *  Send Brites Msg – create a chat doc in /messages
+     *  Send Brites Msg – POST via Netlify function
      * =======================================================*/
     const sendBtn   = document.getElementById("goScreenTwoBtn");
     const newMsgInp = document.getElementById("newBritesMsg");
 
-    if(sendBtn){
-      sendBtn.addEventListener("click", async ()=>{
-        try{
-          const orderId = document.getElementById("etsyOrderNumber").value.trim();
-          const msgTxt  = (newMsgInp.value||"").trim();
-          const staff   = (document.getElementById("employeeName").value||"Staff").trim();
-          if(!orderId || !msgTxt){
-            M.toast({html:"Enter order # and message."});
-            return;
-          }
+    if (sendBtn) {
+      sendBtn.addEventListener("click", async () => {
+        const orderId = document.getElementById("etsyOrderNumber").value.trim();
+        const msgTxt  = (newMsgInp.value || "").trim();
+        const staff   = (document.getElementById("employeeName").value || "Staff").trim();
 
-          await db.collection("Brites_Orders")
-                  .doc(orderId)
-                  .collection("messages")
-                  .add({
-                    text       : msgTxt,
-                    senderName : staff,
-                    senderRole : "staff",
-                    timestamp  : firebase.firestore.FieldValue.serverTimestamp()
-                  });
+        if (!orderId || !msgTxt) {
+          M.toast({ html: "Enter order # and message." });
+          return;
+        }
 
-          newMsgInp.value = "";
-        }catch(err){
-          console.error("Send error:",err);
-          M.toast({html:"Error: "+err.message});
+        try {
+          const resp = await fetch("/.netlify/functions/firebaseOrders", {
+            method : "POST",
+            headers: { "Content-Type": "application/json" },
+            body   : JSON.stringify({
+              orderNumber : orderId,
+              newMessage  : msgTxt,
+              employeeName: staff
+            })
+          });
+          const json = await resp.json();
+          if (!resp.ok || !json.success) throw new Error(json.error || "Server error");
+          newMsgInp.value = "";                // clear box on success
+        } catch (err) {
+          console.error("Send error:", err);
+          M.toast({ html: "Error: " + err.message });
         }
       });
     }
