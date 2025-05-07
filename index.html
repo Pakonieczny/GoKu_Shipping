@@ -516,6 +516,15 @@
       if(box) box.classList.add("selected");
     }
 
+    /* tightens vertical spacing without touching alignment */
+    function applyChatSpacing() {
+      document.querySelectorAll("#customerMessageHistory .msg").forEach(el => {
+        el.style.margin = "5px 0";          // gap between bubbles
+        const meta = el.querySelector(".meta");
+        if (meta) meta.style.marginBottom = "3px";   // gap timestamp → text
+      });
+    }
+
     /* ─── realtime Brites chat listener ─────────────────────────── */
     let chatUnsub = null;
     function startBritesListener(orderId){
@@ -558,6 +567,7 @@
               });
           box.innerHTML = html;
           box.scrollTop = box.scrollHeight;
+          applyChatSpacing();          // enforce 5 px / 3 px gaps inline
         });
     }
     /* basic XSS guard */
