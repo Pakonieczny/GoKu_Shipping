@@ -516,12 +516,12 @@
       if(box) box.classList.add("selected");
     }
 
-    /* tightens vertical spacing without touching alignment */
+    /* helper: enforce chat spacing — adds !important so nothing wins the cascade */
     function applyChatSpacing() {
       document.querySelectorAll("#customerMessageHistory .msg").forEach(el => {
-        el.style.margin = "5px 0";          // gap between bubbles
+        el.style.setProperty("margin","5px 0","important");          // 5 px gap Sender↔Receiver
         const meta = el.querySelector(".meta");
-        if (meta) meta.style.marginBottom = "3px";   // gap timestamp → text
+        if (meta) meta.style.setProperty("margin-bottom","3px","important"); // 3 px gap timestamp→text
       });
     }
 
@@ -1437,11 +1437,11 @@
     });
   </script>
 
-  <!-- FINAL chat-spacing override: placed last so nothing can beat it -->
-  <style id="chatSpacingOverride">
-    .msg            { margin:2px 0 !important; }   /* 5 px gap between bubbles */
-    .msg .meta      {display:block;font-size:11px;opacity:.7;margin-bottom:2px !important; }
-  </style>
+<!-- FINAL chat-spacing override: placed last so nothing can beat it -->
+<style id="chatSpacingOverride">
+  .msg       { margin:3px 0 !important; }   /* 3 px between bubbles */
+  .msg .meta { display:block;font-size:11px;opacity:.7;margin-bottom:2px !important; } /* 2 px timestamp gap */
+</style>
 
 </body>
 </html>
