@@ -516,13 +516,15 @@
       if(box) box.classList.add("selected");
     }
 
-    /* helper: enforce chat spacing — adds !important so nothing wins the cascade */
+    /* helper: enforce vertical gaps WITHOUT touching left/right margins */
     function applyChatSpacing() {
       document.querySelectorAll("#customerMessageHistory .msg").forEach(el => {
-        el.style.cssText += "margin:5px 0!important;padding-top:0!important;padding-bottom:0!important;";
+        /* top & bottom only */
+        el.style.setProperty("margin-top",    "5px", "important");
+        el.style.setProperty("margin-bottom", "5px", "important");
+
         const meta = el.querySelector(".meta");
-        if (meta) meta.style.cssText += "margin-bottom:3px!important;";
-        console.debug("👟 spacing pass at", Date.now());
+        if (meta) meta.style.setProperty("margin-bottom", "3px", "important");
       });
     }
 
