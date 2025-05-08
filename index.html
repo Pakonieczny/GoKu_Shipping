@@ -1512,9 +1512,12 @@
   .msg{
     display:flex !important;
     flex-direction:column !important;
-    row-gap:1px !important;          /* tighter gap */
-    margin:5px 0 !important;         /* keep 5 px bubble gap */
-    padding:4px 8px !important;      /* 25 % less vertical padding */
+    row-gap:0 !important;            /* remove internal gap */
+    margin:5px 0 !important;         /* keep 5-px bubble gap between bubbles */
+    padding-top:0px;
+    padding-bottom:5px;
+    padding-left:7px;
+    padding-right:7px;
     max-width:70%;
     border-radius:12px !important;
     color:#fff !important;
@@ -1551,6 +1554,7 @@
     font-size:0.65em !important;
     color:rgba(255,255,255,0.8) !important; /* slightly darker than text */
   }
+  
 </style>
 
 </body>
