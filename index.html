@@ -1449,10 +1449,17 @@
     });
   </script>
 
-<!-- FINAL chat-spacing override: placed last so nothing can beat it -->
+<!-- FINAL chat-spacing override: flex-column + row-gap, placed last -->
 <style id="chatSpacingOverride">
-  .msg       { margin:3px 0 !important; }   /* 3 px between bubbles */
-  .msg .meta { display:block;font-size:11px;opacity:.7;margin-bottom:2px !important; } /* 2 px timestamp gap */
+  /* 5 px between bubbles */
+  .msg{
+    display:flex !important;          /* switch to flex column */
+    flex-direction:column !important;
+    row-gap:3px !important;           /* 3 px between timestamp → text */
+    margin:5px 0 !important;          /* 5 px Sender ↔ Receiver gap   */
+    padding:0 !important;             /* nuke any old padding          */
+  }
+  .msg .meta{margin:0 !important;}    /* meta no extra margin          */
 </style>
 
 </body>
