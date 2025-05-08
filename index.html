@@ -412,8 +412,6 @@
     <div id="titleOrderDate">Order Date:</div>
     <div id="titleOrderDate2" style="font-weight:bold;"></div>
     <div id="titleShipDate">Ship By:</div>
-    <div id="titleOrderCompletedOn">Last Updated On:</div>
-    <div id="titleOrderCompletedBy">Updated By:</div>
     <div id="titleSignedInAs">Signed In As:</div>
 
     <div id="titleOrderDetails">Order Details:</div>
@@ -423,9 +421,7 @@
 
     <input type="text" id="dateOrdered" readonly />
     <input type="text" id="shipDate" readonly />
-    <input type="text" id="labelCreationDate" placeholder="Label Creation Date" />
     <input type="text" id="employeeName" placeholder="Employee Name" />
-    <input type="text" id="completedByEmployee" placeholder="Completed By Employee" />
 
     <div id="signatureBox">Sig Box</div>
 
@@ -691,28 +687,28 @@
     /*
      * Incorporate the new login modal elements in the config array so they're adjustable.
      */
-    var configComponentIDs = [
-      "connectEtsyBtn","openConfigBtn","orderLinkBtn","trackingLinkBtn","etsyOrderNumber",
-      "Photo_Grid","quantityCell0","quantityCell1","quantityCell2","quantityCell3",
-      "quantityCell4","quantityCell5","quantityCell6","quantityCell7",
-      "metalCell0","metalCell1","metalCell2","metalCell3",
-      "metalCell4","metalCell5","metalCell6","metalCell7",
-      "orderDetails","customerMessageHistory","britesMsgInput","dateOrdered","shipDate",
-      "labelCreationDate","employeeName","completedByEmployee",
-      "titleOrderDate","titleOrderDate2","titleShipDate",
-      "titleOrderCompletedOn","titleOrderCompletedBy","titleSignedInAs",
-      "titleOrderDetails","titleBritesMessages","titlePurchasedItems","titleOrderNumber",
-      "goScreenTwoBtn",
-      /* Existing modal references */
-      "userLoginModal",
-      /* Newly added for positioning the login elements */
-      "userLoginModalContainer",
-      "loginModalTitle",
-      "loginModalPrompt",
-      "employeeNumberInput",
-      "loginModalFooter",
-      "employeeLoginBtn"
-    ];
+      var configComponentIDs = [
+        "connectEtsyBtn","openConfigBtn","orderLinkBtn","trackingLinkBtn","etsyOrderNumber",
+        "Photo_Grid","quantityCell0","quantityCell1","quantityCell2","quantityCell3",
+        "quantityCell4","quantityCell5","quantityCell6","quantityCell7",
+        "metalCell0","metalCell1","metalCell2","metalCell3",
+        "metalCell4","metalCell5","metalCell6","metalCell7",
+        "orderDetails","customerMessageHistory","britesMsgInput","dateOrdered","shipDate",
+        "employeeName",
+        "titleOrderDate","titleOrderDate2","titleShipDate",
+        "titleSignedInAs",
+        "titleOrderDetails","titleBritesMessages","titlePurchasedItems","titleOrderNumber",
+        "goScreenTwoBtn",
+        /* Existing modal references */
+        "userLoginModal",
+        /* Newly added for positioning the login elements */
+        "userLoginModalContainer",
+        "loginModalTitle",
+        "loginModalPrompt",
+        "employeeNumberInput",
+        "loginModalFooter",
+        "employeeLoginBtn"
+      ];
 
     // Updated default positions block
     const defaultPositions = {
@@ -747,15 +743,11 @@
 
       dateOrdered:          { left: 10,   top: 100,  width: 145, height: 30 },
       shipDate:             { left: 164,  top: 100,  width: 145, height: 30 },
-      labelCreationDate:    { left: 380,  top: 23,   width: 145, height: 30 },
       employeeName:         { left: 1015, top: 23,   width: 100, height: 30 },
-      completedByEmployee:  { left: 537,  top: 23,   width: 100, height: 30 },
 
       titleOrderDate:       { left: 10,   top: 82,   width: 99,  height: 25 },
       titleOrderDate2:      { left: 127,  top: 209,  width: 145, height: 15 },
       titleShipDate:        { left: 167,  top: 82,   width: 99,  height: 15 },
-      titleOrderCompletedOn:{ left: 381,  top: 7,    width: 107, height: 15 },
-      titleOrderCompletedBy:{ left: 538,  top: 7,    width: 105, height: 15 },
       titleSignedInAs:      { left: 1016, top: 7,    width: 75,  height: 15 },
       titleOrderDetails:    { left: 11,   top: 144,  width: 99,  height: 15 },
       titleBritesMessages:  { left: 11,   top: 518,  width: 99,  height: 15 },
@@ -1010,7 +1002,8 @@
                   const hh = ("0" + dt.getHours()).slice(-2);
                   const mm = ("0" + dt.getMinutes()).slice(-2);
                   const finalStr = dd + " " + mStr + " " + yyyy + ", " + hh + ":" + mm;
-                  document.getElementById("labelCreationDate").value = finalStr;
+                  const lblDateEl = document.getElementById("labelCreationDate");
+                  if (lblDateEl) lblDateEl.value = finalStr;
                 } else {
                   document.getElementById("labelCreationDate").value = "";
                 }
@@ -1022,19 +1015,20 @@
               if(typeof dbEmpNameRaw === "string"){
                 dbEmpName = dbEmpNameRaw.trim();
               }
-              document.getElementById("completedByEmployee").value = dbEmpName;
+              const compEmpEl = document.getElementById("completedByEmployee");
+              if (compEmpEl) compEmpEl.value = dbEmpName;
               if(dbEmpName){
                 const imageFile = encodeURIComponent(dbEmpName + ".jpg");
                 const imagePath = `/assets/${imageFile}`;
-                document.getElementById("signatureBox").innerHTML = `
-                  <img
-                    src="${imagePath}"
-                    style="width:100%; height:100%; object-fit:cover;"
-                    alt="Signature for ${dbEmpName}"
-                  >
-                `;
+                const sigBox = document.getElementById("signatureBox");
+                if (sigBox){
+                  sigBox.innerHTML = `<img src="${imagePath}"
+                                       style="width:100%; height:100%; object-fit:cover;"
+                                       alt="Signature for ${dbEmpName}">`;
+                }
               } else {
-                document.getElementById("signatureBox").innerHTML = "Sig Box";
+                const sigBox = document.getElementById("signatureBox");
+                if (sigBox) sigBox.innerHTML = "Sig Box";
               }
             } catch(errPD){
               // Real error from network or code, not doc-not-found
