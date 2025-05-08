@@ -1477,8 +1477,10 @@
 
   /* RIGHT-justified (staff) bubble */
   .msg.sent{
-    background:#2f2f2f !important;  /* dark grey */
-    margin-left:auto !important;
+    background:#2f2f2f !important;      /* dark grey */
+    margin-left:auto  !important;        /* shove to the right edge */
+    margin-right:0    !important;
+    text-align:right  !important;
   }
   .msg.sent .meta{
     font-size:0.65em !important;
@@ -1487,8 +1489,10 @@
 
   /* LEFT-justified (customer) bubble */
   .msg.received{
-    background:#4aa3ff !important;  /* light blue */
-    margin-right:auto !important;
+    background:#4aa3ff !important;       /* light blue */
+    margin-right:auto !important;        /* shove to the left edge */
+    margin-left:0     !important;
+    text-align:left   !important;
   }
   .msg.received .meta{
     font-size:0.65em !important;
