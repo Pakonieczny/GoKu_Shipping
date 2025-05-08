@@ -579,10 +579,10 @@
             const dt = formatChatTimestamp(d.timestamp?.toDate() || new Date());
 
             /* staff ⇒ right align, customer ⇒ left align */
-            const emp   = (document.getElementById("employeeName").value || "").trim().toLowerCase();
-            const align = (d.senderName && d.senderName.trim().toLowerCase() === emp) ? "right" : "left";
+            const emp        = (document.getElementById("employeeName").value || "").trim().toLowerCase();
+            const bubbleCls  = (d.senderName && d.senderName.trim().toLowerCase() === emp) ? "sent" : "received";
 
-            html += `<div class="msg" style="text-align:${align};">
+            html += `<div class="msg ${bubbleCls}">
                        <span class="meta">${d.senderName} • ${dt}</span>
                        <span>${escapeHtml(d.text)}</span>
                      </div>`;
@@ -1460,19 +1460,39 @@
     });
   </script>
 
-<!-- FINAL chat-spacing + meta-size override -->
+<!-- FINAL chat-bubble override: placed last so nothing beats it -->
 <style id="chatSpacingOverride">
+  /* base bubble */
   .msg{
     display:flex !important;
     flex-direction:column !important;
-    row-gap:3px !important;           /* timestamp → text */
-    margin:5px 0 !important;          /* bubble → bubble */
-    padding:0 !important;
+    row-gap:3px !important;          /* 3 px ts → text  */
+    margin:5px 0 !important;         /* 5 px bubble gap */
+    padding:8px 10px !important;
+    max-width:70%;
+    border-radius:12px !important;
+    color:#fff !important;
+    font-size:0.85em;
   }
-  .msg .meta{
-    margin:0 !important;
-    font-size:0.65em !important;      /* smaller date stamp */
-    opacity:.7;
+
+  /* RIGHT-justified (staff) bubble */
+  .msg.sent{
+    background:#2f2f2f !important;  /* dark grey */
+    margin-left:auto !important;
+  }
+  .msg.sent .meta{
+    font-size:0.65em !important;
+    color:rgba(255,255,255,0.6) !important; /* slightly darker than text */
+  }
+
+  /* LEFT-justified (customer) bubble */
+  .msg.received{
+    background:#4aa3ff !important;  /* light blue */
+    margin-right:auto !important;
+  }
+  .msg.received .meta{
+    font-size:0.65em !important;
+    color:rgba(255,255,255,0.8) !important; /* slightly darker than text */
   }
 </style>
 
