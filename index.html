@@ -1468,13 +1468,20 @@
   .msg{
     display:flex !important;
     flex-direction:column !important;
-    row-gap:3px !important;          /* 3 px ts → text  */
-    margin:5px 0 !important;         /* 5 px bubble gap */
-    padding:8px 10px !important;
+    row-gap:2px !important;          /* 3 px ts → text  */
+    margin:6px 0 !important;         /* 5 px bubble gap */
+    padding:6px 8px !important;
     max-width:70%;
     border-radius:12px !important;
     color:#fff !important;
     font-size:0.85em;
+  }
+
+  /* force long text to wrap within the bubble */
+  .msg > span:not(.meta){
+    white-space:pre-wrap !important;  /* respect line-breaks */
+    word-break:break-word !important; /* wrap long words/links */
+    overflow-wrap:anywhere !important;
   }
 
   /* RIGHT-justified (staff) bubble */
