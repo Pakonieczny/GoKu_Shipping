@@ -404,7 +404,10 @@
 
     <textarea id="orderDetails" readonly></textarea>
     <div id="customerMessageHistory" class="msg-box"></div>
-    <input id="newBritesMsg" placeholder="Type a Brites message…" style="position:absolute;">
+    <input id="britesMsgInput"
+       type="text"
+       placeholder="Message"
+       style="font-size:0.8em; width:100%;"/>
 
     <div id="titleOrderDate">Order Date:</div>
     <div id="titleOrderDate2" style="font-weight:bold;"></div>
@@ -448,9 +451,13 @@
       </div>
     </div>
 
-  <button id="goScreenTwoBtn" class="btn" style="position:absolute; left:180px; top:110px; font-size:0.8em;">
-    Send
-  </button>
+    <button id="goScreenTwoBtn" class="btn"
+            style="position:absolute; left:180px; top:110px;
+                   width:65px; height:24px; line-height:24px;
+                   font-size:0.8em; text-align:center;">
+      Send
+    </button>
+  
   </div>
 
   <div id="secondaryContainer"></div>
@@ -552,8 +559,24 @@
         .replace(/\s([ap])\.?m/i,(_,p)=>` ${p.toLowerCase()}m`); // → “pm” / “am”
     }
 
+    /* ===== utility: play a 150 ms sine-wave beep ========================= */
+    function playBeep(){
+      try{
+        const ctx = new (window.AudioContext || window.webkitAudioContext)();
+        const osc = ctx.createOscillator();
+        osc.type = "sine";
+        osc.frequency.value = 880;            // A5 tone
+        osc.connect(ctx.destination);
+        osc.start();
+        osc.stop(ctx.currentTime + 0.15);     // 150 ms beep
+      }catch(err){
+        console.warn("AudioContext error:", err);
+      }
+    }
+
     /* ─── realtime Brites chat listener ─────────────────────────── */
     let chatUnsub = null;
+    let firstBatch = true;    // skip beep on initial load
     function startBritesListener(orderId){
       if(chatUnsub) chatUnsub();          // switch orders → kill previous watch
       chatUnsub = db
@@ -589,6 +612,12 @@
                        <span>${escapeHtml(d.text)}</span>
                      </div>`;
           });
+
+                /* 🔔 beep for any new message after initial snapshot */
+                if (!firstBatch && snap.docChanges().some(c => c.type === "added")){
+                  playBeep();
+                }
+                firstBatch = false;
 
           box.innerHTML = html;
           box.scrollTop = box.scrollHeight;
