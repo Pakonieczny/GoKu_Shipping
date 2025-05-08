@@ -1512,9 +1512,9 @@
   .msg{
     display:flex !important;
     flex-direction:column !important;
-    row-gap:2px !important;          /* 3 px ts → text  */
-    margin:6px 0 !important;         /* 5 px bubble gap */
-    padding:6px 8px !important;
+    row-gap:1px !important;          /* tighter gap */
+    margin:5px 0 !important;         /* keep 5 px bubble gap */
+    padding:4px 8px !important;      /* 25 % less vertical padding */
     max-width:70%;
     border-radius:12px !important;
     color:#fff !important;
@@ -1530,7 +1530,7 @@
 
   /* RIGHT-justified (staff) bubble */
   .msg.sent{
-    background:#2f2f2f !important;      /* dark grey */
+    background:#797d7f !important;      /* dark grey */
     margin-left:auto  !important;        /* shove to the right edge */
     margin-right:0    !important;
     text-align:right  !important;
@@ -1542,7 +1542,7 @@
 
   /* LEFT-justified (customer) bubble */
   .msg.received{
-    background:#4aa3ff !important;       /* light blue */
+    background:#5dade2 !important;       /* light blue */
     margin-right:auto !important;        /* shove to the left edge */
     margin-left:0     !important;
     text-align:left   !important;
