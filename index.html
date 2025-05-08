@@ -327,7 +327,7 @@
       padding:1px;
     }
     .msg{margin:1px 0 !important; }
-    .msg .meta{display:block;font-size:11px;opacity:.7;margin-bottom:2px !important; }
+    .msg .meta{display:block;font-size:11px;opacity:1;margin-bottom:2px !important; }
     .msg.sent    {text-align:right;color:#1565c0;}
     .msg.received{text-align:left; color:#333;}
 
@@ -1512,49 +1512,51 @@
   .msg{
     display:flex !important;
     flex-direction:column !important;
-    row-gap:0 !important;            /* remove internal gap */
-    margin:5px 0 !important;         /* keep 5-px bubble gap between bubbles */
-    padding-top:0px;
-    padding-bottom:5px;
-    padding-left:7px;
-    padding-right:7px;
-    max-width:70%;
-    border-radius:12px !important;
+    row-gap:0 !important;               /* no extra flex gap             */
+    padding:2px 12px 4px !important;    /* top 2 • lr 12 • bottom 4       */
+    margin:5px 0   !important;          /* bubble-to-bubble spacing       */
+    max-width:75%;
+    border-radius:7px !important;
     color:#fff !important;
     font-size:0.85em;
   }
 
-  /* force long text to wrap within the bubble */
+  /* tighten date-stamp ↔ text, keep within bubble */
+  .msg .meta{
+    margin:0 0 1px 0 !important;        /* bottom 1 px only               */
+    line-height:1   !important;         /* compact line box               */
+  }
+
+  /* wrap long text nicely */
   .msg > span:not(.meta){
-    white-space:pre-wrap !important;  /* respect line-breaks */
-    word-break:break-word !important; /* wrap long words/links */
+    white-space:pre-wrap !important;
+    word-break:break-word !important;
     overflow-wrap:anywhere !important;
   }
 
   /* RIGHT-justified (staff) bubble */
   .msg.sent{
-    background:#797d7f !important;      /* dark grey */
-    margin-left:auto  !important;        /* shove to the right edge */
-    margin-right:0    !important;
+    background:#797d7f !important;
+    margin-left:auto  !important;       /* push to right edge             */
     text-align:right  !important;
+    align-items:flex-end !important;    /* children follow right edge     */
   }
   .msg.sent .meta{
     font-size:0.65em !important;
-    color:rgba(255,255,255,0.6) !important; /* slightly darker than text */
+    color:rgba(255,255,255,0.6) !important;
   }
 
   /* LEFT-justified (customer) bubble */
   .msg.received{
-    background:#5dade2 !important;       /* light blue */
-    margin-right:auto !important;        /* shove to the left edge */
-    margin-left:0     !important;
+    background:#5dade2 !important;
+    margin-right:auto !important;       /* push to left edge              */
     text-align:left   !important;
+    align-items:flex-start !important;  /* children follow left edge      */
   }
   .msg.received .meta{
     font-size:0.65em !important;
-    color:rgba(255,255,255,0.8) !important; /* slightly darker than text */
+    color:rgba(255,255,255,0.8) !important;
   }
-  
 </style>
 
 </body>
