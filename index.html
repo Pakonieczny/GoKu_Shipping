@@ -944,14 +944,19 @@
         });
       }
 
+      /* Open Config → show modal + disable live UI clicks           */
       document.getElementById("openConfigBtn").addEventListener("click", function(){
         populateConfigTable();
         var modalElem = document.getElementById("configModal");
-        var instance = M.Modal.getInstance(modalElem);
+        var instance  = M.Modal.getInstance(modalElem);
         instance.open();
+        document.body.classList.add("configOpen");        // 🔑 flag ON
       });
+
+      /* Save Config → close modal + re-enable live UI clicks        */
       document.getElementById("saveConfigBtn").addEventListener("click", function(){
         saveConfiguration();
+        document.body.classList.remove("configOpen");     // 🔑 flag OFF
       });
 
       var connectEtsyBtn = document.getElementById("connectEtsyBtn");
@@ -1616,6 +1621,14 @@
     font-size:0.65em !important;
     color:rgba(255,255,255,0.8) !important;
   }
+
+  /* Disable live-UI clicks while Config is open so dragging works */
+  body.configOpen #screenOne select,
+  body.configOpen #screenOne input,
+  body.configOpen #screenOne button{
+    pointer-events:none !important;
+  }
+  
 </style>
 
 </body>
