@@ -537,6 +537,19 @@
     .observe(chatContainer, { childList: true, subtree: true });
 }
 
+    /* ===== CHAT TIMESTAMP util ========================================= */
+    function formatChatTimestamp(date){
+      return (date instanceof Date ? date : new Date(date))
+        .toLocaleString("en-US",{
+          month : "short",
+          day   : "2-digit",
+          hour  : "numeric",
+          minute: "2-digit",
+          hour12: true
+        })
+        .replace(/\s([ap])\.?m/i,(_,p)=>` ${p.toLowerCase()}m`); // → “pm” / “am”
+    }
+
     /* ─── realtime Brites chat listener ─────────────────────────── */
     let chatUnsub = null;
     function startBritesListener(orderId){
@@ -547,39 +560,37 @@
         .collection("messages")
         .orderBy("timestamp","asc")
         .onSnapshot(snap=>{
-          console.log("messages snapshot size:", snap.size);   // ◄ debug
+          console.log("messages snapshot size:", snap.size);
           const box = document.getElementById("customerMessageHistory");
           if(!box) return;
+
           let html = "";
-             /* 🆕 first bubble = buyer’s original note, if any */
-             if (window.buyerMessageText && window.buyerMessageText.length) {
-               const ts = new Date().toLocaleString("en-CA",
-                           {year:"2-digit",month:"short",day:"2-digit",
-                            hour:"2-digit",minute:"2-digit"});
-               html += `<div class="msg received">
-                          <span class="meta">Customer • ${ts}</span>
-                          ${escapeHtml(window.buyerMessageText)}
-                        </div>`;
-             }
-              snap.forEach(doc => {
-                const d  = doc.data();
-                const dt = (d.timestamp?.toDate() || new Date())
-                             .toLocaleString("en-CA",
-                               { year:"2-digit", month:"short", day:"2-digit",
-                                 hour:"2-digit", minute:"2-digit" });
+          /* buyer’s original note */
+          if (window.buyerMessageText && window.buyerMessageText.length){
+            const ts = formatChatTimestamp(new Date());
+            html += `<div class="msg received">
+                       <span class="meta">Customer • ${ts}</span>
+                       ${escapeHtml(window.buyerMessageText)}
+                     </div>`;
+          }
 
-                /* staff ⇒ right align, customer ⇒ left align */
-                const emp   = (document.getElementById("employeeName").value || "").trim().toLowerCase();
-                const align = (d.senderName && d.senderName.trim().toLowerCase() === emp) ? "right" : "left";
+          snap.forEach(doc=>{
+            const d  = doc.data();
+            const dt = formatChatTimestamp(d.timestamp?.toDate() || new Date());
 
-                html += `<div class="msg" style="text-align:${align};">
-                           <span class="meta" style="display:block;">${d.senderName} • ${dt}</span>
-                           <span style="display:block;">${escapeHtml(d.text)}</span>
-                         </div>`;
-              });
+            /* staff ⇒ right align, customer ⇒ left align */
+            const emp   = (document.getElementById("employeeName").value || "").trim().toLowerCase();
+            const align = (d.senderName && d.senderName.trim().toLowerCase() === emp) ? "right" : "left";
+
+            html += `<div class="msg" style="text-align:${align};">
+                       <span class="meta">${d.senderName} • ${dt}</span>
+                       <span>${escapeHtml(d.text)}</span>
+                     </div>`;
+          });
+
           box.innerHTML = html;
           box.scrollTop = box.scrollHeight;
-          applyChatSpacing();          // enforce 5 px / 3 px gaps inline
+          applyChatSpacing();  // keep 5 px / 3 px gaps
         });
     }
     /* basic XSS guard */
@@ -1449,17 +1460,20 @@
     });
   </script>
 
-<!-- FINAL chat-spacing override: flex-column + row-gap, placed last -->
+<!-- FINAL chat-spacing + meta-size override -->
 <style id="chatSpacingOverride">
-  /* 5 px between bubbles */
   .msg{
-    display:flex !important;          /* switch to flex column */
+    display:flex !important;
     flex-direction:column !important;
-    row-gap:3px !important;           /* 3 px between timestamp → text */
-    margin:5px 0 !important;          /* 5 px Sender ↔ Receiver gap   */
-    padding:0 !important;             /* nuke any old padding          */
+    row-gap:3px !important;           /* timestamp → text */
+    margin:5px 0 !important;          /* bubble → bubble */
+    padding:0 !important;
   }
-  .msg .meta{margin:0 !important;}    /* meta no extra margin          */
+  .msg .meta{
+    margin:0 !important;
+    font-size:0.65em !important;      /* smaller date stamp */
+    opacity:.7;
+  }
 </style>
 
 </body>
