@@ -454,6 +454,29 @@
       Send
     </button>
 
+    <!-- ▼▼ NEW: tracking / carrier / complete-order ▼▼ -->
+    <input id="trackingNumberInput"
+           type="text"
+           placeholder="Tracking #"
+           style="position:absolute; left:260px; top:110px;
+                  width:140px; height:24px; font-size:0.8em;" />
+
+    <select id="carrierSelect"
+            style="position:absolute; left:410px; top:110px;
+                   width:110px; height:24px; font-size:0.8em;">
+      <option value="" disabled selected>Carrier</option>
+      <option value="chitchats">ChitChats</option>
+      <option value="usps">USPS</option>
+    </select>
+
+    <button id="completeOrderBtn" class="btn"
+            style="position:absolute; left:530px; top:110px;
+                   width:110px; height:24px; line-height:24px;
+                   font-size:0.8em; text-align:center;">
+      Complete Order
+    </button>
+    <!-- ▲▲ END new controls ▲▲ -->
+
   </div>
 
   <div id="secondaryContainer"></div>
@@ -694,7 +717,7 @@
         "metalCell0","metalCell1","metalCell2","metalCell3",
         "metalCell4","metalCell5","metalCell6","metalCell7",
         "orderDetails","customerMessageHistory","britesMsgInput","dateOrdered","shipDate",
-        "employeeName",
+        "employeeName","trackingNumberInput","carrierSelect","completeOrderBtn",
         "titleOrderDate","titleOrderDate2","titleShipDate",
         "titleSignedInAs",
         "titleOrderDetails","titleBritesMessages","titlePurchasedItems","titleOrderNumber",
@@ -764,7 +787,10 @@
       loginModalPrompt:     { left: 40,    top: 90,    width: 325,   height: 0 },
       employeeNumberInput:  { left: 40,   top: 60,   width: 75, height: 35 },
       loginModalFooter:     { left: 20,    top: 0,    width: 250,   height: 0 },
-      employeeLoginBtn:     { left: 130,   top: 150,   width: 100, height: 35 }
+      employeeLoginBtn:     { left: 130,   top: 150,   width: 100, height: 35 },
+      trackingNumberInput:{ left:260, top:110, width:140, height:24 },
+      carrierSelect:       { left:410, top:110, width:110, height:24 },
+      completeOrderBtn:    { left:530, top:110, width:110, height:24 }
     };
 
     function loadPositions(){
@@ -1167,6 +1193,45 @@
       });
     }
 
+    /* =========================================================
+     *  Complete Order – POST tracking to Etsy (via Netlify)
+     * =======================================================*/
+    const completeBtn = document.getElementById("completeOrderBtn");
+    const trackingInp = document.getElementById("trackingNumberInput");
+    const carrierSel  = document.getElementById("carrierSelect");
+
+    if (completeBtn) {
+      completeBtn.addEventListener("click", async () => {
+        const receiptId = document.getElementById("etsyOrderNumber").value.trim();
+        const tracking  = (trackingInp.value || "").trim();
+        const carrier   = carrierSel.value;        // "chitchats" or "usps"
+
+        if (!receiptId) { M.toast({html:"Enter order #"}); return; }
+        if (!tracking)  { M.toast({html:"Enter tracking #"}); return; }
+        if (!carrier)   { M.toast({html:"Choose carrier"}); return; }
+
+        try {
+          /* hit your new Netlify proxy (see step 4) */
+          const resp = await fetch("/.netlify/functions/trackOrderProxy", {
+            method : "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "access-token": localStorage.getItem("access_token") || ""
+            },
+            body: JSON.stringify({ receiptId, tracking, carrier })
+          });
+          const json = await resp.json();
+          if (!resp.ok) throw new Error(json.error || "Server error");
+
+          M.toast({ html: "Etsy order marked complete 🎉" });
+          trackingInp.value = "";
+          carrierSel.selectedIndex = 0;
+        } catch (err) {
+          console.error(err);
+          M.toast({ html: "Complete failed: " + err.message });
+        }
+      });
+    }
 
     async function updateImageGrid(data){
       var items = [];
