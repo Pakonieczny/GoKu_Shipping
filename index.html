@@ -519,11 +519,23 @@
     /* helper: enforce chat spacing — adds !important so nothing wins the cascade */
     function applyChatSpacing() {
       document.querySelectorAll("#customerMessageHistory .msg").forEach(el => {
-        el.style.setProperty("margin","5px 0","important");          // 5 px gap Sender↔Receiver
+        el.style.cssText += "margin:5px 0!important;padding-top:0!important;padding-bottom:0!important;";
         const meta = el.querySelector(".meta");
-        if (meta) meta.style.setProperty("margin-bottom","3px","important"); // 3 px gap timestamp→text
+        if (meta) meta.style.cssText += "margin-bottom:3px!important;";
+        console.debug("👟 spacing pass at", Date.now());
       });
     }
+
+    /* observe chat container and re-enforce spacing whenever nodes change */
+    const chatContainer = document.getElementById("customerMessageHistory");
+    if (chatContainer) {
+      /* initial pass */
+      applyChatSpacing();
+
+  /* keep re-applying after any DOM mutations */
+  new MutationObserver(applyChatSpacing)
+    .observe(chatContainer, { childList: true, subtree: true });
+}
 
     /* ─── realtime Brites chat listener ─────────────────────────── */
     let chatUnsub = null;
