@@ -1037,7 +1037,7 @@
                   const mm = ("0" + dt.getMinutes()).slice(-2);
                   const finalStr = dd + " " + mStr + " " + yyyy + ", " + hh + ":" + mm;
                   const lblDateEl = document.getElementById("labelCreationDate");
-                  if (lblDateEl) lblDateEl.value = finalStr;
+                  if (lblDateEl) lblDateEl.value = order.labelCreationDate || "";
                 } else {
                   document.getElementById("labelCreationDate").value = "";
                 }
@@ -1050,7 +1050,7 @@
                 dbEmpName = dbEmpNameRaw.trim();
               }
               const compEmpEl = document.getElementById("completedByEmployee");
-              if (compEmpEl) compEmpEl.value = dbEmpName;
+              if (compEmpEl) compEmpEl.value = order.completedByEmployee || "";
               if(dbEmpName){
                 const imageFile = encodeURIComponent(dbEmpName + ".jpg");
                 const imagePath = `/assets/${imageFile}`;
