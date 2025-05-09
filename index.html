@@ -193,6 +193,15 @@
     #shipDate,
     #labelCreationDate,
     #employeeName,
+    #completedByEmployee {
+      position: absolute;
+      width: 200px;
+      height: 20px;
+      box-sizing: border-box;
+      outline: none;
+      background: transparent;
+      font-size: 0.9em;
+    }
     #dateOrdered {
       font-weight: bold !important;
       border-bottom: 1px solid black !important;
@@ -203,6 +212,16 @@
     }
     #employeeName {
       font-weight: bold;
+    }
+    #labelCreationDate {
+      font-weight: bold !important;
+      font-style: italic !important;
+      border-bottom: 1px solid black !important;
+    }
+    #completedByEmployee {
+      font-weight: bold !important;
+      font-style: italic !important;
+      border-bottom: 1px solid black !important;
     }
 
     /* Title texts */
@@ -1036,12 +1055,17 @@
                 const lblDateEl = document.getElementById("labelCreationDate");
                 if (lblDateEl) lblDateEl.value = "";
               }
-              /* ── Signature box image ──────────────────────────────── */
+
+              /* ── Completed-by employee ─────────────────────────────── */
               const dbEmpNameRaw = docDataPD["Employee Name"];
               let dbEmpName = "";
               if (typeof dbEmpNameRaw === "string") {
                 dbEmpName = dbEmpNameRaw.trim();
               }
+              const compEmpEl = document.getElementById("completedByEmployee");
+              if (compEmpEl) compEmpEl.value = dbEmpName;
+
+              /* ── Signature box image ──────────────────────────────── */
               const sigBox = document.getElementById("signatureBox");
               if (dbEmpName && sigBox) {
                 const imageFile = encodeURIComponent(dbEmpName + ".jpg");
