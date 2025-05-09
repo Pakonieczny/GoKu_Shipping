@@ -353,6 +353,11 @@
     <!-- Etsy Order Fields -->
     <input type="text" id="etsyOrderNumber" placeholder="Etsy Order Number" />
 
+    <!-- 🟡 anchor: immediately after <input id="shipDate" …/> -->
+    <input type="text" id="labelCreationDate"    readonly />
+    <input type="text" id="completedByEmployee"  readonly />
+    <!-- ▲ nothing else changes here -->
+
     <!-- Photo Grid -->
     <div id="Photo_Grid">
       <div id="photoGridContainer">
@@ -1016,55 +1021,61 @@
               // If we reach here => doc is found or newly created
               const docDataPD = resPD.data || {};
               const dbOrderNum = docDataPD["Order Number"];
-              if(dbOrderNum !== orderNumber){
+              if (dbOrderNum !== orderNumber) {
                 M.toast({ html: "Order mismatch: doc has '" + dbOrderNum + "', expected '" + orderNumber + "'" });
                 return;
               }
-              if(typeof docDataPD["Brites Messages"] === "string"){
-                document.getElementById("customerMessageHistory").innerText = docDataPD["Brites Messages"];
+
+              /* ── Brites message history ───────────────────────────── */
+              if (typeof docDataPD["Brites Messages"] === "string") {
+                document.getElementById("customerMessageHistory").innerText =
+                  docDataPD["Brites Messages"];
                 M.toast({ html: "Brites Messages loaded!" });
               } else {
                 document.getElementById("customerMessageHistory").innerText = "";
               }
-              if(docDataPD["Shipping Label Timestamps"]){
+
+              /* ── Shipping-label creation date ─────────────────────── */
+              if (docDataPD["Shipping Label Timestamps"]) {
                 const dt = new Date(docDataPD["Shipping Label Timestamps"]);
-                if(!isNaN(dt.valueOf())){
+                const lblDateEl = document.getElementById("labelCreationDate");
+                if (!isNaN(dt.valueOf()) && lblDateEl) {
                   const monthNamesF2 = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
-                  const dd = ("0" + dt.getDate()).slice(-2);
+                  const dd   = ("0" + dt.getDate()).slice(-2);
                   const mStr = monthNamesF2[dt.getMonth()];
                   const yyyy = dt.getFullYear();
-                  const hh = ("0" + dt.getHours()).slice(-2);
-                  const mm = ("0" + dt.getMinutes()).slice(-2);
+                  const hh   = ("0" + dt.getHours()).slice(-2);
+                  const mm   = ("0" + dt.getMinutes()).slice(-2);
                   const finalStr = dd + " " + mStr + " " + yyyy + ", " + hh + ":" + mm;
-                  const lblDateEl = document.getElementById("labelCreationDate");
-                  if (lblDateEl) lblDateEl.value = order.labelCreationDate || "";
-                } else {
-                  document.getElementById("labelCreationDate").value = "";
+                  lblDateEl.value = finalStr;
+                } else if (lblDateEl) {
+                  lblDateEl.value = "";
                 }
               } else {
-                document.getElementById("labelCreationDate").value = "";
+                const lblDateEl = document.getElementById("labelCreationDate");
+                if (lblDateEl) lblDateEl.value = "";
               }
+
+              /* ── Completed-by employee ─────────────────────────────── */
               const dbEmpNameRaw = docDataPD["Employee Name"];
               let dbEmpName = "";
-              if(typeof dbEmpNameRaw === "string"){
+              if (typeof dbEmpNameRaw === "string") {
                 dbEmpName = dbEmpNameRaw.trim();
               }
               const compEmpEl = document.getElementById("completedByEmployee");
-              if (compEmpEl) compEmpEl.value = order.completedByEmployee || "";
-              if(dbEmpName){
+              if (compEmpEl) compEmpEl.value = dbEmpName;
+
+              /* ── Signature box image ──────────────────────────────── */
+              const sigBox = document.getElementById("signatureBox");
+              if (dbEmpName && sigBox) {
                 const imageFile = encodeURIComponent(dbEmpName + ".jpg");
-                const imagePath = `/assets/${imageFile}`;
-                const sigBox = document.getElementById("signatureBox");
-                if (sigBox){
-                  sigBox.innerHTML = `<img src="${imagePath}"
-                                       style="width:100%; height:100%; object-fit:cover;"
-                                       alt="Signature for ${dbEmpName}">`;
-                }
-              } else {
-                const sigBox = document.getElementById("signatureBox");
-                if (sigBox) sigBox.innerHTML = "Sig Box";
+                sigBox.innerHTML = `<img src="/assets/${imageFile}"
+                                     style="width:100%; height:100%; object-fit:cover;"
+                                     alt="Signature for ${dbEmpName}">`;
+              } else if (sigBox) {
+                sigBox.innerHTML = "Sig Box";
               }
-            } catch(errPD){
+            } catch (errPD) {
               // Real error from network or code, not doc-not-found
               M.toast({ html: "Error: " + errPD.message });
               console.error("Failed to pull data from Firestore:", errPD);
