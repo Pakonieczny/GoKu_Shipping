@@ -237,6 +237,9 @@
       margin: 0;
       padding: 0;
     }
+
+
+
     #titleOrderDate2 {
       font-weight: bold;
     }
@@ -288,6 +291,12 @@
       overflow: hidden;
       user-select: none;
       border-bottom: 1px solid black !important;
+    }
+
+    /* shipping title style */
+    #titleShipping{
+      font-size:1.2em !important;
+      font-weight:bold !important;
     }
 
     /*
@@ -356,6 +365,8 @@
     <!-- 🟡 anchor: immediately after <input id="shipDate" …/> -->
     <input type="text" id="labelCreationDate"    readonly />
     <input type="text" id="completedByEmployee"  readonly />
+    <!-- 🆕—— new draggable title -->
+    <input id="titleShipping" type="text" value="Shipping"  readonly />
     <!-- ▲ nothing else changes here -->
 
     <!-- Photo Grid -->
@@ -798,7 +809,9 @@
       employeeLoginBtn:     { left: 130,   top: 150,   width: 100, height: 35 },
       trackingNumberInput:{ left:260, top:110, width:140, height:24 },
       carrierSelectWrap:  { left:410, top:110, width:110, height:24 },
-      completeOrderBtn:    { left:530, top:110, width:110, height:24 }
+      completeOrderBtn:    { left:530, top:110, width:110, height:24 },
+      titleShipping:        { left: 10, top: 285, width: 120, height: 28 },
+
     };
 
     function loadPositions(){
