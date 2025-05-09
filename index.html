@@ -1622,11 +1622,18 @@
     color:rgba(255,255,255,0.8) !important;
   }
 
-  /* Disable live-UI clicks while Config is open so dragging works */
-  body.configOpen #screenOne select,
+  /* Disable clicks on everything in screenOne … */
   body.configOpen #screenOne input,
+  body.configOpen #screenOne select,
   body.configOpen #screenOne button{
     pointer-events:none !important;
+  }
+
+  /* …but immediately re-enable them inside the Config modal */
+  body.configOpen #configModal input,
+  body.configOpen #configModal select,
+  body.configOpen #configModal button{
+    pointer-events:auto !important;
   }
   
 </style>
