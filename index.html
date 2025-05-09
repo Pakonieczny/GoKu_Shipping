@@ -1223,28 +1223,44 @@
       completeBtn.addEventListener("click", async () => {
         const receiptId = document.getElementById("etsyOrderNumber").value.trim();
         const tracking  = (trackingInp.value || "").trim();
-        const carrier   = carrierSel.value;        // "chitchats" or "usps"
+        const carrier   = carrierSel.value;          // "chitchats" or "usps"
 
-        if (!receiptId) { M.toast({html:"Enter order #"}); return; }
-        if (!tracking)  { M.toast({html:"Enter tracking #"}); return; }
-        if (!carrier)   { M.toast({html:"Choose carrier"}); return; }
+        if (!receiptId) { M.toast({ html: "Enter order #"   }); return; }
+        if (!tracking)  { M.toast({ html: "Enter tracking #" }); return; }
+        if (!carrier)   { M.toast({ html: "Choose carrier"  }); return; }
+
+        /* -------- helper so we can retry once if token is bad -------- */
+        const trackOnce = async token => {
+          return await fetch("/.netlify/functions/trackOrderProxy", {
+            method  : "POST",
+            headers : {
+              "Content-Type": "application/json",
+              "access-token": token
+            },
+            body    : JSON.stringify({ receiptId, tracking, carrier })
+          });
+        };
 
         try {
-          /* hit your new Netlify proxy (see step 4) */
-          const resp = await fetch("/.netlify/functions/trackOrderProxy", {
-            method : "POST",
-            headers: {
-              "Content-Type": "application/json",
-              "access-token": localStorage.getItem("access_token") || ""
-            },
-            body: JSON.stringify({ receiptId, tracking, carrier })
-          });
-          const json = await resp.json();
-          if (!resp.ok) throw new Error(json.error || "Server error");
+          let token            = localStorage.getItem("access_token") || "";
+          let resp             = await trackOnce(token);
+          let data             = await resp.json().catch(() => ({}));
 
+          /* 🔑 401 → Etsy token expired → purge + start OAuth flow */
+          if (resp.status === 401) {
+            localStorage.removeItem("access_token");
+            const connectBtn = document.getElementById("connectEtsyBtn");
+            if (connectBtn) connectBtn.click();          // open PKCE login
+            throw new Error("Unauthorized – reconnecting Etsy…");
+          }
+
+          if (!resp.ok) throw new Error(data.error || "Server error");
+
+          /* 🎉 success */
           M.toast({ html: "Etsy order marked complete 🎉" });
-          trackingInp.value = "";
+          trackingInp.value        = "";
           carrierSel.selectedIndex = 0;
+
         } catch (err) {
           console.error(err);
           M.toast({ html: "Complete failed: " + err.message });
