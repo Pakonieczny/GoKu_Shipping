@@ -461,13 +461,16 @@
            style="position:absolute; left:260px; top:110px;
                   width:140px; height:24px; font-size:0.8em;" />
 
-    <select id="carrierSelect"
-            style="position:absolute; left:410px; top:110px;
-                   width:110px; height:24px; font-size:0.8em;">
-      <option value="" disabled selected>Carrier</option>
-      <option value="chitchats">ChitChats</option>
-      <option value="usps">USPS</option>
-    </select>
+          <div id="carrierSelectWrap"
+               style="position:absolute; left:410px; top:110px;
+                      width:110px; height:24px;">
+            <select id="carrierSelect"
+                    style="width:100%; height:100%; font-size:0.8em;">
+              <option value="" disabled selected>Carrier</option>
+              <option value="chitchats">ChitChats</option>
+              <option value="usps">USPS</option>
+            </select>
+          </div>
 
     <button id="completeOrderBtn" class="btn"
             style="position:absolute; left:530px; top:110px;
@@ -717,7 +720,7 @@
         "metalCell0","metalCell1","metalCell2","metalCell3",
         "metalCell4","metalCell5","metalCell6","metalCell7",
         "orderDetails","customerMessageHistory","britesMsgInput","dateOrdered","shipDate",
-        "employeeName","trackingNumberInput","carrierSelect","completeOrderBtn",
+        "employeeName","trackingNumberInput","carrierSelectWrap","completeOrderBtn",
         "titleOrderDate","titleOrderDate2","titleShipDate",
         "titleSignedInAs",
         "titleOrderDetails","titleBritesMessages","titlePurchasedItems","titleOrderNumber",
@@ -789,7 +792,7 @@
       loginModalFooter:     { left: 20,    top: 0,    width: 250,   height: 0 },
       employeeLoginBtn:     { left: 130,   top: 150,   width: 100, height: 35 },
       trackingNumberInput:{ left:260, top:110, width:140, height:24 },
-      carrierSelect:       { left:410, top:110, width:110, height:24 },
+      carrierSelectWrap:  { left:410, top:110, width:110, height:24 },
       completeOrderBtn:    { left:530, top:110, width:110, height:24 }
     };
 
