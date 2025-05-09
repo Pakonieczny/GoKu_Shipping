@@ -1622,20 +1622,20 @@
     color:rgba(255,255,255,0.8) !important;
   }
 
-  /* Disable clicks on everything in screenOne … */
-  body.configOpen #screenOne input,
+  /* disable live controls */
+  body.configOpen #screenOne select{ pointer-events:none !important; }
   body.configOpen #screenOne select,
   body.configOpen #screenOne button{
     pointer-events:none !important;
   }
 
-  /* …but immediately re-enable them inside the Config modal */
-  body.configOpen #configModal input,
+  /* re-enable inside modal */
+  body.configOpen #configModal select{ pointer-events:auto !important; }
   body.configOpen #configModal select,
   body.configOpen #configModal button{
     pointer-events:auto !important;
   }
-  
+
 </style>
 
 </body>
