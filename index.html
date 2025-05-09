@@ -1223,38 +1223,46 @@
       completeBtn.addEventListener("click", async () => {
         const receiptId = document.getElementById("etsyOrderNumber").value.trim();
         const tracking  = (trackingInp.value || "").trim();
-        const carrier   = carrierSel.value;          // "chitchats" or "usps"
+        const carrier   = carrierSel.value;          // "chitchats" | "usps"
 
         if (!receiptId) { M.toast({ html: "Enter order #"   }); return; }
         if (!tracking)  { M.toast({ html: "Enter tracking #" }); return; }
         if (!carrier)   { M.toast({ html: "Choose carrier"  }); return; }
 
-        /* -------- helper so we can retry once if token is bad -------- */
-        const trackOnce = async token => {
-          return await fetch("/.netlify/functions/trackOrderProxy", {
-            method  : "POST",
-            headers : {
+        /* helper → perform one POST with the supplied token */
+        const postTracking = tok =>
+          fetch("/.netlify/functions/trackOrderProxy", {
+            method : "POST",
+            headers: {
               "Content-Type": "application/json",
-              "access-token": token
+              "access-token": tok
             },
-            body    : JSON.stringify({ receiptId, tracking, carrier })
+            body   : JSON.stringify({ receiptId, tracking, carrier })
           });
-        };
 
         try {
-          let token            = localStorage.getItem("access_token") || "";
-          let resp             = await trackOnce(token);
-          let data             = await resp.json().catch(() => ({}));
+          let token        = localStorage.getItem("access_token") || "";
+          let resp         = await postTracking(token);
+          let payload      = await resp.text();              // Etsy proxy returns raw text
+          let errMsg       = "";
 
-          /* 🔑 401 → Etsy token expired → purge + start OAuth flow */
+          /* ── token expired (401) → restart OAuth flow ── */
           if (resp.status === 401) {
             localStorage.removeItem("access_token");
-            const connectBtn = document.getElementById("connectEtsyBtn");
-            if (connectBtn) connectBtn.click();          // open PKCE login
+            document.getElementById("connectEtsyBtn")?.click();
             throw new Error("Unauthorized – reconnecting Etsy…");
           }
 
-          if (!resp.ok) throw new Error(data.error || "Server error");
+          /* ── forbidden (403) usually means missing shipping permission scope ── */
+          if (resp.status === 403) {
+            errMsg = "Forbidden – Etsy says this action isn’t allowed.";
+          } else if (!resp.ok) {
+            /* try to JSON-parse any error payload, else show raw text */
+            try   { errMsg = JSON.parse(payload).error || "Server error"; }
+            catch { errMsg = payload || "Server error"; }
+          }
+
+          if (errMsg) throw new Error(errMsg);
 
           /* 🎉 success */
           M.toast({ html: "Etsy order marked complete 🎉" });
