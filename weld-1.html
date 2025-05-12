@@ -646,87 +646,80 @@
     }
 
     /* ─── realtime Brites chat listener ─────────────────────────── */
-    let chatUnsub = null;
-    let firstBatch = true;    // skip beep on initial load
-    function startBritesListener(orderId){
-      if(chatUnsub) chatUnsub();          // switch orders → kill previous watch
-      chatUnsub = db
-        .collection("Brites_Orders")
-        .doc(orderId)
-        .collection("messages")
-        .orderBy("timestamp","asc")
-        .onSnapshot(snap=>{
-          console.log("messages snapshot size:", snap.size);
-          const box = document.getElementById("customerMessageHistory");
-          if(!box) return;
+let chatUnsub = null;
+let firstBatch = true;    // skip beep on initial load
+function startBritesListener(orderId){
+  if (chatUnsub) chatUnsub();      // switch orders → kill previous watch
+  chatUnsub = db
+    .collection("Brites_Orders")
+    .doc(orderId)
+    .collection("messages")
+    .orderBy("timestamp","asc")
+    .onSnapshot(snap=>{
+      console.log("messages snapshot size:", snap.size);
+      const box = document.getElementById("customerMessageHistory");
+      if(!box) return;
 
-          let html = "";
-          /* buyer’s original note */
-          if (window.buyerMessageText && window.buyerMessageText.length){
-            const ts = formatChatTimestamp(new Date());
-            html += `<div class="msg received">
-                       <span class="meta">Customer • ${ts}</span>
-                       ${escapeHtml(window.buyerMessageText)}
-                     </div>`;
-          }
-
-          snap.forEach(doc=>{
-            const d  = doc.data();
-            const dt = formatChatTimestamp(d.timestamp?.toDate() || new Date());
-
-            /* staff ⇒ right align, customer ⇒ left align */
-            const emp        = (document.getElementById("employeeName").value || "").trim().toLowerCase();
-            const bubbleCls  = (d.senderName && d.senderName.trim().toLowerCase() === emp) ? "sent" : "received";
-
-            html += `<div class="msg ${bubbleCls}">
-                       <span class="meta">${d.senderName} • ${dt}</span>
-                       <span>${escapeHtml(d.text)}</span>
-                     </div>`;
-          });
-
-                /* 🔔 beep for any new message after initial snapshot */
-                if (!firstBatch && snap.docChanges().some(c => c.type === "added")){
-                  playChime();
-                }
-                firstBatch = false;
-
-          box.innerHTML = html;
-          box.scrollTop = box.scrollHeight;
-          applyChatSpacing();  // keep 5 px / 3 px gaps
-        });
-    }
-    /* basic XSS guard */
-    function escapeHtml(str=""){
-      return str.replace(/[&<>"']/g,m=>({"&":"&amp;","<":"&lt;",">":"&gt;",
-                                         "\"":"&quot;","'":"&#039;"}[m]));
-    }
-
-    window.isEmployeeLoggedIn = false; // We'll use this to guard the real-time listener
-
-    (function(){
-      var urlParams = new URLSearchParams(window.location.search);
-      var accessToken = urlParams.get("access_token");
-      if(accessToken){
-        localStorage.setItem("access_token", accessToken);
-        window.history.replaceState({}, document.title, window.location.pathname);
-        M.toast({html:"Connection Successful!"});
-        console.log("Access token received:", accessToken);
-      } else {
-        var authCode = urlParams.get("code");
-        if(authCode){
-          var storedCodeVerifier = localStorage.getItem("etsy_code_verifier");
-          if(storedCodeVerifier){
-            window.location.href =
-              "/.netlify/functions/exchangeToken?code=" +
-              encodeURIComponent(authCode) +
-              "&code_verifier=" +
-              encodeURIComponent(storedCodeVerifier);
-          } else {
-            console.error("No code verifier found in localStorage.");
-          }
-        }
+      let html = "";
+      /* buyer’s original note */
+      if (window.buyerMessageText && window.buyerMessageText.length){
+        const ts = formatChatTimestamp(new Date());
+        html += `<div class="msg received">
+                   <span class="meta">Customer • ${ts}</span>
+                   ${escapeHtml(window.buyerMessageText)}
+                 </div>`;
       }
-    })();
+
+      snap.forEach(doc=>{
+        const d  = doc.data();
+        const dt = formatChatTimestamp(d.timestamp?.toDate() || new Date());
+
+        /* staff ⇒ right align, customer ⇒ left align */
+        const emp        = (document.getElementById("employeeName").value || "").trim().toLowerCase();
+        const bubbleCls  = (d.senderName && d.senderName.trim().toLowerCase() === emp) ? "sent" : "received";
+
+        html += `<div class="msg ${bubbleCls}">
+                   <span class="meta">${d.senderName} • ${dt}</span>
+                   <span>${escapeHtml(d.text)}</span>
+                 </div>`;
+      });
+
+      /* 🔔 beep for any new message after initial snapshot */
+      if (!firstBatch && snap.docChanges().some(c => c.type === "added")){
+        playChime();
+      }
+      firstBatch = false;
+
+      box.innerHTML = html;
+      box.scrollTop = box.scrollHeight;
+      applyChatSpacing();  // keep 5 px / 3 px gaps
+    });
+}
+/* basic XSS guard */
+function escapeHtml(str=""){
+  return str.replace(/[&<>"']/g,m=>({"&":"&amp;","<":"&lt;",">":"&gt;",
+                                     "\"":"&quot;","'":"&#039;"}[m]));
+}
+
+window.isEmployeeLoggedIn = false; // guard the real-time listener
+
+/* ─── OAuth return handler (Option B: server owns PKCE) ───────── */
+(function(){
+  const params      = new URLSearchParams(window.location.search);
+  const accessToken = params.get("access_token");
+
+  if (accessToken){
+    /* ➊ store token, ➋ clean URL, ➌ notify user */
+    localStorage.setItem("access_token", accessToken);
+    window.history.replaceState({}, document.title, window.location.pathname);
+    M.toast({ html: "Connection Successful!" });
+    console.log("Access token received:", accessToken);
+  }
+  /* no else-branch: if there’s no access_token, we simply stay unauthenticated.
+     The “Connect to Etsy” button now redirects the user to
+       /.netlify/functions/exchangeToken
+     which starts & completes the PKCE flow entirely on the server. */
+})();
 
     function generateRandomString(length){
       var chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
