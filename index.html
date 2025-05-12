@@ -1618,26 +1618,39 @@
       });
     }
 
+    /* ---------------------------------------------------------
+     *  Firestore listener for employee-scanned order numbers
+     * --------------------------------------------------------*/
     function startScannedOrderListener(){
-      if(!window.isEmployeeLoggedIn){
+      if (!window.isEmployeeLoggedIn){
         console.warn("startScannedOrderListener called but user not logged in!");
         return;
       }
-      db.collection("Brites_Orders").doc("ScannedOrder").onSnapshot((docSnap) => {
-        if(!window.isEmployeeLoggedIn) return;
-        if(docSnap.exists){
-          const data = docSnap.data();
-          if(data && data["Order Number"]){
-            const orderNumber = data["Order Number"];
-            const etsyOrderInput = document.getElementById("etsyOrderNumber");
-            etsyOrderInput.value = orderNumber;
-            const event = new KeyboardEvent("keydown",{key:"Enter",keyCode:13,which:13});
-            etsyOrderInput.dispatchEvent(event);
+
+      let firstSnap = true;                       // 🔑 skip the initial payload
+      db.collection("Brites_Orders")
+        .doc("ScannedOrder")
+        .onSnapshot(docSnap => {
+          if (!window.isEmployeeLoggedIn) return;
+
+          /* ignore Firestore’s first delivery; wait for *changes* */
+          if (firstSnap){ firstSnap = false; return; }
+
+          if (docSnap.exists){
+            const data = docSnap.data();
+            if (data && data["Order Number"]){
+              const orderNumber   = data["Order Number"];
+              const etsyOrderInput = document.getElementById("etsyOrderNumber");
+              etsyOrderInput.value = orderNumber;
+
+              /* simulate user hitting Enter → kicks off full load */
+              etsyOrderInput.dispatchEvent(
+                new KeyboardEvent("keydown", { key:"Enter", keyCode:13, which:13 })
+              );
+            }
           }
-        }
-      });
+        });
     }
-    });
   </script>
 
   <!-- 🆕 hard-hide unused fields -->
