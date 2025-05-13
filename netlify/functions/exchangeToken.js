@@ -248,7 +248,7 @@ exports.handler = async function(event) {
       redirect_uri:  finalRedirectUri,
       code_verifier: codeVerifier
     });
-    console.log("Token exchange =>", params.toString());
+    console.log("SERVER posting verifier:", codeVerifier);
 
     const resp = await fetch("https://api.etsy.com/v3/public/oauth/token", {
       method: "POST",
