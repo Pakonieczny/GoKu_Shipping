@@ -61,6 +61,15 @@ function pickDomainFromHost(event) {
     return SORTING_DOMAIN;
   }
 
+    /* weld + design */
+  else if (param === "weld-1") {
+    console.log("Overriding domain: user specified ?redirect_domain=weld-1");
+    return WELD1_DOMAIN;
+  } else if (param === "design-1") {
+    console.log("Overriding domain: user specified ?redirect_domain=design-1");
+    return DESIGN1_DOMAIN;
+  }
+
   /* assembly */
   else if (param === "assembly-1") {
     console.log("Overriding domain: user specified ?redirect_domain=assembly-1");
@@ -86,15 +95,6 @@ function pickDomainFromHost(event) {
   } else if (param === "shipping-3") {
     console.log("Overriding domain: user specified ?redirect_domain=shipping-3");
     return SHIPPING3_DOMAIN;
-  }
-
-  /* weld + design */
-  else if (param === "weld-1") {
-    console.log("Overriding domain: user specified ?redirect_domain=weld-1");
-    return WELD1_DOMAIN;
-  } else if (param === "design-1") {
-    console.log("Overriding domain: user specified ?redirect_domain=design-1");
-    return DESIGN1_DOMAIN;
   }
 
   /* existing shortcuts */
