@@ -164,7 +164,7 @@ else if (host.includes("goldenspike.app")) {
   console.log("Auto-detected goldenspike domain from host");
   return GOLDENSPIKE_DOMAIN;
 }
-
+}
 
 exports.handler = async function(event) {
   try {
@@ -239,8 +239,6 @@ exports.handler = async function(event) {
         })
       };
     }
-
-    console.log("SERVER posting verifier:", codeVerifier);
 
     const params = new URLSearchParams({
       grant_type:    "authorization_code",
