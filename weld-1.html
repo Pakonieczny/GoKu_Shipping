@@ -1005,6 +1005,8 @@
           var codeVerifier = generateRandomString(64);
           localStorage.setItem("etsy_code_verifier", codeVerifier);
           var codeChallenge = await generateCodeChallenge(codeVerifier);
+          console.log("FRONTEND verifier:",  codeVerifier);
+          console.log("FRONTEND challenge:", codeChallenge);
           var state = "randomState123";
           var scope = "listings_w listings_r transactions_r transactions_w";
           var CLIENT_ID = "k75zdspz4r99txpqdji7i2em";

@@ -165,10 +165,6 @@ else if (host.includes("goldenspike.app")) {
   return GOLDENSPIKE_DOMAIN;
 }
 
-  // If we can't detect, pick a default. Let's default to goldenspike:
-  console.log("Host doesn't match either domain => defaulting to goldenspike");
-  return GOLDENSPIKE_DOMAIN;
-}
 
 exports.handler = async function(event) {
   try {
@@ -243,6 +239,8 @@ exports.handler = async function(event) {
         })
       };
     }
+
+    console.log("SERVER posting verifier:", codeVerifier);
 
     const params = new URLSearchParams({
       grant_type:    "authorization_code",
