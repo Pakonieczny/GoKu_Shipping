@@ -11,6 +11,20 @@ const crypto = require("crypto");
 const SORTING_DOMAIN      = "https://sorting.goldenspike.app";
 const GOLDENSPIKE_DOMAIN  = "https://goldenspike.app";
 const DESIGN_DOMAIN  = "https://design.goldenspike.app";
+// ─── new assembly domains ───────────────────────────────────────────
+const ASSEMBLY1_DOMAIN   = "https://assembly-1.goldenspike.app";
+const ASSEMBLY2_DOMAIN   = "https://assembly-2.goldenspike.app";
+const ASSEMBLY3_DOMAIN   = "https://assembly-3.goldenspike.app";
+const ASSEMBLY4_DOMAIN   = "https://assembly-4.goldenspike.app";
+
+// ─── new shipping domains ───────────────────────────────────────────
+const SHIPPING1_DOMAIN   = "https://shipping-1.goldenspike.app";
+const SHIPPING2_DOMAIN   = "https://shipping-2.goldenspike.app";
+const SHIPPING3_DOMAIN   = "https://shipping-3.goldenspike.app";
+
+// ─── new weld + design sub-domains ──────────────────────────────────
+const WELD1_DOMAIN       = "https://weld-1.goldenspike.app";
+const DESIGN1_DOMAIN     = "https://design-1.goldenspike.app";
 
 // Helpers for PKCE:
 function generateRandomString(length) {
@@ -40,33 +54,116 @@ function pickDomainFromHost(event) {
   console.log("exchangeToken => Detected host:", host);
 
   const param = (event.queryStringParameters || {}).redirect_domain || "";
+
+  /* ── query-param overrides ───────────────────────────────────────── */
   if (param === "sorting") {
     console.log("Overriding domain: user specified ?redirect_domain=sorting");
     return SORTING_DOMAIN;
-  } else if (param === "goldenspike") {
+  }
+
+  /* assembly */
+  else if (param === "assembly-1") {
+    console.log("Overriding domain: user specified ?redirect_domain=assembly-1");
+    return ASSEMBLY1_DOMAIN;
+  } else if (param === "assembly-2") {
+    console.log("Overriding domain: user specified ?redirect_domain=assembly-2");
+    return ASSEMBLY2_DOMAIN;
+  } else if (param === "assembly-3") {
+    console.log("Overriding domain: user specified ?redirect_domain=assembly-3");
+    return ASSEMBLY3_DOMAIN;
+  } else if (param === "assembly-4") {
+    console.log("Overriding domain: user specified ?redirect_domain=assembly-4");
+    return ASSEMBLY4_DOMAIN;
+  }
+
+  /* shipping */
+  else if (param === "shipping-1") {
+    console.log("Overriding domain: user specified ?redirect_domain=shipping-1");
+    return SHIPPING1_DOMAIN;
+  } else if (param === "shipping-2") {
+    console.log("Overriding domain: user specified ?redirect_domain=shipping-2");
+    return SHIPPING2_DOMAIN;
+  } else if (param === "shipping-3") {
+    console.log("Overriding domain: user specified ?redirect_domain=shipping-3");
+    return SHIPPING3_DOMAIN;
+  }
+
+  /* weld + design */
+  else if (param === "weld-1") {
+    console.log("Overriding domain: user specified ?redirect_domain=weld-1");
+    return WELD1_DOMAIN;
+  } else if (param === "design-1") {
+    console.log("Overriding domain: user specified ?redirect_domain=design-1");
+    return DESIGN1_DOMAIN;
+  }
+
+  /* existing shortcuts */
+  else if (param === "goldenspike") {
     console.log("Overriding domain: user specified ?redirect_domain=goldenspike");
     return GOLDENSPIKE_DOMAIN;
-  }
-    else if (param === "design") {
+  } else if (param === "design") {
     console.log("Overriding domain: user specified ?redirect_domain=design");
     return DESIGN_DOMAIN;
-  }  
-
-  // If no param => auto detect from host
-  if (host.includes("sorting.goldenspike.app")) {
-    console.log("Auto-detected sorting domain from host");
-    return SORTING_DOMAIN;
-  } 
-
-    else if (host.includes("design.goldenspike.app")) {
-    console.log("Auto-detected design domain from host");
-    return DESIGN_DOMAIN;
-  }  
-
-    else if (host.includes("goldenspike.app")) {
-    console.log("Auto-detected goldenspike domain from host");
-    return GOLDENSPIKE_DOMAIN;
   }
+
+// If no param => auto detect from host
+if (host.includes("sorting.goldenspike.app")) {
+  console.log("Auto-detected sorting domain from host");
+  return SORTING_DOMAIN;
+}
+
+/* ── assembly sub-domains ─────────────────────────────────────────── */
+else if (host.includes("assembly-1.goldenspike.app")) {
+  console.log("Auto-detected assembly-1 domain from host");
+  return ASSEMBLY1_DOMAIN;
+}
+else if (host.includes("assembly-2.goldenspike.app")) {
+  console.log("Auto-detected assembly-2 domain from host");
+  return ASSEMBLY2_DOMAIN;
+}
+else if (host.includes("assembly-3.goldenspike.app")) {
+  console.log("Auto-detected assembly-3 domain from host");
+  return ASSEMBLY3_DOMAIN;
+}
+else if (host.includes("assembly-4.goldenspike.app")) {
+  console.log("Auto-detected assembly-4 domain from host");
+  return ASSEMBLY4_DOMAIN;
+}
+
+/* ── shipping sub-domains ─────────────────────────────────────────── */
+else if (host.includes("shipping-1.goldenspike.app")) {
+  console.log("Auto-detected shipping-1 domain from host");
+  return SHIPPING1_DOMAIN;
+}
+else if (host.includes("shipping-2.goldenspike.app")) {
+  console.log("Auto-detected shipping-2 domain from host");
+  return SHIPPING2_DOMAIN;
+}
+else if (host.includes("shipping-3.goldenspike.app")) {
+  console.log("Auto-detected shipping-3 domain from host");
+  return SHIPPING3_DOMAIN;
+}
+
+/* ── weld sub-domain ──────────────────────────────────────────────── */
+else if (host.includes("weld-1.goldenspike.app")) {
+  console.log("Auto-detected weld-1 domain from host");
+  return WELD1_DOMAIN;
+}
+
+/* ── design root + design-1 sub-domain ────────────────────────────── */
+else if (
+  host.includes("design.goldenspike.app") ||
+  host.includes("design-1.goldenspike.app")
+) {
+  console.log("Auto-detected design domain from host");
+  return host.includes("design-1.") ? DESIGN1_DOMAIN : DESIGN_DOMAIN;
+}
+
+/* ── fallback to main site ─────────────────────────────────────────── */
+else if (host.includes("goldenspike.app")) {
+  console.log("Auto-detected goldenspike domain from host");
+  return GOLDENSPIKE_DOMAIN;
+}
 
   // If we can't detect, pick a default. Let's default to goldenspike:
   console.log("Host doesn't match either domain => defaulting to goldenspike");
