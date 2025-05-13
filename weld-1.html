@@ -713,6 +713,8 @@
         console.log("Access token received:", accessToken);
       } else {
         var authCode = urlParams.get("code");
+        var raw = urlParams.get("code") || "";
+        var authCode = raw.split("&")[0];          // keep only the code value
         if(authCode){
           var storedCodeVerifier = localStorage.getItem("etsy_code_verifier");
           if(storedCodeVerifier){
