@@ -722,7 +722,8 @@
               "/.netlify/functions/exchangeToken?code=" +
               encodeURIComponent(authCode) +
               "&code_verifier=" +
-              encodeURIComponent(storedCodeVerifier);
+              encodeURIComponent(storedCodeVerifier) +
+              "&redirect_domain=weld-1";   // ← NEW so server picks weld-1 domain
           } else {
             console.error("No code verifier found in localStorage.");
           }
