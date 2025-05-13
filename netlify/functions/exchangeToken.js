@@ -84,14 +84,22 @@ exports.handler = async function(event) {
 
     console.log("exchangeToken => finalRedirectUri:", finalRedirectUri);
 
-      // 2)  Expect to be called ONLY after Etsy redirects back with ?code & ?code_verifier.
-      //     If ?code is missing we abort instead of starting our own PKCE handshake.
-      if (!code) {
+    // 2) If no code => begin OAuth w/ PKCE
+    if (!code) {
+      console.log("No ?code => starting PKCE handshake...");
+
+      const newCodeVerifier = generateRandomString(64);
+      const codeChallenge   = generateCodeChallenge(newCodeVerifier);
+      
+      console.log("PKCE code_verifier:", newCodeVerifier);
+      console.log("PKCE code_challenge:", codeChallenge);
+
+      const CLIENT_ID = process.env.CLIENT_ID;
+      if (!CLIENT_ID) {
+        console.error("Missing CLIENT_ID env var!");
         return {
-          statusCode: 400,
-          body: JSON.stringify({
-            error: "Call this function only with ?code and ?code_verifier"
-          })
+          statusCode: 500,
+          body: JSON.stringify({ error: "Server config error: no CLIENT_ID" })
         };
       }
 
