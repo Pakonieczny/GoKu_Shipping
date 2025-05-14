@@ -709,6 +709,7 @@
     }
 
     window.isEmployeeLoggedIn = false; // We'll use this to guard the real-time listener
+        let lastScanProcessed = null;      // 🔑 remember most-recent scanned order
 
     (function(){
       var urlParams = new URLSearchParams(window.location.search);
@@ -1650,6 +1651,8 @@
             const data = docSnap.data();
             if (data && data["Order Number"]){
               const orderNumber   = data["Order Number"];
+              if (orderNumber === lastScanProcessed) return;   // duplicate → ignore
+              lastScanProcessed = orderNumber;                 // remember newest hit
               const etsyOrderInput = document.getElementById("etsyOrderNumber");
               etsyOrderInput.value = orderNumber;
 
