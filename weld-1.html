@@ -357,6 +357,13 @@
       text-decoration:none !important;
       border-bottom:none !important;
     }
+
+    /* --- weld-1: hide unused shipping widgets --- */
+    #completeOrderBtn,          /* “Complete” button  */
+    #carrierSelectWrap,        /* carrier dropdown   */
+    #trackingNumberInput         /* tracking text box  */
+    { display:none !important; }
+
   </style>
 
 </head>
@@ -384,7 +391,7 @@
     <input type="text" id="labelCreationDate"    readonly />
     <input type="text" id="completedByEmployee"  readonly />
     <!-- 🆕—— new draggable title -->
-    <input id="titleShipping" type="text" value="Shipping"  readonly />
+    <input id="titleShipping" type="text" value="Weld_1"  readonly />
     <!-- ▲ nothing else changes here -->
 
     <!-- Photo Grid -->
@@ -802,8 +809,8 @@
       metalCell7:           { left: 1136, top: 536,  width: 153, height: 45 },
 
       orderDetails:           { left: 10,   top: 162,  width: 300, height: 342 },
-      customerMessageHistory: { left: 10, top: 535,  width: 300, height: 93 },
-      britesMsgInput:         { left: 10, top: 635, width: 300, height: 26 },
+      customerMessageHistory: { left: 10, top: 535,  width: 300, height: 266 },
+      britesMsgInput:         { left: 14, top: 802, width: 295, height: 23 },
 
       dateOrdered:          { left: 10,   top: 100,  width: 145, height: 30 },
       shipDate:             { left: 164,  top: 100,  width: 145, height: 30 },
@@ -818,7 +825,7 @@
       titlePurchasedItems:  { left: 538,  top: 84,   width: 99,  height: 15 },
       titleOrderNumber:     { left: 11,   top: 7,    width: 99,  height: 15 },
 
-      goScreenTwoBtn:       { left: 1141, top: 7,    width: 185, height: 36 },
+      goScreenTwoBtn:       { left: 244, top: 802,    width: 65, height: 23 },
       signatureBox:         { left: 624,  top: 19,   width: 105, height: 34 },
 
       // The modal elements:
