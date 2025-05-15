@@ -322,7 +322,7 @@
           orderNumber: "shipping-scan-1",
           orderNumField: codeVal,
           clientName: "Scanner Page",
-          britesMessages: "(Auto push from weld-scan-1.html)",
+          britesMessages: "(Auto push from shipping-scan-1.html)",
           shippingLabelTimestamps: new Date().toISOString(),
           employeeName: "ScannerBot"
         };
@@ -335,7 +335,7 @@
         if (!response.ok) {
           throw new Error(result.error || "Unknown error from firebaseOrders function");
         }
-        M.toast({ html: "Firestore updated: doc 'weld-scan-1' => " + codeVal });
+        M.toast({ html: "Firestore updated: doc 'shipping-scan-1' => " + codeVal });
       } catch (err) {
         M.toast({ html: "Error: " + err.message });
         console.error("Error sending to Firestore:", err);
