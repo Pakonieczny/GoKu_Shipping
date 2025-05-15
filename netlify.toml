@@ -80,13 +80,13 @@
   status = 200
   force = true
 
-    [[redirects]]
+  [[redirects]]
   from = "https://assembly-1.goldenspike.app"
   to = "/assembly-1.html"
   status = 200
   force = true
 
-  [redirects]]
+  [[redirects]]
   from = "https://assembly-2.goldenspike.app"
   to = "/assembly-2.html"
   status = 200
