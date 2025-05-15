@@ -44,6 +44,18 @@
   status = 200
   force = true
 
+  [[redirects]]
+  from = "https://shipping-1.goldenspike.app"
+  to = "/shipping-1.html"
+  status = 200
+  force = true
+
+  [[redirects]]
+  from = "https://shipping-scan-1.goldenspike.app"
+  to = "/shipping-scan-1.html"
+  status = 200
+  force = true
+
 
 
 
