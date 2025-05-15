@@ -57,7 +57,7 @@
   force = true
 
   [[redirects]]
-  from = "https://shipping-scan-2.goldenspike.app"
+  from = "https://shipping-2.goldenspike.app"
   to = "/shipping-scan-2.html"
   status = 200
   force = true
