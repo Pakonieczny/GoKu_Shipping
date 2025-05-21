@@ -128,6 +128,12 @@
   status = 200
   force = true
 
+  [[redirects]]
+  from = "https://design-1.goldenspike.app"
+  to = "/design-1.html"
+  status = 200
+  force = true
+
 
 
 
