@@ -208,8 +208,8 @@ function buildPDFDocWithDots(dataUrl, dotCount, dispatchDate, orderNum) {
         type: 'ellipse',
         x: i * spacing,
         y: 0,
-        r1: 1,
-        r2: 1,
+        r1: 0.75,
+        r2: 0.75,
         color: 'black',
         fillOpacity: 1
       });
@@ -228,7 +228,7 @@ function buildPDFDocWithDots(dataUrl, dotCount, dispatchDate, orderNum) {
       // QR code 64×64 at y=30..94
       {
         image: dataUrl,
-        width: 16,
+        width: 15,
         absolutePosition:{ x:18, y:3 }
       },
       // Bold date text at (x=80, y=104)
