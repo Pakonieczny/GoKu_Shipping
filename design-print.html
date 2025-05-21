@@ -65,10 +65,10 @@ async function handleMetalBundles(lists) {
       pageMargins: [0,0,0,0],
       content : [
         /* ↓↓↓  MATCHES QR Printer.html sizing/position ↓↓↓ */
-        { image: imgData, width:18, absolutePosition:{ x:15, y:2 } },
+        { image: imgData, width:18, absolutePosition:{ x:20, y:2 } },
         { text : `${metal.toUpperCase()} (${arr.length})`,
           fontSize:3, bold:true,
-          absolutePosition:{ x:15, y:20 } }
+          absolutePosition:{ x:20, y:20 } }
       ]
     };
     await autoPrint(docDef);
