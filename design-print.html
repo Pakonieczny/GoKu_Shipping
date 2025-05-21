@@ -89,7 +89,7 @@ async function handleLegacy(dataObj){
 
   const imgData = await makeQRDataURL(orderNum);
   const docDef  = {
-    pageSize   : { width:144, height:108 },          // 1″ × 1″
+    pageSize   : { width:72, height:72 },          // 1″ × 1″
     pageMargins: [0,0,0,0],
     content : [
       { image: imgData, width:16, absolutePosition:{ x:15, y:2 } },
