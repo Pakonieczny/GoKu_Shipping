@@ -61,11 +61,11 @@ async function handleMetalBundles(lists) {
 
     const imgData = await makeQRDataURL(arr.join(","));
     const docDef  = {
-      pageSize   : { width:144, height:108 },          // 1″ × 1″
+      pageSize   : { width:72, height:72 },          // 1″ × 1″
       pageMargins: [0,0,0,0],
       content : [
         /* ↓↓↓  MATCHES QR Printer.html sizing/position ↓↓↓ */
-        { image: imgData, width:20, absolutePosition:{ x:40, y:30 } },
+        { image: imgData, width:20, absolutePosition:{ x:10, y:10 } },
         { text : `${metal.toUpperCase()} (${arr.length})`,
           fontSize:2, bold:true,
           absolutePosition:{ x:2, y:28 } }
