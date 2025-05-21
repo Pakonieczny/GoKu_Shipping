@@ -92,10 +92,10 @@ async function handleLegacy(dataObj){
     pageSize   : { width:144, height:108 },          // 1″ × 1″
     pageMargins: [0,0,0,0],
     content : [
-      { image: imgData, width:16, absolutePosition:{ x:2, y:2 } },
+      { image: imgData, width:16, absolutePosition:{ x:15, y:2 } },
       { text : dispatchDate,
         fontSize:3, bold:true,
-        absolutePosition:{ x:2, y:18 } }
+        absolutePosition:{ x:15, y:19 } }
     ]
   };
   await autoPrint(docDef);
