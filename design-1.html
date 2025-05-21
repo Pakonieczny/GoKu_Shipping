@@ -378,7 +378,7 @@
 <button id="openConfigBtn"     class="btn waves-effect waves-light">Open Config</button>
 <button id="updateOrderListBtn"class="btn waves-effect waves-light">Update</button>
 <button id="clearBtn"          class="btn red lighten-1">Clear</button>
-<button id="clearCompletedBtn" class="btn orange lighten-1">Clear Completed</button>
+<!--<button id="clearCompletedBtn" class="btn orange lighten-1">Clear Completed</button> -->
 
 <!-- NEW green “Complete !” button (drag-positionable inside the modal) -->
 <button id="completeBtn"
@@ -834,10 +834,10 @@ document.addEventListener("DOMContentLoaded", () => {
       });
 
       /* ────────── Clear Completed (green) button  ─────────── */
-      const clrCompBtn = document.getElementById("clearCompletedBtn");
+      /*const clrCompBtn = document.getElementById("clearCompletedBtn");
       if (clrCompBtn) {
         clrCompBtn.addEventListener("click", clearCompleted);   // ← NEW
-      }
+      } */
 
   // Load multiple orders on Enter (partial snippet)
   const etsyOrderInput = document.getElementById("etsyOrderNumber");
