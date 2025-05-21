@@ -160,7 +160,12 @@ async function buildAndPrintLabel(orderNum, dotCount, dispatchDate) {
 
   // 2) Build docDefinition with the bold shipping date (no label text, just the date)
   const dataUrl = qrImg.src;
-  const docDefinition = buildPDFDocWithDots(dataUrl, dotCount, dispatchDate);
+  const docDefinition = buildPDFDocWithDots(
+   dataUrl,
+   dotCount,
+   dispatchDate,
+   orderNum            // ⬅️ new arg
+ );
 
   // 3) Render PDF => place into a hidden iframe => auto-print
   const pdfDocGenerator = pdfMake.createPdf(docDefinition);
@@ -193,7 +198,7 @@ async function buildAndPrintLabel(orderNum, dotCount, dispatchDate) {
  * Then prints the bold date text 10px below the QR code
  * at y=104 (since the QR ends at ~y=94).
  ********************************************************/
-function buildPDFDocWithDots(dataUrl, dotCount, dispatchDate) {
+function buildPDFDocWithDots(dataUrl, dotCount, dispatchDate, orderNum) {
   // Dot = 6px diameter => radius=3, spaced 12px
   const dotEllipses = [];
   if (dotCount > 0) {
@@ -217,21 +222,28 @@ function buildPDFDocWithDots(dataUrl, dotCount, dispatchDate) {
     content: [
       // Dot ellipse(s) near top
       {
-        absolutePosition: { x:27.75, y:1 },
+        absolutePosition: { x:18.25, y:1 },
         canvas: dotEllipses
       },
       // QR code 64×64 at y=30..94
       {
         image: dataUrl,
-        width: 12,
-        absolutePosition: { x:27.5, y:2 }
+        width: 18,
+        absolutePosition:{ x:18, y:2 }
       },
       // Bold date text at (x=80, y=104)
       {
         text: dispatchDate || "N/A",
         fontSize: 2,
         bold: true,
-        absolutePosition: { x:27.5, y:13.75 }
+        absolutePosition:{ x:18, y:19 }
+      },
+      // order number immediately below the date
+      {
+        text: orderNum || "Unknown",
+        fontSize: 2,
+        bold: true,
+        absolutePosition: { x:18, y:21 }
       }
     ]
   };
