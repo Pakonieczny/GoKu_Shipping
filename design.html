@@ -378,7 +378,7 @@
 <button id="openConfigBtn"     class="btn waves-effect waves-light">Open Config</button>
 <button id="updateOrderListBtn"class="btn waves-effect waves-light">Update</button>
 <button id="clearBtn"          class="btn red lighten-1">Clear</button>
-<button id="clearCompletedBtn" class="btn orange lighten-1">Clear Completed</button>
+<!-- <button id="clearCompletedBtn" class="btn orange lighten-1">Clear Completed</button>-->
 
 <!-- NEW green “Complete !” button (drag-positionable inside the modal) -->
 <button id="completeBtn"
@@ -833,11 +833,11 @@ document.addEventListener("DOMContentLoaded", () => {
         M.toast({ html: "Selection cleared" });
       });
 
-      /* ────────── Clear Completed (green) button  ─────────── */
+      /* ────────── Clear Completed (green) button  ─────────── 
       const clrCompBtn = document.getElementById("clearCompletedBtn");
       if (clrCompBtn) {
         clrCompBtn.addEventListener("click", clearCompleted);   // ← NEW
-      }
+      }*/
 
   // Load multiple orders on Enter (partial snippet)
   const etsyOrderInput = document.getElementById("etsyOrderNumber");
@@ -2370,33 +2370,23 @@ async function startScannedSortingListener() {
 
 /* ===== Hard-coded fallback positions & sizes (no calculations) ===== */
 const defaultPos = {
-  configModal:              { left:711, top:387, width:250, height:450 },
-  configTable:              { left:27,  top:7,   width:525, height:1392 },
-  connectEtsyBtn:           { left:1239,top:14,  width:170, height:35 },
-  cropImagesBtn:            { left:20,  top:215, width:140, height:35 },
-  etsyOrderNumber:          { left:20,  top:25,  width:200, height:30 },
-  imageComparisonContainer: { left:0,   top:0,   width:0,   height:0 },
-  matchPrintBtn:            { left:20,  top:315, width:210, height:35 },
-  matchesModal:             { left:0,   top:0,   width:55,  height:0 },
-  mpBackBtn:                { left:720, top:15,  width:100, height:35 },
-  mpNextBtn:                { left:850, top:15,  width:100, height:35 },
-  openConfigBtn:            { left:1270,top:729, width:140, height:35 },
-  photoDragDrop:            { left:0,   top:-195,width:210, height:100 },
-  photoGridContainer:       { left:318, top:45,  width:1142,height:700 },
-  titleEtsyOrderNumber:     { left:20,  top:2,   width:145, height:20 },
-  titleImageMatrixDrop:     { left:20,  top:91,  width:145, height:20 },
-  titleUnmatchedImages:     { left:21,  top:437, width:145, height:20 },
-  unmatchedContainer:       { left:0,   top:152, width:600, height:0 },
-  userImage:                { left:0,   top:0,   width:100, height:100 },
-  saveConfigBtn:            { left:10,  top:3,   width:85,  height:35 },
-  sendMatchBtn:             { left:20,  top:255, width:210, height:35 },
-  testOpenAIBtn:            { left:20,  top:65,  width:140, height:35 },
-  newOrderContainer:        { left:20, top:236, width:318, height:800 },
-  nextPageBtn:              { left:482, top:0, width:120, height:36 },
-  orderHeaderBar:           { left:0, top:23, width:290, height:23 },
-  pageButtonsContainer:     { left:20, top:20, width:270, height:25 },
-  clearBtn:                 { left:820, top:0, width:120, height:35 },
-  completeBtn:              { left:500, top:500, width:120, height:35 }
+  connectEtsyBtn:           { left:1123, top:803, width:126, height:35 },
+  openConfigBtn:            { left:1270,  top:803, width:133, height:35 },
+  updateOrderListBtn:       { left:1189,top:5,  width:120, height:35 },
+  clearBtn:               { left:1324,  top:5, width:120, height:35 },
+  etsyOrderNumber:          { left:765,  top:5,  width:200, height:25 },
+  photoGridContainer:     { left:318,   top:45,   width:1142,   height:0 },
+  orderHeaderBar:       { left:6,   top:19,   width:290,   height:27 },
+  configModal:              { left:50,  top:50, width:250, height:450 },
+  configTable:              { left:27,   top:7,   width:525,  height:1562 },
+  saveConfigBtn:            { left:10, top:3,  width:85, height:35 },
+  newOrderContainer:        { left:1, top:45,  width:318, height:800 },
+  pageButtonsContainer:     { left:71,top:-4, width:325, height:25 },
+  completeBtn:              { left:1054,   top:5, width:120, height:35 },
+  goldCounter:          { left:319, top:9,  width:72,height:27 },
+  silverCounter:        { left:402,  top:9,   width:72, height:27 },
+  roseCounter:          { left:485,  top:9,  width:72, height:27 },
+  solidCounter:         { left:568,  top:9, width:72, height:27 }
 };
 
 /********************************************************
