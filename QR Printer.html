@@ -208,8 +208,8 @@ function buildPDFDocWithDots(dataUrl, dotCount, dispatchDate, orderNum) {
         type: 'ellipse',
         x: i * spacing,
         y: 0,
-        r1: 0.5,
-        r2: 0.5,
+        r1: 1,
+        r2: 1,
         color: 'black',
         fillOpacity: 1
       });
@@ -222,26 +222,26 @@ function buildPDFDocWithDots(dataUrl, dotCount, dispatchDate, orderNum) {
     content: [
       // Dot ellipse(s) near top
       {
-        absolutePosition: { x:18.25, y:1 },
+        absolutePosition: { x:18.75, y:1.5 },
         canvas: dotEllipses
       },
       // QR code 64×64 at y=30..94
       {
         image: dataUrl,
-        width: 18,
-        absolutePosition:{ x:18, y:2 }
+        width: 16,
+        absolutePosition:{ x:18, y:3 }
       },
       // Bold date text at (x=80, y=104)
       {
         text: dispatchDate || "N/A",
-        fontSize: 2,
+        fontSize: 2.5,
         bold: true,
-        absolutePosition:{ x:18, y:19 }
+        absolutePosition:{ x:18, y:18 }
       },
       // order number immediately below the date
       {
         text: orderNum || "Unknown",
-        fontSize: 2,
+        fontSize: 2.5,
         bold: true,
         absolutePosition: { x:18, y:21 }
       }
