@@ -65,10 +65,10 @@ async function handleMetalBundles(lists) {
       pageMargins: [0,0,0,0],
       content : [
         /* ↓↓↓  MATCHES QR Printer.html sizing/position ↓↓↓ */
-        { image: imgData, width:18, absolutePosition:{ x:20, y:2 } },
+        { image: imgData, width:17, absolutePosition:{ x:18, y:1 } },
         { text : `${metal.toUpperCase()} (${arr.length})`,
           fontSize:3, bold:true,
-          absolutePosition:{ x:20, y:20 } }
+          absolutePosition:{ x:18, y:21 } }
       ]
     };
     await autoPrint(docDef);
@@ -110,7 +110,7 @@ async function makeQRDataURL(text){
   document.body.appendChild(holder);
 
   new QRCode(holder, {
-    text, width:1024, height:1024, correctLevel:QRCode.CorrectLevel.H
+    text, width:2048, height:2048, correctLevel:QRCode.CorrectLevel.H
   });
   await new Promise(r => setTimeout(r, 300));      // allow render
 
