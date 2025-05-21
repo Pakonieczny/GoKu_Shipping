@@ -61,14 +61,14 @@ async function handleMetalBundles(lists) {
 
     const imgData = await makeQRDataURL(arr.join(","));
     const docDef  = {
-      pageSize   : { width:72, height:72 },          // 1″ × 1″
+      pageSize   : { width:144, height:108 },          // 1″ × 1″
       pageMargins: [0,0,0,0],
       content : [
         /* ↓↓↓  MATCHES QR Printer.html sizing/position ↓↓↓ */
         { image: imgData, width:16, absolutePosition:{ x:2, y:2 } },
         { text : `${metal.toUpperCase()} (${arr.length})`,
-          fontSize:3, bold:true,
-          absolutePosition:{ x:2, y:13.75 } }
+          fontSize:2, bold:true,
+          absolutePosition:{ x:2, y:18 } }
       ]
     };
     await autoPrint(docDef);
@@ -89,10 +89,10 @@ async function handleLegacy(dataObj){
 
   const imgData = await makeQRDataURL(orderNum);
   const docDef  = {
-    pageSize   : { width:144, height:96 },          // 1″ × 1″
+    pageSize   : { width:144, height:108 },          // 1″ × 1″
     pageMargins: [0,0,0,0],
     content : [
-      { image: imgData, width:18, absolutePosition:{ x:2, y:2 } },
+      { image: imgData, width:16, absolutePosition:{ x:2, y:2 } },
       { text : dispatchDate,
         fontSize:3, bold:true,
         absolutePosition:{ x:2, y:13.75 } }
