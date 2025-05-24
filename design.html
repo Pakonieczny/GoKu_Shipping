@@ -3112,6 +3112,15 @@ function reflowGrid(){
         detRow.appendChild(inp);
       };
 
+      /* ensure we have otherLabel even if makePreviewNode missed it */
+      if (!item.otherLabel && Array.isArray(item.variations)) {
+        const v = item.variations.find(x =>
+          !/(metal|colour|color)/i.test(x.formatted_name || "") &&
+          !/personalization/i.test(x.formatted_name || "")
+        );
+        item.otherLabel = v ? v.formatted_value : "N/A";
+      }
+
       mkInput("Qty"  , item.quantity   ?? "0");
       mkInput("Metal", item.metalLabel || "N/A");
       mkInput("SKU"  , item.sku        || "N/A");
