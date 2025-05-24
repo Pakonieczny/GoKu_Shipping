@@ -1664,6 +1664,7 @@ document.addEventListener("DOMContentLoaded", () => {
     /* ===== metal lookup, SKU, attention flag ========================== */
     let metalSel = "";
     let metalKey = "";
+    let otherSel  = "";                    // NEW – first non-metal variation
 
     if (Array.isArray(item.variations)) {
       const ok = [
@@ -1687,12 +1688,23 @@ document.addEventListener("DOMContentLoaded", () => {
           else if (/rose/.test(val))   metalKey = "rose";
           else if (/silv(?:er|r)/.test(val)) metalKey = "silver";
           else if (/gold/.test(val))   metalKey = "gold";
+
+          /* capture first non-metal / non-personalization variation */
+        if (
+          !otherSel &&
+          !/(metal|colour|color)/i.test(v.formatted_name || "") &&
+          !/personalization/i.test(v.formatted_name || "") &&
+          v.formatted_value
+        ){
+          otherSel = v.formatted_value;
+        }
         }
       });
     }
 
     /* NEW – if missing, borrow the key we just detected for the row */
     item.metalLabel = metalSel || item._metalKey || metalKey || "No Metal";
+    item.otherLabel = otherSel || "N/A";         // NEW
 
     /* does this listing need manual attention? */
     const hasPersonalization =
@@ -3100,9 +3112,10 @@ function reflowGrid(){
         detRow.appendChild(inp);
       };
 
-      mkInput("Qty"  , item.quantity  ?? "0");
+      mkInput("Qty"  , item.quantity   ?? "0");
       mkInput("Metal", item.metalLabel || "N/A");
-      mkInput("SKU"  , item.sku       || "N/A");
+      mkInput("SKU"  , item.sku        || "N/A");
+      mkInput("Other", item.otherLabel || "N/A");   // NEW line
 
       listingModal.open();
     }
