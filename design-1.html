@@ -1664,6 +1664,7 @@ document.addEventListener("DOMContentLoaded", () => {
     /* ===== metal lookup, SKU, attention flag ========================== */
     let metalSel = "";
     let metalKey = "";
+    let otherSel  = "";      // first non-metal variation
 
     if (Array.isArray(item.variations)) {
       const ok = [
@@ -1677,22 +1678,37 @@ document.addEventListener("DOMContentLoaded", () => {
 
       /* scan every variation */
       item.variations.forEach(v => {
-        if (!v?.formatted_value) return;          // value required only
+        if (!v?.formatted_value) return;                 // need a value
+        const name = (v.formatted_name  || "").replace(/&quot;/g, '"');
+        const val  = (v.formatted_value || "").replace(/&quot;/g, '"');
 
-        if (!metalSel) metalSel = v.formatted_value;   // first label wins
-        const val = v.formatted_value.toLowerCase();
-
+        /* grab the first METAL match for row-colouring */
         if (!metalKey) {
-          if (/14\s*k\s*solid/i.test(val))         metalKey = "14k";
-          else if (/rose/.test(val))   metalKey = "rose";
-          else if (/silv(?:er|r)/.test(val)) metalKey = "silver";
-          else if (/gold/.test(val))   metalKey = "gold";
+          const low = val.toLowerCase();
+          if (/14\s*k\s*solid/i.test(low))         metalKey = "14k";
+          else if (/rose/.test(low))               metalKey = "rose";
+          else if (/silv(?:er|r)/.test(low))       metalKey = "silver";
+          else if (/gold/.test(low))               metalKey = "gold";
         }
+
+        /* grab the first NON-metal, NON-personalization variation */
+        if (
+          !otherSel &&
+          !/(metal|colour|color)/i.test(name) &&
+          !/personalization/i.test(name) &&
+          val.trim()
+        ){
+          otherSel = val.trim();
+        }
+
+        /* remember the very first label for completeness */
+        if (!metalSel) metalSel = val;
       });
     }
 
     /* NEW – if missing, borrow the key we just detected for the row */
     item.metalLabel = metalSel || item._metalKey || metalKey || "No Metal";
+    item.otherLabel = otherSel || "N/A";
 
     /* does this listing need manual attention? */
     const hasPersonalization =
@@ -3103,6 +3119,7 @@ function reflowGrid(){
       mkInput("Qty"  , item.quantity  ?? "0");
       mkInput("Metal", item.metalLabel || "N/A");
       mkInput("SKU"  , item.sku       || "N/A");
+      mkInput("Option", item.otherLabel || "N/A");   // new line
 
       listingModal.open();
     }
