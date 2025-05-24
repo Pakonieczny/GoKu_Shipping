@@ -1679,8 +1679,8 @@ document.addEventListener("DOMContentLoaded", () => {
       /* scan every variation */
       item.variations.forEach(v => {
         if (!v?.formatted_value) return;                 // need a value
-        const name = v.formatted_name  || "";
-        const val  = v.formatted_value || "";
+        const name = (v.formatted_name  || "").replace(/&quot;/g, '"');
+        const val  = (v.formatted_value || "").replace(/&quot;/g, '"');
 
         /* grab the first METAL match for row-colouring */
         if (!metalKey) {
