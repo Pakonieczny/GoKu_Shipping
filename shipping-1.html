@@ -537,13 +537,6 @@
     </div>
   </div>
 
-  <!-- 🆕 Image popup -->
-  <div id="imageModal" class="modal">
-    <div class="modal-content" style="padding:0;">
-      <img id="modalImage" style="width:100%;height:auto;display:block;">
-    </div>
-  </div>
-
   <!-- jQuery & Materialize -->
   <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
   <script
@@ -553,8 +546,6 @@
   <!-- 1) Firebase loaded first, define db for global usage -->
   <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
-  <!-- 🆕 Storage -->
-  <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-storage-compat.js"></script>
   <script>
     const firebaseConfig = {
       apiKey: "AIzaSyBXhQLsYRa4i0bX1TPTRiElF9Zjy5vSHlA",
@@ -689,18 +680,11 @@
             const emp        = (document.getElementById("employeeName").value || "").trim().toLowerCase();
             const bubbleCls  = (d.senderName && d.senderName.trim().toLowerCase() === emp) ? "sent" : "received";
 
-            let bodyHTML = "";
-            if (d.imageUrl){
-              const alt = d.fileName || "Image";
-              bodyHTML  = `<a href="#" class="img-link" data-src="${d.imageUrl}">${escapeHtml(alt)}</a>`;
-            }else{
-              bodyHTML  = escapeHtml(d.text || "");
-            }
-
             html += `<div class="msg ${bubbleCls}">
-           <span class="meta">${d.senderName} • ${dt}</span>
-           <span>${bodyHTML}</span>
-         </div>`;          });
+                       <span class="meta">${d.senderName} • ${dt}</span>
+                       <span>${escapeHtml(d.text)}</span>
+                     </div>`;
+          });
 
                 /* 🔔 beep for any new message after initial snapshot */
                 if (!firstBatch && snap.docChanges().some(c => c.type === "added")){
@@ -1681,54 +1665,6 @@
           }
         });
     }
-
-    /* ─── Drag & Drop image → upload to Storage → log chat msg ───────── */
-    const msgBox = document.getElementById("customerMessageHistory");
-    if (msgBox){
-      msgBox.addEventListener("dragover", e => e.preventDefault());
-
-      msgBox.addEventListener("drop", async e => {
-        e.preventDefault();
-        const orderId = document.getElementById("etsyOrderNumber").value.trim();
-        const staff   = (document.getElementById("employeeName").value || "Staff").trim();
-        const file    = e.dataTransfer.files[0];
-
-        if (!orderId){ M.toast({html:"Enter order # first"}); return; }
-        if (!file || !file.type.startsWith("image/")){
-          M.toast({html:"Drop an image file"}); return;
-        }
-
-        try{
-          const path = `orderImages/${orderId}/${Date.now()}_${file.name}`;
-          const snap = await firebase.storage().ref(path).put(file);
-          const url  = await snap.ref.getDownloadURL();
-
-          /* Firestore chat entry with imageUrl */
-          await db.collection("Brites_Orders")
-                  .doc(orderId)
-                  .collection("messages")
-                  .add({
-                    imageUrl  : url,
-                    fileName  : file.name,
-                    senderName: staff,
-                    timestamp : firebase.firestore.FieldValue.serverTimestamp()
-                  });
-        }catch(err){
-          console.error(err);
-          M.toast({html:"Upload failed: "+err.message});
-        }
-      });
-
-      /* click any image link → open modal */
-      msgBox.addEventListener("click", e=>{
-        const a = e.target.closest(".img-link");
-        if (!a) return;
-        e.preventDefault();
-        document.getElementById("modalImage").src = a.dataset.src;
-        M.Modal.getInstance(document.getElementById("imageModal")).open();
-      });
-    }
-    
     });   // ← closes DOMContentLoaded handler
   </script>
 
