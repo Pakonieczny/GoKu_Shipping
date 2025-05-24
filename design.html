@@ -187,8 +187,8 @@
     /* Container for dynamically generated preview boxes and detail boxes */
     #photoGridContainer {
       position: relative;
-      width: 1200px;
-      max-height: 700px;
+      width: 1500px;
+      max-height: 800px;
       overflow-y: auto;
       border-left: 1px dashed #ccc;
       border-right: 1px dashed #ccc;
@@ -1621,8 +1621,8 @@ document.addEventListener("DOMContentLoaded", () => {
   /* build a preview row (image + 4 tiny detail inputs) */
   function makePreviewNode(item){
     const idx = gridElements.size;
-    const row = Math.floor(idx / 9);
-    const col = idx % 9;
+    const row = Math.floor(idx / 12);
+    const col = idx % 12;
 
     /* wrapper keeps receipt ID for easy lookup */
     const wrap = document.createElement("div");
@@ -2375,7 +2375,7 @@ const defaultPos = {
   updateOrderListBtn:       { left:1189,top:5,  width:120, height:35 },
   clearBtn:               { left:1324,  top:5, width:120, height:35 },
   etsyOrderNumber:          { left:765,  top:5,  width:200, height:25 },
-  photoGridContainer:     { left:318,   top:45,   width:1142,   height:0 },
+  photoGridContainer:     { left:318,   top:45,   width:1400, height:700 },
   orderHeaderBar:       { left:6,   top:19,   width:290,   height:27 },
   configModal:              { left:50,  top:50, width:250, height:450 },
   configTable:              { left:27,   top:7,   width:525,  height:1562 },
@@ -2856,8 +2856,8 @@ function reflowGrid(){
                      .filter(w => w.style.display !== "none");
 
   wraps.forEach((wrap, idx) => {
-    const row = Math.floor(idx / 9);      // 9 cols per row
-    const col = idx % 9;
+    const row = Math.floor(idx / 12);      // 9 cols per row
+    const col = idx % 12;
     wrap.style.left = (col * 125) + "px";
     wrap.style.top  = (row * 165) + "px";
   });
@@ -3111,8 +3111,8 @@ function reflowGrid(){
     function realignGrid(){
       const wraps = Array.from(document.querySelectorAll("#photoGridContainer .wrap-preview"));
       wraps.forEach((w, idx) => {
-        const row = Math.floor(idx / 9);
-        const col = idx % 9;
+        const row = Math.floor(idx / 12);
+        const col = idx % 12;
         w.style.left = (col * 125) + "px";
         w.style.top  = (row * 165) + "px";
       });
