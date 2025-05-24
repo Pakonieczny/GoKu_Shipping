@@ -1678,27 +1678,31 @@ document.addEventListener("DOMContentLoaded", () => {
 
       /* scan every variation */
       item.variations.forEach(v => {
-        if (!v?.formatted_value) return;          // value required only
+        if (!v?.formatted_value) return;                 // need a value
+        const name = v.formatted_name  || "";
+        const val  = v.formatted_value || "";
 
-        if (!metalSel) metalSel = v.formatted_value;   // first label wins
-        const val = v.formatted_value.toLowerCase();
-
+        /* grab the first METAL match for row-colouring */
         if (!metalKey) {
-          if (/14\s*k\s*solid/i.test(val))         metalKey = "14k";
-          else if (/rose/.test(val))   metalKey = "rose";
-          else if (/silv(?:er|r)/.test(val)) metalKey = "silver";
-          else if (/gold/.test(val))   metalKey = "gold";
+          const low = val.toLowerCase();
+          if (/14\s*k\s*solid/i.test(low))         metalKey = "14k";
+          else if (/rose/.test(low))               metalKey = "rose";
+          else if (/silv(?:er|r)/.test(low))       metalKey = "silver";
+          else if (/gold/.test(low))               metalKey = "gold";
+        }
 
-          /* capture first non-metal / non-personalization variation */
+        /* grab the first NON-metal, NON-personalization variation */
         if (
           !otherSel &&
-          !/(metal|colour|color)/i.test(v.formatted_name || "") &&
-          !/personalization/i.test(v.formatted_name || "") &&
-          v.formatted_value
+          !/(metal|colour|color)/i.test(name) &&
+          !/personalization/i.test(name) &&
+          val.trim()
         ){
-          otherSel = v.formatted_value;
+          otherSel = val.trim();
         }
-        }
+
+        /* remember the very first label for completeness */
+        if (!metalSel) metalSel = val;
       });
     }
 
