@@ -656,6 +656,10 @@
       }
     }
 
+    /* globals for realtime listener */
+    let chatUnsub = null;        // holds the active Firestore unsubscribe fn
+    let firstBatch = true;       // suppress chime on initial load
+
     /* ─── realtime Brites chat listener (now supports images) ─────────── */
     function startBritesListener(orderId){
       if(chatUnsub) chatUnsub();
