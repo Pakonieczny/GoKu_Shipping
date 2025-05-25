@@ -520,6 +520,13 @@
 
   <div id="secondaryContainer"></div>
 
+  <!-- Brites chat image-viewer -->
+  <div id="chatImgModal" class="modal">
+    <div class="modal-content" style="padding:0;">
+      <img id="chatImgModalImg" src="" style="width:100%;height:auto;display:block;">
+    </div>
+  </div>
+
   <!-- The user login modal -->
   <div id="userLoginModal" class="modal">
     <!-- A wrapper with position: relative, so children can be absolutely placed -->
@@ -546,6 +553,8 @@
   <!-- 1) Firebase loaded first, define db for global usage -->
   <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
+  <!-- Firebase Storage (needed for image uploads) -->
+  <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-storage-compat.js"></script>
   <script>
     const firebaseConfig = {
       apiKey: "AIzaSyBXhQLsYRa4i0bX1TPTRiElF9Zjy5vSHlA",
@@ -647,23 +656,19 @@
       }
     }
 
-    /* ─── realtime Brites chat listener ─────────────────────────── */
-    let chatUnsub = null;
-    let firstBatch = true;    // skip beep on initial load
+    /* ─── realtime Brites chat listener (now supports images) ─────────── */
     function startBritesListener(orderId){
-      if(chatUnsub) chatUnsub();          // switch orders → kill previous watch
+      if(chatUnsub) chatUnsub();
       chatUnsub = db
-        .collection("Brites_Orders")
-        .doc(orderId)
-        .collection("messages")
-        .orderBy("timestamp","asc")
+        .collection("Brites_Orders").doc(orderId)
+        .collection("messages").orderBy("timestamp","asc")
         .onSnapshot(snap=>{
-          console.log("messages snapshot size:", snap.size);
           const box = document.getElementById("customerMessageHistory");
           if(!box) return;
 
           let html = "";
-          /* buyer’s original note */
+
+          /* buyer’s original note (if any) */
           if (window.buyerMessageText && window.buyerMessageText.length){
             const ts = formatChatTimestamp(new Date());
             html += `<div class="msg received">
@@ -676,25 +681,33 @@
             const d  = doc.data();
             const dt = formatChatTimestamp(d.timestamp?.toDate() || new Date());
 
-            /* staff ⇒ right align, customer ⇒ left align */
-            const emp        = (document.getElementById("employeeName").value || "").trim().toLowerCase();
-            const bubbleCls  = (d.senderName && d.senderName.trim().toLowerCase() === emp) ? "sent" : "received";
+            const emp = (document.getElementById("employeeName").value||"")
+                         .trim().toLowerCase();
+            const bubbleCls =
+              (d.senderName && d.senderName.trim().toLowerCase()===emp)
+                ? "sent" : "received";
 
-            html += `<div class="msg ${bubbleCls}">
-                       <span class="meta">${d.senderName} • ${dt}</span>
-                       <span>${escapeHtml(d.text)}</span>
-                     </div>`;
+            /* 🔗 image vs. text */
+            if (d.imageUrl){
+              html += `<div class="msg ${bubbleCls}">
+                         <span class="meta">${d.senderName} • ${dt}</span>
+                         <a href="#!" class="img-link" data-src="${d.imageUrl}">📷 Image</a>
+                       </div>`;
+            } else {
+              html += `<div class="msg ${bubbleCls}">
+                         <span class="meta">${d.senderName} • ${dt}</span>
+                         <span>${escapeHtml(d.text)}</span>
+                       </div>`;
+            }
           });
 
-                /* 🔔 beep for any new message after initial snapshot */
-                if (!firstBatch && snap.docChanges().some(c => c.type === "added")){
-                  playChime();
-                }
-                firstBatch = false;
+          /* 🔔 chime after initial batch */
+          if (!firstBatch && snap.docChanges().some(c=>c.type==="added")) playChime();
+          firstBatch = false;
 
           box.innerHTML = html;
           box.scrollTop = box.scrollHeight;
-          applyChatSpacing();  // keep 5 px / 3 px gaps
+          applyChatSpacing();
         });
     }
     /* basic XSS guard */
@@ -1212,6 +1225,62 @@
           isDragging = false;
         });
       });
+
+      /* === Drag-drop image upload + click-viewer ===================== */
+      (function attachImageDnD(){
+        const chatBox   = document.getElementById("customerMessageHistory");
+        const orderInp  = document.getElementById("etsyOrderNumber");
+        const empNameEl = document.getElementById("employeeName");
+        if(!chatBox) return;
+
+        /* drag-over glow */
+        const onEnter = e=>{e.preventDefault(); chatBox.style.outline="2px dashed dodgerblue";};
+        const onLeave = e=>{e.preventDefault(); chatBox.style.outline="";};
+        ["dragenter","dragover"].forEach(x=>chatBox.addEventListener(x,onEnter));
+        ["dragleave","drop"].forEach(x=>chatBox.addEventListener(x,onLeave));
+
+        /* drop → Storage → Firestore */
+        chatBox.addEventListener("drop", async e=>{
+          e.preventDefault();
+          const images = [...e.dataTransfer.files].filter(f=>f.type.startsWith("image/"));
+          if(!images.length) return;
+
+          const orderId = orderInp.value.trim();
+          if(!orderId){ M.toast({html:"Enter order # first"}); return; }
+          const staff   = (empNameEl.value||"Staff").trim();
+
+          for(const file of images){
+            try{
+              const path = `chatImages/${orderId}/${Date.now()}_${file.name}`;
+              const snap = await firebase.storage().ref().child(path).put(file);
+              const url  = await snap.ref.getDownloadURL();
+
+              await db.collection("Brites_Orders")
+                .doc(orderId).collection("messages")
+                .add({
+                  imageUrl  : url,
+                  text      : "Image attachment",
+                  senderName: staff,
+                  senderRole: "staff",
+                  timestamp : firebase.firestore.FieldValue.serverTimestamp()
+                });
+            }catch(err){
+              console.error("upload error:",err);
+              M.toast({html:"Upload failed: "+err.message});
+            }
+          }
+        });
+
+        /* click any .img-link → modal */
+        document.addEventListener("click", e=>{
+          if(!e.target.classList.contains("img-link")) return;
+          document.getElementById("chatImgModalImg").src = e.target.dataset.src;
+          M.Modal.getInstance(document.getElementById("chatImgModal")).open();
+        });
+
+        /* one-time modal init */
+        M.Modal.init(document.getElementById("chatImgModal"));
+      })();
 
     /* =========================================================
      *  Send Brites Msg – POST via Netlify function
