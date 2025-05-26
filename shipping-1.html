@@ -568,6 +568,24 @@
     window.db = firebase.firestore(); // define globally
   </script>
 
+  <!-- helper: force every upload to use resumable PUT -->
+  <script type="module">
+    import { getStorage, ref, uploadBytesResumable }
+      from "https://www.gstatic.com/firebasejs/9.23.0/firebase-storage.js";
+
+    const storage = getStorage();                   // re-uses the compat app
+    window.uploadViaResumable = async (path, file) => {
+      const storageRef = ref(storage, path);
+      const task = uploadBytesResumable(storageRef, file,
+                                        { contentType: file.type });
+
+      await new Promise((res, rej) =>
+        task.on("state_changed", null, rej, res)
+      );
+      return await storageRef.getDownloadURL();
+    };
+  </script>
+
   <script>
     /********** Global Variables **********/
     window.receiptIsGift = null;
@@ -1253,23 +1271,12 @@
           if(!orderId){ M.toast({html:"Enter order # first"}); return; }
           const staff   = (empNameEl.value||"Staff").trim();
 
-          for(const file of images){
-            try{
+          for (const file of images) {
+            try {
               const path = `chatImages/${orderId}/${Date.now()}_${file.name}`;
-              /* use resumable PUT instead of simple POST */
-              const storageRef = firebase.storage().ref().child(path);
-              const uploadTask = storageRef.put(file, { contentType: file.type });
 
-              await new Promise((resolve, reject) => {
-                uploadTask.on(
-                  "state_changed",
-                  null,          // you can hook progress here later
-                  reject,
-                  () => resolve(uploadTask.snapshot)
-                );
-              });
-
-              const url = await storageRef.getDownloadURL();
+              /* 🚀 one-liner: resumable PUT upload + URL */
+              const url = await uploadViaResumable(path, file);
 
               await db.collection("Brites_Orders")
                 .doc(orderId).collection("messages")
@@ -1280,9 +1287,9 @@
                   senderRole: "staff",
                   timestamp : firebase.firestore.FieldValue.serverTimestamp()
                 });
-            }catch(err){
-              console.error("upload error:",err);
-              M.toast({html:"Upload failed: "+err.message});
+            } catch(err) {
+              console.error("upload error:", err);
+              M.toast({ html: "Upload failed: " + err.message });
             }
           }
         });
