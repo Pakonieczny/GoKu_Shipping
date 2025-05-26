@@ -1276,7 +1276,7 @@
               const path = `chatImages/${orderId}/${Date.now()}_${file.name}`;
 
               /* 🚀 one-liner: resumable PUT upload + URL */
-              const url = await uploadViaResumable(path, file);
+              const url = await window.uploadViaResumable(path, file);
 
               await db.collection("Brites_Orders")
                 .doc(orderId).collection("messages")
