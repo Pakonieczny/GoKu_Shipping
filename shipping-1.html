@@ -568,25 +568,7 @@
     window.db = firebase.firestore(); // define globally
   </script>
 
-  <!-- helper: force every upload to use resumable PUT -->
-  <script type="module">
-    import { getStorage, ref, uploadBytesResumable }
-      from "https://www.gstatic.com/firebasejs/9.23.0/firebase-storage.js";
-
-    const storage = getStorage();                   // re-uses the compat app
-    window.uploadViaResumable = async (path, file) => {
-      const storageRef = ref(storage, path);
-      const task = uploadBytesResumable(storageRef, file,
-                                        { contentType: file.type });
-
-      await new Promise((res, rej) =>
-        task.on("state_changed", null, rej, res)
-      );
-      return await storageRef.getDownloadURL();
-    };
-  </script>
-
-  <script type="module">
+  <script>
     /********** Global Variables **********/
     window.receiptIsGift = null;
     window.receiptGiftMessage = null;
@@ -1758,6 +1740,27 @@
         });
     }
     });   // ← closes DOMContentLoaded handler
+  </script>
+
+  <!-- helper: force every upload to use resumable PUT -->
+  <script type="module">
+    import { getStorage, ref, uploadBytesResumable }
+      from "https://www.gstatic.com/firebasejs/9.23.0/firebase-storage.js";
+
+    const storage = getStorage();                   // re-uses the compat app
+    window.uploadViaResumable = async (path, file) => {
+      const storageRef = ref(storage, path);
+      const task = uploadBytesResumable(
+        storageRef,
+        file,
+        { contentType: file.type }
+      );
+
+      await new Promise((res, rej) =>
+        task.on("state_changed", null, rej, res)
+      );
+      return await storageRef.getDownloadURL();
+    };
   </script>
 
   <!-- 🆕 hard-hide unused fields -->
