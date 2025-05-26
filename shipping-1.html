@@ -1256,8 +1256,20 @@
           for(const file of images){
             try{
               const path = `chatImages/${orderId}/${Date.now()}_${file.name}`;
-              const snap = await firebase.storage().ref().child(path).put(file);
-              const url  = await snap.ref.getDownloadURL();
+              /* use resumable PUT instead of simple POST */
+              const storageRef = firebase.storage().ref().child(path);
+              const uploadTask = storageRef.put(file, { contentType: file.type });
+
+              await new Promise((resolve, reject) => {
+                uploadTask.on(
+                  "state_changed",
+                  null,          // you can hook progress here later
+                  reject,
+                  () => resolve(uploadTask.snapshot)
+                );
+              });
+
+              const url = await storageRef.getDownloadURL();
 
               await db.collection("Brites_Orders")
                 .doc(orderId).collection("messages")
