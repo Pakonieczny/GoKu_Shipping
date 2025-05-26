@@ -1744,13 +1744,33 @@
 
   <!-- helper: force every upload to use resumable PUT -->
   <script type="module">
-    import { getStorage, ref, uploadBytesResumable }
-      from "https://www.gstatic.com/firebasejs/9.23.0/firebase-storage.js";
+    /* modular imports */
+    import {
+      initializeApp,
+      getApp
+    } from "https://www.gstatic.com/firebasejs/9.23.0/firebase-app.js";
+    import {
+      getStorage,
+      ref,
+      uploadBytesResumable
+    } from "https://www.gstatic.com/firebasejs/9.23.0/firebase-storage.js";
 
-    const storage = getStorage();                   // re-uses the compat app
+    /* reuse the compat-initialised config */
+    let modApp;
+    try {
+      modApp = getApp();                       // already exists? (unlikely)
+    } catch {
+      // pull the options off the compat app & spin a modular twin
+      const compatOpts = firebase.app().options;
+      modApp = initializeApp(compatOpts);
+    }
+
+    const storage = getStorage(modApp);        // OK – default app now present
+
+    /* expose a single resumable uploader */
     window.uploadViaResumable = async (path, file) => {
       const storageRef = ref(storage, path);
-      const task = uploadBytesResumable(
+      const task       = uploadBytesResumable(
         storageRef,
         file,
         { contentType: file.type }
