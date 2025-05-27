@@ -4,13 +4,13 @@
 // else if "goldenspike.app" => uses that
 // else => defaults to goldenspike (you can invert this default if you wish).
 
-const fetch = require("node-fetch");
+const fetch  = require("node-fetch");
 const crypto = require("crypto");
 
 // We only allow these two final domains:
 const SORTING_DOMAIN      = "https://sorting.goldenspike.app";
 const GOLDENSPIKE_DOMAIN  = "https://goldenspike.app";
-const DESIGN_DOMAIN  = "https://design.goldenspike.app";
+const DESIGN_DOMAIN       = "https://design.goldenspike.app";
 // ─── new assembly domains ───────────────────────────────────────────
 const ASSEMBLY1_DOMAIN   = "https://assembly-1.goldenspike.app";
 const ASSEMBLY2_DOMAIN   = "https://assembly-2.goldenspike.app";
@@ -25,6 +25,13 @@ const SHIPPING3_DOMAIN   = "https://shipping-3.goldenspike.app";
 // ─── new weld + design sub-domains ──────────────────────────────────
 const WELD1_DOMAIN       = "https://weld-1.goldenspike.app";
 const DESIGN1_DOMAIN     = "https://design-1.goldenspike.app";
+
+/* 🆕 global CORS constants */
+const CORS = {
+  "Access-Control-Allow-Origin" : "*",
+  "Access-Control-Allow-Headers": "Content-Type,Authorization",
+  "Access-Control-Allow-Methods": "GET,POST,OPTIONS"
+};
 
 // Helpers for PKCE:
 function generateRandomString(length) {
@@ -91,6 +98,12 @@ function pickDomainFromHost(event) {
 }
 
 exports.handler = async function(event) {
+
+  /* 🆕 quick reply for pre-flight requests */
+  if (event.httpMethod === "OPTIONS") {
+    return { statusCode: 200, headers: CORS, body: "ok" };
+  }
+
   try {
     const query = event.queryStringParameters || {};
     const code = query.code;
@@ -106,7 +119,7 @@ exports.handler = async function(event) {
       const codeChallenge   = generateCodeChallenge(newCodeVerifier);
       const CLIENT_ID       = process.env.CLIENT_ID;
       if (!CLIENT_ID) {
-        return { statusCode: 500, body: JSON.stringify({ error: "Server config error" }) };
+        return { statusCode: 500, headers: CORS, body: JSON.stringify({ error: "Server config error" }) };
       }
 
       const scope = "listings_w listings_r transactions_r transactions_w";
@@ -120,19 +133,19 @@ exports.handler = async function(event) {
         `&code_challenge=${encodeURIComponent(codeChallenge)}` +
         `&code_challenge_method=S256`;
 
-      return { statusCode: 302, headers: { Location: oauthUrl }, body: "" };
+      return { statusCode: 302, headers: { ...CORS, Location: oauthUrl }, body: "" };
     }
 
     // Require code_verifier
     if (!codeVerifier) {
-      return { statusCode: 400, body: JSON.stringify({ error: "Missing code_verifier param" }) };
+      return { statusCode: 400, headers: CORS, body: JSON.stringify({ error: "Missing code_verifier param" }) };
     }
 
     // Exchange token
     const CLIENT_ID     = process.env.CLIENT_ID;
     const CLIENT_SECRET = process.env.CLIENT_SECRET;
     if (!CLIENT_ID || !CLIENT_SECRET) {
-      return { statusCode: 500, body: JSON.stringify({ error: "Server creds missing" }) };
+      return { statusCode: 500, headers: CORS, body: JSON.stringify({ error: "Server creds missing" }) };
     }
 
     const params = new URLSearchParams({
@@ -151,13 +164,13 @@ exports.handler = async function(event) {
     });
     const data  = await resp.json();
     if (!resp.ok) {
-      return { statusCode: resp.status, body: JSON.stringify(data) };
+      return { statusCode: resp.status, headers: CORS, body: JSON.stringify(data) };
     }
 
     const finalUrl = `${finalRedirectUri}?access_token=${encodeURIComponent(data.access_token)}`;
-    return { statusCode: 302, headers: { Location: finalUrl }, body: "" };
+    return { statusCode: 302, headers: { ...CORS, Location: finalUrl }, body: "" };
 
   } catch (err) {
-    return { statusCode: 500, body: JSON.stringify({ error: err.message }) };
+    return { statusCode: 500, headers: CORS, body: JSON.stringify({ error: err.message }) };
   }
 };

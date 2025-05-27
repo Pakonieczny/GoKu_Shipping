@@ -20,4 +20,20 @@ if (!admin.apps.length) {
   });
 }
 
+/* ─── ensure CORS rule (runs once per cold-start) ───────── */
+if (!process.env.CORS_SET) {
+  const { Storage } = require("@google-cloud/storage");
+  new Storage({ credentials: serviceAccount })
+    .bucket("gokudatabase.appspot.com")
+    .setCorsConfiguration([{
+      origin        : ["https://shipping-1.goldenspike.app"],
+      method        : ["GET","POST","PUT","DELETE","HEAD","OPTIONS"],
+      responseHeader: ["Content-Type","Authorization"],
+      maxAgeSeconds : 3600
+    }])
+    .then(() => console.log("CORS confirmed"))
+    .catch(err => console.error("CORS error:", err));
+  process.env.CORS_SET = "1";   // prevent repeats on warm invokes
+}
+
 module.exports = admin;

@@ -2,7 +2,20 @@
 const admin = require("./firebaseAdmin");
 const db    = admin.firestore();
 
+/* 🆕 global CORS headers */
+const CORS = {
+  "Access-Control-Allow-Origin" : "*",
+  "Access-Control-Allow-Headers": "Content-Type,Authorization",
+  "Access-Control-Allow-Methods": "GET,POST,OPTIONS"
+};
+
 exports.handler = async (event, context) => {
+
+  /* 🆕 instant response for pre-flight */
+  if (event.httpMethod === "OPTIONS") {
+    return { statusCode: 200, headers: CORS, body: "ok" };
+  }
+
   try {
     const method = event.httpMethod;
 
@@ -23,6 +36,7 @@ exports.handler = async (event, context) => {
       if (!orderNumber) {
         return {
           statusCode: 400,
+          headers: CORS,
           body: JSON.stringify({ error: "No orderNumber provided" })
         };
       }
@@ -42,6 +56,7 @@ exports.handler = async (event, context) => {
 
         return {
           statusCode: 200,
+          headers: CORS,
           body: JSON.stringify({ success: true, message: "Chat doc added." })
         };
       }
@@ -57,6 +72,7 @@ exports.handler = async (event, context) => {
       if (Object.keys(dataToStore).length === 0) {
         return {
           statusCode: 200,
+          headers: CORS,
           body: JSON.stringify({ success: true, message: "Nothing to update." })
         };
       }
@@ -68,6 +84,7 @@ exports.handler = async (event, context) => {
 
       return {
         statusCode: 200,
+        headers: CORS,
         body: JSON.stringify({
           success: true,
           message: `Order doc ${orderNumber} created/updated.`
@@ -75,35 +92,40 @@ exports.handler = async (event, context) => {
       };
     }
 
-    /* ───────────────────────── GET ───────────────────────── */
-    if (method === "GET") {
-      const { orderId } = event.queryStringParameters || {};
+/* ───────────────────────── GET (replace this block) ──────────────── */
+if (method === "GET") {
+  const { orderId } = event.queryStringParameters || {};
 
-      if (!orderId) {
-        return {
-          statusCode: 400,
-          body: JSON.stringify({ error: "No orderId query param provided" })
-        };
-      }
+  if (!orderId) {
+    return {
+      statusCode: 400,
+      headers: CORS,
+      body: JSON.stringify({ error: "No orderId query param provided" })
+    };
+  }
 
-      const docSnap = await db.collection("Brites_Orders").doc(orderId).get();
+  const docSnap = await db.collection("Brites_Orders").doc(orderId).get();
 
-      if (!docSnap.exists) {
-        return {
-          statusCode: 404,
-          body: JSON.stringify({ error: `Order ${orderId} not found.` })
-        };
-      }
+  /* 200 ➜ quieter “not found”, caller checks success flag instead of .ok */
+  if (!docSnap.exists) {
+    return {
+      statusCode: 200,
+      headers: CORS,
+      body: JSON.stringify({ success: false, notFound: true })
+    };
+  }
 
-      return {
-        statusCode: 200,
-        body: JSON.stringify({ success: true, data: docSnap.data() })
-      };
-    }
+  return {
+    statusCode: 200,
+    headers: CORS,
+    body: JSON.stringify({ success: true, data: docSnap.data() })
+  };
+}
 
     /* ─────────────────────── fallback ─────────────────────── */
     return {
       statusCode: 405,
+      headers: CORS,
       body: JSON.stringify({ error: "Method Not Allowed" })
     };
 
@@ -111,6 +133,7 @@ exports.handler = async (event, context) => {
     console.error("Error in firebaseOrders function:", error);
     return {
       statusCode: 500,
+      headers: CORS,
       body: JSON.stringify({ error: error.message })
     };
   }
