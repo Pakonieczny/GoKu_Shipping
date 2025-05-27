@@ -24,7 +24,7 @@ if (!admin.apps.length) {
 if (!process.env.CORS_SET) {
   const { Storage } = require("@google-cloud/storage");
   new Storage({ credentials: serviceAccount })
-    .bucket("gokudatabase.appspot.com")
+    .bucket("gokudatabase.firebasestorage.app")
     .setCorsConfiguration([{
       origin        : ["https://shipping-1.goldenspike.app"],
       method        : ["GET","POST","PUT","DELETE","HEAD","OPTIONS"],

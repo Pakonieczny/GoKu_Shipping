@@ -14,7 +14,7 @@ const creds = {
 exports.handler = async () => {
   try {
     const storage = new Storage({ credentials: creds });
-    await storage.bucket("gokudatabase.appspot.com")
+    await storage.bucket("gokudatabase.firebasestorage.app")
       .setCorsConfiguration([{
         origin        : ["https://shipping-1.goldenspike.app"],
         method        : ["GET","POST","PUT","DELETE","HEAD","OPTIONS"],
