@@ -1757,6 +1757,7 @@
       ref,
       uploadBytesResumable
     } from "https://www.gstatic.com/firebasejs/9.23.0/firebase-storage.js";
+    import { getDownloadURL } from "https://www.gstatic.com/firebasejs/9.23.0/firebase-storage.js";
     import {
       getAuth,
       signInAnonymously
@@ -1788,7 +1789,7 @@
       await new Promise((res, rej) =>
         task.on("state_changed", null, rej, res)
       );
-      return await storageRef.getDownloadURL();
+      return await getDownloadURL(storageRef);
     };
   </script>
 
