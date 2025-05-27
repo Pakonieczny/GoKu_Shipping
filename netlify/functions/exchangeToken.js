@@ -11,6 +11,8 @@ const crypto = require("crypto");
 const SORTING_DOMAIN      = "https://sorting.goldenspike.app";
 const GOLDENSPIKE_DOMAIN  = "https://goldenspike.app";
 const DESIGN_DOMAIN       = "https://design.goldenspike.app";
+const DESIGNMESSAGE_DOMAIN       = "https://design-message.goldenspike.app";
+const DESIGNMESSAGE1_DOMAIN       = "https://design-message-1.goldenspike.app";
 // ─── new assembly domains ───────────────────────────────────────────
 const ASSEMBLY1_DOMAIN   = "https://assembly-1.goldenspike.app";
 const ASSEMBLY2_DOMAIN   = "https://assembly-2.goldenspike.app";
@@ -66,6 +68,8 @@ function pickDomainFromHost(event) {
     case "sorting":      return SORTING_DOMAIN;
     case "weld-1":       return WELD1_DOMAIN;
     case "design-1":     return DESIGN1_DOMAIN;
+    case "design-message":     return DESIGNMESSAGE_DOMAIN;
+    case "design-message-1":     return DESIGNMESSAGE1_DOMAIN;
     case "assembly-1":   return ASSEMBLY1_DOMAIN;
     case "assembly-2":   return ASSEMBLY2_DOMAIN;
     case "assembly-3":   return ASSEMBLY3_DOMAIN;
@@ -91,6 +95,8 @@ function pickDomainFromHost(event) {
   if (host.includes("weld-1.goldenspike.app"))       return WELD1_DOMAIN;
   if (host.includes("design-1.goldenspike.app"))     return DESIGN1_DOMAIN;
   if (host.includes("design.goldenspike.app"))       return DESIGN_DOMAIN;
+  if (host.includes("design-message.goldenspike.app"))       return DESIGNMESSAGE_DOMAIN;
+  if (host.includes("design-message-1.goldenspike.app"))       return DESIGNMESSAGE1_DOMAIN;
   if (host.includes("goldenspike.app"))              return GOLDENSPIKE_DOMAIN;
 
   /* ── fallback ────────────────────────────────────────────────────── */

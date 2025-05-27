@@ -1,0 +1,1874 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>Etsy Order & OAuth Integration</title>
+
+  <!-- Materialize CSS -->
+  <link
+    rel="stylesheet"
+    href="https://cdnjs.cloudflare.com/ajax/libs/materialize/1.0.0/css/materialize.min.css"
+  >
+  <style>
+    /* Hide page initially for a fade-in effect */
+    body {
+      background-color: white;
+      margin: 0;
+      height: 100vh;
+      position: relative;
+      opacity: 0; /* hidden initially */
+      transition: opacity 0s; /* fade-in controlled by JS */
+    }
+
+    /* Main UI Buttons */
+    #connectEtsyBtn {
+      position: absolute;
+      left: 50px;
+      top: 20px;
+    }
+
+    /* "Open Config" button */
+    #openConfigBtn {
+      position: absolute;
+      left: 50px;
+      top: 110px;
+    }
+
+    /* "Order Link" button */
+    #orderLinkBtn {
+      position: absolute;
+      left: 120px;
+      top: 20px;
+      background: transparent;
+      border: none;
+      cursor: pointer;
+      padding: 0;
+      outline: none;
+    }
+    #orderLinkBtn img {
+      width: 14px;
+      height: 14px;
+      display: block;
+    }
+
+    /* "Tracking Link" button */
+    #trackingLinkBtn {
+      position: absolute;
+      left: 160px;
+      top: 20px;
+      background: transparent;
+      border: none;
+      cursor: pointer;
+      padding: 0;
+      outline: none;
+      z-index: 9999;
+      display: none; /* hidden by default */
+    }
+    #trackingLinkBtn img {
+      width: 17px;
+      height: 17px;
+      display: block;
+    }
+
+    #etsyOrderNumber {
+      position: absolute;
+      left: 50px;
+      top: 160px;
+      margin: 0;
+      padding: 0;
+      line-height: 1.0;
+      border: none;
+      border-bottom: 1px solid #000;
+      background: transparent !important;
+      text-align: left;
+      width: 250px; /* explicitly set => 250 */
+      font-size: 1em;
+      outline: none;
+    }
+
+    /* Photo Grid and Preview Boxes */
+    #Photo_Grid {
+      position: absolute;
+      left: 400px;
+      top: 160px;
+      transform: scale(1.25);
+      transform-origin: top left;
+    }
+    #photoGridContainer {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      grid-template-rows: repeat(2, auto);
+      gap: 35px 5px;
+    }
+    .grid-cell {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+    }
+    .preview-box {
+      border: 1px solid black !important;
+      background: #f9f9f9;
+      width: 100%;
+      height: 150px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      overflow: hidden;
+      position: relative;
+      user-select: none;
+    }
+
+    /* ====== PREVIEW-BOX OUTLINES (final) ============================= */
+
+    /* Persistent selection → 3 px orangered ring (sits just inside) */
+    .preview-box.selected{
+      outline:3px solid orangered;
+      outline-offset:-3px;        /* hugs inner edge */
+    }
+
+    /* Hover  → 3 px blue ring (always, even on selected tiles) */
+    .preview-box:hover{
+      box-shadow:0 0 0 3px dodgerblue;   /* outer ring rides outside the outline */
+    }
+
+    .preview-box img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      transform-origin: center center;
+      transition: transform 0.2s ease;
+    }
+
+    /* 16 text-box-absolute elements */
+    .text-box-absolute {
+      position: absolute;
+      border: none !important;
+      outline: none !important;
+      background: transparent !important;
+      text-decoration: none !important;
+      box-shadow: none !important;
+      font-size: 0.8em !important;
+      width: 60px;
+      height: 20px;
+      text-align: left;
+      line-height: 1.0;
+      padding: 0 2px 2px 2px;
+      box-sizing: border-box;
+    }
+
+    /* Order Details text area */
+    #orderDetails {
+      position: absolute;
+      border: 1px solid black;
+      width: 300px; /* explicitly => 300 */
+      height: 175px; /* explicitly => 175 */
+      box-sizing: border-box;
+      outline: none;
+      background: transparent;
+      font-size: 0.9em;
+      line-height: 1.5;
+      resize: none;
+      text-align: left;
+      overflow-y: auto;
+    }
+
+    /* Customer Message History text area */
+    #customerMessageHistory {
+      position: absolute;
+      border: 1px solid black;
+      width: 300px; /* => 300 */
+      height: 175px; /* => 175 */
+      box-sizing: border-box;
+      outline: none;
+      background: transparent;
+      font-size: 0.9em;
+      line-height: 1.5;
+      resize: none;
+      text-align: left;
+      overflow-y: auto;
+    }
+
+    /* Single-line text boxes */
+    #dateOrdered,
+    #shipDate,
+    #labelCreationDate,
+    #employeeName,
+    #completedByEmployee {
+      position: absolute;
+      width: 200px;
+      height: 20px;
+      box-sizing: border-box;
+      outline: none;
+      background: transparent;
+      font-size: 0.9em;
+    }
+    #dateOrdered {
+      font-weight: bold !important;
+      border-bottom: 1px solid black !important;
+    }
+    #shipDate {
+      font-weight: bold !important;
+      border-bottom: 1px solid black !important;
+    }
+    #employeeName {
+      font-weight: bold;
+    }
+    #labelCreationDate {
+      font-weight: bold !important;
+      font-style: italic !important;
+      border-bottom: 1px solid black !important;
+    }
+    #completedByEmployee {
+      font-weight: bold !important;
+      font-style: italic !important;
+      border-bottom: 1px solid black !important;
+    }
+
+    /* Title texts */
+    #titleOrderDate,
+    #titleOrderDate2,
+    #titleShipDate,
+    #titleOrderDetails,
+    #titleBritesMessages,
+    #titlePurchasedItems,
+    #titleOrderNumber {
+      position: absolute;
+      font-size: 0.7em;
+      margin: 0;
+      padding: 0;
+    }
+
+
+
+    #titleOrderDate2 {
+      font-weight: bold;
+    }
+    #titleOrderCompletedOn,
+    #titleOrderCompletedBy,
+    #titleSignedInAs {
+      position: absolute;
+      font-size: 0.7em;
+      margin: 0;
+      padding: 0;
+    }
+    #titleOrderCompletedOn {
+      left: 50px;
+      top: 460px;
+    }
+    #titleOrderCompletedBy {
+      left: 50px;
+      top: 480px;
+    }
+    #titleSignedInAs {
+      left: 50px;
+      top: 500px;
+    }
+
+    /* Configuration Modal styling */
+    #configModal.modal {
+      position: fixed !important;
+      top: 50% !important;
+      left: 50% !important;
+      transform: translate(-50%, -50%) !important;
+      height: auto !important;
+      max-height: 70vh !important;
+      width: auto !important;
+      max-width: 650px !important;
+      overflow-y: scroll !important;
+    }
+
+    /* "Signature Box" */
+    #signatureBox {
+      position: absolute;
+      left: 400px;
+      top: 360px;
+      width: 50px;
+      height: 25px;
+      background: #f9f9f9;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      overflow: hidden;
+      user-select: none;
+      border-bottom: 1px solid black !important;
+    }
+
+    /* shipping title style */
+    #titleShipping{
+      font-size:1.65em !important;
+      font-weight: Bold !important;
+    }
+
+    #titleShipping{
+    font-size:1.7em !important;
+    font-weight:bold !important;
+    text-decoration:none !important;   /* 🔻 kills underline */
+    border-bottom:none !important;     /* in case it came from a border */
+  }
+
+    /*
+     * Always-center the user login modal,
+     * but use a relative container so we can move
+     * the text/prompt inside with "Open Config."
+     */
+    #userLoginModal.modal {
+  position: fixed !important;
+  top: 35% !important;
+  left: 50% !important;
+  transform: translate(-50%, -50%) !important;
+  width: 400px !important;
+  height: 200px !important;
+  margin: 0 !important;
+  z-index: 9999 !important;
+  overflow: hidden !important; /* or 'auto' if you prefer scrolling */
+}
+
+#userLoginModalContainer {
+  position: static !important; /* so content doesn’t shrink weirdly */
+  height: auto !important;
+  width: auto !important;
+}
+
+/* ⤵️ hard-hide the signature box */
+#signatureBox { display:none !important; }
+
+/* ====== Brites chat stream =================================== */
+    .msg-box{
+      position:absolute;
+      border:1px solid #000;
+      background:#fafafa;
+      font:14px/1.4 Arial, sans-serif;
+      overflow-y:auto;
+      white-space:pre-wrap;
+      padding:1px;
+    }
+    .msg{margin:1px 0 !important; }
+    .msg .meta{display:block;font-size:11px;opacity:1;margin-bottom:2px !important; }
+    .msg.sent    {text-align:right;color:#1565c0;}
+    .msg.received{text-align:left; color:#333;}
+
+  </style>
+
+  <!-- 🆕 remove underline from the dropdown trigger -->
+  <style id="dropdownNoUnderline">
+    .select-dropdown.dropdown-trigger,
+    .select-dropdown.dropdown-trigger:hover,
+    .select-dropdown.dropdown-trigger:focus{
+      text-decoration:none !important;
+      border-bottom:none !important;
+    }
+    
+
+  </style>
+
+</head>
+
+<body>
+  <!-- WRAP SCREEN ONE CONTENT IN THIS CONTAINER -->
+  <div id="screenOne">
+    <button id="connectEtsyBtn" class="configurable btn waves-effect waves-light">Connect to Etsy</button>
+    <button id="openConfigBtn" class="configurable btn waves-effect waves-light">Open Config</button>
+
+    <!-- "Order Link" button -->
+    <button id="orderLinkBtn" name="Order Link">
+      <img src="assets/Globe.png" alt="Order Link Icon" />
+    </button>
+
+    <!-- "Tracking Link" button -->
+    <button id="trackingLinkBtn" name="Tracking Link">
+      <img src="assets/USPS.png" alt="Tracking Link Icon" />
+    </button>
+
+    <!-- Etsy Order Fields -->
+    <input type="text" id="etsyOrderNumber" placeholder="Etsy Order Number" />
+
+    <!-- 🟡 anchor: immediately after <input id="shipDate" …/> -->
+    <input type="text" id="labelCreationDate"    readonly />
+    <input type="text" id="completedByEmployee"  readonly />
+    <!-- 🆕—— new draggable title -->
+    <input id="titleShipping" type="text" value="Shipping_1"  readonly />
+    <!-- ▲ nothing else changes here -->
+
+    <!-- Photo Grid -->
+    <div id="Photo_Grid">
+      <div id="photoGridContainer">
+        <div class="grid-cell">
+          <div class="preview-box" id="previewCell0">Empty</div>
+        </div>
+        <div class="grid-cell">
+          <div class="preview-box" id="previewCell1">Empty</div>
+        </div>
+        <div class="grid-cell">
+          <div class="preview-box" id="previewCell2">Empty</div>
+        </div>
+        <div class="grid-cell">
+          <div class="preview-box" id="previewCell3">Empty</div>
+        </div>
+        <div class="grid-cell">
+          <div class="preview-box" id="previewCell4">Empty</div>
+        </div>
+        <div class="grid-cell">
+          <div class="preview-box" id="previewCell5">Empty</div>
+        </div>
+        <div class="grid-cell">
+          <div class="preview-box" id="previewCell6">Empty</div>
+        </div>
+        <div class="grid-cell">
+          <div class="preview-box" id="previewCell7">Empty</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 16 text-box-absolute elements -->
+    <input type="text" id="quantityCell0" class="text-box-absolute" readonly />
+    <input type="text" id="quantityCell1" class="text-box-absolute" readonly />
+    <input type="text" id="quantityCell2" class="text-box-absolute" readonly />
+    <input type="text" id="quantityCell3" class="text-box-absolute" readonly />
+    <input type="text" id="quantityCell4" class="text-box-absolute" readonly />
+    <input type="text" id="quantityCell5" class="text-box-absolute" readonly />
+    <input type="text" id="quantityCell6" class="text-box-absolute" readonly />
+    <input type="text" id="quantityCell7" class="text-box-absolute" readonly />
+
+    <input type="text" id="metalCell0" class="text-box-absolute" readonly />
+    <input type="text" id="metalCell1" class="text-box-absolute" readonly />
+    <input type="text" id="metalCell2" class="text-box-absolute" readonly />
+    <input type="text" id="metalCell3" class="text-box-absolute" readonly />
+    <input type="text" id="metalCell4" class="text-box-absolute" readonly />
+    <input type="text" id="metalCell5" class="text-box-absolute" readonly />
+    <input type="text" id="metalCell6" class="text-box-absolute" readonly />
+    <input type="text" id="metalCell7" class="text-box-absolute" readonly />
+
+    <textarea id="orderDetails" readonly></textarea>
+    <div id="customerMessageHistory" class="msg-box"></div>
+    <input id="britesMsgInput"
+       type="text"
+       placeholder="Message"
+       style="font-size:0.8em; width:100%;"/>
+
+    <div id="titleOrderDate">Order Date:</div>
+    <div id="titleOrderDate2" style="font-weight:bold;"></div>
+    <div id="titleShipDate">Ship By:</div>
+    <div id="titleSignedInAs">Signed In As:</div>
+
+    <div id="titleOrderDetails">Order Details:</div>
+    <div id="titleBritesMessages">Brites Messages</div>
+    <div id="titlePurchasedItems">Purchased Items</div>
+    <div id="titleOrderNumber">Order Number</div>
+
+    <input type="text" id="dateOrdered" readonly />
+    <input type="text" id="shipDate" readonly />
+    <input type="text" id="employeeName" placeholder="Employee Name" />
+
+    <div id="signatureBox">Sig Box</div>
+
+    <div id="configModal" class="modal">
+      <div class="modal-content">
+        <table class="striped" id="configTable">
+          <thead>
+            <tr>
+              <th>Component Name</th>
+              <th>Left (px)</th>
+              <th>Top (px)</th>
+              <th>Width (px)</th>
+              <th>Height (px)</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+      <div class="modal-footer">
+        <a href="#!" id="saveConfigBtn" class="modal-close waves-effect waves-green btn">
+          Save Config
+        </a>
+      </div>
+    </div>
+
+    <button id="goScreenTwoBtn" class="btn"
+            style="position:absolute; left:180px; top:110px;
+                   width:65px; height:24px; line-height:24px;
+                   font-size:0.8em; text-align:center;">
+      Send
+    </button>
+
+    <!-- ▼▼ NEW: tracking / carrier / complete-order ▼▼ -->
+    <input id="trackingNumberInput"
+           type="text"
+           placeholder="Tracking #"
+           style="position:absolute; left:260px; top:110px;
+                  width:140px; height:24px; font-size:1.0em;" />
+
+          <div id="carrierSelectWrap"
+               style="position:absolute; left:410px; top:110px;
+                      width:110px; height:24px;">
+            <select id="carrierSelect"
+                    style="width:100%; height:100%; font-size:0.75em;">
+              <option value="" disabled selected>Carrier</option>
+              <option value="chitchats">ChitChats</option>
+              <option value="usps">USPS</option>
+            </select>
+          </div>
+
+    <button id="completeOrderBtn" class="btn"
+            style="position:absolute; left:530px; top:110px;
+                   width:110px; height:24px; line-height:24px;
+                   font-size:0.85em; text-align:center;">
+      Complete Order
+    </button>
+    <!-- ▲▲ END new controls ▲▲ -->
+
+  </div>
+
+  <div id="secondaryContainer"></div>
+
+  <!-- Brites chat image-viewer -->
+  <div id="chatImgModal" class="modal">
+    <div class="modal-content" style="padding:0;">
+      <img id="chatImgModalImg" src="" style="width:100%;height:auto;display:block;">
+    </div>
+  </div>
+
+  <!-- The user login modal -->
+  <div id="userLoginModal" class="modal">
+    <!-- A wrapper with position: relative, so children can be absolutely placed -->
+    <div id="userLoginModalContainer" class="modal-content" style="position:relative;">
+      <h5 id="loginModalTitle">User Log In</h5>
+      <p id="loginModalPrompt">Please enter your 3-digit Employee Number:</p>
+      <input
+        type="text"
+        id="employeeNumberInput"
+        placeholder="001"
+      />
+    </div>
+    <div id="loginModalFooter" class="modal-footer">
+      <button id="employeeLoginBtn" class="btn">Log In</button>
+    </div>
+  </div>
+
+  <!-- jQuery & Materialize -->
+  <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+  <script
+    src="https://cdnjs.cloudflare.com/ajax/libs/materialize/1.0.0/js/materialize.min.js"
+  ></script>
+
+  <!-- 1) Firebase loaded first, define db for global usage -->
+  <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
+  <!-- Firebase Storage (needed for image uploads) -->
+  <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
+  <script>
+    const firebaseConfig = {
+      apiKey: "AIzaSyBXhQLsYRa4i0bX1TPTRiElF9Zjy5vSHlA",
+      authDomain: "gokudatabase.firebaseapp.com",
+      projectId: "gokudatabase",
+      storageBucket: "gokudatabase.firebasestorage.app",
+      messagingSenderId: "1078662308113",
+      appId: "1:1078662308113:web:41df0e5d229ff2af7a6cb0"
+    };
+    firebase.initializeApp(firebaseConfig);
+    window.db = firebase.firestore(); // define globally
+    firebase.auth().signInAnonymously()
+      .then(()=>console.log("Anon auth ✔"))
+      .catch(err=>console.error("Anon auth ❌", err));
+  </script>
+
+  <script>
+    /********** Global Variables **********/
+    window.receiptIsGift = null;
+    window.receiptGiftMessage = null;
+    window.orderName = "";
+    window.orderStatus = "";
+    window.orderIsShipped = "";
+    window.cachedOrderItems = [];
+    window.orderShippedTimestamp = null;
+    window.orderShipments = [];
+    window.currentTracking = null;
+    window.currentCarrier = null;
+
+    /* ─── helper: keep only one .selected box ─── */
+    function highlightSelectedPreview(box){
+      /* remove an earlier selection, if any */
+      document.querySelectorAll(".preview-box.selected")
+              .forEach(el => el.classList.remove("selected"));
+      /* light up the newly clicked box */
+      if(box) box.classList.add("selected");
+    }
+
+    /* helper: enforce vertical gaps WITHOUT touching left/right margins */
+    function applyChatSpacing() {
+      document.querySelectorAll("#customerMessageHistory .msg").forEach(el => {
+        /* top & bottom only */
+        el.style.setProperty("margin-top",    "5px", "important");
+        el.style.setProperty("margin-bottom", "5px", "important");
+
+        const meta = el.querySelector(".meta");
+        if (meta) meta.style.setProperty("margin-bottom", "3px", "important");
+      });
+    }
+
+    /* observe chat container and re-enforce spacing whenever nodes change */
+    const chatContainer = document.getElementById("customerMessageHistory");
+    if (chatContainer) {
+      /* initial pass */
+      applyChatSpacing();
+
+  /* keep re-applying after any DOM mutations */
+  new MutationObserver(applyChatSpacing)
+    .observe(chatContainer, { childList: true, subtree: true });
+}
+
+    /* ===== CHAT TIMESTAMP util ========================================= */
+    function formatChatTimestamp(date){
+      return (date instanceof Date ? date : new Date(date))
+        .toLocaleString("en-US",{
+          month : "short",
+          day   : "2-digit",
+          hour  : "numeric",
+          minute: "2-digit",
+          hour12: true
+        })
+        .replace(/\s([ap])\.?m/i,(_,p)=>` ${p.toLowerCase()}m`); // → “pm” / “am”
+    }
+
+    /* ===== utility: pleasant two-note chime ================================= */
+    function playChime(){
+      try{
+        const ctx = new (window.AudioContext || window.webkitAudioContext)();
+
+        // helper to schedule a note (freq in Hz, start offset in s)
+        const note = (freq, when, dur = 0.18) =>{
+          const osc = ctx.createOscillator();
+          const gain = ctx.createGain();
+          osc.type = "sine";
+          osc.frequency.value = freq;
+          osc.connect(gain);
+          gain.connect(ctx.destination);
+
+          osc.start(ctx.currentTime + when);
+          osc.stop (ctx.currentTime + when + dur);
+
+          // quick fade-out to avoid click
+          gain.gain.setValueAtTime(0.6, ctx.currentTime + when);
+          gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + when + dur);
+        };
+
+        // WhatsApp-ish up-step: E6 → A6
+        note(1319, 0.00);   // E6
+        note(1760, 0.20);   // A6
+      }catch(err){
+        console.warn("AudioContext error:", err);
+      }
+    }
+
+    /* globals for realtime listener */
+    let chatUnsub = null;        // holds the active Firestore unsubscribe fn
+    let firstBatch = true;       // suppress chime on initial load
+
+    /* ─── realtime Brites chat listener (now supports images) ─────────── */
+    function startBritesListener(orderId){
+      if(chatUnsub) chatUnsub();
+      chatUnsub = db
+        .collection("Brites_Orders").doc(orderId)
+        .collection("messages").orderBy("timestamp","asc")
+        .onSnapshot(snap=>{
+          const box = document.getElementById("customerMessageHistory");
+          if(!box) return;
+
+          let html = "";
+
+          /* buyer’s original note (if any) */
+          if (window.buyerMessageText && window.buyerMessageText.length){
+            const ts = formatChatTimestamp(new Date());
+            html += `<div class="msg received">
+                       <span class="meta">Customer • ${ts}</span>
+                       ${escapeHtml(window.buyerMessageText)}
+                     </div>`;
+          }
+
+          snap.forEach(doc=>{
+            const d  = doc.data();
+            const dt = formatChatTimestamp(d.timestamp?.toDate() || new Date());
+
+            const emp = (document.getElementById("employeeName").value||"")
+                         .trim().toLowerCase();
+            const bubbleCls =
+              (d.senderName && d.senderName.trim().toLowerCase()===emp)
+                ? "sent" : "received";
+
+            /* 🔗 image vs. text */
+            if (d.imageUrl){
+              html += `<div class="msg ${bubbleCls}">
+                         <span class="meta">${d.senderName} • ${dt}</span>
+                         <a href="#!" class="img-link" data-src="${d.imageUrl}">📷 Image</a>
+                       </div>`;
+            } else {
+              html += `<div class="msg ${bubbleCls}">
+                         <span class="meta">${d.senderName} • ${dt}</span>
+                         <span>${escapeHtml(d.text)}</span>
+                       </div>`;
+            }
+          });
+
+          /* 🔔 chime after initial batch */
+          if (!firstBatch && snap.docChanges().some(c=>c.type==="added")) playChime();
+          firstBatch = false;
+
+          box.innerHTML = html;
+          box.scrollTop = box.scrollHeight;
+          applyChatSpacing();
+        });
+    }
+    /* basic XSS guard */
+    function escapeHtml(str=""){
+      return str.replace(/[&<>"']/g,m=>({"&":"&amp;","<":"&lt;",">":"&gt;",
+                                         "\"":"&quot;","'":"&#039;"}[m]));
+    }
+
+    window.isEmployeeLoggedIn = false; // We'll use this to guard the real-time listener
+        let lastScanProcessed = null;      // 🔑 remember most-recent scanned order
+
+    (function(){
+      var urlParams = new URLSearchParams(window.location.search);
+      var accessToken = urlParams.get("access_token");
+      if(accessToken){
+        localStorage.setItem("access_token", accessToken);
+        window.history.replaceState({}, document.title, window.location.pathname);
+        M.toast({html:"Connection Successful!"});
+        console.log("Access token received:", accessToken);
+      } else {
+        var authCode = urlParams.get("code");
+        var raw = urlParams.get("code") || "";
+        var authCode = raw.split("&")[0];          // keep only the code value
+        if(authCode){
+          var storedCodeVerifier = localStorage.getItem("etsy_code_verifier");
+          if(storedCodeVerifier){
+           const qs = new URLSearchParams({
+            code:            authCode,
+            code_verifier:   storedCodeVerifier,
+            redirect_domain: "design-message-1"
+          });
+          window.location.href = "/.netlify/functions/exchangeToken?" + qs.toString();
+          } else {
+            console.error("No code verifier found in localStorage.");
+          }
+        }
+      }
+    })();
+
+    function generateRandomString(length){
+      var chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+      var text = "";
+      for(var i = 0; i < length; i++){
+        text += chars.charAt(Math.floor(Math.random() * chars.length));
+      }
+      return text;
+    }
+    async function generateCodeChallenge(codeVerifier){
+      var encoder = new TextEncoder();
+      var data = encoder.encode(codeVerifier);
+      var digest = await crypto.subtle.digest("SHA-256", data);
+      var base64String = btoa(String.fromCharCode.apply(null, new Uint8Array(digest)));
+      return base64String.replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+    }
+
+    /*
+     * Incorporate the new login modal elements in the config array so they're adjustable.
+     */
+      var configComponentIDs = [
+        "connectEtsyBtn","openConfigBtn","orderLinkBtn","trackingLinkBtn","etsyOrderNumber",
+        "Photo_Grid","quantityCell0","quantityCell1","quantityCell2","quantityCell3",
+        "quantityCell4","quantityCell5","quantityCell6","quantityCell7",
+        "metalCell0","metalCell1","metalCell2","metalCell3",
+        "metalCell4","metalCell5","metalCell6","metalCell7",
+        "orderDetails","customerMessageHistory","britesMsgInput","dateOrdered","shipDate",
+        "employeeName","trackingNumberInput","carrierSelectWrap","completeOrderBtn",
+        "titleOrderDate","titleOrderDate2","titleShipDate",
+        "titleSignedInAs",
+        "titleOrderDetails","titleBritesMessages","titlePurchasedItems","titleOrderNumber",
+        "titleShipping",                // 🆕 make “Shipping” configurable
+        "goScreenTwoBtn",
+        /* Existing modal references */
+        "userLoginModal",
+        /* Newly added for positioning the login elements */
+        "userLoginModalContainer",
+        "loginModalTitle",
+        "loginModalPrompt",
+        "employeeNumberInput",
+        "loginModalFooter",
+        "employeeLoginBtn"
+      ];
+
+    // Updated default positions block
+    const defaultPositions = {
+      connectEtsyBtn:       { left: 1062, top: 781,  width: 107, height: 35 },
+      openConfigBtn:        { left: 1184, top: 781,  width: 132, height: 35 },
+      orderLinkBtn:         { left: 639,  top: 127,   width: 30,  height: 30 },
+      trackingLinkBtn:      { left: 134,  top: 248,  width: 15,  height: 16 },
+      etsyOrderNumber:      { left: 11,   top: 7,    width: 282, height: 45 },
+      Photo_Grid:           { left: 538,  top: 162,  width: 632, height: 272 },
+
+      quantityCell0:        { left: 536,  top: 339,  width: 152, height: 45 },
+      quantityCell1:        { left: 737,  top: 339,  width: 152, height: 45 },
+      quantityCell2:        { left: 937,  top: 339,  width: 153, height: 45 },
+      quantityCell3:        { left: 1136, top: 339,  width: 153, height: 45 },
+      quantityCell4:        { left: 535,  top: 568,  width: 153, height: 45 },
+      quantityCell5:        { left: 737,  top: 568,  width: 153, height: 45 },
+      quantityCell6:        { left: 937,  top: 568,  width: 153, height: 45 },
+      quantityCell7:        { left: 1136, top: 568,  width: 153, height: 45 },
+
+      metalCell0:           { left: 537,  top: 354,  width: 153, height: 45 },
+      metalCell1:           { left: 737,  top: 354,  width: 153, height: 45 },
+      metalCell2:           { left: 937,  top: 354,  width: 153, height: 45 },
+      metalCell3:           { left: 1136, top: 354,  width: 153, height: 45 },
+      metalCell4:           { left: 536,  top: 583,  width: 153, height: 45 },
+      metalCell5:           { left: 737,  top: 583,  width: 153, height: 45 },
+      metalCell6:           { left: 937,  top: 583,  width: 153, height: 45 },
+      metalCell7:           { left: 1136, top: 583,  width: 153, height: 45 },
+
+      orderDetails:           { left: 10,   top: 162,  width: 300, height: 342 },
+      customerMessageHistory: { left: 10, top: 535,  width: 300, height: 266 },
+      britesMsgInput:         { left: 14, top: 802, width: 295, height: 23 },
+
+      dateOrdered:          { left: 10,   top: 100,  width: 145, height: 30 },
+      shipDate:             { left: 164,  top: 100,  width: 145, height: 30 },
+      employeeName:         { left: 1226, top: 23,   width: 98, height: 30 },
+
+      titleOrderDate:       { left: 10,   top: 82,   width: 99,  height: 25 },
+      titleOrderDate2:      { left: 127,  top: 209,  width: 145, height: 15 },
+      titleShipDate:        { left: 167,  top: 82,   width: 99,  height: 15 },
+      titleSignedInAs:      { left: 1226, top: 7,    width: 75,  height: 15 },
+      titleOrderDetails:    { left: 11,   top: 144,  width: 99,  height: 15 },
+      titleBritesMessages:  { left: 11,   top: 518,  width: 99,  height: 15 },
+      titlePurchasedItems:  { left: 538,  top: 135,   width: 99,  height: 15 },
+      titleOrderNumber:     { left: 11,   top: 7,    width: 99,  height: 15 },
+
+      goScreenTwoBtn:       { left: 244, top: 802,    width: 65, height: 23 },
+      signatureBox:         { left: 624,  top: 19,   width: 105, height: 34 },
+
+      // The modal elements:
+      userLoginModal:       { left: 0,    top: 0,    width: 0,   height: 0 },
+      userLoginModalContainer: { left:0,  top: 0,    width: 0,   height: 0 },
+      loginModalTitle:      { left: 130,    top: 0,    width: 250,   height: 0 },
+      loginModalPrompt:     { left: 40,    top: 90,    width: 325,   height: 0 },
+      employeeNumberInput:  { left: 40,   top: 60,   width: 75, height: 35 },
+      loginModalFooter:     { left: 20,    top: 0,    width: 250,   height: 0 },
+      employeeLoginBtn:     { left: 130,   top: 150,   width: 100, height: 35 },
+      trackingNumberInput:{ left:677, top:674, width:308, height:23 },
+      carrierSelectWrap:  { left:539, top:664, width:107, height:23 },
+      completeOrderBtn:    { left:1062, top:656, width:155, height:41 },
+      titleShipping:        { left: 700, top: 10, width: 120, height: 30 }
+
+    };
+
+    function loadPositions(){
+      for(var i=0; i<configComponentIDs.length; i++){
+        var id = configComponentIDs[i];
+        var el = document.getElementById(id);
+        if(!el) continue;
+
+        var def = defaultPositions[id] || { left:0, top:0, width:0, height:0 };
+
+        var left = localStorage.getItem("pos-"+id+"-left");
+        var top  = localStorage.getItem("pos-"+id+"-top");
+        var w    = localStorage.getItem("pos-"+id+"-width");
+        var h    = localStorage.getItem("pos-"+id+"-height");
+
+        if(left === null)  left = def.left;
+        if(top === null)   top  = def.top;
+        if(w === null)     w    = def.width;
+        if(h === null)     h    = def.height;
+
+        el.style.position = "absolute";
+        el.style.left   = left + "px";
+        el.style.top    = top  + "px";
+        el.style.width  = w    + "px";
+        el.style.height = h    + "px";
+      }
+    }
+
+    function populateConfigTable(){
+      var tbody = document.getElementById("configTable").querySelector("tbody");
+      tbody.innerHTML = "";
+
+      for(var i=0; i<configComponentIDs.length; i++){
+        var id = configComponentIDs[i];
+        var el = document.getElementById(id);
+        if(!el) continue;
+
+        var compName = (el.textContent && el.textContent.trim()) || (el.value && el.value.trim()) || id;
+        var cs = window.getComputedStyle(el);
+
+        var leftVal = (cs.left === "auto") ? 0 : parseInt(cs.left, 10);
+        var topVal = (cs.top === "auto") ? 0 : parseInt(cs.top, 10);
+        var widthVal = (cs.width === "auto") ? 0 : parseInt(cs.width, 10);
+        var heightVal = (cs.height === "auto") ? 0 : parseInt(cs.height, 10);
+
+        var row = document.createElement("tr");
+        row.innerHTML = `
+          <td>${compName}</td>
+          <td><input type='number' value='${leftVal}' data-id='${id}' class='left-input'></td>
+          <td><input type='number' value='${topVal}' data-id='${id}' class='top-input'></td>
+          <td><input type='number' value='${widthVal}' data-id='${id}' class='width-input'></td>
+          <td><input type='number' value='${heightVal}' data-id='${id}' class='height-input'></td>
+        `;
+        tbody.appendChild(row);
+
+        row.querySelector(".left-input").addEventListener("input", function(){
+          var tgt = document.getElementById(this.getAttribute("data-id"));
+          if(tgt) tgt.style.left = parseInt(this.value, 10) + "px";
+        });
+        row.querySelector(".top-input").addEventListener("input", function(){
+          var tgt2 = document.getElementById(this.getAttribute("data-id"));
+          if(tgt2) tgt2.style.top = parseInt(this.value, 10) + "px";
+        });
+        row.querySelector(".width-input").addEventListener("input", function(){
+          var tgt3 = document.getElementById(this.getAttribute("data-id"));
+          if(tgt3) tgt3.style.width = parseInt(this.value, 10) + "px";
+        });
+        row.querySelector(".height-input").addEventListener("input", function(){
+          var tgt4 = document.getElementById(this.getAttribute("data-id"));
+          if(tgt4) tgt4.style.height = parseInt(this.value, 10) + "px";
+        });
+      }
+    }
+
+    function saveConfiguration(){
+      for(var i=0; i<configComponentIDs.length; i++){
+        var id = configComponentIDs[i];
+        var el = document.getElementById(id);
+        if(el){
+          var cs = window.getComputedStyle(el);
+          var leftVal = parseInt(cs.left, 10) || 0;
+          var topVal = parseInt(cs.top, 10) || 0;
+          var widthVal = parseInt(cs.width, 10) || 0;
+          var heightVal = parseInt(cs.height, 10) || 0;
+          localStorage.setItem("pos-"+id+"-left", leftVal);
+          localStorage.setItem("pos-"+id+"-top", topVal);
+          localStorage.setItem("pos-"+id+"-width", widthVal);
+          localStorage.setItem("pos-"+id+"-height", heightVal);
+        }
+      }
+      console.log("Configuration saved.");
+    }
+
+    document.addEventListener("DOMContentLoaded", function(){
+      M.AutoInit();
+
+      // Fade in body
+      document.body.style.opacity = 0;
+      setTimeout(function(){
+        loadPositions();
+        document.body.style.opacity = 1;
+      }, 250);
+
+      // Show the "User Log In" modal on load
+      var userLoginModalElem = document.getElementById("userLoginModal");
+      var userLoginModal = M.Modal.init(userLoginModalElem, {
+        dismissible: false
+      });
+      userLoginModal.open();
+
+      // "Log In" button for employees
+      var employeeLoginBtn = document.getElementById("employeeLoginBtn");
+      var employeeNumberInput = document.getElementById("employeeNumberInput");
+      if(employeeLoginBtn){
+        employeeLoginBtn.addEventListener("click", async function(){
+          try {
+            var empNumber = employeeNumberInput.value.trim();
+            if(!empNumber || empNumber.length !== 3){
+              M.toast({html: "Please enter a valid 3-digit Employee Number!"});
+              return;
+            }
+              var responseEN = await fetch(
+                "/.netlify/functions/firebaseOrders?orderId=" +
+                encodeURIComponent("Employee Numbers")
+              );                         // ← closes fetch( … )
+
+              if (!responseEN.ok) {
+              M.toast({ html: "Error fetching Employee Numbers doc!" });
+              return;
+            }
+            var resultEN = await responseEN.json();
+            if(!resultEN.success || !resultEN.data){
+              M.toast({ html: "No data found for Employee Numbers doc!" });
+              return;
+            }
+            var docDataEN = resultEN.data;
+            if(docDataEN[empNumber]){
+              var nameFound = docDataEN[empNumber];
+              M.toast({ html: "Welcome, " + nameFound + "!" });
+              document.getElementById("employeeName").value = nameFound;
+              userLoginModal.close();
+              window.isEmployeeLoggedIn = true;
+              startScannedOrderListener();
+            } else {
+              M.toast({ html: "Employee # " + empNumber + " not found in DB!" });
+            }
+          } catch(errEN){
+            console.error("Error in employee login flow:", errEN);
+            M.toast({ html: "Error: " + errEN.message });
+          }
+        });
+      }
+
+      /* Open Config → show modal + disable live UI clicks           */
+      document.getElementById("openConfigBtn").addEventListener("click", function(){
+        populateConfigTable();
+        var modalElem = document.getElementById("configModal");
+        var instance  = M.Modal.getInstance(modalElem);
+        instance.open();
+        document.body.classList.add("configOpen");        // 🔑 flag ON
+      });
+
+      /* Save Config → close modal + re-enable live UI clicks        */
+      document.getElementById("saveConfigBtn").addEventListener("click", function(){
+        saveConfiguration();
+        document.body.classList.remove("configOpen");     // 🔑 flag OFF
+      });
+
+      var connectEtsyBtn = document.getElementById("connectEtsyBtn");
+      if(connectEtsyBtn){
+        connectEtsyBtn.addEventListener("click", async function(){
+          var codeVerifier = generateRandomString(64);
+          localStorage.setItem("etsy_code_verifier", codeVerifier);
+          var codeChallenge = await generateCodeChallenge(codeVerifier);
+          var state = "randomState123";
+          var scope = "listings_w listings_r transactions_r transactions_w";
+          var CLIENT_ID = "k75zdspz4r99txpqdji7i2em";
+          var redirectUri = "https://design-message-1.goldenspike.app";
+
+          var etsyAuthUrl =
+            "https://www.etsy.com/oauth/connect?response_type=code" +
+            "&client_id=" + CLIENT_ID +
+            "&redirect_uri=" + encodeURIComponent(redirectUri) +
+            "&scope=" + encodeURIComponent(scope) +
+            "&state=" + state +
+            "&code_challenge=" + encodeURIComponent(codeChallenge) +
+            "&code_challenge_method=S256";
+
+          console.log("Redirecting to Etsy OAuth URL:", etsyAuthUrl);
+          window.location.href = etsyAuthUrl;
+        });
+      }
+
+      var etsyOrderInput = document.getElementById("etsyOrderNumber");
+      etsyOrderInput.addEventListener("keydown", async function(e){
+        if(e.key === "Enter"){
+          const orderNumber = etsyOrderInput.value.trim();
+          if(orderNumber !== ""){
+            const orderData = await pullEtsyOrderDetails(orderNumber);
+            if(orderData){
+              await updateImageGrid(orderData);
+              startBritesListener(orderNumber);
+            }
+            try {
+              const respPD = await fetch("/.netlify/functions/firebaseOrders?orderId=" + encodeURIComponent(orderNumber));
+              const resPD = await respPD.json();
+
+              if(!respPD.ok){
+                if(resPD.error && resPD.error.toLowerCase().includes("not found")){
+                  // Doc not found => clear fields quietly, no error
+                  document.getElementById("labelCreationDate").value = "";
+                  document.getElementById("completedByEmployee").value = "";
+                  document.getElementById("signatureBox").innerHTML = "Sig Box";
+                  return;
+                } else {
+                  throw new Error(resPD.error || "Unknown error from firebaseOrders function");
+                }
+              }
+
+              // If we reach here => doc is found or newly created
+              const docDataPD = resPD.data || {};
+              const dbOrderNum = docDataPD["Order Number"];
+              if (dbOrderNum !== orderNumber) {
+                M.toast({ html: "Order mismatch: doc has '" + dbOrderNum + "', expected '" + orderNumber + "'" });
+                return;
+              }
+
+              /* ── Brites message history ───────────────────────────── */
+              if (typeof docDataPD["Brites Messages"] === "string") {
+                document.getElementById("customerMessageHistory").innerText =
+                  docDataPD["Brites Messages"];
+                M.toast({ html: "Brites Messages loaded!" });
+              } else {
+                document.getElementById("customerMessageHistory").innerText = "";
+              }
+
+              /* ── Shipping-label creation date ─────────────────────── */
+              if (docDataPD["Shipping Label Timestamps"]) {
+                const dt = new Date(docDataPD["Shipping Label Timestamps"]);
+                const lblDateEl = document.getElementById("labelCreationDate");
+                if (!isNaN(dt.valueOf()) && lblDateEl) {
+                  const monthNamesF2 = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+                  const dd   = ("0" + dt.getDate()).slice(-2);
+                  const mStr = monthNamesF2[dt.getMonth()];
+                  const yyyy = dt.getFullYear();
+                  const hh   = ("0" + dt.getHours()).slice(-2);
+                  const mm   = ("0" + dt.getMinutes()).slice(-2);
+                  const finalStr = dd + " " + mStr + " " + yyyy + ", " + hh + ":" + mm;
+                  lblDateEl.value = finalStr;
+                } else if (lblDateEl) {
+                  lblDateEl.value = "";
+                }
+              } else {
+                const lblDateEl = document.getElementById("labelCreationDate");
+                if (lblDateEl) lblDateEl.value = "";
+              }
+
+              /* ── Completed-by employee ─────────────────────────────── */
+              const dbEmpNameRaw = docDataPD["Employee Name"];
+              let dbEmpName = "";
+              if (typeof dbEmpNameRaw === "string") {
+                dbEmpName = dbEmpNameRaw.trim();
+              }
+              const compEmpEl = document.getElementById("completedByEmployee");
+              if (compEmpEl) compEmpEl.value = dbEmpName;
+
+              /* ── Signature box image ──────────────────────────────── */
+              const sigBox = document.getElementById("signatureBox");
+              if (dbEmpName && sigBox) {
+                const imageFile = encodeURIComponent(dbEmpName + ".jpg");
+                sigBox.innerHTML = `<img src="/assets/${imageFile}"
+                                     style="width:100%; height:100%; object-fit:cover;"
+                                     alt="Signature for ${dbEmpName}">`;
+              } else if (sigBox) {
+                sigBox.innerHTML = "Sig Box";
+              }
+            } catch (errPD) {
+              // Real error from network or code, not doc-not-found
+              M.toast({ html: "Error: " + errPD.message });
+              console.error("Failed to pull data from Firestore:", errPD);
+            }
+          }
+        }
+      });
+
+      document.getElementById("orderLinkBtn").addEventListener("click", function(){
+        var baseUrl = "https://www.etsy.com/your/orders/sold?ref=seller-platform-mcnav&order_id=0000000000";
+        var currentOrder = etsyOrderInput.value.trim();
+        if(!currentOrder){
+          console.log("No order number entered.");
+          return;
+        }
+        var customLink = baseUrl.replace("0000000000", currentOrder);
+        window.open(customLink, "_blank");
+      });
+
+      document.getElementById("trackingLinkBtn").addEventListener("click", function(){
+        if(!window.currentTracking){
+          console.log("No tracking number available.");
+          return;
+        }
+        var templateUrl = "";
+        if(window.currentCarrier && window.currentCarrier.toUpperCase() !== "USPS"){
+          templateUrl = "https://chitchats.com/tracking/0000000000000";
+          templateUrl = templateUrl.replace("0000000000000", window.currentTracking);
+        } else {
+          templateUrl = "https://tools.usps.com/go/TrackConfirmAction_input?qtc_tLabels1=0000000000000000000000000000000000";
+          templateUrl = templateUrl.replace("0000000000000000000000000000000000", window.currentTracking);
+        }
+        window.open(templateUrl, "_blank");
+      });
+
+      var previewBoxes = document.querySelectorAll('.preview-box');
+      previewBoxes.forEach(function(box){
+        var isDragging = false;
+        var lastX = 0;
+        var lastY = 0;
+        box.addEventListener('wheel', function(e){
+          var img = box.querySelector('img');
+          if(!img) return;
+          e.preventDefault();
+          var currentScale = parseFloat(img.dataset.scale) || 1;
+          var offsetX = parseFloat(img.dataset.offsetX) || 0;
+          var offsetY = parseFloat(img.dataset.offsetY) || 0;
+          if(e.deltaY < 0){
+            currentScale *= 1.1;
+          } else {
+            currentScale /= 1.1;
+            if(currentScale <= 1){
+              currentScale = 1;
+              offsetX = 0;
+              offsetY = 0;
+            }
+          }
+          currentScale = Math.max(1, Math.min(4, currentScale));
+          img.dataset.scale = currentScale;
+          img.dataset.offsetX = offsetX;
+          img.dataset.offsetY = offsetY;
+          img.style.transform = "translate(" + offsetX + "px, " + offsetY + "px) scale(" + currentScale + ")";
+        });
+        box.addEventListener('mousedown', function(e){
+          var img = box.querySelector('img');
+          if(!img) return;
+          var currentScale = parseFloat(img.dataset.scale) || 1;
+          if(currentScale <= 1) return;
+          e.preventDefault();
+          isDragging = true;
+          lastX = e.clientX;
+          lastY = e.clientY;
+        });
+        box.addEventListener('mousemove', function(e){
+          if(!isDragging) return;
+          e.preventDefault();
+          var img = box.querySelector('img');
+          if(!img) return;
+          var currentScale = parseFloat(img.dataset.scale) || 1;
+          var offsetX = parseFloat(img.dataset.offsetX) || 0;
+          var offsetY = parseFloat(img.dataset.offsetY) || 0;
+          var dx = e.clientX - lastX;
+          var dy = e.clientY - lastY;
+          offsetX += dx;
+          offsetY += dy;
+          img.dataset.offsetX = offsetX;
+          img.dataset.offsetY = offsetY;
+          img.style.transform = "translate(" + offsetX + "px, " + offsetY + "px) scale(" + currentScale + ")";
+          lastX = e.clientX;
+          lastY = e.clientY;
+        });
+        box.addEventListener('mouseup', function(){
+          isDragging = false;
+        });
+        box.addEventListener('mouseleave', function(){
+          isDragging = false;
+        });
+      });
+
+      /* === Drag-drop image upload + click-viewer ===================== */
+      (function attachImageDnD(){
+        const chatBox   = document.getElementById("customerMessageHistory");
+        const orderInp  = document.getElementById("etsyOrderNumber");
+        const empNameEl = document.getElementById("employeeName");
+        if(!chatBox) return;
+
+        /* drag-over glow */
+        const onEnter = e=>{e.preventDefault(); chatBox.style.outline="2px dashed dodgerblue";};
+        const onLeave = e=>{e.preventDefault(); chatBox.style.outline="";};
+        ["dragenter","dragover"].forEach(x=>chatBox.addEventListener(x,onEnter));
+        ["dragleave","drop"].forEach(x=>chatBox.addEventListener(x,onLeave));
+
+        /* drop → Storage → Firestore */
+        chatBox.addEventListener("drop", async e=>{
+          e.preventDefault();
+          const images = [...e.dataTransfer.files].filter(f=>f.type.startsWith("image/"));
+          if(!images.length) return;
+
+          const orderId = orderInp.value.trim();
+          if(!orderId){ M.toast({html:"Enter order # first"}); return; }
+          const staff   = (empNameEl.value||"Staff").trim();
+
+          for (const file of images) {
+            try {
+              const path = `chatImages/${orderId}/${Date.now()}_${file.name}`;
+
+              /* 🚀 one-liner: resumable PUT upload + URL */
+              const url = await window.uploadViaResumable(path, file);
+
+              await db.collection("Brites_Orders")
+                .doc(orderId).collection("messages")
+                .add({
+                  imageUrl  : url,
+                  text      : "Image attachment",
+                  senderName: staff,
+                  senderRole: "staff",
+                  timestamp : firebase.firestore.FieldValue.serverTimestamp()
+                });
+            } catch(err) {
+              console.error("upload error:", err);
+              M.toast({ html: "Upload failed: " + err.message });
+            }
+          }
+        });
+
+        /* click any .img-link → modal */
+        document.addEventListener("click", e=>{
+          if(!e.target.classList.contains("img-link")) return;
+          document.getElementById("chatImgModalImg").src = e.target.dataset.src;
+          M.Modal.getInstance(document.getElementById("chatImgModal")).open();
+        });
+
+        /* one-time modal init */
+        M.Modal.init(document.getElementById("chatImgModal"));
+      })();
+
+    /* =========================================================
+     *  Send Brites Msg – POST via Netlify function
+     * =======================================================*/
+    const sendBtn   = document.getElementById("goScreenTwoBtn");
+    const newMsgInp = document.getElementById("britesMsgInput");
+
+    if (sendBtn) {
+      sendBtn.addEventListener("click", async () => {
+        const orderId = document.getElementById("etsyOrderNumber").value.trim();
+        const msgTxt  = (newMsgInp.value || "").trim();
+        const staff   = (document.getElementById("employeeName").value || "Staff").trim();
+
+        if (!orderId || !msgTxt) {
+          M.toast({ html: "Enter order # and message." });
+          return;
+        }
+
+        try {
+          const resp = await fetch("/.netlify/functions/firebaseOrders", {
+            method : "POST",
+            headers: { "Content-Type": "application/json" },
+            body   : JSON.stringify({
+              orderNumber : orderId,
+              newMessage  : msgTxt,
+              employeeName: staff
+            })
+          });
+          const json = await resp.json();
+          if (!resp.ok || !json.success) throw new Error(json.error || "Server error");
+          newMsgInp.value = "";                // clear box on success
+        } catch (err) {
+          console.error("Send error:", err);
+          M.toast({ html: "Error: " + err.message });
+        }
+      });
+    }
+
+    /* =========================================================
+     *  Complete Order – POST tracking to Etsy (via Netlify)
+     * =======================================================*/
+    const completeBtn = document.getElementById("completeOrderBtn");
+    const trackingInp = document.getElementById("trackingNumberInput");
+    const carrierSel  = document.getElementById("carrierSelect");
+
+    if (completeBtn) {
+      completeBtn.addEventListener("click", async () => {
+        const receiptId = document.getElementById("etsyOrderNumber").value.trim();
+        const tracking  = (trackingInp.value || "").trim();
+        const carrier   = carrierSel.value;          // "chitchats" | "usps"
+
+        if (!receiptId) { M.toast({ html: "Enter order #"   }); return; }
+        if (!tracking)  { M.toast({ html: "Enter tracking #" }); return; }
+        if (!carrier)   { M.toast({ html: "Choose carrier"  }); return; }
+
+        /* helper → perform one POST with the supplied token */
+        const postTracking = tok =>
+          fetch("/.netlify/functions/trackOrderProxy", {
+            method : "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "access-token": tok
+            },
+            body   : JSON.stringify({ receiptId, tracking, carrier })
+          });
+
+        try {
+          let token        = localStorage.getItem("access_token") || "";
+          let resp         = await postTracking(token);
+          let payload      = await resp.text();              // Etsy proxy returns raw text
+          let errMsg       = "";
+
+          /* ── token expired (401) → restart OAuth flow ── */
+          if (resp.status === 401) {
+            localStorage.removeItem("access_token");
+            document.getElementById("connectEtsyBtn")?.click();
+            throw new Error("Unauthorized – reconnecting Etsy…");
+          }
+
+          /* ── forbidden (403) usually means missing shipping permission scope ── */
+          if (resp.status === 403) {
+            errMsg = "Forbidden – Etsy says this action isn’t allowed.";
+          } else if (!resp.ok) {
+            /* try to JSON-parse any error payload, else show raw text */
+            try   { errMsg = JSON.parse(payload).error || "Server error"; }
+            catch { errMsg = payload || "Server error"; }
+          }
+
+          if (errMsg) throw new Error(errMsg);
+
+          /* 🎉 success */
+          M.toast({ html: "Etsy order marked complete 🎉" });
+          trackingInp.value        = "";
+          carrierSel.selectedIndex = 0;
+
+        } catch (err) {
+          console.error(err);
+          M.toast({ html: "Complete failed: " + err.message });
+        }
+      });
+    }
+
+    async function updateImageGrid(data){
+      var items = [];
+      if(data.transactions && Array.isArray(data.transactions)){
+        items = data.transactions;
+      } else if(data.shipments && Array.isArray(data.shipments)){
+        items = data.shipments;
+      } else if(Array.isArray(data)){
+        items = data;
+      } else if(data.results && Array.isArray(data.results)){
+        items = data.results;
+      } else if(data.orders && Array.isArray(data.orders)){
+        items = data.orders;
+      } else if(typeof data === "object" && data !== null){
+        for(var key in data){
+          if(Array.isArray(data[key])){
+            items = data[key];
+            break;
+          }
+        }
+      }
+      window.cachedOrderItems = items;
+      for(var i=0; i<8; i++){
+        var cell = document.getElementById("previewCell" + i);
+        var qtyBox = document.getElementById("quantityCell" + i);
+        var metalBox = document.getElementById("metalCell" + i);
+        if(cell){
+          if(i < items.length){
+            var item = items[i];
+            try {
+              var images = await fetchListingImages(item.listing_id);
+              if(images && images.length > 0){
+                cell.innerHTML =
+                  '<img src="' + images[0].url_fullxfull + '" alt="Listing Image ' + i + '" data-scale="1" data-offsetX="0" data-offsetY="0">';
+              } else {
+                cell.innerHTML = "No images found";
+              }
+            } catch(errA){
+              console.error("Error fetching listing " + item.listing_id + ": ", errA);
+              cell.innerHTML = "Error loading image";
+            }
+            cell.style.cursor = "pointer";
+            (function(idx){
+              cell.onclick = function(){
+                highlightSelectedPreview(this); // NEW → 3 px orangered outline
+                showItemDetails(idx);           // existing detail pop-up
+              };
+            })(i);
+            if(qtyBox){
+              var actualQty = (item.quantity != null) ? item.quantity : 0;
+              qtyBox.value = " Quantity: " + actualQty;
+            }
+            if(metalBox){
+              var metalSel = "";
+              if(item.variations && Array.isArray(item.variations)){
+                var acceptedMetalNames = [
+                  "metal","metal choice","metal - engraving","metal colour",
+                  "color","metal choice / engraving option"
+                ];
+                var metalVar = item.variations.find(function(v){
+                  if(!v.formatted_name) return false;
+                  var nameLC = v.formatted_name.trim().toLowerCase();
+                  return (acceptedMetalNames.indexOf(nameLC) >= 0);
+                });
+                if(metalVar && metalVar.formatted_value){
+                  metalSel = metalVar.formatted_value;
+                }
+              }
+              metalBox.value = " Metal: " + metalSel;
+            }
+          } else {
+            cell.innerHTML = "Empty";
+            cell.style.cursor = "default";
+            cell.onclick = null;
+            if(qtyBox) qtyBox.value = "";
+            if(metalBox) metalBox.value = "";
+          }
+        }
+      }
+      if(items.length > 0){
+        highlightSelectedPreview(document.getElementById("previewCell0")); // NEW
+        showItemDetails(0);
+      } else {
+        document.getElementById("orderDetails").value = " ORDER DETAILS:\n\nNo items found.";
+      }
+    }
+
+    function showItemDetails(index){
+      if(!window.cachedOrderItems || !window.cachedOrderItems[index]){
+        console.warn("No item at index:", index);
+        return;
+      }
+      var item = window.cachedOrderItems[index];
+      var details = "";
+      if(window.orderName){
+        details += " ORDER FROM: " + window.orderName + "\n";
+      }
+      if(window.orderStatus){
+        details += " Order Status: " + window.orderStatus + "\n";
+      }
+
+      /*
+       * REVISED CODE TO HIDE ONLY "Shipped!" TEXT
+       * We still append "Shipping Status:" but skip the literal "Shipped!" if it equals "Shipped!"
+       */
+      if (window.orderIsShipped === "Shipped!") {
+        // Only show "Shipping Status:" with no further text
+        details += " Shipping Status:\n";
+      } else if (typeof window.orderIsShipped === "string") {
+        // For other string statuses, append them normally
+        details += " Shipping Status: " + window.orderIsShipped + "\n";
+      } else {
+        // If there's no recognized "shipped" string or it's boolean false, fallback
+        details += " Shipping Status:\n";
+      }
+
+      // If there's shipping data, we proceed as normal
+      if(window.orderIsShipped === "Shipped!" && window.orderShipments && window.orderShipments.length > 0){
+        var ship = window.orderShipments[0];
+        if(ship.carrier_name){
+          details += " Carrier Name: " + ship.carrier_name + "\n";
+          window.currentCarrier = ship.carrier_name;
+        }
+        if(ship.tracking_code){
+          details += " Tracking Number:\n" + ship.tracking_code + "\n\n";
+          window.currentTracking = ship.tracking_code;
+          if(window.currentCarrier && window.currentCarrier.toUpperCase() !== "USPS"){
+            document.getElementById("trackingLinkBtn").querySelector("img").src = "assets/ChitChats.png";
+          } else {
+            document.getElementById("trackingLinkBtn").querySelector("img").src = "assets/USPS.png";
+          }
+        } else {
+          details += "\n";
+          window.currentTracking = null;
+        }
+        if(window.currentTracking){
+          document.getElementById("trackingLinkBtn").style.display = "block";
+        }
+      } else {
+        document.getElementById("trackingLinkBtn").style.display = "none";
+      }
+
+      details += " ORDER DETAILS:\n\n";
+      if(item.title){
+        var firstFour = item.title.trim().split(" ").slice(0,4).join(" ");
+        details += " Title: " + firstFour + "\n";
+      }
+      if(item.sku){
+        details += " SKU: " + item.sku + "\n";
+      }
+      if(item.variations && Array.isArray(item.variations)){
+        var acceptedMetalNames2 = [
+          "metal","metal choice","metal - engraving","metal colour",
+          "color","metal choice / engraving option"
+        ];
+        var acceptedLengthNames2 = [
+          "length","necklace length","metal/necklace length",
+          "metal choice / necklace length","necklace length in inches"
+        ];
+        for(var j=0; j<item.variations.length; j++){
+          var v2 = item.variations[j];
+          if(!v2.formatted_name || !v2.formatted_value) continue;
+          var nameLower2 = v2.formatted_name.trim().toLowerCase();
+          var val2 = v2.formatted_value.trim();
+          if(nameLower2 === "personalization" && val2 === "Not requested on this item."){
+            val2 = "Not Requested";
+            details += " Personalization: " + val2 + "\n";
+          } else if(acceptedMetalNames2.indexOf(nameLower2) >= 0){
+            details += " Metal Choice: " + val2 + "\n";
+          } else if(acceptedLengthNames2.indexOf(nameLower2) >= 0){
+            var lengthMap2 = {
+              "14&quot;": "14 Inches",
+              "16&quot;": "16 Inches",
+              "18&quot;": "18 Inches",
+              "20&quot;": "20 Inches",
+              "14\"\"": "14 Inches",
+              "16\"\"": "16 Inches",
+              "18\"\"": "18 Inches",
+              "20\"\"": "20 Inches"
+            };
+            if(lengthMap2[val2]){
+              val2 = lengthMap2[val2];
+            }
+            details += " Item Length: " + val2 + "\n";
+          } else {
+            details += " " + v2.formatted_name + ": " + v2.formatted_value + "\n";
+          }
+        }
+      }
+      if(window.receiptIsGift !== null){
+        details += " Marked as Gift: " + window.receiptIsGift + "\n";
+      }
+      if(window.receiptGiftMessage){
+        details += " Gift Message: " + window.receiptGiftMessage + "\n";
+      }
+      document.getElementById("orderDetails").value = details;
+    }
+
+    async function fetchListingImages(listingId){
+      const responseLI = await fetch("/.netlify/functions/etsyImages?listingId=" + listingId, {
+        headers: { "access-token": localStorage.getItem("access_token") }
+      });
+      if(!responseLI.ok){
+        throw new Error("Error fetching images for listing " + listingId + ": " + responseLI.statusText);
+      }
+      const dataLI = await responseLI.json();
+      return dataLI.results;
+    }
+
+    function pullEtsyOrderDetails(orderNumber){
+      console.log("Pulling Etsy order details for order number:", orderNumber);
+      var token = localStorage.getItem("access_token");
+      return fetch("/.netlify/functions/etsyOrderProxy?orderId=" + encodeURIComponent(orderNumber), {
+        headers: { "access-token": token }
+      })
+      .then(function(r){ return r.json(); })
+      .then(function(data){
+        console.log("Etsy Order Data:", data);
+        window.receiptIsGift = (typeof data.is_gift !== "undefined") ? data.is_gift : null;
+        window.receiptGiftMessage = data.gift_message || "";
+
+        /* 🆕 store buyer note so the chat listener can render it */
+        window.buyerMessageText  = (data.message_from_buyer || "").trim();
+        window.orderShipments = data.shipments || [];
+        var titleDate2 = document.getElementById("titleOrderDate2");
+        titleDate2.textContent = "";
+        if(data.name){
+          window.orderName = data.name;
+        } else {
+          window.orderName = "";
+        }
+        if(data.status){
+          window.orderStatus = data.status;
+        } else {
+          window.orderStatus = "";
+        }
+        if(data.is_shipped === true){
+          window.orderIsShipped = "Shipped!";
+        } else if(data.is_shipped === false){
+          window.orderIsShipped = "Not Shipped";
+        } else {
+          window.orderIsShipped = "";
+        }
+        var foundStamp = null;
+        if(data.shipped_timestamp && data.is_shipped === true){
+          foundStamp = data.shipped_timestamp;
+        }
+        else if(data.transactions && Array.isArray(data.transactions) && data.transactions.length > 0
+                && data.transactions[0].shipped_timestamp && data.is_shipped === true){
+          foundStamp = data.transactions[0].shipped_timestamp;
+        }
+        window.orderShippedTimestamp = foundStamp;
+        if(window.orderIsShipped === "Shipped!" && window.orderShippedTimestamp){
+          var d4 = new Date(window.orderShippedTimestamp * 1000);
+          var monthNames4 = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+          var day4 = ("0" + d4.getDate()).slice(-2);
+          var mStr4 = monthNames4[d4.getMonth()];
+          var y4 = d4.getFullYear();
+          titleDate2.textContent = "Shipped On: " + day4 + " " + mStr4 + " " + y4;
+        }
+
+        if(data.transactions && data.transactions.length > 0){
+          var firstTrans = data.transactions[0];
+          var monthNamesF = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+          if(firstTrans.created_timestamp){
+            var dT = new Date(firstTrans.created_timestamp * 1000);
+            var ddT = ("0" + dT.getDate()).slice(-2);
+            var mmT = monthNamesF[dT.getMonth()];
+            var yyT = dT.getFullYear();
+            document.getElementById("dateOrdered").value = " " + ddT + " " + mmT + " " + yyT;
+          } else {
+            document.getElementById("dateOrdered").value = "";
+          }
+          var shipEl = document.getElementById("shipDate");
+          shipEl.style.color = "";
+          if(firstTrans.expected_ship_date){
+            var sTS = new Date(firstTrans.expected_ship_date * 1000);
+            var sDay = ("0" + sTS.getDate()).slice(-2);
+            var sMonth = monthNamesF[sTS.getMonth()];
+            var sYear = sTS.getFullYear();
+            shipEl.value = " " + sDay + " " + sMonth + " " + sYear;
+            if(window.orderIsShipped === "Shipped!"){
+              shipEl.style.color = "#006400";
+            } else {
+              var todayD = new Date();
+              todayD.setHours(0,0,0,0);
+              var dueDateD = new Date(sYear, sTS.getMonth(), sDay);
+              dueDateD.setHours(0,0,0,0);
+              if(dueDateD.getTime() === todayD.getTime()){
+                shipEl.style.color = "orange";
+              } else {
+                shipEl.style.color = "";
+              }
+            }
+          } else {
+            shipEl.value = "";
+          }
+        } else {
+          document.getElementById("dateOrdered").value = "";
+          var shipEl2 = document.getElementById("shipDate");
+          shipEl2.value = "";
+          shipEl2.style.color = "";
+        }
+        return data;
+      })
+      .catch(function(err){
+        console.error("Error fetching Etsy order details:", err);
+        return null;
+      });
+    }
+
+    /* ---------------------------------------------------------
+     *  Firestore listener for employee-scanned order numbers
+     * --------------------------------------------------------*/
+    function startScannedOrderListener(){
+      if (!window.isEmployeeLoggedIn){
+        console.warn("startScannedOrderListener called but user not logged in!");
+        return;
+      }
+
+      let firstSnap = true;                       // 🔑 skip the initial payload
+      db.collection("Brites_Orders")
+        .doc("shipping-scan-1")
+        .onSnapshot(docSnap => {
+          if (!window.isEmployeeLoggedIn) return;
+
+          /* ignore Firestore’s first delivery; wait for *changes* */
+          if (firstSnap){ firstSnap = false; return; }
+
+          if (docSnap.exists){
+            const data = docSnap.data();
+            if (data && data["Order Number"]){
+              const orderNumber   = data["Order Number"];
+              if (orderNumber === lastScanProcessed) return;   // duplicate → ignore
+              lastScanProcessed = orderNumber;                 // remember newest hit
+              const etsyOrderInput = document.getElementById("etsyOrderNumber");
+              etsyOrderInput.value = orderNumber;
+
+              /* simulate user hitting Enter → kicks off full load */
+              etsyOrderInput.dispatchEvent(
+                new KeyboardEvent("keydown", { key:"Enter", keyCode:13, which:13 })
+              );
+
+              /* one-shot: wipe the field so it can’t be reused */
+              db.collection("Brites_Orders")
+                .doc("shipping-scan-1")
+                .set({ "Order Number": firebase.firestore.FieldValue.delete() }, { merge:true });
+
+            }
+          }
+        });
+    }
+    });   // ← closes DOMContentLoaded handler
+  </script>
+
+  <!-- helper: force every upload to use resumable PUT -->
+  <script type="module">
+    /* modular imports */
+    import {
+      initializeApp,
+      getApp
+    } from "https://www.gstatic.com/firebasejs/9.23.0/firebase-app.js";
+    import {
+      getStorage,
+      ref,
+      uploadBytesResumable
+    } from "https://www.gstatic.com/firebasejs/9.23.0/firebase-storage.js";
+    import { getDownloadURL } from "https://www.gstatic.com/firebasejs/9.23.0/firebase-storage.js";
+    import {
+      getAuth,
+      signInAnonymously
+    } from "https://www.gstatic.com/firebasejs/9.23.0/firebase-auth.js";
+
+    /* reuse the compat-initialised config */
+    let modApp;
+    try {
+      modApp = getApp();                       // already exists? (unlikely)
+    } catch {
+      // pull the options off the compat app & spin a modular twin
+      const compatOpts = firebase.app().options;
+      modApp = initializeApp(compatOpts);
+    }
+
+    const storage = getStorage(modApp);        // OK – default app now present
+    const auth   = getAuth(modApp);
+    signInAnonymously(auth).catch(console.error);
+
+    /* expose a single resumable uploader */
+    window.uploadViaResumable = async (path, file) => {
+      const storageRef = ref(storage, path);
+      const task       = uploadBytesResumable(
+        storageRef,
+        file,
+        { contentType: file.type }
+      );
+
+      await new Promise((res, rej) =>
+        task.on("state_changed", null, rej, res)
+      );
+      return await getDownloadURL(storageRef);
+    };
+  </script>
+
+  <!-- 🆕 hard-hide unused fields -->
+  <style id="hideUnusedFields">
+    #labelCreationDate,
+    #completedByEmployee { display:none !important; }
+  </style>
+
+<!-- FINAL chat-bubble override: placed last so nothing beats it -->
+<style id="chatSpacingOverride">
+  /* base bubble */
+  .msg{
+    display:flex !important;
+    flex-direction:column !important;
+    row-gap:0 !important;               /* no extra flex gap             */
+    padding:2px 12px 4px !important;    /* top 2 • lr 12 • bottom 4       */
+    margin:5px 0   !important;          /* bubble-to-bubble spacing       */
+    max-width:75%;
+    border-radius:7px !important;
+    color:#fff !important;
+    font-size:0.85em;
+  }
+
+  /* tighten date-stamp ↔ text, keep within bubble */
+  .msg .meta{
+    margin:4px 0 1px 0 !important;        /* bottom 1 px only               */
+    line-height:1   !important;         /* compact line box               */
+  }
+
+  /* wrap long text nicely */
+  .msg > span:not(.meta){
+    white-space:pre-wrap !important;
+    word-break:break-word !important;
+    overflow-wrap:anywhere !important;
+  }
+
+  /* RIGHT-justified (staff) bubble */
+  .msg.sent{
+    background:#797d7f !important;
+    margin-left:auto  !important;       /* push to right edge             */
+    text-align:right  !important;
+    align-items:flex-end !important;    /* children follow right edge     */
+  }
+  .msg.sent .meta{
+    font-size:0.65em !important;
+    color:rgba(255,255,255,0.6) !important;
+  }
+
+  /* LEFT-justified (customer) bubble */
+  .msg.received{
+    background:#5dade2 !important;
+    margin-right:auto !important;       /* push to left edge              */
+    text-align:left   !important;
+    align-items:flex-start !important;  /* children follow left edge      */
+  }
+  .msg.received .meta{
+    font-size:0.65em !important;
+    color:rgba(255,255,255,0.8) !important;
+  }
+
+  /* disable live controls */
+  body.configOpen #screenOne select{ pointer-events:none !important; }
+  body.configOpen #screenOne select,
+  body.configOpen #screenOne button{
+    pointer-events:none !important;
+  }
+
+  /* re-enable inside modal */
+  body.configOpen #configModal select{ pointer-events:auto !important; }
+  body.configOpen #configModal select,
+  body.configOpen #configModal button{
+    pointer-events:auto !important;
+  }
+
+  /* allow dragging the Carrier dropdown while Config is open */
+  body.configOpen #carrierSelect{ pointer-events:auto !important; }
+
+</style>
+
+</body>
+</html>
