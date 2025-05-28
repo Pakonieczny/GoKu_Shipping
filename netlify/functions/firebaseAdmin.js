@@ -26,7 +26,11 @@ if (!process.env.CORS_SET) {
   new Storage({ credentials: serviceAccount })
     .bucket("gokudatabase.firebasestorage.app")
     .setCorsConfiguration([{
-      origin        : ["https://shipping-1.goldenspike.app"],
+      origin        : [
+        "https://shipping-1.goldenspike.app",
+        "https://design-message.goldenspike.app",
+        "https://design-message-1.goldenspike.app"
+      ],
       method        : ["GET","POST","PUT","DELETE","HEAD","OPTIONS"],
       responseHeader: ["Content-Type","Authorization"],
       maxAgeSeconds : 3600
