@@ -386,7 +386,7 @@
     <input type="text" id="labelCreationDate"    readonly />
     <input type="text" id="completedByEmployee"  readonly />
     <!-- 🆕—— new draggable title -->
-    <input id="titleShipping" type="text" value="Shipping_1"  readonly />
+    <input id="titleShipping" type="text" value="Design_Message 1"  readonly />
     <!-- ▲ nothing else changes here -->
 
     <!-- Photo Grid -->
@@ -857,7 +857,7 @@
       trackingNumberInput:{ left:677, top:674, width:308, height:23 },
       carrierSelectWrap:  { left:539, top:664, width:107, height:23 },
       completeOrderBtn:    { left:1062, top:656, width:155, height:41 },
-      titleShipping:        { left: 700, top: 10, width: 120, height: 30 }
+      titleShipping:        { left: 700, top: 10, width: 250, height: 30 }
 
     };
 
@@ -1797,8 +1797,13 @@
 
   <!-- 🆕 hard-hide unused fields -->
   <style id="hideUnusedFields">
-    #labelCreationDate,
-    #completedByEmployee { display:none !important; }
+       /* already hidden */
+       #labelCreationDate,
+       #completedByEmployee,
+       /* NEW — hide dropdown + tracking + complete-order controls */
+       .select-dropdown.dropdown-trigger,
+       #trackingNumberInput,
+       #completeOrderBtn         { display:none !important; }
   </style>
 
 <!-- FINAL chat-bubble override: placed last so nothing beats it -->
