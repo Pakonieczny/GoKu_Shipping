@@ -1,183 +1,182 @@
 // netlify/functions/exchangeToken.js
-// Handles Etsy OAuth → exchanges “code” for access_token, auto-routes by sub-domain.
-//
-// Domains we recognize --------------------------------------------------
-const SORTING_DOMAIN           = "https://sorting.goldenspike.app";
-const GOLDENSPIKE_DOMAIN       = "https://goldenspike.app";
-const DESIGN_DOMAIN            = "https://design.goldenspike.app";
-const DESIGNMESSAGE_DOMAIN     = "https://design-message.goldenspike.app";
-const DESIGNMESSAGE1_DOMAIN    = "https://design-message-1.goldenspike.app";
-const ASSEMBLY1_DOMAIN         = "https://assembly-1.goldenspike.app";
-const ASSEMBLY2_DOMAIN         = "https://assembly-2.goldenspike.app";
-const ASSEMBLY3_DOMAIN         = "https://assembly-3.goldenspike.app";
-const ASSEMBLY4_DOMAIN         = "https://assembly-4.goldenspike.app";
-const SHIPPING1_DOMAIN         = "https://shipping-1.goldenspike.app";
-const SHIPPING2_DOMAIN         = "https://shipping-2.goldenspike.app";
-const SHIPPING3_DOMAIN         = "https://shipping-3.goldenspike.app";
-const WELD1_DOMAIN             = "https://weld-1.goldenspike.app";
-const DESIGN1_DOMAIN           = "https://design-1.goldenspike.app";
+// A single function that auto-detects your domain from request headers.
+// If "sorting.goldenspike.app" => uses that redirect
+// else if "goldenspike.app" => uses that
+// else => defaults to goldenspike (you can invert this default if you wish).
 
-// CORS (public JSON API) -----------------------------------------------
+const fetch  = require("node-fetch");
+const crypto = require("crypto");
+
+// We only allow these two final domains:
+const SORTING_DOMAIN      = "https://sorting.goldenspike.app";
+const GOLDENSPIKE_DOMAIN  = "https://goldenspike.app";
+const DESIGN_DOMAIN       = "https://design.goldenspike.app";
+const DESIGNMESSAGE_DOMAIN       = "https://design-message.goldenspike.app";
+const DESIGNMESSAGE1_DOMAIN       = "https://design-message-1.goldenspike.app";
+// ─── new assembly domains ───────────────────────────────────────────
+const ASSEMBLY1_DOMAIN   = "https://assembly-1.goldenspike.app";
+const ASSEMBLY2_DOMAIN   = "https://assembly-2.goldenspike.app";
+const ASSEMBLY3_DOMAIN   = "https://assembly-3.goldenspike.app";
+const ASSEMBLY4_DOMAIN   = "https://assembly-4.goldenspike.app";
+
+// ─── new shipping domains ───────────────────────────────────────────
+const SHIPPING1_DOMAIN   = "https://shipping-1.goldenspike.app";
+const SHIPPING2_DOMAIN   = "https://shipping-2.goldenspike.app";
+const SHIPPING3_DOMAIN   = "https://shipping-3.goldenspike.app";
+
+// ─── new weld + design sub-domains ──────────────────────────────────
+const WELD1_DOMAIN       = "https://weld-1.goldenspike.app";
+const DESIGN1_DOMAIN     = "https://design-1.goldenspike.app";
+
+/* 🆕 global CORS constants */
 const CORS = {
   "Access-Control-Allow-Origin" : "*",
   "Access-Control-Allow-Headers": "Content-Type,Authorization",
   "Access-Control-Allow-Methods": "GET,POST,OPTIONS"
 };
 
-const fetch  = require("node-fetch");
-const crypto = require("crypto");
-
-// ───────────────────────────────────────────────────────────────────────
-// Helpers
-// ───────────────────────────────────────────────────────────────────────
-function generateRandomString(len) {
-  return crypto.randomBytes(Math.ceil(len / 2))
-               .toString("hex")
-               .slice(0, len);
+// Helpers for PKCE:
+function generateRandomString(length) {
+  const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+  let text = "";
+  for (let i = 0; i < length; i++) {
+    text += chars.charAt(Math.floor(Math.random() * chars.length));
+  }
+  return text;
 }
 
-function toBase64URL(buf) {
-  return buf.toString("base64")
-            .replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+function generateCodeChallenge(codeVerifier) {
+  const hash = crypto.createHash("sha256").update(codeVerifier).digest();
+  return hash.toString("base64")
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_")
+    .replace(/=+$/, "");
 }
 
-async function sha256(message) {
-  return crypto.createHash("sha256").update(message).digest();
-}
-
-// Decide which domain to redirect back to ------------------------------
+// Helper to auto-detect domain from the request's host header
 function pickDomainFromHost(event) {
-  const host = (event.headers["x-forwarded-host"] || event.headers["host"] || "")
-                 .toLowerCase();
+  // 'x-forwarded-host' is typical under Netlify; fallback to Host if needed
+  const host = (event.headers["x-forwarded-host"] || event.headers["host"] || "").toLowerCase(); // normalized
   console.log("exchangeToken => Detected host:", host);
 
-  const param = ((event.queryStringParameters || {}).redirect_domain || "").trim().toLowerCase();
-
-  /* explicit ?redirect_domain= overrides */
-  switch (param) {
-    case "sorting":          return SORTING_DOMAIN;
-    case "weld-1":           return WELD1_DOMAIN;
-    case "design":           return DESIGN_DOMAIN;
-    case "design-1":         return DESIGN1_DOMAIN;
-    case "design-message":   return DESIGNMESSAGE_DOMAIN;
-    case "design-message-1": return DESIGNMESSAGE1_DOMAIN;
-    case "assembly-1":       return ASSEMBLY1_DOMAIN;
-    case "assembly-2":       return ASSEMBLY2_DOMAIN;
-    case "assembly-3":       return ASSEMBLY3_DOMAIN;
-    case "assembly-4":       return ASSEMBLY4_DOMAIN;
-    case "shipping-1":       return SHIPPING1_DOMAIN;
-    case "shipping-2":       return SHIPPING2_DOMAIN;
-    case "shipping-3":       return SHIPPING3_DOMAIN;
-    default: /* fall through */
+  // normalize query param
+  const param = (event.queryStringParameters || {}).redirect_domain || "";
+  const paramLower = param.trim().toLowerCase(); // normalized
+  
+  /* ── query-param overrides ───────────────────────────────────────── */
+  switch (paramLower) {
+    case "sorting":      return SORTING_DOMAIN;
+    case "weld-1":       return WELD1_DOMAIN;
+    case "design-1":     return DESIGN1_DOMAIN;
+    case "design-message":     return DESIGNMESSAGE_DOMAIN;
+    case "design-message-1":     return DESIGNMESSAGE1_DOMAIN;
+    case "assembly-1":   return ASSEMBLY1_DOMAIN;
+    case "assembly-2":   return ASSEMBLY2_DOMAIN;
+    case "assembly-3":   return ASSEMBLY3_DOMAIN;
+    case "assembly-4":   return ASSEMBLY4_DOMAIN;
+    case "shipping-1":   return SHIPPING1_DOMAIN;
+    case "shipping-2":   return SHIPPING2_DOMAIN;
+    case "shipping-3":   return SHIPPING3_DOMAIN;
+    case "goldenspike":  return GOLDENSPIKE_DOMAIN;
+    case "design":       return DESIGN_DOMAIN;
+    default:
+      break; // fall through to host
   }
 
-  /* host-based routing */
-  if (host.includes("sorting."))          return SORTING_DOMAIN;
-  if (host.includes("weld-1."))           return WELD1_DOMAIN;
-  if (host.includes("design-1."))         return DESIGN1_DOMAIN;
-  if (host.includes("design-message-1.")) return DESIGNMESSAGE1_DOMAIN;
-  if (host.includes("design-message."))   return DESIGNMESSAGE_DOMAIN;
-  if (host.includes("design."))           return DESIGN_DOMAIN;
-  if (host.includes("assembly-1."))       return ASSEMBLY1_DOMAIN;
-  if (host.includes("assembly-2."))       return ASSEMBLY2_DOMAIN;
-  if (host.includes("assembly-3."))       return ASSEMBLY3_DOMAIN;
-  if (host.includes("assembly-4."))       return ASSEMBLY4_DOMAIN;
-  if (host.includes("shipping-1."))       return SHIPPING1_DOMAIN;
-  if (host.includes("shipping-2."))       return SHIPPING2_DOMAIN;
-  if (host.includes("shipping-3."))       return SHIPPING3_DOMAIN;
+  /* ── host header autodetect ──────────────────────────────────────── */
+  if (host.includes("sorting.goldenspike.app"))      return SORTING_DOMAIN;
+  if (host.includes("assembly-1.goldenspike.app"))   return ASSEMBLY1_DOMAIN;
+  if (host.includes("assembly-2.goldenspike.app"))   return ASSEMBLY2_DOMAIN;
+  if (host.includes("assembly-3.goldenspike.app"))   return ASSEMBLY3_DOMAIN;
+  if (host.includes("assembly-4.goldenspike.app"))   return ASSEMBLY4_DOMAIN;
+  if (host.includes("shipping-1.goldenspike.app"))   return SHIPPING1_DOMAIN;
+  if (host.includes("shipping-2.goldenspike.app"))   return SHIPPING2_DOMAIN;
+  if (host.includes("shipping-3.goldenspike.app"))   return SHIPPING3_DOMAIN;
+  if (host.includes("weld-1.goldenspike.app"))       return WELD1_DOMAIN;
+  if (host.includes("design-1.goldenspike.app"))     return DESIGN1_DOMAIN;
+  if (host.includes("design.goldenspike.app"))       return DESIGN_DOMAIN;
+  if (host.includes("design-message.goldenspike.app"))       return DESIGNMESSAGE_DOMAIN;
+  if (host.includes("design-message-1.goldenspike.app"))       return DESIGNMESSAGE1_DOMAIN;
+  if (host.includes("goldenspike.app"))              return GOLDENSPIKE_DOMAIN;
 
-  /* default */                           return GOLDENSPIKE_DOMAIN;
+  /* ── fallback ────────────────────────────────────────────────────── */
+  return GOLDENSPIKE_DOMAIN;
 }
 
-// ───────────────────────────────────────────────────────────────────────
-// Netlify handler
-// ───────────────────────────────────────────────────────────────────────
-exports.handler = async (event) => {
-  const method = event.httpMethod.toUpperCase();
+exports.handler = async function(event) {
 
-  if (method === "OPTIONS") {
-    return { statusCode: 204, headers: CORS, body: "" };
+  /* 🆕 quick reply for pre-flight requests */
+  if (event.httpMethod === "OPTIONS") {
+    return { statusCode: 200, headers: CORS, body: "ok" };
   }
 
-  /* Step 1 — start OAuth ------------------------------------------------*/
-  if (method === "GET" && !event.queryStringParameters.code) {
-    const state        = generateRandomString(16);
-    const codeVerifier = generateRandomString(64);
-    const codeData     = await sha256(codeVerifier);
-    const codeChallenge = toBase64URL(codeData);
+  try {
+    const query = event.queryStringParameters || {};
+    const code = query.code;
+    const codeVerifier = query.code_verifier;
 
-    // cache verifier in cookie (30 min) so second-leg call can read it
-    const cookie = `cv=${codeVerifier}; Path=/; Max-Age=1800; SameSite=Lax; Secure`;
+    // Decide which domain to use
+    const finalRedirectUri = pickDomainFromHost(event);
+    console.log("exchangeToken => finalRedirectUri:", finalRedirectUri);
 
-    const EtsyAuthURL = new URL("https://www.etsy.com/oauth/connect");
-    EtsyAuthURL.searchParams.set("response_type", "code");
-    EtsyAuthURL.searchParams.set("redirect_uri", `${pickDomainFromHost(event)}/.netlify/functions/exchangeToken`);
-    EtsyAuthURL.searchParams.set("client_id", process.env.CLIENT_ID);
-    EtsyAuthURL.searchParams.set("state", state);
-    EtsyAuthURL.searchParams.set("code_challenge", codeChallenge);
-    EtsyAuthURL.searchParams.set("code_challenge_method", "S256");
-    EtsyAuthURL.searchParams.set("scope", "transactions_r listings_r listings_w");
+    // If no code => begin OAuth PKCE handshake
+    if (!code) {
+      const newCodeVerifier = generateRandomString(64);
+      const codeChallenge   = generateCodeChallenge(newCodeVerifier);
+      const CLIENT_ID       = process.env.CLIENT_ID;
+      if (!CLIENT_ID) {
+        return { statusCode: 500, headers: CORS, body: JSON.stringify({ error: "Server config error" }) };
+      }
 
-    return {
-      statusCode: 302,
-      headers: {
-        ...CORS,
-        "Set-Cookie": cookie,
-        Location: EtsyAuthURL.toString()
-      },
-      body: ""
-    };
-  }
+      const scope = "listings_w listings_r transactions_r transactions_w";
+      const state = "randomState123";
+      const oauthUrl =
+        "https://www.etsy.com/oauth/connect" +
+        `?response_type=code&client_id=${CLIENT_ID}` +
+        `&redirect_uri=${encodeURIComponent(finalRedirectUri)}` +
+        `&scope=${encodeURIComponent(scope)}` +
+        `&state=${state}` +
+        `&code_challenge=${encodeURIComponent(codeChallenge)}` +
+        `&code_challenge_method=S256`;
 
-  /* Step 2 — exchange code for access_token ----------------------------*/
-  if (method === "GET" && event.queryStringParameters.code) {
-    const code         = event.queryStringParameters.code;
-    const codeVerifier =
-      (event.queryStringParameters.code_verifier || "") ||
-      (event.headers.cookie || "").split(";").map(c => c.trim())
-        .find(c => c.startsWith("cv="))?.slice(3) || "";
-
-    if (!codeVerifier) {
-      return {
-        statusCode: 400,
-        headers: CORS,
-        body: JSON.stringify({ error: "Missing code_verifier param" })
-      };
+      return { statusCode: 302, headers: { ...CORS, Location: oauthUrl }, body: "" };
     }
 
-    const resp = await fetch("https://api.etsy.com/v3/public/oauth/token", {
-      method : "POST",
-      headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      body   : new URLSearchParams({
-        grant_type   : "authorization_code",
-        client_id    : process.env.CLIENT_ID,
-        redirect_uri : `${pickDomainFromHost(event)}/.netlify/functions/exchangeToken`,
-        code         : code,
-        code_verifier: codeVerifier
-      }).toString()
+    // Require code_verifier
+    if (!codeVerifier) {
+      return { statusCode: 400, headers: CORS, body: JSON.stringify({ error: "Missing code_verifier param" }) };
+    }
+
+    // Exchange token
+    const CLIENT_ID     = process.env.CLIENT_ID;
+    const CLIENT_SECRET = process.env.CLIENT_SECRET;
+    if (!CLIENT_ID || !CLIENT_SECRET) {
+      return { statusCode: 500, headers: CORS, body: JSON.stringify({ error: "Server creds missing" }) };
+    }
+
+    const params = new URLSearchParams({
+      grant_type: "authorization_code",
+      client_id: CLIENT_ID,
+      client_secret: CLIENT_SECRET,
+      code,
+      redirect_uri: finalRedirectUri,
+      code_verifier: codeVerifier
     });
 
-    const data = await resp.json();
+    const resp  = await fetch("https://api.etsy.com/v3/public/oauth/token", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: params
+    });
+    const data  = await resp.json();
     if (!resp.ok) {
-      console.error("Token exchange failed:", data);
-      return { statusCode: 500, headers: CORS, body: JSON.stringify(data) };
+      return { statusCode: resp.status, headers: CORS, body: JSON.stringify(data) };
     }
 
-    // success → redirect back to app with token in hash
-    return {
-      statusCode: 302,
-      headers: {
-        ...CORS,
-        Location: `${pickDomainFromHost(event)}/#access_token=${data.access_token}`
-      },
-      body: ""
-    };
-  }
+    const finalUrl = `${finalRedirectUri}?access_token=${encodeURIComponent(data.access_token)}`;
+    return { statusCode: 302, headers: { ...CORS, Location: finalUrl }, body: "" };
 
-  /* Unknown route ------------------------------------------------------*/
-  return {
-    statusCode: 404,
-    headers: CORS,
-    body: JSON.stringify({ error: "Route not found" })
-  };
+  } catch (err) {
+    return { statusCode: 500, headers: CORS, body: JSON.stringify({ error: err.message }) };
+  }
 };
