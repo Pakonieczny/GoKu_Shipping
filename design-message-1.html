@@ -746,7 +746,8 @@
             code_verifier:   storedCodeVerifier,
             redirect_domain: "design-message-1"
           });
-          window.location.href = "/.netlify/functions/exchangeToken?" + qs.toString();
+          window.location.href = location.origin + "/.netlify/functions/exchangeToken?"
+                    + qs.toString();   // ⇦ guarantees we stay on THIS sub-domain
           } else {
             console.error("No code verifier found in localStorage.");
           }
