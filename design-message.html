@@ -1797,11 +1797,13 @@
 
   <!-- 🆕 hard-hide unused fields -->
   <style id="hideUnusedFields">
-      /* hide controls we never use */
+      /* hide unused UI */
       #labelCreationDate,
       #completedByEmployee,
       .select-dropdown.dropdown-trigger,
-      .dropdown-content.select-dropdown,  /* ← NEW: dropdown list itself */
+      .dropdown-content.select-dropdown,
+      #carrierSelectWrap,
+      #carrierSelect,
       #trackingNumberInput,
       #completeOrderBtn {
         display: none !important;
