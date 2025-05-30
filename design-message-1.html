@@ -1797,13 +1797,15 @@
 
   <!-- 🆕 hard-hide unused fields -->
   <style id="hideUnusedFields">
-       /* already hidden */
-       #labelCreationDate,
-       #completedByEmployee,
-       /* NEW — hide dropdown + tracking + complete-order controls */
-       .select-dropdown.dropdown-trigger,
-       #trackingNumberInput,
-       #completeOrderBtn         { display:none !important; }
+      /* hide controls we never use */
+      #labelCreationDate,
+      #completedByEmployee,
+      .select-dropdown.dropdown-trigger,
+      .dropdown-content.select-dropdown,  /* ← NEW: dropdown list itself */
+      #trackingNumberInput,
+      #completeOrderBtn {
+        display: none !important;
+      }
   </style>
 
 <!-- FINAL chat-bubble override: placed last so nothing beats it -->
