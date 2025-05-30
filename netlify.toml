@@ -134,6 +134,18 @@
   status = 200
   force = true
 
+  [[redirects]]
+  from = "https://design-message.goldenspike.app"
+  to = "/design-message.html"
+  status = 200
+  force = true
+
+  [[redirects]]
+  from = "https://design-message-1.goldenspike.app"
+  to = "/design-message-1.html"
+  status = 200
+  force = true
+
 
 
 
