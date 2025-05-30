@@ -525,11 +525,15 @@
     <!-- A wrapper with position: relative, so children can be absolutely placed -->
     <div id="userLoginModalContainer" class="modal-content" style="position:relative;">
       <h5 id="loginModalTitle">User Log In</h5>
-      <p id="loginModalPrompt">Please enter your 3-digit Employee Number:</p>
+      <p id="loginModalPrompt">Please enter your 6-digit Employee Number:</p>
       <input
-        type="text"
-        id="employeeNumberInput"
-        placeholder="001"
+      type="text"
+                   id="employeeNumberInput"
+                   placeholder="000000"
+                   maxlength="6"
+                   inputmode="numeric"
+                   autocomplete="one-time-code"
+                   pattern="[0-9]{6}"
       />
     </div>
     <div id="loginModalFooter" class="modal-footer">
@@ -950,12 +954,30 @@
       // "Log In" button for employees
       var employeeLoginBtn = document.getElementById("employeeLoginBtn");
       var employeeNumberInput = document.getElementById("employeeNumberInput");
+        
+      /* ╭─★ mask each typed digit with * while keeping raw value ★─╮ */
+       (function(){
+         const inp = employeeNumberInput;
+         inp.dataset.raw = "";
+         inp.addEventListener("keydown", e=>{
+           if(e.key === "Backspace"){
+             inp.dataset.raw = inp.dataset.raw.slice(0,-1);
+           } else if(/^[0-9]$/.test(e.key)){
+             if(inp.dataset.raw.length === 6){ e.preventDefault(); return; }
+             inp.dataset.raw += e.key;
+           } else if(e.key.length > 1){ return; }           /* ignore Ctrl, etc */
+           else { e.preventDefault(); return; }             /* block non-digits */
+           e.preventDefault();
+           inp.value = "*".repeat(inp.dataset.raw.length);  /* render stars */
+         });
+       })();
+
       if(employeeLoginBtn){
         employeeLoginBtn.addEventListener("click", async function(){
           try {
-            var empNumber = employeeNumberInput.value.trim();
-            if(!empNumber || empNumber.length !== 3){
-              M.toast({html: "Please enter a valid 3-digit Employee Number!"});
+             var empNumber = employeeNumberInput.dataset.raw || "";
+             if(!/^[0-9]{6}$/.test(empNumber)){
+               M.toast({html: "Please enter a valid 6-digit Employee Number!"});
               return;
             }
               var responseEN = await fetch(
