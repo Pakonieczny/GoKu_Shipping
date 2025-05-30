@@ -993,15 +993,15 @@
            inp.value = "*".repeat(inp.dataset.raw.length);  /* render stars */
          });
        })();
-
-      if(employeeLoginBtn){
+      
+if(employeeLoginBtn){
         employeeLoginBtn.addEventListener("click", async function(){
           try {
              var empNumber = employeeNumberInput.dataset.raw || "";
              if(!/^[0-9]{6}$/.test(empNumber)){
                M.toast({html: "Please enter a valid 6-digit Employee Number!"});
               return;
-              
+            }
               var responseEN = await fetch(
                 "/.netlify/functions/firebaseOrders?orderId=" +
                 encodeURIComponent("Employee Numbers")
