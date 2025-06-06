@@ -1209,13 +1209,6 @@ function openIframePrinterForListing(cellIndex) {
     // --------------- Drag-and-drop logic ---------------    /* ⇢ anchor */
     const photoDragDropElem = document.getElementById("photoDragDrop");
 
-    // Slice into 10×14 = 140 tiles
-    const subImages = await extractSubImages144(fileDataUrl);
-
-    M.toast({
-      html: `File ${file.name}: Extracted 140 quadrant images (each 512×512).`
-    });
-
     /* allow dropping */
     photoDragDropElem.addEventListener("dragover", (e) => {
       e.preventDefault();                        // must keep
