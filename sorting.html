@@ -1209,6 +1209,13 @@ function openIframePrinterForListing(cellIndex) {
     // --------------- Drag-and-drop logic ---------------    /* ⇢ anchor */
     const photoDragDropElem = document.getElementById("photoDragDrop");
 
+    // Slice into 10×14 = 140 tiles
+    const subImages = await extractSubImages144(fileDataUrl);
+
+    M.toast({
+      html: `File ${file.name}: Extracted 140 quadrant images (each 512×512).`
+    });
+
     /* allow dropping */
     photoDragDropElem.addEventListener("dragover", (e) => {
       e.preventDefault();                        // must keep
@@ -1227,7 +1234,7 @@ function openIframePrinterForListing(cellIndex) {
     const files = e.dataTransfer.files;
     if (!files || files.length === 0) return;
 
-    /* Collect every 512×512 quadrant here for one-time AI analysis */
+    /* Collect every 400×400 quadrant here for one-time AI analysis */
     const subImagesToAnalyze = [];
 
     for (let i = 0; i < files.length; i++) {
@@ -1236,7 +1243,7 @@ function openIframePrinterForListing(cellIndex) {
       // Convert the dropped file to a DataURL
       const fileDataUrl = await readAsDataURL(file);
 
-      // Slice into 12×12 = 144 tiles
+      // Slice into 10×14 = 140 tiles
       const subImages = await extractSubImages144(fileDataUrl);
 
       for (let q = 0; q < subImages.length; q++) {
@@ -1266,7 +1273,7 @@ function openIframePrinterForListing(cellIndex) {
 
 /* ─────────────────────────────────────────────────────────────
    analyzeAndStoreSubImages(list)
-   • Sends each 512×512 quadrant to the AI.
+   • Sends each 400×400 quadrant to the AI.
    • Saves the photo into userImagesArray ONLY if charmPresent == "yes".
    • Aborts after 4 consecutive “No charm” images.
    • Persists good images and enables “Send & Match”.
@@ -1350,18 +1357,20 @@ async function readAsDataURL(file) {
   });
 }
 
-// extractSubImages144: always slice a composite into 12×12 = 144 tiles
+/********************************************************
+ * extractSubImages144: always slice a composite into 10×14 = 140 tiles
+ ********************************************************/
 async function extractSubImages144(baseDataUrl) {
   const img = await loadImage(baseDataUrl);
 
   const fullW = img.naturalWidth;
   const fullH = img.naturalHeight;
-  const cellW = fullW / 12;
-  const cellH = fullH / 12;
+  const cellW = fullW / 10;          // ← changed from /10
+  const cellH = fullH / 14;          // ← changed from /14
 
   const results = [];
-  for (let r = 0; r < 12; r++) {
-    for (let c = 0; c < 12; c++) {
+  for (let r = 0; r < 14; r++) {     // ← rows: 14 tall
+    for (let c = 0; c < 10; c++) {   // ← cols: 10 wide
       const canvas = document.createElement("canvas");
       canvas.width  = cellW;
       canvas.height = cellH;
@@ -1375,17 +1384,17 @@ async function extractSubImages144(baseDataUrl) {
       results.push(canvas.toDataURL("image/png"));
     }
   }
-  return results;     // 144 sub‑images
+  return results;     // 140 sub-images
 }
 
-// cropTo512: forcibly resize each quadrant to 512×512
+// cropTo512: forcibly resize each quadrant to 400×400
 async function cropTo512(dataUrl) {
   const loaded = await loadImage(dataUrl);
   const canvas = document.createElement("canvas");
-  canvas.width = 512;
-  canvas.height = 512;
+  canvas.width = 400;
+  canvas.height = 400;
   const ctx = canvas.getContext("2d");
-  ctx.drawImage(loaded, 0, 0, 512, 512);
+  ctx.drawImage(loaded, 0, 0, 400, 400);
   return canvas.toDataURL("image/png");
 }
 
