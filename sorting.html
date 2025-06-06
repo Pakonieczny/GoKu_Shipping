@@ -2158,21 +2158,26 @@ async function sendAndMatch() {
     return;
   }
 
-  /* ===== metalFilterOk (REPLACED) ======================================
-     Strict match logic
-     • "Silver"   → filenames containing "silver"
-     • "Rose Gold"/"RoseGold"/"Rose" → filenames containing "rose" or "rosegold"
-     • "Gold"     → filenames containing "gold" BUT *not* "rose"
-     • Anything else / empty value  → allow any image
+  /* ===== metalFilterOk (fixed Gold vs RoseGold) =========================
+     • Gold  → filenames that contain “gold” NOT immediately preceded by “rose”
+               and NOT followed by another letter  (so "gold_23", "gold-7" ok)
+     • Rose Gold → “rosegold” or “rose gold”
+     • Silver → “silver” (not “silvery”)
   ====================================================================== */
   function metalFilterOk(metalVal = "", userName = "") {
     const metalLow = metalVal.toLowerCase();
     const nameLow  = userName.toLowerCase();
 
-    const hasSilver    = /\bsilver\b/.test(nameLow);
-    const hasRoseGold  = /\brose\s*gold\b/.test(nameLow) || /rosegold/.test(nameLow) || /\brose\b/.test(nameLow);
-    const hasPlainGold = /\bgold\b/.test(nameLow) && !hasRoseGold;   // gold but NOT rose-gold
+    /* helper regexes --------------------------------------------------- */
+    const hasRoseGold = /(?:rosegold|rose\s*gold)/i.test(nameLow);
 
+    /* “gold” not preceded by “rose” and not followed by a letter a-z */
+    const hasPlainGold = /(?<!rose)gold(?![a-z])/i.test(nameLow);
+
+    /* “silver” not followed by a letter a-z */
+    const hasSilver = /silver(?![a-z])/i.test(nameLow);
+
+    /* decision --------------------------------------------------------- */
     if (metalLow.includes("silver"))        return hasSilver;
     if (metalLow.includes("rosegold") ||
         metalLow.includes("rose"))          return hasRoseGold;
