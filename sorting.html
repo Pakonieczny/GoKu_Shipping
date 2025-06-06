@@ -1274,63 +1274,47 @@ function openIframePrinterForListing(cellIndex) {
 async function analyzeAndStoreSubImages(imgObjs) {
   if (!imgObjs || imgObjs.length === 0) return;
 
-  showProgressModal("Analyzing Photos...", imgObjs.length);
+  const LIMIT = 125;                    // ← hard cap
+  const toRun = imgObjs.slice(0, LIMIT);
 
-  let done = 0;
+  showProgressModal("Analyzing Photos...", toRun.length);
+
+  let done       = 0;
   let savedCount = 0;
-  let noCharmStreak = 0;
 
-  for (let idx = 0; idx < imgObjs.length; idx++) {
-    const imgObj = imgObjs[idx];
+  for (let idx = 0; idx < toRun.length; idx++) {
+    const imgObj = toRun[idx];
     const result = await openAIAnalyzePhoto(imgObj.data);
 
     if ((result.charmPresent || "").toLowerCase() === "yes") {
-      /* Reset streak */
-      noCharmStreak = 0;
-
-    /* ---------- colour / number naming ---------- */
-    const finalColor = result.color || "UnknownColor";       // Gold | RoseGold | Silver | Unknown
-    const num        = result.topRightNumber || "XX";
-
-    userImagesArray.push({
-      name    : `${finalColor}_${num}.jpg`,
-      data    : imgObj.data,
-      analyzed: true
-    });
-
+      const finalColor = result.color || "UnknownColor";
+      const num        = result.topRightNumber || "XX";
+      userImagesArray.push({
+        name    : `${finalColor}_${num}.jpg`,
+        data    : imgObj.data,
+        analyzed: true
+      });
       savedCount++;
-    } else {
-      /* Charmless image → increment streak */
-      noCharmStreak++;
-      if (noCharmStreak === 4) {
-        M.toast({ html: "Stopped: 4 consecutive photos without charms." });
-        done++;                           // count the current one
-        updateProgressModal(done, imgObjs.length);
-        break;                            // abort further analysis
-      }
     }
 
     done++;
-    updateProgressModal(done, imgObjs.length);
+    updateProgressModal(done, toRun.length);
   }
 
   closeProgressModal();
 
-    /* Persist vetted images & enable Send‑and‑Match */
-    /* ---------- store ONLY lightweight metadata ---------- */
-    try {
-      const slimCopy = userImagesArray.map(({ name, skipForCharm = false }) => ({
-        name,
-        skipForCharm
-      }));
-      localStorage.setItem("userImagesArray", JSON.stringify(slimCopy));
-    } catch (err) {
-      console.warn("localStorage quota exceeded:", err.message);
-      // optional: fall back to sessionStorage, or simply skip persistence
-    }
-  enableSendMatch();
+  /* ---------- persist lightweight copy ---------- */
+  try {
+    const slim = userImagesArray.map(({ name, skipForCharm = false }) => ({
+      name, skipForCharm
+    }));
+    localStorage.setItem("userImagesArray", JSON.stringify(slim));
+  } catch (err) {
+    console.warn("localStorage quota exceeded:", err.message);
+  }
 
-  M.toast({ html: `Analysis complete – saved ${savedCount} charm photos.` });
+  enableSendMatch();
+  M.toast({ html: `Analysis complete – processed ${done} photos, saved ${savedCount}.` });
 }
 
 /********************************************************
