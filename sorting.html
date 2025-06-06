@@ -1368,10 +1368,10 @@ async function extractSubImages144(baseDataUrl) {
 async function cropTo512(dataUrl) {
   const loaded = await loadImage(dataUrl);
   const canvas = document.createElement("canvas");
-  canvas.width = 400;
-  canvas.height = 400;
+  canvas.width = 402;
+  canvas.height = 403;
   const ctx = canvas.getContext("2d");
-  ctx.drawImage(loaded, 0, 0, 400, 400);
+  ctx.drawImage(loaded, 0, 0, 402, 403);
   return canvas.toDataURL("image/png");
 }
 
@@ -2158,20 +2158,27 @@ async function sendAndMatch() {
     return;
   }
 
-  // --------------------------------------------------
-  // NEW HELPER: checks if a user image name is allowed
-  // based on the 3rd read-only text box metal content.
-  // --------------------------------------------------
-  function metalFilterOk(metalVal, userName) {
-    // Lowercase everything for consistent comparison
+  /* ===== metalFilterOk (REPLACED) ======================================
+     Strict match logic
+     • "Silver"   → filenames containing "silver"
+     • "Rose Gold"/"RoseGold"/"Rose" → filenames containing "rose" or "rosegold"
+     • "Gold"     → filenames containing "gold" BUT *not* "rose"
+     • Anything else / empty value  → allow any image
+  ====================================================================== */
+  function metalFilterOk(metalVal = "", userName = "") {
     const metalLow = metalVal.toLowerCase();
     const nameLow  = userName.toLowerCase();
 
-    if (metalLow.includes("silver"))     return nameLow.includes("silver");
-    else if (metalLow.includes("rosegold")) return (nameLow.includes("rose") || nameLow.includes("rosegold"));
-    else if (metalLow.includes("rose"))  return (nameLow.includes("rose") || nameLow.includes("rosegold"));
-    else if (metalLow.includes("gold"))  return nameLow.includes("gold");
-    return true;   // no metal specified → allow any
+    const hasSilver    = /\bsilver\b/.test(nameLow);
+    const hasRoseGold  = /\brose\s*gold\b/.test(nameLow) || /rosegold/.test(nameLow) || /\brose\b/.test(nameLow);
+    const hasPlainGold = /\bgold\b/.test(nameLow) && !hasRoseGold;   // gold but NOT rose-gold
+
+    if (metalLow.includes("silver"))        return hasSilver;
+    if (metalLow.includes("rosegold") ||
+        metalLow.includes("rose"))          return hasRoseGold;
+    if (metalLow.includes("gold"))          return hasPlainGold;
+
+    return true;    // no metal specified → accept any grid photo
   }
 
 //---------------------------------------------------------------------
