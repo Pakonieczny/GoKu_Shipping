@@ -1448,15 +1448,22 @@ async function openAIAnalyzePhoto(base64Image) {
     return { topRightNumber:null, color:null, charmPresent:"no" };
   }
 
-  /* ───────────────────── PASS2 : hue ⇒ fixed label ───────────────────── */
+  /* ───────────────────── PASS 2 : hue ⇒ strict label ───────────────────── */
   const ctrlLabel = new AbortController();
   pendingFetchControllers.push(ctrlLabel);
 
+  /*  STRICTER PROMPT
+      • “Gold”  ⇢ ONLY if the metal reads clearly yellow / yellow-orange.
+      • “RoseGold” ⇢ ANY pink, rose, blush, reddish, or copper hue.
+      • “Silver” ⇢ grey-white metallic.
+  */
   const labelPrompt =
-    `Based solely on the hue description below, choose the single closest label:\n` +
-    `• Gold\n• RoseGold\n• Silver\n\n` +
-    `Respond with exactly one of those words (or "Unknown" if unclear).\n` +
-    `\nHUE DESCRIPTION: "${hueText}"`;
+    `Based solely on the hue description below, pick the ONE closest label:` +
+    `\n• Gold      = bright yellow / yellow-orange metallic` +
+    `\n• RoseGold  = pink / rose / blush / reddish / copper metallic` +
+    `\n• Silver` +
+    `\n\nReturn exactly one word (or "Unknown" if truly unclear).` +
+    `\n\nHUE DESCRIPTION: "${hueText}"`;
 
   const labelPayload = {
     model: "gpt-4.1-mini",
@@ -1475,17 +1482,27 @@ async function openAIAnalyzePhoto(base64Image) {
       signal : ctrlLabel.signal
     });
     const d2 = await r2.json();
-    let raw2 = d2.choices?.[0]?.message?.content?.trim() || "";
-    console.log("%c[openAIAnalyzePhoto] PASS 2 raw response:", "color:#8E24AA", raw2);
+    let raw2 = (d2.choices?.[0]?.message?.content || "").trim();
+    console.log("%c[openAIAnalyzePhoto] PASS 2 raw response:", "color:#8E24AA", raw2);
 
-    raw2       = raw2.replace(/[^A-Za-z]/g, "");
-    finalColor = ["Gold", "RoseGold", "Silver"].includes(raw2) ? raw2 : "Unknown";
+    raw2 = raw2.replace(/[^A-Za-z]/g, "");   // strip junk
+    let baseLabel = ["Gold","RoseGold","Silver"].includes(raw2) ? raw2 : "Unknown";
+
+    /* --- extra safeguard: if GPT said “Gold” but hue says rose/pink/copper --- */
+    if (
+      baseLabel === "Gold" &&
+      /\b(rose\s*gold|rose|pink|blush|copper)\b/i.test(hueText)
+    ) {
+      baseLabel = "RoseGold";
+    }
+
+    finalColor = baseLabel;
     console.log(
-      "%c[openAIAnalyzePhoto] PASS 2 → final metal label:", "color:#8E24AA;font-weight:bold",
+      "%c[openAIAnalyzePhoto] PASS 2 → final metal label:", "color:#8E24AA;font-weight:bold",
       finalColor
     );
   } catch (err) {
-    console.error("[openAIAnalyzePhoto] PASS 2 error:", err);
+    console.error("[openAIAnalyzePhoto] PASS 2 error:", err);
     finalColor = "Unknown";
   }
 
