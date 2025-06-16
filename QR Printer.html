@@ -222,35 +222,35 @@ function buildPDFDocWithDots(dataUrl, dotCount, dispatchDate, orderNum) {
     content: [
       // Dot ellipse(s) near top
       {
-        absolutePosition: { x:18.75, y:1.5 },
+        absolutePosition: { x:2.75, y:1.5 },
         canvas: dotEllipses
       },
       // QR code 64×64 at y=30..94
       {
         image: dataUrl,
-        width: 25,
-        absolutePosition:{ x:18, y:3 }
+        width: 40,
+        absolutePosition:{ x:2, y:3 }
       },
       // Bold date text at (x=80, y=104)
       {
         text: dispatchDate || "N/A",
         fontSize: 2.5,
         bold: true,
-        absolutePosition:{ x:18, y:18 }
+        absolutePosition:{ x:2, y:36 }
       },
       // order number immediately below the date
       {
         text: orderNum || "Unknown",
         fontSize: 2.5,
         bold: true,
-        absolutePosition: { x:18, y:21 }
+        absolutePosition: { x:2, y:49 }
       },
       // order number immediately below the date
       {
         text: "Notes:",
         fontSize: 2.5,
         bold: true,
-        absolutePosition: { x:38, y:0.5 }
+        absolutePosition: { x:22, y:0.5 }
       }
     ]
   };
