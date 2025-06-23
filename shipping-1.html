@@ -368,6 +368,7 @@
   <div id="screenOne">
     <button id="connectEtsyBtn" class="configurable btn waves-effect waves-light">Connect to Etsy</button>
     <button id="openConfigBtn" class="configurable btn waves-effect waves-light">Open Config</button>
+    <button id="signOutBtn" class="configurable btn waves-effect waves-light">Sign Out</button>
 
     <!-- "Order Link" button -->
     <button id="orderLinkBtn" name="Order Link">
@@ -778,7 +779,7 @@
      * Incorporate the new login modal elements in the config array so they're adjustable.
      */
       var configComponentIDs = [
-        "connectEtsyBtn","openConfigBtn","connectEtsyBtn","openConfigBtn","signOutBtn","orderLinkBtn","trackingLinkBtn","etsyOrderNumber","Photo_Grid","quantityCell0","quantityCell1","quantityCell2","quantityCell3",
+        "connectEtsyBtn","openConfigBtn","signOutBtn","orderLinkBtn","trackingLinkBtn","etsyOrderNumber","Photo_Grid","quantityCell0","quantityCell1","quantityCell2","quantityCell3",
         "quantityCell4","quantityCell5","quantityCell6","quantityCell7",
         "metalCell0","metalCell1","metalCell2","metalCell3",
         "metalCell4","metalCell5","metalCell6","metalCell7",
@@ -1914,8 +1915,7 @@
   /* disable live controls */
   body.configOpen #screenOne select{ pointer-events:none !important; }
   body.configOpen #screenOne select,
-  body.configOpen #screenOne button{
-    pointer-events:none !important;
+  body.configOpen #screenOne button{ pointer-events:none !important;
   }
 
   /* re-enable inside modal */
