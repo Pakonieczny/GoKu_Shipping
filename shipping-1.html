@@ -778,8 +778,7 @@
      * Incorporate the new login modal elements in the config array so they're adjustable.
      */
       var configComponentIDs = [
-        "connectEtsyBtn","openConfigBtn","orderLinkBtn","trackingLinkBtn","etsyOrderNumber",
-        "Photo_Grid","quantityCell0","quantityCell1","quantityCell2","quantityCell3",
+        "connectEtsyBtn","openConfigBtn","connectEtsyBtn","openConfigBtn","signOutBtn","orderLinkBtn","trackingLinkBtn","etsyOrderNumber","Photo_Grid","quantityCell0","quantityCell1","quantityCell2","quantityCell3",
         "quantityCell4","quantityCell5","quantityCell6","quantityCell7",
         "metalCell0","metalCell1","metalCell2","metalCell3",
         "metalCell4","metalCell5","metalCell6","metalCell7",
@@ -860,6 +859,7 @@
       carrierSelectWrap:  { left:539, top:664, width:107, height:23 },
       completeOrderBtn:    { left:1062, top:656, width:155, height:41 },
       titleShipping:        { left: 700, top: 10, width: 200, height: 30 }
+      signOutBtn:           { left: 50,  top: 200, width: 107, height: 35 },
 
     };
 
@@ -986,7 +986,7 @@
         else if (!oauthFlag) {
           userLoginModal.open();
         }
-        
+
       // "Log In" button for employees
       var employeeLoginBtn = document.getElementById("employeeLoginBtn");
       var employeeNumberInput = document.getElementById("employeeNumberInput");
@@ -1060,6 +1060,20 @@
         var instance  = M.Modal.getInstance(modalElem);
         instance.open();
         document.body.classList.add("configOpen");        // 🔑 flag ON
+      });
+
+      /* ===== Sign-Out ===== */
+      document.getElementById("signOutBtn").addEventListener("click", () => {
+        /* clear employee & login state */
+        localStorage.removeItem("employee_id");
+        localStorage.removeItem("employee_name");
+        window.isEmployeeLoggedIn = false;
+        if (chatUnsub) chatUnsub();                 // stop Brites listener
+        /* show modal again */
+        M.Modal.getInstance(document.getElementById("userLoginModal")).open();
+        /* optional: blank out name field */
+        document.getElementById("employeeName").value = "";
+        M.toast({ html: "Signed out." });
       });
 
       /* Save Config → close modal + re-enable live UI clicks        */
