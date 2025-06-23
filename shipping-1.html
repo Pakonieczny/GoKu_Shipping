@@ -986,8 +986,7 @@
         else if (!oauthFlag) {
           userLoginModal.open();
         }
-      });
-
+        
       // "Log In" button for employees
       var employeeLoginBtn = document.getElementById("employeeLoginBtn");
       var employeeNumberInput = document.getElementById("employeeNumberInput");
@@ -1039,7 +1038,7 @@
               /* remember the current employee for future reloads */
               localStorage.setItem("employee_id",  empNumber);
               localStorage.setItem("employee_name", nameFound);
-              
+
               document.getElementById("employeeName").value = nameFound;
               userLoginModal.close();
               window.isEmployeeLoggedIn = true;
