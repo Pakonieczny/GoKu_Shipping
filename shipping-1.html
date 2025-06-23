@@ -964,12 +964,15 @@
         document.body.style.opacity = 1;
       }, 250);
 
-      // Show the "User Log In" modal on load
-      var userLoginModalElem = document.getElementById("userLoginModal");
-      var userLoginModal = M.Modal.init(userLoginModalElem, {
-        dismissible: false
-      });
-      userLoginModal.open();
+      /* ▼▼  Show the employee-login modal **only after** Etsy OAuth is complete ▼▼ */
+      if (localStorage.getItem("access_token")) {          // token exists ⇒ OAuth finished
+        const userLoginModalElem = document.getElementById("userLoginModal");
+        const userLoginModal     = M.Modal.init(userLoginModalElem, {
+          dismissible: false
+        });
+        userLoginModal.open();
+      }
+      /* ▲▲  End conditional display ▲▲ */
 
       // "Log In" button for employees
       var employeeLoginBtn = document.getElementById("employeeLoginBtn");
