@@ -966,13 +966,11 @@
 
       /* ▼▼  Show the employee-login modal **only after** Etsy OAuth is complete ▼▼ */
       if (localStorage.getItem("access_token")) {          // token exists ⇒ OAuth finished
-        const userLoginModalElem = document.getElementById("userLoginModal");
-        const userLoginModal     = M.Modal.init(userLoginModalElem, {
-          dismissible: false
-        });
-        userLoginModal.open();
+        // 🔥  AUTO-LOGIN: skip the modal entirely
+        window.isEmployeeLoggedIn = true;
+        startScannedOrderListener();
       }
-      /* ▲▲  End conditional display ▲▲ */
+      /* ▲▲  End auto-bypass ▲▲ */
 
       // "Log In" button for employees
       var employeeLoginBtn = document.getElementById("employeeLoginBtn");
@@ -1022,7 +1020,6 @@
               var nameFound = docDataEN[empNumber];
               M.toast({ html: "Welcome, " + nameFound + "!" });
               document.getElementById("employeeName").value = nameFound;
-              userLoginModal.close();
               window.isEmployeeLoggedIn = true;
               startScannedOrderListener();
             } else {
