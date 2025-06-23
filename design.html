@@ -395,6 +395,30 @@
                  inset 0 0 0 3px #2196F3;
     }
 
+    /* column wrapper that sits 20 px to the right of the image */
+    .modal-notes-col{
+      margin-left:20px;
+      display:flex;
+      flex-direction:column;
+    }
+
+    /* wrapper keeps spinner inside the 100 × 35 box */
+    #staffNoteWrap{
+      position:relative;
+      width:100px;
+      height:35px;
+    }
+
+    #modalStaffNote{
+      width:100%;
+      height:100%;
+      padding:4px;
+      border:1px solid #999;
+    }
+
+    /* tiny circular spinner */
+    @keyframes spin{to{transform:rotate(360deg);}}
+
   </style>
 </head>
 <body>
@@ -3187,38 +3211,46 @@ function reflowGrid(){
       mkInput("SKU"  , item.sku        || "N/A");
       mkInput("Other", item.otherLabel || "N/A");   // NEW line
 
-      /* ▼▼  STAFF NOTE sync  (deduped) ▼▼ */
-      const staffInp = document.getElementById("modalStaffNote");
-      const orderId  = String(item.receipt_id || item.orderNumber);
+      /* ▼▼  STAFF NOTE sync with spinner ▼▼ */
+      const staffInp  = document.getElementById("modalStaffNote");
+      const staffWrap = document.getElementById("staffNoteWrap");
+      const orderId   = String(item.receipt_id || item.orderNumber);
 
-      staffInp.value = "";   // reset before fetch
+      staffInp.value  = "";                       // reset
+      staffWrap.classList.add("loading");         // show spinner
+      staffInp.disabled = true;                   // lock while fetching
 
+      /* pull existing note */
       fetch(`${functionsBaseUrl}/firebaseOrders?orderId=${encodeURIComponent(orderId)}`)
-        .then(r => r.json())
-        .then(res => {
-          if (res.success && res.data && res.data["Staff Note"]) {
-            staffInp.value = res.data["Staff Note"];
-          }
+        .then(r=>r.json())
+        .then(res=>{
+           if(res.success && res.data && res.data["Staff Note"]){
+             staffInp.value = res.data["Staff Note"];
+           }
         })
-        .catch(console.error);
+        .catch(console.error)
+        .finally(()=>{
+           staffWrap.classList.remove("loading"); // hide spinner
+           staffInp.disabled = false;
+        });
 
-      /* overwrite any previous handlers */
-        staffInp.onchange = staffInp.onblur = async () => {
+      /* overwrite handlers – show spinner while saving */
+      staffInp.onchange = staffInp.onblur = async () => {
         const note = staffInp.value.trim();
+        staffWrap.classList.add("loading");
 
-        /* write to Firestore */
         fetch(`${functionsBaseUrl}/firebaseOrders`,{
           method : "POST",
           headers: { "Content-Type":"application/json" },
-          body   : JSON.stringify({ orderNumber: orderId, staffNote: note })
-        }).catch(console.error);
+          body   : JSON.stringify({ orderNumber:orderId, staffNote:note })
+        }).catch(console.error)
+          .finally(()=>{
+            staffWrap.classList.remove("loading");
+          });
 
-        /* instant UI feedback */
-        if(note){
-          staffNoteIDs.add(orderId);
-        }else{
-          staffNoteIDs.delete(orderId);
-        }
+        /* instant highlight update */
+        if(note){ staffNoteIDs.add(orderId); }
+        else     { staffNoteIDs.delete(orderId); }
         markStaffNoteOrders();
       };
       /* ▲▲  end STAFF NOTE sync ▲▲ */
@@ -3251,10 +3283,12 @@ function reflowGrid(){
       <div class="modal-notes-col">
         <pre id="modalListingNotes"></pre>
 
-        <!-- 100 × 35 px input, 10 px gap below notes -->
-        <input id="modalStaffNote"
-               type="text"
-               placeholder="Staff Note">
+        <!-- wrapper lets us show a spinner inside the box -->
+        <div id="staffNoteWrap">
+          <input id="modalStaffNote"
+                 type="text"
+                 placeholder="Staff Note">
+        </div>
       </div>
     </div>
 
