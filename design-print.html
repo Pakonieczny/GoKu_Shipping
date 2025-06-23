@@ -65,17 +65,17 @@ async function handleMetalBundles(lists) {
       pageMargins: [0,0,0,0],
       content : [
         /* ↓↓↓  MATCHES QR Printer.html sizing/position ↓↓↓ */
-        { image: imgData, width:50, absolutePosition:{ x:18, y:1 } },
+        { image: imgData, width:75, absolutePosition:{ x:1, y:1 } },
         { text : `${metal.toUpperCase()} (${arr.length})`,
-          fontSize:3, bold:true,
-          absolutePosition:{ x:51, y:20.5 } },
+          fontSize:6, bold:true,
+          absolutePosition:{ x:1, y:77 } },
 
         // order number immediately below the date
       {
         text: "Notes:",
-        fontSize: 2.5,
+        fontSize: 6,
         bold: true,
-        absolutePosition: { x:39.5, y:0.5 }
+        absolutePosition: { x:76, y:0.5 }
       }
       ]
     };
