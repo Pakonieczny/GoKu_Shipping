@@ -2386,9 +2386,13 @@ async function buildNewOrderList(offset = 0) {
    /* run the GREEN pass one frame later so nothing else can overwrite it */
    requestAnimationFrame(highlightCompletedRows);
 
-   /* ── refresh the four metal badges no matter what filters are set ── */
-   updateCounters();
- 
+  /* ── refresh the four metal badges no matter what filters are set ── */
+  updateCounters();
+
+  /* 🆕 highlight any rows that own a Staff Note */
+  await refreshStaffNoteIDs();     // pulls latest note IDs
+  markStaffNoteOrders();           // adds .has-staff-note class
+
   /* return page size (0-100) so buttons enable/disable correctly */
   return page.length;
 }
