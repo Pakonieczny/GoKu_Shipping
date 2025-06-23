@@ -61,14 +61,22 @@ async function handleMetalBundles(lists) {
 
     const imgData = await makeQRDataURL(arr.join(","));
     const docDef  = {
-      pageSize   : { width:72, height:72 },          // 1″ × 1″
+      pageSize   : { width:145, height:145 },          // 1″ × 1″
       pageMargins: [0,0,0,0],
       content : [
         /* ↓↓↓  MATCHES QR Printer.html sizing/position ↓↓↓ */
-        { image: imgData, width:18, absolutePosition:{ x:18, y:1 } },
+        { image: imgData, width:85, absolutePosition:{ x:3, y:3 } },
         { text : `${metal.toUpperCase()} (${arr.length})`,
-          fontSize:3, bold:true,
-          absolutePosition:{ x:18, y:20 } }
+          fontSize:9, bold:true,
+          absolutePosition:{ x:1, y:93 } },
+
+        // order number immediately below the date
+      {
+        text: "Notes:",
+        fontSize: 9,
+        bold: true,
+        absolutePosition: { x:92, y:0.5 }
+      }
       ]
     };
     await autoPrint(docDef);
