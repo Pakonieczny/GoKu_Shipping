@@ -101,11 +101,21 @@
       align-items:flex-start;
     }
 
+    /* column wrapper – sits 20 px right of the image */
+    .modal-notes-col{
+      margin-left:20px;
+      display:flex;
+      flex-direction:column;
+    }
+
+    /* remove old left-margin so notes align with input */
+    .modal-notes-col #modalListingNotes{ margin:0; }
+
+    /* staff-note field */
     #modalStaffNote{
       width:100px;
       height:35px;
-      display:block;          /* own line */
-      margin:10px 0 0 220px;  /* 200 px img + 20 px gap */
+      margin-top:10px;
       padding:4px;
       border:1px solid #999;
     }
@@ -3183,24 +3193,31 @@ function reflowGrid(){
 
   </script>
 
-    <!-- ─── Listing-detail modal ─── -->
-  <div id="listingModal" class="modal">
-    <div class="modal-content">
-      <h5 id="modalListingTitle"></h5>
-      <div class="modal-flex-row">
-        <img id="modalListingImg"/>
+<!-- ─── Listing-detail modal ─── -->
+<div id="listingModal" class="modal">
+  <div class="modal-content">
+    <h5 id="modalListingTitle"></h5>
+
+    <div class="modal-flex-row">
+      <img id="modalListingImg"/>
+
+      <!-- notes + staff input stacked -->
+      <div class="modal-notes-col">
         <pre id="modalListingNotes"></pre>
-        <!-- ▼ Staff Note input (below notes) ▼ -->
+
+        <!-- 100 × 35 px input, 10 px gap below notes -->
         <input id="modalStaffNote"
                type="text"
                placeholder="Staff Note">
-        <!-- ▲ end Staff Note -->
       </div>
-      <div id="modalListingDetails" class="modal-detail-row"></div>
+    </div>
+
+    <div id="modalListingDetails" class="modal-detail-row"></div>
     <div class="modal-footer">
       <a href="#!" class="modal-close btn-flat">Close</a>
     </div>
   </div>
+</div>
 
 </body>
 </html>
