@@ -307,6 +307,12 @@
       box-shadow:0 0 0 4px orangered;   /* 4-px warning ring */
     }
 
+    /* purple + bold when Staff Note exists */
+    .new-order-box.has-staff-note{
+      font-weight:700;
+      color:purple;
+    }
+
     /* —— 3-px BLUE hover ring (outer) —— */
     #photoGridContainer .wrap-preview:hover{
       box-shadow: 0 0 0 3px #2196F3 !important;  /* outer blue ring */
@@ -487,6 +493,29 @@ const selectedOrders = new Set();      // receipt_id strings
 const orderCache     = {};             // receipt_id → transactions[]
 const gridElements   = new Map();      // transaction_id → wrapper DOM
 let   lastCtrlIdx    = null;           // ⬅️  anchor for Ctrl/⌘ range-select
+
+/* =====  Staff-Note highlighting  =================================== */
+let staffNoteIDs = new Set();
+
+async function refreshStaffNoteIDs(){
+  try{
+    const res  = await fetch(`${functionsBaseUrl}/firebaseOrders?staffNotes=1`);
+    const json = await res.json();
+    if(json.success) staffNoteIDs = new Set(json.orderNumbers.map(String));
+  }catch(e){ console.error(e); }
+}
+
+function markStaffNoteOrders(){
+  document.querySelectorAll(".new-order-box").forEach(box=>{
+    const id = box.dataset.receipt || box.dataset.orderNumber;
+    if(staffNoteIDs.has(String(id))){
+      box.classList.add("has-staff-note");
+    }else{
+      box.classList.remove("has-staff-note");
+    }
+  });
+}
+
 /* ==== SEARCH SNAPSHOT (for restoring UI) ==== */
 let searchSnapshot = null;             // { orderHTML, gridHTML, gridMap }
 const processedTxIds = new Set();      // guards against duplicate preview tiles
@@ -2136,6 +2165,11 @@ const observer = new MutationObserver(async () => {
       (a, b) => (b.order_number || b.receipt_id) - (a.order_number || a.receipt_id)
     );
     renderOrderBoxes(currentReceipts);
+
+    /* ─── INSERT ↓↓↓  (exactly here) ───────────────────────────── */
+    await refreshStaffNoteIDs();
+    markStaffNoteOrders();
+
   }
 });
 observer.observe(document.getElementById("newOrderContainer"), { childList: true });
@@ -3165,15 +3199,23 @@ function reflowGrid(){
         .catch(console.error);
 
       /* overwrite any previous handlers */
-      staffInp.onchange = staffInp.onblur = () => {
+        staffInp.onchange = staffInp.onblur = async () => {
+        const note = staffInp.value.trim();
+
+        /* write to Firestore */
         fetch(`${functionsBaseUrl}/firebaseOrders`,{
           method : "POST",
           headers: { "Content-Type":"application/json" },
-          body   : JSON.stringify({
-            orderNumber : orderId,
-            staffNote   : staffInp.value.trim()
-          })
+          body   : JSON.stringify({ orderNumber: orderId, staffNote: note })
         }).catch(console.error);
+
+        /* instant UI feedback */
+        if(note){
+          staffNoteIDs.add(orderId);
+        }else{
+          staffNoteIDs.delete(orderId);
+        }
+        markStaffNoteOrders();
       };
       /* ▲▲  end STAFF NOTE sync ▲▲ */
 
