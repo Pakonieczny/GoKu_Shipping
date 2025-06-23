@@ -3149,33 +3149,33 @@ function reflowGrid(){
       mkInput("SKU"  , item.sku        || "N/A");
       mkInput("Other", item.otherLabel || "N/A");   // NEW line
 
-      /* ▼▼  STAFF NOTE sync ▼▼ */
-      const staffInp   = document.getElementById("modalStaffNote");
-      const orderId    = String(item.receipt_id || item.orderNumber);   // master key
-      staffInp.value   = "";                                            // reset
+      /* ▼▼  STAFF NOTE sync  (deduped) ▼▼ */
+      const staffInp = document.getElementById("modalStaffNote");
+      const orderId  = String(item.receipt_id || item.orderNumber);
 
-      /* pull existing note */
+      staffInp.value = "";   // reset before fetch
+
       fetch(`${functionsBaseUrl}/firebaseOrders?orderId=${encodeURIComponent(orderId)}`)
         .then(r => r.json())
         .then(res => {
-           if (res.success && res.data && res.data["Staff Note"]) {
-             staffInp.value = res.data["Staff Note"];
-           }
+          if (res.success && res.data && res.data["Staff Note"]) {
+            staffInp.value = res.data["Staff Note"];
+          }
         })
         .catch(console.error);
 
-      /* auto-save on change / blur */
-      ["change","blur"].forEach(evt => staffInp.addEventListener(evt, () => {
+      /* overwrite any previous handlers */
+      staffInp.onchange = staffInp.onblur = () => {
         fetch(`${functionsBaseUrl}/firebaseOrders`,{
           method : "POST",
           headers: { "Content-Type":"application/json" },
           body   : JSON.stringify({
-            orderNumber: orderId,
-            staffNote  : staffInp.value.trim()
+            orderNumber : orderId,
+            staffNote   : staffInp.value.trim()
           })
         }).catch(console.error);
-      }));
-/* ▲▲  end STAFF NOTE sync ▲▲ */
+      };
+      /* ▲▲  end STAFF NOTE sync ▲▲ */
 
       listingModal.open();
     }
