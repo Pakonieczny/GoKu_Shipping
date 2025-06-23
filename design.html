@@ -3211,46 +3211,38 @@ function reflowGrid(){
       mkInput("SKU"  , item.sku        || "N/A");
       mkInput("Other", item.otherLabel || "N/A");   // NEW line
 
-      /* ▼▼  STAFF NOTE sync with spinner ▼▼ */
-      const staffInp  = document.getElementById("modalStaffNote");
-      const staffWrap = document.getElementById("staffNoteWrap");
-      const orderId   = String(item.receipt_id || item.orderNumber);
+      /* ▼▼  STAFF NOTE sync  (deduped) ▼▼ */
+      const staffInp = document.getElementById("modalStaffNote");
+      const orderId  = String(item.receipt_id || item.orderNumber);
 
-      staffInp.value  = "";                       // reset
-      staffWrap.classList.add("loading");         // show spinner
-      staffInp.disabled = true;                   // lock while fetching
+      staffInp.value = "";   // reset before fetch
 
-      /* pull existing note */
       fetch(`${functionsBaseUrl}/firebaseOrders?orderId=${encodeURIComponent(orderId)}`)
-        .then(r=>r.json())
-        .then(res=>{
-           if(res.success && res.data && res.data["Staff Note"]){
-             staffInp.value = res.data["Staff Note"];
-           }
+        .then(r => r.json())
+        .then(res => {
+          if (res.success && res.data && res.data["Staff Note"]) {
+            staffInp.value = res.data["Staff Note"];
+          }
         })
-        .catch(console.error)
-        .finally(()=>{
-           staffWrap.classList.remove("loading"); // hide spinner
-           staffInp.disabled = false;
-        });
+        .catch(console.error);
 
-      /* overwrite handlers – show spinner while saving */
-      staffInp.onchange = staffInp.onblur = async () => {
+      /* overwrite any previous handlers */
+        staffInp.onchange = staffInp.onblur = async () => {
         const note = staffInp.value.trim();
-        staffWrap.classList.add("loading");
 
+        /* write to Firestore */
         fetch(`${functionsBaseUrl}/firebaseOrders`,{
           method : "POST",
           headers: { "Content-Type":"application/json" },
-          body   : JSON.stringify({ orderNumber:orderId, staffNote:note })
-        }).catch(console.error)
-          .finally(()=>{
-            staffWrap.classList.remove("loading");
-          });
+          body   : JSON.stringify({ orderNumber: orderId, staffNote: note })
+        }).catch(console.error);
 
-        /* instant highlight update */
-        if(note){ staffNoteIDs.add(orderId); }
-        else     { staffNoteIDs.delete(orderId); }
+        /* instant UI feedback */
+        if(note){
+          staffNoteIDs.add(orderId);
+        }else{
+          staffNoteIDs.delete(orderId);
+        }
         markStaffNoteOrders();
       };
       /* ▲▲  end STAFF NOTE sync ▲▲ */
