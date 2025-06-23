@@ -101,6 +101,15 @@
       align-items:flex-start;
     }
 
+    #modalStaffNote{
+      width:100px;
+      height:35px;
+      display:block;          /* own line */
+      margin:10px 0 0 220px;  /* 200 px img + 20 px gap */
+      padding:4px;
+      border:1px solid #999;
+    }
+
     /* fixed thumbnail size, border stays */
     #modalListingImg{
       width:200px;
@@ -3181,12 +3190,11 @@ function reflowGrid(){
       <div class="modal-flex-row">
         <img id="modalListingImg"/>
         <pre id="modalListingNotes"></pre>
-          <!-- ▼▼  STAFF NOTE INPUT (10 px below notes) ▼▼ -->
-          <input id="modalStaffNote"
-          type="text"
-          placeholder="Staff Note"
-          style="width:100px;height:35px;margin-top:10px;padding:4px;border:1px solid #999;">
-          <!-- ▲▲  end STAFF NOTE ▲▲ -->
+        <!-- ▼ Staff Note input (below notes) ▼ -->
+        <input id="modalStaffNote"
+               type="text"
+               placeholder="Staff Note">
+        <!-- ▲ end Staff Note -->
       </div>
       <div id="modalListingDetails" class="modal-detail-row"></div>
     <div class="modal-footer">
