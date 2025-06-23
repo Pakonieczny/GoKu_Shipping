@@ -965,12 +965,12 @@
       }, 250);
 
       /* ▼▼  Show the employee-login modal **only after** Etsy OAuth is complete ▼▼ */
-      if (localStorage.getItem("access_token")) {          // token exists ⇒ OAuth finished
-        // 🔥  AUTO-LOGIN: skip the modal entirely
-        window.isEmployeeLoggedIn = true;
-        startScannedOrderListener();
-      }
-      /* ▲▲  End auto-bypass ▲▲ */
+       if (localStorage.getItem("access_token")) {          // token exists ⇒ OAuth finished
+         const userLoginModalElem = document.getElementById("userLoginModal");
+         const userLoginModal     = M.Modal.init(userLoginModalElem, { dismissible: false });
+         userLoginModal.open();                             // ← show the modal now
+       }
+       /* ▲▲  End conditional display ▲▲ */
 
       // "Log In" button for employees
       var employeeLoginBtn = document.getElementById("employeeLoginBtn");
