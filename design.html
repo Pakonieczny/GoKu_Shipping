@@ -395,30 +395,6 @@
                  inset 0 0 0 3px #2196F3;
     }
 
-    /* column wrapper that sits 20 px to the right of the image */
-    .modal-notes-col{
-      margin-left:20px;
-      display:flex;
-      flex-direction:column;
-    }
-
-    /* wrapper keeps spinner inside the 100 × 35 box */
-    #staffNoteWrap{
-      position:relative;
-      width:100px;
-      height:35px;
-    }
-
-    #modalStaffNote{
-      width:100%;
-      height:100%;
-      padding:4px;
-      border:1px solid #999;
-    }
-
-    /* tiny circular spinner */
-    @keyframes spin{to{transform:rotate(360deg);}}
-
   </style>
 </head>
 <body>
@@ -3275,12 +3251,10 @@ function reflowGrid(){
       <div class="modal-notes-col">
         <pre id="modalListingNotes"></pre>
 
-        <!-- wrapper lets us show a spinner inside the box -->
-        <div id="staffNoteWrap">
-          <input id="modalStaffNote"
-                 type="text"
-                 placeholder="Staff Note">
-        </div>
+        <!-- 100 × 35 px input, 10 px gap below notes -->
+        <input id="modalStaffNote"
+               type="text"
+               placeholder="Staff Note">
       </div>
     </div>
 
