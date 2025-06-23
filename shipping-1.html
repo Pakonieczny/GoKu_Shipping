@@ -735,10 +735,6 @@
       var accessToken = urlParams.get("access_token");
       if(accessToken){
         localStorage.setItem("access_token", accessToken);
-
-        /* 🟢 OAuth complete — clear flag so next reload shows modal again */
-        localStorage.removeItem("oauth_in_progress");
-        
         window.history.replaceState({}, document.title, window.location.pathname);
         M.toast({html:"Connection Successful!"});
         console.log("Access token received:", accessToken);
@@ -974,9 +970,15 @@
         dismissible: false
       });
 
-      /* show only on normal load — not during OAuth return */
-      if (!localStorage.getItem("oauth_in_progress")) {
+      const oauthFlag = localStorage.getItem("oauth_in_progress");
+
+      /* show the login only on a true fresh load */
+      if (!oauthFlag) {
         userLoginModal.open();
+      } else {
+        /* back from OAuth → keep modal hidden now,
+           but clear the flag so it appears on the *next* real reload */
+        setTimeout(()=> localStorage.removeItem("oauth_in_progress"), 1000);
       }
 
       // "Log In" button for employees
