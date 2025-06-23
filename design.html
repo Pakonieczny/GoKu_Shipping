@@ -3130,6 +3130,34 @@ function reflowGrid(){
       mkInput("SKU"  , item.sku        || "N/A");
       mkInput("Other", item.otherLabel || "N/A");   // NEW line
 
+      /* ▼▼  STAFF NOTE sync ▼▼ */
+      const staffInp   = document.getElementById("modalStaffNote");
+      const orderId    = String(item.receipt_id || item.orderNumber);   // master key
+      staffInp.value   = "";                                            // reset
+
+      /* pull existing note */
+      fetch(`${functionsBaseUrl}/firebaseOrders?orderId=${encodeURIComponent(orderId)}`)
+        .then(r => r.json())
+        .then(res => {
+           if (res.success && res.data && res.data["Staff Note"]) {
+             staffInp.value = res.data["Staff Note"];
+           }
+        })
+        .catch(console.error);
+
+      /* auto-save on change / blur */
+      ["change","blur"].forEach(evt => staffInp.addEventListener(evt, () => {
+        fetch(`${functionsBaseUrl}/firebaseOrders`,{
+          method : "POST",
+          headers: { "Content-Type":"application/json" },
+          body   : JSON.stringify({
+            orderNumber: orderId,
+            staffNote  : staffInp.value.trim()
+          })
+        }).catch(console.error);
+      }));
+/* ▲▲  end STAFF NOTE sync ▲▲ */
+
       listingModal.open();
     }
 
@@ -3153,6 +3181,12 @@ function reflowGrid(){
       <div class="modal-flex-row">
         <img id="modalListingImg"/>
         <pre id="modalListingNotes"></pre>
+          <!-- ▼▼  STAFF NOTE INPUT (10 px below notes) ▼▼ -->
+          <input id="modalStaffNote"
+          type="text"
+          placeholder="Staff Note"
+          style="width:100px;height:35px;margin-top:10px;padding:4px;border:1px solid #999;">
+          <!-- ▲▲  end STAFF NOTE ▲▲ -->
       </div>
       <div id="modalListingDetails" class="modal-detail-row"></div>
     <div class="modal-footer">

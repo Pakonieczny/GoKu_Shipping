@@ -30,7 +30,8 @@ exports.handler = async (event, context) => {
         britesMessages,
         shippingLabelTimestamps,
         employeeName,
-        newMessage              // optional chat text
+        newMessage,
+        staffNote             
       } = body;
 
       if (!orderNumber) {
@@ -68,6 +69,7 @@ exports.handler = async (event, context) => {
       if (britesMessages          !== undefined) dataToStore["Brites Messages"]           = britesMessages;
       if (shippingLabelTimestamps !== undefined) dataToStore["Shipping Label Timestamps"] = shippingLabelTimestamps;
       if (employeeName            !== undefined) dataToStore["Employee Name"]             = employeeName;
+      if (staffNote               !== undefined) dataToStore["Staff Note"]                = staffNote;
 
       if (Object.keys(dataToStore).length === 0) {
         return {
