@@ -96,14 +96,28 @@ exports.handler = async (event, context) => {
 
 /* ───────────────────────── GET (replace this block) ──────────────── */
 if (method === "GET") {
-  const { orderId } = event.queryStringParameters || {};
 
-  if (!orderId) {
+  /* 🆕  bulk query:  ?staffNotes=1  →  array of order IDs with Staff Note */
+  if (event.queryStringParameters?.staffNotes === "1") {
+    const snap = await db.collection("Brites_Orders")
+                         .where("Staff Note", "!=", "")
+                         .select()            // ids only
+                         .get();
     return {
-      statusCode: 400,
+      statusCode: 200,
       headers: CORS,
-      body: JSON.stringify({ error: "No orderId query param provided" })
+      body: JSON.stringify({
+        success      : true,
+        orderNumbers : snap.docs.map(d => d.id)
+      })
     };
+  }
+
+  /* ── single-order fetch (legacy path) ── */
+  const { orderId } = event.queryStringParameters || {};
+  if (!orderId) {                         //  ← no longer tripped by staffNotes call
+    return { statusCode: 400, headers: CORS,
+             body: JSON.stringify({ success:false, msg:"orderId required" }) };
   }
 
   const docSnap = await db.collection("Brites_Orders").doc(orderId).get();
