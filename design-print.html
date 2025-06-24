@@ -46,13 +46,10 @@ window.addEventListener("load", async () => {
  *  NEW FLOW  – one QR per metal-specific bundle
  * ────────────────────────────────────────────────────────── */
 async function handleMetalBundles(lists) {
-  /* 1️⃣  de-dupe across bundles */
-  const seen = new Set();
+  /* 1️⃣  de-dupe within each bundle */
   Object.keys(lists).forEach(m => {
-    lists[m] = (lists[m] || []).filter(id => {
-      if (seen.has(id)) return false;
-      seen.add(id); return true;
-    });
+    // keep duplicates across metal groups, but remove repeats *within* each one
+    lists[m] = [...new Set(lists[m] || [])];
   });
 
   /* 2️⃣  print each non-empty bundle */
@@ -71,12 +68,12 @@ async function handleMetalBundles(lists) {
           absolutePosition:{ x:1, y:93 } },
 
         // order number immediately below the date
-      {
-        text: "Notes:",
-        fontSize: 9,
-        bold: true,
-        absolutePosition: { x:92, y:0.5 }
-      }
+        {
+          text: "Notes:",
+          fontSize: 9,
+          bold: true,
+          absolutePosition: { x:92, y:0.5 }
+        }
       ]
     };
     await autoPrint(docDef);
