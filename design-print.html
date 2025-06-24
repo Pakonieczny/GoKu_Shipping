@@ -42,43 +42,47 @@ window.addEventListener("load", async () => {
   console.error("Nothing to print: no metalOrderLists or qrPrintAll found.");
 });
 
-/* ──────────────────────────────────────────────────────────
- *  NEW FLOW  – one QR per metal-specific bundle
- * ────────────────────────────────────────────────────────── */
-async function handleMetalBundles(lists) {
-  /* 1️⃣  de-dupe within each bundle */
-  Object.keys(lists).forEach(m => {
-    // keep duplicates across metal groups, but remove repeats *within* each one
-    lists[m] = [...new Set(lists[m] || [])];
-  });
+  /* ──────────────────────────────────────────────────────────
+   *  NEW FLOW – single PDF, one 1″×1″ page per metal bundle
+   * ────────────────────────────────────────────────────────── */
+  async function handleMetalBundles(lists){
 
-  /* 2️⃣  print each non-empty bundle */
-  for (const [metal, arr] of Object.entries(lists)) {
-    if (!arr.length) continue;
+    /* 1️⃣  de-dupe only inside each bundle */
+    Object.keys(lists).forEach(m=>{
+      lists[m] = [...new Set(lists[m] || [])];
+    });
 
-    const imgData = await makeQRDataURL(arr.join(","));
-    const docDef  = {
-      pageSize   : { width:145, height:145 },          // 1″ × 1″
-      pageMargins: [0,0,0,0],
-      content : [
-        /* ↓↓↓  MATCHES QR Printer.html sizing/position ↓↓↓ */
+    /* 2️⃣  assemble all non-empty bundles into ONE document */
+    const pages = [];
+    const metals = Object.entries(lists).filter(([,arr])=>arr.length);
+
+    for (let i = 0; i < metals.length; i++){
+      const [metal, ids] = metals[i];
+      const imgData = await makeQRDataURL(ids.join(","));
+
+      pages.push(
         { image: imgData, width:85, absolutePosition:{ x:3, y:3 } },
-        { text : `${metal.toUpperCase()} (${arr.length})`,
+        { text : `${metal.toUpperCase()} (${ids.length})`,
           fontSize:9, bold:true,
-          absolutePosition:{ x:1, y:93 } },
+          absolutePosition:{ x:1, y:93 } }
+      );
 
-        // order number immediately below the date
-        {
-          text: "Notes:",
-          fontSize: 9,
-          bold: true,
-          absolutePosition: { x:92, y:0.5 }
-        }
-      ]
+      /* add a hard page break except after the last bundle */
+      if (i < metals.length - 1){
+        pages.push({ text:"", pageBreak:"after" });
+      }
+    }
+
+    if (!pages.length) return;        // nothing to print
+
+    const docDef = {
+      pageSize   : { width:145, height:145 },     // 1″ × 1″
+      pageMargins: [0,0,0,0],
+      content    : pages
     };
-    await autoPrint(docDef);
+
+    await autoPrint(docDef);          // one print dialog ➜ all four labels
   }
-}
 
 /* ──────────────────────────────────────────────────────────
  *  LEGACY FLOW  – single order QR (unchanged)
