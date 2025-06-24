@@ -368,6 +368,7 @@
   <div id="screenOne">
     <button id="connectEtsyBtn" class="configurable btn waves-effect waves-light">Connect to Etsy</button>
     <button id="openConfigBtn" class="configurable btn waves-effect waves-light">Open Config</button>
+    <button id="signOutBtn" class="configurable btn waves-effect waves-light">Sign Out</button>
 
     <!-- "Order Link" button -->
     <button id="orderLinkBtn" name="Order Link">
@@ -780,7 +781,7 @@
      * Incorporate the new login modal elements in the config array so they're adjustable.
      */
       var configComponentIDs = [
-        "connectEtsyBtn","openConfigBtn","orderLinkBtn","trackingLinkBtn","etsyOrderNumber",
+        "connectEtsyBtn","openConfigBtn","signOutBtn","orderLinkBtn","trackingLinkBtn","etsyOrderNumber",
         "Photo_Grid","quantityCell0","quantityCell1","quantityCell2","quantityCell3",
         "quantityCell4","quantityCell5","quantityCell6","quantityCell7",
         "metalCell0","metalCell1","metalCell2","metalCell3",
@@ -861,8 +862,8 @@
       trackingNumberInput:{ left:677, top:674, width:308, height:23 },
       carrierSelectWrap:  { left:539, top:664, width:107, height:23 },
       completeOrderBtn:    { left:1062, top:656, width:155, height:41 },
-      titleShipping:        { left: 700, top: 10, width: 250, height: 30 }
-
+      titleShipping:        { left: 700, top: 10, width: 200, height: 30 },
+      signOutBtn:           { left: 1356,  top: 17, width: 103, height: 35 }
     };
 
     function loadPositions(){
@@ -956,22 +957,39 @@
       console.log("Configuration saved.");
     }
 
-    document.addEventListener("DOMContentLoaded", function(){
-      M.AutoInit();
+        document.addEventListener("DOMContentLoaded", function () {
+        M.AutoInit();
 
-      // Fade in body
-      document.body.style.opacity = 0;
-      setTimeout(function(){
-        loadPositions();
-        document.body.style.opacity = 1;
-      }, 250);
+        // Fade in body
+        document.body.style.opacity = 0;
+        setTimeout(function () {
+          loadPositions();
+          document.body.style.opacity = 1;
+        }, 250);
 
-      // Show the "User Log In" modal on load
-      var userLoginModalElem = document.getElementById("userLoginModal");
-      var userLoginModal = M.Modal.init(userLoginModalElem, {
-        dismissible: false
-      });
-      userLoginModal.open();
+        // Show the “User Log In” modal on load
+        const userLoginModalElem = document.getElementById("userLoginModal");
+        const userLoginModal = M.Modal.init(userLoginModalElem, { dismissible: false });
+
+        // --- employee auto-restore + OAuth guard ---------------------------
+        const oauthFlag  = localStorage.getItem("oauth_in_progress");
+        const savedEmpID = localStorage.getItem("employee_id");
+        const savedEmpNm = localStorage.getItem("employee_name");
+
+        /* A. employee already verified — stay logged-in */
+        if (savedEmpID) {
+          window.isEmployeeLoggedIn = true;
+          document.getElementById("employeeName").value = savedEmpNm || "";
+          startScannedOrderListener();
+
+          // if we’re just back from OAuth, clear flag for NEXT real reload
+          if (oauthFlag) setTimeout(() => localStorage.removeItem("oauth_in_progress"), 1000);
+        }
+        /* B. nobody stored → show login (unless mid-OAuth) */
+        else if (!oauthFlag) {
+          userLoginModal.open();
+        }
+
 
       // "Log In" button for employees
       var employeeLoginBtn = document.getElementById("employeeLoginBtn");
@@ -1020,6 +1038,11 @@ if(employeeLoginBtn){
             if(docDataEN[empNumber]){
               var nameFound = docDataEN[empNumber];
               M.toast({ html: "Welcome, " + nameFound + "!" });
+
+              /* remember the current employee for future reloads */
+              localStorage.setItem("employee_id",  empNumber);
+              localStorage.setItem("employee_name", nameFound);
+
               document.getElementById("employeeName").value = nameFound;
               userLoginModal.close();
               window.isEmployeeLoggedIn = true;
@@ -1041,6 +1064,20 @@ if(employeeLoginBtn){
         var instance  = M.Modal.getInstance(modalElem);
         instance.open();
         document.body.classList.add("configOpen");        // 🔑 flag ON
+      });
+
+      /* ===== Sign-Out ===== */
+      document.getElementById("signOutBtn").addEventListener("click", () => {
+        /* clear employee & login state */
+        localStorage.removeItem("employee_id");
+        localStorage.removeItem("employee_name");
+        window.isEmployeeLoggedIn = false;
+        if (chatUnsub) chatUnsub();                 // stop Brites listener
+        /* show modal again */
+        M.Modal.getInstance(document.getElementById("userLoginModal")).open();
+        /* optional: blank out name field */
+        document.getElementById("employeeName").value = "";
+        M.toast({ html: "Signed out." });
       });
 
       /* Save Config → close modal + re-enable live UI clicks        */
@@ -1068,6 +1105,9 @@ if(employeeLoginBtn){
             "&state=" + state +
             "&code_challenge=" + encodeURIComponent(codeChallenge) +
             "&code_challenge_method=S256";
+
+            /* 🟢 flag: tell next load we’re mid-OAuth */
+          localStorage.setItem("oauth_in_progress","1");   // <<< ADD THIS LINE
 
           console.log("Redirecting to Etsy OAuth URL:", etsyAuthUrl);
           window.location.href = etsyAuthUrl;
