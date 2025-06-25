@@ -1990,6 +1990,8 @@ document.addEventListener("DOMContentLoaded", () => {
      /* keep greens hidden unless Completed filter is on */
      requestAnimationFrame(window.applyMetalFilter);
 
+     requestAnimationFrame(markStaffNoteOrders);      // 🔄 restore Staff-Note purple/bold
+
   }           
 
   /** 1.  HEADER BAR  +  EVENT LISTENERS ------------------------------- */
