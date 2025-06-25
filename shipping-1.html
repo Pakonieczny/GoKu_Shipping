@@ -565,7 +565,7 @@
       apiKey: "AIzaSyBXhQLsYRa4i0bX1TPTRiElF9Zjy5vSHlA",
       authDomain: "gokudatabase.firebaseapp.com",
       projectId: "gokudatabase",
-      storageBucket: "gokudatabase.firebasestorage.app",
+      storageBucket: "gokudatabase.appspot.com",
       messagingSenderId: "1078662308113",
       appId: "1:1078662308113:web:41df0e5d229ff2af7a6cb0"
     };
@@ -860,7 +860,7 @@
       carrierSelectWrap:  { left:539, top:664, width:107, height:23 },
       completeOrderBtn:    { left:1062, top:656, width:155, height:41 },
       titleShipping:        { left: 700, top: 10, width: 200, height: 30 },
-      signOutBtn:           { left: 50,  top: 200, width: 107, height: 35 }
+      signOutBtn:           { left: 1356,  top: 17, width: 103, height: 35 }
 
     };
 
@@ -1319,7 +1319,7 @@
 
           for (const file of images) {
             try {
-              const path = `chatImages/${orderId}/${Date.now()}_${file.name}`;
+              const path = `chatImages/${orderId}/${crypto.randomUUID()}_${file.name}`;
 
               /* 🚀 one-liner: resumable PUT upload + URL */
               const url = await window.uploadViaResumable(path, file);
