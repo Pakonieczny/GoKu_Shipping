@@ -396,14 +396,17 @@
     }
 
     /* === Listing-modal COMPLETE checkbox === */
-    .modal-complete-chk{
-      position:absolute;     /* pins to modal’s top-left */
-      left:8px;
-      top:8px;
-      width:20px;
-      height:20px;
+    .modal-complete-label{
+      position:absolute;        /* pins to modal’s top-left corner */
+      left:10px;
+      top:10px;
       cursor:pointer;
-      transform:scale(1.2);
+      user-select:none;
+    }
+    .modal-complete-label input[type="checkbox"]+span{
+      /* scale the visible square up a bit */
+      transform:scale(1.3);
+      margin:0;                 /* kill Materialize’s default margin */
     }
 
   </style>
@@ -3282,7 +3285,10 @@ function reflowGrid(){
 <div id="listingModal" class="modal">
   <div class="modal-content">
     <!-- ▼▼ NEW COMPLETE-CHECKBOX ▼▼ -->
-    <input id="modalCompleteChk" type="checkbox" class="modal-complete-chk">
+    <label id="modalCompleteWrap" class="modal-complete-label">
+      <input id="modalCompleteChk" type="checkbox" class="filled-in" />
+      <span></span>
+    </label>
     <!-- ▲▲ NEW COMPLETE-CHECKBOX ▲▲ -->
 
     <h5 id="modalListingTitle"></h5>
