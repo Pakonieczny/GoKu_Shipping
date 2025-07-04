@@ -395,6 +395,17 @@
                  inset 0 0 0 3px #2196F3;
     }
 
+    /* === Listing-modal COMPLETE checkbox === */
+    .modal-complete-chk{
+      position:absolute;     /* pins to modal’s top-left */
+      left:8px;
+      top:8px;
+      width:20px;
+      height:20px;
+      cursor:pointer;
+      transform:scale(1.2);
+    }
+
   </style>
 </head>
 <body>
@@ -772,6 +783,28 @@ document.addEventListener("DOMContentLoaded", () => {
     loadPositions();
     document.body.style.opacity = 1;
   }, 200);
+
+    const modalCompleteChk = document.getElementById("modalCompleteChk");
+    modalCompleteChk.addEventListener("change", () => {
+    const rid = modalCompleteChk.dataset.rid;
+    if(!rid) return;                      // safety
+
+    /* — mark as completed — */
+    completedOrders.add(rid);             // global Set   [oai_citation:2‡design.html](file-service://file-UD87qPNcvFGdsBetdyBDoA)
+    selectedOrders.delete(rid);
+
+    /* remove/hide UI elements */
+    document.querySelectorAll(
+      `.new-order-box[data-receipt='${rid}']`
+    ).forEach(el => el.remove());
+
+    removePreviewBoxesForOrder(rid);      // existing helper
+    persistCompleted();                   // commits bucket
+    updateCounters();
+    applyMetalFilter();
+
+    listingModal.close();                 // done – pop modal
+  });
 
   // Connect Etsy
   document.getElementById("connectEtsyBtn").addEventListener("click", async function () {
@@ -3225,6 +3258,10 @@ function reflowGrid(){
       };
       /* ▲▲  end STAFF NOTE sync ▲▲ */
 
+      /* sync checkbox with this order */
+      modalCompleteChk.checked   = completedOrders.has(orderId);
+      modalCompleteChk.dataset.rid = orderId;    // pass receipt ID
+
       listingModal.open();
     }
 
@@ -3244,6 +3281,14 @@ function reflowGrid(){
 <!-- ─── Listing-detail modal ─── -->
 <div id="listingModal" class="modal">
   <div class="modal-content">
+
+  <div id="listingModal" class="modal">
+    <div class="modal-content">
+    <!-- ▼▼ NEW COMPLETE-CHECKBOX ▼▼ -->
+    <input id="modalCompleteChk" type="checkbox" class="modal-complete-chk" />
+    <!-- ▲▲ NEW COMPLETE-CHECKBOX ▲▲ -->
+    <h5 id="modalListingTitle"></h5>
+
     <h5 id="modalListingTitle"></h5>
 
     <div class="modal-flex-row">
