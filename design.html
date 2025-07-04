@@ -397,16 +397,25 @@
 
     /* === Listing-modal COMPLETE checkbox === */
     .modal-complete-label{
-      position:absolute;        /* pins to modal’s top-left corner */
-      left:10px;
-      top:10px;
+      position:absolute;
+      right:10px;          /* ⬅️ pin to top-right */
+      top:30px;            /* 5 px below the title */
       cursor:pointer;
       user-select:none;
     }
     .modal-complete-label input[type="checkbox"]+span{
-      /* scale the visible square up a bit */
       transform:scale(1.3);
-      margin:0;                 /* kill Materialize’s default margin */
+      margin:0;
+    }
+
+    /* “Skip Order” heading (5 px above the box) */
+    .modal-skip-title{
+      position:absolute;
+      right:10px;
+      top:10px;
+      font-size:0.9em;
+      font-weight:600;
+      user-select:none;
     }
 
   </style>
@@ -3284,12 +3293,13 @@ function reflowGrid(){
 <!-- ─── Listing-detail modal ─── -->
 <div id="listingModal" class="modal">
   <div class="modal-content">
-    <!-- ▼▼ NEW COMPLETE-CHECKBOX ▼▼ -->
-    <label id="modalCompleteWrap" class="modal-complete-label">
+    <!-- ▼▼ NEW COMPLETE-CHECKBOX + TITLE ▼▼ -->
+    <span class="modal-skip-title">Skip Order</span>
+    <label class="modal-complete-label">
       <input id="modalCompleteChk" type="checkbox" class="filled-in" />
       <span></span>
     </label>
-    <!-- ▲▲ NEW COMPLETE-CHECKBOX ▲▲ -->
+    <!-- ▲▲ NEW COMPLETE-CHECKBOX + TITLE ▲▲ -->
 
     <h5 id="modalListingTitle"></h5>
 
