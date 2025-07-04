@@ -3281,24 +3281,19 @@ function reflowGrid(){
 <!-- ─── Listing-detail modal ─── -->
 <div id="listingModal" class="modal">
   <div class="modal-content">
-
-  <div id="listingModal" class="modal">
-    <div class="modal-content">
     <!-- ▼▼ NEW COMPLETE-CHECKBOX ▼▼ -->
-    <input id="modalCompleteChk" type="checkbox" class="modal-complete-chk" />
+    <input id="modalCompleteChk" type="checkbox" class="modal-complete-chk">
     <!-- ▲▲ NEW COMPLETE-CHECKBOX ▲▲ -->
-    <h5 id="modalListingTitle"></h5>
 
     <h5 id="modalListingTitle"></h5>
 
     <div class="modal-flex-row">
-      <img id="modalListingImg"/>
+      <img id="modalListingImg" />
 
       <!-- notes + staff input stacked -->
       <div class="modal-notes-col">
         <pre id="modalListingNotes"></pre>
 
-        <!-- 100 × 35 px input, 10 px gap below notes -->
         <input id="modalStaffNote"
                type="text"
                placeholder="Staff Note">
@@ -3306,11 +3301,12 @@ function reflowGrid(){
     </div>
 
     <div id="modalListingDetails" class="modal-detail-row"></div>
-    <div class="modal-footer">
-      <a href="#!" class="modal-close btn-flat">Close</a>
-    </div>
+  </div><!-- /modal-content -->
+
+  <div class="modal-footer">
+    <a href="#!" class="modal-close btn-flat">Close</a>
   </div>
-</div>
+</div><!-- /listingModal -->
 
 </body>
 </html>
