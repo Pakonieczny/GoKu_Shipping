@@ -1274,47 +1274,63 @@ function openIframePrinterForListing(cellIndex) {
 async function analyzeAndStoreSubImages(imgObjs) {
   if (!imgObjs || imgObjs.length === 0) return;
 
-  const LIMIT = 125;                    // ← hard cap
-  const toRun = imgObjs.slice(0, LIMIT);
+  showProgressModal("Analyzing Photos...", imgObjs.length);
 
-  showProgressModal("Analyzing Photos...", toRun.length);
-
-  let done       = 0;
+  let done = 0;
   let savedCount = 0;
+  let noCharmStreak = 0;
 
-  for (let idx = 0; idx < toRun.length; idx++) {
-    const imgObj = toRun[idx];
+  for (let idx = 0; idx < imgObjs.length; idx++) {
+    const imgObj = imgObjs[idx];
     const result = await openAIAnalyzePhoto(imgObj.data);
 
     if ((result.charmPresent || "").toLowerCase() === "yes") {
-      const finalColor = result.color || "UnknownColor";
-      const num        = result.topRightNumber || "XX";
-      userImagesArray.push({
-        name    : `${finalColor}_${num}.jpg`,
-        data    : imgObj.data,
-        analyzed: true
-      });
+      /* Reset streak */
+      noCharmStreak = 0;
+
+    /* ---------- colour / number naming ---------- */
+    const finalColor = result.color || "UnknownColor";       // Gold | RoseGold | Silver | Unknown
+    const num        = result.topRightNumber || "XX";
+
+    userImagesArray.push({
+      name    : `${finalColor}_${num}.jpg`,
+      data    : imgObj.data,
+      analyzed: true
+    });
+
       savedCount++;
+    } else {
+      /* Charmless image → increment streak */
+      noCharmStreak++;
+      if (noCharmStreak === 4) {
+        M.toast({ html: "Stopped: 4 consecutive photos without charms." });
+        done++;                           // count the current one
+        updateProgressModal(done, imgObjs.length);
+        break;                            // abort further analysis
+      }
     }
 
     done++;
-    updateProgressModal(done, toRun.length);
+    updateProgressModal(done, imgObjs.length);
   }
 
   closeProgressModal();
 
-  /* ---------- persist lightweight copy ---------- */
-  try {
-    const slim = userImagesArray.map(({ name, skipForCharm = false }) => ({
-      name, skipForCharm
-    }));
-    localStorage.setItem("userImagesArray", JSON.stringify(slim));
-  } catch (err) {
-    console.warn("localStorage quota exceeded:", err.message);
-  }
-
+    /* Persist vetted images & enable Send‑and‑Match */
+    /* ---------- store ONLY lightweight metadata ---------- */
+    try {
+      const slimCopy = userImagesArray.map(({ name, skipForCharm = false }) => ({
+        name,
+        skipForCharm
+      }));
+      localStorage.setItem("userImagesArray", JSON.stringify(slimCopy));
+    } catch (err) {
+      console.warn("localStorage quota exceeded:", err.message);
+      // optional: fall back to sessionStorage, or simply skip persistence
+    }
   enableSendMatch();
-  M.toast({ html: `Analysis complete – processed ${done} photos, saved ${savedCount}.` });
+
+  M.toast({ html: `Analysis complete – saved ${savedCount} charm photos.` });
 }
 
 /********************************************************
@@ -1342,8 +1358,8 @@ async function extractSubImages144(baseDataUrl) {
 
   const fullW = img.naturalWidth;
   const fullH = img.naturalHeight;
-  const cellW = fullW / 10.085;          // ← changed from /10
-  const cellH = fullH / 13.83;          // ← changed from /14
+  const cellW = fullW / 10;          // ← changed from /10
+  const cellH = fullH / 14;          // ← changed from /14
 
   const results = [];
   for (let r = 0; r < 14; r++) {     // ← rows: 14 tall
@@ -1368,10 +1384,10 @@ async function extractSubImages144(baseDataUrl) {
 async function cropTo512(dataUrl) {
   const loaded = await loadImage(dataUrl);
   const canvas = document.createElement("canvas");
-  canvas.width = 400;
-  canvas.height = 400;
+  canvas.width = 402;
+  canvas.height = 403;
   const ctx = canvas.getContext("2d");
-  ctx.drawImage(loaded, 0, 0, 400, 400);
+  ctx.drawImage(loaded, 0, 0, 402, 403);
   return canvas.toDataURL("image/png");
 }
 
@@ -1448,22 +1464,15 @@ async function openAIAnalyzePhoto(base64Image) {
     return { topRightNumber:null, color:null, charmPresent:"no" };
   }
 
-  /* ───────────────────── PASS 2 : hue ⇒ strict label ───────────────────── */
+  /* ───────────────────── PASS2 : hue ⇒ fixed label ───────────────────── */
   const ctrlLabel = new AbortController();
   pendingFetchControllers.push(ctrlLabel);
 
-  /*  STRICTER PROMPT
-      • “Gold”  ⇢ ONLY if the metal reads clearly yellow / yellow-orange.
-      • “RoseGold” ⇢ ANY pink, rose, blush, reddish, or copper hue.
-      • “Silver” ⇢ grey-white metallic.
-  */
   const labelPrompt =
-    `Based solely on the hue description below, pick the ONE closest label:` +
-    `\n• Gold      = bright yellow / yellow-orange metallic` +
-    `\n• RoseGold  = pink / rose / blush / reddish / copper metallic` +
-    `\n• Silver` +
-    `\n\nReturn exactly one word (or "Unknown" if truly unclear).` +
-    `\n\nHUE DESCRIPTION: "${hueText}"`;
+    `Based solely on the hue description below, choose the single closest label:\n` +
+    `• Gold\n• RoseGold\n• Silver\n\n` +
+    `Respond with exactly one of those words (or "Unknown" if unclear).\n` +
+    `\nHUE DESCRIPTION: "${hueText}"`;
 
   const labelPayload = {
     model: "gpt-4.1-mini",
@@ -1482,27 +1491,17 @@ async function openAIAnalyzePhoto(base64Image) {
       signal : ctrlLabel.signal
     });
     const d2 = await r2.json();
-    let raw2 = (d2.choices?.[0]?.message?.content || "").trim();
-    console.log("%c[openAIAnalyzePhoto] PASS 2 raw response:", "color:#8E24AA", raw2);
+    let raw2 = d2.choices?.[0]?.message?.content?.trim() || "";
+    console.log("%c[openAIAnalyzePhoto] PASS 2 raw response:", "color:#8E24AA", raw2);
 
-    raw2 = raw2.replace(/[^A-Za-z]/g, "");   // strip junk
-    let baseLabel = ["Gold","RoseGold","Silver"].includes(raw2) ? raw2 : "Unknown";
-
-    /* --- extra safeguard: if GPT said “Gold” but hue says rose/pink/copper --- */
-    if (
-      baseLabel === "Gold" &&
-      /\b(rose\s*gold|rose|pink|blush|copper)\b/i.test(hueText)
-    ) {
-      baseLabel = "RoseGold";
-    }
-
-    finalColor = baseLabel;
+    raw2       = raw2.replace(/[^A-Za-z]/g, "");
+    finalColor = ["Gold", "RoseGold", "Silver"].includes(raw2) ? raw2 : "Unknown";
     console.log(
-      "%c[openAIAnalyzePhoto] PASS 2 → final metal label:", "color:#8E24AA;font-weight:bold",
+      "%c[openAIAnalyzePhoto] PASS 2 → final metal label:", "color:#8E24AA;font-weight:bold",
       finalColor
     );
   } catch (err) {
-    console.error("[openAIAnalyzePhoto] PASS 2 error:", err);
+    console.error("[openAIAnalyzePhoto] PASS 2 error:", err);
     finalColor = "Unknown";
   }
 
@@ -2175,32 +2174,20 @@ async function sendAndMatch() {
     return;
   }
 
-  /* ===== metalFilterOk (fixed Gold vs RoseGold) =========================
-     • Gold  → filenames that contain “gold” NOT immediately preceded by “rose”
-               and NOT followed by another letter  (so "gold_23", "gold-7" ok)
-     • Rose Gold → “rosegold” or “rose gold”
-     • Silver → “silver” (not “silvery”)
-  ====================================================================== */
-  function metalFilterOk(metalVal = "", userName = "") {
+  // --------------------------------------------------
+  // NEW HELPER: checks if a user image name is allowed
+  // based on the 3rd read-only text box metal content.
+  // --------------------------------------------------
+  function metalFilterOk(metalVal, userName) {
+    // Lowercase everything for consistent comparison
     const metalLow = metalVal.toLowerCase();
     const nameLow  = userName.toLowerCase();
 
-    /* helper regexes --------------------------------------------------- */
-    const hasRoseGold = /(?:rosegold|rose\s*gold)/i.test(nameLow);
-
-    /* “gold” not preceded by “rose” and not followed by a letter a-z */
-    const hasPlainGold = /(?<!rose)gold(?![a-z])/i.test(nameLow);
-
-    /* “silver” not followed by a letter a-z */
-    const hasSilver = /silver(?![a-z])/i.test(nameLow);
-
-    /* decision --------------------------------------------------------- */
-    if (metalLow.includes("silver"))        return hasSilver;
-    if (metalLow.includes("rosegold") ||
-        metalLow.includes("rose"))          return hasRoseGold;
-    if (metalLow.includes("gold"))          return hasPlainGold;
-
-    return true;    // no metal specified → accept any grid photo
+    if (metalLow.includes("silver"))     return nameLow.includes("silver");
+    else if (metalLow.includes("rosegold")) return (nameLow.includes("rose") || nameLow.includes("rosegold"));
+    else if (metalLow.includes("rose"))  return (nameLow.includes("rose") || nameLow.includes("rosegold"));
+    else if (metalLow.includes("gold"))  return nameLow.includes("gold");
+    return true;   // no metal specified → allow any
   }
 
 //---------------------------------------------------------------------
