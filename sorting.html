@@ -280,6 +280,12 @@
   <div id="matchesModal" class="modal">
     <div class="modal-content">
       <h5 style="position:relative; top:-12px; padding-bottom:12px;">Successful Image Matches</h5>
+        <!-- ▼▼ Customer Notes box ▼▼ -->
+        <input id="customerNotes"
+         type="text"
+         readonly
+         placeholder="Customer Notes"
+         style="display:block; margin-top:10px; width:250px; height:30px;" />
       <div
         id="matchesGridContainer"
         style="display: flex; flex-wrap: wrap; gap: 10px;"
@@ -1997,6 +2003,10 @@ async function loadBatchEtsyOrders(orderNumbers) {
       }
 
       const data = await resp.json();
+      // ▼▼ cache buyer note for later ▼▼
+      window.customerNotesMap = window.customerNotesMap || {};
+      window.customerNotesMap[ord] = (data.message_from_buyer || "").trim();
+      // ▲▲ cache buyer note ▲▲
       console.log("Etsy Order Data:", data);
 
       // -- NEW CODE: attach the typed order # to each transaction --
@@ -2611,6 +2621,12 @@ function openMatchPreviewModal(cellIndex) {
 
   /* --- live grid values pulled from main screen --- */
   const orderVal = document.getElementById("orderCell"   + cellIndex)?.value || "";
+  // ▼▼ populate Customer Notes field ▼▼
+  const notesEl = document.getElementById("customerNotes");
+  if (notesEl) {
+    notesEl.value = window.customerNotesMap?.[orderVal] || "";
+  }
+  // ▲▲ populate Customer Notes ▲▲
   const qtyVal   = document.getElementById("quantityCell"+ cellIndex)?.value || "";
   const metalVal = document.getElementById("metalCell"   + cellIndex)?.value || "";
 
