@@ -2003,10 +2003,41 @@ async function loadBatchEtsyOrders(orderNumbers) {
       }
 
       const data = await resp.json();
-      // ▼▼ cache buyer note for later ▼▼
+      // ▼▼ build & cache *all* customer notes (buyer note + gift + personalisation) ▼▼
       window.customerNotesMap = window.customerNotesMap || {};
-      window.customerNotesMap[ord] = (data.message_from_buyer || "").trim();
-      // ▲▲ cache buyer note ▲▲
+
+      const notesParts = [];
+
+      // 1) checkout note
+      if (data.message_from_buyer) notesParts.push(data.message_from_buyer.trim());
+
+      // 2) gift-wrap message (optional)
+      if (data.gift_message) notesParts.push(data.gift_message.trim());
+
+      // 3) item-level personalisation
+      if (Array.isArray(data.transactions)) {
+        data.transactions.forEach(tr => {
+          // explicit field
+          if (tr.personalization && tr.personalization.trim() &&
+              tr.personalization.trim() !== "Not requested on this item.") {
+            notesParts.push(tr.personalization.trim());
+          }
+          // variation called “Personalization”
+          if (Array.isArray(tr.variations)) {
+            tr.variations.forEach(v => {
+              if ((v.formatted_name || "").trim().toLowerCase() === "personalization") {
+                const val = (v.formatted_value || "").trim();
+                if (val && val !== "Not requested on this item.") notesParts.push(val);
+              }
+            });
+          }
+        });
+      }
+
+      // key by receipt_id so it lines up with <input id="orderCellX">
+      const receiptKey = data.receipt_id || ord;
+      window.customerNotesMap[receiptKey] = notesParts.join(" | ");
+      // ▲▲ done ▲▲
       console.log("Etsy Order Data:", data);
 
       // -- NEW CODE: attach the typed order # to each transaction --
