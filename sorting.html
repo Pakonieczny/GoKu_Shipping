@@ -597,7 +597,6 @@ etsyOrderInput.addEventListener("keydown", async function (e) {
       .split(",")
       .map((x) => x.trim())
       .filter((x) => x);
-    orderNumbers = orderNumbers.slice(0, 50);
 
     await loadBatchEtsyOrders(orderNumbers);
   }
