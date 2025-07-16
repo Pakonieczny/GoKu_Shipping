@@ -334,6 +334,33 @@ let skipMatches = {};   // { cellIndex: true }
 let earringCells  = {};            // { cellIdx : true }
 let earringState  = {};            // { cellIdx : { firstImg:null } }
 
+/* ===== ADAPTIVE COOLDOWN CONFIG (ADD) =========================== */
+let lastRateLimitAt = 0;     // timestamp of most recent 429 / rate-limit
+let burstCalls      = 0;     // running count of OpenAI compare calls this page load
+
+const COOL_HEALTHY_MS        = 120;   // floor when no recent rate-limit
+const COOL_RATE_LIMIT_MS     = 800;   // base when inside 15s RL window
+const COOL_PER_CANDIDATE_MS  = 5;     // add per candidate in the just-finished cell
+const COOL_JITTER_MAX_MS     = 200;   // random 0..200 jitter
+const COOL_PERIODIC_PAUSE_MS = 400;   // extra pause every Nth burst (below)
+
+function noteRateLimit() {
+  lastRateLimitAt = Date.now();
+}
+
+async function adaptiveCooldown(loadFactor = 1) {
+  burstCalls++;
+  const inRLWindow = (Date.now() - lastRateLimitAt) < 15000; // 15s grace
+  let wait = inRLWindow ? COOL_RATE_LIMIT_MS : COOL_HEALTHY_MS;
+  wait += loadFactor * COOL_PER_CANDIDATE_MS;
+  if (burstCalls % 50 === 0) {
+    wait += COOL_PERIODIC_PAUSE_MS;   // tiny breather every 50 calls
+  }
+  wait += Math.floor(Math.random() * COOL_JITTER_MAX_MS); // jitter
+  await new Promise(r => setTimeout(r, wait));
+}
+/* ===== END ADAPTIVE COOLDOWN CONFIG ============================= */
+
 /********************************************************
  * flipImageHorizontal(dataURL) → returns mirrored dataURL
  ********************************************************/
@@ -2186,6 +2213,9 @@ async function compareImages(userImage, croppedGridImage, cellIndex, userImageNa
     return { score };
   } catch (err) {
     console.error("Error comparing images with OpenAI:", err);
+    if (/429|rate.?limit/i.test(String(err?.message || err))) {
+      noteRateLimit();     // <-- mark recent rate-limit so cooldown stretches briefly
+    }
     return { score: 0.0 };
   }
 }
@@ -2401,8 +2431,8 @@ async function sendAndMatch() {
         smDone++;
         updateProgressModal(smDone, smTotal);
 
-        // 2s cooldown
-        await new Promise(resolve => setTimeout(resolve, 2000));
+        // adaptive cooldown scaled to how many candidates we just compared
+        await adaptiveCooldown((validUserImages && validUserImages.length) || 1);
       }
     }
 
@@ -2532,8 +2562,8 @@ async function sendAndMatch() {
     smDone++;
     updateProgressModal(smDone, smTotal);
 
-    // 2s cooldown
-    await new Promise(resolve => setTimeout(resolve, 2000));
+    // adaptive cooldown (second pass)
+    await adaptiveCooldown((validUserImages && validUserImages.length) || 1);
   }
 
   /* ---------- HIGHLIGHT unmatched cells ---------- */
