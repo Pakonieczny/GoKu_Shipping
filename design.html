@@ -1364,6 +1364,22 @@ document.addEventListener("DOMContentLoaded", () => {
     }
 
     /* 2️⃣  collect every visible preview that matches those metals */
+
+    // ── identify orders that span multiple metals ──
+    const metalSets = {};
+    document
+      .querySelectorAll("#photoGridContainer .wrap-preview")
+      .forEach(w => {
+        const rid = w.dataset.receipt;
+        metalSets[rid] = metalSets[rid] || new Set();
+        metalSets[rid].add(w.dataset.metal);
+      });
+    const multiMetalOrders = new Set(
+      Object.entries(metalSets)
+            .filter(([, metals]) => metals.size > 1)
+            .map(([rid]) => rid)
+    );
+
     const listsByMetal = { gold: [], silver: [], rose: [], "14k": [] };
     const greenIDs = new Set();
 
@@ -1373,6 +1389,7 @@ document.addEventListener("DOMContentLoaded", () => {
       if (!REQUIRED.includes(metal))           return;               // wrong metal
 
       const rid = w.dataset.receipt;
+      if (multiMetalOrders.has(rid))           return;   // skip mixed‐metal in pure pass
       greenIDs.add(rid);
       if (!listsByMetal[metal].includes(rid)) listsByMetal[metal].push(rid);
     });
@@ -1419,6 +1436,15 @@ document.addEventListener("DOMContentLoaded", () => {
     applyMetalFilter();
 
     /* 7️⃣  hand off to design-print.html via HIDDEN iframe (no URL change) */
+    // ── now shove each mixed‐metal order into whichever metal list is smallest ──
+    multiMetalOrders.forEach(rid => {
+      const metals = Array.from(metalSets[rid]);  // e.g. ['gold','silver']
+      const target = metals.reduce((a, b) =>
+        listsByMetal[a].length <= listsByMetal[b].length ? a : b
+      );
+      listsByMetal[target].push(rid);
+    });
+ 
     const hasBundles = Object.values(listsByMetal).some(arr => arr.length);
     if (hasBundles) {
       localStorage.setItem("metalOrderLists", JSON.stringify(listsByMetal));
