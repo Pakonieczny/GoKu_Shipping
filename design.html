@@ -1460,6 +1460,8 @@ document.addEventListener("DOMContentLoaded", () => {
       printFrame.style.height     = "1px";
       printFrame.src = "design-print.html";      // loads silently, prints inside
       document.body.appendChild(printFrame);
+     // ── clear all remaining previews from the photo grid ──
+     document.getElementById("photoGridContainer").innerHTML = "";
     }
 
     M.toast({ html: "Completed orders removed — pages recalculated" });
