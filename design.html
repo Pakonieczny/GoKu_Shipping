@@ -1383,6 +1383,9 @@ document.addEventListener("DOMContentLoaded", () => {
     const listsByMetal = { gold: [], silver: [], rose: [], "14k": [] };
     const greenIDs = new Set();
 
+    // ── include mixed-metal orders so they get removed from the sidebar too ──
+    multiMetalOrders.forEach(rid => greenIDs.add(rid));
+
     document.querySelectorAll("#photoGridContainer .wrap-preview").forEach(w => {
       if (w.style.display === "none")          return;               // hidden
       const metal = w.dataset.metal;
