@@ -1331,16 +1331,7 @@ async function analyzeAndStoreSubImages(imgObjs) {
     const isCharm = (result.charmPresent || "").toLowerCase() === "yes";
 
     if (isCharm) {
-      // ── flush any buffered empties as “kept” ──
-      for (const emptyObj of emptyBatch) {
-        userImagesArray.push({
-          name        : emptyObj.origName || `empty_${done}.jpg`,
-          data        : emptyObj.data,
-          analyzed    : true,
-          skipForCharm: true
-        });
-        savedCount++;
-      }
+
       emptyBatch    = [];
       noCharmStreak = 0;
 
@@ -1371,18 +1362,17 @@ async function analyzeAndStoreSubImages(imgObjs) {
 
   closeProgressModal();
 
-  // ── if we never hit 4 empties but ran out of images under the cap, flush leftovers ──
-  if (emptyBatch.length > 0 && toRun.length < MAX_LIMIT && noCharmStreak < 4) {
-    for (const emptyObj of emptyBatch) {
-      userImagesArray.push({
-        name        : emptyObj.origName || `empty_${done}.jpg`,
-        data        : emptyObj.data,
-        analyzed    : true,
-        skipForCharm: true
-      });
-      savedCount++;
-    }
-  }
+   // ── if we never hit 4 empties but ran out < MAX_LIMIT, flush leftovers ──
+   if (emptyBatch.length > 0 && toRun.length < MAX_LIMIT && noCharmStreak < 4) {
+     for (const emptyObj of emptyBatch) {
+       userImagesArray.push({
+         name    : emptyObj.origName || `empty_${done}.jpg`,
+         data    : emptyObj.data,
+         analyzed: true
+       });
+       savedCount++;
+     }
+   }
   // otherwise (at the 140-tile cap), leftover empties (<4) are simply dropped
 
   // ── persist only saved images ──
