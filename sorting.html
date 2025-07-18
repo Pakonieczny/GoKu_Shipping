@@ -1305,61 +1305,48 @@ function openIframePrinterForListing(cellIndex) {
 
 /* ──────────────────────────────────────────────────────────────
    analyzeAndStoreSubImages(imgObjs)
-   • Slices up to 140 tiles & sends each to AI.
-   • Buffers every “no charm” image.
-   • On a charm hit: flush buffer → keep 1–3 empties + this charm.
-   • On 4 empties in a row: drop those 4 and abort.
-   • End of loop under cap: flush any remaining buffer.
-   • End of loop at cap: drop remaining buffer (<4).
+   • Analyze up to 140 tiles via AI.
+   • Immediately save each tile with skipForCharm = !isCharm.
+   • On 4 “no charm” in a row: splice out exactly those 4 and abort.
+   • At 140-tile cap without a 4-streak: splice out trailing <4 empties.
+   • Persist {name, skipForCharm} so send&match sees them correctly.
 ────────────────────────────────────────────────────────────── */
 async function analyzeAndStoreSubImages(imgObjs) {
-  if (!imgObjs || imgObjs.length === 0) return;
-
-  const MAX_LIMIT = 140;
-  const toRun     = imgObjs.slice(0, MAX_LIMIT);
+  if (!imgObjs?.length) return;
+  const MAX = 140;
+  const toRun = imgObjs.slice(0, MAX);
 
   showProgressModal("Analyzing Photos...", toRun.length);
 
   let done       = 0;
-  let savedCount = 0;
   let streak     = 0;
-  let buffer     = [];    // holds the last few “no charm” tiles
+  let savedCount = 0;
 
-  for (let idx = 0; idx < toRun.length; idx++) {
-    const { origName, data } = toRun[idx];
-    const { charmPresent, color = "UnknownColor", topRightNumber = "XX" } =
-      await openAIAnalyzePhoto(data);
+  for (let i = 0; i < toRun.length; i++) {
+    const { origName, data } = toRun[i];
+    const res = await openAIAnalyzePhoto(data);
+    const isCharm = (res.charmPresent || "").toLowerCase() === "yes";
 
-    const isCharm = charmPresent.toLowerCase() === "yes";
+    // 1) Save every tile immediately, tagging empties
+    userImagesArray.push({
+      name         : isCharm
+                     ? `${res.color||"UnknownColor"}_${res.topRightNumber||"XX"}.jpg`
+                     : `${origName}.jpg`,
+      data,
+      analyzed     : true,
+      skipForCharm : !isCharm
+    });
+    savedCount++;
 
+    // 2) Track empty streak
     if (isCharm) {
-      // keep any buffered empties (1–3)
-      for (const e of buffer) {
-        userImagesArray.push({
-          name    : e.origName + ".jpg",
-          data    : e.data,
-          analyzed: true
-        });
-        savedCount++;
-      }
-      buffer = [];
       streak = 0;
-
-      // then keep this charm
-      userImagesArray.push({
-        name    : `${color}_${topRightNumber}.jpg`,
-        data    : data,
-        analyzed: true
-      });
-      savedCount++;
     } else {
-      // buffer this empty
-      buffer.push({ origName, data });
       streak++;
-
-      // on 4 in a row, drop them all and stop
       if (streak === 4) {
-        userImagesArray.splice(-0);  // nothing in array corresponds to buffer yet
+        // remove exactly those last 4 empties & stop
+        userImagesArray.splice(-4, 4);
+        savedCount -= 4;
         M.toast({ html: "Stopped: 4 consecutive photos without charms." });
         break;
       }
@@ -1371,25 +1358,18 @@ async function analyzeAndStoreSubImages(imgObjs) {
 
   closeProgressModal();
 
-  // if we never broke early and we're under the cap, flush leftover buffer
-  if (buffer.length > 0 && streak < 4 && toRun.length < MAX_LIMIT) {
-    for (const e of buffer) {
-      userImagesArray.push({
-        name    : e.origName + ".jpg",
-        data    : e.data,
-        analyzed: true
-      });
-      savedCount++;
-    }
+  // 3) If we processed all 140 with no 4-streak, drop trailing empties (<4)
+  if (streak > 0 && streak < 4 && toRun.length === MAX) {
+    userImagesArray.splice(-streak, streak);
+    savedCount -= streak;
   }
-  // if at cap, leftover buffer (<4) is simply dropped
 
-  // persist only the kept images
+  // 4) Persist only names + skipForCharm
   try {
-    const slim = userImagesArray.map(({ name }) => ({ name }));
+    const slim = userImagesArray.map(({ name, skipForCharm }) => ({ name, skipForCharm }));
     localStorage.setItem("userImagesArray", JSON.stringify(slim));
-  } catch (err) {
-    console.warn("localStorage quota exceeded:", err.message);
+  } catch (e) {
+    console.warn("localStorage quota exceeded:", e.message);
   }
 
   enableSendMatch();
