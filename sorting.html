@@ -1303,25 +1303,26 @@ function openIframePrinterForListing(cellIndex) {
        That preview is shown ONLY after Send-and-Match finishes.  */
   });
 
-/* ─────────────────────────────────────────────────────────────
+/* ──────────────────────────────────────────────────────────────
    analyzeAndStoreSubImages(list)
    • Sends each 400×400 quadrant to the AI.
    • Keeps images unless you hit 4 “no charm” in a row.
    • Discards exactly those 4 then stops.
-   • Persists good images and enables “Send & Match”.
-───────────────────────────────────────────────────────────── */
+   • Exception: at 140-image limit, drop any leftover empties (<4).
+   • Persists all saved images and enables “Send & Match”.
+────────────────────────────────────────────────────────────── */
 async function analyzeAndStoreSubImages(imgObjs) {
   if (!imgObjs || imgObjs.length === 0) return;
 
-  const LIMIT = 125;                    // ← hard cap
-  const toRun = imgObjs.slice(0, LIMIT);
+  const MAX_LIMIT = 140;                     // ← analyze up to 140 tiles
+  const toRun     = imgObjs.slice(0, MAX_LIMIT);
 
   showProgressModal("Analyzing Photos...", toRun.length);
 
-  let done       = 0;
-  let savedCount = 0;
-  let noCharmStreak = 0;               // ← count consecutive “no charm”
-  const emptyBatch = [];               // ← buffer for empty images
+  let done          = 0;
+  let savedCount    = 0;
+  let noCharmStreak = 0;
+  let emptyBatch    = [];
 
   for (let idx = 0; idx < toRun.length; idx++) {
     const imgObj = toRun[idx];
@@ -1329,7 +1330,20 @@ async function analyzeAndStoreSubImages(imgObjs) {
     const isCharm = (result.charmPresent || "").toLowerCase() === "yes";
 
     if (isCharm) {
-      // ✔︎ Save only real charms
+      // flush any buffered empties (they now count as “kept”)
+      for (const emptyObj of emptyBatch) {
+        userImagesArray.push({
+          name         : emptyObj.origName || `empty_${done}.jpg`,
+          data         : emptyObj.data,
+          analyzed     : true,
+          skipForCharm : true
+        });
+        savedCount++;
+      }
+      emptyBatch    = [];
+      noCharmStreak = 0;
+
+      // now save the actual charm image
       const finalColor = result.color || "UnknownColor";
       const num        = result.topRightNumber || "XX";
       userImagesArray.push({
@@ -1338,14 +1352,12 @@ async function analyzeAndStoreSubImages(imgObjs) {
         analyzed: true
       });
       savedCount++;
-      // reset streak
-      noCharmStreak = 0;
-      emptyBatch.length = 0;
     } else {
-      // ✘ Buffer empty
+      // buffer this empty tile
       noCharmStreak++;
-      emptyBatch.push(imgObj);
-      // After 4 in a row, discard them all and stop
+      emptyBatch.push({ origName: imgObj.origName, data: imgObj.data });
+
+      // once you hit four empties in a row, drop them all and abort
       if (noCharmStreak === 4) {
         M.toast({ html: "Stopped: 4 consecutive photos without charms." });
         break;
@@ -1358,7 +1370,9 @@ async function analyzeAndStoreSubImages(imgObjs) {
 
   closeProgressModal();
 
-  // Persist only saved charms
+  // any empties left over at the 140-tile cap (<4) are simply not saved
+
+  // persist only the saved array
   try {
     const slim = userImagesArray.map(({ name, skipForCharm = false }) => ({ name, skipForCharm }));
     localStorage.setItem("userImagesArray", JSON.stringify(slim));
