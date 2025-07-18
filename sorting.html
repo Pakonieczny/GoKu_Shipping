@@ -1306,47 +1306,49 @@ function openIframePrinterForListing(cellIndex) {
 /* ──────────────────────────────────────────────────────────────
    analyzeAndStoreSubImages(imgObjs)
    • Analyze up to 140 tiles via AI.
-   • Immediately save each tile with skipForCharm = !isCharm.
-   • On 4 “no charm” in a row: splice out exactly those 4 and abort.
-   • At 140-tile cap without a 4-streak: splice out trailing <4 empties.
-   • Persist {name, skipForCharm} so send&match sees them correctly.
+   • Save every image immediately (no tagging yet).
+   • Track a “no charm” streak.
+   • On 4th consecutive “no charm”: remove those 4 and stop.
+   • Otherwise (even 1–3 “no charm”): keep all.
+   • If you process all 140 without a 4-streak, keep all.
+   • Persists names only, so downstream send&match sees every tile.
 ────────────────────────────────────────────────────────────── */
 async function analyzeAndStoreSubImages(imgObjs) {
-  if (!imgObjs?.length) return;
+  if (!imgObjs || imgObjs.length === 0) return;
+
   const MAX = 140;
   const toRun = imgObjs.slice(0, MAX);
 
   showProgressModal("Analyzing Photos...", toRun.length);
 
-  let done       = 0;
-  let streak     = 0;
-  let savedCount = 0;
+  let done    = 0;
+  let streak  = 0;
+  let saved   = 0;
 
   for (let i = 0; i < toRun.length; i++) {
     const { origName, data } = toRun[i];
     const res = await openAIAnalyzePhoto(data);
     const isCharm = (res.charmPresent || "").toLowerCase() === "yes";
 
-    // 1) Save every tile immediately, tagging empties
+    // 1) Save *every* image immediately, no skipForCharm flag
     userImagesArray.push({
-      name         : isCharm
-                     ? `${res.color||"UnknownColor"}_${res.topRightNumber||"XX"}.jpg`
-                     : `${origName}.jpg`,
+      name    : isCharm
+                ? `${res.color||"UnknownColor"}_${res.topRightNumber||"XX"}.jpg`
+                : `${origName}.jpg`,
       data,
-      analyzed     : true,
-      skipForCharm : !isCharm
+      analyzed: true
     });
-    savedCount++;
+    saved++;
 
-    // 2) Track empty streak
+    // 2) Update streak
     if (isCharm) {
       streak = 0;
     } else {
       streak++;
       if (streak === 4) {
-        // remove exactly those last 4 empties & stop
+        // remove exactly those 4 empties and abort
         userImagesArray.splice(-4, 4);
-        savedCount -= 4;
+        saved -= 4;
         M.toast({ html: "Stopped: 4 consecutive photos without charms." });
         break;
       }
@@ -1358,22 +1360,19 @@ async function analyzeAndStoreSubImages(imgObjs) {
 
   closeProgressModal();
 
-  // 3) If we processed all 140 with no 4-streak, drop trailing empties (<4)
-  if (streak > 0 && streak < 4 && toRun.length === MAX) {
-    userImagesArray.splice(-streak, streak);
-    savedCount -= streak;
-  }
+  // 3) If you ran out under the cap (no 4-streak), do nothing—keep all
+  // 4) If you hit exactly 140 with no 4-streak, do nothing—keep all
 
-  // 4) Persist only names + skipForCharm
+  // 5) Persist only the names (no skipForCharm)
   try {
-    const slim = userImagesArray.map(({ name, skipForCharm }) => ({ name, skipForCharm }));
+    const slim = userImagesArray.map(({ name }) => ({ name }));
     localStorage.setItem("userImagesArray", JSON.stringify(slim));
-  } catch (e) {
-    console.warn("localStorage quota exceeded:", e.message);
+  } catch (err) {
+    console.warn("localStorage quota exceeded:", err.message);
   }
 
   enableSendMatch();
-  M.toast({ html: `Analysis complete – processed ${done} photos, saved ${savedCount}.` });
+  M.toast({ html: `Analysis complete – processed ${done} photos, saved ${saved}.` });
 }
 
 /********************************************************
