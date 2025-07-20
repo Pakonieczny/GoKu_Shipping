@@ -1525,31 +1525,21 @@ async function openAIAnalyzePhoto(base64Image) {
     return { topRightNumber:null, color:null, charmPresent:"no" };
   }
 
-/* ───────────────────── PASS2 : classify via hueValue ───────────────────── */
-   let finalColor = null;
-   try {
-     // Extract hueValue from PASS1 output
-     const raw1 = d1.choices?.[0]?.message?.content?.trim() || "{}";
-     const { hueValue } = JSON.parse(raw1);
-     const hv = parseFloat(hueValue);
- 
-     if (!isNaN(hv)) {
-       if (hv >= 10 && hv <= 90)       finalColor = "Gold";
-       else if (hv < 10)               finalColor = "RoseGold";
-       else                             finalColor = "Silver";
-     } else {
-        finalColor = "Unknown";
-     }
-  
-     console.log(
-       "%c[openAIAnalyzePhoto] PASS 2 → final metal label:",
-       "color:#8E24AA;font-weight:bold",
-       finalColor
-     );
-   } catch (err) {
-     console.error("[openAIAnalyzePhoto] PASS 2 classification error:", err);
-     finalColor = "Unknown";
-   }
+  /* ───────────────────── PASS2 : hue ⇒ fixed label ───────────────────── */
+  const ctrlLabel = new AbortController();
+  pendingFetchControllers.push(ctrlLabel);
+
+  const labelPrompt =
+     `Based solely on the hueValue below, choose the single closest label:\n` +
+     `• Gold\n• RoseGold\n• Silver\n\n` +
+     `Respond with exactly one of those words (or "Unknown" if unclear).\n` +
+     `\nHUE VALUE: ${hueValue}`;
+
+  const labelPayload = {
+    model: "gpt-4.1-mini",
+    messages: [{ role: "user", content: labelPrompt }],
+    max_tokens: 30
+  };
 
   console.log("%c[openAIAnalyzePhoto] PASS 2 payload:", "color:#8E24AA", labelPayload);
 
