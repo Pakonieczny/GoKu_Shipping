@@ -9,6 +9,7 @@ const crypto = require("crypto");
 
 // We only allow these two final domains:
 const SORTING_DOMAIN      = "https://sorting.goldenspike.app";
+const SORTING2_DOMAIN      = "https://sorting-2.goldenspike.app";
 const GOLDENSPIKE_DOMAIN  = "https://goldenspike.app";
 const DESIGN_DOMAIN       = "https://design.goldenspike.app";
 const DESIGNMESSAGE_DOMAIN       = "https://design-message.goldenspike.app";
@@ -66,6 +67,7 @@ function pickDomainFromHost(event) {
   /* ── query-param overrides ───────────────────────────────────────── */
   switch (paramLower) {
     case "sorting":      return SORTING_DOMAIN;
+    case "sorting-2":      return SORTING2_DOMAIN;  
     case "weld-1":       return WELD1_DOMAIN;
     case "design-1":     return DESIGN1_DOMAIN;
     case "design-message":     return DESIGNMESSAGE_DOMAIN;
@@ -85,6 +87,7 @@ function pickDomainFromHost(event) {
 
   /* ── host header autodetect ──────────────────────────────────────── */
   if (host.includes("sorting.goldenspike.app"))      return SORTING_DOMAIN;
+  if (host.includes("sorting-2.goldenspike.app"))    return SORTING2_DOMAIN;
   if (host.includes("assembly-1.goldenspike.app"))   return ASSEMBLY1_DOMAIN;
   if (host.includes("assembly-2.goldenspike.app"))   return ASSEMBLY2_DOMAIN;
   if (host.includes("assembly-3.goldenspike.app"))   return ASSEMBLY3_DOMAIN;
