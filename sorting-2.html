@@ -317,7 +317,6 @@
 
   <!-- Everything is in this single <script> block -->
   <script>
-
 /********************************************************
  * Base URL & Global Variables
  ********************************************************/
@@ -383,95 +382,6 @@ function flipImageHorizontal(dataURL) {
     img.src = dataURL;
   });
 }
-
- // ---------------- Metal & Color Helpers (global scope) ----------------
- /**
-  * Precise metal name filter: only pure silver, Rose/RoseGold, or plain gold.
-  */
- function metalFilterOk(metalVal, userName) {
-   const metalLow = metalVal.toLowerCase();
-   const nameLow  = userName.toLowerCase();
-   if (metalLow.includes("silver")) {
-     return /\bsilver\b/.test(nameLow);
-   }
-   if (metalLow.includes("rosegold") || metalLow.includes("rose")) {
-     return /\bros(?:egold)?\b/.test(nameLow);
-   }
-   if (metalLow.includes("gold")) {
-     return /\bgold\b/.test(nameLow);
-   }
-   return true;
- }
- 
- /**
-  * Sample N pixels strictly inside the charm silhouette, remove outliers, return avg RGB.
-  */
- async function getRobustAverageRGB(imgEl, samples = 80, zThresh = 2) {
-   const w = imgEl.naturalWidth, h = imgEl.naturalHeight;
-   // draw to hidden canvas
-   const imgC = document.createElement("canvas"); imgC.width = w; imgC.height = h;
-   const imgCtx = imgC.getContext("2d"); imgCtx.drawImage(imgEl, 0, 0);
- 
-   // build brightness-based mask
-   const maskC = document.createElement("canvas"); maskC.width = w; maskC.height = h;
-   const maskCtx = maskC.getContext("2d");
-   const imgData  = imgCtx.getImageData(0,0,w,h);
-   const maskData = maskCtx.createImageData(w,h);
-   for (let i = 0; i < imgData.data.length; i += 4) {
-     const bright = 0.299*imgData.data[i] + 0.587*imgData.data[i+1] + 0.114*imgData.data[i+2];
-     const val = bright > 200 ? 0 : 255;
-     maskData.data[i] = maskData.data[i+1] = maskData.data[i+2] = val;
-     maskData.data[i+3] = 255;
-   }
-   maskCtx.putImageData(maskData, 0, 0);
- 
-   // random sampling inside mask
-   const pts = [];
-   for (let i = 0; i < samples; i++) {
-     let x, y, off;
-     do {
-       x = Math.floor(Math.random() * w);
-       y = Math.floor(Math.random() * h);
-       off = (y * w + x) * 4;
-     } while (maskData.data[off] === 0);
-     pts.push([imgData.data[off], imgData.data[off+1], imgData.data[off+2]]);
-   }
- 
-   // outlier removal + average
-   const med   = [0,1,2].map(i => {
-     const arr = pts.map(p=>p[i]).sort((a,b)=>a-b);
-     return arr[Math.floor(arr.length/2)];
-   });
-   const dists = pts.map(p => Math.hypot(p[0]-med[0], p[1]-med[1], p[2]-med[2]));
-   const meanD = dists.reduce((a,b)=>a+b,0)/dists.length;
-   const stdD  = Math.sqrt(dists.map(d=>Math.pow(d-meanD,2)).reduce((a,b)=>a+b,0)/dists.length);
-   const filt  = pts.filter((p,i) => Math.abs((dists[i]-meanD)/stdD) < zThresh);
-   const sum   = filt.reduce((acc,p) => { acc[0]+=p[0]; acc[1]+=p[1]; acc[2]+=p[2]; return acc; }, [0,0,0]);
-   const N     = filt.length || pts.length;
-   return sum.map(v => Math.round(v/N));
- }
- 
- /**
-  * Convert RGB [0–255] to HSL [h°, s, l].
-  */
-  function rgbToHsl(r, g, b) {
-   r /= 255; g /= 255; b /= 255;
-   const max = Math.max(r, g, b), min = Math.min(r, g, b);
-   let h, s, l = (max + min) / 2;
-   if (max === min) {
-     h = s = 0;
-    } else {
-     const d = max - min;
-     s = l > 0.5 ? d/(2-max-min) : d/(max+min);
-     switch (max) {
-       case r: h = (g - b)/d + (g < b ? 6 : 0); break;
-       case g: h = (b - r)/d + 2;               break;
-       case b: h = (r - g)/d + 4;               break;
-     }
-     h /= 6;
-   }
-   return [h*360, s, l];
- }
 
 /********************************************************
  * Progress‑bar modal helpers (one modal reused everywhere)
@@ -1534,76 +1444,6 @@ function loadImage(dataUrl) {
   });
 }
 
- /**
-+ * Segment the charm, then sample N pixels inside it, remove outliers, return avg RGB.
-+ * @param {HTMLImageElement} imgEl 
-+ * @param {number} samples 
-+ * @param {number} zThresh 
-+ */
- async function getRobustAverageRGB(imgEl, samples = 50, zThresh = 1.5) {
-   const w = imgEl.naturalWidth, h = imgEl.naturalHeight;
-   const imgC = document.createElement("canvas"); imgC.width = w; imgC.height = h;
-   const imgCtx = imgC.getContext("2d"); imgCtx.drawImage(imgEl, 0, 0);
- 
-   // build mask via brightness threshold
-   const maskC = document.createElement("canvas"); maskC.width = w; maskC.height = h;
-   const maskCtx = maskC.getContext("2d");
-   const imgData = imgCtx.getImageData(0,0,w,h);
-   const maskData = maskCtx.createImageData(w,h);
-   for (let i = 0; i < imgData.data.length; i += 4) {
-     const bright = 0.299*imgData.data[i] + 0.587*imgData.data[i+1] + 0.114*imgData.data[i+2];
-     const val = bright > 200 ? 0 : 255;
-     maskData.data[i] = maskData.data[i+1] = maskData.data[i+2] = val;
-     maskData.data[i+3] = 255;
-   }
-   maskCtx.putImageData(maskData, 0, 0);
- 
-   // sample only inside mask
-   const pts = [];
-   for (let i = 0; i < samples; i++) {
-     let x, y, off;
-     do {
-       x = Math.floor(Math.random() * w);
-       y = Math.floor(Math.random() * h);
-       off = (y * w + x) * 4;
-     } while (maskData.data[off] === 0);
-     pts.push([imgData.data[off], imgData.data[off+1], imgData.data[off+2]]);
-   }
- 
-   // outlier removal + average
-   const med = [0,1,2].map(i => {
-     const arr = pts.map(p=>p[i]).sort((a,b)=>a-b);
-     return arr[Math.floor(arr.length/2)];
-   });
-   const dists = pts.map(p=>Math.hypot(p[0]-med[0],p[1]-med[1],p[2]-med[2]));
-   const meanD = dists.reduce((a,b)=>a+b,0)/dists.length;
-   const stdD = Math.sqrt(dists.map(d=>Math.pow(d-meanD,2)).reduce((a,b)=>a+b,0)/dists.length);
-   const filt = pts.filter((p,i)=>Math.abs((dists[i]-meanD)/stdD) < zThresh);
-   const sum = filt.reduce((acc,p)=>{acc[0]+=p[0];acc[1]+=p[1];acc[2]+=p[2];return acc;}, [0,0,0]);
-   const N = filt.length || pts.length;
-   return sum.map(v => Math.round(v/N));
- }
- 
- // Convert RGB [0–255] to HSL [h°, s, l]
- function rgbToHsl(r, g, b) {
-   r /= 255; g /= 255; b /= 255;
-   const max = Math.max(r, g, b), min = Math.min(r, g, b);
-   let h, s, l = (max + min) / 2;
-   if (max === min) {
-     h = s = 0;
-   } else {
-     const d = max - min;
-     s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
-     switch (max) {
-       case r: h = ((g - b) / d + (g < b ? 6 : 0)); break;
-       case g: h = ((b - r) / d + 2);               break;
-       case b: h = ((r - g) / d + 4);               break;
-     }
-     h /= 6;
-   }
-   return [h * 360, s, l];
- }
-
 // --------------- Single‑Photo Analysis (TWO‑PASS hue→label + verbose logs) ---------------
 async function openAIAnalyzePhoto(base64Image) {
   /* ───────────────────── PASS 1 : hue / number / charm ───────────────────── */
@@ -1665,17 +1505,6 @@ async function openAIAnalyzePhoto(base64Image) {
     console.error("[openAIAnalyzePhoto] PASS 1 error:", err);
     return { topRightNumber:null, color:null, charmPresent:"no" };
   }
-
-   // — Robust hue pre-classification —
-   const imgEl = await loadImage(base64Image);
-   const [r, g, b] = await getRobustAverageRGB(imgEl, 80, 2);
-   const [h] = rgbToHsl(r, g, b);
-   let robustColor = "Unknown";
-   if (h >= 40 && h <= 60)      robustColor = "Gold";
-   else if (h >=   0 && h <  40) robustColor = "RoseGold";
-   if (robustColor !== "Unknown") {
-     return { topRightNumber: topNumber, color: robustColor, charmPresent: charmFlag };
-   }
 
   /* ───────────────────── PASS2 : hue ⇒ fixed label ───────────────────── */
   const ctrlLabel = new AbortController();
@@ -2403,6 +2232,58 @@ async function compareImages(userImage, croppedGridImage, cellIndex, userImageNa
     return { score: 0.0 };
   }
 }
+
+/********************************************************
+ * sendAndMatch with metal filter logic
+ ********************************************************/
+async function sendAndMatch() {
+  /* --- progress setup --- */
+  let smDone  = 0;
+  let smTotal = 0;
+  showProgressModal("Matching Images... (First Pass)", 1);
+
+  /* — reset earring maps for this run — */
+  earringState  = {};
+
+  const runId = globalRunId;     // snapshot current run
+
+  /* Purge any residual skipForCharm photos */
+  userImagesArray = userImagesArray.filter(u => !u.skipForCharm);
+
+  // Disable Match & Print at the start
+  const matchPrintBtn = document.getElementById("matchPrintBtn");
+  matchPrintBtn.disabled = true;
+  matchPrintBtn.style.opacity = "0.5";
+
+  if (userImagesArray.length === 0) {
+    M.toast({ html: "No user images available! Please drop user images first." });
+    return;
+  }
+  if (!croppedImagesArray || croppedImagesArray.length === 0) {
+    M.toast({ html: "No cropped grid images available! Please crop images first." });
+    return;
+  }
+
+   // Improved metal filter: precise matching for Silver, RoseGold, Gold
+   function metalFilterOk(metalVal, userName) {
+     const metalLow = metalVal.toLowerCase();
+     const nameLow = userName.toLowerCase();
+ 
+     if (metalLow.includes("silver")) {
+       // only pure “silver”
+       return /\bsilver\b/.test(nameLow);
+     }
+     if (metalLow.includes("rosegold") || metalLow.includes("rose")) {
+       // allow both “rose” and “rosegold” as RoseGold
+      return /\bros(?:egold)?\b/.test(nameLow);
+          }
+     if (metalLow.includes("gold")) {
+       // only plain “gold” (exclude rosegold)
+       return /\bgold\b/.test(nameLow);
+     }
+     return true; // no metal specified → allow all
+  }
+
 
 
 //---------------------------------------------------------------------
