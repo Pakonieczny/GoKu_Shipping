@@ -1451,32 +1451,47 @@ async function openAIAnalyzePhoto(base64Image) {
   pendingFetchControllers.push(ctrlHue);
 
   const huePayload = {
-    model: "gpt-4.1-mini",
-    messages: [
-      {
-        role: "user",
-         content: [
-           {
-             type: "text",
-             text:
-               "Return JSON EXACTLY like:\n" +
-               '  {\"hue\":\"<≤10-word description>\", \"hueValue\":\"<0-360>\", \"topRightNumber\":\"<number or blank>\", \"charmPresent\":\"Yes|No\"}\n\n' +
-               "TASK 1 – Compute the average hue angle of the metal in degrees (0-360) as “hueValue”.\n" +
-               "TASK 2 – Describe the dominant metal hue in ≤10 words (e.g. “warm golden yellow”).\n" +
-               "TASK 3 – Top-right number (blank if none).\n" +
-               "TASK 4 – Is a jewellery charm clearly visible? (Yes|No).\n\n" +
-               "For classification, use these thresholds on hueValue:\n" +
-               "• Gold: 10 ≤ hueValue ≤ 90\n" +
-               "• RoseGold: hueValue < 10\n" +
-               "• Silver: otherwise\n" +
-               "Respond with JSON only."
-           },
-           { type: "image_url", image_url: { url: base64Image, detail: "high" } }
-         ]
-       }
-     ],
-     max_tokens: 200
-  };
+  model: "gpt-4.1-mini",
+  messages: [
+    { 
+      role: "system", 
+      content: "You are a strict colour‐angle calculator." 
+    },
+    { 
+      role: "user", 
+      content:
+        "Image A → hueValue: 50\n" +
+        "Image B → hueValue: 20\n" +
+        "Image C → hueValue: 200\n\n" +
+        "Now for the new image, return JSON {\"hueValue\":<0-360>} only."
+    },
+    {
+      role: "user",
+      content: [
+        {
+          type: "text",
+          text:
+            "Return JSON EXACTLY like:\n" +
+            '  {"hue":"<≤10-word description>", "hueValue":"<0-360>", "topRightNumber":"<number or blank>", "charmPresent":"Yes|No"}\n\n' +
+            "TASK 1 – Compute the average hue angle of the metal in degrees (0-360) as \"hueValue\".\n" +
+            "TASK 2 – Describe the dominant metal hue in ≤10 words (e.g. \"warm golden yellow\").\n" +
+            "TASK 3 – Top-right number (blank if none).\n" +
+            "TASK 4 – Is a jewellery charm clearly visible? (Yes|No).\n\n" +
+            "For classification, use these thresholds on hueValue:\n" +
+            "• Gold: 10 ≤ hueValue ≤ 90\n" +
+            "• RoseGold: hueValue < 10\n" +
+            "• Silver: otherwise\n" +
+            "Respond with JSON only."
+        },
+        {
+          type: "image_url",
+          image_url: { url: base64Image, detail: "high" }
+        }
+      ]
+    }
+  ],
+  max_tokens: 200
+};
 
   console.log("%c[openAIAnalyzePhoto] PASS 1 payload:", "color:#03A9F4", huePayload);
 
