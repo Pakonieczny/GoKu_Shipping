@@ -1530,10 +1530,10 @@ async function openAIAnalyzePhoto(base64Image) {
   pendingFetchControllers.push(ctrlLabel);
 
   const labelPrompt =
-     `Based solely on the hueValue below, choose the single closest label:\n` +
-     `• Gold\n• RoseGold\n• Silver\n\n` +
-     `Respond with exactly one of those words (or "Unknown" if unclear).\n` +
-     `\nHUE VALUE: ${hueValue}`;
+    `Based solely on the hueValue below, choose the single closest label:\n` +
+    `• Gold\n• RoseGold\n• Silver\n\n` +
+    `Respond with exactly one of those words (or "Unknown" if unclear).\n` +
+    `\nhueValue "${hueText}"`;
 
   const labelPayload = {
     model: "gpt-4.1-mini",
