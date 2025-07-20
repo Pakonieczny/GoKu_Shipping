@@ -1705,7 +1705,7 @@ async function fillPreviewBoxes(items) {
        if (regex.test(lower) && ++matchCount >= 2) return true;
      }
      return false;
-   }
+  }
 
   /* ---------- MAIN LOOP: one preview row per transaction ---------- */
   items.forEach((item, index) => {
@@ -2264,27 +2264,21 @@ async function sendAndMatch() {
     return;
   }
 
-   // Improved metal filter: precise matching for Silver, RoseGold, Gold
-   function metalFilterOk(metalVal, userName) {
-     const metalLow = metalVal.toLowerCase();
-     const nameLow = userName.toLowerCase();
- 
-     if (metalLow.includes("silver")) {
-       // only pure “silver”
-       return /\bsilver\b/.test(nameLow);
-     }
-     if (metalLow.includes("rosegold") || metalLow.includes("rose")) {
-       // allow both “rose” and “rosegold” as RoseGold
-      return /\bros(?:egold)?\b/.test(nameLow);
-          }
-     if (metalLow.includes("gold")) {
-       // only plain “gold” (exclude rosegold)
-       return /\bgold\b/.test(nameLow);
-     }
-     return true; // no metal specified → allow all
-  }
+  // --------------------------------------------------
+  // NEW HELPER: checks if a user image name is allowed
+  // based on the 3rd read-only text box metal content.
+  // --------------------------------------------------
+  function metalFilterOk(metalVal, userName) {
+    // Lowercase everything for consistent comparison
+    const metalLow = metalVal.toLowerCase();
+    const nameLow  = userName.toLowerCase();
 
-  
+    if (metalLow.includes("silver"))     return nameLow.includes("silver");
+    else if (metalLow.includes("rosegold")) return (nameLow.includes("rose") || nameLow.includes("rosegold"));
+    else if (metalLow.includes("rose"))  return (nameLow.includes("rose") || nameLow.includes("rosegold"));
+    else if (metalLow.includes("gold"))  return nameLow.includes("gold");
+    return true;   // no metal specified → allow any
+  }
 
 //---------------------------------------------------------------------
   // FIRST PASS
