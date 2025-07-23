@@ -1402,19 +1402,28 @@ document.addEventListener("DOMContentLoaded", () => {
       return;
     }
 
-    /* 3️⃣  mark completed + purge DOM & master cache (unchanged) */
-    greenIDs.forEach(id => {
-      completedOrders.add(id);
-      selectedOrders.delete(id);
+     /* 3️⃣  defer removal until print dialog confirms */
+     const printIDs = Array.from(greenIDs);
+     function onPrintComplete(e) {
+       if (e.data && e.data.printSuccess) {
+         printIDs.forEach(id => {
+           completedOrders.add(id);
+           selectedOrders.delete(id);
+           document.querySelectorAll(`.new-order-box[data-receipt='${id}']`)
+             .forEach(r => r.remove());
+           removePreviewBoxesForOrder(id);
+         });
+         allOpenReceipts = allOpenReceipts.filter(r => !greenIDs.has(String(r.receipt_id)));
+         persistCompleted();
+         persistSelection();
+         updateCounters();
+         applyMetalFilter();
+         M.toast({ html: "Completed orders removed — pages recalculated" });
+         window.removeEventListener("message", onPrintComplete);
+       }
+     }
+     window.addEventListener("message", onPrintComplete);
 
-      /* sidebar rows */
-      document.querySelectorAll(`.new-order-box[data-receipt='${id}']`)
-              .forEach(r => r.remove());
-
-      /* preview tiles */
-      removePreviewBoxesForOrder(id);
-    });
-    allOpenReceipts = allOpenReceipts.filter(r => !greenIDs.has(String(r.receipt_id)));
 
     /* 4️⃣  recompute paging (unchanged) */
     if (typeof orderListOffset === "undefined") window.orderListOffset = 0;
