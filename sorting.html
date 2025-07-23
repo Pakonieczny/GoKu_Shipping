@@ -1822,6 +1822,17 @@ async function fillPreviewBoxes(items) {
     }
     metalInput.value = " Metal: " + (metalSel || "No Metal");
 
+    // highlight Metal line if this order has a note
+    {
+      const rKey    = String(item.receipt_id || item.orderNumber);
+      const noteTxt = (window.customerNotesMap && window.customerNotesMap[rKey])?.trim();
+      if (noteTxt) {
+        metalInput.style.fontWeight = "bold";
+        metalInput.style.color      = "#008B8B"; // dark cyan
+        metalInput.dataset.hasNote  = "1";
+      }
+    }
+
     const matchInput = document.createElement("input");
     matchInput.type  = "text";
     matchInput.readOnly = true;
@@ -2095,6 +2106,8 @@ async function loadBatchEtsyOrders(orderNumbers) {
         });
       }
 
+      // ensure global notes map exists (run once before assigning)
+      window.customerNotesMap = window.customerNotesMap || {};
       // key by receipt_id so it lines up with <input id="orderCellX">
       const receiptKey = data.receipt_id || ord;
       window.customerNotesMap[receiptKey] = notesParts.join(" | ");
