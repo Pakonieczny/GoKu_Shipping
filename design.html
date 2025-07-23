@@ -1424,6 +1424,12 @@ document.addEventListener("DOMContentLoaded", () => {
      }
      window.addEventListener("message", onPrintComplete);
 
+     // ── FALLBACK: in case afterprint/postMessage doesn’t fire,
+     //     remove orders when our window regains focus
+     window.addEventListener("focus", () => {
+       onPrintComplete({ data: { printSuccess: true } });
+     }, { once: true });
+
 
     /* 4️⃣  recompute paging (unchanged) */
     if (typeof orderListOffset === "undefined") window.orderListOffset = 0;
