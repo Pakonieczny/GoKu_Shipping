@@ -2814,12 +2814,10 @@ function openMatchPreviewModal(cellIndex) {
    etsyWrapper.appendChild(orderRow);
    etsyBox.style.marginBottom = "0.5px";   // 0.5px space under the image
    const isQtyMulti = (window.cachedOrderItems[cellIndex]?.quantity ?? window.cachedOrderItems[cellIndex]?.qty ?? 1) > 1;
-   etsyWrapper.appendChild(makeDetail(qtyVal, isQtyMulti)); // Qty (bold if >1)
    const qtyRow = makeDetail(qtyVal, isQtyMulti);           // Qty
    qtyRow.style.fontSize = "0.9em";   // match order number size
    qtyRow.style.height   = "16px";    // avoid clipping
    etsyWrapper.appendChild(qtyRow);
-   etsyWrapper.appendChild(makeDetail(metalVal, true));  // ► bold Metal
    const metalRow = makeDetail(metalVal, true);          // Metal
    metalRow.style.fontSize = "0.9em";    // match order number size
    metalRow.style.height   = "16px";
