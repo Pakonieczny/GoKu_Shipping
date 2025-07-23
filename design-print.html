@@ -81,9 +81,11 @@ window.addEventListener("load", async () => {
       content    : pages
     };
 
-     await autoPrint(docDef);          // one print dialog ➜ all four labels
-     // notify parent that print dialog opened
+   // only notify once the print dialog completes
+   window.addEventListener("afterprint", () => {
      window.parent.postMessage({ printSuccess: true }, "*");
+   }, { once: true });
+   await autoPrint(docDef);
   }
 
 /* ──────────────────────────────────────────────────────────
@@ -109,9 +111,11 @@ async function handleLegacy(dataObj){
         absolutePosition:{ x:15, y:19 } }
     ]
   };
-   await autoPrint(docDef);
-   // notify parent that print dialog opened
-   window.parent.postMessage({ printSuccess: true }, "*");}
+     // only notify once the print dialog completes
+     window.addEventListener("afterprint", () => {
+       window.parent.postMessage({ printSuccess: true }, "*");
+     }, { once: true });
+     await autoPrint(docDef);
 
 /* ──────────────────────────────────────────────────────────
  *  HELPERS
