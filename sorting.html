@@ -298,12 +298,8 @@
         style="display: flex; flex-wrap: wrap; gap: 10px;"
       ></div>
     </div>
-    <div class="modal-footer">
-      <!-- “Save” button that will perform the array updates and then close the modal -->
-      <a href="#!" id="saveMatchesBtn" class="waves-effect waves-green btn">Save</a>
-      <!-- “Cancel” button that closes the modal without saving changes -->
-      <a href="#!" class="modal-close waves-effect waves-red btn">Cancel</a>
-    </div>
+     <!-- footer removed—buttons relocated dynamically -->
+     <div class="modal-footer" style="display:none;"></div>
   </div>
 
     <!-- 1) Firebase (compat mode) – must be above your main sorting code -->
@@ -2631,8 +2627,8 @@ function openMatchPreviewModal(cellIndex) {
   skipWrapper.style.top = "10px";
   skipWrapper.style.right = "15px";
   skipWrapper.style.display = "flex";
-  skipWrapper.style.flexDirection = "column";
-  skipWrapper.style.alignItems = "flex-end";
+  skipWrapper.style.flexDirection = "row";
+  skipWrapper.style.alignItems = "center";
 
   const skipTitle = document.createElement("div");
   skipTitle.textContent = "Skip Matching:";
@@ -2658,6 +2654,11 @@ function openMatchPreviewModal(cellIndex) {
   label.appendChild(skipInput);
   label.appendChild(chkSpan);
   skipWrapper.appendChild(label);
+ 
+   // ── relocate Save button next to Skip Matching title ──
+   const saveBtn = document.getElementById("saveMatchesBtn");
+   saveBtn.style.marginRight = "30px";    // 30px gap to title
+   skipWrapper.insertBefore(saveBtn, skipTitle);
 
   container.appendChild(skipWrapper);
 
