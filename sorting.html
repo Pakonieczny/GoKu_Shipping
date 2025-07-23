@@ -298,8 +298,12 @@
         style="display: flex; flex-wrap: wrap; gap: 10px;"
       ></div>
     </div>
-     <!-- footer removed—buttons relocated dynamically -->
-     <div class="modal-footer" style="display:none;"></div>
+     <div class="modal-footer">
+       <!-- keep Save here so JS can grab it -->
+       <a href="#!" id="saveMatchesBtn" class="waves-effect waves-green btn">Save</a>
+       <!-- hide only the Cancel link -->
+       <a href="#!" class="modal-close waves-effect waves-red btn" style="display:none;">Cancel</a>
+     </div>
   </div>
 
     <!-- 1) Firebase (compat mode) – must be above your main sorting code -->
