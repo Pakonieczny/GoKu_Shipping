@@ -1777,7 +1777,7 @@
 
       let firstSnap = true;                       // 🔑 skip the initial payload
       db.collection("Brites_Orders")
-        .doc("shipping-scan-1")
+        .doc("design-scan-???")
         .onSnapshot(docSnap => {
           if (!window.isEmployeeLoggedIn) return;
 
@@ -1800,7 +1800,7 @@
 
               /* one-shot: wipe the field so it can’t be reused */
               db.collection("Brites_Orders")
-                .doc("shipping-scan-1")
+                .doc("design-scan-???")
                 .set({ "Order Number": firebase.firestore.FieldValue.delete() }, { merge:true });
 
             }
