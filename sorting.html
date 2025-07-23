@@ -1799,6 +1799,14 @@ async function fillPreviewBoxes(items) {
     qtyInput.style.top  = previewTop  + 107 + "px";
     qtyInput.value = " Qty: " + (item.quantity != null ? item.quantity : 0);
 
+    // bold Quantity if > 1
+    {
+      const qVal = Number(item.quantity ?? item.qty ?? 0);
+      if (qVal > 1) {
+        qtyInput.style.fontWeight = "bold";
+      }
+    }
+
     const metalInput = document.createElement("input");
     metalInput.type  = "text";
     metalInput.readOnly = true;
