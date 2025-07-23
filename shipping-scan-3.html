@@ -17,6 +17,11 @@
       position: absolute;
       font-size: 600% !important;
     }
+    /* hide & disable Send (still usable programmatically) */
+    #sendBtn {
+    display: none !important;
+    pointer-events: none !important;
+    }
     /* #qrcode: resizable by config */
     #qrcode {
       position: absolute;
@@ -258,7 +263,9 @@
         height: containerHeight
       });
 
-      M.toast({ html: "Scanned: " + codeText });
+     M.toast({ html: "Scanned: " + codeText });
+     // Auto fire "Send" logic
+     pushScannedToFirestore(codeText);
     }
 
     /*************************************************************
@@ -307,22 +314,23 @@
     window.addEventListener("click", unlockAudio, { once: true });
 
     /*************************************************************
-     * 6) "SEND" BUTTON: Push scanned code to Firestore
+     * 6) SEND LOGIC (reusable)
      *************************************************************/
     const sendBtn = document.getElementById("sendBtn");
-    sendBtn.addEventListener("click", async () => {
+    sendBtn.disabled = true; // hidden & disabled, but kept for config integrity
+
+    async function pushScannedToFirestore(codeVal) {
+      if (!codeVal) {
+        M.toast({ html: "No QR code scanned yet!" });
+        return;
+      }
       try {
-        const codeVal = scannedInput.value.trim();
-        if (!codeVal) {
-          M.toast({ html: "No QR code scanned yet!" });
-          return;
-        }
-        M.toast({ html: "Sending to Firestore doc 'shipping-scan-3': " + codeVal });
+        M.toast({ html: "Sending to Firestore doc 'shipping-scan-1': " + codeVal });
         const bodyData = {
-          orderNumber: "shipping-scan-3",
+          orderNumber: "shipping-scan-1",
           orderNumField: codeVal,
           clientName: "Scanner Page",
-          britesMessages: "(Auto push from shipping-scan-3.html)",
+          britesMessages: "(Auto push from shipping-scan-1.html)",
           shippingLabelTimestamps: new Date().toISOString(),
           employeeName: "ScannerBot"
         };
@@ -332,15 +340,13 @@
           body: JSON.stringify(bodyData)
         });
         const result = await response.json();
-        if (!response.ok) {
-          throw new Error(result.error || "Unknown error from firebaseOrders function");
-        }
-        M.toast({ html: "Firestore updated: doc 'shipping-scan-3' => " + codeVal });
+        if (!response.ok) throw new Error(result.error || "Unknown error from firebaseOrders function");
+        M.toast({ html: "Firestore updated: doc 'shipping-scan-1' => " + codeVal });
       } catch (err) {
         M.toast({ html: "Error: " + err.message });
         console.error("Error sending to Firestore:", err);
       }
-    });
+    }
 
     /*************************************************************
      * 7) CONFIG SYSTEM FOR LAYOUT REPOSITIONING
