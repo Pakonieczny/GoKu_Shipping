@@ -191,6 +191,10 @@
     }
     .modal-overlay.show {
       opacity: 1;
+
+     /* Hide the Cancel button in matchesModal */
+     #matchesModal .modal-footer .modal-close{display:none !important;}
+
     }
 
     /* === custom button colour (outline blue) ================= */
@@ -298,12 +302,12 @@
         style="display: flex; flex-wrap: wrap; gap: 10px;"
       ></div>
     </div>
-     <div class="modal-footer">
-       <!-- keep Save here so JS can grab it -->
-       <a href="#!" id="saveMatchesBtn" class="waves-effect waves-green btn">Save</a>
-       <!-- hide only the Cancel link -->
-       <a href="#!" class="modal-close waves-effect waves-red btn" style="display:none;">Cancel</a>
-     </div>
+    <div class="modal-footer">
+      <!-- “Save” button that will perform the array updates and then close the modal -->
+      <a href="#!" id="saveMatchesBtn" class="waves-effect waves-green btn">Save</a>
+      <!-- “Cancel” button that closes the modal without saving changes -->
+      <a href="#!" class="modal-close waves-effect waves-red btn">Cancel</a>
+    </div>
   </div>
 
     <!-- 1) Firebase (compat mode) – must be above your main sorting code -->
@@ -2625,21 +2629,42 @@ function openMatchPreviewModal(cellIndex) {
 
   container.innerHTML = "";
 
-  /* ‑‑‑ Skip‑matching UI (top‑right) ‑‑‑ */
-  const skipWrapper = document.createElement("div");
-  skipWrapper.style.position = "absolute";
-  skipWrapper.style.top = "10px";
-  skipWrapper.style.right = "15px";
-  skipWrapper.style.display = "flex";
-  skipWrapper.style.flexDirection = "row";
-  skipWrapper.style.alignItems = "center";
-
-  const skipTitle = document.createElement("div");
-  skipTitle.textContent = "Skip Matching:";
-  skipTitle.style.fontWeight = "bold";
-  skipTitle.style.fontSize = "0.7em";
-  skipTitle.style.marginBottom = "5px";
-  skipWrapper.appendChild(skipTitle);
+   /* --- Skip-matching UI (top-right) + relocated Save button --- */
+   const skipWrapper = document.createElement("div");
+   skipWrapper.style.position = "absolute";
+   skipWrapper.style.top = "10px";
+   skipWrapper.style.right = "15px";
+   skipWrapper.style.display = "flex";
+   skipWrapper.style.flexDirection = "column";
+   skipWrapper.style.alignItems = "flex-end";
+ 
+   // Grab existing Save button from footer and move it up here
+   const saveBtn = document.getElementById("saveMatchesBtn");
+   if (saveBtn) {
+     saveBtn.style.position = "static";
+     saveBtn.style.margin = "0";
+   }
+ 
+   const skipTitle = document.createElement("div");
+   skipTitle.textContent = "Skip Matching:";
+   skipTitle.style.fontWeight = "bold";
+   skipTitle.style.fontSize = "0.7em";
+   skipTitle.style.marginBottom = "5px";
+ 
+   // Top bar: Save button 30px to the left of the title, vertically aligned
+   const topBar = document.createElement("div");
+   topBar.style.display = "flex";
+   topBar.style.alignItems = "center";
+   topBar.style.gap = "30px";              // ← exact 30px spacing
+ 
+   if (saveBtn) topBar.appendChild(saveBtn);
+   topBar.appendChild(skipTitle);
+ 
+   skipWrapper.appendChild(topBar);
+ 
+   // Hide the Cancel button (in case CSS didn’t catch it)
+   const cancelBtn = modalElem.querySelector(".modal-close");
+   if (cancelBtn) cancelBtn.style.display = "none";
 
   // --- Materialize checkbox wrapper ---
   const label = document.createElement("label");
@@ -2658,11 +2683,6 @@ function openMatchPreviewModal(cellIndex) {
   label.appendChild(skipInput);
   label.appendChild(chkSpan);
   skipWrapper.appendChild(label);
- 
-   // ── relocate Save button next to Skip Matching title ──
-   const saveBtn = document.getElementById("saveMatchesBtn");
-   saveBtn.style.marginRight = "30px";    // 30px gap to title
-   skipWrapper.insertBefore(saveBtn, skipTitle);
 
   container.appendChild(skipWrapper);
 
