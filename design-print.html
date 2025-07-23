@@ -81,11 +81,9 @@ window.addEventListener("load", async () => {
       content    : pages
     };
 
-   // only notify once the print dialog completes
-   window.addEventListener("afterprint", () => {
-     window.parent.postMessage({ printSuccess: true }, "*");
-   }, { once: true });
+   // show print dialog, then notify parent once it's closed
    await autoPrint(docDef);
+   window.parent.postMessage({ printSuccess: true }, "*");
   }
 
 /* ──────────────────────────────────────────────────────────
@@ -111,11 +109,9 @@ async function handleLegacy(dataObj){
         absolutePosition:{ x:15, y:19 } }
     ]
   };
-     // only notify once the print dialog completes
-     window.addEventListener("afterprint", () => {
-       window.parent.postMessage({ printSuccess: true }, "*");
-     }, { once: true });
-     await autoPrint(docDef);
+    // show print dialog, then notify parent once it's closed
+    await autoPrint(docDef);
+    window.parent.postMessage({ printSuccess: true }, "*");
 
 /* ──────────────────────────────────────────────────────────
  *  HELPERS
@@ -142,7 +138,14 @@ async function autoPrint(docDefinition){
       const frame = document.createElement("iframe");
       frame.style.visibility = "hidden";
       frame.src = url;
-      frame.onload = () => { frame.contentWindow.print(); res(); };
+         frame.onload = () => {
+         // resolve only after user closes the native print dialog
+         frame.contentWindow.addEventListener("afterprint", () => {
+           res();
+           document.body.removeChild(frame);
+         }, { once: true });
+         frame.contentWindow.print();
+       };
       document.body.appendChild(frame);
     });
   });
