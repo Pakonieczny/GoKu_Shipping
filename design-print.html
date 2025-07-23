@@ -81,9 +81,9 @@ window.addEventListener("load", async () => {
       content    : pages
     };
 
-     await autoPrint(docDef);          // one print dialog ➜ all four labels
-     // notify parent that print dialog opened
-     window.parent.postMessage({ printSuccess: true }, "*");
+      // show dialog, then notify parent once it's closed
+      await autoPrint(docDef);
+      window.parent.postMessage({ printSuccess: true }, "*");
   }
 
 /* ──────────────────────────────────────────────────────────
@@ -109,9 +109,9 @@ async function handleLegacy(dataObj){
         absolutePosition:{ x:15, y:19 } }
     ]
   };
-   await autoPrint(docDef);
-   // notify parent that print dialog opened
-   window.parent.postMessage({ printSuccess: true }, "*");
+      // show dialog, then notify parent once it's closed
+      await autoPrint(docDef);
+      window.parent.postMessage({ printSuccess: true }, "*");
 }
 
 /* ──────────────────────────────────────────────────────────
@@ -139,7 +139,14 @@ async function autoPrint(docDefinition){
       const frame = document.createElement("iframe");
       frame.style.visibility = "hidden";
       frame.src = url;
-      frame.onload = () => { frame.contentWindow.print(); res(); };
+       frame.onload = () => {
+         // wait until the user actually closes the print dialog
+         frame.contentWindow.addEventListener("afterprint", () => {
+           res();
+           document.body.removeChild(frame);
+         }, { once: true });
+         frame.contentWindow.print();
+       };
       document.body.appendChild(frame);
     });
   });
