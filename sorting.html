@@ -2638,11 +2638,11 @@ function openMatchPreviewModal(cellIndex) {
    skipWrapper.style.flexDirection = "column";
    skipWrapper.style.alignItems = "flex-end";
  
-   // Grab existing Save button from footer and move it up here
-   const saveBtn = document.getElementById("saveMatchesBtn");
-   if (saveBtn) {
-     saveBtn.style.position = "static";
-     saveBtn.style.margin = "0";
+   // Grab existing Save button from footer and move it up here (avoid redeclaring const saveBtn)
+   const saveBtnMove = document.getElementById("saveMatchesBtn");
+   if (saveBtnMove) {
+     saveBtnMove.style.position = "static";
+     saveBtnMove.style.margin = "0";
    }
  
    const skipTitle = document.createElement("div");
@@ -2657,7 +2657,7 @@ function openMatchPreviewModal(cellIndex) {
    topBar.style.alignItems = "center";
    topBar.style.gap = "30px";              // ← exact 30px spacing
  
-   if (saveBtn) topBar.appendChild(saveBtn);
+   if (saveBtnMove) topBar.appendChild(saveBtnMove);
    topBar.appendChild(skipTitle);
  
    skipWrapper.appendChild(topBar);
