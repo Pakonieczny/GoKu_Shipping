@@ -334,6 +334,16 @@ let matchPrintFlowInProgress = false;
 let pendingFetchControllers = [];
 let globalRunId = 0;
 let currentSaveHandler = null;      // tracks active “Save” listener
+function parkSaveBtn() {
+  const btn    = document.getElementById("saveMatchesBtn");
+  const footer = document.querySelector("#matchesModal .modal-footer");
+  if (btn && footer && !footer.contains(btn)) {
+    footer.appendChild(btn);
+    btn.style.display  = "";
+    btn.style.position = "static";
+    btn.style.margin   = "0";
+  }
+}
 let skipMatches = {};   // { cellIndex: true }  
 let earringCells  = {};            // { cellIdx : true }
 let earringState  = {};            // { cellIdx : { firstImg:null } }
@@ -2620,6 +2630,7 @@ enableSendMatch();
  * openMatchPreviewModal
  ********************************************************/
 function openMatchPreviewModal(cellIndex) {
+  parkSaveBtn();
   const modalElem = document.getElementById("matchesModal");
   const container = document.getElementById("matchesGridContainer");
 
@@ -2990,9 +3001,7 @@ container.appendChild(matchedWrapper);       // ← keep this line
   const saveBtn = document.getElementById("saveMatchesBtn");
 
   // Remove the previously attached handler, if any
-  if (currentSaveHandler) {
-    saveBtn.removeEventListener("click", currentSaveHandler);
-  }
+  if (saveBtn && currentSaveHandler) saveBtn.removeEventListener("click", currentSaveHandler);
 
   // Define a fresh handler for THIS modal instance
   currentSaveHandler = function () {
@@ -3077,7 +3086,7 @@ container.appendChild(matchedWrapper);       // ← keep this line
   };
 
   // Attach the fresh handler
-  saveBtn.addEventListener("click", currentSaveHandler);
+  if (saveBtn) saveBtn.addEventListener("click", currentSaveHandler);
 
   // -------------------------------------------------------------
   // 3) Open the modal
