@@ -1519,13 +1519,37 @@ document.addEventListener("DOMContentLoaded", () => {
       /* ensure sidebar row exists – if missing, fetch it and push the
         receipt object back into `allOpenReceipts` so
         buildNewOrderList()` can recreate the row */
-      if (!document.querySelector(`.new-order-box[data-receipt='${rid}']`)){
-       const ord = await pullEtsyOrderDetails(rid);
-       if (ord){
-         allOpenReceipts.push(ord);      // restore master list
-          orderCache[rid] = ord.transactions || [];
+       if (!document.querySelector(`.new-order-box[data-receipt='${rid}']`)){
+         const ord = await pullEtsyOrderDetails(rid);
+         if (ord){
+           /* ✨ rebuild helper meta so buildNewOrderList can sort/render */
+           let ts = null;
+           if (Array.isArray(ord.transactions) &&
+               ord.transactions[0]?.expected_ship_date){
+             ts = ord.transactions[0].expected_ship_date;
+           }
+           if (!ts) ts = ord.dispatch_date || ord.ship_by_date || 0;
+           ord._shipTS  = ts;
+           ord._shipStr = ts
+             ? new Date(ts*1000).toLocaleDateString(
+                 "en-US",{month:"short",day:"2-digit"})
+             : "N/A";
+ 
+           const mc = { Gold:0, Silver:0, "Rose G":0, "14K":0 };
+           (ord.transactions||[]).forEach(t=>{
+             const q   = t.quantity||1;
+             const val = (t._metalKey||"").toLowerCase();
+             if (/14k/.test(val))          mc["14K"]    += q;
+             else if (/rose/.test(val))    mc["Rose G"] += q;
+             else if (/silv/.test(val))    mc.Silver    += q;
+             else if (/gold/.test(val))    mc.Gold      += q;
+           });
+           ord._metalCounts = mc;
+ 
+           allOpenReceipts.push(ord);      // restore master list
+           orderCache[rid] = ord.transactions || [];
+         }
        }
-      }
  
        /* restore preview boxes */
        orderCache[rid]?.forEach(tx=>{
@@ -1533,8 +1557,9 @@ document.addEventListener("DOMContentLoaded", () => {
        });
      }
  
-     /* redraw sidebar & pagination, then sync everything */
-     await buildNewOrderList(orderListOffset || 0);   // refresh UI
+      /* redraw sidebar starting at page 1 so restored rows show */
+      orderListOffset = 0;
+      await buildNewOrderList(0);                      // refresh UI
  
      /* sync everything */
      persistCompleted();
