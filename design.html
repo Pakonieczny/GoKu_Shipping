@@ -863,6 +863,7 @@ document.addEventListener("DOMContentLoaded", () => {
          '</span>';
 
           orderListOffset = 0;                 // reset to first page
+          allOpenReceipts = [];                // 🚀 clear cache → next call re-fetches
           const gotRows = await buildNewOrderList(orderListOffset);
 
 
@@ -1546,7 +1547,11 @@ document.addEventListener("DOMContentLoaded", () => {
            });
            ord._metalCounts = mc;
  
-           allOpenReceipts.push(ord);      // restore master list
+             /* avoid duplicates before pushing back */
+            if (!allOpenReceipts.some(r => String(r.receipt_id) === String(rid))){
+              allOpenReceipts.push(ord);    // restore master list
+            }
+            
            orderCache[rid] = ord.transactions || [];
          }
        }
