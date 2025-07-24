@@ -1516,21 +1516,25 @@ document.addEventListener("DOMContentLoaded", () => {
        completedOrders.delete(rid);        // remove green status
        selectedOrders.add(rid);            // mark orange again
  
-       /* ensure sidebar row exists – addOrderRow() is your existing helper
-          from buildNewOrderList; swap for buildNewOrderList(0) if needed */
-       if (!document.querySelector(`.new-order-box[data-receipt='${rid}']`)){
-         const ord = await pullEtsyOrderDetails(rid);
-         if (ord){
-           addOrderRow(ord);
-           orderCache[rid] = ord.transactions || [];
-         }
+      /* ensure sidebar row exists – if missing, fetch it and push the
+        receipt object back into `allOpenReceipts` so
+        buildNewOrderList()` can recreate the row */
+      if (!document.querySelector(`.new-order-box[data-receipt='${rid}']`)){
+       const ord = await pullEtsyOrderDetails(rid);
+       if (ord){
+         allOpenReceipts.push(ord);      // restore master list
+          orderCache[rid] = ord.transactions || [];
        }
+      }
  
        /* restore preview boxes */
        orderCache[rid]?.forEach(tx=>{
          if (!tx._inGrid) addPreviewBox(tx);
        });
      }
+ 
+     /* redraw sidebar & pagination, then sync everything */
+     await buildNewOrderList(orderListOffset || 0);   // refresh UI
  
      /* sync everything */
      persistCompleted();
