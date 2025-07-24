@@ -1487,8 +1487,11 @@ document.addEventListener("DOMContentLoaded", () => {
       printFrame.style.height     = "1px";
       printFrame.src = "design-print.html";      // loads silently, prints inside
       document.body.appendChild(printFrame);
-     // ── clear all remaining previews from the photo grid ──
-     document.getElementById("photoGridContainer").innerHTML = "";
+
+      /* clear DOM *and* in-memory map so no orphan wraps inflate counters */
+      document.getElementById("photoGridContainer").innerHTML = "";
+      gridElements.clear();      // 🆕 purge stale references
+      updateCounters();          // 🆕 keep the badges in sync
     }
 
     M.toast({ html: "Completed orders removed — pages recalculated" });
