@@ -1514,8 +1514,11 @@ document.addEventListener("DOMContentLoaded", () => {
      }
  
      for (const rid of lastClearedReceipts){
-       completedOrders.delete(rid);        // remove green status
-       selectedOrders.add(rid);            // mark orange again
+        completedOrders.delete(rid);        // remove green status
+        selectedOrders.add(rid);            // mark orange again
+ 
+        /* 🔄  clear any leftover wraps so counters don’t double */
+        removePreviewBoxesForOrder(rid);    // resets _inGrid flags too
  
       /* ensure sidebar row exists – if missing, fetch it and push the
         receipt object back into `allOpenReceipts` so
@@ -1551,7 +1554,7 @@ document.addEventListener("DOMContentLoaded", () => {
             if (!allOpenReceipts.some(r => String(r.receipt_id) === String(rid))){
               allOpenReceipts.push(ord);    // restore master list
             }
-            
+
            orderCache[rid] = ord.transactions || [];
          }
        }
