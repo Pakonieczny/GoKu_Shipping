@@ -22,9 +22,7 @@ exports.handler = async event => {
      /* Etsy wants URL-encoded form data for tracking */
      const params = new URLSearchParams({
        tracking_code: tracking,
-       carrier_name : carrier,
-       notify_buyer : "true",
-       send_bcc     : "true"
+       carrier_name : carrier
      });
 
     const etsyResp = await fetch(url, {
