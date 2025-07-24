@@ -17,20 +17,20 @@ exports.handler = async event => {
     const url = `https://openapi.etsy.com/v3/application/shops/${shopId}` +
                 `/receipts/${receiptId}/tracking`;
 
-    /* Etsy wants JSON in v3 */
-    const body = JSON.stringify({
-      tracking_code : tracking,
-      carrier_name  : carrier,
-      notify_buyer  : true,   // emails buyer
-      send_bcc      : true    // emails seller
-    });
+     /* Etsy wants URL-encoded form data for tracking */
+     const params = new URLSearchParams({
+       tracking_code: tracking,
+       carrier_name : carrier,
+       notify_buyer : "true",
+       send_bcc     : "true"
+     });
 
     const etsyResp = await fetch(url, {
       method : "POST",
       headers: {
         "Authorization": `Bearer ${token}`,
         "x-api-key"    : apiKey,
-        "Content-Type" : "application/json"
+        "Content-Type" : "application/x-www-form-urlencoded"
       },
       body
     });
@@ -38,7 +38,7 @@ exports.handler = async event => {
     /* pass Etsy’s raw status back so the client can act on 401/403 */
     return {
       statusCode: etsyResp.status,
-      body      : await etsyResp.text()
+      body: params.toString()      : await etsyResp.text()
     };
   } catch (err) {
     return { statusCode: 500,

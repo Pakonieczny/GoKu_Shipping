@@ -67,7 +67,7 @@ function pickDomainFromHost(event) {
   /* ── query-param overrides ───────────────────────────────────────── */
   switch (paramLower) {
     case "sorting":      return SORTING_DOMAIN;
-    case "sorting-2":      return SORTING2_DOMAIN;  
+    case "sorting-2":    return SORTING2_DOMAIN;  
     case "weld-1":       return WELD1_DOMAIN;
     case "design-1":     return DESIGN1_DOMAIN;
     case "design-message":     return DESIGNMESSAGE_DOMAIN;
