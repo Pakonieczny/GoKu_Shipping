@@ -426,7 +426,9 @@
 <button id="openConfigBtn"     class="btn waves-effect waves-light">Open Config</button>
 <button id="updateOrderListBtn"class="btn waves-effect waves-light">Update</button>
 <button id="clearBtn"          class="btn red lighten-1">Clear</button>
-<!-- <button id="clearCompletedBtn" class="btn orange lighten-1">Clear Completed</button>-->
+
+<!-- NEW orange “Undo Complete” button (same drag-friendly style) -->
+<button id="undoCompleteBtn"  class="btn orange" style="position:absolute;left:170px;top:220px;width:160px;height:36px;">Undo&nbsp;Complete</button>
 
 <!-- NEW green “Complete !” button (drag-positionable inside the modal) -->
 <button id="completeBtn"
@@ -545,6 +547,9 @@ const processedTxIds = new Set();      // guards against duplicate preview tiles
 
 /* storage keys */
 const COMPLETED_KEY = "completedOrders";   // green-list
+
+// ——— buffer that holds the last batch we cleared (for Undo Complete) ———
+let lastClearedReceipts = [];
 
 /* ─── helper: recount items and update the little badge ───────────── */
 function refreshRowCount(receiptId){
@@ -710,6 +715,7 @@ const configIDs = [
   "newOrderContainer",
   "pageButtonsContainer",
   "completeBtn",          // ← NEW
+  "undoCompleteBtn",      // ← NEW
   "goldCounter",
   "silverCounter",
   "roseCounter",
@@ -729,6 +735,10 @@ document.addEventListener("DOMContentLoaded", () => {
   if (completeBtn) {
     completeBtn.addEventListener("click", handleCompleteClick);
   }
+
+  /* wire “Undo Complete” */
+  const undoBtn = document.getElementById("undoCompleteBtn");
+  if (undoBtn) undoBtn.addEventListener("click", handleUndoCompleteClick);
 
   /* ❶  wire "Complete !" button */
   document.getElementById("completeBtn").addEventListener("click", handleCompleteClick);
@@ -1404,6 +1414,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
      /* 3️⃣  defer removal until print dialog confirms */
      const printIDs = Array.from(greenIDs);
+     lastClearedReceipts = [...printIDs];          // ← keep for Undo Complete
      function onPrintComplete(e) {
        if (e.data && e.data.printSuccess) {
          printIDs.forEach(id => {
@@ -1492,6 +1503,45 @@ document.addEventListener("DOMContentLoaded", () => {
     obj[nowMonth] = [ ...completedOrders ];                    // overwrite bucket
     localStorage.setItem(COMPLETED_KEY, JSON.stringify(obj));
   }
+
+   /* ───────────────── handleUndoCompleteClick ───────────────── */
+   async function handleUndoCompleteClick(){
+ 
+    if (!lastClearedReceipts.length){
+       M.toast({ html:"Nothing to undo" });    // safety guard
+       return;
+     }
+ 
+     for (const rid of lastClearedReceipts){
+       completedOrders.delete(rid);        // remove green status
+       selectedOrders.add(rid);            // mark orange again
+ 
+       /* ensure sidebar row exists – addOrderRow() is your existing helper
+          from buildNewOrderList; swap for buildNewOrderList(0) if needed */
+       if (!document.querySelector(`.new-order-box[data-receipt='${rid}']`)){
+         const ord = await pullEtsyOrderDetails(rid);
+         if (ord){
+           addOrderRow(ord);
+           orderCache[rid] = ord.transactions || [];
+         }
+       }
+ 
+       /* restore preview boxes */
+       orderCache[rid]?.forEach(tx=>{
+         if (!tx._inGrid) addPreviewBox(tx);
+       });
+     }
+ 
+     /* sync everything */
+     persistCompleted();
+     persistSelection();
+     updateCounters();
+     applyMetalFilter();
+     highlightSavedRows();
+ 
+     lastClearedReceipts = [];             // clear the buffer
+     M.toast({ html:"Undo Complete – orders restored" });
+   }
 
   /* -------------------------------------------------------------
      Clear all completed-order memory & remove green highlights
