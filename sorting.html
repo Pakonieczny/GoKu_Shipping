@@ -333,6 +333,8 @@ let partialMatches = {};
 let matchPrintFlowInProgress = false;
 let pendingFetchControllers = [];
 let globalRunId = 0;
+// Parallel to croppedImagesArray (Etsy grid images)
+let croppedDescsArray = [];  // croppedDescsArray[i] = ≤20-word charm description
 let currentSaveHandler = null;      // tracks active “Save” listener
 function parkSaveBtn() {
   const btn    = document.getElementById("saveMatchesBtn");
@@ -1595,6 +1597,118 @@ async function openAIAnalyzePhoto(base64Image) {
   };
 }
 
+/********************************************************
+ * describeCharmImage(base64) → { desc: "≤20 words" }
+ ********************************************************/
+async function describeCharmImage(base64Image, signal = undefined) {
+  const controller = new AbortController();
+  pendingFetchControllers.push(controller);
+
+  const payload = {
+    model: "gpt-4.1-mini",
+    messages: [{
+      role: "user",
+      content: [
+        { type: "text", text:
+          "Return JSON EXACTLY like: {\"desc\":\"<≤20 words>\"}\n" +
+          "Describe ONLY the charm/pendant (silhouette, engraving/features, pose/orientation). " +
+          "Ignore chains, hoops, hands, backgrounds. ≤20 words. JSON only."
+        },
+        { type: "image_url", image_url: { url: base64Image, detail: "high" } }
+      ]
+    }],
+    max_tokens: 120
+  };
+
+  try {
+    const resp = await fetch(functionsBaseUrl + "/openaiProxy", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+      signal: controller.signal
+    });
+    const data = await resp.json();
+    let raw = (data.choices?.[0]?.message?.content || "").trim();
+    raw = raw.replace(/^```(\w+)?/, "").replace(/```$/, "").trim();
+    const obj = JSON.parse(raw);
+    let desc = (obj.desc || "").trim();
+    // Hard cap: 20 words
+    desc = desc.split(/\s+/).slice(0, 20).join(" ");
+    return { desc };
+  } catch (e) {
+    console.warn("describeCharmImage failed:", e);
+    if (/429|rate.?limit/i.test(String(e?.message || e))) noteRateLimit();
+    return { desc: "" };
+  }
+}
+
+/********************************************************
+ * textSimilarity(a,b) → 0..1  (token Dice coefficient)
+ * – simple, fast, local string similarity for descriptions
+ ********************************************************/
+function textSimilarity(a = "", b = "") {
+  if (!a || !b) return 0;
+  const stop = new Set(["a","an","the","of","and","with","to","for","on","in","at","by","from","is","are","it","its","as"]);
+  const tok = s => s.toLowerCase()
+    .replace(/[^a-z0-9\s]/g, " ")
+    .split(/\s+/).filter(Boolean)
+    .filter(w => !stop.has(w));
+  const A = new Set(tok(a));
+  const B = new Set(tok(b));
+  if (A.size === 0 || B.size === 0) return 0;
+  let inter = 0;
+  A.forEach(w => { if (B.has(w)) inter++; });
+  const dice = (2 * inter) / (A.size + B.size);
+  return dice; // 0..1
+}
+
+/********************************************************
+ * ensureImageDescriptions()
+ * – builds descriptions for ALL Etsy cropped images and
+ *   ALL user matrix images that lack a .desc
+ ********************************************************/
+async function ensureImageDescriptions() {
+  // 1) Etsy cropped images → croppedDescsArray[i]
+  const needEtsy = [];
+  for (let i = 0; i < croppedImagesArray.length; i++) {
+    if (!croppedImagesArray[i]) continue;
+    if (!croppedDescsArray[i] || !croppedDescsArray[i].trim()) needEtsy.push(i);
+  }
+
+  if (needEtsy.length) {
+    showProgressModal("Describing Etsy Photos…", needEtsy.length);
+    let done = 0;
+    for (const i of needEtsy) {
+      const { desc } = await describeCharmImage(croppedImagesArray[i]);
+      croppedDescsArray[i] = desc || "";
+      done++;
+      updateProgressModal(done, needEtsy.length);
+      await adaptiveCooldown(1);
+    }
+    closeProgressModal();
+  }
+
+  // 2) User images → userImagesArray[].desc
+  const needUser = userImagesArray
+    .map((u, idx) => ({ u, idx }))
+    .filter(({ u }) => !u.skipForCharm && !u.desc)
+    .map(({ idx }) => idx);
+
+  if (needUser.length) {
+    showProgressModal("Describing Matrix Photos…", needUser.length);
+    let done = 0;
+    for (const idx of needUser) {
+      const u = userImagesArray[idx];
+      const { desc } = await describeCharmImage(u.data);
+      u.desc = desc || "";
+      done++;
+      updateProgressModal(done, needUser.length);
+      await adaptiveCooldown(1);
+    }
+    closeProgressModal();
+  }
+}
+
 // --------------- Master Analysis Function ---------------
 async function analyzeUserImagesViaOpenAI() {
   /* -- make sure stripExtension exists in this scope -------- */
@@ -2297,7 +2411,10 @@ async function compareImages(userImage, croppedGridImage, cellIndex, userImageNa
 /********************************************************
  * sendAndMatch with metal filter logic
  ********************************************************/
-async function sendAndMatch() {
+ async function sendAndMatch() {
+  // Intermediary step: ensure all photos have ≤20-word charm descriptions
+  await ensureImageDescriptions();
+
   /* --- progress setup --- */
   let smDone  = 0;
   let smTotal = 0;
@@ -2361,34 +2478,50 @@ async function sendAndMatch() {
     const matchBox = document.getElementById("matchCell" + i);
     const metalVal = document.getElementById("metalCell" + i).value || "";
 
-    /* 🔥 Filter out skipForCharm as well */
+    /* 🔥 Filter out skipForCharm as well */
     const validUserImages = userImagesArray.filter(
-        (u) => !u.skipForCharm && metalFilterOk(metalVal, u.name)
+      (u) => !u.skipForCharm && metalFilterOk(metalVal, u.name)
     );
 
     let firstImg = null;   // remembers first earring photo for this cell
 
-    const comparisonPromises = validUserImages.map((user, j) => {
-      return new Promise((resolve) => {
-        setTimeout(() => {
-          if (runId !== globalRunId) return resolve({ result: { score: 0 }, user });
-          if (matchedUserNames.has(user.name) || matchedCellIndices.has(i)) {
-            return resolve({ result: { score: 0 }, user });
-          }
-          compareImages(
-              user.data,
-              firstImg ? firstImg : croppedImagesArray[i],
-              i,
-              user.name
-            )
-            .then((result) => resolve({ result, user }))
-            .catch((err) => {
-              console.error("First‑pass compare error:", i, user.name, err);
-              resolve({ result: { score: 0 }, user });
-            });
-        }, j * 250);
+    /* NEW: Description-similarity gate (≥ 0.80) */
+    const etsyDesc = (croppedDescsArray[i] || "").trim();
+    const similarityQualified = validUserImages.filter(u =>
+      textSimilarity(etsyDesc, (u.desc || "")) >= 0.80
+    );
+
+    /* If nothing clears the threshold, skip expensive calls for this cell */
+    if (!similarityQualified.length) {
+      // progress bookkeeping remains consistent
+      smDone++;
+      updateProgressModal(smDone, smTotal);
+      await adaptiveCooldown(1);
+      continue;
+    }
+
+  /* Only send ≥80% description matches to OpenAI for final vision comparison */
+      const comparisonPromises = similarityQualified.map((user, j) => {
+        return new Promise((resolve) => {
+          setTimeout(() => {
+            if (runId !== globalRunId) return resolve({ result: { score: 0 }, user });
+            if (matchedUserNames.has(user.name) || matchedCellIndices.has(i)) {
+              return resolve({ result: { score: 0 }, user });
+            }
+            compareImages(
+                user.data,
+                firstImg ? firstImg : croppedImagesArray[i],
+                i,
+                user.name
+              )
+              .then((result) => resolve({ result, user }))
+              .catch((err) => {
+                console.error("First‑pass compare error:", i, user.name, err);
+                resolve({ result: { score: 0 }, user });
+              });
+          }, j * 250);
+        });
       });
-    });
 
     const results = await Promise.all(comparisonPromises);
 
