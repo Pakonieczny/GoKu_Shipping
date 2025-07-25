@@ -357,7 +357,7 @@
       text-decoration:none !important;
       border-bottom:none !important;
     }
-
+    
 
   </style>
 
@@ -387,7 +387,7 @@
     <input type="text" id="labelCreationDate"    readonly />
     <input type="text" id="completedByEmployee"  readonly />
     <!-- 🆕—— new draggable title -->
-    <input id="titleShipping" type="text" value="Shipping_2"  readonly />
+    <input id="titleShipping" type="text" value="Shipping_1"  readonly />
     <!-- ▲ nothing else changes here -->
 
     <!-- Photo Grid -->
@@ -440,6 +440,14 @@
     <input type="text" id="metalCell7" class="text-box-absolute" readonly />
 
     <textarea id="orderDetails" readonly></textarea>
+
+    <!-- ▼▼ NEW COPY BUTTON ▼▼ -->
+    <button id="copyOrderDetailsBtn" class="btn"
+            style="position:absolute; left:260px; top:162px;
+                   width:50px; height:24px; font-size:0.75em;">
+      Copy
+    </button>
+    <!-- ▲▲ NEW COPY BUTTON ▲▲ -->
     <div id="customerMessageHistory" class="msg-box"></div>
     <input id="britesMsgInput"
        type="text"
@@ -521,6 +529,13 @@
 
   <div id="secondaryContainer"></div>
 
+  <!-- Brites chat image-viewer -->
+  <div id="chatImgModal" class="modal">
+    <div class="modal-content" style="padding:0;">
+      <img id="chatImgModalImg" src="" style="width:100%;height:auto;display:block;">
+    </div>
+  </div>
+
   <!-- The user login modal -->
   <div id="userLoginModal" class="modal">
     <!-- A wrapper with position: relative, so children can be absolutely placed -->
@@ -551,6 +566,8 @@
   <!-- 1) Firebase loaded first, define db for global usage -->
   <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
+  <!-- Firebase Storage (needed for image uploads) -->
+  <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
   <script>
     const firebaseConfig = {
       apiKey: "AIzaSyBXhQLsYRa4i0bX1TPTRiElF9Zjy5vSHlA",
@@ -562,6 +579,9 @@
     };
     firebase.initializeApp(firebaseConfig);
     window.db = firebase.firestore(); // define globally
+    firebase.auth().signInAnonymously()
+      .then(()=>console.log("Anon auth ✔"))
+      .catch(err=>console.error("Anon auth ❌", err));
   </script>
 
   <script>
@@ -652,23 +672,23 @@
       }
     }
 
-    /* ─── realtime Brites chat listener ─────────────────────────── */
-    let chatUnsub = null;
-    let firstBatch = true;    // skip beep on initial load
+    /* globals for realtime listener */
+    let chatUnsub = null;        // holds the active Firestore unsubscribe fn
+    let firstBatch = true;       // suppress chime on initial load
+
+    /* ─── realtime Brites chat listener (now supports images) ─────────── */
     function startBritesListener(orderId){
-      if(chatUnsub) chatUnsub();          // switch orders → kill previous watch
+      if(chatUnsub) chatUnsub();
       chatUnsub = db
-        .collection("Brites_Orders")
-        .doc(orderId)
-        .collection("messages")
-        .orderBy("timestamp","asc")
+        .collection("Brites_Orders").doc(orderId)
+        .collection("messages").orderBy("timestamp","asc")
         .onSnapshot(snap=>{
-          console.log("messages snapshot size:", snap.size);
           const box = document.getElementById("customerMessageHistory");
           if(!box) return;
 
           let html = "";
-          /* buyer’s original note */
+
+          /* buyer’s original note (if any) */
           if (window.buyerMessageText && window.buyerMessageText.length){
             const ts = formatChatTimestamp(new Date());
             html += `<div class="msg received">
@@ -681,25 +701,33 @@
             const d  = doc.data();
             const dt = formatChatTimestamp(d.timestamp?.toDate() || new Date());
 
-            /* staff ⇒ right align, customer ⇒ left align */
-            const emp        = (document.getElementById("employeeName").value || "").trim().toLowerCase();
-            const bubbleCls  = (d.senderName && d.senderName.trim().toLowerCase() === emp) ? "sent" : "received";
+            const emp = (document.getElementById("employeeName").value||"")
+                         .trim().toLowerCase();
+            const bubbleCls =
+              (d.senderName && d.senderName.trim().toLowerCase()===emp)
+                ? "sent" : "received";
 
-            html += `<div class="msg ${bubbleCls}">
-                       <span class="meta">${d.senderName} • ${dt}</span>
-                       <span>${escapeHtml(d.text)}</span>
-                     </div>`;
+            /* 🔗 image vs. text */
+            if (d.imageUrl){
+              html += `<div class="msg ${bubbleCls}">
+                         <span class="meta">${d.senderName} • ${dt}</span>
+                         <a href="#!" class="img-link" data-src="${d.imageUrl}">📷 Image</a>
+                       </div>`;
+            } else {
+              html += `<div class="msg ${bubbleCls}">
+                         <span class="meta">${d.senderName} • ${dt}</span>
+                         <span>${escapeHtml(d.text)}</span>
+                       </div>`;
+            }
           });
 
-                /* 🔔 beep for any new message after initial snapshot */
-                if (!firstBatch && snap.docChanges().some(c => c.type === "added")){
-                  playChime();
-                }
-                firstBatch = false;
+          /* 🔔 chime after initial batch */
+          if (!firstBatch && snap.docChanges().some(c=>c.type==="added")) playChime();
+          firstBatch = false;
 
           box.innerHTML = html;
           box.scrollTop = box.scrollHeight;
-          applyChatSpacing();  // keep 5 px / 3 px gaps
+          applyChatSpacing();
         });
     }
     /* basic XSS guard */
@@ -759,12 +787,11 @@
      * Incorporate the new login modal elements in the config array so they're adjustable.
      */
       var configComponentIDs = [
-        "connectEtsyBtn","openConfigBtn","signOutBtn","orderLinkBtn","trackingLinkBtn","etsyOrderNumber",
-        "Photo_Grid","quantityCell0","quantityCell1","quantityCell2","quantityCell3",
+        "connectEtsyBtn","openConfigBtn","signOutBtn","orderLinkBtn","trackingLinkBtn","etsyOrderNumber","Photo_Grid","quantityCell0","quantityCell1","quantityCell2","quantityCell3",
         "quantityCell4","quantityCell5","quantityCell6","quantityCell7",
         "metalCell0","metalCell1","metalCell2","metalCell3",
         "metalCell4","metalCell5","metalCell6","metalCell7",
-        "orderDetails","customerMessageHistory","britesMsgInput","dateOrdered","shipDate",
+        "orderDetails", "copyOrderDetailsBtn", "customerMessageHistory","britesMsgInput","dateOrdered","shipDate",
         "employeeName","trackingNumberInput","carrierSelectWrap","completeOrderBtn",
         "titleOrderDate","titleOrderDate2","titleShipDate",
         "titleSignedInAs",
@@ -841,6 +868,7 @@
       carrierSelectWrap:  { left:539, top:664, width:107, height:23 },
       completeOrderBtn:    { left:1062, top:656, width:155, height:41 },
       titleShipping:        { left: 700, top: 10, width: 200, height: 30 },
+      copyOrderDetailsBtn: { left: 260, top: 162, width: 50, height: 24 },
       signOutBtn:           { left: 1356,  top: 17, width: 103, height: 35 }
 
     };
@@ -936,7 +964,7 @@
       console.log("Configuration saved.");
     }
 
-        document.addEventListener("DOMContentLoaded", function () {
+      document.addEventListener("DOMContentLoaded", function () {
         M.AutoInit();
 
         // Fade in body
@@ -969,11 +997,10 @@
           userLoginModal.open();
         }
 
-
       // "Log In" button for employees
       var employeeLoginBtn = document.getElementById("employeeLoginBtn");
       var employeeNumberInput = document.getElementById("employeeNumberInput");
-
+      
       /* ╭─★ mask each typed digit with * while keeping raw value ★─╮ */
        (function(){
          const inp = employeeNumberInput;
@@ -1036,6 +1063,21 @@
         });
       }
 
+      /* ── Copy ORDER-FROM Name ─────────────────────────── */
+      document.getElementById("copyOrderDetailsBtn")
+        .addEventListener("click", () => {
+          const val = document.getElementById("orderDetails").value || "";
+          const m   = val.match(/ORDER FROM[:\s]+([^\r\n]+)/i); // capture name
+          if (!m || !m[1].trim()) {
+            M.toast({ html: "Name not found." });
+            return;
+          }
+          const name = m[1].trim();
+          navigator.clipboard.writeText(name)
+            .then(()   => M.toast({ html: `Copied ${name} ✔` }))
+            .catch(err => M.toast({ html: "Copy failed: " + err.message }));
+        });
+
       /* Open Config → show modal + disable live UI clicks           */
       document.getElementById("openConfigBtn").addEventListener("click", function(){
         populateConfigTable();
@@ -1085,7 +1127,7 @@
             "&code_challenge=" + encodeURIComponent(codeChallenge) +
             "&code_challenge_method=S256";
 
-            /* 🟢 flag: tell next load we’re mid-OAuth */
+          /* 🟢 flag: tell next load we’re mid-OAuth */
           localStorage.setItem("oauth_in_progress","1");   // <<< ADD THIS LINE
 
           console.log("Redirecting to Etsy OAuth URL:", etsyAuthUrl);
@@ -1275,6 +1317,63 @@
           isDragging = false;
         });
       });
+
+      /* === Drag-drop image upload + click-viewer ===================== */
+      (function attachImageDnD(){
+        const chatBox   = document.getElementById("customerMessageHistory");
+        const orderInp  = document.getElementById("etsyOrderNumber");
+        const empNameEl = document.getElementById("employeeName");
+        if(!chatBox) return;
+
+        /* drag-over glow */
+        const onEnter = e=>{e.preventDefault(); chatBox.style.outline="2px dashed dodgerblue";};
+        const onLeave = e=>{e.preventDefault(); chatBox.style.outline="";};
+        ["dragenter","dragover"].forEach(x=>chatBox.addEventListener(x,onEnter));
+        ["dragleave","drop"].forEach(x=>chatBox.addEventListener(x,onLeave));
+
+        /* drop → Storage → Firestore */
+        chatBox.addEventListener("drop", async e=>{
+          e.preventDefault();
+          const images = [...e.dataTransfer.files].filter(f=>f.type.startsWith("image/"));
+          if(!images.length) return;
+
+          const orderId = orderInp.value.trim();
+          if(!orderId){ M.toast({html:"Enter order # first"}); return; }
+          const staff   = (empNameEl.value||"Staff").trim();
+
+          for (const file of images) {
+            try {
+              const path = `chatImages/${orderId}/${Date.now()}_${file.name}`;
+
+              /* 🚀 one-liner: resumable PUT upload + URL */
+              const url = await window.uploadViaResumable(path, file);
+
+              await db.collection("Brites_Orders")
+                .doc(orderId).collection("messages")
+                .add({
+                  imageUrl  : url,
+                  text      : "Image attachment",
+                  senderName: staff,
+                  senderRole: "staff",
+                  timestamp : firebase.firestore.FieldValue.serverTimestamp()
+                });
+            } catch(err) {
+              console.error("upload error:", err);
+              M.toast({ html: "Upload failed: " + err.message });
+            }
+          }
+        });
+
+        /* click any .img-link → modal */
+        document.addEventListener("click", e=>{
+          if(!e.target.classList.contains("img-link")) return;
+          document.getElementById("chatImgModalImg").src = e.target.dataset.src;
+          M.Modal.getInstance(document.getElementById("chatImgModal")).open();
+        });
+
+        /* one-time modal init */
+        M.Modal.init(document.getElementById("chatImgModal"));
+      })();
 
     /* =========================================================
      *  Send Brites Msg – POST via Netlify function
@@ -1698,7 +1797,7 @@
 
       let firstSnap = true;                       // 🔑 skip the initial payload
       db.collection("Brites_Orders")
-        .doc("shipping-scan-2")
+        .doc("shipping-scan-1")
         .onSnapshot(docSnap => {
           if (!window.isEmployeeLoggedIn) return;
 
@@ -1721,7 +1820,7 @@
 
               /* one-shot: wipe the field so it can’t be reused */
               db.collection("Brites_Orders")
-                .doc("shipping-scan-2")
+                .doc("shipping-scan-1")
                 .set({ "Order Number": firebase.firestore.FieldValue.delete() }, { merge:true });
 
             }
@@ -1729,6 +1828,54 @@
         });
     }
     });   // ← closes DOMContentLoaded handler
+  </script>
+
+  <!-- helper: force every upload to use resumable PUT -->
+  <script type="module">
+    /* modular imports */
+    import {
+      initializeApp,
+      getApp
+    } from "https://www.gstatic.com/firebasejs/9.23.0/firebase-app.js";
+    import {
+      getStorage,
+      ref,
+      uploadBytesResumable
+    } from "https://www.gstatic.com/firebasejs/9.23.0/firebase-storage.js";
+    import { getDownloadURL } from "https://www.gstatic.com/firebasejs/9.23.0/firebase-storage.js";
+    import {
+      getAuth,
+      signInAnonymously
+    } from "https://www.gstatic.com/firebasejs/9.23.0/firebase-auth.js";
+
+    /* reuse the compat-initialised config */
+    let modApp;
+    try {
+      modApp = getApp();                       // already exists? (unlikely)
+    } catch {
+      // pull the options off the compat app & spin a modular twin
+      const compatOpts = firebase.app().options;
+      modApp = initializeApp(compatOpts);
+    }
+
+    const storage = getStorage(modApp);        // OK – default app now present
+    const auth   = getAuth(modApp);
+    signInAnonymously(auth).catch(console.error);
+
+    /* expose a single resumable uploader */
+    window.uploadViaResumable = async (path, file) => {
+      const storageRef = ref(storage, path);
+      const task       = uploadBytesResumable(
+        storageRef,
+        file,
+        { contentType: file.type }
+      );
+
+      await new Promise((res, rej) =>
+        task.on("state_changed", null, rej, res)
+      );
+      return await getDownloadURL(storageRef);
+    };
   </script>
 
   <!-- 🆕 hard-hide unused fields -->
@@ -1792,8 +1939,7 @@
   /* disable live controls */
   body.configOpen #screenOne select{ pointer-events:none !important; }
   body.configOpen #screenOne select,
-  body.configOpen #screenOne button{
-    pointer-events:none !important;
+  body.configOpen #screenOne button{ pointer-events:none !important;
   }
 
   /* re-enable inside modal */

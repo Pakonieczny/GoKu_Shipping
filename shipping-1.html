@@ -440,6 +440,14 @@
     <input type="text" id="metalCell7" class="text-box-absolute" readonly />
 
     <textarea id="orderDetails" readonly></textarea>
+
+    <!-- ▼▼ NEW COPY BUTTON ▼▼ -->
+    <button id="copyOrderDetailsBtn" class="btn"
+            style="position:absolute; left:260px; top:162px;
+                   width:50px; height:24px; font-size:0.75em;">
+      Copy
+    </button>
+    <!-- ▲▲ NEW COPY BUTTON ▲▲ -->
     <div id="customerMessageHistory" class="msg-box"></div>
     <input id="britesMsgInput"
        type="text"
@@ -783,7 +791,7 @@
         "quantityCell4","quantityCell5","quantityCell6","quantityCell7",
         "metalCell0","metalCell1","metalCell2","metalCell3",
         "metalCell4","metalCell5","metalCell6","metalCell7",
-        "orderDetails","customerMessageHistory","britesMsgInput","dateOrdered","shipDate",
+        "orderDetails", "copyOrderDetailsBtn", "customerMessageHistory","britesMsgInput","dateOrdered","shipDate",
         "employeeName","trackingNumberInput","carrierSelectWrap","completeOrderBtn",
         "titleOrderDate","titleOrderDate2","titleShipDate",
         "titleSignedInAs",
@@ -860,6 +868,7 @@
       carrierSelectWrap:  { left:539, top:664, width:107, height:23 },
       completeOrderBtn:    { left:1062, top:656, width:155, height:41 },
       titleShipping:        { left: 700, top: 10, width: 200, height: 30 },
+      copyOrderDetailsBtn: { left: 260, top: 162, width: 50, height: 24 },
       signOutBtn:           { left: 1356,  top: 17, width: 103, height: 35 }
 
     };
@@ -1053,6 +1062,21 @@
           }
         });
       }
+
+      /* ── Copy ORDER-FROM Name ─────────────────────────── */
+      document.getElementById("copyOrderDetailsBtn")
+        .addEventListener("click", () => {
+          const val = document.getElementById("orderDetails").value || "";
+          const m   = val.match(/ORDER FROM[:\s]+([^\r\n]+)/i); // capture name
+          if (!m || !m[1].trim()) {
+            M.toast({ html: "Name not found." });
+            return;
+          }
+          const name = m[1].trim();
+          navigator.clipboard.writeText(name)
+            .then(()   => M.toast({ html: `Copied ${name} ✔` }))
+            .catch(err => M.toast({ html: "Copy failed: " + err.message }));
+        });
 
       /* Open Config → show modal + disable live UI clicks           */
       document.getElementById("openConfigBtn").addEventListener("click", function(){
