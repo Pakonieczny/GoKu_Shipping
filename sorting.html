@@ -1293,13 +1293,14 @@ function openIframePrinterForListing(cellIndex) {
       const subImages = await extractSubImages144(fileDataUrl);
 
       for (let q = 0; q < subImages.length; q++) {
-        const cropped = await cropTo512(subImages[q]);
-
-        // Push to temporary array; NOT yet stored in userImagesArray
-        subImagesToAnalyze.push({
-          origName: file.name + "_Q" + q,
-          data: cropped
-        });
+         const cropped   = await cropTo512(subImages[q]);
+         const corrected = await reduceRedTone(cropped, 0.7);   // NEW
+ 
+         // Push to temporary array; NOT yet stored in userImagesArray
+         subImagesToAnalyze.push({
+           origName: file.name + "_Q" + q,
+           data: corrected          // red-corrected image
+         });
       }
 
       M.toast({
@@ -1446,6 +1447,31 @@ async function cropTo512(dataUrl) {
   ctx.drawImage(loaded, 0, 0, 402, 403);
   return canvas.toDataURL("image/png");
 }
+
+ /* === NEW : reduceRedTone — dims the R-channel by 30 % === */
+ async function reduceRedTone(dataURL, factor = 0.7) {
+   return new Promise((resolve, reject) => {
+     const img = new Image();
+     img.crossOrigin = "Anonymous";
+     img.onload = () => {
+       const canvas = document.createElement("canvas");
+       canvas.width  = img.width;
+       canvas.height = img.height;
+       const ctx = canvas.getContext("2d");
+       ctx.drawImage(img, 0, 0);
+ 
+       const imgData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+       const data    = imgData.data;
+       for (let i = 0; i < data.length; i += 4) {
+         data[i] = Math.round(data[i] * factor);   // R channel ↓30 %
+       }
+       ctx.putImageData(imgData, 0, 0);
+       resolve(canvas.toDataURL("image/png"));
+     };
+     img.onerror = reject;
+     img.src = dataURL;
+   });
+ }
 
 // Utility: load a DataURL into <img> so we can measure width/height
 function loadImage(dataUrl) {
