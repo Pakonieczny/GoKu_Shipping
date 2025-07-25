@@ -1,47 +1,66 @@
-// trackOrderProxy.js  — proxy → Etsy
+// trackOrderProxy.js  — proxy → ShipStation → Etsy
+// Requires two Netlify env-vars:
+//   SS_API_KEY    = your ShipStation “API Key”
+//   SS_API_SECRET = the matching “API Secret”
+
 const fetch = require("node-fetch");
 
 exports.handler = async event => {
   try {
-    const { receiptId, tracking, carrier } = JSON.parse(event.body || "{}");
-    const token  = event.headers["access-token"]
-     || event.headers["authorization"]?.replace(/^Bearer\s+/i, "")
-     || "";
-    const shopId = process.env.SHOP_ID;     // set in Netlify env
-    const apiKey = process.env.CLIENT_ID;   // Etsy “Client ID”
+    /* Front-end sends { receiptId, tracking, carrier } — keep names intact */
+    const {
+      receiptId:   orderNumber,
+      tracking:    trackingNumber,
+      carrier:     carrierCode,
+      shipDate
+    } = JSON.parse(event.body || "{}");
 
-    /* basic validation */
-    if (!receiptId || !tracking || !carrier)
-      return { statusCode: 400,
-               body: JSON.stringify({ error: "Missing receiptId / tracking / carrier" }) };
+    /* Basic validation */
+    if (!orderNumber || !trackingNumber || !carrierCode) {
+      return {
+        statusCode: 400,
+        body: JSON.stringify({ error: "Missing orderNumber / trackingNumber / carrierCode" })
+      };
+    }
 
-    /* build Etsy endpoint */
-    const url = `https://openapi.etsy.com/v3/application/shops/${shopId}` +
-                `/receipts/${receiptId}/tracking`;
+    /* ShipStation V1 uses Basic auth: base64(key:secret) */
+    const auth = Buffer.from(
+      `${process.env.SS_API_KEY}:${process.env.SS_API_SECRET}`
+    ).toString("base64");
+    const headers = { Authorization: `Basic ${auth}` };
+    const baseURL = "https://ssapi.shipstation.com";
 
-     /* Etsy wants URL-encoded form data for tracking */
-     const params = new URLSearchParams({
-       tracking_code: tracking,
-       carrier_name : carrier
-     });
+    /* 1️⃣  Find the ShipStation order that matches the Etsy receiptId */
+    const lookupURL = `${baseURL}/orders?orderNumber=${encodeURIComponent(orderNumber)}`;
+    const lookupResp = await fetch(lookupURL, { headers });
 
-    const etsyResp = await fetch(url, {
-      method : "POST",
-      headers: {
-        "Authorization": `Bearer ${token}`,
-        "x-api-key"    : apiKey,
-        "Content-Type" : "application/x-www-form-urlencoded"
-       },
-       body: params.toString()
+    if (!lookupResp.ok) {
+      return { statusCode: lookupResp.status, body: await lookupResp.text() };
+    }
+
+    const { orders } = await lookupResp.json();
+    const orderId = orders?.[0]?.orderId;
+
+    if (!orderId) {
+      return { statusCode: 404, body: "Order not found in ShipStation" };
+    }
+
+    /* 2️⃣  Mark the order as shipped (ShipStation notifies Etsy automatically) */
+    const markResp = await fetch(`${baseURL}/orders/markasshipped`, {
+      method: "POST",
+      headers: { ...headers, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        orderId,
+        carrierCode,
+        trackingNumber,
+        shipDate: shipDate || new Date().toISOString().slice(0, 10),
+        notifyCustomer: true,
+        notifySalesChannel: true
+      })
     });
 
-    /* pass Etsy’s raw status back so the client can act on 401/403 */
-     return {
-       statusCode: etsyResp.status,
-       body: await etsyResp.text()
-     };
+    return { statusCode: markResp.status, body: await markResp.text() };
   } catch (err) {
-    return { statusCode: 500,
-             body: JSON.stringify({ error: err.message }) };
+    return { statusCode: 500, body: JSON.stringify({ error: err.message }) };
   }
 };
