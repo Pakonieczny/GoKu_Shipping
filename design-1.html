@@ -101,6 +101,25 @@
       align-items:flex-start;
     }
 
+/* column wrapper – sits 20 px right of the image */
+.modal-notes-col{
+  margin-left:20px;
+  display:flex;
+  flex-direction:column;
+}
+
+/* remove old left-margin so notes align with input */
+.modal-notes-col #modalListingNotes{ margin:0; }
+
+/* staff-note field */
+#modalStaffNote{
+  width:300px;
+  height:35px;
+  margin-top:40px;
+  padding:4px;
+  border:1px solid #999;
+}
+
     /* fixed thumbnail size, border stays */
     #modalListingImg{
       width:200px;
@@ -187,8 +206,8 @@
     /* Container for dynamically generated preview boxes and detail boxes */
     #photoGridContainer {
       position: relative;
-      width: 1300px;
-      max-height: 800px;
+      width: 1500px;
+      max-height: 830px;
       overflow-y: auto;
       border-left: 1px dashed #ccc;
       border-right: 1px dashed #ccc;
@@ -288,6 +307,12 @@
       box-shadow:0 0 0 4px orangered;   /* 4-px warning ring */
     }
 
+    /* purple + bold when Staff Note exists */
+    .new-order-box.has-staff-note{
+      font-weight:700;
+      color:purple;
+    }
+
     /* —— 3-px BLUE hover ring (outer) —— */
     #photoGridContainer .wrap-preview:hover{
       box-shadow: 0 0 0 3px #2196F3 !important;  /* outer blue ring */
@@ -370,6 +395,29 @@
                  inset 0 0 0 3px #2196F3;
     }
 
+    /* === Listing-modal COMPLETE checkbox === */
+    .modal-complete-label{
+      position:absolute;
+      right:10px;          /* ⬅️ pin to top-right */
+      top:30px;            /* 5 px below the title */
+      cursor:pointer;
+      user-select:none;
+    }
+    .modal-complete-label input[type="checkbox"]+span{
+      transform:scale(1.3);
+      margin:0;
+    }
+
+    /* “Skip Order” heading (5 px above the box) */
+    .modal-skip-title{
+      position:absolute;
+      right:10px;
+      top:10px;
+      font-size:0.9em;
+      font-weight:600;
+      user-select:none;
+    }
+
   </style>
 </head>
 <body>
@@ -378,7 +426,9 @@
 <button id="openConfigBtn"     class="btn waves-effect waves-light">Open Config</button>
 <button id="updateOrderListBtn"class="btn waves-effect waves-light">Update</button>
 <button id="clearBtn"          class="btn red lighten-1">Clear</button>
-<!--<button id="clearCompletedBtn" class="btn orange lighten-1">Clear Completed</button> -->
+
+<!-- NEW orange “Undo Complete” button (same drag-friendly style) -->
+<button id="undoCompleteBtn"  class="btn orange" style="position:absolute;left:170px;top:220px;width:160px;height:36px;">Undo&nbsp;Complete</button>
 
 <!-- NEW green “Complete !” button (drag-positionable inside the modal) -->
 <button id="completeBtn"
@@ -468,12 +518,38 @@ const selectedOrders = new Set();      // receipt_id strings
 const orderCache     = {};             // receipt_id → transactions[]
 const gridElements   = new Map();      // transaction_id → wrapper DOM
 let   lastCtrlIdx    = null;           // ⬅️  anchor for Ctrl/⌘ range-select
+
+/* =====  Staff-Note highlighting  =================================== */
+let staffNoteIDs = new Set();
+
+async function refreshStaffNoteIDs(){
+  try{
+    const res  = await fetch(`${functionsBaseUrl}/firebaseOrders?staffNotes=1`);
+    const json = await res.json();
+    if(json.success) staffNoteIDs = new Set(json.orderNumbers.map(String));
+  }catch(e){ console.error(e); }
+}
+
+function markStaffNoteOrders(){
+  document.querySelectorAll(".new-order-box").forEach(box=>{
+    const id = box.dataset.receipt || box.dataset.orderNumber;
+    if(staffNoteIDs.has(String(id))){
+      box.classList.add("has-staff-note");
+    }else{
+      box.classList.remove("has-staff-note");
+    }
+  });
+}
+
 /* ==== SEARCH SNAPSHOT (for restoring UI) ==== */
 let searchSnapshot = null;             // { orderHTML, gridHTML, gridMap }
 const processedTxIds = new Set();      // guards against duplicate preview tiles
 
 /* storage keys */
 const COMPLETED_KEY = "completedOrders";   // green-list
+
+// ——— buffer that holds the last batch we cleared (for Undo Complete) ———
+let lastClearedReceipts = [];
 
 /* ─── helper: recount items and update the little badge ───────────── */
 function refreshRowCount(receiptId){
@@ -639,6 +715,7 @@ const configIDs = [
   "newOrderContainer",
   "pageButtonsContainer",
   "completeBtn",          // ← NEW
+  "undoCompleteBtn",      // ← NEW
   "goldCounter",
   "silverCounter",
   "roseCounter",
@@ -658,6 +735,10 @@ document.addEventListener("DOMContentLoaded", () => {
   if (completeBtn) {
     completeBtn.addEventListener("click", handleCompleteClick);
   }
+
+  /* wire “Undo Complete” */
+  const undoBtn = document.getElementById("undoCompleteBtn");
+  if (undoBtn) undoBtn.addEventListener("click", handleUndoCompleteClick);
 
   /* ❶  wire "Complete !" button */
   document.getElementById("completeBtn").addEventListener("click", handleCompleteClick);
@@ -725,6 +806,28 @@ document.addEventListener("DOMContentLoaded", () => {
     document.body.style.opacity = 1;
   }, 200);
 
+    const modalCompleteChk = document.getElementById("modalCompleteChk");
+    modalCompleteChk.addEventListener("change", () => {
+    const rid = modalCompleteChk.dataset.rid;
+    if(!rid) return;                      // safety
+
+    /* — mark as completed — */
+    completedOrders.add(rid);             // global Set   [oai_citation:2‡design.html](file-service://file-UD87qPNcvFGdsBetdyBDoA)
+    selectedOrders.delete(rid);
+
+    /* remove/hide UI elements */
+    document.querySelectorAll(
+      `.new-order-box[data-receipt='${rid}']`
+    ).forEach(el => el.remove());
+
+    removePreviewBoxesForOrder(rid);      // existing helper
+    persistCompleted();                   // commits bucket
+    updateCounters();
+    applyMetalFilter();
+
+    listingModal.close();                 // done – pop modal
+  });
+
   // Connect Etsy
   document.getElementById("connectEtsyBtn").addEventListener("click", async function () {
     try {
@@ -760,6 +863,7 @@ document.addEventListener("DOMContentLoaded", () => {
          '</span>';
 
           orderListOffset = 0;                 // reset to first page
+          allOpenReceipts = [];                // 🚀 clear cache → next call re-fetches
           const gotRows = await buildNewOrderList(orderListOffset);
 
 
@@ -833,11 +937,11 @@ document.addEventListener("DOMContentLoaded", () => {
         M.toast({ html: "Selection cleared" });
       });
 
-      /* ────────── Clear Completed (green) button  ─────────── */
-      /*const clrCompBtn = document.getElementById("clearCompletedBtn");
+      /* ────────── Clear Completed (green) button  ─────────── 
+      const clrCompBtn = document.getElementById("clearCompletedBtn");
       if (clrCompBtn) {
         clrCompBtn.addEventListener("click", clearCompleted);   // ← NEW
-      } */
+      }*/
 
   // Load multiple orders on Enter (partial snippet)
   const etsyOrderInput = document.getElementById("etsyOrderNumber");
@@ -1271,8 +1375,27 @@ document.addEventListener("DOMContentLoaded", () => {
     }
 
     /* 2️⃣  collect every visible preview that matches those metals */
+
+    // ── identify orders that span multiple metals ──
+    const metalSets = {};
+    document
+      .querySelectorAll("#photoGridContainer .wrap-preview")
+      .forEach(w => {
+        const rid = w.dataset.receipt;
+        metalSets[rid] = metalSets[rid] || new Set();
+        metalSets[rid].add(w.dataset.metal);
+      });
+    const multiMetalOrders = new Set(
+      Object.entries(metalSets)
+            .filter(([, metals]) => metals.size > 1)
+            .map(([rid]) => rid)
+    );
+
     const listsByMetal = { gold: [], silver: [], rose: [], "14k": [] };
     const greenIDs = new Set();
+
+    // ── include mixed-metal orders so they get removed from the sidebar too ──
+    multiMetalOrders.forEach(rid => greenIDs.add(rid));
 
     document.querySelectorAll("#photoGridContainer .wrap-preview").forEach(w => {
       if (w.style.display === "none")          return;               // hidden
@@ -1280,6 +1403,7 @@ document.addEventListener("DOMContentLoaded", () => {
       if (!REQUIRED.includes(metal))           return;               // wrong metal
 
       const rid = w.dataset.receipt;
+      if (multiMetalOrders.has(rid))           return;   // skip mixed‐metal in pure pass
       greenIDs.add(rid);
       if (!listsByMetal[metal].includes(rid)) listsByMetal[metal].push(rid);
     });
@@ -1289,19 +1413,35 @@ document.addEventListener("DOMContentLoaded", () => {
       return;
     }
 
-    /* 3️⃣  mark completed + purge DOM & master cache (unchanged) */
-    greenIDs.forEach(id => {
-      completedOrders.add(id);
-      selectedOrders.delete(id);
+     /* 3️⃣  defer removal until print dialog confirms */
+     const printIDs = Array.from(greenIDs);
+     lastClearedReceipts = [...printIDs];          // ← keep for Undo Complete
+     function onPrintComplete(e) {
+       if (e.data && e.data.printSuccess) {
+         printIDs.forEach(id => {
+           completedOrders.add(id);
+           selectedOrders.delete(id);
+           document.querySelectorAll(`.new-order-box[data-receipt='${id}']`)
+             .forEach(r => r.remove());
+           removePreviewBoxesForOrder(id);
+         });
+         allOpenReceipts = allOpenReceipts.filter(r => !greenIDs.has(String(r.receipt_id)));
+         persistCompleted();
+         persistSelection();
+         updateCounters();
+         applyMetalFilter();
+         M.toast({ html: "Completed orders removed — pages recalculated" });
+         window.removeEventListener("message", onPrintComplete);
+       }
+     }
+     window.addEventListener("message", onPrintComplete);
 
-      /* sidebar rows */
-      document.querySelectorAll(`.new-order-box[data-receipt='${id}']`)
-              .forEach(r => r.remove());
+     // ── FALLBACK: in case afterprint/postMessage doesn’t fire,
+     //     remove orders when our window regains focus
+     window.addEventListener("focus", () => {
+       onPrintComplete({ data: { printSuccess: true } });
+     }, { once: true });
 
-      /* preview tiles */
-      removePreviewBoxesForOrder(id);
-    });
-    allOpenReceipts = allOpenReceipts.filter(r => !greenIDs.has(String(r.receipt_id)));
 
     /* 4️⃣  recompute paging (unchanged) */
     if (typeof orderListOffset === "undefined") window.orderListOffset = 0;
@@ -1325,7 +1465,16 @@ document.addEventListener("DOMContentLoaded", () => {
     updateCounters();
     applyMetalFilter();
 
-    /* 7️⃣  hand off to design-print-1.html via HIDDEN iframe (no URL change) */
+    /* 7️⃣  hand off to design-print.html via HIDDEN iframe (no URL change) */
+    // ── now shove each mixed‐metal order into whichever metal list is smallest ──
+    multiMetalOrders.forEach(rid => {
+      const metals = Array.from(metalSets[rid]);  // e.g. ['gold','silver']
+      const target = metals.reduce((a, b) =>
+        listsByMetal[a].length <= listsByMetal[b].length ? a : b
+      );
+      listsByMetal[target].push(rid);
+    });
+ 
     const hasBundles = Object.values(listsByMetal).some(arr => arr.length);
     if (hasBundles) {
       localStorage.setItem("metalOrderLists", JSON.stringify(listsByMetal));
@@ -1336,8 +1485,13 @@ document.addEventListener("DOMContentLoaded", () => {
       printFrame.style.right      = "9999px";
       printFrame.style.width      = "1px";
       printFrame.style.height     = "1px";
-      printFrame.src = "design-print-1.html";      // loads silently, prints inside
+      printFrame.src = "design-print.html";      // loads silently, prints inside
       document.body.appendChild(printFrame);
+
+      /* clear DOM *and* in-memory map so no orphan wraps inflate counters */
+      document.getElementById("photoGridContainer").innerHTML = "";
+      gridElements.clear();      // 🆕 purge stale references
+      updateCounters();          // 🆕 keep the badges in sync
     }
 
     M.toast({ html: "Completed orders removed — pages recalculated" });
@@ -1353,6 +1507,81 @@ document.addEventListener("DOMContentLoaded", () => {
     obj[nowMonth] = [ ...completedOrders ];                    // overwrite bucket
     localStorage.setItem(COMPLETED_KEY, JSON.stringify(obj));
   }
+
+   /* ───────────────── handleUndoCompleteClick ───────────────── */
+   async function handleUndoCompleteClick(){
+ 
+    if (!lastClearedReceipts.length){
+       M.toast({ html:"Nothing to undo" });    // safety guard
+       return;
+     }
+ 
+     for (const rid of lastClearedReceipts){
+        completedOrders.delete(rid);        // remove green status
+        selectedOrders.add(rid);            // mark orange again
+ 
+        /* 🔄  clear any leftover wraps so counters don’t double */
+        removePreviewBoxesForOrder(rid);    // resets _inGrid flags too
+ 
+      /* ensure sidebar row exists – if missing, fetch it and push the
+        receipt object back into `allOpenReceipts` so
+        buildNewOrderList()` can recreate the row */
+       if (!document.querySelector(`.new-order-box[data-receipt='${rid}']`)){
+         const ord = await pullEtsyOrderDetails(rid);
+         if (ord){
+           /* ✨ rebuild helper meta so buildNewOrderList can sort/render */
+           let ts = null;
+           if (Array.isArray(ord.transactions) &&
+               ord.transactions[0]?.expected_ship_date){
+             ts = ord.transactions[0].expected_ship_date;
+           }
+           if (!ts) ts = ord.dispatch_date || ord.ship_by_date || 0;
+           ord._shipTS  = ts;
+           ord._shipStr = ts
+             ? new Date(ts*1000).toLocaleDateString(
+                 "en-US",{month:"short",day:"2-digit"})
+             : "N/A";
+ 
+           const mc = { Gold:0, Silver:0, "Rose G":0, "14K":0 };
+           (ord.transactions||[]).forEach(t=>{
+             const q   = t.quantity||1;
+             const val = (t._metalKey||"").toLowerCase();
+             if (/14k/.test(val))          mc["14K"]    += q;
+             else if (/rose/.test(val))    mc["Rose G"] += q;
+             else if (/silv/.test(val))    mc.Silver    += q;
+             else if (/gold/.test(val))    mc.Gold      += q;
+           });
+           ord._metalCounts = mc;
+ 
+             /* avoid duplicates before pushing back */
+            if (!allOpenReceipts.some(r => String(r.receipt_id) === String(rid))){
+              allOpenReceipts.push(ord);    // restore master list
+            }
+
+           orderCache[rid] = ord.transactions || [];
+         }
+       }
+ 
+       /* restore preview boxes */
+       orderCache[rid]?.forEach(tx=>{
+         if (!tx._inGrid) addPreviewBox(tx);
+       });
+     }
+ 
+      /* redraw sidebar starting at page 1 so restored rows show */
+      orderListOffset = 0;
+      await buildNewOrderList(0);                      // refresh UI
+ 
+     /* sync everything */
+     persistCompleted();
+     persistSelection();
+     updateCounters();
+     applyMetalFilter();
+     highlightSavedRows();
+ 
+     lastClearedReceipts = [];             // clear the buffer
+     M.toast({ html:"Undo Complete – orders restored" });
+   }
 
   /* -------------------------------------------------------------
      Clear all completed-order memory & remove green highlights
@@ -1621,8 +1850,8 @@ document.addEventListener("DOMContentLoaded", () => {
   /* build a preview row (image + 4 tiny detail inputs) */
   function makePreviewNode(item){
     const idx = gridElements.size;
-    const row = Math.floor(idx / 9);
-    const col = idx % 9;
+    const row = Math.floor(idx / 12);
+    const col = idx % 12;
 
     /* wrapper keeps receipt ID for easy lookup */
     const wrap = document.createElement("div");
@@ -1664,7 +1893,7 @@ document.addEventListener("DOMContentLoaded", () => {
     /* ===== metal lookup, SKU, attention flag ========================== */
     let metalSel = "";
     let metalKey = "";
-    let otherSel  = "";      // first non-metal variation
+    let otherSel  = "";                    // NEW – first non-metal variation
 
     if (Array.isArray(item.variations)) {
       const ok = [
@@ -1708,7 +1937,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
     /* NEW – if missing, borrow the key we just detected for the row */
     item.metalLabel = metalSel || item._metalKey || metalKey || "No Metal";
-    item.otherLabel = otherSel || "N/A";
+    item.otherLabel = otherSel || "N/A";         // NEW
 
     /* does this listing need manual attention? */
     const hasPersonalization =
@@ -1942,6 +2171,8 @@ document.addEventListener("DOMContentLoaded", () => {
      /* keep greens hidden unless Completed filter is on */
      requestAnimationFrame(window.applyMetalFilter);
 
+     requestAnimationFrame(markStaffNoteOrders);      // 🔄 restore Staff-Note purple/bold
+
   }           
 
   /** 1.  HEADER BAR  +  EVENT LISTENERS ------------------------------- */
@@ -2117,6 +2348,11 @@ const observer = new MutationObserver(async () => {
       (a, b) => (b.order_number || b.receipt_id) - (a.order_number || a.receipt_id)
     );
     renderOrderBoxes(currentReceipts);
+
+    /* ─── INSERT ↓↓↓  (exactly here) ───────────────────────────── */
+    await refreshStaffNoteIDs();
+    markStaffNoteOrders();
+
   }
 });
 observer.observe(document.getElementById("newOrderContainer"), { childList: true });
@@ -2333,9 +2569,13 @@ async function buildNewOrderList(offset = 0) {
    /* run the GREEN pass one frame later so nothing else can overwrite it */
    requestAnimationFrame(highlightCompletedRows);
 
-   /* ── refresh the four metal badges no matter what filters are set ── */
-   updateCounters();
- 
+  /* ── refresh the four metal badges no matter what filters are set ── */
+  updateCounters();
+
+  /* 🆕 highlight any rows that own a Staff Note */
+  await refreshStaffNoteIDs();     // pulls latest note IDs
+  markStaffNoteOrders();           // adds .has-staff-note class
+
   /* return page size (0-100) so buttons enable/disable correctly */
   return page.length;
 }
@@ -2388,17 +2628,18 @@ async function startScannedSortingListener() {
 const defaultPos = {
   connectEtsyBtn:           { left:1123, top:803, width:126, height:35 },
   openConfigBtn:            { left:1270,  top:803, width:133, height:35 },
-  updateOrderListBtn:       { left:1189,top:5,  width:120, height:35 },
-  clearBtn:               { left:1324,  top:5, width:120, height:35 },
-  etsyOrderNumber:          { left:765,  top:5,  width:200, height:25 },
-  photoGridContainer:     { left:318,   top:45,   width:1142,   height:0 },
+  updateOrderListBtn:       { left:1204,top:5,  width:120, height:35 },
+  clearBtn:               { left:1339,  top:5, width:120, height:35 },
+  etsyOrderNumber:          { left:663,  top:5,  width:200, height:25 },
+  photoGridContainer:     { left:318,   top:45,   width:1513, height:850 },
   orderHeaderBar:       { left:6,   top:19,   width:290,   height:27 },
   configModal:              { left:50,  top:50, width:250, height:450 },
   configTable:              { left:27,   top:7,   width:525,  height:1562 },
   saveConfigBtn:            { left:10, top:3,  width:85, height:35 },
   newOrderContainer:        { left:1, top:45,  width:318, height:800 },
   pageButtonsContainer:     { left:71,top:-4, width:325, height:25 },
-  completeBtn:              { left:1054,   top:5, width:120, height:35 },
+  completeBtn:              { left:1069,   top:5, width:120, height:35 },
+  undoCompleteBtn:          { left:897,  top:5, width:156, height:35 },
   goldCounter:          { left:319, top:9,  width:72,height:27 },
   silverCounter:        { left:402,  top:9,   width:72, height:27 },
   roseCounter:          { left:485,  top:9,  width:72, height:27 },
@@ -2872,8 +3113,8 @@ function reflowGrid(){
                      .filter(w => w.style.display !== "none");
 
   wraps.forEach((wrap, idx) => {
-    const row = Math.floor(idx / 9);      // 9 cols per row
-    const col = idx % 9;
+    const row = Math.floor(idx / 12);      // 9 cols per row
+    const col = idx % 12;
     wrap.style.left = (col * 125) + "px";
     wrap.style.top  = (row * 165) + "px";
   });
@@ -3116,10 +3357,59 @@ function reflowGrid(){
         detRow.appendChild(inp);
       };
 
-      mkInput("Qty"  , item.quantity  ?? "0");
+      /* ensure we have otherLabel even if makePreviewNode missed it */
+      if (!item.otherLabel && Array.isArray(item.variations)) {
+        const v = item.variations.find(x =>
+          !/(metal|colour|color)/i.test(x.formatted_name || "") &&
+          !/personalization/i.test(x.formatted_name || "")
+        );
+        item.otherLabel = v ? v.formatted_value : "N/A";
+      }
+
+      mkInput("Qty"  , item.quantity   ?? "0");
       mkInput("Metal", item.metalLabel || "N/A");
-      mkInput("SKU"  , item.sku       || "N/A");
-      mkInput("Option", item.otherLabel || "N/A");   // new line
+      mkInput("SKU"  , item.sku        || "N/A");
+      mkInput("Other", item.otherLabel || "N/A");   // NEW line
+
+      /* ▼▼  STAFF NOTE sync  (deduped) ▼▼ */
+      const staffInp = document.getElementById("modalStaffNote");
+      const orderId  = String(item.receipt_id || item.orderNumber);
+
+      staffInp.value = "";   // reset before fetch
+
+      fetch(`${functionsBaseUrl}/firebaseOrders?orderId=${encodeURIComponent(orderId)}`)
+        .then(r => r.json())
+        .then(res => {
+          if (res.success && res.data && res.data["Staff Note"]) {
+            staffInp.value = res.data["Staff Note"];
+          }
+        })
+        .catch(console.error);
+
+      /* overwrite any previous handlers */
+        staffInp.onchange = staffInp.onblur = async () => {
+        const note = staffInp.value.trim();
+
+        /* write to Firestore */
+        fetch(`${functionsBaseUrl}/firebaseOrders`,{
+          method : "POST",
+          headers: { "Content-Type":"application/json" },
+          body   : JSON.stringify({ orderNumber: orderId, staffNote: note })
+        }).catch(console.error);
+
+        /* instant UI feedback */
+        if(note){
+          staffNoteIDs.add(orderId);
+        }else{
+          staffNoteIDs.delete(orderId);
+        }
+        markStaffNoteOrders();
+      };
+      /* ▲▲  end STAFF NOTE sync ▲▲ */
+
+      /* sync checkbox with this order */
+      modalCompleteChk.checked   = completedOrders.has(orderId);
+      modalCompleteChk.dataset.rid = orderId;    // pass receipt ID
 
       listingModal.open();
     }
@@ -3128,8 +3418,8 @@ function reflowGrid(){
     function realignGrid(){
       const wraps = Array.from(document.querySelectorAll("#photoGridContainer .wrap-preview"));
       wraps.forEach((w, idx) => {
-        const row = Math.floor(idx / 9);
-        const col = idx % 9;
+        const row = Math.floor(idx / 12);
+        const col = idx % 12;
         w.style.left = (col * 125) + "px";
         w.style.top  = (row * 165) + "px";
       });
@@ -3137,19 +3427,39 @@ function reflowGrid(){
 
   </script>
 
-    <!-- ─── Listing-detail modal ─── -->
-  <div id="listingModal" class="modal">
-    <div class="modal-content">
-      <h5 id="modalListingTitle"></h5>
-      <div class="modal-flex-row">
-        <img id="modalListingImg"/>
+<!-- ─── Listing-detail modal ─── -->
+<div id="listingModal" class="modal">
+  <div class="modal-content">
+    <!-- ▼▼ NEW COMPLETE-CHECKBOX + TITLE ▼▼ -->
+    <span class="modal-skip-title">Skip Order</span>
+    <label class="modal-complete-label">
+      <input id="modalCompleteChk" type="checkbox" class="filled-in" />
+      <span></span>
+    </label>
+    <!-- ▲▲ NEW COMPLETE-CHECKBOX + TITLE ▲▲ -->
+
+    <h5 id="modalListingTitle"></h5>
+
+    <div class="modal-flex-row">
+      <img id="modalListingImg" />
+
+      <!-- notes + staff input stacked -->
+      <div class="modal-notes-col">
         <pre id="modalListingNotes"></pre>
+
+        <input id="modalStaffNote"
+               type="text"
+               placeholder="Staff Note">
       </div>
-      <div id="modalListingDetails" class="modal-detail-row"></div>
-    <div class="modal-footer">
-      <a href="#!" class="modal-close btn-flat">Close</a>
     </div>
+
+    <div id="modalListingDetails" class="modal-detail-row"></div>
+  </div><!-- /modal-content -->
+
+  <div class="modal-footer">
+    <a href="#!" class="modal-close btn-flat">Close</a>
   </div>
+</div><!-- /listingModal -->
 
 </body>
 </html>
