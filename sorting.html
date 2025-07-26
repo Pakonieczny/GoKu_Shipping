@@ -2458,6 +2458,9 @@ async function compareImages(userImage, croppedGridImage, cellIndex, userImageNa
     return true;   // no metal specified → allow any
   }
 
+  // TEMP: globally toggle Second Pass
+  const ENABLE_SECOND_PASS = false;
+
 //---------------------------------------------------------------------
   // FIRST PASS
   //---------------------------------------------------------------------
@@ -2659,126 +2662,136 @@ async function compareImages(userImage, croppedGridImage, cellIndex, userImageNa
       }
     }
 
-// -----------------------------------------------------------------------
-  // SECOND PASS
-  // -----------------------------------------------------------------------
-  const mirrorChecklist = Object.keys(earringCells)
-    .filter(idx => cellMatches[idx] && cellMatches[idx].length === 1)
-    .map(Number);                      // earrings still missing a twin
+    // -----------------------------------------------------------------------
+    // SECOND PASS (toggleable)
+    // -----------------------------------------------------------------------
+    if (ENABLE_SECOND_PASS) {
+      const mirrorChecklist = Object.keys(earringCells)
+        .filter(idx => cellMatches[idx] && cellMatches[idx].length === 1)
+        .map(Number);                      // earrings still missing a twin
 
-  unmatchedCells = [];
-  for (let i = 0; i < croppedImagesArray.length; i++) {
-    // include normal unmatched cells + earrings that still need a twin
-    if (mirrorChecklist.includes(i) || !matchedCellIndices.has(i)) {
-      unmatchedCells.push(i);
-    }
-  }
-
-  smTotal += unmatchedCells.length;
-  document.getElementById("progressTitle").textContent =
-    "Matching Images... (Second Pass)";
-
-  for (const i of unmatchedCells) {
-    if (runId !== globalRunId) return;
-
-    const matchBox = document.getElementById("matchCell" + i);
-    const metalVal = document.getElementById("metalCell" + i).value || "";
-
-    /* 🔥Filter out skipForCharm here too */
-    const validUserImages = userImagesArray.filter(
-      (u) => !u.skipForCharm && metalFilterOk(metalVal, u.name)
-    );
-
-    /* ---- choose comparison source ---- */
-    const compareTarget = mirrorChecklist.includes(i) && earringState[i]?.firstImg
-        ? earringState[i].firstImg        // compare candidate vs first user photo
-        : croppedImagesArray[i];          // normal source
-
-    const comparisonPromises = validUserImages.map((user, j) => {
-      return new Promise((resolve) => {
-        setTimeout(() => {
-          if (runId !== globalRunId) return resolve({ result: { score: 0 }, user });
-          if (matchedUserNames.has(user.name) || matchedCellIndices.has(i)) {
-            return resolve({ result: { score: 0 }, user });
-          }
-          compareImages(user.data, compareTarget, i, user.name)
-            .then((result) => resolve({ result, user }))
-            .catch((err) => {
-              console.error("Second‑pass compare error:", i, user.name, err);
-              resolve({ result: { score: 0 }, user });
-            });
-        }, j * 250);
-      });
-    });
-
-    const results = await Promise.all(comparisonPromises);
-
-    if (runId !== globalRunId) return;        // NEW guard right after await
-
-    results.sort((a, b) => b.result.score - a.result.score);
-
-    if (!results.length || results[0].result.score === 0) {
-      M.toast({ html: `Cell ${i}: No valid matches found in second pass.` });
-    } else {
-      const topCandidate = results[0];
-      const topScore = topCandidate.result.score;
-      const topScorePerc = (topScore * 100).toFixed(2);
-      const matchName = topCandidate.user.name.replace(/(\.jpg|\.png)$/i, "");
-
-      M.toast({
-        html: `Cell ${i}: Best candidate => ${matchName} (${topScorePerc}%)`
-      });
-
-      if (topScore === 1.0 || topScore >= 0.98) {
-        if (matchBox) {
-          /* ✨ append instead of overwrite if this is the missing twin */
-          if (earringCells[i] && cellMatches[i] && cellMatches[i].length === 1) {
-            matchBox.value += `, ${matchName}`;
-          } else {
-            matchBox.value  =  matchName;
-          }
-          matchBox.style.fontWeight = "";
-          matchBox.style.color = "";
+      let unmatchedCells = [];
+      for (let i = 0; i < croppedImagesArray.length; i++) {
+        // include normal unmatched cells + earrings that still need a twin
+        if (mirrorChecklist.includes(i) || !matchedCellIndices.has(i)) {
+          unmatchedCells.push(i);
         }
-        if (!cellMatches[i]) cellMatches[i] = [];
-        cellMatches[i].push({
-          userName: matchName,
-          userImage: topCandidate.user.data,
-          score: topScore
-        });
-
-        matchedUserNames.add(topCandidate.user.name);
-        matchedCellIndices.add(i);
-
-        userImagesArray = userImagesArray.filter(u => u.name !== topCandidate.user.name);
-
-      } else if (topScore >= 0.88) {
-        /* --------‑ same append logic for the ≥88% branch -------- */
-        if (matchBox) {
-          if (earringCells[i] && cellMatches[i] && cellMatches[i].length === 1) {
-            matchBox.value += `, ${matchName}`;
-          } else {
-            matchBox.value  =  matchName;
-          }
-          matchBox.style.fontWeight = "bold";
-          matchBox.style.color = "orangered";
-        }
-
-        if (!cellMatches[i]) cellMatches[i] = [];
-        cellMatches[i].push({
-          userName: matchName,
-          userImage: topCandidate.user.data,
-          score: topScore
-        });
-
-        matchedUserNames.add(topCandidate.user.name);
-        matchedCellIndices.add(i);
-
-        userImagesArray = userImagesArray.filter(u => u.name !== topCandidate.user.name);
-
-      } else {
-        M.toast({ html: `Cell ${i}: Score ${topScorePerc}% < 88%. No match.` });
       }
+
+      smTotal += unmatchedCells.length;
+      document.getElementById("progressTitle").textContent =
+        "Matching Images... (Second Pass)";
+
+      for (const i of unmatchedCells) {
+        if (runId !== globalRunId) return;
+
+        const matchBox = document.getElementById("matchCell" + i);
+        const metalVal = document.getElementById("metalCell" + i).value || "";
+
+        /* 🔥Filter out skipForCharm here too */
+        const validUserImages = userImagesArray.filter(
+          (u) => !u.skipForCharm && metalFilterOk(metalVal, u.name)
+        );
+
+        /* ---- choose comparison source ---- */
+        const compareTarget = mirrorChecklist.includes(i) && earringState[i]?.firstImg
+            ? earringState[i].firstImg
+            : croppedImagesArray[i];
+
+        const comparisonPromises = validUserImages.map((user, j) => {
+          return new Promise((resolve) => {
+            setTimeout(() => {
+              if (runId !== globalRunId) return resolve({ result: { score: 0 }, user });
+              if (matchedUserNames.has(user.name) || matchedCellIndices.has(i)) {
+                return resolve({ result: { score: 0 }, user });
+              }
+              compareImages(user.data, compareTarget, i, user.name)
+                .then((result) => resolve({ result, user }))
+                .catch((err) => {
+                  console.error("Second-pass compare error:", i, user.name, err);
+                  resolve({ result: { score: 0 }, user });
+                });
+            }, j * 250);
+          });
+        });
+
+        const results = await Promise.all(comparisonPromises);
+        if (runId !== globalRunId) return;
+
+        results.sort((a, b) => b.result.score - a.result.score);
+
+        if (!results.length || results[0].result.score === 0) {
+          M.toast({ html: `Cell ${i}: No valid matches found in second pass.` });
+        } else {
+          const topCandidate = results[0];
+          const topScore = topCandidate.result.score;
+          const topScorePerc = (topScore * 100).toFixed(2);
+          const matchName = topCandidate.user.name.replace(/(\.jpg|\.png)$/i, "");
+
+          M.toast({ html: `Cell ${i}: Best candidate => ${matchName} (${topScorePerc}%)` });
+
+          if (topScore === 1.0 || topScore >= 0.98) {
+            if (matchBox) {
+              if (earringCells[i] && cellMatches[i] && cellMatches[i].length === 1) {
+                matchBox.value += `, ${matchName}`;
+              } else {
+                matchBox.value  =  matchName;
+              }
+              matchBox.style.fontWeight = "";
+              matchBox.style.color = "";
+            }
+            if (!cellMatches[i]) cellMatches[i] = [];
+            cellMatches[i].push({
+              userName: matchName,
+              userImage: topCandidate.user.data,
+              score: topScore
+            });
+
+            matchedUserNames.add(topCandidate.user.name);
+            matchedCellIndices.add(i);
+
+            userImagesArray = userImagesArray.filter(u => u.name !== topCandidate.user.name);
+
+          } else if (topScore >= 0.88) {
+            if (matchBox) {
+              if (earringCells[i] && cellMatches[i] && cellMatches[i].length === 1) {
+                matchBox.value += `, ${matchName}`;
+              } else {
+                matchBox.value  =  matchName;
+              }
+              matchBox.style.fontWeight = "bold";
+              matchBox.style.color = "orangered";
+            }
+
+            if (!cellMatches[i]) cellMatches[i] = [];
+            cellMatches[i].push({
+              userName: matchName,
+              userImage: topCandidate.user.data,
+              score: topScore
+            });
+
+            matchedUserNames.add(topCandidate.user.name);
+            matchedCellIndices.add(i);
+
+            userImagesArray = userImagesArray.filter(u => u.name !== topCandidate.user.name);
+
+          } else {
+            M.toast({ html: `Cell ${i}: Score ${topScorePerc}% < 88%. No match.` });
+          }
+        }
+
+        /* update Send&Match progress (second pass) */
+        smDone++;
+        updateProgressModal(smDone, smTotal);
+
+        // adaptive cooldown (second pass)
+        await adaptiveCooldown((validUserImages && validUserImages.length) || 1);
+      }
+    } else {
+      // Skipped: keep UI consistent and inform the user
+      document.getElementById("progressTitle").textContent =
+        "Matching Images... (First Pass Only)";
+      M.toast({ html: "Second Pass is disabled (temporary)" });
     }
 
     /* update Send&Match progress (second pass) */
@@ -2797,7 +2810,7 @@ async function compareImages(userImage, croppedGridImage, cellIndex, userImageNa
 /* call the helper once the second‑pass loop is done */
 attachMatchCellListeners();
 
-M.toast({ html: "Finished matching passes." });
+M.toast({ html: ENABLE_SECOND_PASS ? "Finished matching passes." : "Finished matching (first pass only)." });
 
 if (runId !== globalRunId) return;   // NEW — abort if a newer run started
 
