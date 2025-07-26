@@ -2485,15 +2485,31 @@ async function compareImages(userImage, croppedGridImage, cellIndex, userImageNa
 
     let firstImg = null;   // remembers first earring photo for this cell
 
-    /* NEW: Description-similarity gate (≥ 0.80) */
+    /* NEW: Description-similarity gate (≥ 0.70 with fallback + missing-desc bypass) */
     const etsyDesc = (croppedDescsArray[i] || "").trim();
-    const similarityQualified = validUserImages.filter(u =>
-      textSimilarity(etsyDesc, (u.desc || "")) >= 0.80
-    );
+    let similarityQualified;
 
-    /* If nothing clears the threshold, skip expensive calls for this cell */
+    if (!etsyDesc) {
+      // If the Etsy description is missing, don’t gate — compare everyone.
+      similarityQualified = validUserImages;
+    } else {
+      const THRESH = 0.60;
+      similarityQualified = validUserImages.filter(u =>
+        textSimilarity(etsyDesc, (u.desc || "")) >= THRESH
+      );
+
+      // Fallback once if nothing passes due to noisy/short descriptions
+      if (!similarityQualified.length && validUserImages.length) {
+        similarityQualified = validUserImages.filter(u =>
+          textSimilarity(etsyDesc, (u.desc || "")) >= 0.50
+        );
+      }
+    }
+
+    // Visual confirmation of how many will be sent to OpenAI
+    M.toast({ html: `Cell ${i}: First-pass sending ${similarityQualified.length}/${validUserImages.length} candidates` });
+
     if (!similarityQualified.length) {
-      // progress bookkeeping remains consistent
       smDone++;
       updateProgressModal(smDone, smTotal);
       await adaptiveCooldown(1);
