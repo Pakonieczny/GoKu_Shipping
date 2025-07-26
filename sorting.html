@@ -1431,7 +1431,7 @@ async function extractSubImages144(baseDataUrl) {
         c * cellW, r * cellH, cellW, cellH,   // src
         0, 0, cellW, cellH                    // dest
       );
-      results.push(canvas.toDataURL("image/png"));
+      results.push(canvas.toDataURL("image/jpeg", 0.7));
     }
   }
   return results;     // 140 sub-images
@@ -1445,7 +1445,7 @@ async function cropTo512(dataUrl) {
   canvas.height = 403;
   const ctx = canvas.getContext("2d");
   ctx.drawImage(loaded, 0, 0, 402, 403);
-  return canvas.toDataURL("image/png");
+  return canvas.toDataURL("image/jpeg", 0.7);
 }
 
  /* === NEW : reduceRedTone — dims the R-channel by 15 % === */
@@ -2262,7 +2262,7 @@ async function compareImages(userImage, croppedGridImage, cellIndex, userImageNa
         ],
       },
     ],
-    max_tokens: 5000,
+    max_tokens: 50,
   };
 
   try {
@@ -2386,7 +2386,7 @@ async function sendAndMatch() {
               console.error("First‑pass compare error:", i, user.name, err);
               resolve({ result: { score: 0 }, user });
             });
-        }, j * 250);
+        }, j * 120);
       });
     });
 
@@ -2558,7 +2558,7 @@ async function sendAndMatch() {
               console.error("Second‑pass compare error:", i, user.name, err);
               resolve({ result: { score: 0 }, user });
             });
-        }, j * 250);
+        }, j * 120);
       });
     });
 
