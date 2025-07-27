@@ -1159,8 +1159,8 @@
       var etsyOrderInput = document.getElementById("etsyOrderNumber");
       etsyOrderInput.addEventListener("keydown", async function(e){
         if(e.key === "Enter"){
+          const orderNumber = etsyOrderInput.value.trim();
           const orderData = await pullEtsyOrderDetails(orderNumber);
-
           // 🆕 Always pull ShipStation Ship-To immediately after loading order meta
           await loadShipToAddress(orderNumber);
 
@@ -1252,8 +1252,7 @@
               console.error("Failed to pull data from Firestore:", errPD);
             }
           }
-        }
-      });
+        });
 
       document.getElementById("orderLinkBtn").addEventListener("click", function(){
         var baseUrl = "https://www.etsy.com/your/orders/sold?ref=seller-platform-mcnav&order_id=0000000000";
