@@ -172,6 +172,23 @@
       overflow-y: auto;
     }
 
+    /* Ship To Address text area */
+    #shipAddressBox {
+      position: absolute;
+      border: 1px solid black;
+      width: 300px;
+      height: 90px;
+      box-sizing: border-box;
+      outline: none;
+      background: transparent;
+      font-size: 0.9em;
+      line-height: 1.4;
+      resize: none;
+      text-align: left;
+      white-space: pre-wrap;
+      overflow-y: auto;
+    }
+
     /* Customer Message History text area */
     #customerMessageHistory {
       position: absolute;
@@ -440,6 +457,7 @@
     <input type="text" id="metalCell7" class="text-box-absolute" readonly />
 
     <textarea id="orderDetails" readonly></textarea>
+    <textarea id="shipAddressBox" readonly></textarea>
 
     <!-- ▼▼ NEW COPY BUTTON ▼▼ -->
     <button id="copyOrderDetailsBtn" class="btn"
@@ -793,7 +811,7 @@
         "quantityCell4","quantityCell5","quantityCell6","quantityCell7",
         "metalCell0","metalCell1","metalCell2","metalCell3",
         "metalCell4","metalCell5","metalCell6","metalCell7",
-        "orderDetails", "copyOrderDetailsBtn", "customerMessageHistory","britesMsgInput","dateOrdered","shipDate",
+        "orderDetails", "shipAddressBox", "copyOrderDetailsBtn", "customerMessageHistory","britesMsgInput","dateOrdered","shipDate",
         "employeeName","trackingNumberInput","carrierSelectWrap","completeOrderBtn",
         "titleOrderDate","titleOrderDate2","titleShipDate",
         "titleSignedInAs",
@@ -839,7 +857,8 @@
       metalCell7:           { left: 1136, top: 583,  width: 153, height: 45 },
 
       orderDetails:           { left: 10,   top: 162,  width: 300, height: 342 },
-      customerMessageHistory: { left: 10, top: 535,  width: 300, height: 266 },
+      shipAddressBox:         { left: 10,   top: 510,  width: 300, height: 90 },
+      customerMessageHistory: { left: 10,   top: 605,  width: 300, height: 266 },
       britesMsgInput:         { left: 14, top: 802, width: 295, height: 23 },
 
       dateOrdered:          { left: 10,   top: 100,  width: 145, height: 30 },
@@ -851,7 +870,7 @@
       titleShipDate:        { left: 167,  top: 82,   width: 99,  height: 15 },
       titleSignedInAs:      { left: 1226, top: 7,    width: 75,  height: 15 },
       titleOrderDetails:    { left: 11,   top: 144,  width: 99,  height: 15 },
-      titleBritesMessages:  { left: 11,   top: 518,  width: 99,  height: 15 },
+      titleBritesMessages:    { left: 11,   top: 588,  width: 99,  height: 15 },
       titlePurchasedItems:  { left: 538,  top: 135,   width: 99,  height: 15 },
       titleOrderNumber:     { left: 11,   top: 7,    width: 99,  height: 15 },
 
@@ -1140,28 +1159,35 @@
       var etsyOrderInput = document.getElementById("etsyOrderNumber");
       etsyOrderInput.addEventListener("keydown", async function(e){
         if(e.key === "Enter"){
-          const orderNumber = etsyOrderInput.value.trim();
-          if(orderNumber !== ""){
-            const orderData = await pullEtsyOrderDetails(orderNumber);
-            if(orderData){
-              await updateImageGrid(orderData);
-              startBritesListener(orderNumber);
-            }
+          const orderData = await pullEtsyOrderDetails(orderNumber);
+
+          // 🆕 Always pull ShipStation Ship-To immediately after loading order meta
+          await loadShipToAddress(orderNumber);
+
+          if(orderData){
+            await updateImageGrid(orderData);
+            startBritesListener(orderNumber);
+          }
             try {
               const respPD = await fetch("/.netlify/functions/firebaseOrders?orderId=" + encodeURIComponent(orderNumber));
               const resPD = await respPD.json();
 
-              if(!respPD.ok){
-                if(resPD.error && resPD.error.toLowerCase().includes("not found")){
-                  // Doc not found => clear fields quietly, no error
-                  document.getElementById("labelCreationDate").value = "";
-                  document.getElementById("completedByEmployee").value = "";
-                  document.getElementById("signatureBox").innerHTML = "Sig Box";
-                  return;
-                } else {
-                  throw new Error(resPD.error || "Unknown error from firebaseOrders function");
-                }
+            if(!respPD.ok){
+              if(resPD.error && resPD.error.toLowerCase().includes("not found")){
+                // Doc not found => clear fields quietly, no error
+                document.getElementById("labelCreationDate").value = "";
+                document.getElementById("completedByEmployee").value = "";
+                document.getElementById("signatureBox").innerHTML = "Sig Box";
+
+                // 🆕 also clear Address Box
+                const ab = document.getElementById("shipAddressBox");
+                if (ab) ab.value = "";
+
+                return;
+              } else {
+                throw new Error(resPD.error || "Unknown error from firebaseOrders function");
               }
+            }
 
               // If we reach here => doc is found or newly created
               const docDataPD = resPD.data || {};
@@ -1786,6 +1812,43 @@
         console.error("Error fetching Etsy order details:", err);
         return null;
       });
+    }
+
+    /* ===== ShipStation — load “Ship To” by orderNumber ======================= */
+    async function loadShipToAddress(orderNumber){
+      try{
+        const box = document.getElementById("shipAddressBox");
+        if (!box) return;
+        box.value = "SHIP TO:\n(Loading...)";
+
+        const resp = await fetch("/.netlify/functions/ssGetOrderAddress?orderNumber=" + encodeURIComponent(orderNumber));
+        if (!resp.ok) {
+          box.value = "SHIP TO:\n(Not found)";
+          return;
+        }
+        const data = await resp.json();
+        const ship = data.shipTo || null;
+        if (!ship) {
+          box.value = "SHIP TO:\n(Not found)";
+          return;
+        }
+
+        const lines = [];
+        const add = (v) => { if (v) lines.push(String(v)); };
+
+        add(ship.name || "");
+        const street = [ship.street1, ship.street2, ship.street3].filter(Boolean).join(" ");
+        add(street);
+        add([ship.city, ship.state, ship.postalCode].filter(Boolean).join(", "));
+        add(ship.country);
+        if (ship.phone) add("Phone: " + ship.phone);
+
+        box.value = "SHIP TO:\n" + lines.filter(Boolean).join("\n");
+      } catch (e){
+        console.error("loadShipToAddress:", e);
+        const box = document.getElementById("shipAddressBox");
+        if (box) box.value = "SHIP TO:\n(Error loading)";
+      }
     }
 
     /* ---------------------------------------------------------
