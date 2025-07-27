@@ -1823,12 +1823,14 @@
         const resp = await fetch("/.netlify/functions/ssGetOrderAddress?orderNumber=" + encodeURIComponent(orderNumber));
         if (!resp.ok) {
           box.value = "SHIP TO:\n(Not found)";
+          box.style.color = "";
           return;
         }
         const data = await resp.json();
         const ship = data.shipTo || null;
         if (!ship) {
           box.value = "SHIP TO:\n(Not found)";
+          box.style.color = "";
           return;
         }
 
@@ -1843,10 +1845,21 @@
         if (ship.phone) add("Phone: " + ship.phone);
 
         box.value = "SHIP TO:\n" + lines.filter(Boolean).join("\n");
+  
+        // 🔶 Color for international addresses (non-US/CA)
+        const countryRaw = (ship.country || ship.countryCode || "").toString().trim();
+        const c = countryRaw.toLowerCase();
+        const isUS = c.startsWith("united states") || c === "usa" || c === "us" || c === "u.s." || c === "u.s.a.";
+        const isCA = c === "canada" || c === "ca";
+        // text color only
+        box.style.color = (isUS || isCA) ? "" : "orangered";
       } catch (e){
         console.error("loadShipToAddress:", e);
         const box = document.getElementById("shipAddressBox");
-        if (box) box.value = "SHIP TO:\n(Error loading)";
+        if (box) {
+          box.value = "SHIP TO:\n(Error loading)";
+          box.style.color = "";
+        }
       }
     }
 
