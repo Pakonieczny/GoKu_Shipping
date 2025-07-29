@@ -1814,19 +1814,21 @@
       });
     }
 
-    /* ===== ShipStation — load “Ship To” by orderNumber ======================= */
-    async function loadShipToAddress(orderNumber){
-      try{
-        const box = document.getElementById("shipAddressBox");
-        if (!box) return;
-        box.value = "SHIP TO:\n(Loading...)";
+      /* ===== ShipStation — load “Ship To” by orderNumber ======================= */
+      async function loadShipToAddress(orderNumber){
+        try {
+          const box = document.getElementById("shipAddressBox");
+          if (!box) return;
+          box.value = "SHIP TO:\n(Loading...)";
 
-        const resp = await fetch("/.netlify/functions/ssGetOrderAddress?orderNumber=" + encodeURIComponent(orderNumber));
-        if (!resp.ok) {
-          box.value = "SHIP TO:\n(Not found)";
-          box.style.color = "";
-          return;
-        }
+          const resp = await fetch(
+            "/.netlify/functions/ssGetOrderAddress?orderNumber=" + encodeURIComponent(orderNumber)
+          );
+          if (!resp.ok) {
+            box.value = "SHIP TO:\n(Not found)";
+            box.style.color = "";
+            return;
+          }
 
           const data = await resp.json();
           const ship = data.shipTo || null;
@@ -1836,51 +1838,44 @@
             return;
           }
 
-          // Gift info comes from ShipStation now
+          // Gift info now comes from ShipStation
           window.receiptIsGift = Boolean(data.gift);
           window.receiptGiftMessage = (data.giftMessage || data.customerNotes || "").trim();
 
-          // Refresh the detail pane to reflect new gift fields, if a tile is selected
+          // If a tile is selected, refresh details to show gift fields
           const sel = document.querySelector(".preview-box.selected");
           if (sel) {
             const idx = parseInt(sel.id.replace("previewCell",""), 10);
             if (!Number.isNaN(idx)) showItemDetails(idx);
           }
-        const ship = data.shipTo || null;
-        if (!ship) {
-          box.value = "SHIP TO:\n(Not found)";
-          box.style.color = "";
-          return;
-        }
 
-        const lines = [];
-        const add = (v) => { if (v) lines.push(String(v)); };
+          const lines = [];
+          const add = v => { if (v) lines.push(String(v)); };
 
-        add(ship.name || "");
-        const street = [ship.street1, ship.street2, ship.street3].filter(Boolean).join(" ");
-        add(street);
-        add([ship.city, ship.state, ship.postalCode].filter(Boolean).join(", "));
-        add(ship.country);
-        if (ship.phone) add("Phone: " + ship.phone);
+          add(ship.name || "");
+          const street = [ship.street1, ship.street2, ship.street3].filter(Boolean).join(" ");
+          add(street);
+          add([ship.city, ship.state, ship.postalCode].filter(Boolean).join(", "));
+          add(ship.country);
+          if (ship.phone) add("Phone: " + ship.phone);
 
-        box.value = "SHIP TO:\n" + lines.filter(Boolean).join("\n");
-  
-        // 🔶 Color for international addresses (non-US/CA)
-        const countryRaw = (ship.country || ship.countryCode || "").toString().trim();
-        const c = countryRaw.toLowerCase();
-        const isUS = c.startsWith("united states") || c === "usa" || c === "us" || c === "u.s." || c === "u.s.a.";
-        const isCA = c === "canada" || c === "ca";
-        // text color only
-        box.style.color = (isUS || isCA) ? "" : "orangered";
-      } catch (e){
-        console.error("loadShipToAddress:", e);
-        const box = document.getElementById("shipAddressBox");
-        if (box) {
-          box.value = "SHIP TO:\n(Error loading)";
-          box.style.color = "";
+          box.value = "SHIP TO:\n" + lines.filter(Boolean).join("\n");
+
+          // Text color only for international (non-US/CA) addresses
+          const countryRaw = (ship.country || ship.countryCode || "").toString().trim();
+          const c = countryRaw.toLowerCase();
+          const isUS = c.startsWith("united states") || c === "usa" || c === "us" || c === "u.s." || c === "u.s.a.";
+          const isCA = c === "canada" || c === "ca";
+          box.style.color = (isUS || isCA) ? "" : "orangered";
+        } catch (e) {
+          console.error("loadShipToAddress:", e);
+          const box = document.getElementById("shipAddressBox");
+          if (box) {
+            box.value = "SHIP TO:\n(Error loading)";
+            box.style.color = "";
+          }
         }
       }
-    }
 
     /* ---------------------------------------------------------
      *  Firestore listener for employee-scanned order numbers
