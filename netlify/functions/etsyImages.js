@@ -1,6 +1,6 @@
  // etsyImages.js
  const fetch = require("node-fetch");
- const { getValidEtsyAccessToken } = require("./lib/etsyAuth");
+ const { getValidEtsyAccessToken } = require("./etsyAuth");
 
 exports.handler = async function(event, context) {
   try {
