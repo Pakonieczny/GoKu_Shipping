@@ -36,26 +36,32 @@ exports.handler = async (event) => {
       return { statusCode: 404, body: JSON.stringify({ error: "Order not found" }) };
     }
 
-      const {
-        orderId,
-        orderNumber: on,
-        shipTo = null,
-        gift = false,
-        giftMessage = "",
-        customerNotes = ""
-      } = order;
+       const {
+         orderId,
+         orderNumber: on,
+         shipTo = null,
+         gift = false,
+         giftMessage = "",
+         customerNotes = "",
+         carrierCode = "",
+         serviceCode = "",
+         shippingAmount = null
+       } = order;
 
       return {
         statusCode: 200,
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          orderId,
-          orderNumber: on,
-          shipTo,
-          gift,
-          giftMessage,
-          customerNotes
-        })
+         body: JSON.stringify({
+           orderId,
+           orderNumber: on,
+           shipTo,
+           gift,
+           giftMessage,
+           customerNotes,
+           carrierCode,
+           serviceCode,
+           shippingAmount
+         })
       };
   } catch (err) {
     return { statusCode: 500, body: JSON.stringify({ error: err.message }) };

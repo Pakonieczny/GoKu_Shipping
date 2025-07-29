@@ -206,11 +206,12 @@
     }
 
     /* Single-line text boxes */
-    #dateOrdered,
-    #shipDate,
-    #labelCreationDate,
-    #employeeName,
-    #completedByEmployee {
+      #dateOrdered,
+      #shipDate,
+      #labelCreationDate,
+      #employeeName,
+      #completedByEmployee,
+      #shippingPriority {
       position: absolute;
       width: 200px;
       height: 20px;
@@ -406,6 +407,8 @@
     <!-- 🆕—— new draggable title -->
     <input id="titleShipping" type="text" value="Shipping_1"  readonly />
     <!-- ▲ nothing else changes here -->
+
+    <input type="text" id="shippingPriority" readonly />
 
     <!-- Photo Grid -->
     <div id="Photo_Grid">
@@ -890,6 +893,7 @@
       completeOrderBtn:    { left:1062, top:656, width:155, height:41 },
       titleShipping:        { left: 700, top: 10, width: 200, height: 30 },
       copyOrderDetailsBtn: { left: 260, top: 162, width: 50, height: 24 },
+      shippingPriority: { left: 324, top: 360, width: 200, height: 24 },
       signOutBtn:           { left: 1356,  top: 17, width: 103, height: 35 }
 
     };
@@ -1836,6 +1840,26 @@
             box.value = "SHIP TO:\n(Not found)";
             box.style.color = "";
             return;
+          }
+
+          // NEW: set Shipping Priority box from SS
+          const prEl = document.getElementById("shippingPriority");
+          if (prEl) {
+            const svc = (data.serviceCode || "").toString();
+            const carrier = (data.carrierCode || "").toString();
+            const amount = (typeof data.shippingAmount === "number")
+              ? data.shippingAmount
+              : (data.shippingAmount && typeof data.shippingAmount.amount === "number")
+                ? data.shippingAmount.amount
+                : null;
+
+            const cost = (amount != null)
+              ? amount.toLocaleString(undefined, { style: "currency", currency: "USD" })
+              : "—";
+
+            // Compact, readable summary
+            const label = [carrier, svc].filter(Boolean).join(" / ");
+            prEl.value = label ? `${label} • ${cost}` : `${cost}`;
           }
 
           // Gift info now comes from ShipStation
