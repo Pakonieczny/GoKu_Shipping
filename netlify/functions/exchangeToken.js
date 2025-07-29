@@ -4,8 +4,13 @@
 // else if "goldenspike.app" => uses that
 // else => defaults to goldenspike (you can invert this default if you wish).
 
-const fetch  = require("node-fetch");
-const crypto = require("crypto");
+ const fetch  = require("node-fetch");
+ const crypto = require("crypto");
+ const admin  = require("firebase-admin");
+ if (!admin.apps.length) {
+   admin.initializeApp({ credential: admin.credential.applicationDefault() });
+ }
+ const db = admin.firestore();
 
 // We only allow these two final domains:
 const SORTING_DOMAIN      = "https://sorting.goldenspike.app";
@@ -176,10 +181,19 @@ exports.handler = async function(event) {
       return { statusCode: resp.status, headers: CORS, body: JSON.stringify(data) };
     }
 
-    const finalUrl = `${finalRedirectUri}?access_token=${encodeURIComponent(data.access_token)}`;
-    return { statusCode: 302, headers: { ...CORS, Location: finalUrl }, body: "" };
+     // Persist tokens server-side
+     const expires_at = Date.now() + Math.max(0, (data.expires_in - 90)) * 1000; // ~90s early
+     await db.doc("config/etsy/oauth").set({
+       access_token : data.access_token,
+       refresh_token: data.refresh_token,
+       expires_at
+     }, { merge: true });
+ 
+     // Clean redirect — no token in URL
+     const finalUrl = `${finalRedirectUri}?auth=ok`;
+     return { statusCode: 302, headers: { ...CORS, Location: finalUrl }, body: "" };
 
-  } catch (err) {
+   } catch (err) {
     return { statusCode: 500, headers: CORS, body: JSON.stringify({ error: err.message }) };
   }
 };
