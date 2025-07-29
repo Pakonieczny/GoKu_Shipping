@@ -1720,10 +1720,11 @@
       .then(function(r){ return r.json(); })
       .then(function(data){
         console.log("Etsy Order Data:", data);
-        window.receiptIsGift = (typeof data.is_gift !== "undefined") ? data.is_gift : null;
-        window.receiptGiftMessage = data.gift_message || "";
+        // Gift fields now sourced from ShipStation in loadShipToAddress()
+        window.receiptIsGift = null;
+        window.receiptGiftMessage = "";
 
-        /* 🆕 store buyer note so the chat listener can render it */
+        /* store buyer note so the chat listener can render it (still from Etsy) */
         window.buyerMessageText  = (data.message_from_buyer || "").trim();
         window.orderShipments = data.shipments || [];
         var titleDate2 = document.getElementById("titleOrderDate2");
@@ -1826,6 +1827,18 @@
           box.style.color = "";
           return;
         }
+
+        // Gift info comes from ShipStation now
+        window.receiptIsGift = Boolean(data.gift);
+        window.receiptGiftMessage = (data.giftMessage || data.customerNotes || "").trim();
+
+        // Refresh the detail pane to reflect new gift fields, if a tile is selected
+        const sel = document.querySelector(".preview-box.selected");
+        if (sel) {
+          const idx = parseInt(sel.id.replace("previewCell",""), 10);
+          if (!Number.isNaN(idx)) showItemDetails(idx);
+        }
+        
         const data = await resp.json();
         const ship = data.shipTo || null;
         if (!ship) {
