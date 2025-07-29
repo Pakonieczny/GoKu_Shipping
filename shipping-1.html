@@ -341,6 +341,13 @@
   overflow: hidden !important; /* or 'auto' if you prefer scrolling */
 }
 
+  #titleShippingPriority {
+    position: absolute;
+    font-size: 0.7em;
+    margin: 0;
+    padding: 0;
+  }
+
 #userLoginModalContainer {
   position: static !important; /* so content doesn’t shrink weirdly */
   height: auto !important;
@@ -481,6 +488,7 @@
     <div id="titleOrderDate2" style="font-weight:bold;"></div>
     <div id="titleShipDate">Ship By:</div>
     <div id="titleSignedInAs">Signed In As:</div>
+    <div id="titleShippingPriority">Shipping Priority</div>
 
     <div id="titleOrderDetails">Order Details:</div>
     <div id="titleBritesMessages">Brites Messages</div>
@@ -818,7 +826,7 @@
         "employeeName","trackingNumberInput","carrierSelectWrap","completeOrderBtn",
         "titleOrderDate","titleOrderDate2","titleShipDate",
         "titleSignedInAs",
-        "titleOrderDetails","titleBritesMessages","titlePurchasedItems","titleOrderNumber",
+        "titleOrderDetails","titleShippingPriority","titleBritesMessages","titlePurchasedItems","titleOrderNumber",
         "titleShipping",                // 🆕 make “Shipping” configurable
         "goScreenTwoBtn",
         /* Existing modal references */
@@ -893,7 +901,8 @@
       completeOrderBtn:    { left:1062, top:656, width:155, height:41 },
       titleShipping:        { left: 700, top: 10, width: 200, height: 30 },
       copyOrderDetailsBtn: { left: 260, top: 162, width: 50, height: 24 },
-      shippingPriority: { left: 324, top: 360, width: 200, height: 24 },
+      shippingPriority: { left: 324, top: 106, width: 200, height: 24 },
+      titleShippingPriority: { left: 324, top: 340, width: 200, height: 15 },
       signOutBtn:           { left: 1356,  top: 17, width: 103, height: 35 }
 
     };
@@ -1847,6 +1856,7 @@
           if (prEl) {
             const svc = (data.serviceCode || "").toString();
             const carrier = (data.carrierCode || "").toString();
+
             const amount = (typeof data.shippingAmount === "number")
               ? data.shippingAmount
               : (data.shippingAmount && typeof data.shippingAmount.amount === "number")
@@ -1857,9 +1867,15 @@
               ? amount.toLocaleString(undefined, { style: "currency", currency: "USD" })
               : "—";
 
-            // Compact, readable summary
             const label = [carrier, svc].filter(Boolean).join(" / ");
             prEl.value = label ? `${label} • ${cost}` : `${cost}`;
+
+            // Make it bold (CSS also enforces this, but we set it here too for safety)
+            prEl.style.fontWeight = "bold";
+
+            // If price is exactly $18 or $55 → purple
+            const amt = Number(amount);
+            prEl.style.color = (amt === 18 || amt === 55) ? "purple" : "";
           }
 
           // Gift info now comes from ShipStation
