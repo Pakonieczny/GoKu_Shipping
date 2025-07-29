@@ -1828,18 +1828,24 @@
           return;
         }
 
-        // Gift info comes from ShipStation now
-        window.receiptIsGift = Boolean(data.gift);
-        window.receiptGiftMessage = (data.giftMessage || data.customerNotes || "").trim();
+          const data = await resp.json();
+          const ship = data.shipTo || null;
+          if (!ship) {
+            box.value = "SHIP TO:\n(Not found)";
+            box.style.color = "";
+            return;
+          }
 
-        // Refresh the detail pane to reflect new gift fields, if a tile is selected
-        const sel = document.querySelector(".preview-box.selected");
-        if (sel) {
-          const idx = parseInt(sel.id.replace("previewCell",""), 10);
-          if (!Number.isNaN(idx)) showItemDetails(idx);
-        }
-        
-        const data = await resp.json();
+          // Gift info comes from ShipStation now
+          window.receiptIsGift = Boolean(data.gift);
+          window.receiptGiftMessage = (data.giftMessage || data.customerNotes || "").trim();
+
+          // Refresh the detail pane to reflect new gift fields, if a tile is selected
+          const sel = document.querySelector(".preview-box.selected");
+          if (sel) {
+            const idx = parseInt(sel.id.replace("previewCell",""), 10);
+            if (!Number.isNaN(idx)) showItemDetails(idx);
+          }
         const ship = data.shipTo || null;
         if (!ship) {
           box.value = "SHIP TO:\n(Not found)";
