@@ -155,30 +155,29 @@ exports.handler = async function(event) {
       return { statusCode: 400, headers: CORS, body: JSON.stringify({ error: "Missing code_verifier param" }) };
     }
 
-    // Exchange token
-    const CLIENT_ID     = process.env.CLIENT_ID;
-    const CLIENT_SECRET = process.env.CLIENT_SECRET;
-    if (!CLIENT_ID || !CLIENT_SECRET) {
-      return { statusCode: 500, headers: CORS, body: JSON.stringify({ error: "Server creds missing" }) };
-    }
+     // Exchange token (PKCE) — only CLIENT_ID is required
+     const CLIENT_ID = process.env.CLIENT_ID;
+     if (!CLIENT_ID) {
+       return { statusCode: 500, headers: CORS, body: JSON.stringify({ error: "Missing CLIENT_ID env var" }) };
+     }
 
-    const params = new URLSearchParams({
-      grant_type: "authorization_code",
-      client_id: CLIENT_ID,
-      client_secret: CLIENT_SECRET,
-      code,
-      redirect_uri: finalRedirectUri,
-      code_verifier: codeVerifier
-    });
+     const params = new URLSearchParams({
+       grant_type   : "authorization_code",
+       client_id    : CLIENT_ID,
+       code,
+       redirect_uri : finalRedirectUri,
+       code_verifier: codeVerifier
+     });
 
     const resp  = await fetch("https://api.etsy.com/v3/public/oauth/token", {
       method: "POST",
-      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      headers: { "Content-Type": "application/x-www-form-urlencoded", "Accept":"application/json" },
       body: params
     });
     const data  = await resp.json();
     if (!resp.ok) {
-      return { statusCode: resp.status, headers: CORS, body: JSON.stringify(data) };
+       console.error("Etsy token exchange failed:", resp.status, data);
+       return { statusCode: resp.status, headers: CORS, body: JSON.stringify(data) };
     }
 
      // Persist tokens server-side
