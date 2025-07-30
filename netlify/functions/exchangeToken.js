@@ -7,21 +7,26 @@
 
  const crypto = require("crypto");
  const admin  = require("firebase-admin");
-// Use an explicit service account on Netlify (JSON or base64-encoded JSON)
- const svcRaw = process.env.FIREBASE_SERVICE_ACCOUNT_JSON || process.env.FIREBASE_SERVICE_ACCOUNT || "";
- const svc    = svcRaw && svcRaw.trim().startsWith("{")
-   ? JSON.parse(svcRaw)
-   : JSON.parse(Buffer.from(svcRaw, "base64").toString("utf8"));
+ // Use an explicit service account on Netlify (JSON literal or base64 of JSON)
+ const raw = process.env.FIREBASE_SERVICE_ACCOUNT_JSON || process.env.FIREBASE_SERVICE_ACCOUNT || "";
+ if (!raw || !raw.trim()) {
+   throw new Error("Missing FIREBASE_SERVICE_ACCOUNT_JSON or FIREBASE_SERVICE_ACCOUNT env var");
+ }
+ let svc;
+ try {
+   svc = raw.trim().startsWith("{")
+     ? JSON.parse(raw)
+     : JSON.parse(Buffer.from(raw, "base64").toString("utf8"));
+ } catch (e) {
+   throw new Error("Invalid service account JSON (did you base64-encode the whole file?): " + e.message);
+ }
  const PROJECT_ID =
    (svc && svc.project_id) ||
    process.env.GOOGLE_CLOUD_PROJECT ||
    process.env.GCLOUD_PROJECT ||
    "gokudatabase";
  if (!admin.apps.length) {
-   admin.initializeApp({
-     credential: admin.credential.cert(svc),
-     projectId: PROJECT_ID
-   });
+   admin.initializeApp({ credential: admin.credential.cert(svc), projectId: PROJECT_ID });
  }
  const db = admin.firestore();
  console.log("exchangeToken => Firebase project:", PROJECT_ID);
