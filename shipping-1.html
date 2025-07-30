@@ -609,7 +609,9 @@
         code_verifier: codeVerifier
       });
       // Hand off to the server (will 302 back to the app cleanly)
-      location.replace("/.netlify/functions/exchangeToken?" + qs.toString());
+         location.replace(
+         "/.netlify/functions/exchangeToken?" + qs.toString() + "&redirect_domain=shipping-1"
+       );
     }
   })();
   </script>
@@ -789,7 +791,7 @@
 
     window.isEmployeeLoggedIn = false; // We'll use this to guard the real-time listener
         let lastScanProcessed = null;      // 🔑 remember most-recent scanned order
-        
+
     function generateRandomString(length){
       var chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
       var text = "";
