@@ -1873,9 +1873,9 @@
             // Make it bold (CSS also enforces this, but we set it here too for safety)
             prEl.style.fontWeight = "bold";
 
-            // If price is exactly $18 or $55 → purple
+            // If price is exactly $18 or $55 → orange
             const amt = Number(amount);
-            prEl.style.color = (amt === 18 || amt === 55) ? "purple" : "";
+            prEl.style.color = (amt === 18 || amt === 55) ? "orange" : "";
           }
 
           // Gift info now comes from ShipStation
