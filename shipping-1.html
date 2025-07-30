@@ -761,6 +761,13 @@
                                          "\"":"&quot;","'":"&#039;"}[m]));
     }
 
+    /* normalize Order Details: strip "&quot;" artifacts */
+    function setOrderDetailsValue(txt = "") {
+      const el = document.getElementById("orderDetails");
+      if (!el) return;
+      el.value = String(txt).replace(/&quot;/g, "");
+    }
+
     window.isEmployeeLoggedIn = false; // We'll use this to guard the real-time listener
         let lastScanProcessed = null;      // 🔑 remember most-recent scanned order
 
@@ -1660,7 +1667,7 @@
         highlightSelectedPreview(document.getElementById("previewCell0")); // NEW
         showItemDetails(0);
       } else {
-        document.getElementById("orderDetails").value = " ORDER DETAILS:\n\nNo items found.";
+        setOrderDetailsValue(" ORDER DETAILS:\n\nNo items found.");
       }
     }
 
@@ -1772,7 +1779,7 @@
       if(window.receiptGiftMessage){
         details += " Gift Message: " + window.receiptGiftMessage + "\n";
       }
-      document.getElementById("orderDetails").value = details;
+      setOrderDetailsValue(details);
     }
 
      async function fetchListingImages(listingId){
