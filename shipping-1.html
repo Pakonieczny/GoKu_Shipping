@@ -1051,6 +1051,14 @@
       document.addEventListener("DOMContentLoaded", function () {
         M.AutoInit();
 
+         // Default carrier: USPS (so user doesn't need to pick each time)
+         (function setDefaultCarrier(){
+           const sel = document.getElementById("carrierSelect");
+           if (!sel) return;
+           sel.value = "usps";
+           sel.dispatchEvent(new Event("change"));
+         })();
+
         // Fade in body
         document.body.style.opacity = 0;
         setTimeout(function () {
@@ -1962,6 +1970,17 @@
           const isUS = c.startsWith("united states") || c === "usa" || c === "us" || c === "u.s." || c === "u.s.a.";
           const isCA = c === "canada" || c === "ca";
           box.style.color = (isUS || isCA) ? "" : "orangered";
+
+           // Auto-select carrier based on destination:
+           // - US → USPS (default)
+           // - Non-US → ChitChats
+           (function setCarrierByDestination(){
+             const sel = document.getElementById("carrierSelect");
+             if (!sel) return;
+             sel.value = isUS ? "usps" : "chitchats";
+             sel.dispatchEvent(new Event("change"));
+           })();
+
         } catch (e) {
           console.error("loadShipToAddress:", e);
           const box = document.getElementById("shipAddressBox");
