@@ -12,6 +12,13 @@
  }
  const db = admin.firestore();
 
+ // Mute the noisy Node deprecation specifically for 'punycode'
+ // (keeps other warnings visible)
+  process.on("warning", (w) => {
+    if (w?.name === "DeprecationWarning" && /punycode/i.test(w.message)) return;
+    console.warn(w);
+  });
+
 // We only allow these two final domains:
 const SORTING_DOMAIN      = "https://sorting.goldenspike.app";
 const SORTING2_DOMAIN      = "https://sorting-2.goldenspike.app";
@@ -202,8 +209,14 @@ exports.handler = async function(event) {
       body: params
     });
     const data  = await resp.json();
-    if (!resp.ok) {
-       console.error("Etsy token exchange failed:", resp.status, data);
+     if (!resp.ok) {
+        console.error(
+          "Etsy token exchange failed:",
+          resp.status,
+          data?.error,
+          data?.error_description,
+          { redirect_uri: finalRedirectUri }
+        );
        // If this is a duplicate callback (code reused), finish gracefully if we already have tokens
        if (data?.error === "invalid_grant" && /used previously/i.test(data?.error_description || "")) {
          const tokSnap = await db.doc(TOKEN_DOC).get();
