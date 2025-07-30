@@ -2,10 +2,6 @@
   publish = "."
   functions = "netlify/functions"
 
-[functions]
-  node_bundler = "esbuild"
-  included_files = ["netlify/functions"]
-
 [[redirects]]
   from = "https://scanner.goldenspike.app"
   to = "/scanner.html"

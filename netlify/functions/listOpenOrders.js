@@ -4,13 +4,19 @@
  * when offset==0, but fetches ONE page when an explicit offset is sent.
  */
 
- const fetch = require("node-fetch");
- const { getValidEtsyAccessToken } = require("./etsyAuth");
+const fetch = require("node-fetch");
 
 exports.handler = async (event) => {
   try {
-     /* 1.  Server-managed OAuth token */
-     const accessToken = await getValidEtsyAccessToken();
+    /* 1.  OAuth token from front-end header */
+    const accessToken =
+      event.headers["access-token"] || event.headers["Access-Token"];
+    if (!accessToken) {
+      return {
+        statusCode: 400,
+        body: JSON.stringify({ error: "Missing access-token header" })
+      };
+    }
 
     /* 2.  Required env vars */
     const SHOP_ID   = process.env.SHOP_ID;      // numeric ID of your Etsy shop
@@ -47,11 +53,12 @@ exports.handler = async (event) => {
 
       const resp = await fetch(url, {
         method: "GET",
-        const headers = {
-          "Authorization": `Bearer ${accessToken}`,
-          "Content-Type": "application/json",
-          "x-api-key": process.env.CLIENT_ID
-        };
+        headers: {
+          Authorization : `Bearer ${accessToken}`,
+          "x-api-key"   : CLIENT_ID,
+          "Content-Type": "application/json"
+        }
+      });
 
       if (!resp.ok) {
         const txt = await resp.text();

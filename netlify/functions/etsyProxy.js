@@ -1,17 +1,17 @@
- const fetch = require('node-fetch');
- const { getValidEtsyAccessToken } = require("./etsyAuth");
+const fetch = require('node-fetch');
 
 exports.handler = async function(event, context) {
   try {
     const listingId = event.queryStringParameters.listingId;
-
+    const accessToken = event.headers['access-token'] || event.headers['Access-Token'];
     if (!listingId) {
       return { statusCode: 400, body: JSON.stringify({ error: "Missing listingId parameter" }) };
     }
-
+    if (!accessToken) {
+      return { statusCode: 400, body: JSON.stringify({ error: "Missing access token" }) };
+    }
     const etsyUrl = `https://api.etsy.com/v3/application/listings/${listingId}`;
-     const accessToken = await getValidEtsyAccessToken();
-     const response = await fetch(etsyUrl, {
+    const response = await fetch(etsyUrl, {
       method: "GET",
       headers: {
         "Authorization": `Bearer ${accessToken}`,

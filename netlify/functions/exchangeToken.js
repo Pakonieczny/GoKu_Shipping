@@ -4,39 +4,8 @@
 // else if "goldenspike.app" => uses that
 // else => defaults to goldenspike (you can invert this default if you wish).
 
-
- const crypto = require("crypto");
- const admin  = require("firebase-admin");
- // Use an explicit service account on Netlify (JSON literal or base64 of JSON)
- const raw = process.env.FIREBASE_SERVICE_ACCOUNT_JSON || process.env.FIREBASE_SERVICE_ACCOUNT || "";
- if (!raw || !raw.trim()) {
-   throw new Error("Missing FIREBASE_SERVICE_ACCOUNT_JSON or FIREBASE_SERVICE_ACCOUNT env var");
- }
- let svc;
- try {
-   svc = raw.trim().startsWith("{")
-     ? JSON.parse(raw)
-     : JSON.parse(Buffer.from(raw, "base64").toString("utf8"));
- } catch (e) {
-   throw new Error("Invalid service account JSON (did you base64-encode the whole file?): " + e.message);
- }
- const PROJECT_ID =
-   (svc && svc.project_id) ||
-   process.env.GOOGLE_CLOUD_PROJECT ||
-   process.env.GCLOUD_PROJECT ||
-   "gokudatabase";
- if (!admin.apps.length) {
-   admin.initializeApp({ credential: admin.credential.cert(svc), projectId: PROJECT_ID });
- }
- const db = admin.firestore();
- console.log("exchangeToken => Firebase project:", PROJECT_ID);
-
- // Mute the noisy Node deprecation specifically for 'punycode'
- // (keeps other warnings visible)
-  process.on("warning", (w) => {
-    if (w?.name === "DeprecationWarning" && /punycode/i.test(w.message)) return;
-    console.warn(w);
-  });
+const fetch  = require("node-fetch");
+const crypto = require("crypto");
 
 // We only allow these two final domains:
 const SORTING_DOMAIN      = "https://sorting.goldenspike.app";
@@ -66,11 +35,6 @@ const CORS = {
   "Access-Control-Allow-Headers": "Content-Type,Authorization",
   "Access-Control-Allow-Methods": "GET,POST,OPTIONS"
 };
-
-// Where we temporarily store PKCE code_verifier per state (collection of docs)
-const STATE_COLL = "oauth_state";
-// Where we persist the final Etsy tokens (single doc)
-const TOKEN_DOC  = "config/etsy_oauth";
 
 // Helpers for PKCE:
 function generateRandomString(length) {
@@ -149,117 +113,73 @@ exports.handler = async function(event) {
     return { statusCode: 200, headers: CORS, body: "ok" };
   }
 
-   try {
-     const query = event.queryStringParameters || {};
-     const code  = query.code;
-     const state = (query.state || "").trim();
+  try {
+    const query = event.queryStringParameters || {};
+    const code = query.code;
+    const codeVerifier = query.code_verifier;
 
     // Decide which domain to use
     const finalRedirectUri = pickDomainFromHost(event);
     console.log("exchangeToken => finalRedirectUri:", finalRedirectUri);
 
-     // If no code => begin OAuth PKCE handshake
-     if (!code) {
-       // Generate one-time state + PKCE verifier/challenge
-       const newState       = generateRandomString(32);
-       const newCodeVerifier = generateRandomString(64);
-       const codeChallenge   = generateCodeChallenge(newCodeVerifier);
+    // If no code => begin OAuth PKCE handshake
+    if (!code) {
+      const newCodeVerifier = generateRandomString(64);
+      const codeChallenge   = generateCodeChallenge(newCodeVerifier);
       const CLIENT_ID       = process.env.CLIENT_ID;
       if (!CLIENT_ID) {
         return { statusCode: 500, headers: CORS, body: JSON.stringify({ error: "Server config error" }) };
       }
 
-       // Persist the verifier keyed by state (single-use)
-       await db.collection(STATE_COLL).doc(newState).set({
-         cv: newCodeVerifier,
-         createdAt: Date.now()
-       });
-
       const scope = "listings_w listings_r transactions_r transactions_w";
-      
+      const state = "randomState123";
       const oauthUrl =
         "https://www.etsy.com/oauth/connect" +
         `?response_type=code&client_id=${CLIENT_ID}` +
         `&redirect_uri=${encodeURIComponent(finalRedirectUri)}` +
         `&scope=${encodeURIComponent(scope)}` +
-        `&state=${newState}` +
+        `&state=${state}` +
         `&code_challenge=${encodeURIComponent(codeChallenge)}` +
         `&code_challenge_method=S256`;
 
       return { statusCode: 302, headers: { ...CORS, Location: oauthUrl }, body: "" };
     }
 
-     // We have `code` (callback). Look up PKCE verifier by `state` (must exist and be unused).
-     if (!state) {
-       return { statusCode: 400, headers: CORS, body: JSON.stringify({ error: "Missing state in callback" }) };
-     }
-     const stateRef = db.collection(STATE_COLL).doc(state);
-     const stateSnap = await stateRef.get();
-     if (!stateSnap.exists) {
-       // Already consumed or invalid — if tokens already exist, just finish gracefully.
-       const tokSnap = await db.doc(TOKEN_DOC).get();
-       if (tokSnap.exists) {
-         const finalUrl = `${finalRedirectUri}?auth=ok&reuse=1`;
-         return { statusCode: 302, headers: { ...CORS, Location: finalUrl }, body: "" };
-       }
-       return { statusCode: 400, headers: CORS, body: JSON.stringify({ error: "Unknown or already-used state" }) };
-     }
-     const codeVerifier = stateSnap.get("cv");
-     // Make the state single-use immediately
-     await stateRef.delete();
+    // Require code_verifier
+    if (!codeVerifier) {
+      return { statusCode: 400, headers: CORS, body: JSON.stringify({ error: "Missing code_verifier param" }) };
+    }
 
-      // Exchange token (PKCE) — only CLIENT_ID is required
-      const CLIENT_ID = process.env.CLIENT_ID;
-      if (!CLIENT_ID) {
-        return { statusCode: 500, headers: CORS, body: JSON.stringify({ error: "Missing CLIENT_ID env var" }) };
-      }
+    // Exchange token
+    const CLIENT_ID     = process.env.CLIENT_ID;
+    const CLIENT_SECRET = process.env.CLIENT_SECRET;
+    if (!CLIENT_ID || !CLIENT_SECRET) {
+      return { statusCode: 500, headers: CORS, body: JSON.stringify({ error: "Server creds missing" }) };
+    }
 
-     const params = new URLSearchParams({
-       grant_type   : "authorization_code",
-       client_id    : CLIENT_ID,
-       code,
-       redirect_uri : finalRedirectUri,
-       code_verifier: codeVerifier
-     });
+    const params = new URLSearchParams({
+      grant_type: "authorization_code",
+      client_id: CLIENT_ID,
+      client_secret: CLIENT_SECRET,
+      code,
+      redirect_uri: finalRedirectUri,
+      code_verifier: codeVerifier
+    });
 
     const resp  = await fetch("https://api.etsy.com/v3/public/oauth/token", {
       method: "POST",
-      headers: { "Content-Type": "application/x-www-form-urlencoded", "Accept":"application/json" },
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
       body: params
     });
     const data  = await resp.json();
-     if (!resp.ok) {
-        console.error(
-          "Etsy token exchange failed:",
-          resp.status,
-          data?.error,
-          data?.error_description,
-          { redirect_uri: finalRedirectUri }
-        );
-       // If this is a duplicate callback (code reused), finish gracefully if we already have tokens
-       if (data?.error === "invalid_grant" && /used previously/i.test(data?.error_description || "")) {
-         const tokSnap = await db.doc(TOKEN_DOC).get();
-         if (tokSnap.exists) {
-           const finalUrl = `${finalRedirectUri}?auth=ok&reused_code=1`;
-           return { statusCode: 302, headers: { ...CORS, Location: finalUrl }, body: "" };
-         }
-       }
-       return { statusCode: resp.status, headers: CORS, body: JSON.stringify(data) };
+    if (!resp.ok) {
+      return { statusCode: resp.status, headers: CORS, body: JSON.stringify(data) };
     }
 
-     // Persist tokens server-side
-      const expires_at = Date.now() + Math.max(0, (data.expires_in - 90)) * 1000; // ~90s early
-      await db.doc(TOKEN_DOC).set({
-       access_token : data.access_token,
-       refresh_token: data.refresh_token,
-       expires_at
-     }, { merge: true });
- 
-     // Clean redirect — no token in URL
-     const finalUrl = `${finalRedirectUri}?auth=ok`;
-     return { statusCode: 302, headers: { ...CORS, Location: finalUrl }, body: "" };
+    const finalUrl = `${finalRedirectUri}?access_token=${encodeURIComponent(data.access_token)}`;
+    return { statusCode: 302, headers: { ...CORS, Location: finalUrl }, body: "" };
 
-   } catch (err) {
+  } catch (err) {
     return { statusCode: 500, headers: CORS, body: JSON.stringify({ error: err.message }) };
   }
 };
