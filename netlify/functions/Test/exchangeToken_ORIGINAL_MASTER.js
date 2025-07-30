@@ -176,16 +176,8 @@ exports.handler = async function(event) {
       return { statusCode: resp.status, headers: CORS, body: JSON.stringify(data) };
     }
 
-     // include refresh payload so the client can auto-refresh
-     const issuedAt = Math.floor(Date.now() / 1000);
-     const paramsOut = new URLSearchParams({
-       access_token : data.access_token || "",
-       refresh_token: data.refresh_token || "",
-       expires_in   : String(data.expires_in || 3600),
-       issued_at    : String(issuedAt)
-     });
-     const finalUrl = `${finalRedirectUri}?${paramsOut.toString()}`;
-     return { statusCode: 302, headers: { ...CORS, Location: finalUrl }, body: "" };
+    const finalUrl = `${finalRedirectUri}?access_token=${encodeURIComponent(data.access_token)}`;
+    return { statusCode: 302, headers: { ...CORS, Location: finalUrl }, body: "" };
 
   } catch (err) {
     return { statusCode: 500, headers: CORS, body: JSON.stringify({ error: err.message }) };
