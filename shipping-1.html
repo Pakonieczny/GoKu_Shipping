@@ -594,6 +594,26 @@
     src="https://cdnjs.cloudflare.com/ajax/libs/materialize/1.0.0/js/materialize.min.js"
   ></script>
 
+  <!-- OAuth callback handoff: send code/state (+ PKCE) to Netlify function -->
+  <script>
+  (function () {
+    const p = new URLSearchParams(location.search);
+    const code  = p.get("code");
+    const state = p.get("state");
+    if (code && state) {
+      // If you started PKCE in the browser, forward the stored verifier too
+      const codeVerifier = localStorage.getItem("etsy_code_verifier") || "";
+      const qs = new URLSearchParams({
+        code: code,
+        state: state,
+        code_verifier: codeVerifier
+      });
+      // Hand off to the server (will 302 back to the app cleanly)
+      location.replace("/.netlify/functions/exchangeToken?" + qs.toString());
+    }
+  })();
+  </script>
+
   <!-- 1) Firebase loaded first, define db for global usage -->
   <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
@@ -769,35 +789,7 @@
 
     window.isEmployeeLoggedIn = false; // We'll use this to guard the real-time listener
         let lastScanProcessed = null;      // 🔑 remember most-recent scanned order
-
-    (function(){
-      var urlParams = new URLSearchParams(window.location.search);
-      var accessToken = urlParams.get("access_token");
-      if(accessToken){
-        localStorage.setItem("access_token", accessToken);
-        window.history.replaceState({}, document.title, window.location.pathname);
-        M.toast({html:"Connection Successful!"});
-        console.log("Access token received:", accessToken);
-      } else {
-        var authCode = urlParams.get("code");
-        var raw = urlParams.get("code") || "";
-        var authCode = raw.split("&")[0];          // keep only the code value
-        if(authCode){
-          var storedCodeVerifier = localStorage.getItem("etsy_code_verifier");
-          if(storedCodeVerifier){
-           const qs = new URLSearchParams({
-            code:            authCode,
-            code_verifier:   storedCodeVerifier,
-            redirect_domain: "shipping-1"
-          });
-          window.location.href = "/.netlify/functions/exchangeToken?" + qs.toString();
-          } else {
-            console.error("No code verifier found in localStorage.");
-          }
-        }
-      }
-    })();
-
+        
     function generateRandomString(length){
       var chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
       var text = "";
@@ -1143,29 +1135,9 @@
 
       var connectEtsyBtn = document.getElementById("connectEtsyBtn");
       if(connectEtsyBtn){
-        connectEtsyBtn.addEventListener("click", async function(){
-          var codeVerifier = generateRandomString(64);
-          localStorage.setItem("etsy_code_verifier", codeVerifier);
-          var codeChallenge = await generateCodeChallenge(codeVerifier);
-          var state = "randomState123";
-          var scope = "listings_w listings_r transactions_r transactions_w";
-          var CLIENT_ID = "k75zdspz4r99txpqdji7i2em";
-          var redirectUri = "https://shipping-1.goldenspike.app";
-
-          var etsyAuthUrl =
-            "https://www.etsy.com/oauth/connect?response_type=code" +
-            "&client_id=" + CLIENT_ID +
-            "&redirect_uri=" + encodeURIComponent(redirectUri) +
-            "&scope=" + encodeURIComponent(scope) +
-            "&state=" + state +
-            "&code_challenge=" + encodeURIComponent(codeChallenge) +
-            "&code_challenge_method=S256";
-
-          /* 🟢 flag: tell next load we’re mid-OAuth */
-          localStorage.setItem("oauth_in_progress","1");   // <<< ADD THIS LINE
-
-          console.log("Redirecting to Etsy OAuth URL:", etsyAuthUrl);
-          window.location.href = etsyAuthUrl;
+        connectEtsyBtn.addEventListener("click", function () {
+          // Let the Netlify function generate state + PKCE and redirect to Etsy
+          window.location.href = "/.netlify/functions/exchangeToken?redirect_domain=shipping-1";
         });
       }
 
