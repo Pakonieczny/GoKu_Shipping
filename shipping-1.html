@@ -814,6 +814,25 @@
       }
     })();
 
+    // Force-sync a Materialize <select> with programmatic value changes
+    function setMatSelectValue(id, value){
+      const sel = document.getElementById(id);
+      if (!sel) return;
+
+      // Update the native select
+      [...sel.options].forEach(o => o.selected = (o.value === value));
+      sel.value = value;
+
+      // Re-init Materialize so the UI mirrors the native <select>
+      const inst = M.FormSelect.getInstance(sel);
+      if (inst) inst.destroy();
+      M.FormSelect.init(sel);
+
+      // Notify any listeners
+      sel.dispatchEvent(new Event("change", { bubbles: true }));
+      sel.dispatchEvent(new Event("input",  { bubbles: true }));
+    }
+
     function generateRandomString(length){
       var chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
       var text = "";
@@ -1053,12 +1072,7 @@
         M.AutoInit();
 
          // Default carrier: USPS (so user doesn't need to pick each time)
-         (function setDefaultCarrier(){
-           const sel = document.getElementById("carrierSelect");
-           if (!sel) return;
-           sel.value = "usps";
-           sel.dispatchEvent(new Event("change"));
-         })();
+         setMatSelectValue("carrierSelect", "usps");
 
         // Fade in body
         document.body.style.opacity = 0;
@@ -1981,12 +1995,7 @@
            // Auto-select carrier based on destination:
            // - US → USPS (default)
            // - Non-US → ChitChats
-           (function setCarrierByDestination(){
-             const sel = document.getElementById("carrierSelect");
-             if (!sel) return;
-             sel.value = isUS ? "usps" : "chitchats";
-             sel.dispatchEvent(new Event("change"));
-           })();
+           setMatSelectValue("carrierSelect", isUS ? "usps" : "chitchats");
 
         } catch (e) {
           console.error("loadShipToAddress:", e);
