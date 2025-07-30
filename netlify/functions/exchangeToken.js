@@ -7,10 +7,24 @@
 
  const crypto = require("crypto");
  const admin  = require("firebase-admin");
+// Use an explicit service account on Netlify (JSON or base64-encoded JSON)
+ const svcRaw = process.env.FIREBASE_SERVICE_ACCOUNT_JSON || process.env.FIREBASE_SERVICE_ACCOUNT || "";
+ const svc    = svcRaw && svcRaw.trim().startsWith("{")
+   ? JSON.parse(svcRaw)
+   : JSON.parse(Buffer.from(svcRaw, "base64").toString("utf8"));
+ const PROJECT_ID =
+   (svc && svc.project_id) ||
+   process.env.GOOGLE_CLOUD_PROJECT ||
+   process.env.GCLOUD_PROJECT ||
+   "gokudatabase";
  if (!admin.apps.length) {
-   admin.initializeApp({ credential: admin.credential.applicationDefault() });
+   admin.initializeApp({
+     credential: admin.credential.cert(svc),
+     projectId: PROJECT_ID
+   });
  }
  const db = admin.firestore();
+ console.log("exchangeToken => Firebase project:", PROJECT_ID);
 
  // Mute the noisy Node deprecation specifically for 'punycode'
  // (keeps other warnings visible)
