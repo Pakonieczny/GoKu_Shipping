@@ -1376,11 +1376,12 @@ document.addEventListener("DOMContentLoaded", () => {
 
      // OPEN PRINT WINDOW EARLY to preserve user-activation on slow machines
      // (If popup is blocked, we'll fall back to the hidden <iframe> path later.)
-     let qrPrintWin = null;
-     try {
-       qrPrintWin = window.open("design-print.html#v2", "qrPrint", "width=420,height=420");
-     } catch (e) {}
-     window.__qrPrintWin = qrPrintWin;  // remember for handoff
+    let qrPrintWin = null;
+    try {
+      // open a real popup in the user-gesture, but keep it blank for now
+      qrPrintWin = window.open("", "qrPrint", "width=420,height=420");
+    } catch (e) {}
+    window.__qrPrintWin = qrPrintWin;
 
     /* 2️⃣  collect every visible preview that matches those metals */
 
