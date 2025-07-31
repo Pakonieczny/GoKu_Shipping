@@ -731,11 +731,6 @@ let listingModal;                     // ← NEW ➊  (declare up-top)
 document.addEventListener("DOMContentLoaded", () => {
   M.AutoInit();
 
-  const completeBtn = document.getElementById("completeBtn");
-  if (completeBtn) {
-    completeBtn.addEventListener("click", handleCompleteClick);
-  }
-
   /* wire “Undo Complete” */
   const undoBtn = document.getElementById("undoCompleteBtn");
   if (undoBtn) undoBtn.addEventListener("click", handleUndoCompleteClick);
