@@ -812,7 +812,7 @@ document.addEventListener("DOMContentLoaded", () => {
     if(!rid) return;                      // safety
 
     /* — mark as completed — */
-    completedOrders.add(rid);             // global Set   [oai_citation:2‡design.html](file-service://file-UD87qPNcvFGdsBetdyBDoA)
+    completedOrders.add(rid);             // global Set   [oai_citation:2‡design-1.html](file-service://file-UD87qPNcvFGdsBetdyBDoA)
     selectedOrders.delete(rid);
 
     /* remove/hide UI elements */
@@ -1465,7 +1465,7 @@ document.addEventListener("DOMContentLoaded", () => {
     updateCounters();
     applyMetalFilter();
 
-    /* 7️⃣  hand off to design-print.html via HIDDEN iframe (no URL change) */
+    /* 7️⃣  hand off to design-print-1.html via HIDDEN iframe (no URL change) */
     // ── now shove each mixed‐metal order into whichever metal list is smallest ──
     multiMetalOrders.forEach(rid => {
       const metals = Array.from(metalSets[rid]);  // e.g. ['gold','silver']
@@ -1485,7 +1485,7 @@ document.addEventListener("DOMContentLoaded", () => {
       printFrame.style.right      = "9999px";
       printFrame.style.width      = "1px";
       printFrame.style.height     = "1px";
-      printFrame.src = "design-print.html";      // loads silently, prints inside
+      printFrame.src = "design-print-1.html";      // loads silently, prints inside
       document.body.appendChild(printFrame);
 
       /* clear DOM *and* in-memory map so no orphan wraps inflate counters */
