@@ -55,6 +55,8 @@ async function handleMetalBundles(lists) {
     });
   });
 
+
+
   /* 2️⃣  print each non-empty bundle */
   for (const [metal, arr] of Object.entries(lists)) {
     if (!arr.length) continue;
@@ -81,6 +83,8 @@ async function handleMetalBundles(lists) {
     };
     await autoPrint(docDef);
   }
+   // Notify parent that all bundle prints are finished
+   try { window.top.postMessage({ printSuccess: true }, "*"); } catch (e) {}
 }
 
 /* ──────────────────────────────────────────────────────────
@@ -132,9 +136,34 @@ async function autoPrint(docDefinition){
     pdfMake.createPdf(docDefinition).getBlob(blob => {
       const url = URL.createObjectURL(blob);
       const frame = document.createElement("iframe");
-      frame.style.visibility = "hidden";
+
+      // Off-screen instead of visibility:hidden to avoid some blockers
+      frame.style.position = "fixed";
+      frame.style.right = "9999px";
+      frame.style.width = "1px";
+      frame.style.height = "1px";
       frame.src = url;
-      frame.onload = () => { frame.contentWindow.print(); res(); };
+
+      frame.onload = () => {
+        const w = frame.contentWindow;
+
+        const done = () => {
+          w.removeEventListener("afterprint", done);
+          // small delay so browsers settle before cleanup
+          setTimeout(() => {
+            URL.revokeObjectURL(url);
+            frame.remove();
+            res();
+          }, 50);
+        };
+
+        // Resolve only after the print dialog is closed
+        w.addEventListener("afterprint", done, { once: true });
+
+        // Focus + slight defer helps some Chromium builds
+        setTimeout(() => { w.focus(); w.print(); }, 100);
+      };
+
       document.body.appendChild(frame);
     });
   });
