@@ -42,49 +42,46 @@ window.addEventListener("load", async () => {
   console.error("Nothing to print: no metalOrderLists or qrPrintAll found.");
 });
 
-  /* ──────────────────────────────────────────────────────────
-   *  NEW FLOW – single PDF, one 1″×1″ page per metal bundle
-   * ────────────────────────────────────────────────────────── */
-  async function handleMetalBundles(lists){
-
-    /* 1️⃣  de-dupe only inside each bundle */
-    Object.keys(lists).forEach(m=>{
-      lists[m] = [...new Set(lists[m] || [])];
+/* ──────────────────────────────────────────────────────────
+ *  NEW FLOW  – one QR per metal-specific bundle
+ * ────────────────────────────────────────────────────────── */
+async function handleMetalBundles(lists) {
+  /* 1️⃣  de-dupe across bundles */
+  const seen = new Set();
+  Object.keys(lists).forEach(m => {
+    lists[m] = (lists[m] || []).filter(id => {
+      if (seen.has(id)) return false;
+      seen.add(id); return true;
     });
+  });
 
-    /* 2️⃣  assemble all non-empty bundles into ONE document */
-    const pages = [];
-    const metals = Object.entries(lists).filter(([,arr])=>arr.length);
+  /* 2️⃣  print each non-empty bundle */
+  for (const [metal, arr] of Object.entries(lists)) {
+    if (!arr.length) continue;
 
-    for (let i = 0; i < metals.length; i++){
-      const [metal, ids] = metals[i];
-      const imgData = await makeQRDataURL(ids.join(","));
-
-      pages.push(
-        { image: imgData, width:85, absolutePosition:{ x:3, y:3 } },
-        { text : `${metal.toUpperCase()} (${ids.length})`,
-          fontSize:9, bold:true,
-          absolutePosition:{ x:1, y:93 } }
-      );
-
-      /* add a hard page break except after the last bundle */
-      if (i < metals.length - 1){
-        pages.push({ text:"", pageBreak:"after" });
-      }
-    }
-
-    if (!pages.length) return;        // nothing to print
-
-    const docDef = {
-      pageSize   : { width:145, height:145 },     // 1″ × 1″
+    const imgData = await makeQRDataURL(arr.join(","));
+    const docDef  = {
+      pageSize   : { width:145, height:145 },          // 1″ × 1″
       pageMargins: [0,0,0,0],
-      content    : pages
-    };
+      content : [
+        /* ↓↓↓  MATCHES QR Printer.html sizing/position ↓↓↓ */
+        { image: imgData, width:85, absolutePosition:{ x:3, y:3 } },
+        { text : `${metal.toUpperCase()} (${arr.length})`,
+          fontSize:9, bold:true,
+          absolutePosition:{ x:1, y:93 } },
 
-      // show dialog, then notify parent once it's closed
-      await autoPrint(docDef);
-      window.parent.postMessage({ printSuccess: true }, "*");
+        // order number immediately below the date
+      {
+        text: "Notes:",
+        fontSize: 9,
+        bold: true,
+        absolutePosition: { x:92, y:0.5 }
+      }
+      ]
+    };
+    await autoPrint(docDef);
   }
+}
 
 /* ──────────────────────────────────────────────────────────
  *  LEGACY FLOW  – single order QR (unchanged)
@@ -103,15 +100,13 @@ async function handleLegacy(dataObj){
     pageSize   : { width:72, height:72 },          // 1″ × 1″
     pageMargins: [0,0,0,0],
     content : [
-      { image: imgData, width:16, absolutePosition:{ x:15, y:2 } },
+      { image: imgData, width:12, absolutePosition:{ x:27.5, y:2 } },
       { text : dispatchDate,
-        fontSize:3, bold:true,
-        absolutePosition:{ x:15, y:19 } }
+        fontSize:2, bold:true,
+        absolutePosition:{ x:27.5, y:13.75 } }
     ]
   };
-      // show dialog, then notify parent once it's closed
-      await autoPrint(docDef);
-      window.parent.postMessage({ printSuccess: true }, "*");
+  await autoPrint(docDef);
 }
 
 /* ──────────────────────────────────────────────────────────
@@ -123,13 +118,22 @@ async function makeQRDataURL(text){
   document.body.appendChild(holder);
 
   new QRCode(holder, {
-    text, width:512, height:512, correctLevel:QRCode.CorrectLevel.H
+    text, width:1024, height:1024, correctLevel:QRCode.CorrectLevel.H
   });
-  await new Promise(r => setTimeout(r, 300));      // allow render
-
-  const img = holder.querySelector("img")
-         || holder.querySelector("canvas")?.toDataURL("image/png");
-  return img.tagName ? img.src : img;              // normalize
+   // Wait until <img> or <canvas> is actually present (handles slow devices)
+   await new Promise(resolve => {
+    const tryNow = () => {
+       const imgEl = holder.querySelector("img");
+       const canvasEl = holder.querySelector("canvas");
+       if ((imgEl && imgEl.naturalWidth) || canvasEl) return resolve();
+       setTimeout(tryNow, 50);
+     };
+     tryNow();
+   });
+   const imgEl = holder.querySelector("img");
+   if (imgEl) return imgEl.src;
+   const canvasEl = holder.querySelector("canvas");
+   return canvasEl ? canvasEl.toDataURL("image/png") : "";
 }
 
 async function autoPrint(docDefinition){
@@ -139,14 +143,19 @@ async function autoPrint(docDefinition){
       const frame = document.createElement("iframe");
       frame.style.visibility = "hidden";
       frame.src = url;
-       frame.onload = () => {
-         // wait until the user actually closes the print dialog
-         frame.contentWindow.addEventListener("afterprint", () => {
-           res();
-           document.body.removeChild(frame);
-         }, { once: true });
-         frame.contentWindow.print();
-       };
+      frame.onload = () => {
+        try {
+          // Notify parent/opener when the *actual* print cycle finishes.
+          frame.contentWindow.onafterprint = () => {
+            try { (window.opener || window.parent)?.postMessage({ printSuccess: true }, "*"); } catch(e) {}
+            setTimeout(() => { try { window.close(); } catch(_) {} }, 300);
+          };
+          frame.contentWindow.focus();
+          frame.contentWindow.print();
+        } finally {
+          res();
+        }
+      };
       document.body.appendChild(frame);
     });
   });
