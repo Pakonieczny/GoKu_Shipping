@@ -15,9 +15,7 @@
     }
 
     /* Increase toast size to 500% total */
-    .toast {
-      font-size: 500% !important;
-    }
+    .toast { font-size: 500% !important; }
 
     /* "Send" button: big for easy tapping */
     #sendBtn {
@@ -33,9 +31,7 @@
     }
 
     /* #qrcode: resizable by config */
-    #qrcode {
-      position: absolute;
-    }
+    #qrcode { position: absolute; }
 
     /* Scanned QR Code text box: big font */
     #orderNumInput {
@@ -45,27 +41,11 @@
       height: 150px !important;
       font-size: 600% !important;
     }
-    #orderLabel {
-      position: absolute;
-      font-weight: bold;
-      font-size: 600% !important;
-    }
-    #qrPreviewTitle {
-      position: absolute;
-      font-weight: bold;
-      font-size: 600% !important;
-    }
-    #openConfigBtnScanner {
-      position: absolute;
-    }
-    #video {
-      position: absolute;
-      background: #333;
-    }
-    #captureCanvas {
-      position: absolute;
-      display: none;
-    }
+    #orderLabel { position: absolute; font-weight: bold; font-size: 600% !important; }
+    #qrPreviewTitle { position: absolute; font-weight: bold; font-size: 600% !important; }
+    #openConfigBtnScanner { position: absolute; }
+    #video { position: absolute; background: #333; }
+    #captureCanvas { position: absolute; display: none; }
 
     /* The "# of Scans" read-only text box => 200×200, 150px font, bold */
     #scanCounter {
@@ -90,37 +70,19 @@
       max-width: 650px !important;
       overflow-y: auto !important;
     }
-    .modal .modal-content {
-      font-size: 0.9em;
-      text-align: left;
-    }
+    .modal .modal-content { font-size: 0.9em; text-align: left; }
     .modal .modal-footer {
-      display: flex !important;
-      justify-content: center !important;
-      align-items: center !important;
-      padding: 10px;
-      background: white;
-      font-size: 0.9em;
+      display: flex !important; justify-content: center !important; align-items: center !important;
+      padding: 10px; background: white; font-size: 0.9em;
     }
-    table.striped {
-      width: 100%;
-    }
-    table.striped th,
-    table.striped td {
-      padding: 8px;
-      text-align: center;
-    }
-    input[type="number"] {
-      width: 70px;
-      font-size: 0.8em;
-    }
+    table.striped { width: 100%; }
+    table.striped th, table.striped td { padding: 8px; text-align: center; }
+    input[type="number"] { width: 70px; font-size: 0.8em; }
   </style>
 </head>
 <body>
   <!-- "Open Config" button -->
-  <button id="openConfigBtnScanner" class="btn waves-effect waves-light">
-    Open Config
-  </button>
+  <button id="openConfigBtnScanner" class="btn waves-effect waves-light">Open Config</button>
 
   <!-- "Order #:" label -->
   <div id="orderLabel">Sort Order #:</div>
@@ -195,14 +157,64 @@
     const db = firebase.firestore();
 
     /*************************************************************
-     * 1) GLOBAL VARIABLES
+     * BASE-36 DECODER + PAYLOAD PARSER
+     * Supports:
+     *  - B36|<metal>|id.id.id
+     *  - B36|<metal>|<part>/<total>|id.id.id
+     *  - legacy CSV: "123,456,789"
+     *************************************************************/
+    function fromB36(b36) {
+      const s = String(b36).toLowerCase();
+      if (!/^[0-9a-z]+$/.test(s)) return s;
+      let n = 0n;
+      for (const ch of s) {
+        const v = "0123456789abcdefghijklmnopqrstuvwxyz".indexOf(ch);
+        if (v < 0) return b36;
+        n = n * 36n + BigInt(v);
+      }
+      return n.toString(10);
+    }
+    function parseScannedPayload(text) {
+      const raw = String(text || "");
+      if (raw.startsWith("B36|")) {
+        const parts = raw.split("|");
+        if (parts.length < 3) return null;
+        const metal = parts[1] || "";
+        let idsBlob = parts[2] || "";
+        let part = null, total = null;
+
+        // Handle optional part/total segment
+        if (idsBlob.includes("/")) {
+          const seg = idsBlob.split("/");
+          part = parseInt(seg[0], 10);
+          total = parseInt(seg[1], 10);
+          idsBlob = parts[3] || "";
+        }
+
+        const ids36 = idsBlob.split(".").filter(Boolean);
+        const ids10 = ids36.map(fromB36);
+        return { type:"b36", metal, part, total, orderIds: ids10, raw };
+      }
+
+      // Legacy CSV of decimals
+      const legacyIds = raw.split(",").map(s => s.trim()).filter(Boolean);
+      const decs = legacyIds.every(s => /^\d+$/.test(s)) ? legacyIds : [];
+      if (decs.length) return { type:"csv", metal:"", part:null, total:null, orderIds: decs, raw };
+
+      // Fallback: treat as single token if numeric
+      if (/^\d+$/.test(raw)) return { type:"single", metal:"", part:null, total:null, orderIds:[raw], raw };
+      return null;
+    }
+
+    /*************************************************************
+     * 1) GLOBALS
      *************************************************************/
     let stream = null;
     let scanningInterval = null;
     let lastScanned = "";
     let audioUnlocked = false; 
     let audioCtx = null;       
-    let scannedCodes = [];     // store up to 3 codes
+    let scannedCodes = [];     // store up to 3 segments (each may contain many IDs)
 
     const video        = document.getElementById("video");
     const canvas       = document.getElementById("captureCanvas");
@@ -218,7 +230,7 @@
     beepSound.load();
 
     /*************************************************************
-     * 2) PLAY BEEP WITH ADJUSTED PARAMETERS
+     * 2) PLAY BEEP
      *************************************************************/
     function playBeep() {
       if (audioCtx) {
@@ -239,13 +251,11 @@
     }
 
     /*************************************************************
-     * 3) START CAMERA AUTOMATICALLY
+     * 3) START CAMERA
      *************************************************************/
     async function startCamera() {
       try {
-        stream = await navigator.mediaDevices.getUserMedia({
-          video: { facingMode: "environment" }
-        });
+        stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } });
         video.srcObject = stream;
         video.play();
 
@@ -253,9 +263,7 @@
           ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
           const frame = ctx.getImageData(0, 0, canvas.width, canvas.height);
           const qrResult = jsQR(frame.data, frame.width, frame.height);
-          if (qrResult) {
-            handleScannedCode(qrResult.data);
-          }
+          if (qrResult) handleScannedCode(qrResult.data);
         }, 500);
       } catch (err) {
         console.error("Camera error:", err);
@@ -264,48 +272,63 @@
     }
 
     /*************************************************************
-     * 4) HANDLE A NEW QR CODE SCAN => Up to 3
+     * 4) HANDLE NEW SCAN
      *************************************************************/
     function handleScannedCode(codeText) {
-      // If repeated code, ignore
-      if (codeText === lastScanned) return;
+      if (codeText === lastScanned) return;  // ignore repeat
       lastScanned = codeText;
 
-      if (audioUnlocked) {
-        playBeep();
-      }
+      if (audioUnlocked) playBeep();
 
-      // If user tries scanning a 4th => reject
       if (scannedCodes.length >= 3) {
         M.toast({ html: "Max of 3 codes reached. Clear or Send first." });
         return;
       }
 
-      // Add code to array
-      scannedCodes.push(codeText);
+      // Decode payload to decimal CSV
+      const parsed = parseScannedPayload(codeText);
+      if (!parsed) {
+        M.toast({ html: "Unrecognized code format." });
+        return;
+      }
+      const decimals = parsed.orderIds.filter(Boolean);
+      if (!decimals.length) {
+        M.toast({ html: "No order IDs found in code." });
+        return;
+      }
 
-      // Show them all in the text box => comma-delimited
-      scannedInput.value = scannedCodes.join(",");
+      const segmentCSV = decimals.join(",");
+      scannedCodes.push(segmentCSV);
 
-      // Update # of Scans
+      // Show all IDs (deduped across all scanned segments)
+      const allIDs = dedupeIDs(scannedCodes.join(","));
+      scannedInput.value = allIDs.join(",");
       document.getElementById("scanCounter").value = scannedCodes.length;
 
-      // Show QR code preview
+      // Preview the original code content (not required, but kept)
       qrcodeDiv.innerHTML = "";
       const containerStyles = window.getComputedStyle(qrcodeDiv);
       const containerWidth  = parseInt(containerStyles.width, 10)  || 128;
       const containerHeight = parseInt(containerStyles.height, 10) || 128;
-      new QRCode(qrcodeDiv, {
-        text: codeText,
-        width: containerWidth,
-        height: containerHeight
-      });
+      new QRCode(qrcodeDiv, { text: codeText, width: containerWidth, height: containerHeight });
 
-      M.toast({ html: "Scanned: " + codeText });
+      const meta = parsed.type === "b36"
+        ? `Decoded ${decimals.length} ${parsed.metal ? parsed.metal.toUpperCase() + " " : ""}IDs`
+        : `Legacy CSV: ${decimals.length} IDs`;
+      M.toast({ html: meta });
+    }
+
+    function dedupeIDs(csv) {
+      const set = new Set();
+      for (const t of csv.split(",")) {
+        const s = t.trim();
+        if (s) set.add(s);
+      }
+      return Array.from(set);
     }
 
     /*************************************************************
-     * 5) UNLOCK AUDIO ON FIRST TOUCH OR CLICK
+     * 5) UNLOCK AUDIO
      *************************************************************/
     function unlockAudio() {
       if (!audioCtx && (window.AudioContext || window.webkitAudioContext)) {
@@ -346,6 +369,7 @@
 
     /*************************************************************
      * 6) "SEND" => push all scans & clear
+     * Sends DEDUPED decimal list (no B36, no metal tags)
      *************************************************************/
     sendBtn.addEventListener("click", async () => {
       try {
@@ -353,13 +377,12 @@
           M.toast({ html: "No codes to send. Scan first!" });
           return;
         }
-        const combinedCodes = scannedCodes.join(",");
-        M.toast({ html: "Sending to Firestore doc 'ScannedSortingOrder': " + combinedCodes });
+        const deduped = dedupeIDs(scannedCodes.join(",")).join(",");
+        M.toast({ html: "Sending to Firestore doc 'ScannedSortingOrder': " + deduped });
 
-        // Send all codes at once
         const bodyData = {
           orderNumber: "ScannedSortingOrder",
-          orderNumField: combinedCodes,
+          orderNumField: deduped,
           clientName: "SortScanner",
           britesMessages: "(Auto push from sort-scan.html)",
           shippingLabelTimestamps: new Date().toISOString(),
@@ -371,12 +394,11 @@
           body: JSON.stringify(bodyData)
         });
         const result = await response.json();
-        if (!response.ok) {
-          throw new Error(result.error || "Unknown error from firebaseOrders function");
-        }
-        M.toast({ html: "Firestore updated: " + combinedCodes });
+        if (!response.ok) throw new Error(result.error || "Unknown error from firebaseOrders function");
 
-        // Clear after send, including QR code image
+        M.toast({ html: "Firestore updated." });
+
+        // Clear after send
         scannedCodes = [];
         scannedInput.value = "";
         document.getElementById("scanCounter").value = "0";
@@ -388,7 +410,7 @@
     });
 
     /*************************************************************
-     * 6.1) “Clear” => reset everything, including QR code image
+     * 6.1) “Clear” => reset UI
      *************************************************************/
     clearBtn.addEventListener("click", function() {
       scannedCodes = [];
