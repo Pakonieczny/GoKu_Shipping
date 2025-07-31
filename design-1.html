@@ -1398,6 +1398,17 @@ if (!orderContainer.dataset.rangeWired){
 
 
    /* ───────── QR-preview helpers ───────── */
+
+   /* Normalise to 4 allowed metals */
+   function canonicalMetal(str){
+     const m = String(str||"").toLowerCase();
+     if(/14k/.test(m) || /solid/.test(m)) return "14k";  // treat “solid” as 14 k
+     if(/rose/.test(m))     return "rose";
+     if(/silv/.test(m))     return "silver";
+     if(/gold/.test(m))     return "gold";
+     return "";
+   }
+
    function toB36(numStr){
      const clean=String(numStr).trim();
      if(!/^\d+$/.test(clean)) return clean;
@@ -1412,7 +1423,7 @@ if (!orderContainer.dataset.rangeWired){
      });
      return `B36|${metal}|`+b36.join(".");
    }
-   function showQrPreviewModal(lists){
+   function showQrPreviewModal(lists, skipped=[]){
      const grid=document.getElementById("qrPreviewGrid"); grid.innerHTML="";
      Object.entries(lists).forEach(([m,arr])=>{
        if(!arr.length) return;
@@ -1427,6 +1438,20 @@ if (!orderContainer.dataset.rangeWired){
        });
      });
      window._pendingMetalLists=lists;
+
+   /* ⏩  display skipped receipts */
+   const skipBox = document.getElementById("qrSkippedContainer");
+   if(skipBox){
+     if(skipped.length){
+       skipBox.innerHTML =
+         `<b>Skipped&nbsp;orders:</b> ${skipped.join(", ")}`;
+       skipBox.style.display = "";
+     }else{
+       skipBox.innerHTML = "";
+       skipBox.style.display = "none";
+     }
+   }
+
      (M.Modal.getInstance(document.getElementById("qrPreviewModal"))
         || M.Modal.init(document.getElementById("qrPreviewModal"))).open();
    }
@@ -1466,8 +1491,9 @@ if (!orderContainer.dataset.rangeWired){
       .querySelectorAll("#photoGridContainer .wrap-preview")
       .forEach(w => {
         const rid = w.dataset.receipt;
-        metalSets[rid] = metalSets[rid] || new Set();
-        metalSets[rid].add(w.dataset.metal);
+         metalSets[rid] = metalSets[rid] || new Set();
+         const m = canonicalMetal(w.dataset.metal);
+         if(m) metalSets[rid].add(m);
       });
     const multiMetalOrders = new Set(
       Object.entries(metalSets)
@@ -1475,16 +1501,18 @@ if (!orderContainer.dataset.rangeWired){
             .map(([rid]) => rid)
     );
 
-    const listsByMetal = { gold: [], silver: [], rose: [], "14k": [] };
-    const greenIDs = new Set();
+     const listsByMetal  = { gold: [], silver: [], rose: [], "14k": [] };
+     const skippedOrders = new Set();              // ← keep track
+     const greenIDs = new Set();
 
     // ── include mixed-metal orders so they get removed from the sidebar too ──
     multiMetalOrders.forEach(rid => greenIDs.add(rid));
 
     document.querySelectorAll("#photoGridContainer .wrap-preview").forEach(w => {
       if (w.style.display === "none")          return;               // hidden
-      const metal = w.dataset.metal;
-      if (!REQUIRED.includes(metal))           return;               // wrong metal
+       const metal = canonicalMetal(w.dataset.metal);
+       if(!metal){ skippedOrders.add(w.dataset.receipt); return; }    // unknown → skip
+       if (!REQUIRED.includes(metal))           return;               // wrong filter
 
       const rid = w.dataset.receipt;
       if (multiMetalOrders.has(rid))           return;   // skip mixed‐metal in pure pass
@@ -1551,8 +1579,12 @@ if (!orderContainer.dataset.rangeWired){
 
      /* 7️⃣  redistribute mixed-metal orders (unchanged logic) */
      multiMetalOrders.forEach(rid=>{
-       const metals = Array.from(metalSets[rid]);
-       const target = metals.reduce(
+         const metals = Array.from(metalSets[rid]).filter(m => listsByMetal[m]);
+         if(!metals.length){
+           console.warn("Unknown metal(s) for order", rid, Array.from(metalSets[rid]));
+           return;          // skip this receipt safely
+         }
+         const target = metals.reduce(
          (a,b)=>listsByMetal[a].length<=listsByMetal[b].length?a:b
        );
        listsByMetal[target].push(rid);
@@ -3531,6 +3563,11 @@ function reflowGrid(){
    <div class="modal-content">
      <h5>QR Preview</h5>
      <div id="qrPreviewGrid" style="display:flex;flex-wrap:wrap;gap:20px;"></div>
+
+     <!-- ▼ skipped orders appear here ▼ -->
+     <div id="qrSkippedContainer"
+          style="margin-top:18px;font-size:.9em;color:#d32f2f;"></div>
+
    </div>
    <div class="modal-footer">
      <a href="#!" id="qrPreviewPrintBtn" class="modal-close btn green">Print&nbsp;Labels</a>
