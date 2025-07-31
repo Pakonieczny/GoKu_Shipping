@@ -18,6 +18,16 @@
 <body>
 <script>
   
+ // Accept large payloads via postMessage from design-1.html
+ window.addEventListener("message", async (e) => {
+   const msg = e.data;
+   if (msg && msg.type === "metalOrderLists" && msg.payload) {
+     await handleMetalBundles(msg.payload);
+     // Best-effort notify opener; focus fallback in parent still applies
+     try { window.top.postMessage({ printSuccess: true }, "*"); } catch (_) {}
+   }
+ }, { once: true });
+
 /********************************************************
  *  COMPAT MODE SWITCH
  *  ─────────────────────────────────────────────────────
@@ -151,20 +161,23 @@ function encodeOrderList(ids, metal) {
 /* ──────────────────────────────────────────────────────────
  *  HELPERS
  * ────────────────────────────────────────────────────────── */
-async function makeQRDataURL(text){
-  const holder = document.createElement("div");
-  holder.style.display = "none";
-  document.body.appendChild(holder);
-
-  new QRCode(holder, {
-    text, width:1024, height:1024, correctLevel:QRCode.CorrectLevel.H
-  });
-  await new Promise(r => setTimeout(r, 300));      // allow render
-
-  const img = holder.querySelector("img")
-         || holder.querySelector("canvas")?.toDataURL("image/png");
-  return img.tagName ? img.src : img;              // normalize
-}
+ async function makeQRDataURL(text){
+   const holder = document.createElement("div");
+   holder.style.display = "none";
+   document.body.appendChild(holder);
+   const levels = [QRCode.CorrectLevel.H, QRCode.CorrectLevel.M, QRCode.CorrectLevel.L];
+   for (const lvl of levels){
+     try{
+       holder.innerHTML = "";
+       new QRCode(holder, { text, width:1024, height:1024, correctLevel:lvl });
+       await new Promise(r => setTimeout(r, 300)); // allow render
+       const img = holder.querySelector("img")
+               || holder.querySelector("canvas")?.toDataURL("image/png");
+       if (img) return img.tagName ? img.src : img;
+     }catch(_){}
+   }
+   throw new Error("QR payload too large");
+ }
 
 async function autoPrint(docDefinition){
   return new Promise(res => {
