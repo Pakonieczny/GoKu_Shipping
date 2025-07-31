@@ -82,6 +82,7 @@ async function handleMetalBundles(lists) {
     await autoPrint(docDef);
     try { window.top.postMessage({ printSuccess: true }, "*"); } catch (e) {}
   }
+}
 
 /* ──────────────────────────────────────────────────────────
  *  LEGACY FLOW  – single order QR (unchanged)
