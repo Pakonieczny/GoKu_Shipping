@@ -17,10 +17,11 @@
 </head>
 <body>
 <script>
+  
 /********************************************************
  *  COMPAT MODE SWITCH
  *  ─────────────────────────────────────────────────────
- *  • NEW FLOW  : design-1.html stashes `metalOrderLists`
+ *  • NEW FLOW  : design.html stashes `metalOrderLists`
  *                { gold:[], silver:[], rose:[], "14k":[] }
  *  • LEGACY    : Sorting page stashes `qrPrintAll`
  *                { dispatchDate, items[], userTypedOrderNum }
@@ -55,33 +56,34 @@ async function handleMetalBundles(lists) {
     });
   });
 
+  /* 2️⃣  print each non-empty bundle */
+  for (const [metal, arr] of Object.entries(lists)) {
+    if (!arr.length) continue;
 
+    // ✅ Base-36 compact payload: B36|<metal>|<id.id.id>
+    const payload = encodeOrderList(arr, metal);
+    const imgData = await makeQRDataURL(payload);
 
-  /* 2️⃣  build ONE multi-page document (prevents print-dialog suppression) */
-  const nonEmpty = Object.entries(lists).filter(([, arr]) => arr && arr.length);
-  const mergedContent = [];
-
-  for (let i = 0; i < nonEmpty.length; i++) {
-    const [metal, arr] = nonEmpty[i];
-     const payload = buildPayloadFor(arr);
-     const imgData = await makeQRDataURL(payload);
-
-    mergedContent.push(
-      { image: imgData, width:85, absolutePosition:{ x:3, y:3 } },
-      { text : `${metal.toUpperCase()} (${arr.length})`, fontSize:9, bold:true, absolutePosition:{ x:1, y:93 } },
-      { text: "Notes:", fontSize: 9, bold: true, absolutePosition: { x:92, y:0.5 } }
-    );
-    if (i < nonEmpty.length - 1) mergedContent.push({ text: "", pageBreak: "after" });
-  }
-
-  if (mergedContent.length) {
-    const docDef = {
-      pageSize   : { width:145, height:145 },  // 1″ × 1″
+    const docDef  = {
+      pageSize   : { width:145, height:145 },          // 1″ × 1″
       pageMargins: [0,0,0,0],
-      content    : mergedContent
+      content : [
+        /* ↓↓↓  MATCHES QR Printer.html sizing/position ↓↓↓ */
+        { image: imgData, width:85, absolutePosition:{ x:3, y:3 } },
+        { text : `${metal.toUpperCase()} (${arr.length})`,
+          fontSize:9, bold:true,
+          absolutePosition:{ x:1, y:93 } },
+
+        // order number immediately below the date
+        {
+          text: "Notes:",
+          fontSize: 9,
+          bold: true,
+          absolutePosition: { x:92, y:0.5 }
+        }
+      ]
     };
     await autoPrint(docDef);
-    try { window.top.postMessage({ printSuccess: true }, "*"); } catch (e) {}
   }
 }
 
@@ -112,46 +114,52 @@ async function handleLegacy(dataObj){
 }
 
 /* ──────────────────────────────────────────────────────────
+ *  BASE-36 COMPACT ENCODING
+ *  ────────────────────────────────────────────────────────── */
+function toB36(numStr) {
+  const clean = String(numStr).trim();
+  if (!/^\d+$/.test(clean)) return clean;   // fall back if non-numeric
+  let n = BigInt(clean);
+  if (n === 0n) return "0";
+  const digits = "0123456789abcdefghijklmnopqrstuvwxyz";
+  let out = "";
+  while (n > 0n) {
+    const r = Number(n % 36n);
+    out = digits[r] + out;
+    n = n / 36n;
+  }
+  return out;
+}
+
+/**
+ * Encode a list of decimal order IDs (strings or numbers) as:
+ *   "B36|<metal>|id.id.id"
+ * where ids are base-36 and joined by '.'
+ */
+function encodeOrderList(ids, metal) {
+  const b36 = (ids || []).map(x => {
+    const digits = String(x).replace(/\D/g, "");
+    return digits ? toB36(digits) : String(x);
+  });
+  return `B36|${metal}|` + b36.join(".");
+}
+
+/* ──────────────────────────────────────────────────────────
  *  HELPERS
  * ────────────────────────────────────────────────────────── */
-
- // Compact encoders (A1: base36 list, A2: base36 + deltas)
- function encodeListV1(nums){
-   return nums.map(n => Number(n).toString(36).toUpperCase()).join("-");
- }
- function encodeListV2(nums){
-   const sorted = nums.map(n => Number(n)).sort((a,b)=>a-b);
-   const out = [ sorted[0].toString(36).toUpperCase() ];
-   for (let i = 1; i < sorted.length; i++){
-     out.push((sorted[i] - sorted[i-1]).toString(36).toUpperCase());
-   }
-   return out.join(".");
- }
- function buildPayloadFor(arr){
-   const raw = arr.join(":");                 // original format (scanner already supports)
-   if (raw.length <= 4000) return raw;        // fits in v40-L alphanumeric
-   const a1  = "A1:" + encodeListV1(arr);     // base36 list
-   if (a1.length <= 4200) return a1;
-   const a2  = "A2:" + encodeListV2(arr);     // base36 + delta encoding
-   if (a2.length <= 4200) return a2;
-   throw new Error("QR payload too large for a single code");
- }
-
 async function makeQRDataURL(text){
   const holder = document.createElement("div");
   holder.style.display = "none";
   document.body.appendChild(holder);
 
   new QRCode(holder, {
-    text, width:1024, height:1024, correctLevel:QRCode.CorrectLevel.L
+    text, width:1024, height:1024, correctLevel:QRCode.CorrectLevel.H
   });
-  await new Promise(r => setTimeout(r, 2000));      // allow render
+  await new Promise(r => setTimeout(r, 300));      // allow render
 
-   const imgEl  = holder.querySelector("img");
-   const cvsEl  = holder.querySelector("canvas");
-   const dataUrl = imgEl?.src || cvsEl?.toDataURL("image/png");
-   if (!dataUrl) throw new Error("QR generation failed (payload too large)");
-   return dataUrl;
+  const img = holder.querySelector("img")
+         || holder.querySelector("canvas")?.toDataURL("image/png");
+  return img.tagName ? img.src : img;              // normalize
 }
 
 async function autoPrint(docDefinition){
@@ -159,34 +167,9 @@ async function autoPrint(docDefinition){
     pdfMake.createPdf(docDefinition).getBlob(blob => {
       const url = URL.createObjectURL(blob);
       const frame = document.createElement("iframe");
-
-      // Off-screen instead of visibility:hidden to avoid some blockers
-      frame.style.position = "fixed";
-      frame.style.right = "9999px";
-      frame.style.width = "1px";
-      frame.style.height = "1px";
+      frame.style.visibility = "hidden";
       frame.src = url;
-
-      frame.onload = () => {
-        const w = frame.contentWindow;
-
-        const done = () => {
-          w.removeEventListener("afterprint", done);
-          // small delay so browsers settle before cleanup
-          setTimeout(() => {
-            URL.revokeObjectURL(url);
-            frame.remove();
-            res();
-          }, 50);
-        };
-
-        // Resolve only after the print dialog is closed
-        w.addEventListener("afterprint", done, { once: true });
-
-        // Focus + slight defer helps some Chromium builds
-        setTimeout(() => { w.focus(); w.print(); }, 100);
-      };
-
+      frame.onload = () => { frame.contentWindow.print(); res(); };
       document.body.appendChild(frame);
     });
   });
