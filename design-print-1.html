@@ -42,6 +42,17 @@ window.addEventListener("load", async () => {
   console.error("Nothing to print: no metalOrderLists or qrPrintAll found.");
 });
 
+// Allow the opener to push the lists directly via postMessage.
+window.addEventListener("message", async (e) => {
+  if (e?.data?.type === "qr-print-start" && e.data.lists) {
+    try {
+      await handleMetalBundles(e.data.lists);
+    } catch (err) {
+      console.error("qr-print-start failed:", err);
+    }
+  }
+});
+
 /* ──────────────────────────────────────────────────────────
  *  NEW FLOW  – one QR per metal-specific bundle
  * ────────────────────────────────────────────────────────── */
@@ -134,7 +145,23 @@ async function autoPrint(docDefinition){
       const frame = document.createElement("iframe");
       frame.style.visibility = "hidden";
       frame.src = url;
-      frame.onload = () => { frame.contentWindow.print(); res(); };
+      frame.onload = () => {
+        const w = frame.contentWindow;
+        const notifyDone = () => {
+          try {
+            // Tell opener (popup) or parent (iframe) that printing finished.
+            (window.opener || parent).postMessage({ type: "qr-print-done", printSuccess: true }, "*");
+          } catch (e) {}
+          res();
+        };
+        // Prefer a real afterprint signal from the printing context.
+        if (w) w.onafterprint = notifyDone;
+        try { if (w) w.focus(); } catch (e) {}
+        if (w) w.print();
+
+        // Fallback in case onafterprint doesn't fire on some browsers.
+        setTimeout(notifyDone, 2000);
+      };
       document.body.appendChild(frame);
     });
   });
