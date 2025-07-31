@@ -57,35 +57,31 @@ async function handleMetalBundles(lists) {
 
 
 
-  /* 2️⃣  print each non-empty bundle */
-  for (const [metal, arr] of Object.entries(lists)) {
-    if (!arr.length) continue;
+  /* 2️⃣  build ONE multi-page document (prevents print-dialog suppression) */
+  const nonEmpty = Object.entries(lists).filter(([, arr]) => arr && arr.length);
+  const mergedContent = [];
 
+  for (let i = 0; i < nonEmpty.length; i++) {
+    const [metal, arr] = nonEmpty[i];
     const imgData = await makeQRDataURL(arr.join(","));
-    const docDef  = {
-      pageSize   : { width:145, height:145 },          // 1″ × 1″
-      pageMargins: [0,0,0,0],
-      content : [
-        /* ↓↓↓  MATCHES QR Printer.html sizing/position ↓↓↓ */
-        { image: imgData, width:85, absolutePosition:{ x:3, y:3 } },
-        { text : `${metal.toUpperCase()} (${arr.length})`,
-          fontSize:9, bold:true,
-          absolutePosition:{ x:1, y:93 } },
 
-        // order number immediately below the date
-      {
-        text: "Notes:",
-        fontSize: 9,
-        bold: true,
-        absolutePosition: { x:92, y:0.5 }
-      }
-      ]
+    mergedContent.push(
+      { image: imgData, width:85, absolutePosition:{ x:3, y:3 } },
+      { text : `${metal.toUpperCase()} (${arr.length})`, fontSize:9, bold:true, absolutePosition:{ x:1, y:93 } },
+      { text: "Notes:", fontSize: 9, bold: true, absolutePosition: { x:92, y:0.5 } }
+    );
+    if (i < nonEmpty.length - 1) mergedContent.push({ text: "", pageBreak: "after" });
+  }
+
+  if (mergedContent.length) {
+    const docDef = {
+      pageSize   : { width:145, height:145 },  // 1″ × 1″
+      pageMargins: [0,0,0,0],
+      content    : mergedContent
     };
     await autoPrint(docDef);
+    try { window.top.postMessage({ printSuccess: true }, "*"); } catch (e) {}
   }
-   // Notify parent that all bundle prints are finished
-   try { window.top.postMessage({ printSuccess: true }, "*"); } catch (e) {}
-}
 
 /* ──────────────────────────────────────────────────────────
  *  LEGACY FLOW  – single order QR (unchanged)
