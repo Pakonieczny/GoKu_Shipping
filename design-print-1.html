@@ -63,7 +63,7 @@ async function handleMetalBundles(lists) {
 
   for (let i = 0; i < nonEmpty.length; i++) {
     const [metal, arr] = nonEmpty[i];
-    const imgData = await makeQRDataURL(arr.join(","));
+    const imgData = await makeQRDataURL(arr.join(":"));
 
     mergedContent.push(
       { image: imgData, width:85, absolutePosition:{ x:3, y:3 } },
@@ -119,13 +119,15 @@ async function makeQRDataURL(text){
   document.body.appendChild(holder);
 
   new QRCode(holder, {
-    text, width:1024, height:1024, correctLevel:QRCode.CorrectLevel.H
+    text, width:1024, height:1024, correctLevel:QRCode.CorrectLevel.L
   });
   await new Promise(r => setTimeout(r, 2000));      // allow render
 
-  const img = holder.querySelector("img")
-         || holder.querySelector("canvas")?.toDataURL("image/png");
-  return img.tagName ? img.src : img;              // normalize
+   const imgEl  = holder.querySelector("img");
+   const cvsEl  = holder.querySelector("canvas");
+   const dataUrl = imgEl?.src || cvsEl?.toDataURL("image/png");
+   if (!dataUrl) throw new Error("QR generation failed (payload too large)");
+   return dataUrl;
 }
 
 async function autoPrint(docDefinition){
