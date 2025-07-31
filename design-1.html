@@ -1508,29 +1508,21 @@ if (!orderContainer.dataset.rangeWired){
  
     const hasBundles = Object.values(listsByMetal).some(arr => arr.length);
     if (hasBundles) {
+      localStorage.setItem("metalOrderLists", JSON.stringify(listsByMetal));
+
       const printFrame = document.createElement("iframe");
       printFrame.style.position   = "fixed";
       printFrame.style.visibility = "hidden";
       printFrame.style.right      = "9999px";
       printFrame.style.width      = "1px";
       printFrame.style.height     = "1px";
-      printFrame.src = "design-print-1.html"; // loads silently, we’ll postMessage payload
+      printFrame.src = "design-print-1.html";      // loads silently, prints inside
       document.body.appendChild(printFrame);
-
-      // Send payload once iframe is ready (avoids localStorage quota issues)
-      printFrame.addEventListener("load", () => {
-        try {
-          printFrame.contentWindow.postMessage(
-            { type: "metalOrderLists", payload: listsByMetal },
-            "*"
-          );
-        } catch (e) { console.error("postMessage to print frame failed:", e); }
-      }, { once: true });
 
       /* clear DOM *and* in-memory map so no orphan wraps inflate counters */
       document.getElementById("photoGridContainer").innerHTML = "";
-      gridElements.clear();
-      updateCounters();
+      gridElements.clear();      // 🆕 purge stale references
+      updateCounters();          // 🆕 keep the badges in sync
     }
 
     M.toast({ html: "Completed orders removed — pages recalculated" });
