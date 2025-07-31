@@ -120,20 +120,11 @@ async function makeQRDataURL(text){
   new QRCode(holder, {
     text, width:1024, height:1024, correctLevel:QRCode.CorrectLevel.H
   });
-  // Wait until <img> or <canvas> is actually present (handles slow devices)
-  await new Promise(resolve => {
-    const tryNow = () => {
-      const imgEl = holder.querySelector("img");
-      const canvasEl = holder.querySelector("canvas");
-      if ((imgEl && imgEl.naturalWidth) || canvasEl) return resolve();
-      setTimeout(tryNow, 50);
-    };
-    tryNow();
-  });
-  const imgEl = holder.querySelector("img");
-  if (imgEl) return imgEl.src;
-  const canvasEl = holder.querySelector("canvas");
-  return canvasEl ? canvasEl.toDataURL("image/png") : "";
+  await new Promise(r => setTimeout(r, 300));      // allow render
+
+  const img = holder.querySelector("img")
+         || holder.querySelector("canvas")?.toDataURL("image/png");
+  return img.tagName ? img.src : img;              // normalize
 }
 
 async function autoPrint(docDefinition){
@@ -143,19 +134,7 @@ async function autoPrint(docDefinition){
       const frame = document.createElement("iframe");
       frame.style.visibility = "hidden";
       frame.src = url;
-      frame.onload = () => {
-        try {
-          // Notify parent/opener when the *actual* print cycle finishes.
-          frame.contentWindow.onafterprint = () => {
-            try { (window.opener || window.parent)?.postMessage({ printSuccess: true }, "*"); } catch(e) {}
-            setTimeout(() => { try { window.close(); } catch(_) {} }, 300);
-          };
-          frame.contentWindow.focus();
-          frame.contentWindow.print();
-        } finally {
-         res();
-        }
-      };
+      frame.onload = () => { frame.contentWindow.print(); res(); };
       document.body.appendChild(frame);
     });
   });
