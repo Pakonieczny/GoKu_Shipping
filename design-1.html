@@ -747,93 +747,52 @@ document.addEventListener("DOMContentLoaded", () => {
   restoreCompleted();
 
   /* ==============================================================
-   *  Unified row click: Plain = toggle, Ctrl/⌘ = toggle, Shift = range
-   *  Always loads previews for selected rows (so print can proceed)
+   *  Ctrl/⌘-click  =  range-select between anchor ⇢ current
    * ============================================================*/
   const orderContainer = document.getElementById("newOrderContainer");
   if (!orderContainer.dataset.rangeWired){
     orderContainer.dataset.rangeWired = "1";
 
-    // Helper: ensure transactions loaded for a receipt
-    async function ensureOrderLoaded(rid){
-      if (orderCache[rid]) return;
-      const ord = await pullEtsyOrderDetails(rid);
-      orderCache[rid] = ord?.transactions || [];
-      refreshRowCount(rid);
-      refreshRowMetalCounts(rid);
-    }
-
-    // Delegated handler (capture) to beat per-row listeners
-    orderContainer.addEventListener("click", async (e) => {
+    orderContainer.addEventListener("click", async e => {
+      if (!(e.ctrlKey || e.metaKey)) return;          // Ctrl (Win) or ⌘ (Mac)
       const box = e.target.closest(".new-order-box");
       if (!box) return;
-
-      // Prevent legacy handlers from swallowing Ctrl/Meta
       e.preventDefault();
-      e.stopImmediatePropagation();
 
       const rows = [...orderContainer.querySelectorAll(".new-order-box")];
-      const currIdx = rows.indexOf(box);
-      if (currIdx === -1) return;
+      const curr = rows.indexOf(box);
+      if (curr === -1) return;
 
-      // Initialize anchor on first interaction
-      if (lastCtrlIdx === null) lastCtrlIdx = currIdx;
+      /* abort if no anchor has been set with a plain click */
+      if (lastCtrlIdx === null) return;
 
-      const selectRow = async (row) => {
+      /* second Ctrl/⌘-click → select full range */
+      const [from, to] = curr > lastCtrlIdx ? [lastCtrlIdx, curr] : [curr, lastCtrlIdx];
+      for (let i = from; i <= to; i++){
+        const row = rows[i];
         const rid = String(row.dataset.receipt);
-        await ensureOrderLoaded(rid);
 
+        /* ⬇️  pull order details if we’ve never loaded this receipt */
+        if (!orderCache[rid]){
+          const ord = await pullEtsyOrderDetails(rid);
+          orderCache[rid] = ord?.transactions || [];
+          refreshRowCount(rid);
+          refreshRowMetalCounts(rid);
+        }
+
+        /* mark row + Set */
         if (!selectedOrders.has(rid)){
           selectedOrders.add(rid);
           row.classList.add("selected");
-          // add previews
-          orderCache[rid].forEach(tx => { if (!tx._inGrid) addPreviewBox(tx); });
         }
-      };
 
-      const deselectRow = (row) => {
-        const rid = String(row.dataset.receipt);
-        if (selectedOrders.has(rid)){
-          selectedOrders.delete(rid);
-          row.classList.remove("selected");
-          removePreviewBoxesForOrder(rid);
-        }
-      };
-
-      if (e.shiftKey){
-        // Range select (inclusive)
-        const [from, to] = currIdx > lastCtrlIdx ? [lastCtrlIdx, currIdx] : [currIdx, lastCtrlIdx];
-        for (let i = from; i <= to; i++){
-          // Only select (don’t deselect in a range)
-          await selectRow(rows[i]);
-        }
-        lastCtrlIdx = currIdx; // move anchor
-      } else if (e.ctrlKey || e.metaKey){
-        // Toggle this row only
-        const rid = String(box.dataset.receipt);
-        if (selectedOrders.has(rid)) {
-          deselectRow(box);
-        } else {
-          await selectRow(box);
-        }
-        lastCtrlIdx = currIdx; // move anchor for subsequent Shift
-      } else {
-        // Plain click → toggle current row
-        const rid = String(box.dataset.receipt);
-        if (selectedOrders.has(rid)) {
-          deselectRow(box);
-        } else {
-          await selectRow(box);
-        }
-        lastCtrlIdx = currIdx;
+        /* ensure every transaction has a preview tile */
+        orderCache[rid].forEach(tx => { if (!tx._inGrid) addPreviewBox(tx); });
       }
 
-      // UI refresh
-      realignGrid();
-      updateCounters();
-      persistSelection();
-      applyMetalFilter();
-    }, true); // <-- capture
+      realignGrid(); updateCounters(); persistSelection(); applyMetalFilter();
+
+    });
   }
 
   /* ❸  run monthly purge */
