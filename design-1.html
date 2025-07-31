@@ -1423,7 +1423,8 @@ if (!orderContainer.dataset.rangeWired){
      });
      return `B36|${metal}|`+b36.join(".");
    }
-   function showQrPreviewModal(lists, skipped=[]){
+     function showQrPreviewModal(lists){
+     const skipped = window._qrSkippedOrders || [];   // ← new
      const grid=document.getElementById("qrPreviewGrid"); grid.innerHTML="";
      Object.entries(lists).forEach(([m,arr])=>{
        if(!arr.length) return;
@@ -1590,8 +1591,9 @@ if (!orderContainer.dataset.rangeWired){
        listsByMetal[target].push(rid);
      });
  
-     /* NEW → Preview before printing */
-     showQrPreviewModal(listsByMetal);
+       // expose the skipped set so the modal can read it
+       window._qrSkippedOrders = Array.from(skippedOrders);
+       showQrPreviewModal(listsByMetal);
   }
 
 
@@ -3562,11 +3564,11 @@ function reflowGrid(){
  <div id="qrPreviewModal" class="modal">
    <div class="modal-content">
      <h5>QR Preview</h5>
-     <div id="qrPreviewGrid" style="display:flex;flex-wrap:wrap;gap:20px;"></div>
-
-     <!-- ▼ skipped orders appear here ▼ -->
-     <div id="qrSkippedContainer"
-          style="margin-top:18px;font-size:.9em;color:#d32f2f;"></div>
+       <!-- Skipped orders appear here (always visible) -->
+       <div id="qrSkippedContainer"
+            style="margin:10px 0;font-size:.9em;color:#d32f2f;"></div>
+ 
+       <div id="qrPreviewGrid" style="display:flex;flex-wrap:wrap;gap:20px;"></div>
 
    </div>
    <div class="modal-footer">
