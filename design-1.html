@@ -2788,6 +2788,7 @@ async function startScannedSortingListener() {
 
 /* ===== Hard-coded fallback positions & sizes (no calculations) ===== */
 const defaultPos = {
+  restoreCompletedInput:   { left:20, top:270, width:320, height:30 },
   connectEtsyBtn:           { left:1123, top:803, width:126, height:35 },
   openConfigBtn:            { left:1270,  top:803, width:133, height:35 },
   updateOrderListBtn:       { left:1204,top:5,  width:120, height:35 },
@@ -3599,10 +3600,6 @@ function reflowGrid(){
       <span></span>
     </label>
     <!-- ▲▲ NEW COMPLETE-CHECKBOX + TITLE ▲▲ -->
-
-    <!-- Restore Completed Orders input -->
-    <input id="restoreCompletedInput"
-       placeholder="Restore Completed Order(s) — comma or space separated" />
 
     <h5 id="modalListingTitle"></h5>
 
