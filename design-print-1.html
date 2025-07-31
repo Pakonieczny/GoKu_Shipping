@@ -63,7 +63,8 @@ async function handleMetalBundles(lists) {
 
   for (let i = 0; i < nonEmpty.length; i++) {
     const [metal, arr] = nonEmpty[i];
-    const imgData = await makeQRDataURL(arr.join(":"));
+     const payload = buildPayloadFor(arr);
+     const imgData = await makeQRDataURL(payload);
 
     mergedContent.push(
       { image: imgData, width:85, absolutePosition:{ x:3, y:3 } },
@@ -113,6 +114,29 @@ async function handleLegacy(dataObj){
 /* ──────────────────────────────────────────────────────────
  *  HELPERS
  * ────────────────────────────────────────────────────────── */
+
+ // Compact encoders (A1: base36 list, A2: base36 + deltas)
+ function encodeListV1(nums){
+   return nums.map(n => Number(n).toString(36).toUpperCase()).join("-");
+ }
+ function encodeListV2(nums){
+   const sorted = nums.map(n => Number(n)).sort((a,b)=>a-b);
+   const out = [ sorted[0].toString(36).toUpperCase() ];
+   for (let i = 1; i < sorted.length; i++){
+     out.push((sorted[i] - sorted[i-1]).toString(36).toUpperCase());
+   }
+   return out.join(".");
+ }
+ function buildPayloadFor(arr){
+   const raw = arr.join(":");                 // original format (scanner already supports)
+   if (raw.length <= 4000) return raw;        // fits in v40-L alphanumeric
+   const a1  = "A1:" + encodeListV1(arr);     // base36 list
+   if (a1.length <= 4200) return a1;
+   const a2  = "A2:" + encodeListV2(arr);     // base36 + delta encoding
+   if (a2.length <= 4200) return a2;
+   throw new Error("QR payload too large for a single code");
+ }
+
 async function makeQRDataURL(text){
   const holder = document.createElement("div");
   holder.style.display = "none";
