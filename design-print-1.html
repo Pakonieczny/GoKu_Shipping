@@ -139,7 +139,7 @@ async function makeQRDataURL(text){
   new QRCode(holder, {
     text, width:1024, height:1024, correctLevel:QRCode.CorrectLevel.H
   });
-  await new Promise(r => setTimeout(r, 300));      // allow render
+  await new Promise(r => setTimeout(r, 2000));      // allow render
 
   const img = holder.querySelector("img")
          || holder.querySelector("canvas")?.toDataURL("image/png");
