@@ -42,64 +42,45 @@ window.addEventListener("load", async () => {
   console.error("Nothing to print: no metalOrderLists or qrPrintAll found.");
 });
 
-// Allow the opener to push the lists directly via postMessage.
-window.addEventListener("message", async (e) => {
-  if (e?.data?.type === "qr-print-start" && e.data.lists) {
-    try {
-      await handleMetalBundles(e.data.lists);
-    } catch (err) {
-      console.error("qr-print-start failed:", err);
-    }
-  }
-});
-
 /* ──────────────────────────────────────────────────────────
- *  NEW FLOW  – single print job, one page per metal
+ *  NEW FLOW  – one QR per metal-specific bundle
  * ────────────────────────────────────────────────────────── */
 async function handleMetalBundles(lists) {
-  // 1) De-dupe *within* each metal only (do not cross-metal collapse)
-  const byMetal = {};
-  for (const m of Object.keys(lists || {})) {
-    const arr = (lists[m] || []).map(String);
-    byMetal[m] = [...new Set(arr)];
-  }
+  /* 1️⃣  de-dupe across bundles */
+  const seen = new Set();
+  Object.keys(lists).forEach(m => {
+    lists[m] = (lists[m] || []).filter(id => {
+      if (seen.has(id)) return false;
+      seen.add(id); return true;
+    });
+  });
 
-  // 2) Build a single pdfMake document with pages in a stable metal order
-  const order = ["gold", "silver", "rose", "14k"];  // matches your documented keys
-  const content = [];
-
-  for (const metal of order) {
-    const arr = byMetal[metal] || [];
+  /* 2️⃣  print each non-empty bundle */
+  for (const [metal, arr] of Object.entries(lists)) {
     if (!arr.length) continue;
 
     const imgData = await makeQRDataURL(arr.join(","));
+    const docDef  = {
+      pageSize   : { width:145, height:145 },          // 1″ × 1″
+      pageMargins: [0,0,0,0],
+      content : [
+        /* ↓↓↓  MATCHES QR Printer.html sizing/position ↓↓↓ */
+        { image: imgData, width:85, absolutePosition:{ x:3, y:3 } },
+        { text : `${metal.toUpperCase()} (${arr.length})`,
+          fontSize:9, bold:true,
+          absolutePosition:{ x:1, y:93 } },
 
-    // Page nodes (size/positions match your existing per-metal page)
-    content.push(
-      { image: imgData, width:85, absolutePosition:{ x:3, y:3 } },
-      { text : `${metal.toUpperCase()} (${arr.length})`,
-        fontSize:9, bold:true,
-        absolutePosition:{ x:1, y:93 } },
-      { text: "Notes:",
-        fontSize: 9, bold: true,
-        absolutePosition: { x:92, y:0.5 },
-        pageBreak: "after" }     // force next metal on a new page
-    );
+        // order number immediately below the date
+      {
+        text: "Notes:",
+        fontSize: 9,
+        bold: true,
+        absolutePosition: { x:92, y:0.5 }
+      }
+      ]
+    };
+    await autoPrint(docDef);
   }
-
-  // 3) Remove trailing pageBreak on the last node (if any pages exist)
-  if (content.length) {
-    delete content[content.length - 1].pageBreak;
-  }
-
-  const unifiedDoc = {
-    pageSize   : { width:145, height:145 },  // 1″ × 1″
-    pageMargins: [0,0,0,0],
-    content
-  };
-
-  // 4) One print dialog, all pages together
-  await autoPrint(unifiedDoc);
 }
 
 /* ──────────────────────────────────────────────────────────
@@ -153,23 +134,7 @@ async function autoPrint(docDefinition){
       const frame = document.createElement("iframe");
       frame.style.visibility = "hidden";
       frame.src = url;
-      frame.onload = () => {
-        const w = frame.contentWindow;
-        const notifyDone = () => {
-          try {
-            // Tell opener (popup) or parent (iframe) that printing finished.
-            (window.opener || parent).postMessage({ type: "qr-print-done", printSuccess: true }, "*");
-          } catch (e) {}
-          res();
-        };
-        // Prefer a real afterprint signal from the printing context.
-        if (w) w.onafterprint = notifyDone;
-        try { if (w) w.focus(); } catch (e) {}
-        if (w) w.print();
-
-        // Fallback in case onafterprint doesn't fire on some browsers.
-        setTimeout(notifyDone, 2000);
-      };
+      frame.onload = () => { frame.contentWindow.print(); res(); };
       document.body.appendChild(frame);
     });
   });

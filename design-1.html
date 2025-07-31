@@ -812,7 +812,7 @@ document.addEventListener("DOMContentLoaded", () => {
     if(!rid) return;                      // safety
 
     /* — mark as completed — */
-    completedOrders.add(rid);             // global Set   [oai_citation:2‡design.html](file-service://file-UD87qPNcvFGdsBetdyBDoA)
+    completedOrders.add(rid);             // global Set   [oai_citation:2‡design-1.html](file-service://file-UD87qPNcvFGdsBetdyBDoA)
     selectedOrders.delete(rid);
 
     /* remove/hide UI elements */
@@ -1465,7 +1465,7 @@ document.addEventListener("DOMContentLoaded", () => {
     updateCounters();
     applyMetalFilter();
 
-    /* 7️⃣  hand off to design-print.html via POPUP (gesture-preserving) */
+    /* 7️⃣  hand off to design-print-1.html via HIDDEN iframe (no URL change) */
     // ── now shove each mixed‐metal order into whichever metal list is smallest ──
     multiMetalOrders.forEach(rid => {
       const metals = Array.from(metalSets[rid]);  // e.g. ['gold','silver']
@@ -1474,40 +1474,24 @@ document.addEventListener("DOMContentLoaded", () => {
       );
       listsByMetal[target].push(rid);
     });
-
+ 
     const hasBundles = Object.values(listsByMetal).some(arr => arr.length);
     if (hasBundles) {
-      // Keep legacy/localStorage payload as a fallback that the print page can read.
       localStorage.setItem("metalOrderLists", JSON.stringify(listsByMetal));
 
-      // Open the print window *synchronously from the click* to satisfy popup blockers.
-      const printWin = window.open("design-print-1.html", "qrprint", "width=420,height=420");
-      if (printWin) {
-        try { printWin.focus(); } catch (e) {}
-
-        // Try to post the payload as soon as the window is ready.
-        const tryPost = () => {
-          try {
-            printWin.postMessage({ type: "qr-print-start", lists: listsByMetal }, "*");
-            return true;
-          } catch (e) {
-            return false;
-          }
-        };
-        // Fire once quickly; if not ready, retry a few times then stop.
-        if (!tryPost()) {
-          const iv = setInterval(() => {
-            if (!printWin || printWin.closed) return clearInterval(iv);
-            if (tryPost()) clearInterval(iv);
-          }, 150);
-          setTimeout(() => clearInterval(iv), 3000);
-        }
-      }
+      const printFrame = document.createElement("iframe");
+      printFrame.style.position   = "fixed";
+      printFrame.style.visibility = "hidden";
+      printFrame.style.right      = "9999px";
+      printFrame.style.width      = "1px";
+      printFrame.style.height     = "1px";
+      printFrame.src = "design-print-1.html";      // loads silently, prints inside
+      document.body.appendChild(printFrame);
 
       /* clear DOM *and* in-memory map so no orphan wraps inflate counters */
       document.getElementById("photoGridContainer").innerHTML = "";
-      gridElements.clear();      // purge stale references
-      updateCounters();          // keep the badges in sync
+      gridElements.clear();      // 🆕 purge stale references
+      updateCounters();          // 🆕 keep the badges in sync
     }
 
     M.toast({ html: "Completed orders removed — pages recalculated" });
