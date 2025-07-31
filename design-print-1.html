@@ -54,44 +54,52 @@ window.addEventListener("message", async (e) => {
 });
 
 /* ──────────────────────────────────────────────────────────
- *  NEW FLOW  – one QR per metal-specific bundle
+ *  NEW FLOW  – single print job, one page per metal
  * ────────────────────────────────────────────────────────── */
 async function handleMetalBundles(lists) {
-  /* 1️⃣  de-dupe across bundles */
-  const seen = new Set();
-  Object.keys(lists).forEach(m => {
-    lists[m] = (lists[m] || []).filter(id => {
-      if (seen.has(id)) return false;
-      seen.add(id); return true;
-    });
-  });
+  // 1) De-dupe *within* each metal only (do not cross-metal collapse)
+  const byMetal = {};
+  for (const m of Object.keys(lists || {})) {
+    const arr = (lists[m] || []).map(String);
+    byMetal[m] = [...new Set(arr)];
+  }
 
-  /* 2️⃣  print each non-empty bundle */
-  for (const [metal, arr] of Object.entries(lists)) {
+  // 2) Build a single pdfMake document with pages in a stable metal order
+  const order = ["gold", "silver", "rose", "14k"];  // matches your documented keys
+  const content = [];
+
+  for (const metal of order) {
+    const arr = byMetal[metal] || [];
     if (!arr.length) continue;
 
     const imgData = await makeQRDataURL(arr.join(","));
-    const docDef  = {
-      pageSize   : { width:145, height:145 },          // 1″ × 1″
-      pageMargins: [0,0,0,0],
-      content : [
-        /* ↓↓↓  MATCHES QR Printer.html sizing/position ↓↓↓ */
-        { image: imgData, width:85, absolutePosition:{ x:3, y:3 } },
-        { text : `${metal.toUpperCase()} (${arr.length})`,
-          fontSize:9, bold:true,
-          absolutePosition:{ x:1, y:93 } },
 
-        // order number immediately below the date
-      {
-        text: "Notes:",
-        fontSize: 9,
-        bold: true,
-        absolutePosition: { x:92, y:0.5 }
-      }
-      ]
-    };
-    await autoPrint(docDef);
+    // Page nodes (size/positions match your existing per-metal page)
+    content.push(
+      { image: imgData, width:85, absolutePosition:{ x:3, y:3 } },
+      { text : `${metal.toUpperCase()} (${arr.length})`,
+        fontSize:9, bold:true,
+        absolutePosition:{ x:1, y:93 } },
+      { text: "Notes:",
+        fontSize: 9, bold: true,
+        absolutePosition: { x:92, y:0.5 },
+        pageBreak: "after" }     // force next metal on a new page
+    );
   }
+
+  // 3) Remove trailing pageBreak on the last node (if any pages exist)
+  if (content.length) {
+    delete content[content.length - 1].pageBreak;
+  }
+
+  const unifiedDoc = {
+    pageSize   : { width:145, height:145 },  // 1″ × 1″
+    pageMargins: [0,0,0,0],
+    content
+  };
+
+  // 4) One print dialog, all pages together
+  await autoPrint(unifiedDoc);
 }
 
 /* ──────────────────────────────────────────────────────────
