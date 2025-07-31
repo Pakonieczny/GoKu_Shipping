@@ -418,17 +418,18 @@
       user-select:none;
     }
 
-    /* Restore Completed Orders input */
     #restoreCompletedInput{
       position:absolute;
-      left: 340px;             /* sits to the right of #etsyOrderNumber */
-      top: 270px;
+      left: 20px;         /* was 340px */
+      top: 310px;         /* was 270px */
       width: 320px;
       height: 30px;
       border: 1px solid #999;
       padding: 4px;
       outline: none;
       font-size: 0.9em;
+      z-index: 1000;      /* NEW: keep it above the grid & list */
+      background: #fff;   /* NEW: readable atop content */
     }
 
   </style>
