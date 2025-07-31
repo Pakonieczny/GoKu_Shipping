@@ -812,7 +812,7 @@ document.addEventListener("DOMContentLoaded", () => {
     if(!rid) return;                      // safety
 
     /* — mark as completed — */
-    completedOrders.add(rid);             // global Set   [oai_citation:2‡design-1.html](file-service://file-UD87qPNcvFGdsBetdyBDoA)
+    completedOrders.add(rid);             // global Set   [oai_citation:2‡design.html](file-service://file-UD87qPNcvFGdsBetdyBDoA)
     selectedOrders.delete(rid);
 
     /* remove/hide UI elements */
@@ -1374,14 +1374,6 @@ document.addEventListener("DOMContentLoaded", () => {
       return;
     }
 
-     // OPEN PRINT WINDOW EARLY to preserve user-activation on slow machines
-     // (If popup is blocked, we'll fall back to the hidden <iframe> path later.)
-     let qrPrintWin = null;
-     try {
-       qrPrintWin = window.open("design-print-1.html#v2", "qrPrint", "width=420,height=420");
-     } catch (e) {}
-     window.__qrPrintWin = qrPrintWin;  // remember for handoff
-
     /* 2️⃣  collect every visible preview that matches those metals */
 
     // ── identify orders that span multiple metals ──
@@ -1473,7 +1465,7 @@ document.addEventListener("DOMContentLoaded", () => {
     updateCounters();
     applyMetalFilter();
 
-    /* 7️⃣  hand off to print page — prefer a real popup (keeps user activation) */
+    /* 7️⃣  hand off to design-print.html via HIDDEN iframe (no URL change) */
     // ── now shove each mixed‐metal order into whichever metal list is smallest ──
     multiMetalOrders.forEach(rid => {
       const metals = Array.from(metalSets[rid]);  // e.g. ['gold','silver']
@@ -1487,21 +1479,14 @@ document.addEventListener("DOMContentLoaded", () => {
     if (hasBundles) {
       localStorage.setItem("metalOrderLists", JSON.stringify(listsByMetal));
 
-       // If we successfully opened a popup in the user-gesture, let it navigate now.
-       if (window.__qrPrintWin && !window.__qrPrintWin.closed) {
-         try { window.__qrPrintWin.location.replace("design-print-1.html#v2"); }
-         catch (e) { /* fall back below */ }
-       } else {
-         // Fallback for blocked popups: hidden iframe (legacy behavior)
-         const printFrame = document.createElement("iframe");
-         printFrame.style.position   = "fixed";
-         printFrame.style.visibility = "hidden";
-         printFrame.style.right      = "9999px";
-         printFrame.style.width      = "1px";
-         printFrame.style.height     = "1px";
-         printFrame.src = "design-print-1.html";  // prints inside the iframe
-         document.body.appendChild(printFrame);
-      }
+      const printFrame = document.createElement("iframe");
+      printFrame.style.position   = "fixed";
+      printFrame.style.visibility = "hidden";
+      printFrame.style.right      = "9999px";
+      printFrame.style.width      = "1px";
+      printFrame.style.height     = "1px";
+      printFrame.src = "design-print.html";      // loads silently, prints inside
+      document.body.appendChild(printFrame);
 
       /* clear DOM *and* in-memory map so no orphan wraps inflate counters */
       document.getElementById("photoGridContainer").innerHTML = "";
