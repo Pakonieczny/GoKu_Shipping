@@ -29,20 +29,6 @@
       top: 120px;
     }
 
-    #restoreCompletedInput{
-      position:absolute;
-      left: 20px;         /* was 340px */
-      top: 310px;         /* was 270px */
-      width: 320px;
-      height: 30px;
-      border: 1px solid #999;
-      padding: 4px;
-      outline: none;
-      font-size: 0.9em;
-      z-index: 1000;      /* NEW: keep it above the grid & list */
-      background: #fff;   /* NEW: readable atop content */
-    }
-
     /* Etsy Order Number input */
     #etsyOrderNumber {
       position: absolute;
@@ -455,10 +441,6 @@
 <input id="etsyOrderNumber"
        placeholder="Search Order Number" />
 
-<!-- Restore Completed Orders input -->
-<input id="restoreCompletedInput"
-       placeholder="Restore Completed Order(s) — comma or space separated" />
-
 <!-- NEW container that will hold the stacked boxes -->
 <div id="newOrderContainer"></div>
 
@@ -722,8 +704,6 @@ const configIDs = [
   "connectEtsyBtn",
   "openConfigBtn",
   "updateOrderListBtn",
-  "solidCounter",
-  "restoreCompletedInput",
   "nextPageBtn",            // ← NEW
   "clearBtn",
   "etsyOrderNumber",
@@ -1807,69 +1787,6 @@ document.addEventListener("DOMContentLoaded", () => {
         cntEl.textContent = (orderCache[receiptId] || []).length;
       }
 
-      /* Remove a receipt id from all localStorage completed buckets */
-function removeFromCompletedStore(rid){
-  const raw = localStorage.getItem(COMPLETED_KEY) || "{}";
-  const obj = JSON.parse(raw);
-  let changed = false;
-
-  Object.keys(obj).forEach(bucket=>{
-    const before = obj[bucket].length;
-    obj[bucket] = obj[bucket].filter(x => String(x) !== String(rid));
-    if (obj[bucket].length !== before) changed = true;
-    if (!obj[bucket].length) delete obj[bucket];  // tidy empty month
-  });
-
-  if (changed) localStorage.setItem(COMPLETED_KEY, JSON.stringify(obj));
-}
-
-/* Bring one completed order back into the UI (based on your Undo code) */
-async function reviveCompletedOrder(rid){
-  completedOrders.delete(String(rid));    // stop treating it as green
-  selectedOrders.add(String(rid));        // paint orange
-
-  removePreviewBoxesForOrder(String(rid));  // reset any stale tiles
-
-  // Ensure a sidebar row exists; if not, fetch + push into allOpenReceipts
-  if (!document.querySelector(`.new-order-box[data-receipt='${rid}']`)){
-    const ord = await pullEtsyOrderDetails(String(rid));
-    if (ord){
-      // Rebuild helper meta so buildNewOrderList can sort/render
-      let ts = null;
-      if (Array.isArray(ord.transactions) &&
-          ord.transactions[0]?.expected_ship_date){
-        ts = ord.transactions[0].expected_ship_date;
-      }
-      if (!ts) ts = ord.dispatch_date || ord.ship_by_date || 0;
-      ord._shipTS  = ts;
-      ord._shipStr = ts
-        ? new Date(ts*1000).toLocaleDateString("en-US",{month:"short",day:"2-digit"})
-        : "N/A";
-
-      const mc = { Gold:0, Silver:0, "Rose G":0, "14K":0 };
-      (ord.transactions||[]).forEach(t=>{
-        const q   = t.quantity||1;
-        const val = (t._metalKey||"").toLowerCase();
-        if (/14k/.test(val))          mc["14K"]    += q;
-        else if (/rose/.test(val))    mc["Rose G"] += q;
-        else if (/silv/.test(val))    mc.Silver    += q;
-        else if (/gold/.test(val))    mc.Gold      += q;
-      });
-      ord._metalCounts = mc;
-
-      if (!allOpenReceipts.some(r => String(r.receipt_id) === String(rid))){
-        allOpenReceipts.push(ord);
-      }
-      orderCache[String(rid)] = ord.transactions || [];
-    }
-  }
-
-  // Restore preview tiles
-  orderCache[String(rid)]?.forEach(tx=>{
-    if (!tx._inGrid) addPreviewBox(tx);
-  });
-}
-
       /* 1 ▸ delete every wrap belonging to this receipt */
       document.querySelectorAll(
         `#photoGridContainer .wrap-preview[data-receipt='${receiptId}']`
@@ -2718,77 +2635,12 @@ async function startScannedSortingListener() {
 
 
 /* === Restore saved orange selections === */
-
-  // Restore Completed Orders input: Enter to revive orders
-  const restoreInp = document.getElementById("restoreCompletedInput");
-  if (restoreInp && !restoreInp.dataset.wired){
-    restoreInp.dataset.wired = "1";
-
-    restoreInp.addEventListener("keydown", async (e)=>{
-      if (e.key !== "Enter") return;
-
-      const raw = restoreInp.value.trim();
-      if (!raw) return;
-
-      // Accept comma and/or whitespace separated
-      const tokens = raw.split(/[,\s]+/).map(x=>x.trim()).filter(Boolean);
-
-      const restored = [];
-      const missing  = [];
-
-      // Snapshot completed ids from storage (union of Set + buckets)
-      const storeRaw = localStorage.getItem(COMPLETED_KEY) || "{}";
-      const storeObj = JSON.parse(storeRaw);
-      const allStored = new Set(Object.values(storeObj).flat().map(String));
-
-      for (const t of tokens){
-        let rid = String(t);
-
-        // If user typed order_number, resolve to receipt_id
-       let inCompleted = completedOrders.has(rid) || allStored.has(rid);
-        if (!inCompleted){
-          try{
-           const ord = await pullEtsyOrderDetails(rid);
-            rid = String(ord?.receipt?.receipt_id || rid);
-            inCompleted = completedOrders.has(rid) || allStored.has(rid);
-          }catch(_){}
-        }
-
-        if (!inCompleted){
-          missing.push(t);
-          continue;
-        }
-
-        await reviveCompletedOrder(rid);
-        removeFromCompletedStore(rid);
-        restored.push(rid);
-      }
-
-      // Rebuild once
-      orderListOffset = 0;
-      await buildNewOrderList(0);
-      persistCompleted();       // rewrite month bucket from Set
-      persistSelection();
-      updateCounters();
-      applyMetalFilter();
-      highlightSavedRows();
-
-      M.toast({ html: `Restored ${restored.length} order(s)` });
-      if (missing.length){
-        M.toast({ html: `Not in completed memory: ${missing.join(", ")}` });
-      }
-
-      restoreInp.value = "";
-    });
-  }
-
-  restoreSelections();            // ← keep this call after wiring the input
+  restoreSelections();            // ← add this line
 
 });        /* ←––––––––– CLOSED DOMContentLoaded LISTENER */
 
 /* ===== Hard-coded fallback positions & sizes (no calculations) ===== */
 const defaultPos = {
-  restoreCompletedInput:   { left:20, top:270, width:320, height:30 },
   connectEtsyBtn:           { left:1123, top:803, width:126, height:35 },
   openConfigBtn:            { left:1270,  top:803, width:133, height:35 },
   updateOrderListBtn:       { left:1204,top:5,  width:120, height:35 },
