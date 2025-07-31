@@ -419,6 +419,10 @@
     }
 
   </style>
+
+   <!-- QR-Preview dependency -->
+   <script src="https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js"></script>
+
 </head>
 <body>
   <!-- Main Buttons -->
@@ -716,6 +720,8 @@ const configIDs = [
   "pageButtonsContainer",
   "completeBtn",          // ← NEW
   "undoCompleteBtn",      // ← NEW
+  "qrPreviewPrintBtn",    // ← NEW
+  "qrPreviewModal",       // ← NEW
   "goldCounter",
   "silverCounter",
   "roseCounter",
@@ -1391,6 +1397,53 @@ if (!orderContainer.dataset.rangeWired){
   }
 
 
+   /* ───────── QR-preview helpers ───────── */
+   function toB36(numStr){
+     const clean=String(numStr).trim();
+     if(!/^\d+$/.test(clean)) return clean;
+     let n=BigInt(clean); if(n===0n) return "0";
+     const digs="0123456789abcdefghijklmnopqrstuvwxyz"; let out="";
+     while(n>0n){ const r=Number(n%36n); out=digs[r]+out; n=n/36n; }
+     return out;
+   }
+   function encodeOrderList(ids,metal){
+     const b36=(ids||[]).map(x=>{
+       const d=String(x).replace(/\D/g,""); return d?toB36(d):String(x);
+     });
+     return `B36|${metal}|`+b36.join(".");
+   }
+   function showQrPreviewModal(lists){
+     const grid=document.getElementById("qrPreviewGrid"); grid.innerHTML="";
+     Object.entries(lists).forEach(([m,arr])=>{
+       if(!arr.length) return;
+       const holder=document.createElement("div");
+       holder.style.cssText="width:120px;text-align:center";
+       holder.innerHTML=`<div id="qr_${m}"></div>
+         <div style="font-size:.8em;margin-top:4px;">${m.toUpperCase()} (${arr.length})</div>`;
+       grid.appendChild(holder);
+       new QRCode(holder.firstElementChild,{
+         text:encodeOrderList(arr,m), width:110, height:110,
+         correctLevel:QRCode.CorrectLevel.H
+       });
+     });
+     window._pendingMetalLists=lists;
+     (M.Modal.getInstance(document.getElementById("qrPreviewModal"))
+        || M.Modal.init(document.getElementById("qrPreviewModal"))).open();
+   }
+   function proceedToPrint(lists){
+     if(!lists) return;
+     localStorage.setItem("metalOrderLists",JSON.stringify(lists));
+     const f=document.createElement("iframe");
+     f.style.cssText="position:fixed;visibility:hidden;right:9999px;width:1px;height:1px;";
+     f.src="design-print-1.html"; document.body.appendChild(f);
+     document.getElementById("photoGridContainer").innerHTML="";
+      gridElements.clear(); updateCounters();
+   }
+   document.addEventListener("DOMContentLoaded",()=>{
+     const p=document.getElementById("qrPreviewPrintBtn");
+     if(p) p.addEventListener("click",()=>proceedToPrint(window._pendingMetalLists));
+   });
+
 
   /* ─────────────────── handleCompleteClick — URL-SAFE VERSION ─────────────────── */
   async function handleCompleteClick() {
@@ -1496,36 +1549,17 @@ if (!orderContainer.dataset.rangeWired){
     updateCounters();
     applyMetalFilter();
 
-    /* 7️⃣  hand off to design-print-1.html via HIDDEN iframe (no URL change) */
-    // ── now shove each mixed‐metal order into whichever metal list is smallest ──
-    multiMetalOrders.forEach(rid => {
-      const metals = Array.from(metalSets[rid]);  // e.g. ['gold','silver']
-      const target = metals.reduce((a, b) =>
-        listsByMetal[a].length <= listsByMetal[b].length ? a : b
-      );
-      listsByMetal[target].push(rid);
-    });
+     /* 7️⃣  redistribute mixed-metal orders (unchanged logic) */
+     multiMetalOrders.forEach(rid=>{
+       const metals = Array.from(metalSets[rid]);
+       const target = metals.reduce(
+         (a,b)=>listsByMetal[a].length<=listsByMetal[b].length?a:b
+       );
+       listsByMetal[target].push(rid);
+     });
  
-    const hasBundles = Object.values(listsByMetal).some(arr => arr.length);
-    if (hasBundles) {
-      localStorage.setItem("metalOrderLists", JSON.stringify(listsByMetal));
-
-      const printFrame = document.createElement("iframe");
-      printFrame.style.position   = "fixed";
-      printFrame.style.visibility = "hidden";
-      printFrame.style.right      = "9999px";
-      printFrame.style.width      = "1px";
-      printFrame.style.height     = "1px";
-      printFrame.src = "design-print-1.html";      // loads silently, prints inside
-      document.body.appendChild(printFrame);
-
-      /* clear DOM *and* in-memory map so no orphan wraps inflate counters */
-      document.getElementById("photoGridContainer").innerHTML = "";
-      gridElements.clear();      // 🆕 purge stale references
-      updateCounters();          // 🆕 keep the badges in sync
-    }
-
-    M.toast({ html: "Completed orders removed — pages recalculated" });
+     /* NEW → Preview before printing */
+     showQrPreviewModal(listsByMetal);
   }
 
 
@@ -3491,6 +3525,18 @@ function reflowGrid(){
     <a href="#!" class="modal-close btn-flat">Close</a>
   </div>
 </div><!-- /listingModal -->
+
+ <!-- ─── QR Preview Modal ─── -->
+ <div id="qrPreviewModal" class="modal">
+   <div class="modal-content">
+     <h5>QR Preview</h5>
+     <div id="qrPreviewGrid" style="display:flex;flex-wrap:wrap;gap:20px;"></div>
+   </div>
+   <div class="modal-footer">
+     <a href="#!" id="qrPreviewPrintBtn" class="modal-close btn green">Print&nbsp;Labels</a>
+     <a href="#!" class="modal-close btn-flat">Cancel</a>
+   </div>
+ </div>
 
 </body>
 </html>
