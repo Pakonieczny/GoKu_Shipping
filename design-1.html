@@ -1462,8 +1462,8 @@ if (!orderContainer.dataset.rangeWired){
      const f=document.createElement("iframe");
      f.style.cssText="position:fixed;visibility:hidden;right:9999px;width:1px;height:1px;";
      f.src="design-print-1.html"; document.body.appendChild(f);
-     document.getElementById("photoGridContainer").innerHTML="";
-      gridElements.clear(); updateCounters();
+    
+    /* keep the preview grid visible until printing succeeds */
    }
    document.addEventListener("DOMContentLoaded",()=>{
      const p=document.getElementById("qrPreviewPrintBtn");
@@ -1531,6 +1531,12 @@ if (!orderContainer.dataset.rangeWired){
      lastClearedReceipts = [...printIDs];          // ← keep for Undo Complete
      function onPrintComplete(e) {
        if (e.data && e.data.printSuccess) {
+
+           /* ❶ now it’s safe to clear the user-selected preview list */
+           document.getElementById("photoGridContainer").innerHTML = "";
+           gridElements.clear();
+           updateCounters();
+
          printIDs.forEach(id => {
            completedOrders.add(id);
            selectedOrders.delete(id);
