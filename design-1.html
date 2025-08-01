@@ -1532,9 +1532,9 @@ if (!orderContainer.dataset.rangeWired){
 
     document.querySelectorAll("#photoGridContainer .wrap-preview").forEach(w => {
       if (w.style.display === "none")          return;               // hidden
-       const metal = canonicalMetal(w.dataset.metal);
-       if(!metal){ skippedOrders.add(w.dataset.receipt); return; }    // unknown → skip
-       if (!REQUIRED.includes(metal))           return;               // wrong filter
+        const metal = canonicalMetal(w.dataset.metal);
+        if(!metal){ skippedOrders.add(w.dataset.receipt); return; }    // unknown → skip
+        if (!active.includes(metal))             return;               // wrong filter
 
       const rid = w.dataset.receipt;
       if (multiMetalOrders.has(rid))           return;   // skip mixed‐metal in pure pass
@@ -1597,8 +1597,8 @@ if (!orderContainer.dataset.rangeWired){
     await buildNewOrderList(orderListOffset);     // redraw rows + buttons
     realignGrid();                                // tighten grid gaps
 
-    /* 5️⃣  reset on-screen metal counters (unchanged) */
-    REQUIRED.forEach(m => {
+     /* 5️⃣  reset on-screen metal counters */
+     active.forEach(m => {
       const el = document.querySelector(`.metal-counter[data-metal='${m}']`);
       if (el) el.textContent = `${m.charAt(0).toUpperCase() + m.slice(1)}: 0`;
     });
