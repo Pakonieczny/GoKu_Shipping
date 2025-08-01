@@ -634,6 +634,7 @@ let croppedImagesArray = [];
 let userImagesArray = [];
 let cellMatches = {};
 let matchPrintFlowInProgress = false;
+let printDialogOpened = false;
 let pendingFetchControllers = [];
 let globalRunId = 0;
 let currentSaveHandler = null;      // tracks active “Save” listener
@@ -1458,6 +1459,7 @@ if (!orderContainer.dataset.rangeWired){
    }
    function proceedToPrint(lists){
      if(!lists) return;
+     printDialogOpened = true;          // ✅ print attempt started
      localStorage.setItem("metalOrderLists",JSON.stringify(lists));
      const f=document.createElement("iframe");
      f.style.cssText="position:fixed;visibility:hidden;right:9999px;width:1px;height:1px;";
@@ -1551,14 +1553,18 @@ if (!orderContainer.dataset.rangeWired){
          applyMetalFilter();
          M.toast({ html: "Completed orders removed — pages recalculated" });
          window.removeEventListener("message", onPrintComplete);
+         printDialogOpened = false;         // 🔄 reset guard
        }
      }
      window.addEventListener("message", onPrintComplete);
 
      // ── FALLBACK: in case afterprint/postMessage doesn’t fire,
      //     remove orders when our window regains focus
-     window.addEventListener("focus", () => {
-       onPrintComplete({ data: { printSuccess: true } });
+     window.addEventListener("focus", function focusHandler(){
+       if (printDialogOpened) {
+         onPrintComplete({ data: { printSuccess: true } });
+       }
+       window.removeEventListener("focus", focusHandler); // self-clean
      }, { once: true });
 
 
