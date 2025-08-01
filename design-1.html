@@ -1474,6 +1474,29 @@ if (!orderContainer.dataset.rangeWired){
        M.toast({ html:"No order labels to print" });
        return;
      }
+
+     /* =====  INSTANTLY clear the user’s active selection  ===== */
+      if (selectedOrders.size){
+        selectedOrders.forEach(rid => {
+          /* sidebar row */
+          const row = document.querySelector(`.new-order-box[data-receipt='${rid}']`);
+          if (row) row.classList.remove("selected");
+    
+          /* preview tiles + caches */
+          removePreviewBoxesForOrder(rid);
+          delete orderCache[rid];
+        });
+    
+        /* wipe persistence */
+        selectedOrders.clear();
+        localStorage.removeItem(SELECTED_KEY);   // legacy key
+        localStorage.removeItem(STORAGE_KEY);    // current key
+    
+        /* UI tidy */
+        reflowGrid();
+        updateCounters();
+        applyMetalFilter();
+      }
  
      printDialogOpened = true;                // mark pending-print
      localStorage.setItem("metalOrderLists", JSON.stringify(lists));
