@@ -1581,9 +1581,13 @@ if (!orderContainer.dataset.rangeWired){
          });
          allOpenReceipts = allOpenReceipts.filter(r => !greenIDs.has(String(r.receipt_id)));
          persistCompleted();
-         persistSelection();
-         updateCounters();
-         applyMetalFilter();
+          /* 🔄 clear all selections post-print */
+          selectedOrders.clear();                 // empty the Set
+          localStorage.removeItem(SELECTED_KEY);  // legacy key
+          localStorage.removeItem(STORAGE_KEY);   // current key
+          persistSelection();                     // now writes empty list
+          updateCounters();
+          applyMetalFilter();
          M.toast({ html: "Completed orders removed — pages recalculated" });
          window.removeEventListener("message", onPrintComplete);
          printDialogOpened = false;         // 🔄 reset guard
