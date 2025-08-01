@@ -432,13 +432,13 @@
 <button id="clearBtn"          class="btn red lighten-1">Clear</button>
 
 <!-- NEW orange “Undo Complete” button (same drag-friendly style) -->
-<button id="undoCompleteBtn"  class="btn orange" style="position:absolute;left:170px;top:220px;width:160px;height:36px;">Undo&nbsp;Complete</button>
+<button id="undoCompleteBtn"  class="btn orange" style="position:absolute;left:170px;top:220px;width:160px;height:36px;">Undo&nbsp;Remove</button>
 
 <!-- NEW green “Complete !” button (drag-positionable inside the modal) -->
 <button id="completeBtn"
     class="btn green"
     style="position:absolute;left:20px;top:220px;width:140px;height:36px;">
-  Complete&nbsp;!
+  Generate&nbsp;QR
 </button>
 
 <!-- Etsy Order Number input -->
@@ -1510,14 +1510,8 @@ if (!orderContainer.dataset.rangeWired){
      const f = document.createElement("iframe");
      f.style.cssText="position:fixed;visibility:hidden;right:9999px;width:1px;height:1px;";
      f.src = "design-print-1.html";
-     f.onload = () => {                       // ✅ now safe to print
-       try{
-         f.contentWindow.focus();
-         f.contentWindow.print();
-       }catch(err){
-         console.error("Print-iframe error:", err);
-       }
-     };
+     
+     // print is now triggered inside design-print-1.html
      document.body.appendChild(f);
    }
    document.addEventListener("DOMContentLoaded",()=>{
