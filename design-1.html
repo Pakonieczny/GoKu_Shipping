@@ -1456,6 +1456,17 @@ if (!orderContainer.dataset.rangeWired){
 
      (M.Modal.getInstance(document.getElementById("qrPreviewModal"))
         || M.Modal.init(document.getElementById("qrPreviewModal"))).open();
+
+       /* 🔄  (re)wire Print Labels every time the modal is built */
+       const btn = document.getElementById("qrPreviewPrintBtn");
+       if (btn && !btn.dataset.wired) {
+         btn.dataset.wired = "1";
+         btn.addEventListener("click", e => {
+           e.preventDefault();            // keep the modal steady
+           proceedToPrint(window._pendingMetalLists);
+         });
+       }
+
    }
    function proceedToPrint(lists){
      /* ── 1. bail early if there is truly nothing to print ── */
