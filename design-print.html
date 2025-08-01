@@ -17,6 +17,7 @@
 </head>
 <body>
 <script>
+  
 /********************************************************
  *  COMPAT MODE SWITCH
  *  ─────────────────────────────────────────────────────
@@ -43,44 +44,51 @@ window.addEventListener("load", async () => {
 });
 
 /* ──────────────────────────────────────────────────────────
- *  NEW FLOW  – one QR per metal-specific bundle
+ *  NEW FLOW – one print job with one page per metal bundle
  * ────────────────────────────────────────────────────────── */
 async function handleMetalBundles(lists) {
-  /* 1️⃣  de-dupe across bundles */
+  // 1) De-dupe across bundles
   const seen = new Set();
-  Object.keys(lists).forEach(m => {
+  for (const m of Object.keys(lists)) {
     lists[m] = (lists[m] || []).filter(id => {
-      if (seen.has(id)) return false;
-      seen.add(id); return true;
+      const k = String(id);
+      if (seen.has(k)) return false;
+      seen.add(k);
+      return true;
     });
-  });
+  }
 
-  /* 2️⃣  print each non-empty bundle */
+  // 2) Build pages (one per metal)
+  const pages = [];
   for (const [metal, arr] of Object.entries(lists)) {
-    if (!arr.length) continue;
+    if (!arr || !arr.length) continue;
 
-    const imgData = await makeQRDataURL(arr.join(","));
-    const docDef  = {
-      pageSize   : { width:145, height:145 },          // 1″ × 1″
-      pageMargins: [0,0,0,0],
-      content : [
-        /* ↓↓↓  MATCHES QR Printer.html sizing/position ↓↓↓ */
+    // Base-36 compact payload: B36|<metal>|<id.id.id>
+    const payload = encodeOrderList(arr, metal);
+    const imgData = await makeQRDataURL(payload);
+
+    pages.push({
+      stack: [
         { image: imgData, width:85, absolutePosition:{ x:3, y:3 } },
         { text : `${metal.toUpperCase()} (${arr.length})`,
-          fontSize:9, bold:true,
-          absolutePosition:{ x:1, y:93 } },
-
-        // order number immediately below the date
-      {
-        text: "Notes:",
-        fontSize: 9,
-        bold: true,
-        absolutePosition: { x:92, y:0.5 }
-      }
-      ]
-    };
-    await autoPrint(docDef);
+          fontSize:9, bold:true, absolutePosition:{ x:1, y:93 } },
+        { text : "Notes:", fontSize:9, bold:true, absolutePosition:{ x:92, y:0.5 } }
+      ],
+      pageBreak: 'after'
+    });
   }
+  if (!pages.length) return;
+
+  // Drop the last pageBreak
+  pages[pages.length - 1].pageBreak = undefined;
+
+  // 3) Single print with all pages
+  const docDef = {
+    pageSize   : { width:145, height:145 },  // 1″ × 1″ for every page
+    pageMargins: [0,0,0,0],
+    content    : pages
+  };
+  await autoPrint(docDef);
 }
 
 /* ──────────────────────────────────────────────────────────
@@ -107,6 +115,37 @@ async function handleLegacy(dataObj){
     ]
   };
   await autoPrint(docDef);
+}
+
+/* ──────────────────────────────────────────────────────────
+ *  BASE-36 COMPACT ENCODING
+ * ────────────────────────────────────────────────────────── */
+function toB36(numStr) {
+  const clean = String(numStr).trim();
+  if (!/^\d+$/.test(clean)) return clean;   // fall back if non-numeric
+  let n = BigInt(clean);
+  if (n === 0n) return "0";
+  const digits = "0123456789abcdefghijklmnopqrstuvwxyz";
+  let out = "";
+  while (n > 0n) {
+    const r = Number(n % 36n);
+    out = digits[r] + out;
+    n = n / 36n;
+  }
+  return out;
+}
+
+/**
+ * Encode a list of decimal order IDs (strings or numbers) as:
+ *   "B36|<metal>|id.id.id"
+ * where ids are base-36 and joined by '.'
+ */
+function encodeOrderList(ids, metal) {
+  const b36 = (ids || []).map(x => {
+    const digits = String(x).replace(/\D/g, "");
+    return digits ? toB36(digits) : String(x);
+  });
+  return `B36|${metal}|` + b36.join(".");
 }
 
 /* ──────────────────────────────────────────────────────────
