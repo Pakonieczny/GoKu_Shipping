@@ -1499,6 +1499,9 @@ if (!orderContainer.dataset.rangeWired){
    const active = Array.from(
      document.querySelectorAll('.metal-counter.active:not([data-metal="completed"])')
    ).map(b => b.dataset.metal);
+
+   // 👇 keep the legacy checks happy
+   const REQUIRED = active.slice();      // ← NEW LINE
  
    if (!active.length) {                       // nothing selected at all
      M.toast({html:"Enable at least one metal filter before printing labels"});
