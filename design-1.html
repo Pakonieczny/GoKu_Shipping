@@ -1670,6 +1670,10 @@ if (!orderContainer.dataset.rangeWired){
       // expose the filtered set so the modal can read it
       window._qrSkippedOrders = zeroMetalOrders;
        showQrPreviewModal(listsByMetal);
+
+      /* ✋ EARLY EXIT — generate QR preview only.
+      Do NOT mutate or remove any lists at this stage. */
+      return; 
   }
 
 
