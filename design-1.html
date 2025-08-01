@@ -1663,8 +1663,12 @@ if (!orderContainer.dataset.rangeWired){
        listsByMetal[target].push(rid);
      });
  
-       // expose the skipped set so the modal can read it
-       window._qrSkippedOrders = Array.from(skippedOrders);
+      /* 🔸 Keep ONLY orders whose items have zero recognised metals */
+      const zeroMetalOrders = [...skippedOrders]
+        .filter(rid => (metalSets[rid]?.size || 0) === 0);
+
+      // expose the filtered set so the modal can read it
+      window._qrSkippedOrders = zeroMetalOrders;
        showQrPreviewModal(listsByMetal);
   }
 
