@@ -1475,27 +1475,32 @@ if (!orderContainer.dataset.rangeWired){
        return;
      }
 
-     /* =====  INSTANTLY clear the user’s active selection  ===== */
-      if (selectedOrders.size){
-        selectedOrders.forEach(rid => {
-          /* sidebar row */
-          const row = document.querySelector(`.new-order-box[data-receipt='${rid}']`);
-          if (row) row.classList.remove("selected");
+      /* 3️⃣  Commit printed orders as completed & tidy UI */
+      const printedIDs = Object.values(lists).flat();
+      if (printedIDs.length) {
+        lastClearedReceipts = [...printedIDs];
     
-          /* preview tiles + caches */
+        printedIDs.forEach(rid => {
+          completedOrders.add(String(rid));
+    
+          document
+            .querySelectorAll(`.new-order-box[data-receipt='${rid}']`)
+            .forEach(r => r.remove());
+    
           removePreviewBoxesForOrder(rid);
           delete orderCache[rid];
+          selectedOrders.delete(String(rid));
         });
     
-        /* wipe persistence */
-        selectedOrders.clear();
-        localStorage.removeItem(SELECTED_KEY);   // legacy key
-        localStorage.removeItem(STORAGE_KEY);    // current key
+        allOpenReceipts = allOpenReceipts
+          .filter(r => !printedIDs.includes(String(r.receipt_id)));
     
-        /* UI tidy */
+        persistCompleted();
+        persistSelection();
         reflowGrid();
         updateCounters();
         applyMetalFilter();
+        M.toast({ html: `${printedIDs.length} order${printedIDs.length !== 1 ? "s" : ""} completed` });
       }
  
      printDialogOpened = true;                // mark pending-print
@@ -1584,66 +1589,7 @@ if (!orderContainer.dataset.rangeWired){
       return;
     }
 
-    /* 3️⃣  IMMEDIATELY mark orders as completed and clear UI */
-    const printIDs = Array.from(greenIDs);
-    lastClearedReceipts = [...printIDs];   // ← keeps Undo-Complete working
-
-    /* 🧹  Wipe the preview grid & counters */
-    document.getElementById("photoGridContainer").innerHTML = "";
-    gridElements.clear();
-    updateCounters();
-
-    /* 🟢  Promote each printed order to “completed” and remove its row */
-    printIDs.forEach(id => {
-      completedOrders.add(id);
-      selectedOrders.delete(id);
-      document.querySelectorAll(`.new-order-box[data-receipt='${id}']`)
-        .forEach(r => r.remove());
-      removePreviewBoxesForOrder(id);
-    });
-    allOpenReceipts = allOpenReceipts.filter(r => !greenIDs.has(String(r.receipt_id)));
-    persistCompleted();
-
-    /* 💾  Flush any saved selection */
-    selectedOrders.clear();
-    localStorage.removeItem(SELECTED_KEY);
-    localStorage.removeItem(STORAGE_KEY);
-    persistSelection();
-    applyMetalFilter();
-
-    M.toast({ html: "Completed orders removed — pages recalculated" });
-     //     remove orders when our window regains focus
-     window.addEventListener("focus", function focusHandler(){
-       if (printDialogOpened) {
-         onPrintComplete({ data: { printSuccess: true } });
-       }
-       window.removeEventListener("focus", focusHandler); // self-clean
-     }, { once: true });
-
-
-    /* 4️⃣  recompute paging (unchanged) */
-    if (typeof orderListOffset === "undefined") window.orderListOffset = 0;
-    const totalPages = Math.ceil(allOpenReceipts.length / 100) || 1;
-    if (orderListOffset >= allOpenReceipts.length) {
-      orderListOffset = (totalPages - 1) * 100;
-    }
-
-    await buildNewOrderList(orderListOffset);     // redraw rows + buttons
-    realignGrid();                                // tighten grid gaps
-
-     /* 5️⃣  reset on-screen metal counters */
-     active.forEach(m => {
-      const el = document.querySelector(`.metal-counter[data-metal='${m}']`);
-      if (el) el.textContent = `${m.charAt(0).toUpperCase() + m.slice(1)}: 0`;
-    });
-
-    /* 6️⃣  persist + refresh (unchanged) */
-    persistCompleted();
-    persistSelection();
-    updateCounters();
-    applyMetalFilter();
-
-     /* 7️⃣  redistribute mixed-metal orders (unchanged logic) */
+    /* 3️⃣  Defer UI cleanup—will run after “Print Labels” */
      multiMetalOrders.forEach(rid=>{
          const metals = Array.from(metalSets[rid]).filter(m => listsByMetal[m]);
          if(!metals.length){
