@@ -1458,18 +1458,38 @@ if (!orderContainer.dataset.rangeWired){
         || M.Modal.init(document.getElementById("qrPreviewModal"))).open();
    }
    function proceedToPrint(lists){
-     if(!lists) return;
-     printDialogOpened = true;          // ✅ print attempt started
-     localStorage.setItem("metalOrderLists",JSON.stringify(lists));
-     const f=document.createElement("iframe");
+     /* ── 1. bail early if there is truly nothing to print ── */
+     if(!lists || !Object.values(lists).some(arr=>arr.length)){
+       M.toast({ html:"No order labels to print" });
+       return;
+     }
+ 
+     printDialogOpened = true;                // mark pending-print
+     localStorage.setItem("metalOrderLists", JSON.stringify(lists));
+ 
+     /* ── 2. spawn hidden iframe *then* open system print dialog ── */
+     const f = document.createElement("iframe");
      f.style.cssText="position:fixed;visibility:hidden;right:9999px;width:1px;height:1px;";
-     f.src="design-print-1.html"; document.body.appendChild(f);
-    
-    /* keep the preview grid visible until printing succeeds */
+     f.src = "design-print-1.html";
+     f.onload = () => {                       // ✅ now safe to print
+       try{
+         f.contentWindow.focus();
+         f.contentWindow.print();
+       }catch(err){
+         console.error("Print-iframe error:", err);
+       }
+     };
+     document.body.appendChild(f);
    }
    document.addEventListener("DOMContentLoaded",()=>{
-     const p=document.getElementById("qrPreviewPrintBtn");
-     if(p) p.addEventListener("click",()=>proceedToPrint(window._pendingMetalLists));
+   const p = document.getElementById("qrPreviewPrintBtn");
+   if(p && !p.dataset.wired){
+     p.dataset.wired = "1";
+     p.addEventListener("click", e => {
+       e.preventDefault();                   // keep modal steady
+       proceedToPrint(window._pendingMetalLists);
+     });
+    }
    });
 
 
