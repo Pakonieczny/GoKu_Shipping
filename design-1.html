@@ -1495,16 +1495,15 @@ if (!orderContainer.dataset.rangeWired){
 
   /* ─────────────────── handleCompleteClick — URL-SAFE VERSION ─────────────────── */
   async function handleCompleteClick() {
-    /* 1️⃣  require ALL four metal filters (unchanged) */
-    const REQUIRED = ["gold", "silver", "rose", "14k"];
-    const active = Array.from(
-      document.querySelectorAll('.metal-counter.active:not([data-metal="completed"])')
-    ).map(b => b.dataset.metal);
-
-    if (active.length !== 4 || !REQUIRED.every(m => active.includes(m))) {
-      M.toast({ html: "Turn ON Gold Silver Rose 14K before completing" });
-      return;
-    }
+   /* 1️⃣  gather which metal filters are ON (we’ll happily continue even if some are off) */
+   const active = Array.from(
+     document.querySelectorAll('.metal-counter.active:not([data-metal="completed"])')
+   ).map(b => b.dataset.metal);
+ 
+   if (!active.length) {                       // nothing selected at all
+     M.toast({html:"Enable at least one metal filter before printing labels"});
+     return;
+   }
 
     /* 2️⃣  collect every visible preview that matches those metals */
 
