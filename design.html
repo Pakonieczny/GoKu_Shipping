@@ -666,31 +666,110 @@ const firebaseConfig = {
 firebase.initializeApp(firebaseConfig);
 const db = firebase.firestore();
 
-/********************************************************
- * Etsy Auth, Code Challenge, configIDs
- ********************************************************/
+
+/* ===== Etsy OAuth boot + auto-refresh wiring ===== */
+const TOKEN_KEYS = {
+  access  : "access_token",
+  refresh : "refresh_token",
+  expires : "token_expires_at"   // epoch seconds
+};
+
+function scheduleTokenRefresh(){
+  clearTimeout(window.__etsyRefreshTimer);
+  const exp = Number(localStorage.getItem(TOKEN_KEYS.expires) || 0);
+  if (!exp) return;
+
+  const now = Math.floor(Date.now()/1000);
+  const leadSec = 120; // refresh 2 min before expiry
+  const delayMs = Math.max(5000, (exp - now - leadSec) * 1000);
+
+  window.__etsyRefreshTimer = setTimeout(refreshAccessToken, delayMs);
+}
+
+function setTokens({ access_token, refresh_token, expires_in, issued_at }){
+  if (access_token)  localStorage.setItem(TOKEN_KEYS.access, access_token);
+  if (refresh_token) localStorage.setItem(TOKEN_KEYS.refresh, refresh_token);
+
+  const now = Math.floor(Date.now()/1000);
+  const iat = Number(issued_at || now);
+  const exp = iat + Number(expires_in || 3600);
+  localStorage.setItem(TOKEN_KEYS.expires, String(exp));
+
+  scheduleTokenRefresh();
+}
+
+async function refreshAccessToken(){
+  const rt = localStorage.getItem(TOKEN_KEYS.refresh);
+  if (!rt) return; // nothing to refresh with
+
+  try{
+    const resp = await fetch(`${functionsBaseUrl}/refreshToken`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ refresh_token: rt })
+    });
+    if (!resp.ok) throw new Error("HTTP " + resp.status);
+
+    const data = await resp.json();
+    setTokens({
+      access_token : data.access_token,
+      refresh_token: data.refresh_token || rt,
+      expires_in   : data.expires_in,
+      issued_at    : data.issued_at || Math.floor(Date.now()/1000)
+    });
+    M.toast({ html: "Etsy token refreshed" });
+  }catch(err){
+    console.warn("Token refresh failed:", err);
+    // Soft-fail: UI can still prompt Connect if needed.
+  }
+}
+
+async function ensureFreshToken(){
+  const exp = Number(localStorage.getItem(TOKEN_KEYS.expires) || 0);
+  if (!exp) return;
+  const now = Math.floor(Date.now()/1000);
+  if (exp - now <= 120) await refreshAccessToken();
+}
+
+/* Boot */
 (function () {
-  const urlParams = new URLSearchParams(window.location.search);
-  const accessToken = urlParams.get("access_token");
-  if (accessToken) {
-    localStorage.setItem("access_token", accessToken);
+  const url = new URLSearchParams(window.location.search);
+
+  // Tokens returned by exchangeToken.js (access, refresh, expires_in, issued_at)
+  const a = url.get("access_token");
+  if (a){
+    setTokens({
+      access_token : a,
+      refresh_token: url.get("refresh_token"),
+      expires_in   : url.get("expires_in"),
+      issued_at    : url.get("issued_at")
+    });
     window.history.replaceState({}, document.title, window.location.pathname);
     M.toast({ html: "Connection Successful!" });
-    console.log("Access token received:", accessToken);
-  } else {
-    const authCode = urlParams.get("code");
-    if (authCode) {
-      const storedCodeVerifier = localStorage.getItem("etsy_code_verifier");
-      if (storedCodeVerifier) {
-        window.location.href =
-          "/.netlify/functions/exchangeToken?code=" +
-          encodeURIComponent(authCode) +
-          "&code_verifier=" +
-          encodeURIComponent(storedCodeVerifier);
-      } else {
-        console.error("No code verifier found in localStorage.");
-      }
+    return;
+  }
+
+  // Standard OAuth code return → hand back to server for code→tokens
+  const code = url.get("code");
+  if (code){
+    const v = localStorage.getItem("etsy_code_verifier");
+    if (v){
+      window.location.href =
+        "/.netlify/functions/exchangeToken?code=" +
+        encodeURIComponent(code) +
+        "&code_verifier=" + encodeURIComponent(v);
+      return;
+    }else{
+      console.error("No code verifier found in localStorage.");
     }
+  }
+
+  // Page load without query: rehydrate existing session and arm refresh
+  if (localStorage.getItem(TOKEN_KEYS.access)) {
+    scheduleTokenRefresh();
+  } else if (localStorage.getItem(TOKEN_KEYS.refresh)) {
+    // No access token but we have a refresh token → refresh immediately
+    refreshAccessToken();
   }
 })();
 
@@ -2516,6 +2595,7 @@ function updatePageButtons(totalPages, currentPage){
  *    • stops only when a page returns < 100 rows
  ********************************************************/
 async function fetchOpenOrdersSequential() {
+  await ensureFreshToken();
   const token  = localStorage.getItem("access_token") || "";
   const all    = [];
   let offset   = 0;
