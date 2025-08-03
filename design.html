@@ -584,10 +584,10 @@ function refreshRowMetalCounts(receiptId){
     }
 
     const q = tx.quantity || 1;
-    if (m === "14k" || /14\s*k\s*solid/i.test(m))  k += q;   // accept row key “14k” too
-    else if (/rose/.test(m))   rG += q;
-    else if (/silv(?:er|r)/.test(m)) s  += q;
-    else if (/gold/.test(m))   g  += q;
+    if (/^14k$/.test(m) || /\b14\s*k(?:t|arat)?\b/i.test(m)) k += q;
+    else if (/rose/i.test(m))                               rG += q;
+    else if (/silv(?:er|r)/i.test(m))                       s  += q;
+    else if (/gold/i.test(m))                               g  += q;
   });
 
   row.querySelector(".col-g").textContent = g;
@@ -1401,14 +1401,14 @@ if (!orderContainer.dataset.rangeWired){
    /* ───────── QR-preview helpers ───────── */
 
    /* Normalise to 4 allowed metals */
-   function canonicalMetal(str){
-     const m = String(str||"").toLowerCase();
-     if(/14k/.test(m) || /solid/.test(m)) return "14k";  // treat “solid” as 14 k
-     if(/rose/.test(m))     return "rose";
-     if(/silv/.test(m))     return "silver";
-     if(/gold/.test(m))     return "gold";
-     return "";
-   }
+    function canonicalMetal(str){
+      const m = String(str || "").toLowerCase();
+      if (/\b14\s*k(?:t|arat)?\b/.test(m) || /solid/.test(m)) return "14k";
+      if (/rose/.test(m))   return "rose";
+      if (/silv/.test(m))   return "silver";
+      if (/gold/.test(m))   return "gold";
+      return "";
+    }
 
    function toB36(numStr){
      const clean=String(numStr).trim();
@@ -2023,14 +2023,14 @@ if (!orderContainer.dataset.rangeWired){
         const name = (v.formatted_name  || "").replace(/&quot;/g, '"');
         const val  = (v.formatted_value || "").replace(/&quot;/g, '"');
 
-        /* grab the first METAL match for row-colouring */
-        if (!metalKey) {
-          const low = val.toLowerCase();
-          if (/14\s*k\s*solid/i.test(low))         metalKey = "14k";
-          else if (/rose/.test(low))               metalKey = "rose";
-          else if (/silv(?:er|r)/.test(low))       metalKey = "silver";
-          else if (/gold/.test(low))               metalKey = "gold";
-        }
+      /* grab the first METAL match for row-colouring */
+      if (!metalKey) {
+        const low = val.toLowerCase();
+        if (/\b14\s*k(?:t|arat)?\b/.test(low))   metalKey = "14k";
+        else if (/rose/.test(low))               metalKey = "rose";
+        else if (/silv(?:er|r)/.test(low))       metalKey = "silver";
+        else if (/gold/.test(low))               metalKey = "gold";
+      }
 
         /* grab the first NON-metal, NON-personalization variation */
         if (
@@ -2415,11 +2415,11 @@ const observer = new MutationObserver(async () => {
         /* add counts from every variation value */
         if (Array.isArray(t.variations)) {
           t.variations.forEach(v => {
-            const val = (v?.formatted_value || "").toLowerCase();
-            if (/14\s*k\s*solid/i.test(val))         mc["14K"]    += q;
-            else if (/rose/.test(val))   mc["Rose G"] += q;
-            else if (/silv(?:er|r)/.test(val)) mc.Silver    += q;
-            else if (/gold/.test(val))   mc.Gold      += q;
+          const val = (v?.formatted_value || "").toLowerCase();
+          if (/\b14\s*k(?:t|arat)?\b/.test(val))   mc["14K"]    += q;
+          else if (/rose/.test(val))               mc["Rose G"] += q;
+          else if (/silv(?:er|r)/.test(val))       mc.Silver    += q;
+          else if (/gold/.test(val))               mc.Gold      += q;
           });
         }
 
