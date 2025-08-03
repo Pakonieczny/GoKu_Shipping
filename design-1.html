@@ -583,11 +583,19 @@ function refreshRowMetalCounts(receiptId){
       }
     }
 
+    // 14K override: if m is 'gold' but the variation text mentions 14k, force 14k
+    if (/^gold$/i.test(m) && Array.isArray(tx.variations)) {
+      const joined = tx.variations
+        .map(v => String(v.formatted_value || "").toLowerCase())
+        .join(" ");
+      if (/\b14\s*k(?:t|arat)?\b/.test(joined)) m = "14k";
+    }
+
     const q = tx.quantity || 1;
-    if (m === "14k" || /14\s*k\s*solid/i.test(m))  k += q;   // accept row key “14k” too
-    else if (/rose/.test(m))   rG += q;
-    else if (/silv(?:er|r)/.test(m)) s  += q;
-    else if (/gold/.test(m))   g  += q;
+    if (/^14k$/.test(m) || /\b14\s*k(?:t|arat)?\b/i.test(m)) k += q;
+    else if (/rose/i.test(m))                               rG += q;
+    else if (/silv(?:er|r)/i.test(m))                       s  += q;
+    else if (/gold/i.test(m))                               g  += q;
   });
 
   row.querySelector(".col-g").textContent = g;
@@ -1401,14 +1409,14 @@ if (!orderContainer.dataset.rangeWired){
    /* ───────── QR-preview helpers ───────── */
 
    /* Normalise to 4 allowed metals */
-   function canonicalMetal(str){
-     const m = String(str||"").toLowerCase();
-     if(/14k/.test(m) || /solid/.test(m)) return "14k";  // treat “solid” as 14 k
-     if(/rose/.test(m))     return "rose";
-     if(/silv/.test(m))     return "silver";
-     if(/gold/.test(m))     return "gold";
-     return "";
-   }
+    function canonicalMetal(str){
+      const m = String(str || "").toLowerCase();
+      if (/\b14\s*k(?:t|arat)?\b/.test(m) || /solid/.test(m)) return "14k";
+      if (/rose/.test(m))   return "rose";
+      if (/silv/.test(m))   return "silver";
+      if (/gold/.test(m))   return "gold";
+      return "";
+    }
 
    function toB36(numStr){
      const clean=String(numStr).trim();
@@ -1510,7 +1518,7 @@ if (!orderContainer.dataset.rangeWired){
      const f = document.createElement("iframe");
      f.style.cssText="position:fixed;visibility:hidden;right:9999px;width:1px;height:1px;";
      f.src = "design-print-1.html";
-     
+
      // print is now triggered inside design-print-1.html
      document.body.appendChild(f);
    }
@@ -2023,13 +2031,16 @@ if (!orderContainer.dataset.rangeWired){
         const name = (v.formatted_name  || "").replace(/&quot;/g, '"');
         const val  = (v.formatted_value || "").replace(/&quot;/g, '"');
 
-        /* grab the first METAL match for row-colouring */
-        if (!metalKey) {
+        /* grab METAL with hard 14K precedence (can override earlier 'gold') */
+        {
           const low = val.toLowerCase();
-          if (/14\s*k\s*solid/i.test(low))         metalKey = "14k";
-          else if (/rose/.test(low))               metalKey = "rose";
-          else if (/silv(?:er|r)/.test(low))       metalKey = "silver";
-          else if (/gold/.test(low))               metalKey = "gold";
+          if (/\b14\s*k(?:t|arat)?\b/.test(low)) {
+            metalKey = "14k"; // 14k always wins, even if 'gold' was set earlier
+          } else if (!metalKey) {
+            if (/rose/.test(low))               metalKey = "rose";
+            else if (/silv(?:er|r)/.test(low))  metalKey = "silver";
+            else if (/gold/.test(low))          metalKey = "gold";
+          }
         }
 
         /* grab the first NON-metal, NON-personalization variation */
@@ -2415,11 +2426,11 @@ const observer = new MutationObserver(async () => {
         /* add counts from every variation value */
         if (Array.isArray(t.variations)) {
           t.variations.forEach(v => {
-            const val = (v?.formatted_value || "").toLowerCase();
-            if (/14\s*k\s*solid/i.test(val))         mc["14K"]    += q;
-            else if (/rose/.test(val))   mc["Rose G"] += q;
-            else if (/silv(?:er|r)/.test(val)) mc.Silver    += q;
-            else if (/gold/.test(val))   mc.Gold      += q;
+          const val = (v?.formatted_value || "").toLowerCase();
+          if (/\b14\s*k(?:t|arat)?\b/.test(val))   mc["14K"]    += q;
+          else if (/rose/.test(val))               mc["Rose G"] += q;
+          else if (/silv(?:er|r)/.test(val))       mc.Silver    += q;
+          else if (/gold/.test(val))               mc.Gold      += q;
           });
         }
 
@@ -2750,8 +2761,8 @@ const defaultPos = {
   saveConfigBtn:            { left:10, top:3,  width:85, height:35 },
   newOrderContainer:        { left:1, top:45,  width:318, height:800 },
   pageButtonsContainer:     { left:71,top:-4, width:325, height:25 },
-  completeBtn:              { left:1069,   top:5, width:120, height:35 },
-  undoCompleteBtn:          { left:897,  top:5, width:156, height:35 },
+  completeBtn:              { left:1057,   top:5, width:134, height:35 },
+  undoCompleteBtn:          { left:902,  top:5, width:139, height:35 },
   goldCounter:          { left:319, top:9,  width:72,height:27 },
   silverCounter:        { left:402,  top:9,   width:72, height:27 },
   roseCounter:          { left:485,  top:9,  width:72, height:27 },
