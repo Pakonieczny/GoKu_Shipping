@@ -523,6 +523,30 @@ const orderCache     = {};             // receipt_id → transactions[]
 const gridElements   = new Map();      // transaction_id → wrapper DOM
 let   lastCtrlIdx    = null;           // ⬅️  anchor for Ctrl/⌘ range-select
 
+ /* ===== Resilient Etsy fetch (auto-refresh + 401 retry) ===== */
+ async function apiFetch(path, init = {}) {
+   // 1) refresh proactively when near expiry
+   await ensureFreshToken();
+ 
+   // 2) attempt request with current token
+   let token = localStorage.getItem("access_token") || "";
+   let resp = await fetch(`${functionsBaseUrl}${path}`, {
+     ...init,
+     headers: { ...(init.headers || {}), "access-token": token }
+   });
+ 
+   // 3) if it 401s, refresh once and retry
+   if (resp.status === 401) {
+     await refreshAccessToken();
+     token = localStorage.getItem("access_token") || "";
+     resp = await fetch(`${functionsBaseUrl}${path}`, {
+       ...init,
+       headers: { ...(init.headers || {}), "access-token": token }
+     });
+   }
+   return resp;
+ }
+
 /* =====  Staff-Note highlighting  =================================== */
 let staffNoteIDs = new Set();
 
@@ -3096,7 +3120,7 @@ async function fetchEtsyOrder(orderNum){
   const token = localStorage.getItem("access_token") || "";
   const url   = functionsBaseUrl +
                 "/etsyOrderProxy?orderId=" + encodeURIComponent(orderNum);
-  const resp  = await fetch(url,{ headers:{ "access-token": token }});
+  const resp  = await apiFetch(`/etsyOrderProxy?orderId=${encodeURIComponent(orderNum)}`);
   if(!resp.ok) throw new Error("HTTP "+resp.status);
   return await resp.json();            // { receipt, transactions, … }
 }
@@ -3115,7 +3139,7 @@ async function loadBatchEtsyOrders(orderNumbers) {
     for (let i = 0; i < orderNumbers.length; i++) {
       const ord  = orderNumbers[i];
       const url  = functionsBaseUrl + "/etsyOrderProxy?orderId=" + encodeURIComponent(ord);
-      const resp = await fetch(url, { headers: { "access-token": token } });
+      const resp = await apiFetch(`/etsyOrderProxy?orderId=${encodeURIComponent(ord)}`);
 
       /* DEBUG ⬇︎ record every payload */
       console.log("%cFETCH ✓", "color:#00c853",
@@ -3202,9 +3226,9 @@ async function loadBatchEtsyOrders(orderNumbers) {
 
 async function fetchListingImages(listingId) {
   const token = localStorage.getItem("access_token") || "";
-  const resp = await fetch(functionsBaseUrl + "/etsyImages?listingId=" + listingId, {
-    headers: { "access-token": token },
-  });
+
+  const resp = await apiFetch(`/etsyImages?listingId=${listingId}`);
+
   if (!resp.ok) {
     console.warn("Image fetch HTTP error:", resp.status);
     return [];
@@ -3238,10 +3262,9 @@ function pullEtsyOrderDetails(orderNumber){
   console.log("Pulling Etsy order details for:", orderNumber);
   const token = localStorage.getItem("access_token") || "";
 
-  return fetch(
-    functionsBaseUrl + "/etsyOrderProxy?orderId=" + encodeURIComponent(orderNumber),
-    { headers: { "access-token": token } }
-  )
+  return apiFetch(`/etsyOrderProxy?orderId=${encodeURIComponent(orderNumber)}`
+    )
+
   .then(r => r.json())
   .then(data => {
     console.log("Etsy Order Data:", data);
