@@ -583,6 +583,14 @@ function refreshRowMetalCounts(receiptId){
       }
     }
 
+    // 14K override: if m is 'gold' but the variation text mentions 14k, force 14k
+    if (/^gold$/i.test(m) && Array.isArray(tx.variations)) {
+      const joined = tx.variations
+        .map(v => String(v.formatted_value || "").toLowerCase())
+        .join(" ");
+      if (/\b14\s*k(?:t|arat)?\b/.test(joined)) m = "14k";
+    }
+
     const q = tx.quantity || 1;
     if (/^14k$/.test(m) || /\b14\s*k(?:t|arat)?\b/i.test(m)) k += q;
     else if (/rose/i.test(m))                               rG += q;
@@ -2023,14 +2031,17 @@ if (!orderContainer.dataset.rangeWired){
         const name = (v.formatted_name  || "").replace(/&quot;/g, '"');
         const val  = (v.formatted_value || "").replace(/&quot;/g, '"');
 
-      /* grab the first METAL match for row-colouring */
-      if (!metalKey) {
-        const low = val.toLowerCase();
-        if (/\b14\s*k(?:t|arat)?\b/.test(low))   metalKey = "14k";
-        else if (/rose/.test(low))               metalKey = "rose";
-        else if (/silv(?:er|r)/.test(low))       metalKey = "silver";
-        else if (/gold/.test(low))               metalKey = "gold";
-      }
+        /* grab METAL with hard 14K precedence (can override earlier 'gold') */
+        {
+          const low = val.toLowerCase();
+          if (/\b14\s*k(?:t|arat)?\b/.test(low)) {
+            metalKey = "14k"; // 14k always wins, even if 'gold' was set earlier
+          } else if (!metalKey) {
+            if (/rose/.test(low))               metalKey = "rose";
+            else if (/silv(?:er|r)/.test(low))  metalKey = "silver";
+            else if (/gold/.test(low))          metalKey = "gold";
+          }
+        }
 
         /* grab the first NON-metal, NON-personalization variation */
         if (
