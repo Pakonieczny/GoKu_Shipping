@@ -752,7 +752,7 @@ async function refreshAccessToken(){
 
   __refreshPromise = (async () => {
     try{
-      const resp = await fetch(`${functionsBaseUrl}/refreshToken`, {
+      const resp = await fetch(`${functionsBaseUrl}/refreshEtsyToken`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ refresh_token: rt })
@@ -769,14 +769,15 @@ async function refreshAccessToken(){
       });
       M.toast({ html: "Etsy token refreshed" });
       return true;
-    }catch(err){
-      console.warn("Token refresh failed:", err);
-      // Clear the expired access so UI can prompt re-connect cleanly
-     localStorage.removeItem(TOKEN_KEYS.access);
-     localStorage.removeItem(TOKEN_KEYS.expires);
-     // Start headless OAuth
-     await startOAuth("refresh-failed");
-     throw err;    
+     }catch(err){
+
+       console.warn("Token refresh failed:", err);
+       // Clear & start headless OAuth (no button clicks)
+       localStorage.removeItem(TOKEN_KEYS.access);
+       localStorage.removeItem(TOKEN_KEYS.expires);
+       await startOAuth("refresh-failed");
+       throw err;   
+       
      }finally{
      __refreshPromise = null;
 
