@@ -620,7 +620,9 @@
     window.receiptIsGift = null;
     window.receiptGiftMessage = null;
     window.receiptGiftWrap = null;
-    window.receiptGiftWrapPrice = null;    window.orderName = "";
+    window.receiptGiftWrapPrice = null;
+    window.receiptGiftMessageFrom = null;    
+    window.orderName = "";
     window.orderStatus = "";
     window.orderIsShipped = "";
     window.cachedOrderItems = [];
@@ -1708,16 +1710,15 @@
       if(window.receiptIsGift !== null){
         details += " Marked as Gift: " + window.receiptIsGift + "\n";
       }
-      if(window.receiptGiftMessage){
-        details += " Gift Message: " + window.receiptGiftMessage + "\n";
+      if (window.receiptGiftMessage) {
+      details += " Gift Message: " + window.receiptGiftMessage;
+      if (window.receiptGiftMessageFrom) {
+      details += " — " + window.receiptGiftMessageFrom;
       }
+      details += "\n";      }
 
       if (window.receiptGiftWrap !== null) {
         details += " Gift Wrapping: " + window.receiptGiftWrap + "\n";
-      }
-      if (typeof window.receiptGiftWrapPrice === "number") {
-        details += " Gift Wrap Price: " +
-          window.receiptGiftWrapPrice.toLocaleString(undefined, { style: "currency", currency: "USD" }) + "\n";
       }
 
       document.getElementById("orderDetails").value = details;
@@ -1746,6 +1747,7 @@
         // Gift fields now sourced from Etsy receipt
         window.receiptIsGift = Boolean(data.is_gift);
         window.receiptGiftMessage = (data.gift_message || "").trim();
+        window.receiptGiftMessageFrom = (data.gift_message_from || "").trim();
 
         // Etsy receipts include gift_wrap_price as a money object { amount, divisor, currency_code }
         const gwp = data.gift_wrap_price;
