@@ -172,6 +172,23 @@
       overflow-y: auto;
     }
 
+    /* Ship To Address text area */
+    #shipAddressBox {
+      position: absolute;
+      border: 1px solid black;
+      width: 300px;
+      height: 90px;
+      box-sizing: border-box;
+      outline: none;
+      background: transparent;
+      font-size: 0.9em;
+      line-height: 1.4;
+      resize: none;
+      text-align: left;
+      white-space: pre-wrap;
+      overflow-y: auto;
+    }
+
     /* Customer Message History text area */
     #customerMessageHistory {
       position: absolute;
@@ -189,11 +206,12 @@
     }
 
     /* Single-line text boxes */
-    #dateOrdered,
-    #shipDate,
-    #labelCreationDate,
-    #employeeName,
-    #completedByEmployee {
+      #dateOrdered,
+      #shipDate,
+      #labelCreationDate,
+      #employeeName,
+      #completedByEmployee,
+      #shippingPriority {
       position: absolute;
       width: 200px;
       height: 20px;
@@ -293,7 +311,7 @@
       border-bottom: 1px solid black !important;
     }
 
-    /* shipping title style */
+    /* shipping-2 title style */
     #titleShipping{
       font-size:1.65em !important;
       font-weight: Bold !important;
@@ -322,6 +340,13 @@
   z-index: 9999 !important;
   overflow: hidden !important; /* or 'auto' if you prefer scrolling */
 }
+
+  #titleShippingPriority {
+    position: absolute;
+    font-size: 0.7em;
+    margin: 0;
+    padding: 0;
+  }
 
 #userLoginModalContainer {
   position: static !important; /* so content doesn’t shrink weirdly */
@@ -390,6 +415,8 @@
     <input id="titleShipping" type="text" value="Shipping_2"  readonly />
     <!-- ▲ nothing else changes here -->
 
+    <input type="text" id="shippingPriority" readonly />
+
     <!-- Photo Grid -->
     <div id="Photo_Grid">
       <div id="photoGridContainer">
@@ -440,6 +467,7 @@
     <input type="text" id="metalCell7" class="text-box-absolute" readonly />
 
     <textarea id="orderDetails" readonly></textarea>
+    <textarea id="shipAddressBox" readonly></textarea>
 
     <!-- ▼▼ NEW COPY BUTTON ▼▼ -->
     <button id="copyOrderDetailsBtn" class="btn"
@@ -460,6 +488,7 @@
     <div id="titleOrderDate2" style="font-weight:bold;"></div>
     <div id="titleShipDate">Ship By:</div>
     <div id="titleSignedInAs">Signed In As:</div>
+    <div id="titleShippingPriority">Shipping Priority</div>
 
     <div id="titleOrderDetails">Order Details:</div>
     <div id="titleBritesMessages">Brites Messages</div>
@@ -590,7 +619,8 @@
     /********** Global Variables **********/
     window.receiptIsGift = null;
     window.receiptGiftMessage = null;
-    window.orderName = "";
+    window.receiptGiftWrap = null;
+    window.receiptGiftWrapPrice = null;    window.orderName = "";
     window.orderStatus = "";
     window.orderIsShipped = "";
     window.cachedOrderItems = [];
@@ -790,14 +820,14 @@
      */
       var configComponentIDs = [
         "connectEtsyBtn","openConfigBtn","signOutBtn","orderLinkBtn","trackingLinkBtn","etsyOrderNumber","Photo_Grid","quantityCell0","quantityCell1","quantityCell2","quantityCell3",
-        "quantityCell4","quantityCell5","quantityCell6","quantityCell7",
+        "quantityCell4", "shippingPriority", "quantityCell5","quantityCell6","quantityCell7",
         "metalCell0","metalCell1","metalCell2","metalCell3",
         "metalCell4","metalCell5","metalCell6","metalCell7",
-        "orderDetails", "copyOrderDetailsBtn", "customerMessageHistory","britesMsgInput","dateOrdered","shipDate",
+        "orderDetails", "shipAddressBox", "copyOrderDetailsBtn", "customerMessageHistory","britesMsgInput","dateOrdered","shipDate",
         "employeeName","trackingNumberInput","carrierSelectWrap","completeOrderBtn",
         "titleOrderDate","titleOrderDate2","titleShipDate",
         "titleSignedInAs",
-        "titleOrderDetails","titleBritesMessages","titlePurchasedItems","titleOrderNumber",
+        "titleOrderDetails","titleShippingPriority","titleBritesMessages","titlePurchasedItems","titleOrderNumber",
         "titleShipping",                // 🆕 make “Shipping” configurable
         "goScreenTwoBtn",
         /* Existing modal references */
@@ -839,7 +869,8 @@
       metalCell7:           { left: 1136, top: 583,  width: 153, height: 45 },
 
       orderDetails:           { left: 10,   top: 162,  width: 300, height: 342 },
-      customerMessageHistory: { left: 10, top: 535,  width: 300, height: 266 },
+      shipAddressBox:         { left: 324,   top: 162,  width: 200, height: 186 },
+      customerMessageHistory: { left: 10,   top: 605,  width: 300, height: 266 },
       britesMsgInput:         { left: 14, top: 802, width: 295, height: 23 },
 
       dateOrdered:          { left: 10,   top: 100,  width: 145, height: 30 },
@@ -851,7 +882,7 @@
       titleShipDate:        { left: 167,  top: 82,   width: 99,  height: 15 },
       titleSignedInAs:      { left: 1226, top: 7,    width: 75,  height: 15 },
       titleOrderDetails:    { left: 11,   top: 144,  width: 99,  height: 15 },
-      titleBritesMessages:  { left: 11,   top: 518,  width: 99,  height: 15 },
+      titleBritesMessages:    { left: 11,   top: 588,  width: 99,  height: 15 },
       titlePurchasedItems:  { left: 538,  top: 135,   width: 99,  height: 15 },
       titleOrderNumber:     { left: 11,   top: 7,    width: 99,  height: 15 },
 
@@ -871,6 +902,8 @@
       completeOrderBtn:    { left:1062, top:656, width:155, height:41 },
       titleShipping:        { left: 700, top: 10, width: 200, height: 30 },
       copyOrderDetailsBtn: { left: 260, top: 162, width: 50, height: 24 },
+      shippingPriority: { left: 324, top: 106, width: 200, height: 24 },
+      titleShippingPriority: { left: 324, top: 82, width: 200, height: 15 },
       signOutBtn:           { left: 1356,  top: 17, width: 103, height: 35 }
 
     };
@@ -1141,27 +1174,34 @@
       etsyOrderInput.addEventListener("keydown", async function(e){
         if(e.key === "Enter"){
           const orderNumber = etsyOrderInput.value.trim();
-          if(orderNumber !== ""){
-            const orderData = await pullEtsyOrderDetails(orderNumber);
-            if(orderData){
-              await updateImageGrid(orderData);
-              startBritesListener(orderNumber);
-            }
+          const orderData = await pullEtsyOrderDetails(orderNumber);
+          // 🆕 Always pull ShipStation Ship-To immediately after loading order meta
+          await loadShipToAddress(orderNumber);
+
+          if(orderData){
+            await updateImageGrid(orderData);
+            startBritesListener(orderNumber);
+          }
             try {
               const respPD = await fetch("/.netlify/functions/firebaseOrders?orderId=" + encodeURIComponent(orderNumber));
               const resPD = await respPD.json();
 
-              if(!respPD.ok){
-                if(resPD.error && resPD.error.toLowerCase().includes("not found")){
-                  // Doc not found => clear fields quietly, no error
-                  document.getElementById("labelCreationDate").value = "";
-                  document.getElementById("completedByEmployee").value = "";
-                  document.getElementById("signatureBox").innerHTML = "Sig Box";
-                  return;
-                } else {
-                  throw new Error(resPD.error || "Unknown error from firebaseOrders function");
-                }
+            if(!respPD.ok){
+              if(resPD.error && resPD.error.toLowerCase().includes("not found")){
+                // Doc not found => clear fields quietly, no error
+                document.getElementById("labelCreationDate").value = "";
+                document.getElementById("completedByEmployee").value = "";
+                document.getElementById("signatureBox").innerHTML = "Sig Box";
+
+                // 🆕 also clear Address Box
+                const ab = document.getElementById("shipAddressBox");
+                if (ab) ab.value = "";
+
+                return;
+              } else {
+                throw new Error(resPD.error || "Unknown error from firebaseOrders function");
               }
+            }
 
               // If we reach here => doc is found or newly created
               const docDataPD = resPD.data || {};
@@ -1180,7 +1220,7 @@
                 document.getElementById("customerMessageHistory").innerText = "";
               }
 
-              /* ── Shipping-label creation date ─────────────────────── */
+              /* ── Shipping-2-label creation date ─────────────────────── */
               if (docDataPD["Shipping Label Timestamps"]) {
                 const dt = new Date(docDataPD["Shipping Label Timestamps"]);
                 const lblDateEl = document.getElementById("labelCreationDate");
@@ -1226,8 +1266,7 @@
               console.error("Failed to pull data from Firestore:", errPD);
             }
           }
-        }
-      });
+        });
 
       document.getElementById("orderLinkBtn").addEventListener("click", function(){
         var baseUrl = "https://www.etsy.com/your/orders/sold?ref=seller-platform-mcnav&order_id=0000000000";
@@ -1672,6 +1711,15 @@
       if(window.receiptGiftMessage){
         details += " Gift Message: " + window.receiptGiftMessage + "\n";
       }
+
+      if (window.receiptGiftWrap !== null) {
+        details += " Gift Wrapping: " + window.receiptGiftWrap + "\n";
+      }
+      if (typeof window.receiptGiftWrapPrice === "number") {
+        details += " Gift Wrap Price: " +
+          window.receiptGiftWrapPrice.toLocaleString(undefined, { style: "currency", currency: "USD" }) + "\n";
+      }
+
       document.getElementById("orderDetails").value = details;
     }
 
@@ -1695,10 +1743,22 @@
       .then(function(r){ return r.json(); })
       .then(function(data){
         console.log("Etsy Order Data:", data);
-        window.receiptIsGift = (typeof data.is_gift !== "undefined") ? data.is_gift : null;
-        window.receiptGiftMessage = data.gift_message || "";
+        // Gift fields now sourced from Etsy receipt
+        window.receiptIsGift = Boolean(data.is_gift);
+        window.receiptGiftMessage = (data.gift_message || "").trim();
 
-        /* 🆕 store buyer note so the chat listener can render it */
+        // Etsy receipts include gift_wrap_price as a money object { amount, divisor, currency_code }
+        const gwp = data.gift_wrap_price;
+        const gwAmount =
+          (gwp && typeof gwp.amount === "number" && typeof gwp.divisor === "number" && gwp.divisor)
+            ? (gwp.amount / gwp.divisor)
+            : (typeof data.gift_wrap_price === "number" ? data.gift_wrap_price : null);
+        window.receiptGiftWrapPrice =
+          (typeof gwAmount === "number" && !Number.isNaN(gwAmount)) ? gwAmount : null;
+        window.receiptGiftWrap =
+          (typeof window.receiptGiftWrapPrice === "number" && window.receiptGiftWrapPrice > 0);
+
+        /* store buyer note so the chat listener can render it (still from Etsy) */
         window.buyerMessageText  = (data.message_from_buyer || "").trim();
         window.orderShipments = data.shipments || [];
         var titleDate2 = document.getElementById("titleOrderDate2");
@@ -1788,6 +1848,93 @@
       });
     }
 
+      /* ===== ShipStation — load “Ship To” by orderNumber ======================= */
+      async function loadShipToAddress(orderNumber){
+        try {
+          const box = document.getElementById("shipAddressBox");
+          if (!box) return;
+          box.value = "SHIP TO:\n(Loading...)";
+
+          const resp = await fetch(
+            "/.netlify/functions/ssGetOrderAddress?orderNumber=" + encodeURIComponent(orderNumber)
+          );
+          if (!resp.ok) {
+            box.value = "SHIP TO:\n(Not found)";
+            box.style.color = "";
+            return;
+          }
+
+          const data = await resp.json();
+          const ship = data.shipTo || null;
+          if (!ship) {
+            box.value = "SHIP TO:\n(Not found)";
+            box.style.color = "";
+            return;
+          }
+
+          // NEW: set Shipping Priority box from SS
+          const prEl = document.getElementById("shippingPriority");
+          if (prEl) {
+            const svc = (data.serviceCode || "").toString();
+            const carrier = (data.carrierCode || "").toString();
+
+            const amount = (typeof data.shippingAmount === "number")
+              ? data.shippingAmount
+              : (data.shippingAmount && typeof data.shippingAmount.amount === "number")
+                ? data.shippingAmount.amount
+                : null;
+
+            const cost = (amount != null)
+              ? amount.toLocaleString(undefined, { style: "currency", currency: "USD" })
+              : "—";
+
+            const label = [carrier, svc].filter(Boolean).join(" / ");
+            prEl.value = label ? `${label} • ${cost}` : `${cost}`;
+
+            // Make it bold (CSS also enforces this, but we set it here too for safety)
+            prEl.style.fontWeight = "bold";
+
+            // If price is exactly $18 or $55 → orange
+            const amt = Number(amount);
+            prEl.style.color = (amt === 18 || amt === 55) ? "orange" : "";
+          }
+
+
+          // If a tile is selected, refresh details to show gift fields
+          const sel = document.querySelector(".preview-box.selected");
+          if (sel) {
+            const idx = parseInt(sel.id.replace("previewCell",""), 10);
+            if (!Number.isNaN(idx)) showItemDetails(idx);
+          }
+
+          const lines = [];
+          const add = v => { if (v) lines.push(String(v)); };
+
+          add(ship.name || "");
+          const street = [ship.street1, ship.street2, ship.street3].filter(Boolean).join(" ");
+          add(street);
+          add([ship.city, ship.state, ship.postalCode].filter(Boolean).join(", "));
+          add(ship.country);
+          if (ship.phone) add("Phone: " + ship.phone);
+
+          box.value = "SHIP TO:\n" + lines.filter(Boolean).join("\n");
+
+          // Text color only for international (non-US/CA) addresses
+          const countryRaw = (ship.country || ship.countryCode || "").toString().trim();
+          const c = countryRaw.toLowerCase();
+          const isUS = c.startsWith("united states") || c === "usa" || c === "us" || c === "u.s." || c === "u.s.a.";
+          const isCA = c === "canada" || c === "ca";
+          box.style.color = (isUS || isCA) ? "" : "orangered";
+        } catch (e) {
+          console.error("loadShipToAddress:", e);
+          const box = document.getElementById("shipAddressBox");
+          if (box) {
+            box.value = "SHIP TO:\n(Error loading)";
+            box.style.color = "";
+          }
+        }
+      }
+
     /* ---------------------------------------------------------
      *  Firestore listener for employee-scanned order numbers
      * --------------------------------------------------------*/
@@ -1799,7 +1946,7 @@
 
       let firstSnap = true;                       // 🔑 skip the initial payload
       db.collection("Brites_Orders")
-        .doc("shipping-scan-1")
+        .doc("shipping-scan-2")
         .onSnapshot(docSnap => {
           if (!window.isEmployeeLoggedIn) return;
 
@@ -1822,7 +1969,7 @@
 
               /* one-shot: wipe the field so it can’t be reused */
               db.collection("Brites_Orders")
-                .doc("shipping-scan-1")
+                .doc("shipping-scan-2")
                 .set({ "Order Number": firebase.firestore.FieldValue.delete() }, { merge:true });
 
             }
