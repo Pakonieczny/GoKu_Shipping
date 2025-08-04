@@ -524,28 +524,37 @@ const gridElements   = new Map();      // transaction_id → wrapper DOM
 let   lastCtrlIdx    = null;           // ⬅️  anchor for Ctrl/⌘ range-select
 
  /* ===== Resilient Etsy fetch (auto-refresh + 401 retry) ===== */
- async function apiFetch(path, init = {}) {
-   // 1) refresh proactively when near expiry
-   await ensureFreshToken();
- 
-   // 2) attempt request with current token
-   let token = localStorage.getItem("access_token") || "";
-   let resp = await fetch(`${functionsBaseUrl}${path}`, {
-     ...init,
-     headers: { ...(init.headers || {}), "access-token": token }
-   });
- 
-   // 3) if it 401s, refresh once and retry
-   if (resp.status === 401) {
-     await refreshAccessToken();
-     token = localStorage.getItem("access_token") || "";
-     resp = await fetch(`${functionsBaseUrl}${path}`, {
-       ...init,
-       headers: { ...(init.headers || {}), "access-token": token }
-     });
-   }
-   return resp;
- }
+async function apiFetch(path, init = {}) {
+  // 1) proactive refresh when near expiry
+  await ensureFreshToken();
+
+  // 2) attempt with current token
+  let token = localStorage.getItem(TOKEN_KEYS.access) || "";
+  let resp  = await fetch(`${functionsBaseUrl}${path}`, {
+    ...init,
+    headers: { ...(init.headers || {}), "access-token": token }
+  });
+
+  // 3) on 401 → single-flight refresh, then retry once
+  if (resp.status === 401) {
+    try {
+      await refreshAccessToken();
+      token = localStorage.getItem(TOKEN_KEYS.access) || "";
+      resp  = await fetch(`${functionsBaseUrl}${path}`, {
+        ...init,
+        headers: { ...(init.headers || {}), "access-token": token }
+      });
+    } catch (_) {
+      // refresh failed → fall through
+    }
+
+    if (resp.status === 401) {
+      M.toast({ html: "Etsy session expired. Please reconnect." });
+    }
+  }
+
+  return resp;
+}
 
 /* =====  Staff-Note highlighting  =================================== */
 let staffNoteIDs = new Set();
@@ -698,6 +707,9 @@ const TOKEN_KEYS = {
   expires : "token_expires_at"   // epoch seconds
 };
 
+// --- NEW: single-flight guard to prevent refresh token races ---
+let __refreshPromise = null;
+
 function scheduleTokenRefresh(){
   clearTimeout(window.__etsyRefreshTimer);
   const exp = Number(localStorage.getItem(TOKEN_KEYS.expires) || 0);
@@ -723,29 +735,43 @@ function setTokens({ access_token, refresh_token, expires_in, issued_at }){
 }
 
 async function refreshAccessToken(){
+  // If a refresh is already in-flight, await it.
+  if (__refreshPromise) return __refreshPromise;
+
   const rt = localStorage.getItem(TOKEN_KEYS.refresh);
   if (!rt) return; // nothing to refresh with
 
-  try{
-    const resp = await fetch(`${functionsBaseUrl}/refreshToken`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ refresh_token: rt })
-    });
-    if (!resp.ok) throw new Error("HTTP " + resp.status);
+  __refreshPromise = (async () => {
+    try{
+      const resp = await fetch(`${functionsBaseUrl}/refreshToken`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ refresh_token: rt })
+      });
+      if (!resp.ok) throw new Error("HTTP " + resp.status);
 
-    const data = await resp.json();
-    setTokens({
-      access_token : data.access_token,
-      refresh_token: data.refresh_token || rt,
-      expires_in   : data.expires_in,
-      issued_at    : data.issued_at || Math.floor(Date.now()/1000)
-    });
-    M.toast({ html: "Etsy token refreshed" });
-  }catch(err){
-    console.warn("Token refresh failed:", err);
-    // Soft-fail: UI can still prompt Connect if needed.
-  }
+      const data = await resp.json();
+      setTokens({
+        access_token : data.access_token,
+        // Etsy rotates refresh_token; if provided, store it, else keep old
+        refresh_token: data.refresh_token || rt,
+        expires_in   : data.expires_in,
+        issued_at    : data.issued_at || Math.floor(Date.now()/1000)
+      });
+      M.toast({ html: "Etsy token refreshed" });
+      return true;
+    }catch(err){
+      console.warn("Token refresh failed:", err);
+      // Clear the expired access so UI can prompt re-connect cleanly
+      localStorage.removeItem(TOKEN_KEYS.access);
+      localStorage.removeItem(TOKEN_KEYS.expires);
+      throw err;
+    }finally{
+      __refreshPromise = null;
+    }
+  })();
+
+  return __refreshPromise;
 }
 
 async function ensureFreshToken(){
