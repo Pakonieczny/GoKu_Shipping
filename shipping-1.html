@@ -1746,8 +1746,20 @@
         console.log("Etsy Order Data:", data);
         // Gift fields now sourced from Etsy receipt
         window.receiptIsGift = Boolean(data.is_gift);
-        window.receiptGiftMessage = (data.gift_message || "").trim();
-        window.receiptGiftMessageFrom = (data.gift_message_from || "").trim();
+
+        /* 🎁 Etsy now sends gift_message as an OBJECT { message, from }.
+           Fall back to the legacy flat fields when needed. */
+        if (data.gift_message && typeof data.gift_message === "object") {
+          window.receiptGiftMessage      = (data.gift_message.message || "").trim();
+          window.receiptGiftMessageFrom  = (
+            data.gift_message.from ??
+            data.gift_message.message_from ??
+            ""
+          ).trim();
+        } else {                                  /* legacy shape */
+          window.receiptGiftMessage      = (data.gift_message      || "").trim();
+          window.receiptGiftMessageFrom  = (data.gift_message_from || "").trim();
+        }
 
         // Etsy receipts include gift_wrap_price as a money object { amount, divisor, currency_code }
         const gwp = data.gift_wrap_price;
