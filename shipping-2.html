@@ -311,7 +311,7 @@
       border-bottom: 1px solid black !important;
     }
 
-    /* shipping-2 title style */
+    /* shipping title style */
     #titleShipping{
       font-size:1.65em !important;
       font-weight: Bold !important;
@@ -620,7 +620,9 @@
     window.receiptIsGift = null;
     window.receiptGiftMessage = null;
     window.receiptGiftWrap = null;
-    window.receiptGiftWrapPrice = null;    window.orderName = "";
+    window.receiptGiftWrapPrice = null;
+    window.receiptGiftMessageFrom = null;    
+    window.orderName = "";
     window.orderStatus = "";
     window.orderIsShipped = "";
     window.cachedOrderItems = [];
@@ -871,7 +873,7 @@
       orderDetails:           { left: 10,   top: 162,  width: 300, height: 342 },
       shipAddressBox:         { left: 324,   top: 162,  width: 200, height: 186 },
       customerMessageHistory: { left: 10,   top: 577,  width: 300, height: 266 },
-      britesMsgInput:         { left: 10, top: 543, width: 295, height: 23 },
+      britesMsgInput:         { left: 14, top: 543, width: 295, height: 23 },
 
       dateOrdered:          { left: 10,   top: 100,  width: 145, height: 30 },
       shipDate:             { left: 164,  top: 100,  width: 145, height: 30 },
@@ -1177,6 +1179,8 @@
           const orderData = await pullEtsyOrderDetails(orderNumber);
           // 🆕 Always pull ShipStation Ship-To immediately after loading order meta
           await loadShipToAddress(orderNumber);
+          // 🎁 NEW – also pull Gift Message from ShipStation
+          await loadGiftMessage(orderNumber);
 
           if(orderData){
             await updateImageGrid(orderData);
@@ -1220,7 +1224,7 @@
                 document.getElementById("customerMessageHistory").innerText = "";
               }
 
-              /* ── Shipping-2-label creation date ─────────────────────── */
+              /* ── Shipping-label creation date ─────────────────────── */
               if (docDataPD["Shipping Label Timestamps"]) {
                 const dt = new Date(docDataPD["Shipping Label Timestamps"]);
                 const lblDateEl = document.getElementById("labelCreationDate");
@@ -1705,19 +1709,27 @@
           }
         }
       }
-      if(window.receiptIsGift !== null){
-        details += " Marked as Gift: " + window.receiptIsGift + "\n";
-      }
-      if(window.receiptGiftMessage){
-        details += " Gift Message: " + window.receiptGiftMessage + "\n";
+      /* 🎁  ── Gift indicators ───────────────────────────────── */
+      const giftIcon = "🎁";           // 20 % larger icon is not possible in a plain textarea,
+                                       // but the emoji renders slightly bigger than text on most OSes.
+
+      /* a. Marked-as-Gift */
+      if (window.receiptIsGift === true){
+        details += ` ${giftIcon} Marked as Gift: Yes\n`;
+      } else if (window.receiptIsGift === false){
+        details += " Marked as Gift: No\n";
       }
 
-      if (window.receiptGiftWrap !== null) {
-        details += " Gift Wrapping: " + window.receiptGiftWrap + "\n";
+      /* b. Gift Message */
+      if (window.receiptGiftMessage){
+        details += ` ${giftIcon} Gift Message: ${window.receiptGiftMessage}\n`;
       }
-      if (typeof window.receiptGiftWrapPrice === "number") {
-        details += " Gift Wrap Price: " +
-          window.receiptGiftWrapPrice.toLocaleString(undefined, { style: "currency", currency: "USD" }) + "\n";
+
+      /* c. Gift Wrapping */
+      if (window.receiptGiftWrap === true){
+        details += ` ${giftIcon} Gift Wrapping: Yes\n`;
+      } else if (window.receiptGiftWrap === false){
+        details += " Gift Wrapping: No\n";
       }
 
       document.getElementById("orderDetails").value = details;
@@ -1745,7 +1757,10 @@
         console.log("Etsy Order Data:", data);
         // Gift fields now sourced from Etsy receipt
         window.receiptIsGift = Boolean(data.is_gift);
-        window.receiptGiftMessage = (data.gift_message || "").trim();
+
+        // 🎁  Gift message now fetched from ShipStation (see loadGiftMessage)
+        window.receiptGiftMessage     = "";
+        window.receiptGiftMessageFrom = "";
 
         // Etsy receipts include gift_wrap_price as a money object { amount, divisor, currency_code }
         const gwp = data.gift_wrap_price;
@@ -1932,6 +1947,32 @@
             box.value = "SHIP TO:\n(Error loading)";
             box.style.color = "";
           }
+        }
+      }
+
+      /* ===== ShipStation — Gift Message (orderNumber) ===================== */
+      async function loadGiftMessage(orderNumber) {
+        try {
+          const resp = await fetch(
+            "/.netlify/functions/ssGetGiftMessage?orderNumber=" +
+            encodeURIComponent(orderNumber)
+          );
+          if (!resp.ok) throw new Error("ShipStation response " + resp.status);
+
+          const data = await resp.json();
+          window.receiptGiftMessage     = (data.giftMessage || "").trim();
+          window.receiptGiftMessageFrom = (data.giftFrom    || "").trim();
+
+          /* refresh details pane if a tile is selected */
+          const sel = document.querySelector(".preview-box.selected");
+          if (sel) {
+            const idx = parseInt(sel.id.replace("previewCell", ""), 10);
+            if (!Number.isNaN(idx)) showItemDetails(idx);
+          }
+        } catch (err) {
+          console.error("loadGiftMessage:", err);
+          window.receiptGiftMessage     = "";
+          window.receiptGiftMessageFrom = "";
         }
       }
 
