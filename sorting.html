@@ -2365,7 +2365,17 @@ async function sendAndMatch() {
   for (const i of unmatchedCells) {
     if (runId !== globalRunId) return;
 
-    if (matchedCellIndices.has(i)) continue;
+     /* Skip only when fully satisfied */
+     {
+       const need = expectedSlots(window.cachedOrderItems?.[i] || {});
+       const have = (cellMatches[i]||[]).filter(m=>m && m.userImage).length;
+       if (have >= need) { /* Mark complete only when have >= need */
+           {
+             const need = expectedSlots(window.cachedOrderItems?.[i] || {});
+             const have = (cellMatches[i]||[]).filter(m=>m && m.userImage).length;
+             if (have >= need) matchedCellIndices.add(i);
+           } continue; }
+     }
     const matchBox = document.getElementById("matchCell" + i);
     const metalVal = document.getElementById("metalCell" + i).value || "";
 
@@ -2412,7 +2422,7 @@ async function sendAndMatch() {
       const matchName = topCandidate.user.name.replace(/(\.jpg|\.png)$/i, "");
 
     if (!matchedUserNames.has(topCandidate.user.name) &&
-          !matchedCellIndices.has(i)) {
+          ((cellMatches[i]||[]).filter(m=>m && m.userImage).length < expectedSlots(window.cachedOrderItems?.[i] || {})) ) {
 
         /* Pre‑computed values already in your loop */
         const secondScore = results[1] ? results[1].result.score : 0;
@@ -2432,7 +2442,13 @@ async function sendAndMatch() {
             score     : topScore
           });
           matchedUserNames.add(topCandidate.user.name);
-          matchedCellIndices.add(i);
+
+           /* Mark complete only when have >= need */
+           {
+             const need = expectedSlots(window.cachedOrderItems?.[i] || {});
+             const have = (cellMatches[i]||[]).filter(m=>m && m.userImage).length;
+             if (have >= need) matchedCellIndices.add(i);
+           }
           userImagesArray = userImagesArray.filter(
             u => u.name !== topCandidate.user.name
           );
@@ -2451,7 +2467,14 @@ async function sendAndMatch() {
             score     : topScore
           });
           matchedUserNames.add(topCandidate.user.name);
-          matchedCellIndices.add(i);
+
+           /* Mark complete only when have >= need */
+           {
+             const need = expectedSlots(window.cachedOrderItems?.[i] || {});
+             const have = (cellMatches[i]||[]).filter(m=>m && m.userImage).length;
+             if (have >= need) matchedCellIndices.add(i);
+           }
+
           userImagesArray = userImagesArray.filter(
             u => u.name !== topCandidate.user.name
           );
@@ -2470,7 +2493,14 @@ async function sendAndMatch() {
             score     : topScore
           });
           matchedUserNames.add(topCandidate.user.name);
-          matchedCellIndices.add(i);
+
+          /* Mark complete only when have >= need */
+           {
+             const need = expectedSlots(window.cachedOrderItems?.[i] || {});
+             const have = (cellMatches[i]||[]).filter(m=>m && m.userImage).length;
+             if (have >= need) matchedCellIndices.add(i);
+           }
+
           userImagesArray = userImagesArray.filter(
             u => u.name !== topCandidate.user.name
           );
@@ -2499,7 +2529,14 @@ async function sendAndMatch() {
             cellMatches[i].push({ userName: twinName, userImage: cand.data, score: bestScore });
 
             matchedUserNames.add(cand.name);
-            matchedCellIndices.add(i);
+
+            /* Mark complete only when have >= need */
+           {
+             const need = expectedSlots(window.cachedOrderItems?.[i] || {});
+             const have = (cellMatches[i]||[]).filter(m=>m && m.userImage).length;
+             if (have >= need) matchedCellIndices.add(i);
+           }
+
             userImagesArray = userImagesArray.filter(u => u.name !== cand.name);
 
             if (matchBox) matchBox.value += `, ${twinName}`;
@@ -2528,7 +2565,9 @@ async function sendAndMatch() {
   unmatchedCells = [];
   for (let i = 0; i < croppedImagesArray.length; i++) {
     // include normal unmatched cells + earrings that still need a twin
-    if (mirrorChecklist.includes(i) || !matchedCellIndices.has(i)) {
+     const need = expectedSlots(window.cachedOrderItems?.[i] || {});
+     const have = (cellMatches[i]||[]).filter(m=>m && m.userImage).length;
+     if (mirrorChecklist.includes(i) || have < need) {
       unmatchedCells.push(i);
     }
   }
@@ -2557,7 +2596,7 @@ async function sendAndMatch() {
       return new Promise((resolve) => {
         setTimeout(() => {
           if (runId !== globalRunId) return resolve({ result: { score: 0 }, user });
-          if (matchedUserNames.has(user.name) || matchedCellIndices.has(i)) {
+          if ( matchedUserNames.has(user.name) || ((cellMatches[i]||[]).filter(m=>m && m.userImage).length >= expectedSlots(window.cachedOrderItems?.[i] || {})) ) {
             return resolve({ result: { score: 0 }, user });
           }
           compareImages(user.data, compareTarget, i, user.name)
@@ -2607,7 +2646,13 @@ async function sendAndMatch() {
         });
 
         matchedUserNames.add(topCandidate.user.name);
-        matchedCellIndices.add(i);
+
+           /* Mark complete only when have >= need */
+           {
+             const need = expectedSlots(window.cachedOrderItems?.[i] || {});
+             const have = (cellMatches[i]||[]).filter(m=>m && m.userImage).length;
+             if (have >= need) matchedCellIndices.add(i);
+           }
 
         userImagesArray = userImagesArray.filter(u => u.name !== topCandidate.user.name);
 
@@ -2631,7 +2676,12 @@ async function sendAndMatch() {
         });
 
         matchedUserNames.add(topCandidate.user.name);
-        matchedCellIndices.add(i);
+           /* Mark complete only when have >= need */
+           {
+             const need = expectedSlots(window.cachedOrderItems?.[i] || {});
+             const have = (cellMatches[i]||[]).filter(m=>m && m.userImage).length;
+             if (have >= need) matchedCellIndices.add(i);
+           }
 
         userImagesArray = userImagesArray.filter(u => u.name !== topCandidate.user.name);
 
