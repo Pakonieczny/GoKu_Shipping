@@ -713,12 +713,18 @@ let __refreshPromise = null;
 function scheduleTokenRefresh(){
   clearTimeout(window.__etsyRefreshTimer);
   const exp = Number(localStorage.getItem(TOKEN_KEYS.expires) || 0);
-  if (!exp) return;
+
+  // Fallback: if expires is missing but we have a refresh token, refresh at 55 min
+  if (!exp){
+    if (localStorage.getItem(TOKEN_KEYS.refresh)){
+      window.__etsyRefreshTimer = setTimeout(refreshAccessToken, 55 * 60 * 1000);
+    }
+    return;
+  }
 
   const now = Math.floor(Date.now()/1000);
-  const leadSec = 120; // refresh 2 min before expiry
+  const leadSec = 120;
   const delayMs = Math.max(5000, (exp - now - leadSec) * 1000);
-
   window.__etsyRefreshTimer = setTimeout(refreshAccessToken, delayMs);
 }
 
@@ -804,10 +810,12 @@ async function ensureFreshToken(){
   if (code){
     const v = localStorage.getItem("etsy_code_verifier");
     if (v){
-      window.location.href =
-        "/.netlify/functions/exchangeToken?code=" +
-        encodeURIComponent(code) +
-        "&code_verifier=" + encodeURIComponent(v);
+      const qs = new URLSearchParams({
+        code,
+        code_verifier: v,
+        redirect_domain: "design"   // ⬅️ match shipping-1 behavior
+      });
+      window.location.href = "/.netlify/functions/exchangeToken?" + qs.toString();
       return;
     }else{
       console.error("No code verifier found in localStorage.");
