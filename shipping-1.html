@@ -1209,6 +1209,8 @@
           const orderData = await pullEtsyOrderDetails(orderNumber);
           // 🆕 Always pull ShipStation Ship-To immediately after loading order meta
           await loadShipToAddress(orderNumber);
+          // 🎁 NEW – also pull Gift Message from ShipStation
+          await loadGiftMessage(orderNumber);
 
           if(orderData){
             await updateImageGrid(orderData);
@@ -1777,29 +1779,9 @@
         // Gift fields now sourced from Etsy receipt
         window.receiptIsGift = Boolean(data.is_gift);
 
-        /* 🎁 Etsy now sends gift_message as an OBJECT { message, from }.
-           Fall back to the legacy flat fields when needed. */
-        if (data.gift_message && typeof data.gift_message === "object") {
-          window.receiptGiftMessage      = (data.gift_message.message || "").trim();
-          window.receiptGiftMessageFrom  = (
-            data.gift_message.from ??
-            data.gift_message.message_from ??
-            ""
-          ).trim();
-        } else {                                  /* legacy shape */
-          window.receiptGiftMessage      = (data.gift_message      || "").trim();
-          window.receiptGiftMessageFrom  = (data.gift_message_from || "").trim();
-        }
-
-        /* NEW: derive signature from the message tail when Etsy didn’t
-           provide a separate "from" field, and de-duplicate display */
-        if (!window.receiptGiftMessageFrom && window.receiptGiftMessage) {
-          const sig = parseGiftSignature(window.receiptGiftMessage);
-          if (sig) {
-            window.receiptGiftMessageFrom = sig.name;
-            window.receiptGiftMessage     = sig.message;
-          }
-        }
+        // 🎁  Gift message now fetched from ShipStation (see loadGiftMessage)
+        window.receiptGiftMessage     = "";
+        window.receiptGiftMessageFrom = "";
 
         // Etsy receipts include gift_wrap_price as a money object { amount, divisor, currency_code }
         const gwp = data.gift_wrap_price;
@@ -1986,6 +1968,32 @@
             box.value = "SHIP TO:\n(Error loading)";
             box.style.color = "";
           }
+        }
+      }
+
+      /* ===== ShipStation — Gift Message (orderNumber) ===================== */
+      async function loadGiftMessage(orderNumber) {
+        try {
+          const resp = await fetch(
+            "/.netlify/functions/ssGetGiftMessage?orderNumber=" +
+            encodeURIComponent(orderNumber)
+          );
+          if (!resp.ok) throw new Error("ShipStation response " + resp.status);
+
+          const data = await resp.json();
+          window.receiptGiftMessage     = (data.giftMessage || "").trim();
+          window.receiptGiftMessageFrom = (data.giftFrom    || "").trim();
+
+          /* refresh details pane if a tile is selected */
+          const sel = document.querySelector(".preview-box.selected");
+          if (sel) {
+            const idx = parseInt(sel.id.replace("previewCell", ""), 10);
+            if (!Number.isNaN(idx)) showItemDetails(idx);
+          }
+        } catch (err) {
+          console.error("loadGiftMessage:", err);
+          window.receiptGiftMessage     = "";
+          window.receiptGiftMessageFrom = "";
         }
       }
 
