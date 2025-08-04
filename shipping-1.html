@@ -1709,15 +1709,27 @@
           }
         }
       }
-      if(window.receiptIsGift !== null){
-        details += " Marked as Gift: " + window.receiptIsGift + "\n";
-      }
-      if (window.receiptGiftMessage) {
-        details += " Gift Message: " + window.receiptGiftMessage + "\n";
+      /* 🎁  ── Gift indicators ───────────────────────────────── */
+      const giftIcon = "🎁";           // 20 % larger icon is not possible in a plain textarea,
+                                       // but the emoji renders slightly bigger than text on most OSes.
+
+      /* a. Marked-as-Gift */
+      if (window.receiptIsGift === true){
+        details += ` ${giftIcon} Marked as Gift: Yes\n`;
+      } else if (window.receiptIsGift === false){
+        details += " Marked as Gift: No\n";
       }
 
-      if (window.receiptGiftWrap !== null) {
-        details += " Gift Wrapping: " + window.receiptGiftWrap + "\n";
+      /* b. Gift Message */
+      if (window.receiptGiftMessage){
+        details += ` ${giftIcon} Gift Message: ${window.receiptGiftMessage}\n`;
+      }
+
+      /* c. Gift Wrapping */
+      if (window.receiptGiftWrap === true){
+        details += ` ${giftIcon} Gift Wrapping: Yes\n`;
+      } else if (window.receiptGiftWrap === false){
+        details += " Gift Wrapping: No\n";
       }
 
       document.getElementById("orderDetails").value = details;
