@@ -523,6 +523,12 @@
       </div>
     </div>
 
+    <button id="goScreenTwoBtn" class="btn"
+            style="position:absolute; left:180px; top:110px;
+                   width:65px; height:24px; line-height:24px;
+                   font-size:0.8em; text-align:center;">
+      Send
+    </button>
 
     <!-- ▼▼ NEW: tracking / carrier / complete-order ▼▼ -->
     <input id="trackingNumberInput"
@@ -613,7 +619,8 @@
     /********** Global Variables **********/
     window.receiptIsGift = null;
     window.receiptGiftMessage = null;
-    window.orderName = "";
+    window.receiptGiftWrap = null;
+    window.receiptGiftWrapPrice = null;    window.orderName = "";
     window.orderStatus = "";
     window.orderIsShipped = "";
     window.cachedOrderItems = [];
@@ -761,41 +768,19 @@
                                          "\"":"&quot;","'":"&#039;"}[m]));
     }
 
-    /* normalize Order Details: strip "&quot;" artifacts */
-    function setOrderDetailsValue(txt = "") {
-      const el = document.getElementById("orderDetails");
-      if (!el) return;
-      el.value = String(txt).replace(/&quot;/g, "");
-    }
-
     window.isEmployeeLoggedIn = false; // We'll use this to guard the real-time listener
         let lastScanProcessed = null;      // 🔑 remember most-recent scanned order
 
-     (function(){
-       const urlParams   = new URLSearchParams(window.location.search);
-       const accessToken = urlParams.get("access_token");
-       const refreshTok  = urlParams.get("refresh_token");
-       const expiresIn   = parseInt(urlParams.get("expires_in") || "0", 10);
-       const issuedAt    = parseInt(urlParams.get("issued_at")  || "0", 10);
- 
-       if (accessToken) {
-         // persist tokens
-         localStorage.setItem("access_token",  accessToken);
-         if (refreshTok) localStorage.setItem("refresh_token", refreshTok);
-         if (expiresIn)  localStorage.setItem("expires_in",    String(expiresIn));
-         if (issuedAt)   localStorage.setItem("issued_at",     String(issuedAt));
- 
-         // precompute expiry moment minus 5 minutes
-         const now = Math.floor(Date.now()/1000);
-         const base = issuedAt || now;
-         const skew = Math.max(0, (expiresIn || 3600) - 300);
-         localStorage.setItem("expiry_at", String(base + skew));
- 
-         // clean URL
-         window.history.replaceState({}, document.title, window.location.pathname);
-         M.toast({ html:"Connection Successful!" });
-         console.log("Access token received and stored with refresh data.");
-       } else {        var authCode = urlParams.get("code");
+    (function(){
+      var urlParams = new URLSearchParams(window.location.search);
+      var accessToken = urlParams.get("access_token");
+      if(accessToken){
+        localStorage.setItem("access_token", accessToken);
+        window.history.replaceState({}, document.title, window.location.pathname);
+        M.toast({html:"Connection Successful!"});
+        console.log("Access token received:", accessToken);
+      } else {
+        var authCode = urlParams.get("code");
         var raw = urlParams.get("code") || "";
         var authCode = raw.split("&")[0];          // keep only the code value
         if(authCode){
@@ -814,25 +799,6 @@
       }
     })();
 
-    // Force-sync a Materialize <select> with programmatic value changes
-    function setMatSelectValue(id, value){
-      const sel = document.getElementById(id);
-      if (!sel) return;
-
-      // Update the native select
-      [...sel.options].forEach(o => o.selected = (o.value === value));
-      sel.value = value;
-
-      // Re-init Materialize so the UI mirrors the native <select>
-      const inst = M.FormSelect.getInstance(sel);
-      if (inst) inst.destroy();
-      M.FormSelect.init(sel);
-
-      // Notify any listeners
-      sel.dispatchEvent(new Event("change", { bubbles: true }));
-      sel.dispatchEvent(new Event("input",  { bubbles: true }));
-    }
-
     function generateRandomString(length){
       var chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
       var text = "";
@@ -848,41 +814,6 @@
       var base64String = btoa(String.fromCharCode.apply(null, new Uint8Array(digest)));
       return base64String.replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
     }
-
-     // ───────── Etsy token helpers ─────────
-     async function refreshEtsyAccessToken() {
-       const rt = localStorage.getItem("refresh_token");
-       if (!rt) throw new Error("Missing refresh_token");
-       const resp = await fetch("/.netlify/functions/refreshEtsyToken", {
-         method: "POST",
-         headers: { "Content-Type": "application/json" },
-         body: JSON.stringify({ refresh_token: rt })
-       });
-       const data = await resp.json();
-       if (!resp.ok) throw new Error(data.error || "Refresh failed");
- 
-       // persist new tokens
-       const issuedAt  = Number(data.issued_at || Math.floor(Date.now()/1000));
-       const expiresIn = Number(data.expires_in || 3600);
-       localStorage.setItem("access_token",  data.access_token || "");
-       if (data.refresh_token) localStorage.setItem("refresh_token", data.refresh_token);
-       localStorage.setItem("expires_in",    String(expiresIn));
-       localStorage.setItem("issued_at",     String(issuedAt));
-       localStorage.setItem("expiry_at",     String(issuedAt + Math.max(0, expiresIn - 300)));
- 
-       return data.access_token;
-     }
- 
-     async function ensureValidEtsyToken() {
-       let tok = localStorage.getItem("access_token") || "";
-       const expiryAt = parseInt(localStorage.getItem("expiry_at") || "0", 10);
-       const now      = Math.floor(Date.now()/1000);
- 
-       if (!tok || (expiryAt && now >= expiryAt)) {
-         tok = await refreshEtsyAccessToken();
-       }
-       return tok;
-     }
 
     /*
      * Incorporate the new login modal elements in the config array so they're adjustable.
@@ -1070,9 +1001,6 @@
 
       document.addEventListener("DOMContentLoaded", function () {
         M.AutoInit();
-
-         // Default carrier: USPS (so user doesn't need to pick each time)
-         setMatSelectValue("carrierSelect", "usps");
 
         // Fade in body
         document.body.style.opacity = 0;
@@ -1489,44 +1417,38 @@
       })();
 
     /* =========================================================
-     *  Send Brites Msg – POST via Netlify function (Enter to send)
+     *  Send Brites Msg – POST via Netlify function
      * =======================================================*/
+    const sendBtn   = document.getElementById("goScreenTwoBtn");
     const newMsgInp = document.getElementById("britesMsgInput");
 
-    async function sendBritesMessage(){
-      const orderId = document.getElementById("etsyOrderNumber").value.trim();
-      const msgTxt  = (newMsgInp?.value || "").trim();
-      const staff   = (document.getElementById("employeeName").value || "Staff").trim();
+    if (sendBtn) {
+      sendBtn.addEventListener("click", async () => {
+        const orderId = document.getElementById("etsyOrderNumber").value.trim();
+        const msgTxt  = (newMsgInp.value || "").trim();
+        const staff   = (document.getElementById("employeeName").value || "Staff").trim();
 
-      if (!orderId || !msgTxt) {
-        M.toast({ html: "Enter order # and message." });
-        return;
-      }
+        if (!orderId || !msgTxt) {
+          M.toast({ html: "Enter order # and message." });
+          return;
+        }
 
-      try {
-        const resp = await fetch("/.netlify/functions/firebaseOrders", {
-          method : "POST",
-          headers: { "Content-Type": "application/json" },
-          body   : JSON.stringify({
-            orderNumber : orderId,
-            newMessage  : msgTxt,
-            employeeName: staff
-          })
-        });
-        const json = await resp.json();
-        if (!resp.ok || !json.success) throw new Error(json.error || "Server error");
-        if (newMsgInp) newMsgInp.value = "";   // clear box on success
-      } catch (err) {
-        console.error("Send error:", err);
-        M.toast({ html: "Error: " + err.message });
-      }
-    }
-
-    if (newMsgInp) {
-      newMsgInp.addEventListener("keydown", async (e) => {
-        if (e.key === "Enter") {
-          e.preventDefault();              // keep focus; no form submit
-          await sendBritesMessage();
+        try {
+          const resp = await fetch("/.netlify/functions/firebaseOrders", {
+            method : "POST",
+            headers: { "Content-Type": "application/json" },
+            body   : JSON.stringify({
+              orderNumber : orderId,
+              newMessage  : msgTxt,
+              employeeName: staff
+            })
+          });
+          const json = await resp.json();
+          if (!resp.ok || !json.success) throw new Error(json.error || "Server error");
+          newMsgInp.value = "";                // clear box on success
+        } catch (err) {
+          console.error("Send error:", err);
+          M.toast({ html: "Error: " + err.message });
         }
       });
     }
@@ -1560,20 +1482,16 @@
           });
 
         try {
-          let token  = await ensureValidEtsyToken();
-          let resp   = await postTracking(token);
+          let token        = localStorage.getItem("access_token") || "";
+          let resp         = await postTracking(token);
           let payload      = await resp.text();              // Etsy proxy returns raw text
           let errMsg       = "";
 
-          /* ── 401 → try one silent refresh + retry ── */
+          /* ── token expired (401) → restart OAuth flow ── */
           if (resp.status === 401) {
-            try {
-              token = await refreshEtsyAccessToken();
-              resp  = await postTracking(token);       // retry once after refresh
-              payload = await resp.text();
-            } catch (e) {
-              // fall through to generic handler below
-            }
+            localStorage.removeItem("access_token");
+            document.getElementById("connectEtsyBtn")?.click();
+            throw new Error("Unauthorized – reconnecting Etsy…");
           }
 
           /* ── forbidden (403) usually means missing shipping permission scope ── */
@@ -1681,7 +1599,7 @@
         highlightSelectedPreview(document.getElementById("previewCell0")); // NEW
         showItemDetails(0);
       } else {
-        setOrderDetailsValue(" ORDER DETAILS:\n\nNo items found.");
+        document.getElementById("orderDetails").value = " ORDER DETAILS:\n\nNo items found.";
       }
     }
 
@@ -1793,14 +1711,22 @@
       if(window.receiptGiftMessage){
         details += " Gift Message: " + window.receiptGiftMessage + "\n";
       }
-      setOrderDetailsValue(details);
+
+      if (window.receiptGiftWrap !== null) {
+        details += " Gift Wrapping: " + window.receiptGiftWrap + "\n";
+      }
+      if (typeof window.receiptGiftWrapPrice === "number") {
+        details += " Gift Wrap Price: " +
+          window.receiptGiftWrapPrice.toLocaleString(undefined, { style: "currency", currency: "USD" }) + "\n";
+      }
+
+      document.getElementById("orderDetails").value = details;
     }
 
-     async function fetchListingImages(listingId){
-       const tok = await ensureValidEtsyToken();
-       const responseLI = await fetch("/.netlify/functions/etsyImages?listingId=" + listingId, {
-         headers: { "access-token": tok }
-       });
+    async function fetchListingImages(listingId){
+      const responseLI = await fetch("/.netlify/functions/etsyImages?listingId=" + listingId, {
+        headers: { "access-token": localStorage.getItem("access_token") }
+      });
       if(!responseLI.ok){
         throw new Error("Error fetching images for listing " + listingId + ": " + responseLI.statusText);
       }
@@ -1808,11 +1734,11 @@
       return dataLI.results;
     }
 
-    async function pullEtsyOrderDetails(orderNumber){
+    function pullEtsyOrderDetails(orderNumber){
       console.log("Pulling Etsy order details for order number:", orderNumber);
-      const tok = await ensureValidEtsyToken();
+      var token = localStorage.getItem("access_token");
       return fetch("/.netlify/functions/etsyOrderProxy?orderId=" + encodeURIComponent(orderNumber), {
-        headers: { "access-token": tok }
+        headers: { "access-token": token }
       })
       .then(function(r){ return r.json(); })
       .then(function(data){
@@ -1820,6 +1746,9 @@
         // Gift fields now sourced from ShipStation in loadShipToAddress()
         window.receiptIsGift = null;
         window.receiptGiftMessage = "";
+
+        window.receiptGiftWrap = null;
+        window.receiptGiftWrapPrice = null;
 
         /* store buyer note so the chat listener can render it (still from Etsy) */
         window.buyerMessageText  = (data.message_from_buyer || "").trim();
@@ -1966,6 +1895,16 @@
           window.receiptIsGift = Boolean(data.gift);
           window.receiptGiftMessage = (data.giftMessage || data.customerNotes || "").trim();
 
+          // Gift wrapping (ShipStation)
+          window.receiptGiftWrap = (data.giftWrap === true);
+          // normalize giftWrapPrice (number or {amount})
+          window.receiptGiftWrapPrice =
+            (typeof data.giftWrapPrice === "number")
+              ? data.giftWrapPrice
+              : (data.giftWrapPrice && typeof data.giftWrapPrice.amount === "number")
+                ? data.giftWrapPrice.amount
+                : null;
+
           // If a tile is selected, refresh details to show gift fields
           const sel = document.querySelector(".preview-box.selected");
           if (sel) {
@@ -1991,12 +1930,6 @@
           const isUS = c.startsWith("united states") || c === "usa" || c === "us" || c === "u.s." || c === "u.s.a.";
           const isCA = c === "canada" || c === "ca";
           box.style.color = (isUS || isCA) ? "" : "orangered";
-
-           // Auto-select carrier based on destination:
-           // - US → USPS (default)
-           // - Non-US → ChitChats
-           setMatSelectValue("carrierSelect", isUS ? "usps" : "chitchats");
-
         } catch (e) {
           console.error("loadShipToAddress:", e);
           const box = document.getElementById("shipAddressBox");
