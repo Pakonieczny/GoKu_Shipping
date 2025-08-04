@@ -549,8 +549,11 @@ async function apiFetch(path, init = {}) {
     }
 
     if (resp.status === 401) {
-      M.toast({ html: "Etsy session expired. Please reconnect." });
-    }
+       // Mirror shipping-1: auto-start OAuth without user action
+       try { localStorage.removeItem(TOKEN_KEYS.access); } catch(e) {}
+       const btn = document.getElementById("connectEtsyBtn");
+       if (btn && typeof btn.click === "function") btn.click();
+       throw new Error("Unauthorized – reconnecting Etsy…");    }
   }
 
   return resp;
@@ -771,6 +774,9 @@ async function refreshAccessToken(){
       // Clear the expired access so UI can prompt re-connect cleanly
       localStorage.removeItem(TOKEN_KEYS.access);
       localStorage.removeItem(TOKEN_KEYS.expires);
+       // Auto-start OAuth flow like shipping-1
+       const btn = document.getElementById("connectEtsyBtn");
+       if (btn && typeof btn.click === "function") btn.click();
       throw err;
     }finally{
       __refreshPromise = null;
