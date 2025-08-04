@@ -1981,6 +1981,19 @@ async function fillPreviewBoxes(items) {
       );
       if (metalVar && metalVar.formatted_value) {
         metalSel = metalVar.formatted_value;
+
+        /* ── strip engraving/character-count flags ───────────────────── */
+        metalSel = metalSel
+          /* +engraving / + Engrave (any case, with/without spaces) */
+          .replace(/\+\s*engraving/gi, "")
+          .replace(/\+\s*engrave/gi, "")
+          /* 1-5 Characters | 6-10 Characters | 11+ Characters | 11 + Characters */
+          .replace(/\b1-5\s*Characters\b/gi, "")
+          .replace(/\b6-10\s*Characters\b/gi, "")
+          .replace(/\b11\s*\+\s*Characters\b/gi, "")
+          /* collapse leftover double spaces */
+          .replace(/\s{2,}/g, " ")
+          .trim();
       }
     }
     metalInput.value = " Metal: " + (metalSel || "No Metal");
