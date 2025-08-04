@@ -770,36 +770,6 @@
                                          "\"":"&quot;","'":"&#039;"}[m]));
     }
 
-    /* ===== gift message signature parser ============================== *
-     * Extracts a trailing signature from the final non-empty line, e.g.:
-     *   "-- Jennifer", "— Jennifer", "- Jennifer", "From: Jennifer",
-     *   "Love, Jennifer", "Thanks, Jennifer", "Thank you Jennifer"
-     * Returns { name, message } or null.
-     */
-    function parseGiftSignature(msg){
-      if (!msg || typeof msg !== "string") return null;
-
-      // Split, trim, and drop blank lines
-      const lines = msg.split(/\r?\n/).map(s => s.trim()).filter(Boolean);
-      if (!lines.length) return null;
-
-      const last = lines[lines.length - 1];
-
-      // 1) Dashes/em-dash prefixes
-      let m = last.match(/^(?:--+|—|–|-)\s*(.+)$/);
-      // 2) “From / Love / Thanks / Thank you” prefixes
-      if (!m) m = last.match(/^(?:from|love|thanks|thank\s*you)[,:-]?\s*(.+)$/i);
-
-      if (m && m[1]) {
-        const name = m[1].trim();
-        if (!name) return null;
-        // Drop the signature line from the body to avoid duplication
-        const cleaned = lines.slice(0, -1).join("\n");
-        return { name, message: cleaned };
-      }
-      return null;
-    }
-
     window.isEmployeeLoggedIn = false; // We'll use this to guard the real-time listener
         let lastScanProcessed = null;      // 🔑 remember most-recent scanned order
 
