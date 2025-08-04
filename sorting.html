@@ -2347,7 +2347,66 @@ async function sendAndMatch() {
     else if (metalLow.includes("rose"))  return (nameLow.includes("rose") || nameLow.includes("rosegold"));
     else if (metalLow.includes("gold"))  return nameLow.includes("gold");
     return true;   // no metal specified → allow any
-  }
+    }
+
+    // --- NEW: helpers to render names and to keep filling until have >= need ---
+    function namesForCell(i){
+      return (cellMatches[i] || [])
+        .filter(m => m && m.userImage)
+        .map(m => m.userName);
+    }
+
+    async function fillRemaining(i, compareTarget, matchBox){
+      while (true){
+        if (runId !== globalRunId) return;
+
+        const need = expectedSlots(window.cachedOrderItems?.[i] || {});
+        const have = (cellMatches[i]||[]).filter(m=>m && m.userImage).length;
+        if (have >= need) break;
+
+        const metalVal = document.getElementById("metalCell" + i).value || "";
+        const pool = userImagesArray.filter(u =>
+          !u.skipForCharm &&
+          metalFilterOk(metalVal, u.name) &&
+          !matchedUserNames.has(u.name)
+        );
+        if (!pool.length) break;
+
+        const promises = pool.map((user, j) =>
+          new Promise(resolve => {
+            setTimeout(() => {
+              if (runId !== globalRunId) return resolve({ result: { score: 0 }, user });
+              compareImages(user.data, compareTarget, i, user.name)
+                .then(result => resolve({ result, user }))
+                .catch(() => resolve({ result: { score: 0 }, user }));
+            }, j * 120);
+          })
+        );
+
+        const results = await Promise.all(promises);
+        if (runId !== globalRunId) return;
+
+        results.sort((a,b) => b.result.score - a.result.score);
+        if (!results.length || results[0].result.score === 0) break;
+
+        const top    = results[0];
+        const second = results[1] ? results[1].result.score : 0;
+        const delta  = top.result.score - second;
+
+        // Reuse the same acceptance logic for each slot
+        if (top.result.score >= 0.95 || (top.result.score >= 0.88 && delta >= 0.15) || top.result.score >= 0.88){
+          if (!cellMatches[i]) cellMatches[i] = [];
+          const nm = top.user.name.replace(/(\.jpg|\.png)$/i, "");
+          cellMatches[i].push({ userName: nm, userImage: top.user.data, score: top.result.score });
+          matchedUserNames.add(top.user.name);
+          userImagesArray = userImagesArray.filter(u => u.name !== top.user.name);
+
+          if (matchBox) matchBox.value = namesForCell(i).join(", ");
+        } else {
+          break;
+        }
+      }
+    }
 
 //---------------------------------------------------------------------
   // FIRST PASS
@@ -2453,6 +2512,14 @@ async function sendAndMatch() {
             u => u.name !== topCandidate.user.name
           );
 
+          const _mb = document.getElementById("matchCell" + i);
+          if (_mb) {
+            _mb.value = (cellMatches[i] || [])
+              .filter(m => m && m.userImage)
+              .map(m => m.userName)
+              .join(", ");
+          }
+
         /* ---------- branchB: score ≥ 0.88  AND  Δ ≥ 0.15 ---------- */
         } else if (topScore >= 0.88 && scoreDelta >= 0.15) {
           if (matchBox) {
@@ -2479,6 +2546,14 @@ async function sendAndMatch() {
             u => u.name !== topCandidate.user.name
           );
 
+          const _mb = document.getElementById("matchCell" + i);
+          if (_mb) {
+            _mb.value = (cellMatches[i] || [])
+              .filter(m => m && m.userImage)
+              .map(m => m.userName)
+              .join(", ");
+          }
+
         /* ---------- branchC: score ≥ 0.88 (partial) ---------- */
         } else if (topScore >= 0.88) {
           if (matchBox) {
@@ -2504,6 +2579,14 @@ async function sendAndMatch() {
           userImagesArray = userImagesArray.filter(
             u => u.name !== topCandidate.user.name
           );
+
+          const _mb = document.getElementById("matchCell" + i);
+          if (_mb) {
+            _mb.value = (cellMatches[i] || [])
+              .filter(m => m && m.userImage)
+              .map(m => m.userName)
+              .join(", ");
+          }
         }
 
         /* ==============================================================
@@ -2545,6 +2628,9 @@ async function sendAndMatch() {
           }
         }
       }   /* ← closes the !matchedUserNames / !matchedCellIndices wrapper */
+
+        // NEW: fill any remaining slots sequentially for multi-qty items
+        await fillRemaining(i, croppedImagesArray[i], document.getElementById("matchCell" + i));
           
         /* update Send&Match progress (first pass) */
         smDone++;
@@ -2689,6 +2775,9 @@ async function sendAndMatch() {
         M.toast({ html: `Cell ${i}: Score ${topScorePerc}% < 88%. No match.` });
       }
     }
+
+    // NEW: fill any remaining slots sequentially for multi-qty items (reuse compareTarget)
+    await fillRemaining(i, compareTarget, document.getElementById("matchCell" + i));
 
     /* update Send&Match progress (second pass) */
     smDone++;
