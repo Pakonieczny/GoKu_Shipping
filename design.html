@@ -552,7 +552,7 @@ let staffNoteIDs = new Set();
 
 async function refreshStaffNoteIDs(){
   try{
-    const res  = await fetch(`${functionsBaseUrl}/firebaseOrders?staffNotes=1`);
+    const res  = await apiFetch(`/firebaseOrders?staffNotes=1`);
     const json = await res.json();
     if(json.success) staffNoteIDs = new Set(json.orderNumbers.map(String));
   }catch(e){ console.error(e); }
@@ -2618,31 +2618,11 @@ function updatePageButtons(totalPages, currentPage){
  *    • waits 250 ms between calls (safe for Etsy’s rate limits)
  *    • stops only when a page returns < 100 rows
  ********************************************************/
-async function fetchOpenOrdersSequential() {
-  await ensureFreshToken();
-  const token  = localStorage.getItem("access_token") || "";
-  const all    = [];
-  let offset   = 0;
-
-  while (true) {
-    const resp = await fetch(
-      `${functionsBaseUrl}/listOpenOrders?offset=${offset}`,
-      { headers: { "access-token": token } }
-    );
+  async function fetchOpenOrdersSequential(offset){
+    const resp = await apiFetch(`/listOpenOrders?offset=${offset}`);
     if (!resp.ok) throw new Error("HTTP " + resp.status);
-
-    const payload  = await resp.json();
-    const receipts = payload.results || [];
-    all.push(...receipts);
-
-    /* ♥ Etsy gives max 100 rows; <100 means we’re done */
-    if (receipts.length < 100) break;
-
-    offset += 100;          // next slice
-    await sleep(250);       // 250 ms pause
+    return resp.json();
   }
-  return all;
-}
 
   /********************************************************
  * buildNewOrderList – serves 100-row “pages” from cache
