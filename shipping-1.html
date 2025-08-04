@@ -1743,12 +1743,20 @@
       .then(function(r){ return r.json(); })
       .then(function(data){
         console.log("Etsy Order Data:", data);
-        // Gift fields now sourced from ShipStation in loadShipToAddress()
-        window.receiptIsGift = null;
-        window.receiptGiftMessage = "";
+        // Gift fields now sourced from Etsy receipt
+        window.receiptIsGift = Boolean(data.is_gift);
+        window.receiptGiftMessage = (data.gift_message || "").trim();
 
-        window.receiptGiftWrap = null;
-        window.receiptGiftWrapPrice = null;
+        // Etsy receipts include gift_wrap_price as a money object { amount, divisor, currency_code }
+        const gwp = data.gift_wrap_price;
+        const gwAmount =
+          (gwp && typeof gwp.amount === "number" && typeof gwp.divisor === "number" && gwp.divisor)
+            ? (gwp.amount / gwp.divisor)
+            : (typeof data.gift_wrap_price === "number" ? data.gift_wrap_price : null);
+        window.receiptGiftWrapPrice =
+          (typeof gwAmount === "number" && !Number.isNaN(gwAmount)) ? gwAmount : null;
+        window.receiptGiftWrap =
+          (typeof window.receiptGiftWrapPrice === "number" && window.receiptGiftWrapPrice > 0);
 
         /* store buyer note so the chat listener can render it (still from Etsy) */
         window.buyerMessageText  = (data.message_from_buyer || "").trim();
@@ -1891,19 +1899,6 @@
             prEl.style.color = (amt === 18 || amt === 55) ? "orange" : "";
           }
 
-          // Gift info now comes from ShipStation
-          window.receiptIsGift = Boolean(data.gift);
-          window.receiptGiftMessage = (data.giftMessage || data.customerNotes || "").trim();
-
-          // Gift wrapping (ShipStation)
-          window.receiptGiftWrap = (data.giftWrap === true);
-          // normalize giftWrapPrice (number or {amount})
-          window.receiptGiftWrapPrice =
-            (typeof data.giftWrapPrice === "number")
-              ? data.giftWrapPrice
-              : (data.giftWrapPrice && typeof data.giftWrapPrice.amount === "number")
-                ? data.giftWrapPrice.amount
-                : null;
 
           // If a tile is selected, refresh details to show gift fields
           const sel = document.querySelector(".preview-box.selected");
