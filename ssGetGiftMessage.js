@@ -1,35 +1,58 @@
 // netlify/functions/ssGetGiftMessage.js
-const fetch = require("node-fetch");              // Netlify ▸ Node 18 runtime
+// Node 18 runtime (CommonJS)
+
+const fetch = require("node-fetch");   // bundled by Netlify
 
 exports.handler = async (event) => {
   const orderNumber = event.queryStringParameters?.orderNumber;
   if (!orderNumber)
     return { statusCode: 400, body: "Missing orderNumber" };
 
-  // ── ShipStation auth (Basic Auth = key:secret, Base64-encoded) ──
+  // ── ShipStation Basic-Auth ──
   const { SS_API_KEY, SS_API_SECRET } = process.env;
-  const auth = Buffer.from(`${SS_API_KEY}:${SS_API_SECRET}`).toString("base64");
+  const AUTH = "Basic " + Buffer.from(`${SS_API_KEY}:${SS_API_SECRET}`).toString("base64");
+  const base = "https://ssapi.shipstation.com";
 
-  const url = `https://ssapi.shipstation.com/orders?orderNumber=${encodeURIComponent(orderNumber)}`;
+  // helper: query ShipStation endpoint, return first order or null
+  const query = async (url) => {
+    const r = await fetch(url, { headers: { Authorization: AUTH } });
+    if (r.status === 404) return null;           // nothing found at this URL
+    if (!r.ok) {
+      const txt = await r.text();
+      throw new Error(`ShipStation ${r.status}: ${txt || r.statusText}`);
+    }
+    const j = await r.json();
+    return j.orders?.[0] || null;
+  };
 
   try {
-    const resp = await fetch(url, { headers: { Authorization: `Basic ${auth}` } });
-    if (!resp.ok)
-      return { statusCode: resp.status, body: await resp.text() };
+    // 1️⃣  Try orderNumber field first, then fall back to customerOrderId
+    let order =
+      await query(`${base}/orders?orderNumber=${encodeURIComponent(orderNumber)}`) ||
+      await query(`${base}/orders?customerOrderId=${encodeURIComponent(orderNumber)}`);
 
-    const json = await resp.json();
-    const order = json.orders?.[0];
+    // 2️⃣  Final fallback: advancedsearch (matches partials, prefixes, etc.)
+    if (!order) {
+      order = await query(
+        `${base}/orders/advancedsearch?orderNumber=${encodeURIComponent(orderNumber)}&page=1&pageSize=1`
+      );
+    }
+
     if (!order)
-      return { statusCode: 404, body: "Order not found" };
+      return { statusCode: 404, body: "Order not found in ShipStation" };
 
     return {
       statusCode: 200,
       body: JSON.stringify({
-        giftMessage: order.giftMessage ?? "",
-        giftFrom   : order.giftMessageFrom ?? order.billTo?.name ?? ""
+        giftMessage: order.giftMessage?.trim() || "",
+        giftFrom:
+          order.giftMessageFrom?.trim() ||
+          order.billTo?.name?.trim() ||
+          ""
       })
     };
   } catch (err) {
+    console.error("[ssGetGiftMessage]", err);
     return { statusCode: 500, body: err.message };
   }
 };
