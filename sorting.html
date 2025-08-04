@@ -1991,6 +1991,12 @@ async function fillPreviewBoxes(items) {
           .replace(/\b1-5\s*Characters\b/gi, "")
           .replace(/\b6-10\s*Characters\b/gi, "")
           .replace(/\b11\s*\+\s*Characters\b/gi, "")
+
+          /* ·-delimited variants — 1-5·Character etc. */
+          .replace(/\b1-5\s*·\s*Character(?:s)?\b/gi, "")
+          .replace(/\b6-10\s*·\s*Character(?:s)?\b/gi, "")
+          .replace(/\b11\+\s*·\s*Character(?:s)?\b/gi, "")
+
           /* collapse leftover double spaces */
           .replace(/\s{2,}/g, " ")
           .trim();
