@@ -2013,13 +2013,23 @@ async function fillPreviewBoxes(items) {
           .replace(/\s*-\s*\d+(\.\d+)?\s*$/g, "")
           .trim();
 
-        // 3) canonical metal keywords so downstream filters never miss
-        const ml = metalSel.toLowerCase();
-        if (/rose\s*gold|rosegold|rose\b/.test(ml))      metalSel = "RoseGold";
-        else if (/\bwhite\s*gold\b/.test(ml))            metalSel = "WhiteGold";
-        else if (/\bsilver\b/.test(ml))                  metalSel = "Silver";
-        else if (/\b14k\b/.test(ml))                     metalSel = "14K";
-        else if (/\bgold\b/.test(ml))                    metalSel = "Gold";
+        /* 3) canonical metal keywords so downstream filters never miss */
+
+        /* normalise odd punctuation such as middle-dots */
+        metalSel = metalSel.replace(/[·•]/g, " ").trim();
+        const norm = metalSel.toLowerCase();
+
+        if (/rose\s*gold|rosegold|rosefilled|rose\b/.test(norm)) {
+          metalSel = "Rose Gold";
+        } else if (/gold\s*filled|goldfilled/.test(norm)) {
+          metalSel = "Gold Filled";
+        } else if (/silv[ae]?r/.test(norm)) {
+          metalSel = "Silver";
+        } else if (/\b14k\b/.test(norm)) {
+          metalSel = "14K";
+        } else if (/\bgold\b/.test(norm)) {          /* plain “gold” → Gold Filled */
+          metalSel = "Gold Filled";
+        }
 
         /* tidy any doubles again */
         metalSel = metalSel.replace(/\s{2,}/g, " ").trim();
