@@ -451,6 +451,7 @@
       justify-content: center;
       align-items: flex-start;
       overflow: visible;             /* keep everything visible within the frame */
+      margin-top: 30px;              /* ← EXACT: 30px below “QR Preview” */
     }
 
     /* Tile sizing chosen to fit multiple QR codes in the fixed frame without scroll */
@@ -3812,14 +3813,14 @@ function reflowGrid(){
 </div><!-- /listingModal -->
 
  <!-- ─── QR Preview Modal ─── -->
- <div id="qrPreviewModal" class="modal">
-   <div class="modal-content">
-     <h5>QR Preview</h5>
-       <!-- Skipped orders appear here (always visible) -->
-       <div id="qrSkippedContainer"
-            style="margin:10px 0;font-size:.9em;color:#d32f2f;"></div>
- 
-       <div id="qrPreviewGrid" style="display:flex;flex-wrap:wrap;gap:20px;"></div>
+  <div id="qrPreviewModal" class="modal">
+    <div class="modal-content">
+      <h5>QR Preview</h5>
+      <!-- QR tiles are positioned 30px below the title via CSS -->
+      <div id="qrPreviewGrid" style="display:flex;flex-wrap:wrap;gap:20px;"></div>
+      <!-- Skipped orders appear below the grid -->
+      <div id="qrSkippedContainer"
+           style="margin:10px 0;font-size:.9em;color:#d32f2f;"></div>
 
    </div>
    <div class="modal-footer">
