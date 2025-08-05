@@ -1980,10 +1980,30 @@ async function fillPreviewBoxes(items) {
         "metal/necklace length","metal/necklace length/engrave",
         "number of discs / metal"
       ];
-    const metalVar = item.variations.find(v => {
-      const name = (v.formatted_name || "").trim().toLowerCase();
-      return name.includes("metal");               // any phrase that mentions “metal”
-    });
+      /* ── find the metal-choice variation ────────────────────────────────
+         ① label contains “metal”, OR
+         ② label starts with “color/colour”, OR
+         ③ label matches our static whitelist, OR
+         ④ (fallback) the value itself looks like a metal keyword         */
+      
+      let metalVar = item.variations.find(v => {
+        const name = (v.formatted_name || "").trim().toLowerCase();
+        return (
+          name.includes("metal")                              ||
+          name.startsWith("color") || name.startsWith("colour") ||
+          acceptedMetalNames.includes(name)
+        );
+      });
+      
+      /* If no luck, scan values for metal words (catches weird combos like
+         “Number of Discs / Metal3 discs • gold”)                          */
+      if (!metalVar) {
+        metalVar = item.variations.find(v => {
+          const val = (v.formatted_value || "").toLowerCase();
+          return /rose\s*gold|rosegold|rosefilled|gold\s*filled|goldfilled|\bgold\b|silv[ae]?r|sterling\s*silver|14k|white\s*gold/.test(val);
+        });
+      }
+      
       if (metalVar && metalVar.formatted_value) {
         metalSel = metalVar.formatted_value;
 
