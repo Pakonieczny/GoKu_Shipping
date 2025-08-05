@@ -172,6 +172,23 @@
       overflow-y: auto;
     }
 
+    /* Ship To Address text area */
+    #shipAddressBox {
+      position: absolute;
+      border: 1px solid black;
+      width: 300px;
+      height: 90px;
+      box-sizing: border-box;
+      outline: none;
+      background: transparent;
+      font-size: 0.9em;
+      line-height: 1.4;
+      resize: none;
+      text-align: left;
+      white-space: pre-wrap;
+      overflow-y: auto;
+    }
+
     /* Customer Message History text area */
     #customerMessageHistory {
       position: absolute;
@@ -189,11 +206,12 @@
     }
 
     /* Single-line text boxes */
-    #dateOrdered,
-    #shipDate,
-    #labelCreationDate,
-    #employeeName,
-    #completedByEmployee {
+      #dateOrdered,
+      #shipDate,
+      #labelCreationDate,
+      #employeeName,
+      #completedByEmployee,
+      #shippingPriority {
       position: absolute;
       width: 200px;
       height: 20px;
@@ -323,6 +341,13 @@
   overflow: hidden !important; /* or 'auto' if you prefer scrolling */
 }
 
+  #titleShippingPriority {
+    position: absolute;
+    font-size: 0.7em;
+    margin: 0;
+    padding: 0;
+  }
+
 #userLoginModalContainer {
   position: static !important; /* so content doesn’t shrink weirdly */
   height: auto !important;
@@ -357,12 +382,7 @@
       text-decoration:none !important;
       border-bottom:none !important;
     }
-
-    /* --- weld-1: hide unused shipping widgets --- */
-    #completeOrderBtn,          /* “Complete” button  */
-    #carrierSelectWrap,        /* carrier dropdown   */
-    #trackingNumberInput         /* tracking text box  */
-    { display:none !important; }
+    
 
   </style>
 
@@ -394,6 +414,8 @@
     <!-- 🆕—— new draggable title -->
     <input id="titleShipping" type="text" value="Assembly_4"  readonly />
     <!-- ▲ nothing else changes here -->
+
+    <input type="text" id="shippingPriority" readonly />
 
     <!-- Photo Grid -->
     <div id="Photo_Grid">
@@ -445,6 +467,17 @@
     <input type="text" id="metalCell7" class="text-box-absolute" readonly />
 
     <textarea id="orderDetails" readonly></textarea>
+    <textarea id="shipAddressBox" readonly></textarea>
+
+    <!-- ▼▼ NEW COPY BUTTON ▼▼ -->
+    <button id="copyOrderDetailsBtn" class="btn"
+            style="position:absolute; left:260px; top:162px;
+                   width:50px; height:24px; font-size:0.65em;
+                   display:flex; align-items:center; justify-content:center;
+                   background-color:#555 !important; color:#fff; padding:0;">
+      Copy
+    </button>
+    <!-- ▲▲ NEW COPY BUTTON ▲▲ -->
     <div id="customerMessageHistory" class="msg-box"></div>
     <input id="britesMsgInput"
        type="text"
@@ -455,6 +488,7 @@
     <div id="titleOrderDate2" style="font-weight:bold;"></div>
     <div id="titleShipDate">Ship By:</div>
     <div id="titleSignedInAs">Signed In As:</div>
+    <div id="titleShippingPriority">Shipping Priority</div>
 
     <div id="titleOrderDetails">Order Details:</div>
     <div id="titleBritesMessages">Brites Messages</div>
@@ -526,6 +560,13 @@
 
   <div id="secondaryContainer"></div>
 
+  <!-- Brites chat image-viewer -->
+  <div id="chatImgModal" class="modal">
+    <div class="modal-content" style="padding:0;">
+      <img id="chatImgModalImg" src="" style="width:100%;height:auto;display:block;">
+    </div>
+  </div>
+
   <!-- The user login modal -->
   <div id="userLoginModal" class="modal">
     <!-- A wrapper with position: relative, so children can be absolutely placed -->
@@ -556,6 +597,8 @@
   <!-- 1) Firebase loaded first, define db for global usage -->
   <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
+  <!-- Firebase Storage (needed for image uploads) -->
+  <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
   <script>
     const firebaseConfig = {
       apiKey: "AIzaSyBXhQLsYRa4i0bX1TPTRiElF9Zjy5vSHlA",
@@ -567,12 +610,18 @@
     };
     firebase.initializeApp(firebaseConfig);
     window.db = firebase.firestore(); // define globally
+    firebase.auth().signInAnonymously()
+      .then(()=>console.log("Anon auth ✔"))
+      .catch(err=>console.error("Anon auth ❌", err));
   </script>
 
   <script>
     /********** Global Variables **********/
     window.receiptIsGift = null;
     window.receiptGiftMessage = null;
+    window.receiptGiftWrap = null;
+    window.receiptGiftWrapPrice = null;
+    window.receiptGiftMessageFrom = null;    
     window.orderName = "";
     window.orderStatus = "";
     window.orderIsShipped = "";
@@ -657,23 +706,23 @@
       }
     }
 
-    /* ─── realtime Brites chat listener ─────────────────────────── */
-    let chatUnsub = null;
-    let firstBatch = true;    // skip beep on initial load
+    /* globals for realtime listener */
+    let chatUnsub = null;        // holds the active Firestore unsubscribe fn
+    let firstBatch = true;       // suppress chime on initial load
+
+    /* ─── realtime Brites chat listener (now supports images) ─────────── */
     function startBritesListener(orderId){
-      if(chatUnsub) chatUnsub();          // switch orders → kill previous watch
+      if(chatUnsub) chatUnsub();
       chatUnsub = db
-        .collection("Brites_Orders")
-        .doc(orderId)
-        .collection("messages")
-        .orderBy("timestamp","asc")
+        .collection("Brites_Orders").doc(orderId)
+        .collection("messages").orderBy("timestamp","asc")
         .onSnapshot(snap=>{
-          console.log("messages snapshot size:", snap.size);
           const box = document.getElementById("customerMessageHistory");
           if(!box) return;
 
           let html = "";
-          /* buyer’s original note */
+
+          /* buyer’s original note (if any) */
           if (window.buyerMessageText && window.buyerMessageText.length){
             const ts = formatChatTimestamp(new Date());
             html += `<div class="msg received">
@@ -686,25 +735,33 @@
             const d  = doc.data();
             const dt = formatChatTimestamp(d.timestamp?.toDate() || new Date());
 
-            /* staff ⇒ right align, customer ⇒ left align */
-            const emp        = (document.getElementById("employeeName").value || "").trim().toLowerCase();
-            const bubbleCls  = (d.senderName && d.senderName.trim().toLowerCase() === emp) ? "sent" : "received";
+            const emp = (document.getElementById("employeeName").value||"")
+                         .trim().toLowerCase();
+            const bubbleCls =
+              (d.senderName && d.senderName.trim().toLowerCase()===emp)
+                ? "sent" : "received";
 
-            html += `<div class="msg ${bubbleCls}">
-                       <span class="meta">${d.senderName} • ${dt}</span>
-                       <span>${escapeHtml(d.text)}</span>
-                     </div>`;
+            /* 🔗 image vs. text */
+            if (d.imageUrl){
+              html += `<div class="msg ${bubbleCls}">
+                         <span class="meta">${d.senderName} • ${dt}</span>
+                         <a href="#!" class="img-link" data-src="${d.imageUrl}">📷 Image</a>
+                       </div>`;
+            } else {
+              html += `<div class="msg ${bubbleCls}">
+                         <span class="meta">${d.senderName} • ${dt}</span>
+                         <span>${escapeHtml(d.text)}</span>
+                       </div>`;
+            }
           });
 
-                /* 🔔 beep for any new message after initial snapshot */
-                if (!firstBatch && snap.docChanges().some(c => c.type === "added")){
-                  playChime();
-                }
-                firstBatch = false;
+          /* 🔔 chime after initial batch */
+          if (!firstBatch && snap.docChanges().some(c=>c.type==="added")) playChime();
+          firstBatch = false;
 
           box.innerHTML = html;
           box.scrollTop = box.scrollHeight;
-          applyChatSpacing();  // keep 5 px / 3 px gaps
+          applyChatSpacing();
         });
     }
     /* basic XSS guard */
@@ -764,16 +821,15 @@
      * Incorporate the new login modal elements in the config array so they're adjustable.
      */
       var configComponentIDs = [
-        "connectEtsyBtn","openConfigBtn","signOutBtn","orderLinkBtn","trackingLinkBtn","etsyOrderNumber",
-        "Photo_Grid","quantityCell0","quantityCell1","quantityCell2","quantityCell3",
-        "quantityCell4","quantityCell5","quantityCell6","quantityCell7",
+        "connectEtsyBtn","openConfigBtn","signOutBtn","orderLinkBtn","trackingLinkBtn","etsyOrderNumber","Photo_Grid","quantityCell0","quantityCell1","quantityCell2","quantityCell3",
+        "quantityCell4", "shippingPriority", "quantityCell5","quantityCell6","quantityCell7",
         "metalCell0","metalCell1","metalCell2","metalCell3",
         "metalCell4","metalCell5","metalCell6","metalCell7",
-        "orderDetails","customerMessageHistory","britesMsgInput","dateOrdered","shipDate",
+        "orderDetails", "shipAddressBox", "copyOrderDetailsBtn", "customerMessageHistory","britesMsgInput","dateOrdered","shipDate",
         "employeeName","trackingNumberInput","carrierSelectWrap","completeOrderBtn",
         "titleOrderDate","titleOrderDate2","titleShipDate",
         "titleSignedInAs",
-        "titleOrderDetails","titleBritesMessages","titlePurchasedItems","titleOrderNumber",
+        "titleOrderDetails","titleShippingPriority","titleBritesMessages","titlePurchasedItems","titleOrderNumber",
         "titleShipping",                // 🆕 make “Shipping” configurable
         "goScreenTwoBtn",
         /* Existing modal references */
@@ -815,8 +871,9 @@
       metalCell7:           { left: 1136, top: 583,  width: 153, height: 45 },
 
       orderDetails:           { left: 10,   top: 162,  width: 300, height: 342 },
-      customerMessageHistory: { left: 10, top: 535,  width: 300, height: 266 },
-      britesMsgInput:         { left: 14, top: 802, width: 295, height: 23 },
+      shipAddressBox:         { left: 324,   top: 162,  width: 200, height: 186 },
+      customerMessageHistory: { left: 10,   top: 577,  width: 300, height: 266 },
+      britesMsgInput:         { left: 14, top: 543, width: 295, height: 23 },
 
       dateOrdered:          { left: 10,   top: 100,  width: 145, height: 30 },
       shipDate:             { left: 164,  top: 100,  width: 145, height: 30 },
@@ -827,11 +884,11 @@
       titleShipDate:        { left: 167,  top: 82,   width: 99,  height: 15 },
       titleSignedInAs:      { left: 1226, top: 7,    width: 75,  height: 15 },
       titleOrderDetails:    { left: 11,   top: 144,  width: 99,  height: 15 },
-      titleBritesMessages:  { left: 11,   top: 518,  width: 99,  height: 15 },
+      titleBritesMessages:    { left: 10,   top: 518,  width: 95,  height: 15 },
       titlePurchasedItems:  { left: 538,  top: 135,   width: 99,  height: 15 },
       titleOrderNumber:     { left: 11,   top: 7,    width: 99,  height: 15 },
 
-      goScreenTwoBtn:       { left: 244, top: 802,    width: 65, height: 23 },
+      goScreenTwoBtn:       { left: 245, top: 536,    width: 65, height: 31 },
       signatureBox:         { left: 624,  top: 19,   width: 105, height: 34 },
 
       // The modal elements:
@@ -842,10 +899,13 @@
       employeeNumberInput:  { left: 40,   top: 60,   width: 75, height: 35 },
       loginModalFooter:     { left: 20,    top: 0,    width: 250,   height: 0 },
       employeeLoginBtn:     { left: 130,   top: 150,   width: 100, height: 35 },
-      trackingNumberInput:{ left:260, top:110, width:140, height:24 },
-      carrierSelectWrap:  { left:410, top:110, width:110, height:24 },
-      completeOrderBtn:    { left:530, top:110, width:110, height:24 },
+      trackingNumberInput:{ left:677, top:674, width:308, height:23 },
+      carrierSelectWrap:  { left:539, top:664, width:107, height:23 },
+      completeOrderBtn:    { left:1062, top:656, width:155, height:41 },
       titleShipping:        { left: 700, top: 10, width: 200, height: 30 },
+      copyOrderDetailsBtn: { left: 260, top: 162, width: 50, height: 24 },
+      shippingPriority: { left: 324, top: 106, width: 200, height: 24 },
+      titleShippingPriority: { left: 324, top: 82, width: 200, height: 15 },
       signOutBtn:           { left: 1356,  top: 17, width: 103, height: 35 }
 
     };
@@ -941,7 +1001,7 @@
       console.log("Configuration saved.");
     }
 
-        document.addEventListener("DOMContentLoaded", function () {
+      document.addEventListener("DOMContentLoaded", function () {
         M.AutoInit();
 
         // Fade in body
@@ -973,7 +1033,6 @@
         else if (!oauthFlag) {
           userLoginModal.open();
         }
-
 
       // "Log In" button for employees
       var employeeLoginBtn = document.getElementById("employeeLoginBtn");
@@ -1041,6 +1100,21 @@
         });
       }
 
+      /* ── Copy ORDER-FROM Name ─────────────────────────── */
+      document.getElementById("copyOrderDetailsBtn")
+        .addEventListener("click", () => {
+          const val = document.getElementById("orderDetails").value || "";
+          const m   = val.match(/ORDER FROM[:\s]+([^\r\n]+)/i); // capture name
+          if (!m || !m[1].trim()) {
+            M.toast({ html: "Name not found." });
+            return;
+          }
+          const name = m[1].trim();
+          navigator.clipboard.writeText(name)
+            .then(()   => M.toast({ html: `Copied ${name} ✔` }))
+            .catch(err => M.toast({ html: "Copy failed: " + err.message }));
+        });
+
       /* Open Config → show modal + disable live UI clicks           */
       document.getElementById("openConfigBtn").addEventListener("click", function(){
         populateConfigTable();
@@ -1090,7 +1164,7 @@
             "&code_challenge=" + encodeURIComponent(codeChallenge) +
             "&code_challenge_method=S256";
 
-            /* 🟢 flag: tell next load we’re mid-OAuth */
+          /* 🟢 flag: tell next load we’re mid-OAuth */
           localStorage.setItem("oauth_in_progress","1");   // <<< ADD THIS LINE
 
           console.log("Redirecting to Etsy OAuth URL:", etsyAuthUrl);
@@ -1102,33 +1176,42 @@
       etsyOrderInput.addEventListener("keydown", async function(e){
         if(e.key === "Enter"){
           const orderNumber = etsyOrderInput.value.trim();
-          if(orderNumber !== ""){
-            const orderData = await pullEtsyOrderDetails(orderNumber);
-            if(orderData){
-              await updateImageGrid(orderData);
-              startBritesListener(orderNumber);
-            }
+          const orderData = await pullEtsyOrderDetails(orderNumber);
+          // 🆕 Always pull ShipStation Ship-To immediately after loading order meta
+          await loadShipToAddress(orderNumber);
+          // 🎁 NEW – also pull Gift Message from ShipStation
+          await loadGiftMessage(orderNumber);
+
+          if(orderData){
+            await updateImageGrid(orderData);
+            startBritesListener(orderNumber);
+          }
             try {
               const respPD = await fetch("/.netlify/functions/firebaseOrders?orderId=" + encodeURIComponent(orderNumber));
               const resPD = await respPD.json();
 
-              if(!respPD.ok){
-                if(resPD.error && resPD.error.toLowerCase().includes("not found")){
-                  // Doc not found => clear fields quietly, no error
-                  document.getElementById("labelCreationDate").value = "";
-                  document.getElementById("completedByEmployee").value = "";
-                  document.getElementById("signatureBox").innerHTML = "Sig Box";
-                  return;
-                } else {
-                  throw new Error(resPD.error || "Unknown error from firebaseOrders function");
-                }
+            if(!respPD.ok){
+              if(resPD.error && resPD.error.toLowerCase().includes("not found")){
+                // Doc not found => clear fields quietly, no error
+                document.getElementById("labelCreationDate").value = "";
+                document.getElementById("completedByEmployee").value = "";
+                document.getElementById("signatureBox").innerHTML = "Sig Box";
+
+                // 🆕 also clear Address Box
+                const ab = document.getElementById("shipAddressBox");
+                if (ab) ab.value = "";
+
+                return;
+              } else {
+                throw new Error(resPD.error || "Unknown error from firebaseOrders function");
               }
+            }
 
               // If we reach here => doc is found or newly created
               const docDataPD = resPD.data || {};
               const dbOrderNum = docDataPD["Order Number"];
               if (dbOrderNum !== orderNumber) {
-                M.toast({ html: "Order mismatch: doc has '" + dbOrderNum + "', expected '" + orderNumber + "'" });
+                // M.toast({ html: "Order mismatch: doc has '" + dbOrderNum + "', expected '" + orderNumber + "'" });
                 return;
               }
 
@@ -1187,8 +1270,7 @@
               console.error("Failed to pull data from Firestore:", errPD);
             }
           }
-        }
-      });
+        });
 
       document.getElementById("orderLinkBtn").addEventListener("click", function(){
         var baseUrl = "https://www.etsy.com/your/orders/sold?ref=seller-platform-mcnav&order_id=0000000000";
@@ -1280,6 +1362,63 @@
           isDragging = false;
         });
       });
+
+      /* === Drag-drop image upload + click-viewer ===================== */
+      (function attachImageDnD(){
+        const chatBox   = document.getElementById("customerMessageHistory");
+        const orderInp  = document.getElementById("etsyOrderNumber");
+        const empNameEl = document.getElementById("employeeName");
+        if(!chatBox) return;
+
+        /* drag-over glow */
+        const onEnter = e=>{e.preventDefault(); chatBox.style.outline="2px dashed dodgerblue";};
+        const onLeave = e=>{e.preventDefault(); chatBox.style.outline="";};
+        ["dragenter","dragover"].forEach(x=>chatBox.addEventListener(x,onEnter));
+        ["dragleave","drop"].forEach(x=>chatBox.addEventListener(x,onLeave));
+
+        /* drop → Storage → Firestore */
+        chatBox.addEventListener("drop", async e=>{
+          e.preventDefault();
+          const images = [...e.dataTransfer.files].filter(f=>f.type.startsWith("image/"));
+          if(!images.length) return;
+
+          const orderId = orderInp.value.trim();
+          if(!orderId){ M.toast({html:"Enter order # first"}); return; }
+          const staff   = (empNameEl.value||"Staff").trim();
+
+          for (const file of images) {
+            try {
+              const path = `chatImages/${orderId}/${Date.now()}_${file.name}`;
+
+              /* 🚀 one-liner: resumable PUT upload + URL */
+              const url = await window.uploadViaResumable(path, file);
+
+              await db.collection("Brites_Orders")
+                .doc(orderId).collection("messages")
+                .add({
+                  imageUrl  : url,
+                  text      : "Image attachment",
+                  senderName: staff,
+                  senderRole: "staff",
+                  timestamp : firebase.firestore.FieldValue.serverTimestamp()
+                });
+            } catch(err) {
+              console.error("upload error:", err);
+              M.toast({ html: "Upload failed: " + err.message });
+            }
+          }
+        });
+
+        /* click any .img-link → modal */
+        document.addEventListener("click", e=>{
+          if(!e.target.classList.contains("img-link")) return;
+          document.getElementById("chatImgModalImg").src = e.target.dataset.src;
+          M.Modal.getInstance(document.getElementById("chatImgModal")).open();
+        });
+
+        /* one-time modal init */
+        M.Modal.init(document.getElementById("chatImgModal"));
+      })();
 
     /* =========================================================
      *  Send Brites Msg – POST via Netlify function
@@ -1570,12 +1709,29 @@
           }
         }
       }
-      if(window.receiptIsGift !== null){
-        details += " Marked as Gift: " + window.receiptIsGift + "\n";
+      /* 🎁  ── Gift indicators ───────────────────────────────── */
+      const giftIcon = "🎁";           // 20 % larger icon is not possible in a plain textarea,
+                                       // but the emoji renders slightly bigger than text on most OSes.
+
+      /* a. Marked-as-Gift */
+      if (window.receiptIsGift === true){
+        details += ` ${giftIcon} Marked as Gift: Yes\n`;
+      } else if (window.receiptIsGift === false){
+        details += " Marked as Gift: No\n";
       }
-      if(window.receiptGiftMessage){
-        details += " Gift Message: " + window.receiptGiftMessage + "\n";
+
+      /* b. Gift Message */
+      if (window.receiptGiftMessage){
+        details += ` ${giftIcon} Gift Message: ${window.receiptGiftMessage}\n`;
       }
+
+      /* c. Gift Wrapping */
+      if (window.receiptGiftWrap === true){
+        details += ` ${giftIcon} Gift Wrapping: Yes\n`;
+      } else if (window.receiptGiftWrap === false){
+        details += " Gift Wrapping: No\n";
+      }
+
       document.getElementById("orderDetails").value = details;
     }
 
@@ -1599,10 +1755,25 @@
       .then(function(r){ return r.json(); })
       .then(function(data){
         console.log("Etsy Order Data:", data);
-        window.receiptIsGift = (typeof data.is_gift !== "undefined") ? data.is_gift : null;
-        window.receiptGiftMessage = data.gift_message || "";
+        // Gift fields now sourced from Etsy receipt
+        window.receiptIsGift = Boolean(data.is_gift);
 
-        /* 🆕 store buyer note so the chat listener can render it */
+        // 🎁  Gift message now fetched from ShipStation (see loadGiftMessage)
+        window.receiptGiftMessage     = "";
+        window.receiptGiftMessageFrom = "";
+
+        // Etsy receipts include gift_wrap_price as a money object { amount, divisor, currency_code }
+        const gwp = data.gift_wrap_price;
+        const gwAmount =
+          (gwp && typeof gwp.amount === "number" && typeof gwp.divisor === "number" && gwp.divisor)
+            ? (gwp.amount / gwp.divisor)
+            : (typeof data.gift_wrap_price === "number" ? data.gift_wrap_price : null);
+        window.receiptGiftWrapPrice =
+          (typeof gwAmount === "number" && !Number.isNaN(gwAmount)) ? gwAmount : null;
+        window.receiptGiftWrap =
+          (typeof window.receiptGiftWrapPrice === "number" && window.receiptGiftWrapPrice > 0);
+
+        /* store buyer note so the chat listener can render it (still from Etsy) */
         window.buyerMessageText  = (data.message_from_buyer || "").trim();
         window.orderShipments = data.shipments || [];
         var titleDate2 = document.getElementById("titleOrderDate2");
@@ -1692,6 +1863,119 @@
       });
     }
 
+      /* ===== ShipStation — load “Ship To” by orderNumber ======================= */
+      async function loadShipToAddress(orderNumber){
+        try {
+          const box = document.getElementById("shipAddressBox");
+          if (!box) return;
+          box.value = "SHIP TO:\n(Loading...)";
+
+          const resp = await fetch(
+            "/.netlify/functions/ssGetOrderAddress?orderNumber=" + encodeURIComponent(orderNumber)
+          );
+          if (!resp.ok) {
+            box.value = "SHIP TO:\n(Not found)";
+            box.style.color = "";
+            return;
+          }
+
+          const data = await resp.json();
+          const ship = data.shipTo || null;
+          if (!ship) {
+            box.value = "SHIP TO:\n(Not found)";
+            box.style.color = "";
+            return;
+          }
+
+          // NEW: set Shipping Priority box from SS
+          const prEl = document.getElementById("shippingPriority");
+          if (prEl) {
+            const svc = (data.serviceCode || "").toString();
+            const carrier = (data.carrierCode || "").toString();
+
+            const amount = (typeof data.shippingAmount === "number")
+              ? data.shippingAmount
+              : (data.shippingAmount && typeof data.shippingAmount.amount === "number")
+                ? data.shippingAmount.amount
+                : null;
+
+            const cost = (amount != null)
+              ? amount.toLocaleString(undefined, { style: "currency", currency: "USD" })
+              : "—";
+
+            const label = [carrier, svc].filter(Boolean).join(" / ");
+            prEl.value = label ? `${label} • ${cost}` : `${cost}`;
+
+            // Make it bold (CSS also enforces this, but we set it here too for safety)
+            prEl.style.fontWeight = "bold";
+
+            // If price is exactly $18 or $55 → orange
+            const amt = Number(amount);
+            prEl.style.color = (amt === 18 || amt === 55) ? "orange" : "";
+          }
+
+
+          // If a tile is selected, refresh details to show gift fields
+          const sel = document.querySelector(".preview-box.selected");
+          if (sel) {
+            const idx = parseInt(sel.id.replace("previewCell",""), 10);
+            if (!Number.isNaN(idx)) showItemDetails(idx);
+          }
+
+          const lines = [];
+          const add = v => { if (v) lines.push(String(v)); };
+
+          add(ship.name || "");
+          const street = [ship.street1, ship.street2, ship.street3].filter(Boolean).join(" ");
+          add(street);
+          add([ship.city, ship.state, ship.postalCode].filter(Boolean).join(", "));
+          add(ship.country);
+          if (ship.phone) add("Phone: " + ship.phone);
+
+          box.value = "SHIP TO:\n" + lines.filter(Boolean).join("\n");
+
+          // Text color only for international (non-US/CA) addresses
+          const countryRaw = (ship.country || ship.countryCode || "").toString().trim();
+          const c = countryRaw.toLowerCase();
+          const isUS = c.startsWith("united states") || c === "usa" || c === "us" || c === "u.s." || c === "u.s.a.";
+          const isCA = c === "canada" || c === "ca";
+          box.style.color = (isUS || isCA) ? "" : "orangered";
+        } catch (e) {
+          console.error("loadShipToAddress:", e);
+          const box = document.getElementById("shipAddressBox");
+          if (box) {
+            box.value = "SHIP TO:\n(Error loading)";
+            box.style.color = "";
+          }
+        }
+      }
+
+      /* ===== ShipStation — Gift Message (orderNumber) ===================== */
+      async function loadGiftMessage(orderNumber) {
+        try {
+          const resp = await fetch(
+            "/.netlify/functions/ssGetGiftMessage?orderNumber=" +
+            encodeURIComponent(orderNumber)
+          );
+          if (!resp.ok) throw new Error("ShipStation response " + resp.status);
+
+          const data = await resp.json();
+          window.receiptGiftMessage     = (data.giftMessage || "").trim();
+          window.receiptGiftMessageFrom = (data.giftFrom    || "").trim();
+
+          /* refresh details pane if a tile is selected */
+          const sel = document.querySelector(".preview-box.selected");
+          if (sel) {
+            const idx = parseInt(sel.id.replace("previewCell", ""), 10);
+            if (!Number.isNaN(idx)) showItemDetails(idx);
+          }
+        } catch (err) {
+          console.error("loadGiftMessage:", err);
+          window.receiptGiftMessage     = "";
+          window.receiptGiftMessageFrom = "";
+        }
+      }
+
     /* ---------------------------------------------------------
      *  Firestore listener for employee-scanned order numbers
      * --------------------------------------------------------*/
@@ -1736,10 +2020,63 @@
     });   // ← closes DOMContentLoaded handler
   </script>
 
+  <!-- helper: force every upload to use resumable PUT -->
+  <script type="module">
+    /* modular imports */
+    import {
+      initializeApp,
+      getApp
+    } from "https://www.gstatic.com/firebasejs/9.23.0/firebase-app.js";
+    import {
+      getStorage,
+      ref,
+      uploadBytesResumable
+    } from "https://www.gstatic.com/firebasejs/9.23.0/firebase-storage.js";
+    import { getDownloadURL } from "https://www.gstatic.com/firebasejs/9.23.0/firebase-storage.js";
+    import {
+      getAuth,
+      signInAnonymously
+    } from "https://www.gstatic.com/firebasejs/9.23.0/firebase-auth.js";
+
+    /* reuse the compat-initialised config */
+    let modApp;
+    try {
+      modApp = getApp();                       // already exists? (unlikely)
+    } catch {
+      // pull the options off the compat app & spin a modular twin
+      const compatOpts = firebase.app().options;
+      modApp = initializeApp(compatOpts);
+    }
+
+    const storage = getStorage(modApp);        // OK – default app now present
+    const auth   = getAuth(modApp);
+    signInAnonymously(auth).catch(console.error);
+
+    /* expose a single resumable uploader */
+    window.uploadViaResumable = async (path, file) => {
+      const storageRef = ref(storage, path);
+      const task       = uploadBytesResumable(
+        storageRef,
+        file,
+        { contentType: file.type }
+      );
+
+      await new Promise((res, rej) =>
+        task.on("state_changed", null, rej, res)
+      );
+      return await getDownloadURL(storageRef);
+    };
+  </script>
+
+  
   <!-- 🆕 hard-hide unused fields -->
   <style id="hideUnusedFields">
     #labelCreationDate,
-    #completedByEmployee { display:none !important; }
+    #completedByEmployee,
+    /* requested hides */
+    #carrierSelectWrap,
+    #trackingNumberInput,
+    #completeOrderBtn { display:none !important; }
   </style>
 
 <!-- FINAL chat-bubble override: placed last so nothing beats it -->
@@ -1797,8 +2134,7 @@
   /* disable live controls */
   body.configOpen #screenOne select{ pointer-events:none !important; }
   body.configOpen #screenOne select,
-  body.configOpen #screenOne button{
-    pointer-events:none !important;
+  body.configOpen #screenOne button{ pointer-events:none !important;
   }
 
   /* re-enable inside modal */
