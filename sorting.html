@@ -1974,12 +1974,16 @@ async function fillPreviewBoxes(items) {
       const acceptedMetalNames = [
         "metal","metal choice","metal - engraving",
         "metal colour","color","metal choice / engraving option",
-        "metal choice / necklace length"          // ← NEW
+        "metal choice / necklace length",
+        // — NEW —
+        "number of discs / metal","number of discs/metal",
+        "metal/necklace length","metal/necklace length/engrave",
+        "number of discs / metal"
       ];
-      const metalVar = item.variations.find(v =>
-        v.formatted_name &&
-        acceptedMetalNames.includes(v.formatted_name.trim().toLowerCase())
-      );
+    const metalVar = item.variations.find(v => {
+      const name = (v.formatted_name || "").trim().toLowerCase();
+      return name.includes("metal");               // any phrase that mentions “metal”
+    });
       if (metalVar && metalVar.formatted_value) {
         metalSel = metalVar.formatted_value;
 
