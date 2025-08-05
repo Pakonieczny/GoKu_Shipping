@@ -418,53 +418,6 @@
       user-select:none;
     }
 
-    /* QR Preview Modal — fixed size, no scroll */
-    #qrPreviewModal.modal {
-      position: fixed !important;
-      top: 50% !important;
-      left: 50% !important;
-      transform: translate(-50%, -50%) !important;
-
-      width: 860px !important;      /* consistent across machines */
-      height: 620px !important;     /* bump if you want more rows */
-      max-height: none !important;
-
-      overflow: visible !important;  /* don't clip tiles */
-      z-index: 1003 !important;      /* above overlay */
-    }
-
-    /* Fill the modal, but don't scroll the frame */
-    #qrPreviewModal .modal-content {
-      display: flex;
-      flex-direction: column;
-      height: 100%;
-      overflow: visible;             /* no internal scroll */
-      padding-bottom: 0;
-    }
-
-    /* Grid must wrap — still no scroll */
-    #qrPreviewGrid {
-      flex: 1 1 auto;
-      display: flex;
-      flex-wrap: wrap;
-      gap: 16px;
-      justify-content: center;
-      align-items: flex-start;
-      overflow: visible;             /* keep everything visible within the frame */
-      margin-top: 30px;              /* ← EXACT: 30px below “QR Preview” */
-    }
-
-    /* Tile sizing chosen to fit multiple QR codes in the fixed frame without scroll */
-    .qr-tile {
-      width: 120px;
-      text-align: center;
-    }
-    .qr-label {
-      font-size: 0.78em;
-      margin-top: 4px;
-      line-height: 1.2;
-    }
-
   </style>
 
    <!-- QR-Preview dependency -->
@@ -1659,26 +1612,18 @@ if (!orderContainer.dataset.rangeWired){
      function showQrPreviewModal(lists){
      const skipped = window._qrSkippedOrders || [];   // ← new
      const grid=document.getElementById("qrPreviewGrid"); grid.innerHTML="";
-      // Build tiles
-      Object.entries(lists).forEach(([m, arr]) => {
-        if (!Array.isArray(arr) || !arr.length) return;
-
-        const holder = document.createElement("div");
-        holder.className = "qr-tile";
-        holder.innerHTML = `
-          <div id="qr_${m}"></div>
-          <div class="qr-label">${m.toUpperCase()} (${arr.length})</div>
-        `;
-        grid.appendChild(holder);
-
-        // Slightly smaller to guarantee fit inside fixed modal without scroll
-        new QRCode(holder.firstElementChild, {
-          text: encodeOrderList(arr, m),
-          width: 96,
-          height: 96,
-          correctLevel: QRCode.CorrectLevel.H
-        });
-      });
+     Object.entries(lists).forEach(([m,arr])=>{
+       if(!arr.length) return;
+       const holder=document.createElement("div");
+       holder.style.cssText="width:120px;text-align:center";
+       holder.innerHTML=`<div id="qr_${m}"></div>
+         <div style="font-size:.8em;margin-top:4px;">${m.toUpperCase()} (${arr.length})</div>`;
+       grid.appendChild(holder);
+       new QRCode(holder.firstElementChild,{
+         text:encodeOrderList(arr,m), width:110, height:110,
+         correctLevel:QRCode.CorrectLevel.H
+       });
+     });
      window._pendingMetalLists=lists;
 
    /* ⏩  display skipped receipts */
@@ -3813,14 +3758,14 @@ function reflowGrid(){
 </div><!-- /listingModal -->
 
  <!-- ─── QR Preview Modal ─── -->
-  <div id="qrPreviewModal" class="modal">
-    <div class="modal-content">
-      <h5>QR Preview</h5>
-      <!-- QR tiles are positioned 30px below the title via CSS -->
-      <div id="qrPreviewGrid" style="display:flex;flex-wrap:wrap;gap:20px;"></div>
-      <!-- Skipped orders appear below the grid -->
-      <div id="qrSkippedContainer"
-           style="margin:10px 0;font-size:.9em;color:#d32f2f;"></div>
+ <div id="qrPreviewModal" class="modal">
+   <div class="modal-content">
+     <h5>QR Preview</h5>
+       <!-- Skipped orders appear here (always visible) -->
+       <div id="qrSkippedContainer"
+            style="margin:10px 0;font-size:.9em;color:#d32f2f;"></div>
+ 
+       <div id="qrPreviewGrid" style="display:flex;flex-wrap:wrap;gap:20px;"></div>
 
    </div>
    <div class="modal-footer">
