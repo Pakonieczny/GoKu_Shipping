@@ -1692,15 +1692,15 @@ if (!orderContainer.dataset.rangeWired){
    window._pendingMetalLists = lists;
 
    /* ⏩  display skipped receipts */
-   const skipBox = document.getElementById("qrSkippedContainer");
-   if(skipBox){
-     if(skipped.length){
-       skipBox.innerHTML =
+   const skipBoxEl = document.getElementById("qrSkippedContainer");
+    if (skipBoxEl){
+    if (skipped.length){
+      skipBoxEl.innerHTML =
          `<b>Skipped&nbsp;orders:</b> ${skipped.join(", ")}`;
-       skipBox.style.display = "";
-     }else{
-       skipBox.innerHTML = "";
-       skipBox.style.display = "none";
+       skipBoxEl.style.display = "";
+    } else {
+      skipBoxEl.innerHTML = "";
+      skipBoxEl.style.display = "none";
      }
    }
 
