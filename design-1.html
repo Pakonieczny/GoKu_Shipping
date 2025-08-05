@@ -418,43 +418,6 @@
       user-select:none;
     }
 
-    /* QR Preview modal: respect configured size, no internal scroll */
-    #qrPreviewModal.modal {
-      position: fixed !important;   /* ensure we can clamp to viewport */
-      max-height: none !important;
-      overflow: hidden !important;
-      display: flex !important;     /* modal is a vertical flex column */
-      flex-direction: column !important;
-    }
-
-    #qrPreviewModal .modal-content {
-      height: auto !important;      /* JS will set an exact height */
-      flex: 1 1 auto !important;
-      display: flex;
-      flex-direction: column;
-      overflow: hidden !important;  /* no internal scroll */
-      padding-bottom: 0 !important;
-      min-height: 0 !important;
-    }
-
-    #qrPreviewModal .modal-footer {
-      flex: 0 0 auto;               /* footer always visible */
-    }
-
-    #qrPreviewGrid {
-      flex: 1 1 auto;               /* takes the remaining space */
-      overflow: hidden !important;  /* no scrollbars in the grid */
-      display: flex;
-      flex-wrap: wrap;
-      gap: 10px;
-      align-items: flex-start;
-      justify-content: center;
-      min-height: 0 !important;
-    }
-
-/* Trim heading margin so it doesn’t steal vertical space */
-#qrPreviewModal h5 { margin: 6px 0 2px !important; }
-
   </style>
 
    <!-- QR-Preview dependency -->
@@ -1646,144 +1609,50 @@ if (!orderContainer.dataset.rangeWired){
      });
      return `B36|${metal}|`+b36.join(".");
    }
-    function showQrPreviewModal(lists){
-    const skipped = window._qrSkippedOrders || [];
-    const modalEl = document.getElementById("qrPreviewModal");
-    const content = modalEl.querySelector(".modal-content");
-    const footer  = modalEl.querySelector(".modal-footer");
-    const grid    = document.getElementById("qrPreviewGrid");
-
-    // Render "skipped" info
-    const skipBoxEl = document.getElementById("qrSkippedContainer");
-    if (skipBoxEl){
-      if (skipped.length){
-        skipBoxEl.innerHTML = `<b>Skipped&nbsp;orders:</b> ${skipped.join(", ")}`;
-        skipBoxEl.style.display = "";
-      } else {
-        skipBoxEl.innerHTML = "";
-        skipBoxEl.style.display = "none";
-      }
-    }
-
-    window._pendingMetalLists = lists;
-
-    function clampToViewport(modalEl) {
-    const vw = window.innerWidth;
-    const vh = window.innerHeight;
-
-    // Read current box from computed/inline styles
-    const cs = getComputedStyle(modalEl);
-    const left  = parseInt(cs.left  || modalEl.style.left  || 0, 10) || 0;
-    const top   = parseInt(cs.top   || modalEl.style.top   || 0, 10) || 0;
-    const width = parseInt(cs.width || modalEl.style.width || modalEl.getBoundingClientRect().width, 10) || 0;
-    const height= parseInt(cs.height|| modalEl.style.height|| modalEl.getBoundingClientRect().height,10) || 0;
-
-    // Clamp to viewport with a small 8px margin
-    const maxW = Math.max(0, vw - 16);
-    const maxH = Math.max(0, vh - 16);
-    const clampedW = Math.min(width  || maxW, maxW);
-    const clampedH = Math.min(height || maxH, maxH);
-    const clampedL = Math.min(Math.max(8, left),  vw - clampedW - 8);
-    const clampedT = Math.min(Math.max(8, top),   vh - clampedH - 8);
-
-    Object.assign(modalEl.style, {
-      position: "fixed",
-      left:  clampedL + "px",
-      top:   clampedT + "px",
-      width: clampedW + "px",
-      height:clampedH + "px"
-    });
-  }
-
-  function layout() {
-    if (!modalEl || !content || !grid) return;
-
-    // Make sure element positions are applied first
-    loadPositions();
-    clampToViewport(modalEl);           // NEW: keep modal fully on-screen
-    content.style.position = "relative";
-
-    // Which metals we’ll render (1..4)
-    const metals = Object.entries(lists).filter(([, arr]) => Array.isArray(arr) && arr.length);
-    const n = Math.max(1, Math.min(4, metals.length));
-
-    // Compute available drawing box from the *modal* rect
-    const cs    = getComputedStyle(content);
-    const padX  = parseInt(cs.paddingLeft, 10) + parseInt(cs.paddingRight, 10);
-    const padY  = parseInt(cs.paddingTop, 10)  + parseInt(cs.paddingBottom, 10);
-    const headerH = 36;
-    const footerH = footer ? footer.getBoundingClientRect().height : 0;
-    const skipH   = (skipBoxEl && skipBoxEl.style.display !== "none")
-                  ? Math.ceil(skipBoxEl.getBoundingClientRect().height) : 0;
-
-    const rect   = modalEl.getBoundingClientRect();
-    const availW = Math.max(0, rect.width  - padX);
-    const availH = Math.max(0, rect.height - padY - headerH - skipH - footerH);
-
-    // NEW: force content to be exactly the usable height, so nothing overflows
-    content.style.height = Math.max(0, availH + headerH + skipH) + "px";
-
-    const gap = 10;
-    const labelH = 22;
-
-    // Try 4→1 columns, pick the largest QR that fits
-    let best = { cols: 1, rows: n, size: 40, tileW: Math.floor(availW) };
-    const maxCols = Math.min(4, n);
-    for (let cols = maxCols; cols >= 1; cols--) {
-      const rows  = Math.ceil(n / cols);
-      const tileW = (availW - gap * (cols - 1)) / cols;
-      const tileH = (availH - gap * (rows - 1)) / rows;
-      const size  = Math.floor(Math.max(40, Math.min(tileW, tileH - labelH)));
-      if (size > best.size) best = { cols, rows, size, tileW };
-    }
-
-    // Grid styling (no scroll)
-    grid.innerHTML = "";
-    grid.style.display        = "flex";
-    grid.style.flexWrap       = "wrap";
-    grid.style.gap            = gap + "px";
-    grid.style.alignItems     = "flex-start";
-    grid.style.justifyContent = best.cols === 1 ? "center" : "center";
-    grid.style.maxWidth       = availW + "px";
-    grid.style.maxHeight      = availH + "px";
-
-    // Build tiles sized to the chosen columns
-    metals.forEach(([m, arr]) => {
-      const tileW = Math.floor(best.tileW);
-      const holder = document.createElement("div");
-      holder.style.cssText = `width:${tileW}px;text-align:center;flex:0 0 ${tileW}px`;
-      holder.innerHTML =
-        `<div id="qr_${m}"></div>
+     function showQrPreviewModal(lists){
+     const skipped = window._qrSkippedOrders || [];   // ← new
+     const grid=document.getElementById("qrPreviewGrid"); grid.innerHTML="";
+     Object.entries(lists).forEach(([m,arr])=>{
+       if(!arr.length) return;
+       const holder=document.createElement("div");
+       holder.style.cssText="width:120px;text-align:center";
+       holder.innerHTML=`<div id="qr_${m}"></div>
          <div style="font-size:.8em;margin-top:4px;">${m.toUpperCase()} (${arr.length})</div>`;
-      grid.appendChild(holder);
-      new QRCode(holder.firstElementChild, {
-        text: encodeOrderList(arr, m),
-        width:  best.size,
-        height: best.size,
-        correctLevel: QRCode.CorrectLevel.H
-      });
-    });
-  }
+       grid.appendChild(holder);
+       new QRCode(holder.firstElementChild,{
+         text:encodeOrderList(arr,m), width:110, height:110,
+         correctLevel:QRCode.CorrectLevel.H
+       });
+     });
+     window._pendingMetalLists=lists;
 
-    // Modal with hooks to (re)layout at the right time
-    const ro = new ResizeObserver(() => layout());
-    const modal = M.Modal.getInstance(modalEl) || M.Modal.init(modalEl, {
-      onOpenStart: () => { loadPositions(); if (content) content.style.position = "relative"; },
-      onOpenEnd  : () => { layout(); try { ro.observe(modalEl); } catch(_){} },
-      onCloseEnd : () => { try { ro.disconnect(); } catch(_){} }
-    });
-    modal.open();
+   /* ⏩  display skipped receipts */
+   const skipBox = document.getElementById("qrSkippedContainer");
+   if(skipBox){
+     if(skipped.length){
+       skipBox.innerHTML =
+         `<b>Skipped&nbsp;orders:</b> ${skipped.join(", ")}`;
+       skipBox.style.display = "";
+     }else{
+       skipBox.innerHTML = "";
+       skipBox.style.display = "none";
+     }
+   }
 
-    // Wire Print (keep your original behaviour)
-    const btn = document.getElementById("qrPreviewPrintBtn");
-    if (btn && !btn.dataset.wired) {
-      btn.dataset.wired = "1";
-      btn.addEventListener("click", e => {
-        e.preventDefault();
-        proceedToPrint(window._pendingMetalLists);
-      });
-    }
-  }
+     (M.Modal.getInstance(document.getElementById("qrPreviewModal"))
+        || M.Modal.init(document.getElementById("qrPreviewModal"))).open();
+
+       /* 🔄  (re)wire Print Labels every time the modal is built */
+       const btn = document.getElementById("qrPreviewPrintBtn");
+       if (btn && !btn.dataset.wired) {
+         btn.dataset.wired = "1";
+         btn.addEventListener("click", e => {
+           e.preventDefault();            // keep the modal steady
+           proceedToPrint(window._pendingMetalLists);
+         });
+       }
+
+   }
    function proceedToPrint(lists){
      /* ── 1. bail early if there is truly nothing to print ── */
      if(!lists || !Object.values(lists).some(arr=>arr.length)){
@@ -3071,7 +2940,6 @@ const defaultPos = {
   silverCounter:        { left:402,  top:9,   width:72, height:27 },
   roseCounter:          { left:485,  top:9,  width:72, height:27 },
   qrPreviewGrid:        { left:730, top:520, width:520, height:260 },
-  qrPreviewModal:       { left: 600, top: 220, width: 600, height: 420 },
   solidCounter:         { left:568,  top:9, width:72, height:27 }
 };
 
@@ -3089,12 +2957,11 @@ function loadPositions() {
     const width  = parseInt(localStorage.getItem(`pos-${id}-width`), 10)  || def.width  || 0;
     const height = parseInt(localStorage.getItem(`pos-${id}-height`), 10) || def.height || 0;
 
-    const isModal = /Modal$/.test(id); // e.g., qrPreviewModal, configModal
-    el.style.position = isModal ? "fixed" : "absolute";
-    el.style.setProperty("left",   left  + "px", "important");
-    el.style.setProperty("top",    top   + "px", "important");
-    if (width  > 0)  el.style.setProperty("width",  width  + "px", "important");
-    if (height > 0)  el.style.setProperty("height", height + "px", "important");
+    el.style.position = "absolute";
+    el.style.left   = left   + "px";
+    el.style.top    = top    + "px";
+    if (width  > 0) el.style.width  = width  + "px";
+    if (height > 0) el.style.height = height + "px";
   });
 }
 
@@ -3140,32 +3007,21 @@ function populateConfigTable() {
     `;
     tbody.appendChild(row);
 
-
     row.querySelector(".left-input").addEventListener("input", function () {
       const target = document.getElementById(this.dataset.id);
-      if (!target) return;
-      const important = /Modal$/.test(this.dataset.id) || this.dataset.id === "qrPreviewGrid";
-      target.style.setProperty("left", parseInt(this.value, 10) + "px", important ? "important" : "");
+      if (target) target.style.left = parseInt(this.value, 10) + "px";
     });
-
     row.querySelector(".top-input").addEventListener("input", function () {
       const target = document.getElementById(this.dataset.id);
-      if (!target) return;
-      const important = /Modal$/.test(this.dataset.id) || this.dataset.id === "qrPreviewGrid";
-      target.style.setProperty("top", parseInt(this.value, 10) + "px", important ? "important" : "");
+      if (target) target.style.top = parseInt(this.value, 10) + "px";
     });
-
     row.querySelector(".width-input").addEventListener("input", function () {
       const target = document.getElementById(this.dataset.id);
-      if (!target) return;
-      const important = /Modal$/.test(this.dataset.id) || this.dataset.id === "qrPreviewGrid";
-      target.style.setProperty("width", parseInt(this.value, 10) + "px", important ? "important" : "");
+      if (target) target.style.width = parseInt(this.value, 10) + "px";
     });
     row.querySelector(".height-input").addEventListener("input", function () {
       const target = document.getElementById(this.dataset.id);
-      if (!target) return;
-      const important = /Modal$/.test(this.dataset.id) || this.dataset.id === "qrPreviewGrid";
-      target.style.setProperty("height", parseInt(this.value, 10) + "px", important ? "important" : "");
+      if (target) target.style.height = parseInt(this.value, 10) + "px";
     });
   });
 }
@@ -3909,7 +3765,7 @@ function reflowGrid(){
        <div id="qrSkippedContainer"
             style="margin:10px 0;font-size:.9em;color:#d32f2f;"></div>
  
-       <div id="qrPreviewGrid"></div>
+       <div id="qrPreviewGrid" style="display:flex;flex-wrap:wrap;gap:20px;"></div>
 
    </div>
    <div class="modal-footer">
