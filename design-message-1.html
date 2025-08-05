@@ -386,15 +386,6 @@
 
   </style>
 
-  <!-- Hard-hide shipping controls -->
-  <style id="hideShippingControls">
-    #carrierSelectWrap,
-    #trackingNumberInput,
-    #completeOrderBtn {
-      display: none !important;
-    }
-  </style>
-
 </head>
 
 <body>
@@ -629,7 +620,9 @@
     window.receiptIsGift = null;
     window.receiptGiftMessage = null;
     window.receiptGiftWrap = null;
-    window.receiptGiftWrapPrice = null;    window.orderName = "";
+    window.receiptGiftWrapPrice = null;
+    window.receiptGiftMessageFrom = null;    
+    window.orderName = "";
     window.orderStatus = "";
     window.orderIsShipped = "";
     window.cachedOrderItems = [];
@@ -879,8 +872,8 @@
 
       orderDetails:           { left: 10,   top: 162,  width: 300, height: 342 },
       shipAddressBox:         { left: 324,   top: 162,  width: 200, height: 186 },
-      customerMessageHistory: { left: 10,   top: 534,  width: 300, height: 266 },
-      britesMsgInput:         { left: 14, top: 802, width: 295, height: 23 },
+      customerMessageHistory: { left: 10,   top: 577,  width: 300, height: 266 },
+      britesMsgInput:         { left: 14, top: 543, width: 295, height: 23 },
 
       dateOrdered:          { left: 10,   top: 100,  width: 145, height: 30 },
       shipDate:             { left: 164,  top: 100,  width: 145, height: 30 },
@@ -891,11 +884,11 @@
       titleShipDate:        { left: 167,  top: 82,   width: 99,  height: 15 },
       titleSignedInAs:      { left: 1226, top: 7,    width: 75,  height: 15 },
       titleOrderDetails:    { left: 11,   top: 144,  width: 99,  height: 15 },
-      titleBritesMessages:    { left: 10,   top: 515,  width: 99,  height: 15 },
+      titleBritesMessages:    { left: 10,   top: 518,  width: 95,  height: 15 },
       titlePurchasedItems:  { left: 538,  top: 135,   width: 99,  height: 15 },
       titleOrderNumber:     { left: 11,   top: 7,    width: 99,  height: 15 },
 
-      goScreenTwoBtn:       { left: 244, top: 802,    width: 65, height: 23 },
+      goScreenTwoBtn:       { left: 245, top: 536,    width: 65, height: 31 },
       signatureBox:         { left: 624,  top: 19,   width: 105, height: 34 },
 
       // The modal elements:
@@ -1186,6 +1179,8 @@
           const orderData = await pullEtsyOrderDetails(orderNumber);
           // 🆕 Always pull ShipStation Ship-To immediately after loading order meta
           await loadShipToAddress(orderNumber);
+          // 🎁 NEW – also pull Gift Message from ShipStation
+          await loadGiftMessage(orderNumber);
 
           if(orderData){
             await updateImageGrid(orderData);
@@ -1714,19 +1709,27 @@
           }
         }
       }
-      if(window.receiptIsGift !== null){
-        details += " Marked as Gift: " + window.receiptIsGift + "\n";
-      }
-      if(window.receiptGiftMessage){
-        details += " Gift Message: " + window.receiptGiftMessage + "\n";
+      /* 🎁  ── Gift indicators ───────────────────────────────── */
+      const giftIcon = "🎁";           // 20 % larger icon is not possible in a plain textarea,
+                                       // but the emoji renders slightly bigger than text on most OSes.
+
+      /* a. Marked-as-Gift */
+      if (window.receiptIsGift === true){
+        details += ` ${giftIcon} Marked as Gift: Yes\n`;
+      } else if (window.receiptIsGift === false){
+        details += " Marked as Gift: No\n";
       }
 
-      if (window.receiptGiftWrap !== null) {
-        details += " Gift Wrapping: " + window.receiptGiftWrap + "\n";
+      /* b. Gift Message */
+      if (window.receiptGiftMessage){
+        details += ` ${giftIcon} Gift Message: ${window.receiptGiftMessage}\n`;
       }
-      if (typeof window.receiptGiftWrapPrice === "number") {
-        details += " Gift Wrap Price: " +
-          window.receiptGiftWrapPrice.toLocaleString(undefined, { style: "currency", currency: "USD" }) + "\n";
+
+      /* c. Gift Wrapping */
+      if (window.receiptGiftWrap === true){
+        details += ` ${giftIcon} Gift Wrapping: Yes\n`;
+      } else if (window.receiptGiftWrap === false){
+        details += " Gift Wrapping: No\n";
       }
 
       document.getElementById("orderDetails").value = details;
@@ -1754,7 +1757,10 @@
         console.log("Etsy Order Data:", data);
         // Gift fields now sourced from Etsy receipt
         window.receiptIsGift = Boolean(data.is_gift);
-        window.receiptGiftMessage = (data.gift_message || "").trim();
+
+        // 🎁  Gift message now fetched from ShipStation (see loadGiftMessage)
+        window.receiptGiftMessage     = "";
+        window.receiptGiftMessageFrom = "";
 
         // Etsy receipts include gift_wrap_price as a money object { amount, divisor, currency_code }
         const gwp = data.gift_wrap_price;
@@ -1944,6 +1950,32 @@
         }
       }
 
+      /* ===== ShipStation — Gift Message (orderNumber) ===================== */
+      async function loadGiftMessage(orderNumber) {
+        try {
+          const resp = await fetch(
+            "/.netlify/functions/ssGetGiftMessage?orderNumber=" +
+            encodeURIComponent(orderNumber)
+          );
+          if (!resp.ok) throw new Error("ShipStation response " + resp.status);
+
+          const data = await resp.json();
+          window.receiptGiftMessage     = (data.giftMessage || "").trim();
+          window.receiptGiftMessageFrom = (data.giftFrom    || "").trim();
+
+          /* refresh details pane if a tile is selected */
+          const sel = document.querySelector(".preview-box.selected");
+          if (sel) {
+            const idx = parseInt(sel.id.replace("previewCell", ""), 10);
+            if (!Number.isNaN(idx)) showItemDetails(idx);
+          }
+        } catch (err) {
+          console.error("loadGiftMessage:", err);
+          window.receiptGiftMessage     = "";
+          window.receiptGiftMessageFrom = "";
+        }
+      }
+
     /* ---------------------------------------------------------
      *  Firestore listener for employee-scanned order numbers
      * --------------------------------------------------------*/
@@ -1955,7 +1987,7 @@
 
       let firstSnap = true;                       // 🔑 skip the initial payload
       db.collection("Brites_Orders")
-        .doc("design-scan-???")
+        .doc("design-scan-1")
         .onSnapshot(docSnap => {
           if (!window.isEmployeeLoggedIn) return;
 
@@ -1978,7 +2010,7 @@
 
               /* one-shot: wipe the field so it can’t be reused */
               db.collection("Brites_Orders")
-                .doc("design-scan-???")
+                .doc("design-scan-1")
                 .set({ "Order Number": firebase.firestore.FieldValue.delete() }, { merge:true });
 
             }
@@ -2039,7 +2071,11 @@
   <!-- 🆕 hard-hide unused fields -->
   <style id="hideUnusedFields">
     #labelCreationDate,
-    #completedByEmployee { display:none !important; }
+    #completedByEmployee,
+    /* requested hides */
+    #carrierSelectWrap,
+    #trackingNumberInput,
+    #completeOrderBtn { display:none !important; }
   </style>
 
 <!-- FINAL chat-bubble override: placed last so nothing beats it -->
