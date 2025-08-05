@@ -349,10 +349,11 @@
       will-change: opacity, transform;
       transition: opacity 300ms ease, transform 300ms ease;
     }
-    .modal.open {
-      opacity: 1 !important;
-      transform: translateY(0) scale(1) !important;
+    
+    /* Anchor absolute children inside the QR Preview modal */
+    #qrPreviewModal .modal-content { position: relative; 
     }
+
     .modal-overlay {
       opacity: 0;
       will-change: opacity;
@@ -476,7 +477,6 @@
 </div>
 
 <!-- Config Modal -->
-<div id="configModal" class="modal">
   <div class="modal-content">
     <table class="striped" id="configTable">
       <thead>
@@ -490,15 +490,13 @@
       </thead>
       <tbody></tbody>
     </table>
-  </div>
 
-  <div class="modal-footer">
-    <a href="#!" id="saveConfigBtn"
-       class="modal-close waves-effect waves-green btn">
-      Save Config
-    </a>
+    <!-- Live QR grid while configuring -->
+    <div id="configQrHost"
+         style="position:relative; min-height:240px; border:1px dashed #bdbdbd; margin-top:12px; padding:8px;">
+      <div style="font-size:.9em; color:#616161; margin-bottom:6px;">Live QR Grid while configuring</div>
+    </div>
   </div>
-</div>
 
 <!-- 1) Firebase (compat mode) – must be above your main sorting code -->
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
@@ -907,6 +905,7 @@ const configIDs = [
   "undoCompleteBtn",      // ← NEW
   "qrPreviewPrintBtn",    // ← NEW
   "qrPreviewModal",       // ← NEW
+  "qrPreviewGrid",        // ← NEW
   "goldCounter",
   "silverCounter",
   "roseCounter",
@@ -2938,6 +2937,7 @@ const defaultPos = {
   goldCounter:          { left:319, top:9,  width:72,height:27 },
   silverCounter:        { left:402,  top:9,   width:72, height:27 },
   roseCounter:          { left:485,  top:9,  width:72, height:27 },
+  qrPreviewGrid:        { left:730, top:520, width:520, height:260 },
   solidCounter:         { left:568,  top:9, width:72, height:27 }
 };
 
@@ -2963,12 +2963,36 @@ function loadPositions() {
   });
 }
 
-// --------------- (Your code for config table, openConfigBtn, saveConfigBtn, etc.) --------------
-document.getElementById("openConfigBtn").addEventListener("click", function () {
-  populateConfigTable();
-  M.Modal.getInstance(document.getElementById("configModal")).open();
-});
+  // --------------- (Your code for config table, openConfigBtn, saveConfigBtn, etc.) --------------
+  function returnGridToQrModal() {
+    const grid = document.getElementById("qrPreviewGrid");
+    if (!grid) return;
+    // Put it back right after the skipped-container (or at the end if not present)
+    const modalContent = document.querySelector("#qrPreviewModal .modal-content");
+    const anchor = document.getElementById("qrSkippedContainer");
+    if (modalContent) {
+      if (anchor && anchor.parentNode === modalContent) {
+        anchor.insertAdjacentElement("afterend", grid);
+      } else {
+        modalContent.appendChild(grid);
+      }
+    }
+  }
 
+  document.getElementById("openConfigBtn").addEventListener("click", function () {
+  populateConfigTable();
+
+  // Move live grid into Config host so edits are visible
+  const grid = document.getElementById("qrPreviewGrid");
+  const host = document.getElementById("configQrHost");
+  if (grid && host && grid.parentNode !== host) {
+    host.appendChild(grid);
+  }
+
+  const cfgEl = document.getElementById("configModal");
+  const cfgModal = M.Modal.getInstance(cfgEl) || M.Modal.init(cfgEl, { onCloseEnd: returnGridToQrModal });
+  cfgModal.open();
+});
 document.getElementById("saveConfigBtn").addEventListener("click", function () {
   configIDs.forEach(function (id) {
     const el = document.getElementById(id);
@@ -2979,6 +3003,9 @@ document.getElementById("saveConfigBtn").addEventListener("click", function () {
     localStorage.setItem("pos-" + id + "-width", parseInt(cs.width, 10) || 0);
     localStorage.setItem("pos-" + id + "-height", parseInt(cs.height, 10) || 0);
   });
+
+  // Put the grid back into the QR modal after saving
+  returnGridToQrModal();
   M.toast({ html: "Positions saved!" });
 });
 
@@ -3005,21 +3032,31 @@ function populateConfigTable() {
     `;
     tbody.appendChild(row);
 
+function ensureAbs(node){ if (node && node.style.position !== "absolute") node.style.position = "absolute"; }
+
     row.querySelector(".left-input").addEventListener("input", function () {
       const target = document.getElementById(this.dataset.id);
-      if (target) target.style.left = parseInt(this.value, 10) + "px";
+      if (!target) return;
+      ensureAbs(target);
+      target.style.left = parseInt(this.value, 10) + "px";
     });
     row.querySelector(".top-input").addEventListener("input", function () {
       const target = document.getElementById(this.dataset.id);
-      if (target) target.style.top = parseInt(this.value, 10) + "px";
+      if (!target) return;
+      ensureAbs(target);
+      target.style.top = parseInt(this.value, 10) + "px";
     });
     row.querySelector(".width-input").addEventListener("input", function () {
       const target = document.getElementById(this.dataset.id);
-      if (target) target.style.width = parseInt(this.value, 10) + "px";
+      if (!target) return;
+      ensureAbs(target);
+      target.style.width = parseInt(this.value, 10) + "px";
     });
     row.querySelector(".height-input").addEventListener("input", function () {
       const target = document.getElementById(this.dataset.id);
-      if (target) target.style.height = parseInt(this.value, 10) + "px";
+      if (!target) return;
+      ensureAbs(target);
+      target.style.height = parseInt(this.value, 10) + "px";
     });
   });
 }
