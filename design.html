@@ -323,11 +323,11 @@
     /* Config Modal */
     #configModal.modal {
       position: fixed !important;
-      top: 50% !important;
+      top: 30% !important;
       left: 50% !important;
       transform: translate(-50%, -50%) !important;
-      width: 250px !important;
-      height: 450px !important;
+      width: 575px !important;
+      height: 300px !important;
       max-height: none !important;
       overflow-y: auto !important;
     }
@@ -416,6 +416,18 @@
       font-size:0.9em;
       font-weight:600;
       user-select:none;
+    }
+
+    /* QR Preview Modal — fixed size & centered */
+    #qrPreviewModal.modal {
+      position: fixed !important;
+      top: 20% !important;
+      left: 20% !important;
+      transform: translate(-20%, -20%) !important;
+      width: 700px !important;    /* set your preferred width */
+      height: 330px !important;   /* set your preferred height */
+      max-height: none !important;
+      overflow-y: auto !important; /* scroll content if it overflows */
     }
 
   </style>
@@ -906,8 +918,6 @@ const configIDs = [
   "completeBtn",          // ← NEW
   "undoCompleteBtn",      // ← NEW
   "qrPreviewPrintBtn",    // ← NEW
-  "qrPreviewModal",       // ← NEW
-  "qrPreviewGrid",        // ← NEW
   "goldCounter",
   "silverCounter",
   "roseCounter",
@@ -2939,7 +2949,6 @@ const defaultPos = {
   goldCounter:          { left:319, top:9,  width:72,height:27 },
   silverCounter:        { left:402,  top:9,   width:72, height:27 },
   roseCounter:          { left:485,  top:9,  width:72, height:27 },
-  qrPreviewGrid:        { left:730, top:520, width:520, height:260 },
   solidCounter:         { left:568,  top:9, width:72, height:27 }
 };
 
