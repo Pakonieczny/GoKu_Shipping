@@ -1612,7 +1612,7 @@ async function openAIAnalyzePhoto(base64Image) {
   pendingFetchControllers.push(ctrlHue);
 
   const huePayload = {
-    model: "gpt-4.1-mini",
+    model: "gpt-4o",
     messages: [
       {
         role: "user",
@@ -1680,7 +1680,7 @@ async function openAIAnalyzePhoto(base64Image) {
     `\nHUE DESCRIPTION: "${hueText}"`;
 
   const labelPayload = {
-    model: "gpt-4.1-mini",
+    model: "gpt-4o",
     messages: [{ role: "user", content: labelPrompt }],
     max_tokens: 30
   };
@@ -2003,7 +2003,7 @@ async function fillPreviewBoxes(items) {
           return /rose\s*gold|rosegold|rosefilled|gold\s*filled|goldfilled|\bgold\b|silv[ae]?r|sterling\s*silver|14k|white\s*gold/.test(val);
         });
       }
-      
+
       if (metalVar && metalVar.formatted_value) {
         metalSel = metalVar.formatted_value;
 
@@ -2451,7 +2451,7 @@ async function compareImages(userImage, croppedGridImage, cellIndex, userImageNa
   pendingFetchControllers.push(controller);
 
   const payload = {
-    model: "gpt-4.1",
+    model: "gpt-4o",
     messages: [
       {
         role: "user",
