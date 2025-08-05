@@ -430,10 +430,23 @@
       overflow: hidden !important;  /* keep frame stable */
     }
 
-    /* Let content scroll inside, not the modal frame */
+    /* Let content fill frame and scroll */
     #qrPreviewModal .modal-content {
-      height: calc(100% - 64px);    /* account for padding/footer */
-      overflow-y: auto;
+      display: flex;         /* stack header + grid */
+      flex-direction: column;
+      height: 100%;
+      overflow: hidden;      /* grid scrolls, not the header */
+      padding-bottom: 0;     /* avoid footer overlap */
+    }
+
+    /* Grid takes the remaining space and scrolls */
+    #qrPreviewGrid {
+      flex: 1 1 auto;
+      min-height: 0;         /* critical for flex children to actually shrink */
+      overflow: auto;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 20px;
     }
 
   </style>
