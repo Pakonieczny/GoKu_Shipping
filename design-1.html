@@ -438,13 +438,15 @@
     #qrPreviewModal .modal-footer {
       flex: 0 0 auto;
     }
-    #qrPreviewGrid {
-      flex: 1 1 auto;
-      overflow: hidden !important;
-      display: flex; 
-      align-items: center; 
-      justify-content: space-between;
-      min-height: 0 !important;
+     #qrPreviewGrid {
+       flex: 1 1 auto;
+       overflow: hidden !important;
+       display: flex;
+       flex-wrap: wrap;              /* ✅ allow rows */
+       gap: 10px;                    /* both row/column gap */
+       align-items: flex-start;
+       justify-content: center;      /* looks nicer across sizes */
+       min-height: 0 !important;
     }
     /* trim heading margin so it doesn’t steal vertical space */
     #qrPreviewModal h5 { margin: 6px 0 2px !important; }
@@ -1640,100 +1642,110 @@ if (!orderContainer.dataset.rangeWired){
      });
      return `B36|${metal}|`+b36.join(".");
    }
-     function showQrPreviewModal(lists){
-   const skipped = window._qrSkippedOrders || [];
-   const grid = document.getElementById("qrPreviewGrid");
-   grid.innerHTML = "";
-   // Make sure layout constraints from CSS are applied
-   grid.style.flexWrap = "nowrap";
-   grid.style.gap = "10px";
-   grid.style.justifyContent = "space-between";
- 
-   // Count how many metals we’re actually showing (1..4)
-   const metals = Object.entries(lists).filter(([, arr]) => Array.isArray(arr) && arr.length);
-   const n = Math.max(1, Math.min(4, metals.length));    // clamp 1..4
- 
-   const modalEl = document.getElementById("qrPreviewModal");
-   const content = modalEl.querySelector(".modal-content");
-   const footer  = modalEl.querySelector(".modal-footer");
-   const headerH = 36;                                    // ~h5 height
- 
-   // Force positions to apply, then measure sizes
-   loadPositions();
-   if (content) content.style.position = "relative";
- 
-   // Compute available inner box *without* scroll: content minus header, skipped box, and footer
-   const contentCS   = getComputedStyle(content);
-   const padX        = parseInt(contentCS.paddingLeft, 10) + parseInt(contentCS.paddingRight, 10);
-   const padY        = parseInt(contentCS.paddingTop, 10)  + parseInt(contentCS.paddingBottom, 10);
-   const skipBox     = document.getElementById("qrSkippedContainer");
- 
-   const modalW      = modalEl.getBoundingClientRect().width;
-   const modalH      = modalEl.getBoundingClientRect().height;
-   const footerH     = footer ? footer.getBoundingClientRect().height : 0;
-   const skipH       = (skipBox && skipBox.style.display !== "none") ? skipBox.getBoundingClientRect().height : 0;
- 
-   const gap         = 10;                      // must match grid.style.gap
-   const availW      = Math.max(0, modalW - padX);
-   const availH      = Math.max(0, modalH - padY - headerH - skipH - footerH);
- 
-   // Layout in a single row (no wrap). Compute a square QR size that *fits*.
-   const tileW       = (availW - gap * (n - 1)) / n;
-   const labelH      = 22;                      // label under the QR
-   const tileH       = availH;                  // one row only
-   const qrSize      = Math.max(40, Math.floor(Math.min(tileW, tileH - labelH)));
- 
-   // Build holders and render QRs at the computed size
-   metals.forEach(([m, arr]) => {
-     const holder = document.createElement("div");
-     holder.style.cssText = `width:${Math.floor(tileW)}px;text-align:center;flex:0 0 ${Math.floor(tileW)}px`;
-     holder.innerHTML = `<div id="qr_${m}"></div>
-       <div style="font-size:.8em;margin-top:4px;">${m.toUpperCase()} (${arr.length})</div>`;
-     grid.appendChild(holder);
-     new QRCode(holder.firstElementChild, {
-       text: encodeOrderList(arr, m),
-       width: qrSize,
-       height: qrSize,
-       correctLevel: QRCode.CorrectLevel.H
-     });
-   });
- 
-   window._pendingMetalLists = lists;
+    function showQrPreviewModal(lists){
+    const skipped = window._qrSkippedOrders || [];
+    const modalEl = document.getElementById("qrPreviewModal");
+    const content = modalEl.querySelector(".modal-content");
+    const footer  = modalEl.querySelector(".modal-footer");
+    const grid    = document.getElementById("qrPreviewGrid");
 
-   /* ⏩  display skipped receipts */
-   const skipBoxEl = document.getElementById("qrSkippedContainer");
+    // Render "skipped" info
+    const skipBoxEl = document.getElementById("qrSkippedContainer");
     if (skipBoxEl){
-    if (skipped.length){
-      skipBoxEl.innerHTML =
-         `<b>Skipped&nbsp;orders:</b> ${skipped.join(", ")}`;
-       skipBoxEl.style.display = "";
-    } else {
-      skipBoxEl.innerHTML = "";
-      skipBoxEl.style.display = "none";
-     }
-   }
+      if (skipped.length){
+        skipBoxEl.innerHTML = `<b>Skipped&nbsp;orders:</b> ${skipped.join(", ")}`;
+        skipBoxEl.style.display = "";
+      } else {
+        skipBoxEl.innerHTML = "";
+        skipBoxEl.style.display = "none";
+      }
+    }
 
-   const modal = M.Modal.getInstance(modalEl) || M.Modal.init(modalEl, {
-     onOpenStart: () => {
-       // Re-apply positions, then rebuild sizes so nothing overflows
-       loadPositions();
-       const content = modalEl.querySelector(".modal-content");
-       if (content) content.style.position = "relative";
-     }
-   });
-   modal.open();
+    window._pendingMetalLists = lists;
 
-       /* 🔄  (re)wire Print Labels every time the modal is built */
-       const btn = document.getElementById("qrPreviewPrintBtn");
-       if (btn && !btn.dataset.wired) {
-         btn.dataset.wired = "1";
-         btn.addEventListener("click", e => {
-           e.preventDefault();            // keep the modal steady
-           proceedToPrint(window._pendingMetalLists);
-         });
-       }
+    function layout(){
+      if (!modalEl || !content || !grid) return;
 
-   }
+      // Apply positions first so width/height are up to date
+      loadPositions();
+      content.style.position = "relative";
+
+      // Metals to render (1..4)
+      const metals = Object.entries(lists).filter(([, arr]) => Array.isArray(arr) && arr.length);
+      const n = Math.max(1, Math.min(4, metals.length));
+
+      // Measure the usable box
+      const cs    = getComputedStyle(content);
+      const padX  = parseInt(cs.paddingLeft, 10) + parseInt(cs.paddingRight, 10);
+      const padY  = parseInt(cs.paddingTop, 10)  + parseInt(cs.paddingBottom, 10);
+      const headerH = 36;
+      const footerH = footer ? footer.getBoundingClientRect().height : 0;
+      const skipH   = (skipBoxEl && skipBoxEl.style.display !== "none")
+                     ? skipBoxEl.getBoundingClientRect().height : 0;
+
+      const rect   = modalEl.getBoundingClientRect();
+      const availW = Math.max(0, rect.width  - padX);
+      const availH = Math.max(0, rect.height - padY - headerH - skipH - footerH);
+
+      const gap = 10;
+      const labelH = 22;
+
+      // Try 4→1 columns, pick the largest QR that fits
+      let best = { cols: 1, rows: n, size: 40, tileW: Math.floor(availW) };
+      const maxCols = Math.min(4, n);
+      for (let cols = maxCols; cols >= 1; cols--){
+        const rows  = Math.ceil(n / cols);
+        const tileW = (availW - gap * (cols - 1)) / cols;
+        const tileH = (availH - gap * (rows - 1)) / rows;
+        const size  = Math.floor(Math.max(40, Math.min(tileW, tileH - labelH)));
+        if (size > best.size) best = { cols, rows, size, tileW };
+      }
+
+      // Grid styling
+      grid.innerHTML = "";
+      grid.style.display        = "flex";
+      grid.style.flexWrap       = "wrap";
+      grid.style.gap            = gap + "px";
+      grid.style.alignItems     = "flex-start";
+      grid.style.justifyContent = best.cols === 1 ? "center" : "center";
+
+      // Build tiles sized to the chosen columns
+      metals.forEach(([m, arr]) => {
+        const tileW = Math.floor(best.tileW);
+        const holder = document.createElement("div");
+        holder.style.cssText = `width:${tileW}px;text-align:center;flex:0 0 ${tileW}px`;
+        holder.innerHTML =
+          `<div id="qr_${m}"></div>
+           <div style="font-size:.8em;margin-top:4px;">${m.toUpperCase()} (${arr.length})</div>`;
+        grid.appendChild(holder);
+        new QRCode(holder.firstElementChild, {
+          text: encodeOrderList(arr, m),
+          width:  best.size,
+          height: best.size,
+          correctLevel: QRCode.CorrectLevel.H
+        });
+      });
+    }
+
+    // Modal with hooks to (re)layout at the right time
+    const ro = new ResizeObserver(() => layout());
+    const modal = M.Modal.getInstance(modalEl) || M.Modal.init(modalEl, {
+      onOpenStart: () => { loadPositions(); if (content) content.style.position = "relative"; },
+      onOpenEnd  : () => { layout(); try { ro.observe(modalEl); } catch(_){} },
+      onCloseEnd : () => { try { ro.disconnect(); } catch(_){} }
+    });
+    modal.open();
+
+    // Wire Print (keep your original behaviour)
+    const btn = document.getElementById("qrPreviewPrintBtn");
+    if (btn && !btn.dataset.wired) {
+      btn.dataset.wired = "1";
+      btn.addEventListener("click", e => {
+        e.preventDefault();
+        proceedToPrint(window._pendingMetalLists);
+      });
+    }
+  }
    function proceedToPrint(lists){
      /* ── 1. bail early if there is truly nothing to print ── */
      if(!lists || !Object.values(lists).some(arr=>arr.length)){
