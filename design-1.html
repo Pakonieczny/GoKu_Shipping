@@ -418,27 +418,33 @@
       user-select:none;
     }
 
-    +/* QR Preview modal: respect configured size, no internal scroll */
-     #qrPreviewModal.modal { 
-       max-height: none !important;                /* disable Materialize cap */
-     }
-     #qrPreviewModal .modal-content {
-       height: 100% !important;                    /* fill the modal box */
-       display: flex; 
-       flex-direction: column;
-       overflow: hidden !important;                /* prevent scrolling */
-       padding-bottom: 0 !important;               /* footer handles bottom spacing */
-     }
-     #qrPreviewModal .modal-footer {
-       flex: 0 0 auto;                             /* footer always visible */
-     }
-     #qrPreviewGrid {
-       flex: 1 1 auto;                             /* grid occupies the middle space */
-       overflow: hidden !important;                /* never scroll */
-       display: flex; 
-       align-items: center; 
-       justify-content: space-between;
-     }
+    /* QR Preview modal: respect configured size, no internal scroll */
+    #qrPreviewModal.modal { 
+      max-height: none !important;      /* disable Materialize cap */
+      overflow: hidden !important;      /* 🔒 stop vertical scrollbar */
+    }
+    #qrPreviewModal .modal-content {
+      height: 100% !important;          
+      display: flex; 
+      flex-direction: column;
+      overflow: hidden !important;      
+      padding-bottom: 0 !important;     
+      min-height: 0 !important;         /* allow flex child to shrink */
+    }
+    #qrPreviewModal .modal-footer {
+      flex: 0 0 auto;                   
+    }
+    #qrPreviewGrid {
+      flex: 1 1 auto;                   
+      overflow: hidden !important;      
+      display: flex; 
+      align-items: center; 
+      justify-content: space-between;
+      min-height: 0 !important;         /* critical in flex layouts */
+    }
+    /* trim heading margin so it doesn’t steal vertical space */
+    #qrPreviewModal h5 { margin: 6px 0 2px !important; 
+    }
 
   </style>
 
