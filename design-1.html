@@ -419,37 +419,41 @@
     }
 
     /* QR Preview modal: respect configured size, no internal scroll */
-    #qrPreviewModal.modal { 
+    #qrPreviewModal.modal {
+      position: fixed !important;   /* ensure we can clamp to viewport */
       max-height: none !important;
       overflow: hidden !important;
-      display: flex !important;        /* NEW: modal becomes flex column */
+      display: flex !important;     /* modal is a vertical flex column */
       flex-direction: column !important;
     }
+
     #qrPreviewModal .modal-content {
-      /* was: height: 100% */
-      height: auto !important;         /* NEW: don't steal footer's space */
-      flex: 1 1 auto !important;       /* NEW: fill remaining height neatly */
-      display: flex; 
+      height: auto !important;      /* JS will set an exact height */
+      flex: 1 1 auto !important;
+      display: flex;
       flex-direction: column;
-      overflow: hidden !important;
+      overflow: hidden !important;  /* no internal scroll */
       padding-bottom: 0 !important;
       min-height: 0 !important;
     }
+
     #qrPreviewModal .modal-footer {
-      flex: 0 0 auto;
+      flex: 0 0 auto;               /* footer always visible */
     }
-     #qrPreviewGrid {
-       flex: 1 1 auto;
-       overflow: hidden !important;
-       display: flex;
-       flex-wrap: wrap;              /* ✅ allow rows */
-       gap: 10px;                    /* both row/column gap */
-       align-items: flex-start;
-       justify-content: center;      /* looks nicer across sizes */
-       min-height: 0 !important;
+
+    #qrPreviewGrid {
+      flex: 1 1 auto;               /* takes the remaining space */
+      overflow: hidden !important;  /* no scrollbars in the grid */
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      align-items: flex-start;
+      justify-content: center;
+      min-height: 0 !important;
     }
-    /* trim heading margin so it doesn’t steal vertical space */
-    #qrPreviewModal h5 { margin: 6px 0 2px !important; }
+
+/* Trim heading margin so it doesn’t steal vertical space */
+#qrPreviewModal h5 { margin: 6px 0 2px !important; }
 
   </style>
 
@@ -1663,69 +1667,103 @@ if (!orderContainer.dataset.rangeWired){
 
     window._pendingMetalLists = lists;
 
-    function layout(){
-      if (!modalEl || !content || !grid) return;
+    function clampToViewport(modalEl) {
+    const vw = window.innerWidth;
+    const vh = window.innerHeight;
 
-      // Apply positions first so width/height are up to date
-      loadPositions();
-      content.style.position = "relative";
+    // Read current box from computed/inline styles
+    const cs = getComputedStyle(modalEl);
+    const left  = parseInt(cs.left  || modalEl.style.left  || 0, 10) || 0;
+    const top   = parseInt(cs.top   || modalEl.style.top   || 0, 10) || 0;
+    const width = parseInt(cs.width || modalEl.style.width || modalEl.getBoundingClientRect().width, 10) || 0;
+    const height= parseInt(cs.height|| modalEl.style.height|| modalEl.getBoundingClientRect().height,10) || 0;
 
-      // Metals to render (1..4)
-      const metals = Object.entries(lists).filter(([, arr]) => Array.isArray(arr) && arr.length);
-      const n = Math.max(1, Math.min(4, metals.length));
+    // Clamp to viewport with a small 8px margin
+    const maxW = Math.max(0, vw - 16);
+    const maxH = Math.max(0, vh - 16);
+    const clampedW = Math.min(width  || maxW, maxW);
+    const clampedH = Math.min(height || maxH, maxH);
+    const clampedL = Math.min(Math.max(8, left),  vw - clampedW - 8);
+    const clampedT = Math.min(Math.max(8, top),   vh - clampedH - 8);
 
-      // Measure the usable box
-      const cs    = getComputedStyle(content);
-      const padX  = parseInt(cs.paddingLeft, 10) + parseInt(cs.paddingRight, 10);
-      const padY  = parseInt(cs.paddingTop, 10)  + parseInt(cs.paddingBottom, 10);
-      const headerH = 36;
-      const footerH = footer ? footer.getBoundingClientRect().height : 0;
-      const skipH   = (skipBoxEl && skipBoxEl.style.display !== "none")
-                     ? skipBoxEl.getBoundingClientRect().height : 0;
+    Object.assign(modalEl.style, {
+      position: "fixed",
+      left:  clampedL + "px",
+      top:   clampedT + "px",
+      width: clampedW + "px",
+      height:clampedH + "px"
+    });
+  }
 
-      const rect   = modalEl.getBoundingClientRect();
-      const availW = Math.max(0, rect.width  - padX);
-      const availH = Math.max(0, rect.height - padY - headerH - skipH - footerH);
+  function layout() {
+    if (!modalEl || !content || !grid) return;
 
-      const gap = 10;
-      const labelH = 22;
+    // Make sure element positions are applied first
+    loadPositions();
+    clampToViewport(modalEl);           // NEW: keep modal fully on-screen
+    content.style.position = "relative";
 
-      // Try 4→1 columns, pick the largest QR that fits
-      let best = { cols: 1, rows: n, size: 40, tileW: Math.floor(availW) };
-      const maxCols = Math.min(4, n);
-      for (let cols = maxCols; cols >= 1; cols--){
-        const rows  = Math.ceil(n / cols);
-        const tileW = (availW - gap * (cols - 1)) / cols;
-        const tileH = (availH - gap * (rows - 1)) / rows;
-        const size  = Math.floor(Math.max(40, Math.min(tileW, tileH - labelH)));
-        if (size > best.size) best = { cols, rows, size, tileW };
-      }
+    // Which metals we’ll render (1..4)
+    const metals = Object.entries(lists).filter(([, arr]) => Array.isArray(arr) && arr.length);
+    const n = Math.max(1, Math.min(4, metals.length));
 
-      // Grid styling
-      grid.innerHTML = "";
-      grid.style.display        = "flex";
-      grid.style.flexWrap       = "wrap";
-      grid.style.gap            = gap + "px";
-      grid.style.alignItems     = "flex-start";
-      grid.style.justifyContent = best.cols === 1 ? "center" : "center";
+    // Compute available drawing box from the *modal* rect
+    const cs    = getComputedStyle(content);
+    const padX  = parseInt(cs.paddingLeft, 10) + parseInt(cs.paddingRight, 10);
+    const padY  = parseInt(cs.paddingTop, 10)  + parseInt(cs.paddingBottom, 10);
+    const headerH = 36;
+    const footerH = footer ? footer.getBoundingClientRect().height : 0;
+    const skipH   = (skipBoxEl && skipBoxEl.style.display !== "none")
+                  ? Math.ceil(skipBoxEl.getBoundingClientRect().height) : 0;
 
-      // Build tiles sized to the chosen columns
-      metals.forEach(([m, arr]) => {
-        const tileW = Math.floor(best.tileW);
-        const holder = document.createElement("div");
-        holder.style.cssText = `width:${tileW}px;text-align:center;flex:0 0 ${tileW}px`;
-        holder.innerHTML =
-          `<div id="qr_${m}"></div>
-           <div style="font-size:.8em;margin-top:4px;">${m.toUpperCase()} (${arr.length})</div>`;
-        grid.appendChild(holder);
-        new QRCode(holder.firstElementChild, {
-          text: encodeOrderList(arr, m),
-          width:  best.size,
-          height: best.size,
-          correctLevel: QRCode.CorrectLevel.H
-        });
-      });
+    const rect   = modalEl.getBoundingClientRect();
+    const availW = Math.max(0, rect.width  - padX);
+    const availH = Math.max(0, rect.height - padY - headerH - skipH - footerH);
+
+    // NEW: force content to be exactly the usable height, so nothing overflows
+    content.style.height = Math.max(0, availH + headerH + skipH) + "px";
+
+    const gap = 10;
+    const labelH = 22;
+
+    // Try 4→1 columns, pick the largest QR that fits
+    let best = { cols: 1, rows: n, size: 40, tileW: Math.floor(availW) };
+    const maxCols = Math.min(4, n);
+    for (let cols = maxCols; cols >= 1; cols--) {
+      const rows  = Math.ceil(n / cols);
+      const tileW = (availW - gap * (cols - 1)) / cols;
+      const tileH = (availH - gap * (rows - 1)) / rows;
+      const size  = Math.floor(Math.max(40, Math.min(tileW, tileH - labelH)));
+      if (size > best.size) best = { cols, rows, size, tileW };
     }
+
+    // Grid styling (no scroll)
+    grid.innerHTML = "";
+    grid.style.display        = "flex";
+    grid.style.flexWrap       = "wrap";
+    grid.style.gap            = gap + "px";
+    grid.style.alignItems     = "flex-start";
+    grid.style.justifyContent = best.cols === 1 ? "center" : "center";
+    grid.style.maxWidth       = availW + "px";
+    grid.style.maxHeight      = availH + "px";
+
+    // Build tiles sized to the chosen columns
+    metals.forEach(([m, arr]) => {
+      const tileW = Math.floor(best.tileW);
+      const holder = document.createElement("div");
+      holder.style.cssText = `width:${tileW}px;text-align:center;flex:0 0 ${tileW}px`;
+      holder.innerHTML =
+        `<div id="qr_${m}"></div>
+         <div style="font-size:.8em;margin-top:4px;">${m.toUpperCase()} (${arr.length})</div>`;
+      grid.appendChild(holder);
+      new QRCode(holder.firstElementChild, {
+        text: encodeOrderList(arr, m),
+        width:  best.size,
+        height: best.size,
+        correctLevel: QRCode.CorrectLevel.H
+      });
+    });
+  }
 
     // Modal with hooks to (re)layout at the right time
     const ro = new ResizeObserver(() => layout());
