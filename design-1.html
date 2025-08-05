@@ -418,6 +418,24 @@
       user-select:none;
     }
 
+    /* QR Preview Modal — fixed size & centered */
+    #qrPreviewModal.modal {
+      position: fixed !important;
+      top: 50% !important;
+      left: 50% !important;
+      transform: translate(-50%, -50%) !important;
+      width: 720px !important;      /* pick the exact width you want */
+      height: 520px !important;     /* pick the exact height you want */
+      max-height: none !important;  /* disable Materialize cap */
+      overflow: hidden !important;  /* keep frame stable */
+    }
+
+    /* Let content scroll inside, not the modal frame */
+    #qrPreviewModal .modal-content {
+      height: calc(100% - 64px);    /* account for padding/footer */
+      overflow-y: auto;
+    }
+
   </style>
 
    <!-- QR-Preview dependency -->
