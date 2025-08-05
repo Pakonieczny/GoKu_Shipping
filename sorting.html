@@ -1974,6 +1974,7 @@ async function fillPreviewBoxes(items) {
       const acceptedMetalNames = [
         "metal","metal choice","metal - engraving",
         "metal colour","color","metal choice / engraving option"
+        "metal choice / necklace length"          // ← NEW
       ];
       const metalVar = item.variations.find(v =>
         v.formatted_name &&
@@ -2000,6 +2001,28 @@ async function fillPreviewBoxes(items) {
           /* collapse leftover double spaces */
           .replace(/\s{2,}/g, " ")
           .trim();
+
+
+          /* ── NEW: yank out length junk & lock onto the metal ── */
+        // 1) split camelCase so “LengthRose” → “Length Rose”
+        metalSel = metalSel.replace(/([a-z])([A-Z])/g, "$1 $2");
+
+        // 2) drop “Necklace Length”, trailing sizes like “- 20”, etc.
+        metalSel = metalSel
+          .replace(/\bnecklace\s*length\b[\s\/:]*/gi, "")
+          .replace(/\s*-\s*\d+(\.\d+)?\s*$/g, "")
+          .trim();
+
+        // 3) canonical metal keywords so downstream filters never miss
+        const ml = metalSel.toLowerCase();
+        if (/rose\s*gold|rosegold|rose\b/.test(ml))      metalSel = "RoseGold";
+        else if (/\bwhite\s*gold\b/.test(ml))            metalSel = "WhiteGold";
+        else if (/\bsilver\b/.test(ml))                  metalSel = "Silver";
+        else if (/\b14k\b/.test(ml))                     metalSel = "14K";
+        else if (/\bgold\b/.test(ml))                    metalSel = "Gold";
+
+        /* tidy any doubles again */
+        metalSel = metalSel.replace(/\s{2,}/g, " ").trim();
       }
     }
     metalInput.value = " Metal: " + (metalSel || "No Metal");
