@@ -420,31 +420,34 @@
 
     /* QR Preview modal: respect configured size, no internal scroll */
     #qrPreviewModal.modal { 
-      max-height: none !important;      /* disable Materialize cap */
-      overflow: hidden !important;      /* 🔒 stop vertical scrollbar */
+      max-height: none !important;
+      overflow: hidden !important;
+      display: flex !important;        /* NEW: modal becomes flex column */
+      flex-direction: column !important;
     }
     #qrPreviewModal .modal-content {
-      height: 100% !important;          
+      /* was: height: 100% */
+      height: auto !important;         /* NEW: don't steal footer's space */
+      flex: 1 1 auto !important;       /* NEW: fill remaining height neatly */
       display: flex; 
       flex-direction: column;
-      overflow: hidden !important;      
-      padding-bottom: 0 !important;     
-      min-height: 0 !important;         /* allow flex child to shrink */
+      overflow: hidden !important;
+      padding-bottom: 0 !important;
+      min-height: 0 !important;
     }
     #qrPreviewModal .modal-footer {
-      flex: 0 0 auto;                   
+      flex: 0 0 auto;
     }
     #qrPreviewGrid {
-      flex: 1 1 auto;                   
-      overflow: hidden !important;      
+      flex: 1 1 auto;
+      overflow: hidden !important;
       display: flex; 
       align-items: center; 
       justify-content: space-between;
-      min-height: 0 !important;         /* critical in flex layouts */
+      min-height: 0 !important;
     }
     /* trim heading margin so it doesn’t steal vertical space */
-    #qrPreviewModal h5 { margin: 6px 0 2px !important; 
-    }
+    #qrPreviewModal h5 { margin: 6px 0 2px !important; }
 
   </style>
 
