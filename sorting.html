@@ -2017,21 +2017,28 @@ async function fillPreviewBoxes(items) {
           .replace(/\s*-\s*\d+(\.\d+)?\s*$/g, "")
           .trim();
 
-        /* 3) canonical metal keywords so downstream filters never miss */
-
-        /* normalise odd punctuation such as middle-dots */
+        /* normalise odd punctuation such as middle-dots, then lower-case */
         metalSel = metalSel.replace(/[·•]/g, " ").trim();
         const norm = metalSel.toLowerCase();
 
-        if (/rose\s*gold|rosegold|rosefilled|rose\b/.test(norm)) {
+        /* — ROSE GOLD — catch plain, filled, or 14 K variants */
+        if (/(?:14k\s*)?(?:rose\s*gold|rosegold|rose\s*gold\s*filled|rosegold\s*filled|rosefilled)\b/.test(norm)) {
           metalSel = "Rose Gold";
-        } else if (/gold\s*filled|goldfilled/.test(norm)) {
+
+        /* — GOLD FILLED — plain or 14 K */
+        } else if (/(?:14k\s*)?(?:gold\s*filled|goldfilled)\b/.test(norm)) {
           metalSel = "Gold Filled";
-        } else if (/silv[ae]?r/.test(norm)) {
+
+        /* — SILVER — plain or “Color Sterling Silver” spellings */
+        } else if (/(?:color\s*)?sterling\s*silver\b|silv[ae]?r\b/.test(norm)) {
           metalSel = "Silver";
+
+        /* — stand-alone 14 K (if it wasn’t part of a filled/rose match) */
         } else if (/\b14k\b/.test(norm)) {
           metalSel = "14K";
-        } else if (/\bgold\b/.test(norm)) {          /* plain “gold” → Gold Filled */
+
+        /* — lone “gold” defaults to Gold Filled */
+        } else if (/\bgold\b/.test(norm)) {
           metalSel = "Gold Filled";
         }
 
