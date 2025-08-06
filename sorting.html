@@ -1644,6 +1644,10 @@ async function openAIAnalyzePhoto(base64Image) {
   let charmFlag = "no";
   let roseHit   = false;  // ← PASS-1 Rose detector
 
+   // Medians from PASS 1 (declared in outer scope so PASS 2 can see them)
+   let hsvH = NaN, hsvS = NaN, hsvV = NaN;
+   let labL = NaN, labA = NaN, labB = NaN;
+
   try {
     const r1 = await fetch(functionsBaseUrl + "/openaiProxy", {
       method : "POST",
@@ -1666,8 +1670,8 @@ async function openAIAnalyzePhoto(base64Image) {
      // NEW: capture medians from API (numbers expected)
     const hsv = obj1.medianHSV || {};
     const lab = obj1.medianLab || {};
-    const hsvH = Number(hsv.H), hsvS = Number(hsv.S), hsvV = Number(hsv.V);
-    const labL = Number(lab.L), labA = Number(lab.a), labB = Number(lab.b);
+    hsvH = Number(hsv.H); hsvS = Number(hsv.S); hsvV = Number(hsv.V);
+    labL = Number(lab.L); labA = Number(lab.a); labB = Number(lab.b);
     console.log("%c[openAIAnalyzePhoto] PASS 1 → medians:",
       "color:#03A9F4;font-weight:bold",
       `HSV H=${hsvH}° S=${hsvS}% V=${hsvV}% | Lab L*=${labL} a*=${labA} b*=${labB}`);
