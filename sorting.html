@@ -1621,10 +1621,13 @@ async function openAIAnalyzePhoto(base64Image) {
             type: "text",
             text:
               "Return JSON EXACTLY like:\n" +
-              '  {"hue":"<≤10‑word description>", "topRightNumber":"<number or blank>", "charmPresent":"Yes|No"}\n\n' +
-              "TASK 1 – Describe the dominant metal hue (≤10 words).\n" +
-              "TASK 2 – Top‑right number (blank if none).\n" +
-              "TASK 3 – Is a jewellery charm clearly visible? (Yes|No).\n" +
+              '  {"hue":"<≤10-word description>", "topRightNumber":"<number or blank>", "charmPresent":"Yes|No",' +
+              '   "medianHSV":{"H":<deg>,"S":<pct>,"V":<pct>}, "medianLab":{"L":<L*>,"a":<a*>,"b":<b*>}}\n\n' +
+              "TASK 1 – Describe the dominant metal hue (≤10 words).\n" +
+              "TASK 2 – Extract the top-right number (blank if none).\n" +
+              "TASK 3 – Is a jewellery charm clearly visible? (Yes|No).\n" +
+              "TASK 4 – From the image, estimate the MEDIAN HSV (H° 0–360, S% 0–100, V% 0–100)\n" +
+              "         and MEDIAN CIELAB (L*, a*, b*). Use numeric values only.\n" +
               "Respond with JSON only."
           },
           { type: "image_url", image_url: { url: base64Image, detail: "high" } }
@@ -1660,6 +1663,15 @@ async function openAIAnalyzePhoto(base64Image) {
     charmFlag = (obj1.charmPresent  || "No").toLowerCase();
     roseHit   = /rose/i.test(hueText);  // any form: “rose”, “rose gold”, “rosegold”
 
+     // NEW: capture medians from API (numbers expected)
+    const hsv = obj1.medianHSV || {};
+    const lab = obj1.medianLab || {};
+    const hsvH = Number(hsv.H), hsvS = Number(hsv.S), hsvV = Number(hsv.V);
+    const labL = Number(lab.L), labA = Number(lab.a), labB = Number(lab.b);
+    console.log("%c[openAIAnalyzePhoto] PASS 1 → medians:",
+      "color:#03A9F4;font-weight:bold",
+      `HSV H=${hsvH}° S=${hsvS}% V=${hsvV}% | Lab L*=${labL} a*=${labA} b*=${labB}`);
+
     console.log(
       "%c[openAIAnalyzePhoto] PASS 1 → hue:", "color:#03A9F4;font-weight:bold",
       `"${hueText}"  |  topRightNumber: ${topNumber}  |  charmPresent: ${charmFlag}`
@@ -1674,10 +1686,16 @@ async function openAIAnalyzePhoto(base64Image) {
   pendingFetchControllers.push(ctrlLabel);
 
   const labelPrompt =
-    `Based solely on the hue description below, choose the single closest label:\n` +
-    `• Gold\n• RoseGold\n• Silver\n\n` +
-    `Respond with exactly one of those words (or "Unknown" if unclear).\n` +
-    `\nHUE DESCRIPTION: "${hueText}"`;
+    `You are classifying metal color from numeric medians. APPLY THESE CUT LINES STRICTLY:\n` +
+    `• HSV rule (primary): RoseGold if median H < 38°, else Gold.\n` +
+    `• CIELAB cross-check: RoseGold if median a* ≥ 2.0; Gold if a* ≤ 1.0.\n` +
+    `• Voting: each satisfied rule is one vote. If both rules agree, use that label.\n` +
+    `• If still tied, prefer the label implied by the hue text; if the hue mentions "rose", break ties to RoseGold; if it mentions "silver", choose Silver; otherwise choose Gold vs RoseGold by closest H to the 38° cut.\n` +
+    `• Only return exactly one word: Gold, RoseGold, or Silver.\n\n` +
+    `INPUT\n` +
+    `hue="${hueText}"\n` +
+    `medianHSV: H=${hsvH} S=${hsvS} V=${hsvV}\n` +
+    `medianLab: L=${labL} a=${labA} b=${labB}`;
 
   const labelPayload = {
     model: "gpt-4o",
@@ -1710,12 +1728,6 @@ async function openAIAnalyzePhoto(base64Image) {
     finalColor = "Unknown";
   }
 
-   // === Unified ROSE override (applies to both passes) ===
-   if (roseHit) {
-     finalColor = "RoseGold";
-     console.log("[override] PASS-1 hue mentioned 'rose' → forcing RoseGold");
-   }
-
   /* ───────────────────── RETURN consolidated result ───────────────────── */
   return {
     topRightNumber : topNumber,
@@ -1731,7 +1743,7 @@ async function analyzeUserImagesViaOpenAI() {
     (typeof window.stripExtension === "function")
       ? window.stripExtension
       : (fn => (fn ? fn.replace(/\.\w+$/, "") : ""));
-
+s
   const runId = globalRunId;   // snapshot current run
 
   const imagesToAnalyze = userImagesArray.filter(u => !u.analyzed);
