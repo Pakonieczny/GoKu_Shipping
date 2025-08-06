@@ -1418,11 +1418,8 @@ function openIframePrinterForListing(cellIndex) {
          const corrected = await reduceRedTone(cropped, 0.85);   // NEW
  
          // Push to temporary array; NOT yet stored in userImagesArray
-         subImagesToAnalyze.push({
-           origName: file.name + "_Q" + q,
-           data: corrected          // red-corrected image
-         });
-      }
+        subImagesToAnalyze.push({ origName: file.name + "_Q" + q, data: cropped });
+              }
 
       M.toast({
         html: `File ${file.name}: Extracted 140 individual images`
@@ -1626,9 +1623,17 @@ async function openAIAnalyzePhoto(base64Image) {
               "TASK 1 – Describe the dominant metal hue (≤10 words).\n" +
               "TASK 2 – Extract the top-right number (blank if none).\n" +
               "TASK 3 – Is a jewellery charm clearly visible? (Yes|No).\n" +
-              "TASK 4 – From the image, estimate the MEDIAN HSV (H° 0–360, S% 0–100, V% 0–100)\n" +
-              "         and MEDIAN CIELAB (L*, a*, b*). Use numeric values only.\n" +
+              "Estimate MEDIAN HSV (H° 0–360, S% 0–100, V% 0–100) and MEDIAN CIELAB (L*, a*, b*).\n" +
+
+              "IMPORTANT MASKING RULES FOR MEDIANS:\n" +
+              "• Exclude background/near-black pixels and any white/near-white background.\n" +
+              "• Ignore pixels if (HSV.V ≤ 18% OR Lab L* ≤ 20)  ← near-black/very dark. \n" +
+              "• Ignore pixels if (HSV.V ≥ 96% OR Lab L* ≥ 96)  ← near-white/very bright. \n" +
+              "• Ignore pixels with very low saturation (HSV.S < 8%) to avoid gray background bleed.\n" +
+
               "Respond with JSON only."
+
+
           },
           { type: "image_url", image_url: { url: base64Image, detail: "high" } }
         ]
@@ -1691,15 +1696,19 @@ async function openAIAnalyzePhoto(base64Image) {
 
   const labelPrompt =
     `You are classifying metal color from numeric medians. APPLY THESE CUT LINES STRICTLY:\n` +
-    `• HSV rule (primary): RoseGold if median H < 41.0°, else Gold.\n` +
-    `• CIELAB cross-check: RoseGold if median a* ≥ 0.7; Gold if a* ≤ 0.6\n` +
+    `• HSV rule (primary): RoseGold if 15° ≤ median H ≤ 33° AND S ≥ 20%.\n` +
+    `• CIELAB rule (cross-check): RoseGold if a* ≥ 6.5 AND b* ≥ 14.\n` +
+    `• Gold rule (fallback): Gold if (median H ≥ 34°) OR (a* ≤ 5.5) OR (b* ≤ 12).\n` +
+    `• Silver: If S ≤ 10% AND a* between −2 and +3 AND b* between −2 and +6.\n` +
     `• Voting: each satisfied rule is one vote. If both rules agree, use that label.\n` +
-    `• If still tied, prefer the label implied by the hue text; if the hue mentions "rose", break ties to RoseGold; if it mentions "silver", choose Silver; otherwise choose Gold vs RoseGold by closest H to the 38° cut.\n` +
+    `Voting: each satisfied rule is one vote. If both RoseGold rules vote RoseGold, use RoseGold.\n` +
+    `If rules disagree, prefer the majority; on ties consult hue text: “rose” → RoseGold, “silver” → Silver; otherwise choose Gold vs RoseGold by whichever H is closer to the RoseGold band center (≈24°).\n` +
     `• Only return exactly one word: Gold, RoseGold, or Silver.\n\n` +
     `INPUT\n` +
     `hue="${hueText}"\n` +
     `medianHSV: H=${hsvH} S=${hsvS} V=${hsvV}\n` +
     `medianLab: L=${labL} a=${labA} b=${labB}`;
+
 
   const labelPayload = {
     model: "gpt-4o",
