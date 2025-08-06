@@ -708,7 +708,7 @@
 
     /* Replace any &quot; entity with a plain single quote */
     function deQuote(s){
-      return (s == null ? "" : String(s)).replace(/&quot;/g, "'");
+      return (s == null ? "" : String(s)).replace(/&quot;/g, '"');
     }
 
     /* globals for realtime listener */
@@ -764,7 +764,7 @@
           if (!firstBatch && snap.docChanges().some(c=>c.type==="added")) playChime();
           firstBatch = false;
 
-          box.innerHTML = html;
+          box.innerHTML = html.replace(/&quot;/g, '"');
           box.scrollTop = box.scrollHeight;
           applyChatSpacing();
         });
