@@ -1467,11 +1467,13 @@ async function analyzeAndStoreSubImages(imgObjs) {
     const isCharm = (res.charmPresent || "").toLowerCase() === "yes";
 
     // 1) Save *every* image immediately, no skipForCharm flag
-     userImagesArray.push({
-       name    : isCharm ? composeMatrixFilename(res) : `${origName}.jpg`,
-       data,
-       analyzed: true
-     });
+    userImagesArray.push({
+      name    : isCharm
+                ? `${res.color||"UnknownColor"}_${res.topRightNumber||"XX"}.jpg`
+                : `${origName}.jpg`,
+      data,
+      analyzed: true
+    });
     saved++;
 
     // 2) Update streak
@@ -1592,90 +1594,6 @@ async function cropTo512(dataUrl) {
    });
  }
 
-  /* ============================================================
-  * Pixel color engine: masked medians + robust Gold/Rose split
-  * ============================================================ */
- const HUE_ROSE_MAX_DEG = 38.0;   // HSV cut (Rose if H < 38°)
- const LAB_A_ROSE_MIN   = 2.0;    // a* ≥ 2.0 → Rose
- const LAB_A_GOLD_MAX   = 1.0;    // a* ≤ 1.0 → Gold
- const LABEL_MASK_FRAC  = 0.26;   // ignore top-right 26% × 26%
-
- function rgb2hsv(r,g,b){
-   r/=255; g/=255; b/=255;
-   const max=Math.max(r,g,b), min=Math.min(r,g,b); const d=max-min;
-   let h=0, s=max===0?0:d/max, v=max;
-   if (d!==0){
-     switch(max){
-       case r: h=((g-b)/d + (g<b?6:0)); break;
-       case g: h=((b-r)/d + 2); break;
-       default: h=((r-g)/d + 4);
-     }
-     h*=60;
-   }
-   return [h, s*100, v*100]; // deg, %, %
- }
-
- function rgb2lab(r,g,b){
-   function lin(u){u/=255;return u<=0.04045?u/12.92:Math.pow((u+0.055)/1.055,2.4);}
-   let R=lin(r),G=lin(g),B=lin(b);
-   let X=R*0.4124564+G*0.3575761+B*0.1804375;
-   let Y=R*0.2126729+G*0.7151522+B*0.0721750;
-   let Z=R*0.0193339+G*0.1191920+B*0.9503041;
-   const Xn=0.95047, Yn=1.00000, Zn=1.08883;
-   function f(t){return t>0.008856?Math.cbrt(t):(7.787*t+16/116);}
-   let fx=f(X/Xn), fy=f(Y/Yn), fz=f(Z/Zn);
-   return [116*fy-16, 500*(fx-fy), 200*(fy-fz)]; // L*, a*, b*
- }
-
- function median(arr){ if(!arr.length) return 0;
-   const s=arr.slice().sort((a,b)=>a-b); const m=Math.floor(s.length/2);
-   return s.length%2?s[m]:(s[m-1]+s[m])/2; }
-
- async function computeMaskedMedians(dataURL){
-   const img = await loadImage(dataURL);
-   const w=img.width, h=img.height;
-   const can=document.createElement("canvas"); can.width=w; can.height=h;
-   const ctx=can.getContext("2d"); ctx.drawImage(img,0,0);
-   const {data}=ctx.getImageData(0,0,w,h);
-   const maskW=Math.floor(w*LABEL_MASK_FRAC), maskH=Math.floor(h*LABEL_MASK_FRAC);
-   const maskX=w-maskW, maskY=0;
-   const Hs=[],Ss=[],Vs=[], Ls=[],As=[],Bs=[];
-   for(let y=0;y<h;y++){
-     for(let x=0;x<w;x++){
-       if (x>=maskX && y<maskH) continue;            // ignore number box
-       const i=(y*w+x)*4, r=data[i],g=data[i+1],b=data[i+2],a=data[i+3];
-       if (a<10) continue;
-       const [hh,ss,vv]=rgb2hsv(r,g,b);
-       if (vv<12) continue;                          // near-black cloth
-       if (vv>97 && ss<3) continue;                  // specular white
-       const [L,aS,bS]=rgb2lab(r,g,b);
-       Hs.push(hh); Ss.push(ss); Vs.push(vv);
-       Ls.push(L);  As.push(aS);  Bs.push(bS);
-     }
-   }
-   return { HSV:{H:median(Hs),S:median(Ss),V:median(Vs)},
-            LAB:{L:median(Ls),a:median(As),b:median(Bs)} };
- }
- function classifyGoldVsRose(hsv, lab){
-   if (hsv.H < HUE_ROSE_MAX_DEG) return "RoseGold";
-   if (lab.a >= LAB_A_ROSE_MIN)  return "RoseGold";
-   if (lab.a <= LAB_A_GOLD_MAX)  return "Gold";
-   return (hsv.H >= HUE_ROSE_MAX_DEG ? "Gold" : "RoseGold");
- }
-
- async function detectMetalColorByPixels(dataURL){
-   const med = await computeMaskedMedians(dataURL);
-   const label = classifyGoldVsRose(med.HSV, med.LAB);
-   return { ...med, label };
- }
-
- // Filename helper (consistent across code paths)
- function composeMatrixFilename(meta){
-   const color = (meta.color || "Unknown").replace(/\s+/g,"");
-   const num   = meta.topRightNumber != null ? String(meta.topRightNumber).padStart(2,"0") : "00";
-   return `${color}_${num}.jpg`;
- }
-
 // Utility: load a DataURL into <img> so we can measure width/height
 function loadImage(dataUrl) {
   return new Promise((resolve, reject) => {
@@ -1687,54 +1605,124 @@ function loadImage(dataUrl) {
   });
 }
 
-// --------------- Single-Photo Analysis (parallel AI + pixel color) ---------------
+// --------------- Single‑Photo Analysis (TWO‑PASS hue→label + verbose logs) ---------------
 async function openAIAnalyzePhoto(base64Image) {
-  const aiCtrl = new AbortController();
-  pendingFetchControllers.push(aiCtrl);
+  /* ───────────────────── PASS 1 : hue / number / charm ───────────────────── */
+  const ctrlHue = new AbortController();
+  pendingFetchControllers.push(ctrlHue);
 
-  const aiPromise = (async () => {
-    const prompt =
-      `Extract two things from the charm tile image:\n` +
-      `1) topRightNumber (digits in the small white box at top-right)\n` +
-      `2) charmPresent: Yes/No (is there a charm silhouette present?)\n` +
-      `Respond strictly as JSON: {"topRightNumber": <int|null>, "charmPresent":"Yes|No"}`;
-    const payload = {
-      model: "gpt-4o-mini",
-      messages: [{ role: "user", content: [
-        { type: "text", text: prompt },
-        { type: "image_url", image_url: { url: base64Image } }
-      ]}],
-      max_tokens: 60
-    };
-    const r = await fetch(functionsBaseUrl + "/openaiProxy", {
-      method: "POST",
+  const huePayload = {
+    model: "gpt-4o",
+    messages: [
+      {
+        role: "user",
+        content: [
+          {
+            type: "text",
+            text:
+              "Return JSON EXACTLY like:\n" +
+              '  {"hue":"<≤10‑word description>", "topRightNumber":"<number or blank>", "charmPresent":"Yes|No"}\n\n' +
+              "TASK 1 – Describe the dominant metal hue (≤10 words).\n" +
+              "TASK 2 – Top‑right number (blank if none).\n" +
+              "TASK 3 – Is a jewellery charm clearly visible? (Yes|No).\n" +
+              "Respond with JSON only."
+          },
+          { type: "image_url", image_url: { url: base64Image, detail: "high" } }
+        ]
+      }
+    ],
+    max_tokens: 200
+  };
+
+  console.log("%c[openAIAnalyzePhoto] PASS 1 payload:", "color:#03A9F4", huePayload);
+
+  let hueText   = "";
+  let topNumber = null;
+  let charmFlag = "no";
+  let roseHit   = false;  // ← PASS-1 Rose detector
+
+  try {
+    const r1 = await fetch(functionsBaseUrl + "/openaiProxy", {
+      method : "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-      signal: aiCtrl.signal
+      body   : JSON.stringify(huePayload),
+      signal : ctrlHue.signal
     });
-    const d = await r.json();
-    const raw = (d.choices?.[0]?.message?.content || "{}").trim();
-    let obj={}; try{ obj = JSON.parse(raw); }catch(_){}
-    return {
-      topRightNumber: (Number.isFinite(obj.topRightNumber) ? obj.topRightNumber : null),
-      charmPresent  : (obj.charmPresent || "No").toLowerCase()
-    };
-  })();
+    const d1 = await r1.json();
+    let raw1 = d1.choices?.[0]?.message?.content?.trim() || "";
+    console.log("%c[openAIAnalyzePhoto] PASS 1 raw response:", "color:#03A9F4", raw1);
 
-  const pixelPromise = detectMetalColorByPixels(base64Image); // { HSV, LAB, label }
-  const [aiRes, pxRes] = await Promise.allSettled([aiPromise, pixelPromise]);
+    raw1 = raw1.replace(/^```(\w+)?/, "").replace(/```$/, "").trim();
+    const obj1 = JSON.parse(raw1);
 
-  const ai = aiRes.status === "fulfilled" ? aiRes.value : { topRightNumber:null, charmPresent:"no" };
-  const px = pxRes.status === "fulfilled" ? pxRes.value : { label:"Unknown", HSV:{}, LAB:{} };
+    hueText   = obj1.hue            || "";
+    topNumber = obj1.topRightNumber || null;
+    charmFlag = (obj1.charmPresent  || "No").toLowerCase();
+    roseHit   = /rose/i.test(hueText);  // any form: “rose”, “rose gold”, “rosegold”
 
-  console.log("%c[metal-color] HSV/LAB:", "color:#ff9800;font-weight:bold", px.HSV, px.LAB, "→", px.label);
+    console.log(
+      "%c[openAIAnalyzePhoto] PASS 1 → hue:", "color:#03A9F4;font-weight:bold",
+      `"${hueText}"  |  topRightNumber: ${topNumber}  |  charmPresent: ${charmFlag}`
+    );
+  } catch (err) {
+    console.error("[openAIAnalyzePhoto] PASS 1 error:", err);
+    return { topRightNumber:null, color:null, charmPresent:"no" };
+  }
 
-   return {
-     topRightNumber: ai.topRightNumber,
-     charmPresent  : ai.charmPresent,
-     color         : px.label
-   };
- }
+  /* ───────────────────── PASS2 : hue ⇒ fixed label ───────────────────── */
+  const ctrlLabel = new AbortController();
+  pendingFetchControllers.push(ctrlLabel);
+
+  const labelPrompt =
+    `Based solely on the hue description below, choose the single closest label:\n` +
+    `• Gold\n• RoseGold\n• Silver\n\n` +
+    `Respond with exactly one of those words (or "Unknown" if unclear).\n` +
+    `\nHUE DESCRIPTION: "${hueText}"`;
+
+  const labelPayload = {
+    model: "gpt-4o",
+    messages: [{ role: "user", content: labelPrompt }],
+    max_tokens: 30
+  };
+
+  console.log("%c[openAIAnalyzePhoto] PASS 2 payload:", "color:#8E24AA", labelPayload);
+
+  let finalColor = null;
+  try {
+    const r2 = await fetch(functionsBaseUrl + "/openaiProxy", {
+      method : "POST",
+      headers: { "Content-Type": "application/json" },
+      body   : JSON.stringify(labelPayload),
+      signal : ctrlLabel.signal
+    });
+    const d2 = await r2.json();
+    let raw2 = d2.choices?.[0]?.message?.content?.trim() || "";
+    console.log("%c[openAIAnalyzePhoto] PASS 2 raw response:", "color:#8E24AA", raw2);
+
+    raw2       = raw2.replace(/[^A-Za-z]/g, "");
+    finalColor = ["Gold", "RoseGold", "Silver"].includes(raw2) ? raw2 : "Unknown";
+    console.log(
+      "%c[openAIAnalyzePhoto] PASS 2 → final metal label:", "color:#8E24AA;font-weight:bold",
+      finalColor
+    );
+  } catch (err) {
+    console.error("[openAIAnalyzePhoto] PASS 2 error:", err);
+    finalColor = "Unknown";
+  }
+
+   // === Unified ROSE override (applies to both passes) ===
+   if (roseHit) {
+     finalColor = "RoseGold";
+     console.log("[override] PASS-1 hue mentioned 'rose' → forcing RoseGold");
+   }
+
+  /* ───────────────────── RETURN consolidated result ───────────────────── */
+  return {
+    topRightNumber : topNumber,
+    color          : finalColor,
+    charmPresent   : charmFlag
+  };
+}
 
 // --------------- Master Analysis Function ---------------
 async function analyzeUserImagesViaOpenAI() {
@@ -1773,6 +1761,11 @@ async function analyzeUserImagesViaOpenAI() {
   for (let i = 0; i < totalImages; i++) {
     if (runId !== globalRunId) { closeProgressModal(); return; }
 
+     // ── If we hit exactly 140 tiles with a short “no charm” streak (1–3), drop them ──
+     if (streak > 0 && streak < 4 && toRun.length === MAX) {
+       userImagesArray.splice(-streak, streak);
+       saved  -= streak;
+     }
 
     const imgObj = imagesToAnalyze[i];
     await new Promise(res => setTimeout(res, 250));   // pacing
@@ -1781,7 +1774,10 @@ async function analyzeUserImagesViaOpenAI() {
       const result = await openAIAnalyzePhoto(imgObj.data);
 
     /* ---------- colour / number naming ---------- */
-    imgObj.name     = composeMatrixFilename(result);
+    const finalColor = result.color || "UnknownColor";   // Gold | RoseGold | Silver | Unknown
+    const numTxt     = result.topRightNumber || "XX";
+
+    imgObj.name     = `${finalColor}_${numTxt}.jpg`;
     imgObj.analyzed = true;
 
     const baseName  = stripExtension(imgObj.name);       // keep this line
