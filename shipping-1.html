@@ -2000,6 +2000,28 @@
 
           box.value = "SHIP TO:\n" + lines.filter(Boolean).join("\n");
 
+           // ── Auto-select Carrier based on destination country ─────────
+          const sel = document.getElementById("carrierSelect");
+          if (sel) {
+            const countryRaw = (ship.countryCode || ship.country || "").toString().trim().toUpperCase();
+            const isUS = (countryRaw === "US" || countryRaw === "USA" || countryRaw === "UNITED STATES");
+            const target = isUS ? "usps" : "chitchats";
+
+            // set native <select> value
+            sel.value = target;
+            // notify any listeners
+            sel.dispatchEvent(new Event("change", { bubbles: true }));
+
+            // refresh Materialize wrapper so visible label updates
+            try {
+              let inst = M.FormSelect.getInstance(sel);
+              if (inst) inst.destroy();
+              inst = M.FormSelect.init(sel);
+              // also update the generated input text (belt & suspenders)
+              if (inst && inst.input) inst.input.value = (target === "usps" ? "USPS" : "ChitChats");
+            } catch(_) { /* Materialize not ready? ignore */ }
+          }
+
           // Text color only for international (non-US/CA) addresses
           const countryRaw = (ship.country || ship.countryCode || "").toString().trim();
           const c = countryRaw.toLowerCase();
