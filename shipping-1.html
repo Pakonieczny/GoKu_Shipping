@@ -706,6 +706,11 @@
       }
     }
 
+    /* Replace any &quot; entity with a plain single quote */
+    function deQuote(s){
+      return (s == null ? "" : String(s)).replace(/&quot;/g, "'");
+    }
+
     /* globals for realtime listener */
     let chatUnsub = null;        // holds the active Firestore unsubscribe fn
     let firstBatch = true;       // suppress chime on initial load
@@ -1649,7 +1654,7 @@
                 }
               }
 
-              metalBox.value = " Metal: " + (metalSel || "No Metal");
+              metalBox.value = " Metal: " + deQuote(metalSel || "No Metal");
             }
           } else {
             cell.innerHTML = "Empty";
@@ -1744,7 +1749,7 @@
           var v2 = item.variations[j];
           if(!v2.formatted_name || !v2.formatted_value) continue;
           var nameLower2 = v2.formatted_name.trim().toLowerCase();
-          var val2 = v2.formatted_value.trim();
+          var val2 = deQuote(v2.formatted_value.trim());
           if(nameLower2 === "personalization" && val2 === "Not requested on this item."){
             val2 = "Not Requested";
             details += " Personalization: " + val2 + "\n";
@@ -1793,7 +1798,7 @@
         details += " Gift Wrapping: No\n";
       }
 
-      document.getElementById("orderDetails").value = details;
+      document.getElementById("orderDetails").value = deQuote(details);
     }
 
     async function fetchListingImages(listingId){
