@@ -1982,9 +1982,9 @@
 
 
           // If a tile is selected, refresh details to show gift fields
-          const sel = document.querySelector(".preview-box.selected");
-          if (sel) {
-            const idx = parseInt(sel.id.replace("previewCell",""), 10);
+          const selectedBox = document.querySelector(".preview-box.selected");
+          if (selectedBox) {
+            const idx = parseInt(selectedBox.id.replace("previewCell",""), 10);
             if (!Number.isNaN(idx)) showItemDetails(idx);
           }
 
