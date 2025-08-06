@@ -1572,23 +1572,84 @@
               var actualQty = (item.quantity != null) ? item.quantity : 0;
               qtyBox.value = " Quantity: " + actualQty;
             }
-            if(metalBox){
-              var metalSel = "";
-              if(item.variations && Array.isArray(item.variations)){
-                var acceptedMetalNames = [
-                  "metal","metal choice","metal - engraving","metal colour",
-                  "color","metal choice / engraving option"
+            if (metalBox) {
+              metalBox.classList.add("detail-box"); // optional: match your example style
+
+              let metalSel = "";
+
+              if (item.variations && Array.isArray(item.variations)) {
+                const acceptedMetalNames = [
+                  "metal","metal choice","metal - engraving",
+                  "metal colour","color","metal choice / engraving option",
+                  // — NEW —
+                  "number of discs / metal","number of discs/metal",
+                  "metal/necklace length","metal/necklace length/engrave",
+                  "number of discs / metal"
                 ];
-                var metalVar = item.variations.find(function(v){
-                  if(!v.formatted_name) return false;
-                  var nameLC = v.formatted_name.trim().toLowerCase();
-                  return (acceptedMetalNames.indexOf(nameLC) >= 0);
+
+                /* ① try by variation label (includes 'color/colour' prefixes) */
+                let metalVar = item.variations.find(v => {
+                  const name = (v.formatted_name || "").trim().toLowerCase();
+                  return (
+                    name.includes("metal") ||
+                    name.startsWith("color") || name.startsWith("colour") ||
+                    acceptedMetalNames.includes(name)
+                  );
                 });
-                if(metalVar && metalVar.formatted_value){
-                  metalSel = metalVar.formatted_value;
+
+                /* ② if not found, sniff values for metal-y words */
+                if (!metalVar) {
+                  metalVar = item.variations.find(v => {
+                    const val = (v.formatted_value || "").toLowerCase();
+                    return /rose\s*gold|rosegold|rosefilled|gold\s*filled|goldfilled|\bgold\b|silv[ae]?r|sterling\s*silver|14k|white\s*gold/.test(val);
+                  });
+                }
+
+                if (metalVar && metalVar.formatted_value) {
+                  metalSel = String(metalVar.formatted_value);
+
+                  /* strip engraving flags, character-count junk, collapse spaces */
+                  metalSel = metalSel
+                    .replace(/\+\s*engraving/gi, "")
+                    .replace(/\+\s*engrave/gi, "")
+                    .replace(/\b1-5\s*Characters\b/gi, "")
+                    .replace(/\b6-10\s*Characters\b/gi, "")
+                    .replace(/\b11\s*\+\s*Characters\b/gi, "")
+                    .replace(/\b1-5\s*·\s*Character(?:s)?\b/gi, "")
+                    .replace(/\b6-10\s*·\s*Character(?:s)?\b/gi, "")
+                    .replace(/\b11\+\s*·\s*Character(?:s)?\b/gi, "")
+                    .replace(/\s{2,}/g, " ")
+                    .trim();
+
+                  /* split camelCase, drop length noise, normalize odd punctuation */
+                  metalSel = metalSel.replace(/([a-z])([A-Z])/g, "$1 $2");
+                  metalSel = metalSel
+                    .replace(/\bnecklace\s*length\b[\s\/:]*/gi, "")
+                    .replace(/\s*-\s*\d+(\.\d+)?\s*$/g, "")
+                    .trim();
+                  metalSel = metalSel.replace(/[·•]/g, " ").trim();
+
+                  const norm = metalSel.toLowerCase();
+
+                  /* map to canonical labels */
+                  if (/(?:14k\s*)?(?:rose\s*gold|rosegold|rose\s*gold\s*filled|rosegold\s*filled|rosefilled)\b/.test(norm)) {
+                    metalSel = "Rose Gold";
+                  } else if (/(?:14k\s*)?(?:gold\s*filled|goldfilled)\b/.test(norm)) {
+                    metalSel = "Gold Filled";
+                  } else if (/(?:color\s*)?sterling\s*silver\b|silv[ae]?r\b/.test(norm)) {
+                    metalSel = "Silver";
+                  } else if (/\b14k\b/.test(norm)) {
+                    metalSel = "14K";
+                  } else if (/\bgold\b/.test(norm)) {
+                    // lone 'gold' → default to Gold Filled per your rule
+                    metalSel = "Gold Filled";
+                  }
+
+                  metalSel = metalSel.replace(/\s{2,}/g, " ").trim();
                 }
               }
-              metalBox.value = " Metal: " + metalSel;
+
+              metalBox.value = " Metal: " + (metalSel || "No Metal");
             }
           } else {
             cell.innerHTML = "Empty";
