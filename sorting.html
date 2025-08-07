@@ -2671,7 +2671,7 @@ async function sendAndMatch() {
         const delta  = top.result.score - second;
 
         // Reuse the same acceptance logic for each slot
-        if (top.result.score >= 0.925){
+        if (top.result.score >= 0.90){
           if (!cellMatches[i]) cellMatches[i] = [];
           const nm = top.user.name.replace(/(\.jpg|\.png)$/i, "");
           cellMatches[i].push({ userName: nm, userImage: top.user.data, score: top.result.score });
@@ -2765,7 +2765,7 @@ async function sendAndMatch() {
         const scoreDelta  = topScore - secondScore;
 
         /* ---------- branchA: score ≥ 0.95 ---------- */
-        if (topScore >= 0.925) {
+        if (topScore >= 0.9) {
           if (matchBox) {
             matchBox.value        = matchName;
             matchBox.style.fontWeight = "400";
