@@ -995,6 +995,21 @@ function enableMatchPrintFlow() {
     return qty * (item.isEarring ? 2 : 1);
   }
 
+   /* ==============================================================
+    * safePushMatch(cellIdx, obj)
+    * — adds obj to cellMatches[cellIdx] **only** if we still have
+    *   free capacity according to expectedSlots()
+    *   returns true when pushed, false when skipped
+    * ==============================================================*/
+   function safePushMatch(cellIdx, obj){
+     const need = expectedSlots(window.cachedOrderItems?.[cellIdx] || {});
+     if (!cellMatches[cellIdx]) cellMatches[cellIdx] = [];
+     const have = cellMatches[cellIdx].filter(m => m && m.userImage).length;
+     if (have >= need) return false;   // already full → ignore extra
+     cellMatches[cellIdx].push(obj);
+     return true;
+   }
+
   function removeHighlightForCell(cellIndex) {
     const previewBox = document.getElementById("previewCell" + cellIndex);
     if (previewBox) {
@@ -2724,7 +2739,7 @@ async function sendAndMatch() {
             matchBox.style.color  = "black";
           }
           if (!cellMatches[i]) cellMatches[i] = [];
-          cellMatches[i].push({
+          safePushMatch(i,{
             userName  : matchName,
             userImage : topCandidate.user.data,   // ← use topCandidate
             score     : topScore
@@ -2757,7 +2772,8 @@ async function sendAndMatch() {
             matchBox.style.color  = "black";
           }
           if (!cellMatches[i]) cellMatches[i] = [];
-          cellMatches[i].push({
+          safePushMatch(i,{
+
             userName  : matchName,
             userImage : topCandidate.user.data,
             score     : topScore
@@ -2791,7 +2807,8 @@ async function sendAndMatch() {
             matchBox.style.color  = "orangered";
           }
           if (!cellMatches[i]) cellMatches[i] = [];
-          cellMatches[i].push({
+          safePushMatch(i,{
+
             userName  : matchName,
             userImage : topCandidate.user.data,
             score     : topScore
