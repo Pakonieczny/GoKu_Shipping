@@ -410,8 +410,8 @@ async function apiFetch(path, init = {}){
   await ensureFreshToken();
   let token = localStorage.getItem(TOKEN_KEYS.access) || "";
   let resp  = await fetch(`${functionsBaseUrl}${path}`, {
-     ...init,
-    headers: { ...(init.headers || {}), "access-token": token }
+      ...init,
+      headers: { ...(init.headers || {}), "access-token": token }
   });
   if (resp.status === 401){
     try{
