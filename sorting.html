@@ -986,14 +986,21 @@ function enableMatchPrintFlow() {
     if (overlayBtn) overlayBtn.remove();
   }
 
-  /* =========================================================
+    /* =========================================================
      expectedSlots(item)
      – Returns Qty × (2 if earring, else 1)
      =======================================================*/
-  function expectedSlots(item = {}) {
-    const qty = Number(item.qty || item.quantity || 1) || 1;   // safety default 1
-    return qty * (item.isEarring ? 2 : 1);
-  }
+    function expectedSlots(item = {}) {
+      const qty  = Number(item.qty  || item.quantity || 1) || 1;        // listing quantity
+      const disc = Number(item.discCount || 0);                         // 0-5
+
+      /* Treat each disc as its own matrix-photo target. If discCount is 0,
+         fall back to the normal listing quantity logic. */
+      let base = disc > 0 ? qty * disc : qty;
+
+      /* Earrings still double the slot requirement */
+      return base * (item.isEarring ? 2 : 1);
+    }
 
    /* ==============================================================
     * safePushMatch(cellIdx, obj)
@@ -1894,6 +1901,9 @@ async function fillPreviewBoxes(items) {
     "hoop","hoops","hoop earrings"
   ];
 
+   /* --- NEW: pattern to capture “1–5 discs” --------------------------- */
+   const DISC_REGEX = /\b([1-5])\s*disc(?:s)?\b/i;
+
   /* true phrase matcher – handles spaces, dashes, slashes, commas … */
   function containsPhrase(str = "", phrase = "") {
     // turn "stud earrings" → /\bstud[\s\W]+earrings\b/i
@@ -1904,14 +1914,23 @@ async function fillPreviewBoxes(items) {
     return new RegExp(pattern, "i").test(str.toLowerCase());
   }
 
-   /* helper: require at least TWO distinct earring-keywords */
-   function isEarringString(str = "") {
-     if (!str) return false;
-     const lower = str.toLowerCase();
-     let matchCount = 0;
-     for (const ph of EARRING_PHRASES) {
-       const regex = new RegExp("\\b" + ph.replace(/\s+/g, "\\s+") + "\\b", "i");
-       if (regex.test(lower) && ++matchCount >= 2) return true;
+    /* helper: detect earring terms (≥1 for high-confidence words, else ≥2) */
+    function isEarringString(str = "") {
+      if (!str) return false;
+      const lower = str.toLowerCase();
+
+      // single-hit words that are always earrings
+      const HIGH_CONFIDENCE = ["Huggie CHARM SET", "CHARM SET", "1 disc","2 discs","3 discs","4 discs","5 discs"];
+      for (const kw of HIGH_CONFIDENCE) {
+        const re = new RegExp("\\b" + kw.replace(/\s+/g, "\\s+") + "\\b", "i");
+        if (re.test(lower)) return true;            // one match is enough
+      }
+
+      // fallback: need any TWO distinct phrases
+      let hits = 0;
+      for (const ph of EARRING_PHRASES) {
+        const re = new RegExp("\\b" + ph.replace(/\s+/g, "\\s+") + "\\b", "i");
+        if (re.test(lower) && ++hits >= 2) return true;
      }
      return false;
   }
@@ -1955,6 +1974,21 @@ async function fillPreviewBoxes(items) {
       earringCells[index] = true;
       earringState[index] = { firstImg:null };
     }
+
+
+     /* --- NEW: parse “X discs” in title or variations ------------------ */
+     let discQty = 0;
+     if (item.title) {
+       const m = item.title.match(DISC_REGEX);
+       if (m) discQty = Number(m[1]);
+     }
+     if (discQty === 0 && Array.isArray(item.variations)) {
+       for (const v of item.variations) {
+         const m = String(v?.formatted_value||"").match(DISC_REGEX);
+         if (m) { discQty = Number(m[1]); break; }
+       }
+     }
+     item.discCount = discQty;   // 0 when absent
 
     /* --- POSITION CALCULATIONS (unchanged from your file) -------- */
     const row  = Math.floor(index / 9);
