@@ -28,6 +28,7 @@ if (!process.env.CORS_SET) {
     .setCorsConfiguration([{
        origin        : [
          "https://shipping-1.goldenspike.app",
+         "https://sorting.goldenspike.app",
          "https://design-message.goldenspike.app",
          "https://design-message-1.goldenspike.app",
          "https://api.openai.com"                // ⬅︎ allow OpenAI’s servers to fetch the JPGs
