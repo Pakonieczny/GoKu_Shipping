@@ -706,14 +706,63 @@
       }
     }
 
+    // Canonicalize metal labels exactly like the grid logic
+    function normalizeMetalLabel(raw){
+      let metalSel = String(raw || "");
+
+      // 1) strip add-ons / counts / whitespace noise
+      metalSel = metalSel
+        .replace(/\+\s*engraving/gi, "")
+        .replace(/\+\s*engrave/gi, "")
+        .replace(/\b1-5\s*Characters\b/gi, "")
+        .replace(/\b6-10\s*Characters\b/gi, "")
+        .replace(/\b11\s*\+\s*Characters\b/gi, "")
+        .replace(/\b1-5\s*·\s*Character(?:s)?\b/gi, "")
+        .replace(/\b6-10\s*·\s*Character(?:s)?\b/gi, "")
+        .replace(/\b11\+\s*·\s*Character(?:s)?\b/gi, "")
+        .replace(/\s{2,}/g, " ")
+        .trim();
+
+      // 2) normalize punctuation / camelCase / trailing numerics / “necklace length”
+      metalSel = metalSel.replace(/([a-z])([A-Z])/g, "$1 $2");
+      metalSel = metalSel
+        .replace(/\bnecklace\s*length\b[\s\/:]*/gi, "")
+        .replace(/\s*-\s*\d+(\.\d+)?\s*$/g, "")
+        .trim();
+      metalSel = metalSel.replace(/[·•]/g, " ").trim();
+
+      const norm = metalSel.toLowerCase();
+
+      // 3) map to canonical labels (same rules as grid)
+      if (/(?:14k\s*)?(?:rose\s*gold|rosegold|rose\s*gold\s*filled|rosegold\s*filled|rosefilled)\b/.test(norm)) {
+        metalSel = "Rose Gold";
+      } else if (/(?:14k\s*)?(?:gold\s*filled|goldfilled)\b/.test(norm)) {
+        metalSel = "Gold Filled";
+      } else if (/(?:color\s*)?sterling\s*silver\b|silv[ae]?r\b/.test(norm)) {
+        metalSel = "Silver";
+      } else if (/\b14k\b/.test(norm)) {
+        metalSel = "14K";
+      } else if (/\bgold\b/.test(norm)) {
+        // lone 'gold' → default to Gold Filled
+        metalSel = "Gold Filled";
+      }
+
+      return metalSel.replace(/\s{2,}/g, " ").trim();
+    }
+
+    // Pink circle vibe for Rose Gold (closest text-only match)
+
     function metalToBadge(label){
-    const s = String(label || "").toLowerCase();
-    if (/^14\s*k/.test(s))               return "🟡 14K";
-    if (/rose\s*gold/.test(s))           return "🟠";
-    if (/silver|sterling/.test(s))       return "⚪";
-    if (/gold/.test(s))                  return "🟡";
-    return ""; // unknown
-  }
+      const canon = normalizeMetalLabel(label);
+      switch ((canon || "").toLowerCase()){
+        case "14k":         return "14K🟡";
+        case "rose gold":   return "🟠;"
+        case "silver":      return "⚪";
+        case "gold filled": return "🟡";
+        case "gold":        return "🟡";
+        default:            return ""; // unknown
+      }
+    }
 
     /* Replace any &quot; entity with a plain single quote */
     function deQuote(s){
@@ -1763,7 +1812,7 @@
             val2 = "Not Requested";
             details += " Personalization: " + val2 + "\n";
           } else if(acceptedMetalNames2.indexOf(nameLower2) >= 0){
-            
+
             const mBadge = metalToBadge(val2);
             details += ` ${mBadge ? mBadge + " " : ""}Metal Choice: ${val2}\n`;
 
