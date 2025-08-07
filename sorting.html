@@ -1771,7 +1771,7 @@ async function analyzeUserImagesViaOpenAI() {
     (typeof window.stripExtension === "function")
       ? window.stripExtension
       : (fn => (fn ? fn.replace(/\.\w+$/, "") : ""));
-      
+
   const runId = globalRunId;   // snapshot current run
 
   const imagesToAnalyze = userImagesArray.filter(u => !u.analyzed);
@@ -2838,8 +2838,10 @@ async function sendAndMatch() {
         /* ==============================================================
            MIRROR‑PAIR LOGIC – runs for ANY accepted earring half
         ============================================================== */
-        if (earringCells[i] && cellMatches[i] && cellMatches[i].length === 1) {
-          const firstImgFixed = cellMatches[i][0].userImage;
+        /* Only run when this order actually expects TWO slots          */
+         const needSlots = expectedSlots(window.cachedOrderItems?.[i] || {});
+         if (needSlots > 1 && earringCells[i] && cellMatches[i] && cellMatches[i].length === 1) {          
+         const firstImgFixed = cellMatches[i][0].userImage;
           if (!earringState[i]) earringState[i] = {};
           earringState[i].firstImg = firstImgFixed;
 
@@ -2854,10 +2856,13 @@ async function sendAndMatch() {
             const bestScore     = Math.max(s1, s2);
             if (bestScore < 0.88) continue;          // twin threshold
 
-            const twinName = cand.name.replace(/(\.jpg|\.png)$/i, "");
-            cellMatches[i].push({ userName: twinName, userImage: cand.data, score: bestScore });
-
-            matchedUserNames.add(cand.name);
+             const twinName = cand.name.replace(/(\.jpg|\.png)$/i, "");
+             /* safe push — silently skips if we already have enough     */
+             if (safePushMatch(i, { userName : twinName,
+                                    userImage: cand.data,
+                                    score    : bestScore })) {
+               matchedUserNames.add(cand.name);   // record only if kept
+             }
 
             /* Mark complete only when have >= need */
            {
