@@ -2538,8 +2538,8 @@ async function compareImages(userImage, croppedGridImage, cellIndex, userImageNa
               "3. ShapeScore: compare overall outline, silhouette, and any interior cut-outs or holes." +
               "4. EngravingScore: compare engraving presence, design, size, position, and orientation." +
               "5. Animal special-case: when the charm depicts an animal, explicitly match head, eye, beak/mouth, ear, limb, and wing positions and proportions inside ShapeScore." +
-              "6. ombine scores: Similarity = 0.60 × ShapeScore + 0.40 × EngravingScore." +
-              "7. Confidence gate: if Similarity < 0.2000 after calculation, output 0.0000." +
+              "6. Combine scores: Similarity = 0.7 × ShapeScore + 0.3 × EngravingScore." +
+              "7. Confidence gate: if Similarity < 0.6000 after calculation, output 0.0000." +
               "8. Output **ONLY** the final Similarity value (e.g., `0.8732`)." 
 
           },
