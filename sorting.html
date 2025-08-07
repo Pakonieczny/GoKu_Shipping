@@ -1577,7 +1577,7 @@ async function extractSubImages144(baseDataUrl) {
   return results;     // 140 sub-images
 }
 
-// cropTo256: forcibly resize each quadrant to 256×256
+// cropTo400: forcibly resize each quadrant to 400×400
 async function cropTo512(dataUrl) {
   const loaded = await loadImage(dataUrl);
   const canvas = document.createElement("canvas");
@@ -1898,7 +1898,7 @@ async function fillPreviewBoxes(items) {
   const EARRING_PHRASES = [
     "stud","stud earrings","earring","earrings",
     "huggie","huggies","huggie earrings",
-    "hoop","hoops","hoop earrings"
+    "hoop","hoops","hoop earrings", "Huggie CHARM SET", "CHARM SET"
   ];
 
    /* --- NEW: pattern to capture “1–5 discs” --------------------------- */
@@ -1920,20 +1920,18 @@ async function fillPreviewBoxes(items) {
       const lower = str.toLowerCase();
 
       // single-hit words that are always earrings
-      const HIGH_CONFIDENCE = ["Huggie CHARM SET", "CHARM SET"];
+      const HIGH_CONFIDENCE = ["Huggie CHARM SET", "CHARM SET","hoop earrings","huggie earrings"];
       for (const kw of HIGH_CONFIDENCE) {
         const re = new RegExp("\\b" + kw.replace(/\s+/g, "\\s+") + "\\b", "i");
         if (re.test(lower)) return true;            // one match is enough
       }
 
-      // fallback: need any TWO distinct phrases
-      let hits = 0;
+      /* fallback: ONE keyword is enough */
       for (const ph of EARRING_PHRASES) {
         const re = new RegExp("\\b" + ph.replace(/\s+/g, "\\s+") + "\\b", "i");
-        if (re.test(lower) && ++hits >= 2) return true;
-     }
-     return false;
-  }
+        if (re.test(lower)) return true;      // first hit ⇒ earring!
+      }
+      return false;
 
   /* ---------- MAIN LOOP: one preview row per transaction ---------- */
   items.forEach((item, index) => {
@@ -2305,7 +2303,7 @@ async function fillPreviewBoxes(items) {
         const img  = cell.querySelector("img");
         if (img && img.src && img.src !== "") {
           try {
-            const cropped = await cropImageFromPreview(cell, 256, 256);
+            const cropped = await cropImageFromPreview(cell, 320, 320);
             croppedImagesArray[i] = cropped;
             M.toast({ html: "Cell " + i + ": Cropped successfully." });
           } catch (err) {
@@ -2672,7 +2670,7 @@ async function sendAndMatch() {
         const delta  = top.result.score - second;
 
         // Reuse the same acceptance logic for each slot
-        if (top.result.score >= 0.95 || (top.result.score >= 0.88 && delta >= 0.15) || top.result.score >= 0.88){
+        if (top.result.score >= 0.935 || (top.result.score >= 0.88 && delta >= 0.15) || top.result.score >= 0.88){
           if (!cellMatches[i]) cellMatches[i] = [];
           const nm = top.user.name.replace(/(\.jpg|\.png)$/i, "");
           cellMatches[i].push({ userName: nm, userImage: top.user.data, score: top.result.score });
