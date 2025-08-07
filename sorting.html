@@ -1782,7 +1782,7 @@ async function analyzeUserImagesViaOpenAI() {
     (typeof window.stripExtension === "function")
       ? window.stripExtension
       : (fn => (fn ? fn.replace(/\.\w+$/, "") : ""));
-s
+
   const runId = globalRunId;   // snapshot current run
 
   const imagesToAnalyze = userImagesArray.filter(u => !u.analyzed);
