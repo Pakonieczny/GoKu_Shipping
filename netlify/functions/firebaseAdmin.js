@@ -24,24 +24,16 @@ if (!admin.apps.length) {
 if (!process.env.CORS_SET) {
   const { Storage } = require("@google-cloud/storage");
   new Storage({ credentials: serviceAccount })
-    .bucket("gokudatabase.appspot.com")
+    .bucket("gokudatabase.firebasestorage.app")
     .setCorsConfiguration([{
-       origin        : [
-         "https://shipping-1.goldenspike.app",
-         "https://sorting.goldenspike.app",
-         "https://design-message.goldenspike.app",
-         "https://design-message-1.goldenspike.app",
-         "https://api.openai.com"                // ⬅︎ allow OpenAI’s servers to fetch the JPGs
-       ],
+      origin        : [
+        "https://shipping-1.goldenspike.app",
+        "https://design-message.goldenspike.app",
+        "https://design-message-1.goldenspike.app"
+      ],
       method        : ["GET","POST","PUT","DELETE","HEAD","OPTIONS"],
-         responseHeader: [
-         "Content-Type",
-         "Authorization",
-         "X-Goog-Upload-Protocol",
-         "X-Goog-Upload-Command",
-         "X-Goog-Upload-Header-Content-Type",
-         "X-Goog-Upload-Offset"
-       ],      maxAgeSeconds : 3600
+      responseHeader: ["Content-Type","Authorization"],
+      maxAgeSeconds : 3600
     }])
     .then(() => console.log("CORS confirmed"))
     .catch(err => console.error("CORS error:", err));
