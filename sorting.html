@@ -1920,7 +1920,7 @@ async function fillPreviewBoxes(items) {
       const lower = str.toLowerCase();
 
       // single-hit words that are always earrings
-      const HIGH_CONFIDENCE = ["Huggie CHARM SET", "CHARM SET", "1 disc","2 discs","3 discs","4 discs","5 discs"];
+      const HIGH_CONFIDENCE = ["Huggie CHARM SET", "CHARM SET"];
       for (const kw of HIGH_CONFIDENCE) {
         const re = new RegExp("\\b" + kw.replace(/\s+/g, "\\s+") + "\\b", "i");
         if (re.test(lower)) return true;            // one match is enough
