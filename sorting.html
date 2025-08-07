@@ -1577,14 +1577,14 @@ async function extractSubImages144(baseDataUrl) {
   return results;     // 140 sub-images
 }
 
-// cropTo512: forcibly resize each quadrant to 400×400
+// cropTo256: forcibly resize each quadrant to 256×256
 async function cropTo512(dataUrl) {
   const loaded = await loadImage(dataUrl);
   const canvas = document.createElement("canvas");
-  canvas.width = 402;
-  canvas.height = 403;
+  canvas.width = 256;
+  canvas.height = 256;
   const ctx = canvas.getContext("2d");
-  ctx.drawImage(loaded, 0, 0, 402, 403);
+  ctx.drawImage(loaded, 0, 0, 256, 256);
   return canvas.toDataURL("image/jpeg", 0.7);
 }
 
@@ -2305,7 +2305,7 @@ async function fillPreviewBoxes(items) {
         const img  = cell.querySelector("img");
         if (img && img.src && img.src !== "") {
           try {
-            const cropped = await cropImageFromPreview(cell, 512, 512);
+            const cropped = await cropImageFromPreview(cell, 256, 256);
             croppedImagesArray[i] = cropped;
             M.toast({ html: "Cell " + i + ": Cropped successfully." });
           } catch (err) {
