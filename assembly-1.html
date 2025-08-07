@@ -706,6 +706,15 @@
       }
     }
 
+    function metalToBadge(label){
+    const s = String(label || "").toLowerCase();
+    if (/^14\s*k/.test(s))               return "🟡 14K";
+    if (/rose\s*gold/.test(s))           return "🟠";
+    if (/silver|sterling/.test(s))       return "⚪";
+    if (/gold/.test(s))                  return "🟡";
+    return ""; // unknown
+  }
+
     /* Replace any &quot; entity with a plain single quote */
     function deQuote(s){
       return (s == null ? "" : String(s)).replace(/&quot;/g, '"');
@@ -1754,7 +1763,10 @@
             val2 = "Not Requested";
             details += " Personalization: " + val2 + "\n";
           } else if(acceptedMetalNames2.indexOf(nameLower2) >= 0){
-            details += " Metal Choice: " + val2 + "\n";
+            
+            const mBadge = metalToBadge(val2);
+            details += ` ${mBadge ? mBadge + " " : ""}Metal Choice: ${val2}\n`;
+
           } else if(acceptedLengthNames2.indexOf(nameLower2) >= 0){
             var lengthMap2 = {
               "14&quot;": "14 Inches",
