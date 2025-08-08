@@ -847,36 +847,42 @@ function metalToBadge(label){
     window.isEmployeeLoggedIn = false; // We'll use this to guard the real-time listener
         let lastScanProcessed = null;      // 🔑 remember most-recent scanned order
 
-    (function(){
-      var urlParams = new URLSearchParams(window.location.search);
-      var accessToken = urlParams.get("access_token");
-       if (accessToken){
-         localStorage.setItem("access_token", accessToken);
-         // assume 1h default unless your server sends a value later:
-         const nowSec = Math.floor(Date.now()/1000);
-         localStorage.setItem("access_token_expires_at", String(nowSec + 3600));
-         // if your exchange redirects with ?refresh_token=... capture it:
-         const rt = urlParams.get("refresh_token");
-         if (rt) localStorage.setItem("refresh_token", rt);
-        window.history.replaceState({}, document.title, window.location.pathname);
-        M.toast({html:"Connection Successful!"});
+    (function () {
+      const params = new URLSearchParams(window.location.search || "");
+
+      // Case 1: OAuth returned an access_token
+      const accessToken = params.get("access_token");
+      if (accessToken) {
+        localStorage.setItem("access_token", accessToken);
+
+        // Assume 1h default unless your server sends a value later
+        const nowSec = Math.floor(Date.now() / 1000);
+        localStorage.setItem("access_token_expires_at", String(nowSec + 3600));
+
+        // Capture refresh_token if present
+        const rt = params.get("refresh_token");
+        if (rt) localStorage.setItem("refresh_token", rt);
+
+        try { window.history.replaceState({}, document.title, window.location.pathname); } catch (_) {}
+
+        if (window.M && M.toast) M.toast({ html: "Connection Successful!" });
         console.log("Access token received:", accessToken);
-      } else {
-        var authCode = urlParams.get("code");
-        var raw = urlParams.get("code") || "";
-        var authCode = raw.split("&")[0];          // keep only the code value
-        if(authCode){
-          var storedCodeVerifier = localStorage.getItem("etsy_code_verifier");
-          if(storedCodeVerifier){
-           const qs = new URLSearchParams({
-            code:            authCode,
-            code_verifier:   storedCodeVerifier,
+        return; // prevent falling through to code-exchange branch
+      }
+
+      // Case 2: OAuth returned an authorization code (PKCE exchange)
+      const code = params.get("code");
+      if (code) {
+        const storedCodeVerifier = localStorage.getItem("etsy_code_verifier");
+        if (storedCodeVerifier) {
+          const qs = new URLSearchParams({
+            code,
+            code_verifier: storedCodeVerifier,
             redirect_domain: "assembly-1"
           });
           window.location.href = "/.netlify/functions/exchangeToken?" + qs.toString();
-          } else {
-            console.error("No code verifier found in localStorage.");
-          }
+        } else {
+          console.error("No code verifier found in localStorage.");
         }
       }
     })();
