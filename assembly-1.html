@@ -763,6 +763,7 @@ function normalizeMetalLabel(raw){
   return metalSel; // fallback (unmapped)
 }
 
+
 function metalToBadge(label){
   const canon = normalizeMetalLabel(label);
   switch ((canon || "").toLowerCase()){
@@ -850,14 +851,8 @@ function metalToBadge(label){
     (function(){
       var urlParams = new URLSearchParams(window.location.search);
       var accessToken = urlParams.get("access_token");
-       if (accessToken){
-         localStorage.setItem("access_token", accessToken);
-         // assume 1h default unless your server sends a value later:
-         const nowSec = Math.floor(Date.now()/1000);
-         localStorage.setItem("access_token_expires_at", String(nowSec + 3600));
-         // if your exchange redirects with ?refresh_token=... capture it:
-         const rt = urlParams.get("refresh_token");
-         if (rt) localStorage.setItem("refresh_token", rt);
+      if(accessToken){
+        localStorage.setItem("access_token", accessToken);
         window.history.replaceState({}, document.title, window.location.pathname);
         M.toast({html:"Connection Successful!"});
         console.log("Access token received:", accessToken);
@@ -896,8 +891,6 @@ function metalToBadge(label){
       var base64String = btoa(String.fromCharCode.apply(null, new Uint8Array(digest)));
       return base64String.replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
     }
-
-
 
     /*
      * Incorporate the new login modal elements in the config array so they're adjustable.
@@ -1568,25 +1561,16 @@ function metalToBadge(label){
           });
 
         try {
-          await ensureFreshToken();
-          let token  = localStorage.getItem("access_token") || "";
-          let resp   = await postTracking(token);
+          let token        = localStorage.getItem("access_token") || "";
+          let resp         = await postTracking(token);
           let payload      = await resp.text();              // Etsy proxy returns raw text
           let errMsg       = "";
 
-         // 401 → try one silent refresh + retry once, then fallback to OAuth
-         if (resp.status === 401) {
-           try {
-             await ensureFreshToken();
-             token = localStorage.getItem("access_token") || "";
-             resp  = await postTracking(token);
-             payload = await resp.text();
-           } catch (_) {}
-           if (resp.status === 401) {
-             localStorage.removeItem("access_token");
-             document.getElementById("connectEtsyBtn")?.click();
-             throw new Error("Unauthorized – reconnecting Etsy…");
-           }
+          /* ── token expired (401) → restart OAuth flow ── */
+          if (resp.status === 401) {
+            localStorage.removeItem("access_token");
+            document.getElementById("connectEtsyBtn")?.click();
+            throw new Error("Unauthorized – reconnecting Etsy…");
           }
 
           /* ── forbidden (403) usually means missing shipping permission scope ── */
@@ -1891,7 +1875,6 @@ function metalToBadge(label){
     }
 
     async function fetchListingImages(listingId){
-      await ensureFreshToken();
       const responseLI = await fetch("/.netlify/functions/etsyImages?listingId=" + listingId, {
         headers: { "access-token": localStorage.getItem("access_token") }
       });
@@ -1904,8 +1887,6 @@ function metalToBadge(label){
 
     function pullEtsyOrderDetails(orderNumber){
       console.log("Pulling Etsy order details for order number:", orderNumber);
-      // make sure we have a fresh token first
-      return ensureFreshToken().then(()=>{
       var token = localStorage.getItem("access_token");
       return fetch("/.netlify/functions/etsyOrderProxy?orderId=" + encodeURIComponent(orderNumber), {
         headers: { "access-token": token }
