@@ -1719,12 +1719,12 @@ async function openAIAnalyzePhoto(base64Image) {
   const labelPrompt =
     `You are classifying metal color from numeric medians. APPLY THESE CUT LINES STRICTLY:\n` +
     `• HSV rule (primary): RoseGold if 15° ≤ median H ≤ 33° AND S ≥ 22%.\n` +
-    `• CIELAB rule (cross-check): RoseGold if a* ≥ 6.5 AND b* ≥ 14.\n` +
+    `• CIELAB rule (cross-check): RoseGold if a* ≥ 6.25 AND b* ≥ 13.\n` +
     `• Gold rule (fallback): Gold if (median H ≥ 34°) OR (a* ≤ 5.5) OR (b* ≤ 12).\n` +
     `• Silver: If S ≤ 10% AND a* between −2 and +3 AND b* between −2 and +6.\n` +
     `• Voting: each satisfied rule is one vote. If both rules agree, use that label.\n` +
     `Voting: each satisfied rule is one vote. If both RoseGold rules vote RoseGold, use RoseGold.\n` +
-    `If rules disagree, prefer the majority; on ties consult hue text: “rose” → RoseGold, “silver” → Silver; otherwise choose Gold vs RoseGold by whichever H is closer to the RoseGold band center (≈24°).\n` +
+    `If rules disagree, prefer the majority.\n` +
     `• Only return exactly one word: Gold, RoseGold, or Silver.\n\n` +
     `INPUT\n` +
     `hue="${hueText}"\n` +
