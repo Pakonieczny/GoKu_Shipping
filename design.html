@@ -519,6 +519,7 @@
 <!-- 1) Firebase (compat mode) – must be above your main sorting code -->
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
 
 <!-- jQuery & Materialize JS -->
 <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
@@ -691,6 +692,13 @@ const firebaseConfig = {
 
 firebase.initializeApp(firebaseConfig);
 const db = firebase.firestore();
+
+// Ensure the client is authenticated (anon is fine for rules below)
+firebase.auth().onAuthStateChanged(u => {
+  if (!u) firebase.auth().signInAnonymously().catch(err => {
+    console.warn("Anon auth failed:", err);
+  });
+});
 
 // === Real-time “selected order” locks ===
 const REALTIME_COLL = "Design_RealTime_Selected_Orders";
