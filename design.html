@@ -190,6 +190,10 @@
       top: 6px;
     }
 
+    /* Realtime selection = light red + (optionally) locked */
+    .new-order-box.rt-selected { background:#ffcdd2 !important; }  /* red lighten-4 */
+    .new-order-box.rt-locked   { pointer-events:none; cursor:not-allowed; opacity:.9; }
+
     /* put right after your .new-order-box rule */
     .new-order-box.selected{
       background:#FFE2B5 !important;   /* force-override any other bg */
@@ -659,32 +663,6 @@ const SELECTED_KEY   = "selectedOrders";         // orange-list
 const LAST_PURGE_KEY = "completed_last_purge";   // ISO month stamp
 const completedOrders = new Set();               // IDs that are already green
 
-/* ===== revive completed set from localStorage (runs immediately) ===== */
-(() => {
-  const raw = localStorage.getItem(COMPLETED_KEY);
-  if (!raw) return;
-  try {
-    const obj = JSON.parse(raw);
-    Object.values(obj).flat().forEach(id => completedOrders.add(String(id).trim()));
-  } catch (err) {
-    console.warn("Couldn’t parse saved completed list:", err);
-  }
-})();
-
-/* ------------------------------------------------------------------
- *  INIT - make sure completedOrders is filled BEFORE any UI action
- * ------------------------------------------------------------------*/
-(function initCompletedSet(){
-  const raw = localStorage.getItem(COMPLETED_KEY);
-  if (!raw) return;
-  try{
-    const obj = JSON.parse(raw);                 // { "YYYY-MM":[…] … }
-    Object.values(obj).flat()
-      .forEach(id => completedOrders.add(String(id)));
-  }catch(e){
-    console.warn("Completed-list parse error:", e);
-  }
-})();
 
 let croppedImagesArray = [];
 let userImagesArray = [];
@@ -713,6 +691,86 @@ const firebaseConfig = {
 
 firebase.initializeApp(firebaseConfig);
 const db = firebase.firestore();
+
+// === Real-time “selected order” locks ===
+const REALTIME_COLL = "Design_RealTime_Selected_Orders";
+
+const RT = {
+  clientId: (() => {
+    const k = "rt_client_id";
+    let v = localStorage.getItem(k);
+    if (!v) { v = "c_" + Math.random().toString(36).slice(2); localStorage.setItem(k, v); }
+    return v;
+  })(),
+  page: location.pathname.toLowerCase().includes("design-1") ? "design-1" : "design"
+};
+
+function rtDoc(id){ return db.collection(REALTIME_COLL).doc(String(id)); }
+
+/* create/update on select; delete on deselect (owner-safe) */
+async function rtSet(id, on){
+  id = String(id);
+  try{
+    if (on){
+      await rtDoc(id).set({
+        selectedBy: RT.clientId,
+        page      : RT.page,
+        at        : firebase.firestore.FieldValue.serverTimestamp()
+      }, { merge:true });
+    } else {
+      const snap = await rtDoc(id).get();
+      if (!snap.exists || snap.data()?.selectedBy === RT.clientId) await rtDoc(id).delete();
+    }
+  }catch(err){ console.warn("rtSet failed", err); }
+}
+
+let rtSelected = new Map();  // id -> owner
+
+/* Owner keeps normal orange; others see light red + locked */
+function paintLock(id, owner){
+  const isMine = owner === RT.clientId;
+  document.querySelectorAll(`.new-order-box[data-receipt='${id}']`).forEach(el=>{
+    if (isMine){
+      el.classList.remove("rt-selected","rt-locked"); // keep your .selected (orange)
+    } else {
+      el.classList.add("rt-selected","rt-locked");    // others: light red + disabled
+    }
+  });
+}
+
+function clearLock(id){
+  document.querySelectorAll(`.new-order-box[data-receipt='${id}']`)
+    .forEach(el=> el.classList.remove("rt-selected","rt-locked"));
+}
+
+/* If rows were rendered after a snapshot, repaint them */
+function applyAllLocksToDOM(){ rtSelected.forEach((owner,id)=>paintLock(id, owner)); }
+
+/* Live subscription */
+db.collection(REALTIME_COLL).onSnapshot((snap)=>{
+  const next = new Map();
+  snap.forEach(doc => next.set(doc.id, (doc.data()||{}).selectedBy || null));
+
+  // added/changed
+  next.forEach((owner, id)=>{
+    const prev = rtSelected.get(id);
+    if (prev !== owner) paintLock(id, owner);
+  });
+  // removed
+  rtSelected.forEach((_, id)=>{ if (!next.has(id)) clearLock(id); });
+
+  rtSelected = next;
+  applyAllLocksToDOM(); // also catches newly-inserted DOM rows
+});
+
+/* Release my locks on tab close */
+window.addEventListener("beforeunload", async ()=>{
+  try{
+    const batch = db.batch();
+    rtSelected.forEach((owner, id)=>{ if (owner === RT.clientId) batch.delete(rtDoc(id)); });
+    await batch.commit();
+  }catch(_){}
+});
 
 
 /* ===== Etsy OAuth boot + auto-refresh wiring ===== */
@@ -970,6 +1028,12 @@ if (!orderContainer.dataset.rangeWired){
     const box = e.target.closest(".new-order-box");
     if (!box) return;
 
+    /* If someone else has this order locked, block clicks */
+    if (box.classList.contains("rt-locked")) {
+      if (window.M?.toast) M.toast({ html: "This order is being worked on in another window." });
+      return;
+    }
+
     // Prevent legacy handlers from swallowing Ctrl/Meta
     e.preventDefault();
     e.stopImmediatePropagation();
@@ -990,6 +1054,7 @@ if (!orderContainer.dataset.rangeWired){
         row.classList.add("selected");
         // add previews
         orderCache[rid].forEach(tx => { if (!tx._inGrid) addPreviewBox(tx); });
+        await rtSet(rid, true);     // realtime claim
       }
     };
 
@@ -999,6 +1064,7 @@ if (!orderContainer.dataset.rangeWired){
         selectedOrders.delete(rid);
         row.classList.remove("selected");
         removePreviewBoxesForOrder(rid);
+        rtSet(rid, false);          // realtime release
       }
     };
 
@@ -1040,7 +1106,7 @@ if (!orderContainer.dataset.rangeWired){
   }, 200);
 
     const modalCompleteChk = document.getElementById("modalCompleteChk");
-    modalCompleteChk.addEventListener("change", () => {
+    modalCompleteChk.addEventListener("change", async () => {
     const rid = modalCompleteChk.dataset.rid;
     if(!rid) return;                      // safety
 
@@ -1054,7 +1120,7 @@ if (!orderContainer.dataset.rangeWired){
     ).forEach(el => el.remove());
 
     removePreviewBoxesForOrder(rid);      // existing helper
-    persistCompleted();                   // commits bucket
+    await persistCompleted([rid]);        // write to Firebase
     updateCounters();
     applyMetalFilter();
 
@@ -1098,10 +1164,9 @@ if (!orderContainer.dataset.rangeWired){
           orderListOffset = 0;                 // reset to first page
           allOpenReceipts = [];                // 🚀 clear cache → next call re-fetches
           const gotRows = await buildNewOrderList(orderListOffset);
-
-
-          /* —— FORCE a second green-pass after new rows exist —— */
-          highlightCompletedRows();                  // <-- NEW LINE
+          /* Pull latest completed set from Firebase, then paint */
+          await restoreCompleted();
+          highlightCompletedRows();
             window.applyMetalFilter();   // re-run filters immediately
 
           /* NEW → log visible order count */
@@ -1663,7 +1728,7 @@ if (!orderContainer.dataset.rangeWired){
        }
 
    }
-   function proceedToPrint(lists){
+   async function proceedToPrint(lists){
      /* ── 1. bail early if there is truly nothing to print ── */
      if(!lists || !Object.values(lists).some(arr=>arr.length)){
        M.toast({ html:"No order labels to print" });
@@ -1671,7 +1736,7 @@ if (!orderContainer.dataset.rangeWired){
      }
 
       /* 3️⃣  Commit printed orders as completed & tidy UI */
-      const printedIDs = Object.values(lists).flat();
+      const printedIDs = Object.values(lists).flat();      
       if (printedIDs.length) {
         lastClearedReceipts = [...printedIDs];
     
@@ -1690,7 +1755,7 @@ if (!orderContainer.dataset.rangeWired){
         allOpenReceipts = allOpenReceipts
           .filter(r => !printedIDs.includes(String(r.receipt_id)));
     
-        persistCompleted();
+        await persistCompleted(printedIDs);      // ← write to Firebase (bulk)        
         persistSelection();
         reflowGrid();
         updateCounters();
@@ -1805,14 +1870,39 @@ if (!orderContainer.dataset.rangeWired){
   }
 
 
-  /* ── save completed list ──────────────────────────────────────── */
-  function persistCompleted(){
-    const nowMonth = new Date().toISOString().slice(0,7);      // "YYYY-MM"
-    const raw = localStorage.getItem(COMPLETED_KEY) || "{}";
-    const obj = JSON.parse(raw);
+  /* ── save completed list to Firebase (optionally accept a subset) ── */
+  async function persistCompleted(ids){
+    try{
+      const list = Array.isArray(ids) ? ids.map(String) : [...completedOrders];
+      if (!list.length) return;
 
-    obj[nowMonth] = [ ...completedOrders ];                    // overwrite bucket
-    localStorage.setItem(COMPLETED_KEY, JSON.stringify(obj));
+      // Use bulk when possible to minimize round-trips
+      const resp = await fetch(`${functionsBaseUrl}/firebaseOrders`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ completedIds: list })
+      });
+      if (!resp.ok) console.warn("persistCompleted: HTTP", resp.status);
+    }catch(err){
+      console.warn("persistCompleted (Firebase) failed:", err);
+    }
+  }
+
+  /* ── unset completed (bulk) in Firebase for Undo ── */
+  async function unsetDesignCompletedBulk(ids){
+    try{
+      const list = Array.isArray(ids) ? ids.map(String) : [];
+      if (!list.length) return;
+
+      const resp = await fetch(`${functionsBaseUrl}/firebaseOrders`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ uncompleteIds: list })
+      });
+      if (!resp.ok) console.warn("unsetDesignCompletedBulk: HTTP", resp.status);
+    }catch(err){
+      console.warn("unsetDesignCompletedBulk failed:", err);
+    }
   }
 
    /* ───────────────── handleUndoCompleteClick ───────────────── */
@@ -1879,8 +1969,8 @@ if (!orderContainer.dataset.rangeWired){
       orderListOffset = 0;
       await buildNewOrderList(0);                      // refresh UI
  
-     /* sync everything */
-     persistCompleted();
+     /* sync everything back to server */
+     await unsetDesignCompletedBulk(lastClearedReceipts);
      persistSelection();
      updateCounters();
      applyMetalFilter();
@@ -1945,26 +2035,25 @@ if (!orderContainer.dataset.rangeWired){
     M.toast({ html:"Completed orders cleared" });
   }
 
-  /* ── restore completed list on load ──────────────────────────── */
-  function restoreCompleted(){
-    const raw = localStorage.getItem(COMPLETED_KEY);
-    if (!raw) return;
-    const obj = JSON.parse(raw);
+  /* ── restore completed list on load — from Firebase ───────────── */
+  async function restoreCompleted(){
+    try{
+      const res  = await fetch(`${functionsBaseUrl}/firebaseOrders?designCompleted=1`);
+      const json = await res.json();
 
-    /* convert every ID to string before adding to the Set */
-    Object.values(obj).flat().forEach(id => completedOrders.add(String(id)));
-
-    /* the rest of the function is unchanged */
-    completedOrders.forEach(id=>{
-      const box = document.querySelector(`.new-order-box[data-receipt="${id}"]`);
-      if (box){
-        box.classList.remove("selected");
-        box.classList.add("completed");
+      completedOrders.clear();
+      if (json.success && Array.isArray(json.orderNumbers)) {
+        json.orderNumbers.forEach(id => completedOrders.add(String(id)));
       }
-      removePreviewBoxesForOrder(id);
-    });
 
-    realignGrid();
+      // paint & tidy
+      highlightCompletedRows();
+      realignGrid();
+      updateCounters();
+      window.applyMetalFilter();
+    }catch(e){
+      console.warn("restoreCompleted (Firebase) failed:", e);
+    }
   }
 
   /* ── purge buckets older than 2 months (run once per load) ───── */

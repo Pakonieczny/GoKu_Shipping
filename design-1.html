@@ -190,6 +190,11 @@
       top: 6px;
     }
 
+    /* Realtime selection = light red + (optionally) locked */
+    .new-order-box.rt-selected { background:#ffcdd2 !important; }  /* red lighten-4 */
+    .new-order-box.rt-locked   { pointer-events:none; cursor:not-allowed; opacity:.9; }
+
+
     /* put right after your .new-order-box rule */
     .new-order-box.selected{
       background:#FFE2B5 !important;   /* force-override any other bg */
@@ -688,6 +693,85 @@ const firebaseConfig = {
 firebase.initializeApp(firebaseConfig);
 const db = firebase.firestore();
 
+// === Real-time “selected order” locks ===
+const REALTIME_COLL = "Design_RealTime_Selected_Orders";
+
+const RT = {
+  clientId: (() => {
+    const k = "rt_client_id";
+    let v = localStorage.getItem(k);
+    if (!v) { v = "c_" + Math.random().toString(36).slice(2); localStorage.setItem(k, v); }
+    return v;
+  })(),
+  page: location.pathname.toLowerCase().includes("design-1") ? "design-1" : "design"
+};
+
+function rtDoc(id){ return db.collection(REALTIME_COLL).doc(String(id)); }
+
+/* create/update on select; delete on deselect (owner-safe) */
+async function rtSet(id, on){
+  id = String(id);
+  try{
+    if (on){
+      await rtDoc(id).set({
+        selectedBy: RT.clientId,
+        page      : RT.page,
+        at        : firebase.firestore.FieldValue.serverTimestamp()
+      }, { merge:true });
+    } else {
+      const snap = await rtDoc(id).get();
+      if (!snap.exists || snap.data()?.selectedBy === RT.clientId) await rtDoc(id).delete();
+    }
+  }catch(err){ console.warn("rtSet failed", err); }
+}
+
+let rtSelected = new Map();  // id -> owner
+
+/* Owner keeps normal orange; others see light red + locked */
+function paintLock(id, owner){
+  const isMine = owner === RT.clientId;
+  document.querySelectorAll(`.new-order-box[data-receipt='${id}']`).forEach(el=>{
+    if (isMine){
+      el.classList.remove("rt-selected","rt-locked"); // keep your .selected (orange)
+    } else {
+      el.classList.add("rt-selected","rt-locked");    // others: light red + disabled
+    }
+  });
+}
+
+function clearLock(id){
+  document.querySelectorAll(`.new-order-box[data-receipt='${id}']`)
+    .forEach(el=> el.classList.remove("rt-selected","rt-locked"));
+}
+
+/* If rows were rendered after a snapshot, repaint them */
+function applyAllLocksToDOM(){ rtSelected.forEach((owner,id)=>paintLock(id, owner)); }
+
+/* Live subscription */
+db.collection(REALTIME_COLL).onSnapshot((snap)=>{
+  const next = new Map();
+  snap.forEach(doc => next.set(doc.id, (doc.data()||{}).selectedBy || null));
+
+  // added/changed
+  next.forEach((owner, id)=>{
+    const prev = rtSelected.get(id);
+    if (prev !== owner) paintLock(id, owner);
+  });
+  // removed
+  rtSelected.forEach((_, id)=>{ if (!next.has(id)) clearLock(id); });
+
+  rtSelected = next;
+  applyAllLocksToDOM(); // also catches newly-inserted DOM rows
+});
+
+/* Release my locks on tab close */
+window.addEventListener("beforeunload", async ()=>{
+  try{
+    const batch = db.batch();
+    rtSelected.forEach((owner, id)=>{ if (owner === RT.clientId) batch.delete(rtDoc(id)); });
+    await batch.commit();
+  }catch(_){}
+});
 
 /* ===== Etsy OAuth boot + auto-refresh wiring ===== */
 const TOKEN_KEYS = {
@@ -944,6 +1028,12 @@ if (!orderContainer.dataset.rangeWired){
     const box = e.target.closest(".new-order-box");
     if (!box) return;
 
+    /* If someone else has this order locked, block clicks */
+    if (box.classList.contains("rt-locked")) {
+    if (window.M?.toast) M.toast({ html: "This order is being worked on in another window." });
+      return;
+    }
+
     // Prevent legacy handlers from swallowing Ctrl/Meta
     e.preventDefault();
     e.stopImmediatePropagation();
@@ -964,6 +1054,7 @@ if (!orderContainer.dataset.rangeWired){
         row.classList.add("selected");
         // add previews
         orderCache[rid].forEach(tx => { if (!tx._inGrid) addPreviewBox(tx); });
+        await rtSet(rid, true);     // realtime claim
       }
     };
 
@@ -973,6 +1064,7 @@ if (!orderContainer.dataset.rangeWired){
         selectedOrders.delete(rid);
         row.classList.remove("selected");
         removePreviewBoxesForOrder(rid);
+        rtSet(rid, false);          // realtime release
       }
     };
 
