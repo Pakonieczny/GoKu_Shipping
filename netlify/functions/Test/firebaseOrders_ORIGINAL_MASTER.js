@@ -22,6 +22,7 @@ exports.handler = async (event, context) => {
     /* ───────────────────────── POST ───────────────────────── */
     if (method === "POST") {
       const body = JSON.parse(event.body || "{}");
+
       const {
         orderNumber,
         orderNumField,
@@ -30,58 +31,14 @@ exports.handler = async (event, context) => {
         shippingLabelTimestamps,
         employeeName,
         newMessage,
-        staffNote,
-        /* NEW: design completion controls */
-        designCompleted,
-        completedIds    /* array of order IDs to mark completed */,
-        uncompleteIds   /* array of order IDs to unset   */
+        staffNote             
       } = body;
 
-         if (
-        !orderNumber &&
-        !Array.isArray(completedIds) &&
-        !Array.isArray(uncompleteIds) &&
-        !(typeof designCompleted === "boolean")
-      ) {
+      if (!orderNumber) {
         return {
           statusCode: 400,
           headers: CORS,
-          body: JSON.stringify({ error: "No actionable fields provided" })
-        };
-      }
-
-       /* 0) Bulk set completed */
-      if (Array.isArray(completedIds) && completedIds.length) {
-        const batch = db.batch();
-        completedIds.forEach(id => {
-          const ref = db.collection("Brites_Orders").doc(String(id));
-          batch.set(ref, {
-            "Design Completed"   : true,
-            "Design Completed At": admin.firestore.FieldValue.serverTimestamp()
-          }, { merge: true });
-        });
-        await batch.commit();
-        return {
-          statusCode: 200,
-          headers: CORS,
-          body: JSON.stringify({ success: true, message: "Marked completed (bulk)", count: completedIds.length })
-        };
-      }
-
-      /* 0b) Bulk UN-set completed */
-      if (Array.isArray(uncompleteIds) && uncompleteIds.length) {
-        const batch = db.batch();
-        uncompleteIds.forEach(id => {
-          const ref = db.collection("Brites_Orders").doc(String(id));
-          batch.set(ref, {
-            "Design Completed": false
-          }, { merge: true });
-        });
-        await batch.commit();
-        return {
-          statusCode: 200,
-          headers: CORS,
-          body: JSON.stringify({ success: true, message: "Unmarked completed (bulk)", count: uncompleteIds.length })
+          body: JSON.stringify({ error: "No orderNumber provided" })
         };
       }
 
@@ -89,7 +46,7 @@ exports.handler = async (event, context) => {
       if (typeof newMessage === "string" && newMessage.trim() !== "") {
         await db
           .collection("Brites_Orders")
-          .doc(String(orderNumber))
+          .doc(orderNumber)
           .collection("messages")
           .add({
             text       : newMessage.trim(),
@@ -113,12 +70,6 @@ exports.handler = async (event, context) => {
       if (shippingLabelTimestamps !== undefined) dataToStore["Shipping Label Timestamps"] = shippingLabelTimestamps;
       if (employeeName            !== undefined) dataToStore["Employee Name"]             = employeeName;
       if (staffNote               !== undefined) dataToStore["Staff Note"]                = staffNote;
-      if (typeof designCompleted  === "boolean") {
-        dataToStore["Design Completed"] = !!designCompleted;
-        if (designCompleted) {
-          dataToStore["Design Completed At"] = admin.firestore.FieldValue.serverTimestamp();
-        }
-      }
 
       if (Object.keys(dataToStore).length === 0) {
         return {
@@ -145,22 +96,6 @@ exports.handler = async (event, context) => {
 
 /* ───────────────────────── GET (replace this block) ──────────────── */
 if (method === "GET") {
-
-   /* NEW:  ?designCompleted=1  → array of order IDs that are completed */
-  if (event.queryStringParameters?.designCompleted === "1") {
-    const snap = await db.collection("Brites_Orders")
-                         .where("Design Completed", "==", true)
-                         .select()
-                         .get();
-    return {
-      statusCode: 200,
-      headers: CORS,
-      body: JSON.stringify({
-        success      : true,
-        orderNumbers : snap.docs.map(d => d.id)
-      })
-    };
-  }
 
   /* 🆕  bulk query:  ?staffNotes=1  →  array of order IDs with Staff Note */
   if (event.queryStringParameters?.staffNotes === "1") {
