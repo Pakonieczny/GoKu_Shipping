@@ -1154,6 +1154,8 @@ if (!orderContainer.dataset.rangeWired){
     // Prevent legacy handlers from swallowing Ctrl/Meta
     e.preventDefault();
     e.stopImmediatePropagation();
+    e.stopPropagation();           // ⬅️ block bubble-phase row handler from re-toggling
+
 
     const rows = [...orderContainer.querySelectorAll(".new-order-box")];
     const currIdx = rows.indexOf(box);
@@ -1175,18 +1177,16 @@ if (!orderContainer.dataset.rangeWired){
       }
     };
 
-  const deselectRow = (row) => {
-    const rid = String(row.dataset.receipt);
-    if (!rid) return;
-    if (selectedOrders.has(rid)){
-      selectedOrders.delete(rid);
-      row.classList.remove("selected");
-      removePreviewBoxesForOrder(rid);
-
-      // 🔓 Always unlock in Firebase immediately (belt & suspenders)
-      rtSet(rid, false);
-    }
-  };
+    const deselectRow = (row) => {
+      const rid = String(row.dataset.receipt);
+      if (selectedOrders.has(rid)){
+        selectedOrders.delete(rid);
+        row.classList.remove("selected");
+        removePreviewBoxesForOrder(rid);
+        // 🔓 explicit realtime unlock (belt & suspenders)
+        try { rtSet(rid, false); } catch (_) {}
+      }
+    };
 
   if (e.ctrlKey || e.metaKey){
     // Range select (inclusive) from last anchor → current
@@ -1321,6 +1321,8 @@ if (!orderContainer.dataset.rangeWired){
           const row = document.querySelector(
             `.new-order-box[data-receipt='${rid}']`);
           if (row) row.classList.remove("selected");
+          // 🔓 unlock each cleared receipt in Firebase
+          try { rtSet(rid, false); } catch (_) {}
 
           /* A2. explicit realtime unlock */
           try { rtSet(rid, false); } catch(_) {}
@@ -1521,6 +1523,7 @@ if (!orderContainer.dataset.rangeWired){
               box.classList.remove("selected");
               removePreviewBoxesForOrder(rid);
               realignGrid(); updateCounters(); persistSelection(); applyMetalFilter();
+              try { rtSet(rid, false); } catch (_) {}   // 🔓 explicit unlock
               return;
             }
 
