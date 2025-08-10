@@ -890,6 +890,26 @@ window.addEventListener("beforeunload", ()=>{
   }catch(_){}
 });
 
+// Reconcile helper: compare our rtSelected map to the server's current active locks
+async function reconcileActiveLocks() {
+  try {
+    const r = await fetch(`${functionsBaseUrl}/firebaseOrders?rt=1`);
+    if (!r.ok) return;
+    const j = await r.json();
+    const live = new Set(Object.keys(j.locks || {}));   // ids currently locked (selected==true)
+
+    // Any id we think is locked but isn't in live → clear it locally
+    rtSelected.forEach((_, id) => {
+      if (!live.has(id)) {
+        rtSelected.delete(id);
+        clearLock(id);
+      }
+    });
+
+    applyAllLocksToDOM();
+  } catch (_) {}
+}
+
 /* ===== Etsy OAuth boot + auto-refresh wiring ===== */
 const TOKEN_KEYS = {
   access  : "access_token",

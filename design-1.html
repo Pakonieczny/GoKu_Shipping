@@ -814,6 +814,26 @@ function applyAllLocksToDOM(){ rtSelected.forEach((owner,id)=>paintLock(id, owne
    return __rtInflight;
  }
 
+ // Reconcile helper: compare our rtSelected map to the server's current active locks
+async function reconcileActiveLocks() {
+  try {
+    const r = await fetch(`${functionsBaseUrl}/firebaseOrders?rt=1`);
+    if (!r.ok) return;
+    const j = await r.json();
+    const live = new Set(Object.keys(j.locks || {}));   // ids currently locked (selected==true)
+
+    // Any id we think is locked but isn't in live → clear it locally
+    rtSelected.forEach((_, id) => {
+      if (!live.has(id)) {
+        rtSelected.delete(id);
+        clearLock(id);
+      }
+    });
+
+    applyAllLocksToDOM();
+  } catch (_) {}
+}
+
 
 // === Server-driven delta poller (adaptive backoff, no Firestore onSnapshot) ===
 const RT_POLL = { t:null };
