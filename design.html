@@ -1076,7 +1076,7 @@ if (!orderContainer.dataset.rangeWired){
         row.classList.add("selected");
         // add previews
         orderCache[rid].forEach(tx => { if (!tx._inGrid) addPreviewBox(tx); });
-        await rtSet(rid, true);     // realtime claim
+        // no direct rtSet here; observer will write on orange state
       }
     };
 
@@ -1086,7 +1086,7 @@ if (!orderContainer.dataset.rangeWired){
         selectedOrders.delete(rid);
         row.classList.remove("selected");
         removePreviewBoxesForOrder(rid);
-        rtSet(rid, false);          // realtime release
+        // observer will release in realtime
       }
     };
 
@@ -1938,6 +1938,11 @@ if (!orderContainer.dataset.rangeWired){
      for (const rid of lastClearedReceipts){
         completedOrders.delete(rid);        // remove green status
         selectedOrders.add(rid);            // mark orange again
+        
+        const _row = document.querySelector(`.new-order-box[data-receipt='${rid}']`);
+        if (_row && !_row.classList.contains("rt-locked")) {
+          _row.classList.add("selected");   // observer will write lock
+        }
  
         /* 🔄  clear any leftover wraps so counters don’t double */
         removePreviewBoxesForOrder(rid);    // resets _inGrid flags too
@@ -2077,6 +2082,63 @@ if (!orderContainer.dataset.rangeWired){
       console.warn("restoreCompleted (Firebase) failed:", e);
     }
   }
+
+    /* ===== Real-time: drive Firebase writes off ORANGE (.selected) state ===== */
+  (function wireSelectionObserver(){
+    const container = document.getElementById("newOrderContainer");
+    if (!container || container.dataset.selObs) return;
+    container.dataset.selObs = "1";
+
+    const onSelectedChange = (row, isSelected) => {
+      const rid = String(row.dataset.receipt || row.dataset.orderNumber || "");
+      if (!rid) return;
+      // ignore remote light-red paints
+      if (row.classList.contains("rt-selected")) return;
+
+      if (isSelected) selectedOrders.add(rid);
+      else selectedOrders.delete(rid);
+
+      // all writes via Netlify function
+      rtSet(rid, isSelected);
+    };
+
+    const obs = new MutationObserver((muts) => {
+      for (const m of muts) {
+        if (m.type === "attributes") {
+          const row = m.target;
+          if (!row.classList.contains("new-order-box")) continue;
+          const had = /\bselected\b/.test(m.oldValue || "");
+          const has = row.classList.contains("selected");
+          if (had !== has) onSelectedChange(row, has);
+        }
+        if (m.type === "childList") {
+          // unlock removed selected rows
+          m.removedNodes.forEach(n => {
+            if (n.nodeType === 1 && n.classList?.contains("new-order-box") && n.classList.contains("selected")) {
+              onSelectedChange(n, false);
+            }
+          });
+          // lock newly added rows that are already selected
+          m.addedNodes.forEach(n => {
+            if (n.nodeType === 1) {
+              if (n.classList?.contains("new-order-box") && n.classList.contains("selected")) {
+                onSelectedChange(n, true);
+              }
+              n.querySelectorAll?.(".new-order-box.selected").forEach(row => onSelectedChange(row, true));
+            }
+          });
+        }
+      }
+    });
+
+    obs.observe(container, {
+      attributes: true,
+      attributeFilter: ["class"],
+      attributeOldValue: true,
+      childList: true,
+      subtree: true
+    });
+  })();
 
   /* ── purge buckets older than 2 months (run once per load) ───── */
   function purgeOldCompleted(){
