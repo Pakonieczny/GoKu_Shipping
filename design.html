@@ -717,6 +717,31 @@ const RT = {
   page: location.pathname.toLowerCase().includes("design-1") ? "design-1" : "design"
 };
 
+/* === Write locks only on orange state changes; ignore pagination/removals === */
+(function wireRtWriter(){
+  const cont = document.getElementById("newOrderContainer");
+  if (!cont || cont.dataset.rtWired) return;
+  cont.dataset.rtWired = "1";
+
+  const onClassFlip = (el) => {
+    if (!el.classList.contains("new-order-box")) return;
+    const id = String(el.dataset.receipt || "");
+    if (!id) return;
+
+    const isSelected = el.classList.contains("selected");
+    // Only write when user selects/deselects; pagination just removes DOM nodes, which we ignore
+    rtSet(id, !!isSelected);
+  };
+
+  const mo = new MutationObserver(muts => {
+    for (const m of muts) {
+      if (m.type === "attributes" && m.attributeName === "class") onClassFlip(m.target);
+      // NOTE: intentionally ignore childList removals to keep locks alive across pages
+    }
+  });
+  mo.observe(cont, { subtree:true, attributes:true, attributeFilter:["class"] });
+})();
+
 /* All writes go through Netlify function */
 async function rtSet(id, on){
   id = String(id);
@@ -1777,7 +1802,15 @@ if (!orderContainer.dataset.rangeWired){
         allOpenReceipts = allOpenReceipts
           .filter(r => !printedIDs.includes(String(r.receipt_id)));
     
-        await persistCompleted(printedIDs);      // ← write to Firebase (bulk)        
+        await persistCompleted(printedIDs);      // ← write to Firebase (bulk)
+        // After: await persistCompleted(printedIDs);
+        try{
+          await fetch(`${functionsBaseUrl}/firebaseOrders`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ rtUnlockIds: printedIDs.map(String), clientId: RT.clientId })
+          });
+        }catch(e){ console.warn("Unlock after complete failed:", e); }        
         persistSelection();
         reflowGrid();
         updateCounters();
@@ -1938,7 +1971,7 @@ if (!orderContainer.dataset.rangeWired){
      for (const rid of lastClearedReceipts){
         completedOrders.delete(rid);        // remove green status
         selectedOrders.add(rid);            // mark orange again
-        
+
         const _row = document.querySelector(`.new-order-box[data-receipt='${rid}']`);
         if (_row && !_row.classList.contains("rt-locked")) {
           _row.classList.add("selected");   // observer will write lock
@@ -2724,6 +2757,7 @@ if (!orderContainer.dataset.rangeWired){
     }
 
     renderOrderBoxes(currentReceipts);
+    applyAllLocksToDOM();   // ← repaint light-red locks after the list is rebuilt
   });
 
 /* 3. HOOK INTO buildNewOrderList() — pass-through only -------------- */
@@ -2831,6 +2865,7 @@ const observer = new MutationObserver(async () => {
       (a, b) => (b.order_number || b.receipt_id) - (a.order_number || a.receipt_id)
     );
     renderOrderBoxes(currentReceipts);
+    applyAllLocksToDOM();   // ← repaint light-red locks after the list is rebuilt
 
     /* ─── INSERT ↓↓↓  (exactly here) ───────────────────────────── */
     await refreshStaffNoteIDs();
