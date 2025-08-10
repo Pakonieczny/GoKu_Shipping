@@ -1524,23 +1524,23 @@ if (!orderContainer.dataset.rangeWired){
               selectedOrders.delete(rid);
               box.classList.remove("selected");
               removePreviewBoxesForOrder(rid);
-          // lock explicitly on user select
-          try { await rtSet(rid, true); } catch (_) {}
-          realignGrid(); updateCounters(); persistSelection(); applyMetalFilter();
+              // 🔓 unlock in Firebase on deselect
+              try { await rtSet(rid, false); } catch (_) {}
+              realignGrid(); updateCounters(); persistSelection(); applyMetalFilter();
               return;
             }
 
-            /* — SELECT 
+            /* — SELECT — */
             selectedOrders.add(rid);
             box.classList.add("selected");
-            /* set range-anchor on plain click
+            /* set range-anchor on plain click */
             lastCtrlIdx = [...document.querySelectorAll("#newOrderContainer .new-order-box")]
                       .indexOf(box);
             orderCache[rid].forEach(tx => { if (!tx._inGrid) addPreviewBox(tx); });
             realignGrid(); updateCounters(); persistSelection(); applyMetalFilter();
             // ✅ lock it in Firebase
             try { await rtSet(rid, true); } catch (_) {}
-          }); */
+          });
 
           /* HOVER → outline concurrent previews */
           box.addEventListener("mouseenter", () => {
