@@ -1530,17 +1530,17 @@ if (!orderContainer.dataset.rangeWired){
               return;
             }
 
-            /* — SELECT — */
+            /* — SELECT 
             selectedOrders.add(rid);
             box.classList.add("selected");
-            /* set range-anchor on plain click */
+            /* set range-anchor on plain click
             lastCtrlIdx = [...document.querySelectorAll("#newOrderContainer .new-order-box")]
                       .indexOf(box);
             orderCache[rid].forEach(tx => { if (!tx._inGrid) addPreviewBox(tx); });
             realignGrid(); updateCounters(); persistSelection(); applyMetalFilter();
             // ✅ lock it in Firebase
             try { await rtSet(rid, true); } catch (_) {}
-          });
+          }); */
 
           /* HOVER → outline concurrent previews */
           box.addEventListener("mouseenter", () => {
