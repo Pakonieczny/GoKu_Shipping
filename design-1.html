@@ -696,9 +696,14 @@ const db = firebase.firestore();
 
 // Ensure the client is authenticated (anon is fine for rules below)
 firebase.auth().onAuthStateChanged(u => {
-  if (!u) firebase.auth().signInAnonymously().catch(err => {
-    console.warn("Anon auth failed:", err);
-  });
+  if (!u) {
+    firebase.auth().signInAnonymously().catch(err => {
+      console.warn("Anon auth failed:", err);
+    });
+  } else {
+    // start Firestore realtime once we’re allowed to read
+    startLockListener();
+  }
 });
 
 // === Real-time “selected order” locks ===
@@ -801,12 +806,7 @@ async function fetchLocksOnce(){
   rtSelected = next;
   applyAllLocksToDOM();
 }
-(async function pollLocks(){
-  for(;;){
-    try{ await fetchLocksOnce(); } catch(e){ }
-    await new Promise(r=>setTimeout(r, 700));
-  }
-})();
+// (polling now only runs as a fallback via beginRtPolling())
 
 /* Release my locks on tab close (server-side) */
 window.addEventListener("beforeunload", async ()=>{

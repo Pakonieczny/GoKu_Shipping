@@ -696,9 +696,14 @@ const db = firebase.firestore();
 
 // Ensure the client is authenticated (anon is fine for rules below)
 firebase.auth().onAuthStateChanged(u => {
-  if (!u) firebase.auth().signInAnonymously().catch(err => {
-    console.warn("Anon auth failed:", err);
-  });
+  if (!u) {
+    firebase.auth().signInAnonymously().catch(err => {
+      console.warn("Anon auth failed:", err);
+    });
+  } else {
+    // start Firestore realtime once we’re allowed to read
+    startLockListener();
+  }
 });
 
 // === Real-time “selected order” locks ===
@@ -780,6 +785,76 @@ function clearLock(id){
 /* If rows were rendered after a snapshot, repaint them */
 function applyAllLocksToDOM(){ rtSelected.forEach((owner,id)=>paintLock(id, owner)); }
 
+// === Firestore realtime listener (primary) with graceful fallback ===
+let __rtUnsub = null;
+function beginRtPolling(){
+  window.__rtPollTimer && clearInterval(window.__rtPollTimer);
+  window.__rtPollTimer = setInterval(fetchLocksOnce, 700);
+}
+async function startLockListener(){
+  // stop any prior polling
+  if (window.__rtPollTimer){ clearInterval(window.__rtPollTimer); window.__rtPollTimer = null; }
+  try{
+    __rtUnsub?.(); // close any old snapshot
+    __rtUnsub = db.collection(REALTIME_COLL).onSnapshot((snap)=>{
+      const next = new Map();
+      snap.forEach(doc=>{
+        const d = doc.data() || {};
+        if (d && d.selected) next.set(String(doc.id), d.selectedBy || null);
+      });
+      next.forEach((owner, id)=>{
+        const prev = rtSelected.get(id);
+        if (prev !== owner) paintLock(id, owner);
+      });
+      rtSelected.forEach((_, id)=>{ if (!next.has(id)) clearLock(id); });
+      rtSelected = next;
+      applyAllLocksToDOM();
+    }, (err)=>{
+      console.warn("onSnapshot failed; falling back to lean polling", err);
+      __rtUnsub = null;
+      beginRtPolling();
+    });
+  }catch(err){
+    console.warn("Realtime listener error; using polling", err);
+    beginRtPolling();
+  }
+}
+
+// === Firestore realtime listener (primary) with graceful fallback ===
+let __rtUnsub = null;
+function beginRtPolling(){
+  window.__rtPollTimer && clearInterval(window.__rtPollTimer);
+  window.__rtPollTimer = setInterval(fetchLocksOnce, 700);
+}
+async function startLockListener(){
+  // stop any prior polling
+  if (window.__rtPollTimer){ clearInterval(window.__rtPollTimer); window.__rtPollTimer = null; }
+  try{
+    __rtUnsub?.(); // close any old snapshot
+    __rtUnsub = db.collection(REALTIME_COLL).onSnapshot((snap)=>{
+      const next = new Map();
+      snap.forEach(doc=>{
+        const d = doc.data() || {};
+        if (d && d.selected) next.set(String(doc.id), d.selectedBy || null);
+      });
+      next.forEach((owner, id)=>{
+        const prev = rtSelected.get(id);
+        if (prev !== owner) paintLock(id, owner);
+      });
+      rtSelected.forEach((_, id)=>{ if (!next.has(id)) clearLock(id); });
+      rtSelected = next;
+      applyAllLocksToDOM();
+    }, (err)=>{
+      console.warn("onSnapshot failed; falling back to lean polling", err);
+      __rtUnsub = null;
+      beginRtPolling();
+    });
+  }catch(err){
+    console.warn("Realtime listener error; using polling", err);
+    beginRtPolling();
+  }
+}
+
 /* Live reads now via the function (lean poll) */
 async function fetchLocksOnce(){
   const resp = await fetch(`${functionsBaseUrl}/firebaseOrders?rt=1`);
@@ -798,13 +873,7 @@ async function fetchLocksOnce(){
   rtSelected = next;
   applyAllLocksToDOM();
 }
-// 600–800ms feels snappy without hammering the function
-(async function pollLocks(){
-  for(;;){
-    try{ await fetchLocksOnce(); } catch(e){ /* quiet */ }
-    await new Promise(r=>setTimeout(r, 700));
-  }
-})();
+// (polling now only runs as a fallback via beginRtPolling())
 
 /* Release my locks on tab close — via function */
 window.addEventListener("beforeunload", ()=>{
@@ -2757,7 +2826,7 @@ if (!orderContainer.dataset.rangeWired){
     }
 
     renderOrderBoxes(currentReceipts);
-    applyAllLocksToDOM();   // ← repaint light-red locks after the list is rebuilt
+    applyAllLocksToDOM(); // repaint locks on the new DOM
   });
 
 /* 3. HOOK INTO buildNewOrderList() — pass-through only -------------- */
