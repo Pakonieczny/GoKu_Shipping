@@ -538,6 +538,7 @@ const functionsBaseUrl = window.location.origin + "/.netlify/functions";
 const selectedOrders = new Set();      // receipt_id strings
 const orderCache     = {};             // receipt_id → transactions[]
 const gridElements   = new Map();      // transaction_id → wrapper DOM
+const REALTIME_COLL = "Design_RealTime_Selected_Orders";
 let   lastCtrlIdx    = null;           // ⬅️  anchor for Ctrl/⌘ range-select
 
  /* ===== Resilient Etsy fetch (auto-refresh + 401 retry) ===== */
@@ -665,6 +666,7 @@ const LAST_PURGE_KEY = "completed_last_purge";   // ISO month stamp
 const completedOrders = new Set();               // IDs that are already green
 
 
+
 let croppedImagesArray = [];
 let userImagesArray = [];
 let cellMatches = {};
@@ -715,21 +717,22 @@ const RT = {
 
 function rtDoc(id){ return db.collection(REALTIME_COLL).doc(String(id)); }
 
-/* create/update on select; delete on deselect (owner-safe) */
+/* create/release via server — reads still come from Firestore onSnapshot */
 async function rtSet(id, on){
   id = String(id);
   try{
-    if (on){
-      await rtDoc(id).set({
-        selectedBy: RT.clientId,
-        page      : RT.page,
-        at        : firebase.firestore.FieldValue.serverTimestamp()
-      }, { merge:true });
-    } else {
-      const snap = await rtDoc(id).get();
-      if (!snap.exists || snap.data()?.selectedBy === RT.clientId) await rtDoc(id).delete();
-    }
-  }catch(err){ console.warn("rtSet failed", err); }
+    const body = on
+      ? { rtLockIds:   [id], clientId: RT.clientId, page: RT.page }
+      : { rtUnlockIds: [id], clientId: RT.clientId };
+    const resp = await fetch(`${functionsBaseUrl}/firebaseOrders`, {
+      method: "POST",
+      headers: { "Content-Type":"application/json" },
+      body: JSON.stringify(body)
+    });
+    if (!resp.ok) throw new Error("HTTP " + resp.status);
+  }catch(err){
+    console.warn("rtSet failed", err);
+  }
 }
 
 let rtSelected = new Map();  // id -> owner
@@ -771,15 +774,20 @@ db.collection(REALTIME_COLL).onSnapshot((snap)=>{
   applyAllLocksToDOM(); // also catches newly-inserted DOM rows
 });
 
-/* Release my locks on tab close */
+/* Release my locks on tab close (server-side) */
 window.addEventListener("beforeunload", async ()=>{
   try{
-    const batch = db.batch();
-    rtSelected.forEach((owner, id)=>{ if (owner === RT.clientId) batch.delete(rtDoc(id)); });
-    await batch.commit();
+    const myIds = [...rtSelected]
+      .filter(([id, owner]) => owner === RT.clientId)
+      .map(([id]) => String(id));
+    if (!myIds.length) return;
+    navigator.sendBeacon?.(
+      `${functionsBaseUrl}/firebaseOrders`,
+      new Blob([JSON.stringify({ rtUnlockIds: myIds, clientId: RT.clientId })],
+               { type: "application/json" })
+    );
   }catch(_){}
 });
-
 
 /* ===== Etsy OAuth boot + auto-refresh wiring ===== */
 const TOKEN_KEYS = {

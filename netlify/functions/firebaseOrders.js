@@ -3,6 +3,7 @@ const admin = require("./firebaseAdmin");
 const db    = admin.firestore();
 
 const COMPLETED_COLL = "Design_Completed Orders";
+const REALTIME_COLL  = "Design_RealTime_Selected_Orders";
 
 /* Global CORS headers */
 const CORS = {
@@ -37,6 +38,39 @@ exports.handler = async (event) => {
         completedIds,   // array of receipt IDs to mark completed
         uncompleteIds   // array of receipt IDs to unset
       } = body;
+
+      /* ─── Realtime selection locks (write via server) ─── */
+      const { rtLockIds, rtUnlockIds, clientId, page } = body;
+      if (Array.isArray(rtLockIds) && rtLockIds.length) {
+        const batch = db.batch();
+        rtLockIds.map(String).forEach((id) => {
+          const ref = db.collection(REALTIME_COLL).doc(id);
+          batch.set(ref, {
+            selectedBy: clientId || "server",
+            page      : page || "design",
+            at        : admin.firestore.FieldValue.serverTimestamp()
+          }, { merge:true });
+        });
+        await batch.commit();
+        return { statusCode: 200, headers: CORS,
+          body: JSON.stringify({ success:true, message:"Locked", count: rtLockIds.length }) };
+      }
+      if (Array.isArray(rtUnlockIds) && rtUnlockIds.length) {
+        const ids   = rtUnlockIds.map(String);
+        const refs  = ids.map(id => db.collection(REALTIME_COLL).doc(id));
+        const snaps = await db.getAll(...refs);
+        const batch = db.batch();
+        let delCount = 0;
+        snaps.forEach((snap) => {
+          if (!snap.exists || snap.data()?.selectedBy === clientId) {
+            batch.delete(snap.ref);
+            delCount++;
+          }
+        });
+        if (delCount) await batch.commit();
+        return { statusCode: 200, headers: CORS,
+          body: JSON.stringify({ success:true, message:"Unlocked", count: delCount }) };
+      }
 
       // If nothing actionable, short-circuit
       if (
