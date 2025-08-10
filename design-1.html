@@ -707,8 +707,11 @@ const REALTIME_COLL = "Design_RealTime_Selected_Orders";
 const RT = {
   clientId: (() => {
     const k = "rt_client_id";
-    let v = localStorage.getItem(k);
-    if (!v) { v = "c_" + Math.random().toString(36).slice(2); localStorage.setItem(k, v); }
+    let v = sessionStorage.getItem(k);
+    if (!v) {
+      v = (crypto.randomUUID?.() || ("c_" + Math.random().toString(36).slice(2)));
+      sessionStorage.setItem(k, v);
+    }
     return v;
   })(),
   page: location.pathname.toLowerCase().includes("design-1") ? "design-1" : "design"
@@ -716,7 +719,7 @@ const RT = {
 
 function rtDoc(id){ return db.collection(REALTIME_COLL).doc(String(id)); }
 
-/* create/release via server — reads still come from Firestore onSnapshot */
+/* All writes go through Netlify function */
 async function rtSet(id, on){
   id = String(id);
   try{
@@ -756,22 +759,28 @@ function clearLock(id){
 /* If rows were rendered after a snapshot, repaint them */
 function applyAllLocksToDOM(){ rtSelected.forEach((owner,id)=>paintLock(id, owner)); }
 
-/* Live subscription */
-db.collection(REALTIME_COLL).onSnapshot((snap)=>{
+/* Live reads via the function (poll) */
+async function fetchLocksOnce(){
+  const resp = await fetch(`${functionsBaseUrl}/firebaseOrders?rt=1`);
+  if (!resp.ok) throw new Error("HTTP " + resp.status);
+  const json = await resp.json();
   const next = new Map();
-  snap.forEach(doc => next.set(doc.id, (doc.data()||{}).selectedBy || null));
-
-  // added/changed
+  Object.entries(json.locks || {}).forEach(([id, doc])=>{
+    next.set(String(id), (doc||{}).selectedBy || null);
+  });
   next.forEach((owner, id)=>{
     const prev = rtSelected.get(id);
     if (prev !== owner) paintLock(id, owner);
   });
-  // removed
   rtSelected.forEach((_, id)=>{ if (!next.has(id)) clearLock(id); });
-
   rtSelected = next;
-  applyAllLocksToDOM(); // also catches newly-inserted DOM rows
-});
+  applyAllLocksToDOM();
+}
+(async function pollLocks(){
+  for(;;){
+    try{ await fetchLocksOnce(); } catch(e){ }
+    await new Promise(r=>setTimeout(r, 700));
+  }
 
 /* Release my locks on tab close (server-side) */
 window.addEventListener("beforeunload", async ()=>{

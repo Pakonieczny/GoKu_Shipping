@@ -208,6 +208,18 @@ exports.handler = async (event) => {
     /* ───────────────────────── GET ───────────────────────── */
     if (method === "GET") {
 
+      /* ?rt=1 → current realtime locks snapshot (id → doc) */
+      if (event.queryStringParameters?.rt === "1") {
+        const snap = await db.collection(REALTIME_COLL).get();
+        const locks = {};
+        snap.forEach(d => { locks[d.id] = d.data(); });
+        return {
+          statusCode: 200,
+          headers: CORS,
+          body: JSON.stringify({ success: true, locks })
+        };
+      }
+
       /* ?designCompleted=1 → list of completed receipt IDs from Design_Completed Orders */
       if (event.queryStringParameters?.designCompleted === "1") {
         const snap = await db.collection(COMPLETED_COLL).select().get();
