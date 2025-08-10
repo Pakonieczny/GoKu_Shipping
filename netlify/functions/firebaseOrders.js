@@ -56,7 +56,7 @@ exports.handler = async (event) => {
         return { statusCode: 200, headers: CORS,
           body: JSON.stringify({ success:true, message:"Locked", count: rtLockIds.length }) };
       }
-      
+
       if (Array.isArray(rtUnlockIds) && rtUnlockIds.length) {
         const ids   = rtUnlockIds.map(String);
         const refs  = ids.map(id => db.collection(REALTIME_COLL).doc(id));
@@ -79,6 +79,21 @@ exports.handler = async (event) => {
           }
         });
         if (updCount) await batch.commit();
+
+        /* Purge old unlocked docs so the collection stays clean (keeps deltas reliable) */
+        try {
+          const cutoff = new Date(Date.now() - 2 * 60 * 1000); // 2 minutes ago
+          const stale = await db.collection(REALTIME_COLL)
+            .where("selected", "==", false)
+            .where("at", "<", cutoff)
+            .get();
+          if (!stale.empty) {
+            const purgeBatch = db.batch();
+            stale.forEach(d => purgeBatch.delete(d.ref));
+            await purgeBatch.commit();
+          }
+        } catch (e) { /* non-fatal */ }
+
         return { statusCode: 200, headers: CORS,
           body: JSON.stringify({ success:true, message:"Unlocked", count: updCount }) };
       }
@@ -258,7 +273,7 @@ exports.handler = async (event) => {
         }
         const sinceTs = new Date(sinceMs);
         const snap = await db.collection(REALTIME_COLL)
-          .where("at", ">", sinceTs)
+          .where("at", ">=", sinceTs)
           .get();
         const locks   = {};
         const unlocks = [];
