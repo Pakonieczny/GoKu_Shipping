@@ -57,22 +57,26 @@ exports.handler = async (event) => {
           body: JSON.stringify({ success:true, message:"Locked", count: rtLockIds.length }) };
       }
 
-      /* 🔥 On de-select: hard delete the RT doc(s), same as Undo Complete pattern */
+      /* 🔓 De-select → write a tombstone so delta polls see it */
       if (Array.isArray(rtUnlockIds) && rtUnlockIds.length) {
         const ids = rtUnlockIds.map(String);
         const batch = db.batch();
         ids.forEach((id) => {
           const ref = db.collection(REALTIME_COLL).doc(id);
-          batch.delete(ref);
+          batch.set(ref, {
+            selected   : false,
+            selectedBy : null,
+            page       : null,
+            at         : admin.firestore.FieldValue.serverTimestamp()
+          }, { merge: true });
         });
         await batch.commit();
-
         return {
           statusCode: 200,
           headers: CORS,
           body: JSON.stringify({
             success: true,
-            message: "Unlocked (deleted)",
+            message: "Unlocked (tombstone)",
             count: ids.length
           })
         };
