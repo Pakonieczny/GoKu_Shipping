@@ -821,7 +821,6 @@ async function startLockListener(){
 }
 
 // === Firestore realtime listener (primary) with graceful fallback ===
-let __rtUnsub = null;
 function beginRtPolling(){
   window.__rtPollTimer && clearInterval(window.__rtPollTimer);
   window.__rtPollTimer = setInterval(fetchLocksOnce, 700);
