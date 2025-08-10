@@ -2275,7 +2275,7 @@ if (!orderContainer.dataset.rangeWired){
     }
   }
 
-    /* ===== Real-time: drive Firebase writes off ORANGE (.selected) state ===== */
+  /* ===== Real-time: drive Firebase writes off ORANGE (.selected) state ===== */
   (function wireSelectionObserver(){
     const container = document.getElementById("newOrderContainer");
     if (!container || container.dataset.selObs) return;
@@ -2303,6 +2303,7 @@ if (!orderContainer.dataset.rangeWired){
           const has = row.classList.contains("selected");
           if (had !== has) onSelectedChange(row, has);
         }
+
         if (m.type === "childList") {
           // unlock removed selected rows
           m.removedNodes.forEach(n => {
@@ -2330,7 +2331,6 @@ if (!orderContainer.dataset.rangeWired){
         }
       }
     });
-  });
 
     obs.observe(container, {
       attributes: true,
