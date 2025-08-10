@@ -799,6 +799,69 @@ function reapplySelectionAndLocks(){
   applyAllLocksToDOM();             // repaints light-red/locks for others
 }
 
+(function startCompletedRealtime(){
+  // Guard so we don't double-wire on the same page
+  if (window.__completedStreamWired) return;
+  window.__completedStreamWired = true;
+
+  const COLL = "Design_Completed Orders";
+
+  function removeIfCompleted(idSet){
+    // Remove from sidebar + grid for any completed receipt IDs
+    document.querySelectorAll("#newOrderContainer .new-order-box").forEach(row=>{
+      const rid = String(row.dataset.receipt || "");
+      if (!rid || !idSet.has(rid)) return;
+
+      // Drop selection + previews + cache
+      selectedOrders.delete(rid);
+      removePreviewBoxesForOrder(rid);
+      delete orderCache[rid];
+
+      // Unlock real-time selection if needed
+      try { rtSet(rid, false); } catch (_) {}
+
+      // Remove the row itself
+      row.remove();
+    });
+
+    // Tidy UI
+    reflowGrid?.();
+    realignGrid?.();
+    updateCounters?.();
+    applyMetalFilter?.();
+  }
+
+  // Primary: native Firestore onSnapshot (fastest + cheapest)
+  try{
+    db.collection(COLL).onSnapshot((snap)=>{
+      const live = new Set(snap.docs.map(d=>String(d.id)));
+      removeIfCompleted(live);
+    }, (err)=>{
+      console.warn("Completed onSnapshot failed; falling back to polling", err);
+      beginCompletedPolling();
+    });
+  }catch(e){
+    console.warn("Completed listener error; using polling", e);
+    beginCompletedPolling();
+  }
+
+  // Fallback: light polling via Netlify function (?designCompleted=1)
+  function beginCompletedPolling(){
+    let t=null;
+    const tick = async ()=>{
+      try{
+        const r = await fetch(`${functionsBaseUrl}/firebaseOrders?designCompleted=1`);
+        const j = await r.json();
+        if (j && j.success) {
+          removeIfCompleted(new Set((j.orderNumbers||[]).map(String)));
+        }
+      }catch(_){}
+      t = setTimeout(tick, 1500);  // gentle 1.5s cadence
+    };
+    tick();
+  }
+})();
+
 // === Server-driven delta poller (adaptive backoff, no Firestore onSnapshot) ===
 const RT_POLL = { t:null };
 function nextDelayMs(){
