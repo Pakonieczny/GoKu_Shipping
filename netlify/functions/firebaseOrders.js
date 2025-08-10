@@ -56,14 +56,19 @@ exports.handler = async (event) => {
         return { statusCode: 200, headers: CORS,
           body: JSON.stringify({ success:true, message:"Locked", count: rtLockIds.length }) };
       }
+      
       if (Array.isArray(rtUnlockIds) && rtUnlockIds.length) {
         const ids   = rtUnlockIds.map(String);
         const refs  = ids.map(id => db.collection(REALTIME_COLL).doc(id));
-        const snaps = await db.getAll(...refs);                            // ← fix
+        const snaps = await db.getAll(...refs);
         const batch = db.batch();
         let updCount = 0;
         snaps.forEach((snap) => {
-          const allow = !snap.exists || snap.data()?.selectedBy === clientId;
+          const data     = snap.exists ? (snap.data() || {}) : {};
+          const owner    = data.selectedBy || null;
+          const docPage  = String(data.page || "");
+          const sameGrp  = /^design/.test(docPage) && /^design/.test(String(page || ""));
+          const allow    = !snap.exists || owner === clientId || sameGrp;
           if (allow){
             batch.set(snap.ref, {
               selected   : false,

@@ -728,10 +728,11 @@ const REALTIME_COLL = "Design_RealTime_Selected_Orders";
 const RT = {
   clientId: (() => {
     const k = "rt_client_id";
-    let v = sessionStorage.getItem(k);
+    let v = null;
+    try { v = localStorage.getItem(k); } catch(_) {}
     if (!v) {
       v = (crypto.randomUUID?.() || ("c_" + Math.random().toString(36).slice(2)));
-      sessionStorage.setItem(k, v);
+      try { localStorage.setItem(k, v); } catch(_) {}
     }
     return v;
   })(),
@@ -772,13 +773,18 @@ async function rtSet(id, on){
   try{
     const body = on
       ? { rtLockIds:   [id], clientId: RT.clientId, page: RT.page }
-      : { rtUnlockIds: [id], clientId: RT.clientId };
+      : { rtUnlockIds: [id], clientId: RT.clientId, page: RT.page };
     const resp = await fetch(`${functionsBaseUrl}/firebaseOrders`, {
       method: "POST",
       headers: { "Content-Type":"application/json" },
       body: JSON.stringify(body)
     });
     if (!resp.ok) throw new Error("HTTP " + resp.status);
+    // optimistic local clear on unlock
+    if (!on) {
+      rtSelected.delete(id);
+      clearLock(id);
+    }
   }catch(err){
     console.warn("rtSet failed", err);
   }
