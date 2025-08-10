@@ -702,8 +702,8 @@ firebase.auth().onAuthStateChanged(u => {
     });
   }
 });
-// Start RT polling regardless of auth; backend is Admin-SDK backed
-beginDeltaPolling();
+// Start RT polling after the poller variables are initialized
+window.addEventListener('DOMContentLoaded', () => beginDeltaPolling());
 
 async function fetchAllLocksOnce(){
   try{
