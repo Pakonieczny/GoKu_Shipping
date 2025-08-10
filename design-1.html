@@ -1137,11 +1137,14 @@ if (!orderContainer.dataset.rangeWired){
 
     const deselectRow = (row) => {
       const rid = String(row.dataset.receipt);
+      if (!rid) return;
       if (selectedOrders.has(rid)){
         selectedOrders.delete(rid);
         row.classList.remove("selected");
         removePreviewBoxesForOrder(rid);
-        // observer will release in realtime
+
+        // 🔓 Always unlock in Firebase immediately (belt & suspenders)
+        rtSet(rid, false);
       }
     };
 
@@ -1278,6 +1281,9 @@ if (!orderContainer.dataset.rangeWired){
           const row = document.querySelector(
             `.new-order-box[data-receipt='${rid}']`);
           if (row) row.classList.remove("selected");
+
+          /* A2. explicit realtime unlock */
+          try { rtSet(rid, false); } catch(_) {}
 
           /* B. nuke every preview wrap for that receipt (even if not orange) */
           document.querySelectorAll(
