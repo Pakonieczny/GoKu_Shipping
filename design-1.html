@@ -194,7 +194,6 @@
     .new-order-box.rt-selected { background:#ffcdd2 !important; }  /* red lighten-4 */
     .new-order-box.rt-locked   { pointer-events:none; cursor:not-allowed; opacity:.9; }
 
-
     /* put right after your .new-order-box rule */
     .new-order-box.selected{
       background:#FFE2B5 !important;   /* force-override any other bg */
@@ -666,6 +665,7 @@ const LAST_PURGE_KEY = "completed_last_purge";   // ISO month stamp
 const completedOrders = new Set();               // IDs that are already green
 
 
+
 let croppedImagesArray = [];
 let userImagesArray = [];
 let cellMatches = {};
@@ -701,7 +701,7 @@ firebase.auth().onAuthStateChanged(u => {
       console.warn("Anon auth failed:", err);
     });
   } else {
-    beginDeltaPolling();
+    beginDeltaPolling();            // server-driven delta poll
   }
 });
 
@@ -717,10 +717,10 @@ async function fetchAllLocksOnce(){
   }catch(e){ console.warn("hydrate locks failed", e); }
 }
 
-// Delta-poll watermark & guards
-let __rtSince = Date.now() - 5 * 60 * 1000; // start 5 min back
-let __rtInflight = null;
-let __rtIdleHits = 0;
+ // Delta-poll watermark & guards
+ let __rtSince = Date.now() - 5 * 60 * 1000; // start 5 min back
+ let __rtInflight = null;
+ let __rtIdleHits = 0;
 
 // === Real-time “selected order” locks ===
 const REALTIME_COLL = "Design_RealTime_Selected_Orders";
@@ -739,9 +739,6 @@ const RT = {
   page: location.pathname.toLowerCase().includes("design-1") ? "design-1" : "design"
 };
 
-
-function rtDoc(id){ return db.collection(REALTIME_COLL).doc(String(id)); }
-
 /* All writes go through Netlify function */
 async function rtSet(id, on){
   id = String(id);
@@ -755,14 +752,14 @@ async function rtSet(id, on){
       body: JSON.stringify(body)
     });
     if (!resp.ok) throw new Error("HTTP " + resp.status);
-    // optimistic local clear on unlock
+
+    // optimistic local clear on unlock so light-red + lock vanish immediately
     if (!on) {
       rtSelected.delete(id);
       clearLock(id);
     }
-  }catch(err){
-    console.warn("rtSet failed", err);
-  }
+
+  }catch(err){ console.warn("rtSet failed", err); }
 }
 
 let rtSelected = new Map();  // id -> owner
@@ -787,34 +784,113 @@ function clearLock(id){
 /* If rows were rendered after a snapshot, repaint them */
 function applyAllLocksToDOM(){ rtSelected.forEach((owner,id)=>paintLock(id, owner)); }
 
+// === Server-driven delta poller (adaptive backoff, no Firestore onSnapshot) ===
+const RT_POLL = { t:null };
+function nextDelayMs(){
+  // ramp up when idle to reduce traffic
+  const steps = [700, 1200, 2500, 5000, 8000];
+  const i = Math.min(__rtIdleHits, steps.length - 1);
+  return steps[i];
+}
+function scheduleRtPoll(){
+  clearTimeout(RT_POLL.t);
+  RT_POLL.t = setTimeout(()=>{ fetchLocksOnce(); }, nextDelayMs());
+}
+function beginDeltaPolling(){
+  clearTimeout(RT_POLL.t);
+  __rtSince    = Date.now() - 5*60*1000;
+  __rtIdleHits = 0;
+  fetchAllLocksOnce();   // get all current locks once
+  scheduleRtPoll();      // then switch to deltas
+}
+
+// === Firestore realtime listener (primary) with graceful fallback ===
+function beginRtPolling(){
+  window.__rtPollTimer && clearInterval(window.__rtPollTimer);
+  window.__rtPollTimer = setInterval(fetchLocksOnce, 700);
+}
+/* async function startLockListener(){
+  // stop any prior polling
+  if (window.__rtPollTimer){ clearInterval(window.__rtPollTimer); window.__rtPollTimer = null; }
+  try{
+    __rtUnsub?.(); // close any old snapshot
+    __rtUnsub = db.collection(REALTIME_COLL).onSnapshot((snap)=>{
+      const next = new Map();
+      snap.forEach(doc=>{
+        const d = doc.data() || {};
+        if (d && d.selected) next.set(String(doc.id), d.selectedBy || null);
+      });
+      next.forEach((owner, id)=>{
+        const prev = rtSelected.get(id);
+        if (prev !== owner) paintLock(id, owner);
+      });
+      rtSelected.forEach((_, id)=>{ if (!next.has(id)) clearLock(id); });
+      rtSelected = next;
+      applyAllLocksToDOM();
+    }, (err)=>{
+      console.warn("onSnapshot failed; falling back to lean polling", err);
+      __rtUnsub = null;
+      beginRtPolling();
+    });
+  }catch(err){
+    console.warn("Realtime listener error; using polling", err);
+    beginRtPolling();
+  }
+} */
+
  async function fetchLocksOnce(){
    if (__rtInflight) return __rtInflight; // dedupe
    const url = `${functionsBaseUrl}/firebaseOrders?rtSince=${__rtSince}`;
-   __rtInflight = fetch(url)
-     .then(r => { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); })
-     .then(json => {
-       let changed = 0;
-       Object.entries(json.locks || {}).forEach(([id, doc]) => {
-         const owner = (doc || {}).selectedBy || null;
-         const prev  = rtSelected.get(id);
-         if (prev !== owner) { rtSelected.set(id, owner); paintLock(id, owner); changed++; }
-       });
-       (json.unlocks || []).forEach(id => {
-         if (rtSelected.has(id)) { rtSelected.delete(id); clearLock(id); changed++; }
-       });
-       __rtSince    = Number(json.now) || Date.now();
-       __rtIdleHits = changed ? 0 : (__rtIdleHits + 1);
-       applyAllLocksToDOM();
-     })
-     .catch(() => {})
-     .finally(() => {
-       __rtInflight = null;
-       scheduleRtPoll();   // switch to deltas
+   __rtInflight = fetch(url).then(r=>{
+     if (!r.ok) throw new Error("HTTP " + r.status);
+     return r.json();
+   }).then(json=>{
+     let changed = 0;
+     // apply new/updated locks
+     Object.entries(json.locks || {}).forEach(([id, doc])=>{
+       const owner = (doc||{}).selectedBy || null;
+       const prev  = rtSelected.get(id);
+       if (prev !== owner){
+         rtSelected.set(id, owner);
+         paintLock(id, owner);
+         changed++;
+       }
      });
+     // apply unlocks
+     (json.unlocks || []).forEach(id=>{
+       if (rtSelected.has(id)){
+         rtSelected.delete(id);
+         clearLock(id);
+         changed++;
+       }
+     });
+     // watermark
+     __rtSince = Number(json.now) || Date.now();
+     __rtIdleHits = changed ? 0 : (__rtIdleHits + 1);
+     applyAllLocksToDOM();
+   }).catch(()=>{}).finally(()=>{
+     __rtInflight = null;
+     scheduleRtPoll();     // keep the loop going with adaptive cadence
+   });
    return __rtInflight;
  }
+// (polling now only runs as a fallback via beginRtPolling())
 
- // Reconcile helper: compare our rtSelected map to the server's current active locks
+/* Release my locks on tab close — via function */
+window.addEventListener("beforeunload", ()=>{
+  try{
+    const myIds = [...rtSelected].filter(([id, owner]) => owner === RT.clientId)
+                                 .map(([id]) => String(id));
+    if (!myIds.length) return;
+    navigator.sendBeacon?.(
+      `${functionsBaseUrl}/firebaseOrders`,
+      new Blob([JSON.stringify({ rtUnlockIds: myIds, clientId: RT.clientId })],
+               { type: "application/json" })
+    );
+  }catch(_){}
+});
+
+// Reconcile helper: compare our rtSelected map to the server's current active locks
 async function reconcileActiveLocks() {
   try {
     const r = await fetch(`${functionsBaseUrl}/firebaseOrders?rt=1`);
@@ -833,42 +909,6 @@ async function reconcileActiveLocks() {
     applyAllLocksToDOM();
   } catch (_) {}
 }
-
-
-// === Server-driven delta poller (adaptive backoff, no Firestore onSnapshot) ===
-const RT_POLL = { t:null };
-function nextDelayMs(){
-  const steps = [700, 1200, 2500, 5000, 8000];
-  const i = Math.min(__rtIdleHits, steps.length - 1);
-  return steps[i];
-}
-function scheduleRtPoll(){
-  clearTimeout(RT_POLL.t);
-  RT_POLL.t = setTimeout(()=>{ fetchLocksOnce(); }, nextDelayMs());
-}
-
- function beginDeltaPolling(){
-   clearTimeout(RT_POLL.t);
-   __rtSince    = Date.now() - 5*60*1000;
-   __rtIdleHits = 0;
-   fetchAllLocksOnce();   // hydrate current light-red locks immediately
-   scheduleRtPoll();      // then switch to deltas
- }
-
-/* Release my locks on tab close (server-side) */
-window.addEventListener("beforeunload", async ()=>{
-  try{
-    const myIds = [...rtSelected]
-      .filter(([id, owner]) => owner === RT.clientId)
-      .map(([id]) => String(id));
-    if (!myIds.length) return;
-    navigator.sendBeacon?.(
-      `${functionsBaseUrl}/firebaseOrders`,
-      new Blob([JSON.stringify({ rtUnlockIds: myIds, clientId: RT.clientId })],
-               { type: "application/json" })
-    );
-  }catch(_){}
-});
 
 /* ===== Etsy OAuth boot + auto-refresh wiring ===== */
 const TOKEN_KEYS = {
@@ -1127,13 +1167,15 @@ if (!orderContainer.dataset.rangeWired){
 
     /* If someone else has this order locked, block clicks */
     if (box.classList.contains("rt-locked")) {
-    if (window.M?.toast) M.toast({ html: "This order is being worked on in another window." });
+      if (window.M?.toast) M.toast({ html: "This order is being worked on in another window." });
       return;
     }
 
     // Prevent legacy handlers from swallowing Ctrl/Meta
     e.preventDefault();
     e.stopImmediatePropagation();
+    e.stopPropagation();           // ⬅️ block bubble-phase row handler from re-toggling
+
 
     const rows = [...orderContainer.querySelectorAll(".new-order-box")];
     const currIdx = rows.indexOf(box);
@@ -1151,20 +1193,20 @@ if (!orderContainer.dataset.rangeWired){
         row.classList.add("selected");
         // add previews
         orderCache[rid].forEach(tx => { if (!tx._inGrid) addPreviewBox(tx); });
-        // no direct rtSet here; observer will write on orange state
+
+        // lock explicitly on user select
+        try { await rtSet(rid, true); } catch (_) {}
       }
     };
 
     const deselectRow = (row) => {
       const rid = String(row.dataset.receipt);
-      if (!rid) return;
       if (selectedOrders.has(rid)){
         selectedOrders.delete(rid);
         row.classList.remove("selected");
         removePreviewBoxesForOrder(rid);
-
-        // 🔓 Always unlock in Firebase immediately (belt & suspenders)
-        rtSet(rid, false);
+        // 🔓 explicit realtime unlock (belt & suspenders)
+        try { rtSet(rid, false); } catch (_) {}
       }
     };
 
@@ -1211,7 +1253,7 @@ if (!orderContainer.dataset.rangeWired){
     if(!rid) return;                      // safety
 
     /* — mark as completed — */
-    completedOrders.add(rid);             // global Set   [oai_citation:2‡design-1.html](file-service://file-UD87qPNcvFGdsBetdyBDoA)
+    completedOrders.add(rid);             // global Set   [oai_citation:2‡design.html](file-service://file-UD87qPNcvFGdsBetdyBDoA)
     selectedOrders.delete(rid);
 
     /* remove/hide UI elements */
@@ -1301,6 +1343,8 @@ if (!orderContainer.dataset.rangeWired){
           const row = document.querySelector(
             `.new-order-box[data-receipt='${rid}']`);
           if (row) row.classList.remove("selected");
+          // 🔓 unlock each cleared receipt in Firebase
+          try { rtSet(rid, false); } catch (_) {}
 
           /* A2. explicit realtime unlock */
           try { rtSet(rid, false); } catch(_) {}
@@ -1500,6 +1544,8 @@ if (!orderContainer.dataset.rangeWired){
               selectedOrders.delete(rid);
               box.classList.remove("selected");
               removePreviewBoxesForOrder(rid);
+              // 🔓 unlock in Firebase on deselect
+              try { await rtSet(rid, false); } catch (_) {}
               realignGrid(); updateCounters(); persistSelection(); applyMetalFilter();
               return;
             }
@@ -1512,6 +1558,8 @@ if (!orderContainer.dataset.rangeWired){
                       .indexOf(box);
             orderCache[rid].forEach(tx => { if (!tx._inGrid) addPreviewBox(tx); });
             realignGrid(); updateCounters(); persistSelection(); applyMetalFilter();
+            // ✅ lock it in Firebase
+            try { await rtSet(rid, true); } catch (_) {}
           });
 
           /* HOVER → outline concurrent previews */
@@ -1626,6 +1674,7 @@ if (!orderContainer.dataset.rangeWired){
             updateCounters();
             persistSelection();
             applyMetalFilter();
+            try { rtSet(rid, false); } catch (_) {}
             return;
           }
 
@@ -1858,7 +1907,7 @@ if (!orderContainer.dataset.rangeWired){
         allOpenReceipts = allOpenReceipts
           .filter(r => !printedIDs.includes(String(r.receipt_id)));
     
-        await persistCompleted(printedIDs);      // ← write to Firebase (bulk)   
+        await persistCompleted(printedIDs);      // ← write to Firebase (bulk)
         // After: await persistCompleted(printedIDs);
         try{
           await fetch(`${functionsBaseUrl}/firebaseOrders`, {
@@ -1866,7 +1915,7 @@ if (!orderContainer.dataset.rangeWired){
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ rtUnlockIds: printedIDs.map(String), clientId: RT.clientId })
           });
-        }catch(e){ console.warn("Unlock after complete failed:", e); }     
+        }catch(e){ console.warn("Unlock after complete failed:", e); }        
         persistSelection();
         reflowGrid();
         updateCounters();
@@ -1882,7 +1931,7 @@ if (!orderContainer.dataset.rangeWired){
      f.style.cssText="position:fixed;visibility:hidden;right:9999px;width:1px;height:1px;";
      f.src = "design-print-1.html";
 
-     // print is now triggered inside design-print-1.html
+     // print is now triggered inside design-print.html
      document.body.appendChild(f);
    }
    document.addEventListener("DOMContentLoaded",()=>{
@@ -2030,7 +2079,7 @@ if (!orderContainer.dataset.rangeWired){
 
         const _row = document.querySelector(`.new-order-box[data-receipt='${rid}']`);
         if (_row && !_row.classList.contains("rt-locked")) {
-          _row.classList.add("selected");   // observer → lock
+          _row.classList.add("selected");   // observer will write lock
         }
  
         /* 🔄  clear any leftover wraps so counters don’t double */
@@ -2187,8 +2236,8 @@ if (!orderContainer.dataset.rangeWired){
       if (isSelected) selectedOrders.add(rid);
       else selectedOrders.delete(rid);
 
-      // all writes via Netlify function
-      rtSet(rid, isSelected);
+      // writes are explicit in click handlers; do not mirror CSS back to RT
+      // rtSet(rid, isSelected);
     };
 
     const obs = new MutationObserver((muts) => {
@@ -2813,7 +2862,7 @@ if (!orderContainer.dataset.rangeWired){
     }
 
     renderOrderBoxes(currentReceipts);
-    applyAllLocksToDOM();   // ← repaint light-red locks after the list is rebuilt
+    applyAllLocksToDOM(); // repaint locks on the new DOM
   });
 
 /* 3. HOOK INTO buildNewOrderList() — pass-through only -------------- */
