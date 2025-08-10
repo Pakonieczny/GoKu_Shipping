@@ -705,6 +705,18 @@ firebase.auth().onAuthStateChanged(u => {
   }
 });
 
+async function fetchAllLocksOnce(){
+  try{
+    const r = await fetch(`${functionsBaseUrl}/firebaseOrders?rt=1`);
+    const j = await r.json();
+    // seed the local map and paint everything we have in DOM
+    rtSelected = new Map(
+      Object.entries(j.locks || {}).map(([id,doc]) => [id, doc.selectedBy || null])
+    );
+    applyAllLocksToDOM();
+  }catch(e){ console.warn("hydrate locks failed", e); }
+}
+
 // Delta-poll watermark & guards
 let __rtSince = Date.now() - 5 * 60 * 1000; // start 5 min back
 let __rtInflight = null;
@@ -732,23 +744,23 @@ const RT = {
   if (!cont || cont.dataset.rtWired) return;
   cont.dataset.rtWired = "1";
 
-  const onClassFlip = (el) => {
-    if (!el.classList.contains("new-order-box")) return;
-    const id = String(el.dataset.receipt || "");
-    if (!id) return;
-
-    const isSelected = el.classList.contains("selected");
-    // Only write when user selects/deselects; pagination just removes DOM nodes, which we ignore
-    rtSet(id, !!isSelected);
-  };
-
   const mo = new MutationObserver(muts => {
     for (const m of muts) {
-      if (m.type === "attributes" && m.attributeName === "class") onClassFlip(m.target);
-      // NOTE: intentionally ignore childList removals to keep locks alive across pages
+      if (m.type !== "attributes" || m.attributeName !== "class") continue;
+      const el = m.target;
+      if (!el.classList.contains("new-order-box")) continue;
+      const id = String(el.dataset.receipt || "");
+      if (!id) continue;
+      const wasSelected = /\bselected\b/.test(m.oldValue || "");
+      const nowSelected = el.classList.contains("selected");
+      if (wasSelected !== nowSelected) rtSet(id, nowSelected);
     }
   });
-  mo.observe(cont, { subtree:true, attributes:true, attributeFilter:["class"] });
+  mo.observe(cont, {
+    subtree:true,
+    attributes:true,
+    attributeFilter:["class"],
+    attributeOldValue:true
 })();
 
 function rtDoc(id){ return db.collection(REALTIME_COLL).doc(String(id)); }
@@ -825,8 +837,8 @@ function applyAllLocksToDOM(){ rtSelected.forEach((owner,id)=>paintLock(id, owne
      applyAllLocksToDOM();
    }).catch(()=>{}).finally(()=>{
      __rtInflight = null;
-     scheduleRtPoll();
-   });
+     fetchAllLocksOnce();   // get all current locks once
+     scheduleRtPoll();      // then switch to deltas   });
    return __rtInflight;
  }
 
