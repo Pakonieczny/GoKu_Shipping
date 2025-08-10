@@ -538,7 +538,6 @@ const functionsBaseUrl = window.location.origin + "/.netlify/functions";
 const selectedOrders = new Set();      // receipt_id strings
 const orderCache     = {};             // receipt_id → transactions[]
 const gridElements   = new Map();      // transaction_id → wrapper DOM
-const REALTIME_COLL = "Design_RealTime_Selected_Orders";
 let   lastCtrlIdx    = null;           // ⬅️  anchor for Ctrl/⌘ range-select
 
  /* ===== Resilient Etsy fetch (auto-refresh + 401 retry) ===== */
