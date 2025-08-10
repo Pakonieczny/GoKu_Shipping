@@ -785,8 +785,18 @@ function applyAllLocksToDOM(){ rtSelected.forEach((owner,id)=>paintLock(id, owne
 
 // Re-apply saved orange selections, then repaint RT locks
 function reapplySelectionAndLocks(){
-  highlightSavedRows();   // adds .selected from your saved set
-  applyAllLocksToDOM();   // repaints light-red/locks for others
+  // tolerate scope/hoist differences across pages
+  if (typeof highlightSavedRows === "function") {
+    highlightSavedRows();           // adds .selected from your saved set
+  } else {
+    // minimal local fallback: paint oranges from selectedOrders
+    selectedOrders.forEach(id => {
+      document
+        .querySelectorAll(`.new-order-box[data-receipt='${id}']`)
+        .forEach(row => row.classList.add("selected"));
+    });
+  }
+  applyAllLocksToDOM();             // repaints light-red/locks for others
 }
 
 // === Server-driven delta poller (adaptive backoff, no Firestore onSnapshot) ===
