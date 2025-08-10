@@ -46,10 +46,11 @@ exports.handler = async (event) => {
         rtLockIds.map(String).forEach((id) => {
           const ref = db.collection(REALTIME_COLL).doc(id);
           batch.set(ref, {
-            selectedBy: clientId || "server",
-            page      : page || "design",
-            at        : admin.firestore.FieldValue.serverTimestamp()
-          }, { merge:true });
+            selected   : true,
+            selectedBy : clientId || "server",
+            page       : page || "design",
+            at         : admin.firestore.FieldValue.serverTimestamp()
+          }, { merge:true })
         });
         await batch.commit();
         return { statusCode: 200, headers: CORS,
@@ -58,18 +59,23 @@ exports.handler = async (event) => {
       if (Array.isArray(rtUnlockIds) && rtUnlockIds.length) {
         const ids   = rtUnlockIds.map(String);
         const refs  = ids.map(id => db.collection(REALTIME_COLL).doc(id));
-        const snaps = await db.getAll(...refs);
+        const snaps = await db.getAll(...refs);                            // ← fix
         const batch = db.batch();
-        let delCount = 0;
+        let updCount = 0;
         snaps.forEach((snap) => {
-          if (!snap.exists || snap.data()?.selectedBy === clientId) {
-            batch.delete(snap.ref);
-            delCount++;
+          const allow = !snap.exists || snap.data()?.selectedBy === clientId;
+          if (allow){
+            batch.set(snap.ref, {
+              selected   : false,
+              selectedBy : null,
+              at         : admin.firestore.FieldValue.serverTimestamp()
+            }, { merge:true });
+            updCount++;
           }
         });
-        if (delCount) await batch.commit();
+        if (updCount) await batch.commit();
         return { statusCode: 200, headers: CORS,
-          body: JSON.stringify({ success:true, message:"Unlocked", count: delCount }) };
+          body: JSON.stringify({ success:true, message:"Unlocked", count: updCount }) };
       }
 
       // If nothing actionable, short-circuit
@@ -205,13 +211,71 @@ exports.handler = async (event) => {
       };
     }
 
+
+     // ?rtSince=epochMillis  -> return only changes since that moment
+     const qs = event.queryStringParameters || {};
+     if (qs.rtSince) {
+       const since = Number(qs.rtSince);
+       const sinceTs = admin.firestore.Timestamp.fromMillis(isNaN(since) ? 0 : since);
+       const snap = await db
+         .collection(REALTIME_COLL)
+         .where('at', '>=', sinceTs)
+         .get();
+
+       const locks = {};
+       const unlocks = [];
+       snap.forEach(d => {
+         const data = d.data() || {};
+         if (data.selected) {
+           locks[d.id] = { selectedBy: data.selectedBy || null, page: data.page || null, at: data.at || null };
+         } else {
+           unlocks.push(d.id);
+         }
+       });
+       return {
+         statusCode: 200,
+         headers: CORS,
+         body: JSON.stringify({ success: true, locks, unlocks, now: Date.now() })
+       };
+     }
+
+
     /* ───────────────────────── GET ───────────────────────── */
     if (method === "GET") {
 
-      /* ?rt=1 → current realtime locks snapshot (id → doc) */
-      if (event.queryStringParameters?.rt === "1") {
-        const snap = await db.collection(REALTIME_COLL).get();
-        const locks = {};
+      /* ?rtSince=NUMBER(ms) → delta since watermark
+      Returns: { locks:{id:{selectedBy,page,atMs}}, unlocks:[id], now:Number } */
+      const qSince = event.queryStringParameters?.rtSince;
+      if (qSince) {
+        const sinceMs = Number(qSince);
+        if (!Number.isFinite(sinceMs)) {
+          return { statusCode: 400, headers: CORS, body: JSON.stringify({ error:"bad rtSince" }) };
+        }
+        const sinceTs = new Date(sinceMs);
+        const snap = await db.collection(REALTIME_COLL)
+          .where("at", ">", sinceTs)
+          .get();
+        const locks   = {};
+        const unlocks = [];
+        snap.forEach(d=>{
+          const v = d.data() || {};
+          if (v.selected === true) {
+            locks[d.id] = { selectedBy: v.selectedBy || null, page: v.page || null, atMs: (v.at?.toMillis?.() || Date.now()) };
+          } else if (v.selected === false) {
+            unlocks.push(d.id);
+          }
+        });
+        return {
+          statusCode: 200,
+          headers: CORS,
+          body: JSON.stringify({ success:true, locks, unlocks, now: Date.now() })
+        };
+      }
+
+     /* ?rt=1 → current active locks only (selected == true) */
+     if (event.queryStringParameters?.rt === "1") {
+       const snap = await db.collection(REALTIME_COLL).where("selected","==",true).get();        
+       const locks = {};
         snap.forEach(d => { locks[d.id] = d.data(); });
         return {
           statusCode: 200,

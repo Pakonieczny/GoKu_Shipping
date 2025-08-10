@@ -701,10 +701,14 @@ firebase.auth().onAuthStateChanged(u => {
       console.warn("Anon auth failed:", err);
     });
   } else {
-    // start Firestore realtime once we’re allowed to read
-    startLockListener();
+    beginDeltaPolling();            // server-driven delta poll
   }
 });
+
+ // Delta-poll watermark & guards
+ let __rtSince = Date.now() - 5 * 60 * 1000; // start 5 min back
+ let __rtInflight = null;
+ let __rtIdleHits = 0;
 
 // === Real-time “selected order” locks ===
 const REALTIME_COLL = "Design_RealTime_Selected_Orders";
@@ -785,13 +789,31 @@ function clearLock(id){
 /* If rows were rendered after a snapshot, repaint them */
 function applyAllLocksToDOM(){ rtSelected.forEach((owner,id)=>paintLock(id, owner)); }
 
+// === Server-driven delta poller (adaptive backoff, no Firestore onSnapshot) ===
+const RT_POLL = { t:null };
+function nextDelayMs(){
+  // ramp up when idle to reduce traffic
+  const steps = [700, 1200, 2500, 5000, 8000];
+  const i = Math.min(__rtIdleHits, steps.length - 1);
+  return steps[i];
+}
+function scheduleRtPoll(){
+  clearTimeout(RT_POLL.t);
+  RT_POLL.t = setTimeout(()=>{ fetchLocksOnce(); }, nextDelayMs());
+}
+function beginDeltaPolling(){
+  clearTimeout(RT_POLL.t);
+  __rtSince    = Date.now() - 5*60*1000;
+  __rtIdleHits = 0;
+  scheduleRtPoll();
+}
+
 // === Firestore realtime listener (primary) with graceful fallback ===
-let __rtUnsub = null;
 function beginRtPolling(){
   window.__rtPollTimer && clearInterval(window.__rtPollTimer);
   window.__rtPollTimer = setInterval(fetchLocksOnce, 700);
 }
-async function startLockListener(){
+/* async function startLockListener(){
   // stop any prior polling
   if (window.__rtPollTimer){ clearInterval(window.__rtPollTimer); window.__rtPollTimer = null; }
   try{
@@ -818,60 +840,44 @@ async function startLockListener(){
     console.warn("Realtime listener error; using polling", err);
     beginRtPolling();
   }
-}
+} */
 
-// === Firestore realtime listener (primary) with graceful fallback ===
-function beginRtPolling(){
-  window.__rtPollTimer && clearInterval(window.__rtPollTimer);
-  window.__rtPollTimer = setInterval(fetchLocksOnce, 700);
-}
-async function startLockListener(){
-  // stop any prior polling
-  if (window.__rtPollTimer){ clearInterval(window.__rtPollTimer); window.__rtPollTimer = null; }
-  try{
-    __rtUnsub?.(); // close any old snapshot
-    __rtUnsub = db.collection(REALTIME_COLL).onSnapshot((snap)=>{
-      const next = new Map();
-      snap.forEach(doc=>{
-        const d = doc.data() || {};
-        if (d && d.selected) next.set(String(doc.id), d.selectedBy || null);
-      });
-      next.forEach((owner, id)=>{
-        const prev = rtSelected.get(id);
-        if (prev !== owner) paintLock(id, owner);
-      });
-      rtSelected.forEach((_, id)=>{ if (!next.has(id)) clearLock(id); });
-      rtSelected = next;
-      applyAllLocksToDOM();
-    }, (err)=>{
-      console.warn("onSnapshot failed; falling back to lean polling", err);
-      __rtUnsub = null;
-      beginRtPolling();
-    });
-  }catch(err){
-    console.warn("Realtime listener error; using polling", err);
-    beginRtPolling();
-  }
-}
-
-/* Live reads now via the function (lean poll) */
-async function fetchLocksOnce(){
-  const resp = await fetch(`${functionsBaseUrl}/firebaseOrders?rt=1`);
-  if (!resp.ok) throw new Error("HTTP " + resp.status);
-  const json = await resp.json();
-  const next = new Map();
-  Object.entries(json.locks || {}).forEach(([id, doc])=>{
-    next.set(String(id), (doc||{}).selectedBy || null);
-  });
-  // apply diffs
-  next.forEach((owner, id)=>{
-    const prev = rtSelected.get(id);
-    if (prev !== owner) paintLock(id, owner);
-  });
-  rtSelected.forEach((_, id)=>{ if (!next.has(id)) clearLock(id); });
-  rtSelected = next;
-  applyAllLocksToDOM();
-}
+ async function fetchLocksOnce(){
+   if (__rtInflight) return __rtInflight; // dedupe
+   const url = `${functionsBaseUrl}/firebaseOrders?rtSince=${__rtSince}`;
+   __rtInflight = fetch(url).then(r=>{
+     if (!r.ok) throw new Error("HTTP " + r.status);
+     return r.json();
+   }).then(json=>{
+     let changed = 0;
+     // apply new/updated locks
+     Object.entries(json.locks || {}).forEach(([id, doc])=>{
+       const owner = (doc||{}).selectedBy || null;
+       const prev  = rtSelected.get(id);
+       if (prev !== owner){
+         rtSelected.set(id, owner);
+         paintLock(id, owner);
+         changed++;
+       }
+     });
+     // apply unlocks
+     (json.unlocks || []).forEach(id=>{
+       if (rtSelected.has(id)){
+         rtSelected.delete(id);
+         clearLock(id);
+         changed++;
+       }
+     });
+     // watermark
+     __rtSince = Number(json.now) || Date.now();
+     __rtIdleHits = changed ? 0 : (__rtIdleHits + 1);
+     applyAllLocksToDOM();
+   }).catch(()=>{}).finally(()=>{
+     __rtInflight = null;
+     scheduleRtPoll();     // keep the loop going with adaptive cadence
+   });
+   return __rtInflight;
+ }
 // (polling now only runs as a fallback via beginRtPolling())
 
 /* Release my locks on tab close — via function */

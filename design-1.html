@@ -701,10 +701,14 @@ firebase.auth().onAuthStateChanged(u => {
       console.warn("Anon auth failed:", err);
     });
   } else {
-    // start Firestore realtime once we’re allowed to read
-    startLockListener();
+    beginDeltaPolling();
   }
 });
+
+// Delta-poll watermark & guards
+let __rtSince = Date.now() - 5 * 60 * 1000; // start 5 min back
+let __rtInflight = null;
+let __rtIdleHits = 0;
 
 // === Real-time “selected order” locks ===
 const REALTIME_COLL = "Design_RealTime_Selected_Orders";
@@ -789,24 +793,61 @@ function clearLock(id){
 /* If rows were rendered after a snapshot, repaint them */
 function applyAllLocksToDOM(){ rtSelected.forEach((owner,id)=>paintLock(id, owner)); }
 
-/* Live reads via the function (poll) */
-async function fetchLocksOnce(){
-  const resp = await fetch(`${functionsBaseUrl}/firebaseOrders?rt=1`);
-  if (!resp.ok) throw new Error("HTTP " + resp.status);
-  const json = await resp.json();
-  const next = new Map();
-  Object.entries(json.locks || {}).forEach(([id, doc])=>{
-    next.set(String(id), (doc||{}).selectedBy || null);
-  });
-  next.forEach((owner, id)=>{
-    const prev = rtSelected.get(id);
-    if (prev !== owner) paintLock(id, owner);
-  });
-  rtSelected.forEach((_, id)=>{ if (!next.has(id)) clearLock(id); });
-  rtSelected = next;
-  applyAllLocksToDOM();
+ async function fetchLocksOnce(){
+   if (__rtInflight) return __rtInflight; // dedupe
+   const url = `${functionsBaseUrl}/firebaseOrders?rtSince=${__rtSince}`;
+   __rtInflight = fetch(url).then(r=>{
+     if (!r.ok) throw new Error("HTTP " + r.status);
+     return r.json();
+   }).then(json=>{
+     let changed = 0;
+     // apply new/updated locks
+     Object.entries(json.locks || {}).forEach(([id, doc])=>{
+       const owner = (doc||{}).selectedBy || null;
+       const prev  = rtSelected.get(id);
+       if (prev !== owner){
+         rtSelected.set(id, owner);
+         paintLock(id, owner);
+         changed++;
+       }
+     });
+     // apply unlocks
+     (json.unlocks || []).forEach(id=>{
+       if (rtSelected.has(id)){
+         rtSelected.delete(id);
+         clearLock(id);
+         changed++;
+       }
+     });
+     // watermark
+     __rtSince = Number(json.now) || Date.now();
+     __rtIdleHits = changed ? 0 : (__rtIdleHits + 1);
+     applyAllLocksToDOM();
+   }).catch(()=>{}).finally(()=>{
+     __rtInflight = null;
+     scheduleRtPoll();
+   });
+   return __rtInflight;
+ }
+
+
+// === Server-driven delta poller (adaptive backoff, no Firestore onSnapshot) ===
+const RT_POLL = { t:null };
+function nextDelayMs(){
+  const steps = [700, 1200, 2500, 5000, 8000];
+  const i = Math.min(__rtIdleHits, steps.length - 1);
+  return steps[i];
 }
-// (polling now only runs as a fallback via beginRtPolling())
+function scheduleRtPoll(){
+  clearTimeout(RT_POLL.t);
+  RT_POLL.t = setTimeout(()=>{ fetchLocksOnce(); }, nextDelayMs());
+}
+function beginDeltaPolling(){
+  clearTimeout(RT_POLL.t);
+  __rtSince    = Date.now() - 5*60*1000;
+  __rtIdleHits = 0;
+  scheduleRtPoll();
+}
 
 /* Release my locks on tab close (server-side) */
 window.addEventListener("beforeunload", async ()=>{
