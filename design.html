@@ -1173,7 +1173,9 @@ if (!orderContainer.dataset.rangeWired){
         row.classList.add("selected");
         // add previews
         orderCache[rid].forEach(tx => { if (!tx._inGrid) addPreviewBox(tx); });
-        // no direct rtSet here; observer will write on orange state
+
+        // lock explicitly on user select
+        try { await rtSet(rid, true); } catch (_) {}
       }
     };
 
@@ -1522,8 +1524,9 @@ if (!orderContainer.dataset.rangeWired){
               selectedOrders.delete(rid);
               box.classList.remove("selected");
               removePreviewBoxesForOrder(rid);
-              realignGrid(); updateCounters(); persistSelection(); applyMetalFilter();
-              try { rtSet(rid, false); } catch (_) {}   // 🔓 explicit unlock
+          // lock explicitly on user select
+          try { await rtSet(rid, true); } catch (_) {}
+          realignGrid(); updateCounters(); persistSelection(); applyMetalFilter();
               return;
             }
 
@@ -1535,6 +1538,8 @@ if (!orderContainer.dataset.rangeWired){
                       .indexOf(box);
             orderCache[rid].forEach(tx => { if (!tx._inGrid) addPreviewBox(tx); });
             realignGrid(); updateCounters(); persistSelection(); applyMetalFilter();
+            // ✅ lock it in Firebase
+            try { await rtSet(rid, true); } catch (_) {}
           });
 
           /* HOVER → outline concurrent previews */
@@ -1649,6 +1654,7 @@ if (!orderContainer.dataset.rangeWired){
             updateCounters();
             persistSelection();
             applyMetalFilter();
+            try { rtSet(rid, false); } catch (_) {}
             return;
           }
 
@@ -2210,8 +2216,8 @@ if (!orderContainer.dataset.rangeWired){
       if (isSelected) selectedOrders.add(rid);
       else selectedOrders.delete(rid);
 
-      // all writes via Netlify function
-      rtSet(rid, isSelected);
+      // writes are explicit in click handlers; do not mirror CSS back to RT
+      // rtSet(rid, isSelected);
     };
 
     const obs = new MutationObserver((muts) => {
