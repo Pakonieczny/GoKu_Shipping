@@ -57,45 +57,25 @@ exports.handler = async (event) => {
           body: JSON.stringify({ success:true, message:"Locked", count: rtLockIds.length }) };
       }
 
+      /* 🔥 On de-select: hard delete the RT doc(s), same as Undo Complete pattern */
       if (Array.isArray(rtUnlockIds) && rtUnlockIds.length) {
-        const ids   = rtUnlockIds.map(String);
-        const refs  = ids.map(id => db.collection(REALTIME_COLL).doc(id));
-        const snaps = await db.getAll(...refs);
+        const ids = rtUnlockIds.map(String);
         const batch = db.batch();
-        let updCount = 0;
-        snaps.forEach((snap) => {
-          const data     = snap.exists ? (snap.data() || {}) : {};
-          const owner    = data.selectedBy || null;
-          const docPage  = String(data.page || "");
-          const sameGrp  = /^design/.test(docPage) && /^design/.test(String(page || ""));
-          const allow    = !snap.exists || owner === clientId || sameGrp;
-          if (allow){
-            batch.set(snap.ref, {
-              selected   : false,
-              selectedBy : null,
-              at         : admin.firestore.FieldValue.serverTimestamp()
-            }, { merge:true });
-            updCount++;
-          }
+        ids.forEach((id) => {
+          const ref = db.collection(REALTIME_COLL).doc(id);
+          batch.delete(ref);
         });
-        if (updCount) await batch.commit();
+        await batch.commit();
 
-        /* Purge old unlocked docs so the collection stays clean (keeps deltas reliable) */
-        try {
-          const cutoff = new Date(Date.now() - 2 * 60 * 1000); // 2 minutes ago
-          const stale = await db.collection(REALTIME_COLL)
-            .where("selected", "==", false)
-            .where("at", "<", cutoff)
-            .get();
-          if (!stale.empty) {
-            const purgeBatch = db.batch();
-            stale.forEach(d => purgeBatch.delete(d.ref));
-            await purgeBatch.commit();
-          }
-        } catch (e) { /* non-fatal */ }
-
-        return { statusCode: 200, headers: CORS,
-          body: JSON.stringify({ success:true, message:"Unlocked", count: updCount }) };
+        return {
+          statusCode: 200,
+          headers: CORS,
+          body: JSON.stringify({
+            success: true,
+            message: "Unlocked (deleted)",
+            count: ids.length
+          })
+        };
       }
 
       // If nothing actionable, short-circuit
