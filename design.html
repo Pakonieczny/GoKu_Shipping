@@ -2304,13 +2304,9 @@ if (!orderContainer.dataset.rangeWired){
           if (had !== has) onSelectedChange(row, has);
         }
 
-        if (m.type === "childList") {
-          // unlock removed selected rows
-          m.removedNodes.forEach(n => {
-            if (n.nodeType === 1 && n.classList?.contains("new-order-box") && n.classList.contains("selected")) {
-              onSelectedChange(n, false);
-            }
-          });
+          if (m.type === "childList") {
+          // NOTE: Page flips re-render rows. Don't treat removals as a user deselect.
+          // The addedNodes handler below will re-apply `.selected` from `selectedOrders`.
 
           // Any newly inserted row whose receipt is in selectedOrders → force .selected
           const ensureRowSelected = (row) => {
