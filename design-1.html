@@ -781,6 +781,7 @@ async function fetchLocksOnce(){
     try{ await fetchLocksOnce(); } catch(e){ }
     await new Promise(r=>setTimeout(r, 700));
   }
+})();
 
 /* Release my locks on tab close (server-side) */
 window.addEventListener("beforeunload", async ()=>{
