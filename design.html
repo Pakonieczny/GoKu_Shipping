@@ -806,6 +806,9 @@ function reapplySelectionAndLocks(){
 
   const COLL = "Design_Completed Orders";
 
+  // Track last-known completed set so we can detect UNDO events
+  let knownCompleted = new Set();
+
   function removeIfCompleted(idSet){
     // Remove from sidebar + grid for any completed receipt IDs
     document.querySelectorAll("#newOrderContainer .new-order-box").forEach(row=>{
@@ -831,12 +834,84 @@ function reapplySelectionAndLocks(){
     applyMetalFilter?.();
   }
 
+  // When a completion is undone elsewhere, bring the row back locally.
+  async function reAddUndone(ids){
+    for (const rid of ids.map(String)) {
+      // If it's already visible, just strip green and refresh UI.
+      const existing = document.querySelector(`.new-order-box[data-receipt='${rid}']`);
+      if (existing) {
+        existing.classList.remove("completed");
+        continue;
+      }
+
+      // Try to source the receipt from our existing caches/lists
+      const bag = (window.currentReceipts || []).concat(window.allOpenReceipts || []);
+      const rec = bag.find(r => String(r.receipt_id) === rid);
+
+      if (rec && Array.isArray(window.currentReceipts)) {
+        // Ensure it's in the current list then re-render the list UI
+        if (!currentReceipts.some(r => String(r.receipt_id) === rid)) {
+          currentReceipts.unshift(rec);
+        }
+        renderOrderBoxes(currentReceipts);
+        reapplySelectionAndLocks?.();
+        updateCounters?.();
+        applyMetalFilter?.();
+        markStaffNoteOrders?.();
+        continue;
+      }
+
+      // Fallback: fetch the full order + minimally rebuild its row and previews
+      try{
+        const data = await pullEtsyOrderDetails(rid);
+        const txs  = data?.transactions || [];
+        const rcpt = data?.receipt || {};
+        orderCache[rid] = txs;
+
+        // quick metal counts (matches sidebar columns)
+        const cnt = { g:0, s:0, r:0, k:0 };
+        txs.forEach(tx=>{
+          const q = tx.quantity || 1;
+          switch (tx._metalKey){ case "gold": cnt.g+=q; break; case "silver": cnt.s+=q; break; case "rose": cnt.r+=q; break; case "14k": cnt.k+=q; break; }
+        });
+        const rowMetal = cnt.k ? "14k" : (cnt.r ? "rose" : (cnt.s ? "silver" : (cnt.g ? "gold" : "")));
+
+        const row = document.createElement("div");
+        row.className = "new-order-box";
+        row.dataset.receipt = rid;
+        if (rowMetal) row.dataset.metal = rowMetal;
+        row.innerHTML = `
+          <span class="col-order">${rcpt.order_number || rid}</span>
+          <span class="col-ship">N/A</span>
+          <span class="col-g">${cnt.g}</span>
+          <span class="col-s">${cnt.s}</span>
+          <span class="col-r">${cnt.r}</span>
+          <span class="col-k">${cnt.k}</span>`;
+        document.getElementById("newOrderContainer").prepend(row);
+
+        // put its items back into the preview grid
+        txs.forEach(tx => { if (!tx._inGrid) addPreviewBox(tx); });
+
+        reapplySelectionAndLocks?.();
+        updateCounters?.();
+        applyMetalFilter?.();
+        markStaffNoteOrders?.();
+      }catch(_){}
+    }
+  }
+
   // Primary: native Firestore onSnapshot (fastest + cheapest)
   try{
-    db.collection(COLL).onSnapshot((snap)=>{
-      const live = new Set(snap.docs.map(d=>String(d.id)));
-      removeIfCompleted(live);
-    }, (err)=>{
+   db.collection(COLL).onSnapshot((snap)=>{
+     const live = new Set(snap.docs.map(d=>String(d.id)));
+     // 1) Remove anything that is completed right now
+     removeIfCompleted(live);
+     // 2) If something was completed before but no longer is, re-add it
+     const undone = [...knownCompleted].filter(id => !live.has(id));
+     if (undone.length) reAddUndone(undone);
+     // 3) Update watermark set
+     knownCompleted = live;
+   }, (err)=>{
       console.warn("Completed onSnapshot failed; falling back to polling", err);
       beginCompletedPolling();
     });
