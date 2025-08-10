@@ -2310,18 +2310,27 @@ if (!orderContainer.dataset.rangeWired){
               onSelectedChange(n, false);
             }
           });
-          // lock newly added rows that are already selected
+
+          // Any newly inserted row whose receipt is in selectedOrders → force .selected
+          const ensureRowSelected = (row) => {
+            if (!row.classList?.contains("new-order-box")) return;
+            const rid = String(row.dataset.receipt || row.dataset.orderNumber || "");
+            if (!rid) return;
+            // green wins if completed
+            if (typeof completedOrders !== "undefined" && completedOrders.has(rid)) return;
+            if (selectedOrders.has(rid)) row.classList.add("selected");
+            if (row.classList.contains("selected")) onSelectedChange(row, true);
+          };
+
           m.addedNodes.forEach(n => {
-            if (n.nodeType === 1) {
-              if (n.classList?.contains("new-order-box") && n.classList.contains("selected")) {
-                onSelectedChange(n, true);
-              }
-              n.querySelectorAll?.(".new-order-box.selected").forEach(row => onSelectedChange(row, true));
-            }
+            if (n.nodeType !== 1) return;
+            if (n.classList?.contains("new-order-box")) ensureRowSelected(n);
+            n.querySelectorAll?.(".new-order-box").forEach(ensureRowSelected);
           });
         }
       }
     });
+  });
 
     obs.observe(container, {
       attributes: true,
@@ -3054,10 +3063,15 @@ function updatePageButtons(totalPages, currentPage){
     btn.className = "page-btn" + (i===currentPage ? " active": "");
     btn.textContent = i;
     btn.addEventListener("click", async () => {
-      orderListOffset = (i-1)*100;                     // global var already exists
+      orderListOffset = (i-1)*100;
       await buildNewOrderList(orderListOffset);
-      reapplySelectionAndLocks();              // ← restore orange + RT locks
-      updatePageButtons(totalPages, i);                // refresh active state
+
+      // Repaint orange after all late DOM work
+      reapplySelectionAndLocks();
+      requestAnimationFrame(reapplySelectionAndLocks);
+      requestAnimationFrame(() => requestAnimationFrame(reapplySelectionAndLocks));
+
+      // buildNewOrderList already refreshes the pager; avoid a double call
     });
     holder.appendChild(btn);
   }
@@ -3238,10 +3252,14 @@ async function buildNewOrderList(offset = 0) {
     container.appendChild(box);
   });                                         // ← closes page.forEach
 
-   highlightSavedRows();        // orange first…
- 
-   /* run the GREEN pass one frame later so nothing else can overwrite it */
-   requestAnimationFrame(highlightCompletedRows);
+  highlightSavedRows();        // orange first…
+
+  /* Green next, then re-assert orange so nothing strips it */
+  requestAnimationFrame(() => {
+    highlightCompletedRows();
+    // one more pass to ensure orange persists after any late handlers
+    highlightSavedRows();
+  });
 
   /* ── refresh the four metal badges no matter what filters are set ── */
   updateCounters();
