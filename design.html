@@ -2258,84 +2258,88 @@ if (!orderContainer.dataset.rangeWired){
   }
 
    /* ───────────────── handleUndoCompleteClick ───────────────── */
-   async function handleUndoCompleteClick(){
- 
+  async function handleUndoCompleteClick(){
+
     if (!lastClearedReceipts.length){
-       M.toast({ html:"Nothing to undo" });    // safety guard
-       return;
-     }
- 
-     for (const rid of lastClearedReceipts){
-        completedOrders.delete(rid);        // remove green status
-        selectedOrders.add(rid);            // mark orange again
+      M.toast({ html:"Nothing to undo" });    // safety guard
+      return;
+    }
 
-        const _row = document.querySelector(`.new-order-box[data-receipt='${rid}']`);
-        if (_row && !_row.classList.contains("rt-locked")) {
-          _row.classList.add("selected");   // observer will write lock
-        }
- 
-        /* 🔄  clear any leftover wraps so counters don’t double */
-        removePreviewBoxesForOrder(rid);    // resets _inGrid flags too
- 
+    for (const rid of lastClearedReceipts){
+      completedOrders.delete(rid);        // remove green status
+      selectedOrders.add(rid);            // mark orange again (for the undoing user)
+
+      const _row = document.querySelector(`.new-order-box[data-receipt='${rid}']`);
+      if (_row && !_row.classList.contains("rt-locked")) {
+        _row.classList.add("selected");   // local orange
+      }
+
+      // 🔴 Assert a realtime lock so EVERYONE ELSE sees Light Red (rt-selected/rt-locked)
+      try { await rtSet(String(rid), true); } catch (e) { console.warn("lock on undo failed", e); }
+
+      /* 🔄  clear any leftover wraps so counters don’t double */
+      removePreviewBoxesForOrder(rid);    // resets _inGrid flags too
+
       /* ensure sidebar row exists – if missing, fetch it and push the
-        receipt object back into `allOpenReceipts` so
-        buildNewOrderList()` can recreate the row */
-       if (!document.querySelector(`.new-order-box[data-receipt='${rid}']`)){
-         const ord = await pullEtsyOrderDetails(rid);
-         if (ord){
-           /* ✨ rebuild helper meta so buildNewOrderList can sort/render */
-           let ts = null;
-           if (Array.isArray(ord.transactions) &&
-               ord.transactions[0]?.expected_ship_date){
-             ts = ord.transactions[0].expected_ship_date;
-           }
-           if (!ts) ts = ord.dispatch_date || ord.ship_by_date || 0;
-           ord._shipTS  = ts;
-           ord._shipStr = ts
-             ? new Date(ts*1000).toLocaleDateString(
-                 "en-US",{month:"short",day:"2-digit"})
-             : "N/A";
- 
-           const mc = { Gold:0, Silver:0, "Rose G":0, "14K":0 };
-           (ord.transactions||[]).forEach(t=>{
-             const q   = t.quantity||1;
-             const val = (t._metalKey||"").toLowerCase();
-             if (/14k/.test(val))          mc["14K"]    += q;
-             else if (/rose/.test(val))    mc["Rose G"] += q;
-             else if (/silv/.test(val))    mc.Silver    += q;
-             else if (/gold/.test(val))    mc.Gold      += q;
-           });
-           ord._metalCounts = mc;
- 
-             /* avoid duplicates before pushing back */
-            if (!allOpenReceipts.some(r => String(r.receipt_id) === String(rid))){
-              allOpenReceipts.push(ord);    // restore master list
-            }
+         receipt object back into `allOpenReceipts` so
+         `buildNewOrderList()` can recreate the row */
+      if (!document.querySelector(`.new-order-box[data-receipt='${rid}']`)){
+        const ord = await pullEtsyOrderDetails(rid);
+        if (ord){
+          /* ✨ rebuild helper meta so buildNewOrderList can sort/render */
+          let ts = null;
+          if (Array.isArray(ord.transactions) &&
+              ord.transactions[0]?.expected_ship_date){
+            ts = ord.transactions[0].expected_ship_date;
+          }
+          if (!ts) ts = ord.dispatch_date || ord.ship_by_date || 0;
+          ord._shipTS  = ts;
+          ord._shipStr = ts
+            ? new Date(ts*1000).toLocaleDateString(
+                "en-US",{month:"short",day:"2-digit"})
+            : "N/A";
 
-           orderCache[rid] = ord.transactions || [];
-         }
-       }
- 
-       /* restore preview boxes */
-       orderCache[rid]?.forEach(tx=>{
-         if (!tx._inGrid) addPreviewBox(tx);
-       });
-     }
- 
-      /* redraw sidebar starting at page 1 so restored rows show */
-      orderListOffset = 0;
-      await buildNewOrderList(0);                      // refresh UI
- 
-     /* sync everything back to server */
-     await unsetDesignCompletedBulk(lastClearedReceipts);
-     persistSelection();
-     updateCounters();
-     applyMetalFilter();
-     highlightSavedRows();
- 
-     lastClearedReceipts = [];             // clear the buffer
-     M.toast({ html:"Undo Complete – orders restored" });
-   }
+          const mc = { Gold:0, Silver:0, "Rose G":0, "14K":0 };
+          (ord.transactions||[]).forEach(t=>{
+            const q   = t.quantity||1;
+            const val = (t._metalKey||"").toLowerCase();
+            if (/14k/.test(val))          mc["14K"]    += q;
+            else if (/rose/.test(val))    mc["Rose G"] += q;
+            else if (/silv/.test(val))    mc.Silver    += q;
+            else if (/gold/.test(val))    mc.Gold      += q;
+          });
+          ord._metalCounts = mc;
+
+          /* avoid duplicates before pushing back */
+          if (!allOpenReceipts.some(r => String(r.receipt_id) === String(rid))){
+            allOpenReceipts.push(ord);    // restore master list
+          }
+
+          orderCache[rid] = ord.transactions || [];
+        }
+      }
+
+      /* restore preview boxes */
+      orderCache[rid]?.forEach(tx=>{
+        if (!tx._inGrid) addPreviewBox(tx);
+      });
+    }
+
+    /* redraw sidebar starting at page 1 so restored rows show */
+    orderListOffset = 0;
+    await buildNewOrderList(0);                      // refresh UI
+
+    /* sync everything back to server (removes from Completed so others re-add) */
+    await unsetDesignCompletedBulk(lastClearedReceipts);
+
+    persistSelection();
+    updateCounters();
+    applyMetalFilter();
+    highlightSavedRows();
+
+    lastClearedReceipts = [];             // clear the buffer
+    M.toast({ html:"Undo Complete – orders restored" });
+  }
 
   /* -------------------------------------------------------------
      Clear all completed-order memory & remove green highlights
