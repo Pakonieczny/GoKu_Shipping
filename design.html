@@ -747,21 +747,36 @@ const RT = {
 
   const mo = new MutationObserver(muts => {
     for (const m of muts) {
-      if (m.type !== "attributes" || m.attributeName !== "class") continue;
-      const el = m.target;
-      if (!el.classList.contains("new-order-box")) continue;
-      const id = String(el.dataset.receipt || "");
-      if (!id) continue;
-      const wasSelected = /\bselected\b/.test(m.oldValue || "");
-      const nowSelected = el.classList.contains("selected");
-      if (wasSelected !== nowSelected) rtSet(id, nowSelected);
+      // A) class toggles (select / deselect)
+      if (m.type === "attributes" && m.attributeName === "class") {
+        const el = m.target;
+        if (!el.classList.contains("new-order-box")) continue;
+        const id = String(el.dataset.receipt || "");
+        if (!id) continue;
+        const wasSelected = /\bselected\b/.test(m.oldValue || "");
+        const nowSelected = el.classList.contains("selected");
+        if (wasSelected !== nowSelected) rtSet(id, nowSelected);
+      }
+      // B) node removals — emit unlock if a selected row was removed
+      if (m.type === "childList" && m.removedNodes?.length) {
+        m.removedNodes.forEach(node => {
+          if (node.nodeType !== 1) return;
+          const el = /** @type {HTMLElement} */ (node);
+          if (!el.classList?.contains("new-order-box")) return;
+          if (!el.classList.contains("selected")) return;
+          const id = String(el.dataset.receipt || "");
+          if (id) rtSet(id, false);
+        });
+      }
     }
   });
+
   mo.observe(cont, {
     subtree:true,
     attributes:true,
     attributeFilter:["class"],
-    attributeOldValue:true
+    attributeOldValue:true,
+    childList:true
   });
 })();
 
@@ -784,7 +799,7 @@ async function rtSet(id, on){
       rtSelected.delete(id);
       clearLock(id);
     }
-    
+
   }catch(err){ console.warn("rtSet failed", err); }
 }
 
