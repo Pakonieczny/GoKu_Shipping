@@ -1227,6 +1227,58 @@ async function refreshAccessToken(){
   return __refreshPromise;
 }
 
+// === Micro-batched RT lock writer ===========================================
+const __rtBatch = { lock: new Set(), unlock: new Set(), t: null, inflight: null };
+
+function scheduleRtFlush(){ clearTimeout(__rtBatch.t); __rtBatch.t = setTimeout(flushRtBatchImmediately, 80); }
+
+function rtQueueLock(id){
+  id = String(id);
+  __rtBatch.unlock.delete(id);
+  __rtBatch.lock.add(id);
+  // optimistic local paint
+  rtSelected.set(id, RT.clientId);
+  paintLock(id, RT.clientId);
+  scheduleRtFlush();
+}
+
+function rtQueueUnlock(id){
+  id = String(id);
+  __rtBatch.lock.delete(id);
+  __rtBatch.unlock.add(id);
+  // optimistic local clear
+  rtSelected.delete(id);
+  clearLock(id);
+  scheduleRtFlush();
+}
+
+async function flushRtBatchImmediately(){
+  if (__rtBatch.inflight) {            // serialize flushes
+    try { await __rtBatch.inflight; } catch(_) {}
+    if (!__rtBatch.lock.size && !__rtBatch.unlock.size) return;
+  }
+  const locks   = [...__rtBatch.lock];
+  const unlocks = [...__rtBatch.unlock];
+  __rtBatch.lock.clear(); __rtBatch.unlock.clear();
+
+  if (!locks.length && !unlocks.length) return;
+
+  __rtBatch.inflight = fetch(`${functionsBaseUrl}/firebaseOrders`,{
+    method:"POST",
+    headers:{ "Content-Type":"application/json" },
+    body: JSON.stringify({
+      rtLockIds   : locks.length   ? locks   : undefined,
+      rtUnlockIds : unlocks.length ? unlocks : undefined,
+      clientId    : RT.clientId,
+      page        : RT.page
+    })
+  }).catch((e)=>{ console.warn("rt batch flush failed", e); })
+    .finally(()=>{ __rtBatch.inflight = null; scheduleHealMissingLocks(); });
+}
+
+// flush when user finishes a burst of clicks
+window.addEventListener("mouseup", ()=> { flushRtBatchImmediately(); });
+
 async function ensureFreshToken(){
   const exp = Number(localStorage.getItem(TOKEN_KEYS.expires) || 0);
   if (!exp) return;
@@ -1418,16 +1470,39 @@ if (!orderContainer.dataset.rangeWired){
 
     const selectRow = async (row) => {
       const rid = String(row.dataset.receipt);
-      await ensureOrderLoaded(rid);
 
       if (!selectedOrders.has(rid)){
         selectedOrders.add(rid);
         row.classList.add("selected");
-        // add previews
-        orderCache[rid].forEach(tx => { if (!tx._inGrid) addPreviewBox(tx); });
 
-        // lock explicitly on user select
-        try { await rtSet(rid, true); } catch (_) {}
+        // write lock immediately (micro-batched)
+        rtQueueLock(rid);
+
+        // then fetch items & render previews without blocking the click flow
+        (async ()=>{
+          try{
+            if (!orderCache[rid]) {
+              const ord = await pullEtsyOrderDetails(rid);
+              orderCache[rid] = ord?.transactions || [];
+              refreshRowCount(rid);
+              refreshRowMetalCounts(rid);
+            }
+            orderCache[rid].forEach(tx => { if (!tx._inGrid) addPreviewBox(tx); });
+            realignGrid(); updateCounters(); persistSelection(); applyMetalFilter();
+          }catch(e){ console.warn("ensure/load failed for", rid, e); }
+        })();
+      }
+    };
+
+    const deselectRow = (row) => {
+      const rid = String(row.dataset.receipt);
+      if (selectedOrders.has(rid)){
+        selectedOrders.delete(rid);
+        row.classList.remove("selected");
+        removePreviewBoxesForOrder(rid);
+
+        // queue unlock immediately
+        rtQueueUnlock(rid);
       }
     };
 
