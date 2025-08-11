@@ -941,7 +941,7 @@ function reapplySelectionAndLocks(){
 const RT_POLL = { t:null };
 function nextDelayMs(){
   // ramp up when idle to reduce traffic
-  const steps = [125, 250, 500, 1000, 2000];
+  const steps = [250, 500, 1000, 2000, 4000];
   const i = Math.min(__rtIdleHits, steps.length - 1);
   return steps[i];
 }
