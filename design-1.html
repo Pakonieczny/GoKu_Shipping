@@ -1721,7 +1721,7 @@ const selectRow = async (row) => {
         .split(",")
         .map((x) => x.trim())
         .filter((x) => x);
-      orderNumbers = orderNumbers.slice(0, 50);
+      orderNumbers = orderNumbers.slice(0, 500);
 
       await loadBatchEtsyOrders(orderNumbers);
     }
@@ -3840,15 +3840,32 @@ async function fetchEtsyOrder(orderNum){
  ********************************************************/
 async function loadBatchEtsyOrders(orderNumbers) {
   try {
-    M.toast({ html: "Loading " + orderNumbers.length + " order(s)..." });
+    /* Accept a raw comma-separated string or an array; normalize, de-dupe, cap at 500 */
+    let list = [];
+    if (typeof orderNumbers === "string") {
+      list = orderNumbers
+        .split(/[,\n\r\t ]+/)
+        .map(s => s.trim())
+        .filter(Boolean);
+    } else if (Array.isArray(orderNumbers)) {
+      list = orderNumbers.map(x => String(x).trim()).filter(Boolean);
+    }
+    const seen = new Set();
+    list = list.filter(id => (id && !seen.has(id)) ? (seen.add(id), true) : false)
+               .slice(0, 500);
 
-    const token         = localStorage.getItem("access_token") || "";
+    M.toast({ html: "Loading " + list.length + " order(s)..." });
+
+    /* Prepare/refresh the left rail list */
+    const container = document.getElementById("newOrderContainer");
+    if (container) container.innerHTML = "";
+    const frag = document.createDocumentFragment();
+
     const combinedItems = [];
 
     /* ── loop through each receiptId ───────────────────────────── */
-    for (let i = 0; i < orderNumbers.length; i++) {
-      const ord  = orderNumbers[i];
-      const url  = functionsBaseUrl + "/etsyOrderProxy?orderId=" + encodeURIComponent(ord);
+    for (let i = 0; i < list.length; i++) {
+      const ord  = list[i];
       const resp = await apiFetch(`/etsyOrderProxy?orderId=${encodeURIComponent(ord)}`);
 
       /* DEBUG ⬇︎ record every payload */
@@ -3865,7 +3882,7 @@ async function loadBatchEtsyOrders(orderNumbers) {
 
       console.log("%cCACHE", "color:#ff9100",
             "receipt:", ord,
-            "TX ids:", data.transactions.map(t => t.transaction_id));
+            "TX ids:", (data.transactions||[]).map(t => t.transaction_id));
 
       console.log("Etsy Order Data:", data);
 
@@ -3921,12 +3938,107 @@ async function loadBatchEtsyOrders(orderNumbers) {
       } else {
         console.warn("No transactions for order", ord);
       }
+
+      /* ──────────────────────────────────────────────────────────
+       * Build a left-rail row for this order (with metal tallies)
+       * ────────────────────────────────────────────────────────── */
+      try {
+        const txs     = data?.transactions || [];
+        const receipt = data?.receipt || {};
+        const rid     = String(receipt.receipt_id || ord);
+
+        // Compute ship date from receipt/tx data
+        let shipDate = "N/A";
+        const tsRaw =
+              receipt.expected_ship_date ??
+              receipt.dispatch_date      ??
+              receipt.ship_by_date       ??
+              txs[0]?.expected_ship_date ??
+              txs[0]?.dispatch_date      ??
+              txs[0]?.ship_by_date       ?? 0;
+
+        if (typeof tsRaw === "number" && tsRaw > 86400) {
+          const d = new Date(tsRaw * 1000);
+          shipDate = d.toLocaleDateString("en-US", { month: "short", day: "2-digit" });
+        } else if (typeof tsRaw === "string" && tsRaw.trim()) {
+          shipDate = tsRaw;
+        }
+
+        // Tally metals by quantity
+        let g = 0, s = 0, rG = 0, k = 0;
+        txs.forEach(tx => {
+          let m = (tx._wrapEl && tx._wrapEl.dataset && tx._wrapEl.dataset.metal) || tx._metalKey || "";
+
+          if (!m && Array.isArray(tx.variations)) {
+            for (const v of tx.variations) {
+              const name  = String(v?.formatted_name  || "");
+              const value = String(v?.formatted_value || "");
+              if (/metal|color|colour/i.test(name)) {
+                m = value.toLowerCase();
+                break;
+              }
+            }
+          }
+
+          // 14K override: if m is 'gold' but the variation text mentions 14k, force 14k
+          if (/^gold$/i.test(m) && Array.isArray(tx.variations)) {
+            const joined = tx.variations
+              .map(v => String(v.formatted_value || "").toLowerCase())
+              .join(" ");
+            if (/\b14\s*k(?:t|arat)?\b/.test(joined)) m = "14k";
+          }
+
+          const q = tx.quantity || 1;
+          if (/^14k$/.test(m) || /\b14\s*k(?:t|arat)?\b/i.test(m)) k += q;
+          else if (/rose/i.test(m))                               rG += q;
+          else if (/silv(?:er|r)/i.test(m))                       s  += q;
+          else if (/gold/i.test(m))                               g  += q;
+        });
+
+        const rowMetal = k ? "14k" : (rG ? "rose" : (s ? "silver" : (g ? "gold" : "")));
+
+        if (container) {
+          const row = document.createElement("div");
+          row.className = "new-order-box";
+          row.dataset.receipt = rid;
+          if (rowMetal) row.dataset.metal = rowMetal;
+
+          row.innerHTML = `
+            <span class="col-order">${receipt.order_number || ord}</span>
+            <span class="col-ship">${shipDate}</span>
+            <span class="col-g">${g}</span>
+            <span class="col-s">${s}</span>
+            <span class="col-r">${rG}</span>
+            <span class="col-k">${k}</span>
+          `;
+
+          // Preserve selection/completed visuals if globals exist
+          try {
+            if (typeof completedOrders !== "undefined" && completedOrders.has(rid)) {
+              row.classList.add("completed");
+            }
+            if (typeof selectedOrders !== "undefined" && selectedOrders.has(rid)) {
+              row.classList.add("selected");
+            }
+          } catch (_e) {}
+
+          frag.appendChild(row);
+        }
+      } catch (rowErr) {
+        console.warn("Left-rail row build error for", ord, rowErr);
+      }
     }  /* ← end for-loop */
+
+    /* One paint for the left rail (fast) */
+    if (container) container.appendChild(frag);
 
     /* ── render combined results ───────────────────────────────── */
     await fillPreviewBoxes(combinedItems);
     attachMatchCellListeners();         // keep listener wiring
-    updateCounters();                   // refresh metal tallies
+    if (typeof updateCounters === "function")   updateCounters();   // refresh metal tallies
+    if (typeof applyMetalFilter === "function") applyMetalFilter(); // apply any active filters
+
+    M.toast({ html: "Bulk load complete" });
 
   } catch (err) {
     console.error("Error loading batch orders:", err);
