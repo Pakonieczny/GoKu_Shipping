@@ -1497,40 +1497,15 @@ const selectRow = async (row) => {
   }
 };
 
-const deselectRow = (row) => {
-  const rid = String(row.dataset.receipt);
-  if (selectedOrders.has(rid)){
+  const deselectRow = (row) => {
+    const rid = String(row.dataset.receipt);
+    if (!selectedOrders.has(rid)) return;
     selectedOrders.delete(rid);
     row.classList.remove("selected");
     removePreviewBoxesForOrder(rid);
-
-    // queue unlock immediately
+    // micro-batched realtime unlock (no await, no race)
     rtQueueUnlock(rid);
-  }
-};
-
-const deselectRow = (row) => {
-  const rid = String(row.dataset.receipt);
-  if (selectedOrders.has(rid)){
-    selectedOrders.delete(rid);
-    row.classList.remove("selected");
-    removePreviewBoxesForOrder(rid);
-
-    // queue unlock immediately
-    rtQueueUnlock(rid);
-  }
-};
-
-    const deselectRow = (row) => {
-      const rid = String(row.dataset.receipt);
-      if (selectedOrders.has(rid)){
-        selectedOrders.delete(rid);
-        row.classList.remove("selected");
-        removePreviewBoxesForOrder(rid);
-        // 🔓 explicit realtime unlock (belt & suspenders)
-        try { rtSet(rid, false); } catch (_) {}
-      }
-    };
+  };
 
   if (e.ctrlKey || e.metaKey){
     // Range select (inclusive) from last anchor → current
@@ -1867,7 +1842,7 @@ const deselectRow = (row) => {
               box.classList.remove("selected");
               removePreviewBoxesForOrder(rid);
               // 🔓 unlock in Firebase on deselect
-              try { await rtSet(rid, false); } catch (_) {}
+              rtQueueUnlock(rid);
               realignGrid(); updateCounters(); persistSelection(); applyMetalFilter();
               return;
             }
@@ -1881,7 +1856,7 @@ const deselectRow = (row) => {
             orderCache[rid].forEach(tx => { if (!tx._inGrid) addPreviewBox(tx); });
             realignGrid(); updateCounters(); persistSelection(); applyMetalFilter();
             // ✅ lock it in Firebase
-            try { await rtSet(rid, true); } catch (_) {}
+            rtQueueLock(rid);
           });
 
           /* HOVER → outline concurrent previews */
