@@ -50,11 +50,14 @@ exports.handler = async (event) => {
             selectedBy : clientId || "server",
             page       : page || "design",
             at         : admin.firestore.FieldValue.serverTimestamp()
-          }, { merge:true })
+          }, { merge:true });
         });
         await batch.commit();
-        return { statusCode: 200, headers: CORS,
-          body: JSON.stringify({ success:true, message:"Locked", count: rtLockIds.length }) };
+        return {
+          statusCode: 200,
+          headers: CORS,
+          body: JSON.stringify({ success:true, message:"Locked", count: rtLockIds.length })
+        };
       }
 
       /* 🔓 De-select → write a tombstone so delta polls see it */
@@ -215,60 +218,36 @@ exports.handler = async (event) => {
       };
     }
 
-
-     // ?rtSince=epochMillis  -> return only changes since that moment
-     const qs = event.queryStringParameters || {};
-     if (qs.rtSince) {
-       const since = Number(qs.rtSince);
-       const sinceTs = admin.firestore.Timestamp.fromMillis(isNaN(since) ? 0 : since);
-       const snap = await db
-         .collection(REALTIME_COLL)
-         .where('at', '>=', sinceTs)
-         .get();
-
-       const locks = {};
-       const unlocks = [];
-       snap.forEach(d => {
-         const data = d.data() || {};
-         if (data.selected) {
-           locks[d.id] = { selectedBy: data.selectedBy || null, page: data.page || null, at: data.at || null };
-         } else {
-           unlocks.push(d.id);
-         }
-       });
-       return {
-         statusCode: 200,
-         headers: CORS,
-         body: JSON.stringify({ success: true, locks, unlocks, now: Date.now() })
-       };
-     }
-
-
     /* ───────────────────────── GET ───────────────────────── */
     if (method === "GET") {
-
-      /* ?rtSince=NUMBER(ms) → delta since watermark
-      Returns: { locks:{id:{selectedBy,page,atMs}}, unlocks:[id], now:Number } */
+      /* ?rtSince=NUMBER(ms) → delta since watermark (server-accurate boundary)
+         Returns: { locks:{id:{selectedBy,page,atMs}}, unlocks:[id], now:Number } */
       const qSince = event.queryStringParameters?.rtSince;
       if (qSince) {
         const sinceMs = Number(qSince);
         if (!Number.isFinite(sinceMs)) {
           return { statusCode: 400, headers: CORS, body: JSON.stringify({ error:"bad rtSince" }) };
         }
-        const sinceTs = new Date(sinceMs);
+        const sinceTs = admin.firestore.Timestamp.fromMillis(sinceMs);
         const snap = await db.collection(REALTIME_COLL)
           .where("at", ">=", sinceTs)
           .get();
+
         const locks   = {};
         const unlocks = [];
         snap.forEach(d=>{
           const v = d.data() || {};
           if (v.selected === true) {
-            locks[d.id] = { selectedBy: v.selectedBy || null, page: v.page || null, atMs: (v.at?.toMillis?.() || Date.now()) };
+            locks[d.id] = {
+              selectedBy: v.selectedBy || null,
+              page     : v.page || null,
+              atMs     : (v.at?.toMillis?.() || Date.now())
+            };
           } else if (v.selected === false) {
             unlocks.push(d.id);
           }
         });
+
         return {
           statusCode: 200,
           headers: CORS,
@@ -276,10 +255,10 @@ exports.handler = async (event) => {
         };
       }
 
-     /* ?rt=1 → current active locks only (selected == true) */
-     if (event.queryStringParameters?.rt === "1") {
-       const snap = await db.collection(REALTIME_COLL).where("selected","==",true).get();        
-       const locks = {};
+      /* ?rt=1 → current active locks only (selected == true) */
+      if (event.queryStringParameters?.rt === "1") {
+        const snap = await db.collection(REALTIME_COLL).where("selected","==",true).get();        
+        const locks = {};
         snap.forEach(d => { locks[d.id] = d.data(); });
         return {
           statusCode: 200,
@@ -299,7 +278,7 @@ exports.handler = async (event) => {
             orderNumbers : snap.docs.map((d) => d.id)
           })
         };
-        }
+      }
 
       /* ?staffNotes=1 → array of order IDs with a Staff Note in Brites_Orders */
       if (event.queryStringParameters?.staffNotes === "1") {

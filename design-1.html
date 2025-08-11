@@ -739,26 +739,36 @@ const RT = {
   page: location.pathname.toLowerCase().includes("design-1") ? "design-1" : "design"
 };
 
-/* All writes go through Netlify function */
+/* All writes go through Netlify function (with small retry) */
 async function rtSet(id, on){
   id = String(id);
-  try{
-    const body = on
-      ? { rtLockIds:   [id], clientId: RT.clientId, page: RT.page }
-      : { rtUnlockIds: [id], clientId: RT.clientId, page: RT.page };
-    const resp = await fetch(`${functionsBaseUrl}/firebaseOrders`, {
-      method: "POST",
-      headers: { "Content-Type":"application/json" },
-      body: JSON.stringify(body)
-    });
-    if (!resp.ok) throw new Error("HTTP " + resp.status);
+  const body = on
+    ? { rtLockIds:   [id], clientId: RT.clientId, page: RT.page }
+    : { rtUnlockIds: [id], clientId: RT.clientId, page: RT.page };
 
-    // optimistic local clear on unlock so light-red + lock vanish immediately
-    if (!on) {
-      rtSelected.delete(id);
-      clearLock(id);
+  let attempt = 0, lastErr = null;
+  while (attempt < 3){
+    try{
+      const resp = await fetch(`${functionsBaseUrl}/firebaseOrders`, {
+        method: "POST",
+        headers: { "Content-Type":"application/json" },
+        body: JSON.stringify(body)
+      });
+      if (!resp.ok) throw new Error("HTTP " + resp.status);
+
+      // optimistic local clear on unlock so light-red + lock vanish immediately
+      if (!on) {
+        rtSelected.delete(id);
+        clearLock(id);
+      }
+      return; // success
+    }catch(err){
+      lastErr = err;
+      await new Promise(r => setTimeout(r, 150 * Math.pow(2, attempt))); // 150ms, 300ms, 600ms
     }
-  }catch(err){ console.warn("rtSet failed", err); }
+    attempt++;
+  }
+  console.warn("rtSet failed after retries:", lastErr);
 }
 
 let rtSelected = new Map();  // id -> owner
@@ -797,6 +807,7 @@ function reapplySelectionAndLocks(){
     });
   }
   applyAllLocksToDOM();             // repaints light-red/locks for others
+  scheduleHealMissingLocks();       // ensure Firebase gets the lock docs
 }
 
 (function startCompletedRealtime(){
@@ -1101,6 +1112,35 @@ async function reconcileActiveLocks() {
     applyAllLocksToDOM();
   } catch (_) {}
 }
+
+// Batch re-lock any locally-selected rows that do not have a live lock owner = me
+  let __healTimer = null;
+
+  async function healMissingLocksNow(){
+    try{
+      const ids = [];
+      selectedOrders.forEach(id => {
+        const s = String(id);
+        const owner = rtSelected.get(s);
+        if (owner !== RT.clientId) ids.push(s);
+      });
+      if (!ids.length) return;
+
+      // single POST with rtLockIds (server already supports arrays)
+      await fetch(`${functionsBaseUrl}/firebaseOrders`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ rtLockIds: ids, clientId: RT.clientId, page: RT.page })
+      });
+    }catch(e){
+      console.warn("healMissingLocks failed:", e);
+    }
+  }
+
+  function scheduleHealMissingLocks(){
+    clearTimeout(__healTimer);
+    __healTimer = setTimeout(healMissingLocksNow, 120);  // tiny debounce
+  }
 
 /* ===== Etsy OAuth boot + auto-refresh wiring ===== */
 const TOKEN_KEYS = {
@@ -1996,6 +2036,7 @@ if (!orderContainer.dataset.rangeWired){
       const row = document.querySelector(`.new-order-box[data-receipt='${id}']`);
       if (row) row.classList.add("selected");
     });
+    scheduleHealMissingLocks();   // push locks for restored selections
     }, 0);
 
     updateCounters();                    // refresh metal totals
@@ -2459,6 +2500,7 @@ if (!orderContainer.dataset.rangeWired){
             if (typeof completedOrders !== "undefined" && completedOrders.has(rid)) return;
             if (selectedOrders.has(rid)) row.classList.add("selected");
             if (row.classList.contains("selected")) onSelectedChange(row, true);
+            scheduleHealMissingLocks();    // write back missing Firestore locks
           };
 
           m.addedNodes.forEach(n => {
