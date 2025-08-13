@@ -989,7 +989,7 @@ function startCompletedRealtime(){
 
 // === Server-driven delta poller (adaptive backoff, no Firestore onSnapshot) ===
  const RT_POLL = { t:null };
- const RT_STEPS = [250, 500, 1000, 2000, 4000, 8000, 16000];
+ const RT_STEPS = [100, 200, 400, 800, 1600, 3200, 6400];
  const RT_MAX_IDLE = RT_STEPS.length - 1;
  function nextDelayMs(){
    const i = Math.min(__rtIdleHits, RT_MAX_IDLE);

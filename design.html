@@ -702,8 +702,30 @@ firebase.auth().onAuthStateChanged(u => {
     });
   }
 });
+
+
+
 // Start RT polling after the poller variables are initialized
-window.addEventListener('DOMContentLoaded', () => beginDeltaPolling());
+ window.addEventListener('DOMContentLoaded', () => {
+   const container = document.getElementById("newOrderContainer");
+   if (!container) return;
+   let armed = false;
+   const start = () => {
+     if (armed) return;
+     armed = true;
+     try { startCompletedRealtime(); } catch(_) {}
+     beginDeltaPolling();
+   };
+   // Primary: click inside the order list
+   container.addEventListener("click", start, { once: true, capture: true });
+   // Also fire on these controls
+   const ids = ["undoCompleteBtn","qrPreviewPrintBtn","clearBtn","pageButtonsContainer","etsyOrderNumber"];
+   ids.forEach(id => document.getElementById(id)?.addEventListener("click", start, { once: true, capture: true }));
+   // Delegate for dynamic tiles
+   document.addEventListener("click", (e) => {
+     if (e.target?.closest?.(".new-order-box")) start();
+   }, { capture:true });
+ });
 
 async function fetchAllLocksOnce(){
   try{
@@ -810,7 +832,7 @@ function reapplySelectionAndLocks(){
   scheduleHealMissingLocks();       // ensure Firebase gets the lock docs
 }
 
-(function startCompletedRealtime(){
+function startCompletedRealtime(){
   // Guard so we don't double-wire on the same page
   if (window.__completedStreamWired) return;
   window.__completedStreamWired = true;
@@ -932,34 +954,61 @@ function reapplySelectionAndLocks(){
   }
 
   // Fallback: light polling via Netlify function (?designCompleted=1)
-  function beginCompletedPolling(){
-    let t=null;
-    const tick = async ()=>{
-      try{
-        const r = await fetch(`${functionsBaseUrl}/firebaseOrders?designCompleted=1`);
-        const j = await r.json();
-        if (j && j.success) {
-          removeIfCompleted(new Set((j.orderNumbers||[]).map(String)));
-        }
-      }catch(_){}
-      t = setTimeout(tick, 1500);  // gentle 1.5s cadence
-    };
-    tick();
+ function beginCompletedPolling(){
+   let t = null;
+   let dcSince = Date.now() - 5*60*1000;
+   let idleHits = 0;
+   const steps = [1000, 2000, 4000, 8000, 16000, 30000];
+   const maxIdle = steps.length - 1;
+   const tick = async ()=>{
+     try{
+       const r = await fetch(`${functionsBaseUrl}/firebaseOrders?dcSince=${dcSince}`);
+       const j = await r.json();
+       const ids = (j && j.success ? (j.orderNumbers||[]) : []).map(String);
+       if (ids.length){
+         removeIfCompleted(new Set(ids));
+         idleHits = 0;
+       } else {
+         idleHits = Math.min(idleHits+1, maxIdle);
+       }
+       if (j && Number.isFinite(j.now)) dcSince = Number(j.now);
+     }catch(_){ idleHits = Math.min(idleHits+1, maxIdle); }
+     if (idleHits >= maxIdle){ t = null; return; }   // sleep until interaction
+     t = setTimeout(tick, steps[idleHits]);
+   };
+   // Resume on interaction (same triggers)
+   const container = document.getElementById("newOrderContainer");
+   const resume = () => { if (!t){ idleHits = 0; tick(); } };
+   container?.addEventListener("click", resume);
+   ["undoCompleteBtn","qrPreviewPrintBtn","clearBtn","pageButtonsContainer","etsyOrderNumber"]
+     .forEach(id => document.getElementById(id)?.addEventListener("click", resume, {capture:true}));
+   document.addEventListener("click", (e)=>{ if (e.target?.closest?.(".new-order-box")) resume(); }, {capture:true});
+   tick();
   }
-})();
+}
 
 // === Server-driven delta poller (adaptive backoff, no Firestore onSnapshot) ===
-const RT_POLL = { t:null };
-function nextDelayMs(){
-  // ramp up when idle to reduce traffic
-  const steps = [250, 500, 1000, 2000, 4000];
-  const i = Math.min(__rtIdleHits, steps.length - 1);
-  return steps[i];
-}
-function scheduleRtPoll(){
-  clearTimeout(RT_POLL.t);
-  RT_POLL.t = setTimeout(()=>{ fetchLocksOnce(); }, nextDelayMs());
-}
+ const RT_POLL = { t:null };
+ const RT_STEPS = [100, 200, 400, 800, 1600, 3200, 6400];
+ const RT_MAX_IDLE = RT_STEPS.length - 1;
+ function nextDelayMs(){
+   const i = Math.min(__rtIdleHits, RT_MAX_IDLE);
+   return RT_STEPS[i];
+ }
+ function scheduleRtPoll(){
+   clearTimeout(RT_POLL.t);
+   if (__rtIdleHits >= RT_MAX_IDLE){ RT_POLL.t = null; return; } // sleep
+   RT_POLL.t = setTimeout(()=>{ fetchLocksOnce(); }, nextDelayMs());
+ }
+ // Resume lock polling on interaction (same triggers)
+ window.addEventListener('DOMContentLoaded', () => {
+  const container = document.getElementById("newOrderContainer");
+  const resume = () => { if (!RT_POLL.t){ __rtIdleHits = 0; scheduleRtPoll(); } };
+   container?.addEventListener("click", resume, {capture:true});
+   ["undoCompleteBtn","qrPreviewPrintBtn","clearBtn","pageButtonsContainer","etsyOrderNumber"]
+     .forEach(id => document.getElementById(id)?.addEventListener("click", resume, {capture:true}));
+   document.addEventListener("click", (e)=>{ if (e.target?.closest?.(".new-order-box")) resume(); }, {capture:true});
+ });
 function beginDeltaPolling(){
   clearTimeout(RT_POLL.t);
   __rtSince    = Date.now() - 5*60*1000;
@@ -1468,31 +1517,31 @@ if (!orderContainer.dataset.rangeWired){
     // Initialize anchor on first interaction
     if (lastCtrlIdx === null) lastCtrlIdx = currIdx;
 
-    const selectRow = async (row) => {
-      const rid = String(row.dataset.receipt);
+const selectRow = async (row) => {
+  const rid = String(row.dataset.receipt);
 
-      if (!selectedOrders.has(rid)){
-        selectedOrders.add(rid);
-        row.classList.add("selected");
+  if (!selectedOrders.has(rid)){
+    selectedOrders.add(rid);
+    row.classList.add("selected");
 
-        // write lock immediately (micro-batched)
-        rtQueueLock(rid);
+    // write lock immediately (micro-batched)
+    rtQueueLock(rid);
 
-        // then fetch items & render previews without blocking the click flow
-        (async ()=>{
-          try{
-            if (!orderCache[rid]) {
-              const ord = await pullEtsyOrderDetails(rid);
-              orderCache[rid] = ord?.transactions || [];
-              refreshRowCount(rid);
-              refreshRowMetalCounts(rid);
-            }
-            orderCache[rid].forEach(tx => { if (!tx._inGrid) addPreviewBox(tx); });
-            realignGrid(); updateCounters(); persistSelection(); applyMetalFilter();
-          }catch(e){ console.warn("ensure/load failed for", rid, e); }
-        })();
-      }
-    };
+    // then fetch items & render previews without blocking the click flow
+    (async ()=>{
+      try{
+        if (!orderCache[rid]) {
+          const ord = await pullEtsyOrderDetails(rid);
+          orderCache[rid] = ord?.transactions || [];
+          refreshRowCount(rid);
+          refreshRowMetalCounts(rid);
+        }
+        orderCache[rid].forEach(tx => { if (!tx._inGrid) addPreviewBox(tx); });
+        realignGrid(); updateCounters(); persistSelection(); applyMetalFilter();
+      }catch(e){ console.warn("ensure/load failed for", rid, e); }
+    })();
+  }
+};
 
   const deselectRow = (row) => {
     const rid = String(row.dataset.receipt);
@@ -1718,7 +1767,7 @@ if (!orderContainer.dataset.rangeWired){
         .split(",")
         .map((x) => x.trim())
         .filter((x) => x);
-      orderNumbers = orderNumbers.slice(0, 50);
+      orderNumbers = orderNumbers.slice(0, 500);
 
       await loadBatchEtsyOrders(orderNumbers);
     }
@@ -3837,15 +3886,32 @@ async function fetchEtsyOrder(orderNum){
  ********************************************************/
 async function loadBatchEtsyOrders(orderNumbers) {
   try {
-    M.toast({ html: "Loading " + orderNumbers.length + " order(s)..." });
+    /* Accept a raw comma-separated string or an array; normalize, de-dupe, cap at 500 */
+    let list = [];
+    if (typeof orderNumbers === "string") {
+      list = orderNumbers
+        .split(/[,\n\r\t ]+/)
+        .map(s => s.trim())
+        .filter(Boolean);
+    } else if (Array.isArray(orderNumbers)) {
+      list = orderNumbers.map(x => String(x).trim()).filter(Boolean);
+    }
+    const seen = new Set();
+    list = list.filter(id => (id && !seen.has(id)) ? (seen.add(id), true) : false)
+               .slice(0, 500);
 
-    const token         = localStorage.getItem("access_token") || "";
+    M.toast({ html: "Loading " + list.length + " order(s)..." });
+
+    /* Prepare/refresh the left rail list */
+    const container = document.getElementById("newOrderContainer");
+    if (container) container.innerHTML = "";
+    const frag = document.createDocumentFragment();
+
     const combinedItems = [];
 
     /* ── loop through each receiptId ───────────────────────────── */
-    for (let i = 0; i < orderNumbers.length; i++) {
-      const ord  = orderNumbers[i];
-      const url  = functionsBaseUrl + "/etsyOrderProxy?orderId=" + encodeURIComponent(ord);
+    for (let i = 0; i < list.length; i++) {
+      const ord  = list[i];
       const resp = await apiFetch(`/etsyOrderProxy?orderId=${encodeURIComponent(ord)}`);
 
       /* DEBUG ⬇︎ record every payload */
@@ -3862,7 +3928,7 @@ async function loadBatchEtsyOrders(orderNumbers) {
 
       console.log("%cCACHE", "color:#ff9100",
             "receipt:", ord,
-            "TX ids:", data.transactions.map(t => t.transaction_id));
+            "TX ids:", (data.transactions||[]).map(t => t.transaction_id));
 
       console.log("Etsy Order Data:", data);
 
@@ -3918,12 +3984,107 @@ async function loadBatchEtsyOrders(orderNumbers) {
       } else {
         console.warn("No transactions for order", ord);
       }
+
+      /* ──────────────────────────────────────────────────────────
+       * Build a left-rail row for this order (with metal tallies)
+       * ────────────────────────────────────────────────────────── */
+      try {
+        const txs     = data?.transactions || [];
+        const receipt = data?.receipt || {};
+        const rid     = String(receipt.receipt_id || ord);
+
+        // Compute ship date from receipt/tx data
+        let shipDate = "N/A";
+        const tsRaw =
+              receipt.expected_ship_date ??
+              receipt.dispatch_date      ??
+              receipt.ship_by_date       ??
+              txs[0]?.expected_ship_date ??
+              txs[0]?.dispatch_date      ??
+              txs[0]?.ship_by_date       ?? 0;
+
+        if (typeof tsRaw === "number" && tsRaw > 86400) {
+          const d = new Date(tsRaw * 1000);
+          shipDate = d.toLocaleDateString("en-US", { month: "short", day: "2-digit" });
+        } else if (typeof tsRaw === "string" && tsRaw.trim()) {
+          shipDate = tsRaw;
+        }
+
+        // Tally metals by quantity
+        let g = 0, s = 0, rG = 0, k = 0;
+        txs.forEach(tx => {
+          let m = (tx._wrapEl && tx._wrapEl.dataset && tx._wrapEl.dataset.metal) || tx._metalKey || "";
+
+          if (!m && Array.isArray(tx.variations)) {
+            for (const v of tx.variations) {
+              const name  = String(v?.formatted_name  || "");
+              const value = String(v?.formatted_value || "");
+              if (/metal|color|colour/i.test(name)) {
+                m = value.toLowerCase();
+                break;
+              }
+            }
+          }
+
+          // 14K override: if m is 'gold' but the variation text mentions 14k, force 14k
+          if (/^gold$/i.test(m) && Array.isArray(tx.variations)) {
+            const joined = tx.variations
+              .map(v => String(v.formatted_value || "").toLowerCase())
+              .join(" ");
+            if (/\b14\s*k(?:t|arat)?\b/.test(joined)) m = "14k";
+          }
+
+          const q = tx.quantity || 1;
+          if (/^14k$/.test(m) || /\b14\s*k(?:t|arat)?\b/i.test(m)) k += q;
+          else if (/rose/i.test(m))                               rG += q;
+          else if (/silv(?:er|r)/i.test(m))                       s  += q;
+          else if (/gold/i.test(m))                               g  += q;
+        });
+
+        const rowMetal = k ? "14k" : (rG ? "rose" : (s ? "silver" : (g ? "gold" : "")));
+
+        if (container) {
+          const row = document.createElement("div");
+          row.className = "new-order-box";
+          row.dataset.receipt = rid;
+          if (rowMetal) row.dataset.metal = rowMetal;
+
+          row.innerHTML = `
+            <span class="col-order">${receipt.order_number || ord}</span>
+            <span class="col-ship">${shipDate}</span>
+            <span class="col-g">${g}</span>
+            <span class="col-s">${s}</span>
+            <span class="col-r">${rG}</span>
+            <span class="col-k">${k}</span>
+          `;
+
+          // Preserve selection/completed visuals if globals exist
+          try {
+            if (typeof completedOrders !== "undefined" && completedOrders.has(rid)) {
+              row.classList.add("completed");
+            }
+            if (typeof selectedOrders !== "undefined" && selectedOrders.has(rid)) {
+              row.classList.add("selected");
+            }
+          } catch (_e) {}
+
+          frag.appendChild(row);
+        }
+      } catch (rowErr) {
+        console.warn("Left-rail row build error for", ord, rowErr);
+      }
     }  /* ← end for-loop */
+
+    /* One paint for the left rail (fast) */
+    if (container) container.appendChild(frag);
 
     /* ── render combined results ───────────────────────────────── */
     await fillPreviewBoxes(combinedItems);
     attachMatchCellListeners();         // keep listener wiring
-    updateCounters();                   // refresh metal tallies
+    if (typeof updateCounters === "function")   updateCounters();   // refresh metal tallies
+    if (typeof applyMetalFilter === "function") applyMetalFilter(); // apply any active filters
+
+    M.toast({ html: "Bulk load complete" });
 
   } catch (err) {
     console.error("Error loading batch orders:", err);
