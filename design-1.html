@@ -706,7 +706,26 @@ firebase.auth().onAuthStateChanged(u => {
 
 
 // Start RT polling after the poller variables are initialized
-window.addEventListener('DOMContentLoaded', () => beginDeltaPolling());
+ window.addEventListener('DOMContentLoaded', () => {
+   const container = document.getElementById("newOrderContainer");
+   if (!container) return;
+   let armed = false;
+   const start = () => {
+     if (armed) return;
+     armed = true;
+     try { startCompletedRealtime(); } catch(_) {}
+     beginDeltaPolling();
+   };
+   // Primary: click inside the order list
+   container.addEventListener("click", start, { once: true, capture: true });
+   // Also fire on these controls
+   const ids = ["undoCompleteBtn","qrPreviewPrintBtn","clearBtn","pageButtonsContainer","etsyOrderNumber"];
+   ids.forEach(id => document.getElementById(id)?.addEventListener("click", start, { once: true, capture: true }));
+   // Delegate for dynamic tiles
+   document.addEventListener("click", (e) => {
+     if (e.target?.closest?.(".new-order-box")) start();
+   }, { capture:true });
+ });
 
 async function fetchAllLocksOnce(){
   try{
@@ -813,7 +832,7 @@ function reapplySelectionAndLocks(){
   scheduleHealMissingLocks();       // ensure Firebase gets the lock docs
 }
 
-(function startCompletedRealtime(){
+function startCompletedRealtime(){
   // Guard so we don't double-wire on the same page
   if (window.__completedStreamWired) return;
   window.__completedStreamWired = true;
@@ -935,34 +954,61 @@ function reapplySelectionAndLocks(){
   }
 
   // Fallback: light polling via Netlify function (?designCompleted=1)
-  function beginCompletedPolling(){
-    let t=null;
-    const tick = async ()=>{
-      try{
-        const r = await fetch(`${functionsBaseUrl}/firebaseOrders?designCompleted=1`);
-        const j = await r.json();
-        if (j && j.success) {
-          removeIfCompleted(new Set((j.orderNumbers||[]).map(String)));
-        }
-      }catch(_){}
-      t = setTimeout(tick, 1500);  // gentle 1.5s cadence
-    };
-    tick();
+ function beginCompletedPolling(){
+   let t = null;
+   let dcSince = Date.now() - 5*60*1000;
+   let idleHits = 0;
+   const steps = [1000, 2000, 4000, 8000, 16000, 30000];
+   const maxIdle = steps.length - 1;
+   const tick = async ()=>{
+     try{
+       const r = await fetch(`${functionsBaseUrl}/firebaseOrders?dcSince=${dcSince}`);
+       const j = await r.json();
+       const ids = (j && j.success ? (j.orderNumbers||[]) : []).map(String);
+       if (ids.length){
+         removeIfCompleted(new Set(ids));
+         idleHits = 0;
+       } else {
+         idleHits = Math.min(idleHits+1, maxIdle);
+       }
+       if (j && Number.isFinite(j.now)) dcSince = Number(j.now);
+     }catch(_){ idleHits = Math.min(idleHits+1, maxIdle); }
+     if (idleHits >= maxIdle){ t = null; return; }   // sleep until interaction
+     t = setTimeout(tick, steps[idleHits]);
+   };
+   // Resume on interaction (same triggers)
+   const container = document.getElementById("newOrderContainer");
+   const resume = () => { if (!t){ idleHits = 0; tick(); } };
+   container?.addEventListener("click", resume);
+   ["undoCompleteBtn","qrPreviewPrintBtn","clearBtn","pageButtonsContainer","etsyOrderNumber"]
+     .forEach(id => document.getElementById(id)?.addEventListener("click", resume, {capture:true}));
+   document.addEventListener("click", (e)=>{ if (e.target?.closest?.(".new-order-box")) resume(); }, {capture:true});
+   tick();
   }
-})();
+}
 
 // === Server-driven delta poller (adaptive backoff, no Firestore onSnapshot) ===
-const RT_POLL = { t:null };
-function nextDelayMs(){
-  // ramp up when idle to reduce traffic
-  const steps = [250, 500, 1000, 2000, 4000];
-  const i = Math.min(__rtIdleHits, steps.length - 1);
-  return steps[i];
-}
-function scheduleRtPoll(){
-  clearTimeout(RT_POLL.t);
-  RT_POLL.t = setTimeout(()=>{ fetchLocksOnce(); }, nextDelayMs());
-}
+ const RT_POLL = { t:null };
+ const RT_STEPS = [250, 500, 1000, 2000, 4000, 8000, 16000];
+ const RT_MAX_IDLE = RT_STEPS.length - 1;
+ function nextDelayMs(){
+   const i = Math.min(__rtIdleHits, RT_MAX_IDLE);
+   return RT_STEPS[i];
+ }
+ function scheduleRtPoll(){
+   clearTimeout(RT_POLL.t);
+   if (__rtIdleHits >= RT_MAX_IDLE){ RT_POLL.t = null; return; } // sleep
+   RT_POLL.t = setTimeout(()=>{ fetchLocksOnce(); }, nextDelayMs());
+ }
+ // Resume lock polling on interaction (same triggers)
+ window.addEventListener('DOMContentLoaded', () => {
+  const container = document.getElementById("newOrderContainer");
+  const resume = () => { if (!RT_POLL.t){ __rtIdleHits = 0; scheduleRtPoll(); } };
+   container?.addEventListener("click", resume, {capture:true});
+   ["undoCompleteBtn","qrPreviewPrintBtn","clearBtn","pageButtonsContainer","etsyOrderNumber"]
+     .forEach(id => document.getElementById(id)?.addEventListener("click", resume, {capture:true}));
+   document.addEventListener("click", (e)=>{ if (e.target?.closest?.(".new-order-box")) resume(); }, {capture:true});
+ });
 function beginDeltaPolling(){
   clearTimeout(RT_POLL.t);
   __rtSince    = Date.now() - 5*60*1000;

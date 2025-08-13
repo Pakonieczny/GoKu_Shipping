@@ -267,6 +267,28 @@ exports.handler = async (event) => {
         };
       }
 
+       /* ?dcSince=NUMBER(ms) → completed IDs changed since watermark */
+     if (event.queryStringParameters?.dcSince) {
+       const sinceMs = Number(event.queryStringParameters.dcSince);
+       if (!Number.isFinite(sinceMs)) {
+         return { statusCode: 400, headers: CORS, body: JSON.stringify({ error: "bad dcSince" }) };
+       }
+       const sinceTs = admin.firestore.Timestamp.fromMillis(sinceMs);
+       const snap = await db.collection(COMPLETED_COLL)
+         .where("completedAt", ">=", sinceTs)
+         .select()
+         .get();
+       return {
+         statusCode: 200,
+         headers: CORS,
+         body: JSON.stringify({
+           success: true,
+           orderNumbers: snap.docs.map(d => d.id),
+           now: Date.now()
+         })
+       };
+     }
+
       /* ?designCompleted=1 → list of completed receipt IDs from Design_Completed Orders */
       if (event.queryStringParameters?.designCompleted === "1") {
         const snap = await db.collection(COMPLETED_COLL).select().get();
