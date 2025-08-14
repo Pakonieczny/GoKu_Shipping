@@ -940,29 +940,18 @@ firebase.auth().onAuthStateChanged(u => {
   }
 });
 
+// Start RT polling immediately on load (no click required)
+window.addEventListener('DOMContentLoaded', () => {
+  try { startCompletedRealtime(); } catch(_) {}
+  beginDeltaPolling();
 
-
-// Start RT polling after the poller variables are initialized
- window.addEventListener('DOMContentLoaded', () => {
-   const container = document.getElementById("newOrderContainer");
-   if (!container) return;
-   let armed = false;
-   const start = () => {
-     if (armed) return;
-     armed = true;
-     try { startCompletedRealtime(); } catch(_) {}
-     beginDeltaPolling();
-   };
-   // Primary: click inside the order list
-   container.addEventListener("click", start, { once: true, capture: true });
-   // Also fire on these controls
-   const ids = ["undoCompleteBtn","qrPreviewPrintBtn","clearBtn","pageButtonsContainer","etsyOrderNumber"];
-   ids.forEach(id => document.getElementById(id)?.addEventListener("click", start, { once: true, capture: true }));
-   // Delegate for dynamic tiles
-   document.addEventListener("click", (e) => {
-     if (e.target?.closest?.(".new-order-box")) start();
-   }, { capture:true });
- });
+  // Paint any existing locks as rows are inserted into the sidebar
+  const container = document.getElementById('newOrderContainer');
+  if (container) {
+    new MutationObserver(() => applyAllLocksToDOM())
+      .observe(container, { childList: true });
+  }
+});
 
 async function fetchAllLocksOnce(){
   try{
