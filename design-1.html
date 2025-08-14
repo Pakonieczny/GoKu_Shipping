@@ -586,26 +586,26 @@ async function apiFetch(path, init = {}) {
     }
 
     if (resp.status === 401) {
-       
-       try { localStorage.removeItem(TOKEN_KEYS.access); } catch(e) {}
-       startOAuth("api-401");
-       throw new Error("Unauthorized – reconnecting Etsy…");
+      try { localStorage.removeItem(TOKEN_KEYS.access); } catch(e) {}
+      startOAuth("api-401");
+      throw new Error("Unauthorized – reconnecting Etsy…");
+    }
+  }
 
-        // 4) on 429 → exponential backoff (respect Retry-After if present)
-        if (resp.status === 429) {
-          let attempt = 0;
-          while (attempt < 4 && resp.status === 429) {
-            const retryAfter = resp.headers?.get?.("retry-after");
-            const raMs = Number.isFinite(Number(retryAfter)) ? Number(retryAfter) * 1000 : 0;
-            const backoff = Math.max(raMs, 300 * Math.pow(2, attempt)); // 300ms, 600ms, 1200ms, 2400ms...
-            await new Promise(r => setTimeout(r, backoff));
-            resp = await fetch(`${functionsBaseUrl}${path}`, {
-              ...init,
-              headers: { ...(init.headers || {}), "access-token": token }
-            });
-            attempt++;
-
-      }
+  // 4) on 429 → exponential backoff (respect Retry-After if present)
+  if (resp.status === 429) {
+    let attempt = 0;
+    while (attempt < 4 && resp.status === 429) {
+      const retryAfter = resp.headers?.get?.("retry-after");
+      const raMs = Number.isFinite(Number(retryAfter)) ? Number(retryAfter) * 1000 : 0;
+      const backoff = Math.max(raMs, 300 * Math.pow(2, attempt)); // 300, 600, 1200, 2400...
+      await new Promise(r => setTimeout(r, backoff));
+      resp = await fetch(`${functionsBaseUrl}${path}`, {
+        ...init,
+        headers: { ...(init.headers || {}), "access-token": token }
+      });
+      attempt++;
+    }
   }
 
   return resp;
@@ -1250,44 +1250,6 @@ function beginDeltaPolling(){
   scheduleRtPoll();      // then switch to deltas
 }
 
-async function fetchLocksOnce(){
-  if (__rtInflight) return __rtInflight; // dedupe
-  const url = `${functionsBaseUrl}/firebaseOrders?rtSince=${__rtSince}`;
-  __rtInflight = fetch(url).then(r=>{
-    if (!r.ok) throw new Error("HTTP " + r.status);
-    return r.json();
-  }).then(json=>{
-    let changed = 0;
-    // apply new/updated locks
-    Object.entries(json.locks || {}).forEach(([id, doc])=>{
-      const owner = (doc||{}).selectedBy || null;
-      const prev  = rtSelected.get(id);
-      if (prev !== owner){
-        rtSelected.set(id, owner);
-        paintLock(id, owner);
-        changed++;
-      }
-    });
-    // apply unlocks (rare; most unlocks delete docs)
-    (json.unlocks || []).forEach(id=>{
-      if (rtSelected.has(id)){
-        rtSelected.delete(id);
-        clearLock(id);
-        changed++;
-      }
-    });
-    // watermark + cadence
-    __rtSince    = Number(json.now) || Date.now();
-    __rtIdleHits = changed ? 0 : (__rtIdleHits + 1);
-    applyAllLocksToDOM();
-  }).catch((e)=>{
-    console.warn("delta poll failed", e);
-  }).finally(()=>{
-    __rtInflight = null;
-    scheduleRtPoll();
-  });
-  return __rtInflight;
-}
 
 // === Firestore realtime listener (primary) with graceful fallback ===
 function beginRtPolling(){
