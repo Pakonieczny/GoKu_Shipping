@@ -603,8 +603,6 @@ function markStaffNoteOrders(){
   });
 }
 
-await refreshStaffNoteIDs({ mode: "visible" }); // targeted ?staffNotesFor=...
-markStaffNoteOrders();
 
 /* ==== SEARCH SNAPSHOT (for restoring UI) ==== */
 let searchSnapshot = null;             // { orderHTML, gridHTML, gridMap }
