@@ -3226,7 +3226,13 @@ async function refreshStaffNoteIDs(opts = {}) {
 
     fetchListingImages(item.listing_id)
       .then(imgs => {
-        const u = imgs?.[0]?.url_fullxfull || imgs?.[0]?.url || null;
+        const first = Array.isArray(imgs) ? imgs[0] : null;
+        const u = first?.url_fullxfull
+               || first?.url
+               || first?.image_url
+               || first?.fullsize_url
+               || first?.src
+               || null;
         if (!u) throw new Error("no-image");
         return getLocalImageData(u);
       })
@@ -3234,8 +3240,7 @@ async function refreshStaffNoteIDs(opts = {}) {
         box.innerHTML = `<img src="${data}" style="width:110%;height:110%;object-fit:cover;">`;
         item.image = data;
       })
-      .catch(()=>{ box.innerHTML = "Img Err"; });
-
+      .catch((e)=>{ console.warn("Image load issue:", e); box.textContent = "No image"; });
     return wrap;
   }
 
@@ -4405,7 +4410,10 @@ async function fetchListingImages(listingId) {
         return [];
       }
       const data = await resp.json();
-      return data.results || [];
+      const imgs = Array.isArray(data)
+      ? data
+      : (data?.results || data?.images || data?.data || []);
+      return imgs || [];
     }
     return [];
   });
