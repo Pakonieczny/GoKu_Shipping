@@ -540,6 +540,45 @@ const orderCache     = {};             // receipt_id → transactions[]
 const gridElements   = new Map();      // transaction_id → wrapper DOM
 let   lastCtrlIdx    = null;           // ⬅️  anchor for Ctrl/⌘ range-select
 
+/* ===== Image fetch flow control (concurrency + memoization) ===== */
+const __imagesCache   = new Map();  // listingId -> resolved array
+const __imagesFlight  = new Map();  // listingId -> in-flight Promise
+
+function makeQueue(max = 4) {
+  let active = 0;
+  const q = [];
+  const pump = () => {
+    if (active >= max || q.length === 0) return;
+    active++;
+    const { fn, resolve, reject } = q.shift();
+    fn().then(v => { active--; pump(); resolve(v); })
+       .catch(e => { active--; pump(); reject(e); });
+  };
+  return (fn) => new Promise((resolve, reject) => { q.push({ fn, resolve, reject }); pump(); });
+}
+
+// Limit concurrent image calls; tune 3–6 based on your quota.
+const runImageTask = makeQueue(3);
+
+  // ---- Global image helper (single definition, shared everywhere) ----
+  // Uses your Netlify imageProxy to avoid CORS and returns a data: URL.
+  // If another copy already defined it, we reuse that.
+  var getLocalImageData = window.getLocalImageData || (async function(imageUrl) {
+    const resp = await fetch(
+      functionsBaseUrl + "/imageProxy?url=" + encodeURIComponent(imageUrl)
+    );
+    if (!resp.ok) throw new Error("imageProxy HTTP " + resp.status);
+    const blob = await resp.blob();
+    return await new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result);
+      reader.onerror = reject;
+      reader.readAsDataURL(blob);
+    });
+  });
+  // expose on window to guarantee reachability from any scope
+  window.getLocalImageData = getLocalImageData;
+
  /* ===== Resilient Etsy fetch (auto-refresh + 401 retry) ===== */
 async function apiFetch(path, init = {}) {
   // 1) proactive refresh when near expiry
@@ -566,14 +605,56 @@ async function apiFetch(path, init = {}) {
     }
 
     if (resp.status === 401) {
-       
-       try { localStorage.removeItem(TOKEN_KEYS.access); } catch(e) {}
-       startOAuth("api-401");
-       throw new Error("Unauthorized – reconnecting Etsy…");
-      }
+      try { localStorage.removeItem(TOKEN_KEYS.access); } catch(e) {}
+      startOAuth("api-401");
+      throw new Error("Unauthorized – reconnecting Etsy…");
+    }
+  }
+
+  // 4) on 429 → exponential backoff (respect Retry-After if present)
+  if (resp.status === 429) {
+    let attempt = 0;
+    while (attempt < 4 && resp.status === 429) {
+      const retryAfter = resp.headers?.get?.("retry-after");
+      const raMs = Number.isFinite(Number(retryAfter)) ? Number(retryAfter) * 1000 : 0;
+      const backoff = Math.max(raMs, 300 * Math.pow(2, attempt)); // 300, 600, 1200, 2400...
+      await new Promise(r => setTimeout(r, backoff));
+      resp = await fetch(`${functionsBaseUrl}${path}`, {
+        ...init,
+        headers: { ...(init.headers || {}), "access-token": token }
+      });
+      attempt++;
+    }
   }
 
   return resp;
+}
+
+/* ────────────────────────────────────────────────────────────────
+ * Abortable, resilient receipt fetch (used by repair pass)
+ * ──────────────────────────────────────────────────────────────── */
+async function fetchReceiptRobust(rid, { signal, retries = 2 } = {}){
+  const url = `/etsyOrderProxy?orderId=${encodeURIComponent(rid)}`;
+  let attempt = 0, lastErr = null;
+  while (attempt <= retries){
+    try{
+      const resp = await apiFetch(url, { signal });
+      if (!resp.ok) throw new Error("HTTP " + resp.status);
+      const data = await resp.json();
+      const txs  = data?.transactions || [];
+      if (!Array.isArray(txs) || txs.length === 0) throw new Error("no-transactions");
+      return data;
+    }catch(e){
+      // Abort means caller cancelled → bubble out
+      if (e?.name === "AbortError") throw e;
+      lastErr = e;
+      // small backoff: 150ms, 300ms
+      await new Promise(r => setTimeout(r, 150 * Math.pow(2, attempt)));
+    }
+    attempt++;
+  }
+  console.warn("fetchReceiptRobust failed:", rid, lastErr?.message || lastErr);
+  return null;
 }
 
 /* =====  Staff-Note highlighting  =================================== */
@@ -666,6 +747,148 @@ function refreshRowMetalCounts(receiptId){
   if (rowMetal) row.dataset.metal = rowMetal;
 }
 
+/* ────────────────────────────────────────────────────────────────
+ * Surgical healer: re-fetch & fix rows with 0/0/0/0 metal counts
+ * ──────────────────────────────────────────────────────────────── */
+function __readInt(el, sel){
+  const n = parseInt(el.querySelector(sel)?.textContent || "0", 10);
+  return Number.isFinite(n) ? n : 0;
+}
+
+function normalizeMetalText(s){
+  return String(s||"")
+    .toLowerCase()
+    .replace(/&quot;/g, '"')
+    .replace(/[\/_-]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function deriveMetalKeyFromVariations(tx){
+  const vals = (tx?.variations || []).map(v => `${v?.formatted_name||""} ${v?.formatted_value||""}`);
+  // widen to include listing title & personalization if parser lacked a hit
+  if (tx?.title) vals.push(tx.title);
+  if (tx?.personalization) vals.push(tx.personalization);
+  const blob = normalizeMetalText(vals.join(" "));
+  if (!blob) return "";
+  // Order matters: 14k → Rose → Silver → Gold
+  if (/\b14\s*k(?:t|arat)?\b/.test(blob))                                  return "14k";
+  if (/\brose\s*gold\b|\brose-?gold\b|\brosegold\b/.test(blob))            return "rose";
+  if (/\bsterling\b|\bsilver\b|color\s*sterling\s*silver|colorsterling\s*silver/.test(blob))
+                                                                           return "silver";
+  if (/\bgold\b|\byellow\b/.test(blob))                                    return "gold";
+  return "";
+}
+
+async function healZeroMetalRows({ passes = 2, concurrency = 4, reason = "" } = {}){
+  const container = document.getElementById("newOrderContainer");
+  if (!container) return;
+
+  async function healOne(rid){
+    try{
+      const data = await pullEtsyOrderDetails(rid);
+      if (!data) return;
+      const txs = data.transactions || [];
+      txs.forEach(tx => {
+        const k = deriveMetalKeyFromVariations(tx);
+        if (k) tx._metalKey = k;
+      });
+      // seed cache → row recalcs will use this
+      orderCache[rid] = txs;
+      refreshRowCount(rid);
+      refreshRowMetalCounts(rid);
+    }catch(e){
+      console.warn("healOne failed", rid, e);
+    }
+  }
+
+  for (let pass = 1; pass <= passes; pass++){
+    const rows = [...container.querySelectorAll(".new-order-box")];
+    const zeroRows = rows.filter(row => {
+      const g = __readInt(row, ".col-g");
+      const s = __readInt(row, ".col-s");
+      const r = __readInt(row, ".col-r");
+      const k = __readInt(row, ".col-k");
+      return (g + s + r + k) === 0;
+    });
+    if (!zeroRows.length) break;
+
+    const ids = zeroRows.map(r => r.dataset.receipt).filter(Boolean);
+    let idx = 0;
+    const workers = Array.from({length: Math.max(1, Math.min(concurrency, ids.length))}, () => (async ()=>{
+      while (idx < ids.length){
+        const rid = ids[idx++];
+        await healOne(rid);
+      }
+    })());
+    await Promise.all(workers);
+    // let the DOM paint between passes
+    await new Promise(r => setTimeout(r, 50));
+  }
+
+  // tidy UI after fixing
+  updateCounters?.();
+  applyMetalFilter?.();
+}
+
+ // handy in console
+ window.healZeroMetalRows = healZeroMetalRows;
+
+/* ────────────────────────────────────────────────────────────────
+ * Repair receipts with absent/empty transactions, then re-derive metals
+ * ──────────────────────────────────────────────────────────────── */
+async function repairMissingReceiptData({ passes = 2, concurrency = 4 } = {}){
+  const myRun = updateRunId; // only commit if still current
+  const container = document.getElementById("newOrderContainer");
+  if (!container) return;
+
+  function needsRepair(row){
+    const rid = String(row?.dataset?.receipt || "");
+    if (!rid) return false;
+    const txs = orderCache[rid];
+    if (!Array.isArray(txs) || txs.length === 0) return true;
+    // also treat rows with 0/0/0/0 as “probably missing data”
+    const g = __readInt(row, ".col-g");
+    const s = __readInt(row, ".col-s");
+    const r = __readInt(row, ".col-r");
+    const k = __readInt(row, ".col-k");
+    return (g + s + r + k) === 0;
+  }
+
+  async function repairOne(rid){
+    // abortable per-task controller, tracked for bulk cancel
+    const ctrl = new AbortController();
+    pendingUpdateControllers.push(ctrl);
+    const data = await fetchReceiptRobust(rid, { signal: ctrl.signal, retries: 2 });
+    if (!data) return;                 // still nothing; leave row visible for manual
+    if (myRun !== updateRunId) return; // outdated run: do not touch UI/cache
+
+    const txs = data.transactions || [];
+    // seed quick metal hints
+    txs.forEach(tx => { tx._metalKey = deriveMetalKeyFromVariations(tx) || tx._metalKey || ""; });
+    orderCache[rid] = txs;             // populate cache
+    refreshRowCount(rid);
+    refreshRowMetalCounts(rid);
+  }
+
+  for (let pass = 1; pass <= passes; pass++){
+    const rowsNeeding = [...container.querySelectorAll(".new-order-box")].filter(needsRepair);
+    if (!rowsNeeding.length) break;
+    let idx = 0;
+    const ids = rowsNeeding.map(r => String(r.dataset.receipt)).filter(Boolean);
+    const workers = Array.from({length: Math.min(concurrency, ids.length)}, () => (async ()=>{
+      while (idx < ids.length){
+        const rid = ids[idx++];
+        try{ await repairOne(rid); }catch(e){ if (e?.name !== "AbortError") console.warn("repairOne", rid, e); }
+      }
+    })());
+    await Promise.all(workers);
+    await new Promise(r => setTimeout(r, 50)); // paint
+  }
+  updateCounters?.(); applyMetalFilter?.();
+}
+window.repairMissingReceiptData = repairMissingReceiptData;
+
 const SELECTED_KEY   = "selectedOrders";         // orange-list
 const LAST_PURGE_KEY = "completed_last_purge";   // ISO month stamp
 const completedOrders = new Set();               // IDs that are already green
@@ -684,6 +907,14 @@ let skipMatches = {};   // { cellIndex: true }
 let earringCells  = {};            // { cellIdx : true }
 let earringState  = {};            // { cellIdx : { firstImg:null } }
 let orderListOffset = 0;      // 0, 100, 200…
+
+/* ── Update-run isolation ─────────────────────────────────────── */
+let updateRunId = 0;                           // increment per Update click
+let pendingUpdateControllers = [];             // AbortControllers for Update
+function abortAllUpdateWork(){
+  try { pendingUpdateControllers.forEach(c=>c.abort()); } catch(_){}
+  pendingUpdateControllers = [];
+}
 
 /********************************************************
  * Firebase Initialization (REQUIRED)
@@ -1038,44 +1269,6 @@ function beginDeltaPolling(){
   scheduleRtPoll();      // then switch to deltas
 }
 
-async function fetchLocksOnce(){
-  if (__rtInflight) return __rtInflight; // dedupe
-  const url = `${functionsBaseUrl}/firebaseOrders?rtSince=${__rtSince}`;
-  __rtInflight = fetch(url).then(r=>{
-    if (!r.ok) throw new Error("HTTP " + r.status);
-    return r.json();
-  }).then(json=>{
-    let changed = 0;
-    // apply new/updated locks
-    Object.entries(json.locks || {}).forEach(([id, doc])=>{
-      const owner = (doc||{}).selectedBy || null;
-      const prev  = rtSelected.get(id);
-      if (prev !== owner){
-        rtSelected.set(id, owner);
-        paintLock(id, owner);
-        changed++;
-      }
-    });
-    // apply unlocks (rare; most unlocks delete docs)
-    (json.unlocks || []).forEach(id=>{
-      if (rtSelected.has(id)){
-        rtSelected.delete(id);
-        clearLock(id);
-        changed++;
-      }
-    });
-    // watermark + cadence
-    __rtSince    = Number(json.now) || Date.now();
-    __rtIdleHits = changed ? 0 : (__rtIdleHits + 1);
-    applyAllLocksToDOM();
-  }).catch((e)=>{
-    console.warn("delta poll failed", e);
-  }).finally(()=>{
-    __rtInflight = null;
-    scheduleRtPoll();
-  });
-  return __rtInflight;
-}
 
 // === Firestore realtime listener (primary) with graceful fallback ===
 function beginRtPolling(){
@@ -1551,10 +1744,10 @@ const selectRow = async (row) => {
     // then fetch items & render previews without blocking the click flow
     (async ()=>{
       try{
-        if (!orderCache[rid]) {
-          const ord = await pullEtsyOrderDetails(rid);
-          orderCache[rid] = ord?.transactions || [];
-          refreshRowCount(rid);
+     const myRun = updateRunId;                 // snapshot
+     if (!orderCache[rid]) {          const ord = await pullEtsyOrderDetails(rid);
+     if (myRun !== updateRunId) return;       // run changed; discard
+        orderCache[rid] = ord?.transactions || [];          refreshRowCount(rid);
           refreshRowMetalCounts(rid);
         }
         orderCache[rid].forEach(tx => { if (!tx._inGrid) addPreviewBox(tx); });
@@ -1660,7 +1853,11 @@ const selectRow = async (row) => {
 
       /* ────────────────── Update-Order-List button ────────────────── */
       document.getElementById("updateOrderListBtn").addEventListener("click", async function () {
-        try {
+      try {
+          // 0) cancel any previous Update’s background work and start a new run
+          abortAllUpdateWork();
+          updateRunId++;
+          const myRun = updateRunId;
           this.disabled = true;
           this.innerHTML = '<span class="loadingWrap">' +
          '  <span class="spinner"></span>' +
@@ -1684,6 +1881,10 @@ const selectRow = async (row) => {
           const displayedCount = document.getElementById("newOrderContainer").children.length;
           console.log(`Orders displayed (offset ${orderListOffset}):`, displayedCount);
 
+          // A) first: repair rows with missing/empty transactions
+          await repairMissingReceiptData({ passes: 2, concurrency: 4 });
+          // B) then: heal any rows still showing 0/0/0/0 metals
+          await healZeroMetalRows({ passes: 2, concurrency: 4, reason: "update-click" });
           this.disabled = false;
           this.innerHTML = "Update Order List";
         } catch (err) {
@@ -2262,17 +2463,22 @@ const selectRow = async (row) => {
       if (printedIDs.length) {
         lastClearedReceipts = [...printedIDs];
     
-        printedIDs.forEach(rid => {
-          completedOrders.add(String(rid));
-    
-          document
-            .querySelectorAll(`.new-order-box[data-receipt='${rid}']`)
-            .forEach(r => r.remove());
-    
-          removePreviewBoxesForOrder(rid);
-          delete orderCache[rid];
-          selectedOrders.delete(String(rid));
-        });
+         printedIDs.forEach(rid => {
+           // 1) Clear previews first (force so we never get blocked)
+           removePreviewBoxesForOrder(rid, { force: true });
+
+           // 2) Remove the sidebar row
+           document
+             .querySelectorAll(`.new-order-box[data-receipt='${rid}']`)
+             .forEach(r => r.remove());
+
+           // 3) Scrub caches & selection
+           delete orderCache[rid];
+           selectedOrders.delete(String(rid));
+
+           // 4) Finally mark as completed (so future removals skip as intended)
+           completedOrders.add(String(rid));
+         });
     
         allOpenReceipts = allOpenReceipts
           .filter(r => !printedIDs.includes(String(r.receipt_id)));
@@ -2807,15 +3013,15 @@ async function refreshStaffNoteIDs(opts = {}) {
      * ======================================================= */
 
       /* ===== removePreviewBoxesForOrder — GLOBAL VERSION ===== */
-      function removePreviewBoxesForOrder(receiptId){
+      function removePreviewBoxesForOrder(receiptId, { force = false } = {}){
 
         console.log("%cREMOVE", "color:#d500f9",
             "receipt:", receiptId,
             "wraps in grid before:", document.querySelectorAll(
               `.wrap-preview[data-receipt='${receiptId}']`).length);
 
-        /* skip removals for completed (green) orders */
-        if (completedOrders.has(receiptId)) return;
+      /* skip removals for completed (green) orders — unless forced */
+      if (!force && completedOrders.has(receiptId)) return;
 
         /* PATCH ▸ allow this order to be re-added next time */
      (orderCache[receiptId] || []).forEach(tx => {
@@ -3038,14 +3244,22 @@ async function refreshStaffNoteIDs(opts = {}) {
     refreshRowMetalCounts(String(item.receipt_id));
 
     fetchListingImages(item.listing_id)
-      .then(imgs => getLocalImageData(imgs[0].url_fullxfull))
-      .then(data => {
-        box.innerHTML =
-          `<img src="${data}" style="width:110%;height:110%;object-fit:cover;">`;
-        item.image = data;                 // cache for modal
+      .then(imgs => {
+        const first = Array.isArray(imgs) ? imgs[0] : null;
+        const u = first?.url_fullxfull
+               || first?.url
+               || first?.image_url
+               || first?.fullsize_url
+               || first?.src
+               || null;
+        if (!u) throw new Error("no-image");
+        return getLocalImageData(u);
       })
-      .catch(()=>{ box.innerHTML = "Img Err"; });
-
+      .then(data => {
+        box.innerHTML = `<img src="${data}" style="width:110%;height:110%;object-fit:cover;">`;
+        item.image = data;
+      })
+      .catch((e)=>{ console.warn("Image load issue:", e); box.textContent = "No image"; });
     return wrap;
   }
 
@@ -3453,6 +3667,9 @@ function updatePageButtons(totalPages, currentPage){
       if (typeof fetchAllLocksOnce   === "function") await fetchAllLocksOnce(); // ?rt=1
       requestAnimationFrame(reapplySelectionAndLocks);
       requestAnimationFrame(() => requestAnimationFrame(reapplySelectionAndLocks));
+
+      // NEW: perform a light heal on page-switch in case any rows rendered as 0/0/0/0
+      await healZeroMetalRows({ passes: 1, concurrency: 4, reason: "page-nav" });
 
       // buildNewOrderList already refreshes the pager; avoid a double call
     });
@@ -4185,33 +4402,48 @@ async function loadBatchEtsyOrders(orderNumbers) {
 }
 
 async function fetchListingImages(listingId) {
-  const token = localStorage.getItem("access_token") || "";
+  const key = String(listingId);
 
-  const resp = await apiFetch(`/etsyImages?listingId=${listingId}`);
+  // 1) Serve from cache if we have it
+  if (__imagesCache.has(key)) return __imagesCache.get(key);
 
-  if (!resp.ok) {
-    console.warn("Image fetch HTTP error:", resp.status);
+  // 2) Share the same in-flight promise for duplicate callers
+  if (__imagesFlight.has(key)) return __imagesFlight.get(key);
+
+  // 3) Run inside the queue with built-in 429 tolerance via apiFetch
+  const task = runImageTask(async () => {
+    let attempt = 0;
+    while (attempt < 5) {
+      const resp = await apiFetch(`/etsyImages?listingId=${encodeURIComponent(key)}`);
+      if (resp.status === 429) {
+        // Extra defense: apiFetch already retried, keep spacing calls if still 429
+        const retryAfter = resp.headers?.get?.("retry-after");
+        const raMs = Number.isFinite(Number(retryAfter)) ? Number(retryAfter) * 1000 : 0;
+        const backoff = Math.max(raMs, 350 * Math.pow(2, attempt)); // 350ms, 700ms, 1400ms...
+        await new Promise(r => setTimeout(r, backoff));
+        attempt++;
+        continue;
+      }
+      if (!resp.ok) {
+        console.warn("Image fetch HTTP error:", resp.status);
+        return [];
+      }
+      const data = await resp.json();
+      const imgs = Array.isArray(data)
+      ? data
+      : (data?.results || data?.images || data?.data || []);
+      return imgs || [];
+    }
     return [];
-  }
-  const data = await resp.json();
-  return data.results || [];
-}
+  });
 
-async function getLocalImageData(imageUrl) {
+  __imagesFlight.set(key, task);
   try {
-    const response = await fetch(
-      functionsBaseUrl + "/imageProxy?url=" + encodeURIComponent(imageUrl)
-    );
-    const blob = await response.blob();
-    return new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = () => resolve(reader.result);
-      reader.onerror = reject;
-      reader.readAsDataURL(blob);
-    });
-  } catch (err) {
-    console.error("Error in getLocalImageData:", err);
-    throw err;
+    const results = await task;
+    __imagesCache.set(key, results);
+    return results;
+  } finally {
+    __imagesFlight.delete(key);
   }
 }
 
