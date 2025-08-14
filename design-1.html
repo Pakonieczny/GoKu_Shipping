@@ -603,15 +603,30 @@ function makePipeline(cfg){
   };
 }
 
-/* NEW: non-blocking event proxy so handlers see a valid currentTarget */
-function proxyEvent(nativeEvt, currentTarget){
-  const e = Object.create(nativeEvt || {});
-  try {
-    Object.defineProperty(e, "currentTarget", { value: currentTarget, enumerable: true });
-  } catch (_){}
-  e.stopPropagation = function(){};
-  e.stopImmediatePropagation = function(){};
-  e.preventDefault = function(){};
+/* Snapshot the click so it's safe to use later in the pipeline */
+function snapshotClickEvent(nativeEvt, currentTarget){
+  const n = nativeEvt || {};
+  const e = {
+    type: n.type,
+    timeStamp: n.timeStamp,
+    detail: n.detail,
+    // pointer/mouse
+    button: n.button, buttons: n.buttons,
+    clientX: n.clientX, clientY: n.clientY,
+    pageX: n.pageX, pageY: n.pageY,
+    screenX: n.screenX, screenY: n.screenY,
+    // modifiers
+    altKey: !!n.altKey, ctrlKey: !!n.ctrlKey,
+    metaKey: !!n.metaKey, shiftKey: !!n.shiftKey,
+    // targets
+    target: currentTarget,
+    currentTarget: currentTarget,
+    // no-ops: we’re serializing; don’t block native flow
+    stopPropagation(){}, stopImmediatePropagation(){}, preventDefault(){},
+    defaultPrevented: false,
+    // keep the original around just in case a handler peeks
+    originalEvent: n
+  };
   return e;
 }
 
@@ -640,7 +655,7 @@ function proxyEvent(nativeEvt, currentTarget){
       const el = this;
       wrapped = function guardedClick(evt){
         // Do NOT block native flow; just serialize handler execution.
-        const safeEvt = proxyEvent(evt, el); // keeps currentTarget stable
+        const safeEvt = snapshotClickEvent(evt, el); // keeps currentTarget stable
         pipe.enqueue(async ()=>{
           try { el.setAttribute("aria-busy","true"); } catch(_){}
           try {
