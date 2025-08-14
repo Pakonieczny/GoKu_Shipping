@@ -2168,25 +2168,29 @@ async function fillPreviewBoxes(items) {
     container.appendChild(metalInput);
     container.appendChild(matchInput);
 
-    /* --- fetch & display listing image (unchanged) ---------------- */
-    fetchListingImages(item.listing_id)
-      .then(imageData => {
-        if (imageData && imageData.length > 0) {
-          return getLocalImageData(imageData[0].url_fullxfull);
-        } else {
-          throw "No image data";
-        }
-      })
-      .then(localImageData => {
-        previewBox.innerHTML =
-          `<img src="${localImageData}" alt="Listing ${item.listing_id}"
-                data-scale="1" data-offsetX="0" data-offsetY="0" />`;
-        attachPreviewBoxListeners(previewBox);
-      })
-      .catch(err => {
-        console.warn("Error loading image for cell " + index + ":", err);
-        previewBox.innerHTML = "Img Error";
-      });
+/* --- fetch & display listing image (match design.html) -------- */
+fetchListingImages(item.listing_id)
+  .then(imgs => {
+    const first = Array.isArray(imgs) ? imgs[0] : null;
+    const u = first?.url_fullxfull
+           || first?.url
+           || first?.image_url
+           || first?.fullsize_url
+           || first?.src
+           || null;
+    if (!u) throw new Error("no-image");
+    return getLocalImageData(u);  // go through imageProxy to avoid CORS
+  })
+  .then(dataUrl => {
+    previewBox.innerHTML =
+      `<img src="${dataUrl}" alt="Listing ${item.listing_id}"
+            data-scale="1" data-offsetX="0" data-offsetY="0" />`;
+    attachPreviewBoxListeners(previewBox);
+  })
+  .catch(e => {
+    console.warn("Image load issue:", e);
+    previewBox.textContent = "No image";
+  });
   });  // end items.forEach
 }  // ← end fillPreviewBoxes
 
@@ -2484,17 +2488,49 @@ async function loadBatchEtsyOrders(orderNumbers) {
   }
 }
 
+// Match design.html: token-safe, queued, cached image fetch
 async function fetchListingImages(listingId) {
-  const token = localStorage.getItem("access_token") || "";
-  const resp = await fetch(functionsBaseUrl + "/etsyImages?listingId=" + listingId, {
-    headers: { "access-token": token },
-  });
-  if (!resp.ok) {
-    console.warn("Image fetch HTTP error:", resp.status);
+  const key = String(listingId);
+
+  // 1) Serve from cache if we have it
+  if (__imagesCache.has(key)) return __imagesCache.get(key);
+
+  // 2) Share the same in-flight promise for duplicate callers
+  if (__imagesFlight.has(key)) return __imagesFlight.get(key);
+
+  // 3) Run inside the queue with built-in 429 tolerance via apiFetch
+  const task = runImageTask(async () => {
+    let attempt = 0;
+    while (attempt < 5) {
+      const resp = await apiFetch(`/etsyImages?listingId=${encodeURIComponent(key)}`);
+      if (resp.status === 429) {
+        const retryAfter = resp.headers?.get?.("retry-after");
+        const raMs = Number.isFinite(Number(retryAfter)) ? Number(retryAfter) * 1000 : 0;
+        const backoff = Math.max(raMs, 350 * Math.pow(2, attempt)); // 350, 700, 1400...
+        await new Promise(r => setTimeout(r, backoff));
+        attempt++;
+        continue;
+      }
+      if (!resp.ok) {
+        console.warn("Image fetch HTTP error:", resp.status);
+        return [];
+      }
+      const data = await resp.json();
+      const imgs = Array.isArray(data) ? data
+                 : (data?.results || data?.images || data?.data || []);
+      return imgs || [];
+    }
     return [];
+  });
+
+  __imagesFlight.set(key, task);
+  try {
+    const results = await task;
+    __imagesCache.set(key, results);
+    return results;
+  } finally {
+    __imagesFlight.delete(key);
   }
-  const data = await resp.json();
-  return data.results || [];
 }
 
 async function getLocalImageData(imageUrl) {
