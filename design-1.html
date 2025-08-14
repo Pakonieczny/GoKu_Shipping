@@ -948,8 +948,8 @@ window.addEventListener('DOMContentLoaded', () => {
   // Paint any existing locks as rows are inserted into the sidebar
   const container = document.getElementById('newOrderContainer');
   if (container) {
-    new MutationObserver(() => applyAllLocksToDOM())
-      .observe(container, { childList: true });
+  new MutationObserver(() => applyAllLocksToDOM())
+  .observe(container, { childList: true, subtree: true });
   }
 });
 
@@ -1236,11 +1236,11 @@ function startCompletedRealtime(){
    const i = Math.min(__rtIdleHits, RT_MAX_IDLE);
    return RT_STEPS[i];
  }
- function scheduleRtPoll(){
-   clearTimeout(RT_POLL.t);
-   if (__rtIdleHits >= RT_MAX_IDLE){ RT_POLL.t = null; return; } // sleep
-   RT_POLL.t = setTimeout(()=>{ fetchLocksOnce(); }, nextDelayMs());
- }
+function scheduleRtPoll(){
+  clearTimeout(RT_POLL.t);
+  // Always keep polling; at max backoff we still tick (no full sleep)
+  RT_POLL.t = setTimeout(()=>{ fetchLocksOnce(); }, nextDelayMs());
+}
  // Resume lock polling on interaction (same triggers)
  window.addEventListener('DOMContentLoaded', () => {
   const container = document.getElementById("newOrderContainer");
