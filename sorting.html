@@ -325,6 +325,55 @@
  * Base URL & Global Variables
  ********************************************************/
 
+// === Image fetch caches + tiny queue (match design.html expectations) ===
+window.__imagesCache  = window.__imagesCache  || new Map();   // listingId -> [images]
+window.__imagesFlight = window.__imagesFlight || new Map();   // listingId -> in-flight Promise
+
+// Simple concurrency limiter so we don't hammer functions; tune as needed
+const IMAGE_QUEUE_CONCURRENCY = 3;
+window.__imageQueue  = window.__imageQueue  || [];
+window.__imageActive = window.__imageActive || 0;
+
+function runImageTask(taskFn) {
+  return new Promise((resolve, reject) => {
+    __imageQueue.push({ taskFn, resolve, reject });
+    pumpImageQueue();
+  });
+}
+
+function pumpImageQueue() {
+  while (__imageActive < IMAGE_QUEUE_CONCURRENCY && __imageQueue.length) {
+    const { taskFn, resolve, reject } = __imageQueue.shift();
+    __imageActive++;
+    (async () => {
+      try {
+        const out = await taskFn();
+        resolve(out);
+      } catch (e) {
+        reject(e);
+      } finally {
+        __imageActive--;
+        pumpImageQueue();
+      }
+    })();
+  }
+}
+
+// Shared proxy loader → returns data:URL; define once if missing
+window.getLocalImageData = window.getLocalImageData || (async function(imageUrl){
+  const resp = await fetch(
+    functionsBaseUrl + "/imageProxy?url=" + encodeURIComponent(imageUrl)
+  );
+  if (!resp.ok) throw new Error("imageProxy HTTP " + resp.status);
+  const blob = await resp.blob();
+  return await new Promise((resolve, reject) => {
+    const r = new FileReader();
+    r.onload = () => resolve(r.result);
+    r.onerror = reject;
+    r.readAsDataURL(blob);
+  });
+});
+
 const functionsBaseUrl = window.location.origin + "/.netlify/functions";
 
 /* ===== Etsy OAuth boot + auto-refresh wiring (match design.html) ===== */
