@@ -219,7 +219,73 @@ exports.handler = async (event) => {
     }
 
     /* ───────────────────────── GET ───────────────────────── */
+
     if (method === "GET") {
+      // helper: parse "a,b,c" → ["a","b","c"]
+      const parseIds = (s) =>
+        String(s || "")
+          .split(",")
+          .map(x => x.trim())
+          .filter(Boolean);
+
+      /* ?dcFor=rid1,rid2 → return subset that exist in Design_Completed Orders */
+      if (event.queryStringParameters?.dcFor) {
+        const ids = parseIds(event.queryStringParameters.dcFor);
+        if (!ids.length) {
+          return { statusCode: 200, headers: CORS, body: JSON.stringify({ success:true, orderNumbers: [] }) };
+        }
+        const refs = ids.map(id => db.collection(COMPLETED_COLL).doc(String(id)));
+        const snaps = await Promise.all(refs.map(r => r.get()));
+        const present = snaps
+          .map((snap, i) => (snap.exists ? ids[i] : null))
+          .filter(Boolean);
+        return {
+          statusCode: 200, headers: CORS,
+          body: JSON.stringify({ success:true, orderNumbers: present, now: Date.now() })
+        };
+      }
+
+      /* ?staffNotesFor=rid1,rid2 → which of these Brites_Orders have a non-empty "Staff Note" */
+      if (event.queryStringParameters?.staffNotesFor) {
+        const ids = parseIds(event.queryStringParameters.staffNotesFor);
+        if (!ids.length) {
+          return { statusCode: 200, headers: CORS, body: JSON.stringify({ success:true, orderNumbers: [] }) };
+        }
+        const refs = ids.map(id => db.collection("Brites_Orders").doc(String(id)));
+        const snaps = await Promise.all(refs.map(r => r.get()));
+        const withNotes = snaps
+          .map((snap, i) => {
+            const v = snap.exists ? (snap.data() || {}) : {};
+            const note = (v["Staff Note"] ?? "").toString().trim();
+            return note ? ids[i] : null;
+          })
+          .filter(Boolean);
+        return {
+          statusCode: 200, headers: CORS,
+          body: JSON.stringify({ success:true, orderNumbers: withNotes, now: Date.now() })
+        };
+      }
+
+      /* ?rtFor=rid1,rid2 → lock state only for these ids in REALTIME_COLL */
+      if (event.queryStringParameters?.rtFor) {
+        const ids = parseIds(event.queryStringParameters.rtFor);
+        if (!ids.length) {
+          return { statusCode: 200, headers: CORS, body: JSON.stringify({ success:true, locks: {} }) };
+        }
+        const refs = ids.map(id => db.collection(REALTIME_COLL).doc(String(id)));
+        const snaps = await Promise.all(refs.map(r => r.get()));
+        const locks = {};
+        snaps.forEach((snap, i) => {
+          if (!snap.exists) return;
+          const v = snap.data() || {};
+          if (v.selected === true) locks[ids[i]] = v;
+        });
+        return {
+          statusCode: 200, headers: CORS,
+          body: JSON.stringify({ success:true, locks, now: Date.now() })
+        };
+      }
+      
       /* ?rtSince=NUMBER(ms) → delta since watermark (server-accurate boundary)
          Returns: { locks:{id:{selectedBy,page,atMs}}, unlocks:[id], now:Number } */
       const qSince = event.queryStringParameters?.rtSince;
