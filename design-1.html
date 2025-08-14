@@ -623,48 +623,132 @@ function refreshRowCount(receiptId){
   cntEl.textContent = (orderCache[receiptId] || []).length;
 }
 
-/* ─── helper: recalc metal counts for one row ───────────────────────── */
-function refreshRowMetalCounts(receiptId){
-  const row = document.querySelector(`.new-order-box[data-receipt='${receiptId}']`);
-  if (!row) return;
+ /* —— Robust, cached metal resolver for a transaction —— */
+ function robustMetalFromTx(tx){
+   if (tx._metalKey) return tx._metalKey;  // cached
 
-  let g = 0, s = 0, rG = 0, k = 0;
-  (orderCache[receiptId] || []).forEach(tx => {
-    let m = tx._wrapEl?.dataset.metal || tx._metalKey || "";
+   const parts = [];
+   try{
+     if (Array.isArray(tx.variations)){
+       for (const v of tx.variations){
+         const n = String(v?.formatted_name || "");
+         const val = String(v?.formatted_value || "");
+         parts.push(n, val);
+       }
+     }
+     // Fallback signals
+     parts.push(String(tx.title || ""));
+     if (Array.isArray(tx.property_values)){
+       parts.push(tx.property_values.map(p => (p?.values || []).join(" ")).join(" "));
+     }
+   }catch(_){}
 
-    if (!m && Array.isArray(tx.variations)) {
-      for (const v of tx.variations) {
-        if (!v?.formatted_name || !v?.formatted_value) continue;
-        if (/metal|color|colour/i.test(v.formatted_name.trim())) {
-          m = v.formatted_value.toLowerCase();
-          break;
-        }
-      }
-    }
+   let blob = parts.join(" ").toLowerCase();
+   blob = blob.replace(/&quot;/g, '"');
+   // Normalize fused tokens like "LengthGold" / "MetalGold" / "ColorRoseGold"
+   blob = blob.replace(
+     /(length|metal|colour|color)(?=(?:\s*)?(gold|silver|rose))/g,
+     "$1 "
+   );
+   // Normalize rose variants
+   blob = blob.replace(/rose\s*-?\s*gold/g, "rose_gold");
+   blob = blob.replace(/rosegold/g, "rose_gold");
 
-    // 14K override: if m is 'gold' but the variation text mentions 14k, force 14k
-    if (/^gold$/i.test(m) && Array.isArray(tx.variations)) {
-      const joined = tx.variations
-        .map(v => String(v.formatted_value || "").toLowerCase())
-        .join(" ");
-      if (/\b14\s*k(?:t|arat)?\b/.test(joined)) m = "14k";
-    }
+   if (/\b14\s*k(?:t|arat)?\b/.test(blob)) { tx._metalKey = "14k";   return "14k"; }
+   if (/\brose_gold\b/.test(blob))          { tx._metalKey = "rose";  return "rose"; }
+   if (/\bsilv(?:er|r)\b/.test(blob))       { tx._metalKey = "silver";return "silver"; }
+   if (/\bgold\b/.test(blob))               { tx._metalKey = "gold";  return "gold"; }
+   tx._metalKey = "";
+   return "";
+ }
 
-    const q = tx.quantity || 1;
-    if (/^14k$/.test(m) || /\b14\s*k(?:t|arat)?\b/i.test(m)) k += q;
-    else if (/rose/i.test(m))                               rG += q;
-    else if (/silv(?:er|r)/i.test(m))                       s  += q;
-    else if (/gold/i.test(m))                               g  += q;
-  });
+ function refreshRowMetalCounts(receiptId){
+   const row = document.querySelector(`.new-order-box[data-receipt='${receiptId}']`);
+   if (!row) return;
 
-  row.querySelector(".col-g").textContent = g;
-  row.querySelector(".col-s").textContent = s;
-  row.querySelector(".col-r").textContent = rG;
-  row.querySelector(".col-k").textContent = k;
+   let g = 0, s = 0, r = 0, k = 0;
+   (orderCache[receiptId] || []).forEach(tx => {
+     const m = (tx._wrapEl?.dataset.metal) || robustMetalFromTx(tx);
+     const q = tx.quantity || 1;
+     if (m === "14k")     k += q;
+     else if (m === "rose")   r += q;
+     else if (m === "silver") s += q;
+     else if (m === "gold")   g += q;
+   });
 
-  const rowMetal = k ? "14k" : rG ? "rose" : s ? "silver" : g ? "gold" : "";
-  if (rowMetal) row.dataset.metal = rowMetal;
-}
+   row.querySelector(".col-g").textContent = g;
+   row.querySelector(".col-s").textContent = s;
+   row.querySelector(".col-r").textContent = r;
+   row.querySelector(".col-k").textContent = k;
+
+   const rowMetal = k ? "14k" : r ? "rose" : s ? "silver" : g ? "gold" : "";
+   if (rowMetal) row.dataset.metal = rowMetal;
+ }
+
+  /* =========================================================
+  * Self-heal pass — guarantees metals/counts/previews post Update
+  * ========================================================= */
+ async function healAllOrdersAfterRender({ passes = 3, delays = [0, 300, 1200], concurrency = 4 } = {}){
+   const rows = [...document.querySelectorAll("#newOrderContainer .new-order-box")];
+   if (!rows.length) return;
+
+   // simple async pool
+   async function withPool(items, fn, limit){
+     const q = items.slice();
+     const workers = Array.from({length: Math.max(1, limit)}, async function worker(){
+       while(q.length){
+         const it = q.shift();
+         try{ await fn(it); }catch(e){ console.warn("heal worker err:", e); }
+       }
+     });
+     await Promise.all(workers);
+   }
+
+   async function fixRow(row){
+     const rid = String(row.dataset.receipt || "");
+     if (!rid) return;
+     // 1) Ensure transactions are loaded
+     if (!Array.isArray(orderCache[rid]) || orderCache[rid].length === 0){
+       try{
+         const data = await pullEtsyOrderDetails(rid);
+         orderCache[rid] = data?.transactions || [];
+       }catch(e){ /* keep going – retry next pass */ }
+     }
+
+     // 2) Recompute metals/counts
+     try{
+       refreshRowCount(rid);
+       refreshRowMetalCounts(rid);
+     }catch(_){}
+
+     // 3) If the row is currently selected, ensure grid tiles exist
+     if (row.classList.contains("selected")){
+       for (const tx of (orderCache[rid] || [])){
+         try{
+           // If not already placed, add its preview tile
+           if (!tx._inGrid){
+             addPreviewBox(tx);  /* your existing function */ /* safe, idempotent */
+           }
+         }catch(_){}
+       }
+     }
+   }
+
+   for (let i=0; i<passes; i++){
+     const d = delays[Math.min(i, delays.length-1)] || 0;
+     if (d) await new Promise(r => setTimeout(r, d));
+     await withPool(rows, fixRow, concurrency);
+   }
+
+   // Final tidy
+   try{
+     updateCounters?.();
+     applyMetalFilter?.();
+     markStaffNoteOrders?.();
+     reflowGrid?.();
+     realignGrid?.();
+   }catch(_){}
+ }
 
 const SELECTED_KEY   = "selectedOrders";         // orange-list
 const LAST_PURGE_KEY = "completed_last_purge";   // ISO month stamp
@@ -684,6 +768,16 @@ let skipMatches = {};   // { cellIndex: true }
 let earringCells  = {};            // { cellIdx : true }
 let earringState  = {};            // { cellIdx : { firstImg:null } }
 let orderListOffset = 0;      // 0, 100, 200…
+
+ /* ===== Small deferred/promise helper (for hydration barrier) ===== */
+ function makeDeferred(){
+   let resolve, reject;
+   const p = new Promise((res, rej)=>{ resolve = res; reject = rej; });
+   p.resolve = resolve; p.reject = reject;
+   return p;
+ }
+ // Will be set right before we rebuild the list
+ window.__lastHydrateDone = null;
 
 /********************************************************
  * Firebase Initialization (REQUIRED)
@@ -897,6 +991,10 @@ function startCompletedRealtime(){
         updateCounters?.();
         applyMetalFilter?.();
         markStaffNoteOrders?.();
+
+        // Signal that initial hydration+render finished for this Update cycle
+        try { window.__lastHydrateDone?.resolve?.(); } catch(_){}
+
         continue;
       }
 
@@ -1658,41 +1756,49 @@ const selectRow = async (row) => {
     }
   });
 
-      /* ────────────────── Update-Order-List button ────────────────── */
-      document.getElementById("updateOrderListBtn").addEventListener("click", async function () {
-        try {
-          this.disabled = true;
-          this.innerHTML = '<span class="loadingWrap">' +
-         '  <span class="spinner"></span>' +
-         '  <span class="loadingTxt">Loading…</span>' +
-         '</span>';
+document.getElementById("updateOrderListBtn")?.addEventListener("click", async () => {
+  const btn = document.getElementById("updateOrderListBtn");
+  if (!btn) return;
+  const original = btn.innerHTML;
+  try {
+    btn.innerHTML = `<span class="loadingWrap"><span class="spinner"></span><span class="loadingTxt">Updating…</span></span>`;
+    btn.disabled = true;
 
-          orderListOffset = 0;                 // reset to first page
-          allOpenReceipts = [];                // 🚀 clear cache → next call re-fetches
-          const gotRows = await buildNewOrderList(orderListOffset);
-          /* Pull latest completed set from Firebase, then paint */
-          await restoreCompleted();
-          highlightCompletedRows();
-          reapplySelectionAndLocks();               // ← keep oranges when list refreshes
+    // Create a fresh barrier so we know when the MutationObserver-driven
+    // hydration+render cycle is fully done.
+    window.__lastHydrateDone = makeDeferred();
 
-          // FULL refresh of auxiliary indices now that rows are present
-          await refreshStaffNoteIDs({ mode: "all" }); // pulls all note owners
-          markStaffNoteOrders();
-          if (typeof fetchAllLocksOnce === "function") await fetchAllLocksOnce(); // fetch active locks
+    // keep your existing reset semantics
+    orderListOffset = 0;
+    allOpenReceipts = [];
 
-          /* NEW → log visible order count */
-          const displayedCount = document.getElementById("newOrderContainer").children.length;
-          console.log(`Orders displayed (offset ${orderListOffset}):`, displayedCount);
+    const gotRows = await buildNewOrderList(orderListOffset);
 
-          this.disabled = false;
-          this.innerHTML = "Update Order List";
-        } catch (err) {
-          console.error("Order-list fetch error:", err);
-          M.toast({ html: "Order-list error: " + err.message });
-          this.disabled = false;
-          this.innerHTML = "Update Order List";
-        }
-      });
+    // your existing post-build steps (keep these)
+    await restoreCompleted();
+    highlightCompletedRows();
+    reapplySelectionAndLocks?.();
+
+    // indices/notes/locks refresh (keep these too)
+    await refreshStaffNoteIDs?.({ mode: "all" });
+    markStaffNoteOrders?.();
+    await fetchAllLocksOnce?.();
+
+    // Wait until the observer-driven render has finished (and resolved us)
+    try { await (window.__lastHydrateDone || Promise.resolve()); } catch(_){}
+
+    // Run a multi-pass, idempotent self-heal to guarantee metals/counts/previews.
+    await healAllOrdersAfterRender();
+
+  } catch (err) {
+    console.error("Order-list fetch error:", err);
+    M.toast({ html: "Order-list error: " + err.message });
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = "Update Order List";
+  }
+});
+
 
 
       /* ───────────────────── Clear button ───────────────────── */
