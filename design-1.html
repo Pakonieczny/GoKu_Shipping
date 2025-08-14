@@ -2447,17 +2447,22 @@ const selectRow = async (row) => {
       if (printedIDs.length) {
         lastClearedReceipts = [...printedIDs];
     
-        printedIDs.forEach(rid => {
-          completedOrders.add(String(rid));
-    
-          document
-            .querySelectorAll(`.new-order-box[data-receipt='${rid}']`)
-            .forEach(r => r.remove());
-    
-          removePreviewBoxesForOrder(rid);
-          delete orderCache[rid];
-          selectedOrders.delete(String(rid));
-        });
+         printedIDs.forEach(rid => {
+           // 1) Clear previews first (force so we never get blocked)
+           removePreviewBoxesForOrder(rid, { force: true });
+
+           // 2) Remove the sidebar row
+           document
+             .querySelectorAll(`.new-order-box[data-receipt='${rid}']`)
+             .forEach(r => r.remove());
+
+           // 3) Scrub caches & selection
+           delete orderCache[rid];
+           selectedOrders.delete(String(rid));
+
+           // 4) Finally mark as completed (so future removals skip as intended)
+           completedOrders.add(String(rid));
+         });
     
         allOpenReceipts = allOpenReceipts
           .filter(r => !printedIDs.includes(String(r.receipt_id)));
@@ -2992,15 +2997,15 @@ async function refreshStaffNoteIDs(opts = {}) {
      * ======================================================= */
 
       /* ===== removePreviewBoxesForOrder — GLOBAL VERSION ===== */
-      function removePreviewBoxesForOrder(receiptId){
+      function removePreviewBoxesForOrder(receiptId, { force = false } = {}){
 
         console.log("%cREMOVE", "color:#d500f9",
             "receipt:", receiptId,
             "wraps in grid before:", document.querySelectorAll(
               `.wrap-preview[data-receipt='${receiptId}']`).length);
 
-        /* skip removals for completed (green) orders */
-        if (completedOrders.has(receiptId)) return;
+      /* skip removals for completed (green) orders — unless forced */
+      if (!force && completedOrders.has(receiptId)) return;
 
         /* PATCH ▸ allow this order to be re-added next time */
      (orderCache[receiptId] || []).forEach(tx => {
