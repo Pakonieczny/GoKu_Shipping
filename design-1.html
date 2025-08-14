@@ -576,6 +576,33 @@ async function apiFetch(path, init = {}) {
   return resp;
 }
 
+/* ────────────────────────────────────────────────────────────────
+ * Abortable, resilient receipt fetch (used by repair pass)
+ * ──────────────────────────────────────────────────────────────── */
+async function fetchReceiptRobust(rid, { signal, retries = 2 } = {}){
+  const url = `/etsyOrderProxy?orderId=${encodeURIComponent(rid)}`;
+  let attempt = 0, lastErr = null;
+  while (attempt <= retries){
+    try{
+      const resp = await apiFetch(url, { signal });
+      if (!resp.ok) throw new Error("HTTP " + resp.status);
+      const data = await resp.json();
+      const txs  = data?.transactions || [];
+      if (!Array.isArray(txs) || txs.length === 0) throw new Error("no-transactions");
+      return data;
+    }catch(e){
+      // Abort means caller cancelled → bubble out
+      if (e?.name === "AbortError") throw e;
+      lastErr = e;
+      // small backoff: 150ms, 300ms
+      await new Promise(r => setTimeout(r, 150 * Math.pow(2, attempt)));
+    }
+    attempt++;
+  }
+  console.warn("fetchReceiptRobust failed:", rid, lastErr?.message || lastErr);
+  return null;
+}
+
 /* =====  Staff-Note highlighting  =================================== */
 let staffNoteIDs = new Set();
 
@@ -685,6 +712,9 @@ function normalizeMetalText(s){
 
 function deriveMetalKeyFromVariations(tx){
   const vals = (tx?.variations || []).map(v => `${v?.formatted_name||""} ${v?.formatted_value||""}`);
+  // widen to include listing title & personalization if parser lacked a hit
+  if (tx?.title) vals.push(tx.title);
+  if (tx?.personalization) vals.push(tx.personalization);
   const blob = normalizeMetalText(vals.join(" "));
   if (!blob) return "";
   // Order matters: 14k → Rose → Silver → Gold
@@ -747,8 +777,63 @@ async function healZeroMetalRows({ passes = 2, concurrency = 4, reason = "" } = 
   applyMetalFilter?.();
 }
 
-// handy in console
-window.healZeroMetalRows = healZeroMetalRows;
+ // handy in console
+ window.healZeroMetalRows = healZeroMetalRows;
+
+/* ────────────────────────────────────────────────────────────────
+ * Repair receipts with absent/empty transactions, then re-derive metals
+ * ──────────────────────────────────────────────────────────────── */
+async function repairMissingReceiptData({ passes = 2, concurrency = 4 } = {}){
+  const myRun = updateRunId; // only commit if still current
+  const container = document.getElementById("newOrderContainer");
+  if (!container) return;
+
+  function needsRepair(row){
+    const rid = String(row?.dataset?.receipt || "");
+    if (!rid) return false;
+    const txs = orderCache[rid];
+    if (!Array.isArray(txs) || txs.length === 0) return true;
+    // also treat rows with 0/0/0/0 as “probably missing data”
+    const g = __readInt(row, ".col-g");
+    const s = __readInt(row, ".col-s");
+    const r = __readInt(row, ".col-r");
+    const k = __readInt(row, ".col-k");
+    return (g + s + r + k) === 0;
+  }
+
+  async function repairOne(rid){
+    // abortable per-task controller, tracked for bulk cancel
+    const ctrl = new AbortController();
+    pendingUpdateControllers.push(ctrl);
+    const data = await fetchReceiptRobust(rid, { signal: ctrl.signal, retries: 2 });
+    if (!data) return;                 // still nothing; leave row visible for manual
+    if (myRun !== updateRunId) return; // outdated run: do not touch UI/cache
+
+    const txs = data.transactions || [];
+    // seed quick metal hints
+    txs.forEach(tx => { tx._metalKey = deriveMetalKeyFromVariations(tx) || tx._metalKey || ""; });
+    orderCache[rid] = txs;             // populate cache
+    refreshRowCount(rid);
+    refreshRowMetalCounts(rid);
+  }
+
+  for (let pass = 1; pass <= passes; pass++){
+    const rowsNeeding = [...container.querySelectorAll(".new-order-box")].filter(needsRepair);
+    if (!rowsNeeding.length) break;
+    let idx = 0;
+    const ids = rowsNeeding.map(r => String(r.dataset.receipt)).filter(Boolean);
+    const workers = Array.from({length: Math.min(concurrency, ids.length)}, () => (async ()=>{
+      while (idx < ids.length){
+        const rid = ids[idx++];
+        try{ await repairOne(rid); }catch(e){ if (e?.name !== "AbortError") console.warn("repairOne", rid, e); }
+      }
+    })());
+    await Promise.all(workers);
+    await new Promise(r => setTimeout(r, 50)); // paint
+  }
+  updateCounters?.(); applyMetalFilter?.();
+}
+window.repairMissingReceiptData = repairMissingReceiptData;
 
 const SELECTED_KEY   = "selectedOrders";         // orange-list
 const LAST_PURGE_KEY = "completed_last_purge";   // ISO month stamp
@@ -768,6 +853,14 @@ let skipMatches = {};   // { cellIndex: true }
 let earringCells  = {};            // { cellIdx : true }
 let earringState  = {};            // { cellIdx : { firstImg:null } }
 let orderListOffset = 0;      // 0, 100, 200…
+
+/* ── Update-run isolation ─────────────────────────────────────── */
+let updateRunId = 0;                           // increment per Update click
+let pendingUpdateControllers = [];             // AbortControllers for Update
+function abortAllUpdateWork(){
+  try { pendingUpdateControllers.forEach(c=>c.abort()); } catch(_){}
+  pendingUpdateControllers = [];
+}
 
 /********************************************************
  * Firebase Initialization (REQUIRED)
@@ -1635,10 +1728,10 @@ const selectRow = async (row) => {
     // then fetch items & render previews without blocking the click flow
     (async ()=>{
       try{
-        if (!orderCache[rid]) {
-          const ord = await pullEtsyOrderDetails(rid);
-          orderCache[rid] = ord?.transactions || [];
-          refreshRowCount(rid);
+     const myRun = updateRunId;                 // snapshot
+     if (!orderCache[rid]) {          const ord = await pullEtsyOrderDetails(rid);
+     if (myRun !== updateRunId) return;       // run changed; discard
+        orderCache[rid] = ord?.transactions || [];          refreshRowCount(rid);
           refreshRowMetalCounts(rid);
         }
         orderCache[rid].forEach(tx => { if (!tx._inGrid) addPreviewBox(tx); });
@@ -1744,7 +1837,11 @@ const selectRow = async (row) => {
 
       /* ────────────────── Update-Order-List button ────────────────── */
       document.getElementById("updateOrderListBtn").addEventListener("click", async function () {
-        try {
+      try {
+          // 0) cancel any previous Update’s background work and start a new run
+          abortAllUpdateWork();
+          updateRunId++;
+          const myRun = updateRunId;
           this.disabled = true;
           this.innerHTML = '<span class="loadingWrap">' +
          '  <span class="spinner"></span>' +
@@ -1768,9 +1865,10 @@ const selectRow = async (row) => {
           const displayedCount = document.getElementById("newOrderContainer").children.length;
           console.log(`Orders displayed (offset ${orderListOffset}):`, displayedCount);
 
-          // NEW: heal any rows still showing 0/0/0/0 metals (two passes, safe concurrency)
+          // A) first: repair rows with missing/empty transactions
+          await repairMissingReceiptData({ passes: 2, concurrency: 4 });
+          // B) then: heal any rows still showing 0/0/0/0 metals
           await healZeroMetalRows({ passes: 2, concurrency: 4, reason: "update-click" });
-
           this.disabled = false;
           this.innerHTML = "Update Order List";
         } catch (err) {
