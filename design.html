@@ -1,4 +1,4 @@
-<<!DOCTYPE html>
+<!DOCTYPE html>
 <html>
 <head>
   <meta charset="UTF-8" />
@@ -602,6 +602,7 @@ function markStaffNoteOrders(){
     }
   });
 }
+
 
 /* ==== SEARCH SNAPSHOT (for restoring UI) ==== */
 let searchSnapshot = null;             // { orderHTML, gridHTML, gridMap }
@@ -1478,7 +1479,7 @@ const configIDs = [
  ********************************************************/
 let listingModal;                     // ← NEW ➊  (declare up-top)
 
-document.addEventListener("DOMContentLoaded", () => {
+document.addEventListener("DOMContentLoaded", async () => {
   M.AutoInit();
 
   const completeBtn = document.getElementById("completeBtn");
@@ -1493,8 +1494,8 @@ document.addEventListener("DOMContentLoaded", () => {
   /* ❶  wire "Complete !" button */
   document.getElementById("completeBtn").addEventListener("click", handleCompleteClick);
 
-  /* ❷  load completed list and colour rows */
-  restoreCompleted();
+/* ❷  on first app load, seed ALL indices (full) */
+await fullRefreshAllIndices();
 
 /* ==============================================================
  *  Unified row click: Plain = toggle, Ctrl/⌘ = toggle, Shift = range
@@ -1673,6 +1674,11 @@ const selectRow = async (row) => {
           await restoreCompleted();
           highlightCompletedRows();
           reapplySelectionAndLocks();               // ← keep oranges when list refreshes
+
+          // FULL refresh of auxiliary indices now that rows are present
+          await refreshStaffNoteIDs({ mode: "all" }); // pulls all note owners
+          markStaffNoteOrders();
+          if (typeof fetchAllLocksOnce === "function") await fetchAllLocksOnce(); // fetch active locks
 
           /* NEW → log visible order count */
           const displayedCount = document.getElementById("newOrderContainer").children.length;
@@ -2589,6 +2595,68 @@ const selectRow = async (row) => {
     }
   }
 
+  /* Seed ALL indices once (full) */
+async function fullRefreshAllIndices() {
+  try {
+    // 1) Completed (full) → already minimal elsewhere, but full here
+    await restoreCompleted();  // uses ?designCompleted=1
+
+    // 2) Staff Notes (full)
+    try {
+      const r  = await fetch(`${functionsBaseUrl}/firebaseOrders?staffNotes=1`);
+      const j  = await r.json();
+      const ids = (j.orderNumbers || []).map(String);
+      // replace the in-memory set atomically
+      if (window.staffNoteIDs instanceof Set) {
+        window.staffNoteIDs = new Set(ids);
+      } else {
+        window.staffNoteIDs = new Set(ids);
+      }
+    } catch(e) { console.warn("Full staff-notes seed failed:", e); }
+
+    // 3) Active locks (full)
+    if (typeof fetchAllLocksOnce === "function") {
+      try { await fetchAllLocksOnce(); } catch(e) { console.warn("Full locks seed failed:", e); }
+    }
+
+    // Repaint if rows are already on screen
+    if (typeof highlightCompletedRows === "function") highlightCompletedRows();
+    if (typeof markStaffNoteOrders     === "function") markStaffNoteOrders();
+  } catch (e) {
+    console.warn("fullRefreshAllIndices failed", e);
+  }
+}
+
+/* Targeted staff-notes refresher: visible rows only (default) or explicit ids */
+async function refreshStaffNoteIDs(opts = {}) {
+  const mode = opts.mode || "visible";        // "visible" (default) | "all"
+  const ids  = Array.isArray(opts.ids) ? opts.ids.map(String) : null;
+
+  try {
+    if (mode === "all") {
+      const r  = await fetch(`${functionsBaseUrl}/firebaseOrders?staffNotes=1`);
+      const j  = await r.json();
+      window.staffNoteIDs = new Set((j.orderNumbers || []).map(String));
+      return;
+    }
+
+    // visible-only: read as little as possible
+    const boxes = document.querySelectorAll("#newOrderContainer .new-order-box");
+    const list  = ids || Array.from(boxes).map(el => el.dataset.receipt || el.dataset.orderNumber).filter(Boolean);
+    if (!list.length) return;
+
+    const qs  = encodeURIComponent(list.join(","));
+    const res = await fetch(`${functionsBaseUrl}/firebaseOrders?staffNotesFor=${qs}`);
+    const json = await res.json();
+    const visibleSet = new Set((json.orderNumbers || []).map(String));
+
+    // Swap to just what we need for current view
+    window.staffNoteIDs = visibleSet;
+  } catch (e) {
+    console.warn("refreshStaffNoteIDs error", e);
+  }
+}
+
   /* ===== Real-time: drive Firebase writes off ORANGE (.selected) state ===== */
   (function wireSelectionObserver(){
     const container = document.getElementById("newOrderContainer");
@@ -3379,6 +3447,10 @@ function updatePageButtons(totalPages, currentPage){
 
       // Repaint orange after all late DOM work
       reapplySelectionAndLocks();
+      // When all orders have loaded → do a full database refresh of "available orders"
+      await refreshStaffNoteIDs({ mode: "all" });  // ?staffNotes=1
+      if (typeof markStaffNoteOrders === "function") markStaffNoteOrders();
+      if (typeof fetchAllLocksOnce   === "function") await fetchAllLocksOnce(); // ?rt=1
       requestAnimationFrame(reapplySelectionAndLocks);
       requestAnimationFrame(() => requestAnimationFrame(reapplySelectionAndLocks));
 
