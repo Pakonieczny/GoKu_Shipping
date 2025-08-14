@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+<<!DOCTYPE html>
 <html>
 <head>
   <meta charset="UTF-8" />
@@ -581,9 +581,14 @@ let staffNoteIDs = new Set();
 
 async function refreshStaffNoteIDs(){
   try{
-    const res  = await fetch(`${functionsBaseUrl}/firebaseOrders?staffNotes=1`);
-    const json = await res.json();
-    if(json.success) staffNoteIDs = new Set(json.orderNumbers.map(String));
+    const ids = [...document.querySelectorAll("#newOrderContainer .new-order-box")]
+      .map(el => el.dataset.receipt)
+      .filter(Boolean);
+    if (!ids.length) { staffNoteIDs = new Set(); markStaffNoteOrders(); return; }
+    const qs  = encodeURIComponent(ids.join(","));
+    const res = await fetch(`${functionsBaseUrl}/firebaseOrders?staffNotesFor=${qs}`);
+    const j   = await res.json();
+    staffNoteIDs = new Set((j.orderNumbers || []).map(String));
   }catch(e){ console.error(e); }
 }
 
@@ -933,25 +938,40 @@ function startCompletedRealtime(){
     }
   }
 
-  // Primary: native Firestore onSnapshot (fastest + cheapest)
-  try{
-   db.collection(COLL).onSnapshot((snap)=>{
-     const live = new Set(snap.docs.map(d=>String(d.id)));
-     // 1) Remove anything that is completed right now
-     removeIfCompleted(live);
-     // 2) If something was completed before but no longer is, re-add it
-     const undone = [...knownCompleted].filter(id => !live.has(id));
-     if (undone.length) reAddUndone(undone);
-     // 3) Update watermark set
-     knownCompleted = live;
-   }, (err)=>{
-      console.warn("Completed onSnapshot failed; falling back to polling", err);
-      beginCompletedPolling();
-    });
-  }catch(e){
-    console.warn("Completed listener error; using polling", e);
-    beginCompletedPolling();
+  // Targeted polling: only check completion for receipts currently visible
+  function visibleReceipts(){
+    return [...document.querySelectorAll("#newOrderContainer .new-order-box")]
+      .map(el => el.dataset.receipt)
+      .filter(Boolean);
   }
+
+  async function pollCompletedTargeted(){
+    const ids = visibleReceipts();
+    if (!ids.length) return { changed:false };
+    const qs  = encodeURIComponent(ids.join(","));
+    const r   = await fetch(`${functionsBaseUrl}/firebaseOrders?dcFor=${qs}`);
+    const j   = await r.json();
+    const live = new Set((j.orderNumbers || []).map(String));
+    removeIfCompleted(live);
+    // reconcile "undo" (completed earlier but now missing)
+    const undone = [...knownCompleted].filter(id => !live.has(id));
+    if (undone.length) await reAddUndone(undone);
+    knownCompleted = live;
+    return { changed: live.size > 0 || undone.length > 0 };
+  }
+
+  // adaptive cadence, sleeps until UI interaction resumes
+  let t=null, idle=0;
+  const steps=[750,1500,3000,6000,12000,30000];
+  async function tick(){
+    try{
+      const { changed } = await pollCompletedTargeted();
+      idle = changed ? 0 : Math.min(idle+1, steps.length-1);
+    }catch(_){ idle = Math.min(idle+1, steps.length-1); }
+    t = setTimeout(tick, steps[idle]);
+  }
+  // start immediately, then pause/resume with the same interaction hooks you already wire
+  tick();
 
   // Fallback: light polling via Netlify function (?designCompleted=1)
  function beginCompletedPolling(){
