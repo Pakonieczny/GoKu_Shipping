@@ -603,6 +603,18 @@ function makePipeline(cfg){
   };
 }
 
+/* NEW: non-blocking event proxy so handlers see a valid currentTarget */
+function proxyEvent(nativeEvt, currentTarget){
+  const e = Object.create(nativeEvt || {});
+  try {
+    Object.defineProperty(e, "currentTarget", { value: currentTarget, enumerable: true });
+  } catch (_){}
+  e.stopPropagation = function(){};
+  e.stopImmediatePropagation = function(){};
+  e.preventDefault = function(){};
+  return e;
+}
+
 // ---- addEventListener monkeypatch (wrap future registrations) ----------
 (function hardenClicks(){
   const pipelines = new WeakMap(); // element -> pipeline
@@ -627,13 +639,15 @@ function makePipeline(cfg){
     if (!wrapped){
       const el = this;
       wrapped = function guardedClick(evt){
-        // Always capture the intent quickly; process later in pipeline.
-        evt.stopPropagation();         // prevent duplicate raw handlers
-        evt.preventDefault?.();
+        // Do NOT block native flow; just serialize handler execution.
+        const safeEvt = proxyEvent(evt, el); // keeps currentTarget stable
         pipe.enqueue(async ()=>{
-          // Re-dispatch the original listener in a safe, serialized context
-          // Preserve "this" so handlers using `this` continue to work.
-          await listener.call(el, evt);
+          try { el.setAttribute("aria-busy","true"); } catch(_){}
+          try {
+            await listener.call(el, safeEvt);
+          } finally {
+            try { el.removeAttribute("aria-busy"); } catch(_){}
+          }
         });
       };
       wrapMap.set(listener, wrapped);
