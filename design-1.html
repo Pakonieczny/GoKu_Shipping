@@ -560,6 +560,25 @@ function makeQueue(max = 4) {
 // Limit concurrent image calls; tune 3–6 based on your quota.
 const runImageTask = makeQueue(3);
 
+  // ---- Global image helper (single definition, shared everywhere) ----
+  // Uses your Netlify imageProxy to avoid CORS and returns a data: URL.
+  // If another copy already defined it, we reuse that.
+  var getLocalImageData = window.getLocalImageData || (async function(imageUrl) {
+    const resp = await fetch(
+      functionsBaseUrl + "/imageProxy?url=" + encodeURIComponent(imageUrl)
+    );
+    if (!resp.ok) throw new Error("imageProxy HTTP " + resp.status);
+    const blob = await resp.blob();
+    return await new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result);
+      reader.onerror = reject;
+      reader.readAsDataURL(blob);
+    });
+  });
+  // expose on window to guarantee reachability from any scope
+  window.getLocalImageData = getLocalImageData;
+
  /* ===== Resilient Etsy fetch (auto-refresh + 401 retry) ===== */
 async function apiFetch(path, init = {}) {
   // 1) proactive refresh when near expiry
