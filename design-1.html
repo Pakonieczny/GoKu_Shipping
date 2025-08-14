@@ -540,6 +540,26 @@ const orderCache     = {};             // receipt_id → transactions[]
 const gridElements   = new Map();      // transaction_id → wrapper DOM
 let   lastCtrlIdx    = null;           // ⬅️  anchor for Ctrl/⌘ range-select
 
+/* ===== Image fetch flow control (concurrency + memoization) ===== */
+const __imagesCache   = new Map();  // listingId -> resolved array
+const __imagesFlight  = new Map();  // listingId -> in-flight Promise
+
+function makeQueue(max = 4) {
+  let active = 0;
+  const q = [];
+  const pump = () => {
+    if (active >= max || q.length === 0) return;
+    active++;
+    const { fn, resolve, reject } = q.shift();
+    fn().then(v => { active--; pump(); resolve(v); })
+       .catch(e => { active--; pump(); reject(e); });
+  };
+  return (fn) => new Promise((resolve, reject) => { q.push({ fn, resolve, reject }); pump(); });
+}
+
+// Limit concurrent image calls; tune 3–6 based on your quota.
+const runImageTask = makeQueue(3);
+
  /* ===== Resilient Etsy fetch (auto-refresh + 401 retry) ===== */
 async function apiFetch(path, init = {}) {
   // 1) proactive refresh when near expiry
@@ -570,6 +590,21 @@ async function apiFetch(path, init = {}) {
        try { localStorage.removeItem(TOKEN_KEYS.access); } catch(e) {}
        startOAuth("api-401");
        throw new Error("Unauthorized – reconnecting Etsy…");
+
+        // 4) on 429 → exponential backoff (respect Retry-After if present)
+        if (resp.status === 429) {
+          let attempt = 0;
+          while (attempt < 4 && resp.status === 429) {
+            const retryAfter = resp.headers?.get?.("retry-after");
+            const raMs = Number.isFinite(Number(retryAfter)) ? Number(retryAfter) * 1000 : 0;
+            const backoff = Math.max(raMs, 300 * Math.pow(2, attempt)); // 300ms, 600ms, 1200ms, 2400ms...
+            await new Promise(r => setTimeout(r, backoff));
+            resp = await fetch(`${functionsBaseUrl}${path}`, {
+              ...init,
+              headers: { ...(init.headers || {}), "access-token": token }
+            });
+            attempt++;
+
       }
   }
 
@@ -3228,11 +3263,14 @@ async function refreshStaffNoteIDs(opts = {}) {
     refreshRowMetalCounts(String(item.receipt_id));
 
     fetchListingImages(item.listing_id)
-      .then(imgs => getLocalImageData(imgs[0].url_fullxfull))
+      .then(imgs => {
+        const u = imgs?.[0]?.url_fullxfull || imgs?.[0]?.url || null;
+        if (!u) throw new Error("no-image");
+        return getLocalImageData(u);
+      })
       .then(data => {
-        box.innerHTML =
-          `<img src="${data}" style="width:110%;height:110%;object-fit:cover;">`;
-        item.image = data;                 // cache for modal
+        box.innerHTML = `<img src="${data}" style="width:110%;height:110%;object-fit:cover;">`;
+        item.image = data;
       })
       .catch(()=>{ box.innerHTML = "Img Err"; });
 
@@ -4378,33 +4416,45 @@ async function loadBatchEtsyOrders(orderNumbers) {
 }
 
 async function fetchListingImages(listingId) {
-  const token = localStorage.getItem("access_token") || "";
+  const key = String(listingId);
 
-  const resp = await apiFetch(`/etsyImages?listingId=${listingId}`);
+  // 1) Serve from cache if we have it
+  if (__imagesCache.has(key)) return __imagesCache.get(key);
 
-  if (!resp.ok) {
-    console.warn("Image fetch HTTP error:", resp.status);
+  // 2) Share the same in-flight promise for duplicate callers
+  if (__imagesFlight.has(key)) return __imagesFlight.get(key);
+
+  // 3) Run inside the queue with built-in 429 tolerance via apiFetch
+  const task = runImageTask(async () => {
+    let attempt = 0;
+    while (attempt < 5) {
+      const resp = await apiFetch(`/etsyImages?listingId=${encodeURIComponent(key)}`);
+      if (resp.status === 429) {
+        // Extra defense: apiFetch already retried, keep spacing calls if still 429
+        const retryAfter = resp.headers?.get?.("retry-after");
+        const raMs = Number.isFinite(Number(retryAfter)) ? Number(retryAfter) * 1000 : 0;
+        const backoff = Math.max(raMs, 350 * Math.pow(2, attempt)); // 350ms, 700ms, 1400ms...
+        await new Promise(r => setTimeout(r, backoff));
+        attempt++;
+        continue;
+      }
+      if (!resp.ok) {
+        console.warn("Image fetch HTTP error:", resp.status);
+        return [];
+      }
+      const data = await resp.json();
+      return data.results || [];
+    }
     return [];
-  }
-  const data = await resp.json();
-  return data.results || [];
-}
+  });
 
-async function getLocalImageData(imageUrl) {
+  __imagesFlight.set(key, task);
   try {
-    const response = await fetch(
-      functionsBaseUrl + "/imageProxy?url=" + encodeURIComponent(imageUrl)
-    );
-    const blob = await response.blob();
-    return new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = () => resolve(reader.result);
-      reader.onerror = reject;
-      reader.readAsDataURL(blob);
-    });
-  } catch (err) {
-    console.error("Error in getLocalImageData:", err);
-    throw err;
+    const results = await task;
+    __imagesCache.set(key, results);
+    return results;
+  } finally {
+    __imagesFlight.delete(key);
   }
 }
 
