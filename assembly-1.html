@@ -408,6 +408,22 @@
     <!-- Etsy Order Fields -->
     <input type="text" id="etsyOrderNumber" placeholder="Etsy Order Number" />
 
+    <!-- Order Number Paste button -->
+    <button id="pasteOrderBtn" class="btn"
+            style="position:absolute; left:310px; top:160px;
+                   width:65px; height:35px; line-height:35px;
+                   font-size:0.8em; text-align:center;">
+      Paste
+    </button>
+
+    <!-- Tracking Number Paste button -->
+    <button id="pasteTrackingBtn" class="btn"
+            style="position:absolute; left:410px; top:110px;
+                   width:65px; height:35px; line-height:35px;
+                   font-size:0.8em; text-align:center;">
+      Paste
+    </button>
+
     <!-- 🟡 anchor: immediately after <input id="shipDate" …/> -->
     <input type="text" id="labelCreationDate"    readonly />
     <input type="text" id="completedByEmployee"  readonly />
@@ -1064,6 +1080,8 @@ function metalToBadge(label){
         "userLoginModal",
         /* Newly added for positioning the login elements */
         "userLoginModalContainer",
+        "pasteOrderBtn",
+        "pasteTrackingBtn",
         "loginModalTitle",
         "loginModalPrompt",
         "employeeNumberInput",
@@ -1134,6 +1152,8 @@ function metalToBadge(label){
       copyOrderDetailsBtn: { left: 242, top: 165, width: 65, height: 35 },
       shippingPriority: { left: 324, top: 106, width: 200, height: 24 },
       titleShippingPriority: { left: 324, top: 82, width: 200, height: 15 },
+      pasteOrderBtn:     { left: 296, top: 165, width: 65, height: 35 },
+      pasteTrackingBtn:  { left: 822, top: 670, width: 65, height: 35 },
       signOutBtn:           { left: 1356,  top: 17, width: 103, height: 35 }
 
     };
@@ -1342,6 +1362,36 @@ function metalToBadge(label){
             .then(()   => M.toast({ html: `Copied ${name} ✔` }))
             .catch(err => M.toast({ html: "Copy failed: " + err.message }));
         });
+
+        /* ── Paste: Order Number ─────────────────────────── */
+        document.getElementById("pasteOrderBtn")
+          ?.addEventListener("click", async () => {
+            try {
+              const txt = (await navigator.clipboard.readText() || "").trim();
+              if (!txt) { M.toast?.({ html: "Clipboard is empty" }); return; }
+              const inp = document.getElementById("etsyOrderNumber");
+              inp.value = txt;
+              inp.dispatchEvent(new Event("input", { bubbles: true }));
+              M.toast?.({ html: "Order # pasted" });
+            } catch (err) {
+              M.toast?.({ html: "Paste failed: " + err.message });
+            }
+          });
+
+        /* ── Paste: Tracking Number ───────────────────────── */
+        document.getElementById("pasteTrackingBtn")
+          ?.addEventListener("click", async () => {
+            try {
+              const txt = (await navigator.clipboard.readText() || "").trim();
+              if (!txt) { M.toast?.({ html: "Clipboard is empty" }); return; }
+              const inp = document.getElementById("trackingNumberInput");
+              inp.value = txt;
+              inp.dispatchEvent(new Event("input", { bubbles: true }));
+              M.toast?.({ html: "Tracking # pasted" });
+            } catch (err) {
+              M.toast?.({ html: "Paste failed: " + err.message });
+            }
+          });
 
       /* Open Config → show modal + disable live UI clicks           */
       document.getElementById("openConfigBtn").addEventListener("click", function(){
