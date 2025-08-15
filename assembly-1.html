@@ -412,7 +412,8 @@
     <button id="pasteOrderBtn" class="btn"
             style="position:absolute; left:310px; top:160px;
                    width:65px; height:35px; line-height:35px;
-                   font-size:0.8em; text-align:center;">
+                   font-size:0.8em; text-align:center;
+                   background-color:#555 !important; color:#fff; padding:0;">
       Paste
     </button>
 
@@ -420,7 +421,8 @@
     <button id="pasteTrackingBtn" class="btn"
             style="position:absolute; left:410px; top:110px;
                    width:65px; height:35px; line-height:35px;
-                   font-size:0.8em; text-align:center;">
+                   font-size:0.8em; text-align:center;
+                   background-color:#555 !important; color:#fff; padding:0;">
       Paste
     </button>
 
@@ -1152,8 +1154,8 @@ function metalToBadge(label){
       copyOrderDetailsBtn: { left: 242, top: 165, width: 65, height: 35 },
       shippingPriority: { left: 324, top: 106, width: 200, height: 24 },
       titleShippingPriority: { left: 324, top: 82, width: 200, height: 15 },
-      pasteOrderBtn:     { left: 296, top: 165, width: 65, height: 35 },
-      pasteTrackingBtn:  { left: 822, top: 670, width: 65, height: 35 },
+      pasteOrderBtn:     { left: 299, top: 16, width: 70, height: 35 },
+      pasteTrackingBtn:  { left: 998, top: 663, width: 70, height: 35 },
       signOutBtn:           { left: 1356,  top: 17, width: 103, height: 35 }
 
     };
@@ -1363,16 +1365,24 @@ function metalToBadge(label){
             .catch(err => M.toast({ html: "Copy failed: " + err.message }));
         });
 
-        /* ── Paste: Order Number ─────────────────────────── */
+        /* ── Paste: Order Number (+ auto-Enter) ───────────────── */
         document.getElementById("pasteOrderBtn")
           ?.addEventListener("click", async () => {
             try {
               const txt = (await navigator.clipboard.readText() || "").trim();
               if (!txt) { M.toast?.({ html: "Clipboard is empty" }); return; }
+
               const inp = document.getElementById("etsyOrderNumber");
               inp.value = txt;
               inp.dispatchEvent(new Event("input", { bubbles: true }));
               M.toast?.({ html: "Order # pasted" });
+
+              // focus, then simulate pressing Enter after 100ms
+              inp.focus();
+              setTimeout(() => {
+                const ev = new KeyboardEvent("keydown", { key: "Enter", bubbles: true });
+                inp.dispatchEvent(ev);
+              }, 100);
             } catch (err) {
               M.toast?.({ html: "Paste failed: " + err.message });
             }
