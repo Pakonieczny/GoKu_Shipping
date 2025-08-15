@@ -540,6 +540,34 @@ const orderCache     = {};             // receipt_id → transactions[]
 const gridElements   = new Map();      // transaction_id → wrapper DOM
 let   lastCtrlIdx    = null;           // ⬅️  anchor for Ctrl/⌘ range-select
 
+/* === CLICK HARDENING HELPERS ========================================= */
+const ClickHarden = (() => {
+  const busy = new WeakSet();
+
+  // Wrap a handler so the *same element* can't re-enter for cooldownMs
+  function withLock(el, fn, cooldownMs = 250) {
+    return async function (ev) {
+      const host = el || ev?.currentTarget || ev?.target || this;
+      if (busy.has(host)) return;              // drop rapid re-clicks on same element
+      busy.add(host);
+      try { await fn.call(this, ev); }
+      finally { setTimeout(() => busy.delete(host), cooldownMs); }
+    };
+  }
+
+  // Lightweight per-element cooldown you can call inline
+  function inCooldown(el, key = "lastTapTs", ms = 250) {
+    if (!el) return false;
+    const now  = performance.now();
+    const prev = +el.dataset[key] || 0;
+    if (now - prev < ms) return true;
+    el.dataset[key] = String(now);
+    return false;
+  }
+
+  return { withLock, inCooldown };
+})();
+
 /* ===== Image fetch flow control (concurrency + memoization) ===== */
 const __imagesCache   = new Map();  // listingId -> resolved array
 const __imagesFlight  = new Map();  // listingId -> in-flight Promise
@@ -1665,16 +1693,32 @@ document.addEventListener("DOMContentLoaded", async () => {
   M.AutoInit();
 
   const completeBtn = document.getElementById("completeBtn");
-  if (completeBtn) {
-    completeBtn.addEventListener("click", handleCompleteClick);
+  if (completeBtn && !completeBtn.dataset.wired) {
+    completeBtn.dataset.wired = "1";
+    completeBtn.addEventListener(
+      "click",
+      ClickHarden.withLock(completeBtn, async function () {
+        if (this.disabled) return;
+        this.disabled = true;
+        this.classList.add("disabled");
+        this.setAttribute("aria-busy", "true");
+        try { await handleCompleteClick(); }
+        finally {
+          setTimeout(() => {
+            this.disabled = false;
+            this.classList.remove("disabled");
+            this.removeAttribute("aria-busy");
+          }, 300);
+        }
+      }, 600)
+    );
   }
 
   /* wire “Undo Complete” */
   const undoBtn = document.getElementById("undoCompleteBtn");
   if (undoBtn) undoBtn.addEventListener("click", handleUndoCompleteClick);
 
-  /* ❶  wire "Complete !" button */
-  document.getElementById("completeBtn").addEventListener("click", handleCompleteClick);
+// (hardened) wiring moved above; duplicate removed
 
 /* ❷  on first app load, seed ALL indices (full) */
 await fullRefreshAllIndices();
@@ -1700,6 +1744,9 @@ if (!orderContainer.dataset.rangeWired){
   orderContainer.addEventListener("click", async (e) => {
     const box = e.target.closest(".new-order-box");
     if (!box) return;
+
+    // fast-click guard per row (same row won't toggle twice inside 250 ms)
+    if (ClickHarden.inCooldown(box, "rowTapTs", 250)) return;
 
     /* If someone else has this order locked, block clicks */
     if (box.classList.contains("rt-locked")) {
@@ -3644,24 +3691,27 @@ function updatePageButtons(totalPages, currentPage){
     const btn = document.createElement("div");
     btn.className = "page-btn" + (i===currentPage ? " active": "");
     btn.textContent = i;
-    btn.addEventListener("click", async () => {
-      orderListOffset = (i-1)*100;
-      await buildNewOrderList(orderListOffset);
+    btn.addEventListener(
+      "click",
+      ClickHarden.withLock(btn, async () => {
+        orderListOffset = (i-1)*100;
+        await buildNewOrderList(orderListOffset);
 
-      // Repaint orange after all late DOM work
-      reapplySelectionAndLocks();
-      // When all orders have loaded → do a full database refresh of "available orders"
-      await refreshStaffNoteIDs({ mode: "all" });  // ?staffNotes=1
-      if (typeof markStaffNoteOrders === "function") markStaffNoteOrders();
-      if (typeof fetchAllLocksOnce   === "function") await fetchAllLocksOnce(); // ?rt=1
-      requestAnimationFrame(reapplySelectionAndLocks);
-      requestAnimationFrame(() => requestAnimationFrame(reapplySelectionAndLocks));
+        // Repaint orange after all late DOM work
+        reapplySelectionAndLocks();
+        // When all orders have loaded → do a full database refresh of "available orders"
+        await refreshStaffNoteIDs({ mode: "all" });  // ?staffNotes=1
+        if (typeof markStaffNoteOrders === "function") markStaffNoteOrders();
+        if (typeof fetchAllLocksOnce   === "function") await fetchAllLocksOnce(); // ?rt=1
+        requestAnimationFrame(reapplySelectionAndLocks);
+        requestAnimationFrame(() => requestAnimationFrame(reapplySelectionAndLocks));
 
-      // NEW: perform a light heal on page-switch in case any rows rendered as 0/0/0/0
-      await healZeroMetalRows({ passes: 1, concurrency: 4, reason: "page-nav" });
+        // NEW: perform a light heal on page-switch in case any rows rendered as 0/0/0/0
+        await healZeroMetalRows({ passes: 1, concurrency: 4, reason: "page-nav" });
 
-      // buildNewOrderList already refreshes the pager; avoid a double call
-    });
+        // buildNewOrderList already refreshes the pager; avoid a double call
+      }, 400)
+    );
     holder.appendChild(btn);
   }
 }
