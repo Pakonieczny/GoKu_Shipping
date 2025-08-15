@@ -408,6 +408,24 @@
     <!-- Etsy Order Fields -->
     <input type="text" id="etsyOrderNumber" placeholder="Etsy Order Number" />
 
+    <!-- Order Number Paste button -->
+    <button id="pasteOrderBtn" class="btn"
+            style="position:absolute; left:310px; top:160px;
+                   width:65px; height:35px; line-height:35px;
+                   font-size:0.8em; text-align:center;
+                   background-color:#555 !important; color:#fff; padding:0;">
+      Paste
+    </button>
+
+    <!-- Tracking Number Paste button -->
+    <button id="pasteTrackingBtn" class="btn"
+            style="position:absolute; left:410px; top:110px;
+                   width:65px; height:35px; line-height:35px;
+                   font-size:0.8em; text-align:center;
+                   background-color:#555 !important; color:#fff; padding:0;">
+      Paste
+    </button>
+
     <!-- 🟡 anchor: immediately after <input id="shipDate" …/> -->
     <input type="text" id="labelCreationDate"    readonly />
     <input type="text" id="completedByEmployee"  readonly />
@@ -472,7 +490,7 @@
     <!-- ▼▼ NEW COPY BUTTON ▼▼ -->
     <button id="copyOrderDetailsBtn" class="btn"
             style="position:absolute; left:260px; top:162px;
-                   width:50px; height:24px; font-size:0.65em;
+                   width:50px; height:24px; font-size:0.8em;
                    display:flex; align-items:center; justify-content:center;
                    background-color:#555 !important; color:#fff; padding:0;">
       Copy
@@ -551,7 +569,7 @@
     <button id="completeOrderBtn" class="btn"
             style="position:absolute; left:530px; top:110px;
                    width:110px; height:24px; line-height:24px;
-                   font-size:0.85em; text-align:center;">
+                   font-size:1.1em; text-align:center;">
       Complete Order
     </button>
     <!-- ▲▲ END new controls ▲▲ -->
@@ -706,6 +724,76 @@
       }
     }
 
+// Strong normalization for all the weird label combos
+function normalizeMetalLabel(raw){
+  let metalSel = String(raw || "");
+
+  // 0) kill noisy labels (even when smashed together)
+  //    e.g. "Metal Choice / Necklace LengthGold - 20" → "... Gold - 20"
+  //    - split camelCase first so "LengthGold" → "Length Gold"
+  metalSel = metalSel.replace(/([a-z])([A-Z])/g, "$1 $2");
+
+  // remove label heads
+  metalSel = metalSel
+    .replace(/\bmetal\s*choice\b\s*\/?/gi, "")
+    .replace(/\bengraving\s*option\b\s*\/?/gi, "")
+    .trim();
+
+  // 1) strip add-ons / counts / bullets
+  metalSel = metalSel
+    .replace(/\+\s*engraving/gi, "")
+    .replace(/\+\s*engrave/gi, "")
+    .replace(/\b1-5\s*Characters\b/gi, "")
+    .replace(/\b6-10\s*Characters\b/gi, "")
+    .replace(/\b11\s*\+\s*Characters\b/gi, "")
+    .replace(/\b1-5\s*·\s*Character(?:s)?\b/gi, "")
+    .replace(/\b6-10\s*·\s*Character(?:s)?\b/gi, "")
+    .replace(/\b11\+\s*·\s*Character(?:s)?\b/gi, "")
+    .replace(/[·•]/g, " ")
+    .replace(/\s{2,}/g, " ")
+    .trim();
+
+  // 2) remove "Necklace Length" (with or without separators), trailing sizes
+  metalSel = metalSel
+    .replace(/\bnecklace\s*length\b[\s\/:]*/gi, "")
+    .replace(/\s*-\s*\d+(\.\d+)?\s*(?:["′””])?$/g, "") // remove "- 20" or - 20" etc
+    .trim();
+
+  const norm = metalSel.toLowerCase();
+
+  // 3) canonical mapping — explicit beats generic
+  if (/(?:14k\s*)?(?:rose\s*gold|rosegold|rose\s*gold\s*filled|rosegold\s*filled|rosefilled)\b/.test(norm)) {
+    return "Rose Gold";
+  }
+  if (/(?:14k\s*)?(?:gold\s*filled|goldfilled)\b/.test(norm)) {
+    return "Gold Filled";
+  }
+  if (/(?:color\s*)?sterling\s*silver\b|silv[ae]?r\b/.test(norm)) {
+    return "Silver";
+  }
+  if (/\b14k\b/.test(norm)) {
+    return "14K";
+  }
+  if (/\bgold\b/.test(norm)) {
+    // ✅ plain "gold" → Gold (not Gold Filled)
+    return "Gold";
+  }
+  return metalSel; // fallback (unmapped)
+}
+
+
+function metalToBadge(label){
+  const canon = normalizeMetalLabel(label);
+  switch ((canon || "").toLowerCase()){
+    case "14k":        return "🟡 14K";
+    case "rose gold":  return "🟠";
+    case "silver":     return "⚪";
+    case "gold filled":return "🟡";
+    case "gold":       return "🟡";
+    default:           return "";
+  }
+}
+
     /* Replace any &quot; entity with a plain single quote */
     function deQuote(s){
       return (s == null ? "" : String(s)).replace(/&quot;/g, '"');
@@ -778,31 +866,156 @@
     window.isEmployeeLoggedIn = false; // We'll use this to guard the real-time listener
         let lastScanProcessed = null;      // 🔑 remember most-recent scanned order
 
-    (function(){
-      var urlParams = new URLSearchParams(window.location.search);
-      var accessToken = urlParams.get("access_token");
-      if(accessToken){
-        localStorage.setItem("access_token", accessToken);
-        window.history.replaceState({}, document.title, window.location.pathname);
-        M.toast({html:"Connection Successful!"});
-        console.log("Access token received:", accessToken);
-      } else {
-        var authCode = urlParams.get("code");
-        var raw = urlParams.get("code") || "";
-        var authCode = raw.split("&")[0];          // keep only the code value
-        if(authCode){
-          var storedCodeVerifier = localStorage.getItem("etsy_code_verifier");
-          if(storedCodeVerifier){
-           const qs = new URLSearchParams({
-            code:            authCode,
-            code_verifier:   storedCodeVerifier,
-            redirect_domain: "shipping-2"
-          });
-          window.location.href = "/.netlify/functions/exchangeToken?" + qs.toString();
-          } else {
-            console.error("No code verifier found in localStorage.");
-          }
+    /********************************************************
+     * Base URL & Global Variables
+     ********************************************************/
+    const functionsBaseUrl = window.location.origin + "/.netlify/functions";
+
+    /* ===== Etsy OAuth boot + auto-refresh wiring (match design/sorting) ===== */
+    const TOKEN_KEYS = {
+      access  : "access_token",
+      refresh : "refresh_token",
+      expires : "token_expires_at"   // epoch seconds
+    };
+
+    let __refreshPromise = null;  // single-flight guard
+
+    function scheduleTokenRefresh(){
+      clearTimeout(window.__etsyRefreshTimer);
+      const exp = Number(localStorage.getItem(TOKEN_KEYS.expires) || 0);
+      if (!exp){
+        if (localStorage.getItem(TOKEN_KEYS.refresh)){
+          window.__etsyRefreshTimer = setTimeout(refreshAccessToken, 55 * 60 * 1000);
         }
+        return;
+      }
+      const now = Math.floor(Date.now()/1000);
+      const leadSec = 120;
+      const delayMs = Math.max(5000, (exp - now - leadSec) * 1000);
+      window.__etsyRefreshTimer = setTimeout(refreshAccessToken, delayMs);
+    }
+
+    function setTokens({ access_token, refresh_token, expires_in, issued_at }){
+      if (access_token)  localStorage.setItem(TOKEN_KEYS.access,  access_token);
+      if (refresh_token) localStorage.setItem(TOKEN_KEYS.refresh, refresh_token);
+      const now = Math.floor(Date.now()/1000);
+      const iat = Number(issued_at || now);
+      const exp = iat + Number(expires_in || 3600);
+      localStorage.setItem(TOKEN_KEYS.expires, String(exp));
+      scheduleTokenRefresh();
+    }
+
+    async function refreshAccessToken(){
+      if (__refreshPromise) return __refreshPromise;
+      const rt = localStorage.getItem(TOKEN_KEYS.refresh);
+      if (!rt) return;
+      __refreshPromise = (async () => {
+        try{
+          const resp = await fetch(`${functionsBaseUrl}/refreshEtsyToken`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ refresh_token: rt })
+          });
+          if (!resp.ok) throw new Error("HTTP " + resp.status);
+          const data = await resp.json();
+          setTokens({
+            access_token : data.access_token,
+            // Etsy rotates refresh_token; if omitted, keep old
+            refresh_token: data.refresh_token || rt,
+            expires_in   : data.expires_in,
+            issued_at    : data.issued_at || Math.floor(Date.now()/1000)
+          });
+          M.toast?.({ html: "Etsy token refreshed" });
+          return true;
+        }catch(err){
+          console.warn("Token refresh failed:", err);
+          // Clear & start headless OAuth (no button clicks)
+          localStorage.removeItem(TOKEN_KEYS.access);
+          localStorage.removeItem(TOKEN_KEYS.expires);
+          await startOAuth("refresh-failed");
+          throw err;
+        }finally{
+          __refreshPromise = null;
+        }
+      })();
+      return __refreshPromise;
+    }
+
+    async function ensureFreshToken(){
+      const exp = Number(localStorage.getItem(TOKEN_KEYS.expires) || 0);
+      if (!exp) return;
+      const now = Math.floor(Date.now()/1000);
+      if (exp - now <= 120) await refreshAccessToken();
+    }
+
+    /* Resilient fetch against our Functions:
+       - ensures token freshness
+       - retries once on 401 after refresh
+       - if still 401, kicks off headless OAuth and throws */
+    async function apiFetch(path, init = {}){
+      await ensureFreshToken();
+      let token = localStorage.getItem(TOKEN_KEYS.access) || "";
+      let resp  = await fetch(`${functionsBaseUrl}${path}`, {
+        ...init,
+        headers: { ...(init.headers || {}), "access-token": token }
+      });
+      if (resp.status === 401){
+        try{
+          await refreshAccessToken();
+          token = localStorage.getItem(TOKEN_KEYS.access) || "";
+          resp  = await fetch(`${functionsBaseUrl}${path}`, {
+            ...init,
+            headers: { ...(init.headers || {}), "access-token": token }
+          });
+        }catch(_) {}
+      }
+      if (resp.status === 401){
+        localStorage.removeItem(TOKEN_KEYS.access);
+        localStorage.removeItem(TOKEN_KEYS.expires);
+        await startOAuth("401");
+        throw new Error("Unauthorized");
+      }
+      return resp;
+    }
+
+    (function () {
+      const url = new URLSearchParams(window.location.search);
+    
+      // Tokens returned by exchangeToken.js (access, refresh, expires_in, issued_at)
+      const a = url.get("access_token");
+      if (a){
+        setTokens({
+          access_token : a,
+          refresh_token: url.get("refresh_token"),
+          expires_in   : url.get("expires_in"),
+          issued_at    : url.get("issued_at")
+        });
+        window.history.replaceState({}, document.title, window.location.pathname);
+        M.toast?.({ html: "Connection Successful!" });
+        return;
+      }
+    
+      // Standard OAuth code return → hand back to server for code→tokens
+      const code = url.get("code");
+      if (code){
+        const v = localStorage.getItem("etsy_code_verifier");
+        if (v){
+          const qs = new URLSearchParams({ code, code_verifier: v, redirect_domain: "shipping-2" });
+          window.location.href = "/.netlify/functions/exchangeToken?" + qs.toString();
+          return;
+        }else{
+          console.error("No code verifier found in localStorage.");
+        }
+      }
+    
+      // Page load without query: rehydrate or refresh or boot OAuth
+      if (localStorage.getItem(TOKEN_KEYS.access)) {
+        scheduleTokenRefresh();
+      } else if (localStorage.getItem(TOKEN_KEYS.refresh)) {
+        refreshAccessToken();
+      } else {
+        // No tokens at all → start OAuth silently (like design/sorting)
+        startOAuth("boot");
       }
     })();
 
@@ -820,6 +1033,34 @@
       var digest = await crypto.subtle.digest("SHA-256", data);
       var base64String = btoa(String.fromCharCode.apply(null, new Uint8Array(digest)));
       return base64String.replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+    }
+
+     // Headless OAuth starter (no UI clicks needed)
+    let __oauthInFlight = false;
+    async function startOAuth(reason = "auto"){
+      if (__oauthInFlight) return;
+      __oauthInFlight = true;
+      try{
+        const codeVerifier = generateRandomString(64);
+        localStorage.setItem("etsy_code_verifier", codeVerifier);
+        const codeChallenge = await generateCodeChallenge(codeVerifier);
+        const CLIENT_ID   = "k75zdspz4r99txpqdji7i2em";
+        const redirectUri = "https://shipping-2.goldenspike.app";
+        const scope       = "listings_w listings_r transactions_r transactions_w";
+        const state       = `reconnect_${Date.now()}_${reason}`;
+        const etsyAuthUrl =
+          "https://www.etsy.com/oauth/connect?response_type=code" +
+          "&client_id=" + CLIENT_ID +
+          "&redirect_uri=" + encodeURIComponent(redirectUri) +
+          "&scope=" + encodeURIComponent(scope) +
+          "&state=" + encodeURIComponent(state) +
+          "&code_challenge=" + encodeURIComponent(codeChallenge) +
+          "&code_challenge_method=S256";
+        window.location.href = etsyAuthUrl;
+      }catch(e){
+        console.error("OAuth boot failed:", e);
+        __oauthInFlight = false;
+      }
     }
 
     /*
@@ -841,6 +1082,8 @@
         "userLoginModal",
         /* Newly added for positioning the login elements */
         "userLoginModalContainer",
+        "pasteOrderBtn",
+        "pasteTrackingBtn",
         "loginModalTitle",
         "loginModalPrompt",
         "employeeNumberInput",
@@ -906,11 +1149,13 @@
       employeeLoginBtn:     { left: 130,   top: 150,   width: 100, height: 35 },
       trackingNumberInput:{ left:677, top:674, width:308, height:23 },
       carrierSelectWrap:  { left:539, top:664, width:107, height:23 },
-      completeOrderBtn:    { left:1062, top:656, width:155, height:41 },
+      completeOrderBtn:    { left:678, top:730, width:300, height:65 },
       titleShipping:        { left: 700, top: 10, width: 200, height: 30 },
-      copyOrderDetailsBtn: { left: 260, top: 162, width: 50, height: 24 },
+      copyOrderDetailsBtn: { left: 242, top: 165, width: 65, height: 35 },
       shippingPriority: { left: 324, top: 106, width: 200, height: 24 },
       titleShippingPriority: { left: 324, top: 82, width: 200, height: 15 },
+      pasteOrderBtn:     { left: 299, top: 16, width: 70, height: 35 },
+      pasteTrackingBtn:  { left: 998, top: 663, width: 70, height: 35 },
       signOutBtn:           { left: 1356,  top: 17, width: 103, height: 35 }
 
     };
@@ -1120,6 +1365,44 @@
             .catch(err => M.toast({ html: "Copy failed: " + err.message }));
         });
 
+        /* ── Paste: Order Number (+ auto-Enter) ───────────────── */
+        document.getElementById("pasteOrderBtn")
+          ?.addEventListener("click", async () => {
+            try {
+              const txt = (await navigator.clipboard.readText() || "").trim();
+              if (!txt) { M.toast?.({ html: "Clipboard is empty" }); return; }
+
+              const inp = document.getElementById("etsyOrderNumber");
+              inp.value = txt;
+              inp.dispatchEvent(new Event("input", { bubbles: true }));
+              M.toast?.({ html: "Order # pasted" });
+
+              // focus, then simulate pressing Enter after 100ms
+              inp.focus();
+              setTimeout(() => {
+                const ev = new KeyboardEvent("keydown", { key: "Enter", bubbles: true });
+                inp.dispatchEvent(ev);
+              }, 100);
+            } catch (err) {
+              M.toast?.({ html: "Paste failed: " + err.message });
+            }
+          });
+
+        /* ── Paste: Tracking Number ───────────────────────── */
+        document.getElementById("pasteTrackingBtn")
+          ?.addEventListener("click", async () => {
+            try {
+              const txt = (await navigator.clipboard.readText() || "").trim();
+              if (!txt) { M.toast?.({ html: "Clipboard is empty" }); return; }
+              const inp = document.getElementById("trackingNumberInput");
+              inp.value = txt;
+              inp.dispatchEvent(new Event("input", { bubbles: true }));
+              M.toast?.({ html: "Tracking # pasted" });
+            } catch (err) {
+              M.toast?.({ html: "Paste failed: " + err.message });
+            }
+          });
+
       /* Open Config → show modal + disable live UI clicks           */
       document.getElementById("openConfigBtn").addEventListener("click", function(){
         populateConfigTable();
@@ -1149,32 +1432,9 @@
         document.body.classList.remove("configOpen");     // 🔑 flag OFF
       });
 
-      var connectEtsyBtn = document.getElementById("connectEtsyBtn");
-      if(connectEtsyBtn){
-        connectEtsyBtn.addEventListener("click", async function(){
-          var codeVerifier = generateRandomString(64);
-          localStorage.setItem("etsy_code_verifier", codeVerifier);
-          var codeChallenge = await generateCodeChallenge(codeVerifier);
-          var state = "randomState123";
-          var scope = "listings_w listings_r transactions_r transactions_w";
-          var CLIENT_ID = "k75zdspz4r99txpqdji7i2em";
-          var redirectUri = "https://shipping-2.goldenspike.app";
-
-          var etsyAuthUrl =
-            "https://www.etsy.com/oauth/connect?response_type=code" +
-            "&client_id=" + CLIENT_ID +
-            "&redirect_uri=" + encodeURIComponent(redirectUri) +
-            "&scope=" + encodeURIComponent(scope) +
-            "&state=" + state +
-            "&code_challenge=" + encodeURIComponent(codeChallenge) +
-            "&code_challenge_method=S256";
-
-          /* 🟢 flag: tell next load we’re mid-OAuth */
-          localStorage.setItem("oauth_in_progress","1");   // <<< ADD THIS LINE
-
-          console.log("Redirecting to Etsy OAuth URL:", etsyAuthUrl);
-          window.location.href = etsyAuthUrl;
-        });
+      const connectEtsyBtn = document.getElementById("connectEtsyBtn");
+      if (connectEtsyBtn){
+        connectEtsyBtn.addEventListener("click", () => startOAuth("manual"));
       }
 
       var etsyOrderInput = document.getElementById("etsyOrderNumber");
@@ -1479,29 +1739,20 @@
         if (!tracking)  { M.toast({ html: "Enter tracking #" }); return; }
         if (!carrier)   { M.toast({ html: "Choose carrier"  }); return; }
 
-        /* helper → perform one POST with the supplied token */
-        const postTracking = tok =>
-          fetch("/.netlify/functions/trackOrderProxy", {
+        /* helper → perform one POST via resilient apiFetch */
+        const postTracking = () =>
+          apiFetch("/trackOrderProxy", {
             method : "POST",
-            headers: {
-              "Content-Type": "application/json",
-              "access-token": tok
-            },
+            headers: { "Content-Type": "application/json" },
             body   : JSON.stringify({ receiptId, tracking, carrier })
           });
 
         try {
-          let token        = localStorage.getItem("access_token") || "";
-          let resp         = await postTracking(token);
+          let resp         = await postTracking();
           let payload      = await resp.text();              // Etsy proxy returns raw text
           let errMsg       = "";
 
-          /* ── token expired (401) → restart OAuth flow ── */
-          if (resp.status === 401) {
-            localStorage.removeItem("access_token");
-            document.getElementById("connectEtsyBtn")?.click();
-            throw new Error("Unauthorized – reconnecting Etsy…");
-          }
+          /* 401s are auto-handled inside apiFetch (refresh + headless OAuth). */
 
           /* ── forbidden (403) usually means missing shipping permission scope ── */
           if (resp.status === 403) {
@@ -1754,7 +2005,10 @@
             val2 = "Not Requested";
             details += " Personalization: " + val2 + "\n";
           } else if(acceptedMetalNames2.indexOf(nameLower2) >= 0){
-            details += " Metal Choice: " + val2 + "\n";
+
+            const mBadge = metalToBadge(val2);
+            details += ` ${mBadge ? mBadge + " " : ""}Metal Choice: ${val2}\n`;
+
           } else if(acceptedLengthNames2.indexOf(nameLower2) >= 0){
             var lengthMap2 = {
               "14&quot;": "14 Inches",
@@ -1982,9 +2236,9 @@
 
 
           // If a tile is selected, refresh details to show gift fields
-          const selectedBox = document.querySelector(".preview-box.selected");
-          if (selectedBox) {
-            const idx = parseInt(selectedBox.id.replace("previewCell",""), 10);
+          const sel = document.querySelector(".preview-box.selected");
+          if (sel) {
+            const idx = parseInt(sel.id.replace("previewCell",""), 10);
             if (!Number.isNaN(idx)) showItemDetails(idx);
           }
 
@@ -2000,26 +2254,26 @@
 
           box.value = "SHIP TO:\n" + lines.filter(Boolean).join("\n");
 
-           // ── Auto-select Carrier based on destination country ─────────
-          const sel = document.getElementById("carrierSelect");
-          if (sel) {
+          // ── Auto-select Carrier based on destination country (match shipping-1.html) ──
+          const carrierSelectEl = document.getElementById("carrierSelect");
+          if (carrierSelectEl) {
             const countryRaw = (ship.countryCode || ship.country || "").toString().trim().toUpperCase();
             const isUS = (countryRaw === "US" || countryRaw === "USA" || countryRaw === "UNITED STATES");
             const target = isUS ? "usps" : "chitchats";
 
             // set native <select> value
-            sel.value = target;
-            // notify any listeners
-            sel.dispatchEvent(new Event("change", { bubbles: true }));
+            carrierSelectEl.value = target;
+            carrierSelectEl.dispatchEvent(new Event("change", { bubbles: true }));
 
-            // refresh Materialize wrapper so visible label updates
+            // refresh Materialize wrapper so the visible label updates
             try {
-              let inst = M.FormSelect.getInstance(sel);
+              let inst = M.FormSelect.getInstance(carrierSelectEl);
               if (inst) inst.destroy();
-              inst = M.FormSelect.init(sel);
-              // also update the generated input text (belt & suspenders)
-              if (inst && inst.input) inst.input.value = (target === "usps" ? "USPS" : "ChitChats");
-            } catch(_) { /* Materialize not ready? ignore */ }
+              inst = M.FormSelect.init(carrierSelectEl);
+              if (inst && inst.input) {
+                inst.input.value = (target === "usps" ? "USPS" : "ChitChats");
+              }
+            } catch (_) { /* Materialize not ready? safe to ignore */ }
           }
 
           // Text color only for international (non-US/CA) addresses
@@ -2156,10 +2410,11 @@
     };
   </script>
 
+  
   <!-- 🆕 hard-hide unused fields -->
   <style id="hideUnusedFields">
-    #labelCreationDate,
-    #completedByEmployee { display:none !important; }
+  #labelCreationDate,
+  #completedByEmployee { display:none !important; }
   </style>
 
 <!-- FINAL chat-bubble override: placed last so nothing beats it -->

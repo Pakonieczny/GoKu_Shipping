@@ -408,24 +408,6 @@
     <!-- Etsy Order Fields -->
     <input type="text" id="etsyOrderNumber" placeholder="Etsy Order Number" />
 
-    <!-- Order Number Paste button -->
-    <button id="pasteOrderBtn" class="btn"
-            style="position:absolute; left:310px; top:160px;
-                   width:65px; height:35px; line-height:35px;
-                   font-size:0.8em; text-align:center;
-                   background-color:#555 !important; color:#fff; padding:0;">
-      Paste
-    </button>
-
-    <!-- Tracking Number Paste button -->
-    <button id="pasteTrackingBtn" class="btn"
-            style="position:absolute; left:410px; top:110px;
-                   width:65px; height:35px; line-height:35px;
-                   font-size:0.8em; text-align:center;
-                   background-color:#555 !important; color:#fff; padding:0;">
-      Paste
-    </button>
-
     <!-- 🟡 anchor: immediately after <input id="shipDate" …/> -->
     <input type="text" id="labelCreationDate"    readonly />
     <input type="text" id="completedByEmployee"  readonly />
@@ -490,7 +472,7 @@
     <!-- ▼▼ NEW COPY BUTTON ▼▼ -->
     <button id="copyOrderDetailsBtn" class="btn"
             style="position:absolute; left:260px; top:162px;
-                   width:50px; height:24px; font-size:0.8em;
+                   width:50px; height:24px; font-size:0.65em;
                    display:flex; align-items:center; justify-content:center;
                    background-color:#555 !important; color:#fff; padding:0;">
       Copy
@@ -569,7 +551,7 @@
     <button id="completeOrderBtn" class="btn"
             style="position:absolute; left:530px; top:110px;
                    width:110px; height:24px; line-height:24px;
-                   font-size:1.1em; text-align:center;">
+                   font-size:0.85em; text-align:center;">
       Complete Order
     </button>
     <!-- ▲▲ END new controls ▲▲ -->
@@ -1082,8 +1064,6 @@ function metalToBadge(label){
         "userLoginModal",
         /* Newly added for positioning the login elements */
         "userLoginModalContainer",
-        "pasteOrderBtn",
-        "pasteTrackingBtn",
         "loginModalTitle",
         "loginModalPrompt",
         "employeeNumberInput",
@@ -1149,13 +1129,11 @@ function metalToBadge(label){
       employeeLoginBtn:     { left: 130,   top: 150,   width: 100, height: 35 },
       trackingNumberInput:{ left:677, top:674, width:308, height:23 },
       carrierSelectWrap:  { left:539, top:664, width:107, height:23 },
-      completeOrderBtn:    { left:678, top:730, width:300, height:65 },
+      completeOrderBtn:    { left:1062, top:656, width:155, height:41 },
       titleShipping:        { left: 700, top: 10, width: 200, height: 30 },
-      copyOrderDetailsBtn: { left: 242, top: 165, width: 65, height: 35 },
+      copyOrderDetailsBtn: { left: 260, top: 162, width: 50, height: 24 },
       shippingPriority: { left: 324, top: 106, width: 200, height: 24 },
       titleShippingPriority: { left: 324, top: 82, width: 200, height: 15 },
-      pasteOrderBtn:     { left: 299, top: 16, width: 70, height: 35 },
-      pasteTrackingBtn:  { left: 998, top: 663, width: 70, height: 35 },
       signOutBtn:           { left: 1356,  top: 17, width: 103, height: 35 }
 
     };
@@ -1364,44 +1342,6 @@ function metalToBadge(label){
             .then(()   => M.toast({ html: `Copied ${name} ✔` }))
             .catch(err => M.toast({ html: "Copy failed: " + err.message }));
         });
-
-        /* ── Paste: Order Number (+ auto-Enter) ───────────────── */
-        document.getElementById("pasteOrderBtn")
-          ?.addEventListener("click", async () => {
-            try {
-              const txt = (await navigator.clipboard.readText() || "").trim();
-              if (!txt) { M.toast?.({ html: "Clipboard is empty" }); return; }
-
-              const inp = document.getElementById("etsyOrderNumber");
-              inp.value = txt;
-              inp.dispatchEvent(new Event("input", { bubbles: true }));
-              M.toast?.({ html: "Order # pasted" });
-
-              // focus, then simulate pressing Enter after 100ms
-              inp.focus();
-              setTimeout(() => {
-                const ev = new KeyboardEvent("keydown", { key: "Enter", bubbles: true });
-                inp.dispatchEvent(ev);
-              }, 100);
-            } catch (err) {
-              M.toast?.({ html: "Paste failed: " + err.message });
-            }
-          });
-
-        /* ── Paste: Tracking Number ───────────────────────── */
-        document.getElementById("pasteTrackingBtn")
-          ?.addEventListener("click", async () => {
-            try {
-              const txt = (await navigator.clipboard.readText() || "").trim();
-              if (!txt) { M.toast?.({ html: "Clipboard is empty" }); return; }
-              const inp = document.getElementById("trackingNumberInput");
-              inp.value = txt;
-              inp.dispatchEvent(new Event("input", { bubbles: true }));
-              M.toast?.({ html: "Tracking # pasted" });
-            } catch (err) {
-              M.toast?.({ html: "Paste failed: " + err.message });
-            }
-          });
 
       /* Open Config → show modal + disable live UI clicks           */
       document.getElementById("openConfigBtn").addEventListener("click", function(){
@@ -2254,28 +2194,6 @@ function metalToBadge(label){
 
           box.value = "SHIP TO:\n" + lines.filter(Boolean).join("\n");
 
-          // ── Auto-select Carrier based on destination country (match shipping-1.html) ──
-          const carrierSelectEl = document.getElementById("carrierSelect");
-          if (carrierSelectEl) {
-            const countryRaw = (ship.countryCode || ship.country || "").toString().trim().toUpperCase();
-            const isUS = (countryRaw === "US" || countryRaw === "USA" || countryRaw === "UNITED STATES");
-            const target = isUS ? "usps" : "chitchats";
-
-            // set native <select> value
-            carrierSelectEl.value = target;
-            carrierSelectEl.dispatchEvent(new Event("change", { bubbles: true }));
-
-            // refresh Materialize wrapper so the visible label updates
-            try {
-              let inst = M.FormSelect.getInstance(carrierSelectEl);
-              if (inst) inst.destroy();
-              inst = M.FormSelect.init(carrierSelectEl);
-              if (inst && inst.input) {
-                inst.input.value = (target === "usps" ? "USPS" : "ChitChats");
-              }
-            } catch (_) { /* Materialize not ready? safe to ignore */ }
-          }
-
           // Text color only for international (non-US/CA) addresses
           const countryRaw = (ship.country || ship.countryCode || "").toString().trim();
           const c = countryRaw.toLowerCase();
@@ -2413,8 +2331,12 @@ function metalToBadge(label){
   
   <!-- 🆕 hard-hide unused fields -->
   <style id="hideUnusedFields">
-  #labelCreationDate,
-  #completedByEmployee { display:none !important; }
+    #labelCreationDate,
+    #completedByEmployee,
+    /* requested hides */
+    #carrierSelectWrap,
+    #trackingNumberInput,
+    #completeOrderBtn { display:none !important; }
   </style>
 
 <!-- FINAL chat-bubble override: placed last so nothing beats it -->
