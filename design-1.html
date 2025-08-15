@@ -530,155 +530,10 @@
 
 let searchActive = false;     // true ⇢ we’re inside single-order search
 
-// Safety stub: becomes a no-op until the real function is defined.
-window.updateCounters = window.updateCounters || function(){};
 
 /********************************************************
  * Base URL & Global Variables
  ********************************************************/
-
-// ===================== Resilient Interaction Layer =====================
-// Purpose: make all buttons safe under rapid / irregular clicks,
-//          and ensure fast clicks are queued even while other work runs.
-
-// ---- Strategy per control (id → mode) ---------------------------------
-// modes: 
-//   - 'queue'  : enqueue every click, handle sequentially
-//   - 'drop'   : ignore while a run/queue exists (immunity to double-fire)
-//   - 'latest' : keep only the newest click; cancels/abandons older intent
-const CLICK_STRATEGY = {
-  updateOrderListBtn: { mode:'latest', cooldownMs: 120, maxQueue:1,
-    onStart: () => { try{ abortAllUpdateWork?.(); }catch(_){}; try{ updateRunId++; }catch(_){}; }
-  },
-  clearBtn          : { mode:'drop',  cooldownMs: 120, maxQueue:0 },
-  undoCompleteBtn   : { mode:'queue', cooldownMs:  60, maxQueue:6 },
-  completeBtn       : { mode:'drop',  cooldownMs: 120, maxQueue:0 }, // avoid double QR
-  connectEtsyBtn    : { mode:'drop',  cooldownMs: 400, maxQueue:0 },
-  saveConfigBtn     : { mode:'drop',  cooldownMs: 120, maxQueue:0 },
-  openConfigBtn     : { mode:'drop',  cooldownMs: 120, maxQueue:0 },
-  // Fallback for everything else (containers, row delegates, etc.)
-  '*': { mode:'queue', cooldownMs: 40, maxQueue: 20 }
-};
-
-// ---- Micro pipeline (per element) -------------------------------------
-function makePipeline(cfg){
-  const state = { running:false, q:[] };
-  async function sleep(ms){ return new Promise(r=>setTimeout(r, ms)); }
-  async function pump(){
-    if (state.running) return;
-    state.running = true;
-    try{
-      while(state.q.length){
-        const job = (cfg.mode === 'latest') ? state.q.pop() : state.q.shift();
-        try{
-          if (typeof cfg.onStart === 'function') { try{ cfg.onStart(); }catch(_){} }
-          await job();
-        }catch(err){
-          // Never crash the app due to an unhandled job error
-          console.warn('[guarded-click] job error:', err?.message || err);
-          try{ window.M?.toast?.({ html: "Action error: " + (err?.message || err) }); }catch(_){}
-        }
-        if (cfg.cooldownMs) await sleep(cfg.cooldownMs);
-      }
-    } finally { state.running = false; }
-  }
-  return {
-    enqueue(fn){
-      // drop: ignore while any task exists
-      if (cfg.mode === 'drop' && (state.running || state.q.length)) return;
-
-      // latest: keep only the newest intent
-      if (cfg.mode === 'latest') {
-        state.q.length = 0;
-        state.q.push(fn);
-        return pump();
-      }
-
-      // queue: append (bounded)
-      if (Number.isFinite(cfg.maxQueue) && cfg.maxQueue > 0 && state.q.length >= cfg.maxQueue) {
-        // If too many, discard oldest to avoid memory growth
-        state.q.shift();
-      }
-      state.q.push(fn);
-      return pump();
-    }
-  };
-}
-
-/* Snapshot the click so it's safe to use later in the pipeline */
-function snapshotClickEvent(nativeEvt, currentTarget){
-  const n = nativeEvt || {};
-  const e = {
-    type: n.type,
-    timeStamp: n.timeStamp,
-    detail: n.detail,
-    // pointer/mouse
-    button: n.button, buttons: n.buttons,
-    clientX: n.clientX, clientY: n.clientY,
-    pageX: n.pageX, pageY: n.pageY,
-    screenX: n.screenX, screenY: n.screenY,
-    // modifiers
-    altKey: !!n.altKey, ctrlKey: !!n.ctrlKey,
-    metaKey: !!n.metaKey, shiftKey: !!n.shiftKey,
-    // targets
-    target: currentTarget,
-    currentTarget: currentTarget,
-    // no-ops: we’re serializing; don’t block native flow
-    stopPropagation(){}, stopImmediatePropagation(){}, preventDefault(){},
-    defaultPrevented: false,
-    // keep the original around just in case a handler peeks
-    originalEvent: n
-  };
-  return e;
-}
-
-// ---- addEventListener monkeypatch (wrap future registrations) ----------
-(function hardenClicks(){
-  const pipelines = new WeakMap(); // element -> pipeline
-  const wrapMap   = new WeakMap(); // original listener -> wrapped
-
-  const original = EventTarget.prototype.addEventListener;
-  EventTarget.prototype.addEventListener = function(type, listener, options){
-    // Only wrap click listeners for real elements
-    if (type !== 'click' || !(this instanceof HTMLElement) || typeof listener !== 'function'){
-      return original.call(this, type, listener, options);
-    }
-
-    const id  = this.id || '';
-    const cfg = CLICK_STRATEGY[id] || CLICK_STRATEGY['*'];
-
-    // Build / cache pipeline for this element
-    let pipe = pipelines.get(this);
-    if (!pipe){ pipe = makePipeline(cfg); pipelines.set(this, pipe); }
-
-    // Idempotent wrapping
-    let wrapped = wrapMap.get(listener);
-    if (!wrapped){
-      const el = this;
-      wrapped = function guardedClick(evt){
-        // Do NOT block native flow; just serialize handler execution.
-        const safeEvt = evt; // use the real event to avoid Illegal invocation
-        pipe.enqueue(async ()=>{
-          try { el.setAttribute("aria-busy","true"); } catch(_){}
-          try {
-            await listener.call(el, safeEvt);
-          } finally {
-            try { el.removeAttribute("aria-busy"); } catch(_){}
-          }
-        });
-      };
-      wrapMap.set(listener, wrapped);
-    }
-
-    return original.call(this, type, wrapped, options);
-  };
-
-  // Global safety net: do not crash on stray promise rejections
-  window.addEventListener('unhandledrejection', (e)=>{
-    console.warn('[guarded-click] unhandled rejection:', e?.reason);
-    try{ window.M?.toast?.({ html: "Background task error (caught)" }); }catch(_){}
-  });
-})();
 const functionsBaseUrl = window.location.origin + "/.netlify/functions";
 const selectedOrders = new Set();      // receipt_id strings
 const orderCache     = {};             // receipt_id → transactions[]
@@ -1064,7 +919,7 @@ function abortAllUpdateWork(){
 /********************************************************
  * Firebase Initialization (REQUIRED)
  ********************************************************/
-const firebaseConfig = window.__FIREBASE_CONFIG__ || {
+const firebaseConfig = {
   apiKey: "YourApiKeyHere",
   authDomain: "YourAuthDomainHere",
   projectId: "gokudatabase",
@@ -1076,18 +931,14 @@ const firebaseConfig = window.__FIREBASE_CONFIG__ || {
 firebase.initializeApp(firebaseConfig);
 const db = firebase.firestore();
 
- // Only attempt anonymous auth when a real API key is configured.
- const __keyOk = !!firebaseConfig.apiKey && !/YourApiKeyHere/i.test(firebaseConfig.apiKey);
- firebase.auth().onAuthStateChanged(u => {
-   if (!__keyOk) {
-     console.warn("Firebase config missing/placeholder — skipping anon auth to avoid 400s.");
-     return;
-   }
-   if (!u) {
-     firebase.auth().signInAnonymously()
-       .catch(err => console.warn("Anon auth failed:", err));
-   }
- });
+// Ensure the client is authenticated (anon is fine for rules below)
+firebase.auth().onAuthStateChanged(u => {
+  if (!u) {
+    firebase.auth().signInAnonymously().catch(err => {
+      console.warn("Anon auth failed:", err);
+    });
+  }
+});
 
 // Start RT polling immediately on load (no click required)
 window.addEventListener('DOMContentLoaded', () => {
@@ -2083,8 +1934,8 @@ const selectRow = async (row) => {
         selectedOrders.clear();
 
         /* 4️⃣ tidy UI */
-        reflowGrid();
-        window.updateCounters?.();  // counters stay metal-only
+        reflowGrid();            // closes photo-grid gaps
+        updateCounters();        // top counters
         window.applyMetalFilter(); /* keeps current filter state */
 
         M.toast({ html: "Selection cleared" });
@@ -3668,18 +3519,13 @@ buildNewOrderList = async function (offset = 0) {
 
 /* Monkey-patch to expose display array for observer ------------------ */
 const origFuncTxt = buildNewOrderList.toString();
-if (!origFuncTxt.includes("window._lastDisplayReceipts")) 
-window._lastDisplayReceipts = displayReceipts;
-  {
+if (!origFuncTxt.includes("window._lastDisplayReceipts")) {
   console.warn(
     "Patch buildNewOrderList manually to expose displayReceipts:\n" +
     "Inside buildNewOrderList(), after you define displayReceipts, add:\n" +
     "    window._lastDisplayReceipts = displayReceipts;"
-
   );
 }
-
-
 
 /** observer detects page changes and triggers initial render --------- */
 const observer = new MutationObserver(async () => {
@@ -4742,11 +4588,11 @@ function reflowGrid(){
       /* fetch only the missing ones */
       if (needReceipts.length){
         loadBatchEtsyOrders(needReceipts)
-          .then(()=>{ reflowGrid(); window.updateCounters?.(); })
+          .then(()=>{ reflowGrid(); updateCounters(); })
           .catch(err => console.error("Completed sync error:", err));
       }else{
         reflowGrid();
-        window.updateCounters?.();      
+        updateCounters();
       }
     }
 
@@ -4864,7 +4710,7 @@ function reflowGrid(){
       });
 
       reflowGrid();
-      window.updateCounters?.();    // keep top counters in sync
+      updateCounters();             // keep top counters in sync
 
        /* one more pass in the next frame — guarantees nothing strips the outline */
        requestAnimationFrame(() => {
