@@ -2194,24 +2194,25 @@ function metalToBadge(label){
 
           box.value = "SHIP TO:\n" + lines.filter(Boolean).join("\n");
 
-          // ── Auto-select Carrier based on destination country (match Shipping_1) ──
-          const sel = document.getElementById("carrierSelect");
-          if (sel) {
+          // ── Auto-select Carrier based on destination country (match shipping-1.html) ──
+          const carrierSelectEl = document.getElementById("carrierSelect");
+          if (carrierSelectEl) {
             const countryRaw = (ship.countryCode || ship.country || "").toString().trim().toUpperCase();
             const isUS = (countryRaw === "US" || countryRaw === "USA" || countryRaw === "UNITED STATES");
             const target = isUS ? "usps" : "chitchats";
 
             // set native <select> value
-            sel.value = target;
-            // notify any listeners (keeps downstream logic in sync)
-            sel.dispatchEvent(new Event("change", { bubbles: true }));
+            carrierSelectEl.value = target;
+            carrierSelectEl.dispatchEvent(new Event("change", { bubbles: true }));
 
             // refresh Materialize wrapper so the visible label updates
             try {
-              let inst = M.FormSelect.getInstance(sel);
+              let inst = M.FormSelect.getInstance(carrierSelectEl);
               if (inst) inst.destroy();
-              inst = M.FormSelect.init(sel);
-              if (inst && inst.input) inst.input.value = (target === "usps" ? "USPS" : "ChitChats");
+              inst = M.FormSelect.init(carrierSelectEl);
+              if (inst && inst.input) {
+                inst.input.value = (target === "usps" ? "USPS" : "ChitChats");
+              }
             } catch (_) { /* Materialize not ready? safe to ignore */ }
           }
 
