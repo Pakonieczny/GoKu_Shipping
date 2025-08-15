@@ -530,6 +530,8 @@
 
 let searchActive = false;     // true ⇢ we’re inside single-order search
 
+// Safety stub: becomes a no-op until the real function is defined.
+window.updateCounters = window.updateCounters || function(){};
 
 /********************************************************
  * Base URL & Global Variables
@@ -655,7 +657,7 @@ function snapshotClickEvent(nativeEvt, currentTarget){
       const el = this;
       wrapped = function guardedClick(evt){
         // Do NOT block native flow; just serialize handler execution.
-        const safeEvt = snapshotClickEvent(evt, el); // keeps currentTarget stable
+        const safeEvt = evt; // use the real event to avoid Illegal invocation
         pipe.enqueue(async ()=>{
           try { el.setAttribute("aria-busy","true"); } catch(_){}
           try {
@@ -1062,7 +1064,7 @@ function abortAllUpdateWork(){
 /********************************************************
  * Firebase Initialization (REQUIRED)
  ********************************************************/
-const firebaseConfig = {
+const firebaseConfig = window.__FIREBASE_CONFIG__ || {
   apiKey: "YourApiKeyHere",
   authDomain: "YourAuthDomainHere",
   projectId: "gokudatabase",
@@ -1074,14 +1076,18 @@ const firebaseConfig = {
 firebase.initializeApp(firebaseConfig);
 const db = firebase.firestore();
 
-// Ensure the client is authenticated (anon is fine for rules below)
-firebase.auth().onAuthStateChanged(u => {
-  if (!u) {
-    firebase.auth().signInAnonymously().catch(err => {
-      console.warn("Anon auth failed:", err);
-    });
-  }
-});
+ // Only attempt anonymous auth when a real API key is configured.
+ const __keyOk = !!firebaseConfig.apiKey && !/YourApiKeyHere/i.test(firebaseConfig.apiKey);
+ firebase.auth().onAuthStateChanged(u => {
+   if (!__keyOk) {
+     console.warn("Firebase config missing/placeholder — skipping anon auth to avoid 400s.");
+     return;
+   }
+   if (!u) {
+     firebase.auth().signInAnonymously()
+       .catch(err => console.warn("Anon auth failed:", err));
+   }
+ });
 
 // Start RT polling immediately on load (no click required)
 window.addEventListener('DOMContentLoaded', () => {
@@ -2077,8 +2083,8 @@ const selectRow = async (row) => {
         selectedOrders.clear();
 
         /* 4️⃣ tidy UI */
-        reflowGrid();            // closes photo-grid gaps
-        updateCounters();        // top counters
+        reflowGrid();
+        window.updateCounters?.();  // counters stay metal-only
         window.applyMetalFilter(); /* keeps current filter state */
 
         M.toast({ html: "Selection cleared" });
@@ -3662,13 +3668,18 @@ buildNewOrderList = async function (offset = 0) {
 
 /* Monkey-patch to expose display array for observer ------------------ */
 const origFuncTxt = buildNewOrderList.toString();
-if (!origFuncTxt.includes("window._lastDisplayReceipts")) {
+if (!origFuncTxt.includes("window._lastDisplayReceipts")) 
+window._lastDisplayReceipts = displayReceipts;
+  {
   console.warn(
     "Patch buildNewOrderList manually to expose displayReceipts:\n" +
     "Inside buildNewOrderList(), after you define displayReceipts, add:\n" +
     "    window._lastDisplayReceipts = displayReceipts;"
+
   );
 }
+
+
 
 /** observer detects page changes and triggers initial render --------- */
 const observer = new MutationObserver(async () => {
@@ -4731,11 +4742,11 @@ function reflowGrid(){
       /* fetch only the missing ones */
       if (needReceipts.length){
         loadBatchEtsyOrders(needReceipts)
-          .then(()=>{ reflowGrid(); updateCounters(); })
+          .then(()=>{ reflowGrid(); window.updateCounters?.(); })
           .catch(err => console.error("Completed sync error:", err));
       }else{
         reflowGrid();
-        updateCounters();
+        window.updateCounters?.();      
       }
     }
 
@@ -4853,7 +4864,7 @@ function reflowGrid(){
       });
 
       reflowGrid();
-      updateCounters();             // keep top counters in sync
+      window.updateCounters?.();    // keep top counters in sync
 
        /* one more pass in the next frame — guarantees nothing strips the outline */
        requestAnimationFrame(() => {
