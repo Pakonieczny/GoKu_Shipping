@@ -2439,10 +2439,8 @@ function metalToBadge(label){
   const fnBase = "/.netlify/functions";
 
   const carrierSel     = document.getElementById("carrierSelect");
-  const trackingInp    = document.getElementById("trackingNumberInput");
   const orderInp       = document.getElementById("etsyOrderNumber");
-
-  const ccWrap         = document.getElementById("ccControls");
+  const trackingInp    = document.getElementById("trackingNumberInput");
   const ccShipEl       = document.getElementById("ccShipmentId");
   const ccBatchSelect  = document.getElementById("ccBatchSelect");
   const ccBatchName    = document.getElementById("ccBatchName");
@@ -2450,25 +2448,31 @@ function metalToBadge(label){
   const addBtn         = document.getElementById("ccAddToBatchBtn");
   const removeBtn      = document.getElementById("ccRemoveFromBatchBtn");
 
-  if (ccWrap) ccWrap.style.display = "block";
+  // Always use the Netlify functions base
+  const fnBase = "/.netlify/functions";
 
-  function reinitSelect(el){
+  // --- Utils
+  const debounce = (fn, ms=250) => { let t; return (...a)=>{ clearTimeout(t); t = setTimeout(()=>fn(...a), ms); }; };
+  const reinitSelect = (el) => {
     try {
       if (window.M && window.M.FormSelect) {
         const inst = window.M.FormSelect.getInstance(el);
         if (inst) inst.destroy();
         window.M.FormSelect.init(el);
       }
-    } catch(_) {}
+    } catch {}
+  };
+  async function safeJSON(resp){
+    const txt = await resp.text();
+    try { return JSON.parse(txt); } catch { return { error: txt.slice(0,200) }; }
   }
-
   async function callSearch(params){
-    const qs   = new URLSearchParams(params);
-    const resp = await apiFetch(`/chitChatSearch?${qs.toString()}`, { method: "GET" });
-    if (!resp.ok) throw new Error(`Search failed ${resp.status}`);
-    return resp.json();
+    const qs   = new URLSearchParams(params).toString();
+    const resp = await fetch(`${fnBase}/chitChatSearch?${qs}`, { credentials: "include" });
+    return await safeJSON(resp);
   }
 
+  // --- UI setters
   function setShipmentUI(s){
     if (!s) {
       if (ccShipEl) ccShipEl.value = "";
@@ -2482,11 +2486,11 @@ function metalToBadge(label){
     }
   }
 
-  // FIX: search by Etsy order → use orderId (not tracking)
+  // --- Lookups
   async function refreshFromOrderIfChitChats(){
     const orderId = (orderInp?.value || "").trim();
     if (!orderId) return;
-    try{
+    try {
       const res = await callSearch({ orderId });
       const s   = (res.shipments || [])[0];
       setShipmentUI(s);
@@ -2494,11 +2498,10 @@ function metalToBadge(label){
       console.warn("order search failed", e);
     }
   }
-
   async function refreshFromTrackingIfChitChats(){
     const tracking = (trackingInp?.value || "").trim();
     if (!tracking) return;
-    try{
+    try {
       const res = await callSearch({ tracking });
       const s   = (res.shipments || [])[0];
       setShipmentUI(s);
@@ -2507,17 +2510,17 @@ function metalToBadge(label){
     }
   }
 
-  // Kick once on load if fields pre-filled
+  // --- Listeners (debounced + change)
+  orderInp   ?.addEventListener("input",  debounce(refreshFromOrderIfChitChats, 250));
+  orderInp   ?.addEventListener("change", refreshFromOrderIfChitChats);
+  trackingInp?.addEventListener("input",  debounce(refreshFromTrackingIfChitChats, 250));
+  trackingInp?.addEventListener("change", refreshFromTrackingIfChitChats);
+
+  // Kick if fields already have values
   if ((orderInp?.value || "").trim())    refreshFromOrderIfChitChats();
   if ((trackingInp?.value || "").trim()) refreshFromTrackingIfChitChats();
 
-  // Safer JSON helper (avoids "<!DOCTYPE..." parse crash on 404/HTML)
-  async function safeJSON(resp){
-    const txt = await resp.text();
-    try { return JSON.parse(txt); } catch { return { error: txt.slice(0, 200) }; }
-  }
-
-  // -------- Batches: fetch/create/add/remove --------
+  // --- Batches
   async function fetchBatches(){
     try {
       const resp = await fetch(`${fnBase}/testChitChats?resource=batches&status=open`, { credentials: "include" });
@@ -2533,9 +2536,15 @@ function metalToBadge(label){
       reinitSelect(ccBatchSelect);
     } catch (e) {
       console.warn("fetchBatches failed", e);
+      if (window.M?.toast) M.toast({ html: "Failed to load Chit Chats batches" });
     }
   }
 
+  // Call once on load, and whenever config opens
+  fetchBatches();
+  document.getElementById("openConfigBtn")?.addEventListener("click", fetchBatches);
+
+  // Create a named batch
   createBtn?.addEventListener("click", async () => {
     try {
       const desc = (ccBatchName.value || "").trim() || `UI ${new Date().toISOString().slice(0,10)}`;
@@ -2546,29 +2555,26 @@ function metalToBadge(label){
         body: JSON.stringify({ action: "create", description: desc })
       });
       const out = await safeJSON(resp);
-      if (!resp.ok || !out?.success) throw new Error(out?.error || JSON.stringify(out || {}));
+      if (!resp.ok || !out?.success) throw new Error(out?.error || JSON.stringify(out||{}));
       await fetchBatches();
       if (out.id) {
         ccBatchSelect.value = out.id;
         reinitSelect(ccBatchSelect);
       }
       ccBatchName.value = "";
-      window.M?.toast?.({ html: "Batch created!" });
+      if (window.M?.toast) M.toast({ html: "Batch created!" });
     } catch (e) {
       console.error(e);
-      window.M?.toast?.({ html: "Create batch failed" });
+      if (window.M?.toast) M.toast({ html: "Create batch failed" });
     }
   });
 
+  // Add/Remove current shipment
   async function mutateBatch(op){
-    // FIX: resolve a string id even if someone set window.ccShipmentId = <input>
-    const resolved   = (typeof window.ccShipmentId === "string" ? window.ccShipmentId : (ccShipEl?.value || ""));
-    const shipmentId = String(resolved).trim();
+    const shipmentId = String(window.ccShipmentId ?? "").trim();
     const batchId    = String(ccBatchSelect?.value ?? "").trim();
-
-    if (!shipmentId){ window.M?.toast?.({ html:"No shipment loaded yet" }); return; }
-    if (!batchId){    window.M?.toast?.({ html:"Choose a batch first" });   return; }
-
+    if (!shipmentId) { if (window.M?.toast) M.toast({ html: "No shipment loaded yet" }); return; }
+    if (!batchId)    { if (window.M?.toast) M.toast({ html: "Choose a batch first" });  return; }
     try {
       const resp = await fetch(`${fnBase}/testChitChats?id=${encodeURIComponent(shipmentId)}`, {
         method: "PATCH",
@@ -2577,33 +2583,31 @@ function metalToBadge(label){
         body: JSON.stringify({ action: op, batch_id: batchId })
       });
       const out = await safeJSON(resp);
-      if (!resp.ok || !out?.success) throw new Error(out?.error || JSON.stringify(out || {}));
-      window.M?.toast?.({ html: op === "add" ? "Added to batch" : "Removed from batch" });
+      if (!resp.ok || !out?.success) throw new Error(out?.error || JSON.stringify(out||{}));
+      if (window.M?.toast) M.toast({ html: op === "add" ? "Added to batch" : "Removed from batch" });
     } catch (e) {
       console.error(e);
-      window.M?.toast?.({ html: "Batch update failed" });
+      if (window.M?.toast) M.toast({ html: "Batch update failed" });
     }
   }
-
-  addBtn?.addEventListener("click",    () => mutateBatch("add"));
+  addBtn   ?.addEventListener("click", () => mutateBatch("add"));
   removeBtn?.addEventListener("click", () => mutateBatch("remove"));
 
-  // Keep dropdown fresh when opening your modal (if you have one)
-  document.getElementById("openConfigBtn")?.addEventListener("click", fetchBatches);
-
-  // initial load
-  fetchBatches();
-
-  // quick reachability ping
+  // Tiny API ping so connectivity issues are obvious in console
   (async () => {
     try {
       const ping = await fetch(`${fnBase}/testChitChats`);
-      if (ping.ok) console.log("Chit Chats function reachable ✔");
-      else         console.warn("Chit Chats function ping failed", ping.status);
+      if (!ping.ok) console.warn("Chit Chats function ping failed", ping.status);
     } catch (e) {
       console.warn("Chit Chats function unreachable:", e);
     }
   })();
+
+  // Expose minimal hooks for the Enter-key flow
+  window.cc = {
+    searchByOrder:    refreshFromOrderIfChitChats,
+    searchByTracking: refreshFromTrackingIfChitChats
+  };
 })();
 
   </script>
