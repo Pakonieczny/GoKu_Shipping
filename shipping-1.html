@@ -1053,33 +1053,37 @@ function metalToBadge(label){
       });
     })();
     
+// — OAuth query handling (self-contained; safe to return inside)
+(() => {
+  const qs = new URLSearchParams(window.location.search);
+
       // Tokens returned by exchangeToken.js (access, refresh, expires_in, issued_at)
-      const a = url.get("access_token");
-      if (a){
+      const a = qs.get("access_token");
+      if (a) {
         setTokens({
           access_token : a,
-          refresh_token: url.get("refresh_token"),
-          expires_in   : url.get("expires_in"),
-          issued_at    : url.get("issued_at")
+          refresh_token: qs.get("refresh_token"),
+          expires_in   : qs.get("expires_in"),
+          issued_at    : qs.get("issued_at")
         });
         window.history.replaceState({}, document.title, window.location.pathname);
         M.toast?.({ html: "Connection Successful!" });
         return;
       }
-    
+
       // Standard OAuth code return → hand back to server for code→tokens
-      const code = url.get("code");
-      if (code){
+      const code = qs.get("code");
+      if (code) {
         const v = localStorage.getItem("etsy_code_verifier");
-        if (v){
-          const qs = new URLSearchParams({ code, code_verifier: v, redirect_domain: "shipping-1" });
-          window.location.href = "/.netlify/functions/exchangeToken?" + qs.toString();
+        if (v) {
+          const next = new URLSearchParams({ code, code_verifier: v, redirect_domain: "shipping-1" });
+          window.location.href = "/.netlify/functions/exchangeToken?" + next.toString();
           return;
-        }else{
+        } else {
           console.error("No code verifier found in localStorage.");
         }
       }
-    
+
       // Page load without query: rehydrate or refresh or boot OAuth
       if (localStorage.getItem(TOKEN_KEYS.access)) {
         scheduleTokenRefresh();
