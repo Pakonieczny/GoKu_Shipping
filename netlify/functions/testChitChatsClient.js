@@ -1,67 +1,32 @@
-// netlify/functions/testChitChatsClient.js
-const fetch = require("node-fetch");
+/* netlify/functions/testChitChatsClient.js */
+const CORS = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Headers": "Content-Type,Authorization",
+  "Access-Control-Allow-Methods": "GET,OPTIONS"
+};
 
-exports.handler = async function(event, context) {
+exports.handler = async (event) => {
+  if (event.httpMethod === "OPTIONS") {
+    return { statusCode: 200, headers: CORS, body: "ok" };
+  }
+
   try {
-    const clientId = process.env.CHIT_CHATS_CLIENT_ID;
-    const accessToken = process.env.CHIT_CHATS_ACCESS_TOKEN;
-    // Use the CHIT_CHATS_BASE_URL if provided, otherwise default to staging
-    const baseUrl = process.env.CHIT_CHATS_BASE_URL || "https://staging.chitchats.com/api/v1";
-    
-    // Debug logging to verify credentials
-    console.log("testChitChatsClient: Using clientId:", clientId);
-    console.log("testChitChatsClient: Access token used:", accessToken);
-    console.log("testChitChatsClient: Authorization header:", `Bearer ${accessToken}`);
-    
-    if (!clientId || !accessToken) {
-      return {
-        statusCode: 500,
-        body: JSON.stringify({ success: false, error: "Missing CHIT_CHATS_CLIENT_ID or CHIT_CHATS_ACCESS_TOKEN" })
-      };
+    const BASE         = process.env.CHIT_CHATS_BASE_URL || "https://chitchats.com/api/v1";
+    const CLIENT_ID    = process.env.CHIT_CHATS_CLIENT_ID;
+    const ACCESS_TOKEN = process.env.CHIT_CHATS_ACCESS_TOKEN;
+    if (!CLIENT_ID || !ACCESS_TOKEN) {
+      return { statusCode: 500, headers: CORS, body: JSON.stringify({ success: false, error: "Missing CHIT_CHATS_CLIENT_ID or CHIT_CHATS_ACCESS_TOKEN" }) };
     }
-    
-    // Construct the API URL to get client details.
-    const apiUrl = `${baseUrl}/clients/${clientId}`;
-    console.log("testChitChatsClient: Full API URL:", apiUrl);
-    
-    const response = await fetch(apiUrl, {
-      method: "GET",
-      headers: {
-        "Authorization": `Bearer ${accessToken}`,
-        "Content-Type": "application/json; charset=utf-8"
-      }
-    });
-    
-    console.log("testChitChatsClient: API response status:", response.status);
-    const rawText = await response.text();
-    console.log("testChitChatsClient: Raw response text:", rawText);
-    
-    let data;
-    try {
-      data = JSON.parse(rawText);
-    } catch (err) {
-      console.error("testChitChatsClient: Error parsing JSON:", err);
-      data = { raw: rawText };
-    }
-    
-    console.log("testChitChatsClient: API response data:", data);
-    
-    if (response.status === 200) {
-      return {
-        statusCode: 200,
-        body: JSON.stringify({ success: true, data })
-      };
-    } else {
-      return {
-        statusCode: response.status,
-        body: JSON.stringify({ success: false, error: data.error || data })
-      };
-    }
-  } catch (error) {
-    console.error("testChitChatsClient: Caught error:", error);
-    return {
-      statusCode: 500,
-      body: JSON.stringify({ success: false, error: error.message })
-    };
+
+    const authH = { "Authorization": ACCESS_TOKEN, "Content-Type": "application/json; charset=utf-8" };
+    const resp  = await fetch(`${BASE}/clients/${encodeURIComponent(CLIENT_ID)}`, { headers: authH });
+    const txt   = await resp.text();
+    let data; try { data = JSON.parse(txt); } catch { data = txt; }
+
+    if (!resp.ok) return { statusCode: resp.status, headers: CORS, body: JSON.stringify({ success: false, error: data }) };
+    return { statusCode: 200, headers: CORS, body: JSON.stringify({ success: true, data }) };
+
+  } catch (err) {
+    return { statusCode: 500, headers: CORS, body: JSON.stringify({ success: false, error: err.message }) };
   }
 };

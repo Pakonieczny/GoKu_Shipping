@@ -572,7 +572,18 @@
                    font-size:1.1em; text-align:center;">
       Complete Order
     </button>
-    <!-- ▲▲ END new controls ▲▲ -->
+
+      <!-- ▼▼ Chit Chats batch controls (shown when carrier = ChitChats) ▼▼ -->
+      <div id="ccControls" style="position:absolute; left:50px; top:190px; display:none;">
+        <input id="ccShipmentId" type="text" placeholder="CC Shipment ID" readonly
+               style="width:180px; height:24px; font-size:0.9em; margin-right:6px;" />
+        <input id="ccBatchId" type="text" placeholder="Batch ID"
+               style="width:120px; height:24px; font-size:0.9em; margin-right:6px;" />
+        <button id="ccCreateBatchBtn" class="btn" style="height:24px; line-height:24px; font-size:0.8em;">New Batch</button>
+        <button id="ccAddToBatchBtn" class="btn" style="height:24px; line-height:24px; font-size:0.8em;">Add→Batch</button>
+        <button id="ccRemoveFromBatchBtn" class="btn grey darken-1" style="height:24px; line-height:24px; font-size:0.8em;">Remove</button>
+      </div>
+    <!-- ▲▲ Chit Chats batch controls ▲▲ -->
 
   </div>
 
@@ -2360,6 +2371,128 @@ function metalToBadge(label){
         });
     }
     });   // ← closes DOMContentLoaded handler
+
+    /* =========================================================
+   *  Chit Chats — search by order/tracking + batch add/remove
+   *  Requires Netlify functions:
+   *    - /.netlify/functions/chitChatSearch
+   *    - /.netlify/functions/testChitChats
+   *  Integrates with:
+   *    #etsyOrderNumber, #trackingNumberInput, #carrierSelect
+   *    #trackingLinkBtn (opens CC or USPS tracking)
+   * =======================================================*/
+  (function initChitChatsIntegration(){
+    const carrierSel  = document.getElementById("carrierSelect");
+    const trackingInp = document.getElementById("trackingNumberInput");
+    const orderInp    = document.getElementById("etsyOrderNumber");
+    const ccWrap      = document.getElementById("ccControls");
+    const ccShipEl    = document.getElementById("ccShipmentId");
+    const ccBatchEl   = document.getElementById("ccBatchId");
+
+    if (!carrierSel || !trackingInp || !orderInp) return;
+
+    async function callSearch(params){
+      const qs = new URLSearchParams(params);
+      const resp = await apiFetch(`/chitChatSearch?${qs.toString()}`, { method: "GET" });
+      if (!resp.ok) throw new Error(`Search failed ${resp.status}`);
+      return resp.json();
+    }
+
+    function setShipmentUI(s){
+      if (!s) { ccShipEl && (ccShipEl.value = ""); return; }
+      if (ccShipEl) ccShipEl.value = s.id || "";
+      // also empower your existing Tracking Link behavior
+      window.ccShipmentId     = s.id || "";
+      window.currentCarrier   = "ChitChats";
+      window.currentTracking  = s.id || s.carrier_tracking_code || window.currentTracking;
+    }
+
+    async function refreshFromOrderIfChitChats(){
+      if (carrierSel.value !== "chitchats") return;
+      const orderId = (orderInp.value || "").trim();
+      if (!orderId) return;
+      try{
+        const res = await callSearch({ orderId });
+        const s   = (res.shipments || [])[0]; // pick most-recent exact match
+        setShipmentUI(s);
+      }catch{ setShipmentUI(null); }
+    }
+
+    async function refreshFromTrackingIfChitChats(){
+      if (carrierSel.value !== "chitchats") return;
+      const tracking = (trackingInp.value || "").trim();
+      if (!tracking) return;
+      try{
+        const res = await callSearch({ tracking });
+        const s   = (res.shipments || [])[0];
+        setShipmentUI(s);
+      }catch{}
+    }
+
+    // Toggle panel when carrier changes
+    carrierSel.addEventListener("change", () => {
+      const on = carrierSel.value === "chitchats";
+      if (ccWrap) ccWrap.style.display = on ? "block" : "none";
+      if (on) {
+        Promise.resolve().then(refreshFromOrderIfChitChats).then(refreshFromTrackingIfChitChats);
+      }
+    });
+
+    // Debounced input listeners
+    let t1, t2;
+    orderInp.addEventListener("input", () => { clearTimeout(t1); t1 = setTimeout(refreshFromOrderIfChitChats, 150); });
+    orderInp.addEventListener("change",      refreshFromOrderIfChitChats);
+    trackingInp.addEventListener("input", () => { clearTimeout(t2); t2 = setTimeout(refreshFromTrackingIfChitChats, 150); });
+    trackingInp.addEventListener("change",    refreshFromTrackingIfChitChats);
+
+    // Small helper to POST/PATCH JSON via your apiFetch
+    async function postJSON(path, body, method="POST"){
+      const resp = await apiFetch(path, { method, body: JSON.stringify(body), headers: { "Content-Type": "application/json" } });
+      const data = await resp.json().catch(() => ({}));
+      if (!resp.ok) throw new Error(data.error || `HTTP ${resp.status}`);
+      return data;
+    }
+
+    // Buttons: create, add, remove
+    document.getElementById("ccCreateBatchBtn")?.addEventListener("click", async () => {
+      try{
+        const data = await postJSON(`/testChitChats`, { action: "create", description: "UI " + new Date().toISOString().slice(0,10) }, "POST");
+        if (ccBatchEl) ccBatchEl.value = data.id || "";
+        M.toast?.({ html: "Batch created: " + (data.id || "?") });
+      }catch(e){ M.toast?.({ html: "Create batch failed: " + e.message }); }
+    });
+
+    async function mutateBatch(kind){
+      const batchId = (ccBatchEl?.value || "").trim();
+      const orderId = (orderInp?.value || "").trim();
+      const tracking= (trackingInp?.value || "").trim();
+      if (!batchId){ M.toast?.({ html: "Enter Batch ID" }); return; }
+
+      // Resolve a CC shipment id
+      let shipmentId = (window.ccShipmentId || "").trim();
+      if (!shipmentId){
+        try{
+          const res = await callSearch({ orderId: orderId || undefined, tracking: tracking || undefined });
+          shipmentId = (res.shipments && res.shipments[0] && res.shipments[0].id) || "";
+        }catch{}
+      }
+      if (!shipmentId){ M.toast?.({ html: "No CC shipment found yet" }); return; }
+
+      try{
+        await postJSON(`/testChitChats`, { action: kind, batchId, shipmentIds: [shipmentId] }, "PATCH");
+        M.toast?.({ html: (kind === "add" ? "Added to batch" : "Removed from batch") + " ✓" });
+      }catch(e){ M.toast?.({ html: "Batch update failed: " + e.message }); }
+    }
+    document.getElementById("ccAddToBatchBtn")?.addEventListener("click",   () => mutateBatch("add"));
+    document.getElementById("ccRemoveFromBatchBtn")?.addEventListener("click",() => mutateBatch("remove"));
+
+    // If already set to ChitChats when page loads
+    if (carrierSel.value === "chitchats") {
+      if (ccWrap) ccWrap.style.display = "block";
+      refreshFromOrderIfChitChats();
+    }
+  })();
+
   </script>
 
   <!-- helper: force every upload to use resumable PUT -->
