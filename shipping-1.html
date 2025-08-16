@@ -2426,28 +2426,32 @@ function metalToBadge(label){
     }
     });   // ← closes DOMContentLoaded handler
 
-/* =======================================================
+/* =========================================================
  *  Chit Chats — search by order/tracking + batch add/remove
- *  Uses Netlify functions:
+ *  Requires Netlify functions:
  *    - /.netlify/functions/chitChatSearch
  *    - /.netlify/functions/testChitChats
+ *  Integrates with:
+ *    #etsyOrderNumber, #trackingNumberInput, #carrierSelect
+ *    #trackingLinkBtn (opens CC or USPS tracking)
  * =======================================================*/
 (function initChitChatsIntegration(){
-  const ccWrap        = document.getElementById("ccControls");
-  const ccShipment    = document.getElementById("ccShipmentId");
-  const ccBatchSelect = document.getElementById("ccBatchSelect");
-  const ccBatchName   = document.getElementById("ccBatchName");
-  const createBtn     = document.getElementById("ccCreateBatchBtn");
-  const addBtn        = document.getElementById("ccAddToBatchBtn");
-  const removeBtn     = document.getElementById("ccRemoveFromBatchBtn");
-
-  // Always show the controls
-  if (ccWrap) ccWrap.style.display = "block";
-
-  // Use the Netlify functions base
   const fnBase = "/.netlify/functions";
 
-  // Helper: re-init Materialize select if present
+  const carrierSel     = document.getElementById("carrierSelect");
+  const trackingInp    = document.getElementById("trackingNumberInput");
+  const orderInp       = document.getElementById("etsyOrderNumber");
+
+  const ccWrap         = document.getElementById("ccControls");
+  const ccShipEl       = document.getElementById("ccShipmentId");
+  const ccBatchSelect  = document.getElementById("ccBatchSelect");
+  const ccBatchName    = document.getElementById("ccBatchName");
+  const createBtn      = document.getElementById("ccCreateBatchBtn");
+  const addBtn         = document.getElementById("ccAddToBatchBtn");
+  const removeBtn      = document.getElementById("ccRemoveFromBatchBtn");
+
+  if (ccWrap) ccWrap.style.display = "block";
+
   function reinitSelect(el){
     try {
       if (window.M && window.M.FormSelect) {
@@ -2455,45 +2459,83 @@ function metalToBadge(label){
         if (inst) inst.destroy();
         window.M.FormSelect.init(el);
       }
-    } catch (_) {}
+    } catch(_) {}
   }
 
-  // Helper: robust JSON parsing (so HTML 404s don't crash us)
-  async function safeJSON(resp) {
-    const text = await resp.text();
-    try { return JSON.parse(text); }
-    catch { return { error: text.slice(0, 300) }; }
+  async function callSearch(params){
+    const qs   = new URLSearchParams(params);
+    const resp = await apiFetch(`/chitChatSearch?${qs.toString()}`, { method: "GET" });
+    if (!resp.ok) throw new Error(`Search failed ${resp.status}`);
+    return resp.json();
   }
 
-  // LOAD: batches for dropdown
+  function setShipmentUI(s){
+    if (!s) {
+      if (ccShipEl) ccShipEl.value = "";
+      window.ccShipmentId = "";
+    } else {
+      const sid = s?.id != null ? String(s.id) : "";
+      if (ccShipEl) ccShipEl.value = sid;
+      window.ccShipmentId    = sid;
+      window.currentCarrier  = "ChitChats";
+      window.currentTracking = s.carrier_tracking_code || sid || window.currentTracking;
+    }
+  }
+
+  // FIX: search by Etsy order → use orderId (not tracking)
+  async function refreshFromOrderIfChitChats(){
+    const orderId = (orderInp?.value || "").trim();
+    if (!orderId) return;
+    try{
+      const res = await callSearch({ orderId });
+      const s   = (res.shipments || [])[0];
+      setShipmentUI(s);
+    } catch (e) {
+      console.warn("order search failed", e);
+    }
+  }
+
+  async function refreshFromTrackingIfChitChats(){
+    const tracking = (trackingInp?.value || "").trim();
+    if (!tracking) return;
+    try{
+      const res = await callSearch({ tracking });
+      const s   = (res.shipments || [])[0];
+      setShipmentUI(s);
+    } catch (e) {
+      console.warn("tracking search failed", e);
+    }
+  }
+
+  // Kick once on load if fields pre-filled
+  if ((orderInp?.value || "").trim())    refreshFromOrderIfChitChats();
+  if ((trackingInp?.value || "").trim()) refreshFromTrackingIfChitChats();
+
+  // Safer JSON helper (avoids "<!DOCTYPE..." parse crash on 404/HTML)
+  async function safeJSON(resp){
+    const txt = await resp.text();
+    try { return JSON.parse(txt); } catch { return { error: txt.slice(0, 200) }; }
+  }
+
+  // -------- Batches: fetch/create/add/remove --------
   async function fetchBatches(){
     try {
       const resp = await fetch(`${fnBase}/testChitChats?resource=batches&status=open`, { credentials: "include" });
       const data = await safeJSON(resp);
-      if (!resp.ok) throw new Error(data.error || `HTTP ${resp.status}`);
-
-      // Function returns { success, batches } in all envs
       const raw  = (data && (data.batches ?? data.data)) ?? data;
       const list = Array.isArray(raw) ? raw : [];
-
       ccBatchSelect.innerHTML =
         `<option value="">Select Batch…</option>` +
         list.map(b => {
           const label = (b.description || b.name || `Batch ${b.id}`) + (b.status ? ` • ${b.status}` : "");
           return `<option value="${b.id}">${label}</option>`;
         }).join("");
-
       reinitSelect(ccBatchSelect);
     } catch (e) {
       console.warn("fetchBatches failed", e);
-      if (window.M?.toast) M.toast({ html: "Failed to load Chit Chats batches" });
     }
   }
 
-  // Call once on load
-  fetchBatches();
-
-  // Create a new batch (named)
   createBtn?.addEventListener("click", async () => {
     try {
       const desc = (ccBatchName.value || "").trim() || `UI ${new Date().toISOString().slice(0,10)}`;
@@ -2505,34 +2547,27 @@ function metalToBadge(label){
       });
       const out = await safeJSON(resp);
       if (!resp.ok || !out?.success) throw new Error(out?.error || JSON.stringify(out || {}));
-
-      // Refresh and auto-select the new batch
       await fetchBatches();
       if (out.id) {
         ccBatchSelect.value = out.id;
         reinitSelect(ccBatchSelect);
       }
       ccBatchName.value = "";
-      if (window.M?.toast) M.toast({ html: "Batch created!" });
+      window.M?.toast?.({ html: "Batch created!" });
     } catch (e) {
       console.error(e);
-      if (window.M?.toast) M.toast({ html: "Create batch failed" });
+      window.M?.toast?.({ html: "Create batch failed" });
     }
   });
 
-  // Add/Remove current shipment to/from selected batch
   async function mutateBatch(op){
-    const shipmentId = String(window.ccShipmentId ?? "").trim();
+    // FIX: resolve a string id even if someone set window.ccShipmentId = <input>
+    const resolved   = (typeof window.ccShipmentId === "string" ? window.ccShipmentId : (ccShipEl?.value || ""));
+    const shipmentId = String(resolved).trim();
     const batchId    = String(ccBatchSelect?.value ?? "").trim();
 
-    if (!shipmentId) {
-      if (window.M?.toast) M.toast({ html: "No shipment loaded yet" });
-      return;
-    }
-    if (!batchId) {
-      if (window.M?.toast) M.toast({ html: "Choose a batch first" });
-      return;
-    }
+    if (!shipmentId){ window.M?.toast?.({ html:"No shipment loaded yet" }); return; }
+    if (!batchId){    window.M?.toast?.({ html:"Choose a batch first" });   return; }
 
     try {
       const resp = await fetch(`${fnBase}/testChitChats?id=${encodeURIComponent(shipmentId)}`, {
@@ -2542,26 +2577,29 @@ function metalToBadge(label){
         body: JSON.stringify({ action: op, batch_id: batchId })
       });
       const out = await safeJSON(resp);
-      if (!resp.ok || !out?.success) throw new Error(out?.error || JSON.stringify(out||{}));
-      if (window.M?.toast) M.toast({ html: op === "add" ? "Added to batch" : "Removed from batch" });
+      if (!resp.ok || !out?.success) throw new Error(out?.error || JSON.stringify(out || {}));
+      window.M?.toast?.({ html: op === "add" ? "Added to batch" : "Removed from batch" });
     } catch (e) {
       console.error(e);
-      if (window.M?.toast) M.toast({ html: "Batch update failed" });
+      window.M?.toast?.({ html: "Batch update failed" });
     }
   }
 
-  addBtn?.addEventListener("click", () => mutateBatch("add"));
+  addBtn?.addEventListener("click",    () => mutateBatch("add"));
   removeBtn?.addEventListener("click", () => mutateBatch("remove"));
 
-  // Also refresh when opening your config modal (keeps dropdown fresh)
+  // Keep dropdown fresh when opening your modal (if you have one)
   document.getElementById("openConfigBtn")?.addEventListener("click", fetchBatches);
 
-  // Optional: quick sanity ping so problems are obvious in console/toast
+  // initial load
+  fetchBatches();
+
+  // quick reachability ping
   (async () => {
     try {
       const ping = await fetch(`${fnBase}/testChitChats`);
       if (ping.ok) console.log("Chit Chats function reachable ✔");
-      else console.warn("Chit Chats function ping failed", ping.status);
+      else         console.warn("Chit Chats function ping failed", ping.status);
     } catch (e) {
       console.warn("Chit Chats function unreachable:", e);
     }
