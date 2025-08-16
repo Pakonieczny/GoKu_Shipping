@@ -1527,121 +1527,88 @@ function metalToBadge(label){
         connectEtsyBtn.addEventListener("click", () => startOAuth("manual"));
       }
 
-      var etsyOrderInput = document.getElementById("etsyOrderNumber");
-      etsyOrderInput.addEventListener("keydown", async function(e){
-        if(e.key === "Enter"){
-          const orderNumber = etsyOrderInput.value.trim();
-          const orderData   = await pullEtsyOrderDetails(orderNumber);
-          await loadShipToAddress(orderNumber);
-          await loadGiftMessage(orderNumber);
+    var etsyOrderInput = document.getElementById("etsyOrderNumber");
+    etsyOrderInput.addEventListener("keydown", async function(e){
+      if (e.key !== "Enter") return;
 
-          if(orderData){
-            await updateImageGrid(orderData);
-            startBritesListener(orderNumber);
+      const orderNumber = etsyOrderInput.value.trim();
+      if (!orderNumber) return;
+
+      const orderData = await pullEtsyOrderDetails(orderNumber);
+      await loadShipToAddress(orderNumber);
+      await loadGiftMessage(orderNumber);
+
+      if (orderData) {
+        await updateImageGrid(orderData);
+        startBritesListener(orderNumber);
+      }
+
+      try {
+        const respPD = await fetch("/.netlify/functions/firebaseOrders?orderId=" + encodeURIComponent(orderNumber));
+        const resPD  = await respPD.json();
+
+        if (!respPD.ok) {
+          if (resPD.error && resPD.error.toLowerCase().includes("not found")) {
+            document.getElementById("labelCreationDate").value = "";
+            document.getElementById("completedByEmployee").value = "";
+            document.getElementById("signatureBox").innerHTML = "Sig Box";
+            const ab = document.getElementById("shipAddressBox"); if (ab) ab.value = "";
+            document.getElementById("customerMessageHistory").innerText = "";
+            return;
           }
-
-          try {
-            const respPD = await fetch("/.netlify/functions/firebaseOrders?orderId=" + encodeURIComponent(orderNumber));
-            const resPD  = await respPD.json();
-
-            if(!respPD.ok){
-              if(resPD.error && resPD.error.toLowerCase().includes("not found")){
-                document.getElementById("labelCreationDate").value = "";
-                document.getElementById("completedByEmployee").value = "";
-                document.getElementById("signatureBox").innerHTML = "Sig Box";
-
-                const ab = document.getElementById("shipAddressBox");
-                if (ab) ab.value = "";
-                return;
-              } else {
-                throw new Error(resPD.error || "Unknown error from firebaseOrders function");
-              }
-            }
-
-            // …process docDataPD normally here…
-
-          } catch (errPD) {
-            M.toast({ html: "Error: " + errPD.message });
-            console.error("Failed to pull data from Firestore:", errPD);
-          }
+          throw new Error(resPD.error || "Unknown error from firebaseOrders function");
         }
-      });
 
-              // If we reach here => doc is found or newly created
-              const docDataPD = resPD.data || {};
-              const dbOrderNum = docDataPD["Order Number"];
-              if (dbOrderNum !== orderNumber) {
-                // M.toast({ html: "Order mismatch: doc has '" + dbOrderNum + "', expected '" + orderNumber + "'" });
-                return;
-              }
+        const docDataPD = resPD.data || {};
 
-              /* ── Brites message history ───────────────────────────── */
-              if (typeof docDataPD["Brites Messages"] === "string") {
-                document.getElementById("customerMessageHistory").innerText =
-                  docDataPD["Brites Messages"];
-                M.toast({ html: "Brites Messages loaded!" });
-              } else {
-                document.getElementById("customerMessageHistory").innerText = "";
-              }
-
-              /* ── Shipping-label creation date ─────────────────────── */
-              if (docDataPD["Shipping Label Timestamps"]) {
-                const dt = new Date(docDataPD["Shipping Label Timestamps"]);
-                const lblDateEl = document.getElementById("labelCreationDate");
-                if (!isNaN(dt.valueOf()) && lblDateEl) {
-                  const monthNamesF2 = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
-                  const dd   = ("0" + dt.getDate()).slice(-2);
-                  const mStr = monthNamesF2[dt.getMonth()];
-                  const yyyy = dt.getFullYear();
-                  const hh   = ("0" + dt.getHours()).slice(-2);
-                  const mm   = ("0" + dt.getMinutes()).slice(-2);
-                  const finalStr = dd + " " + mStr + " " + yyyy + ", " + hh + ":" + mm;
-                  lblDateEl.value = finalStr;
-                } else if (lblDateEl) {
-                  lblDateEl.value = "";
-                }
-              } else {
-                const lblDateEl = document.getElementById("labelCreationDate");
-                if (lblDateEl) lblDateEl.value = "";
-              }
-
-              /* ── Completed-by employee ─────────────────────────────── */
-              const dbEmpNameRaw = docDataPD["Employee Name"];
-              let dbEmpName = "";
-              if (typeof dbEmpNameRaw === "string") {
-                dbEmpName = dbEmpNameRaw.trim();
-              }
-              const compEmpEl = document.getElementById("completedByEmployee");
-              if (compEmpEl) compEmpEl.value = dbEmpName;
-
-              /* ── Signature box image ──────────────────────────────── */
-              const sigBox = document.getElementById("signatureBox");
-              if (dbEmpName && sigBox) {
-                const imageFile = encodeURIComponent(dbEmpName + ".jpg");
-                sigBox.innerHTML = `<img src="/assets/${imageFile}"
-                                     style="width:100%; height:100%; object-fit:cover;"
-                                     alt="Signature for ${dbEmpName}">`;
-              } else if (sigBox) {
-                sigBox.innerHTML = "Sig Box";
-              }
-            } catch (errPD) {
-              // Real error from network or code, not doc-not-found
-              M.toast({ html: "Error: " + errPD.message });
-              console.error("Failed to pull data from Firestore:", errPD);
-            }
-          }
-        });
-
-      document.getElementById("orderLinkBtn").addEventListener("click", function(){
-        var baseUrl = "https://www.etsy.com/your/orders/sold?ref=seller-platform-mcnav&order_id=0000000000";
-        var currentOrder = etsyOrderInput.value.trim();
-        if(!currentOrder){
-          console.log("No order number entered.");
-          return;
+        // ── Brites message history
+        if (typeof docDataPD["Brites Messages"] === "string") {
+          document.getElementById("customerMessageHistory").innerText = docDataPD["Brites Messages"];
+          M.toast({ html: "Brites Messages loaded!" });
+        } else {
+          document.getElementById("customerMessageHistory").innerText = "";
         }
-        var customLink = baseUrl.replace("0000000000", currentOrder);
-        window.open(customLink, "_blank");
-      });
+
+        // ── Shipping-label creation date
+        if (docDataPD["Shipping Label Timestamps"]) {
+          const dt = new Date(docDataPD["Shipping Label Timestamps"]);
+          const lblDateEl = document.getElementById("labelCreationDate");
+          if (!isNaN(dt.valueOf()) && lblDateEl) {
+            const monthNamesF2 = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+            const dd = ("0" + dt.getDate()).slice(-2);
+            const mStr = monthNamesF2[dt.getMonth()];
+            const yyyy = dt.getFullYear();
+            const hh = ("0" + dt.getHours()).slice(-2);
+            const mm = ("0" + dt.getMinutes()).slice(-2);
+            lblDateEl.value = `${dd} ${mStr} ${yyyy}, ${hh}:${mm}`;
+          } else if (lblDateEl) {
+            lblDateEl.value = "";
+          }
+        } else {
+          const lblDateEl = document.getElementById("labelCreationDate");
+          if (lblDateEl) lblDateEl.value = "";
+        }
+
+        // ── Completed-by employee + signature
+        const dbEmpNameRaw = docDataPD["Employee Name"];
+        const dbEmpName = typeof dbEmpNameRaw === "string" ? dbEmpNameRaw.trim() : "";
+        const compEmpEl = document.getElementById("completedByEmployee");
+        if (compEmpEl) compEmpEl.value = dbEmpName;
+
+        const sigBox = document.getElementById("signatureBox");
+        if (dbEmpName && sigBox) {
+          const imageFile = encodeURIComponent(dbEmpName + ".jpg");
+          sigBox.innerHTML =
+            `<img src="/assets/${imageFile}" style="width:100%; height:100%; object-fit:cover;" alt="Signature for ${dbEmpName}">`;
+        } else if (sigBox) {
+          sigBox.innerHTML = "Sig Box";
+        }
+
+      } catch (errPD) {
+        M.toast({ html: "Error: " + errPD.message });
+        console.error("Failed to pull data from Firestore:", errPD);
+      }
+    });
 
       document.getElementById("trackingLinkBtn").addEventListener("click", function(){
         if(!window.currentTracking){
