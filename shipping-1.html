@@ -1821,8 +1821,8 @@ function metalToBadge(label){
             errMsg = "Forbidden – Etsy says this action isn’t allowed.";
           } else if (!resp.ok) {
             /* try to JSON-parse any error payload, else show raw text */
-            try   { errMsg = JSON.parse(payload).error || "Server error"; }
-            catch { errMsg = payload || "Server error"; }
+          try   { errMsg = JSON.parse(payload).error || "Server error"; }
+          catch (e) { errMsg = payload || "Server error"; }
           }
 
           if (errMsg) throw new Error(errMsg);
@@ -2466,11 +2466,12 @@ function metalToBadge(label){
       async function refreshFromOrderIfChitChats(){
       const orderId = (orderInp.value || "").trim();
       if (!orderId) return;
+      // refreshFromTrackingIfChitChats
       try{
-        const res = await callSearch({ orderId });
-        const s   = (res.shipments || [])[0]; // pick most-recent exact match
+        const res = await callSearch({ tracking });
+        const s   = (res.shipments || [])[0];
         setShipmentUI(s);
-      }catch{ setShipmentUI(null); }
+      } catch (e) {}                         // ← add (e)
     }
 
       async function refreshFromTrackingIfChitChats(){
