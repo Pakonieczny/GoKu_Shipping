@@ -426,6 +426,31 @@
       Paste
     </button>
 
+    <!-- ▼▼ Chit Chats controls (always visible) ▼▼ -->
+    <div id="ccControls" style="position:absolute; left:50px; top:190px;">
+      <input id="ccShipmentId" type="text" placeholder="CC Shipment ID" readonly
+             style="width:180px; height:24px; font-size:0.9em; margin-right:6px;" />
+
+      <!-- Batch dropdown -->
+      <select id="ccBatchSelect"
+              style="width:180px; height:28px; font-size:0.9em; margin-right:6px;">
+        <option value="">Select Batch…</option>
+      </select>
+
+      <!-- Optional name for *new* batches -->
+      <input id="ccBatchName" type="text" placeholder="New batch name (optional)"
+             style="width:170px; height:24px; font-size:0.9em; margin-right:6px;" />
+
+      <button id="ccCreateBatchBtn" class="btn"
+              style="height:24px; line-height:24px; font-size:0.8em;">Create Batch</button>
+
+      <button id="ccAddToBatchBtn" class="btn"
+              style="height:24px; line-height:24px; font-size:0.8em; margin-left:6px;">Add→Batch</button>
+
+      <button id="ccRemoveFromBatchBtn" class="btn"
+              style="height:24px; line-height:24px; font-size:0.8em; margin-left:6px;">Remove From Batch</button>
+    </div>
+
     <!-- 🟡 anchor: immediately after <input id="shipDate" …/> -->
     <input type="text" id="labelCreationDate"    readonly />
     <input type="text" id="completedByEmployee"  readonly />
@@ -1099,7 +1124,9 @@ function metalToBadge(label){
         "loginModalPrompt",
         "employeeNumberInput",
         "loginModalFooter",
-        "employeeLoginBtn"
+        "employeeLoginBtn",
+        "ccControls","ccShipmentId","ccBatchSelect","ccBatchName",
+        "ccCreateBatchBtn","ccAddToBatchBtn","ccRemoveFromBatchBtn"
       ];
 
     // Updated default positions block
@@ -1168,6 +1195,13 @@ function metalToBadge(label){
       pasteOrderBtn:     { left: 299, top: 16, width: 70, height: 35 },
       pasteTrackingBtn:  { left: 998, top: 663, width: 70, height: 35 },
       signOutBtn:           { left: 1356,  top: 17, width: 103, height: 35 }
+      ccControls:            { left: 50,  top: 190, width: 960, height: 28 },
+      ccShipmentId:          { left: 50,  top: 190, width: 180, height: 24 },
+      ccBatchSelect:         { left: 236, top: 190, width: 185, height: 28 },
+      ccBatchName:           { left: 427, top: 190, width: 170, height: 24 },
+      ccCreateBatchBtn:      { left: 603, top: 188, width: 110, height: 28 },
+      ccAddToBatchBtn:       { left: 719, top: 188, width: 110, height: 28 },
+      ccRemoveFromBatchBtn:  { left: 835, top: 188, width: 175, height: 28 }
 
     };
 
@@ -2455,45 +2489,108 @@ function metalToBadge(label){
     }
 
     // Buttons: create, add, remove
-    document.getElementById("ccCreateBatchBtn")?.addEventListener("click", async () => {
-      try{
-        const data = await postJSON(`/testChitChats`, { action: "create", description: "UI " + new Date().toISOString().slice(0,10) }, "POST");
-        if (ccBatchEl) ccBatchEl.value = data.id || "";
-        M.toast?.({ html: "Batch created: " + (data.id || "?") });
-      }catch(e){ M.toast?.({ html: "Create batch failed: " + e.message }); }
-    });
+    (function(){
+      const ccWrap         = document.getElementById("ccControls");
+      const ccShipment     = document.getElementById("ccShipmentId");
+      const ccBatchSelect  = document.getElementById("ccBatchSelect");
+      const ccBatchName    = document.getElementById("ccBatchName");
+      const createBtn      = document.getElementById("ccCreateBatchBtn");
+      const addBtn         = document.getElementById("ccAddToBatchBtn");
+      const removeBtn      = document.getElementById("ccRemoveFromBatchBtn");
 
-    async function mutateBatch(kind){
-      const batchId = (ccBatchEl?.value || "").trim();
-      const orderId = (orderInp?.value || "").trim();
-      const tracking= (trackingInp?.value || "").trim();
-      if (!batchId){ M.toast?.({ html: "Enter Batch ID" }); return; }
+      if (ccWrap) ccWrap.style.display = "block"; // always visible
 
-      // Resolve a CC shipment id
-      let shipmentId = String(window.ccShipmentId ?? "").trim();
-      if (!shipmentId){
-        try{
-          const res = await callSearch({ orderId: orderId || undefined, tracking: tracking || undefined });
-          shipmentId = (res.shipments && res.shipments[0] && res.shipments[0].id) || "";
-        }catch{}
+      // Helper: re-init Materialize select if present
+      function reinitSelect(el){
+        try {
+          if (window.M && window.M.FormSelect) {
+            // destroy old instance if any
+            const inst = window.M.FormSelect.getInstance(el);
+            if (inst) inst.destroy();
+            window.M.FormSelect.init(el);
+          }
+        } catch(e) {}
       }
-      if (!shipmentId){ M.toast?.({ html: "No CC shipment found yet" }); return; }
 
-      try{
-        await postJSON(`/testChitChats`, { action: kind, batchId, shipmentIds: [shipmentId] }, "PATCH");
-        M.toast?.({ html: (kind === "add" ? "Added to batch" : "Removed from batch") + " ✓" });
-      }catch(e){ M.toast?.({ html: "Batch update failed: " + e.message }); }
-    }
-    document.getElementById("ccAddToBatchBtn")?.addEventListener("click",   () => mutateBatch("add"));
-    document.getElementById("ccRemoveFromBatchBtn")?.addEventListener("click",() => mutateBatch("remove"));
+      // GET batches from Netlify function (see server change below)
+      async function fetchBatches(){
+        try {
+          const resp = await fetch(`/testChitChats?resource=batches&status=open`, { credentials: "include" });
+          const data = await resp.json().catch(()=> ({}));
+          const list = Array.isArray(data) ? data : (data.batches || data.data || []);
+          ccBatchSelect.innerHTML =
+            `<option value="">Select Batch…</option>` +
+            list.map(b => {
+              const label = (b.description || b.name || `Batch ${b.id}`) + (b.status ? ` • ${b.status}` : "");
+              return `<option value="${b.id}">${label}</option>`;
+            }).join("");
+          reinitSelect(ccBatchSelect);
+        } catch (e) {
+          console.warn("fetchBatches failed", e);
+        }
+      }
 
-    // If already set to ChitChats when page loads
-    if (carrierSel.value === "chitchats") {
-      if (ccWrap) ccWrap.style.display = "block";
-      refreshFromOrderIfChitChats();
-    }
-  })();
+      // Call once on load
+      fetchBatches();
 
+      // Create named batch
+      createBtn?.addEventListener("click", async () => {
+        try {
+          const desc = (ccBatchName.value || "").trim() || `UI ${new Date().toISOString().slice(0,10)}`;
+          const resp = await fetch("/testChitChats", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            credentials: "include",
+            body: JSON.stringify({ action: "create", description: desc })
+          });
+          const out = await resp.json();
+          if (!out || !out.success) throw new Error(JSON.stringify(out || {}));
+          // Refresh and auto-select the new batch
+          await fetchBatches();
+          if (out.id) {
+            ccBatchSelect.value = out.id;
+            reinitSelect(ccBatchSelect);
+          }
+          ccBatchName.value = "";
+          if (window.M && M.toast) M.toast({ html: "Batch created!" });
+        } catch(e) {
+          console.error(e);
+          if (window.M && M.toast) M.toast({ html: "Create batch failed" });
+        }
+      });
+
+      async function mutateBatch(op){
+        let shipmentId = String(window.ccShipmentId ?? "").trim();
+        const batchId  = String(ccBatchSelect?.value ?? "").trim();
+
+        if (!shipmentId) {
+          if (window.M && M.toast) M.toast({ html: "No shipment loaded yet" });
+          return;
+        }
+        if (!batchId) {
+          if (window.M && M.toast) M.toast({ html: "Choose a batch first" });
+          return;
+        }
+
+        const resp = await fetch(`/testChitChats?id=${encodeURIComponent(shipmentId)}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          credentials: "include",
+          body: JSON.stringify({ action: op, batch_id: batchId })
+        });
+        const out = await resp.json();
+        if (!out || !out.success) throw new Error(JSON.stringify(out||{}));
+        if (window.M && M.toast) M.toast({ html: op === "add" ? "Added to batch" : "Removed from batch" });
+      }
+
+      addBtn?.addEventListener("click", () => mutateBatch("add"));
+      removeBtn?.addEventListener("click", () => mutateBatch("remove"));
+
+      // Optional: also refresh batch list whenever you open the config modal
+      document.getElementById("openConfigBtn")?.addEventListener("click", () => {
+        fetchBatches();
+      });
+    })();
   </script>
 
   <!-- helper: force every upload to use resumable PUT -->
