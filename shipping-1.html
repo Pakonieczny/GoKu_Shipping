@@ -1009,7 +1009,8 @@ function metalToBadge(label){
       const oauthState = url.searchParams.get("state");
       const hasCallback = Boolean(oauthCode);
 
-      async function startOAuth(reason = "manual") {
+      // Legacy (server-initiated) OAuth kept for reference but NOT used
+      async function startOAuthLegacy(reason = "manual") {
         try {
           const resp = await fetch(`${functionsBaseUrl}/startEtsyOAuth`, { method: "POST" });
           if (!resp.ok) throw new Error("HTTP " + resp.status);
@@ -1021,8 +1022,7 @@ function metalToBadge(label){
           M.toast?.({ html: "OAuth error: " + err.message });
         }
       }
-      window.startOAuth = startOAuth;
-
+    
       async function finishOAuthIfNeeded() {
         if (!hasCallback) return;
         try {
@@ -1048,8 +1048,11 @@ function metalToBadge(label){
       }
 
       document.addEventListener("DOMContentLoaded", () => {
-        document.getElementById("connectEtsyBtn")?.addEventListener("click", () => startOAuth("button"));
-        finishOAuthIfNeeded();
+        // Route button to HEADLESS PKCE flow defined later (global)
+        document.getElementById("connectEtsyBtn")
+          ?.addEventListener("click", () => window.startOAuth?.("manual"));
+        // Headless PKCE handles its own callback via /exchangeToken; no legacy finish step
+        // finishOAuthIfNeeded();
       });
     })();
     
@@ -1234,14 +1237,14 @@ function metalToBadge(label){
       titleShippingPriority: { left: 324, top: 82, width: 200, height: 15 },
       pasteOrderBtn:     { left: 299, top: 16, width: 70, height: 35 },
       pasteTrackingBtn:  { left: 998, top: 663, width: 70, height: 35 },
-      signOutBtn:           { left: 1356,  top: 17, width: 103, height: 35 },
-      ccControls:            { left: 50,  top: 190, width: 960, height: 28 },
-      ccShipmentId:          { left: 50,  top: 190, width: 180, height: 24 },
-      ccBatchSelect:         { left: 236, top: 190, width: 185, height: 28 },
-      ccBatchName:           { left: 427, top: 190, width: 170, height: 24 },
-      ccCreateBatchBtn:      { left: 603, top: 188, width: 110, height: 28 },
-      ccAddToBatchBtn:       { left: 719, top: 188, width: 110, height: 28 },
-      ccRemoveFromBatchBtn:  { left: 835, top: 188, width: 175, height: 28 }
+      signOutBtn:           { left: 1400,  top: 17, width: 103, height: 35 },
+      ccControls:            { left: 1400,  top: 50, width: 150, height: 45 },
+      ccShipmentId:          { left: 1400,  top: 80, width: 175, height: 45 },
+      ccBatchSelect:         { left: 1400, top: 110, width:  175, height: 45 },
+      ccBatchName:           { left: 1400, top: 140, width: 175, height: 45 },
+      ccCreateBatchBtn:      { left: 1400, top: 170, width: 175, height: 45 },
+      ccAddToBatchBtn:       { left: 1400, top: 200, width: 175, height: 45 },
+      ccRemoveFromBatchBtn:  { left: 1400, top: 230, width: 175, height: 45 }
 
     };
 
