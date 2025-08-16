@@ -2400,11 +2400,12 @@ function metalToBadge(label){
 
     function setShipmentUI(s){
       if (!s) { ccShipEl && (ccShipEl.value = ""); return; }
-      if (ccShipEl) ccShipEl.value = s.id || "";
-      // also empower your existing Tracking Link behavior
-      window.ccShipmentId     = s.id || "";
-      window.currentCarrier   = "ChitChats";
-      window.currentTracking  = s.id || s.carrier_tracking_code || window.currentTracking;
+      const sid = s?.id != null ? String(s.id) : "";
+      if (ccShipEl) ccShipEl.value = sid;
+      window.ccShipmentId    = sid;
+      window.currentCarrier  = "ChitChats";
+      // prefer carrier tracking code for tracking links; fall back to shipment id
+      window.currentTracking = s.carrier_tracking_code || sid || window.currentTracking;
     }
 
     async function refreshFromOrderIfChitChats(){
@@ -2469,7 +2470,7 @@ function metalToBadge(label){
       if (!batchId){ M.toast?.({ html: "Enter Batch ID" }); return; }
 
       // Resolve a CC shipment id
-      let shipmentId = (window.ccShipmentId || "").trim();
+      let shipmentId = String(window.ccShipmentId ?? "").trim();
       if (!shipmentId){
         try{
           const res = await callSearch({ orderId: orderId || undefined, tracking: tracking || undefined });
