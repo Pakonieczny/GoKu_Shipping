@@ -431,11 +431,13 @@
       <input id="ccShipmentId" type="text" placeholder="CC Shipment ID" readonly
              style="width:180px; height:24px; font-size:0.9em; margin-right:6px;" />
 
-      <!-- Batch dropdown -->
-      <select id="ccBatchSelect"
-              style="width:180px; height:28px; font-size:0.9em; margin-right:6px;">
-        <option value="">Select Batch…</option>
-      </select>
+      <!-- Batch dropdown (wrapped so Config can move/resize the visible control) -->
+      <div id="ccBatchSelectWrap"
+           style="position:absolute; width:180px; height:28px; margin-right:6px;">
+        <select id="ccBatchSelect" style="width:100%; height:100%; font-size:0.9em;">
+          <option value="">Select Batch…</option>
+        </select>
+      </div>
 
       <!-- Optional name for *new* batches -->
       <input id="ccBatchName" type="text" placeholder="New batch name (optional)"
@@ -1168,7 +1170,7 @@ function metalToBadge(label){
         "employeeNumberInput",
         "loginModalFooter",
         "employeeLoginBtn",
-        "ccControls","ccShipmentId","ccBatchSelect","ccBatchName",
+        "ccControls","ccShipmentId","ccBatchSelectWrap","ccBatchName",
         "ccCreateBatchBtn","ccAddToBatchBtn","ccRemoveFromBatchBtn"
       ];
 
@@ -1240,7 +1242,7 @@ function metalToBadge(label){
       signOutBtn:           { left: 1400,  top: 17, width: 103, height: 35 },
       ccControls:            { left: 1400,  top: 50, width: 150, height: 45 },
       ccShipmentId:          { left: 1400,  top: 80, width: 175, height: 45 },
-      ccBatchSelect:         { left: 1400, top: 110, width:  175, height: 45 },
+      ccBatchSelectWrap:     { left: 1400, top: 110, width:  175, height: 45 },
       ccBatchName:           { left: 1400, top: 140, width: 175, height: 45 },
       ccCreateBatchBtn:      { left: 1400, top: 170, width: 175, height: 45 },
       ccAddToBatchBtn:       { left: 1400, top: 200, width: 175, height: 45 },
@@ -2466,6 +2468,10 @@ function metalToBadge(label){
     const ccShipEl    = document.getElementById("ccShipmentId");
     const ccBatchEl   = document.getElementById("ccBatchId");
 
+    // If the page already has values (paste/restore), populate immediately
+    if ((orderInp.value || "").trim())     { refreshFromOrderIfChitChats(); }
+    if ((trackingInp.value || "").trim())  { refreshFromTrackingIfChitChats(); }
+
     if (!carrierSel || !trackingInp || !orderInp) return;
 
     async function callSearch(params){
@@ -2547,9 +2553,12 @@ function metalToBadge(label){
       // GET batches from Netlify function (see server change below)
       async function fetchBatches(){
         try {
-          const resp = await fetch(`/testChitChats?resource=batches&status=open`, { credentials: "include" });
-          const data = await resp.json().catch(()=> ({}));
-          const list = Array.isArray(data) ? data : (data.batches || data.data || []);
+        try {
+         const resp = await fetch(`/testChitChats?resource=batches&status=open`, { credentials: "include" });
+         const data = await resp.json().catch(()=> ({}));
+         // testChitChats returns { success, batches } but some envs return arrays
+         const raw  = (data && (data.batches ?? data.data)) ?? data;
+         const list = Array.isArray(raw) ? raw : [];
           ccBatchSelect.innerHTML =
             `<option value="">Select Batch…</option>` +
             list.map(b => {
