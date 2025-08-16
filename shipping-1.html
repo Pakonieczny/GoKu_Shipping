@@ -1531,36 +1531,41 @@ function metalToBadge(label){
       etsyOrderInput.addEventListener("keydown", async function(e){
         if(e.key === "Enter"){
           const orderNumber = etsyOrderInput.value.trim();
-          const orderData = await pullEtsyOrderDetails(orderNumber);
-          // 🆕 Always pull ShipStation Ship-To immediately after loading order meta
+          const orderData   = await pullEtsyOrderDetails(orderNumber);
           await loadShipToAddress(orderNumber);
-          // 🎁 NEW – also pull Gift Message from ShipStation
           await loadGiftMessage(orderNumber);
 
           if(orderData){
             await updateImageGrid(orderData);
             startBritesListener(orderNumber);
           }
-            try {
-              const respPD = await fetch("/.netlify/functions/firebaseOrders?orderId=" + encodeURIComponent(orderNumber));
-              const resPD = await respPD.json();
+
+          try {
+            const respPD = await fetch("/.netlify/functions/firebaseOrders?orderId=" + encodeURIComponent(orderNumber));
+            const resPD  = await respPD.json();
 
             if(!respPD.ok){
               if(resPD.error && resPD.error.toLowerCase().includes("not found")){
-                // Doc not found => clear fields quietly, no error
                 document.getElementById("labelCreationDate").value = "";
                 document.getElementById("completedByEmployee").value = "";
                 document.getElementById("signatureBox").innerHTML = "Sig Box";
 
-                // 🆕 also clear Address Box
                 const ab = document.getElementById("shipAddressBox");
                 if (ab) ab.value = "";
-
                 return;
               } else {
                 throw new Error(resPD.error || "Unknown error from firebaseOrders function");
               }
             }
+
+            // …process docDataPD normally here…
+
+          } catch (errPD) {
+            M.toast({ html: "Error: " + errPD.message });
+            console.error("Failed to pull data from Firestore:", errPD);
+          }
+        }
+      });
 
               // If we reach here => doc is found or newly created
               const docDataPD = resPD.data || {};
