@@ -598,18 +598,6 @@
       Complete Order
     </button>
 
-      <!-- ▼▼ Chit Chats batch controls (shown when carrier = ChitChats) ▼▼ -->
-      <div id="ccControls" style="position:absolute; left:50px; top:190px; display:none;">
-        <input id="ccShipmentId" type="text" placeholder="CC Shipment ID" readonly
-               style="width:180px; height:24px; font-size:0.9em; margin-right:6px;" />
-        <input id="ccBatchId" type="text" placeholder="Batch ID"
-               style="width:120px; height:24px; font-size:0.9em; margin-right:6px;" />
-        <button id="ccCreateBatchBtn" class="btn" style="height:24px; line-height:24px; font-size:0.8em;">New Batch</button>
-        <button id="ccAddToBatchBtn" class="btn" style="height:24px; line-height:24px; font-size:0.8em;">Add→Batch</button>
-        <button id="ccRemoveFromBatchBtn" class="btn grey darken-1" style="height:24px; line-height:24px; font-size:0.8em;">Remove</button>
-      </div>
-    <!-- ▲▲ Chit Chats batch controls ▲▲ -->
-
   </div>
 
   <div id="secondaryContainer"></div>
@@ -1015,7 +1003,55 @@ function metalToBadge(label){
     }
 
     (function () {
-      const url = new URLSearchParams(window.location.search);
+      // Handle OAuth callback & wire up page events (fully closed)
+      const url = new URL(window.location.href);
+      const oauthCode  = url.searchParams.get("code");
+      const oauthState = url.searchParams.get("state");
+      const hasCallback = Boolean(oauthCode);
+
+      async function startOAuth(reason = "manual") {
+        try {
+          const resp = await fetch(`${functionsBaseUrl}/startEtsyOAuth`, { method: "POST" });
+          if (!resp.ok) throw new Error("HTTP " + resp.status);
+          const { authUrl } = await resp.json();
+          if (!authUrl) throw new Error("No authUrl from server");
+          window.location.href = authUrl;
+        } catch (err) {
+          console.error("startOAuth failed:", err);
+          M.toast?.({ html: "OAuth error: " + err.message });
+        }
+      }
+      window.startOAuth = startOAuth;
+
+      async function finishOAuthIfNeeded() {
+        if (!hasCallback) return;
+        try {
+          const resp = await fetch(`${functionsBaseUrl}/completeEtsyOAuth`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ code: oauthCode, state: oauthState })
+          });
+          if (!resp.ok) throw new Error("HTTP " + resp.status);
+          const data = await resp.json();
+          setTokens({
+            access_token : data.access_token,
+            refresh_token: data.refresh_token,
+            expires_in   : data.expires_in,
+            issued_at    : data.issued_at
+          });
+          window.history.replaceState({}, document.title, window.location.pathname);
+          M.toast?.({ html: "Etsy connected" });
+        } catch (err) {
+          console.error("OAuth completion failed:", err);
+          M.toast?.({ html: "OAuth completion failed" });
+        }
+      }
+
+      document.addEventListener("DOMContentLoaded", () => {
+        document.getElementById("connectEtsyBtn")?.addEventListener("click", () => startOAuth("button"));
+        finishOAuthIfNeeded();
+      });
+    })();
     
       // Tokens returned by exchangeToken.js (access, refresh, expires_in, issued_at)
       const a = url.get("access_token");
@@ -2442,8 +2478,7 @@ function metalToBadge(label){
       window.currentTracking = s.carrier_tracking_code || sid || window.currentTracking;
     }
 
-    async function refreshFromOrderIfChitChats(){
-      if (carrierSel.value !== "chitchats") return;
+      async function refreshFromOrderIfChitChats(){
       const orderId = (orderInp.value || "").trim();
       if (!orderId) return;
       try{
@@ -2453,8 +2488,7 @@ function metalToBadge(label){
       }catch{ setShipmentUI(null); }
     }
 
-    async function refreshFromTrackingIfChitChats(){
-      if (carrierSel.value !== "chitchats") return;
+      async function refreshFromTrackingIfChitChats(){
       const tracking = (trackingInp.value || "").trim();
       if (!tracking) return;
       try{
@@ -2463,15 +2497,6 @@ function metalToBadge(label){
         setShipmentUI(s);
       }catch{}
     }
-
-    // Toggle panel when carrier changes
-    carrierSel.addEventListener("change", () => {
-      const on = carrierSel.value === "chitchats";
-      if (ccWrap) ccWrap.style.display = on ? "block" : "none";
-      if (on) {
-        Promise.resolve().then(refreshFromOrderIfChitChats).then(refreshFromTrackingIfChitChats);
-      }
-    });
 
     // Debounced input listeners
     let t1, t2;
