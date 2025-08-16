@@ -2461,6 +2461,22 @@ function metalToBadge(label){
       }
     } catch {}
   };
+
+  // Remember a batch we want to select (only if it’s still open)
+  let _desiredBatchId = "";
+
+  /** Try to select a batch id if it exists in the current open-only options */
+  function preselectBatchIfOpen(id){
+    _desiredBatchId = String(id || "").trim();
+    if (!_desiredBatchId || !ccBatchSelect) return;
+
+    const has = Array.from(ccBatchSelect.options || []).some(o => o.value === _desiredBatchId);
+    if (has) {
+      ccBatchSelect.value = _desiredBatchId;
+      reinitSelect(ccBatchSelect);
+    }
+  }
+  
   async function safeJSON(resp){
     const txt = await resp.text();
     try { return JSON.parse(txt); } catch { return { error: txt.slice(0,200) }; }
@@ -2476,12 +2492,19 @@ function metalToBadge(label){
     if (!s) {
       if (ccShipEl) ccShipEl.value = "";
       window.ccShipmentId = "";
-    } else {
-      const sid = s?.id != null ? String(s.id) : "";
-      if (ccShipEl) ccShipEl.value = sid;
-      window.ccShipmentId    = sid;
-      window.currentCarrier  = "ChitChats";
-      window.currentTracking = s.carrier_tracking_code || sid || window.currentTracking;
+      // When no shipment is loaded, do not force a batch selection change.
+      return;
+    }
+
+    const sid = s?.id != null ? String(s.id) : "";
+    if (ccShipEl) ccShipEl.value = sid;
+    window.ccShipmentId    = sid;
+    window.currentCarrier  = "ChitChats";
+    window.currentTracking = s.carrier_tracking_code || sid || window.currentTracking;
+
+    // If this shipment already belongs to a batch, try to preselect it (only if it’s open)
+    if (s.batch_id != null) {
+      preselectBatchIfOpen(String(s.batch_id));
     }
   }
 
@@ -2522,17 +2545,23 @@ function metalToBadge(label){
   // --- Batches
   async function fetchBatches(){
     try {
+      // Open-only (pending) batches; received/closed are excluded by the API filter
       const resp = await fetch(`${fnBase}/testChitChats?resource=batches&status=open`, { credentials: "include" });
       const data = await safeJSON(resp);
       const raw  = (data && (data.batches ?? data.data)) ?? data;
       const list = Array.isArray(raw) ? raw : [];
+
       ccBatchSelect.innerHTML =
         `<option value="">Select Batch…</option>` +
         list.map(b => {
           const label = (b.description || b.name || `Batch ${b.id}`) + (b.status ? ` • ${b.status}` : "");
           return `<option value="${b.id}">${label}</option>`;
         }).join("");
+
       reinitSelect(ccBatchSelect);
+
+      // If a shipment just told us its batch, try to apply it now (only works if still open)
+      if (_desiredBatchId) preselectBatchIfOpen(_desiredBatchId);
     } catch (e) {
       console.warn("fetchBatches failed", e);
       if (window.M?.toast) M.toast({ html: "Failed to load Chit Chats batches" });
