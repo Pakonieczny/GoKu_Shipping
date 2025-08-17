@@ -2810,9 +2810,11 @@ function metalToBadge(label){
     out.to_name = lines[0] || "";
     const last = lines[lines.length-1] || "";
     if (/canada/i.test(last)) out.to_country_code = "CA";
-    else if (/united\\s*states|USA|US/i.test(last)) out.to_country_code = "US";
+    // US detection: single escapes; group alternatives
+    else if (/(united\s*states|USA|US)/i.test(last)) out.to_country_code = "US";
     const cityLine = lines.find(l => /,/.test(l)) || "";
-    const m = cityLine.match(/^([^,]+),\\s*([A-Za-z]{2})\\s+([A-Za-z0-9\\- ]{3,10})/);
+    // City, ST ZIP — remove double escapes and put '-' at the end of the class to avoid range errors
+    const m = cityLine.match(/^([^,]+),\s*([A-Za-z]{2})\s+([A-Za-z0-9 -]{3,10})/);
     if (m){ out.to_city=m[1].trim(); out.to_province_code=m[2].trim(); out.to_postal_code=m[3].trim(); }
     out.to_address_1 = lines[1] || "";
     out.to_address_2 = (lines[2] || "").match(/(unit|apt)/i) ? lines[2] : "";
