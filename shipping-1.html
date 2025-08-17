@@ -3259,23 +3259,22 @@ function metalToBadge(label){
     }
 
     async function maybeVerifyAddressBeforeStep1(){
-      const orig = addressFromInputs();
-      try{
-       const out  = await callCc("POST", { action:"verify_to", to: orig });
-       const raw  = out?.suggested || out?.normalized || out?.address || out;
-       const sugg = normalizeToAddressShape(raw);
-       const changed = sugg && JSON.stringify({
-        ...orig, to_country_code: (orig.to_country_code||"").toUpperCase()
-      }) !== JSON.stringify({
-        ...sugg, to_country_code: (sugg.to_country_code||"").toUpperCase()
-      });
+    const out  = await callCc("POST", { action:"verify_to", to: orig });
+    const raw  = (out?.suggested ?? out?.normalized ?? out?.address ?? null);
+    if (!raw) return false;                           // nothing from API
 
-      if (sugg && changed) return openVerifyModal(orig, sugg);
-      }catch(e){
-        M.toast?.({ html: "Address verification unavailable. Continuing with your entry." });
-      }
-      return false;
-    }
+    const sugg = normalizeToAddressShape(raw);
+    const hasAny = Object.values(sugg || {}).some(v => String(v || "").trim() !== "");
+    if (!hasAny) return false;                        // all empty → skip
+
+    const changed = JSON.stringify({
+      ...orig, to_country_code: (orig.to_country_code||"").toUpperCase()
+    }) !== JSON.stringify({
+      ...sugg, to_country_code: (sugg.to_country_code||"").toUpperCase()
+    });
+
+    if (changed) return openVerifyModal(orig, sugg);
+    return false;
 
       /* ────────────────────────────────────────────────────────────── */
 
