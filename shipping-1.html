@@ -3174,9 +3174,10 @@ function metalToBadge(label){
         };
       }
       // Normalize various API shapes → our "to_*" keys
-      function normalizeToAddressShape(a){
-        if (!a || typeof a !== "object") return null;
-        const pick = (...keys) => {
+         function normalizeToAddressShape(raw){
+           // Accept either a flat object or { address: { … } }
+           const src = raw && typeof raw === "object" ? (raw.address || raw) : {};
+           const pick = (...keys) => keys.reduce((v,k)=> v ?? src?.[k], null) ?? "";
           for (const k of keys) { const v = a[k]; if (v != null && v !== "") return v; }
           return "";
         };
@@ -3224,11 +3225,10 @@ function metalToBadge(label){
         sEl.innerHTML = hi(fmtAddress(orig), fmtAddress(sugg));
       }
 
-      // helper to show the verify modal (normalize first)
-      function openVerifyModal(orig, rawSugg){
-        const sugg = normalizeToAddressShape(rawSugg);
-        renderAddressDiff(orig, sugg);
-
+     // helper to show the verify modal (normalize first)
+     function openVerifyModal(orig, rawSugg){
+       const sugg = normalizeToAddressShape(rawSugg);
+       renderAddressDiff(orig, sugg);
       const modal = document.getElementById("ccVerifyModal");
       if (!modal) { M.toast?.({ html:"Address suggestion available — verify modal not found." }); return false; }
 
@@ -3259,11 +3259,10 @@ function metalToBadge(label){
     async function maybeVerifyAddressBeforeStep1(){
       const orig = addressFromInputs();
       try{
-      const out  = await callCc("POST", { action:"verify_to", to: orig });
-      const raw  = out?.suggested || out?.normalized || out?.address || out;
-      const sugg = normalizeToAddressShape(raw);
-
-      const changed = sugg && JSON.stringify({
+       const out  = await callCc("POST", { action:"verify_to", to: orig });
+       const raw  = out?.suggested || out?.normalized || out?.address || out;
+       const sugg = normalizeToAddressShape(raw);
+       const changed = sugg && JSON.stringify({
         ...orig, to_country_code: (orig.to_country_code||"").toUpperCase()
       }) !== JSON.stringify({
         ...sugg, to_country_code: (sugg.to_country_code||"").toUpperCase()
