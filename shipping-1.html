@@ -372,6 +372,31 @@
     .msg.sent    {text-align:right;color:#1565c0;}
     .msg.received{text-align:left; color:#333;}
 
+   /* ===== Chit Chats Edit Shipment Wizard ===== */
+    #ccEditModal{position:fixed;inset:0;background:rgba(0,0,0,.45);display:none;z-index:9999;}
+    #ccEditCard{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);
+      width:860px;max-height:86vh;overflow:auto;background:#fff;border-radius:12px;
+      box-shadow:0 18px 60px rgba(0,0,0,.25);}
+    #ccEditHead{padding:14px 18px;border-bottom:1px solid #ececec;display:flex;align-items:center;gap:10px}
+    #ccEditTitle{font-weight:700;font-size:18px}
+    .cc-steps{display:flex;gap:8px;margin-left:auto}
+    .cc-step-pill{padding:6px 10px;border-radius:999px;border:1px solid #ddd;font-size:12px;color:#666}
+    .cc-step-pill.active{background:#242424;color:#fff;border-color:#242424}
+    .cc-body{padding:18px 20px}
+    .cc-step{display:none}
+    .cc-step.active{display:block}
+    .cc-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+    .cc-grid-3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px}
+    .cc-field{display:flex;flex-direction:column;gap:6px;margin-bottom:8px}
+    .cc-field label{font-size:12px;color:#444}
+    .cc-field input,.cc-field select,.cc-field textarea{padding:8px 10px;border:1px solid #bbb;border-radius:8px;font-size:14px}
+    #ccRates{list-style:none;padding:0;margin:0;display:flex;flex-direction:column;gap:10px}
+    #ccRates li{border:1px solid #ddd;border-radius:10px;padding:10px 12px;display:flex;justify-content:space-between;align-items:center;cursor:pointer}
+    #ccRates li.selected{outline:2px solid #1976d2}
+    #ccEditFoot{display:flex;justify-content:space-between;align-items:center;padding:12px 16px;border-top:1px solid #ececec;background:#fafafa;border-radius:0 0 12px 12px}
+    #ccEditFoot button{padding:9px 14px;border-radius:8px;border:0;background:#333;color:#fff;cursor:pointer}
+    #ccEditFoot button[disabled]{opacity:.5;cursor:not-allowed}
+
   </style>
 
   <!-- 🆕 remove underline from the dropdown trigger -->
@@ -452,6 +477,119 @@
       <button id="ccRemoveFromBatchBtn" class="btn"
               style="height:24px; line-height:24px; font-size:0.8em; margin-left:6px;">Remove From Batch</button>
     </div>
+
+   <!-- CC Edit Shipment button -->
+  <button id="ccEditBtn" class="btn" style="position:absolute; left:50px; top:225px; height:28px; line-height:28px;">
+    Edit Shipment…
+  </button>
+
+  <!-- CC Edit Shipment Modal -->
+  <div id="ccEditModal" role="dialog" aria-modal="true">
+    <div id="ccEditCard">
+      <div id="ccEditHead">
+        <div id="ccEditTitle">Edit Shipment</div>
+        <div class="cc-steps">
+          <div class="cc-step-pill" data-step="0">Recipient</div>
+          <div class="cc-step-pill" data-step="1">Description</div>
+          <div class="cc-step-pill" data-step="2">Package</div>
+          <div class="cc-step-pill" data-step="3">Postage</div>
+        </div>
+      </div>
+      <div class="cc-body">
+        <!-- Step 0: Recipient -->
+        <section id="ccStep0" class="cc-step">
+          <div class="cc-grid">
+            <div class="cc-field"><label>Full name</label><input id="cc_to_name"></div>
+            <div class="cc-field"><label>Email (optional)</label><input id="cc_to_email" type="email"></div>
+            <div class="cc-field"><label>Address 1</label><input id="cc_to_address_1"></div>
+            <div class="cc-field"><label>Address 2</label><input id="cc_to_address_2"></div>
+            <div class="cc-field"><label>City</label><input id="cc_to_city"></div>
+            <div class="cc-field"><label>State/Province</label><input id="cc_to_province_code"></div>
+            <div class="cc-field"><label>Postal/Zip</label><input id="cc_to_postal_code"></div>
+            <div class="cc-field"><label>Country (2-letter)</label><input id="cc_to_country_code" placeholder="US or CA"></div>
+            <div class="cc-field"><label>Phone (optional)</label><input id="cc_to_phone"></div>
+          </div>
+        </section>
+
+        <!-- Step 1: Description / Customs -->
+        <section id="ccStep1" class="cc-step">
+          <div class="cc-grid">
+            <div class="cc-field"><label>Package contents</label>
+              <select id="cc_package_contents">
+                <option value="merchandise" selected>Merchandise</option>
+                <option value="documents">Documents</option>
+                <option value="gift">Gift</option>
+                <option value="sample">Sample</option>
+                <option value="return">Return</option>
+              </select>
+            </div>
+            <div class="cc-field"><label>Order ID (optional)</label><input id="cc_order_id"></div>
+            <div class="cc-field"><label>Declared value (sum)</label><input id="cc_value" type="number" step="0.01"></div>
+            <div class="cc-field"><label>Value currency</label>
+              <select id="cc_value_currency"><option value="usd">USD</option><option value="cad">CAD</option></select>
+            </div>
+          </div>
+          <h4 style="margin:12px 0 4px;">Line item</h4>
+          <div class="cc-grid-3">
+            <div class="cc-field"><label>Description</label><input id="cc_item_description" placeholder="Rock On Stud Earrings, Stb"></div>
+            <div class="cc-field"><label>Quantity</label><input id="cc_item_qty" type="number" min="1" value="1"></div>
+            <div class="cc-field"><label>Unit value</label><input id="cc_item_unit_value" type="number" step="0.01"></div>
+            <div class="cc-field"><label>Origin country</label><input id="cc_item_origin_country" placeholder="CA"></div>
+            <div class="cc-field"><label>HS code</label><input id="cc_item_hs_tariff_code" placeholder="7113.19.5080"></div>
+            <div class="cc-field"><label>Country of manufacture</label><input id="cc_item_manufacture_country" placeholder="CA"></div>
+            <div class="cc-field"><label>Manufacturer name</label><input id="cc_item_manufacturer_contact" placeholder="Brites Jewelry Inc."></div>
+            <div class="cc-field"><label>Manufacturer address</label><input id="cc_item_manufacturer_street" placeholder="450 Matheson Blvd, East"></div>
+            <div class="cc-field"><label>Manufacturer city</label><input id="cc_item_manufacturer_city" placeholder="Mississauga"></div>
+            <div class="cc-field"><label>Manufacturer province</label><input id="cc_item_manufacturer_province_code" placeholder="ON"></div>
+            <div class="cc-field"><label>Manufacturer postal</label><input id="cc_item_manufacturer_postal_code" placeholder="L4Z 1R5"></div>
+            <div class="cc-field"><label>Manufacturer phone</label><input id="cc_item_manufacturer_phone"></div>
+            <div class="cc-field"><label>Manufacturer email</label><input id="cc_item_manufacturer_email"></div>
+          </div>
+        </section>
+
+        <!-- Step 2: Package -->
+        <section id="ccStep2" class="cc-step">
+          <div class="cc-grid-3">
+            <div class="cc-field"><label>Package type</label>
+              <select id="cc_package_type">
+                <option value="parcel">Parcel</option>
+                <option value="thick_envelope">Thick envelope</option>
+                <option value="envelope">Envelope</option>
+                <option value="letter">Letter</option>
+                <option value="card">Card</option>
+              </select>
+            </div>
+            <div class="cc-field"><label>Size unit</label><select id="cc_size_unit"><option>cm</option><option>in</option></select></div>
+            <div class="cc-field"><label>Weight unit</label><select id="cc_weight_unit"><option>g</option><option>oz</option><option>kg</option><option>lb</option></select></div>
+            <div class="cc-field"><label>Length (X)</label><input id="cc_size_x" type="number" step="0.1"></div>
+            <div class="cc-field"><label>Width (Y)</label><input id="cc_size_y" type="number" step="0.1"></div>
+            <div class="cc-field"><label>Height (Z)</label><input id="cc_size_z" type="number" step="0.1"></div>
+            <div class="cc-field"><label>Weight</label><input id="cc_weight" type="number" step="0.01"></div>
+            <div class="cc-field"><label>Insurance?</label><select id="cc_insurance_requested"><option value="false">No</option><option value="true">Yes</option></select></div>
+            <div class="cc-field"><label>Signature Required?</label><select id="cc_signature_requested"><option value="false">No</option><option value="true">Yes</option></select></div>
+            <div class="cc-field"><label>Media Mail?</label><select id="cc_media_mail_requested"><option value="false">No</option><option value="true">Yes</option></select></div>
+            <div class="cc-field"><label>Ship date</label><input id="cc_ship_date" placeholder="today or YYYY-MM-DD"></div>
+          </div>
+        </section>
+
+        <!-- Step 3: Postage -->
+        <section id="ccStep3" class="cc-step">
+          <ul id="ccRates"></ul>
+        </section>
+      </div>
+      <div id="ccEditFoot">
+        <div style="display:flex;gap:8px">
+          <button id="ccClose">Close</button>
+          <button id="ccBack">Back</button>
+        </div>
+        <div style="display:flex;gap:8px">
+          <button id="ccNext">Next</button>
+          <button id="ccRefreshRates">Refresh Rates</button>
+          <button id="ccBuy" disabled>Buy & Print</button>
+        </div>
+      </div>
+    </div>
+  </div>
 
     <!-- 🟡 anchor: immediately after <input id="shipDate" …/> -->
     <input type="text" id="labelCreationDate"    readonly />
@@ -2476,7 +2614,7 @@ function metalToBadge(label){
       reinitSelect(ccBatchSelect);
     }
   }
-  
+
   async function safeJSON(resp){
     const txt = await resp.text();
     try { return JSON.parse(txt); } catch { return { error: txt.slice(0,200) }; }
@@ -2636,6 +2774,208 @@ function metalToBadge(label){
     searchByOrder:    refreshFromOrderIfChitChats,
     searchByTracking: refreshFromTrackingIfChitChats
   };
+})();
+
+/* ===== Chit Chats Edit Shipment Wizard (create → refresh rates → buy) ===== */
+(function(){
+  const modal     = document.getElementById("ccEditModal");
+  const editBtn   = document.getElementById("ccEditBtn");
+  const pillNodes = Array.from(document.querySelectorAll(".cc-step-pill"));
+  const steps     = [0,1,2,3].map(i => document.getElementById("ccStep"+i));
+  const ratesList = document.getElementById("ccRates");
+  const btnClose  = document.getElementById("ccClose");
+  const btnBack   = document.getElementById("ccBack");
+  const btnNext   = document.getElementById("ccNext");
+  const btnRefresh= document.getElementById("ccRefreshRates");
+  const btnBuy    = document.getElementById("ccBuy");
+  const idInput   = document.getElementById("ccShipmentId");
+  const fnBase    = "/.netlify/functions";
+
+  let currentStep = 0, selectedPostageType = null;
+  function showStep(i){
+    currentStep = Math.max(0, Math.min(3, i));
+    steps.forEach((el,idx) => el.classList.toggle("active", idx===currentStep));
+    pillNodes.forEach((el,idx) => el.classList.toggle("active", idx===currentStep));
+    btnBack.disabled = currentStep === 0;
+    btnNext.disabled = currentStep === 3;
+    btnRefresh.style.display = currentStep === 3 ? "inline-block" : "none";
+    btnBuy.style.display     = currentStep === 3 ? "inline-block" : "none";
+  }
+
+  function parseShipToBox(){
+    const box = document.getElementById("shipAddressBox");
+    const txt = (box?.value || "").replace(/^SHIP TO:\n?/i,"").trim();
+    const lines = txt.split(/\n+/).map(l => l.trim()).filter(Boolean);
+    const out = {};
+    out.to_name = lines[0] || "";
+    const last = lines[lines.length-1] || "";
+    if (/canada/i.test(last)) out.to_country_code = "CA";
+    else if (/united\\s*states|USA|US/i.test(last)) out.to_country_code = "US";
+    const cityLine = lines.find(l => /,/.test(l)) || "";
+    const m = cityLine.match(/^([^,]+),\\s*([A-Za-z]{2})\\s+([A-Za-z0-9\\- ]{3,10})/);
+    if (m){ out.to_city=m[1].trim(); out.to_province_code=m[2].trim(); out.to_postal_code=m[3].trim(); }
+    out.to_address_1 = lines[1] || "";
+    out.to_address_2 = (lines[2] || "").match(/(unit|apt)/i) ? lines[2] : "";
+    return out;
+  }
+  function modalOpen(){
+    const seed = parseShipToBox();
+    document.getElementById("cc_to_name").value = seed.to_name || "";
+    document.getElementById("cc_to_address_1").value = seed.to_address_1 || "";
+    document.getElementById("cc_to_address_2").value = seed.to_address_2 || "";
+    document.getElementById("cc_to_city").value = seed.to_city || "";
+    document.getElementById("cc_to_province_code").value = seed.to_province_code || "";
+    document.getElementById("cc_to_postal_code").value = seed.to_postal_code || "";
+    document.getElementById("cc_to_country_code").value = seed.to_country_code || "";
+    document.getElementById("cc_value_currency").value = seed.to_country_code === "CA" ? "cad" : "usd";
+    selectedPostageType = null; btnBuy.disabled = true; ratesList.innerHTML = "";
+    modal.style.display = "block"; showStep(0);
+  }
+  function modalClose(){ modal.style.display = "none"; }
+
+  async function callCc(method, body, qs=""){
+    const resp = await fetch(`${fnBase}/testChitChats${qs}`, {
+      method, headers: { "Content-Type":"application/json" }, body: body ? JSON.stringify(body) : undefined
+    });
+    const txt = await resp.text();
+    let data; try { data = JSON.parse(txt); } catch { data = txt; }
+    if (!resp.ok) throw new Error(typeof data === "string" ? data : (data.error || JSON.stringify(data)));
+    return data;
+  }
+
+  async function ensureShipment(){
+    const id = (idInput.value || "").trim();
+    if (id) return await callCc("GET", null, `?resource=shipment&id=${encodeURIComponent(id)}`);
+    const out = await callCc("POST", { action:"create_shipment", shipment: buildShipmentPayload() });
+    if (out && out.id) idInput.value = out.id;
+    return out.shipment || (out.id ? await callCc("GET", null, `?resource=shipment&id=${encodeURIComponent(out.id)}`) : null);
+  }
+
+  function buildShipmentPayload(){
+    const to = {
+      to_name: document.getElementById("cc_to_name").value.trim(),
+      to_address_1: document.getElementById("cc_to_address_1").value.trim(),
+      to_address_2: document.getElementById("cc_to_address_2").value.trim() || null,
+      to_city: document.getElementById("cc_to_city").value.trim(),
+      to_province_code: document.getElementById("cc_to_province_code").value.trim(),
+      to_postal_code: document.getElementById("cc_to_postal_code").value.trim(),
+      to_country_code: document.getElementById("cc_to_country_code").value.trim().toUpperCase(),
+      to_phone: document.getElementById("cc_to_phone").value.trim() || null,
+      to_email: document.getElementById("cc_to_email").value.trim() || null
+    };
+    const valueCurrency = document.getElementById("cc_value_currency").value;
+    const line = {
+      description: document.getElementById("cc_item_description").value.trim(),
+      quantity: Number(document.getElementById("cc_item_qty").value || 1),
+      unit_value: Number(document.getElementById("cc_item_unit_value").value || 0),
+      hs_tariff_code: document.getElementById("cc_item_hs_tariff_code").value.trim() || null,
+      origin_country: document.getElementById("cc_item_origin_country").value.trim().toUpperCase() || null,
+      manufacture_country: document.getElementById("cc_item_manufacture_country").value.trim().toUpperCase() || null,
+      manufacturer_contact      : document.getElementById("cc_item_manufacturer_contact").value.trim() || null,
+      manufacturer_street       : document.getElementById("cc_item_manufacturer_street").value.trim() || null,
+      manufacturer_city         : document.getElementById("cc_item_manufacturer_city").value.trim() || null,
+      manufacturer_province_code: document.getElementById("cc_item_manufacturer_province_code").value.trim() || null,
+      manufacturer_postal_code  : document.getElementById("cc_item_manufacturer_postal_code").value.trim() || null,
+      manufacturer_phone        : document.getElementById("cc_item_manufacturer_phone").value.trim() || null,
+      manufacturer_email        : document.getElementById("cc_item_manufacturer_email").value.trim() || null
+    };
+    const pkg = {
+      package_type: document.getElementById("cc_package_type").value,
+      size_unit   : document.getElementById("cc_size_unit").value,
+      size_x      : Number(document.getElementById("cc_size_x").value || 0),
+      size_y      : Number(document.getElementById("cc_size_y").value || 0),
+      size_z      : Number(document.getElementById("cc_size_z").value || 0),
+      weight_unit : document.getElementById("cc_weight_unit").value,
+      weight      : Number(document.getElementById("cc_weight").value || 0),
+      insurance_requested : document.getElementById("cc_insurance_requested").value === "true",
+      signature_requested : document.getElementById("cc_signature_requested").value === "true",
+      media_mail_requested: document.getElementById("cc_media_mail_requested").value === "true",
+      ship_date   : (document.getElementById("cc_ship_date").value || "today")
+    };
+    return {
+      ...to,
+      package_contents: document.getElementById("cc_package_contents").value,
+      order_id       : (document.getElementById("cc_order_id").value || document.getElementById("etsyOrderNumber")?.value || "").trim() || null,
+      description    : line.description,
+      value          : String((line.unit_value || 0) * (line.quantity || 1)),
+      value_currency : valueCurrency,
+      postage_type   : "unknown",
+      line_items     : [{
+        description: line.description, quantity: line.quantity,
+        unit_value: String(line.unit_value), origin_country: line.origin_country,
+        hs_tariff_code: line.hs_tariff_code, manufacture_country: line.manufacture_country,
+        manufacturer_contact: line.manufacturer_contact,
+        manufacturer_street: line.manufacturer_street,
+        manufacturer_city: line.manufacturer_city,
+        manufacturer_province_code: line.manufacturer_province_code,
+        manufacturer_postal_code: line.manufacturer_postal_code,
+        manufacturer_phone: line.manufacturer_phone,
+        manufacturer_email: line.manufacturer_email
+      }],
+      ...pkg
+    };
+  }
+
+  function renderRates(s){
+    const rates = (s && s.rates) || [];
+    ratesList.innerHTML = "";
+    rates.forEach(r => {
+      const li = document.createElement("li");
+      li.dataset.postageType = r.postage_type;
+      const left = document.createElement("div");
+      left.innerHTML = `<div style="font-weight:600">${r.service_name || r.postage_type}</div>
+                        <div style="font-size:12px;opacity:.8">${(r.estimated_delivery_days || r.delivery_days || "")} business days</div>`;
+      const right = document.createElement("div");
+      right.innerHTML = `<div style="font-weight:700">$${Number(r.payment_amount || r.rate || 0).toFixed(2)}</div>`;
+      li.appendChild(left); li.appendChild(right);
+      li.addEventListener("click", () => {
+        [...ratesList.children].forEach(n => n.classList.remove("selected"));
+        li.classList.add("selected"); selectedPostageType = li.dataset.postageType; btnBuy.disabled = !selectedPostageType;
+      });
+      ratesList.appendChild(li);
+    });
+  }
+
+  async function refreshRates(){
+    const id = (idInput.value || "").trim();
+    const payload = {
+      weight_unit: document.getElementById("cc_weight_unit").value,
+      weight     : Number(document.getElementById("cc_weight").value || 0),
+      size_unit  : document.getElementById("cc_size_unit").value,
+      size_x     : Number(document.getElementById("cc_size_x").value || 0),
+      size_y     : Number(document.getElementById("cc_size_y").value || 0),
+      size_z     : Number(document.getElementById("cc_size_z").value || 0),
+      package_type: document.getElementById("cc_package_type").value,
+      ship_date  : (document.getElementById("cc_ship_date").value || "today"),
+      insurance_requested: document.getElementById("cc_insurance_requested").value === "true",
+       media_mail_requested: document.getElementById("cc_media_mail_requested").value === "true",
+       signature_requested : document.getElementById("cc_signature_requested").value === "true",
+      postage_type: "unknown"
+    };
+    const out = await callCc("PATCH", { action:"refresh", shipment_id:id, payload });
+    const s   = out.shipment || out;
+    renderRates(s);
+  }
+
+  async function buySelected(){
+    const id = (idInput.value || "").trim();
+    if (!id || !selectedPostageType) return;
+    await callCc("PATCH", { action:"buy", shipment_id:id, postage_type:selectedPostageType });
+    const det = await callCc("GET", null, `?resource=shipment&id=${encodeURIComponent(id)}`);
+    const pdf = det.postage_label_pdf_url || det.postage_label_png_url;
+    if (pdf) window.open(pdf, "_blank");
+    else M.toast?.({ html:"Label purchased. Refresh later for label URL." });
+  }
+
+  if (editBtn) editBtn.addEventListener("click", modalOpen);
+  btnClose.addEventListener("click", () => modalClose());
+  btnBack .addEventListener("click", () => showStep(currentStep-1));
+  btnNext .addEventListener("click", async () => {
+    if (currentStep < 2) { showStep(currentStep+1); return; }
+    if (currentStep === 2) { await ensureShipment(); await refreshRates(); showStep(3); }
+  });
+  btnRefresh.addEventListener("click", async () => { await ensureShipment(); await refreshRates(); });
+  btnBuy    .addEventListener("click", buySelected);
 })();
 
   </script>

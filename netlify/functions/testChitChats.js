@@ -67,6 +67,18 @@ exports.handler = async (event) => {
         }
       }
 
+      // GET single shipment by id
+      if (resource === "shipment" && qp.id) {
+        try {
+          const resp = await fetch(url(`/shipments/${encodeURIComponent(qp.id)}`), { headers: authH });
+          const out  = await wrap(resp);
+          if (!out.ok) return bad(out.status, out.data);
+          return ok(out.data);
+        } catch (e) {
+          return bad(500, e);
+        }
+      }
+
       // Default: quick shipments sanity ping (kept for backward compat)
       const limit = qp.limit ? Number(qp.limit) : 25;
       const page  = qp.page  ? Number(qp.page)  : 1;
@@ -77,33 +89,80 @@ exports.handler = async (event) => {
       return ok({ success: true, data: out.data });
     }
 
-    // ---------- POST (create batch) ----------
+    // ---------- POST (create batch | create shipment) ----------
     if (event.httpMethod === "POST") {
-      const body = safeJSON(event.body);
-      if ((body.action || "").toLowerCase() !== "create") {
-        return bad(400, "action=create required");
+      const body   = safeJSON(event.body);
+      const action = (body.action || "").toLowerCase();
+
+      // (1) create batch
+      if (action === "create") {
+        const payload = { description: (body.description || "").toString() };
+        const resp = await fetch(url("/batches"), { method: "POST", headers: authH, body: JSON.stringify(payload) });
+        const out  = await wrap(resp);
+        if (!out.ok) return bad(out.status, out.data);
+        const loc = out.resp.headers.get("Location") || "";
+        const id  = loc.split("/").filter(Boolean).pop();
+        return ok({ success: true, id, location: loc || null });
       }
-      const payload = { description: (body.description || "").toString() };
 
-      const resp = await fetch(url("/batches"), { method: "POST", headers: authH, body: JSON.stringify(payload) });
-      const out  = await wrap(resp);
-      if (!out.ok) return bad(out.status, out.data);
+      // (2) create shipment
+      if (action === "create_shipment") {
+        const shipment = body.shipment || body.payload || {};
+        const resp = await fetch(url(`/shipments`), { method: "POST", headers: authH, body: JSON.stringify(shipment) });
+        const out  = await wrap(resp);
+        if (!out.ok) return bad(out.status, out.data);
+        const loc = out.resp.headers.get("Location") || "";
+        const id  = loc.split("/").filter(Boolean).pop() || null;
 
-      // Batch id is last segment of Location header
-      const loc = out.resp.headers.get("Location") || "";
-      const id  = loc.split("/").filter(Boolean).pop();
-      return ok({ success: true, id, location: loc || null });
+        // Try to return the created resource body for convenience
+        let created = null;
+        if (id) {
+          try {
+            const r2  = await fetch(url(`/shipments/${encodeURIComponent(id)}`), { headers: authH });
+            const o2  = await wrap(r2);
+            if (o2.ok) created = o2.data;
+          } catch {}
+        }
+        return ok({ success: true, id, shipment: created });
+      }
+
+      return bad(400, "action must be create or create_shipment");
     }
 
-    // ---------- PATCH (add/remove shipments to/from batch) ----------
+    // ---------- PATCH (batch add/remove | shipment refresh/buy) ----------
     if (event.httpMethod === "PATCH") {
       const qp   = event.queryStringParameters || {};
       const body = safeJSON(event.body);
+      const action = (body.action || "").toLowerCase();
 
-      // Accept both shapes from UI:
-      const action = (body.action || "").toLowerCase(); // "add" | "remove"
+      // (A) Shipment: refresh rates
+      if (action === "refresh") {
+        const id = String(body.shipment_id || body.id || qp.id || "");
+        if (!id) return bad(400, "shipment_id required for refresh");
+        const payload = body.payload || {};
+        const resp = await fetch(url(`/shipments/${encodeURIComponent(id)}/refresh`), {
+          method: "PATCH", headers: authH, body: JSON.stringify(payload)
+        });
+        const out = await wrap(resp);
+        if (!out.ok) return bad(out.status, out.data);
+        return ok(out.data);
+      }
+
+      // (B) Shipment: buy postage
+      if (action === "buy") {
+        const id = String(body.shipment_id || body.id || qp.id || "");
+        if (!id) return bad(400, "shipment_id required for buy");
+        const payload = { postage_type: (body.postage_type || body.postageType || "unknown") };
+        const resp = await fetch(url(`/shipments/${encodeURIComponent(id)}/buy`), {
+          method: "PATCH", headers: authH, body: JSON.stringify(payload)
+        });
+        const out = await wrap(resp);
+        if (!out.ok) return bad(out.status, out.data);
+        return ok(out.data);
+      }
+
+      // (C) Batches: add/remove shipments
       const batchId = numberish(body.batch_id ?? body.batchId ?? qp.batch_id ?? qp.batchId);
-      // shipment(s):
       const oneIdFromQuery = qp.id ? String(qp.id) : "";
       const oneIdFromBody  = body.shipment_id ? String(body.shipment_id) : (body.shipmentId ? String(body.shipmentId) : "");
       const manyFromBody   = Array.isArray(body.shipmentIds) ? body.shipmentIds.map(String) : [];
@@ -117,14 +176,11 @@ exports.handler = async (event) => {
       if (action !== "add" && action !== "remove") {
         return bad(400, "action must be add|remove");
       }
-
       const payload = { batch_id: Number(batchId), shipment_ids: shipmentIds };
       const path = action === "add" ? "/shipments/add_to_batch" : "/shipments/remove_from_batch";
-
       const resp = await fetch(url(path), { method: "PATCH", headers: authH, body: JSON.stringify(payload) });
       const out  = await wrap(resp);
       if (!out.ok) return bad(out.status, out.data);
-
       return ok({ success: true });
     }
 
