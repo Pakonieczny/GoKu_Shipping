@@ -114,7 +114,10 @@ exports.handler = async (event) => {
           body: JSON.stringify({ address: to })
         });
         const o1 = await wrap(r1);
-        if (o1.ok) return ok(o1.data); // can contain { suggested | normalized | address }
+        if (o1.ok) {
+          const suggested = o1.data?.suggested || o1.data?.normalized || o1.data?.address || o1.data || null;
+          return ok({ suggested });
+        }
       } catch {}
 
       // B) Fallback variant some tenants expose
@@ -125,7 +128,10 @@ exports.handler = async (event) => {
           body: JSON.stringify({ to })
         });
         const o2 = await wrap(r2);
-        if (o2.ok) return ok(o2.data);
+        if (o2.ok) {
+          const suggested = o2.data?.suggested || o2.data?.normalized || o2.data?.address || o2.data || null;
+          return ok({ suggested });
+        }
       } catch {}
 
       // C) Graceful fallback so the UI continues without a scary 500
