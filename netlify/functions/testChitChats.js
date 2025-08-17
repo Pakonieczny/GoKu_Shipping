@@ -1,9 +1,13 @@
 /* netlify/functions/testChitChats.js
  *
  * Chit Chats proxy:
- *   - GET  ?resource=batches[&status=open]     → list batches
- *   - GET                                      → light shipments sanity ping (ready)
- *   - POST { action:"create", description? }   → create batch
+ *   - GET  ?resource=batches[&status=open]           → list batches
+ *   - GET  ?resource=shipment&id=<shipmentId>        → fetch one shipment
+ *   - GET  (no resource)                             → quick shipments ping (status=ready)
+ *   - POST { action:"create", description? }         → create batch
+ *   - POST { action:"create_shipment", shipment:{} } → create shipment
+ *   - PATCH { action:"refresh", shipment_id, payload:{} } → refresh rates / update pkg
+ *   - PATCH { action:"buy",     shipment_id, postage_type } → buy label
  *   - PATCH { action:"add"|"remove", batch_id|batchId, shipmentIds[] }
  *           OR PATCH ?id=<shipmentId> with body { action, batch_id|batchId }
  *
@@ -37,21 +41,21 @@ exports.handler = async (event) => {
     };
     const url = (p) => `${BASE}/clients/${encodeURIComponent(CLIENT_ID)}${p}`;
 
-    // ---------- Helpers ----------
+    // ---------- helpers ----------
     const wrap = async (resp) => {
       const txt = await resp.text();
       let data; try { data = JSON.parse(txt); } catch { data = txt; }
       return { ok: resp.ok, status: resp.status, data, resp };
     };
-    const ok = (data)  => ({ statusCode: 200, headers: CORS, body: JSON.stringify(data) });
-    const bad = (code, err) => ({ statusCode: code, headers: CORS, body: JSON.stringify({ error: typeof err === "string" ? err : (err?.message || err) }) });
+    const ok  = (data)       => ({ statusCode: 200, headers: CORS, body: JSON.stringify(data) });
+    const bad = (code, err)  => ({ statusCode: code, headers: CORS, body: JSON.stringify({ error: typeof err === "string" ? err : (err?.message || err) }) });
 
     // ---------- GET ----------
     if (event.httpMethod === "GET") {
       const qp = event.queryStringParameters || {};
       const resource = (qp.resource || "").toLowerCase();
 
-      // GET batches (for dropdown)
+      // List batches (optional ?status=open|processing|archived)
       if (resource === "batches") {
         try {
           const status = qp.status ? `?status=${encodeURIComponent(qp.status)}` : "";
@@ -59,7 +63,7 @@ exports.handler = async (event) => {
           const out  = await wrap(resp);
           if (!out.ok) return bad(out.status, out.data);
 
-          // Some environments return array, some wrap under .batches/.data — normalize:
+          // normalize: some envs return array; others wrap under .batches/.data
           const list = Array.isArray(out.data) ? out.data : (out.data?.batches || out.data?.data || []);
           return ok({ success: true, batches: list });
         } catch (e) {
@@ -67,7 +71,7 @@ exports.handler = async (event) => {
         }
       }
 
-      // GET single shipment by id
+      // Fetch a single shipment
       if (resource === "shipment" && qp.id) {
         try {
           const resp = await fetch(url(`/shipments/${encodeURIComponent(qp.id)}`), { headers: authH });
@@ -80,10 +84,13 @@ exports.handler = async (event) => {
       }
 
       // Default: quick shipments sanity ping (kept for backward compat)
-      const limit = qp.limit ? Number(qp.limit) : 25;
-      const page  = qp.page  ? Number(qp.page)  : 1;
+      const limit  = qp.limit ? Number(qp.limit) : 25;
+      const page   = qp.page  ? Number(qp.page)  : 1;
       const status = qp.status || "ready";
-      const resp = await fetch(url(`/shipments?status=${encodeURIComponent(status)}&limit=${encodeURIComponent(limit)}&page=${encodeURIComponent(page)}`), { headers: authH });
+      const resp = await fetch(
+        url(`/shipments?status=${encodeURIComponent(status)}&limit=${encodeURIComponent(limit)}&page=${encodeURIComponent(page)}`),
+        { headers: authH }
+      );
       const out  = await wrap(resp);
       if (!out.ok) return bad(out.status, out.data);
       return ok({ success: true, data: out.data });
@@ -100,6 +107,8 @@ exports.handler = async (event) => {
         const resp = await fetch(url("/batches"), { method: "POST", headers: authH, body: JSON.stringify(payload) });
         const out  = await wrap(resp);
         if (!out.ok) return bad(out.status, out.data);
+
+        // id is last segment of Location header
         const loc = out.resp.headers.get("Location") || "";
         const id  = loc.split("/").filter(Boolean).pop();
         return ok({ success: true, id, location: loc || null });
@@ -111,15 +120,16 @@ exports.handler = async (event) => {
         const resp = await fetch(url(`/shipments`), { method: "POST", headers: authH, body: JSON.stringify(shipment) });
         const out  = await wrap(resp);
         if (!out.ok) return bad(out.status, out.data);
+
         const loc = out.resp.headers.get("Location") || "";
         const id  = loc.split("/").filter(Boolean).pop() || null;
 
-        // Try to return the created resource body for convenience
+        // Return full created resource if possible
         let created = null;
         if (id) {
           try {
-            const r2  = await fetch(url(`/shipments/${encodeURIComponent(id)}`), { headers: authH });
-            const o2  = await wrap(r2);
+            const r2 = await fetch(url(`/shipments/${encodeURIComponent(id)}`), { headers: authH });
+            const o2 = await wrap(r2);
             if (o2.ok) created = o2.data;
           } catch {}
         }
@@ -131,11 +141,11 @@ exports.handler = async (event) => {
 
     // ---------- PATCH (batch add/remove | shipment refresh/buy) ----------
     if (event.httpMethod === "PATCH") {
-      const qp   = event.queryStringParameters || {};
-      const body = safeJSON(event.body);
+      const qp     = event.queryStringParameters || {};
+      const body   = safeJSON(event.body);
       const action = (body.action || "").toLowerCase();
 
-      // (A) Shipment: refresh rates
+      // (A) Shipment: refresh rates / update pkg details
       if (action === "refresh") {
         const id = String(body.shipment_id || body.id || qp.id || "");
         if (!id) return bad(400, "shipment_id required for refresh");
@@ -170,14 +180,16 @@ exports.handler = async (event) => {
                         : (oneIdFromBody ? [oneIdFromBody]
                         : (oneIdFromQuery ? [oneIdFromQuery] : []));
 
+      if (!action || (action !== "add" && action !== "remove")) {
+        return bad(400, "action must be refresh|buy|add|remove");
+      }
       if (!batchId || !shipmentIds.length) {
         return bad(400, "batch_id + at least one shipment id required");
       }
-      if (action !== "add" && action !== "remove") {
-        return bad(400, "action must be add|remove");
-      }
+
       const payload = { batch_id: Number(batchId), shipment_ids: shipmentIds };
       const path = action === "add" ? "/shipments/add_to_batch" : "/shipments/remove_from_batch";
+
       const resp = await fetch(url(path), { method: "PATCH", headers: authH, body: JSON.stringify(payload) });
       const out  = await wrap(resp);
       if (!out.ok) return bad(out.status, out.data);

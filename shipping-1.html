@@ -2843,7 +2843,11 @@ function metalToBadge(label){
     });
     const txt = await resp.text();
     let data; try { data = JSON.parse(txt); } catch { data = txt; }
-    if (!resp.ok) throw new Error(typeof data === "string" ? data : (data.error || JSON.stringify(data)));
+    if (!resp.ok) {
+     const msg = typeof data === "string" ? data
+             : (data.error || data.message || JSON.stringify(data, null, 2));
+     throw new Error(msg);
+   }
     return data;
   }
 
