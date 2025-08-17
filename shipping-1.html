@@ -3174,24 +3174,26 @@ function metalToBadge(label){
         };
       }
       // Normalize various API shapes → our "to_*" keys
-         function normalizeToAddressShape(raw){
-           // Accept either a flat object or { address: { … } }
-           const src = raw && typeof raw === "object" ? (raw.address || raw) : {};
-           const pick = (...keys) => keys.reduce((v,k)=> v ?? src?.[k], null) ?? "";
-          for (const k of keys) { const v = a[k]; if (v != null && v !== "") return v; }
-          return "";
-        };
-        const ccRaw = pick("to_country_code","country_code","country","country_iso2");
-        return {
-          to_name          : pick("to_name","name","recipient_name"),
-          to_address_1     : pick("to_address_1","address_1","address1","street1","line1","street"),
-          to_address_2     : pick("to_address_2","address_2","address2","street2","line2","unit","suite","apt"),
-          to_city          : pick("to_city","city","locality","town"),
-          to_province_code : pick("to_province_code","province_code","state_code","state","province","region","administrative_area"),
-          to_postal_code   : pick("to_postal_code","postal_code","zip","zip_code","postcode"),
-          to_country_code  : (ccRaw || "").toString().toUpperCase()
-        };
-      }
+       function normalizeToAddressShape(raw){
+         const src = raw && typeof raw === "object" ? (raw.address || raw) : {};
+         const get = (...keys) => {
+           for (const k of keys) {
+             const v = src?.[k];
+             if (v != null && String(v).trim() !== "") return String(v).trim();
+           }
+           return "";
+         };
+         const cc = (get("to_country_code","country_code","country","country_iso2") || "").toUpperCase();
+         return {
+           to_name          : get("to_name","name","recipient_name","full_name"),
+           to_address_1     : get("to_address_1","address_1","address1","street1","line1","street"),
+           to_address_2     : get("to_address_2","address_2","address2","street2","line2","unit","suite","apt","apartment","unit_number"),
+           to_city          : get("to_city","city","locality","town"),
+           to_province_code : get("to_province_code","province_code","state_code","state","province","region","administrative_area"),
+           to_postal_code   : get("to_postal_code","postal_code","zip","zip_code","postcode"),
+           to_country_code  : cc
+         };
+       }
       
       // Safe formatter (never prints "undefined")
       function fmtAddress(a){
