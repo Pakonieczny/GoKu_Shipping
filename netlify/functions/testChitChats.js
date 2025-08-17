@@ -120,7 +120,7 @@ exports.handler = async (event) => {
         }
       } catch {}
 
-      // B) Fallback variant some tenants expose
+      // B) Fallback: some deployments expose a shipments verify (use url()+authH)
       try {
         const r2 = await fetch(url("/shipments/verify"), {
           method: "POST",
@@ -149,33 +149,6 @@ exports.handler = async (event) => {
         const loc = out.resp.headers.get("Location") || "";
         const id  = loc.split("/").filter(Boolean).pop();
         return ok({ success: true, id, location: loc || null });
-      }
-
-      // address verification (best-guess endpoint name; adjust if your tenant differs)
-      if (action === "verify_to") {
-        const to = body.to || {};
-        // Try a dedicated address verification endpoint
-        let resp = await fetch(api("/addresses/verify"), {
-          method: "POST",
-          headers: authJson(),
-          body: JSON.stringify({ address: to })
-        });
-        let out  = await wrap(resp);
-
-        // Fallback: some deployments expose a shipments verify
-        if (!out.ok && out.status === 404) {
-          resp = await fetch(api("/shipments/verify"), {
-            method: "POST",
-            headers: authJson(),
-            body: JSON.stringify({ to })
-          });
-          out = await wrap(resp);
-        }
-        if (!out.ok) return bad(out.status, out.data);
-
-        // Normalize to a simple shape for the client
-        const suggested = out.data?.suggested || out.data?.normalized || out.data?.address || out.data;
-        return ok({ suggested });
       }
 
       // (2) create shipment

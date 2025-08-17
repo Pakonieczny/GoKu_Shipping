@@ -3259,25 +3259,38 @@ function metalToBadge(label){
       return true;
     }
 
-    async function maybeVerifyAddressBeforeStep1(){
-      const orig = addressFromInputs();
-      const out  = await callCc("POST", { action:"verify_to", to: orig });
-    const raw  = (out?.suggested ?? out?.normalized ?? out?.address ?? null);
-    if (!raw) return false;                           // nothing from API
-
-    const sugg = normalizeToAddressShape(raw);
-    const hasAny = Object.values(sugg || {}).some(v => String(v || "").trim() !== "");
-    if (!hasAny) return false;                        // all empty → skip
-
-    const changed = JSON.stringify({
-      ...orig, to_country_code: (orig.to_country_code||"").toUpperCase()
-    }) !== JSON.stringify({
-      ...sugg, to_country_code: (sugg.to_country_code||"").toUpperCase()
-    });
-
-    if (changed) return openVerifyModal(orig, sugg);
-    return false;
-  } // ← close maybeVerifyAddressBeforeStep1
+     async function maybeVerifyAddressBeforeStep1(){
+       const ccLog = (...args) => { try { console.debug("[CC Verify]", ...args); } catch {} };
+       const orig = addressFromInputs();
+       M.toast?.({ html: "Verifying address with Chit Chats…" });
+       ccLog("request", orig);
+    
+       const out  = await callCc("POST", { action:"verify_to", to: orig });
+       ccLog("response", out);
+    
+       const raw  = (out?.suggested ?? out?.normalized ?? out?.address ?? null);
+       if (!raw) {
+         M.toast?.({ html: "No address suggestions from Chit Chats" });
+         return false;                           // nothing from API
+       }
+    
+       const sugg = normalizeToAddressShape(raw);
+       const hasAny = Object.values(sugg || {}).some(v => String(v || "").trim() !== "");
+       if (!hasAny) return false;                        // all empty → skip
+    
+       const changed = JSON.stringify({
+         ...orig, to_country_code: (orig.to_country_code||"").toUpperCase()
+       }) !== JSON.stringify({
+         ...sugg, to_country_code: (sugg.to_country_code||"").toUpperCase()
+       });
+    
+       if (changed) {
+         ccLog("changed → opening compare modal", { orig, sugg });
+         return openVerifyModal(orig, sugg);
+       }
+       M.toast?.({ html: "Address already normalized" });
+       return false;
+     }
 
       /* ────────────────────────────────────────────────────────────── */
 
