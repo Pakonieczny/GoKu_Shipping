@@ -102,6 +102,36 @@ exports.handler = async (event) => {
       const body   = safeJSON(event.body);
       const action = (body.action || "").toLowerCase();
 
+        // (0) verify recipient address (best-effort; never throw)
+    if (action === "verify_to") {
+      const to = body.to || body.address || {};
+
+      // A) Try a dedicated address verify endpoint, if available
+      try {
+        const r1 = await fetch(url("/addresses/verify"), {
+          method: "POST",
+          headers: authH,
+          body: JSON.stringify({ address: to })
+        });
+        const o1 = await wrap(r1);
+        if (o1.ok) return ok(o1.data); // can contain { suggested | normalized | address }
+      } catch {}
+
+      // B) Fallback variant some tenants expose
+      try {
+        const r2 = await fetch(url("/shipments/verify"), {
+          method: "POST",
+          headers: authH,
+          body: JSON.stringify({ to })
+        });
+        const o2 = await wrap(r2);
+        if (o2.ok) return ok(o2.data);
+      } catch {}
+
+      // C) Graceful fallback so the UI continues without a scary 500
+      return ok({ suggested: null });
+    }
+
       // (1) create batch
       if (action === "create") {
         const payload = { description: (body.description || "").toString() };
