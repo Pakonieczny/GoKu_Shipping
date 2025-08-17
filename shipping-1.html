@@ -2956,15 +2956,14 @@ function metalToBadge(label){
       size_y     : Number(document.getElementById("cc_size_y").value || 0),
       size_z     : Number(document.getElementById("cc_size_z").value || 0),
       package_type: document.getElementById("cc_package_type").value,
-      ship_date  : (document.getElementById("cc_ship_date").value || "today"),
-      insurance_requested: document.getElementById("cc_insurance_requested").value === "true",
-       media_mail_requested: document.getElementById("cc_media_mail_requested").value === "true",
-       signature_requested : document.getElementById("cc_signature_requested").value === "true",
-      postage_type: "unknown"
+      ship_date  : (document.getElementById("cc_ship_date").value || new Date().toISOString().slice(0,10)),
+      insurance_requested : document.getElementById("cc_insurance_requested").value === "true",
+      media_mail_requested: document.getElementById("cc_media_mail_requested").value === "true",
+      signature_requested : document.getElementById("cc_signature_requested").value === "true"
+      // 🚫 no postage_type here
     };
     const out = await callCc("PATCH", { action:"refresh", shipment_id:id, payload });
-    const s   = out.shipment || out;
-    renderRates(s);
+    renderRates(out.shipment || out);
   }
 
   async function buySelected(){
