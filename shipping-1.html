@@ -406,6 +406,19 @@
     .select-dropdown.dropdown-trigger:focus{
       text-decoration:none !important;
       border-bottom:none !important;
+
+  /* OrangeRed field highlight */
+  .cc-missing .cc-field > input,
+  .cc-missing .cc-field > select,
+  .cc-missing .cc-field > textarea {
+    border:2px solid orangered !important;
+    box-shadow:0 0 0 2px rgba(255,69,0,.12);
+  }
+  .cc-missing label { color: orangered !important; }
+
+  /* Address diff colors */
+  .cc-diff-add { color: orangered; font-weight:700; }
+  .cc-diff-del { color:#b00020; text-decoration:line-through; }
     }
     
 
@@ -588,6 +601,31 @@
           <button id="ccBuy" disabled>Buy & Print</button>
         </div>
       </div>
+    </div>
+  </div>
+
+  <!-- Address Verify overlay (hidden until needed) -->
+  <div id="ccAddrVerify" style="display:none; position:absolute; inset:0; background:#fff; padding:28px; overflow:auto;">
+    <h3 style="margin-top:0">Verify shipping address</h3>
+    <p>We found a similar address in our database. Please pick one:</p>
+
+    <div style="display:grid; grid-template-columns:1fr 1fr; gap:28px; align-items:start;">
+      <div>
+        <h4 style="margin:0 0 8px 0">Original Address:</h4>
+        <div id="ccVerifyOriginal" style="white-space:pre-line; font-size:15px;"></div>
+        <button id="ccAddrEdit" class="btn-flat" style="margin-top:8px;">Edit</button>
+      </div>
+
+      <div>
+        <h4 style="margin:0 0 8px 0">Suggested Address:</h4>
+        <div id="ccVerifySuggested" style="white-space:pre-line; font-size:15px;"></div>
+      </div>
+    </div>
+
+    <div style="display:flex; gap:12px; margin-top:24px;">
+      <button id="ccKeepOriginal" class="btn grey darken-3">Keep Original Address</button>
+      <button id="ccUseSuggested" class="btn">Use Suggested Address</button>
+      <button id="ccAddrCancel" class="btn-flat">Cancel</button>
     </div>
   </div>
 
@@ -2566,436 +2604,652 @@ function metalToBadge(label){
     }
     });   // ← closes DOMContentLoaded handler
 
-/* =========================================================
- *  Chit Chats — search by order/tracking + batch add/remove
- *  Requires Netlify functions:
- *    - /.netlify/functions/chitChatSearch
- *    - /.netlify/functions/testChitChats
- *  Integrates with:
- *    #etsyOrderNumber, #trackingNumberInput, #carrierSelect
- *    #trackingLinkBtn (opens CC or USPS tracking)
- * =======================================================*/
-(function initChitChatsIntegration(){
+    /* =========================================================
+     *  Chit Chats — search by order/tracking + batch add/remove
+     *  Requires Netlify functions:
+     *    - /.netlify/functions/chitChatSearch
+     *    - /.netlify/functions/testChitChats
+     *  Integrates with:
+     *    #etsyOrderNumber, #trackingNumberInput, #carrierSelect
+     *    #trackingLinkBtn (opens CC or USPS tracking)
+     * =======================================================*/
+    (function initChitChatsIntegration(){
 
-  const carrierSel     = document.getElementById("carrierSelect");
-  const orderInp       = document.getElementById("etsyOrderNumber");
-  const trackingInp    = document.getElementById("trackingNumberInput");
-  const ccShipEl       = document.getElementById("ccShipmentId");
-  const ccBatchSelect  = document.getElementById("ccBatchSelect");
-  const ccBatchName    = document.getElementById("ccBatchName");
-  const createBtn      = document.getElementById("ccCreateBatchBtn");
-  const addBtn         = document.getElementById("ccAddToBatchBtn");
-  const removeBtn      = document.getElementById("ccRemoveFromBatchBtn");
+      const carrierSel     = document.getElementById("carrierSelect");
+      const orderInp       = document.getElementById("etsyOrderNumber");
+      const trackingInp    = document.getElementById("trackingNumberInput");
+      const ccShipEl       = document.getElementById("ccShipmentId");
+      const ccBatchSelect  = document.getElementById("ccBatchSelect");
+      const ccBatchName    = document.getElementById("ccBatchName");
+      const createBtn      = document.getElementById("ccCreateBatchBtn");
+      const addBtn         = document.getElementById("ccAddToBatchBtn");
+      const removeBtn      = document.getElementById("ccRemoveFromBatchBtn");
 
-  // Always use the Netlify functions base
-  const fnBase = "/.netlify/functions";
+      // Always use the Netlify functions base
+      const fnBase = "/.netlify/functions";
 
-  // --- Utils
-  const debounce = (fn, ms=250) => { let t; return (...a)=>{ clearTimeout(t); t = setTimeout(()=>fn(...a), ms); }; };
-  const reinitSelect = (el) => {
-    try {
-      if (window.M && window.M.FormSelect) {
-        const inst = window.M.FormSelect.getInstance(el);
-        if (inst) inst.destroy();
-        window.M.FormSelect.init(el);
+      // --- Utils
+      const debounce = (fn, ms=250) => { let t; return (...a)=>{ clearTimeout(t); t = setTimeout(()=>fn(...a), ms); }; };
+      const reinitSelect = (el) => {
+        try {
+          if (window.M && window.M.FormSelect) {
+            const inst = window.M.FormSelect.getInstance(el);
+            if (inst) inst.destroy();
+            window.M.FormSelect.init(el);
+          }
+        } catch {}
+      };
+
+      // Remember a batch we want to select (only if it’s still open)
+      let _desiredBatchId = "";
+
+      /** Try to select a batch id if it exists in the current open-only options */
+      function preselectBatchIfOpen(id){
+        _desiredBatchId = String(id || "").trim();
+        if (!_desiredBatchId || !ccBatchSelect) return;
+
+        const has = Array.from(ccBatchSelect.options || []).some(o => o.value === _desiredBatchId);
+        if (has) {
+          ccBatchSelect.value = _desiredBatchId;
+          reinitSelect(ccBatchSelect);
+        }
       }
-    } catch {}
-  };
 
-  // Remember a batch we want to select (only if it’s still open)
-  let _desiredBatchId = "";
-
-  /** Try to select a batch id if it exists in the current open-only options */
-  function preselectBatchIfOpen(id){
-    _desiredBatchId = String(id || "").trim();
-    if (!_desiredBatchId || !ccBatchSelect) return;
-
-    const has = Array.from(ccBatchSelect.options || []).some(o => o.value === _desiredBatchId);
-    if (has) {
-      ccBatchSelect.value = _desiredBatchId;
-      reinitSelect(ccBatchSelect);
-    }
-  }
-
-  async function safeJSON(resp){
-    const txt = await resp.text();
-    try { return JSON.parse(txt); } catch { return { error: txt.slice(0,200) }; }
-  }
-  async function callSearch(params){
-    const qs   = new URLSearchParams(params).toString();
-    const resp = await fetch(`${fnBase}/chitChatSearch?${qs}`, { credentials: "include" });
-    return await safeJSON(resp);
-  }
-
-  // --- UI setters
-  function setShipmentUI(s){
-    if (!s) {
-      if (ccShipEl) ccShipEl.value = "";
-      window.ccShipmentId = "";
-      // When no shipment is loaded, do not force a batch selection change.
-      return;
-    }
-
-    const sid = s?.id != null ? String(s.id) : "";
-    if (ccShipEl) ccShipEl.value = sid;
-    window.ccShipmentId    = sid;
-    window.currentCarrier  = "ChitChats";
-    window.currentTracking = s.carrier_tracking_code || sid || window.currentTracking;
-
-    // If this shipment already belongs to a batch, try to preselect it (only if it’s open)
-    if (s.batch_id != null) {
-      preselectBatchIfOpen(String(s.batch_id));
-    }
-  }
-
-  // --- Lookups
-  async function refreshFromOrderIfChitChats(){
-    const orderId = (orderInp?.value || "").trim();
-    if (!orderId) return;
-    try {
-      const res = await callSearch({ orderId });
-      const s   = (res.shipments || [])[0];
-      setShipmentUI(s);
-    } catch (e) {
-      console.warn("order search failed", e);
-    }
-  }
-  async function refreshFromTrackingIfChitChats(){
-    const tracking = (trackingInp?.value || "").trim();
-    if (!tracking) return;
-    try {
-      const res = await callSearch({ tracking });
-      const s   = (res.shipments || [])[0];
-      setShipmentUI(s);
-    } catch (e) {
-      console.warn("tracking search failed", e);
-    }
-  }
-
-  // --- Listeners (debounced + change)
-  orderInp   ?.addEventListener("input",  debounce(refreshFromOrderIfChitChats, 250));
-  orderInp   ?.addEventListener("change", refreshFromOrderIfChitChats);
-  trackingInp?.addEventListener("input",  debounce(refreshFromTrackingIfChitChats, 250));
-  trackingInp?.addEventListener("change", refreshFromTrackingIfChitChats);
-
-  // Kick if fields already have values
-  if ((orderInp?.value || "").trim())    refreshFromOrderIfChitChats();
-  if ((trackingInp?.value || "").trim()) refreshFromTrackingIfChitChats();
-
-  // --- Batches
-  async function fetchBatches(){
-    try {
-      // Open-only (pending) batches; received/closed are excluded by the API filter
-      const resp = await fetch(`${fnBase}/testChitChats?resource=batches&status=open`, { credentials: "include" });
-      const data = await safeJSON(resp);
-      const raw  = (data && (data.batches ?? data.data)) ?? data;
-      const list = Array.isArray(raw) ? raw : [];
-
-      ccBatchSelect.innerHTML =
-        `<option value="">Select Batch…</option>` +
-        list.map(b => {
-          const label = (b.description || b.name || `Batch ${b.id}`) + (b.status ? ` • ${b.status}` : "");
-          return `<option value="${b.id}">${label}</option>`;
-        }).join("");
-
-      reinitSelect(ccBatchSelect);
-
-      // If a shipment just told us its batch, try to apply it now (only works if still open)
-      if (_desiredBatchId) preselectBatchIfOpen(_desiredBatchId);
-    } catch (e) {
-      console.warn("fetchBatches failed", e);
-      if (window.M?.toast) M.toast({ html: "Failed to load Chit Chats batches" });
-    }
-  }
-
-  // Call once on load, and whenever config opens
-  fetchBatches();
-  document.getElementById("openConfigBtn")?.addEventListener("click", fetchBatches);
-
-  // Create a named batch
-  createBtn?.addEventListener("click", async () => {
-    try {
-      const desc = (ccBatchName.value || "").trim() || `UI ${new Date().toISOString().slice(0,10)}`;
-      const resp = await fetch(`${fnBase}/testChitChats`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        credentials: "include",
-        body: JSON.stringify({ action: "create", description: desc })
-      });
-      const out = await safeJSON(resp);
-      if (!resp.ok || !out?.success) throw new Error(out?.error || JSON.stringify(out||{}));
-      await fetchBatches();
-      if (out.id) {
-        ccBatchSelect.value = out.id;
-        reinitSelect(ccBatchSelect);
+      async function safeJSON(resp){
+        const txt = await resp.text();
+        try { return JSON.parse(txt); } catch { return { error: txt.slice(0,200) }; }
       }
-      ccBatchName.value = "";
-      if (window.M?.toast) M.toast({ html: "Batch created!" });
-    } catch (e) {
-      console.error(e);
-      if (window.M?.toast) M.toast({ html: "Create batch failed" });
-    }
-  });
+      async function callSearch(params){
+        const qs   = new URLSearchParams(params).toString();
+        const resp = await fetch(`${fnBase}/chitChatSearch?${qs}`, { credentials: "include" });
+        return await safeJSON(resp);
+      }
 
-  // Add/Remove current shipment
-  async function mutateBatch(op){
-    const shipmentId = String(window.ccShipmentId ?? "").trim();
-    const batchId    = String(ccBatchSelect?.value ?? "").trim();
-    if (!shipmentId) { if (window.M?.toast) M.toast({ html: "No shipment loaded yet" }); return; }
-    if (!batchId)    { if (window.M?.toast) M.toast({ html: "Choose a batch first" });  return; }
-    try {
-      const resp = await fetch(`${fnBase}/testChitChats?id=${encodeURIComponent(shipmentId)}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        credentials: "include",
-        body: JSON.stringify({ action: op, batch_id: batchId })
+      // --- UI setters
+      function setShipmentUI(s){
+        if (!s) {
+          if (ccShipEl) ccShipEl.value = "";
+          window.ccShipmentId = "";
+          // When no shipment is loaded, do not force a batch selection change.
+          return;
+        }
+
+        const sid = s?.id != null ? String(s.id) : "";
+        if (ccShipEl) ccShipEl.value = sid;
+        window.ccShipmentId    = sid;
+        window.currentCarrier  = "ChitChats";
+        window.currentTracking = s.carrier_tracking_code || sid || window.currentTracking;
+
+        // If this shipment already belongs to a batch, try to preselect it (only if it’s open)
+        if (s.batch_id != null) {
+          preselectBatchIfOpen(String(s.batch_id));
+        }
+      }
+
+      // --- Lookups
+      async function refreshFromOrderIfChitChats(){
+        const orderId = (orderInp?.value || "").trim();
+        if (!orderId) return;
+        try {
+          const res = await callSearch({ orderId });
+          const s   = (res.shipments || [])[0];
+          setShipmentUI(s);
+        } catch (e) {
+          console.warn("order search failed", e);
+        }
+      }
+      async function refreshFromTrackingIfChitChats(){
+        const tracking = (trackingInp?.value || "").trim();
+        if (!tracking) return;
+        try {
+          const res = await callSearch({ tracking });
+          const s   = (res.shipments || [])[0];
+          setShipmentUI(s);
+        } catch (e) {
+          console.warn("tracking search failed", e);
+        }
+      }
+
+      // --- Listeners (debounced + change)
+      orderInp   ?.addEventListener("input",  debounce(refreshFromOrderIfChitChats, 250));
+      orderInp   ?.addEventListener("change", refreshFromOrderIfChitChats);
+      trackingInp?.addEventListener("input",  debounce(refreshFromTrackingIfChitChats, 250));
+      trackingInp?.addEventListener("change", refreshFromTrackingIfChitChats);
+
+      // Kick if fields already have values
+      if ((orderInp?.value || "").trim())    refreshFromOrderIfChitChats();
+      if ((trackingInp?.value || "").trim()) refreshFromTrackingIfChitChats();
+
+      // --- Batches
+      async function fetchBatches(){
+        try {
+          // Open-only (pending) batches; received/closed are excluded by the API filter
+          const resp = await fetch(`${fnBase}/testChitChats?resource=batches&status=open`, { credentials: "include" });
+          const data = await safeJSON(resp);
+          const raw  = (data && (data.batches ?? data.data)) ?? data;
+          const list = Array.isArray(raw) ? raw : [];
+
+          ccBatchSelect.innerHTML =
+            `<option value="">Select Batch…</option>` +
+            list.map(b => {
+              const label = (b.description || b.name || `Batch ${b.id}`) + (b.status ? ` • ${b.status}` : "");
+              return `<option value="${b.id}">${label}</option>`;
+            }).join("");
+
+          reinitSelect(ccBatchSelect);
+
+          // If a shipment just told us its batch, try to apply it now (only works if still open)
+          if (_desiredBatchId) preselectBatchIfOpen(_desiredBatchId);
+        } catch (e) {
+          console.warn("fetchBatches failed", e);
+          if (window.M?.toast) M.toast({ html: "Failed to load Chit Chats batches" });
+        }
+      }
+
+      // Call once on load, and whenever config opens
+      fetchBatches();
+      document.getElementById("openConfigBtn")?.addEventListener("click", fetchBatches);
+
+      // Create a named batch
+      createBtn?.addEventListener("click", async () => {
+        try {
+          const desc = (ccBatchName.value || "").trim() || `UI ${new Date().toISOString().slice(0,10)}`;
+          const resp = await fetch(`${fnBase}/testChitChats`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            credentials: "include",
+            body: JSON.stringify({ action: "create", description: desc })
+          });
+          const out = await safeJSON(resp);
+          if (!resp.ok || !out?.success) throw new Error(out?.error || JSON.stringify(out||{}));
+          await fetchBatches();
+          if (out.id) {
+            ccBatchSelect.value = out.id;
+            reinitSelect(ccBatchSelect);
+          }
+          ccBatchName.value = "";
+          if (window.M?.toast) M.toast({ html: "Batch created!" });
+        } catch (e) {
+          console.error(e);
+          if (window.M?.toast) M.toast({ html: "Create batch failed" });
+        }
       });
-      const out = await safeJSON(resp);
-      if (!resp.ok || !out?.success) throw new Error(out?.error || JSON.stringify(out||{}));
-      if (window.M?.toast) M.toast({ html: op === "add" ? "Added to batch" : "Removed from batch" });
-    } catch (e) {
-      console.error(e);
-      if (window.M?.toast) M.toast({ html: "Batch update failed" });
-    }
-  }
-  addBtn   ?.addEventListener("click", () => mutateBatch("add"));
-  removeBtn?.addEventListener("click", () => mutateBatch("remove"));
 
-  // Tiny API ping so connectivity issues are obvious in console
-  (async () => {
-    try {
-      const ping = await fetch(`${fnBase}/testChitChats`);
-      if (!ping.ok) console.warn("Chit Chats function ping failed", ping.status);
-    } catch (e) {
-      console.warn("Chit Chats function unreachable:", e);
-    }
-  })();
+      // Add/Remove current shipment
+      async function mutateBatch(op){
+        const shipmentId = String(window.ccShipmentId ?? "").trim();
+        const batchId    = String(ccBatchSelect?.value ?? "").trim();
+        if (!shipmentId) { if (window.M?.toast) M.toast({ html: "No shipment loaded yet" }); return; }
+        if (!batchId)    { if (window.M?.toast) M.toast({ html: "Choose a batch first" });  return; }
+        try {
+          const resp = await fetch(`${fnBase}/testChitChats?id=${encodeURIComponent(shipmentId)}`, {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            credentials: "include",
+            body: JSON.stringify({ action: op, batch_id: batchId })
+          });
+          const out = await safeJSON(resp);
+          if (!resp.ok || !out?.success) throw new Error(out?.error || JSON.stringify(out||{}));
+          if (window.M?.toast) M.toast({ html: op === "add" ? "Added to batch" : "Removed from batch" });
+        } catch (e) {
+          console.error(e);
+          if (window.M?.toast) M.toast({ html: "Batch update failed" });
+        }
+      }
+      addBtn   ?.addEventListener("click", () => mutateBatch("add"));
+      removeBtn?.addEventListener("click", () => mutateBatch("remove"));
 
-  // Expose minimal hooks for the Enter-key flow
-  window.cc = {
-    searchByOrder:    refreshFromOrderIfChitChats,
-    searchByTracking: refreshFromTrackingIfChitChats
-  };
-})();
+      // Tiny API ping so connectivity issues are obvious in console
+      (async () => {
+        try {
+          const ping = await fetch(`${fnBase}/testChitChats`);
+          if (!ping.ok) console.warn("Chit Chats function ping failed", ping.status);
+        } catch (e) {
+          console.warn("Chit Chats function unreachable:", e);
+        }
+      })();
 
-/* ===== Chit Chats Edit Shipment Wizard (create → refresh rates → buy) ===== */
-(function(){
-  const modal     = document.getElementById("ccEditModal");
-  const editBtn   = document.getElementById("ccEditBtn");
-  const pillNodes = Array.from(document.querySelectorAll(".cc-step-pill"));
-  const steps     = [0,1,2,3].map(i => document.getElementById("ccStep"+i));
-  const ratesList = document.getElementById("ccRates");
-  const btnClose  = document.getElementById("ccClose");
-  const btnBack   = document.getElementById("ccBack");
-  const btnNext   = document.getElementById("ccNext");
-  const btnRefresh= document.getElementById("ccRefreshRates");
-  const btnBuy    = document.getElementById("ccBuy");
-  const idInput   = document.getElementById("ccShipmentId");
-  const fnBase    = "/.netlify/functions";
+      // Expose minimal hooks for the Enter-key flow
+      window.cc = {
+        searchByOrder:    refreshFromOrderIfChitChats,
+        searchByTracking: refreshFromTrackingIfChitChats
+      };
+    })();
 
-  let currentStep = 0, selectedPostageType = null;
-  function showStep(i){
-    currentStep = Math.max(0, Math.min(3, i));
-    steps.forEach((el,idx) => el.classList.toggle("active", idx===currentStep));
-    pillNodes.forEach((el,idx) => el.classList.toggle("active", idx===currentStep));
-    btnBack.disabled = currentStep === 0;
-    btnNext.disabled = currentStep === 3;
-    btnRefresh.style.display = currentStep === 3 ? "inline-block" : "none";
-    btnBuy.style.display     = currentStep === 3 ? "inline-block" : "none";
-  }
+    /* ===== Chit Chats Edit Shipment Wizard (create → refresh rates → buy) ===== */
+    (function(){
+      const modal     = document.getElementById("ccEditModal");
+      const editBtn   = document.getElementById("ccEditBtn");
+      const pillNodes = Array.from(document.querySelectorAll(".cc-step-pill"));
+      const steps     = [0,1,2,3].map(i => document.getElementById("ccStep"+i));
+      const ratesList = document.getElementById("ccRates");
+      const btnClose  = document.getElementById("ccClose");
+      const btnBack   = document.getElementById("ccBack");
+      const btnNext   = document.getElementById("ccNext");
+      const btnRefresh= document.getElementById("ccRefreshRates");
+      const btnBuy    = document.getElementById("ccBuy");
+      const idInput   = document.getElementById("ccShipmentId");
+      const fnBase    = "/.netlify/functions";
 
-  function parseShipToBox(){
-    const box = document.getElementById("shipAddressBox");
-    const txt = (box?.value || "").replace(/^SHIP TO:\n?/i,"").trim();
-    const lines = txt.split(/\n+/).map(l => l.trim()).filter(Boolean);
-    const out = {};
-    out.to_name = lines[0] || "";
-    const last = lines[lines.length-1] || "";
-    if (/canada/i.test(last)) out.to_country_code = "CA";
-    // US detection: single escapes; group alternatives
-    else if (/(united\s*states|USA|US)/i.test(last)) out.to_country_code = "US";
-    const cityLine = lines.find(l => /,/.test(l)) || "";
-    // City, ST ZIP — remove double escapes and put '-' at the end of the class to avoid range errors
-    const m = cityLine.match(/^([^,]+),\s*([A-Za-z]{2})\s+([A-Za-z0-9 -]{3,10})/);
-    if (m){ out.to_city=m[1].trim(); out.to_province_code=m[2].trim(); out.to_postal_code=m[3].trim(); }
-    out.to_address_1 = lines[1] || "";
-    out.to_address_2 = (lines[2] || "").match(/(unit|apt)/i) ? lines[2] : "";
-    return out;
-  }
-  function modalOpen(){
-    const seed = parseShipToBox();
-    document.getElementById("cc_to_name").value = seed.to_name || "";
-    document.getElementById("cc_to_address_1").value = seed.to_address_1 || "";
-    document.getElementById("cc_to_address_2").value = seed.to_address_2 || "";
-    document.getElementById("cc_to_city").value = seed.to_city || "";
-    document.getElementById("cc_to_province_code").value = seed.to_province_code || "";
-    document.getElementById("cc_to_postal_code").value = seed.to_postal_code || "";
-    document.getElementById("cc_to_country_code").value = seed.to_country_code || "";
-    document.getElementById("cc_value_currency").value = seed.to_country_code === "CA" ? "cad" : "usd";
-    selectedPostageType = null; btnBuy.disabled = true; ratesList.innerHTML = "";
-    modal.style.display = "block"; showStep(0);
-  }
-  function modalClose(){ modal.style.display = "none"; }
+      let currentStep = 0, selectedPostageType = null;
+      function showStep(i){
+        currentStep = Math.max(0, Math.min(3, i));
+        steps.forEach((el,idx) => el.classList.toggle("active", idx===currentStep));
+        pillNodes.forEach((el,idx) => el.classList.toggle("active", idx===currentStep));
+        btnBack.disabled = currentStep === 0;
+        btnNext.disabled = currentStep === 3;
+        btnRefresh.style.display = currentStep === 3 ? "inline-block" : "none";
+        btnBuy.style.display     = currentStep === 3 ? "inline-block" : "none";
+      }
 
-  async function callCc(method, body, qs=""){
-    const resp = await fetch(`${fnBase}/testChitChats${qs}`, {
-      method, headers: { "Content-Type":"application/json" }, body: body ? JSON.stringify(body) : undefined
-    });
-    const txt = await resp.text();
-    let data; try { data = JSON.parse(txt); } catch { data = txt; }
-    if (!resp.ok) {
-    const pick = (k) => (data && typeof data[k] === "string" ? data[k] : null);
-    const msg = typeof data === "string"
-      ? data
-      : (pick("error") || pick("message") || JSON.stringify(data, null, 2));
-    throw new Error(msg);
-   }
-    return data;
-  }
+      function parseShipToBox(){
+        const box = document.getElementById("shipAddressBox");
+        const txt = (box?.value || "").replace(/^SHIP TO:\n?/i,"").trim();
+        const lines = txt.split(/\n+/).map(l => l.trim()).filter(Boolean);
+        const out = {};
+        out.to_name = lines[0] || "";
+        const last = lines[lines.length-1] || "";
+        if (/canada/i.test(last)) out.to_country_code = "CA";
+        // US detection: single escapes; group alternatives
+        else if (/(united\s*states|USA|US)/i.test(last)) out.to_country_code = "US";
+        const cityLine = lines.find(l => /,/.test(l)) || "";
+        // City, ST ZIP — remove double escapes and put '-' at the end of the class to avoid range errors
+        const m = cityLine.match(/^([^,]+),\s*([A-Za-z]{2})\s+([A-Za-z0-9 -]{3,10})/);
+        if (m){ out.to_city=m[1].trim(); out.to_province_code=m[2].trim(); out.to_postal_code=m[3].trim(); }
+        out.to_address_1 = lines[1] || "";
+        out.to_address_2 = (lines[2] || "").match(/(unit|apt)/i) ? lines[2] : "";
+        return out;
+      }
+      function modalOpen(){
+        const seed = parseShipToBox();
+        document.getElementById("cc_to_name").value = seed.to_name || "";
+        document.getElementById("cc_to_address_1").value = seed.to_address_1 || "";
+        document.getElementById("cc_to_address_2").value = seed.to_address_2 || "";
+        document.getElementById("cc_to_city").value = seed.to_city || "";
+        document.getElementById("cc_to_province_code").value = seed.to_province_code || "";
+        document.getElementById("cc_to_postal_code").value = seed.to_postal_code || "";
+        document.getElementById("cc_to_country_code").value = seed.to_country_code || "";
+        document.getElementById("cc_value_currency").value = seed.to_country_code === "CA" ? "cad" : "usd";
+        selectedPostageType = null; btnBuy.disabled = true; ratesList.innerHTML = "";
+        modal.style.display = "block"; showStep(0);
+      }
+      function modalClose(){ modal.style.display = "none"; }
 
-  async function ensureShipment(){
-    const id = (idInput.value || "").trim();
-    if (id) return await callCc("GET", null, `?resource=shipment&id=${encodeURIComponent(id)}`);
-    const out = await callCc("POST", { action:"create_shipment", shipment: buildShipmentPayload() });
-    if (out && out.id) idInput.value = out.id;
-    return out.shipment || (out.id ? await callCc("GET", null, `?resource=shipment&id=${encodeURIComponent(out.id)}`) : null);
-  }
+      /* ---------- Enhanced fetch wrapper (keeps raw error for mapping) ---------- */
+      async function callCc(method, body, qs=""){
+        const resp = await fetch(`${fnBase}/testChitChats${qs}`, {
+          method,
+          headers: { "Content-Type":"application/json" },
+          body: body ? JSON.stringify(body) : undefined
+        });
+        const text = await resp.text();
+        let data; try { data = JSON.parse(text); } catch { data = text; }
 
-  function buildShipmentPayload(){
-    const to = {
-      to_name: document.getElementById("cc_to_name").value.trim(),
-      to_address_1: document.getElementById("cc_to_address_1").value.trim(),
-      to_address_2: document.getElementById("cc_to_address_2").value.trim() || null,
-      to_city: document.getElementById("cc_to_city").value.trim(),
-      to_province_code: document.getElementById("cc_to_province_code").value.trim(),
-      to_postal_code: document.getElementById("cc_to_postal_code").value.trim(),
-      to_country_code: document.getElementById("cc_to_country_code").value.trim().toUpperCase(),
-      to_phone: document.getElementById("cc_to_phone").value.trim() || null,
-      to_email: document.getElementById("cc_to_email").value.trim() || null
-    };
-    const valueCurrency = document.getElementById("cc_value_currency").value;
-    const line = {
-      description: document.getElementById("cc_item_description").value.trim(),
-      quantity: Number(document.getElementById("cc_item_qty").value || 1),
-      unit_value: Number(document.getElementById("cc_item_unit_value").value || 0),
-      hs_tariff_code: document.getElementById("cc_item_hs_tariff_code").value.trim() || null,
-      origin_country: document.getElementById("cc_item_origin_country").value.trim().toUpperCase() || null,
-      manufacture_country: document.getElementById("cc_item_manufacture_country").value.trim().toUpperCase() || null,
-      manufacturer_contact      : document.getElementById("cc_item_manufacturer_contact").value.trim() || null,
-      manufacturer_street       : document.getElementById("cc_item_manufacturer_street").value.trim() || null,
-      manufacturer_city         : document.getElementById("cc_item_manufacturer_city").value.trim() || null,
-      manufacturer_province_code: document.getElementById("cc_item_manufacturer_province_code").value.trim() || null,
-      manufacturer_postal_code  : document.getElementById("cc_item_manufacturer_postal_code").value.trim() || null,
-      manufacturer_phone        : document.getElementById("cc_item_manufacturer_phone").value.trim() || null,
-      manufacturer_email        : document.getElementById("cc_item_manufacturer_email").value.trim() || null
-    };
-    const pkg = {
-      package_type: document.getElementById("cc_package_type").value,
-      size_unit   : document.getElementById("cc_size_unit").value,
-      size_x      : Number(document.getElementById("cc_size_x").value || 0),
-      size_y      : Number(document.getElementById("cc_size_y").value || 0),
-      size_z      : Number(document.getElementById("cc_size_z").value || 0),
-      weight_unit : document.getElementById("cc_weight_unit").value,
-      weight      : Number(document.getElementById("cc_weight").value || 0),
-      insurance_requested : document.getElementById("cc_insurance_requested").value === "true",
-      signature_requested : document.getElementById("cc_signature_requested").value === "true",
-      media_mail_requested: document.getElementById("cc_media_mail_requested").value === "true",
-      ship_date   : (document.getElementById("cc_ship_date").value || "today")
-    };
-    return {
-      ...to,
-      package_contents: document.getElementById("cc_package_contents").value,
-      order_id       : (document.getElementById("cc_order_id").value || document.getElementById("etsyOrderNumber")?.value || "").trim() || null,
-      description    : line.description,
-      value          : String((line.unit_value || 0) * (line.quantity || 1)),
-      value_currency : valueCurrency,
-      postage_type   : "unknown",
-      line_items     : [{
-        description: line.description, quantity: line.quantity,
-        unit_value: String(line.unit_value), origin_country: line.origin_country,
-        hs_tariff_code: line.hs_tariff_code, manufacture_country: line.manufacture_country,
-        manufacturer_contact: line.manufacturer_contact,
-        manufacturer_street: line.manufacturer_street,
-        manufacturer_city: line.manufacturer_city,
-        manufacturer_province_code: line.manufacturer_province_code,
-        manufacturer_postal_code: line.manufacturer_postal_code,
-        manufacturer_phone: line.manufacturer_phone,
-        manufacturer_email: line.manufacturer_email
-      }],
-      ...pkg
-    };
-  }
+        if (!resp.ok) {
+          const pick = k => (data && typeof data[k] === "string" ? data[k] : null);
+          const message = typeof data === "string"
+            ? data
+            : (pick("error") || pick("message") || JSON.stringify(data, null, 2));
 
-  function renderRates(s){
-    const rates = (s && s.rates) || [];
-    ratesList.innerHTML = "";
-    rates.forEach(r => {
-      const li = document.createElement("li");
-      li.dataset.postageType = r.postage_type;
-      const left = document.createElement("div");
-      left.innerHTML = `<div style="font-weight:600">${r.service_name || r.postage_type}</div>
-                        <div style="font-size:12px;opacity:.8">${(r.estimated_delivery_days || r.delivery_days || "")} business days</div>`;
-      const right = document.createElement("div");
-      right.innerHTML = `<div style="font-weight:700">$${Number(r.payment_amount || r.rate || 0).toFixed(2)}</div>`;
-      li.appendChild(left); li.appendChild(right);
-      li.addEventListener("click", () => {
-        [...ratesList.children].forEach(n => n.classList.remove("selected"));
-        li.classList.add("selected"); selectedPostageType = li.dataset.postageType; btnBuy.disabled = !selectedPostageType;
-      });
-      ratesList.appendChild(li);
-    });
-  }
+          const e = new Error(message);
+          e.status = resp.status;
+          e.raw    = data;
+          throw e;
+        }
+        return data;
+      }
 
-  async function refreshRates(){
-    const id = (idInput.value || "").trim();
-    const payload = {
-      weight_unit: document.getElementById("cc_weight_unit").value,
-      weight     : Number(document.getElementById("cc_weight").value || 0),
-      size_unit  : document.getElementById("cc_size_unit").value,
-      size_x     : Number(document.getElementById("cc_size_x").value || 0),
-      size_y     : Number(document.getElementById("cc_size_y").value || 0),
-      size_z     : Number(document.getElementById("cc_size_z").value || 0),
-      package_type: document.getElementById("cc_package_type").value,
-      ship_date  : (document.getElementById("cc_ship_date").value || new Date().toISOString().slice(0,10)),
-      insurance_requested : document.getElementById("cc_insurance_requested").value === "true",
-      media_mail_requested: document.getElementById("cc_media_mail_requested").value === "true",
-      signature_requested : document.getElementById("cc_signature_requested").value === "true"
-      // 🚫 no postage_type here
-    };
-    const out = await callCc("PATCH", { action:"refresh", shipment_id:id, payload });
-    renderRates(out.shipment || out);
-  }
-
-  async function buySelected(){
-    const id = (idInput.value || "").trim();
-    if (!id || !selectedPostageType) return;
-    await callCc("PATCH", { action:"buy", shipment_id:id, postage_type:selectedPostageType });
-    const det = await callCc("GET", null, `?resource=shipment&id=${encodeURIComponent(id)}`);
-    const pdf = det.postage_label_pdf_url || det.postage_label_png_url;
-    if (pdf) window.open(pdf, "_blank");
-    else M.toast?.({ html:"Label purchased. Refresh later for label URL." });
-  }
-
-  if (editBtn) editBtn.addEventListener("click", modalOpen);
-  btnClose.addEventListener("click", () => modalClose());
-  btnBack .addEventListener("click", () => showStep(currentStep-1));
-  btnNext.addEventListener("click", async () => {
-    if (currentStep < 2) { showStep(currentStep + 1); return; }
-    if (currentStep === 2) {
-      try {
-        await ensureShipment();
+      async function ensureShipment(){
         const id = (idInput.value || "").trim();
-        if (!id) { M.toast?.({ html: "Could not create shipment — check Recipient & Description." }); return; }
-        await refreshRates();
-        showStep(3);
-      } catch (err) {
-        M.toast?.({ html: "Chit Chats error: " + err.message });
+        if (id) return await callCc("GET", null, `?resource=shipment&id=${encodeURIComponent(id)}`);
+        const out = await callCc("POST", { action:"create_shipment", shipment: buildShipmentPayload() });
+        if (out && out.id) idInput.value = out.id;
+        return out.shipment || (out.id ? await callCc("GET", null, `?resource=shipment&id=${encodeURIComponent(out.id)}`) : null);
       }
-    }
-  });
-  btnRefresh.addEventListener("click", async () => { await ensureShipment(); await refreshRates(); });
-  btnBuy    .addEventListener("click", buySelected);
-})();
+
+      function buildShipmentPayload(){
+        const to = {
+          to_name: document.getElementById("cc_to_name").value.trim(),
+          to_address_1: document.getElementById("cc_to_address_1").value.trim(),
+          to_address_2: document.getElementById("cc_to_address_2").value.trim() || null,
+          to_city: document.getElementById("cc_to_city").value.trim(),
+          to_province_code: document.getElementById("cc_to_province_code").value.trim(),
+          to_postal_code: document.getElementById("cc_to_postal_code").value.trim(),
+          to_country_code: document.getElementById("cc_to_country_code").value.trim().toUpperCase(),
+          to_phone: document.getElementById("cc_to_phone").value.trim() || null,
+          to_email: document.getElementById("cc_to_email").value.trim() || null
+        };
+        const valueCurrency = document.getElementById("cc_value_currency").value;
+        const line = {
+          description: document.getElementById("cc_item_description").value.trim(),
+          quantity: Number(document.getElementById("cc_item_qty").value || 1),
+          unit_value: Number(document.getElementById("cc_item_unit_value").value || 0),
+          hs_tariff_code: document.getElementById("cc_item_hs_tariff_code").value.trim() || null,
+          origin_country: document.getElementById("cc_item_origin_country").value.trim().toUpperCase() || null,
+          manufacture_country: document.getElementById("cc_item_manufacture_country").value.trim().toUpperCase() || null,
+          manufacturer_contact      : document.getElementById("cc_item_manufacturer_contact").value.trim() || null,
+          manufacturer_street       : document.getElementById("cc_item_manufacturer_street").value.trim() || null,
+          manufacturer_city         : document.getElementById("cc_item_manufacturer_city").value.trim() || null,
+          manufacturer_province_code: document.getElementById("cc_item_manufacturer_province_code").value.trim() || null,
+          manufacturer_postal_code  : document.getElementById("cc_item_manufacturer_postal_code").value.trim() || null,
+          manufacturer_phone        : document.getElementById("cc_item_manufacturer_phone").value.trim() || null,
+          manufacturer_email        : document.getElementById("cc_item_manufacturer_email").value.trim() || null
+        };
+        const pkg = {
+          package_type: document.getElementById("cc_package_type").value,
+          size_unit   : document.getElementById("cc_size_unit").value,
+          size_x      : Number(document.getElementById("cc_size_x").value || 0),
+          size_y      : Number(document.getElementById("cc_size_y").value || 0),
+          size_z      : Number(document.getElementById("cc_size_z").value || 0),
+          weight_unit : document.getElementById("cc_weight_unit").value,
+          weight      : Number(document.getElementById("cc_weight").value || 0),
+          insurance_requested : document.getElementById("cc_insurance_requested").value === "true",
+          signature_requested : document.getElementById("cc_signature_requested").value === "true",
+          media_mail_requested: document.getElementById("cc_media_mail_requested").value === "true",
+          ship_date   : (document.getElementById("cc_ship_date").value || "today")
+        };
+        return {
+          ...to,
+          package_contents: document.getElementById("cc_package_contents").value,
+          order_id       : (document.getElementById("cc_order_id").value || document.getElementById("etsyOrderNumber")?.value || "").trim() || null,
+          description    : line.description,
+          value          : String((line.unit_value || 0) * (line.quantity || 1)),
+          value_currency : valueCurrency,
+          postage_type   : "unknown",
+          line_items     : [{
+            description: line.description, quantity: line.quantity,
+            unit_value: String(line.unit_value), origin_country: line.origin_country,
+            hs_tariff_code: line.hs_tariff_code, manufacture_country: line.manufacture_country,
+            manufacturer_contact: line.manufacturer_contact,
+            manufacturer_street: line.manufacturer_street,
+            manufacturer_city: line.manufacturer_city,
+            manufacturer_province_code: line.manufacturer_province_code,
+            manufacturer_postal_code: line.manufacturer_postal_code,
+            manufacturer_phone: line.manufacturer_phone,
+            manufacturer_email: line.manufacturer_email
+          }],
+          ...pkg
+        };
+      }
+
+      function renderRates(s){
+        const rates = (s && s.rates) || [];
+        ratesList.innerHTML = "";
+        rates.forEach(r => {
+          const li = document.createElement("li");
+          li.dataset.postageType = r.postage_type;
+          const left = document.createElement("div");
+          left.innerHTML = `<div style="font-weight:600">${r.service_name || r.postage_type}</div>
+                            <div style="font-size:12px;opacity:.8">${(r.estimated_delivery_days || r.delivery_days || "")} business days</div>`;
+          const right = document.createElement("div");
+          right.innerHTML = `<div style="font-weight:700">$${Number(r.payment_amount || r.rate || 0).toFixed(2)}</div>`;
+          li.appendChild(left); li.appendChild(right);
+          li.addEventListener("click", () => {
+            [...ratesList.children].forEach(n => n.classList.remove("selected"));
+            li.classList.add("selected"); selectedPostageType = li.dataset.postageType; btnBuy.disabled = !selectedPostageType;
+          });
+          ratesList.appendChild(li);
+        });
+      }
+
+      async function refreshRates(){
+        const id = (idInput.value || "").trim();
+        const payload = {
+          weight_unit: document.getElementById("cc_weight_unit").value,
+          weight     : Number(document.getElementById("cc_weight").value || 0),
+          size_unit  : document.getElementById("cc_size_unit").value,
+          size_x     : Number(document.getElementById("cc_size_x").value || 0),
+          size_y     : Number(document.getElementById("cc_size_y").value || 0),
+          size_z     : Number(document.getElementById("cc_size_z").value || 0),
+          package_type: document.getElementById("cc_package_type").value,
+          ship_date  : (document.getElementById("cc_ship_date").value || new Date().toISOString().slice(0,10)),
+          insurance_requested : document.getElementById("cc_insurance_requested").value === "true",
+          media_mail_requested: document.getElementById("cc_media_mail_requested").value === "true",
+          signature_requested : document.getElementById("cc_signature_requested").value === "true"
+          // 🚫 no postage_type here
+        };
+        const out = await callCc("PATCH", { action:"refresh", shipment_id:id, payload });
+        renderRates(out.shipment || out);
+      }
+
+      async function buySelected(){
+        const id = (idInput.value || "").trim();
+        if (!id || !selectedPostageType) return;
+        await callCc("PATCH", { action:"buy", shipment_id:id, postage_type:selectedPostageType });
+        const det = await callCc("GET", null, `?resource=shipment&id=${encodeURIComponent(id)}`);
+        const pdf = det.postage_label_pdf_url || det.postage_label_png_url;
+        if (pdf) window.open(pdf, "_blank");
+        else M.toast?.({ html:"Label purchased. Refresh later for label URL." });
+      }
+
+      if (editBtn) editBtn.addEventListener("click", modalOpen);
+      btnClose.addEventListener("click", () => modalClose());
+      btnBack .addEventListener("click", () => showStep(currentStep-1));
+
+      /* ──────────────────────────────────────────────────────────────
+       *  JS HELPERS (validation + toasts + address compare)
+       * ────────────────────────────────────────────────────────────── */
+
+      // map API field names → DOM ids
+      const FIELD_MAP = {
+        // step 0 - recipient
+        to_name: "cc_to_name",
+        to_address_1: "cc_to_address_1",
+        to_address_2: "cc_to_address_2",
+        to_city: "cc_to_city",
+        to_province_code: "cc_to_province_code",
+        to_postal_code: "cc_to_postal_code",
+        to_country_code: "cc_to_country_code",
+        to_phone: "cc_to_phone",
+        to_email: "cc_to_email",
+        // step 1 - description
+        description: "cc_item_description",
+        quantity: "cc_item_qty",
+        unit_value: "cc_item_unit_value",
+        hs_tariff_code: "cc_item_hs_tariff_code",
+        origin_country: "cc_item_origin_country",
+        manufacture_country: "cc_item_manufacture_country",
+        // step 2 - package
+        package_type: "cc_package_type",
+        size_unit: "cc_size_unit",
+        weight_unit: "cc_weight_unit",
+        size_x: "cc_size_x",
+        size_y: "cc_size_y",
+        size_z: "cc_size_z",
+        weight: "cc_weight",
+        ship_date: "cc_ship_date",
+        insurance_requested: "cc_insurance_requested",
+        signature_requested: "cc_signature_requested",
+        media_mail_requested: "cc_media_mail_requested"
+      };
+
+      function getStepRoot(step){ return document.getElementById(`ccStep${step}`); }
+
+      function clearMissing(step){
+        const root = getStepRoot(step);
+        root?.classList.remove("cc-missing");
+        [...root?.querySelectorAll(".cc-field") || []].forEach(w => w.style.removeProperty("border"));
+      }
+
+      function markMissing(step, ids){
+        if (!ids.length) return;
+        const root = getStepRoot(step);
+        root?.classList.add("cc-missing");
+        ids.forEach(id=>{
+          const el = document.getElementById(id);
+          const wrap = el?.closest(".cc-field");
+          if (wrap) wrap.style.border = "2px solid orangered";
+          else if (el) el.style.border = "2px solid orangered";
+        });
+      }
+
+      function validateStep(step){
+        const missing = [];
+        if (step === 0){
+          ["to_name","to_address_1","to_city","to_province_code","to_postal_code","to_country_code"]
+            .forEach(k => { const v = document.getElementById(FIELD_MAP[k]).value.trim(); if (!v) missing.push(FIELD_MAP[k]);});
+        } else if (step === 1){
+          const q = Number(document.getElementById("cc_item_qty").value || 0);
+          const uv= Number(document.getElementById("cc_item_unit_value").value || 0);
+          if (!document.getElementById("cc_item_description").value.trim()) missing.push("cc_item_description");
+          if (!q || q<=0) missing.push("cc_item_qty");
+          if (uv < 0) missing.push("cc_item_unit_value");
+        } else if (step === 2){
+          const req = ["cc_package_type","cc_size_unit","cc_weight_unit","cc_size_x","cc_size_y","cc_size_z","cc_weight"];
+          req.forEach(id=>{
+            const el = document.getElementById(id);
+            const v  = el?.value ?? "";
+            if (v==="" || (el && !isNaN(el.value) && Number(el.value)<=0)) missing.push(id);
+          });
+        }
+        clearMissing(step);
+        markMissing(step, missing);
+        if (missing.length){
+          const names = missing.map(id => document.querySelector(`label[for="${id}"]`)?.innerText || id).join(", ");
+          M.toast?.({ html:`Missing required fields: ${names}` });
+        }
+        return missing.length === 0;
+      }
+
+      function handleCcApiError(err){
+        const raw = err?.raw || {};
+        const details = [];
+        const fieldsObj = raw?.error?.fields || raw?.errors;
+        if (fieldsObj && typeof fieldsObj === "object"){
+          for (const k of Object.keys(fieldsObj)){
+            const id = FIELD_MAP[k] || k;
+            details.push(k);
+            const el = document.getElementById(id);
+            if (el){ (el.closest(".cc-field") || el).style.border = "2px solid orangered"; }
+          }
+        } else if (Array.isArray(raw?.missing)){
+          raw.missing.forEach(k=>{
+            const id = FIELD_MAP[k] || k;
+            details.push(k);
+            const el = document.getElementById(id);
+            if (el){ (el.closest(".cc-field") || el).style.border = "2px solid orangered"; }
+          });
+        }
+        const extra = details.length ? ` — missing/invalid: ${details.join(", ")}` : "";
+        M.toast?.({ html:`Chit Chats error: ${err.message}${extra}` });
+      }
+
+      function addressFromInputs(){
+        return {
+          to_name: document.getElementById("cc_to_name").value.trim(),
+          to_address_1: document.getElementById("cc_to_address_1").value.trim(),
+          to_address_2: document.getElementById("cc_to_address_2").value.trim(),
+          to_city: document.getElementById("cc_to_city").value.trim(),
+          to_province_code: document.getElementById("cc_to_province_code").value.trim(),
+          to_postal_code: document.getElementById("cc_to_postal_code").value.trim(),
+          to_country_code: document.getElementById("cc_to_country_code").value.trim().toUpperCase()
+        };
+      }
+      function fmtAddress(a){
+        return [
+          a.to_name,
+          a.to_address_1 + (a.to_address_2 ? `\n${a.to_address_2}` : ""),
+          `${a.to_city}, ${a.to_province_code} ${a.to_postal_code}`,
+          (a.to_country_code==="US"?"United States":a.to_country_code==="CA"?"Canada":a.to_country_code||"")
+        ].filter(Boolean).join("\n");
+      }
+      function renderAddressDiff(orig, sugg){
+        const oEl = document.getElementById("ccVerifyOriginal");
+        const sEl = document.getElementById("ccVerifySuggested");
+        if (!oEl || !sEl) return; // if overlay not present, silently skip
+        function hi(base, compare){
+          const bt = base.split(/(\s+)/), ct = compare.split(/(\s+)/);
+          const out = [];
+          for (let i=0;i<Math.max(bt.length,ct.length);i++){
+            const b = bt[i] ?? "", c = ct[i] ?? "";
+            out.push(b===c ? c : `<span class="cc-diff-add">${c}</span>`);
+          }
+          return out.join("");
+        }
+        oEl.innerHTML = fmtAddress(orig);
+        sEl.innerHTML = hi(fmtAddress(orig), fmtAddress(sugg));
+      }
+
+      async function maybeVerifyAddressBeforeStep1(){
+        const orig = addressFromInputs();
+        try{
+          const out = await callCc("POST", { action:"verify_to", to: orig });
+          const sugg = out?.suggested || out?.normalized || out?.address || out;
+          const changed = sugg && JSON.stringify({
+            ...orig, to_country_code:orig.to_country_code||""
+          }) !== JSON.stringify({
+            ...sugg, to_country_code:sugg?.to_country_code||""
+          });
+          if (sugg && changed){
+            const overlay = document.getElementById("ccAddrVerify");
+            if (overlay){
+              renderAddressDiff(orig, sugg);
+              overlay.style.display = "block";
+              (document.getElementById("ccAddrEdit")||{}).onclick = () => { overlay.style.display="none"; showStep(0); };
+              (document.getElementById("ccAddrCancel")||{}).onclick = () => { overlay.style.display="none"; };
+              (document.getElementById("ccKeepOriginal")||{}).onclick = () => { overlay.style.display="none"; showStep(1); };
+              (document.getElementById("ccUseSuggested")||{}).onclick = () => {
+                const map = {
+                  to_name:"cc_to_name", to_address_1:"cc_to_address_1", to_address_2:"cc_to_address_2",
+                  to_city:"cc_to_city", to_province_code:"cc_to_province_code",
+                  to_postal_code:"cc_to_postal_code", to_country_code:"cc_to_country_code"
+                };
+                Object.keys(map).forEach(k=>{ if (sugg[k] != null) document.getElementById(map[k]).value = sugg[k]; });
+                overlay.style.display = "none";
+                showStep(1);
+              };
+              return true;
+            } else {
+              M.toast?.({ html:"Address suggestion available — open overlay not found." });
+            }
+          }
+        }catch(e){
+          M.toast?.({ html: "Address verification unavailable. Continuing with your entry." });
+        }
+        return false;
+      }
+
+      /* ────────────────────────────────────────────────────────────── */
+
+      btnNext.addEventListener("click", async () => {
+        try {
+          if (currentStep === 0){
+            if (!validateStep(0)) return;
+            const shown = await maybeVerifyAddressBeforeStep1();
+            if (shown) return;
+            showStep(1);
+            return;
+          }
+          if (currentStep === 1){
+            if (!validateStep(1)) return;
+            showStep(2);
+            return;
+          }
+          if (currentStep === 2){
+            if (!validateStep(2)) return;
+            await ensureShipment();
+            const id = (idInput.value || "").trim();
+            if (!id) { M.toast?.({ html: "Could not create shipment — check Recipient & Description." }); return; }
+            await refreshRates();
+            showStep(3);
+          }
+        } catch (err) {
+          handleCcApiError(err);
+        }
+      });
+
+      btnRefresh.addEventListener("click", async () => {
+        try{
+          if (!validateStep(2)) return;
+          await ensureShipment();
+          await refreshRates();
+        }catch(err){
+          handleCcApiError(err);
+        }
+      });
+      btnBuy.addEventListener("click", buySelected);
+
+    })();
 
   </script>
 
