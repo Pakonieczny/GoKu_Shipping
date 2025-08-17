@@ -396,6 +396,10 @@
     #ccEditFoot{display:flex;justify-content:space-between;align-items:center;padding:12px 16px;border-top:1px solid #ececec;background:#fafafa;border-radius:0 0 12px 12px}
     #ccEditFoot button{padding:9px 14px;border-radius:8px;border:0;background:#333;color:#fff;cursor:pointer}
     #ccEditFoot button[disabled]{opacity:.5;cursor:not-allowed}
+    #ccVerifyModal { position:fixed; inset:0; background:rgba(0,0,0,.45); display:none; z-index:10000; }
+    #ccVerifyCard  { position:absolute; left:50%; top:50%; transform:translate(-50%,-50%);
+                 width:860px; max-height:86vh; overflow:auto; background:#fff; border-radius:12px;
+                 box-shadow:0 18px 60px rgba(0,0,0,.25); }
 
   </style>
 
@@ -604,28 +608,52 @@
     </div>
   </div>
 
-  <!-- Address Verify overlay (hidden until needed) -->
-  <div id="ccAddrVerify" style="display:none; position:absolute; inset:0; background:#fff; padding:28px; overflow:auto;">
-    <h3 style="margin-top:0">Verify shipping address</h3>
-    <p>We found a similar address in our database. Please pick one:</p>
-
-    <div style="display:grid; grid-template-columns:1fr 1fr; gap:28px; align-items:start;">
-      <div>
-        <h4 style="margin:0 0 8px 0">Original Address:</h4>
-        <div id="ccVerifyOriginal" style="white-space:pre-line; font-size:15px;"></div>
-        <button id="ccAddrEdit" class="btn-flat" style="margin-top:8px;">Edit</button>
+  <!-- ✅ Address Verify Modal (replaces the old overlay) -->
+  <div id="ccVerifyModal" role="dialog" aria-modal="true" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,.45); z-index:10000;">
+    <div id="ccVerifyCard" style="position:absolute; left:50%; top:50%; transform:translate(-50%,-50%);
+         width:860px; max-height:86vh; overflow:auto; background:#fff; border-radius:12px;
+         box-shadow:0 18px 60px rgba(0,0,0,.25);">
+      <div style="padding:14px 18px; border-bottom:1px solid #ececec; display:flex; align-items:center; gap:10px">
+        <div style="font-weight:700; font-size:18px">Edit Shipment</div>
+        <div class="cc-steps" style="margin-left:auto; display:flex; gap:8px;">
+          <div class="cc-step-pill active">Recipient</div>
+          <div class="cc-step-pill">Description</div>
+          <div class="cc-step-pill">Package</div>
+          <div class="cc-step-pill">Postage</div>
+        </div>
       </div>
 
-      <div>
-        <h4 style="margin:0 0 8px 0">Suggested Address:</h4>
-        <div id="ccVerifySuggested" style="white-space:pre-line; font-size:15px;"></div>
-      </div>
-    </div>
+      <div class="cc-body" style="padding:18px 20px;">
+        <h4 style="margin:0 0 6px;">Verify shipping address</h4>
+        <p style="margin-top:0; color:#444;">
+          We found a similar address in our database. This is only a suggestion. As the shipper it is your
+          responsibility to ensure the <a href="#!" style="text-decoration:underline;">recipient's address</a> is correct.
+          Select the address you wish to use:
+        </p>
 
-    <div style="display:flex; gap:12px; margin-top:24px;">
-      <button id="ccKeepOriginal" class="btn grey darken-3">Keep Original Address</button>
-      <button id="ccUseSuggested" class="btn">Use Suggested Address</button>
-      <button id="ccAddrCancel" class="btn-flat">Cancel</button>
+        <div style="display:grid; grid-template-columns:1fr 1fr; gap:28px; align-items:start;">
+          <div>
+            <h5 style="margin:0 0 8px 0; font-size:16px;">Original Address:</h5>
+            <div id="ccVerifyOriginal" style="white-space:pre-line; font-size:15px;"></div>
+            <button id="ccAddrEdit" class="btn-flat" style="margin-top:8px;">Edit</button>
+          </div>
+
+          <div>
+            <h5 style="margin:0 0 8px 0; font-size:16px;">Suggested Address:</h5>
+            <div id="ccVerifySuggested" style="white-space:pre-line; font-size:15px;"></div>
+          </div>
+        </div>
+      </div>
+
+      <div style="display:flex; justify-content:space-between; align-items:center; padding:12px 16px; border-top:1px solid #ececec; background:#fafafa; border-radius:0 0 12px 12px">
+        <div>
+          <button id="ccVerifyClose" class="btn-flat">Close</button>
+        </div>
+        <div style="display:flex; gap:8px;">
+          <button id="ccKeepOriginal" class="btn grey darken-3">Keep Original Address</button>
+          <button id="ccUseSuggested" class="btn">Use Suggested Address</button>
+        </div>
+      </div>
     </div>
   </div>
 
@@ -3170,44 +3198,56 @@ function metalToBadge(label){
         sEl.innerHTML = hi(fmtAddress(orig), fmtAddress(sugg));
       }
 
-      async function maybeVerifyAddressBeforeStep1(){
-        const orig = addressFromInputs();
-        try{
-          const out = await callCc("POST", { action:"verify_to", to: orig });
-          const sugg = out?.suggested || out?.normalized || out?.address || out;
-          const changed = sugg && JSON.stringify({
-            ...orig, to_country_code:orig.to_country_code||""
-          }) !== JSON.stringify({
-            ...sugg, to_country_code:sugg?.to_country_code||""
-          });
-          if (sugg && changed){
-            const overlay = document.getElementById("ccAddrVerify");
-            if (overlay){
-              renderAddressDiff(orig, sugg);
-              overlay.style.display = "block";
-              (document.getElementById("ccAddrEdit")||{}).onclick = () => { overlay.style.display="none"; showStep(0); };
-              (document.getElementById("ccAddrCancel")||{}).onclick = () => { overlay.style.display="none"; };
-              (document.getElementById("ccKeepOriginal")||{}).onclick = () => { overlay.style.display="none"; showStep(1); };
-              (document.getElementById("ccUseSuggested")||{}).onclick = () => {
-                const map = {
-                  to_name:"cc_to_name", to_address_1:"cc_to_address_1", to_address_2:"cc_to_address_2",
-                  to_city:"cc_to_city", to_province_code:"cc_to_province_code",
-                  to_postal_code:"cc_to_postal_code", to_country_code:"cc_to_country_code"
-                };
-                Object.keys(map).forEach(k=>{ if (sugg[k] != null) document.getElementById(map[k]).value = sugg[k]; });
-                overlay.style.display = "none";
-                showStep(1);
-              };
-              return true;
-            } else {
-              M.toast?.({ html:"Address suggestion available — open overlay not found." });
-            }
-          }
-        }catch(e){
-          M.toast?.({ html: "Address verification unavailable. Continuing with your entry." });
+    // helper to show the new modal with filled content
+    function openVerifyModal(orig, sugg){
+      // render address diffs (you already have renderAddressDiff)
+      renderAddressDiff(orig, sugg);
+
+      const modal = document.getElementById("ccVerifyModal");
+      if (!modal) { M.toast?.({ html:"Address suggestion available — verify modal not found." }); return false; }
+
+      modal.style.display = "block";
+
+      // buttons
+      document.getElementById("ccVerifyClose").onclick = () => { modal.style.display = "none"; };
+      document.getElementById("ccAddrEdit").onclick    = () => { modal.style.display = "none"; showStep(0); };
+      document.getElementById("ccKeepOriginal").onclick = () => { modal.style.display = "none"; showStep(1); };
+
+      document.getElementById("ccUseSuggested").onclick = () => {
+        const map = {
+          to_name:"cc_to_name", to_address_1:"cc_to_address_1", to_address_2:"cc_to_address_2",
+          to_city:"cc_to_city", to_province_code:"cc_to_province_code",
+          to_postal_code:"cc_to_postal_code", to_country_code:"cc_to_country_code"
+        };
+        Object.keys(map).forEach(k=>{
+          if (sugg[k] != null) document.getElementById(map[k]).value = sugg[k];
+        });
+        modal.style.display = "none";
+        showStep(1);
+      };
+
+      return true;
+    }
+
+    async function maybeVerifyAddressBeforeStep1(){
+      const orig = addressFromInputs();
+      try{
+        const out   = await callCc("POST", { action:"verify_to", to: orig });
+        const sugg  = out?.suggested || out?.normalized || out?.address || out;
+        const changed = sugg && JSON.stringify({
+          ...orig, to_country_code:orig.to_country_code||""
+        }) !== JSON.stringify({
+          ...sugg, to_country_code:sugg?.to_country_code||""
+        });
+
+        if (sugg && changed){
+          return openVerifyModal(orig, sugg);
         }
-        return false;
+      }catch(e){
+        M.toast?.({ html: "Address verification unavailable. Continuing with your entry." });
       }
+      return false;
+    }
 
       /* ────────────────────────────────────────────────────────────── */
 
