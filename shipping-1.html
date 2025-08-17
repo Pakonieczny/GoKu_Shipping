@@ -3173,13 +3173,39 @@ function metalToBadge(label){
           to_country_code: document.getElementById("cc_to_country_code").value.trim().toUpperCase()
         };
       }
+      // Normalize various API shapes → our "to_*" keys
+      function normalizeToAddressShape(a){
+        if (!a || typeof a !== "object") return null;
+        const pick = (...keys) => {
+          for (const k of keys) { const v = a[k]; if (v != null && v !== "") return v; }
+          return "";
+        };
+        const ccRaw = pick("to_country_code","country_code","country","country_iso2");
+        return {
+          to_name          : pick("to_name","name","recipient_name"),
+          to_address_1     : pick("to_address_1","address_1","address1","street1","line1","street"),
+          to_address_2     : pick("to_address_2","address_2","address2","street2","line2","unit","suite","apt"),
+          to_city          : pick("to_city","city","locality","town"),
+          to_province_code : pick("to_province_code","province_code","state_code","state","province","region","administrative_area"),
+          to_postal_code   : pick("to_postal_code","postal_code","zip","zip_code","postcode"),
+          to_country_code  : (ccRaw || "").toString().toUpperCase()
+        };
+      }
+      
+      // Safe formatter (never prints "undefined")
       function fmtAddress(a){
-        return [
-          a.to_name,
-          a.to_address_1 + (a.to_address_2 ? `\n${a.to_address_2}` : ""),
-          `${a.to_city}, ${a.to_province_code} ${a.to_postal_code}`,
-          (a.to_country_code==="US"?"United States":a.to_country_code==="CA"?"Canada":a.to_country_code||"")
-        ].filter(Boolean).join("\n");
+        if (!a) return "";
+        const name = a.to_name || "";
+        const l1   = a.to_address_1 || "";
+        const l2   = a.to_address_2 || "";
+        const city = a.to_city || "";
+        const prov = a.to_province_code || "";
+        const pc   = a.to_postal_code || "";
+        const cc   = (a.to_country_code || "").toUpperCase();
+        const country = cc === "US" ? "United States" : cc === "CA" ? "Canada" : cc;
+        const street   = [l1, l2].filter(Boolean).join("\n");
+        const cityLine = city && prov ? `${city}, ${prov} ${pc}` : [city, prov, pc].filter(Boolean).join(" ");
+        return [name, street, cityLine, country].filter(Boolean).join("\n");
       }
       function renderAddressDiff(orig, sugg){
         const oEl = document.getElementById("ccVerifyOriginal");
@@ -3198,10 +3224,10 @@ function metalToBadge(label){
         sEl.innerHTML = hi(fmtAddress(orig), fmtAddress(sugg));
       }
 
-    // helper to show the new modal with filled content
-    function openVerifyModal(orig, sugg){
-      // render address diffs (you already have renderAddressDiff)
-      renderAddressDiff(orig, sugg);
+      // helper to show the verify modal (normalize first)
+      function openVerifyModal(orig, rawSugg){
+        const sugg = normalizeToAddressShape(rawSugg);
+        renderAddressDiff(orig, sugg);
 
       const modal = document.getElementById("ccVerifyModal");
       if (!modal) { M.toast?.({ html:"Address suggestion available — verify modal not found." }); return false; }
@@ -3219,8 +3245,9 @@ function metalToBadge(label){
           to_city:"cc_to_city", to_province_code:"cc_to_province_code",
           to_postal_code:"cc_to_postal_code", to_country_code:"cc_to_country_code"
         };
-        Object.keys(map).forEach(k=>{
-          if (sugg[k] != null) document.getElementById(map[k]).value = sugg[k];
+        Object.keys(map).forEach(k => {
+          const v = sugg && sugg[k];
+          if (v != null) document.getElementById(map[k]).value = v;
         });
         modal.style.display = "none";
         showStep(1);
@@ -3232,17 +3259,17 @@ function metalToBadge(label){
     async function maybeVerifyAddressBeforeStep1(){
       const orig = addressFromInputs();
       try{
-        const out   = await callCc("POST", { action:"verify_to", to: orig });
-        const sugg  = out?.suggested || out?.normalized || out?.address || out;
-        const changed = sugg && JSON.stringify({
-          ...orig, to_country_code:orig.to_country_code||""
-        }) !== JSON.stringify({
-          ...sugg, to_country_code:sugg?.to_country_code||""
-        });
+      const out  = await callCc("POST", { action:"verify_to", to: orig });
+      const raw  = out?.suggested || out?.normalized || out?.address || out;
+      const sugg = normalizeToAddressShape(raw);
 
-        if (sugg && changed){
-          return openVerifyModal(orig, sugg);
-        }
+      const changed = sugg && JSON.stringify({
+        ...orig, to_country_code: (orig.to_country_code||"").toUpperCase()
+      }) !== JSON.stringify({
+        ...sugg, to_country_code: (sugg.to_country_code||"").toUpperCase()
+      });
+
+      if (sugg && changed) return openVerifyModal(orig, sugg);
       }catch(e){
         M.toast?.({ html: "Address verification unavailable. Continuing with your entry." });
       }
