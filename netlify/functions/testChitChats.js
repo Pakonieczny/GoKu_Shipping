@@ -48,7 +48,8 @@ exports.handler = async (event) => {
       return { ok: resp.ok, status: resp.status, data, resp };
     };
     const ok  = (data)       => ({ statusCode: 200, headers: CORS, body: JSON.stringify(data) });
-    const bad = (code, err)  => ({ statusCode: code, headers: CORS, body: JSON.stringify({ error: typeof err === "string" ? err : (err?.message || err) }) });
+    const bad = (code, err)  => ({ statusCode: code, headers: CORS, body: JSON.stringify({ error:
+    typeof err === "string" ? err : (err?.message || JSON.stringify(err)) }) });
 
     // ---------- GET ----------
     if (event.httpMethod === "GET") {

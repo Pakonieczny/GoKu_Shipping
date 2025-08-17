@@ -2844,9 +2844,11 @@ function metalToBadge(label){
     const txt = await resp.text();
     let data; try { data = JSON.parse(txt); } catch { data = txt; }
     if (!resp.ok) {
-     const msg = typeof data === "string" ? data
-             : (data.error || data.message || JSON.stringify(data, null, 2));
-     throw new Error(msg);
+    const pick = (k) => (data && typeof data[k] === "string" ? data[k] : null);
+    const msg = typeof data === "string"
+      ? data
+      : (pick("error") || pick("message") || JSON.stringify(data, null, 2));
+    throw new Error(msg);
    }
     return data;
   }
@@ -2978,9 +2980,19 @@ function metalToBadge(label){
   if (editBtn) editBtn.addEventListener("click", modalOpen);
   btnClose.addEventListener("click", () => modalClose());
   btnBack .addEventListener("click", () => showStep(currentStep-1));
-  btnNext .addEventListener("click", async () => {
-    if (currentStep < 2) { showStep(currentStep+1); return; }
-    if (currentStep === 2) { await ensureShipment(); await refreshRates(); showStep(3); }
+  btnNext.addEventListener("click", async () => {
+    if (currentStep < 2) { showStep(currentStep + 1); return; }
+    if (currentStep === 2) {
+      try {
+        await ensureShipment();
+        const id = (idInput.value || "").trim();
+        if (!id) { M.toast?.({ html: "Could not create shipment — check Recipient & Description." }); return; }
+        await refreshRates();
+        showStep(3);
+      } catch (err) {
+        M.toast?.({ html: "Chit Chats error: " + err.message });
+      }
+    }
   });
   btnRefresh.addEventListener("click", async () => { await ensureShipment(); await refreshRates(); });
   btnBuy    .addEventListener("click", buySelected);
