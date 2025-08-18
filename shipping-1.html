@@ -3341,28 +3341,50 @@ document.getElementById("ccAddrEdit")?.addEventListener("click", openVerifyAddre
       return true;
     }
 
-     async function maybeVerifyAddressBeforeStep1(){
-       const ccLog = (...args) => { try { console.debug("[CC Verify]", ...args); } catch {} };
-       const orig = addressFromInputs();
-       M.toast?.({ html: "Verifying address with Chit Chats…" });
-       ccLog("request", orig);
-    
-        const out  = await callCc("POST", { action:"verify_to", to: orig });
-        ccLog("response", out);
+    async function maybeVerifyAddressBeforeStep1(){
+      const orig = addressFromInputs();
+      const fnBase = "/.netlify/functions";
+      const country = String(orig.to_country_code || "").toUpperCase();
+      let sugg = null;
 
-        // accept shapes: {suggested|normalized|address} or {suggestions:[...]}
-        const raw  = (out?.suggested
-                   ?? out?.normalized
-                   ?? out?.address
-                   ?? (Array.isArray(out?.suggestions) ? out.suggestions[0] : null)
-                   ?? null);
-        // normalize any payload (or empty) and ALWAYS show the modal
-        const sugg     = normalizeToAddressShape(raw || {});
-        const hasAny   = Object.values(sugg).some(v => String(v || "").trim() !== "");
-        const safeSugg = hasAny ? sugg : orig;          // fallback: mirror original
-        ccLog("opening verify modal", { tried: out?.tried, orig, sugg: safeSugg });
-        return openVerifyModal(orig, safeSugg);
-     }
+      M.toast?.({ html: "Verifying address…" });
+
+      // 1) If US → USPS (free)
+      if (country === "US") {
+        try {
+          const r = await fetch(`${fnBase}/uspsVerify`, {
+            method: "POST",
+            headers: { "Content-Type":"application/json" },
+            body: JSON.stringify({
+              address1: orig.to_address_1,
+              address2: orig.to_address_2,
+              city:     orig.to_city,
+              state:    orig.to_province_code,
+              postal:   orig.to_postal_code
+            })
+          });
+          if (r.ok) { const j = await r.json(); sugg = j.suggested || null; }
+        } catch {}
+      }
+
+      // 2) Otherwise (or USPS had nothing) → Nominatim (international)
+      if (!sugg) {
+        try {
+          const q = [orig.to_address_1, orig.to_address_2, orig.to_city, orig.to_province_code, orig.to_postal_code]
+            .filter(Boolean).join(", ");
+          const r = await fetch(`${fnBase}/nominatimNormalize`, {
+            method: "POST",
+            headers: { "Content-Type":"application/json" },
+            body: JSON.stringify({ q, country })
+          });
+          if (r.ok) { const j = await r.json(); sugg = j.suggested || null; }
+        } catch {}
+      }
+
+      const hasAny = sugg && Object.values(sugg).some(v => String(v||"").trim() !== "");
+      const safeSugg = hasAny ? sugg : orig;   // still show the modal, diffing against original
+      return openVerifyModal(orig, safeSugg);
+    }
 
       /* ────────────────────────────────────────────────────────────── */
 
