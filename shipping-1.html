@@ -2161,8 +2161,8 @@ document.getElementById("ccAddrEdit")?.addEventListener("click", openVerifyAddre
             try {
               var images = await fetchListingImages(item.listing_id);
               if(images && images.length > 0){
-                cell.innerHTML =
-                  '<img src="' + images[0].url_fullxfull + '" alt="Listing Image ' + i + '" data-scale="1" data-offsetX="0" data-offsetY="0">';
+              cell.innerHTML =
+              '<img src="' + images[0].url_fullxfull + '" alt="Listing Image ' + i + '" data-scale="1" data-offsetX="0" data-offsetY="0">';
               } else {
                 cell.innerHTML = "No images found";
               }
