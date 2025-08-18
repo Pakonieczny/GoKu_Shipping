@@ -2649,6 +2649,38 @@ function metalToBadge(label){
       const addBtn         = document.getElementById("ccAddToBatchBtn");
       const removeBtn      = document.getElementById("ccRemoveFromBatchBtn");
 
+      /* ── Auto-populate CC Shipment ID whenever a new order loads ───────── */
+      (function initCcAutoPopulate(){
+        if (orderInp) {
+          // Hook programmatic .value assignments so they behave like real user input
+          const desc = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value");
+          if (desc && !orderInp._ccHooked) {
+            const origSet = desc.set, origGet = desc.get;
+            Object.defineProperty(orderInp, "value", {
+              configurable: true,
+              get(){ return origGet.call(this); },
+              set(v){
+               const prev = origGet.call(this);
+                origSet.call(this, v);
+                const cur = String(v || "").trim();
+                if (cur && cur !== prev) {
+                  // Fire the same listeners your manual entry uses
+                  this.dispatchEvent(new Event("input",  { bubbles: true }));
+                  this.dispatchEvent(new Event("change", { bubbles: true }));
+                  // Belt-and-suspenders: run the lookup after the UI settles
+                  setTimeout(() => { try { refreshFromOrderIfChitChats(); } catch {} }, 60);
+                }
+              }
+            });
+            orderInp._ccHooked = true;
+          }
+        }
+        // Optional: if other code emits a lifecycle event, respond to it
+        document.addEventListener("order:loaded", () => {
+          if ((orderInp?.value || "").trim()) refreshFromOrderIfChitChats();
+        });
+      })();
+      
       // Always use the Netlify functions base
       const fnBase = "/.netlify/functions";
 
