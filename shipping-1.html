@@ -1766,12 +1766,13 @@ function metalToBadge(label){
 
         const docDataPD = resPD.data || {};
 
-        // ── Brites message history
-        if (typeof docDataPD["Brites Messages"] === "string") {
-          document.getElementById("customerMessageHistory").innerText = docDataPD["Brites Messages"];
+        // ── Brites message history (fallback; only if live hasn't populated)
+        const histBox = document.getElementById("customerMessageHistory");
+        const boxIsEmpty = !histBox || !histBox.innerHTML.trim();
+
+        if (boxIsEmpty && typeof docDataPD["Brites Messages"] === "string") {
+          histBox.innerText = docDataPD["Brites Messages"];
           M.toast({ html: "Brites Messages loaded!" });
-        } else {
-          document.getElementById("customerMessageHistory").innerText = "";
         }
 
         // ── Shipping-label creation date
