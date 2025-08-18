@@ -2761,7 +2761,7 @@ function metalToBadge(label){
           // Slow pass (fallback pages) – runs after a short delay without clearing the field
           setTimeout(async () => {
             try {
-              const slow = await callSearch({ orderId, fast: "0", pageSize: 999 });
+              const slow = await callSearch({ orderId, fast: "0" });
               const s2   = pickBestShipment(orderId, (slow.shipments || []));
               if (s2) setShipmentUI(s2);
             } catch {}
@@ -2783,7 +2783,7 @@ function metalToBadge(label){
           // Slow pass (fallback pages)
           setTimeout(async () => {
             try {
-              const slow = await callSearch({ tracking, fast: "0", pageSize: 999 });
+              const slow = await callSearch({ tracking, fast: "0" });
               const s2   = pickBestShipment(tracking, (slow.shipments || []));
               if (s2) setShipmentUI(s2);
             } catch {}
