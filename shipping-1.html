@@ -1672,6 +1672,9 @@ function metalToBadge(label){
               inp.dispatchEvent(new Event("input", { bubbles: true }));
               M.toast?.({ html: "Order # pasted" });
 
+              // 🔎 Also refresh ccShipmentId 500ms after paste (independent of auto-Enter)
+              setTimeout(refreshFromOrderIfChitChats, 500);
+
               // focus, then simulate pressing Enter after 100ms
               inp.focus();
               setTimeout(() => {
@@ -2779,8 +2782,20 @@ function metalToBadge(label){
       trackingInp?.addEventListener("change", refreshFromTrackingIfChitChats);
 
       // Enter-to-search for reliability (manual entry/paste)
-      orderInp   ?.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); refreshFromOrderIfChitChats(); } });
-      trackingInp?.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); refreshFromTrackingIfChitChats(); } });
+      // 🔁 Order: run lookup 500ms after a *real* Enter press so UI settles first.
+      orderInp?.addEventListener("keydown", (e) => {
+        if (e.key === "Enter") {
+          e.preventDefault();
+          if (e.isTrusted) setTimeout(refreshFromOrderIfChitChats, 500); // ← 500ms delay
+        }
+      });
+      // Tracking remains immediate on Enter
+      trackingInp?.addEventListener("keydown", (e) => {
+        if (e.key === "Enter") {
+          e.preventDefault();
+          refreshFromTrackingIfChitChats();
+        }
+      });
 
       // Kick if fields already have values
       if ((orderInp?.value || "").trim())    refreshFromOrderIfChitChats();
