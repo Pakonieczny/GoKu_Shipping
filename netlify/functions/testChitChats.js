@@ -16,33 +16,33 @@
  * Auth: Authorization: <ACCESS_TOKEN>  (raw token, not "Bearer ...")
  * Base: https://chitchats.com/api/v1  (override with CHIT_CHATS_BASE_URL)
  */
- 
+
 const CORS = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": "Content-Type,Authorization",
   "Access-Control-Allow-Methods": "GET,POST,OPTIONS,PATCH"
 };
- 
+
 exports.handler = async (event) => {
   if (event.httpMethod === "OPTIONS") {
     return { statusCode: 200, headers: CORS, body: "ok" };
   }
- 
+
   try {
     const BASE         = process.env.CHIT_CHATS_BASE_URL || "https://chitchats.com/api/v1";
     const CLIENT_ID    = process.env.CHIT_CHATS_CLIENT_ID;
     const ACCESS_TOKEN = process.env.CHIT_CHATS_ACCESS_TOKEN;
- 
+
     if (!CLIENT_ID || !ACCESS_TOKEN) {
       return bad(500, "Missing CHIT_CHATS_CLIENT_ID or CHIT_CHATS_ACCESS_TOKEN");
     }
- 
+
     const authH = {
       "Authorization": ACCESS_TOKEN, // raw token per Chit Chats docs
       "Content-Type": "application/json; charset=utf-8"
     };
     const url = (p) => `${BASE}/clients/${encodeURIComponent(CLIENT_ID)}${p}`;
- 
+
     // ---------- helpers ----------
     const wrap = async (resp) => {
       const txt = await resp.text();
@@ -55,12 +55,12 @@ exports.handler = async (event) => {
       headers: CORS,
       body: JSON.stringify({ error: typeof err === "string" ? err : (err?.message || JSON.stringify(err)) })
     });
- 
+
     // ---------- GET ----------
     if (event.httpMethod === "GET") {
       const qp = event.queryStringParameters || {};
       const resource = (qp.resource || "").toLowerCase();
- 
+
       // List batches (optional ?status=open|processing|archived)
       if (resource === "batches") {
         try {
@@ -68,7 +68,7 @@ exports.handler = async (event) => {
           const resp = await fetch(url(`/batches${status}`), { headers: authH });
           const out  = await wrap(resp);
           if (!out.ok) return bad(out.status, out.data);
- 
+
           // normalize: some envs return array; others wrap under .batches/.data
           const list = Array.isArray(out.data) ? out.data : (out.data?.batches || out.data?.data || []);
           return ok({ success: true, batches: list });
@@ -76,29 +76,52 @@ exports.handler = async (event) => {
           return bad(500, e);
         }
       }
- 
+
       // Search shipments by orderId or tracking (best-effort with graceful fallbacks)
       if (resource === "search") {
         const orderId  = (qp.orderId || "").toString().trim();
         const tracking = (qp.tracking || "").toString().trim();
         const want     = orderId || tracking;
         if (!want) return ok({ shipments: [] });
- 
+
         const fastMode = String(qp.fast || "").toLowerCase() === "1" || String(qp.fast || "").toLowerCase() === "true";
- 
- 
+
         // helpers
         const norm = (s) => String(s || "").toLowerCase().replace(/[^a-z0-9]/g, "");
         const looksLikeId = (s) => /^[0-9]{6,}$/.test(String(s || "").trim());
+
+        // *** FIELD-PARITY MATCHER (fixes older orders that only have reference_number/value) ***
         const matches = (sh) => {
-          const nOrder    = norm(orderId);
-          const nTrack    = norm(tracking);
-          const candOrd   = norm(sh.order_id || sh.order_number || sh.reference || "");
-          const candTrack = norm(sh.carrier_tracking_code || sh.tracking_code || sh.tracking_number || "");
-          return (nOrder && candOrd && (candOrd.includes(nOrder) || nOrder.includes(candOrd)))
-              || (nTrack && candTrack && (candTrack.includes(nTrack) || nTrack.includes(candTrack)));
+          const n = (v) => norm(v);
+          const nOrder = n(orderId);
+          const nTrack = n(tracking);
+
+          // mirror frontend candidate fields
+          const ordFields = [
+            sh.order_id,
+            sh.order_number,
+            sh.reference,
+            sh.reference_number,
+            sh.reference_value,
+            sh.external_order_id,
+            sh.external_id
+          ];
+          const trkFields = [
+            sh.carrier_tracking_code,
+            sh.tracking_code,
+            sh.tracking_number,
+            sh.tracking
+          ];
+
+          const candOrd   = n(ordFields.find(Boolean) || "");
+          const candTrack = n(trkFields.find(Boolean) || "");
+
+          return (
+            (nOrder && candOrd && (candOrd.includes(nOrder) || nOrder.includes(candOrd))) ||
+            (nTrack && candTrack && (candTrack.includes(nTrack) || nTrack.includes(candTrack)))
+          );
         };
- 
+
         // Try exact shipment id first if the input looks like one
         if (looksLikeId(want)) {
           try {
@@ -109,7 +132,7 @@ exports.handler = async (event) => {
             }
           } catch {}
         }
- 
+
         // Try vendor-side search param if available
         try {
           const r1 = await fetch(
@@ -125,10 +148,10 @@ exports.handler = async (event) => {
             if (hits.length) return ok({ shipments: hits });
           }
         } catch {}
- 
+
         // In fast mode, stop here without deep fallback loops
         if (fastMode) return ok({ shipments: [] });
- 
+
         // Fallback: scan more pages locally and filter (find older orders too)
         const tryPages = async (status) => {
           const out = [];
@@ -149,7 +172,7 @@ exports.handler = async (event) => {
           }
           return out;
         };
- 
+
         // Prefer archived (completed/shipped) first, then processing, then ready
         const pools = ["archived", "processing", "ready"];
         for (const st of pools) {
@@ -158,7 +181,7 @@ exports.handler = async (event) => {
         }
         return ok({ shipments: [] });
       }
- 
+
       // Fetch a single shipment
       if (resource === "shipment" && qp.id) {
         try {
@@ -170,7 +193,7 @@ exports.handler = async (event) => {
           return bad(500, e);
         }
       }
- 
+
       // Default: quick shipments sanity ping (kept for backward compat)
       const limit  = qp.limit ? Number(qp.limit) : 25;
       const page   = qp.page  ? Number(qp.page)  : 1;
@@ -183,16 +206,16 @@ exports.handler = async (event) => {
       if (!out.ok) return bad(out.status, out.data);
       return ok({ success: true, data: out.data });
     }
- 
+
     // ---------- POST (create batch | create shipment | verify_to) ----------
     if (event.httpMethod === "POST") {
       const body   = safeJSON(event.body);
       const action = (body.action || "").toLowerCase();
- 
+
       // (0) verify recipient address (best-effort; never throw)
       if (action === "verify_to") {
         const to = body.to || body.address || {};
- 
+
         // A) Try a dedicated address verify endpoint, if available
         try {
           const r1 = await fetch(url("/addresses/verify"), {
@@ -203,7 +226,7 @@ exports.handler = async (event) => {
           const o1 = await wrap(r1);
           if (o1.ok) return ok(o1.data); // may contain { suggested | normalized | address }
         } catch {}
- 
+
         // B) Fallback variant some tenants expose
         try {
           const r2 = await fetch(url("/shipments/verify"), {
@@ -214,34 +237,34 @@ exports.handler = async (event) => {
           const o2 = await wrap(r2);
           if (o2.ok) return ok(o2.data);
         } catch {}
- 
+
         // C) Graceful fallback so the UI continues without a scary 500
         return ok({ suggested: null });
       }
- 
+
       // (1) create batch
       if (action === "create") {
         const payload = { description: (body.description || "").toString() };
         const resp = await fetch(url("/batches"), { method: "POST", headers: authH, body: JSON.stringify(payload) });
         const out  = await wrap(resp);
         if (!out.ok) return bad(out.status, out.data);
- 
+
         // id is last segment of Location header
         const loc = out.resp.headers.get("Location") || "";
         const id  = loc.split("/").filter(Boolean).pop();
         return ok({ success: true, id, location: loc || null });
       }
- 
+
       // (2) create shipment
       if (action === "create_shipment") {
         const shipment = body.shipment || body.payload || {};
         const resp = await fetch(url(`/shipments`), { method: "POST", headers: authH, body: JSON.stringify(shipment) });
         const out  = await wrap(resp);
         if (!out.ok) return bad(out.status, out.data);
- 
+
         const loc = out.resp.headers.get("Location") || "";
         const id  = loc.split("/").filter(Boolean).pop() || null;
- 
+
         // Return full created resource if possible
         let created = null;
         if (id) {
@@ -253,16 +276,16 @@ exports.handler = async (event) => {
         }
         return ok({ success: true, id, shipment: created });
       }
- 
+
       return bad(400, "action must be create or create_shipment or verify_to");
     }
- 
+
     // ---------- PATCH (batch add/remove | shipment refresh/buy) ----------
     if (event.httpMethod === "PATCH") {
       const qp     = event.queryStringParameters || {};
       const body   = safeJSON(event.body);
       const action = (body.action || "").toLowerCase();
- 
+
       // (A) Shipment: refresh rates / update pkg details
       if (action === "refresh") {
         const id = String(body.shipment_id || body.id || qp.id || "");
@@ -275,7 +298,7 @@ exports.handler = async (event) => {
         if (!out.ok) return bad(out.status, out.data);
         return ok(out.data);
       }
- 
+
       // (B) Shipment: buy postage
       if (action === "buy") {
         const id = String(body.shipment_id || body.id || qp.id || "");
@@ -288,7 +311,7 @@ exports.handler = async (event) => {
         if (!out.ok) return bad(out.status, out.data);
         return ok(out.data);
       }
- 
+
       // (C) Batches: add/remove shipments
       const batchId = numberish(body.batch_id ?? body.batchId ?? qp.batch_id ?? qp.batchId);
       const oneIdFromQuery = qp.id ? String(qp.id) : "";
@@ -297,31 +320,31 @@ exports.handler = async (event) => {
       const shipmentIds = manyFromBody.length ? manyFromBody
                         : (oneIdFromBody ? [oneIdFromBody]
                         : (oneIdFromQuery ? [oneIdFromQuery] : []));
- 
+
       if (!action || (action !== "add" && action !== "remove")) {
         return bad(400, "action must be refresh|buy|add|remove");
       }
       if (!batchId || !shipmentIds.length) {
         return bad(400, "batch_id + at least one shipment id required");
       }
- 
+
       const payload = { batch_id: Number(batchId), shipment_ids: shipmentIds };
       const path = action === "add" ? "/shipments/add_to_batch" : "/shipments/remove_from_batch";
- 
+
       const resp = await fetch(url(path), { method: "PATCH", headers: authH, body: JSON.stringify(payload) });
       const out  = await wrap(resp);
       if (!out.ok) return bad(out.status, out.data);
       return ok({ success: true });
     }
- 
+
     // ---------- Fallback ----------
     return { statusCode: 405, headers: CORS, body: "Method Not Allowed" };
- 
+
   } catch (error) {
     return { statusCode: 500, headers: CORS, body: JSON.stringify({ error: error.message }) };
   }
 };
- 
+
 // ---------- small utilities ----------
 function safeJSON(txt) {
   if (!txt) return {};
