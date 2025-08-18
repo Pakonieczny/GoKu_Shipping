@@ -3268,7 +3268,12 @@ function metalToBadge(label){
        const out  = await callCc("POST", { action:"verify_to", to: orig });
        ccLog("response", out);
     
-       const raw  = (out?.suggested ?? out?.normalized ?? out?.address ?? null);
+      // also handle APIs that return { suggestions: [ ... ] }
+       const raw  = (out?.suggested
+                  ?? out?.normalized
+                  ?? out?.address
+                  ?? (Array.isArray(out?.suggestions) ? out.suggestions[0] : null)
+                  ?? null);
        if (!raw) {
          M.toast?.({ html: "No address suggestions from Chit Chats" });
          return false;                           // nothing from API

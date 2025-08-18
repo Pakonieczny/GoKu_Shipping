@@ -106,17 +106,34 @@ exports.handler = async (event) => {
     if (action === "verify_to") {
       const to = body.to || body.address || {};
 
+      // Map our "to_*" payload to Chit Chats' verify shape
+      const toAsAddress = {
+        name         : to.to_name ?? to.name ?? "",
+        address_1    : to.to_address_1 ?? to.address_1 ?? to.address1 ?? "",
+        address_2    : to.to_address_2 ?? to.address_2 ?? to.address2 ?? "",
+        city         : to.to_city ?? to.city ?? "",
+        province_code: to.to_province_code ?? to.province_code ?? to.state_code ?? to.state ?? "",
+        postal_code  : to.to_postal_code ?? to.postal_code ?? to.zip ?? "",
+        country_code : String(to.to_country_code ?? to.country_code ?? to.country ?? "")
+                        .toUpperCase()
+      };
+
       // A) Try a dedicated address verify endpoint, if available
       try {
         const r1 = await fetch(url("/addresses/verify"), {
           method: "POST",
           headers: authH,
-          body: JSON.stringify({ address: to })
+          body: JSON.stringify({ address: toAsAddress })
         });
         const o1 = await wrap(r1);
         if (o1.ok) {
-          const suggested = o1.data?.suggested || o1.data?.normalized || o1.data?.address || o1.data || null;
-          return ok({ suggested });
+        const suggested = o1.data?.suggested
+                         || o1.data?.normalized
+                         || o1.data?.address
+                         || (Array.isArray(o1.data?.suggestions) ? o1.data.suggestions[0] : null)
+                         || o1.data
+                         || null;
+         return ok({ suggested });
         }
       } catch {}
 
@@ -129,7 +146,12 @@ exports.handler = async (event) => {
         });
         const o2 = await wrap(r2);
         if (o2.ok) {
-          const suggested = o2.data?.suggested || o2.data?.normalized || o2.data?.address || o2.data || null;
+        const suggested = o2.data?.suggested
+                         || o2.data?.normalized
+                         || o2.data?.address
+                         || (Array.isArray(o2.data?.suggestions) ? o2.data.suggestions[0] : null)
+                         || o2.data
+                         || null;
           return ok({ suggested });
         }
       } catch {}
