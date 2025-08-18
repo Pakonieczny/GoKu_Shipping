@@ -1101,88 +1101,6 @@ function metalToBadge(label){
      ********************************************************/
     const functionsBaseUrl = window.location.origin + "/.netlify/functions";
 
-    /* ===== Address Suggestion Orchestrator (USPS-first, no Chit Chats) ===== */
-function formatAddr(a){
-  if (!a) return "—";
-  const lines = [
-    a.address1 || "",
-    a.address2 || "",
-    [a.city, a.state, a.postal].filter(Boolean).join(", "),
-    a.country || ""
-  ].filter(Boolean);
-  return lines.join("\n");
-}
-
-async function getSuggestedAddress(to){
-  const country = String(to.to_country_code || to.country || "").toUpperCase();
-
-  // 1) USPS (US-only, free, authoritative)
-  if (country === "US") {
-    try{
-      const r = await fetch(`${functionsBaseUrl}/uspsVerify`, {
-        method: "POST",
-        headers: { "Content-Type":"application/json" },
-        body: JSON.stringify({
-          address1: to.to_address_1,
-          address2: to.to_address_2,
-          city    : to.to_city,
-          state   : to.to_province_code,
-          postal  : to.to_postal_code
-        })
-      });
-      if (r.ok){
-        const { suggested } = await r.json();
-        if (suggested) return suggested;
-      }
-    }catch(_){}
-  }
-
-  // 2) Nominatim (international normalization suggestion)
-  try{
-    const q = [to.to_address_1,to.to_address_2,to.to_city,to.to_province_code,to.to_postal_code].filter(Boolean).join(", ");
-    const r = await fetch(`${functionsBaseUrl}/nominatimNormalize`, {
-      method:"POST",
-      headers:{ "Content-Type":"application/json" },
-      body: JSON.stringify({ q, country })
-    });
-    if (r.ok){
-      const { suggested } = await r.json();
-      if (suggested) return suggested;
-    }
-  }catch(_){}
-
-  return null;
-}
-
-/* Call this when opening the "Verify shipping address" modal */
-async function openVerifyAddressModal(){
-  const to = {
-    to_name         : document.getElementById("cc_to_name")?.value || "",
-    to_address_1    : document.getElementById("cc_to_address_1")?.value || "",
-    to_address_2    : document.getElementById("cc_to_address_2")?.value || "",
-    to_city         : document.getElementById("cc_to_city")?.value || "",
-    to_province_code: document.getElementById("cc_to_province_code")?.value || "",
-    to_postal_code  : document.getElementById("cc_to_postal_code")?.value || "",
-    to_country_code : document.getElementById("cc_to_country_code")?.value || ""
-  };
-
-  const origText = formatAddr({
-    address1: to.to_address_1, address2: to.to_address_2,
-    city: to.to_city, state: to.to_province_code,
-    postal: to.to_postal_code, country: to.to_country_code
-  });
-  document.getElementById("ccVerifyOriginal").textContent = origText;
-
-  const sug = await getSuggestedAddress(to);
-  document.getElementById("ccVerifySuggested").textContent = sug ? formatAddr(sug) : "— no suggestion —";
-
-  // show modal
-  document.getElementById("ccVerifyModal").style.display = "block";
-}
-
-/* Example trigger — wire to your existing button */
-document.getElementById("ccAddrEdit")?.addEventListener("click", openVerifyAddressModal);
-
     /* ===== Etsy OAuth boot + auto-refresh wiring (match design/sorting) ===== */
     const TOKEN_KEYS = {
       access  : "access_token",
@@ -2161,8 +2079,8 @@ document.getElementById("ccAddrEdit")?.addEventListener("click", openVerifyAddre
             try {
               var images = await fetchListingImages(item.listing_id);
               if(images && images.length > 0){
-              cell.innerHTML =
-              '<img src="' + images[0].url_fullxfull + '" alt="Listing Image ' + i + '" data-scale="1" data-offsetX="0" data-offsetY="0">';
+                cell.innerHTML =
+                  '<img src="' + images[0].url_fullxfull + '" alt="Listing Image ' + i + '" data-scale="1" data-offsetX="0" data-offsetY="0">';
               } else {
                 cell.innerHTML = "No images found";
               }
@@ -3341,125 +3259,67 @@ document.getElementById("ccAddrEdit")?.addEventListener("click", openVerifyAddre
       return true;
     }
 
-    // ── USPS helpers (keep once in this scope) ─────────────────────────────
-const US_STATE_MAP = {
-  "ALABAMA":"AL","ALASKA":"AK","ARIZONA":"AZ","ARKANSAS":"AR","CALIFORNIA":"CA","COLORADO":"CO","CONNECTICUT":"CT",
-  "DELAWARE":"DE","DISTRICT OF COLUMBIA":"DC","FLORIDA":"FL","GEORGIA":"GA","HAWAII":"HI","IDAHO":"ID","ILLINOIS":"IL",
-  "INDIANA":"IN","IOWA":"IA","KANSAS":"KS","KENTUCKY":"KY","LOUISIANA":"LA","MAINE":"ME","MARYLAND":"MD","MASSACHUSETTS":"MA",
-  "MICHIGAN":"MI","MINNESOTA":"MN","MISSISSIPPI":"MS","MISSOURI":"MO","MONTANA":"MT","NEBRASKA":"NE","NEVADA":"NV",
-  "NEW HAMPSHIRE":"NH","NEW JERSEY":"NJ","NEW MEXICO":"NM","NEW YORK":"NY","NORTH CAROLINA":"NC","NORTH DAKOTA":"ND",
-  "OHIO":"OH","OKLAHOMA":"OK","OREGON":"OR","PENNSYLVANIA":"PA","RHODE ISLAND":"RI","SOUTH CAROLINA":"SC","SOUTH DAKOTA":"SD",
-  "TENNESSEE":"TN","TEXAS":"TX","UTAH":"UT","VERMONT":"VT","VIRGINIA":"VA","WASHINGTON":"WA","WEST VIRGINIA":"WV",
-  "WISCONSIN":"WI","WYOMING":"WY","PUERTO RICO":"PR","GUAM":"GU","AMERICAN SAMOA":"AS","NORTHERN MARIANA ISLANDS":"MP",
-  "VIRGIN ISLANDS":"VI","ARMED FORCES AMERICAS":"AA","ARMED FORCES EUROPE":"AE","ARMED FORCES PACIFIC":"AP"
-};
-const normUSCountry = c => {
-  const s = String(c||"").trim().toUpperCase();
-  return ["US","USA","UNITED STATES","UNITED STATES OF AMERICA","U.S.","AMERICA"].includes(s) ? "US" : s;
-};
-const normUSState = s => {
-  if (!s) return "";
-  const up = String(s).trim().toUpperCase();
-  if (up.length === 2) return up;
-  return US_STATE_MAP[up] || up;
-};
-const normUSZip = z => String(z||"").replace(/\D/g,"").slice(0,5);
+    async function maybeVerifyAddressBeforeStep1(){
+      const orig = addressFromInputs();
+      const out  = await callCc("POST", { action:"verify_to", to: orig });
+    const raw  = (out?.suggested ?? out?.normalized ?? out?.address ?? null);
+    if (!raw) return false;                           // nothing from API
 
-// ── Verify-orchestrator (USPS → Nominatim) ─────────────────────────────
-async function maybeVerifyAddressBeforeStep1(){
-  const orig = addressFromInputs();
-  const fnBase = "/.netlify/functions";
-  const country = normUSCountry(orig.to_country_code);
-  let sugg = null;
+    const sugg = normalizeToAddressShape(raw);
+    const hasAny = Object.values(sugg || {}).some(v => String(v || "").trim() !== "");
+    if (!hasAny) return false;                        // all empty → skip
 
-  M.toast?.({ html: "Verifying address…" });
+    const changed = JSON.stringify({
+      ...orig, to_country_code: (orig.to_country_code||"").toUpperCase()
+    }) !== JSON.stringify({
+      ...sugg, to_country_code: (sugg.to_country_code||"").toUpperCase()
+    });
 
-  // 1) If US → USPS (free, authoritative)
-  if (country === "US") {
-    try {
-      const r = await fetch(`${fnBase}/uspsVerify`, {
-        method: "POST",
-        headers: { "Content-Type":"application/json" },
-        body: JSON.stringify({
-          address1: (orig.to_address_1||"").trim(),
-          address2: (orig.to_address_2||"").trim(),
-          city:     (orig.to_city||"").trim(),
-          state:    normUSState(orig.to_province_code),
-          postal:   normUSZip(orig.to_postal_code)
-        })
+    if (changed) return openVerifyModal(orig, sugg);
+    return false;
+  } // ← close maybeVerifyAddressBeforeStep1
+
+      /* ────────────────────────────────────────────────────────────── */
+
+      btnNext.addEventListener("click", async () => {
+        try {
+          if (currentStep === 0){
+            if (!validateStep(0)) return;
+            const shown = await maybeVerifyAddressBeforeStep1();
+            if (shown) return;
+            showStep(1);
+            return;
+          }
+          if (currentStep === 1){
+            if (!validateStep(1)) return;
+            showStep(2);
+            return;
+          }
+          if (currentStep === 2){
+            if (!validateStep(2)) return;
+            await ensureShipment();
+            const id = (idInput.value || "").trim();
+            if (!id) { M.toast?.({ html: "Could not create shipment — check Recipient & Description." }); return; }
+            await refreshRates();
+            showStep(3);
+          }
+        } catch (err) {
+          handleCcApiError(err);
+        }
       });
 
-      let j = {};
-      try { j = await r.json(); } catch {}
-      if (!r.ok || j.error) {
-        M.toast?.({ html: `USPS: ${j.error || r.status}` });
-      } else if (j.suggested) {
-        sugg = j.suggested;
-      }
-    } catch {}
-  }
-
-  // 2) Otherwise (or USPS had nothing) → Nominatim (international normalization)
-  if (!sugg) {
-    try {
-      const q = [orig.to_address_1, orig.to_address_2, orig.to_city, orig.to_province_code, orig.to_postal_code]
-        .filter(Boolean).join(", ");
-      const r = await fetch(`${fnBase}/nominatimNormalize`, {
-        method: "POST",
-        headers: { "Content-Type":"application/json" },
-        body: JSON.stringify({ q, country })
+      btnRefresh.addEventListener("click", async () => {
+        try{
+          if (!validateStep(2)) return;
+          await ensureShipment();
+          await refreshRates();
+        }catch(err){
+          handleCcApiError(err);
+        }
       });
-      if (r.ok) {
-        const j = await r.json();
-        sugg = j.suggested || null;
-      }
-    } catch {}
-  }
+      btnBuy.addEventListener("click", buySelected);
 
-  const hasAny = sugg && Object.values(sugg).some(v => String(v||"").trim() !== "");
-  const safeSugg = hasAny ? sugg : orig;   // still show the modal, diffing against original
-  return openVerifyModal(orig, safeSugg);
-}
-
-/* ────────────────────────────────────────────────────────────── */
-
-btnNext.addEventListener("click", async () => {
-  try {
-    if (currentStep === 0){
-      if (!validateStep(0)) return;
-      const shown = await maybeVerifyAddressBeforeStep1();
-      if (shown) return;
-      showStep(1);
-      return;
-    }
-    if (currentStep === 1){
-      if (!validateStep(1)) return;
-      showStep(2);
-      return;
-    }
-    if (currentStep === 2){
-      if (!validateStep(2)) return;
-      await ensureShipment();
-      const id = (idInput.value || "").trim();
-      if (!id) { M.toast?.({ html: "Could not create shipment — check Recipient & Description." }); return; }
-      await refreshRates();
-      showStep(3);
-    }
-  } catch (err) {
-    handleCcApiError(err);
-  }
-});
-
-btnRefresh.addEventListener("click", async () => {
-  try{
-    if (!validateStep(2)) return;
-    await ensureShipment();
-    await refreshRates();
-  }catch(err){
-    handleCcApiError(err);
-  }
-});
-btnBuy.addEventListener("click", buySelected);
+    })();
 
   </script>
 
