@@ -47,7 +47,13 @@ exports.handler = async (event) => {
 
     // Gracefully parse the tiny USPS XML without deps
     if (/<Error>/i.test(text)) {
-      return { statusCode: 200, headers: CORS, body: JSON.stringify({ suggested: null, raw: text }) };
+      const num  = (text.match(/<Number>([^<]+)<\/Number>/i)||[, ""])[1];
+      const desc = (text.match(/<Description>([^<]+)<\/Description>/i)||[, "USPS error"])[1];
+      return { statusCode: 200, headers: CORS, body: JSON.stringify({
+        suggested: null,
+        error: `${num ? num + ": " : ""}${desc}`,
+        raw: text
+      }) };
     }
 
     const pick = (tag) => (text.match(new RegExp(`<${tag}>([^<]*)</${tag}>`, "i")) || [,""])[1].trim();

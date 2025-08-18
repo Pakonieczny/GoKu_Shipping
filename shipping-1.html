@@ -3341,92 +3341,125 @@ document.getElementById("ccAddrEdit")?.addEventListener("click", openVerifyAddre
       return true;
     }
 
-    async function maybeVerifyAddressBeforeStep1(){
-      const orig = addressFromInputs();
-      const fnBase = "/.netlify/functions";
-      const country = String(orig.to_country_code || "").toUpperCase();
-      let sugg = null;
+    // ── USPS helpers (keep once in this scope) ─────────────────────────────
+const US_STATE_MAP = {
+  "ALABAMA":"AL","ALASKA":"AK","ARIZONA":"AZ","ARKANSAS":"AR","CALIFORNIA":"CA","COLORADO":"CO","CONNECTICUT":"CT",
+  "DELAWARE":"DE","DISTRICT OF COLUMBIA":"DC","FLORIDA":"FL","GEORGIA":"GA","HAWAII":"HI","IDAHO":"ID","ILLINOIS":"IL",
+  "INDIANA":"IN","IOWA":"IA","KANSAS":"KS","KENTUCKY":"KY","LOUISIANA":"LA","MAINE":"ME","MARYLAND":"MD","MASSACHUSETTS":"MA",
+  "MICHIGAN":"MI","MINNESOTA":"MN","MISSISSIPPI":"MS","MISSOURI":"MO","MONTANA":"MT","NEBRASKA":"NE","NEVADA":"NV",
+  "NEW HAMPSHIRE":"NH","NEW JERSEY":"NJ","NEW MEXICO":"NM","NEW YORK":"NY","NORTH CAROLINA":"NC","NORTH DAKOTA":"ND",
+  "OHIO":"OH","OKLAHOMA":"OK","OREGON":"OR","PENNSYLVANIA":"PA","RHODE ISLAND":"RI","SOUTH CAROLINA":"SC","SOUTH DAKOTA":"SD",
+  "TENNESSEE":"TN","TEXAS":"TX","UTAH":"UT","VERMONT":"VT","VIRGINIA":"VA","WASHINGTON":"WA","WEST VIRGINIA":"WV",
+  "WISCONSIN":"WI","WYOMING":"WY","PUERTO RICO":"PR","GUAM":"GU","AMERICAN SAMOA":"AS","NORTHERN MARIANA ISLANDS":"MP",
+  "VIRGIN ISLANDS":"VI","ARMED FORCES AMERICAS":"AA","ARMED FORCES EUROPE":"AE","ARMED FORCES PACIFIC":"AP"
+};
+const normUSCountry = c => {
+  const s = String(c||"").trim().toUpperCase();
+  return ["US","USA","UNITED STATES","UNITED STATES OF AMERICA","U.S.","AMERICA"].includes(s) ? "US" : s;
+};
+const normUSState = s => {
+  if (!s) return "";
+  const up = String(s).trim().toUpperCase();
+  if (up.length === 2) return up;
+  return US_STATE_MAP[up] || up;
+};
+const normUSZip = z => String(z||"").replace(/\D/g,"").slice(0,5);
 
-      M.toast?.({ html: "Verifying address…" });
+// ── Verify-orchestrator (USPS → Nominatim) ─────────────────────────────
+async function maybeVerifyAddressBeforeStep1(){
+  const orig = addressFromInputs();
+  const fnBase = "/.netlify/functions";
+  const country = normUSCountry(orig.to_country_code);
+  let sugg = null;
 
-      // 1) If US → USPS (free)
-      if (country === "US") {
-        try {
-          const r = await fetch(`${fnBase}/uspsVerify`, {
-            method: "POST",
-            headers: { "Content-Type":"application/json" },
-            body: JSON.stringify({
-              address1: orig.to_address_1,
-              address2: orig.to_address_2,
-              city:     orig.to_city,
-              state:    orig.to_province_code,
-              postal:   orig.to_postal_code
-            })
-          });
-          if (r.ok) { const j = await r.json(); sugg = j.suggested || null; }
-        } catch {}
+  M.toast?.({ html: "Verifying address…" });
+
+  // 1) If US → USPS (free, authoritative)
+  if (country === "US") {
+    try {
+      const r = await fetch(`${fnBase}/uspsVerify`, {
+        method: "POST",
+        headers: { "Content-Type":"application/json" },
+        body: JSON.stringify({
+          address1: (orig.to_address_1||"").trim(),
+          address2: (orig.to_address_2||"").trim(),
+          city:     (orig.to_city||"").trim(),
+          state:    normUSState(orig.to_province_code),
+          postal:   normUSZip(orig.to_postal_code)
+        })
+      });
+
+      let j = {};
+      try { j = await r.json(); } catch {}
+      if (!r.ok || j.error) {
+        M.toast?.({ html: `USPS: ${j.error || r.status}` });
+      } else if (j.suggested) {
+        sugg = j.suggested;
       }
+    } catch {}
+  }
 
-      // 2) Otherwise (or USPS had nothing) → Nominatim (international)
-      if (!sugg) {
-        try {
-          const q = [orig.to_address_1, orig.to_address_2, orig.to_city, orig.to_province_code, orig.to_postal_code]
-            .filter(Boolean).join(", ");
-          const r = await fetch(`${fnBase}/nominatimNormalize`, {
-            method: "POST",
-            headers: { "Content-Type":"application/json" },
-            body: JSON.stringify({ q, country })
-          });
-          if (r.ok) { const j = await r.json(); sugg = j.suggested || null; }
-        } catch {}
+  // 2) Otherwise (or USPS had nothing) → Nominatim (international normalization)
+  if (!sugg) {
+    try {
+      const q = [orig.to_address_1, orig.to_address_2, orig.to_city, orig.to_province_code, orig.to_postal_code]
+        .filter(Boolean).join(", ");
+      const r = await fetch(`${fnBase}/nominatimNormalize`, {
+        method: "POST",
+        headers: { "Content-Type":"application/json" },
+        body: JSON.stringify({ q, country })
+      });
+      if (r.ok) {
+        const j = await r.json();
+        sugg = j.suggested || null;
       }
+    } catch {}
+  }
 
-      const hasAny = sugg && Object.values(sugg).some(v => String(v||"").trim() !== "");
-      const safeSugg = hasAny ? sugg : orig;   // still show the modal, diffing against original
-      return openVerifyModal(orig, safeSugg);
+  const hasAny = sugg && Object.values(sugg).some(v => String(v||"").trim() !== "");
+  const safeSugg = hasAny ? sugg : orig;   // still show the modal, diffing against original
+  return openVerifyModal(orig, safeSugg);
+}
+
+/* ────────────────────────────────────────────────────────────── */
+
+btnNext.addEventListener("click", async () => {
+  try {
+    if (currentStep === 0){
+      if (!validateStep(0)) return;
+      const shown = await maybeVerifyAddressBeforeStep1();
+      if (shown) return;
+      showStep(1);
+      return;
     }
+    if (currentStep === 1){
+      if (!validateStep(1)) return;
+      showStep(2);
+      return;
+    }
+    if (currentStep === 2){
+      if (!validateStep(2)) return;
+      await ensureShipment();
+      const id = (idInput.value || "").trim();
+      if (!id) { M.toast?.({ html: "Could not create shipment — check Recipient & Description." }); return; }
+      await refreshRates();
+      showStep(3);
+    }
+  } catch (err) {
+    handleCcApiError(err);
+  }
+});
 
-      /* ────────────────────────────────────────────────────────────── */
-
-      btnNext.addEventListener("click", async () => {
-        try {
-          if (currentStep === 0){
-            if (!validateStep(0)) return;
-            const shown = await maybeVerifyAddressBeforeStep1();
-            if (shown) return;
-            showStep(1);
-            return;
-          }
-          if (currentStep === 1){
-            if (!validateStep(1)) return;
-            showStep(2);
-            return;
-          }
-          if (currentStep === 2){
-            if (!validateStep(2)) return;
-            await ensureShipment();
-            const id = (idInput.value || "").trim();
-            if (!id) { M.toast?.({ html: "Could not create shipment — check Recipient & Description." }); return; }
-            await refreshRates();
-            showStep(3);
-          }
-        } catch (err) {
-          handleCcApiError(err);
-        }
-      });
-
-      btnRefresh.addEventListener("click", async () => {
-        try{
-          if (!validateStep(2)) return;
-          await ensureShipment();
-          await refreshRates();
-        }catch(err){
-          handleCcApiError(err);
-        }
-      });
-      btnBuy.addEventListener("click", buySelected);
-
-    })();
+btnRefresh.addEventListener("click", async () => {
+  try{
+    if (!validateStep(2)) return;
+    await ensureShipment();
+    await refreshRates();
+  }catch(err){
+    handleCcApiError(err);
+  }
+});
+btnBuy.addEventListener("click", buySelected);
 
   </script>
 
