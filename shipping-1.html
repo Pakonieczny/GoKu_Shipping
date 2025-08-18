@@ -2650,38 +2650,25 @@ function metalToBadge(label){
       const addBtn         = document.getElementById("ccAddToBatchBtn");
       const removeBtn      = document.getElementById("ccRemoveFromBatchBtn");
 
-      /* ── Auto-populate CC Shipment ID whenever a new order loads ───────── */
-      (function initCcAutoPopulate(){
-        if (orderInp) {
-          // Hook programmatic .value assignments so they behave like real user input
-          const desc = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value");
-          if (desc && !orderInp._ccHooked) {
-            const origSet = desc.set, origGet = desc.get;
-            Object.defineProperty(orderInp, "value", {
-              configurable: true,
-              get(){ return origGet.call(this); },
-              set(v){
-               const prev = origGet.call(this);
-                origSet.call(this, v);
-                const cur = String(v || "").trim();
-                if (cur && cur !== prev) {
-                  // Fire the same listeners your manual entry uses
-                  this.dispatchEvent(new Event("input",  { bubbles: true }));
-                  this.dispatchEvent(new Event("change", { bubbles: true }));
-                  // Belt-and-suspenders: run the lookup after the UI settles
-                  setTimeout(() => { try { refreshFromOrderIfChitChats(); } catch {} }, 60);
-                }
-              }
-            });
-            orderInp._ccHooked = true;
+      /* ── Guard: ignore immediate blank rewrites of #ccShipmentId ─────────── */
+      (function guardCcShipmentId(){
+        const el = document.getElementById("ccShipmentId");
+        if (!el || el._guarded) return;
+        const desc = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value");
+        if (!desc || typeof desc.get !== "function" || typeof desc.set !== "function") return;
+        Object.defineProperty(el, "value", {
+          configurable: true,
+          get(){ return desc.get.call(this); },
+          set(v){
+            const isBlank = v == null || String(v).trim() === "";
+            const fresh   = this.dataset.setAt && (Date.now() - Number(this.dataset.setAt)) < 2000;
+            if (fresh && isBlank) return;     // 🚫 ignore “just after set” blanking
+            desc.set.call(this, v);
           }
-        }
-        // Optional: if other code emits a lifecycle event, respond to it
-        document.addEventListener("order:loaded", () => {
-          if ((orderInp?.value || "").trim()) refreshFromOrderIfChitChats();
         });
+        el._guarded = true;
       })();
-      
+
       // Always use the Netlify functions base
       const fnBase = "/.netlify/functions";
 
@@ -2731,7 +2718,10 @@ function metalToBadge(label){
         }
 
         const sid = s?.id != null ? String(s.id) : "";
-        if (ccShipEl) ccShipEl.value = sid;
+        if (ccShipEl) {
+          ccShipEl.value = sid;
+          ccShipEl.dataset.setAt = String(Date.now()); // 🕒 stamp when we set it
+        }        
         window.ccShipmentId    = sid;
         window.currentCarrier  = "ChitChats";
         window.currentTracking = s.carrier_tracking_code || sid || window.currentTracking;
