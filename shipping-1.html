@@ -1101,6 +1101,88 @@ function metalToBadge(label){
      ********************************************************/
     const functionsBaseUrl = window.location.origin + "/.netlify/functions";
 
+    /* ===== Address Suggestion Orchestrator (USPS-first, no Chit Chats) ===== */
+function formatAddr(a){
+  if (!a) return "—";
+  const lines = [
+    a.address1 || "",
+    a.address2 || "",
+    [a.city, a.state, a.postal].filter(Boolean).join(", "),
+    a.country || ""
+  ].filter(Boolean);
+  return lines.join("\n");
+}
+
+async function getSuggestedAddress(to){
+  const country = String(to.to_country_code || to.country || "").toUpperCase();
+
+  // 1) USPS (US-only, free, authoritative)
+  if (country === "US") {
+    try{
+      const r = await fetch(`${functionsBaseUrl}/uspsVerify`, {
+        method: "POST",
+        headers: { "Content-Type":"application/json" },
+        body: JSON.stringify({
+          address1: to.to_address_1,
+          address2: to.to_address_2,
+          city    : to.to_city,
+          state   : to.to_province_code,
+          postal  : to.to_postal_code
+        })
+      });
+      if (r.ok){
+        const { suggested } = await r.json();
+        if (suggested) return suggested;
+      }
+    }catch(_){}
+  }
+
+  // 2) Nominatim (international normalization suggestion)
+  try{
+    const q = [to.to_address_1,to.to_address_2,to.to_city,to.to_province_code,to.to_postal_code].filter(Boolean).join(", ");
+    const r = await fetch(`${functionsBaseUrl}/nominatimNormalize`, {
+      method:"POST",
+      headers:{ "Content-Type":"application/json" },
+      body: JSON.stringify({ q, country })
+    });
+    if (r.ok){
+      const { suggested } = await r.json();
+      if (suggested) return suggested;
+    }
+  }catch(_){}
+
+  return null;
+}
+
+/* Call this when opening the "Verify shipping address" modal */
+async function openVerifyAddressModal(){
+  const to = {
+    to_name         : document.getElementById("cc_to_name")?.value || "",
+    to_address_1    : document.getElementById("cc_to_address_1")?.value || "",
+    to_address_2    : document.getElementById("cc_to_address_2")?.value || "",
+    to_city         : document.getElementById("cc_to_city")?.value || "",
+    to_province_code: document.getElementById("cc_to_province_code")?.value || "",
+    to_postal_code  : document.getElementById("cc_to_postal_code")?.value || "",
+    to_country_code : document.getElementById("cc_to_country_code")?.value || ""
+  };
+
+  const origText = formatAddr({
+    address1: to.to_address_1, address2: to.to_address_2,
+    city: to.to_city, state: to.to_province_code,
+    postal: to.to_postal_code, country: to.to_country_code
+  });
+  document.getElementById("ccVerifyOriginal").textContent = origText;
+
+  const sug = await getSuggestedAddress(to);
+  document.getElementById("ccVerifySuggested").textContent = sug ? formatAddr(sug) : "— no suggestion —";
+
+  // show modal
+  document.getElementById("ccVerifyModal").style.display = "block";
+}
+
+/* Example trigger — wire to your existing button */
+document.getElementById("ccAddrEdit")?.addEventListener("click", openVerifyAddressModal);
+
     /* ===== Etsy OAuth boot + auto-refresh wiring (match design/sorting) ===== */
     const TOKEN_KEYS = {
       access  : "access_token",
