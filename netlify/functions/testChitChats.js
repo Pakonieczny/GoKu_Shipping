@@ -118,6 +118,7 @@ exports.handler = async (event) => {
                         .toUpperCase()
       };
 
+      const tried = [];
       // A) Try a dedicated address verify endpoint, if available
       try {
         const r1 = await fetch(url("/addresses/verify"), {
@@ -126,6 +127,7 @@ exports.handler = async (event) => {
           body: JSON.stringify({ address: toAsAddress })
         });
         const o1 = await wrap(r1);
+        tried.push({ path: "/addresses/verify", status: o1.status, ok: o1.ok });
         if (o1.ok) {
         const suggested = o1.data?.suggested
                          || o1.data?.normalized
@@ -133,7 +135,7 @@ exports.handler = async (event) => {
                          || (Array.isArray(o1.data?.suggestions) ? o1.data.suggestions[0] : null)
                          || o1.data
                          || null;
-         return ok({ suggested });
+         return ok({ suggested, tried });
         }
       } catch {}
 
@@ -142,9 +144,11 @@ exports.handler = async (event) => {
         const r2 = await fetch(url("/shipments/verify"), {
           method: "POST",
           headers: authH,
-          body: JSON.stringify({ to })
+         // send the same normalized shape; some servers expect {address:{...}}
+          body: JSON.stringify({ address: toAsAddress })
         });
         const o2 = await wrap(r2);
+        tried.push({ path: "/shipments/verify", status: o2.status, ok: o2.ok });
         if (o2.ok) {
         const suggested = o2.data?.suggested
                          || o2.data?.normalized
@@ -152,12 +156,12 @@ exports.handler = async (event) => {
                          || (Array.isArray(o2.data?.suggestions) ? o2.data.suggestions[0] : null)
                          || o2.data
                          || null;
-          return ok({ suggested });
+          return ok({ suggested, tried });
         }
       } catch {}
 
-      // C) Graceful fallback so the UI continues without a scary 500
-      return ok({ suggested: null });
+     // C) Graceful fallback so the UI continues without a scary 500
+     return ok({ suggested: null, tried });
     }
 
       // (1) create batch

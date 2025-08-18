@@ -3265,22 +3265,28 @@ function metalToBadge(label){
        M.toast?.({ html: "Verifying address with Chit Chats…" });
        ccLog("request", orig);
     
-       const out  = await callCc("POST", { action:"verify_to", to: orig });
-       ccLog("response", out);
-    
-      // also handle APIs that return { suggestions: [ ... ] }
+        const out  = await callCc("POST", { action:"verify_to", to: orig });
+        ccLog("response", out);
+
+        // accept shapes: {suggested|normalized|address} or {suggestions:[...]}
         const raw  = (out?.suggested
                    ?? out?.normalized
                    ?? out?.address
                    ?? (Array.isArray(out?.suggestions) ? out.suggestions[0] : null)
                    ?? null);
-
-        const sugg     = normalizeToAddressShape(raw || {});
-        const hasAny   = Object.values(sugg).some(v => String(v || "").trim() !== "");
-        const safeSugg = hasAny ? sugg : orig;           // fallback: mirror original
-
-        ccLog("opening verify modal", { raw, orig, sugg: safeSugg });
-        return openVerifyModal(orig, safeSugg);
+        if (!raw) {
+          M.toast?.({ html: "No suggested address returned by Chit Chats." });
+          return false;
+        }
+        const sugg = normalizeToAddressShape(raw);
+        // Only prompt if anything actually changed (ignore country case)
+        const changed = JSON.stringify({ ...orig, to_country_code:(orig.to_country_code||"").toUpperCase() })
+                      !== JSON.stringify({ ...sugg, to_country_code:(sugg.to_country_code||"").toUpperCase() });
+        if (!changed) {
+          M.toast?.({ html: "No differences found between entered and suggested address." });
+          return false;
+        }
+        return openVerifyModal(orig, sugg);
      }
 
       /* ────────────────────────────────────────────────────────────── */
