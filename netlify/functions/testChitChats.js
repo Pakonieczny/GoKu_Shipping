@@ -145,86 +145,158 @@ exports.handler = async (event) => {
       }
 
       // Search shipments by orderId or tracking (best-effort with graceful fallbacks)
-      if (resource === "search") {
-        const orderId  = (qp.orderId || "").toString().trim();
-        const tracking = (qp.tracking || "").toString().trim();
-        const want     = orderId || tracking;
-        if (!want) return ok({ shipments: [] });
+// --- inside: if (resource === "search") { ... }  REPLACE WHOLE BLOCK ---
+if (resource === "search") {
+  const orderId  = (qp.orderId || "").toString().trim();
+  const tracking = (qp.tracking || "").toString().trim();
+  const want     = orderId || tracking;
+  if (!want) return ok({ shipments: [] });
 
-        const fastMode = String(qp.fast || "").toLowerCase() === "1" || String(qp.fast || "").toLowerCase() === "true";
-        const pageSize = qp.pageSize ? Number(qp.pageSize) : 500;
+  const fastMode = String(qp.fast || "").toLowerCase() === "1" || String(qp.fast || "").toLowerCase() === "true";
 
-        // helpers
-        const norm = (s) => String(s || "").toLowerCase().replace(/[^a-z0-9]/g, "");
-        const looksLikeId = (s) => /^[0-9]{6,}$/.test(String(s || "").trim());
+  // NEW: scope to batches only
+  const parseCSV = (s) => String(s || "").split(",").map(t => t.trim()).filter(Boolean);
+  const batchIdsFromQuery = parseCSV(qp.batchIds || qp.batchId);
+  const batchesOnly = String(qp.batchesOnly || "").toLowerCase() === "1" || String(qp.batchesOnly || "") === "true" || batchIdsFromQuery.length > 0;
 
-        // Match across multiple possible fields (older orders often store refs differently)
-        const matches = (sh) => {
-          const n = (v) => norm(v);
-          const nOrder = n(orderId);
-          const nTrack = n(tracking);
+  const norm = (s) => String(s || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+  const looksLikeId = (s) => /^[0-9]{6,}$/.test(String(s || "").trim());
+  const matches = (sh) => {
+    const nOrder    = norm(orderId);
+    const nTrack    = norm(tracking);
+    const candOrd   = norm(sh.order_id || sh.order_number || sh.reference || "");
+    const candTrack = norm(sh.carrier_tracking_code || sh.tracking_code || sh.tracking_number || "");
+    return (nOrder && candOrd && (candOrd.includes(nOrder) || nOrder.includes(candOrd)))
+        || (nTrack && candTrack && (candTrack.includes(nTrack) || nTrack.includes(candTrack)));
+  };
 
-          const ordFields = [
-            sh.order_id,
-            sh.order_number,
-            sh.reference,
-            sh.reference_number,
-            sh.reference_value,
-            sh.external_order_id,
-            sh.external_id
-          ];
-          const trkFields = [
-            sh.carrier_tracking_code,
-            sh.tracking_code,
-            sh.tracking_number,
-            sh.tracking
-          ];
+  // helper: list open batches when none explicitly given
+  const listOpenBatchIds = async () => {
+    const r = await fetch(url(`/batches?status=open`), { headers: authH });
+    const o = await wrap(r);
+    if (!o.ok) return [];
+    const arr = Array.isArray(o.data) ? o.data : (o.data?.batches || o.data?.data || []);
+    return (arr || []).map(b => String(b.id)).filter(Boolean);
+  };
 
-          const candOrd   = n(ordFields.find(Boolean) || "");
-          const candTrack = n(trkFields.find(Boolean) || "");
+  // helper: page through shipments for a single batch id
+  const fetchBatchShipments = async (batchId, limitPerPage = 100, maxPages = 12) => {
+    const found = [];
+    for (let page = 1; page <= maxPages; page++) {
+      let r, o;
 
-          return (
-            (nOrder && candOrd && (candOrd.includes(nOrder) || nOrder.includes(candOrd))) ||
-            (nTrack && candTrack && (candTrack.includes(nTrack) || nTrack.includes(candTrack)))
-          );
-        };
-
-        // 1) Direct by ID if the input looks like a shipment id
-        if (looksLikeId(want)) {
-          try {
-            const r = await fetch(url(`/shipments/${encodeURIComponent(want)}`), { headers: authH });
-            const o = await wrap(r);
-            if (o.ok && o.data && o.data.id) {
-              return ok({ shipments: [o.data] });
-            }
-          } catch {}
+      // Prefer vendor batch-scoped endpoint if present
+      try {
+        r = await with429Retry(() => fetch(
+          url(`/batches/${encodeURIComponent(batchId)}/shipments?limit=${limitPerPage}&page=${page}`),
+          { headers: authH }
+        ));
+        if (r.ok) {
+          o = await wrap(r);
+        } else if (r.status === 404) {
+          o = null; // fall back below
+        } else {
+          break;
         }
+      } catch { o = null; }
 
-        // 2) Vendor search across *all pages*
+      // Fallback: some tenants expose a shipments filter by batch_id instead
+      if (!o) {
         try {
-          const all = await paginateShipments({
-            search: want,
-            pageSize,
-            // Stop early if we already have a hit to reduce calls
-            stopEarlyIf: (sh) => matches(sh)
-          });
-          const hits = (all || []).filter(matches);
-          if (hits.length) return ok({ shipments: hits });
-        } catch { /* non-fatal; continue */ }
-
-        // 3) If fast mode, stop after a full vendor pagination
-        if (fastMode) return ok({ shipments: [] });
-
-        // 4) Deep fallback: scan by status pools with pagination & local filter
-        const pools = ["archived", "processing", "ready"];
-        for (const st of pools) {
-          const pageResults = await paginateShipments({ status: st, pageSize });
-          const hits = pageResults.filter(matches);
-          if (hits.length) return ok({ shipments: hits });
-        }
-
-        return ok({ shipments: [] });
+          const r2 = await with429Retry(() => fetch(
+            url(`/shipments?batch_id=${encodeURIComponent(batchId)}&limit=${limitPerPage}&page=${page}`),
+            { headers: authH }
+          ));
+          o = await wrap(r2);
+          if (!o.ok) break;
+        } catch { break; }
       }
+
+      const arr = Array.isArray(o.data) ? o.data : (o.data?.shipments || o.data?.data || []);
+      for (const sh of (arr || [])) if (matches(sh)) found.push(sh);
+      if (!arr || arr.length < limitPerPage) break; // end of pages
+    }
+    return found;
+  };
+
+  // --- Batch-scoped search path (strict) ---
+  if (batchesOnly) {
+    const ids = batchIdsFromQuery.length ? batchIdsFromQuery : (await listOpenBatchIds());
+    if (!ids.length) return ok({ shipments: [] });
+
+    const pageCap = fastMode ? 2 : 12; // fast mode: skim first two pages per batch
+    const results = [];
+    // Small concurrency without hammering the API
+    const CONC = 3;
+    for (let i = 0; i < ids.length; i += CONC) {
+      const slice = ids.slice(i, i + CONC);
+      const chunk = await Promise.all(slice.map(id => fetchBatchShipments(id, 100, pageCap)));
+      for (const arr of chunk) results.push(...arr);
+      if (fastMode && results.length) break; // early exit if we already have a winner
+    }
+
+    // If input looks like a shipment id, optional verification that it belongs to allowed batches
+    if (!results.length && looksLikeId(want)) {
+      try {
+        const r = await fetch(url(`/shipments/${encodeURIComponent(want)}`), { headers: authH });
+        const o = await wrap(r);
+        if (o.ok && o.data && o.data.id) {
+          const bid = String(o.data.batch_id || "");
+          if (bid && ids.includes(bid) && matches(o.data)) return ok({ shipments: [o.data] });
+        }
+      } catch {}
+    }
+
+    return ok({ shipments: results });
+  }
+
+  // --- Original (global) search path kept for non-batch calls ---
+  // 1) try exact id
+  if (looksLikeId(want)) {
+    try {
+      const r = await fetch(url(`/shipments/${encodeURIComponent(want)}`), { headers: authH });
+      const o = await wrap(r);
+      if (o.ok && o.data && o.data.id) return ok({ shipments: [o.data] });
+    } catch {}
+  }
+
+  // 2) vendor search
+  try {
+    const r1 = await fetch(
+      url(`/shipments?search=${encodeURIComponent(want)}&limit=100&page=1`),
+      { headers: authH }
+    );
+    const o1 = await wrap(r1);
+    if (o1.ok) {
+      const arr = Array.isArray(o1.data) ? o1.data : (o1.data?.shipments || o1.data?.data || []);
+      const hits = (arr || []).filter(matches);
+      if (hits.length) return ok({ shipments: hits });
+    }
+  } catch {}
+
+  // 3) deep fallback across statuses
+  if (fastMode) return ok({ shipments: [] });
+  const tryPages = async (status) => {
+    const out = [];
+    const MAX_PAGES = 12;
+    for (let page = 1; page <= MAX_PAGES; page++) {
+      try {
+        const r = await fetch(url(`/shipments?status=${encodeURIComponent(status)}&limit=100&page=${page}`), { headers: authH });
+        const o = await wrap(r);
+        if (!o.ok) break;
+        const arr = Array.isArray(o.data) ? o.data : (o.data?.shipments || o.data?.data || []);
+        for (const sh of (arr || [])) if (matches(sh)) out.push(sh);
+        if (!arr || arr.length < 100) break;
+      } catch { break; }
+    }
+    return out;
+  };
+  for (const st of ["archived", "processing", "ready"]) {
+    const found = await tryPages(st);
+    if (found.length) return ok({ shipments: found });
+  }
+  return ok({ shipments: [] });
+}
 
       // Fetch a single shipment
       if (resource === "shipment" && qp.id) {
