@@ -1673,8 +1673,7 @@ function metalToBadge(label){
               M.toast?.({ html: "Order # pasted" });
 
               // 🔎 Also refresh ccShipmentId 500ms after paste (independent of auto-Enter)
-              setTimeout(refreshFromOrderIfChitChats, 500);
-
+              setTimeout(() => window.refreshFromOrderIfChitChats?.(), 500);
               // focus, then simulate pressing Enter after 100ms
               inp.focus();
               setTimeout(() => {
@@ -2653,6 +2652,10 @@ function metalToBadge(label){
       const addBtn         = document.getElementById("ccAddToBatchBtn");
       const removeBtn      = document.getElementById("ccRemoveFromBatchBtn");
 
+      // Make lookups callable from outside the IIFE (e.g., Paste button)
+      window.refreshFromOrderIfChitChats    = refreshFromOrderIfChitChats;
+      window.refreshFromTrackingIfChitChats = refreshFromTrackingIfChitChats;
+
       /* ── Guard: ignore immediate blank rewrites of #ccShipmentId ─────────── */
       (function guardCcShipmentId(){
         const el = document.getElementById("ccShipmentId");
@@ -2786,7 +2789,7 @@ function metalToBadge(label){
       orderInp?.addEventListener("keydown", (e) => {
         if (e.key === "Enter") {
           e.preventDefault();
-          if (e.isTrusted) setTimeout(refreshFromOrderIfChitChats, 500); // ← 500ms delay
+          if (e.isTrusted) setTimeout(() => window.refreshFromOrderIfChitChats?.(), 500); // ← 500ms delay
         }
       });
       // Tracking remains immediate on Enter
