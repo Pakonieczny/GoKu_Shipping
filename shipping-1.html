@@ -3264,36 +3264,62 @@ function metalToBadge(label){
       return true;
     }
 
+      // ───────────────── Smarty: client proxy caller ─────────────────
+      async function verifyWithSmarty(to){
+        try{
+          const r = await fetch("/.netlify/functions/smartyVerify", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ to })
+          });
+          const out = await r.json();
+          // Normalize shape: { suggested: {to_*}, raw: {...} }
+          return out && out.suggested ? out.suggested : null;
+        }catch(err){
+          console.warn("[Smarty]", err);
+          return null;
+        }
+      }
+
      async function maybeVerifyAddressBeforeStep1(){
-       const ccLog = (...args) => { try { console.debug("[CC Verify]", ...args); } catch {} };
+       const log  = (...a)=>{ try{ console.debug("[Verify]", ...a);}catch{} };
        const orig = addressFromInputs();
-       M.toast?.({ html: "Verifying address with Chit Chats…" });
-       ccLog("request", orig);
-    
-       const out  = await callCc("POST", { action:"verify_to", to: orig });
-       ccLog("response", out);
-    
-       const raw  = (out?.suggested ?? out?.normalized ?? out?.address ?? null);
-       if (!raw) {
-         M.toast?.({ html: "No address suggestions from Chit Chats" });
-         return false;                           // nothing from API
+       if ((orig.to_country_code||"").toUpperCase() !== "US") return false; // only US via Smarty
+
+       // 1) Try Smarty (US Street) first
+       M.toast?.({ html: "Verifying address with Smarty…" });
+       log("Smarty request", orig);
+       const smartySugg = await verifyWithSmarty(orig);
+       log("Smarty suggested", smartySugg);
+
+       let sugg = smartySugg ? normalizeToAddressShape(smartySugg) : null;
+
+       // 2) Optional fallback: if Smarty had nothing, try your existing Chit Chats normalization
+       if (!sugg){
+         try{
+           M.toast?.({ html: "No Smarty suggestion — checking carrier…" });
+           const out = await callCc("POST", { action:"verify_to", to: orig });
+           const raw = (out?.suggested ?? out?.normalized ?? out?.address ?? null);
+           sugg = raw ? normalizeToAddressShape(raw) : null;
+         }catch(e){ log("Carrier verify failed", e); }
        }
-    
-       const sugg = normalizeToAddressShape(raw);
-       const hasAny = Object.values(sugg || {}).some(v => String(v || "").trim() !== "");
-       if (!hasAny) return false;                        // all empty → skip
-    
+
+       if (!sugg) {
+         M.toast?.({ html: "No verified address suggestion found" });
+         return false;
+       }
+
        const changed = JSON.stringify({
-         ...orig, to_country_code: (orig.to_country_code||"").toUpperCase()
+         ...orig, to_country_code:(orig.to_country_code||"").toUpperCase()
        }) !== JSON.stringify({
-         ...sugg, to_country_code: (sugg.to_country_code||"").toUpperCase()
+         ...sugg, to_country_code:(sugg.to_country_code||"").toUpperCase()
        });
-    
+
        if (changed) {
-         ccLog("changed → opening compare modal", { orig, sugg });
+         log("changed → opening compare modal", { orig, sugg });
          return openVerifyModal(orig, sugg);
        }
-       M.toast?.({ html: "Address already normalized" });
+       M.toast?.({ html: "Address already verified" });
        return false;
      }
 
