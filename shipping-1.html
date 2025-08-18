@@ -2687,12 +2687,24 @@ function metalToBadge(label){
         const txt = await resp.text();
         try { return JSON.parse(txt); } catch { return { error: txt.slice(0,200) }; }
       }
-      // Use the deployed proxy function (testChitChats) and its new "search" resource
+      // Use the deployed proxy function (testChitChats) with fast=1 and cancel stale requests
+      let _searchAbort;
       async function callSearch(params){
-        const qs   = new URLSearchParams(params).toString();
-        const resp = await fetch(`${fnBase}/testChitChats?resource=search&${qs}`, { credentials: "include" });
+        const p  = { ...params, fast: 1 };
+        const qs = new URLSearchParams(p).toString();
+        if (_searchAbort) { try { _searchAbort.abort(); } catch {} }
+        _searchAbort = new AbortController();
+        const resp = await fetch(`${fnBase}/testChitChats?resource=search&${qs}`, {
+          credentials: "include",
+          signal: _searchAbort.signal
+        });
         return await safeJSON(resp);
       }
+
+      // --- search de-duplication guards
+      let _lastOrderQuery = "";
+      let _lastTrackingQuery = "";
+      let _lastEnterTs = 0;
 
       // --- UI setters
       function setShipmentUI(s){
@@ -2719,6 +2731,8 @@ function metalToBadge(label){
       async function refreshFromOrderIfChitChats(){
         const orderId = (orderInp?.value || "").trim();
         if (!orderId) return;
+        if (orderId === _lastOrderQuery) return;
+        _lastOrderQuery = orderId;
         try {
           const res = await callSearch({ orderId });
           const s   = (res.shipments || [])[0];
@@ -2730,6 +2744,8 @@ function metalToBadge(label){
       async function refreshFromTrackingIfChitChats(){
         const tracking = (trackingInp?.value || "").trim();
         if (!tracking) return;
+        if (tracking === _lastTrackingQuery) return;
+        _lastTrackingQuery = tracking;
         try {
           const res = await callSearch({ tracking });
           const s   = (res.shipments || [])[0];
@@ -2740,14 +2756,18 @@ function metalToBadge(label){
       }
 
       // --- Listeners (debounced + change)
-      orderInp   ?.addEventListener("input",  debounce(refreshFromOrderIfChitChats, 250));
+      orderInp   ?.addEventListener("input",  debounce(refreshFromOrderIfChitChats, 700));
       orderInp   ?.addEventListener("change", refreshFromOrderIfChitChats);
-      trackingInp?.addEventListener("input",  debounce(refreshFromTrackingIfChitChats, 250));
+      trackingInp?.addEventListener("input",  debounce(refreshFromTrackingIfChitChats, 700));
       trackingInp?.addEventListener("change", refreshFromTrackingIfChitChats);
 
       // Enter-to-search for reliability (manual entry/paste)
-      orderInp   ?.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); refreshFromOrderIfChitChats(); } });
-      trackingInp?.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); refreshFromTrackingIfChitChats(); } });
+      orderInp   ?.addEventListener("keydown", (e) => {
+        if (e.key === "Enter") { const now = Date.now(); if (now - _lastEnterTs < 300) return; _lastEnterTs = now; e.preventDefault(); refreshFromOrderIfChitChats(); }
+      });
+      trackingInp?.addEventListener("keydown", (e) => {
+        if (e.key === "Enter") { const now = Date.now(); if (now - _lastEnterTs < 300) return; _lastEnterTs = now; e.preventDefault(); refreshFromTrackingIfChitChats(); }
+      });
 
       // Kick if fields already have values
       if ((orderInp?.value || "").trim())    refreshFromOrderIfChitChats();
