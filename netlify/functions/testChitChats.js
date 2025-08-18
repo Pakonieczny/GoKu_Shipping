@@ -3,9 +3,11 @@
  * Chit Chats proxy:
  *   - GET  ?resource=batches[&status=open]           → list batches
  *   - GET  ?resource=shipment&id=<shipmentId>        → fetch one shipment
+ *   - GET  ?resource=search&orderId=..&tracking=..   → best-effort search
  *   - GET  (no resource)                             → quick shipments ping (status=ready)
  *   - POST { action:"create", description? }         → create batch
  *   - POST { action:"create_shipment", shipment:{} } → create shipment
+ *   - POST { action:"verify_to", to:{} }             → verify recipient address (best-effort)
  *   - PATCH { action:"refresh", shipment_id, payload:{} } → refresh rates / update pkg
  *   - PATCH { action:"buy",     shipment_id, postage_type } → buy label
  *   - PATCH { action:"add"|"remove", batch_id|batchId, shipmentIds[] }
@@ -48,8 +50,11 @@ exports.handler = async (event) => {
       return { ok: resp.ok, status: resp.status, data, resp };
     };
     const ok  = (data)       => ({ statusCode: 200, headers: CORS, body: JSON.stringify(data) });
-    const bad = (code, err)  => ({ statusCode: code, headers: CORS, body: JSON.stringify({ error:
-    typeof err === "string" ? err : (err?.message || JSON.stringify(err)) }) });
+    const bad = (code, err)  => ({
+      statusCode: code,
+      headers: CORS,
+      body: JSON.stringify({ error: typeof err === "string" ? err : (err?.message || JSON.stringify(err)) })
+    });
 
     // ---------- GET ----------
     if (event.httpMethod === "GET") {
@@ -171,40 +176,40 @@ exports.handler = async (event) => {
       return ok({ success: true, data: out.data });
     }
 
-    // ---------- POST (create batch | create shipment) ----------
+    // ---------- POST (create batch | create shipment | verify_to) ----------
     if (event.httpMethod === "POST") {
       const body   = safeJSON(event.body);
       const action = (body.action || "").toLowerCase();
 
-        // (0) verify recipient address (best-effort; never throw)
-    if (action === "verify_to") {
-      const to = body.to || body.address || {};
+      // (0) verify recipient address (best-effort; never throw)
+      if (action === "verify_to") {
+        const to = body.to || body.address || {};
 
-      // A) Try a dedicated address verify endpoint, if available
-      try {
-        const r1 = await fetch(url("/addresses/verify"), {
-          method: "POST",
-          headers: authH,
-          body: JSON.stringify({ address: to })
-        });
-        const o1 = await wrap(r1);
-        if (o1.ok) return ok(o1.data); // can contain { suggested | normalized | address }
-      } catch {}
+        // A) Try a dedicated address verify endpoint, if available
+        try {
+          const r1 = await fetch(url("/addresses/verify"), {
+            method: "POST",
+            headers: authH,
+            body: JSON.stringify({ address: to })
+          });
+          const o1 = await wrap(r1);
+          if (o1.ok) return ok(o1.data); // may contain { suggested | normalized | address }
+        } catch {}
 
-      // B) Fallback variant some tenants expose
-      try {
-        const r2 = await fetch(url("/shipments/verify"), {
-          method: "POST",
-          headers: authH,
-          body: JSON.stringify({ to })
-        });
-        const o2 = await wrap(r2);
-        if (o2.ok) return ok(o2.data);
-      } catch {}
+        // B) Fallback variant some tenants expose
+        try {
+          const r2 = await fetch(url("/shipments/verify"), {
+            method: "POST",
+            headers: authH,
+            body: JSON.stringify({ to })
+          });
+          const o2 = await wrap(r2);
+          if (o2.ok) return ok(o2.data);
+        } catch {}
 
-      // C) Graceful fallback so the UI continues without a scary 500
-      return ok({ suggested: null });
-    }
+        // C) Graceful fallback so the UI continues without a scary 500
+        return ok({ suggested: null });
+      }
 
       // (1) create batch
       if (action === "create") {
@@ -217,33 +222,6 @@ exports.handler = async (event) => {
         const loc = out.resp.headers.get("Location") || "";
         const id  = loc.split("/").filter(Boolean).pop();
         return ok({ success: true, id, location: loc || null });
-      }
-
-      // address verification (best-guess endpoint name; adjust if your tenant differs)
-      if (action === "verify_to") {
-        const to = body.to || {};
-        // Try a dedicated address verification endpoint
-        let resp = await fetch(api("/addresses/verify"), {
-          method: "POST",
-          headers: authJson(),
-          body: JSON.stringify({ address: to })
-        });
-        let out  = await wrap(resp);
-
-        // Fallback: some deployments expose a shipments verify
-        if (!out.ok && out.status === 404) {
-          resp = await fetch(api("/shipments/verify"), {
-            method: "POST",
-            headers: authJson(),
-            body: JSON.stringify({ to })
-          });
-          out = await wrap(resp);
-        }
-        if (!out.ok) return bad(out.status, out.data);
-
-        // Normalize to a simple shape for the client
-        const suggested = out.data?.suggested || out.data?.normalized || out.data?.address || out.data;
-        return ok({ suggested });
       }
 
       // (2) create shipment
@@ -268,7 +246,7 @@ exports.handler = async (event) => {
         return ok({ success: true, id, shipment: created });
       }
 
-      return bad(400, "action must be create or create_shipment");
+      return bad(400, "action must be create or create_shipment or verify_to");
     }
 
     // ---------- PATCH (batch add/remove | shipment refresh/buy) ----------

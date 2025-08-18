@@ -2942,21 +2942,23 @@ function metalToBadge(label){
         // 2) Only treat the id as valid if it looks like a real one
         const rawId      = (document.getElementById("ccShipmentId")?.value || "").trim();
         const hasValidId = /^[A-Za-z0-9_-]{8,}$/.test(rawId);
+        const canRefresh = hasValidId && step >= 2; // only refresh once package fields exist
         try {
-          if (hasValidId) {
-            // Server-side validate/update existing shipment
-            await callCc("PATCH", { action: "refresh", shipment_id: rawId, payload });
-            return [];
-          }
-          // No/invalid id yet:
-          if (step === 0) {
-            // Step 0: verify address (no shipment creation)
-            await callCc("POST", { action: "verify_to", to: payload.to });
-            return [];
-          }
-          // Steps 1/2: create to get precise server-side field errors
-          await callCc("POST", { action: "create_shipment", shipment: payload });
+        if (canRefresh) {
+          // Server-side validate/update existing shipment (now safe)
+          await callCc("PATCH", { action: "refresh", shipment_id: rawId, payload });
           return [];
+        }
+        if (step === 0) {
+          // Step 0: verify address only; never create/refresh here
+          await callCc("POST", { action: "verify_to", to: payload.to });
+          return [];
+        }
+        // Step 1 may not have full pkg info; only create if we don't have an id yet
+        if (!hasValidId) {
+          await callCc("POST", { action: "create_shipment", shipment: payload });
+        }
+        return [];
         } catch (e) {
           // Highlight server-reported fields and stop advancing
           handleCcApiError(step, e);
@@ -3356,19 +3358,19 @@ function metalToBadge(label){
       btnNext.addEventListener("click", async () => {
         try {
           if (currentStep === 0){
-            if (!validateStep(0)) return;
+            if (!(await validateStep(0))) return;
             const shown = await maybeVerifyAddressBeforeStep1();
             if (shown) return;
             showStep(1);
             return;
           }
           if (currentStep === 1){
-            if (!validateStep(1)) return;
+            if (!(await validateStep(1))) return;            
             showStep(2);
             return;
           }
           if (currentStep === 2){
-            if (!validateStep(2)) return;
+            if (!(await validateStep(2))) return;
             await ensureShipment();
             const id = (idInput.value || "").trim();
             if (!id) { M.toast?.({ html: "Could not create shipment — check Recipient & Description." }); return; }
@@ -3382,7 +3384,7 @@ function metalToBadge(label){
 
       btnRefresh.addEventListener("click", async () => {
         try{
-          if (!validateStep(2)) return;
+          if (!(await validateStep(2))) return;
           await ensureShipment();
           await refreshRates();
         }catch(err){
