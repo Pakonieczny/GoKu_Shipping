@@ -2738,6 +2738,19 @@ function metalToBadge(label){
         }
       }
 
+        function pickBestShipment(target, list = []){
+        const norm = (s) => String(s || "").toLowerCase().replace(/[^a-z0-9]/g,"");
+        const t = norm(target);
+        const fields = (s) => [s.order_id, s.order_number, s.reference, s.carrier_tracking_code];
+        const exact = list.find(s => fields(s).some(v => norm(v) === t));
+        if (exact) return exact;
+        const partial = list.find(s => fields(s).some(v => {
+          const n = norm(v);
+          return n && (n.includes(t) || t.includes(n));
+        }));
+        return partial || list[0] || null;
+      }
+
       // --- Lookups
       async function refreshFromOrderIfChitChats(){
         const orderId = (orderInp?.value || "").trim();
@@ -2745,13 +2758,13 @@ function metalToBadge(label){
         try {
           // Fast pass (vendor search / id match only)
           const fast = await callSearch({ orderId });
-          const hit  = (fast.shipments || [])[0];
+          const hit  = pickBestShipment(orderId, (fast.shipments || []));
           if (hit) { setShipmentUI(hit); return; }
           // Slow pass (fallback pages) – runs after a short delay without clearing the field
           setTimeout(async () => {
             try {
               const slow = await callSearch({ orderId, fast: "0" });
-              const s2   = (slow.shipments || [])[0];
+              const s2   = pickBestShipment(orderId, (slow.shipments || []));
               if (s2) setShipmentUI(s2);
             } catch {}
           }, 900);
@@ -2764,12 +2777,12 @@ function metalToBadge(label){
         if (!tracking) return;
         try {
           const fast = await callSearch({ tracking });
-          const hit  = (fast.shipments || [])[0];
+          const hit  = pickBestShipment(tracking, (fast.shipments || []));
           if (hit) { setShipmentUI(hit); return; }
           setTimeout(async () => {
             try {
               const slow = await callSearch({ tracking, fast: "0" });
-              const s2   = (slow.shipments || [])[0];
+              const s2   = pickBestShipment(tracking, (slow.shipments || []));
               if (s2) setShipmentUI(s2);
             } catch {}
           }, 900);

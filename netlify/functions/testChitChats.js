@@ -129,10 +129,11 @@ exports.handler = async (event) => {
         // In fast mode, stop here without deep fallback loops
         if (fastMode) return ok({ shipments: [] });
 
-        // Fallback: scan a couple of statuses/pages locally and filter
+        // Fallback: scan more pages locally and filter (find older orders too)
         const tryPages = async (status) => {
           const out = [];
-          for (let page = 1; page <= 2; page++) {
+          const MAX_PAGES = 12; // ~1200 shipments across time
+          for (let page = 1; page <= MAX_PAGES; page++) {
             try {
               const r = await fetch(
                 url(`/shipments?status=${encodeURIComponent(status)}&limit=100&page=${page}`),
@@ -149,7 +150,8 @@ exports.handler = async (event) => {
           return out;
         };
 
-        const pools = ["ready", "processing", "archived"];
+        // Prefer archived (completed/shipped) first, then processing, then ready
+        const pools = ["archived", "processing", "ready"];
         for (const st of pools) {
           const found = await tryPages(st);
           if (found.length) return ok({ shipments: found });
