@@ -41,22 +41,6 @@ exports.handler = async (event) => {
     };
     const url = (p) => `${BASE}/clients/${encodeURIComponent(CLIENT_ID)}${p}`;
 
-    // In-memory tiny cache (per warm Lambda instance)
-    const _cache = (() => {
-      const m = new Map();
-      const TTL_MS = 2 * 60 * 1000; // 2 minutes
-      return {
-        get(k){
-          const v = m.get(k);
-          if (!v) return null;
-          if (Date.now() - v.t > TTL_MS) { m.delete(k); return null; }
-          return v.d;
-        },
-        set(k, d){ m.set(k, { d, t: Date.now() }); },
-        key(orderId, tracking){ return `q:${(orderId||"")}|${(tracking||"")}`.toLowerCase(); }
-      };
-    })();
-
     // ---------- helpers ----------
     const wrap = async (resp) => {
       const txt = await resp.text();
@@ -94,7 +78,6 @@ exports.handler = async (event) => {
         const tracking = (qp.tracking || "").toString().trim();
         const want     = orderId || tracking;
         if (!want) return ok({ shipments: [] });
-        const fast = (qp.fast === "0") ? 0 : 1;
 
         // helpers
         const norm = (s) => String(s || "").toLowerCase().replace(/[^a-z0-9]/g, "");
@@ -114,16 +97,9 @@ exports.handler = async (event) => {
             const r = await fetch(url(`/shipments/${encodeURIComponent(want)}`), { headers: authH });
             const o = await wrap(r);
             if (o.ok && o.data && o.data.id) {
-            if (fast) _cache.set(_cache.key(orderId, tracking), [o.data]);
-             return ok({ shipments: [o.data] });
+              return ok({ shipments: [o.data] });
             }
           } catch {}
-        }
-
-        // cache fast path
-        const _ckey = _cache.key(orderId, tracking);
-        if (fast && _cache.get(_ckey)) {
-          return ok({ shipments: _cache.get(_ckey) });
         }
 
         // Try vendor-side search param if available
@@ -138,13 +114,11 @@ exports.handler = async (event) => {
             const arr = Array.isArray(o1.data) ? o1.data
                       : (o1.data?.shipments || o1.data?.data || []);
             const hits = (arr || []).filter(matches);
-            if (hits.length) { if (fast) _cache.set(_ckey, hits); return ok({ shipments: hits }); }
+            if (hits.length) return ok({ shipments: hits });
           }
         } catch {}
 
-        // Fallback: scan a couple of statuses/pages locally and filter (only when fast=0)
-        if (fast) { return ok({ shipments: [] }); }
-        // heavy fallback below
+        // Fallback: scan a couple of statuses/pages locally and filter
         const tryPages = async (status) => {
           const out = [];
           for (let page = 1; page <= 2; page++) {
