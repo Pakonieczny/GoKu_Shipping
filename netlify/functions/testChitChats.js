@@ -83,42 +83,56 @@ exports.handler = async (event) => {
 
     // Generic paginator over /shipments that walks every page until exhausted.
     async function paginateShipments({ status, search, pageSize = 500, stopEarlyIf }) {
-      const PAGE_SIZE = Math.min(Math.max(Number(pageSize) || 500, 1), 1000); // docs say max 1000
+      const PAGE_SIZE = Math.min(Math.max(Number(pageSize) || 500, 1), 1000);
+      const CONCURRENCY = Math.min(Math.max(Number(process.env.CHIT_CHATS_CONCURRENCY) || 4, 1), 8);
       const qsCore = [
         status ? `status=${encodeURIComponent(status)}` : "",
         search ? `search=${encodeURIComponent(search)}` : "",
         `limit=${PAGE_SIZE}`
       ].filter(Boolean).join("&");
 
-      // Try to estimate total pages from /shipments/count (if available)
-      let estPages = null;
+      // Estimate total pages; if unknown, hard stop at 200
+      let totalPages = 200;
       try {
         const countQs = status ? `status=${encodeURIComponent(status)}` : "";
         const cnt = await getCount(countQs);
         if (typeof cnt === "number" && cnt >= 0) {
-          estPages = Math.max(1, Math.ceil(cnt / PAGE_SIZE));
+          totalPages = Math.max(1, Math.ceil(cnt / PAGE_SIZE));
         }
-      } catch { /* non-fatal */ }
+      } catch {}
 
       const results = [];
-      const MAX_PAGES_HARDSTOP = estPages || 200; // safety stop if /count unavailable
-      for (let page = 1; page <= MAX_PAGES_HARDSTOP; page++) {
-        const resp = await with429Retry(() =>
-          fetch(url(`/shipments?${qsCore}&page=${page}`), { headers: authH })
-        );
-        const out = await wrap(resp);
-        if (!out.ok) break;
-
-        const arr = normalizeList(out.data);
-        if (!arr || arr.length === 0) break;
-
-        for (const sh of arr) {
-          results.push(sh);
-          if (stopEarlyIf && stopEarlyIf(sh)) return results;
+      let nextPage = 1;
+      let found = false;
+      // windowed parallel fetcher
+      while (nextPage <= totalPages && !found) {
+        const pages = [];
+        for (let i = 0; i < CONCURRENCY && nextPage <= totalPages; i++, nextPage++) {
+          const page = nextPage;
+          pages.push(
+            with429Retry(() =>
+              fetch(url(`/shipments?${qsCore}&page=${page}`), { headers: authH })
+            ).then(wrap).then(out => ({ page, out }))
+          );
         }
-
-        // If the server returned fewer than PAGE_SIZE, we're at the last page.
-        if (arr.length < PAGE_SIZE) break;
+        const batch = await Promise.all(pages);
+        let hitEarlyStop = false;
+        for (const { out } of batch) {
+          if (!out.ok) continue;
+          const arr = normalizeList(out.data) || [];
+          for (const sh of arr) {
+            results.push(sh);
+            if (stopEarlyIf && stopEarlyIf(sh)) { hitEarlyStop = true; break; }
+          }
+          // if a page returned less than PAGE_SIZE, it was the last page
+          if ((out?.data && Array.isArray(out.data) && out.data.length < PAGE_SIZE) ||
+              (Array.isArray(out?.data?.shipments) && out.data.shipments.length < PAGE_SIZE) ||
+              (Array.isArray(out?.data?.data) && out.data.data.length < PAGE_SIZE)) {
+            totalPages = Math.min(totalPages, nextPage - 1);
+          }
+          if (hitEarlyStop) break;
+        }
+        if (hitEarlyStop) { found = true; break; }
       }
       return results;
     }
