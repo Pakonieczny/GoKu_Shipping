@@ -2687,9 +2687,10 @@ function metalToBadge(label){
         const txt = await resp.text();
         try { return JSON.parse(txt); } catch { return { error: txt.slice(0,200) }; }
       }
+      // Use the deployed proxy function (testChitChats) and its new "search" resource
       async function callSearch(params){
         const qs   = new URLSearchParams(params).toString();
-        const resp = await fetch(`${fnBase}/chitChatSearch?${qs}`, { credentials: "include" });
+        const resp = await fetch(`${fnBase}/testChitChats?resource=search&${qs}`, { credentials: "include" });
         return await safeJSON(resp);
       }
 

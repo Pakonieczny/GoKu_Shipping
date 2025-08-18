@@ -72,6 +72,80 @@ exports.handler = async (event) => {
         }
       }
 
+      // Search shipments by orderId or tracking (best-effort with graceful fallbacks)
+      if (resource === "search") {
+        const orderId  = (qp.orderId || "").toString().trim();
+        const tracking = (qp.tracking || "").toString().trim();
+        const want     = orderId || tracking;
+        if (!want) return ok({ shipments: [] });
+
+        // helpers
+        const norm = (s) => String(s || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+        const looksLikeId = (s) => /^[0-9]{6,}$/.test(String(s || "").trim());
+        const matches = (sh) => {
+          const nOrder    = norm(orderId);
+          const nTrack    = norm(tracking);
+          const candOrd   = norm(sh.order_id || sh.order_number || sh.reference || "");
+          const candTrack = norm(sh.carrier_tracking_code || sh.tracking_code || sh.tracking_number || "");
+          return (nOrder && candOrd && (candOrd.includes(nOrder) || nOrder.includes(candOrd)))
+              || (nTrack && candTrack && (candTrack.includes(nTrack) || nTrack.includes(candTrack)));
+        };
+
+        // Try exact shipment id first if the input looks like one
+        if (looksLikeId(want)) {
+          try {
+            const r = await fetch(url(`/shipments/${encodeURIComponent(want)}`), { headers: authH });
+            const o = await wrap(r);
+            if (o.ok && o.data && o.data.id) {
+              return ok({ shipments: [o.data] });
+            }
+          } catch {}
+        }
+
+        // Try vendor-side search param if available
+        try {
+          const r1 = await fetch(
+            url(`/shipments?search=${encodeURIComponent(want)}&limit=100&page=1`),
+            { headers: authH }
+          );
+          const o1 = await wrap(r1);
+          if (o1.ok) {
+            // normalize array shapes {shipments: []} | [] | {data:[]}
+            const arr = Array.isArray(o1.data) ? o1.data
+                      : (o1.data?.shipments || o1.data?.data || []);
+            const hits = (arr || []).filter(matches);
+            if (hits.length) return ok({ shipments: hits });
+          }
+        } catch {}
+
+        // Fallback: scan a couple of statuses/pages locally and filter
+        const tryPages = async (status) => {
+          const out = [];
+          for (let page = 1; page <= 2; page++) {
+            try {
+              const r = await fetch(
+                url(`/shipments?status=${encodeURIComponent(status)}&limit=100&page=${page}`),
+                { headers: authH }
+              );
+              const o = await wrap(r);
+              if (!o.ok) break;
+              const arr = Array.isArray(o.data) ? o.data
+                        : (o.data?.shipments || o.data?.data || []);
+              for (const sh of (arr || [])) if (matches(sh)) out.push(sh);
+              if (!arr || arr.length < 100) break; // no more pages
+            } catch { break; }
+          }
+          return out;
+        };
+
+        const pools = ["ready", "processing", "archived"];
+        for (const st of pools) {
+          const found = await tryPages(st);
+          if (found.length) return ok({ shipments: found });
+        }
+        return ok({ shipments: [] });
+      }
+
       // Fetch a single shipment
       if (resource === "shipment" && qp.id) {
         try {
