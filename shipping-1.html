@@ -2937,33 +2937,34 @@ function metalToBadge(label){
       }
 
       async function ccValidateAgainstApi(step){
-      // Build the minimal payload from current form
-      const payload = buildShipmentPayload();
-
-      // Prefer server-side validation if we have a shipment id
-      const id = (document.getElementById("ccShipmentId")?.value || "").trim();
-
-      try {
-        if (id) {
-          // Ask Chit Chats to refresh/validate current data
-          await callCc("PATCH", { action:"refresh", shipment_id: id, payload }, "");
-          return []; // no server-side errors
-        } else {
-          // No id yet — attempt a create to get precise field errors back.
-          // If it succeeds, great; if it 4xx’s, we’ll parse errors below.
-          await callCc("POST", { action:"create_shipment", shipment: payload });
+        // 1) Build minimal payload from current form
+        const payload = buildShipmentPayload();
+        // 2) Only treat the id as valid if it looks like a real one
+        const rawId      = (document.getElementById("ccShipmentId")?.value || "").trim();
+        const hasValidId = /^[A-Za-z0-9_-]{8,}$/.test(rawId);
+        try {
+          if (hasValidId) {
+            // Server-side validate/update existing shipment
+            await callCc("PATCH", { action: "refresh", shipment_id: rawId, payload });
+            return [];
+          }
+          // No/invalid id yet:
+          if (step === 0) {
+            // Step 0: verify address (no shipment creation)
+            await callCc("POST", { action: "verify_to", to: payload.to });
+            return [];
+          }
+          // Steps 1/2: create to get precise server-side field errors
+          await callCc("POST", { action: "create_shipment", shipment: payload });
           return [];
+        } catch (e) {
+          // Highlight server-reported fields and stop advancing
+          handleCcApiError(step, e);
+          const stepEl = document.getElementById("ccStep" + step);
+          const ids = Array.from(stepEl.querySelectorAll(".cc-field.cc-missing [id]")).map(n => n.id);
+          return ids;
         }
-      } catch (e) {
-        // Map Chit Chats error → UI field ids using existing logic
-        // (handleCcApiError already normalizes shapes and calls markMissing)
-        handleCcApiError(step, e);
-        // Return list of ids we highlighted so validateStep can stop advancing
-        const stepEl = document.getElementById("ccStep" + step);
-        const ids = Array.from(stepEl.querySelectorAll(".cc-field.cc-missing [id]")).map(n => n.id);
-        return ids;
       }
-    }
 
       function buildShipmentPayload(){
         const to = {
@@ -3169,7 +3170,9 @@ function metalToBadge(label){
         return true;
       }
 
-      function handleCcApiError(err){
+      // Accepts handleCcApiError(err) or handleCcApiError(step, err)
+      function handleCcApiError(stepOrErr, maybeErr){
+        const err = (maybeErr && typeof maybeErr === "object") ? maybeErr : stepOrErr;
         const raw = err?.raw || {};
         const details = [];
         const fieldsObj = raw?.error?.fields || raw?.errors;
