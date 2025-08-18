@@ -2685,7 +2685,7 @@ function metalToBadge(label){
       }
       // Use the deployed proxy function (testChitChats) and its new "search" resource
       async function callSearch(params){
-        const qs   = new URLSearchParams(params).toString();
+        const qs   = new URLSearchParams({ fast: "1", ...params }).toString();
         const resp = await fetch(`${fnBase}/testChitChats?resource=search&${qs}`, { credentials: "include" });
         return await safeJSON(resp);
       }
@@ -2693,9 +2693,7 @@ function metalToBadge(label){
       // --- UI setters
       function setShipmentUI(s){
         if (!s) {
-          if (ccShipEl) ccShipEl.value = "";
-          window.ccShipmentId = "";
-          // When no shipment is loaded, do not force a batch selection change.
+          // Do not wipe a previously found id on a miss/timeout. Keep showing the last good value.
           return;
         }
 
@@ -2716,9 +2714,18 @@ function metalToBadge(label){
         const orderId = (orderInp?.value || "").trim();
         if (!orderId) return;
         try {
-          const res = await callSearch({ orderId });
-          const s   = (res.shipments || [])[0];
-          setShipmentUI(s);
+          // Fast pass (vendor search / id match only)
+          const fast = await callSearch({ orderId });
+          const hit  = (fast.shipments || [])[0];
+          if (hit) { setShipmentUI(hit); return; }
+          // Slow pass (fallback pages) – runs after a short delay without clearing the field
+          setTimeout(async () => {
+            try {
+              const slow = await callSearch({ orderId, fast: "0" });
+              const s2   = (slow.shipments || [])[0];
+              if (s2) setShipmentUI(s2);
+            } catch {}
+          }, 900);
         } catch (e) {
           console.warn("order search failed", e);
         }
@@ -2727,9 +2734,16 @@ function metalToBadge(label){
         const tracking = (trackingInp?.value || "").trim();
         if (!tracking) return;
         try {
-          const res = await callSearch({ tracking });
-          const s   = (res.shipments || [])[0];
-          setShipmentUI(s);
+          const fast = await callSearch({ tracking });
+          const hit  = (fast.shipments || [])[0];
+          if (hit) { setShipmentUI(hit); return; }
+          setTimeout(async () => {
+            try {
+              const slow = await callSearch({ tracking, fast: "0" });
+              const s2   = (slow.shipments || [])[0];
+              if (s2) setShipmentUI(s2);
+            } catch {}
+          }, 900);
         } catch (e) {
           console.warn("tracking search failed", e);
         }

@@ -84,6 +84,9 @@ exports.handler = async (event) => {
         const want     = orderId || tracking;
         if (!want) return ok({ shipments: [] });
 
+        const fastMode = String(qp.fast || "").toLowerCase() === "1" || String(qp.fast || "").toLowerCase() === "true";
+
+
         // helpers
         const norm = (s) => String(s || "").toLowerCase().replace(/[^a-z0-9]/g, "");
         const looksLikeId = (s) => /^[0-9]{6,}$/.test(String(s || "").trim());
@@ -122,6 +125,9 @@ exports.handler = async (event) => {
             if (hits.length) return ok({ shipments: hits });
           }
         } catch {}
+
+        // In fast mode, stop here without deep fallback loops
+        if (fastMode) return ok({ shipments: [] });
 
         // Fallback: scan a couple of statuses/pages locally and filter
         const tryPages = async (status) => {
