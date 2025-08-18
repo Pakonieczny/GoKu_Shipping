@@ -3269,32 +3269,18 @@ function metalToBadge(label){
        ccLog("response", out);
     
       // also handle APIs that return { suggestions: [ ... ] }
-       const raw  = (out?.suggested
-                  ?? out?.normalized
-                  ?? out?.address
-                  ?? (Array.isArray(out?.suggestions) ? out.suggestions[0] : null)
-                  ?? null);
-       if (!raw) {
-         M.toast?.({ html: "No address suggestions from Chit Chats" });
-         return false;                           // nothing from API
-       }
-    
-       const sugg = normalizeToAddressShape(raw);
-       const hasAny = Object.values(sugg || {}).some(v => String(v || "").trim() !== "");
-       if (!hasAny) return false;                        // all empty → skip
-    
-       const changed = JSON.stringify({
-         ...orig, to_country_code: (orig.to_country_code||"").toUpperCase()
-       }) !== JSON.stringify({
-         ...sugg, to_country_code: (sugg.to_country_code||"").toUpperCase()
-       });
-    
-       if (changed) {
-         ccLog("changed → opening compare modal", { orig, sugg });
-         return openVerifyModal(orig, sugg);
-       }
-       M.toast?.({ html: "Address already normalized" });
-       return false;
+        const raw  = (out?.suggested
+                   ?? out?.normalized
+                   ?? out?.address
+                   ?? (Array.isArray(out?.suggestions) ? out.suggestions[0] : null)
+                   ?? null);
+
+        const sugg     = normalizeToAddressShape(raw || {});
+        const hasAny   = Object.values(sugg).some(v => String(v || "").trim() !== "");
+        const safeSugg = hasAny ? sugg : orig;           // fallback: mirror original
+
+        ccLog("opening verify modal", { raw, orig, sugg: safeSugg });
+        return openVerifyModal(orig, safeSugg);
      }
 
       /* ────────────────────────────────────────────────────────────── */
