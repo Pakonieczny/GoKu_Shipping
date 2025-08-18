@@ -3,7 +3,7 @@
  * Chit Chats proxy:
  *   - GET  ?resource=batches[&status=open]           → list batches
  *   - GET  ?resource=shipment&id=<shipmentId>        → fetch one shipment
- *   - GET  ?resource=search&orderId=..&tracking=..   → best-effort search
+ *   - GET  ?resource=search&orderId=..&tracking=..   → best-effort search (paginates all pages)
  *   - GET  (no resource)                             → quick shipments ping (status=ready)
  *   - POST { action:"create", description? }         → create batch
  *   - POST { action:"create_shipment", shipment:{} } → create shipment
@@ -56,6 +56,73 @@ exports.handler = async (event) => {
       body: JSON.stringify({ error: typeof err === "string" ? err : (err?.message || JSON.stringify(err)) })
     });
 
+    const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+    const with429Retry = async (makeFetch, attempts = 3) => {
+      for (let i = 1; i <= attempts; i++) {
+        const resp = await makeFetch();
+        if (resp.status !== 429) return resp;
+        const ra = Number(resp.headers.get("Retry-After") || "1");
+        await sleep(Math.max(ra, 1) * 1000);
+      }
+      return makeFetch();
+    };
+
+    const normalizeList = (obj) =>
+      Array.isArray(obj) ? obj : (obj?.shipments || obj?.data || []);
+
+    const getCount = async (qs) => {
+      // Uses official /shipments/count to estimate total pages (status supported)
+      // Not all filters are guaranteed server-side for /count; we treat it as a hint.
+      const resp = await with429Retry(() =>
+        fetch(url(`/shipments/count${qs ? `?${qs}` : ""}`), { headers: authH })
+      );
+      const out = await wrap(resp);
+      if (!out.ok || typeof out.data?.count !== "number") return null;
+      return out.data.count;
+    };
+
+    // Generic paginator over /shipments that walks every page until exhausted.
+    async function paginateShipments({ status, search, pageSize = 500, stopEarlyIf }) {
+      const PAGE_SIZE = Math.min(Math.max(Number(pageSize) || 500, 1), 1000); // docs say max 1000
+      const qsCore = [
+        status ? `status=${encodeURIComponent(status)}` : "",
+        search ? `search=${encodeURIComponent(search)}` : "",
+        `limit=${PAGE_SIZE}`
+      ].filter(Boolean).join("&");
+
+      // Try to estimate total pages from /shipments/count (if available)
+      let estPages = null;
+      try {
+        const countQs = status ? `status=${encodeURIComponent(status)}` : "";
+        const cnt = await getCount(countQs);
+        if (typeof cnt === "number" && cnt >= 0) {
+          estPages = Math.max(1, Math.ceil(cnt / PAGE_SIZE));
+        }
+      } catch { /* non-fatal */ }
+
+      const results = [];
+      const MAX_PAGES_HARDSTOP = estPages || 200; // safety stop if /count unavailable
+      for (let page = 1; page <= MAX_PAGES_HARDSTOP; page++) {
+        const resp = await with429Retry(() =>
+          fetch(url(`/shipments?${qsCore}&page=${page}`), { headers: authH })
+        );
+        const out = await wrap(resp);
+        if (!out.ok) break;
+
+        const arr = normalizeList(out.data);
+        if (!arr || arr.length === 0) break;
+
+        for (const sh of arr) {
+          results.push(sh);
+          if (stopEarlyIf && stopEarlyIf(sh)) return results;
+        }
+
+        // If the server returned fewer than PAGE_SIZE, we're at the last page.
+        if (arr.length < PAGE_SIZE) break;
+      }
+      return results;
+    }
+
     // ---------- GET ----------
     if (event.httpMethod === "GET") {
       const qp = event.queryStringParameters || {};
@@ -85,18 +152,18 @@ exports.handler = async (event) => {
         if (!want) return ok({ shipments: [] });
 
         const fastMode = String(qp.fast || "").toLowerCase() === "1" || String(qp.fast || "").toLowerCase() === "true";
+        const pageSize = qp.pageSize ? Number(qp.pageSize) : 500;
 
         // helpers
         const norm = (s) => String(s || "").toLowerCase().replace(/[^a-z0-9]/g, "");
         const looksLikeId = (s) => /^[0-9]{6,}$/.test(String(s || "").trim());
 
-        // *** FIELD-PARITY MATCHER (fixes older orders that only have reference_number/value) ***
+        // Match across multiple possible fields (older orders often store refs differently)
         const matches = (sh) => {
           const n = (v) => norm(v);
           const nOrder = n(orderId);
           const nTrack = n(tracking);
 
-          // mirror frontend candidate fields
           const ordFields = [
             sh.order_id,
             sh.order_number,
@@ -122,7 +189,7 @@ exports.handler = async (event) => {
           );
         };
 
-        // Try exact shipment id first if the input looks like one
+        // 1) Direct by ID if the input looks like a shipment id
         if (looksLikeId(want)) {
           try {
             const r = await fetch(url(`/shipments/${encodeURIComponent(want)}`), { headers: authH });
@@ -133,52 +200,29 @@ exports.handler = async (event) => {
           } catch {}
         }
 
-        // Try vendor-side search param if available
+        // 2) Vendor search across *all pages*
         try {
-          const r1 = await fetch(
-            url(`/shipments?search=${encodeURIComponent(want)}&limit=100&page=1`),
-            { headers: authH }
-          );
-          const o1 = await wrap(r1);
-          if (o1.ok) {
-            // normalize array shapes {shipments: []} | [] | {data:[]}
-            const arr = Array.isArray(o1.data) ? o1.data
-                      : (o1.data?.shipments || o1.data?.data || []);
-            const hits = (arr || []).filter(matches);
-            if (hits.length) return ok({ shipments: hits });
-          }
-        } catch {}
+          const all = await paginateShipments({
+            search: want,
+            pageSize,
+            // Stop early if we already have a hit to reduce calls
+            stopEarlyIf: (sh) => matches(sh)
+          });
+          const hits = (all || []).filter(matches);
+          if (hits.length) return ok({ shipments: hits });
+        } catch { /* non-fatal; continue */ }
 
-        // In fast mode, stop here without deep fallback loops
+        // 3) If fast mode, stop after a full vendor pagination
         if (fastMode) return ok({ shipments: [] });
 
-        // Fallback: scan more pages locally and filter (find older orders too)
-        const tryPages = async (status) => {
-          const out = [];
-          const MAX_PAGES = 12; // ~1200 shipments across time
-          for (let page = 1; page <= MAX_PAGES; page++) {
-            try {
-              const r = await fetch(
-                url(`/shipments?status=${encodeURIComponent(status)}&limit=100&page=${page}`),
-                { headers: authH }
-              );
-              const o = await wrap(r);
-              if (!o.ok) break;
-              const arr = Array.isArray(o.data) ? o.data
-                        : (o.data?.shipments || o.data?.data || []);
-              for (const sh of (arr || [])) if (matches(sh)) out.push(sh);
-              if (!arr || arr.length < 100) break; // no more pages
-            } catch { break; }
-          }
-          return out;
-        };
-
-        // Prefer archived (completed/shipped) first, then processing, then ready
+        // 4) Deep fallback: scan by status pools with pagination & local filter
         const pools = ["archived", "processing", "ready"];
         for (const st of pools) {
-          const found = await tryPages(st);
-          if (found.length) return ok({ shipments: found });
+          const pageResults = await paginateShipments({ status: st, pageSize });
+          const hits = pageResults.filter(matches);
+          if (hits.length) return ok({ shipments: hits });
         }
+
         return ok({ shipments: [] });
       }
 
@@ -216,7 +260,7 @@ exports.handler = async (event) => {
       if (action === "verify_to") {
         const to = body.to || body.address || {};
 
-        // A) Try a dedicated address verify endpoint, if available
+        // A) dedicated address verify endpoint
         try {
           const r1 = await fetch(url("/addresses/verify"), {
             method: "POST",
@@ -227,7 +271,7 @@ exports.handler = async (event) => {
           if (o1.ok) return ok(o1.data); // may contain { suggested | normalized | address }
         } catch {}
 
-        // B) Fallback variant some tenants expose
+        // B) fallback variant some tenants expose
         try {
           const r2 = await fetch(url("/shipments/verify"), {
             method: "POST",
