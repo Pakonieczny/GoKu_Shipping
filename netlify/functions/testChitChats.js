@@ -106,62 +106,30 @@ exports.handler = async (event) => {
     if (action === "verify_to") {
       const to = body.to || body.address || {};
 
-      // Map our "to_*" payload to Chit Chats' verify shape
-      const toAsAddress = {
-        name         : to.to_name ?? to.name ?? "",
-        address_1    : to.to_address_1 ?? to.address_1 ?? to.address1 ?? "",
-        address_2    : to.to_address_2 ?? to.address_2 ?? to.address2 ?? "",
-        city         : to.to_city ?? to.city ?? "",
-        province_code: to.to_province_code ?? to.province_code ?? to.state_code ?? to.state ?? "",
-        postal_code  : to.to_postal_code ?? to.postal_code ?? to.zip ?? "",
-        country_code : String(to.to_country_code ?? to.country_code ?? to.country ?? "")
-                        .toUpperCase()
-      };
-
-      const tried = [];
       // A) Try a dedicated address verify endpoint, if available
       try {
         const r1 = await fetch(url("/addresses/verify"), {
           method: "POST",
           headers: authH,
-          body: JSON.stringify({ address: toAsAddress })
+          body: JSON.stringify({ address: to })
         });
         const o1 = await wrap(r1);
-        tried.push({ path: "/addresses/verify", status: o1.status, ok: o1.ok });
-        if (o1.ok) {
-        const suggested = o1.data?.suggested
-                         || o1.data?.normalized
-                         || o1.data?.address
-                         || (Array.isArray(o1.data?.suggestions) ? o1.data.suggestions[0] : null)
-                         || o1.data
-                         || null;
-         return ok({ suggested, tried });
-        }
+        if (o1.ok) return ok(o1.data); // can contain { suggested | normalized | address }
       } catch {}
 
-      // B) Fallback: some deployments expose a shipments verify (use url()+authH)
+      // B) Fallback variant some tenants expose
       try {
         const r2 = await fetch(url("/shipments/verify"), {
           method: "POST",
           headers: authH,
-         // send the same normalized shape; some servers expect {address:{...}}
-          body: JSON.stringify({ address: toAsAddress })
+          body: JSON.stringify({ to })
         });
         const o2 = await wrap(r2);
-        tried.push({ path: "/shipments/verify", status: o2.status, ok: o2.ok });
-        if (o2.ok) {
-        const suggested = o2.data?.suggested
-                         || o2.data?.normalized
-                         || o2.data?.address
-                         || (Array.isArray(o2.data?.suggestions) ? o2.data.suggestions[0] : null)
-                         || o2.data
-                         || null;
-          return ok({ suggested, tried });
-        }
+        if (o2.ok) return ok(o2.data);
       } catch {}
 
-     // C) Graceful fallback so the UI continues without a scary 500
-     return ok({ suggested: null, tried });
+      // C) Graceful fallback so the UI continues without a scary 500
+      return ok({ suggested: null });
     }
 
       // (1) create batch
@@ -175,6 +143,33 @@ exports.handler = async (event) => {
         const loc = out.resp.headers.get("Location") || "";
         const id  = loc.split("/").filter(Boolean).pop();
         return ok({ success: true, id, location: loc || null });
+      }
+
+      // address verification (best-guess endpoint name; adjust if your tenant differs)
+      if (action === "verify_to") {
+        const to = body.to || {};
+        // Try a dedicated address verification endpoint
+        let resp = await fetch(api("/addresses/verify"), {
+          method: "POST",
+          headers: authJson(),
+          body: JSON.stringify({ address: to })
+        });
+        let out  = await wrap(resp);
+
+        // Fallback: some deployments expose a shipments verify
+        if (!out.ok && out.status === 404) {
+          resp = await fetch(api("/shipments/verify"), {
+            method: "POST",
+            headers: authJson(),
+            body: JSON.stringify({ to })
+          });
+          out = await wrap(resp);
+        }
+        if (!out.ok) return bad(out.status, out.data);
+
+        // Normalize to a simple shape for the client
+        const suggested = out.data?.suggested || out.data?.normalized || out.data?.address || out.data;
+        return ok({ suggested });
       }
 
       // (2) create shipment
