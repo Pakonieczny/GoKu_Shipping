@@ -2738,22 +2738,20 @@ function metalToBadge(label){
         }
       }
 
-        function pickBestShipment(target, list = []){
-        const norm = (s) => String(s || "").toLowerCase().replace(/[^a-z0-9]/g,"");
-        const t = norm(target);
-        const fields = (s) => [s.order_id, s.order_number, s.reference, s.carrier_tracking_code];
-        const exact = list.find(s => fields(s).some(v => norm(v) === t));
-        if (exact) return exact;
-        const partial = list.find(s => fields(s).some(v => {
-          const n = norm(v);
-          return n && (n.includes(t) || t.includes(n));
-        }));
-        return partial || list[0] || null;
-      }
+        // --- Lookups
+         function pickBestShipment(target, list = []){
+          const norm = (s) => String(s || "").toLowerCase().replace(/[^a-z0-9]/g,"");
+          const t = norm(target);
+          const fields = (s) => [s.order_id, s.order_number, s.reference, s.reference_number, s.reference_value, s.carrier_tracking_code, s.tracking_code, s.tracking_number];
+          const exact = list.find(s => fields(s).some(v => norm(v) === t));
+          if (exact) return exact;
+          const partial = list.find(s => fields(s).some(v => {
+            const n = norm(v); return n && (n.includes(t) || t.includes(n));
+          }));
+          return partial || list[0] || null;
+        }
 
-      // --- Lookups
-      async function refreshFromOrderIfChitChats(){
-        const orderId = (orderInp?.value || "").trim();
+        async function refreshFromOrderIfChitChats(){        const orderId = (orderInp?.value || "").trim();
         if (!orderId) return;
         try {
           // Fast pass (vendor search / id match only)
@@ -2772,24 +2770,10 @@ function metalToBadge(label){
           console.warn("order search failed", e);
         }
       }
-      async function refreshFromTrackingIfChitChats(){
-        const tracking = (trackingInp?.value || "").trim();
-        if (!tracking) return;
-        try {
-          const fast = await callSearch({ tracking });
-          const hit  = pickBestShipment(tracking, (fast.shipments || []));
-          if (hit) { setShipmentUI(hit); return; }
-          setTimeout(async () => {
-            try {
-              const slow = await callSearch({ tracking, fast: "0" });
-              const s2   = pickBestShipment(tracking, (slow.shipments || []));
-              if (s2) setShipmentUI(s2);
-            } catch {}
-          }, 900);
-        } catch (e) {
-          console.warn("tracking search failed", e);
-        }
-      }
+
+      // make accessible to the Paste button’s 500ms trigger
+      window.refreshFromOrderIfChitChats    = refreshFromOrderIfChitChats;
+      window.refreshFromTrackingIfChitChats = refreshFromTrackingIfChitChats;
 
       // --- Listeners (debounced + change)
       orderInp   ?.addEventListener("input",  debounce(refreshFromOrderIfChitChats, 250));
