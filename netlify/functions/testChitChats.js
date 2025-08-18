@@ -117,6 +117,30 @@ exports.handler = async (event) => {
           if (stopEarlyIf && stopEarlyIf(sh)) return results;
         }
 
+    // --- NEW: Limit results to Pending (open) batches only ---
+    let _openBatchIdsCache = null;
+    async function getOpenBatchIdsSet() {
+      if (_openBatchIdsCache) return _openBatchIdsCache;
+      try {
+        const r = await fetch(url(`/batches?status=open`), { headers: authH });
+        const o = await wrap(r);
+        if (!o.ok) return (_openBatchIdsCache = new Set());
+        const list = Array.isArray(o.data) ? o.data : (o.data?.batches || o.data?.data || []);
+        _openBatchIdsCache = new Set((list || []).map(b => String(b.id)));
+        return _openBatchIdsCache;
+      } catch {
+        return (_openBatchIdsCache = new Set());
+      }
+    }
+    async function keepPendingOnly(list) {
+      const open = await getOpenBatchIdsSet();
+      return (list || []).filter(sh => {
+        const bid = sh?.batch_id == null ? "" : String(sh.batch_id);
+        // keep: no batch yet OR in an open (pending) batch
+        return !bid || open.has(bid);
+      });
+    }
+
         // If the server returned fewer than PAGE_SIZE, we're at the last page.
         if (arr.length < PAGE_SIZE) break;
       }
@@ -195,8 +219,9 @@ exports.handler = async (event) => {
             const r = await fetch(url(`/shipments/${encodeURIComponent(want)}`), { headers: authH });
             const o = await wrap(r);
             if (o.ok && o.data && o.data.id) {
-              return ok({ shipments: [o.data] });
-            }
+              const kept = await keepPendingOnly([o.data]);
+              return ok({ shipments: kept });
+            }          
           } catch {}
         }
 
@@ -209,7 +234,8 @@ exports.handler = async (event) => {
             stopEarlyIf: (sh) => matches(sh)
           });
           const hits = (all || []).filter(matches);
-          if (hits.length) return ok({ shipments: hits });
+          const kept = await keepPendingOnly(hits);
+          if (kept.length) return ok({ shipments: kept });
         } catch { /* non-fatal; continue */ }
 
         // 3) If fast mode, stop after a full vendor pagination
@@ -220,7 +246,8 @@ exports.handler = async (event) => {
         for (const st of pools) {
           const pageResults = await paginateShipments({ status: st, pageSize });
           const hits = pageResults.filter(matches);
-          if (hits.length) return ok({ shipments: hits });
+          const kept = await keepPendingOnly(hits);
+          if (kept.length) return ok({ shipments: kept });
         }
 
         return ok({ shipments: [] });
