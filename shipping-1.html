@@ -412,15 +412,11 @@
       border-bottom:none !important;
     }
 
-  /* OrangeRed field highlight */
-  .cc-missing .cc-field > input,
-  .cc-missing .cc-field > select,
-  .cc-missing .cc-field > textarea {
-    border:2px solid orangered !important;
-    box-shadow:0 0 0 2px rgba(255,69,0,.12);
-  }
-  .cc-missing label { color: orangered !important; }
-
+  /* OrangeRed field highlight (field-scoped) */
+  .cc-field.cc-missing > input,
+  .cc-field.cc-missing > select,
+  .cc-field.cc-missing > textarea { border: 2px solid orangered !important; box-shadow: 0 0 0 2px rgba(255,69,0,.12); }
+  .cc-field.cc-missing > label { color: orangered !important; }
   /* Address diff colors */
   .cc-diff-add { color: orangered; font-weight:700; }
   .cc-diff-del { color:#b00020; text-decoration:line-through; }
@@ -2940,6 +2936,35 @@ function metalToBadge(label){
         return out.shipment || (out.id ? await callCc("GET", null, `?resource=shipment&id=${encodeURIComponent(out.id)}`) : null);
       }
 
+      async function ccValidateAgainstApi(step){
+      // Build the minimal payload from current form
+      const payload = buildShipmentPayload();
+
+      // Prefer server-side validation if we have a shipment id
+      const id = (document.getElementById("ccShipmentId")?.value || "").trim();
+
+      try {
+        if (id) {
+          // Ask Chit Chats to refresh/validate current data
+          await callCc("PATCH", { action:"refresh", shipment_id: id, payload }, "");
+          return []; // no server-side errors
+        } else {
+          // No id yet — attempt a create to get precise field errors back.
+          // If it succeeds, great; if it 4xx’s, we’ll parse errors below.
+          await callCc("POST", { action:"create_shipment", shipment: payload });
+          return [];
+        }
+      } catch (e) {
+        // Map Chit Chats error → UI field ids using existing logic
+        // (handleCcApiError already normalizes shapes and calls markMissing)
+        handleCcApiError(step, e);
+        // Return list of ids we highlighted so validateStep can stop advancing
+        const stepEl = document.getElementById("ccStep" + step);
+        const ids = Array.from(stepEl.querySelectorAll(".cc-field.cc-missing [id]")).map(n => n.id);
+        return ids;
+      }
+    }
+
       function buildShipmentPayload(){
         const to = {
           to_name: document.getElementById("cc_to_name").value.trim(),
@@ -3099,49 +3124,49 @@ function metalToBadge(label){
       function getStepRoot(step){ return document.getElementById(`ccStep${step}`); }
 
       function clearMissing(step){
-        const root = getStepRoot(step);
-        root?.classList.remove("cc-missing");
-        [...root?.querySelectorAll(".cc-field") || []].forEach(w => w.style.removeProperty("border"));
-      }
-
-      function markMissing(step, ids){
-        if (!ids.length) return;
-        const root = getStepRoot(step);
-        root?.classList.add("cc-missing");
-        ids.forEach(id=>{
-          const el = document.getElementById(id);
-          const wrap = el?.closest(".cc-field");
-          if (wrap) wrap.style.border = "2px solid orangered";
-          else if (el) el.style.border = "2px solid orangered";
+        const stepEl = document.getElementById("ccStep" + step);
+        stepEl.querySelectorAll(".cc-field.cc-missing").forEach(f => {
+          f.classList.remove("cc-missing");
         });
       }
 
-      function validateStep(step){
-        const missing = [];
-        if (step === 0){
-          ["to_name","to_address_1","to_city","to_province_code","to_postal_code","to_country_code"]
-            .forEach(k => { const v = document.getElementById(FIELD_MAP[k]).value.trim(); if (!v) missing.push(FIELD_MAP[k]);});
-        } else if (step === 1){
-          const q = Number(document.getElementById("cc_item_qty").value || 0);
-          const uv= Number(document.getElementById("cc_item_unit_value").value || 0);
-          if (!document.getElementById("cc_item_description").value.trim()) missing.push("cc_item_description");
-          if (!q || q<=0) missing.push("cc_item_qty");
-          if (uv < 0) missing.push("cc_item_unit_value");
-        } else if (step === 2){
-          const req = ["cc_package_type","cc_size_unit","cc_weight_unit","cc_size_x","cc_size_y","cc_size_z","cc_weight"];
-          req.forEach(id=>{
-            const el = document.getElementById(id);
-            const v  = el?.value ?? "";
-            if (v==="" || (el && !isNaN(el.value) && Number(el.value)<=0)) missing.push(id);
-          });
-        }
+      function markMissing(step, ids){
+        const stepEl = document.getElementById("ccStep" + step);
+        const seen = new Set();
+        ids.forEach(id => {
+          const el = document.getElementById(id);
+          if (!el) return;
+          const field = el.closest(".cc-field");
+          if (!field || seen.has(field)) return;
+          field.classList.add("cc-missing");
+          seen.add(field);
+        });
+        const first = stepEl.querySelector(".cc-field.cc-missing input, .cc-field.cc-missing select, .cc-field.cc-missing textarea");
+        first?.focus();
+      }
+
+      async function validateStep(step){
         clearMissing(step);
-        markMissing(step, missing);
-        if (missing.length){
-          const names = missing.map(id => document.querySelector(`label[for="${id}"]`)?.innerText || id).join(", ");
-          M.toast?.({ html:`Missing required fields: ${names}` });
+
+        // 1) Ask the server what’s actually missing
+        const apiMissing = await ccValidateAgainstApi(step);
+        if (apiMissing.length) return false;
+
+        // 2) Fallback to local minimal checks (keeps UX snappy offline)
+        let req = [];
+        if (step === 0) {
+          req = ["cc_to_name","cc_to_address_1","cc_to_city","cc_to_province_code","cc_to_postal_code","cc_to_country_code"];
+        } else if (step === 1) {
+          req = ["cc_item_description","cc_item_qty","cc_item_unit_value"];
+        } else if (step === 2) {
+          req = ["cc_pkg_weight","cc_pkg_length","cc_pkg_width","cc_pkg_height","cc_value_currency"];
         }
-        return missing.length === 0;
+        const missing = req.filter(id => !String(document.getElementById(id)?.value || "").trim());
+        if (missing.length) {
+          markMissing(step, missing);
+          return false;
+        }
+        return true;
       }
 
       function handleCcApiError(err){
