@@ -2928,11 +2928,22 @@ function metalToBadge(label){
         return data;
       }
 
+       // Keep the ID field and global in sync wherever a shipment gets created/refreshed
+      function pushShipmentId(id){
+        const sid = String(id || "").trim();
+        if (!sid) return;
+        idInput.value = sid;           // updates the visible input
+        window.ccShipmentId = sid;     // used by batch actions
+        try {                          // notify any listeners
+          idInput.dispatchEvent(new Event("input", { bubbles: true }));
+        } catch {}
+      }
+
       async function ensureShipment(){
         const id = (idInput.value || "").trim();
         if (id) return await callCc("GET", null, `?resource=shipment&id=${encodeURIComponent(id)}`);
         const out = await callCc("POST", { action:"create_shipment", shipment: buildShipmentPayload() });
-        if (out && out.id) idInput.value = out.id;
+        pushShipmentId(out?.id);
         return out.shipment || (out.id ? await callCc("GET", null, `?resource=shipment&id=${encodeURIComponent(out.id)}`) : null);
       }
 
@@ -2947,6 +2958,7 @@ function metalToBadge(label){
         if (canRefresh) {
           // Server-side validate/update existing shipment (now safe)
           await callCc("PATCH", { action: "refresh", shipment_id: rawId, payload });
+          pushShipmentId(rawId); // keep window.ccShipmentId in sync
           return [];
         }
         if (step === 0) {
@@ -2956,7 +2968,8 @@ function metalToBadge(label){
         }
         // Step 1 may not have full pkg info; only create if we don't have an id yet
         if (!hasValidId) {
-          await callCc("POST", { action: "create_shipment", shipment: payload });
+          const out = await callCc("POST", { action: "create_shipment", shipment: payload });
+          pushShipmentId(out?.id || out?.shipment?.id); // <- populate immediately
         }
         return [];
         } catch (e) {
