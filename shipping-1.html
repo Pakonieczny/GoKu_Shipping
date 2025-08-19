@@ -1039,15 +1039,36 @@ function metalToBadge(label){
       return (s == null ? "" : String(s)).replace(/&quot;/g, '"');
     }
 
-    /* Normalize cc_ship_date input to ISO YYYY-MM-DD (accepts "", "today", "tomorrow", ISO, or parseable date) */
-    function normalizeShipDate(s){
-      const t = String(s || "").trim().toLowerCase();
-      if (!t || t === "today")     return new Date().toISOString().slice(0,10);
-      if (t === "tomorrow")        return new Date(Date.now() + 86400000).toISOString().slice(0,10);
-      if (/^\d{4}-\d{2}-\d{2}$/.test(t)) return t;
-      const d = new Date(t);
-      return isNaN(d) ? new Date().toISOString().slice(0,10) : d.toISOString().slice(0,10);
-    }
+   // Day-only YYYY-MM-DD using local time (fixes UTC off-by-one)
+   function _ymdLocal(d) {
+     const yyyy = d.getFullYear();
+     const mm   = String(d.getMonth() + 1).padStart(2, "0");
+     const dd   = String(d.getDate()).padStart(2, "0");
+     return `${yyyy}-${mm}-${dd}`;
+   }
+   function normalizeShipDate(s){
+     const t = String(s || "").trim().toLowerCase();
+     const now = new Date();
+     const today = _ymdLocal(now);
+     if (!t || t === "today") return today;
+     if (t === "tomorrow") {
+       const d = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1);
+       return _ymdLocal(d);
+     }
+     if (/^\d{4}-\d{2}-\d{2}$/.test(t)) return t;
+     const d = new Date(t);
+     return Number.isNaN(d.getTime()) ? today : _ymdLocal(d);
+   }
+
+   // Set sane defaults when the page is ready (prevents empty/past dates)
+   document.addEventListener("DOMContentLoaded", () => {
+     const el = document.getElementById("cc_ship_date");
+     if (el) {
+       const today = normalizeShipDate("");
+       el.min = today;               // block past dates the API rejects
+       if (!el.value) el.value = today;
+     }
+   });
 
     /* globals for realtime listener */
     let chatUnsub = null;        // holds the active Firestore unsubscribe fn

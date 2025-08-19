@@ -56,6 +56,25 @@ exports.handler = async (event) => {
       body: JSON.stringify({ error: typeof err === "string" ? err : (err?.message || JSON.stringify(err)) })
     });
 
+    // Server-side YYYY-MM-DD normalization in local day semantics
+    const ymdLocal = (d) => {
+      const dt = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+      const y = dt.getFullYear();
+      const m = String(dt.getMonth() + 1).padStart(2, "0");
+      const day = String(dt.getDate()).padStart(2, "0");
+      return `${y}-${m}-${day}`;
+    };
+    const normalizeShipDateServer = (v) => {
+      const t = String(v || "").trim().toLowerCase();
+      const now = new Date();
+      const today = ymdLocal(now);
+      if (!t || t === "today") return today;
+      if (t === "tomorrow") return ymdLocal(new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1));
+      if (/^\d{4}-\d{2}-\d{2}$/.test(t)) return t;
+      const d = new Date(t);
+      return Number.isNaN(d.getTime()) ? today : ymdLocal(d);
+    };
+
     const sleep = (ms) => new Promise(r => setTimeout(r, ms));
     const with429Retry = async (makeFetch, attempts = 3) => {
       for (let i = 1; i <= attempts; i++) {
@@ -334,6 +353,7 @@ exports.handler = async (event) => {
       // (2) create shipment
       if (action === "create_shipment") {
         const shipment = body.shipment || body.payload || {};
+        shipment.ship_date = normalizeShipDateServer(shipment.ship_date);
         const resp = await fetch(url(`/shipments`), { method: "POST", headers: authH, body: JSON.stringify(shipment) });
         const out  = await wrap(resp);
         if (!out.ok) return bad(out.status, out.data);
@@ -367,6 +387,7 @@ exports.handler = async (event) => {
         const id = String(body.shipment_id || body.id || qp.id || "");
         if (!id) return bad(400, "shipment_id required for refresh");
         const payload = body.payload || {};
+        payload.ship_date = normalizeShipDateServer(payload.ship_date);
         const resp = await fetch(url(`/shipments/${encodeURIComponent(id)}/refresh`), {
           method: "PATCH", headers: authH, body: JSON.stringify(payload)
         });
