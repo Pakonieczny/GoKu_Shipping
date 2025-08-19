@@ -551,10 +551,7 @@
               </select>
             </div>
             <div class="cc-field"><label>Order ID (optional)</label><input id="cc_order_id"></div>
-            <div class="cc-field"><label>Declared value (sum)</label><input id="cc_value" type="number" step="0.01"></div>
-            <div class="cc-field"><label>Value currency</label>
-              <select id="cc_value_currency"><option value="usd">USD</option><option value="cad">CAD</option></select>
-            </div>
+
           </div>
           <h4 style="margin:12px 0 4px;">Line item</h4>
           <div class="cc-grid-3">
@@ -963,6 +960,12 @@
         console.warn("AudioContext error:", err);
       }
     }
+
+    function extractOrderTitle(){
+    const raw = (document.getElementById("orderDetails")?.value || "");
+    const m = raw.match(/^\s*Title:\s*(.+)$/mi);
+    return (m ? m[1] : "").trim();
+  }
 
 // Strong normalization for all the weird label combos
 function normalizeMetalLabel(raw){
@@ -3036,6 +3039,47 @@ function metalToBadge(label){
         btnBuy.style.display     = currentStep === 3 ? "inline-block" : "none";
       }
 
+      async function autofillCustomsFromCcAndOrder(){
+      const set = (id, val) => { const el = document.getElementById(id); if (el) el.value = val; };
+
+      // (A) Description from Order Details -> Title:
+      const title = extractOrderTitle();
+      if (title) set("cc_item_description", title.slice(0, 95));
+
+      // (B) Pull qty + unit_value from existing Chit Chats shipment (if ID present)
+      try {
+        const sid = (document.getElementById("ccShipmentId")?.value || "").trim();
+        if (sid) {
+          const sh = await callCc("GET", null, `?resource=shipment&id=${encodeURIComponent(sid)}`);
+          // Try several common shapes:
+          const customs = sh?.customs || sh?.line_items || sh?.items || sh?.customs_items;
+          const first =
+            (Array.isArray(customs?.items) ? customs.items[0] :
+             Array.isArray(customs)         ? customs[0] :
+             customs) || null;
+
+          const qty  = Number(first?.quantity ?? first?.qty ?? sh?.items_count ?? 1);
+          const uval = Number(first?.unit_value ?? first?.value ?? 0);
+
+          if (!Number.isNaN(qty))  set("cc_item_qty", qty);
+          if (!Number.isNaN(uval)) set("cc_item_unit_value", uval);
+        }
+      } catch {}
+
+      // (C) Static defaults you requested
+      // NOTE: These fields are sent as ISO/codes to Chit Chats later; we’ll set sensible values.
+      set("cc_item_origin_country", "CA");           // API prefers 2-letter country code
+      set("cc_item_hs_tariff_code", "7113.19.5080");
+      set("cc_item_manufacture_country", "CA");      // API prefers 2-letter country code
+      set("cc_item_manufacturer_contact", "Brites Jewelry Inc.");
+      set("cc_item_manufacturer_street",  "450 Matheson Blvd, East");
+      set("cc_item_manufacturer_city",    "Mississauga");
+      set("cc_item_manufacturer_province_code", "ON");   // API prefers code (ON)
+      set("cc_item_manufacturer_postal_code",   "L4Z-1R5");
+      set("cc_item_manufacturer_phone",         "416-606-2476");
+      set("cc_item_manufacturer_email",         "michelle@custombrites.com");
+    }
+
       function parseShipToBox(){
         const box = document.getElementById("shipAddressBox");
         const txt = (box?.value || "").replace(/^SHIP TO:\n?/i,"").trim();
@@ -3054,22 +3098,24 @@ function metalToBadge(label){
         out.to_address_2 = (lines[2] || "").match(/(unit|apt)/i) ? lines[2] : "";
         return out;
       }
-      function modalOpen(){
+      function modalOpen() {
         const seed = parseShipToBox();
-        document.getElementById("cc_to_name").value = seed.to_name || "";
-        document.getElementById("cc_to_address_1").value = seed.to_address_1 || "";
-        document.getElementById("cc_to_address_2").value = seed.to_address_2 || "";
-        document.getElementById("cc_to_city").value = seed.to_city || "";
-        document.getElementById("cc_to_province_code").value = seed.to_province_code || "";
-        document.getElementById("cc_to_postal_code").value = seed.to_postal_code || "";
-        document.getElementById("cc_to_country_code").value = seed.to_country_code || "";
-        document.getElementById("cc_value_currency").value = seed.to_country_code === "CA" ? "cad" : "usd";
-        selectedPostageType = null; btnBuy.disabled = true; ratesList.innerHTML = "";
+        document.getElementById("cc_to_name").value           = seed.to_name || "";
+        document.getElementById("cc_to_address_1").value      = seed.to_address_1 || "";
+        document.getElementById("cc_to_address_2").value      = seed.to_address_2 || "";
+        document.getElementById("cc_to_city").value           = seed.to_city || "";
+        document.getElementById("cc_to_province_code").value  = seed.to_province_code || "";
+        document.getElementById("cc_to_postal_code").value    = seed.to_postal_code || "";
+        document.getElementById("cc_to_country_code").value   = seed.to_country_code || "";
+
+        selectedPostageType = null;
+        btnBuy.disabled = true;
+        ratesList.innerHTML = "";
+
         modal.style.display = "block";
-        // New default: skip Step 0 in normal flow → start on Description (Step 1)
-        showStep(1);
-        // Always run address verification flow on open (automated)
-        setTimeout(()=>{ maybeVerifyAddressBeforeStep1(true); }, 0);
+        // Do NOT call showStep(1) here; verify must appear first.
+        // Kick off the verification flow immediately:
+        maybeVerifyAddressBeforeStep1(true);
       }
       function modalClose(){ modal.style.display = "none"; }
 
@@ -3164,7 +3210,8 @@ function metalToBadge(label){
           to_phone: document.getElementById("cc_to_phone").value.trim() || null,
           to_email: document.getElementById("cc_to_email").value.trim() || null
         };
-        const valueCurrency = document.getElementById("cc_value_currency").value;
+         const toCountry = document.getElementById("cc_to_country_code").value.trim().toUpperCase();
+
         const line = {
           description: document.getElementById("cc_item_description").value.trim(),
           quantity: Number(document.getElementById("cc_item_qty").value || 1),
@@ -3484,6 +3531,10 @@ function metalToBadge(label){
       document.getElementById("ccKeepOriginal").onclick = () => { modal.style.display = "none"; showStep(1); };
 
       document.getElementById("ccUseSuggested").onclick = () => {
+        
+        // Auto-fill Step 1 fields while we show the verify modal
+        try { autofillFromVerifyModal(); } catch (_) {}
+
         const map = {
           to_name:"cc_to_name", to_address_1:"cc_to_address_1", to_address_2:"cc_to_address_2",
           to_city:"cc_to_city", to_province_code:"cc_to_province_code",
@@ -3498,6 +3549,80 @@ function metalToBadge(label){
       };
 
       return true;
+    }
+
+    /* === Helper: pull "Title:" line from the Order Details box === */
+    function extractOrderTitle() {
+      try {
+        const ta = document.getElementById("orderDetails");
+        const raw = (ta?.value || ta?.innerText || "");
+        const line = raw.split("\n").find(l => /^ *Title:\s*/i.test(l));
+        if (line) return line.replace(/^ *Title:\s*/i, "").trim();
+        // fallback to first item title if needed
+        if (Array.isArray(window.cachedOrderItems) && window.cachedOrderItems.length) {
+          const t = String(window.cachedOrderItems[0]?.title || "");
+          return t.split(" ").slice(0, 12).join(" ").trim();
+        }
+      } catch {}
+      return "";
+    }
+
+    /* === Helper: auto-fill Step 1 fields when verify modal opens === */
+    async function autofillFromVerifyModal() {
+      const set = (id, v) => {
+        const el = document.getElementById(id);
+        if (el && (el.value == null || el.value === "")) el.value = String(v);
+      };
+
+      // (A) Description from Order Details -> Title:
+      set("cc_item_description", extractOrderTitle());
+
+      // (B) Fixed defaults (origin / HS / manufacturer)
+      set("cc_item_origin_country",            "CA");
+      set("cc_item_hs_tariff_code",            "7113.19.5080");
+      set("cc_item_manufacture_country",       "CA");
+      set("cc_item_manufacturer_contact",      "Brites Jewelry Inc.");
+      set("cc_item_manufacturer_street",       "450 Matheson Blvd, East");
+      set("cc_item_manufacturer_city",         "Mississauga");
+      set("cc_item_manufacturer_province_code","ON");
+      set("cc_item_manufacturer_postal_code",  "L4Z-1R5");
+      set("cc_item_manufacturer_phone",        "416-606-2476");
+      set("cc_item_manufacturer_email",        "michelle@custombrites.com");
+
+      // (C) Unit value + Qty from Chit Chats API
+      try {
+        const sid = (document.getElementById("ccShipmentId")?.value || "").trim();
+        let detail = null;
+
+        if (sid) {
+          const r = await fetch("/.netlify/functions/testChitChats?resource=shipment&id=" + encodeURIComponent(sid));
+          if (r.ok) detail = await r.json();
+        } else {
+          // fall back: try searching by your visible order number label in Details
+          const orderNo = (document.getElementById("titleOrderNumber")?.innerText || "").trim();
+          if (orderNo) {
+            const r = await fetch("/.netlify/functions/testChitChats?resource=search&orderId=" + encodeURIComponent(orderNo) + "&fast=1");
+            if (r.ok) {
+              const js = await r.json();
+              detail = (js.shipments && js.shipments[0]) || null;
+            }
+          }
+        }
+
+        if (detail) {
+          // Normalize path to customs item
+          const item =
+            (detail.customs && Array.isArray(detail.customs.items) && detail.customs.items[0]) ||
+            (Array.isArray(detail.items) && detail.items[0]) || null;
+
+          if (item) {
+            if (item.unit_value != null) set("cc_item_unit_value", item.unit_value);
+            if (item.quantity    != null) set("cc_item_qty",        item.quantity);
+          }
+        }
+      } catch (e) {
+        console.warn("Autofill (unit value/qty) failed:", e);
+      }
     }
 
       // ───────────────── Smarty: client proxy caller ─────────────────
