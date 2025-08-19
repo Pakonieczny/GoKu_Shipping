@@ -1055,6 +1055,13 @@ function metalToBadge(label){
        const d = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1);
        return _ymdLocal(d);
      }
+
+    // Prefer API's 'today' token or pass-through YYYY-MM-DD; avoid parsing
+   function getShipDateForApi(){
+     const el = document.getElementById("cc_ship_date");
+     const raw = String(el && el.value || "").trim();
+     return raw ? raw : "today";
+   }
      if (/^\d{4}-\d{2}-\d{2}$/.test(t)) return t;
      const d = new Date(t);
      return Number.isNaN(d.getTime()) ? today : _ymdLocal(d);
@@ -3073,6 +3080,7 @@ function metalToBadge(label){
           const e = new Error(message);
           e.status = resp.status;
           e.raw    = data;
+          try { console.debug("ChitChats proxy error", resp.status, data); } catch {}
           throw e;
         }
         return data;
@@ -3231,7 +3239,7 @@ function metalToBadge(label){
           size_y     : Number(document.getElementById("cc_size_y").value || 0),
           size_z     : Number(document.getElementById("cc_size_z").value || 0),
           package_type: document.getElementById("cc_package_type").value,
-          ship_date  : normalizeShipDate(document.getElementById("cc_ship_date").value),
+          ship_date  : getShipDateForApi(),
           insurance_requested : document.getElementById("cc_insurance_requested").value === "true",
           media_mail_requested: document.getElementById("cc_media_mail_requested").value === "true",
           signature_requested : document.getElementById("cc_signature_requested").value === "true"
@@ -3330,7 +3338,8 @@ function metalToBadge(label){
         } else if (step === 1) {
           req = ["cc_item_description","cc_item_qty","cc_item_unit_value"];
         } else if (step === 2) {
-          req = ["cc_pkg_weight","cc_pkg_length","cc_pkg_width","cc_pkg_height","cc_value_currency"];
+          // Package fields actually used by payload + refresh
+          req = ["cc_weight","cc_size_x","cc_size_y","cc_size_z","cc_value_currency"];
         }
         const missing = req.filter(id => !String(document.getElementById(id)?.value || "").trim());
         if (missing.length) {
