@@ -3002,6 +3002,14 @@ function metalToBadge(label){
       };
     })();
 
+    // Global helper — returns "YYYY-MM-DD" from #cc_ship_date or "today"
+    function getShipDateForApi() {
+      const el = document.getElementById("cc_ship_date");
+      const raw = String((el && el.value) || "").trim();
+      return raw ? raw : "today";
+    }
+    window.getShipDateForApi = getShipDateForApi; // optional, explicit
+
     /* ===== Chit Chats Edit Shipment Wizard (create → refresh rates → buy) ===== */
     (function(){
       const modal     = document.getElementById("ccEditModal");
