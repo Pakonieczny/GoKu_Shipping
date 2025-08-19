@@ -81,93 +81,68 @@ exports.handler = async (event) => {
       return out.data.count;
     };
 
-    // ---- request & time budget helpers ---------------------------------
-    function fetchWithTimeout(input, init = {}, ms = 4500) {
-      const ctrl = new AbortController();
-      const id = setTimeout(() => ctrl.abort(), ms);
-      return fetch(input, { ...init, signal: ctrl.signal }).finally(() => clearTimeout(id));
-    }
-
-    function makeBudget(deadlineMs) {
-      const started = Date.now();
-      const BUDGET = Math.max(0, Number(deadlineMs || 0));
-      return {
-        left() { return BUDGET ? Math.max(0, BUDGET - (Date.now() - started)) : 0; },
-        // wrap fetch so each call respects remaining budget (with a floor)
-        f(theUrl, init, floor = 1200) {
-          const ms = Math.max(floor, this.left() || floor);
-          return fetchWithTimeout(theUrl, init, ms);
-        }
-      };
-    }
-
-    // ── Pending-only helpers (HOISTED to top-level so /search can use them)
-    let _openBatchIdsCache = null;
-    async function getOpenBatchIdsSet() {
-      if (_openBatchIdsCache) return _openBatchIdsCache;
-      try {
-        const r = await fetch(url(`/batches?status=open`), { headers: authH });
-        const o = await wrap(r);
-        const list = Array.isArray(o.data) ? o.data : (o.data?.batches || o.data?.data || []);
-        _openBatchIdsCache = new Set((list || []).map(b => String(b.id)));
-      } catch {
-        _openBatchIdsCache = new Set();
-      }
-      return _openBatchIdsCache;
-    }
-    function wantsPendingOnly(qp) {
-      const v = String(qp.pendingOnly ?? "").toLowerCase();
-      return v === "1" || v === "true" || v === "yes";
-    }
-    async function filterPendingOnlyMaybe(list, qp) {
-      if (!wantsPendingOnly(qp)) return list || [];
-      const open = await getOpenBatchIdsSet();
-      return (list || []).filter(sh => {
-        const bid = sh?.batch_id == null ? "" : String(sh.batch_id);
-        // keep: no batch yet OR in an open (Pending) batch
-        return !bid || open.has(bid);
-      });
-    }
-
-    // Generic paginator over /shipments with bounds to avoid timeouts.
-    async function paginateShipments({ status, search, pageSize = 250, stopEarlyIf, maxPages = 10, deadlineMs, useCount = false }) {
-      const PAGE_SIZE = Math.min(Math.max(Number(pageSize) || 250, 1), 1000);
+    // Generic paginator over /shipments that walks every page until exhausted.
+    async function paginateShipments({ status, search, pageSize = 500, stopEarlyIf }) {
+      const PAGE_SIZE = Math.min(Math.max(Number(pageSize) || 500, 1), 1000); // docs say max 1000
       const qsCore = [
         status ? `status=${encodeURIComponent(status)}` : "",
         search ? `search=${encodeURIComponent(search)}` : "",
         `limit=${PAGE_SIZE}`
       ].filter(Boolean).join("&");
 
-      const budget = makeBudget(deadlineMs);
-
-      // Optional count probe (disabled by default to save a round-trip)
+      // Try to estimate total pages from /shipments/count (if available)
       let estPages = null;
-      if (useCount && status) {
-        try {
-          const countQs = `status=${encodeURIComponent(status)}`;
-          const r = await with429Retry(() => budget.f(url(`/shipments/count?${countQs}`), { headers: authH }, 1200));
-          const o = await wrap(r);
-          if (o.ok && typeof o.data?.count === "number") estPages = Math.max(1, Math.ceil(o.data.count / PAGE_SIZE));
-        } catch {}
-      }
+      try {
+        const countQs = status ? `status=${encodeURIComponent(status)}` : "";
+        const cnt = await getCount(countQs);
+        if (typeof cnt === "number" && cnt >= 0) {
+          estPages = Math.max(1, Math.ceil(cnt / PAGE_SIZE));
+        }
+      } catch { /* non-fatal */ }
 
       const results = [];
-      const HARDSTOP = Math.max(1, Number(estPages || maxPages));
-      for (let page = 1; page <= HARDSTOP; page++) {
-        if (deadlineMs && budget.left() <= 0) break;
+      const MAX_PAGES_HARDSTOP = estPages || 200; // safety stop if /count unavailable
+      for (let page = 1; page <= MAX_PAGES_HARDSTOP; page++) {
+        const resp = await with429Retry(() =>
+          fetch(url(`/shipments?${qsCore}&page=${page}`), { headers: authH })
+        );
+        const out = await wrap(resp);
+        if (!out.ok) break;
 
-        const r = await with429Retry(() => budget.f(url(`/shipments?${qsCore}&page=${page}`), { headers: authH }, 1200));
-        const o = await wrap(r);
-        if (!o.ok) break;
-
-        const arr = normalizeList(o.data);
+        const arr = normalizeList(out.data);
         if (!arr || arr.length === 0) break;
 
         for (const sh of arr) {
           results.push(sh);
           if (stopEarlyIf && stopEarlyIf(sh)) return results;
         }
-        if (arr.length < PAGE_SIZE) break; // last page
+
+    // --- NEW: Limit results to Pending (open) batches only ---
+    let _openBatchIdsCache = null;
+    async function getOpenBatchIdsSet() {
+      if (_openBatchIdsCache) return _openBatchIdsCache;
+      try {
+        const r = await fetch(url(`/batches?status=open`), { headers: authH });
+        const o = await wrap(r);
+        if (!o.ok) return (_openBatchIdsCache = new Set());
+        const list = Array.isArray(o.data) ? o.data : (o.data?.batches || o.data?.data || []);
+        _openBatchIdsCache = new Set((list || []).map(b => String(b.id)));
+        return _openBatchIdsCache;
+      } catch {
+        return (_openBatchIdsCache = new Set());
+      }
+    }
+    async function keepPendingOnly(list) {
+      const open = await getOpenBatchIdsSet();
+      return (list || []).filter(sh => {
+        const bid = sh?.batch_id == null ? "" : String(sh.batch_id);
+        // keep: no batch yet OR in an open (pending) batch
+        return !bid || open.has(bid);
+      });
+    }
+
+        // If the server returned fewer than PAGE_SIZE, we're at the last page.
+        if (arr.length < PAGE_SIZE) break;
       }
       return results;
     }
@@ -193,94 +168,86 @@ exports.handler = async (event) => {
         }
       }
 
-      // Search shipments by orderId or tracking (bounded; honors pendingOnly)
+      // Search shipments by orderId or tracking (best-effort with graceful fallbacks)
       if (resource === "search") {
-        const orderId  = (qp.orderId  || "").toString().trim();
+        const orderId  = (qp.orderId || "").toString().trim();
         const tracking = (qp.tracking || "").toString().trim();
         const want     = orderId || tracking;
         if (!want) return ok({ shipments: [] });
 
-        const fastMode   = String(qp.fast || "").toLowerCase() === "1" || String(qp.fast || "").toLowerCase() === "true";
-        const pendingOnly = wantsPendingOnly(qp);
-        const pageSize   = qp.pageSize ? Number(qp.pageSize) : 250;
+        const fastMode = String(qp.fast || "").toLowerCase() === "1" || String(qp.fast || "").toLowerCase() === "true";
+        const pageSize = qp.pageSize ? Number(qp.pageSize) : 500;
 
-        // global time budget per request (keep below Netlify cut-off)
-        const deadlineMs = Number(qp.deadlineMs || (fastMode ? 3500 : 8000));
-        const budget = makeBudget(deadlineMs);
-
+        // helpers
         const norm = (s) => String(s || "").toLowerCase().replace(/[^a-z0-9]/g, "");
         const looksLikeId = (s) => /^[0-9]{6,}$/.test(String(s || "").trim());
+
+        // Match across multiple possible fields (older orders often store refs differently)
         const matches = (sh) => {
           const n = (v) => norm(v);
-          const nOrder = n(orderId); const nTrack = n(tracking);
-          const ordFields = [sh.order_id, sh.order_number, sh.reference, sh.reference_number, sh.reference_value, sh.external_order_id, sh.external_id];
-          const trkFields = [sh.carrier_tracking_code, sh.tracking_code, sh.tracking_number, sh.tracking];
+          const nOrder = n(orderId);
+          const nTrack = n(tracking);
+
+          const ordFields = [
+            sh.order_id,
+            sh.order_number,
+            sh.reference,
+            sh.reference_number,
+            sh.reference_value,
+            sh.external_order_id,
+            sh.external_id
+          ];
+          const trkFields = [
+            sh.carrier_tracking_code,
+            sh.tracking_code,
+            sh.tracking_number,
+            sh.tracking
+          ];
+
           const candOrd   = n(ordFields.find(Boolean) || "");
           const candTrack = n(trkFields.find(Boolean) || "");
-          return (nOrder && candOrd && (candOrd.includes(nOrder) || nOrder.includes(candOrd))) ||
-                 (nTrack && candTrack && (candTrack.includes(nTrack) || nTrack.includes(candTrack)));
+
+          return (
+            (nOrder && candOrd && (candOrd.includes(nOrder) || nOrder.includes(candOrd))) ||
+            (nTrack && candTrack && (candTrack.includes(nTrack) || nTrack.includes(candTrack)))
+          );
         };
 
-        // 1) direct by shipment id (short timeout)
+        // 1) Direct by ID if the input looks like a shipment id
         if (looksLikeId(want)) {
           try {
-            const r = await budget.f(url(`/shipments/${encodeURIComponent(want)}`), { headers: authH }, 1200);
+            const r = await fetch(url(`/shipments/${encodeURIComponent(want)}`), { headers: authH });
             const o = await wrap(r);
             if (o.ok && o.data && o.data.id) {
-              const kept = await filterPendingOnlyMaybe([o.data], qp);
-              return ok({ shipments: kept }); // possibly []
-            }
+              const kept = await keepPendingOnly([o.data]);
+              return ok({ shipments: kept });
+            }          
           } catch {}
         }
 
-        // Helper: search a specific status pool with the server's own filter
-        async function searchStatus(st, opts = {}) {
-          const all = await paginateShipments({
-            status: st, search: want, pageSize,
-            maxPages  : opts.maxPages ?? 3,
-            deadlineMs: budget.left(),
-            useCount  : false,
-            stopEarlyIf: (sh) => matches(sh)
-          });
-          return (all || []).filter(matches);
-        }
-
-        // 2) Pending-only? Stay narrow: only READY + PROCESSING pools
-        if (pendingOnly) {
-          try {
-            const rdy = await searchStatus("ready");
-            const pro = rdy.length ? [] : await searchStatus("processing");
-            const kept = await filterPendingOnlyMaybe([...rdy, ...pro], qp);
-            if (kept.length) return ok({ shipments: kept });
-          } catch {}
-          return ok({ shipments: [] }); // bounded and done
-        }
-
-        // 3) Broad vendor search (bounded pages/time) when not pending-only
+        // 2) Vendor search across *all pages*
         try {
           const all = await paginateShipments({
-            search: want, pageSize,
-            maxPages  : fastMode ? 10 : 30,
-            deadlineMs: budget.left(),
-            useCount  : false,
+            search: want,
+            pageSize,
+            // Stop early if we already have a hit to reduce calls
             stopEarlyIf: (sh) => matches(sh)
           });
           const hits = (all || []).filter(matches);
-          if (hits.length) return ok({ shipments: hits });
-        } catch {}
+          const kept = await keepPendingOnly(hits);
+          if (kept.length) return ok({ shipments: kept });
+        } catch { /* non-fatal; continue */ }
 
+        // 3) If fast mode, stop after a full vendor pagination
         if (fastMode) return ok({ shipments: [] });
 
-        // 4) Final fallback pools (small, bounded)
+        // 4) Deep fallback: scan by status pools with pagination & local filter
         const pools = ["archived", "processing", "ready"];
         for (const st of pools) {
-          const pageResults = await paginateShipments({
-            status: st, pageSize,
-            maxPages  : 5,
-            deadlineMs: budget.left()
-          });
+          const pageResults = await paginateShipments({ status: st, pageSize });
           const hits = pageResults.filter(matches);
-          if (hits.length) return ok({ shipments: hits });
+          const kept = await keepPendingOnly(hits);
+          if (kept.length) return ok({ shipments: kept });
         }
 
         return ok({ shipments: [] });
