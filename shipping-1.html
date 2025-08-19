@@ -1061,14 +1061,17 @@ function metalToBadge(label){
    }
 
    // Set sane defaults when the page is ready (prevents empty/past dates)
-   document.addEventListener("DOMContentLoaded", () => {
-     const el = document.getElementById("cc_ship_date");
-     if (el) {
-       const today = normalizeShipDate("");
-       el.min = today;               // block past dates the API rejects
-       if (!el.value) el.value = today;
-     }
-   });
+    document.addEventListener("DOMContentLoaded", () => {
+      const el = document.getElementById("cc_ship_date");
+      if (el && !el.value) {
+        const tz = new Date();
+        const yyyy = tz.getFullYear();
+        const mm = String(tz.getMonth()+1).padStart(2,"0");
+        const dd = String(tz.getDate()).padStart(2,"0");
+        el.value = `${yyyy}-${mm}-${dd}`;
+        el.min   = el.value; // prevent past dates
+      }
+    });
 
     /* globals for realtime listener */
     let chatUnsub = null;        // holds the active Firestore unsubscribe fn

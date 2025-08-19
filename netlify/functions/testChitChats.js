@@ -387,7 +387,7 @@ exports.handler = async (event) => {
         const id = String(body.shipment_id || body.id || qp.id || "");
         if (!id) return bad(400, "shipment_id required for refresh");
         const payload = body.payload || {};
-        payload.ship_date = normalizeShipDateServer(payload.ship_date);
+        payload.ship_date = normalizeShipDateServer(payload.ship_date); // <-- REQUIRED
         const resp = await fetch(url(`/shipments/${encodeURIComponent(id)}/refresh`), {
           method: "PATCH", headers: authH, body: JSON.stringify(payload)
         });
