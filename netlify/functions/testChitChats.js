@@ -75,7 +75,25 @@ exports.handler = async (event) => {
       return Number.isNaN(d.getTime()) ? today : ymdLocal(d);
     };
 
-    const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+    // --- ship_date normalization (server-side safety net) ---
+    const ymdLocal = (d) => {
+      const dt = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+      const y  = dt.getFullYear();
+      const m  = String(dt.getMonth() + 1).padStart(2, "0");
+      const dd = String(dt.getDate()).padStart(2, "0");
+      return `${y}-${m}-${dd}`;
+    };
+    const normalizeShipDateServer = (v) => {
+      const t = String(v || "").trim().toLowerCase();
+      const now = new Date();
+      const today = ymdLocal(now);
+      if (!t || t === "today") return today;
+      if (t === "tomorrow") return ymdLocal(new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1));
+      if (/^\d{4}-\d{2}-\d{2}$/.test(t)) return t;
+      const d = new Date(t);
+      return Number.isNaN(d.getTime()) ? today : ymdLocal(d);
+    };
+const sleep = (ms) => new Promise(r => setTimeout(r, ms));
     const with429Retry = async (makeFetch, attempts = 3) => {
       for (let i = 1; i <= attempts; i++) {
         const resp = await makeFetch();
@@ -388,6 +406,7 @@ exports.handler = async (event) => {
         if (!id) return bad(400, "shipment_id required for refresh");
         const payload = body.payload || {};
         payload.ship_date = normalizeShipDateServer(payload.ship_date); // <-- REQUIRED
+        if (!payload.ship_date) delete payload.ship_date;
         const resp = await fetch(url(`/shipments/${encodeURIComponent(id)}/refresh`), {
           method: "PATCH", headers: authH, body: JSON.stringify(payload)
         });
