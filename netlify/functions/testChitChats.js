@@ -57,16 +57,6 @@ exports.handler = async (event) => {
     });
 
     const sleep = (ms) => new Promise(r => setTimeout(r, ms));
-
-    // Timeout wrapper for fetch
-    const fetchWithTimeout = (resource, options = {}, timeoutMs = 9000) => {
-      const ctrl = new AbortController();
-      const timer = setTimeout(() => ctrl.abort(), Math.max(2000, timeoutMs));
-      return fetch(resource, { ...options, signal: ctrl.signal })
-        .finally(() => clearTimeout(timer));
-    };
-
-    // 429-aware retry helper (caller provides a thunk that already uses fetchWithTimeout)
     const with429Retry = async (makeFetch, attempts = 3) => {
       for (let i = 1; i <= attempts; i++) {
         const resp = await makeFetch();
@@ -80,12 +70,22 @@ exports.handler = async (event) => {
     const normalizeList = (obj) =>
       Array.isArray(obj) ? obj : (obj?.shipments || obj?.data || []);
 
-    // --- cache open batch ids (used by pendingOnly filter) ---
+    const getCount = async (qs) => {
+      // Uses official /shipments/count to estimate total pages (status supported)
+      const resp = await with429Retry(() =>
+        fetch(url(`/shipments/count${qs ? `?${qs}` : ""}`), { headers: authH })
+      );
+      const out = await wrap(resp);
+      if (!out.ok || typeof out.data?.count !== "number") return null;
+      return out.data.count;
+    };
+
+    // --- Pending/open-batch filter (correct scope) ---
     let _openBatchIdsCache = null;
-    async function getOpenBatchIdsSet(perRequestTimeoutMs = 9000) {
+    async function getOpenBatchIdsSet() {
       if (_openBatchIdsCache) return _openBatchIdsCache;
       try {
-        const r = await fetchWithTimeout(url(`/batches?status=open`), { headers: authH }, perRequestTimeoutMs);
+        const r = await fetch(url(`/batches?status=open`), { headers: authH });
         const o = await wrap(r);
         if (!o.ok) return (_openBatchIdsCache = new Set());
         const list = Array.isArray(o.data) ? o.data : (o.data?.batches || o.data?.data || []);
@@ -95,8 +95,9 @@ exports.handler = async (event) => {
         return (_openBatchIdsCache = new Set());
       }
     }
-    async function keepPendingOnly(list, perRequestTimeoutMs = 9000) {
-      const open = await getOpenBatchIdsSet(perRequestTimeoutMs);
+    async function keepPendingOnly(list, enabled = true) {
+      if (!enabled) return list || [];
+      const open = await getOpenBatchIdsSet();
       return (list || []).filter(sh => {
         const bid = sh?.batch_id == null ? "" : String(sh.batch_id);
         // keep: no batch yet OR in an open (pending) batch
@@ -104,27 +105,8 @@ exports.handler = async (event) => {
       });
     }
 
-    const getCount = async (qs, perRequestTimeoutMs = 9000) => {
-      // Uses official /shipments/count to estimate total pages (status supported)
-      // Not all filters are guaranteed server-side for /count; we treat it as a hint.
-      const resp = await with429Retry(() =>
-        fetchWithTimeout(url(`/shipments/count${qs ? `?${qs}` : ""}`), { headers: authH }, perRequestTimeoutMs)
-      );
-      const out = await wrap(resp);
-      if (!out.ok || typeof out.data?.count !== "number") return null;
-      return out.data.count;
-    };
-
-    // Generic paginator over /shipments with time + page caps.
-    async function paginateShipments({
-      status,
-      search,
-      pageSize = 500,
-      stopEarlyIf,
-      maxPages,
-      deadline,
-      perRequestTimeoutMs = 9000
-    }) {
+    // Generic paginator over /shipments that walks every page until exhausted.
+    async function paginateShipments({ status, search, pageSize = 500, stopEarlyIf }) {
       const PAGE_SIZE = Math.min(Math.max(Number(pageSize) || 500, 1), 1000); // docs say max 1000
       const qsCore = [
         status ? `status=${encodeURIComponent(status)}` : "",
@@ -136,18 +118,17 @@ exports.handler = async (event) => {
       let estPages = null;
       try {
         const countQs = status ? `status=${encodeURIComponent(status)}` : "";
-        const cnt = await getCount(countQs, perRequestTimeoutMs);
+        const cnt = await getCount(countQs);
         if (typeof cnt === "number" && cnt >= 0) {
           estPages = Math.max(1, Math.ceil(cnt / PAGE_SIZE));
         }
       } catch { /* non-fatal */ }
 
       const results = [];
-      const HARDSTOP = Math.min(maxPages || estPages || 200, 200); // absolute safety
-      for (let page = 1; page <= HARDSTOP; page++) {
-        if (deadline && Date.now() > deadline) break; // global budget expired
+      const MAX_PAGES_HARDSTOP = estPages || 200; // safety stop if /count unavailable
+      for (let page = 1; page <= MAX_PAGES_HARDSTOP; page++) {
         const resp = await with429Retry(() =>
-          fetchWithTimeout(url(`/shipments?${qsCore}&page=${page}`), { headers: authH }, perRequestTimeoutMs)
+          fetch(url(`/shipments?${qsCore}&page=${page}`), { headers: authH })
         );
         const out = await wrap(resp);
         if (!out.ok) break;
@@ -171,11 +152,14 @@ exports.handler = async (event) => {
       const qp = event.queryStringParameters || {};
       const resource = (qp.resource || "").toLowerCase();
 
+      // Allow controlling the pending filter (default on)
+      const pendingOnlyOn = !["0","false"].includes(String(qp.pendingOnly ?? "1").toLowerCase());
+
       // List batches (optional ?status=open|processing|archived)
       if (resource === "batches") {
         try {
           const status = qp.status ? `?status=${encodeURIComponent(qp.status)}` : "";
-          const resp = await fetchWithTimeout(url(`/batches${status}`), { headers: authH }, 9000);
+          const resp = await fetch(url(`/batches${status}`), { headers: authH });
           const out  = await wrap(resp);
           if (!out.ok) return bad(out.status, out.data);
 
@@ -189,17 +173,13 @@ exports.handler = async (event) => {
 
       // Search shipments by orderId or tracking (best-effort with graceful fallbacks)
       if (resource === "search") {
-        const orderId    = (qp.orderId || "").toString().trim();
-        const tracking   = (qp.tracking || "").toString().trim();
-        const want       = orderId || tracking;
+        const orderId  = (qp.orderId || "").toString().trim();
+        const tracking = (qp.tracking || "").toString().trim();
+        const want     = orderId || tracking;
         if (!want) return ok({ shipments: [] });
 
-        const fastMode     = /^(1|true)$/i.test(String(qp.fast || ""));
-        const pageSize     = qp.pageSize ? Number(qp.pageSize) : 500;
-        const timeoutMs    = Math.min(Math.max(Number(qp.timeoutMs) || 9000, 2000), 25000);
-        const deadline     = Date.now() + timeoutMs;
-        const pendingOnly  = /^(1|true|yes)$/i.test(String(qp.pendingOnly || ""));
-        const perReqMs     = Math.floor(timeoutMs / 3);
+        const fastMode = String(qp.fast || "").toLowerCase() === "1" || String(qp.fast || "").toLowerCase() === "true";
+        const pageSize = qp.pageSize ? Number(qp.pageSize) : 500;
 
         // helpers
         const norm = (s) => String(s || "").toLowerCase().replace(/[^a-z0-9]/g, "");
@@ -236,30 +216,30 @@ exports.handler = async (event) => {
           );
         };
 
+        const applyPendingFilter = (list) => keepPendingOnly(list, pendingOnlyOn);
+
         // 1) Direct by ID if the input looks like a shipment id
         if (looksLikeId(want)) {
           try {
-            const r = await fetchWithTimeout(url(`/shipments/${encodeURIComponent(want)}`), { headers: authH }, perReqMs);
+            const r = await fetch(url(`/shipments/${encodeURIComponent(want)}`), { headers: authH });
             const o = await wrap(r);
             if (o.ok && o.data && o.data.id) {
-              const kept = pendingOnly ? await keepPendingOnly([o.data], perReqMs) : [o.data];
+              const kept = await applyPendingFilter([o.data]);
               return ok({ shipments: kept });
             }
-          } catch { /* ignore and continue */ }
+          } catch {}
         }
 
-        // 2) Vendor search across pages (time + page capped, stop early on a hit)
+        // 2) Vendor search across *all pages*
         try {
           const all = await paginateShipments({
             search: want,
             pageSize,
-            stopEarlyIf: (sh) => matches(sh),
-            maxPages: 20,
-            deadline,
-            perRequestTimeoutMs: perReqMs
+            // Stop early if we already have a hit to reduce calls
+            stopEarlyIf: (sh) => matches(sh)
           });
           const hits = (all || []).filter(matches);
-          const kept = pendingOnly ? await keepPendingOnly(hits, perReqMs) : hits;
+          const kept = await applyPendingFilter(hits);
           if (kept.length) return ok({ shipments: kept });
         } catch { /* non-fatal; continue */ }
 
@@ -267,19 +247,12 @@ exports.handler = async (event) => {
         if (fastMode) return ok({ shipments: [] });
 
         // 4) Deep fallback: scan by status pools with pagination & local filter
-        const pools = pendingOnly ? ["processing", "ready"] : ["archived", "processing", "ready"];
+        const pools = ["archived", "processing", "ready"];
         for (const st of pools) {
-          const pageResults = await paginateShipments({
-            status: st,
-            pageSize,
-            maxPages: 6,
-            deadline,
-            perRequestTimeoutMs: perReqMs
-          });
-          const hits = (pageResults || []).filter(matches);
-          const kept = pendingOnly ? await keepPendingOnly(hits, perReqMs) : hits;
+          const pageResults = await paginateShipments({ status: st, pageSize });
+          const hits = pageResults.filter(matches);
+          const kept = await applyPendingFilter(hits);
           if (kept.length) return ok({ shipments: kept });
-          if (deadline && Date.now() > deadline) break;
         }
 
         return ok({ shipments: [] });
@@ -288,7 +261,7 @@ exports.handler = async (event) => {
       // Fetch a single shipment
       if (resource === "shipment" && qp.id) {
         try {
-          const resp = await fetchWithTimeout(url(`/shipments/${encodeURIComponent(qp.id)}`), { headers: authH }, 9000);
+          const resp = await fetch(url(`/shipments/${encodeURIComponent(qp.id)}`), { headers: authH });
           const out  = await wrap(resp);
           if (!out.ok) return bad(out.status, out.data);
           return ok(out.data);
@@ -301,10 +274,9 @@ exports.handler = async (event) => {
       const limit  = qp.limit ? Number(qp.limit) : 25;
       const page   = qp.page  ? Number(qp.page)  : 1;
       const status = qp.status || "ready";
-      const resp = await fetchWithTimeout(
+      const resp = await fetch(
         url(`/shipments?status=${encodeURIComponent(status)}&limit=${encodeURIComponent(limit)}&page=${encodeURIComponent(page)}`),
-        { headers: authH },
-        9000
+        { headers: authH }
       );
       const out  = await wrap(resp);
       if (!out.ok) return bad(out.status, out.data);
@@ -322,22 +294,22 @@ exports.handler = async (event) => {
 
         // A) dedicated address verify endpoint
         try {
-          const r1 = await fetchWithTimeout(url("/addresses/verify"), {
+          const r1 = await fetch(url("/addresses/verify"), {
             method: "POST",
             headers: authH,
             body: JSON.stringify({ address: to })
-          }, 10000);
+          });
           const o1 = await wrap(r1);
           if (o1.ok) return ok(o1.data); // may contain { suggested | normalized | address }
         } catch {}
 
         // B) fallback variant some tenants expose
         try {
-          const r2 = await fetchWithTimeout(url("/shipments/verify"), {
+          const r2 = await fetch(url("/shipments/verify"), {
             method: "POST",
             headers: authH,
             body: JSON.stringify({ to })
-          }, 10000);
+          });
           const o2 = await wrap(r2);
           if (o2.ok) return ok(o2.data);
         } catch {}
@@ -349,7 +321,7 @@ exports.handler = async (event) => {
       // (1) create batch
       if (action === "create") {
         const payload = { description: (body.description || "").toString() };
-        const resp = await fetchWithTimeout(url("/batches"), { method: "POST", headers: authH, body: JSON.stringify(payload) }, 10000);
+        const resp = await fetch(url("/batches"), { method: "POST", headers: authH, body: JSON.stringify(payload) });
         const out  = await wrap(resp);
         if (!out.ok) return bad(out.status, out.data);
 
@@ -362,7 +334,7 @@ exports.handler = async (event) => {
       // (2) create shipment
       if (action === "create_shipment") {
         const shipment = body.shipment || body.payload || {};
-        const resp = await fetchWithTimeout(url(`/shipments`), { method: "POST", headers: authH, body: JSON.stringify(shipment) }, 10000);
+        const resp = await fetch(url(`/shipments`), { method: "POST", headers: authH, body: JSON.stringify(shipment) });
         const out  = await wrap(resp);
         if (!out.ok) return bad(out.status, out.data);
 
@@ -373,7 +345,7 @@ exports.handler = async (event) => {
         let created = null;
         if (id) {
           try {
-            const r2 = await fetchWithTimeout(url(`/shipments/${encodeURIComponent(id)}`), { headers: authH }, 9000);
+            const r2 = await fetch(url(`/shipments/${encodeURIComponent(id)}`), { headers: authH });
             const o2 = await wrap(r2);
             if (o2.ok) created = o2.data;
           } catch {}
@@ -395,9 +367,9 @@ exports.handler = async (event) => {
         const id = String(body.shipment_id || body.id || qp.id || "");
         if (!id) return bad(400, "shipment_id required for refresh");
         const payload = body.payload || {};
-        const resp = await fetchWithTimeout(url(`/shipments/${encodeURIComponent(id)}/refresh`), {
+        const resp = await fetch(url(`/shipments/${encodeURIComponent(id)}/refresh`), {
           method: "PATCH", headers: authH, body: JSON.stringify(payload)
-        }, 10000);
+        });
         const out = await wrap(resp);
         if (!out.ok) return bad(out.status, out.data);
         return ok(out.data);
@@ -408,9 +380,9 @@ exports.handler = async (event) => {
         const id = String(body.shipment_id || body.id || qp.id || "");
         if (!id) return bad(400, "shipment_id required for buy");
         const payload = { postage_type: (body.postage_type || body.postageType || "unknown") };
-        const resp = await fetchWithTimeout(url(`/shipments/${encodeURIComponent(id)}/buy`), {
+        const resp = await fetch(url(`/shipments/${encodeURIComponent(id)}/buy`), {
           method: "PATCH", headers: authH, body: JSON.stringify(payload)
-        }, 10000);
+        });
         const out = await wrap(resp);
         if (!out.ok) return bad(out.status, out.data);
         return ok(out.data);
@@ -435,7 +407,7 @@ exports.handler = async (event) => {
       const payload = { batch_id: Number(batchId), shipment_ids: shipmentIds };
       const path = action === "add" ? "/shipments/add_to_batch" : "/shipments/remove_from_batch";
 
-      const resp = await fetchWithTimeout(url(path), { method: "PATCH", headers: authH, body: JSON.stringify(payload) }, 10000);
+      const resp = await fetch(url(path), { method: "PATCH", headers: authH, body: JSON.stringify(payload) });
       const out  = await wrap(resp);
       if (!out.ok) return bad(out.status, out.data);
       return ok({ success: true });
