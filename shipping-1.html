@@ -2712,7 +2712,14 @@ function metalToBadge(label){
       // Use the deployed proxy function (testChitChats) and its "search" resource
       // Always limit to Pending (open) batches on the server
       async function callSearch(params){
-        const qs   = new URLSearchParams({ fast: "1", pendingOnly: "1", ...params }).toString();
+        // default fast=1; keep pending-only; add a sane server time budget
+        const qs   = new URLSearchParams({
+          fast: "1",
+          pendingOnly: "1",
+          timeoutMs: "9000",
+          pageSize: "500",
+          ...params
+        }).toString();
         const resp = await fetch(`${fnBase}/testChitChats?resource=search&${qs}`, { credentials: "include" });
         return await safeJSON(resp);
       }
