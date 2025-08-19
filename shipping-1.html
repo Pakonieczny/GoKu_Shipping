@@ -3065,7 +3065,11 @@ function metalToBadge(label){
         document.getElementById("cc_to_country_code").value = seed.to_country_code || "";
         document.getElementById("cc_value_currency").value = seed.to_country_code === "CA" ? "cad" : "usd";
         selectedPostageType = null; btnBuy.disabled = true; ratesList.innerHTML = "";
-        modal.style.display = "block"; showStep(0);
+        modal.style.display = "block";
+        // New default: skip Step 0 in normal flow → start on Description (Step 1)
+        showStep(1);
+        // Always run address verification flow on open (automated)
+        setTimeout(()=>{ maybeVerifyAddressBeforeStep1(true); }, 0);
       }
       function modalClose(){ modal.style.display = "none"; }
 
@@ -3513,46 +3517,64 @@ function metalToBadge(label){
         }
       }
 
-     async function maybeVerifyAddressBeforeStep1(){
+     // Choose the correct "orig" address source: prefer Chit Chats shipment → fallback to inputs
+      async function pickOrigAddress(){
+        const id = (document.getElementById("ccShipmentId")?.value || "").trim();
+        // Start from whatever is currently in the inputs (seeded from Ship To)
+        let orig = addressFromInputs();
+        if (id) {
+          try {
+            const det = await callCc("GET", null, `?resource=shipment&id=${encodeURIComponent(id)}`);
+            const fromCc = normalizeToAddressShape(det?.to || det?.recipient || det?.ship_to || det?.address || det);
+            if (fromCc && (fromCc.to_address_1 || fromCc.to_city || fromCc.to_postal_code)) {
+              // Reflect CC address into the form so everything stays in sync
+              const map = {
+                to_name:"cc_to_name", to_address_1:"cc_to_address_1", to_address_2:"cc_to_address_2",
+                to_city:"cc_to_city", to_province_code:"cc_to_province_code",
+                to_postal_code:"cc_to_postal_code", to_country_code:"cc_to_country_code"
+              };
+              Object.keys(map).forEach(k => {
+                const v = fromCc[k]; if (v != null) document.getElementById(map[k]).value = v;
+              });
+              orig = fromCc;
+            }
+          } catch(e){ try{ console.debug("[Verify] CC shipment fetch failed", e);}catch{} }
+        }
+        return orig;
+      }
+
+     async function maybeVerifyAddressBeforeStep1(force = false){
        const log  = (...a)=>{ try{ console.debug("[Verify]", ...a);}catch{} };
-       const orig = addressFromInputs();
-       if ((orig.to_country_code||"").toUpperCase() !== "US") return false; // only US via Smarty
+       const orig = await pickOrigAddress(); // prefer CC's own shipment address
 
-       // 1) Try Smarty (US Street) first
-       M.toast?.({ html: "Verifying address with Smarty…" });
-       log("Smarty request", orig);
-       const smartySugg = await verifyWithSmarty(orig);
-       log("Smarty suggested", smartySugg);
+       // Try Smarty (US only); otherwise fall back to carrier verify.
+       let sugg = null;
+       const cc = (orig.to_country_code || "").toUpperCase();
+       try{
+         if (cc === "US") {
+           M.toast?.({ html: "Verifying address with Smarty…" });
+           log("Smarty request", orig);
+           const smartySugg = await verifyWithSmarty(orig);
+           log("Smarty suggested", smartySugg);
+           sugg = smartySugg ? normalizeToAddressShape(smartySugg) : null;
+         }
+       } catch(e) { log("Smarty verify failed", e); }
 
-       let sugg = smartySugg ? normalizeToAddressShape(smartySugg) : null;
-
-       // 2) Optional fallback: if Smarty had nothing, try your existing Chit Chats normalization
+       // Always try Chit Chats normalization as a secondary signal
        if (!sugg){
          try{
-           M.toast?.({ html: "No Smarty suggestion — checking carrier…" });
+           M.toast?.({ html: "Checking carrier verification…" });
            const out = await callCc("POST", { action:"verify_to", to: orig });
            const raw = (out?.suggested ?? out?.normalized ?? out?.address ?? null);
            sugg = raw ? normalizeToAddressShape(raw) : null;
          }catch(e){ log("Carrier verify failed", e); }
        }
 
-       if (!sugg) {
-         M.toast?.({ html: "No verified address suggestion found" });
-         return false;
-       }
-
-       const changed = JSON.stringify({
-         ...orig, to_country_code:(orig.to_country_code||"").toUpperCase()
-       }) !== JSON.stringify({
-         ...sugg, to_country_code:(sugg.to_country_code||"").toUpperCase()
-       });
-
-       if (changed) {
-         log("changed → opening compare modal", { orig, sugg });
-         return openVerifyModal(orig, sugg);
-       }
-       M.toast?.({ html: "Address already verified" });
-       return false;
+       // Always show the compare modal (even if verified / no changes / no suggestion)
+       const finalSugg = sugg || orig;
+       log("opening compare modal", { orig, finalSugg });
+       openVerifyModal(orig, finalSugg);
+       return true;
      }
 
       /* ────────────────────────────────────────────────────────────── */
