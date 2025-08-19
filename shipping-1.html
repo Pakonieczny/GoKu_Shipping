@@ -558,6 +558,8 @@
             <div class="cc-field"><label>Description</label><input id="cc_item_description" placeholder="Rock On Stud Earrings, Stb"></div>
             <div class="cc-field"><label>Quantity</label><input id="cc_item_qty" type="number" min="1" value="1"></div>
             <div class="cc-field"><label>Unit value</label><input id="cc_item_unit_value" type="number" step="0.01"></div>
+            <div class="cc-field"><label>Value currency</label><select id="cc_value_currency"><option value="CAD">CAD</option><option value="USD">USD</option></select></div>
+            <div class="cc-field"><label>Value currency</label>
             <div class="cc-field"><label>Origin country</label><input id="cc_item_origin_country" placeholder="CA"></div>
             <div class="cc-field"><label>HS code</label><input id="cc_item_hs_tariff_code" placeholder="7113.19.5080"></div>
             <div class="cc-field"><label>Country of manufacture</label><input id="cc_item_manufacture_country" placeholder="CA"></div>
@@ -3211,6 +3213,7 @@ function metalToBadge(label){
           to_email: document.getElementById("cc_to_email").value.trim() || null
         };
          const toCountry = document.getElementById("cc_to_country_code").value.trim().toUpperCase();
+         const valueCurrency =(document.getElementById("cc_value_currency")?.value || (toCountry === "CA" ? "CAD" : "USD"));
 
         const line = {
           description: document.getElementById("cc_item_description").value.trim(),
@@ -3347,6 +3350,7 @@ function metalToBadge(label){
       const FIELD_MAP = {
         // step 0 - recipient
         to_name: "cc_to_name",
+        value_currency: "cc_value_currency",
         to_address_1: "cc_to_address_1",
         to_address_2: "cc_to_address_2",
         to_city: "cc_to_city",
