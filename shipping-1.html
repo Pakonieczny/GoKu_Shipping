@@ -3123,7 +3123,8 @@ function metalToBadge(label){
         try {
         if (canRefresh) {
           // Server-side validate/update existing shipment (now safe)
-          await callCc("PATCH", { action: "refresh", shipment_id: rawId, payload });
+          const refreshPayload = buildRefreshPayload();
+          await callCc("PATCH", { action: "refresh", shipment_id: rawId, payload: refreshPayload });
           pushShipmentId(rawId); // keep window.ccShipmentId in sync
           return [];
         }
@@ -3211,6 +3212,22 @@ function metalToBadge(label){
           ...pkg
         };
       }
+
+      function buildRefreshPayload(){
+      return {
+        weight_unit: document.getElementById("cc_weight_unit").value,
+        weight     : Number(document.getElementById("cc_weight").value || 0),
+        size_unit  : document.getElementById("cc_size_unit").value,
+        size_x     : Number(document.getElementById("cc_size_x").value || 0),
+        size_y     : Number(document.getElementById("cc_size_y").value || 0),
+        size_z     : Number(document.getElementById("cc_size_z").value || 0),
+        package_type: document.getElementById("cc_package_type").value,
+        ship_date  : normalizeShipDate(document.getElementById("cc_ship_date").value),
+        insurance_requested : document.getElementById("cc_insurance_requested").value === "true",
+        media_mail_requested: document.getElementById("cc_media_mail_requested").value === "true",
+        signature_requested : document.getElementById("cc_signature_requested").value === "true"
+      };
+    }
 
       function renderRates(s){
         const rates = (s && s.rates) || [];
