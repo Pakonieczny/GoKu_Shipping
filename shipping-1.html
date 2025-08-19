@@ -51,6 +51,14 @@
       display: block;
     }
 
+    @keyframes ccSpin { to { transform: rotate(360deg); } }
+    .cc-spinner {
+    display:none; width:16px; height:16px;
+    border:2px solid #cfd8dc; border-top-color:#26a69a;
+    border-radius:50%; animation: ccSpin .8s linear infinite;
+    vertical-align: middle; margin-left: 6px;
+  }
+
     /* "Tracking Link" button */
     #trackingLinkBtn {
       position: absolute;
@@ -468,6 +476,12 @@
     <div id="ccControls" style="position:absolute; left:50px; top:190px;">
       <input id="ccShipmentId" type="text" placeholder="CC Shipment ID" readonly
              style="width:180px; height:24px; font-size:0.9em; margin-right:6px;" />
+
+    <span id="ccIdSpinner"
+      class="cc-spinner"
+      aria-live="polite"
+      aria-label="Looking up shipment in Chit Chats"
+      title="Looking up shipment in Chit Chats"></span>
 
       <!-- Batch dropdown (wrapped so Config can move/resize the visible control) -->
       <div id="ccBatchSelectWrap"
@@ -1373,7 +1387,7 @@ function metalToBadge(label){
         "employeeNumberInput",
         "loginModalFooter",
         "employeeLoginBtn",
-        "ccControls","ccShipmentId","ccBatchSelectWrap","ccBatchName",
+        "ccControls","ccShipmentId","ccIdSpinner","ccBatchSelectWrap","ccBatchName",
         "ccCreateBatchBtn","ccAddToBatchBtn","ccRemoveFromBatchBtn",
         "ccEditBtn"
       ];
@@ -1446,6 +1460,7 @@ function metalToBadge(label){
       signOutBtn:           { left: 1400,  top: 17, width: 103, height: 35 },
       ccControls:            { left: 1400,  top: 50, width: 150, height: 45 },
       ccShipmentId:          { left: 1400,  top: 80, width: 175, height: 45 },
+      ccIdSpinner:           { left: 1580,  top: 86, width: 16,  height: 16 },
       ccBatchSelectWrap:     { left: 1400, top: 110, width:  175, height: 45 },
       ccBatchName:           { left: 1400, top: 140, width: 175, height: 45 },
       ccCreateBatchBtn:      { left: 1400, top: 170, width: 175, height: 45 },
@@ -2673,6 +2688,17 @@ function metalToBadge(label){
           }
         });
         el._guarded = true;
+
+      // Spinner just for Chit Chats shipment-id lookups
+      const ccSpinnerEl = document.getElementById("ccIdSpinner");
+      let _ccSpinDepth = 0;
+      function ccSpin(on){
+        if (!ccSpinnerEl) return;
+        if (on) { _ccSpinDepth++; ccSpinnerEl.style.display = "inline-block"; }
+        else    { _ccSpinDepth = Math.max(0, _ccSpinDepth - 1);
+                  if (_ccSpinDepth === 0) ccSpinnerEl.style.display = "none"; }
+      }
+
       })();
 
       // Always use the Netlify functions base
@@ -2712,16 +2738,20 @@ function metalToBadge(label){
       // Use the deployed proxy function (testChitChats) and its "search" resource
       // Always limit to Pending (open) batches on the server
       async function callSearch(params){
-        // default fast=1; keep pending-only; add a sane server time budget
-        const qs   = new URLSearchParams({
-          fast: "1",
-          pendingOnly: "1",
-          timeoutMs: "9000",
-          pageSize: "500",
-          ...params
-        }).toString();
-        const resp = await fetch(`${fnBase}/testChitChats?resource=search&${qs}`, { credentials: "include" });
-        return await safeJSON(resp);
+        ccSpin(true);
+        try {
+          const qs = new URLSearchParams({
+            fast: "1",
+            pendingOnly: "1",
+            timeoutMs: "9000",
+            pageSize: "500",
+            ...params
+          }).toString();
+          const resp = await fetch(`${fnBase}/testChitChats?resource=search&${qs}`, { credentials: "include" });
+          return await safeJSON(resp);
+        } finally {
+          ccSpin(false);
+        }
       }
 
       // --- UI setters
