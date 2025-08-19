@@ -2698,6 +2698,7 @@ function metalToBadge(label){
         else    { _ccSpinDepth = Math.max(0, _ccSpinDepth - 1);
                   if (_ccSpinDepth === 0) ccSpinnerEl.style.display = "none"; }
       }
+      window.ccSpin = ccSpin; // ← expose globally
 
       })();
 
@@ -2738,19 +2739,19 @@ function metalToBadge(label){
       // Use the deployed proxy function (testChitChats) and its "search" resource
       // Always limit to Pending (open) batches on the server
       async function callSearch(params){
-        ccSpin(true);
+        window.ccSpin && window.ccSpin(true);   // safe global call
         try {
           const qs = new URLSearchParams({
             fast: "1",
             pendingOnly: "1",
             timeoutMs: "9000",
             pageSize: "500",
-            ...params
+            ...params                          // ← fix spread (was .params)
           }).toString();
           const resp = await fetch(`${fnBase}/testChitChats?resource=search&${qs}`, { credentials: "include" });
           return await safeJSON(resp);
         } finally {
-          ccSpin(false);
+          window.ccSpin && window.ccSpin(false);
         }
       }
 
