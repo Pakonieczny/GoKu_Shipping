@@ -1055,14 +1055,6 @@ function metalToBadge(label){
        const d = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1);
        return _ymdLocal(d);
      }
-
-    // Prefer API's 'today' token or pass-through YYYY-MM-DD; avoid parsing
-   function getShipDateForApi(){
-     const el = document.getElementById("cc_ship_date");
-     const raw = String(el && el.value || "").trim();
-     return raw ? raw : "today";
-   }
-
      if (/^\d{4}-\d{2}-\d{2}$/.test(t)) return t;
      const d = new Date(t);
      return Number.isNaN(d.getTime()) ? today : _ymdLocal(d);
@@ -3239,7 +3231,7 @@ function metalToBadge(label){
           size_y     : Number(document.getElementById("cc_size_y").value || 0),
           size_z     : Number(document.getElementById("cc_size_z").value || 0),
           package_type: document.getElementById("cc_package_type").value,
-          ship_date  : getShipDateForApi(),
+          ship_date  : normalizeShipDate(document.getElementById("cc_ship_date").value),
           insurance_requested : document.getElementById("cc_insurance_requested").value === "true",
           media_mail_requested: document.getElementById("cc_media_mail_requested").value === "true",
           signature_requested : document.getElementById("cc_signature_requested").value === "true"
