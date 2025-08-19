@@ -3525,14 +3525,22 @@ function metalToBadge(label){
 
       modal.style.display = "block";
 
+      // kick off autofill immediately upon opening the verify modal
+      try { autofillFromVerifyModal(); } catch (_) {}
+
       // buttons
       document.getElementById("ccVerifyClose").onclick = () => { modal.style.display = "none"; };
       document.getElementById("ccAddrEdit").onclick    = () => { modal.style.display = "none"; showStep(0); };
-      document.getElementById("ccKeepOriginal").onclick = () => { modal.style.display = "none"; showStep(1); };
 
+      // Keep Original → still ensure Step 1 is ready-populated
+      document.getElementById("ccKeepOriginal").onclick = () => {
+        try { autofillFromVerifyModal(); } catch (_) {}
+        modal.style.display = "none";
+        showStep(1);
+      };
+
+      // Use Suggested → populate recipient fields + ensure Step 1 prefilled
       document.getElementById("ccUseSuggested").onclick = () => {
-        
-        // Auto-fill Step 1 fields while we show the verify modal
         try { autofillFromVerifyModal(); } catch (_) {}
 
         const map = {
@@ -3567,63 +3575,63 @@ function metalToBadge(label){
       return "";
     }
 
-    /* === Helper: auto-fill Step 1 fields when verify modal opens === */
     async function autofillFromVerifyModal() {
-      const set = (id, v) => {
-        const el = document.getElementById(id);
-        if (el && (el.value == null || el.value === "")) el.value = String(v);
-      };
+    const set = (id, v) => {
+      const el = document.getElementById(id);
+      if (el) el.value = String(v);
+    };
 
-      // (A) Description from Order Details -> Title:
-      set("cc_item_description", extractOrderTitle());
+    // (A) Description from Order Details → Title:
+    const title = (typeof extractOrderTitle === "function") ? extractOrderTitle() : "";
+    if (title) set("cc_item_description", title.slice(0, 95));  // safe length for CC field
 
-      // (B) Fixed defaults (origin / HS / manufacturer)
-      set("cc_item_origin_country",            "CA");
-      set("cc_item_hs_tariff_code",            "7113.19.5080");
-      set("cc_item_manufacture_country",       "CA");
-      set("cc_item_manufacturer_contact",      "Brites Jewelry Inc.");
-      set("cc_item_manufacturer_street",       "450 Matheson Blvd, East");
-      set("cc_item_manufacturer_city",         "Mississauga");
-      set("cc_item_manufacturer_province_code","ON");
-      set("cc_item_manufacturer_postal_code",  "L4Z-1R5");
-      set("cc_item_manufacturer_phone",        "416-606-2476");
-      set("cc_item_manufacturer_email",        "michelle@custombrites.com");
+    // (B) Static defaults (API prefers ISO codes where applicable)
+    set("cc_item_origin_country",             "CA");            // Canada
+    set("cc_item_hs_tariff_code",             "7113.19.5080");
+    set("cc_item_manufacture_country",        "CA");            // Canada
+    set("cc_item_manufacturer_contact",       "Brites Jewelry Inc.");
+    set("cc_item_manufacturer_street",        "450 Matheson Blvd, East");
+    set("cc_item_manufacturer_city",          "Mississauga");
+    set("cc_item_manufacturer_province_code", "ON");            // Ontario
+    set("cc_item_manufacturer_postal_code",   "L4Z-1R5");
+    set("cc_item_manufacturer_phone",         "416-606-2476");
+    set("cc_item_manufacturer_email",         "michelle@custombrites.com");
 
-      // (C) Unit value + Qty from Chit Chats API
-      try {
-        const sid = (document.getElementById("ccShipmentId")?.value || "").trim();
-        let detail = null;
+    // (C) Qty + Unit Value from Chit Chats API (shipment → first customs line)
+    try {
+      const sid = (document.getElementById("ccShipmentId")?.value || "").trim();
+      let detail = null;
 
-        if (sid) {
-          const r = await fetch("/.netlify/functions/testChitChats?resource=shipment&id=" + encodeURIComponent(sid));
-          if (r.ok) detail = await r.json();
-        } else {
-          // fall back: try searching by your visible order number label in Details
-          const orderNo = (document.getElementById("titleOrderNumber")?.innerText || "").trim();
-          if (orderNo) {
-            const r = await fetch("/.netlify/functions/testChitChats?resource=search&orderId=" + encodeURIComponent(orderNo) + "&fast=1");
-            if (r.ok) {
-              const js = await r.json();
-              detail = (js.shipments && js.shipments[0]) || null;
-            }
+      if (sid) {
+        const r = await fetch("/.netlify/functions/testChitChats?resource=shipment&id=" + encodeURIComponent(sid));
+        if (r.ok) detail = await r.json();
+      } else {
+        // fallback: try by visible order number (fast mode)
+        const orderNo = (document.getElementById("titleOrderNumber")?.innerText || "").trim();
+        if (orderNo) {
+          const r = await fetch("/.netlify/functions/testChitChats?resource=search&orderId=" + encodeURIComponent(orderNo) + "&fast=1");
+          if (r.ok) {
+            const js = await r.json();
+            detail = (js.shipments && js.shipments[0]) || null;
           }
         }
-
-        if (detail) {
-          // Normalize path to customs item
-          const item =
-            (detail.customs && Array.isArray(detail.customs.items) && detail.customs.items[0]) ||
-            (Array.isArray(detail.items) && detail.items[0]) || null;
-
-          if (item) {
-            if (item.unit_value != null) set("cc_item_unit_value", item.unit_value);
-            if (item.quantity    != null) set("cc_item_qty",        item.quantity);
-          }
-        }
-      } catch (e) {
-        console.warn("Autofill (unit value/qty) failed:", e);
       }
-    }
+
+      if (detail) {
+        const customs = detail?.customs || detail?.line_items || detail?.items || detail?.customs_items;
+        const first =
+          (Array.isArray(customs?.items) ? customs.items[0] :
+           Array.isArray(customs)         ? customs[0] :
+           customs) || null;
+
+        const qty  = Number(first?.quantity ?? first?.qty ?? detail?.items_count ?? 1);
+        const uval = Number(first?.unit_value ?? first?.value ?? 0);
+
+        if (!Number.isNaN(qty))  set("cc_item_qty", qty);
+        if (!Number.isNaN(uval)) set("cc_item_unit_value", uval);
+      }
+    } catch (_) {}
+  }
 
       // ───────────────── Smarty: client proxy caller ─────────────────
       async function verifyWithSmarty(to){
