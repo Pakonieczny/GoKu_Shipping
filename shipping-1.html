@@ -3136,7 +3136,7 @@ function metalToBadge(label){
           insurance_requested : document.getElementById("cc_insurance_requested").value === "true",
           signature_requested : document.getElementById("cc_signature_requested").value === "true",
           media_mail_requested: document.getElementById("cc_media_mail_requested").value === "true",
-          ship_date   : (document.getElementById("cc_ship_date").value || "today")
+          ship_date   : (document.getElementById("cc_ship_date").value || new Date().toISOString().slice(0,10))
         };
         return {
           ...to,
@@ -3183,7 +3183,12 @@ function metalToBadge(label){
       }
 
       async function refreshRates(){
-        const id = (idInput.value || "").trim();
+        let id = (idInput.value || "").trim();
+        if (!id) {
+          const created = await ensureShipment();
+          id = (created?.id || idInput.value || "").trim();
+          if (!id) { M.toast?.({ html: "Create the shipment first" }); return; }
+        }
         const payload = {
           weight_unit: document.getElementById("cc_weight_unit").value,
           weight     : Number(document.getElementById("cc_weight").value || 0),
