@@ -2685,7 +2685,8 @@ function metalToBadge(label){
             const fresh   = this.dataset.setAt && (Date.now() - Number(this.dataset.setAt)) < 2000;
             if (fresh && isBlank) return;     // 🚫 ignore “just after set” blanking
             desc.set.call(this, v);
-          }
+           // ✅ stop spinner immediately when a real value lands
+        if (!isBlank) { window.ccSpin && window.ccSpin(false); }          }
         });
         el._guarded = true;
 
@@ -2766,6 +2767,8 @@ function metalToBadge(label){
         if (ccShipEl) {
           ccShipEl.value = sid;
           ccShipEl.dataset.setAt = String(Date.now()); // 🕒 stamp when we set it
+          // ✅ hide spinner as soon as the textbox updates
+          window.ccSpin && window.ccSpin(false);
         }        
         window.ccShipmentId    = sid;
         window.currentCarrier  = "ChitChats";
