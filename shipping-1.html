@@ -501,8 +501,8 @@
       <button id="ccAddToBatchBtn" class="btn"
               style="height:24px; line-height:24px; font-size:0.8em; margin-left:6px;">Add→Batch</button>
 
-      <button id="ccRemoveFromBatchBtn" class="btn"
-              style="height:24px; line-height:24px; font-size:0.8em; margin-left:6px;">Remove From Batch</button>
+      <!-- <button id="ccRemoveFromBatchBtn" class="btn"
+              style="height:24px; line-height:24px; font-size:0.8em; margin-left:6px;">Remove From Batch</button> -->
     </div>
 
    <!-- CC Edit Shipment button -->
@@ -1249,10 +1249,8 @@ function metalToBadge(label){
 
         // Always use apiFetch so we inherit your token refresh/retry behavior
         const tryUrls = [
-          `/etsyTransactions?orderId=${encodeURIComponent(receiptId)}`,
           `/etsyOrderProxy?orderId=${encodeURIComponent(receiptId)}&include=transactions`
-        ];
-
+          ];
         let out = null;
         for (const path of tryUrls){
           const res = await apiFetch(path);              // <— was fetch(); use your wrapper
