@@ -3286,47 +3286,49 @@ function metalToBadge(label){
       set("cc_item_manufacturer_email",         "michelle@custombrites.com");
     
 
-      // shipping-1.html  — robust "SHIP TO" parser
       function parseShipToBox(){
         const box = document.getElementById("shipAddressBox");
-        const txt = (box?.value || "").replace(/^SHIP TO:\n?/i,"").trim();
-        const lines = txt.split(/\n+/).map(l => l.trim()).filter(Boolean);
+        const txt = (box?.value || "").replace(/^SHIP TO:\s*/i, "").trim();
+        const raw = txt.split(/\n+/).map(l => l.trim()).filter(Boolean);
+        const lines = raw.filter(l => !/^phone\s*:?/i.test(l)); // drop phone line from parsing
 
         const out = {};
         out.to_name = lines[0] || "";
 
-        // Country from last line
-        const last = lines[lines.length - 1] || "";
-        if (/canada/i.test(last)) out.to_country_code = "CA";
-        else if (/(united\s*states|USA|US)/i.test(last)) out.to_country_code = "US";
+        // Country: look anywhere, not just the last line
+        const joined = lines.join("\n");
+        if (/canada/i.test(joined)) out.to_country_code = "CA";
+        else if (/(united\s*states|USA|US)/i.test(joined)) out.to_country_code = "US";
 
-        // Prefer the LAST comma line as "City, ST ZIP"; fallback to "City ST ZIP"
-        let csp = "";
+        // Pick the most likely "City ST ZIP" line from the bottom up
+        let candidate = "";
         for (let i = lines.length - 1; i >= 0; i--) {
-          if (/,/.test(lines[i])) { csp = lines[i]; break; }
+          const l = lines[i];
+          if (/,/.test(l) || /\b[A-Za-z]{2}\s+[A-Za-z0-9][A-Za-z0-9 -]{2,}\b/.test(l)) { candidate = l; break; }
         }
 
-        let city = "", prov = "", postal = "";
+        // 1) City, ST ZIP
+        let m = candidate.match(/^([^,]+),\s*([A-Za-z]{2})\s+([A-Za-z0-9 -]{3,10})$/);
+        // 2) City ST ZIP (no comma)
+        if (!m) m = candidate.match(/^(.+?)\s+([A-Za-z]{2})\s+([A-Za-z0-9 -]{3,10})$/);
 
-        // 1) "City, ST ZIP"
-        let m = csp && csp.match(/^([^,]+),\s*([A-Za-z]{2})\s+([A-Za-z0-9 -]{3,10})$/);
-
-        // 2) Fallback: "City ST ZIP" (no comma)
-        if (!m) {
-          const guess = lines.find((l, idx) => idx > 0 && /^[^:]+$/.test(l)); // skip "Phone:" etc
-          m = guess && guess.match(/^(.+?)\s+([A-Za-z]{2})\s+([A-Za-z0-9 -]{3,10})$/);
+        if (m) {
+          out.to_city = m[1].trim();
+          out.to_province_code = m[2].trim();
+          out.to_postal_code = m[3].trim();
         }
 
-        if (m) { city = m[1].trim(); prov = m[2].trim(); postal = m[3].trim(); }
-        out.to_city = city;
-        out.to_province_code = prov;
-        out.to_postal_code = postal;
-
-        // Streets
+        // Street lines
         out.to_address_1 = lines[1] || "";
-        // Keep address_2 empty unless clearly embedded in line[1] as a unit/suite tag.
         const unitMatch = (lines[1] || "").match(/\b(apt|unit|suite|#)\s*[\w-]+/i);
         out.to_address_2 = unitMatch ? unitMatch[0] : "";
+
+        // If country still unknown, infer from postal format
+        if (!out.to_country_code) {
+          const pc = out.to_postal_code || "";
+          if (/^[A-Za-z]\d[A-Za-z]\s?\d[A-Za-z]\d$/i.test(pc)) out.to_country_code = "CA";
+          else if (/^\d{5}(-\d{4})?$/.test(pc)) out.to_country_code = "US";
+        }
 
         return out;
       }
