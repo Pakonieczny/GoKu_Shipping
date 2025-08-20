@@ -1175,6 +1175,36 @@ function metalToBadge(label){
 
     let __refreshPromise = null;  // single-flight guard
 
+    // Extract a numeric unit price from Etsy's various shapes
+    function extractUnitPriceFromEtsy(item){
+      const pickNum = v => (v == null ? NaN : Number(v));
+      const src = item?.price ?? item?.transaction_price ?? item?.listing_price ?? item?.variation_price ?? null;
+      if (src && typeof src === "object") {
+        const amount  = pickNum(src.amount ?? src.value ?? src.gross ?? src.net);
+        const divisor = pickNum(src.divisor ?? 100);
+        if (!Number.isNaN(amount)) return amount / (divisor || 1);
+      }
+      const num = pickNum(src);
+      return Number.isNaN(num) ? NaN : num;
+    }
+
+    function prefillCustomsFromEtsy(){
+      const items = Array.isArray(window.cachedOrderItems) ? window.cachedOrderItems : [];
+      const idx   = (typeof window.selectedPreviewIndex === "number") ? window.selectedPreviewIndex : 0;
+      const item  = items[idx];
+      if (!item) return;
+
+      const set = (id, val) => { const el = document.getElementById(id); if (el != null && val !== "" && val != null) el.value = val; };
+
+      const qty  = Number(item.quantity ?? 1);
+      const uval = extractUnitPriceFromEtsy(item);
+
+      if (!Number.isNaN(qty))  set("cc_item_qty", qty);
+      if (!Number.isNaN(uval)) set("cc_item_unit_value", uval.toFixed(2));
+
+      if (item.title) set("cc_item_description", item.title.trim().split(" ").slice(0,4).join(" "));
+    }
+
     function scheduleTokenRefresh(){
       clearTimeout(window.__etsyRefreshTimer);
       const exp = Number(localStorage.getItem(TOKEN_KEYS.expires) || 0);
@@ -2264,7 +2294,10 @@ function metalToBadge(label){
       }
     }
 
-    function showItemDetails(index){
+     function showItemDetails(index){
+      // Track active preview tile (duplicated intentionally per request)
+      window.selectedPreviewIndex = index;
+      window.selectedPreviewIndex = index;
       if(!window.cachedOrderItems || !window.cachedOrderItems[index]){
         console.warn("No item at index:", index);
         return;
@@ -2393,6 +2426,8 @@ function metalToBadge(label){
       }
 
       document.getElementById("orderDetails").value = deQuote(details);
+      // Auto-fill qty + unit value for the currently selected item
+      prefillCustomsFromEtsy();
     }
 
     async function fetchListingImages(listingId){
@@ -3048,7 +3083,7 @@ function metalToBadge(label){
       else el.textContent = String(v);
       try { el.dispatchEvent(new Event("input", { bubbles: true })); } catch {}
     }
-      
+
       function showStep(i){
         currentStep = Math.max(0, Math.min(3, i));
         steps.forEach((el,idx) => el.classList.toggle("active", idx===currentStep));
@@ -3059,35 +3094,8 @@ function metalToBadge(label){
         btnBuy.style.display     = currentStep === 3 ? "inline-block" : "none";
       }
 
-      // (B) Pull qty + unit_value from Etsy Transactions (prefer cached order items)
-      try {
-        const items = Array.isArray(window.cachedOrderItems) ? window.cachedOrderItems : [];
-        const item  = items[0]; // use first transaction by default
-
-        if (item) {
-          // Qty
-          const qty = Number(item.quantity ?? 1);
-
-          // Unit value — Etsy shapes vary: object {amount, divisor, currency_code} or plain string/number.
-          const pickNum = (v) => (v == null ? NaN : Number(v));
-          const extractPrice = (it) => {
-            const src = it.price ?? it.transaction_price ?? it.listing_price ?? it.variation_price ?? null;
-
-            if (src && typeof src === "object") {
-              const amount  = pickNum(src.amount ?? src.value ?? src.gross ?? src.net);
-              const divisor = pickNum(src.divisor ?? 100);
-              if (!Number.isNaN(amount)) return amount / (divisor || 1);
-            }
-            const num = pickNum(src);
-            return Number.isNaN(num) ? NaN : num;
-          };
-
-          const uval = extractPrice(item);
-
-          if (!Number.isNaN(qty))  set("cc_item_qty", qty);
-          if (!Number.isNaN(uval)) set("cc_item_unit_value", uval.toFixed(2));
-        }
-      } catch {}
+      /* (B) Removed — this ran too early and ignored the selected tile.
+      Use prefillCustomsFromEtsy() on tile selection + modal open instead. */
 
       // (C) Static defaults you requested
       // NOTE: These fields are sent as ISO/codes to Chit Chats later; we’ll set sensible values.
@@ -3121,7 +3129,7 @@ function metalToBadge(label){
         out.to_address_2 = (lines[2] || "").match(/(unit|apt)/i) ? lines[2] : "";
         return out;
       }
-      function modalOpen() {
+      function modalOpen(){
         const seed = parseShipToBox();
         document.getElementById("cc_to_name").value           = seed.to_name || "";
         document.getElementById("cc_to_address_1").value      = seed.to_address_1 || "";
@@ -3138,6 +3146,8 @@ function metalToBadge(label){
         modal.style.display = "block";
         // Do NOT call showStep(1) here; verify must appear first.
         // Kick off the verification flow immediately:
+       // Fill again when the Edit modal opens
+       prefillCustomsFromEtsy();
         maybeVerifyAddressBeforeStep1(true);
       }
       function modalClose(){ modal.style.display = "none"; }
