@@ -3920,7 +3920,7 @@ function metalToBadge(label){
       async function pickOrigAddress(){
         const id = (document.getElementById("ccShipmentId")?.value || "").trim();
         // Start from whatever is currently in the inputs (seeded from Ship To)
-        let orig = collectRecipientAddress();
+        let orig = (window.collectRecipientAddress || collectRecipientAddress || gatherRecipientFromInputs)();
         if (id) {
           try {
             const det = await callCc("GET", null, `?resource=shipment&id=${encodeURIComponent(id)}`);
@@ -4192,6 +4192,9 @@ function parseIntlAddressBlock(blockText = "", fallbackCountryCode = "") {
     // Fallback: just the inputs
     return gatherRecipientFromInputs();
   }
+
+      // expose globally for handlers defined in other scopes/blocks
+      window.collectRecipientAddress = collectRecipientAddress;
 
       async function verifyAddressAndShowModal(){
         const to = collectRecipientAddress();
