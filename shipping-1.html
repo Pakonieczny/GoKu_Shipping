@@ -3244,16 +3244,16 @@ function metalToBadge(label){
         out.to_address_2 = (lines[2] || "").match(/(unit|apt)/i) ? lines[2] : "";
         return out;
       }
-      function modalOpen(){
+      async function modalOpen(){
         /* INSERT inside modalOpen(), near the top after local refs */
         {
           // Make sure we have the transactions for this order before showing Step 1
           const receiptId = (document.getElementById("etsyOrderNumber")?.value || "").trim();
           if (receiptId && (!Array.isArray(window.cachedOrderItems) || window.cachedOrderItems.length === 0)) {
-            await maybeLoadEtsyTransactions(receiptId);
+            maybeLoadEtsyTransactions(receiptId).then(() => prefillCustomsFromEtsy());
+          } else {
+            prefillCustomsFromEtsy();
           }
-          // Prime Step 1 with the currently selected tile (or first item)
-          prefillCustomsFromEtsy();
         }
         const seed = parseShipToBox();
         document.getElementById("cc_to_name").value           = seed.to_name || "";
