@@ -3734,6 +3734,110 @@ function metalToBadge(label){
        return true;
      }
 
+     /* ===== Customs Tax Reference Auto-Fill ================================
+     Rules:
+     - GB / UK → "UK VAT 370600428"
+     - Any EU destination (27 members) except GB → "IM3720000224"
+     - Else → empty
+     ------------------------------------------------------------------- */
+    (function(){
+      const EU_CODES = new Set([
+        "AT","BE","BG","HR","CY","CZ","DK","EE","FI","FR","DE","GR",
+        "HU","IE","IT","LV","LT","LU","MT","NL","PL","PT","RO","SK","SI","ES","SE"
+      ]);
+
+      // Common country name → ISO2 mappings (helps when parsing freeform address lines)
+      const NAME_TO_CODE = {
+        // UK / GB
+        "united kingdom":"GB","great britain":"GB","england":"GB","scotland":"GB",
+        "wales":"GB","northern ireland":"GB","uk":"GB",
+
+        // EU (27)
+        "austria":"AT","belgium":"BE","bulgaria":"BG","croatia":"HR","cyprus":"CY",
+        "czech republic":"CZ","czechia":"CZ","denmark":"DK","estonia":"EE","finland":"FI",
+        "france":"FR","germany":"DE","deutschland":"DE","greece":"GR","hellenic republic":"GR",
+        "hungary":"HU","ireland":"IE","republic of ireland":"IE","italy":"IT","latvia":"LV",
+        "lithuania":"LT","luxembourg":"LU","malta":"MT","netherlands":"NL","the netherlands":"NL",
+        "nederland":"NL","poland":"PL","portugal":"PT","romania":"RO","slovakia":"SK",
+        "slovenia":"SI","spain":"ES","españa":"ES","sweden":"SE"
+      };
+
+      function countryFromFreeform(text){
+        if (!text) return "";
+        const lower = text.toLowerCase();
+
+        // Name contains (robust)
+        for (const [name, code] of Object.entries(NAME_TO_CODE)) {
+          if (lower.includes(name)) return code;
+        }
+
+        // Scan from last non-empty line for 2-letter tokens that look like ISO codes
+        const lines = lower.split(/\r?\n/).map(s=>s.trim()).filter(Boolean);
+        for (let i = lines.length - 1; i >= 0; i--) {
+          const tokens = lines[i].toUpperCase().match(/\b[A-Z]{2}\b/g);
+          if (tokens) {
+            for (let t of tokens) {
+              if (t === "UK") t = "GB";          // normalize
+              if (/^[A-Z]{2}$/.test(t)) return t;
+            }
+          }
+        }
+        return "";
+      }
+
+      function detectDestCountryCode(){
+        const codeField = document.getElementById("cc_to_country_code");
+        let code = (codeField?.value || "").trim().toUpperCase();
+        if (code === "UK") code = "GB";
+        if (/^[A-Z]{2}$/.test(code)) return code;
+
+        const addr = document.getElementById("shipAddressBox")?.value || "";
+        return countryFromFreeform(addr);
+      }
+
+      function isEU(code){ return EU_CODES.has(code); }
+
+      function autoFillCustomsTaxRef(){
+        const input = document.getElementById("cc_customs_tax_reference_number");
+        if (!input) return;
+
+        const dest = detectDestCountryCode();
+        if (dest === "GB") {
+          input.value = "UK VAT 370600428";
+        } else if (isEU(dest)) {
+          input.value = "IM3720000224";
+        } else {
+          input.value = "";
+        }
+      }
+
+      // --- Wiring: react to user edits and modal use, plus light polling for programmatic updates
+      function wireCustomsAutoFill(){
+        // Fire on country edits and when opening the Edit Shipment modal
+        document.getElementById("cc_to_country_code")?.addEventListener("input",  autoFillCustomsTaxRef);
+        document.getElementById("cc_to_country_code")?.addEventListener("change", autoFillCustomsTaxRef);
+        document.getElementById("shipAddressBox")    ?.addEventListener("input",  autoFillCustomsTaxRef);
+        document.getElementById("ccEditBtn")         ?.addEventListener("click",  () => setTimeout(autoFillCustomsTaxRef, 0));
+
+        // In case values are set programmatically (no input/change fired), do a cheap snapshot poll.
+        let lastSig = "";
+        setInterval(() => {
+          const a = document.getElementById("shipAddressBox")?.value || "";
+          const c = document.getElementById("cc_to_country_code")?.value || "";
+          const sig = a + " | " + c;
+          if (sig !== lastSig) {
+            lastSig = sig;
+            autoFillCustomsTaxRef();
+          }
+        }, 1200);
+
+        // Initial attempt on page ready
+        autoFillCustomsTaxRef();
+      }
+
+      document.addEventListener("DOMContentLoaded", wireCustomsAutoFill);
+    })();
+
       /* ────────────────────────────────────────────────────────────── */
 
       btnNext.addEventListener("click", async () => {
