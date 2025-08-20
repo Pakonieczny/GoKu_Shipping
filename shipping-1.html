@@ -4058,10 +4058,20 @@ const COUNTRY_TO_ISO2 = {
   "italy":"IT","italia":"IT","united states":"US","usa":"US","canada":"CA","france":"FR","germany":"DE","spain":"ES"
 };
 
-// Accept only real region codes/names; drop 1–2 letter junk like "As" unless whitelisted.
-function sanitizeProvinceForCountry(raw, country){
-  const s = String(raw || "").trim();
-  if (!s) return "";
+ // UK + EU country codes (plus crown deps aliases)
+ const EU_UK_CODES = new Set([
+   "AT","BE","BG","HR","CY","CZ","DK","EE","FI","FR","DE","GR","HU","IE","IT","LV","LT","LU","MT","NL","PL","PT","RO","SK","SI","ES","SE",
+   "GB","UK","IM","JE","GG"
+ ]);
+
+  // Accept only real region codes/names; drop 1–2 letter junk like "As" unless whitelisted.
+  function sanitizeProvinceForCountry(raw, country){
+    const s = String(raw || "").trim();
+    if (!s) return "";
+
+   const cc = String(country || "").toUpperCase();
+   // 🔒 For all UK + EU orders, we never keep a province/state
+   if (EU_UK_CODES.has(cc)) return "";
 
   const US = new Set(["AL","AK","AZ","AR","CA","CO","CT","DE","FL","GA","HI","ID","IL","IN","IA","KS","KY","LA","ME","MD","MA","MI","MN","MS","MO","MT","NE","NV","NH","NJ","NM","NY","NC","ND","OH","OK","OR","PA","RI","SC","SD","TN","TX","UT","VT","VA","WA","WV","WI","WY","DC","PR"]);
   const CA = new Set(["AB","BC","MB","NB","NL","NS","NT","NU","ON","PE","QC","SK","YT"]);
@@ -4176,8 +4186,7 @@ function parseIntlAddressBlock(blockText = "", fallbackCountryCode = "") {
 
   // Cleanups: collapse double spaces, tolerate diacritics
   const clean = (s)=>s.replace(/\s{2,}/g," ").trim();
-
-  // Final guard: drop bogus province tokens (e.g., "As" from apartment text)
+  // ✅ Final guard: zero province for UK/EU, and sanitize everywhere else
   to_province_code = sanitizeProvinceForCountry(to_province_code, to_country_code);
 
   return {
@@ -4185,7 +4194,7 @@ function parseIntlAddressBlock(blockText = "", fallbackCountryCode = "") {
     to_address_1: clean(to_address_1),
     to_address_2: clean(to_address_2),
     to_city: clean(to_city),
-    to_province_code: clean(to_province_code),
+    to_province_code: EU_UK_CODES.has(to_country_code) ? "" : clean(to_province_code),
     to_postal_code: clean(to_postal_code),
     to_country_code: to_country_code || ""
   };
@@ -4226,6 +4235,9 @@ function parseIntlAddressBlock(blockText = "", fallbackCountryCode = "") {
         to_country_code : (parsed.to_country_code || fields.to_country_code || "").toUpperCase()
       };
 
+     // Belt & suspenders: if UK/EU, force province empty before using anywhere else
+     if (EU_UK_CODES.has(to.to_country_code)) to.to_province_code = "";
+
       // Hydrate Step-0 inputs so the compare modal never shows blanks
       const set = (id, v)=>{ const el=document.getElementById(id); if(el && v) el.value=v; };
       set("cc_to_name", to.to_name);
@@ -4263,7 +4275,7 @@ function parseIntlAddressBlock(blockText = "", fallbackCountryCode = "") {
 
       // Use the same diff-rendering flow as the newer path
       openVerifyModal(to, suggested || to);
-      
+
       }
 
       // Wire the Step-0 "Next" button to run verification once before moving on
