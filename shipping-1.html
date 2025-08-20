@@ -4120,13 +4120,33 @@ function parseIntlAddressBlock(blockText = "", fallbackCountryCode = "") {
     }
   }
 
-  // 5) POSTAL: scan remaining lines for the first strong postal pattern
-  //    (declared above to avoid TDZ; we simply fill it if still empty)
+  // 5) POSTAL (+ province if they share a line, e.g. "VIZCAYA 48007" or "48007 VIZCAYA")
+  //    Prefer numeric zips (ES/IT/FR/DE…) and split the leftover text as province.
+  //    Else fall back to common alpha-numeric formats (UK/CA) and also split leftovers.
   for (let j = idx; j < lines.length; j++) {
-    const s = lines[j];
-    // strong hits: 5+ digits or alnum clusters used by many countries
-    const mZip = s.match(/\b[0-9]{4,6}\b|[A-Z0-9][A-Z0-9\s\-]{2,}[A-Z0-9]\b/i);
-    if (mZip) { to_postal_code = mZip[0].toUpperCase(); break; }
+    const raw = (lines[j] || "").trim().replace(/[.,;]+$/,"");
+
+    // A) numeric 4–6 digits → postal; leftover letters → province
+    const mNum = raw.match(/\b\d{4,6}\b/);
+    if (mNum) {
+      to_postal_code = mNum[0].toUpperCase();
+      if (!to_province_code) {
+        const prov = raw.replace(mNum[0], "").replace(/[-,]/g," ").replace(/\s{2,}/g," ").trim();
+        if (/[A-Za-z]/.test(prov)) to_province_code = prov.toUpperCase();
+      }
+      break;
+    }
+
+    // B) UK-like or Canada-like alpha-numeric postal codes
+    const mAlpha = raw.match(/\b(?:[A-Z]\d[A-Z]\s?\d[A-Z]\d|[A-Z]{1,3}\d[A-Z\d]?\s?\d[A-Z]{2})\b/i);
+    if (mAlpha) {
+      to_postal_code = mAlpha[0].toUpperCase();
+      if (!to_province_code) {
+        const prov = raw.replace(mAlpha[0], "").replace(/[-,]/g," ").replace(/\s{2,}/g," ").trim();
+        if (/[A-Za-z]/.test(prov)) to_province_code = prov.toUpperCase();
+      }
+      break;
+    }
   }
 
   // Cleanups: collapse double spaces, tolerate diacritics
