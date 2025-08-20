@@ -1510,6 +1510,24 @@ function metalToBadge(label){
       }
     })();
 
+    // Ensure a single, global source of truth for the proxy endpoint
+    (function(){
+      const fnBase = "/.netlify/functions";
+      const DEFAULT_FN = `${fnBase}/testChitChats`; // rename if your function name differs
+
+      function getCcEndpoint(){
+        if (window.chitChatsFn) return window.chitChatsFn; // prefer explicit global if set
+        const base = location.hostname.includes("goldenspike")
+          ? "https://shipping-1.goldenspike.app/.netlify/functions"
+          : "/.netlify/functions";
+        return `${base}/testChitChats`; // keep this in sync with your function name
+      }
+
+      // Expose both, so either style of call site works
+      window.getCcEndpoint = getCcEndpoint;
+      window.chitChatsFn   = window.chitChatsFn || DEFAULT_FN;
+    })();
+
     function generateRandomString(length){
       var chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
       var text = "";
@@ -3086,7 +3104,7 @@ function metalToBadge(label){
       async function fetchBatches(){
         try {
           // Open-only (pending) batches; received/closed are excluded by the API filter
-          const resp = await fetch(`${chitChatsFn}?resource=batches&status=open`, { credentials: "include" });
+          const resp = await fetch(`${window.getCcEndpoint()}?resource=batches&status=open`, { credentials: "include" });
           const data = await safeJSON(resp);
           const raw  = (data && (data.batches ?? data.data)) ?? data;
           const list = Array.isArray(raw) ? raw : [];
@@ -3116,7 +3134,7 @@ function metalToBadge(label){
       createBtn?.addEventListener("click", async () => {
         try {
           const desc = (ccBatchName.value || "").trim() || `UI ${new Date().toISOString().slice(0,10)}`;
-          const resp = await fetch(`${chitChatsFn}`, {
+          const resp = await fetch(`${window.getCcEndpoint()}`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             credentials: "include",
