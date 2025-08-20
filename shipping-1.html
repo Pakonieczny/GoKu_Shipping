@@ -3199,6 +3199,26 @@ function metalToBadge(label){
       try { el.dispatchEvent(new Event("input", { bubbles: true })); } catch {}
     }
 
+      // NEW: fillOnce — only sets when the field is empty and not user-edited
+      function fillOnce(id, val) {
+        const el = document.getElementById(id);
+        if (!el) return;
+        if (el.dataset.userEdited === "1") return;
+        const hasVal = String(el.value ?? "").trim().length > 0;
+        if (hasVal) return;
+        if (val == null || (typeof val === "number" && !Number.isFinite(val))) return;
+        el.value = String(val);
+        try { el.dispatchEvent(new Event("input", { bubbles: true })); } catch {}
+      }
+    
+      // NEW: mark qty/unit_value as user-edited when the user types
+      document.addEventListener("DOMContentLoaded", () => {
+        ["cc_item_qty","cc_item_unit_value"].forEach(id => {
+          const el = document.getElementById(id);
+          el?.addEventListener("input", () => { el.dataset.userEdited = "1"; });
+        });
+      });
+
       function showStep(i){
         currentStep = Math.max(0, Math.min(3, i));
         steps.forEach((el,idx) => el.classList.toggle("active", idx===currentStep));
@@ -3208,7 +3228,16 @@ function metalToBadge(label){
         btnRefresh.style.display = currentStep === 3 ? "inline-block" : "none";
         btnBuy.style.display     = currentStep === 3 ? "inline-block" : "none";
         /* After toggling .active classes, trigger autofill when entering Step 1 */
-        if (currentStep === 1) prefillCustomsFromEtsy();
+        if (currentStep === 1) {
+          prefillCustomsFromEtsy();
+          // one-shot safety: if something blanks them right after open, re-fill once
+          setTimeout(() => {
+            const q = document.getElementById("cc_item_qty");
+            const u = document.getElementById("cc_item_unit_value");
+            if (q && !String(q.value || "").trim() && q.dataset.userEdited !== "1") prefillCustomsFromEtsy();
+            if (u && !String(u.value || "").trim() && u.dataset.userEdited !== "1") prefillCustomsFromEtsy();
+          }, 300);
+        }
       }
 
       /* (B) Removed — this ran too early and ignored the selected tile.
@@ -3790,8 +3819,8 @@ function metalToBadge(label){
         const qty  = Number(first?.quantity ?? first?.qty ?? detail?.items_count ?? 1);
         const uval = Number(first?.unit_value ?? first?.value ?? 0);
 
-        if (!Number.isNaN(qty))  set("cc_item_qty", qty);
-        if (!Number.isNaN(uval)) set("cc_item_unit_value", uval);
+        if (!Number.isNaN(qty))  fillOnce("cc_item_qty", qty);
+        if (!Number.isNaN(uval)) fillOnce("cc_item_unit_value", uval);
       }
 
        // D) Customs tax reference number (IOSS / VAT / EORI) if API provides it
