@@ -3920,7 +3920,7 @@ function metalToBadge(label){
       async function pickOrigAddress(){
         const id = (document.getElementById("ccShipmentId")?.value || "").trim();
         // Start from whatever is currently in the inputs (seeded from Ship To)
-        let orig = addressFromInputs();
+        let orig = collectRecipientAddress();
         if (id) {
           try {
             const det = await callCc("GET", null, `?resource=shipment&id=${encodeURIComponent(id)}`);
@@ -4097,12 +4097,20 @@ function parseIntlAddressBlock(blockText = "", fallbackCountryCode = "") {
   let to_city = "", to_province_code = "";
   if (idx < lines.length) {
     const cityProv = lines[idx] || "";
-    const m = cityProv.match(/^(.+?)[,\s]+(.+)$/u); // unicode-aware
+    const m = cityProv.match(/^(.+?)[,\s]+(.+)$/u);
     if (m) {
-      to_city = m[1].trim();
-      to_province_code = m[2].trim();
-      idx++;
-    } else {
+       to_city = m[1].trim();
+       const right = m[2].trim();
+       // pull ZIP if it trails after province/region on the same line
+       const mZipOnRight = right.match(/\b[0-9]{4,6}\b|[A-Z0-9][A-Z0-9\s\-]{2,}[A-Z0-9]\b/i);
+       if (mZipOnRight) {
+         to_postal_code = mZipOnRight[0].toUpperCase();
+         to_province_code = right.replace(mZipOnRight[0], "").replace(/[, ]+$/,"").trim();
+       } else {
+         to_province_code = right;
+       }
+       idx++;
+     } else {
       // If no comma, assume it's the city line
       to_city = cityProv.trim();
       idx++;
