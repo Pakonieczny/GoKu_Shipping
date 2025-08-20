@@ -1188,61 +1188,129 @@ function metalToBadge(label){
       return Number.isNaN(num) ? NaN : num;
     }
 
+    /* ======================= */
     function prefillCustomsFromEtsy(){
-      const items = Array.isArray(window.cachedOrderItems) ? window.cachedOrderItems : [];
-      const idx   = (typeof window.selectedPreviewIndex === "number") ? window.selectedPreviewIndex : 0;
-      const item  = items[idx];
-      if (!item) return;
+      try{
+        const qtyInput  = document.getElementById("cc_item_qty");
+        const unitInput = document.getElementById("cc_item_unit_value");
+        if(!qtyInput || !unitInput) return;
 
-      const set = (id, val) => { const el = document.getElementById(id); if (el != null && val !== "" && val != null) el.value = val; };
+        const idx = (typeof window.selectedPreviewIndex === "number" ? window.selectedPreviewIndex : 0);
+        const arr = Array.isArray(window.cachedOrderItems) ? window.cachedOrderItems : [];
+        const it  = arr[idx];
 
-      let qty  = Number(item.quantity ?? 1);
-      let uval = extractUnitPriceFromEtsy(item);
-
-      if (!Number.isNaN(qty))  set("cc_item_qty", qty);
-      if (!Number.isNaN(uval)) set("cc_item_unit_value", uval.toFixed(2));
-
-      // NEW: fallback sweep if first pick lacks clean qty/price
-      if ((Number.isNaN(qty) || Number.isNaN(uval)) && items.length){
-        for (let j=0; j<items.length; j++){
-          const q = Number(items[j]?.quantity ?? 1);
-          const u = extractUnitPriceFromEtsy(items[j]);
-          if (Number.isNaN(qty)  && !Number.isNaN(q)) qty = q, set("cc_item_qty", q);
-          if (Number.isNaN(uval) && !Number.isNaN(u)) uval = u, set("cc_item_unit_value", u.toFixed(2));
-          if (!Number.isNaN(qty) && !Number.isNaN(uval)) break;
+        // If nothing cached yet, bail quietly (caller will re-run after load)
+        if(!it){
+          return;
         }
-      }
 
-      if (item.title) set("cc_item_description", item.title.trim().split(" ").slice(0,4).join(" "));
-    }
+        // Prefer explicit normalized fields from PATCH A, then fallbacks
+        const qty =
+          (typeof it.__qty === "number" && isFinite(it.__qty)) ? it.__qty :
+          (typeof it.quantity === "number" ? it.quantity :
+           typeof it.qty === "number" ? it.qty :
+           typeof it.purchase_quantity === "number" ? it.purchase_quantity : null);
 
-    // ADD: Try to fetch Etsy transactions for a receipt and cache them for customs autofill
-    async function maybeLoadEtsyTransactions(receiptId){
-      const token = localStorage.getItem("access_token");
-      const urls = [
-        `/.netlify/functions/etsyOrderProxy?orderId=${encodeURIComponent(receiptId)}&include=transactions`,
-        `/.netlify/functions/etsyTransactions?orderId=${encodeURIComponent(receiptId)}`
-      ];
-
-      for (const url of urls){
-        try{
-          const r = await fetch(url, { headers: { "access-token": token }});
-          if (!r.ok) continue;
-          const js = await r.json();
-
-          const tx = Array.isArray(js.transactions)               ? js.transactions
-                   : Array.isArray(js.results)                    ? js.results
-                   : Array.isArray(js.data)                       ? js.data
-                   : (js.transactions && Array.isArray(js.transactions.results)) ? js.transactions.results
-                   : [];
-
-          if (tx.length){
-            window.cachedOrderItems = tx; // 🔑 temp memory for modal autofill
-            return tx;
+        // helper from PATCH A logic
+        function parseMoney(m){
+          if (!m) return null;
+          if (typeof m === "number" || typeof m === "string") return Number(m);
+          if (typeof m === "object"){
+            if (typeof m.amount === "number" && typeof m.divisor === "number" && m.divisor) {
+              return m.amount / m.divisor;
+            }
+            if (typeof m.value === "number") return m.value;
+            if (typeof m.cents === "number") return m.cents / 100;
+            if (typeof m.amount === "string") return Number(m.amount);
           }
-        } catch (_) { /* ignore and try next */ }
+          return null;
+        }
+        const unitValue =
+          (typeof it.__unitValue === "number" && isFinite(it.__unitValue)) ? it.__unitValue :
+          parseMoney(it.price) ?? parseMoney(it.unit_price) ??
+          parseMoney(it.original_unit_price) ?? parseMoney(it.variation_price) ?? null;
+
+        // Only write when we actually have a number; don't clobber user edits otherwise
+        if (typeof qty === "number" && isFinite(qty) && qty > 0) {
+          qtyInput.value = String(qty);
+        }
+        if (typeof unitValue === "number" && isFinite(unitValue) && unitValue >= 0) {
+          // Fixed to 2 decimals for currency
+          unitInput.value = unitValue.toFixed(2);
+        }
+      } catch(err){
+        console.warn("prefillCustomsFromEtsy failed:", err);
       }
-      return [];
+    }
+    /* =======================*/
+    async function maybeLoadEtsyTransactions(receiptId){
+      try{
+        if(!receiptId) return [];
+
+        // Always use apiFetch so we inherit your token refresh/retry behavior
+        const tryUrls = [
+          `/etsyTransactions?orderId=${encodeURIComponent(receiptId)}`,
+          `/etsyOrderProxy?orderId=${encodeURIComponent(receiptId)}&include=transactions`
+        ];
+
+        let out = null;
+        for (const path of tryUrls){
+          const res = await apiFetch(path);              // <— was fetch(); use your wrapper
+          if(res?.ok){
+            out = await res.json();
+            break;
+          }
+        }
+        if(!out) return [];
+
+        // Normalize possible shapes into a flat array of transactions/items
+        let items = [];
+        if (Array.isArray(out)) {
+          items = out;
+        } else if (Array.isArray(out?.transactions)) {
+          items = out.transactions;
+        } else if (Array.isArray(out?.data?.transactions)) {
+          items = out.data.transactions;
+        } else if (Array.isArray(out?.results)) {
+          items = out.results;
+        }
+
+        // Defensive copy + ensure numeric quantity and parse money
+        function parseMoney(m){
+          if (!m) return null;
+          if (typeof m === "number" || typeof m === "string") return Number(m);
+          if (typeof m === "object"){
+            if (typeof m.amount === "number" && typeof m.divisor === "number" && m.divisor) {
+              return m.amount / m.divisor;
+            }
+            if (typeof m.value === "number") return m.value;
+            if (typeof m.cents === "number") return m.cents / 100;
+            if (typeof m.amount === "string") return Number(m.amount);
+          }
+          return null;
+        }
+
+        const normalized = items.map(it => {
+          const qty =
+            it.quantity ?? it.qty ?? it.purchase_quantity ?? it.count ?? null;
+
+          // common Etsy fields: price, unit_price, original_unit_price, variation_price
+          const unitValue =
+            parseMoney(it.price) ??
+            parseMoney(it.unit_price) ??
+            parseMoney(it.original_unit_price) ??
+            parseMoney(it.variation_price) ?? null;
+
+          return { ...it, __qty: (qty!=null ? Number(qty) : null), __unitValue: (unitValue!=null ? Number(unitValue) : null) };
+        });
+
+        // Cache in temp memory for modal prefill + preview tile
+        window.cachedOrderItems = normalized;
+        return normalized;
+      } catch(err){
+        console.error("maybeLoadEtsyTransactions error:", err);
+        return [];
+      }
     }
 
     function scheduleTokenRefresh(){
@@ -2233,10 +2301,11 @@ function metalToBadge(label){
             }
             cell.style.cursor = "pointer";
             (function(idx){
-              cell.onclick = function(){
-                highlightSelectedPreview(this); // NEW → 3 px orangered outline
-                showItemDetails(idx);           // existing detail pop-up
-              };
+            cell.onclick = function(){
+              highlightSelectedPreview(this);
+              showItemDetails(idx);
+              prefillCustomsFromEtsy();       // <— keep Step 1 in sync with selected item
+            };
             })(i);
             if(qtyBox){
               var actualQty = (item.quantity != null) ? item.quantity : 0;
@@ -3136,6 +3205,8 @@ function metalToBadge(label){
         btnNext.disabled = currentStep === 3;
         btnRefresh.style.display = currentStep === 3 ? "inline-block" : "none";
         btnBuy.style.display     = currentStep === 3 ? "inline-block" : "none";
+        /* Inside showStep(step) AFTER you toggle .active classes */
+        if (step === 1) prefillCustomsFromEtsy();
       }
 
       /* (B) Removed — this ran too early and ignored the selected tile.
@@ -3174,6 +3245,16 @@ function metalToBadge(label){
         return out;
       }
       function modalOpen(){
+        /* INSERT inside modalOpen(), near the top after local refs */
+        {
+          // Make sure we have the transactions for this order before showing Step 1
+          const receiptId = (document.getElementById("etsyOrderNumber")?.value || "").trim();
+          if (receiptId && (!Array.isArray(window.cachedOrderItems) || window.cachedOrderItems.length === 0)) {
+            await maybeLoadEtsyTransactions(receiptId);
+          }
+          // Prime Step 1 with the currently selected tile (or first item)
+          prefillCustomsFromEtsy();
+        }
         const seed = parseShipToBox();
         document.getElementById("cc_to_name").value           = seed.to_name || "";
         document.getElementById("cc_to_address_1").value      = seed.to_address_1 || "";
