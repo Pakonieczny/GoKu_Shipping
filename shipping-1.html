@@ -1196,13 +1196,53 @@ function metalToBadge(label){
 
       const set = (id, val) => { const el = document.getElementById(id); if (el != null && val !== "" && val != null) el.value = val; };
 
-      const qty  = Number(item.quantity ?? 1);
-      const uval = extractUnitPriceFromEtsy(item);
+      let qty  = Number(item.quantity ?? 1);
+      let uval = extractUnitPriceFromEtsy(item);
 
       if (!Number.isNaN(qty))  set("cc_item_qty", qty);
       if (!Number.isNaN(uval)) set("cc_item_unit_value", uval.toFixed(2));
 
+      // NEW: fallback sweep if first pick lacks clean qty/price
+      if ((Number.isNaN(qty) || Number.isNaN(uval)) && items.length){
+        for (let j=0; j<items.length; j++){
+          const q = Number(items[j]?.quantity ?? 1);
+          const u = extractUnitPriceFromEtsy(items[j]);
+          if (Number.isNaN(qty)  && !Number.isNaN(q)) qty = q, set("cc_item_qty", q);
+          if (Number.isNaN(uval) && !Number.isNaN(u)) uval = u, set("cc_item_unit_value", u.toFixed(2));
+          if (!Number.isNaN(qty) && !Number.isNaN(uval)) break;
+        }
+      }
+
       if (item.title) set("cc_item_description", item.title.trim().split(" ").slice(0,4).join(" "));
+    }
+
+    // ADD: Try to fetch Etsy transactions for a receipt and cache them for customs autofill
+    async function maybeLoadEtsyTransactions(receiptId){
+      const token = localStorage.getItem("access_token");
+      const urls = [
+        `/.netlify/functions/etsyOrderProxy?orderId=${encodeURIComponent(receiptId)}&include=transactions`,
+        `/.netlify/functions/etsyTransactions?orderId=${encodeURIComponent(receiptId)}`
+      ];
+
+      for (const url of urls){
+        try{
+          const r = await fetch(url, { headers: { "access-token": token }});
+          if (!r.ok) continue;
+          const js = await r.json();
+
+          const tx = Array.isArray(js.transactions)               ? js.transactions
+                   : Array.isArray(js.results)                    ? js.results
+                   : Array.isArray(js.data)                       ? js.data
+                   : (js.transactions && Array.isArray(js.transactions.results)) ? js.transactions.results
+                   : [];
+
+          if (tx.length){
+            window.cachedOrderItems = tx; // 🔑 temp memory for modal autofill
+            return tx;
+          }
+        } catch (_) { /* ignore and try next */ }
+      }
+      return [];
     }
 
     function scheduleTokenRefresh(){
@@ -1845,10 +1885,14 @@ function metalToBadge(label){
       await loadShipToAddress(orderNumber);
       await loadGiftMessage(orderNumber);
 
-      if (orderData) {
+      // Prefer transactions (they carry quantity + unit price) for customs autofill
+      const tx = await maybeLoadEtsyTransactions(orderNumber);
+      if (tx.length) {
+        await updateImageGrid({ transactions: tx });
+      } else if (orderData) {
         await updateImageGrid(orderData);
-        startBritesListener(orderNumber);
       }
+      startBritesListener(orderNumber);
 
       try {
         const respPD = await fetch("/.netlify/functions/firebaseOrders?orderId=" + encodeURIComponent(orderNumber));
