@@ -3050,30 +3050,33 @@ function metalToBadge(label){
         btnBuy.style.display     = currentStep === 3 ? "inline-block" : "none";
       }
 
-      async function autofillCustomsFromCcAndOrder(){
-      const set = (id, val) => { const el = document.getElementById(id); if (el) el.value = val; };
-
-      // (A) Description from Order Details -> Title:
-      const title = extractOrderTitle();
-      if (title) set("cc_item_description", title.slice(0, 95));
-
-      // (B) Pull qty + unit_value from existing Chit Chats shipment (if ID present)
+      // (B) Pull qty + unit_value from Etsy Transactions (prefer cached order items)
       try {
-        const sid = (document.getElementById("ccShipmentId")?.value || "").trim();
-        if (sid) {
-          const sh = await callCc("GET", null, `?resource=shipment&id=${encodeURIComponent(sid)}`);
-          // Try several common shapes:
-          const customs = sh?.customs || sh?.line_items || sh?.items || sh?.customs_items;
-          const first =
-            (Array.isArray(customs?.items) ? customs.items[0] :
-             Array.isArray(customs)         ? customs[0] :
-             customs) || null;
+        const items = Array.isArray(window.cachedOrderItems) ? window.cachedOrderItems : [];
+        const item  = items[0]; // use first transaction by default
 
-          const qty  = Number(first?.quantity ?? first?.qty ?? sh?.items_count ?? 1);
-          const uval = Number(first?.unit_value ?? first?.value ?? 0);
+        if (item) {
+          // Qty
+          const qty = Number(item.quantity ?? 1);
+
+          // Unit value — Etsy shapes vary: object {amount, divisor, currency_code} or plain string/number.
+          const pickNum = (v) => (v == null ? NaN : Number(v));
+          const extractPrice = (it) => {
+            const src = it.price ?? it.transaction_price ?? it.listing_price ?? it.variation_price ?? null;
+
+            if (src && typeof src === "object") {
+              const amount  = pickNum(src.amount ?? src.value ?? src.gross ?? src.net);
+              const divisor = pickNum(src.divisor ?? 100);
+              if (!Number.isNaN(amount)) return amount / (divisor || 1);
+            }
+            const num = pickNum(src);
+            return Number.isNaN(num) ? NaN : num;
+          };
+
+          const uval = extractPrice(item);
 
           if (!Number.isNaN(qty))  set("cc_item_qty", qty);
-          if (!Number.isNaN(uval)) set("cc_item_unit_value", uval);
+          if (!Number.isNaN(uval)) set("cc_item_unit_value", uval.toFixed(2));
         }
       } catch {}
 
