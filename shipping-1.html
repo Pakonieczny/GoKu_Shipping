@@ -2911,6 +2911,18 @@ function metalToBadge(label){
       // Single source of truth for the Chit Chats proxy function name:
       const chitChatsFn = `${fnBase}/testChitChats`; // ← change 'testChitChats' here if your function is named differently
 
+      // expose globally so any IIFE/module can access it
+      window.chitChatsFn = chitChatsFn;
+      
+      // Resolve the proxy endpoint even if the global isn't set yet
+      function getCcEndpoint(){
+        if (typeof window !== "undefined" && window.chitChatsFn) return window.chitChatsFn;
+        const base = location.hostname.includes("goldenspike")
+          ? "https://shipping-1.goldenspike.app/.netlify/functions"
+          : "/.netlify/functions";
+        return `${base}/testChitChats`;
+      }
+
       // --- Utils
       const debounce = (fn, ms=250) => { let t; return (...a)=>{ clearTimeout(t); t = setTimeout(()=>fn(...a), ms); }; };
       const reinitSelect = (el) => {
@@ -3132,7 +3144,8 @@ function metalToBadge(label){
         if (!shipmentId) { if (window.M?.toast) M.toast({ html: "No shipment loaded yet" }); return; }
         if (!batchId)    { if (window.M?.toast) M.toast({ html: "Choose a batch first" });  return; }
         try {
-          const resp = await fetch(`${chitChatsFn}?id=${encodeURIComponent(shipmentId)}`, {
+          const url  = `${getCcEndpoint()}?id=${encodeURIComponent(shipmentId)}`;
+          const resp = await fetch(url, {
             method: "PATCH",
             headers: { "Content-Type": "application/json" },
             credentials: "include",
@@ -3152,7 +3165,7 @@ function metalToBadge(label){
       // Tiny API ping so connectivity issues are obvious in console
       (async () => {
         try {
-          const ping = await fetch(`${chitChatsFn}`);
+          const ping = await fetch(getCcEndpoint());
           if (!ping.ok) console.warn("Chit Chats function ping failed", ping.status);
         } catch (e) {
           console.warn("Chit Chats function unreachable:", e);
@@ -3310,7 +3323,7 @@ function metalToBadge(label){
 
       /* ---------- Enhanced fetch wrapper (keeps raw error for mapping) ---------- */
       async function callCc(method, body, qs=""){
-        const resp = await fetch(`${chitChatsFn}${qs}`, {          
+        const resp = await fetch(`${getCcEndpoint()}${qs}`, {     
           method,
           headers: { "Content-Type":"application/json" },
           body: body ? JSON.stringify(body) : undefined
