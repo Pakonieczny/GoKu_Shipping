@@ -4141,57 +4141,57 @@ function parseIntlAddressBlock(blockText = "", fallbackCountryCode = "") {
   };
 }
 
-// Gather from Step-0 inputs as fallback
-function gatherRecipientFromInputs(){
-  const v = id => (document.getElementById(id)?.value || "").trim();
-  return {
-    to_name         : v("cc_to_name"),
-    to_address_1    : v("cc_to_address_1"),
-    to_address_2    : v("cc_to_address_2"),
-    to_city         : v("cc_to_city"),
-    to_province_code: v("cc_to_province_code"),
-    to_postal_code  : v("cc_to_postal_code"),
-    to_country_code : v("cc_to_country_code").toUpperCase()
-  };
-}
+  // Choose block vs inputs; always pass a fallback country from the field
+  function gatherRecipientFromInputs(){
+    const v = id => (document.getElementById(id)?.value || "").trim();
+    return {
+      to_name         : v("cc_to_name"),
+      to_address_1    : v("cc_to_address_1"),
+      to_address_2    : v("cc_to_address_2"),
+      to_city         : v("cc_to_city"),
+      to_province_code: v("cc_to_province_code"),
+      to_postal_code  : v("cc_to_postal_code"),
+      to_country_code : v("cc_to_country_code").toUpperCase()
+    };
+  }
 
-      // ▼ REPLACE ENTIRE FUNCTION collectRecipientAddress WITH THIS
-      function collectRecipientAddress(){
-        const block   = (document.getElementById("shipAddressBox")?.value || "").trim();
-        const country = (document.getElementById("cc_to_country_code")?.value || "").trim();
+  // ▼ Define the missing helper (global scope)
+  function collectRecipientAddress(){
+    const block   = (document.getElementById("shipAddressBox")?.value || "").trim();
+    const country = (document.getElementById("cc_to_country_code")?.value || "").trim();
 
-        // Prefer a real multi-line block; otherwise just use the inputs
-        if (block.split("\n").length >= 2) {
-          const parsed = parseIntlAddressBlock(block, country);
-          const fields = gatherRecipientFromInputs();
+    // Prefer a real multi-line block; otherwise just use the inputs
+    if (block.split("\n").length >= 2) {
+      const parsed = parseIntlAddressBlock(block, country);   // already in your file
+      const fields = gatherRecipientFromInputs();
 
-          // Merge: parsed wins where present, otherwise keep field values
-          const to = {
-            to_name         : parsed.to_name          || fields.to_name,
-            to_address_1    : parsed.to_address_1     || fields.to_address_1,
-            to_address_2    : parsed.to_address_2     || fields.to_address_2,
-            to_city         : parsed.to_city          || fields.to_city,
-            to_province_code: parsed.to_province_code || fields.to_province_code,
-            to_postal_code  : parsed.to_postal_code   || fields.to_postal_code,
-            to_country_code : (parsed.to_country_code || fields.to_country_code || "").toUpperCase()
-          };
+      // Merge parsed with field fallbacks + normalize country
+      const to = {
+        to_name         : parsed.to_name          || fields.to_name,
+        to_address_1    : parsed.to_address_1     || fields.to_address_1,
+        to_address_2    : parsed.to_address_2     || fields.to_address_2,
+        to_city         : parsed.to_city          || fields.to_city,
+        to_province_code: parsed.to_province_code || fields.to_province_code,
+        to_postal_code  : parsed.to_postal_code   || fields.to_postal_code,
+        to_country_code : (parsed.to_country_code || fields.to_country_code || "").toUpperCase()
+      };
 
-          // 🔁 Hydrate Step-0 inputs so "orig" never shows blanks in the compare modal
-          const set = (id, v)=>{ const el=document.getElementById(id); if(el && v) el.value=v; };
-          set("cc_to_name", to.to_name);
-          set("cc_to_address_1", to.to_address_1);
-          set("cc_to_address_2", to.to_address_2);
-          set("cc_to_city", to.to_city);
-          set("cc_to_province_code", to.to_province_code);
-          set("cc_to_postal_code", to.to_postal_code);
-          set("cc_to_country_code", to.to_country_code);
+      // Hydrate Step-0 inputs so the compare modal never shows blanks
+      const set = (id, v)=>{ const el=document.getElementById(id); if(el && v) el.value=v; };
+      set("cc_to_name", to.to_name);
+      set("cc_to_address_1", to.to_address_1);
+      set("cc_to_address_2", to.to_address_2);
+      set("cc_to_city", to.to_city);
+      set("cc_to_province_code", to.to_province_code);
+      set("cc_to_postal_code", to.to_postal_code);
+      set("cc_to_country_code", to.to_country_code);
 
-          return to;
-        }
+      return to;
+    }
 
-        // Fallback: just the inputs
-        return gatherRecipientFromInputs();
-      }
+    // Fallback: just the inputs
+    return gatherRecipientFromInputs();
+  }
 
       async function verifyAddressAndShowModal(){
         const to = collectRecipientAddress();
