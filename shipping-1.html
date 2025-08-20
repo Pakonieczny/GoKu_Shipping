@@ -3040,6 +3040,15 @@ function metalToBadge(label){
       const fnBase    = "/.netlify/functions";
 
       let currentStep = 0, selectedPostageType = null;
+
+      function set(id, v) {
+      const el = document.getElementById(id);
+      if (!el) return;
+      if ("value" in el) el.value = String(v);
+      else el.textContent = String(v);
+      try { el.dispatchEvent(new Event("input", { bubbles: true })); } catch {}
+    }
+      
       function showStep(i){
         currentStep = Math.max(0, Math.min(3, i));
         steps.forEach((el,idx) => el.classList.toggle("active", idx===currentStep));
