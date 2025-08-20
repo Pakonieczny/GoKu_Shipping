@@ -2908,6 +2908,8 @@ function metalToBadge(label){
 
       // Always use the Netlify functions base
       const fnBase = "/.netlify/functions";
+      // Single source of truth for the Chit Chats proxy function name:
+      const chitChatsFn = `${fnBase}/testChitChats`; // ← change 'testChitChats' here if your function is named differently
 
       // --- Utils
       const debounce = (fn, ms=250) => { let t; return (...a)=>{ clearTimeout(t); t = setTimeout(()=>fn(...a), ms); }; };
@@ -3072,7 +3074,7 @@ function metalToBadge(label){
       async function fetchBatches(){
         try {
           // Open-only (pending) batches; received/closed are excluded by the API filter
-          const resp = await fetch(`${fnBase}/testChitChats?resource=batches&status=open`, { credentials: "include" });
+          const resp = await fetch(`${chitChatsFn}?resource=batches&status=open`, { credentials: "include" });
           const data = await safeJSON(resp);
           const raw  = (data && (data.batches ?? data.data)) ?? data;
           const list = Array.isArray(raw) ? raw : [];
@@ -3102,7 +3104,7 @@ function metalToBadge(label){
       createBtn?.addEventListener("click", async () => {
         try {
           const desc = (ccBatchName.value || "").trim() || `UI ${new Date().toISOString().slice(0,10)}`;
-          const resp = await fetch(`${fnBase}/testChitChats`, {
+          const resp = await fetch(`${chitChatsFn}`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             credentials: "include",
@@ -3130,7 +3132,7 @@ function metalToBadge(label){
         if (!shipmentId) { if (window.M?.toast) M.toast({ html: "No shipment loaded yet" }); return; }
         if (!batchId)    { if (window.M?.toast) M.toast({ html: "Choose a batch first" });  return; }
         try {
-          const resp = await fetch(`${fnBase}/testChitChats?id=${encodeURIComponent(shipmentId)}`, {
+          const resp = await fetch(`${chitChatsFn}?id=${encodeURIComponent(shipmentId)}`, {
             method: "PATCH",
             headers: { "Content-Type": "application/json" },
             credentials: "include",
@@ -3150,7 +3152,7 @@ function metalToBadge(label){
       // Tiny API ping so connectivity issues are obvious in console
       (async () => {
         try {
-          const ping = await fetch(`${fnBase}/testChitChats`);
+          const ping = await fetch(`${chitChatsFn}`);
           if (!ping.ok) console.warn("Chit Chats function ping failed", ping.status);
         } catch (e) {
           console.warn("Chit Chats function unreachable:", e);
@@ -3205,8 +3207,8 @@ function metalToBadge(label){
         btnNext.disabled = currentStep === 3;
         btnRefresh.style.display = currentStep === 3 ? "inline-block" : "none";
         btnBuy.style.display     = currentStep === 3 ? "inline-block" : "none";
-        /* Inside showStep(step) AFTER you toggle .active classes */
-        if (step === 1) prefillCustomsFromEtsy();
+        /* After toggling .active classes, trigger autofill when entering Step 1 */
+        if (currentStep === 1) prefillCustomsFromEtsy();
       }
 
       /* (B) Removed — this ran too early and ignored the selected tile.
@@ -3279,7 +3281,7 @@ function metalToBadge(label){
 
       /* ---------- Enhanced fetch wrapper (keeps raw error for mapping) ---------- */
       async function callCc(method, body, qs=""){
-        const resp = await fetch(`${fnBase}/testChitChats${qs}`, {
+        const resp = await fetch(`${chitChatsFn}${qs}`, {          
           method,
           headers: { "Content-Type":"application/json" },
           body: body ? JSON.stringify(body) : undefined
