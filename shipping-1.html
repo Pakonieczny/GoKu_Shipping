@@ -558,7 +558,10 @@
               </select>
             </div>
 
-            <div class="cc-field"><label>Order ID (optional)</label><input id="cc_order_id"></div>
+            <div class="cc-field">
+              <label>Customs Tax Reference Number</label>
+              <input id="cc_customs_tax_reference_number" placeholder="IOSS / VAT / EORI, etc.">
+            </div>
 
           </div>
           <h4 style="margin:12px 0 4px;">Line item</h4>
@@ -3252,7 +3255,7 @@ function metalToBadge(label){
         return {
           ...to,
           package_contents: document.getElementById("cc_package_contents").value,
-          order_id       : (document.getElementById("cc_order_id").value || document.getElementById("etsyOrderNumber")?.value || "").trim() || null,
+          customs_tax_reference_number: (document.getElementById("cc_customs_tax_reference_number")?.value || "").trim() || null,
           description    : line.description,
           value          : String((line.unit_value || 0) * (line.quantity || 1)),
           value_currency : valueCurrency,
@@ -3356,7 +3359,8 @@ function metalToBadge(label){
       const FIELD_MAP = {
         // step 0 - recipient
         to_name: "cc_to_name",
-        value_currency: "cc_value_currency",
+        value_currency          : "cc_value_currency",
+        customs_tax_reference_number: "cc_customs_tax_reference_number",
         to_address_1: "cc_to_address_1",
         to_address_2: "cc_to_address_2",
         to_city: "cc_to_city",
@@ -3640,6 +3644,16 @@ function metalToBadge(label){
         if (!Number.isNaN(qty))  set("cc_item_qty", qty);
         if (!Number.isNaN(uval)) set("cc_item_unit_value", uval);
       }
+
+       // D) Customs tax reference number (IOSS / VAT / EORI) if API provides it
+          const taxRef =
+            detail?.customs_tax_reference_number ??
+            detail?.tax_reference_number ??
+            detail?.ioss_number ?? detail?.ioss ??
+            detail?.vat_number  ?? detail?.vat  ??
+            detail?.eori_number ?? detail?.eori ?? null;
+          if (taxRef) set("cc_customs_tax_reference_number", String(taxRef));
+
     } catch (_) {}
   }
 
