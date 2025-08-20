@@ -3252,6 +3252,8 @@ function metalToBadge(label){
       });
 
       function showStep(i){
+        // Ensure the editor modal is visible when stepping between wizard pages
+        if (modal && modal.style.display !== "block") modal.style.display = "block";
         currentStep = Math.max(0, Math.min(3, i));
         steps.forEach((el,idx) => el.classList.toggle("active", idx===currentStep));
         pillNodes.forEach((el,idx) => el.classList.toggle("active", idx===currentStep));
@@ -3362,6 +3364,8 @@ function metalToBadge(label){
         selectedPostageType = null;
         btnBuy.disabled = true;
         ratesList.innerHTML = "";
+
+
 
         modal.style.display = "block";
         // Do NOT call showStep(1) here; verify must appear first.
@@ -3589,7 +3593,24 @@ function metalToBadge(label){
         else M.toast?.({ html:"Label purchased. Refresh later for label URL." });
       }
 
-      if (editBtn) editBtn.addEventListener("click", modalOpen);
+      if (editBtn) editBtn.addEventListener("click", async () => {
+        // Ensure Step-0 inputs are hydrated so the verify modal isn't blank
+        try { window.collectRecipientAddress?.(); } catch {}
+
+        // Keep the editor hidden until explicitly requested
+        if (modal) modal.style.display = "none";
+
+        const verifyEl = document.getElementById("ccVerifyModal");
+
+        // Run Smarty + render RedOrange diffs in the Verify modal
+        await verifyAddressAndShowModal();
+
+        // Fallback: if verify didn't open (e.g., no country or API error), open editor wizard
+        if (verifyEl && verifyEl.style.display !== "block") {
+          modalOpen();
+        }
+      });
+
       btnClose.addEventListener("click", () => modalClose());
       btnBack .addEventListener("click", () => showStep(currentStep-1));
 
