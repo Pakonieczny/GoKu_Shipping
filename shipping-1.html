@@ -4053,83 +4053,120 @@ function metalToBadge(label){
         }
       }
 
-      // --- Parse multi-line address blocks into structured fields (intl aware)
-      function parseIntlAddressBlock(blockText = "") {
-        // Normalize weird quotes / whitespace
-        const lines = String(blockText).replace(/\r/g,"").split("\n").map(s => s.trim()).filter(Boolean);
-        if (!lines.length) return {};
+// ISO2 lookup for common names → code (minimal; expand as needed)
+const COUNTRY_TO_ISO2 = {
+  "italy":"IT","italia":"IT","united states":"US","usa":"US","canada":"CA","france":"FR","germany":"DE","spain":"ES"
+};
 
-        // Heuristics:
-        //  [0] name (often)
-        //  [1] street line
-        //  [2] "City, ADMIN"  (ADMIN optional or on the next line)
-        //  [3] postal (may be with city/line) 
-        //  last: country code/name
-        const countryLine = lines[lines.length - 1];
-        const countryGuess = (countryLine.length <= 3 ? countryLine : countryLine.slice(0,2)).toUpperCase();
-        const country = /^[A-Z]{2}$/.test(countryGuess) ? countryGuess : "";
+// Robust, locale-agnostic parser for pasted multi-line addresses
+function parseIntlAddressBlock(blockText = "", fallbackCountryCode = "") {
+  const lines = String(blockText)
+    .replace(/\r/g,"")
+    .split("\n")
+    .map(s => s.replace(/\u00A0/g," ").trim()) // strip NBSPs
+    .filter(Boolean);
 
-        let idx = 0;
-        const maybeName = lines[idx];
-        const nameLooksLikePerson = /\s/.test(maybeName) && !/\d/.test(maybeName);
-        const to_name = nameLooksLikePerson ? lines[idx++] : "";
+  if (!lines.length) return {};
 
-        const to_address_1 = lines[idx++] || "";
-        let cityLine = lines[idx] || "";
-        let to_city = "", to_province_code = "", to_postal_code = "";
+  // 1) COUNTRY: prefer last non-empty line
+  let rawCountry = (lines[lines.length - 1] || "").trim();
+  let to_country_code = "";
 
-        // Try "City, ADMIN"
-        const m = cityLine.match(/^(.+?)[,\s]+(.+)$/);
-        if (m) {
-          to_city = m[1].trim();
-          to_province_code = m[2].trim();   // OK if full name; Intl API can still resolve
-          idx++;
-        } else {
-          // Otherwise just city
-          to_city = cityLine || "";
-          idx++;
-        }
+  if (/^[A-Za-z]{2}$/.test(rawCountry)) {
+    to_country_code = rawCountry.toUpperCase();
+  } else {
+    const key = rawCountry.toLowerCase();
+    to_country_code = COUNTRY_TO_ISO2[key] || "";
+  }
+  if (!to_country_code && fallbackCountryCode) {
+    to_country_code = String(fallbackCountryCode).trim().toUpperCase();
+  }
 
-        // Postal (line after), if present and looks like a postal
-        const next = (lines[idx] || "");
-        if (/[\dA-Z]{3,}/.test(next)) { to_postal_code = next.trim(); idx++; }
+  // 2) NAME: if first line has no digits & ≥2 words, treat as name
+  const first = lines[0] || "";
+  const to_name = (/\S+\s+\S+/.test(first) && !/\d/.test(first)) ? first : "";
 
-        return {
-          to_name,
-          to_address_1,
-          to_address_2: "",
-          to_city,
-          to_province_code,
-          to_postal_code,
-          to_country_code: country || (document.getElementById("cc_to_country_code")?.value || "").toUpperCase()
-        };
-      }
+  // Maintain a cursor after name
+  let idx = (to_name ? 1 : 0);
 
-      // Gather from the Step-0 inputs if user typed them individually
-      function gatherRecipientFromInputs(){
-        const g = id => (document.getElementById(id)?.value || "").trim();
-        return {
-          to_name         : g("cc_to_name"),
-          to_address_1    : g("cc_to_address_1"),
-          to_address_2    : g("cc_to_address_2"),
-          to_city         : g("cc_to_city"),
-          to_province_code: g("cc_to_province_code"),
-          to_postal_code  : g("cc_to_postal_code"),
-          to_country_code : g("cc_to_country_code").toUpperCase()
-        };
-      }
+  // 3) STREET: next line is almost always the street
+  let to_address_1 = lines[idx++] || "";
+  let to_address_2 = "";
 
-      // Decide best source: a pasted block (shipAddressBox) or the individual fields
-      function collectRecipientAddress(){
-        const block = (document.getElementById("shipAddressBox")?.value || "").trim();
-        if (block.split("\n").length >= 3) {
-          const parsed = parseIntlAddressBlock(block);
-          // If country is still empty, trust the field
-          if (!parsed.to_country_code) parsed.to_country_code = (document.getElementById("cc_to_country_code")?.value || "").toUpperCase();
-          return parsed;
-        }
-        return gatherRecipientFromInputs();
-      }
+  // 4) CITY / PROVINCE: try to split a comma line e.g. "Cesenatico, FORLÌ-CESENA"
+  let to_city = "", to_province_code = "";
+  if (idx < lines.length) {
+    const cityProv = lines[idx] || "";
+    const m = cityProv.match(/^(.+?)[,\s]+(.+)$/u); // unicode-aware
+    if (m) {
+      to_city = m[1].trim();
+      to_province_code = m[2].trim();
+      idx++;
+    } else {
+      // If no comma, assume it's the city line
+      to_city = cityProv.trim();
+      idx++;
+    }
+  }
+
+  // 5) POSTAL: scan remaining lines for the first strong postal pattern
+  //    Italy = 5 digits; keep generic matcher for other countries
+  let to_postal_code = "";
+  for (let j = idx; j < lines.length; j++) {
+    const s = lines[j];
+    // strong hits: 5+ digits or alnum clusters used by many countries
+    const mZip = s.match(/\b[0-9]{4,6}\b|[A-Z0-9][A-Z0-9\s\-]{2,}[A-Z0-9]\b/i);
+    if (mZip) { to_postal_code = mZip[0].toUpperCase(); break; }
+  }
+
+  // Cleanups: collapse double spaces, tolerate diacritics
+  const clean = (s)=>s.replace(/\s{2,}/g," ").trim();
+
+  return {
+    to_name: clean(to_name),
+    to_address_1: clean(to_address_1),
+    to_address_2: clean(to_address_2),
+    to_city: clean(to_city),
+    to_province_code: clean(to_province_code),
+    to_postal_code: clean(to_postal_code),
+    to_country_code: to_country_code || ""
+  };
+}
+
+// Gather from Step-0 inputs as fallback
+function gatherRecipientFromInputs(){
+  const v = id => (document.getElementById(id)?.value || "").trim();
+  return {
+    to_name         : v("cc_to_name"),
+    to_address_1    : v("cc_to_address_1"),
+    to_address_2    : v("cc_to_address_2"),
+    to_city         : v("cc_to_city"),
+    to_province_code: v("cc_to_province_code"),
+    to_postal_code  : v("cc_to_postal_code"),
+    to_country_code : v("cc_to_country_code").toUpperCase()
+  };
+}
+
+// Choose block vs inputs; always pass a fallback country from the field
+function collectRecipientAddress(){
+  const block   = (document.getElementById("shipAddressBox")?.value || "").trim();
+  const country = (document.getElementById("cc_to_country_code")?.value || "").trim();
+  if (block.split("\n").length >= 2) {
+    const parsed = parseIntlAddressBlock(block, country);
+    // If something critical is still missing, blend in field values as fallback
+    const fields = gatherRecipientFromInputs();
+    return {
+      to_name         : parsed.to_name         || fields.to_name,
+      to_address_1    : parsed.to_address_1    || fields.to_address_1,
+      to_address_2    : parsed.to_address_2    || fields.to_address_2,
+      to_city         : parsed.to_city         || fields.to_city,
+      to_province_code: parsed.to_province_code|| fields.to_province_code,
+      to_postal_code  : parsed.to_postal_code  || fields.to_postal_code,
+      to_country_code : parsed.to_country_code || fields.to_country_code
+    };
+  }
+  return gatherRecipientFromInputs();
+}
 
       async function verifyAddressAndShowModal(){
         const to = collectRecipientAddress();
