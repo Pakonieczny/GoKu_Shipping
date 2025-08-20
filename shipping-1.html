@@ -2752,7 +2752,10 @@ function metalToBadge(label){
           add(ship.name || "");
           const street = [ship.street1, ship.street2, ship.street3].filter(Boolean).join(" ");
           add(street);
-          add([ship.city, ship.state, ship.postalCode].filter(Boolean).join(", "));
+          const cityLine = (ship.city && ship.state)
+          ? `${ship.city}, ${ship.state}${ship.postalCode ? " " + ship.postalCode : ""}`
+          : [ship.city, ship.state, ship.postalCode].filter(Boolean).join(" ");
+          add(cityLine);
           add(ship.country);
           if (ship.phone) add("Phone: " + ship.phone);
 
@@ -3307,10 +3310,13 @@ function metalToBadge(label){
           if (/,/.test(l) || /\b[A-Za-z]{2}\s+[A-Za-z0-9][A-Za-z0-9 -]{2,}\b/.test(l)) { candidate = l; break; }
         }
 
-        // 1) City, ST ZIP
-        let m = candidate.match(/^([^,]+),\s*([A-Za-z]{2})\s+([A-Za-z0-9 -]{3,10})$/);
-        // 2) City ST ZIP (no comma)
-        if (!m) m = candidate.match(/^(.+?)\s+([A-Za-z]{2})\s+([A-Za-z0-9 -]{3,10})$/);
+        // Accept all of the following:
+        //   City, ST ZIP
+        //   City, ST, ZIP   ← (extra comma before ZIP)
+        //   City ST ZIP     ← (no comma)
+        let m =
+          candidate.match(/^([^,]+),\s*([A-Za-z]{2})(?:,|\s)+([A-Za-z0-9][A-Za-z0-9 -]{2,})$/) ||
+          candidate.match(/^(.+?)\s+([A-Za-z]{2})\s+([A-Za-z0-9][A-Za-z0-9 -]{2,})$/);
 
         if (m) {
           out.to_city = m[1].trim();
@@ -3332,7 +3338,7 @@ function metalToBadge(label){
 
         return out;
       }
-      
+
       async function modalOpen(){
         /* INSERT inside modalOpen(), near the top after local refs */
         {
