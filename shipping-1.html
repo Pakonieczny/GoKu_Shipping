@@ -4094,7 +4094,8 @@ function parseIntlAddressBlock(blockText = "", fallbackCountryCode = "") {
   let to_address_2 = "";
 
   // 4) CITY / PROVINCE: try to split a comma line e.g. "Cesenatico, FORLÌ-CESENA"
-  let to_city = "", to_province_code = "", to_postal_code = "";
+  let to_city = "", to_province_code = "";
+  let to_postal_code = ""; // moved up to avoid TDZ (assigned earlier if found on same line)
   if (idx < lines.length) {
     const cityProv = lines[idx] || "";
     const m = cityProv.match(/^(.+?)[,\s]+(.+)$/u);
