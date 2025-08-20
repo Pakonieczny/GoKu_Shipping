@@ -4063,8 +4063,10 @@ function parseIntlAddressBlock(blockText = "", fallbackCountryCode = "") {
   const lines = String(blockText)
     .replace(/\r/g,"")
     .split("\n")
-    .map(s => s.replace(/\u00A0/g," ").trim()) // strip NBSPs
-    .filter(Boolean);
+    // strip NBSPs, trim, then remove a leading "SHIP TO:" label if present on any line
+    .map(s => s.replace(/\u00A0/g," ").trim().replace(/^ship\s*to\s*:\s*/i, ""))
+    // drop any leftover empty lines or a line that was just "SHIP TO:"
+    .filter(s => s && !/^\s*ship\s*to\s*:?\s*$/i.test(s));
 
   if (!lines.length) return {};
 
