@@ -2797,13 +2797,13 @@ function metalToBadge(label){
       async function callSearch(params){
         window.ccSpin && window.ccSpin(true);   // safe global call
         try {
-          const qs = new URLSearchParams({
-            fast: "1",
-            pendingOnly: "1",
-            timeoutMs: "9000",
-            pageSize: "500",
-            ...params                          // ← fix spread (was .params)
-          }).toString();
+       const qs = new URLSearchParams({
+         fast: "1",
+         pendingOnly: String(params?.pendingOnly ?? "1"),
+         timeoutMs: "9000",
+         pageSize: String(params?.pageSize ?? "500"),
+         ...(params || {})
+       }).toString();
           const resp = await fetch(`${fnBase}/testChitChats?resource=search&${qs}`, { credentials: "include" });
           return await safeJSON(resp);
         } finally {
@@ -2852,13 +2852,13 @@ function metalToBadge(label){
         if (!orderId) return;
         try {
           // Fast pass (vendor search / id match only)
-          const fast = await callSearch({ orderId });
+          const fast = await callSearch({ orderId, fast: "1", pendingOnly: "0" });          
           const hit  = pickBestShipment(orderId, (fast.shipments || []));
           if (hit) { setShipmentUI(hit); return; }
           // Slow pass (fallback pages) – runs after a short delay without clearing the field
           setTimeout(async () => {
             try {
-              const slow = await callSearch({ orderId, fast: "0" });
+              const slow = await callSearch({ orderId, fast: "0", pendingOnly: "0" });
               const s2   = pickBestShipment(orderId, (slow.shipments || []));
               if (s2) setShipmentUI(s2);
             } catch {}
@@ -2874,13 +2874,13 @@ function metalToBadge(label){
         if (!tracking) return;
         try {
           // Fast pass (uses vendor search)
-          const fast = await callSearch({ tracking });
+          const fast = await callSearch({ tracking, fast: "1", pendingOnly: "0" });
           const hit  = pickBestShipment(tracking, (fast.shipments || []));
           if (hit) { setShipmentUI(hit); return; }
           // Slow pass (fallback pages)
           setTimeout(async () => {
             try {
-              const slow = await callSearch({ tracking, fast: "0" });
+              const slow = await callSearch({ tracking, fast: "0", pendingOnly: "0" });
               const s2   = pickBestShipment(tracking, (slow.shipments || []));
               if (s2) setShipmentUI(s2);
             } catch {}
@@ -3623,7 +3623,7 @@ function metalToBadge(label){
         // fallback: try by visible order number (fast mode)
         const orderNo = (document.getElementById("titleOrderNumber")?.innerText || "").trim();
         if (orderNo) {
-          const r = await fetch("/.netlify/functions/testChitChats?resource=search&orderId=" + encodeURIComponent(orderNo) + "&fast=1");
+          const r = await fetch("/.netlify/functions/testChitChats?resource=search&orderId=" + encodeURIComponent(orderNo) + "&fast=1&pendingOnly=0");
           if (r.ok) {
             const js = await r.json();
             detail = (js.shipments && js.shipments[0]) || null;
