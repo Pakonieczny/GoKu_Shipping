@@ -35,16 +35,46 @@ exports.handler = async (event) => {
 
     const byId = new Map(items.map(i => [Number(i.product_id), String(i.sku || "").trim()]));
 
-    // 2) Apply SKU changes
-    const products = (inv.products || []).map(p => {
+    // 2) Apply SKU changes on the fetched products
+    const updated = (inv.products || []).map(p => {
       const pid = Number(p.product_id);
-      if (byId.has(pid)) {
-        p.sku = byId.get(pid);
-      }
+      if (byId.has(pid)) p.sku = byId.get(pid);
       return p;
     });
 
-    // 3) PUT back to Etsy
+    // Helper: normalize Etsy Money formats to decimal number
+    function toDecimalPrice(price) {
+      // v3 GET may return an object or array of Money; PUT wants a decimal
+      const m = Array.isArray(price) ? price[0] : price;
+      if (m && typeof m === "object" && m.amount != null) {
+        const amt = Number(m.amount);
+        const div = Number(m.divisor || 100);
+        return +(amt / div).toFixed(2);
+      }
+      // already a number/string; let API accept it
+      return typeof price === "string" ? Number(price) : price;
+    }
+
+    // 3) Build sanitized products array for PUT (remove invalid keys)
+    const products = updated.map(p => ({
+      sku: p.sku || "",
+      // keep only allowed property_values fields
+      property_values: Array.isArray(p.property_values) ? p.property_values.map(v => ({
+        property_id: v.property_id,
+        property_name: v.property_name ?? undefined,
+        scale_id: v.scale_id ?? null,
+        value_ids: Array.isArray(v.value_ids) ? v.value_ids : [],
+        values: Array.isArray(v.values) ? v.values : []
+      })) : [],
+      // keep only allowed offerings fields and convert price
+      offerings: Array.isArray(p.offerings) ? p.offerings.map(o => ({
+        quantity: Number(o.quantity ?? o.available_quantity ?? 0),
+        is_enabled: o.is_enabled !== false,
+        price: toDecimalPrice(o.price)
+      })) : []
+    }));
+
+    // 4) PUT back to Etsy (include *_on_property if present)
     const putUrl = `https://openapi.etsy.com/v3/application/listings/${listingId}/inventory`;
     const putResp = await fetch(putUrl, {
       method: "PUT",
@@ -53,7 +83,12 @@ exports.handler = async (event) => {
         "x-api-key": clientId,
         "Content-Type": "application/json"
       },
-      body: JSON.stringify({ products })
+      body: JSON.stringify({
+        products,
+        price_on_property: inv.price_on_property || [],
+        quantity_on_property: inv.quantity_on_property || [],
+        sku_on_property: inv.sku_on_property || []
+      })
     });
     const result = await putResp.json();
     if (!putResp.ok) {
