@@ -602,6 +602,9 @@
                 <div class="cc-field"><label>Description</label>
                   <input class="cc_item_description" placeholder="Item description">
                 </div>
+                <div class="cc-field"><label>SKU</label>
+                  <input class="cc_item_sku" placeholder="SKU">
+                </div>
                 <div class="cc-field"><label>Quantity</label>
                   <input class="cc_item_qty" type="number" min="1" value="1">
                 </div>
@@ -1254,6 +1257,25 @@ function metalToBadge(label){
       return Number.isNaN(num) ? NaN : num;
     }
 
+    // Extract SKU across the common Etsy transaction shapes
+    function extractSkuFromEtsy(it){
+      // direct field
+      if (it?.sku) return String(it.sku);
+      // nested product data
+      if (it?.product_data?.sku) return String(it.product_data.sku);
+      if (it?.product?.sku) return String(it.product.sku);
+      // variations array with sku on an element
+      if (Array.isArray(it?.variations)) {
+        const v = it.variations.find(x => x && x.sku);
+        if (v?.sku) return String(v.sku);
+      }
+      if (Array.isArray(it?.product_variations)) {
+        const v = it.product_variations.find(x => x && x.sku);
+        if (v?.sku) return String(v.sku);
+      }
+      return "";
+    }
+
     /* ======================= */
     function prefillCustomsFromEtsy(){
       try {
@@ -1279,6 +1301,7 @@ function metalToBadge(label){
   function groupUniqueItems(items){
     const map = new Map();
     for (const it of (items || [])){
+      const sku = it?.__sku ?? extractSkuFromEtsy(it) ?? "";
       const unit = (typeof it.__unitValue === "number" && isFinite(it.__unitValue))
         ? it.__unitValue
         : (Number(it?.price?.amount || it?.price || 0) / (Number(it?.price?.divisor || 100) || 1)) || 0;
@@ -1287,9 +1310,9 @@ function metalToBadge(label){
         ? it.__qty
         : Number(it?.quantity || it?.qty || it?.purchase_quantity || 1);
 
-      const desc = buildEtsyDesc(it);
-      const key  = `${it?.listing_id || it?.listingId || desc}||${desc}`;
-      const cur  = map.get(key) || { desc, unit, qty:0, raw: it };
+        const desc = buildEtsyDesc(it);
+        const key  = `${it?.listing_id || it?.listingId || desc}||${desc}||${sku}`;
+        const cur  = map.get(key) || { desc, unit, qty:0, raw: it, sku };
       // If unit varies slightly across identical SKUs (discounts/rounding), prefer lower (customer paid)
       cur.unit = Math.min(cur.unit || unit, unit || cur.unit || 0);
       cur.qty += qty || 0;
@@ -1329,11 +1352,13 @@ function metalToBadge(label){
 
       const $ = sel => node.querySelector(sel);
       const qDesc = $(".cc_item_description");
+      const qSku  = $(".cc_item_sku");
       const qQty  = $(".cc_item_qty");
       const qUnit = $(".cc_item_unit_value");
       const qVal  = $(".cc_item_value");
 
       qDesc.value = g.desc || "Item";
+      qSku.value  = (g.sku || (g.raw ? extractSkuFromEtsy(g.raw) : "") || "") + "";
       qQty.value  = String(Math.max(1, Math.round(g.qty || 1)));
       qUnit.value = (Number(g.unit || 0)).toFixed(2);
       qVal.value  = (Number(qQty.value) * Number(qUnit.value)).toFixed(2);
@@ -1376,6 +1401,7 @@ function metalToBadge(label){
       const $ = sel => node.querySelector(sel);
       const line = {
         description: ($(".cc_item_description")?.value || "").trim(),
+        sku         : ($(".cc_item_sku")?.value || "").trim() || null,
         quantity    : Number($(".cc_item_qty")?.value || 1),
         unit_value  : Number($(".cc_item_unit_value")?.value || 0),
         origin_country      : ($(".cc_item_origin_country")?.value || "").trim().toUpperCase() || null,
@@ -1501,6 +1527,7 @@ function metalToBadge(label){
             __qty: qty,
             __unitValueBase: round2(baseU),     // for reference/debug
             __unitValue: effectiveUnit,         // ← this is what prefillCustomsFromEtsy will use
+            __sku: extractSkuFromEtsy(it) || null,
             __discounts: {
               itemLevel: round2(itemLevelDiscount || 0),
               orderLevelAllocated: round2(orderDiscountForLine || 0),
