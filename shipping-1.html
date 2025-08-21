@@ -381,6 +381,13 @@
     .msg.received{text-align:left; color:#333;}
 
    /* ===== Chit Chats Edit Shipment Wizard ===== */
+    /* 🆕 Line item tranches */
+    .cc-tranche{
+      border:1px solid #e0e0e0;
+      border-radius:10px;
+      padding:10px;
+      margin:10px 0;
+      background:#fff;}
     #ccEditModal{position:fixed;inset:0;background:rgba(0,0,0,.45);display:none;z-index:9999;}
     #ccEditCard{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);
       width:860px;max-height:86vh;overflow:auto;background:#fff;border-radius:12px;
@@ -564,22 +571,60 @@
             </div>
 
           </div>
-          <h4 style="margin:12px 0 4px;">Line item</h4>
-          <div class="cc-grid-3">
-            <div class="cc-field"><label>Description</label><input id="cc_item_description" placeholder="Rock On Stud Earrings, Stb"></div>
-            <div class="cc-field"><label>Quantity</label><input id="cc_item_qty" type="number" min="1" value="1"></div>
-            <div class="cc-field"><label>Unit value</label><input id="cc_item_unit_value" type="number" step="0.01"></div>
-            <div class="cc-field"><label>Origin country</label><input id="cc_item_origin_country" placeholder="CA"></div>
-            <div class="cc-field"><label>HS code</label><input id="cc_item_hs_tariff_code" placeholder="7113.19.5080"></div>
-            <div class="cc-field"><label>Country of manufacture</label><input id="cc_item_manufacture_country" placeholder="CA"></div>
-            <div class="cc-field"><label>Manufacturer name</label><input id="cc_item_manufacturer_contact" placeholder="Brites Jewelry Inc."></div>
-            <div class="cc-field"><label>Manufacturer address</label><input id="cc_item_manufacturer_street" placeholder="450 Matheson Blvd, East"></div>
-            <div class="cc-field"><label>Manufacturer city</label><input id="cc_item_manufacturer_city" placeholder="Mississauga"></div>
-            <div class="cc-field"><label>Manufacturer province</label><input id="cc_item_manufacturer_province_code" placeholder="ON"></div>
-            <div class="cc-field"><label>Manufacturer postal</label><input id="cc_item_manufacturer_postal_code" placeholder="L4Z 1R5"></div>
-            <div class="cc-field"><label>Manufacturer phone</label><input id="cc_item_manufacturer_phone"></div>
-            <div class="cc-field"><label>Manufacturer email</label><input id="cc_item_manufacturer_email"></div>
-          </div>
+          <h4 style="margin:12px 0 4px;">Line items</h4>
+          <div id="cc_line_items_container"></div>
+
+          <template id="cc_line_item_tpl">
+            <div class="cc-tranche cc-line-item" data-index="__IDX__">
+              <h5 style="margin:0 0 6px; font-size:13px; color:#555;">Line item <span class="cc-li-number">__NUM__</span></h5>
+              <div class="cc-grid-3">
+                <div class="cc-field"><label>Description</label>
+                  <input class="cc_item_description" placeholder="Item description">
+                </div>
+                <div class="cc-field"><label>Quantity</label>
+                  <input class="cc_item_qty" type="number" min="1" value="1">
+                </div>
+                <div class="cc-field"><label>Unit value</label>
+                  <input class="cc_item_unit_value" type="number" step="0.01">
+                </div>
+                <div class="cc-field"><label>Item value</label>
+                  <input class="cc_item_value" type="number" step="0.01" readonly>
+                </div>
+
+                <div class="cc-field"><label>Origin country</label>
+                  <input class="cc_item_origin_country" placeholder="CA">
+                </div>
+                <div class="cc-field"><label>HS code</label>
+                  <input class="cc_item_hs_tariff_code" placeholder="7113.19.5080">
+                </div>
+                <div class="cc-field"><label>Country of manufacture</label>
+                  <input class="cc_item_manufacture_country" placeholder="CA">
+                </div>
+
+                <div class="cc-field"><label>Manufacturer name</label>
+                  <input class="cc_item_manufacturer_contact" placeholder="Brites Jewelry Inc.">
+                </div>
+                <div class="cc-field"><label>Manufacturer address</label>
+                  <input class="cc_item_manufacturer_street" placeholder="450 Matheson Blvd, East">
+                </div>
+                <div class="cc-field"><label>Manufacturer city</label>
+                  <input class="cc_item_manufacturer_city" placeholder="Mississauga">
+                </div>
+                <div class="cc-field"><label>Manufacturer province</label>
+                  <input class="cc_item_manufacturer_province_code" placeholder="ON">
+                </div>
+                <div class="cc-field"><label>Manufacturer postal</label>
+                  <input class="cc_item_manufacturer_postal_code" placeholder="L4Z 1R5">
+                </div>
+                <div class="cc-field"><label>Manufacturer phone</label>
+                  <input class="cc_item_manufacturer_phone">
+                </div>
+                <div class="cc-field"><label>Manufacturer email</label>
+                  <input class="cc_item_manufacturer_email">
+                </div>
+              </div>
+            </div>
+          </template>
         </section>
 
         <!-- Step 2: Package -->
@@ -1190,19 +1235,12 @@ function metalToBadge(label){
 
     /* ======================= */
     function prefillCustomsFromEtsy(){
-      try{
-        const qtyInput  = document.getElementById("cc_item_qty");
-        const unitInput = document.getElementById("cc_item_unit_value");
-        if(!qtyInput || !unitInput) return;
-
-        const idx = (typeof window.selectedPreviewIndex === "number" ? window.selectedPreviewIndex : 0);
-        const arr = Array.isArray(window.cachedOrderItems) ? window.cachedOrderItems : [];
-        const it  = arr[idx];
-
-        // If nothing cached yet, bail quietly (caller will re-run after load)
-        if(!it){
-          return;
-        }
+      try {
+        renderCcLineItemsFromCached();
+      } catch (e){
+        console.warn("prefillCustomsFromEtsy() failed:", e);
+      }
+    }
 
         // Prefer explicit normalized fields from PATCH A, then fallbacks
         const qty =
@@ -1242,6 +1280,138 @@ function metalToBadge(label){
         console.warn("prefillCustomsFromEtsy failed:", err);
       }
     }
+
+    function buildEtsyDesc(it){
+    const title = (it?.title || it?.listing_title || it?.name || "Item").toString();
+    const props = it?.property_values || it?.variations || [];
+    const varStr = Array.isArray(props)
+      ? props.map(p => {
+          const k = p?.property_name || p?.name || p?.property_name_formatted || "";
+          const v = p?.value || (Array.isArray(p?.values) ? p.values[0] : p?.formatted_value) || "";
+          return (k && v) ? `${k}: ${v}` : (v || k || "");
+        }).filter(Boolean).join(", ")
+      : "";
+    return varStr ? `${title} (${varStr})` : title;
+  }
+
+  function groupUniqueItems(items){
+    const map = new Map();
+    for (const it of (items || [])){
+      const unit = (typeof it.__unitValue === "number" && isFinite(it.__unitValue))
+        ? it.__unitValue
+        : (Number(it?.price?.amount || it?.price || 0) / (Number(it?.price?.divisor || 100) || 1)) || 0;
+
+      const qty  = (typeof it.__qty === "number" && isFinite(it.__qty))
+        ? it.__qty
+        : Number(it?.quantity || it?.qty || it?.purchase_quantity || 1);
+
+      const desc = buildEtsyDesc(it);
+      const key  = `${it?.listing_id || it?.listingId || desc}||${desc}`;
+      const cur  = map.get(key) || { desc, unit, qty:0, raw: it };
+      // If unit varies slightly across identical SKUs (discounts/rounding), prefer lower (customer paid)
+      cur.unit = Math.min(cur.unit || unit, unit || cur.unit || 0);
+      cur.qty += qty || 0;
+      map.set(key, cur);
+    }
+    return Array.from(map.values());
+  }
+
+  function renderCcLineItemsFromCached(){
+    const container = document.getElementById("cc_line_items_container");
+    const tpl = document.getElementById("cc_line_item_tpl");
+    if (!container || !tpl) return;
+
+    container.innerHTML = "";
+
+    const items = Array.isArray(window.cachedOrderItems) ? window.cachedOrderItems : [];
+    const groups = groupUniqueItems(items);
+
+    // sensible defaults (mirror old single-field defaults)
+    const defaults = {
+      origin_country: "CA",
+      hs: "7113.19.5080",
+      manuf_country: "CA",
+      m_contact: "Brites Jewelry Inc.",
+      m_street:  "450 Matheson Blvd, East",
+      m_city:    "Mississauga",
+      m_prov:    "ON",
+      m_postal:  "L4Z-1R5",
+      m_phone:   "416-606-2476",
+      m_email:   "michelle@custombrites.com"
+    };
+
+    groups.forEach((g, i) => {
+      const node = tpl.content.firstElementChild.cloneNode(true);
+      node.dataset.index = String(i);
+      node.querySelector(".cc-li-number").textContent = String(i+1);
+
+      const $ = sel => node.querySelector(sel);
+      const qDesc = $(".cc_item_description");
+      const qQty  = $(".cc_item_qty");
+      const qUnit = $(".cc_item_unit_value");
+      const qVal  = $(".cc_item_value");
+
+      qDesc.value = g.desc || "Item";
+      qQty.value  = String(Math.max(1, Math.round(g.qty || 1)));
+      qUnit.value = (Number(g.unit || 0)).toFixed(2);
+      qVal.value  = (Number(qQty.value) * Number(qUnit.value)).toFixed(2);
+
+      const bindRecalc = () => {
+        const iv = (Number(qQty.value || 0) * Number(qUnit.value || 0));
+        qVal.value = isFinite(iv) ? iv.toFixed(2) : "";
+      };
+      qQty.addEventListener("input", bindRecalc);
+      qUnit.addEventListener("input", bindRecalc);
+
+      // defaults
+      $(".cc_item_origin_country").value             = defaults.origin_country;
+      $(".cc_item_hs_tariff_code").value             = defaults.hs;
+      $(".cc_item_manufacture_country").value        = defaults.manuf_country;
+      $(".cc_item_manufacturer_contact").value       = defaults.m_contact;
+      $(".cc_item_manufacturer_street").value        = defaults.m_street;
+      $(".cc_item_manufacturer_city").value          = defaults.m_city;
+      $(".cc_item_manufacturer_province_code").value = defaults.m_prov;
+      $(".cc_item_manufacturer_postal_code").value   = defaults.m_postal;
+      $(".cc_item_manufacturer_phone").value         = defaults.m_phone;
+      $(".cc_item_manufacturer_email").value         = defaults.m_email;
+
+      container.appendChild(node);
+    });
+
+    // If no items (edge), render one empty tranche so user can fill manually
+    if (!groups.length){
+      const node = tpl.content.firstElementChild.cloneNode(true);
+      node.dataset.index = "0";
+      node.querySelector(".cc-li-number").textContent = "1";
+      container.appendChild(node);
+    }
+  }
+
+  function collectCcLineItems(){
+    const out = [];
+    const nodes = document.querySelectorAll("#cc_line_items_container .cc-line-item");
+    nodes.forEach(node => {
+      const $ = sel => node.querySelector(sel);
+      const line = {
+        description: ($(".cc_item_description")?.value || "").trim(),
+        quantity    : Number($(".cc_item_qty")?.value || 1),
+        unit_value  : Number($(".cc_item_unit_value")?.value || 0),
+        origin_country      : ($(".cc_item_origin_country")?.value || "").trim().toUpperCase() || null,
+        hs_tariff_code      : ($(".cc_item_hs_tariff_code")?.value || "").trim() || null,
+        manufacture_country : ($(".cc_item_manufacture_country")?.value || "").trim().toUpperCase() || null,
+        manufacturer_contact       : ($(".cc_item_manufacturer_contact")?.value || "").trim() || null,
+        manufacturer_street        : ($(".cc_item_manufacturer_street")?.value || "").trim() || null,
+        manufacturer_city          : ($(".cc_item_manufacturer_city")?.value || "").trim() || null,
+        manufacturer_province_code : ($(".cc_item_manufacturer_province_code")?.value || "").trim() || null,
+        manufacturer_postal_code   : ($(".cc_item_manufacturer_postal_code")?.value || "").trim() || null,
+        manufacturer_phone         : ($(".cc_item_manufacturer_phone")?.value || "").trim() || null,
+        manufacturer_email         : ($(".cc_item_manufacturer_email")?.value || "").trim() || null
+      };
+      if (line.description) out.push(line);
+    });
+    return out;
+  }
+
     /* =======================*/
     async function maybeLoadEtsyTransactions(receiptId){
       try{
@@ -3525,21 +3695,14 @@ function metalToBadge(label){
          const toCountry = document.getElementById("cc_to_country_code").value.trim().toUpperCase();
          const valueCurrency =(document.getElementById("cc_value_currency")?.value || (toCountry === "CA" ? "CAD" : "USD"));
 
-        const line = {
-          description: document.getElementById("cc_item_description").value.trim(),
-          quantity: Number(document.getElementById("cc_item_qty").value || 1),
-          unit_value: Number(document.getElementById("cc_item_unit_value").value || 0),
-          hs_tariff_code: document.getElementById("cc_item_hs_tariff_code").value.trim() || null,
-          origin_country: document.getElementById("cc_item_origin_country").value.trim().toUpperCase() || null,
-          manufacture_country: document.getElementById("cc_item_manufacture_country").value.trim().toUpperCase() || null,
-          manufacturer_contact      : document.getElementById("cc_item_manufacturer_contact").value.trim() || null,
-          manufacturer_street       : document.getElementById("cc_item_manufacturer_street").value.trim() || null,
-          manufacturer_city         : document.getElementById("cc_item_manufacturer_city").value.trim() || null,
-          manufacturer_province_code: document.getElementById("cc_item_manufacturer_province_code").value.trim() || null,
-          manufacturer_postal_code  : document.getElementById("cc_item_manufacturer_postal_code").value.trim() || null,
-          manufacturer_phone        : document.getElementById("cc_item_manufacturer_phone").value.trim() || null,
-          manufacturer_email        : document.getElementById("cc_item_manufacturer_email").value.trim() || null
+        // ⬇️ multi-item support
+        const lines = collectCcLineItems();
+        const first = lines[0] || {
+          description: "Items",
+          quantity: 1,
+          unit_value: 0
         };
+        const totalValue = lines.reduce((sum, li) => sum + (Number(li.unit_value||0) * Number(li.quantity||0)), 0);
         const pkg = {
           package_type: document.getElementById("cc_package_type").value,
           size_unit   : document.getElementById("cc_size_unit").value,
@@ -3557,22 +3720,25 @@ function metalToBadge(label){
           ...to,
           package_contents: document.getElementById("cc_package_contents").value,
           customs_tax_reference_number: (document.getElementById("cc_customs_tax_reference_number")?.value || "").trim() || null,
-          description    : line.description,
-          value          : String((line.unit_value || 0) * (line.quantity || 1)),
+          description    : first.description,
+          value          : String(totalValue),
           value_currency : valueCurrency,
           postage_type   : "unknown",
-          line_items     : [{
-            description: line.description, quantity: line.quantity,
-            unit_value: String(line.unit_value), origin_country: line.origin_country,
-            hs_tariff_code: line.hs_tariff_code, manufacture_country: line.manufacture_country,
-            manufacturer_contact: line.manufacturer_contact,
-            manufacturer_street: line.manufacturer_street,
-            manufacturer_city: line.manufacturer_city,
-            manufacturer_province_code: line.manufacturer_province_code,
-            manufacturer_postal_code: line.manufacturer_postal_code,
-            manufacturer_phone: line.manufacturer_phone,
-            manufacturer_email: line.manufacturer_email
-          }],
+          line_items     : lines.map(li => ({
+            description: li.description,
+            quantity   : li.quantity,
+            unit_value : String(li.unit_value),
+            origin_country      : li.origin_country,
+            hs_tariff_code      : li.hs_tariff_code,
+            manufacture_country : li.manufacture_country,
+            manufacturer_contact       : li.manufacturer_contact,
+            manufacturer_street        : li.manufacturer_street,
+            manufacturer_city          : li.manufacturer_city,
+            manufacturer_province_code : li.manufacturer_province_code,
+            manufacturer_postal_code   : li.manufacturer_postal_code,
+            manufacturer_phone         : li.manufacturer_phone,
+            manufacturer_email         : li.manufacturer_email
+          })),
           ...pkg
         };
       }
