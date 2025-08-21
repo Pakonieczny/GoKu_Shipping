@@ -4,8 +4,6 @@
   <meta charset="UTF-8" />
   <title>Etsy Listings</title>
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-
-  <!-- Minimal styling; feel free to swap to your existing CSS framework -->
   <style>
     body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; margin: 0; background:#0a0a0a; color:#eee;}
     header { position: sticky; top:0; background:#111; border-bottom:1px solid #222; padding:10px 16px; display:flex; gap:8px; align-items:center; z-index:10;}
@@ -54,29 +52,17 @@
   </footer>
 
 <script>
-/** ============ Config ============ */
-const functionsBaseUrl = "/.netlify/functions";
+/** ============ Hard domain binding ============ */
+const ORIGIN = "https://sku.goldenspike.app";
+const functionsBaseUrl = ORIGIN + "/.netlify/functions";
+
+/** ============ Token storage ============ */
 const TOKEN_KEYS = {
   access : "access_token",
   refresh: "refresh_token",
   exp    : "expires_in",
   iat    : "issued_at"
 };
-
-/** ======= Utilities / OAuth pieces (mirrors your design.html approach) ======= */
-/* generateCodeChallenge & Connect button style follow the design.html blueprint. */ //  [oai_citation:0‡design.html](file-service://file-X9Nzcr2D5txXR96yC12fqD)
-function generateRandomString(length = 64){
-  const charset="ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~";
-  let s=""; const rnd = crypto.getRandomValues(new Uint8Array(length));
-  for (let i=0;i<length;i++) s += charset[rnd[i] % charset.length];
-  return s;
-}
-async function generateCodeChallenge(codeVerifier){
-  const data = new TextEncoder().encode(codeVerifier);
-  const digest = await crypto.subtle.digest("SHA-256", data);
-  let b64 = btoa(String.fromCharCode(...new Uint8Array(digest)));
-  return b64.replace(/\+/g,"-").replace(/\//g,"_").replace(/=+$/,"");
-}
 
 function setTokens(tok){
   if (!tok) return;
@@ -120,65 +106,59 @@ async function refreshAccessToken(){
   } else {
     console.warn("Refresh failed", data);
   }
-} // uses your refresh function shape.  [oai_citation:1‡refreshEtsyToken.js](file-service://file-1xFZXH4xPAMov8h33a8kwu)
+}
 
-/* API wrapper that adds Access-Token like design.html’s etsyOrderProxy usage */ //  [oai_citation:2‡etsyOrderProxy.js](file-service://file-5o2TFR7tejaScMH2UvABSa)
+/** ============ OAuth helpers (match design.html pattern) ============ */
+function generateRandomString(length = 64){
+  const charset="ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~";
+  let s=""; const rnd = crypto.getRandomValues(new Uint8Array(length));
+  for (let i=0;i<length;i++) s += charset[rnd[i] % charset.length];
+  return s;
+}
+async function generateCodeChallenge(codeVerifier){
+  const data = new TextEncoder().encode(codeVerifier);
+  const digest = await crypto.subtle.digest("SHA-256", data);
+  let b64 = btoa(String.fromCharCode(...new Uint8Array(digest)));
+  return b64.replace(/\+/g,"-").replace(/\//g,"_").replace(/=+$/,"");
+}
+
+let __oauthInFlight = false;
+async function startOAuth(reason = "manual"){
+  if (__oauthInFlight) return;
+  __oauthInFlight = true;
+  try {
+    const codeVerifier = generateRandomString(64);
+    localStorage.setItem("etsy_code_verifier", codeVerifier);
+    const codeChallenge = await generateCodeChallenge(codeVerifier);
+
+    // Same CLIENT_ID style as design.html
+    const CLIENT_ID  = "k75zdspz4r99txpqdji7i2em";
+    const redirectUri = ORIGIN; // Etsy returns to https://sku.goldenspike.app
+    const scope      = "listings_w listings_r transactions_r transactions_w";
+    const state      = `reconnect_${Date.now()}_${reason}`;
+
+    const etsyAuthUrl =
+      "https://www.etsy.com/oauth/connect?response_type=code" +
+      "&client_id=" + CLIENT_ID +
+      "&redirect_uri=" + encodeURIComponent(redirectUri) +
+      "&scope=" + encodeURIComponent(scope) +
+      "&state=" + encodeURIComponent(state) +
+      "&code_challenge=" + encodeURIComponent(codeChallenge) +
+      "&code_challenge_method=S256";
+
+    window.location.href = etsyAuthUrl;
+  } catch (e) {
+    console.error("OAuth boot failed:", e);
+    __oauthInFlight = false;
+  }
+}
+
+/** ============ API wrapper ============ */
 async function apiFetch(path, init={}){
   const headers = new Headers(init.headers || {});
   const tok = getAccessToken();
   if (tok) headers.set("Access-Token", tok);
   return fetch(`${functionsBaseUrl}${path}`, { ...init, headers });
-}
-
-/* Connect button – same style as design.html (PKCE + redirect) */ //  [oai_citation:3‡design.html](file-service://file-X9Nzcr2D5txXR96yC12fqD)
-async function startOAuth(){
-  const codeVerifier = generateRandomString(64);
-  localStorage.setItem("etsy_code_verifier", codeVerifier);
-
-  // Prefer server-provided CLIENT_ID + REDIRECT_URI if available
-  let CLIENT_ID = null, REDIRECT_URI = window.location.origin + window.location.pathname;
-  try {
-    const r = await fetch(`${functionsBaseUrl}/getEtsyCredentials`);
-    if (r.ok){
-      const js = await r.json();
-      CLIENT_ID = js.CLIENT_ID || null;
-      REDIRECT_URI = js.REDIRECT_URI || REDIRECT_URI;
-    }
-  } catch(_) {}
-
-  if (!CLIENT_ID) {
-    // Fallback to same literal pattern used in design.html if envs aren’t wired yet. //  [oai_citation:4‡design.html](file-service://file-X9Nzcr2D5txXR96yC12fqD)
-    CLIENT_ID = "k75zdspz4r99txpqdji7i2em";
-  }
-
-  const codeChallenge = await generateCodeChallenge(codeVerifier);
-  const scope = "listings_w listings_r transactions_r transactions_w";
-  const state = `reconnect_${Date.now()}`;
-
-  const etsyAuthUrl =
-    "https://www.etsy.com/oauth/connect?response_type=code" +
-    "&client_id=" + CLIENT_ID +
-    "&redirect_uri=" + encodeURIComponent(REDIRECT_URI) +
-    "&scope=" + encodeURIComponent(scope) +
-    "&state=" + encodeURIComponent(state) +
-    "&code_challenge=" + encodeURIComponent(codeChallenge) +
-    "&code_challenge_method=S256";
-
-  window.location.href = etsyAuthUrl;
-}
-
-/* Handle OAuth return params from exchange function (same pattern) */ //  [oai_citation:5‡exchangeToken.js](file-service://file-GpuBnQnEPVJidX6ADY9TWB)
-function bootFromQueryParams(){
-  const q = new URLSearchParams(location.search);
-  const access_token  = q.get("access_token");
-  const refresh_token = q.get("refresh_token");
-  const expires_in    = q.get("expires_in");
-  const issued_at     = q.get("issued_at");
-  if (access_token && refresh_token && expires_in && issued_at){
-    setTokens({ access_token, refresh_token, expires_in, issued_at });
-    // Clean URL
-    history.replaceState({}, "", location.pathname);
-  }
 }
 
 /** ============ Listings UI ============ */
@@ -193,7 +173,7 @@ const refreshBtn    = document.getElementById("refreshBtn");
 const connectBtn    = document.getElementById("connectEtsyBtn");
 
 let page = 1;
-let lastBatch = []; // store most recent results to allow client-side filter of title
+let lastBatch = [];
 
 function setAuthBadge(){
   authStatusEl.textContent = getAccessToken() ? "Connected" : "Not connected";
@@ -254,7 +234,6 @@ async function fetchPrimaryImage(listingId){
   const r = await apiFetch(`/etsyListingImagesProxy?listingId=${encodeURIComponent(listingId)}`);
   if (!r.ok) return "";
   const js = await r.json();
-  // Prefer explicit primary, else lowest rank, else first
   let best = null;
   if (Array.isArray(js.results) && js.results.length){
     best = js.results.find(x => x.is_primary) ||
@@ -303,18 +282,16 @@ async function loadPage(p=1){
   const js = await r.json();
   const raw = Array.isArray(js.results) ? js.results : (Array.isArray(js) ? js : []);
 
-  // Map to our minimal shape first
   const base = raw.map(x => ({
     listing_id: x.listing_id,
     title     : x.title,
-    price     : x.price, // if present in payload
+    price     : x.price,
     primary_image: "",
     skus: []
   }));
 
-  // Fill primary images + skus with light concurrency
   const jobs = base.map(item => item);
-  const iterator = pLimit(jobs, 6, async (item) => {
+  for await (const done of pLimit(jobs, 6, async (item) => {
     const [img, skus] = await Promise.all([
       fetchPrimaryImage(item.listing_id),
       fetchSkus(item.listing_id)
@@ -322,31 +299,56 @@ async function loadPage(p=1){
     item.primary_image = img;
     item.skus = skus;
     return item;
-  });
+  })) {
+    // no-op; iteration fills in place
+  }
 
-  lastBatch = [];
-  for await (const done of iterator) lastBatch.push(done);
+  lastBatch = base;
   renderListings(lastBatch);
 
-  // Enable/disable paging heuristically (no total; rely on < limit)
   prevBtn.disabled = p <= 1;
   nextBtn.disabled = raw.length < limit;
 }
 
-/** ============ Events & Boot ============ */
+/** ============ Boot ============ */
+function setAuthBadge(){ authStatusEl.textContent = getAccessToken() ? "Connected" : "Not connected"; }
+
 document.addEventListener("DOMContentLoaded", async () => {
-  bootFromQueryParams();
+  // Handle OAuth returns
+  const url = new URLSearchParams(location.search);
+
+  // If we already have tokens in the URL (server redirect), store and clean URL
+  const access_token  = url.get("access_token");
+  const refresh_token = url.get("refresh_token");
+  const expires_in    = url.get("expires_in");
+  const issued_at     = url.get("issued_at");
+  if (access_token && refresh_token && expires_in && issued_at){
+    setTokens({ access_token, refresh_token, expires_in, issued_at });
+    history.replaceState({}, "", ORIGIN + location.pathname); // clean query
+  } else {
+    // Standard OAuth code return → pass code to the server for exchange
+    const code = url.get("code");
+    if (code){
+      const v = localStorage.getItem("etsy_code_verifier");
+      if (v){
+        const qs = new URLSearchParams({ code, code_verifier: v, redirect_domain: "sku" });
+        window.location.href = ORIGIN + "/.netlify/functions/exchangeToken?" + qs.toString();
+        return;
+      } else {
+        console.error("No code verifier found in localStorage.");
+      }
+    }
+  }
+
   setAuthBadge();
-  scheduleTokenRefresh();
 
-  connectBtn.addEventListener("click", startOAuth); // same button wiring as design.html.  [oai_citation:6‡design.html](file-service://file-X9Nzcr2D5txXR96yC12fqD)
-  refreshBtn.addEventListener("click", () => loadPage(page));
-  prevBtn.addEventListener("click", () => { if (page>1){ page--; loadPage(page);} });
-  nextBtn.addEventListener("click", () => { page++; loadPage(page); });
-  pageSizeEl.addEventListener("change", () => { page = 1; loadPage(page); });
-  searchInput.addEventListener("input", () => renderListings(lastBatch));
+  document.getElementById("connectEtsyBtn").addEventListener("click", () => startOAuth("button"));
+  document.getElementById("refreshBtn").addEventListener("click", () => loadPage(page));
+  document.getElementById("prevBtn").addEventListener("click", () => { if (page>1){ page--; loadPage(page);} });
+  document.getElementById("nextBtn").addEventListener("click", () => { page++; loadPage(page); });
+  document.getElementById("pageSize").addEventListener("change", () => { page = 1; loadPage(page); });
+  document.getElementById("searchInput").addEventListener("input", () => renderListings(lastBatch));
 
-  // Auto-load first page if already connected
   if (getAccessToken()) loadPage(1);
 });
 </script>
