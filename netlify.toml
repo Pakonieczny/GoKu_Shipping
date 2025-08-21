@@ -152,6 +152,11 @@
   status = 200
   force = true
 
+  [[redirects]]
+  from = "https://sku.goldenspike.app"
+  to = "/SKU_List_V1.html"
+  status = 200
+  force = true
 
 
 
