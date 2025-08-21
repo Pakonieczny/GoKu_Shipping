@@ -33,12 +33,20 @@ exports.handler = async (event) => {
       return { statusCode: getResp.status, body: JSON.stringify(inv) };
     }
 
-    const byId = new Map(items.map(i => [Number(i.product_id), String(i.sku || "").trim()]));
+    // 2) Determine Variant 1 (first product) and apply only that SKU
+    const list = Array.isArray(inv.products) ? inv.products : [];
+    if (!list.length) {
+      return { statusCode: 400, body: JSON.stringify({ error: "No variants found for this listing" }) };
+    }
+    const targetPid = Number(list[0].product_id); // Variant 1
+    const requested = Array.isArray(items) ? items.find(i => Number(i.product_id) === targetPid) : null;
+    if (!requested) {
+      return { statusCode: 400, body: JSON.stringify({ error: "Missing Variant 1 in items (product_id of first variant required)" }) };
+    }
+    const newSku = String(requested.sku || "").trim();
 
-    // 2) Apply SKU changes on the fetched products
-    const updated = (inv.products || []).map(p => {
-      const pid = Number(p.product_id);
-      if (byId.has(pid)) p.sku = byId.get(pid);
+    const updated = list.map(p => {
+      if (Number(p.product_id) === targetPid) p.sku = newSku; // only Variant 1 changes
       return p;
     });
 

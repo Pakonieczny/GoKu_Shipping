@@ -204,7 +204,8 @@ function renderListings(items){
 
     const sku = document.createElement("div");
     sku.className = "sku";
-    sku.textContent = it.skus && it.skus.length ? `SKU: ${it.skus.join(", ")}` : "SKU: —";
+    const firstSku = (Array.isArray(it.skus) && it.skus.length) ? it.skus[0] : "";
+    sku.textContent = firstSku ? `SKU: ${firstSku} (Variant 1)` : "SKU: —";
 
     const row = document.createElement("div");
     row.className = "row";
@@ -265,33 +266,33 @@ function buildSkuEditorDom(listing, products){
 
   const hdr = document.createElement("div");
   hdr.className = "title";
-  hdr.textContent = "Edit SKUs";
+  hdr.textContent = "Edit SKU (Variant 1)";
   editor.appendChild(hdr);
 
-  // rows
-  products.forEach((p, idx) => {
-    const row = document.createElement("div");
-    row.className = "row";
-    row.style.gap = "6px";
-    row.style.alignItems = "center";
+  // Use only the first product (Variant 1)
+  const p = (Array.isArray(products) && products.length) ? products[0] : { product_id: null, sku: "" };
 
-    const tag = document.createElement("span");
-    tag.className = "pill";
-    tag.textContent = `Variant ${idx+1}`;
-    row.appendChild(tag);
+  const row = document.createElement("div");
+  row.className = "row";
+  row.style.gap = "6px";
+  row.style.alignItems = "center";
 
-    const input = document.createElement("input");
-    input.type  = "text";
-    input.value = p.sku || "";
-    input.placeholder = "SKU";
-    input.style.flex = "1";
-    input.dataset.productId = String(p.product_id);
-    input.className = "skuInput";
-    input.maxLength = 64; // sane limit
-    row.appendChild(input);
+  const tag = document.createElement("span");
+  tag.className = "pill";
+  tag.textContent = "Variant 1";
+  row.appendChild(tag);
 
-    editor.appendChild(row);
-  });
+  const input = document.createElement("input");
+  input.type  = "text";
+  input.value = p.sku || "";
+  input.placeholder = "SKU";
+  input.style.flex = "1";
+  input.dataset.productId = p.product_id != null ? String(p.product_id) : "";
+  input.className = "skuInput";
+  input.maxLength = 64;
+  row.appendChild(input);
+
+  editor.appendChild(row);
 
   const actions = document.createElement("div");
   actions.className = "row";
@@ -305,16 +306,17 @@ function buildSkuEditorDom(listing, products){
   save.className = "btn";
   save.textContent = "Save";
   save.addEventListener("click", async () => {
-    const inputs = [...editor.querySelectorAll(".skuInput")];
-    const items = inputs.map(el => ({ product_id: Number(el.dataset.productId), sku: el.value.trim() }));
+    const el = editor.querySelector(".skuInput");
+    const item = { product_id: Number(el.dataset.productId), sku: el.value.trim() };
     save.disabled = true;
     try {
-      const ok = await saveSkuUpdates(listing.listing_id, items);
+      const ok = await saveSkuUpdates(listing.listing_id, [item]); // only Variant 1
       if (ok){
-        // update visible SKU line on card
-        listing.skus = items.map(i => i.sku).filter(Boolean);
+        // Update visible SKU line on card
+        listing.skus = [item.sku].filter(Boolean);
         const skuLine = card.querySelector(".sku");
-        skuLine.textContent = listing.skus.length ? `SKU: ${listing.skus.join(", ")}` : "SKU: —";
+        const firstSku = (Array.isArray(listing.skus) && listing.skus.length) ? listing.skus[0] : "";
+        skuLine.textContent = firstSku ? `SKU: ${firstSku} (Variant 1)` : "SKU: —";
         editor.style.display = "none";
       }
     } catch (e){
@@ -422,7 +424,7 @@ async function loadPage(p=1){
       fetchSkus(item.listing_id)
     ]);
     item.primary_image = img;
-    item.skus = skus;
+    item.skus = (skus || []).slice(0, 1); // Variant 1 only
     return item;
   })) {
     // no-op; iteration fills in place
