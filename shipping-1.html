@@ -1247,62 +1247,117 @@ function metalToBadge(label){
       try{
         if(!receiptId) return [];
 
-        // Always use apiFetch so we inherit your token refresh/retry behavior
-        const tryUrls = [
-          `/etsyOrderProxy?orderId=${encodeURIComponent(receiptId)}&include=transactions`
-          ];
-        let out = null;
-        for (const path of tryUrls){
-          const res = await apiFetch(path);              // <— was fetch(); use your wrapper
-          if(res?.ok){
-            out = await res.json();
-            break;
-          }
-        }
-        if(!out) return [];
+        // Always use apiFetch so we inherit token refresh/retry behavior
+        const res = await apiFetch(`/etsyOrderProxy?orderId=${encodeURIComponent(receiptId)}&include=transactions`);
+        if(!res?.ok) return [];
+        const out = await res.json();
 
-        // Normalize possible shapes into a flat array of transactions/items
+        // ---- normalize "transactions" array out of various shapes ----
         let items = [];
-        if (Array.isArray(out)) {
-          items = out;
-        } else if (Array.isArray(out?.transactions)) {
-          items = out.transactions;
-        } else if (Array.isArray(out?.data?.transactions)) {
-          items = out.data.transactions;
-        } else if (Array.isArray(out?.results)) {
-          items = out.results;
-        }
+        if (Array.isArray(out)) items = out;
+        else if (Array.isArray(out?.transactions)) items = out.transactions;
+        else if (Array.isArray(out?.data?.transactions)) items = out.data.transactions;
+        else if (Array.isArray(out?.results)) items = out.results;
 
-        // Defensive copy + ensure numeric quantity and parse money
+        // ---- helpers ----
         function parseMoney(m){
-          if (!m) return null;
+          if (!m && m !== 0) return null;
           if (typeof m === "number" || typeof m === "string") return Number(m);
           if (typeof m === "object"){
-            if (typeof m.amount === "number" && typeof m.divisor === "number" && m.divisor) {
-              return m.amount / m.divisor;
-            }
-            if (typeof m.value === "number") return m.value;
-            if (typeof m.cents === "number") return m.cents / 100;
+            if (typeof m.amount === "number" && typeof m.divisor === "number" && m.divisor) return m.amount / m.divisor;
+            if (typeof m.value  === "number") return m.value;
+            if (typeof m.cents  === "number") return m.cents / 100;
             if (typeof m.amount === "string") return Number(m.amount);
           }
           return null;
         }
+        const round2 = n => Math.round((Number(n)||0) * 100) / 100;
 
-        const normalized = items.map(it => {
-          const qty =
-            it.quantity ?? it.qty ?? it.purchase_quantity ?? it.count ?? null;
+        // ----- extract an order-level discount if present -----
+        const orderDiscountCandidates = [
+          out?.discount_amt, out?.discount_amount, out?.total_discounts,
+          out?.receipt?.discount_amt, out?.receipt?.discount_amount, out?.receipt?.total_discounts,
+          out?.data?.discount_amt, out?.data?.discount_amount, out?.data?.total_discounts,
+          out?.data?.receipt?.discount_amt, out?.data?.receipt?.discount_amount, out?.data?.receipt?.total_discounts
+        ];
+        let orderLevelDiscount = 0;
+        for (const c of orderDiscountCandidates){
+          const v = parseMoney(c);
+          if (v && v > 0){ orderLevelDiscount = v; break; }
+        }
 
-          // common Etsy fields: price, unit_price, original_unit_price, variation_price
-          const unitValue =
+        // ----- first pass: derive qty and BASE (pre-discount) unit value -----
+        const baseNormalized = items.map(it => {
+          const qty = it.quantity ?? it.qty ?? it.purchase_quantity ?? it.count ?? null;
+
+          const baseUnit =
             parseMoney(it.price) ??
             parseMoney(it.unit_price) ??
             parseMoney(it.original_unit_price) ??
             parseMoney(it.variation_price) ?? null;
 
-          return { ...it, __qty: (qty!=null ? Number(qty) : null), __unitValue: (unitValue!=null ? Number(unitValue) : null) };
+          return {
+            ...it,
+            __qty: (qty!=null ? Number(qty) : null),
+            __unitValueBase: (baseUnit!=null ? Number(baseUnit) : null)
+          };
         });
 
-        // Cache in temp memory for modal prefill + preview tile
+        // ----- compute total pre-discount line value for pro-rating -----
+        const totalPreDiscount = baseNormalized.reduce((sum, it) => {
+          const q = (typeof it.__qty === "number" && isFinite(it.__qty)) ? it.__qty : 0;
+          const u = (typeof it.__unitValueBase === "number" && isFinite(it.__unitValueBase)) ? it.__unitValueBase : 0;
+          return sum + (q > 0 && u >= 0 ? (q * u) : 0);
+        }, 0);
+
+        // ----- second pass: apply item-level + pro-rated order-level discounts -----
+        const normalized = baseNormalized.map(it => {
+          const qty = (typeof it.__qty === "number" && isFinite(it.__qty) && it.__qty > 0) ? it.__qty : 1;
+          const baseU = (typeof it.__unitValueBase === "number" && isFinite(it.__unitValueBase) && it.__unitValueBase >= 0)
+            ? it.__unitValueBase : 0;
+
+          // pull any item-specific discount fields we might see
+          let itemLevelDiscount = 0;
+          const itemDiscountCandidates = [
+            it.discount_amt, it.discount_amount, it.item_discount, it.order_discount, it.total_discount,
+            it.seller_coupon_discount_amount, it.price_discount, it.price_discount_amount
+          ];
+          for (const c of itemDiscountCandidates){
+            const v = parseMoney(c);
+            if (v && v > 0) itemLevelDiscount += v;
+          }
+          // arrays like applied_discounts: [{amount}, ...]
+          if (Array.isArray(it.applied_discounts)){
+            for (const d of it.applied_discounts){
+              const v = parseMoney(d?.amount ?? d?.discount_amount);
+              if (v && v > 0) itemLevelDiscount += v;
+            }
+          }
+
+          // pro-rate any order-level discount by line share of the pre-discount total
+          const linePre = baseU * qty;
+          const share = (orderLevelDiscount > 0 && totalPreDiscount > 0) ? (linePre / totalPreDiscount) : 0;
+          const orderDiscountForLine = orderLevelDiscount * share;
+
+          const totalDiscountForLine = (itemLevelDiscount || 0) + (orderDiscountForLine || 0);
+          const perUnitDiscount = totalDiscountForLine / qty;
+
+          const effectiveUnit = round2(Math.max(0, baseU - perUnitDiscount));
+
+          return {
+            ...it,
+            __qty: qty,
+            __unitValueBase: round2(baseU),     // for reference/debug
+            __unitValue: effectiveUnit,         // ← this is what prefillCustomsFromEtsy will use
+            __discounts: {
+              itemLevel: round2(itemLevelDiscount || 0),
+              orderLevelAllocated: round2(orderDiscountForLine || 0),
+              perUnitApplied: round2(perUnitDiscount || 0)
+            }
+          };
+        });
+
+        // Cache for the UI prefill + preview tiles
         window.cachedOrderItems = normalized;
         return normalized;
       } catch(err){
