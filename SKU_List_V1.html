@@ -1,0 +1,354 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Etsy Listings</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+
+  <!-- Minimal styling; feel free to swap to your existing CSS framework -->
+  <style>
+    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; margin: 0; background:#0a0a0a; color:#eee;}
+    header { position: sticky; top:0; background:#111; border-bottom:1px solid #222; padding:10px 16px; display:flex; gap:8px; align-items:center; z-index:10;}
+    .btn { background:#2962ff; color:#fff; border:0; border-radius:8px; padding:10px 14px; cursor:pointer; font-weight:600;}
+    .btn:disabled { opacity:.6; cursor:default;}
+    .btn.secondary { background:#333; }
+    .grid { display:grid; grid-template-columns: repeat(auto-fill, minmax(280px,1fr)); gap:12px; padding:16px; }
+    .card { background:#121212; border:1px solid #222; border-radius:14px; overflow:hidden; display:flex; flex-direction:column; }
+    .thumb { width:100%; aspect-ratio: 1 / 1; object-fit:cover; background:#151515; }
+    .meta { padding:12px; display:flex; flex-direction:column; gap:6px; }
+    .title { font-size:14px; line-height:1.3; color:#fafafa; font-weight:600; }
+    .sku { font-size:12px; color:#bbb; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+    .row { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+    .pill { font-size:12px; padding:4px 8px; border-radius:999px; border:1px solid #2a2a2a; color:#cfcfcf; }
+    .status { margin-left:auto; font-size:12px; color:#9ad; }
+    footer { position: sticky; bottom:0; background:#111; border-top:1px solid #222; padding:10px 16px; display:flex; gap:8px; align-items:center; }
+    .pagebox { margin-left:auto; color:#aaa; }
+    input[type="number"]{ background:#181818; color:#ddd; border:1px solid #2a2a2a; border-radius:8px; padding:8px; width:90px;}
+    .search { flex: 1; }
+    .search input { width:100%; background:#181818; color:#ddd; border:1px solid #2a2a2a; border-radius:8px; padding:10px 12px; }
+  </style>
+</head>
+<body>
+
+  <header>
+    <button id="connectEtsyBtn" class="btn">Connect Etsy</button>
+    <button id="refreshBtn" class="btn secondary">Refresh</button>
+
+    <div class="search">
+      <input id="searchInput" placeholder="Filter by title… (client-side)" />
+    </div>
+
+    <span id="authStatus" class="status">Not connected</span>
+  </header>
+
+  <main id="listContainer" class="grid" aria-live="polite"></main>
+
+  <footer>
+    <button id="prevBtn" class="btn secondary">Prev</button>
+    <button id="nextBtn" class="btn">Next</button>
+    <span class="pagebox">
+      Page <span id="pageNum">1</span>
+      &nbsp;•&nbsp; Page size
+      <input id="pageSize" type="number" min="1" max="100" value="100" />
+    </span>
+  </footer>
+
+<script>
+/** ============ Config ============ */
+const functionsBaseUrl = "/.netlify/functions";
+const TOKEN_KEYS = {
+  access : "access_token",
+  refresh: "refresh_token",
+  exp    : "expires_in",
+  iat    : "issued_at"
+};
+
+/** ======= Utilities / OAuth pieces (mirrors your design.html approach) ======= */
+/* generateCodeChallenge & Connect button style follow the design.html blueprint. */ //  [oai_citation:0‡design.html](file-service://file-X9Nzcr2D5txXR96yC12fqD)
+function generateRandomString(length = 64){
+  const charset="ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~";
+  let s=""; const rnd = crypto.getRandomValues(new Uint8Array(length));
+  for (let i=0;i<length;i++) s += charset[rnd[i] % charset.length];
+  return s;
+}
+async function generateCodeChallenge(codeVerifier){
+  const data = new TextEncoder().encode(codeVerifier);
+  const digest = await crypto.subtle.digest("SHA-256", data);
+  let b64 = btoa(String.fromCharCode(...new Uint8Array(digest)));
+  return b64.replace(/\+/g,"-").replace(/\//g,"_").replace(/=+$/,"");
+}
+
+function setTokens(tok){
+  if (!tok) return;
+  if (tok.access_token)  localStorage.setItem(TOKEN_KEYS.access, tok.access_token);
+  if (tok.refresh_token) localStorage.setItem(TOKEN_KEYS.refresh, tok.refresh_token);
+  if (tok.expires_in)    localStorage.setItem(TOKEN_KEYS.exp, tok.expires_in);
+  if (tok.issued_at)     localStorage.setItem(TOKEN_KEYS.iat, tok.issued_at);
+}
+function getAccessToken(){ return localStorage.getItem(TOKEN_KEYS.access) || ""; }
+function getRefreshToken(){ return localStorage.getItem(TOKEN_KEYS.refresh) || ""; }
+
+function secondsUntilExpiry(){
+  const exp = Number(localStorage.getItem(TOKEN_KEYS.exp)||0);
+  const iat = Number(localStorage.getItem(TOKEN_KEYS.iat)||0);
+  if (!exp || !iat) return 0;
+  const now = Math.floor(Date.now()/1000);
+  return (iat + exp) - now;
+}
+
+let __refreshTimer = null;
+function scheduleTokenRefresh(){
+  clearTimeout(__refreshTimer);
+  const sec = Math.max(5, secondsUntilExpiry() - 90);
+  __refreshTimer = setTimeout(refreshAccessToken, sec*1000);
+}
+
+async function refreshAccessToken(){
+  const refresh_token = getRefreshToken();
+  if (!refresh_token) return;
+  const r = await fetch(`${functionsBaseUrl}/refreshEtsyToken`, {
+    method: "POST",
+    headers: { "Content-Type":"application/json" },
+    body: JSON.stringify({ refresh_token })
+  });
+  const data = await r.json();
+  if (r.ok){
+    const issued_at = Math.floor(Date.now()/1000);
+    setTokens({ ...data, issued_at });
+    scheduleTokenRefresh();
+    setAuthBadge();
+  } else {
+    console.warn("Refresh failed", data);
+  }
+} // uses your refresh function shape.  [oai_citation:1‡refreshEtsyToken.js](file-service://file-1xFZXH4xPAMov8h33a8kwu)
+
+/* API wrapper that adds Access-Token like design.html’s etsyOrderProxy usage */ //  [oai_citation:2‡etsyOrderProxy.js](file-service://file-5o2TFR7tejaScMH2UvABSa)
+async function apiFetch(path, init={}){
+  const headers = new Headers(init.headers || {});
+  const tok = getAccessToken();
+  if (tok) headers.set("Access-Token", tok);
+  return fetch(`${functionsBaseUrl}${path}`, { ...init, headers });
+}
+
+/* Connect button – same style as design.html (PKCE + redirect) */ //  [oai_citation:3‡design.html](file-service://file-X9Nzcr2D5txXR96yC12fqD)
+async function startOAuth(){
+  const codeVerifier = generateRandomString(64);
+  localStorage.setItem("etsy_code_verifier", codeVerifier);
+
+  // Prefer server-provided CLIENT_ID + REDIRECT_URI if available
+  let CLIENT_ID = null, REDIRECT_URI = window.location.origin + window.location.pathname;
+  try {
+    const r = await fetch(`${functionsBaseUrl}/getEtsyCredentials`);
+    if (r.ok){
+      const js = await r.json();
+      CLIENT_ID = js.CLIENT_ID || null;
+      REDIRECT_URI = js.REDIRECT_URI || REDIRECT_URI;
+    }
+  } catch(_) {}
+
+  if (!CLIENT_ID) {
+    // Fallback to same literal pattern used in design.html if envs aren’t wired yet. //  [oai_citation:4‡design.html](file-service://file-X9Nzcr2D5txXR96yC12fqD)
+    CLIENT_ID = "k75zdspz4r99txpqdji7i2em";
+  }
+
+  const codeChallenge = await generateCodeChallenge(codeVerifier);
+  const scope = "listings_w listings_r transactions_r transactions_w";
+  const state = `reconnect_${Date.now()}`;
+
+  const etsyAuthUrl =
+    "https://www.etsy.com/oauth/connect?response_type=code" +
+    "&client_id=" + CLIENT_ID +
+    "&redirect_uri=" + encodeURIComponent(REDIRECT_URI) +
+    "&scope=" + encodeURIComponent(scope) +
+    "&state=" + encodeURIComponent(state) +
+    "&code_challenge=" + encodeURIComponent(codeChallenge) +
+    "&code_challenge_method=S256";
+
+  window.location.href = etsyAuthUrl;
+}
+
+/* Handle OAuth return params from exchange function (same pattern) */ //  [oai_citation:5‡exchangeToken.js](file-service://file-GpuBnQnEPVJidX6ADY9TWB)
+function bootFromQueryParams(){
+  const q = new URLSearchParams(location.search);
+  const access_token  = q.get("access_token");
+  const refresh_token = q.get("refresh_token");
+  const expires_in    = q.get("expires_in");
+  const issued_at     = q.get("issued_at");
+  if (access_token && refresh_token && expires_in && issued_at){
+    setTokens({ access_token, refresh_token, expires_in, issued_at });
+    // Clean URL
+    history.replaceState({}, "", location.pathname);
+  }
+}
+
+/** ============ Listings UI ============ */
+const listContainer = document.getElementById("listContainer");
+const pageNumEl     = document.getElementById("pageNum");
+const pageSizeEl    = document.getElementById("pageSize");
+const searchInput   = document.getElementById("searchInput");
+const authStatusEl  = document.getElementById("authStatus");
+const prevBtn       = document.getElementById("prevBtn");
+const nextBtn       = document.getElementById("nextBtn");
+const refreshBtn    = document.getElementById("refreshBtn");
+const connectBtn    = document.getElementById("connectEtsyBtn");
+
+let page = 1;
+let lastBatch = []; // store most recent results to allow client-side filter of title
+
+function setAuthBadge(){
+  authStatusEl.textContent = getAccessToken() ? "Connected" : "Not connected";
+}
+
+function titlePassesFilter(t){
+  const q = searchInput.value.trim().toLowerCase();
+  if (!q) return true;
+  return String(t||"").toLowerCase().includes(q);
+}
+
+function renderListings(items){
+  listContainer.innerHTML = "";
+  for (const it of items){
+    if (!titlePassesFilter(it.title)) continue;
+
+    const img = document.createElement("img");
+    img.className = "thumb";
+    img.alt = it.title || "Listing image";
+    img.src = it.primary_image || "";
+
+    const meta = document.createElement("div");
+    meta.className = "meta";
+
+    const title = document.createElement("div");
+    title.className = "title";
+    title.textContent = it.title || "(untitled)";
+
+    const sku = document.createElement("div");
+    sku.className = "sku";
+    sku.textContent = it.skus && it.skus.length ? `SKU: ${it.skus.join(", ")}` : "SKU: —";
+
+    const row = document.createElement("div");
+    row.className = "row";
+    const idPill = document.createElement("span");
+    idPill.className = "pill";
+    idPill.textContent = `#${it.listing_id}`;
+    const pricePill = document.createElement("span");
+    pricePill.className = "pill";
+    if (it.price) pricePill.textContent = `${it.price.amount/100} ${it.price.currency_code}`;
+    row.appendChild(idPill);
+    if (it.price) row.appendChild(pricePill);
+
+    meta.appendChild(title);
+    meta.appendChild(sku);
+    meta.appendChild(row);
+
+    const card = document.createElement("div");
+    card.className = "card";
+    card.appendChild(img);
+    card.appendChild(meta);
+
+    listContainer.appendChild(card);
+  }
+}
+
+async function fetchPrimaryImage(listingId){
+  const r = await apiFetch(`/etsyListingImagesProxy?listingId=${encodeURIComponent(listingId)}`);
+  if (!r.ok) return "";
+  const js = await r.json();
+  // Prefer explicit primary, else lowest rank, else first
+  let best = null;
+  if (Array.isArray(js.results) && js.results.length){
+    best = js.results.find(x => x.is_primary) ||
+           js.results.sort((a,b) => (a.rank||999) - (b.rank||999))[0] ||
+           js.results[0];
+  }
+  return best?.url_fullxfull || best?.url_570xN || "";
+}
+
+async function fetchSkus(listingId){
+  const r = await apiFetch(`/etsyListingInventoryProxy?listingId=${encodeURIComponent(listingId)}`);
+  if (!r.ok) return [];
+  const js = await r.json();
+  return js.skus || [];
+}
+
+async function* pLimit(iterable, concurrency=6, worker){
+  const queue = [...iterable]; const running = new Set();
+  while (queue.length || running.size){
+    while (queue.length && running.size < concurrency){
+      const item = queue.shift();
+      const p = Promise.resolve(worker(item)).finally(()=>running.delete(p));
+      running.add(p);
+    }
+    if (running.size) yield await Promise.race(running);
+  }
+}
+
+async function loadPage(p=1){
+  const limit = Math.min(100, Math.max(1, Number(pageSizeEl.value||100)));
+  const offset = (p-1) * limit;
+  pageNumEl.textContent = String(p);
+
+  const token = getAccessToken();
+  if (!token){
+    listContainer.innerHTML = `<div class="card"><div class="meta"><div class="title">Please connect Etsy first.</div></div></div>`;
+    return;
+  }
+
+  const r = await apiFetch(`/etsyShopListingsProxy?limit=${limit}&offset=${offset}&state=active`);
+  if (!r.ok){
+    const t = await r.text();
+    listContainer.innerHTML = `<div class="card"><div class="meta"><div class="title">Error loading listings: ${r.status}</div><div class="sku">${t}</div></div></div>`;
+    return;
+  }
+  const js = await r.json();
+  const raw = Array.isArray(js.results) ? js.results : (Array.isArray(js) ? js : []);
+
+  // Map to our minimal shape first
+  const base = raw.map(x => ({
+    listing_id: x.listing_id,
+    title     : x.title,
+    price     : x.price, // if present in payload
+    primary_image: "",
+    skus: []
+  }));
+
+  // Fill primary images + skus with light concurrency
+  const jobs = base.map(item => item);
+  const iterator = pLimit(jobs, 6, async (item) => {
+    const [img, skus] = await Promise.all([
+      fetchPrimaryImage(item.listing_id),
+      fetchSkus(item.listing_id)
+    ]);
+    item.primary_image = img;
+    item.skus = skus;
+    return item;
+  });
+
+  lastBatch = [];
+  for await (const done of iterator) lastBatch.push(done);
+  renderListings(lastBatch);
+
+  // Enable/disable paging heuristically (no total; rely on < limit)
+  prevBtn.disabled = p <= 1;
+  nextBtn.disabled = raw.length < limit;
+}
+
+/** ============ Events & Boot ============ */
+document.addEventListener("DOMContentLoaded", async () => {
+  bootFromQueryParams();
+  setAuthBadge();
+  scheduleTokenRefresh();
+
+  connectBtn.addEventListener("click", startOAuth); // same button wiring as design.html.  [oai_citation:6‡design.html](file-service://file-X9Nzcr2D5txXR96yC12fqD)
+  refreshBtn.addEventListener("click", () => loadPage(page));
+  prevBtn.addEventListener("click", () => { if (page>1){ page--; loadPage(page);} });
+  nextBtn.addEventListener("click", () => { page++; loadPage(page); });
+  pageSizeEl.addEventListener("change", () => { page = 1; loadPage(page); });
+  searchInput.addEventListener("input", () => renderListings(lastBatch));
+
+  // Auto-load first page if already connected
+  if (getAccessToken()) loadPage(1);
+});
+</script>
+</body>
+</html>
