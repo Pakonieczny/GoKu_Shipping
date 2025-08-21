@@ -3795,6 +3795,8 @@ function metalToBadge(label){
 
      // helper to show the verify modal (normalize first)
      function openVerifyModal(orig, rawSugg){
+      // make available across script blocks
+      window.openVerifyModal = openVerifyModal;
        const sugg = normalizeToAddressShape(rawSugg);
        renderAddressDiff(orig, sugg);
       const modal = document.getElementById("ccVerifyModal");
@@ -4295,9 +4297,12 @@ function parseIntlAddressBlock(blockText = "", fallbackCountryCode = "") {
         const { suggested } = await resp.json();
 
       // Use the same diff-rendering flow as the newer path
-      openVerifyModal(to, suggested || to);
+      window.openVerifyModal(to, suggested || to);
 
       }
+
+      // make available across script blocks
+      window.verifyAddressAndShowModal = verifyAddressAndShowModal;
 
       // Wire the Step-0 "Next" button to run verification once before moving on
       document.getElementById("ccNext")?.addEventListener("click", async (e)=>{
@@ -4305,7 +4310,7 @@ function parseIntlAddressBlock(blockText = "", fallbackCountryCode = "") {
         const onRecipient = document.getElementById("ccStep0")?.classList.contains("active");
         if (onRecipient) {
           e.preventDefault();
-          await verifyAddressAndShowModal();
+          await window.verifyAddressAndShowModal();
         }
       });
 
