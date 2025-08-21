@@ -390,7 +390,7 @@
       background:#fff;}
     #ccEditModal{position:fixed;inset:0;background:rgba(0,0,0,.45);display:none;z-index:9999;}
     #ccEditCard{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);
-      width:1032px;max-height:86vh;overflow:auto;background:#fff;border-radius:12px;
+      width:860px;max-height:86vh;overflow:auto;background:#fff;border-radius:12px;
       box-shadow:0 18px 60px rgba(0,0,0,.25);}
     #ccEditHead{padding:14px 18px;border-bottom:1px solid #ececec;display:flex;align-items:center;gap:10px}
     #ccEditTitle{font-weight:700;font-size:18px}
@@ -413,10 +413,31 @@
     #ccEditFoot button[disabled]{opacity:.5;cursor:not-allowed}
     #ccVerifyModal { position:fixed; inset:0; background:rgba(0,0,0,.45); display:none; z-index:10000; }
     #ccVerifyCard  { position:absolute; left:50%; top:50%; transform:translate(-50%,-50%);
-                 width:1032px; max-height:86vh; overflow:auto; background:#fff; border-radius:12px;
+                 width:860px; max-height:86vh; overflow:auto; background:#fff; border-radius:12px;
                  box-shadow:0 18px 60px rgba(0,0,0,.25); }
 
   </style>
+
+  <style id="ccGridNoOverlapFix">
+  /* Grid columns shrink correctly and inputs stay inside their cells */
+  .cc-grid     { display: grid; grid-template-columns: minmax(0,1fr) minmax(0,1fr) !important; gap: 12px !important; }
+  .cc-grid-3   { display: grid; grid-template-columns: repeat(3, minmax(0,1fr)) !important; gap: 12px !important; }
+
+  .cc-field { min-width: 0 !important; overflow: hidden; }
+
+  .cc-field input,
+  .cc-field select,
+  .cc-field textarea {
+    width: 100% !important;
+    box-sizing: border-box !important;
+    max-width: 100% !important;
+  }
+
+  .cc-field input,
+  .cc-field textarea { text-overflow: ellipsis; }
+
+  .cc-field label { white-space: nowrap; }
+ </style>
 
   <!-- 🆕 remove underline from the dropdown trigger -->
   <style id="dropdownNoUnderline">
@@ -674,7 +695,7 @@
   <!-- ✅ Address Verify Modal (replaces the old overlay) -->
   <div id="ccVerifyModal" role="dialog" aria-modal="true" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,.45); z-index:10000;">
     <div id="ccVerifyCard" style="position:absolute; left:50%; top:50%; transform:translate(-50%,-50%);
-         width:1032px; max-height:86vh; overflow:auto; background:#fff; border-radius:12px;
+         width:860px; max-height:86vh; overflow:auto; background:#fff; border-radius:12px;
          box-shadow:0 18px 60px rgba(0,0,0,.25);">
       <div style="padding:14px 18px; border-bottom:1px solid #ececec; display:flex; align-items:center; gap:10px">
         <div style="font-weight:700; font-size:18px">Edit Shipment</div>
