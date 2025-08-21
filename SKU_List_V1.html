@@ -226,6 +226,13 @@ function renderListings(items){
     editBtn.addEventListener("click", () => openSkuEditor(it));
     row.appendChild(editBtn);
 
+    // 🔹 Generate button
+    const genBtn = document.createElement("button");
+    genBtn.className = "btn";
+    genBtn.textContent = "Generate";
+    genBtn.addEventListener("click", () => generateAndSaveSku(it, genBtn));
+    row.appendChild(genBtn);
+
     meta.appendChild(title);
     meta.appendChild(sku);
     meta.appendChild(row);
@@ -357,6 +364,22 @@ async function saveSkuUpdates(listingId, items){
   return !!js.ok;
 }
 
+async function fetchListingDescription(listingId){
+  const r = await apiFetch(`/etsyListingGetProxy?listingId=${encodeURIComponent(listingId)}`);
+  if (!r.ok) return "";
+  const js = await r.json();
+  // Etsy may return description as a long string; guard just in case
+  return typeof js.description === "string" ? js.description : "";
+}
+
+function makeSkuFrom(desc, listingId){
+  const last4 = String(listingId).slice(-4);
+  const firstWordMatch = String(desc || "").match(/[A-Za-z0-9]+/);
+  const raw = firstWordMatch ? firstWordMatch[0] : "SKU";
+  const pretty = raw.charAt(0).toUpperCase() + raw.slice(1).toLowerCase();
+  return `${pretty}_${last4}`;
+}
+
 async function fetchPrimaryImage(listingId){
   const r = await apiFetch(`/etsyListingImagesProxy?listingId=${encodeURIComponent(listingId)}`);
   if (!r.ok) return "";
@@ -435,6 +458,33 @@ async function loadPage(p=1){
 
   prevBtn.disabled = p <= 1;
   nextBtn.disabled = raw.length < limit;
+}
+
+async function generateAndSaveSku(listing, btn){
+  try {
+    btn.disabled = true;
+    // 1) Get description & build SKU
+    const desc = await fetchListingDescription(listing.listing_id);
+    const computedSku = makeSkuFrom(desc || listing.title || "", listing.listing_id);
+
+    // 2) Get Variant 1 product_id
+    const products = await fetchInventoryDetail(listing.listing_id);
+    const p0 = (Array.isArray(products) && products.length) ? products[0] : null;
+    if (!p0 || p0.product_id == null) throw new Error("Missing Variant 1");
+
+    // 3) Save (server enforces consistency across all variants)
+    const ok = await saveSkuUpdates(listing.listing_id, [{ product_id: Number(p0.product_id), sku: computedSku }]);
+    if (ok){
+      listing.skus = [computedSku];
+      const card = findCardFor(listing.listing_id);
+      const skuLine = card?.querySelector(".sku");
+      if (skuLine) skuLine.textContent = `SKU: ${computedSku} (Variant 1)`;
+    }
+  } catch (e){
+    alert("Generate failed: " + e.message);
+  } finally {
+    btn.disabled = false;
+  }
 }
 
 /** ============ Boot ============ */
