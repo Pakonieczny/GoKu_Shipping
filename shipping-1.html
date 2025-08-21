@@ -3635,6 +3635,38 @@ function metalToBadge(label){
         return data;
       }
 
+      /* ---- Add below callCc(...) ---- */
+      function openAndAutoPrint(url){
+        // Open a clean window with an iframe and print as soon as it loads.
+        const w = window.open("", "_blank", "noopener,noreferrer");
+        if (!w) { M.toast?.({ html:"Pop-up blocked — allow pop-ups to print automatically" }); window.open(url, "_blank"); return; }
+        w.document.write(`
+          <!doctype html><html><head><meta charset="utf-8"><title>Shipping Label</title>
+            <style>html,body{margin:0;height:100%}</style>
+          </head><body>
+            <iframe id="labelFrame" src="${url}" style="border:0;width:100%;height:100%"></iframe>
+            <script>
+              const f = document.getElementById('labelFrame');
+              f.onload = function(){
+                try { (f.contentWindow || window).focus(); (f.contentWindow || window).print(); } catch(e){ window.print(); }
+                setTimeout(()=>window.close(), 2000);
+              };
+            <\/script>
+          </body></html>
+        `);
+        w.document.close();
+      }
+
+      async function waitForLabelUrl(shipmentId, {tries=12, delayMs=1000}={}){
+        for (let i=0; i<tries; i++){
+          const det = await callCc("GET", null, `?resource=shipment&id=${encodeURIComponent(shipmentId)}`);
+          const url = det.postage_label_pdf_url || det.postage_label_png_url;
+          if (url) return url;
+          await new Promise(r => setTimeout(r, delayMs));
+        }
+        return null;
+      }
+
        // Keep the ID field and global in sync wherever a shipment gets created/refreshed
       function pushShipmentId(id){
         const sid = String(id || "").trim();
@@ -3816,30 +3848,32 @@ function metalToBadge(label){
       async function buySelected(){
         const id = (idInput.value || "").trim();
         if (!id || !selectedPostageType) return;
-        await callCc("PATCH", { action:"buy", shipment_id:id, postage_type:selectedPostageType });
-        const det = await callCc("GET", null, `?resource=shipment&id=${encodeURIComponent(id)}`);
-        const pdf = det.postage_label_pdf_url || det.postage_label_png_url;
-        if (pdf) window.open(pdf, "_blank");
-        else M.toast?.({ html:"Label purchased. Refresh later for label URL." });
-      }
 
-      if (editBtn) editBtn.addEventListener("click", async () => {
-        // Ensure Step-0 inputs are hydrated so the verify modal isn't blank
-        try { window.collectRecipientAddress?.(); } catch {}
+        // UX: prevent double-clicks
+        const prevTxt = btnBuy.textContent;
+        btnBuy.disabled = true;
+        btnBuy.textContent = "Buying…";
 
-        // Keep the editor hidden until explicitly requested
-        if (modal) modal.style.display = "none";
+        try{
+          await callCc("PATCH", { action:"buy", shipment_id:id, postage_type:selectedPostageType });
 
-        const verifyEl = document.getElementById("ccVerifyModal");
+          btnBuy.textContent = "Fetching label…";
+          const url = await waitForLabelUrl(id, {tries:12, delayMs:1000}); // ~12s max
 
-        // Run Smarty + render RedOrange diffs in the Verify modal
-        await verifyAddressAndShowModal();
-
-        // Fallback: if verify didn't open (e.g., no country or API error), open editor wizard
-        if (verifyEl && verifyEl.style.display !== "block") {
-          modalOpen();
+          if (url){
+            btnBuy.textContent = "Printing…";
+            openAndAutoPrint(url);
+            M.toast?.({ html:"Label purchased — sending to printer" });
+          } else {
+            M.toast?.({ html:"Label purchased, but not generated yet. Try again in a moment." });
+          }
+        } catch(err){
+          handleCcApiError?.(err);
+        } finally {
+          btnBuy.textContent = prevTxt || "Buy & Print";
+          btnBuy.disabled = false;
         }
-      });
+      }
 
       btnClose.addEventListener("click", () => modalClose());
       btnBack .addEventListener("click", () => showStep(currentStep-1));
