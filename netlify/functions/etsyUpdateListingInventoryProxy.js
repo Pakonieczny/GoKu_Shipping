@@ -33,7 +33,7 @@ exports.handler = async (event) => {
       return { statusCode: getResp.status, body: JSON.stringify(inv) };
     }
 
-    // 2) Determine Variant 1 (first product) and apply only that SKU
+    // 2) Determine Variant 1 (first product) and apply that SKU consistently to ALL variants
     const list = Array.isArray(inv.products) ? inv.products : [];
     if (!list.length) {
       return { statusCode: 400, body: JSON.stringify({ error: "No variants found for this listing" }) };
@@ -45,8 +45,9 @@ exports.handler = async (event) => {
     }
     const newSku = String(requested.sku || "").trim();
 
+    // Enforce SKU consistency across ALL products to satisfy Etsy API rule
     const updated = list.map(p => {
-      if (Number(p.product_id) === targetPid) p.sku = newSku; // only Variant 1 changes
+      p.sku = newSku;
       return p;
     });
 
