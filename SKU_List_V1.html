@@ -372,9 +372,9 @@ async function fetchListingDescription(listingId){
   return typeof js.description === "string" ? js.description : "";
 }
 
-function makeSkuFrom(desc, listingId){
+function makeSkuFrom(title, listingId){
   const last4 = String(listingId).slice(-4);
-  const firstWordMatch = String(desc || "").match(/[A-Za-z0-9]+/);
+  const firstWordMatch = String(title || "").match(/[A-Za-z0-9]+/);
   const raw = firstWordMatch ? firstWordMatch[0] : "SKU";
   const pretty = raw.charAt(0).toUpperCase() + raw.slice(1).toLowerCase();
   return `${pretty}_${last4}`;
@@ -463,9 +463,8 @@ async function loadPage(p=1){
 async function generateAndSaveSku(listing, btn){
   try {
     btn.disabled = true;
-    // 1) Get description & build SKU
-    const desc = await fetchListingDescription(listing.listing_id);
-    const computedSku = makeSkuFrom(desc || listing.title || "", listing.listing_id);
+    // 1) Build SKU from TITLE ONLY
+    const computedSku = makeSkuFrom(listing.title || "", listing.listing_id);
 
     // 2) Get Variant 1 product_id
     const products = await fetchInventoryDetail(listing.listing_id);
