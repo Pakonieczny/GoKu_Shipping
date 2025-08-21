@@ -1242,45 +1242,6 @@ function metalToBadge(label){
       }
     }
 
-        // Prefer explicit normalized fields from PATCH A, then fallbacks
-        const qty =
-          (typeof it.__qty === "number" && isFinite(it.__qty)) ? it.__qty :
-          (typeof it.quantity === "number" ? it.quantity :
-           typeof it.qty === "number" ? it.qty :
-           typeof it.purchase_quantity === "number" ? it.purchase_quantity : null);
-
-        // helper from PATCH A logic
-        function parseMoney(m){
-          if (!m) return null;
-          if (typeof m === "number" || typeof m === "string") return Number(m);
-          if (typeof m === "object"){
-            if (typeof m.amount === "number" && typeof m.divisor === "number" && m.divisor) {
-              return m.amount / m.divisor;
-            }
-            if (typeof m.value === "number") return m.value;
-            if (typeof m.cents === "number") return m.cents / 100;
-            if (typeof m.amount === "string") return Number(m.amount);
-          }
-          return null;
-        }
-        const unitValue =
-          (typeof it.__unitValue === "number" && isFinite(it.__unitValue)) ? it.__unitValue :
-          parseMoney(it.price) ?? parseMoney(it.unit_price) ??
-          parseMoney(it.original_unit_price) ?? parseMoney(it.variation_price) ?? null;
-
-        // Only write when we actually have a number; don't clobber user edits otherwise
-        if (typeof qty === "number" && isFinite(qty) && qty > 0) {
-          qtyInput.value = String(qty);
-        }
-        if (typeof unitValue === "number" && isFinite(unitValue) && unitValue >= 0) {
-          // Fixed to 2 decimals for currency
-          unitInput.value = unitValue.toFixed(2);
-        }
-      } catch(err){
-        console.warn("prefillCustomsFromEtsy failed:", err);
-      }
-    }
-
     function buildEtsyDesc(it){
     const title = (it?.title || it?.listing_title || it?.name || "Item").toString();
     const props = it?.property_values || it?.variations || [];
