@@ -3838,6 +3838,9 @@ function metalToBadge(label){
       return true;
     }
 
+    // expose globally for other script blocks
+    window.openVerifyModal = openVerifyModal;
+
     /* === Helper: pull "Title:" line from the Order Details box === */
     function extractOrderTitle() {
       try {
@@ -4297,7 +4300,7 @@ function parseIntlAddressBlock(blockText = "", fallbackCountryCode = "") {
         const { suggested } = await resp.json();
 
       // Use the same diff-rendering flow as the newer path
-      window.openVerifyModal(to, suggested || to);
+      openVerifyModal(to, suggested || to);
 
       }
 
