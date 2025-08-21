@@ -230,8 +230,15 @@ function renderListings(items){
     const genBtn = document.createElement("button");
     genBtn.className = "btn";
     genBtn.textContent = "Generate";
+    genBtn.dataset.role = "gen-btn"; // identify per-card button
     genBtn.addEventListener("click", () => generateAndSaveSku(it, genBtn));
     row.appendChild(genBtn);
+
+    // If no SKU from Etsy → highlight Generate button
+    if (!firstSku) {
+      genBtn.style.background = "OrangeRed";
+      genBtn.title = "No SKU yet — click Generate";
+    }
 
     meta.appendChild(title);
     meta.appendChild(sku);
@@ -324,6 +331,9 @@ function buildSkuEditorDom(listing, products){
         const skuLine = card.querySelector(".sku");
         const firstSku = (Array.isArray(listing.skus) && listing.skus.length) ? listing.skus[0] : "";
         skuLine.textContent = firstSku ? `SKU: ${firstSku} (Variant 1)` : "SKU: —";
+        // Reset Generate button color if SKU now exists
+        const genBtn = card.querySelector('[data-role="gen-btn"]');
+        if (genBtn) genBtn.style.background = firstSku ? "" : "OrangeRed";
         editor.style.display = "none";
       }
     } catch (e){
@@ -478,6 +488,8 @@ async function generateAndSaveSku(listing, btn){
       const card = findCardFor(listing.listing_id);
       const skuLine = card?.querySelector(".sku");
       if (skuLine) skuLine.textContent = `SKU: ${computedSku} (Variant 1)`;
+      // Remove warning color now that SKU exists
+      if (btn) btn.style.background = "";
     }
   } catch (e){
     alert("Generate failed: " + e.message);
