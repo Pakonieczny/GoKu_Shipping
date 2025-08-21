@@ -3835,6 +3835,16 @@ function metalToBadge(label){
         media_mail_requested: "cc_media_mail_requested"
       };
 
+       // Fallback selectors for the multi-tranche UI
+       const CLASS_MAP = {
+          description       : ".cc_item_description",
+          quantity          : ".cc_item_qty",
+          unit_value        : ".cc_item_unit_value",
+          hs_tariff_code    : ".cc_item_hs_tariff_code",
+          origin_country    : ".cc_item_origin_country",
+          manufacture_country: ".cc_item_manufacture_country"
+       };
+
       function getStepRoot(step){ return document.getElementById(`ccStep${step}`); }
 
       function clearMissing(step){
@@ -3871,9 +3881,37 @@ function metalToBadge(label){
         if (step === 0) {
           req = ["cc_to_name","cc_to_address_1","cc_to_city","cc_to_province_code","cc_to_postal_code","cc_to_country_code"];
         } else if (step === 1) {
-          req = ["cc_item_description","cc_item_qty","cc_item_unit_value"];
+          // ✅ New multi-line-item validation
+          // 1) Gather items from the UI
+          const lines = collectCcLineItems();
+          // 2) Require at least one tranche
+          if (!lines.length) {
+            const cont  = document.getElementById("cc_line_items_container");
+            const first = cont?.querySelector(".cc-line-item");
+            if (first){
+              first.querySelectorAll(".cc_item_description,.cc_item_qty,.cc_item_unit_value")
+                   .forEach(el => el.closest(".cc-field")?.classList.add("cc-missing"));
+              first.querySelector(".cc_item_description")?.focus();
+            }
+            return false;
+          }
+          // 3) Per-tranche minimal checks
+          for (const node of document.querySelectorAll("#cc_line_items_container .cc-line-item")){
+            const desc = node.querySelector(".cc_item_description")?.value.trim();
+            const qty  = Number(node.querySelector(".cc_item_qty")?.value);
+            const unit = Number(node.querySelector(".cc_item_unit_value")?.value);
+            const ok = !!desc && isFinite(qty) && qty > 0 && isFinite(unit) && unit >= 0;
+            if (!ok){
+              node.querySelectorAll(".cc_item_description,.cc_item_qty,.cc_item_unit_value")
+                  .forEach(el => el.closest(".cc-field")?.classList.add("cc-missing"));
+              node.querySelector(".cc_item_description")?.focus();
+              return false;
+            }
+          }
+          // All good for Step 1
         } else if (step === 2) {
-          // Package fields actually used by payload + refresh
+
+        // Package fields actually used by payload + refresh
           req = ["cc_weight","cc_size_x","cc_size_y","cc_size_z","cc_value_currency"];
         }
         const missing = req.filter(id => !String(document.getElementById(id)?.value || "").trim());
@@ -3894,14 +3932,20 @@ function metalToBadge(label){
           for (const k of Object.keys(fieldsObj)){
             const id = FIELD_MAP[k] || k;
             details.push(k);
-            const el = document.getElementById(id);
+            let el = document.getElementById(id);
+            if (!el && CLASS_MAP[k]) {
+              el = document.querySelector("#cc_line_items_container " + CLASS_MAP[k]);
+            }
             if (el){ (el.closest(".cc-field") || el).style.border = "2px solid orangered"; }
           }
         } else if (Array.isArray(raw?.missing)){
           raw.missing.forEach(k=>{
             const id = FIELD_MAP[k] || k;
             details.push(k);
-            const el = document.getElementById(id);
+           let el = document.getElementById(id);
+            if (!el && CLASS_MAP[k]) {
+              el = document.querySelector("#cc_line_items_container " + CLASS_MAP[k]);
+            }
             if (el){ (el.closest(".cc-field") || el).style.border = "2px solid orangered"; }
           });
         }
