@@ -3652,14 +3652,14 @@ function metalToBadge(label){
 
       // Keep the ID field and global in sync wherever a shipment gets created/refreshed
       function pushShipmentId(id){
-        const v  = String(id ?? "");
+        const v = String(id ?? "");
         window.ccShipmentId = v;
         const el = document.getElementById("ccShipmentId");
         if (el) {
           const prev = el.value;
           el.value = v;
           el.dataset.setAt = String(Date.now());
-          // Only trigger 'input' when not muted AND not frozen post-buy
+          // ⛔ do not fire 'input' if muted or frozen
           if (!window.ccMuteIdInput && !window.ccPostBuyFrozen && v !== prev) {
             try { el.dispatchEvent(new Event("input", { bubbles: true })); } catch {}
           }
@@ -3822,7 +3822,7 @@ function metalToBadge(label){
           window.ccSpin?.(true);
           // No stub window: we will print inline in the same tab.
           // Mute ccShipmentId 'input' side-effects during Buy so it doesn't auto-refresh.
-          window.ccMuteIdInput = true;
+          window.ccPostBuyFrozen = true; // freeze immediately on Buy
 
           // 1) Ensure we have a shipment (create if missing)
           const s0 = await ensureShipment();
@@ -3976,7 +3976,7 @@ function metalToBadge(label){
         // 2) Only treat the id as valid if it looks like a real one
         const rawId      = (document.getElementById("ccShipmentId")?.value || "").trim();
         const hasValidId = /^[A-Za-z0-9_-]{8,}$/.test(rawId);
-        const canRefresh = hasValidId && step >= 2; // only refresh once package fields exist
+        const canRefresh = hasValidId && step >= 2 && !window.ccPostBuyFrozen;
         try {
         if (canRefresh) {
           // Server-side validate/update existing shipment (now safe)
