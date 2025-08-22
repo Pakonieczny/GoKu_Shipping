@@ -1161,6 +1161,25 @@ function metalToBadge(label){
         el.value = `${yyyy}-${mm}-${dd}`;
         el.min   = el.value; // prevent past dates
       }
+
+      /* 🆕 Pre-fill Chit Chats Package defaults (Step 2) */
+      (function prefillPackageDefaults(){
+        const set = (id, val) => { const el = document.getElementById(id); if (el) el.value = val; };
+        const setIfBlank = (id, val) => {
+          const el = document.getElementById(id);
+          if (el && String(el.value||"").trim()==="") el.value = val;
+        };
+        // i)  Package type → Thick Envelope
+        set("cc_package_type", "thick_envelope");
+        // ii) Size unit → In
+        set("cc_size_unit", "in");
+        // iii) Weight unit → lbs (select uses 'lb')
+        set("cc_weight_unit", "lb");
+        // iv–vi) Dimensions & weight
+        setIfBlank("cc_size_x", "6");     // Length (X)
+        setIfBlank("cc_size_y", "4");     // Width (Y)
+        setIfBlank("cc_weight", "0.25");  // Weight
+      })();
     });
 
     /* globals for realtime listener */
