@@ -3635,38 +3635,6 @@ function metalToBadge(label){
         return data;
       }
 
-      /* ---- Add below callCc(...) ---- */
-      function openAndAutoPrint(url){
-        // Open a clean window with an iframe and print as soon as it loads.
-        const w = window.open("", "_blank", "noopener,noreferrer");
-        if (!w) { M.toast?.({ html:"Pop-up blocked — allow pop-ups to print automatically" }); window.open(url, "_blank"); return; }
-        w.document.write(`
-          <!doctype html><html><head><meta charset="utf-8"><title>Shipping Label</title>
-            <style>html,body{margin:0;height:100%}</style>
-          </head><body>
-            <iframe id="labelFrame" src="${url}" style="border:0;width:100%;height:100%"></iframe>
-            <script>
-              const f = document.getElementById('labelFrame');
-              f.onload = function(){
-                try { (f.contentWindow || window).focus(); (f.contentWindow || window).print(); } catch(e){ window.print(); }
-                setTimeout(()=>window.close(), 2000);
-              };
-            <\/script>
-          </body></html>
-        `);
-        w.document.close();
-      }
-
-      async function waitForLabelUrl(shipmentId, {tries=12, delayMs=1000}={}){
-        for (let i=0; i<tries; i++){
-          const det = await callCc("GET", null, `?resource=shipment&id=${encodeURIComponent(shipmentId)}`);
-          const url = det.postage_label_pdf_url || det.postage_label_png_url;
-          if (url) return url;
-          await new Promise(r => setTimeout(r, delayMs));
-        }
-        return null;
-      }
-
        // Keep the ID field and global in sync wherever a shipment gets created/refreshed
       function pushShipmentId(id){
         const sid = String(id || "").trim();
@@ -3848,30 +3816,92 @@ function metalToBadge(label){
       async function buySelected(){
         const id = (idInput.value || "").trim();
         if (!id || !selectedPostageType) return;
-
-        // UX: prevent double-clicks
-        const prevTxt = btnBuy.textContent;
         btnBuy.disabled = true;
-        btnBuy.textContent = "Buying…";
-
         try{
+          // 1) Buy the label
           await callCc("PATCH", { action:"buy", shipment_id:id, postage_type:selectedPostageType });
 
-          btnBuy.textContent = "Fetching label…";
-          const url = await waitForLabelUrl(id, {tries:12, delayMs:1000}); // ~12s max
+          // 2) Wait for Chit Chats to finish generating the label URL
+          const url = await waitForLabelUrl(id, 8, 1200); // up to ~10s
 
-          if (url){
-            btnBuy.textContent = "Printing…";
-            openAndAutoPrint(url);
-            M.toast?.({ html:"Label purchased — sending to printer" });
+          // 3) Auto-print (PDF or PNG) with robust fallback
+          if (url) {
+            await openAndAutoPrintLabel(url);
+            M.toast?.({ html:"Label opened for printing." });
           } else {
-            M.toast?.({ html:"Label purchased, but not generated yet. Try again in a moment." });
+            M.toast?.({ html:"Label purchased; not ready yet. Try opening from Chit Chats shortly." });
           }
         } catch(err){
           handleCcApiError?.(err);
         } finally {
-          btnBuy.textContent = prevTxt || "Buy & Print";
           btnBuy.disabled = false;
+        }
+      }
+
+      if (editBtn) editBtn.addEventListener("click", async () => {
+        // Ensure Step-0 inputs are hydrated so the verify modal isn't blank
+        try { window.collectRecipientAddress?.(); } catch {}
+
+        // Keep the editor hidden until explicitly requested
+        if (modal) modal.style.display = "none";
+
+        const verifyEl = document.getElementById("ccVerifyModal");
+
+        // Run Smarty + render RedOrange diffs in the Verify modal
+        await verifyAddressAndShowModal();
+
+        // Fallback: if verify didn't open (e.g., no country or API error), open editor wizard
+        if (verifyEl && verifyEl.style.display !== "block") {
+          modalOpen();
+        }
+      });
+
+       // ── helpers for label readiness + auto-print ─────────────────────
+      async function waitForLabelUrl(id, tries = 8, delayMs = 1200){
+        for (let i = 0; i < tries; i++){
+          const det = await callCc("GET", null, `?resource=shipment&id=${encodeURIComponent(id)}`);
+          const url = det?.postage_label_pdf_url || det?.postage_label_png_url;
+          if (url) return url;
+          await new Promise(r => setTimeout(r, delayMs));
+        }
+        return null;
+      }
+
+      async function openAndAutoPrintLabel(url){
+        // Prefer same-origin blob to avoid cross-origin print restrictions.
+        try{
+          const resp = await fetch(url, { mode: "cors" });
+          if (!resp.ok) throw new Error("fetch failed");
+          const blob = await resp.blob();
+          const blobUrl = URL.createObjectURL(blob);
+          await new Promise((resolve) => {
+            const iframe = document.createElement("iframe");
+            iframe.style.position = "fixed";
+            iframe.style.right = "0";
+            iframe.style.bottom = "0";
+            iframe.style.width = "0";
+            iframe.style.height = "0";
+            iframe.style.border = "0";
+            iframe.onload = () => {
+              // Give PDF viewers a moment to render before print
+              setTimeout(() => {
+                try {
+                  iframe.contentWindow?.focus();
+                  iframe.contentWindow?.print();
+                } finally {
+                  URL.revokeObjectURL(blobUrl);
+                  document.body.removeChild(iframe);
+                  resolve();
+                }
+              }, 500);
+            };
+            document.body.appendChild(iframe);
+            iframe.src = blobUrl;
+          });
+        } catch {
+          // Fallback: open in a new tab if CORS blocks blob fetch
+          const sep = url.includes("?") ? "&" : "?";
+          window.open(url + sep + "print=1", "_blank");
         }
       }
 
