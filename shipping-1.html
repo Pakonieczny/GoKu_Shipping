@@ -1194,6 +1194,28 @@ function metalToBadge(label){
 
     });
 
+    /* 🧷 Last-line defense: block clicks while over limit */
+    (function attachGrandTotalGuards(){
+      const GRAND_TOTAL_LIMIT = 300;
+      const guard = (e) => {
+        const total = Number(document.getElementById("cc_grand_total")?.value || 0);
+        const cur   = (document.getElementById("cc_value_currency")?.value || "").toUpperCase();
+        if (total >= GRAND_TOTAL_LIMIT){
+          e.stopImmediatePropagation?.(); e.preventDefault();
+          window.M?.toast && M.toast({
+            html: `Grand Total must be below $${GRAND_TOTAL_LIMIT} ${cur ? `(${cur})` : ""} to proceed.`,
+            classes: "red darken-2"
+          });
+          return false;
+        }
+        return true;
+      };
+      ["ccNext","ccRefreshRates","ccBuy"].forEach(id=>{
+        const el = document.getElementById(id);
+        if (el) el.addEventListener("click", guard, true); // capture: intercept before other handlers
+      });
+    })();
+
     /* globals for realtime listener */
     let chatUnsub = null;        // holds the active Firestore unsubscribe fn
     let firstBatch = true;       // suppress chime on initial load
@@ -1439,6 +1461,8 @@ function metalToBadge(label){
         sku         : ($(".cc_item_sku")?.value || "").trim() || null,
         quantity    : Number($(".cc_item_qty")?.value || 1),
         unit_value  : Number($(".cc_item_unit_value")?.value || 0),
+        // NEW: total item value from the UI field (falls back later if blank)
+        value       : Number($(".cc_item_value")?.value || 0),
         origin_country      : ($(".cc_item_origin_country")?.value || "").trim().toUpperCase() || null,
         hs_tariff_code      : ($(".cc_item_hs_tariff_code")?.value || "").trim() || null,
         manufacture_country : ($(".cc_item_manufacture_country")?.value || "").trim().toUpperCase() || null,
@@ -1467,6 +1491,27 @@ function metalToBadge(label){
       if (out) out.value = total.toFixed(2);
       const curEl = document.getElementById("cc_grand_total_currency");
       if (curEl) curEl.textContent = cur ? `(${cur})` : "";
+
+      /* 🔒 Over-limit enforcement */
+      const GRAND_TOTAL_LIMIT = 300; // currency-agnostic hard cap
+      const over = total >= GRAND_TOTAL_LIMIT;
+      const nextBtn    = document.getElementById("ccNext");
+      const buyBtn     = document.getElementById("ccBuy");
+      const rateBtn    = document.getElementById("ccRefreshRates");
+      [nextBtn, buyBtn, rateBtn].forEach(b => { if (b) b.disabled = over; });
+
+      // fire toast only on state change → avoid spam while typing
+      window.__gtOverLimit = window.__gtOverLimit ?? false;
+      if (over !== window.__gtOverLimit){
+        window.__gtOverLimit = over;
+        if (over && window.M?.toast){
+          M.toast({
+            html: `Grand Total is $${total.toFixed(2)} ${cur ? `(${cur})` : ""}. Reduce below $${GRAND_TOTAL_LIMIT} to continue.`,
+            classes: "red darken-2"
+          });
+        }
+      }
+
     }catch(e){
       console.warn("updateGrandTotal() failed:", e);
     }
@@ -4091,6 +4136,9 @@ function metalToBadge(label){
           unit_value: 0
         };
         const totalValue = lines.reduce((sum, li) => sum + (Number(li.unit_value||0) * Number(li.quantity||0)), 0);
+        // Prefer the UI's Grand Total if present (sums `.cc_item_value`), else fall back
+        const grandInput = Number(document.getElementById("cc_grand_total")?.value || 0);
+        const grandTotal = (Number.isFinite(grandInput) && grandInput > 0) ? grandInput : totalValue;
         const pkg = {
           package_type: document.getElementById("cc_package_type").value,
           size_unit   : document.getElementById("cc_size_unit").value,
@@ -4109,13 +4157,19 @@ function metalToBadge(label){
           package_contents: document.getElementById("cc_package_contents").value,
           customs_tax_reference_number: (document.getElementById("cc_customs_tax_reference_number")?.value || "").trim() || null,
           description    : first.description,
-          value          : String(totalValue),
+          // NEW: Grand Total → shipment.value
+          value          : String(grandTotal),
           value_currency : valueCurrency,
           postage_type   : "unknown",
           line_items     : lines.map(li => ({
             description: li.description,
             quantity   : li.quantity,
             unit_value : String(li.unit_value),
+            // NEW: per-line total → line_items[].value, fallback to unit_value * quantity
+            value      : String(
+              (Number.isFinite(Number(li.value)) && Number(li.value) > 0)
+                ? Number(li.value)
+                : (Number(li.unit_value||0) * Number(li.quantity||0))
             origin_country      : li.origin_country,
             hs_tariff_code      : li.hs_tariff_code,
             manufacture_country : li.manufacture_country,
