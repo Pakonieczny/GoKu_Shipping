@@ -3654,7 +3654,11 @@ function metalToBadge(label){
         return out.shipment || (out.id ? await callCc("GET", null, `?resource=shipment&id=${encodeURIComponent(out.id)}`) : null);
       }
 
-      /* ---------- Buy → Poll Chit Chats for label → Print via QZ (with fallbacks) ---------- */
+      /* ---------- Buy → Poll Chit Chats for label → Print inline (no tabs); QZ optional ---------- */
+
+      /* Feature flag: leave QZ code in the file, but disable it by default */
+      const USE_QZ = false;
+
 
       /* Enhanced fetch wrapper you already use: callCc(method, body, qs) */
       /* Helper that ensures we have a shipment object: ensureShipment()  */
@@ -3667,19 +3671,45 @@ function metalToBadge(label){
         return { zpl, pdf, png };
       }
 
-      function openPrintStub(){
-        let win = null;
-        try { win = window.open("", "_blank", "noopener,noreferrer"); } catch {}
-        if (!win) return null;
-        const html = `<!doctype html><html><head><meta charset="utf-8"><title>Generating label…</title>
-          <style>
-            body{margin:0;display:flex;align-items:center;justify-content:center;height:100vh;font:16px system-ui,Arial}
-            .spinner{width:42px;height:42px;border:4px solid #ddd;border-top-color:#26a69a;border-radius:50%;animation:spin .9s linear infinite;margin:12px auto}
-            @keyframes spin{to{transform:rotate(360deg)}}
-          </style></head>
-          <body><div><div class="spinner"></div><div>Generating label in Chit Chats… don’t close this tab.</div></div></body></html>`;
-        try { win.document.open(); win.document.write(html); win.document.close(); } catch {}
-        return win;
+      /* --- Inline-print helpers (no new tab) --- */
+      async function fetchCcLabelBlob(fmt, shipmentId) {
+        const u = `/.netlify/functions/testChitChats?resource=label&id=${encodeURIComponent(shipmentId)}&format=${encodeURIComponent(fmt)}`;
+        const r = await fetch(u, { method: "GET" });
+        if (!r.ok) throw new Error(`label ${fmt} fetch failed: ${r.status}`);
+        const ct = r.headers.get("content-type") || (fmt === "pdf" ? "application/pdf" : "image/png");
+        const buf = await r.arrayBuffer();
+        return new Blob([buf], { type: ct });
+      }
+
+      function printBlobInPlace(blob) {
+        return new Promise((resolve, reject) => {
+          const url = URL.createObjectURL(blob);
+          const iframe = document.createElement("iframe");
+          iframe.style.position = "fixed";
+          iframe.style.right = "0";
+          iframe.style.bottom = "0";
+          iframe.style.width = "0";
+          iframe.style.height = "0";
+          iframe.style.border = "0";
+          iframe.onload = () => {
+            try {
+              const w = iframe.contentWindow;
+              // Let the PDF viewer initialize before printing
+              setTimeout(() => {
+                w.focus();
+                w.print();
+                resolve();
+                setTimeout(() => { URL.revokeObjectURL(url); iframe.remove(); }, 1000);
+              }, 250);
+            } catch (e) {
+              URL.revokeObjectURL(url);
+              iframe.remove();
+              reject(e);
+            }
+          };
+          iframe.src = url;
+          document.body.appendChild(iframe);
+        });
       }
 
       /* Poll GET ?resource=shipment&id=… until label URLs appear (Chit Chats returns them when status turns ready) */
@@ -3766,11 +3796,11 @@ function metalToBadge(label){
         target.document.open(); target.document.write(html); target.document.close();
       }
 
-      /* Main flow: buy → poll → print */
+      /* Main flow: buy → poll → print (no new tab) */      
       async function buyCcThenPrint() {
         try {
           window.ccSpin?.(true);
-          const stub = openPrintStub(); // holds the user gesture open
+          // No stub window: we will print inline in the same tab.
 
           // 1) Ensure we have a shipment (create if missing)
           const s0 = await ensureShipment();
@@ -3788,23 +3818,21 @@ function metalToBadge(label){
           // 4) Poll for label URLs (Chit Chats may return postage_requested first)
           const { zpl, pdf, png, shipment } = await waitForLabelUrls(shipmentId, 12, 1500);
 
-          // 5) Try QZ in order ZPL → PDF → PNG → browser fallback
+          // 5) Preferred: inline browser print (PDF first, then PNG). No tabs, no redirect.
           let printed = false;
           try {
-            if (zpl) {
-              // Avoid CORS by fetching ZPL via our Netlify proxy
-              const zplText = await callCc("GET", null, `?resource=label&id=${encodeURIComponent(shipmentId)}&format=zpl`);
-              await qzPrintZpl(zplText);
-              printed = true;
-            }
-          } catch {}
-          if (!printed) { try { if (pdf) { await qzPrintPdfUrl(pdf); printed = true; } } catch {} }
-          if (!printed) { try { if (png) { await qzPrintPngUrl(png); printed = true; } } catch {} }
+            const pdfBlob = await fetchCcLabelBlob("pdf", shipmentId);
+            await printBlobInPlace(pdfBlob);
+            printed = true;
+          } catch {}  // fall through to PNG
           if (!printed) {
-            const url = pdf || png || zpl;
-            if (!url) throw new Error("Label purchased, but not ready yet. Try again in a moment.");
-            await openAndAutoPrintLabel(url, stub);
+            try {
+              const pngBlob = await fetchCcLabelBlob("png", shipmentId);
+              await printBlobInPlace(pngBlob);
+              printed = true;
+            } catch {}
           }
+          if (!printed) throw new Error("Label purchased, but not ready yet.");
 
           // 6) Update UI bits if available
           if (shipment?.carrier_tracking_code) {
