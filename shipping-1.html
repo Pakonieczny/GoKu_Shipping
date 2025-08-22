@@ -3432,6 +3432,33 @@ function metalToBadge(label){
       };
     })();
 
+    function extractLabelUrl(obj){
+      const c = obj || {};
+      return (
+        c.postage_label_pdf_url ||
+        c.postage_label_png_url ||
+        c.postage_label_url     ||
+        c.label_url             ||
+        (c.label && (c.label.pdf || c.label.url)) ||
+        (c.shipment && extractLabelUrl(c.shipment)) ||
+        null
+      );
+    }
+
+    // Long-poll with exponential backoff (maxMs ~45s)
+    async function waitForLabelUrlEx(id, maxMs = 45000){
+      const start = Date.now();
+      let delay = 800;
+      while ((Date.now() - start) < maxMs){
+        const det = await callCc("GET", null, `?resource=shipment&id=${encodeURIComponent(id)}`);
+        const url = extractLabelUrl(det);
+        if (url) return url;
+        await new Promise(r => setTimeout(r, delay));
+        delay = Math.min(Math.round(delay * 1.6), 4000);
+      }
+      return null;
+    }
+
     // Global helper — returns "YYYY-MM-DD" from #cc_ship_date or "today"
     function getShipDateForApi() {
       const el = document.getElementById("cc_ship_date");
@@ -3817,26 +3844,32 @@ function metalToBadge(label){
         const id = (idInput.value || "").trim();
         if (!id || !selectedPostageType) return;
         btnBuy.disabled = true;
+        // Pre-open a print window during the user gesture to dodge popup blockers
+        const preWin = window.open("", "labelPrintWin", "noopener,noreferrer");
+        if (preWin) preWin.document.write('<p style="font:14px sans-serif;padding:12px">Preparing label…</p>');
         try{
           // 1) Buy the label
-          await callCc("PATCH", { action:"buy", shipment_id:id, postage_type:selectedPostageType });
-
-          // 2) Wait for Chit Chats to finish generating the label URL
-          const url = await waitForLabelUrl(id, 8, 1200); // up to ~10s
-
+          const buyOut = await callCc("PATCH", { action:"buy", shipment_id:id, postage_type:selectedPostageType });
+          // 2) Use label URL from buy response if present; else long-poll with backoff
+          let url = extractLabelUrl(buyOut);
+          if (!url) {
+            M.toast?.({ html:"Generating label…" });
+            url = await waitForLabelUrlEx(id, 45000); // up to ~45s with backoff
+          }
           // 3) Auto-print (PDF or PNG) with robust fallback
           if (url) {
-            await openAndAutoPrintLabel(url);
+            await openAndAutoPrintLabel(url, preWin);
             M.toast?.({ html:"Label opened for printing." });
           } else {
-            M.toast?.({ html:"Label purchased; not ready yet. Try opening from Chit Chats shortly." });
+            preWin?.close();
+            M.toast?.({ html:"Label purchased; still generating on Chit Chats." });
           }
         } catch(err){
+          preWin?.close();
           handleCcApiError?.(err);
         } finally {
           btnBuy.disabled = false;
         }
-      }
 
       if (editBtn) editBtn.addEventListener("click", async () => {
         // Ensure Step-0 inputs are hydrated so the verify modal isn't blank
@@ -3867,41 +3900,48 @@ function metalToBadge(label){
         return null;
       }
 
-      async function openAndAutoPrintLabel(url){
+      async function openAndAutoPrintLabel(url, preWin){
         // Prefer same-origin blob to avoid cross-origin print restrictions.
         try{
           const resp = await fetch(url, { mode: "cors" });
           if (!resp.ok) throw new Error("fetch failed");
           const blob = await resp.blob();
           const blobUrl = URL.createObjectURL(blob);
-          await new Promise((resolve) => {
-            const iframe = document.createElement("iframe");
-            iframe.style.position = "fixed";
-            iframe.style.right = "0";
-            iframe.style.bottom = "0";
-            iframe.style.width = "0";
-            iframe.style.height = "0";
-            iframe.style.border = "0";
-            iframe.onload = () => {
-              // Give PDF viewers a moment to render before print
-              setTimeout(() => {
-                try {
-                  iframe.contentWindow?.focus();
-                  iframe.contentWindow?.print();
-                } finally {
-                  URL.revokeObjectURL(blobUrl);
-                  document.body.removeChild(iframe);
-                  resolve();
-                }
-              }, 500);
-            };
-            document.body.appendChild(iframe);
-            iframe.src = blobUrl;
-          });
+    if (preWin) {
+      preWin.location = blobUrl;
+      setTimeout(()=>{ try{ preWin.focus(); preWin.print(); }catch{} }, 600);
+      // give the viewer time before we revoke
+      setTimeout(()=>URL.revokeObjectURL(blobUrl), 5000);
+      return;
+    }
+    await new Promise((resolve) => {
+      const iframe = document.createElement("iframe");
+      iframe.style.position = "fixed";
+      iframe.style.right = "0";
+      iframe.style.bottom = "0";
+      iframe.style.width = "0";
+      iframe.style.height = "0";
+      iframe.style.border = "0";
+      iframe.onload = () => {
+        setTimeout(() => {
+          try {
+            iframe.contentWindow?.focus();
+            iframe.contentWindow?.print();
+          } finally {
+            URL.revokeObjectURL(blobUrl);
+            document.body.removeChild(iframe);
+            resolve();
+          }
+        }, 500);
+      };
+      document.body.appendChild(iframe);
+      iframe.src = blobUrl;
+    });
         } catch {
           // Fallback: open in a new tab if CORS blocks blob fetch
           const sep = url.includes("?") ? "&" : "?";
-          window.open(url + sep + "print=1", "_blank");
+          if (preWin) { preWin.location = url + sep + "print=1"; }
+          else { window.open(url + sep + "print=1", "_blank"); }
         }
       }
 
