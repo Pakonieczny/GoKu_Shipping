@@ -5019,29 +5019,53 @@ function parseIntlAddressBlock(blockText = "", fallbackCountryCode = "") {
 
       /* ────────────────────────────────────────────────────────────── */
 
+      // Helper: inline button spinner toggler
+      function setBtnLoading(btn, on){
+        if (!btn) return;
+        btn.disabled = !!on;
+        let sp = btn.querySelector(".cc-spinner");
+        if (!sp){
+          sp = document.createElement("span");
+          sp.className = "cc-spinner";
+          sp.setAttribute("aria-hidden","true");
+          btn.appendChild(sp);
+        }
+        sp.style.display = on ? "inline-block" : "none";
+      }
+
       btnNext.addEventListener("click", async () => {
         try {
           if (currentStep === 0){
-            if (!(await validateStep(0))) return;
+            setBtnLoading(btnNext, true);
+            if (!(await validateStep(0))) { setBtnLoading(btnNext, false); return; }
             const shown = await maybeVerifyAddressBeforeStep1();
+            setBtnLoading(btnNext, false);
             if (shown) return;
             showStep(1);
             return;
           }
           if (currentStep === 1){
-            if (!(await validateStep(1))) return;            
+            // No Chit Chats call here → no spinner
+            if (!(await validateStep(1))) return;
             showStep(2);
             return;
           }
           if (currentStep === 2){
-            if (!(await validateStep(2))) return;
+            setBtnLoading(btnNext, true);
+            if (!(await validateStep(2))) { setBtnLoading(btnNext, false); return; }
             await ensureShipment();
             const id = (idInput.value || "").trim();
-            if (!id) { M.toast?.({ html: "Could not create shipment — check Recipient & Description." }); return; }
+            if (!id) {
+              M.toast?.({ html: "Could not create shipment — check Recipient & Description." });
+              setBtnLoading(btnNext, false);
+              return;
+            }
             await refreshRates();
+            setBtnLoading(btnNext, false);
             showStep(3);
           }
         } catch (err) {
+          setBtnLoading(btnNext, false);
           handleCcApiError(err);
         }
       });
@@ -5055,7 +5079,18 @@ function parseIntlAddressBlock(blockText = "", fallbackCountryCode = "") {
           handleCcApiError(err);
         }
       });
-      document.getElementById("ccBuy")?.addEventListener("click", buyCcThenPrint);
+     // Wrap Buy with spinner while purchasing + fetching label via proxy
+      document.getElementById("ccBuy")?.addEventListener("click", async (e) => {
+        const btn = e.currentTarget;
+        try {
+          setBtnLoading(btn, true);
+          await buyCcThenPrint();
+        } catch (err) {
+          handleCcApiError(err);
+        } finally {
+          setBtnLoading(btn, false);
+        }
+      });
 
     })();
 
