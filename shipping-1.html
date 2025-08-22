@@ -3659,10 +3659,6 @@ function metalToBadge(label){
       /* Enhanced fetch wrapper you already use: callCc(method, body, qs) */
       /* Helper that ensures we have a shipment object: ensureShipment()  */
       /* Helper to set the visible shipment id + window.ccShipmentId: pushShipmentId(id) */
-
-      const ratesList = document.getElementById("ratesList");
-      const idInput   = document.getElementById("ccShipmentId");
-
       /* Prefer ZPL for thermal; PDF/PNG as fallback */
       function pickLabelFromShipment(s) {
         const zpl = s.postage_label_zpl_url || s.postageLabelZplUrl;
