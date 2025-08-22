@@ -3453,6 +3453,16 @@ function metalToBadge(label){
       const btnRefresh= document.getElementById("ccRefreshRates");
       const btnBuy    = document.getElementById("ccBuy");
       const idInput   = document.getElementById("ccShipmentId");
+      // Single source of truth: once we buy, freeze auto-refreshes that key off ccShipmentId
+      window.ccPostBuyFrozen ??= false;
+      // Capture-phase guard so we intercept before any other listener
+      idInput?.addEventListener("input", (e) => {
+        if (window.ccPostBuyFrozen) {
+          e.stopImmediatePropagation();
+          e.preventDefault();
+        }
+      }, true);
+
       const fnBase    = "/.netlify/functions";
 
       let currentStep = 0, selectedPostageType = null;
@@ -3462,9 +3472,10 @@ function metalToBadge(label){
         if (!el) return;
         if ("value" in el) el.value = String(v);
         else el.textContent = String(v);
-        // Don't propagate 'input' for ccShipmentId while muted (prevents auto-refresh)
-        const shouldDispatch = !(id === "ccShipmentId" && window.ccMuteIdInput);
-        if (shouldDispatch) {
+        // Never re-trigger lookups for the Chit Chats id once we've bought.
+        const isCcId = id === "ccShipmentId";
+        const suppress = isCcId && (window.ccMuteIdInput || window.ccPostBuyFrozen);
+        if (!suppress) {
           try { el.dispatchEvent(new Event("input", { bubbles: true })); } catch {}
         }
       }
@@ -3845,7 +3856,10 @@ function metalToBadge(label){
           }
           if (!printed) throw new Error("Label purchased, but not ready yet.");
 
-          // 6) Update UI bits if available
+           // 6) Lock out auto-refresh for ccShipmentId going forward
+          window.ccPostBuyFrozen = true;
+
+          // (Optional UI updates)
           if (shipment?.carrier_tracking_code) {
             const t = document.getElementById("trackingNumberInput");
             if (t) { t.value = shipment.carrier_tracking_code; t.dispatchEvent(new Event("input", { bubbles:true })); }
@@ -3862,8 +3876,8 @@ function metalToBadge(label){
           M.toast?.({ html: "Buy/print failed: " + (err.message || err) });
         } finally {
           window.ccSpin?.(false);
-         // Always unmute after the flow completes
-         window.ccMuteIdInput = false;
+          // Only unmute if we did NOT freeze (i.e., only on failure path)
+          if (!window.ccPostBuyFrozen) window.ccMuteIdInput = false;
         }
       }
 
