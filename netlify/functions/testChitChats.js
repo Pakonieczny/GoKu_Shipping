@@ -4,6 +4,7 @@
  *   - GET  ?resource=batches[&status=open]           → list batches
  *   - GET  ?resource=shipment&id=<shipmentId>        → fetch one shipment
  *   - GET  ?resource=search&orderId=..&tracking=..   → best-effort search (paginates all pages)
+ *   - GET  ?resource=label&id=<shipmentId>&format=zpl|pdf|png → fetch label payload (proxy)
  *   - GET  (no resource)                             → quick shipments ping (status=ready)
  *   - POST { action:"create", description? }         → create batch
  *   - POST { action:"create_shipment", shipment:{} } → create shipment
@@ -50,6 +51,12 @@ exports.handler = async (event) => {
       return { ok: resp.ok, status: resp.status, data, resp };
     };
     const ok  = (data)       => ({ statusCode: 200, headers: CORS, body: JSON.stringify(data) });
+    // raw (non-JSON) success for ZPL/plain text (so the browser hands it to QZ as-is)
+    const okText = (text, contentType = "text/plain; charset=utf-8") => ({
+      statusCode: 200,
+      headers: { ...CORS, "Content-Type": contentType },
+      body: text
+    });
     const bad = (code, err)  => ({
       statusCode: code,
       headers: CORS,
@@ -171,6 +178,44 @@ exports.handler = async (event) => {
       const qp = event.queryStringParameters || {};
       const resource = (qp.resource || "").toLowerCase();
 
+      // Proxy actual label bytes (solves browser CORS for ZPL/PDF/PNG)
+      if (resource === "label") {
+        const id  = String(qp.id || "");
+        const fmt = String(qp.format || "zpl").toLowerCase();
+        if (!id) return bad(400, "id required");
+
+        // 1) Read shipment → find label URLs
+        const rs  = await fetch(url(`/shipments/${encodeURIComponent(id)}`), { headers: authH });
+        const os  = await wrap(rs);
+        if (!os.ok) return bad(os.status, os.data);
+        const s   = os.data?.shipment || os.data || {};
+        const pick = fmt === "zpl" ? (s.postage_label_zpl_url || s.postageLabelZplUrl)
+                   : fmt === "pdf" ? (s.postage_label_pdf_url || s.postageLabelPdfUrl || s.label_pdf_url || s.labelPdfUrl)
+                                   : (s.postage_label_png_url || s.postageLabelPngUrl || s.label_png_url || s.labelPngUrl);
+        if (!pick) return bad(404, "Label not ready");
+
+        // 2) Fetch label from Chit Chats
+        const lr = await fetch(pick);
+        if (!lr.ok) return bad(lr.status, await lr.text());
+        const ctype = lr.headers.get("content-type") || (fmt === "zpl"
+                       ? "text/plain; charset=utf-8"
+                       : fmt === "pdf" ? "application/pdf" : "image/png");
+
+        if (fmt === "zpl") {
+          const txt = await lr.text();
+          return { statusCode: 200, headers: { ...CORS, "Content-Type": ctype }, body: txt };
+        } else {
+          const ab  = await lr.arrayBuffer();
+          const b64 = Buffer.from(ab).toString("base64");
+          return {
+            statusCode: 200,
+            headers: { ...CORS, "Content-Type": ctype },
+            isBase64Encoded: true,
+            body: b64
+          };
+        }
+      }
+
       // Allow controlling the pending filter (default on)
       const pendingOnlyOn = !["0","false"].includes(String(qp.pendingOnly ?? "1").toLowerCase());
 
@@ -185,6 +230,49 @@ exports.handler = async (event) => {
           // normalize: some envs return array; others wrap under .batches/.data
           const list = Array.isArray(out.data) ? out.data : (out.data?.batches || out.data?.data || []);
           return ok({ success: true, batches: list });
+        } catch (e) {
+          return bad(500, e);
+        }
+      }
+
+      // NEW: fetch a label payload (ZPL/PDF/PNG) via proxy to avoid CORS and enable QZ printing
+      if (resource === "label" && qp.id) {
+        try {
+          const fmt = String(qp.format || "zpl").toLowerCase();
+          const sid = String(qp.id);
+          // 1) Load shipment to discover label URLs
+          const r0  = await fetch(url(`/shipments/${encodeURIComponent(sid)}`), { headers: authH });
+          const o0  = await wrap(r0);
+          if (!o0.ok) return bad(o0.status, o0.data);
+          const s = o0.data || {};
+          const zpl = s.postage_label_zpl_url || s.postageLabelZplUrl || s.label_zpl_url || s.labelZplUrl;
+          const pdf = s.postage_label_pdf_url || s.postageLabelPdfUrl || s.label_pdf_url || s.labelPdfUrl;
+          const png = s.postage_label_png_url || s.postageLabelPngUrl || s.label_png_url || s.labelPngUrl;
+          const target = fmt === "pdf" ? pdf : (fmt === "png" ? png : zpl);
+          if (!target) return bad(404, "label not ready");
+          // 2) Fetch the label content (try with auth, then without for public URLs)
+          let r = await fetch(target, { headers: authH });
+          if (!r.ok && (r.status === 401 || r.status === 403)) {
+            r = await fetch(target);
+          }
+          if (!r.ok) return bad(r.status, await r.text());
+          const ct = r.headers.get("Content-Type") || (
+            fmt === "pdf" ? "application/pdf"
+            : fmt === "png" ? "image/png"
+            : "text/plain; charset=utf-8"
+          );
+          if (fmt === "zpl") {
+            const text = await r.text();
+            return okText(text, ct);
+          } else {
+            const buf = Buffer.from(await r.arrayBuffer());
+            return {
+              statusCode: 200,
+              headers: { ...CORS, "Content-Type": ct },
+              body: buf.toString("base64"),
+              isBase64Encoded: true
+            };
+          }
         } catch (e) {
           return bad(500, e);
         }
