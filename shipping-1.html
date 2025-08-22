@@ -3801,7 +3801,7 @@ function metalToBadge(label){
           if (!printed) { try { if (pdf) { await qzPrintPdfUrl(pdf); printed = true; } } catch {} }
           if (!printed) { try { if (png) { await qzPrintPngUrl(png); printed = true; } } catch {} }
           if (!printed) {
-            const url = zpl || pdf || png;
+            const url = pdf || png || zpl;
             if (!url) throw new Error("Label purchased, but not ready yet. Try again in a moment.");
             await openAndAutoPrintLabel(url, stub);
           }
