@@ -3843,102 +3843,104 @@ function metalToBadge(label){
       async function buySelected(){
         const id = (idInput.value || "").trim();
         if (!id || !selectedPostageType) return;
+
         btnBuy.disabled = true;
+
         // Pre-open a print window during the user gesture to dodge popup blockers
         const preWin = window.open("", "labelPrintWin", "noopener,noreferrer");
         if (preWin) preWin.document.write('<p style="font:14px sans-serif;padding:12px">Preparing label…</p>');
-        try{
+
+        try {
           // 1) Buy the label
-          const buyOut = await callCc("PATCH", { action:"buy", shipment_id:id, postage_type:selectedPostageType });
-          // 2) Use label URL from buy response if present; else long-poll with backoff
+          const buyOut = await callCc("PATCH", {
+            action: "buy",
+            shipment_id: id,
+            postage_type: selectedPostageType
+          });
+
+          // 2) Use label from buy response if present; else poll until ready
           let url = extractLabelUrl(buyOut);
           if (!url) {
-            M.toast?.({ html:"Generating label…" });
+            M.toast?.({ html: "Generating label…" });
             url = await waitForLabelUrlEx(id, 45000); // up to ~45s with backoff
           }
-          // 3) Auto-print (PDF or PNG) with robust fallback
+
+          // 3) Auto-print
           if (url) {
             await openAndAutoPrintLabel(url, preWin);
-            M.toast?.({ html:"Label opened for printing." });
+            M.toast?.({ html: "Label opened for printing." });
           } else {
             preWin?.close();
-            M.toast?.({ html:"Label purchased; still generating on Chit Chats." });
+            M.toast?.({ html: "Label purchased; still generating on Chit Chats." });
           }
-        } catch(err){
+        } catch (err) {
           preWin?.close();
           handleCcApiError?.(err);
         } finally {
           btnBuy.disabled = false;
         }
+      }
 
-      if (editBtn) editBtn.addEventListener("click", async () => {
-        // Ensure Step-0 inputs are hydrated so the verify modal isn't blank
-        try { window.collectRecipientAddress?.(); } catch {}
+      // Pull a label URL out of a variety of response shapes
+      function extractLabelUrl(x){
+        const o = x?.shipment || x?.data || x || {};
+        return o.postage_label_pdf_url || o.postage_label_png_url || null;
+      }
 
-        // Keep the editor hidden until explicitly requested
-        if (modal) modal.style.display = "none";
-
-        const verifyEl = document.getElementById("ccVerifyModal");
-
-        // Run Smarty + render RedOrange diffs in the Verify modal
-        await verifyAddressAndShowModal();
-
-        // Fallback: if verify didn't open (e.g., no country or API error), open editor wizard
-        if (verifyEl && verifyEl.style.display !== "block") {
-          modalOpen();
-        }
-      });
-
-       // ── helpers for label readiness + auto-print ─────────────────────
-      async function waitForLabelUrl(id, tries = 8, delayMs = 1200){
-        for (let i = 0; i < tries; i++){
+      // Long-poll for readiness with gentle backoff
+      async function waitForLabelUrlEx(id, maxMs = 45000){
+        const start = Date.now();
+        let delay = 500;
+        while (Date.now() - start < maxMs) {
           const det = await callCc("GET", null, `?resource=shipment&id=${encodeURIComponent(id)}`);
           const url = det?.postage_label_pdf_url || det?.postage_label_png_url;
           if (url) return url;
-          await new Promise(r => setTimeout(r, delayMs));
+          await new Promise(r => setTimeout(r, delay));
+          delay = Math.min(Math.round(delay * 1.6), 2500);
         }
         return null;
       }
 
+      // Print via blob (iframe or the pre-opened window)
       async function openAndAutoPrintLabel(url, preWin){
-        // Prefer same-origin blob to avoid cross-origin print restrictions.
-        try{
+        try {
           const resp = await fetch(url, { mode: "cors" });
           if (!resp.ok) throw new Error("fetch failed");
           const blob = await resp.blob();
           const blobUrl = URL.createObjectURL(blob);
-    if (preWin) {
-      preWin.location = blobUrl;
-      setTimeout(()=>{ try{ preWin.focus(); preWin.print(); }catch{} }, 600);
-      // give the viewer time before we revoke
-      setTimeout(()=>URL.revokeObjectURL(blobUrl), 5000);
-      return;
-    }
-    await new Promise((resolve) => {
-      const iframe = document.createElement("iframe");
-      iframe.style.position = "fixed";
-      iframe.style.right = "0";
-      iframe.style.bottom = "0";
-      iframe.style.width = "0";
-      iframe.style.height = "0";
-      iframe.style.border = "0";
-      iframe.onload = () => {
-        setTimeout(() => {
-          try {
-            iframe.contentWindow?.focus();
-            iframe.contentWindow?.print();
-          } finally {
-            URL.revokeObjectURL(blobUrl);
-            document.body.removeChild(iframe);
-            resolve();
+
+          if (preWin) {
+            preWin.location = blobUrl;
+            setTimeout(()=>{ try{ preWin.focus(); preWin.print(); }catch{} }, 600);
+            setTimeout(()=>URL.revokeObjectURL(blobUrl), 5000);
+            return;
           }
-        }, 500);
-      };
-      document.body.appendChild(iframe);
-      iframe.src = blobUrl;
-    });
+
+          await new Promise((resolve) => {
+            const iframe = document.createElement("iframe");
+            iframe.style.position = "fixed";
+            iframe.style.right = "0";
+            iframe.style.bottom = "0";
+            iframe.style.width = "0";
+            iframe.style.height = "0";
+            iframe.style.border = "0";
+            iframe.onload = () => {
+              setTimeout(() => {
+                try {
+                  iframe.contentWindow?.focus();
+                  iframe.contentWindow?.print();
+                } finally {
+                  URL.revokeObjectURL(blobUrl);
+                  document.body.removeChild(iframe);
+                  resolve();
+                }
+              }, 500);
+            };
+            document.body.appendChild(iframe);
+            iframe.src = blobUrl;
+          });
         } catch {
-          // Fallback: open in a new tab if CORS blocks blob fetch
+          // Fallback: open in tab if CORS blocked
           const sep = url.includes("?") ? "&" : "?";
           if (preWin) { preWin.location = url + sep + "print=1"; }
           else { window.open(url + sep + "print=1", "_blank"); }
