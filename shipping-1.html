@@ -594,6 +594,12 @@
           </div>
           <h4 style="margin:12px 0 4px;">Line items</h4>
           <div id="cc_line_items_container"></div>
+          <!-- 🆕 Grand Total footer (sum of all "Item value") -->
+          <div id="cc_line_items_total" class="cc-tranche" style="margin-top:10px; display:flex; justify-content:flex-end; align-items:center; gap:10px;">
+            <span style="font-weight:700;">Grand Total <span id="cc_grand_total_currency"></span>:</span>
+            <input id="cc_grand_total" type="number" step="0.01" readonly
+                   style="width:140px; font-weight:700; text-align:right;">
+          </div>
 
           <template id="cc_line_item_tpl">
             <div class="cc-tranche cc-line-item" data-index="__IDX__">
@@ -1178,8 +1184,14 @@ function metalToBadge(label){
         // iv–vi) Dimensions & weight
         setIfBlank("cc_size_x", "6");     // Length (X)
         setIfBlank("cc_size_y", "4");     // Width (Y)
+        setIfBlank("cc_size_z", "1");     // Height (Z)
         setIfBlank("cc_weight", "0.25");  // Weight
       })();
+
+      // 🆕 keep currency badge in sync with selector
+      const curSel = document.getElementById("cc_value_currency");
+      if (curSel) curSel.addEventListener("change", updateGrandTotal);
+
     });
 
     /* globals for realtime listener */
@@ -1385,6 +1397,7 @@ function metalToBadge(label){
       const bindRecalc = () => {
         const iv = (Number(qQty.value || 0) * Number(qUnit.value || 0));
         qVal.value = isFinite(iv) ? iv.toFixed(2) : "";
+        updateGrandTotal();
       };
       qQty.addEventListener("input", bindRecalc);
       qUnit.addEventListener("input", bindRecalc);
@@ -1403,6 +1416,9 @@ function metalToBadge(label){
 
       container.appendChild(node);
     });
+
+    // 🆕 compute total once after render
+    updateGrandTotal();
 
     // If no items (edge), render one empty tranche so user can fill manually
     if (!groups.length){
@@ -1437,6 +1453,23 @@ function metalToBadge(label){
       if (line.description) out.push(line);
     });
     return out;
+  }
+
+  /* 🆕 Sum all ".cc_item_value" and show it in #cc_grand_total */
+  function updateGrandTotal(){
+    try{
+      const vals = Array.from(document.querySelectorAll("#cc_line_items_container .cc_item_value"))
+        .map(el => Number(el.value || 0))
+        .filter(n => Number.isFinite(n));
+      const total = vals.reduce((a,b)=>a+b, 0);
+      const cur = (document.getElementById("cc_value_currency")?.value || "").toUpperCase();
+      const out = document.getElementById("cc_grand_total");
+      if (out) out.value = total.toFixed(2);
+      const curEl = document.getElementById("cc_grand_total_currency");
+      if (curEl) curEl.textContent = cur ? `(${cur})` : "";
+    }catch(e){
+      console.warn("updateGrandTotal() failed:", e);
+    }
   }
 
     /* =======================*/
