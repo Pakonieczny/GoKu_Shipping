@@ -3790,7 +3790,14 @@ function metalToBadge(label){
 
           // 5) Try QZ in order ZPL → PDF → PNG → browser fallback
           let printed = false;
-          try { if (zpl) { await qzPrintZpl(await (await fetch(zpl)).text()); printed = true; } } catch {}
+          try {
+            if (zpl) {
+              // Avoid CORS by fetching ZPL via our Netlify proxy
+              const zplText = await callCc("GET", null, `?resource=label&id=${encodeURIComponent(shipmentId)}&format=zpl`);
+              await qzPrintZpl(zplText);
+              printed = true;
+            }
+          } catch {}
           if (!printed) { try { if (pdf) { await qzPrintPdfUrl(pdf); printed = true; } } catch {} }
           if (!printed) { try { if (png) { await qzPrintPngUrl(png); printed = true; } } catch {} }
           if (!printed) {
