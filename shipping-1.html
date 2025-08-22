@@ -3659,8 +3659,8 @@ function metalToBadge(label){
           const prev = el.value;
           el.value = v;
           el.dataset.setAt = String(Date.now());
-          // Only trigger 'input' when not muted (avoids auto-refresh after Buy)
-          if (!window.ccMuteIdInput && v !== prev) {
+          // Only trigger 'input' when not muted AND not frozen post-buy
+          if (!window.ccMuteIdInput && !window.ccPostBuyFrozen && v !== prev) {
             try { el.dispatchEvent(new Event("input", { bubbles: true })); } catch {}
           }
         }
@@ -4143,6 +4143,9 @@ function metalToBadge(label){
         if (!id || !selectedPostageType) return;
         btnBuy.disabled = true;
         try{
+        // 🔒 Freeze any ccShipmentId-driven auto lookups after Buy
+        window.ccPostBuyFrozen = true;
+        window.ccMuteIdInput   = true;
          // 0) Open a print tab *now* to avoid popup blocking
          const printWin = openPrintStub();
 
