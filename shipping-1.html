@@ -3458,12 +3458,16 @@ function metalToBadge(label){
       let currentStep = 0, selectedPostageType = null;
 
       function set(id, v) {
-      const el = document.getElementById(id);
-      if (!el) return;
-      if ("value" in el) el.value = String(v);
-      else el.textContent = String(v);
-      try { el.dispatchEvent(new Event("input", { bubbles: true })); } catch {}
-    }
+        const el = document.getElementById(id);
+        if (!el) return;
+        if ("value" in el) el.value = String(v);
+        else el.textContent = String(v);
+        // Don't propagate 'input' for ccShipmentId while muted (prevents auto-refresh)
+        const shouldDispatch = !(id === "ccShipmentId" && window.ccMuteIdInput);
+        if (shouldDispatch) {
+          try { el.dispatchEvent(new Event("input", { bubbles: true })); } catch {}
+        }
+      }
 
       // NEW: fillOnce — only sets when the field is empty and not user-edited
       function fillOnce(id, val) {
@@ -3635,15 +3639,20 @@ function metalToBadge(label){
         return data;
       }
 
-       // Keep the ID field and global in sync wherever a shipment gets created/refreshed
+      // Keep the ID field and global in sync wherever a shipment gets created/refreshed
       function pushShipmentId(id){
-        const sid = String(id || "").trim();
-        if (!sid) return;
-        idInput.value = sid;           // updates the visible input
-        window.ccShipmentId = sid;     // used by batch actions
-        try {                          // notify any listeners
-          idInput.dispatchEvent(new Event("input", { bubbles: true }));
-        } catch {}
+        const v  = String(id ?? "");
+        window.ccShipmentId = v;
+        const el = document.getElementById("ccShipmentId");
+        if (el) {
+          const prev = el.value;
+          el.value = v;
+          el.dataset.setAt = String(Date.now());
+          // Only trigger 'input' when not muted (avoids auto-refresh after Buy)
+          if (!window.ccMuteIdInput && v !== prev) {
+            try { el.dispatchEvent(new Event("input", { bubbles: true })); } catch {}
+          }
+        }
       }
 
       async function ensureShipment(){
@@ -3801,6 +3810,8 @@ function metalToBadge(label){
         try {
           window.ccSpin?.(true);
           // No stub window: we will print inline in the same tab.
+          // Mute ccShipmentId 'input' side-effects during Buy so it doesn't auto-refresh.
+          window.ccMuteIdInput = true;
 
           // 1) Ensure we have a shipment (create if missing)
           const s0 = await ensureShipment();
@@ -3840,12 +3851,19 @@ function metalToBadge(label){
             if (t) { t.value = shipment.carrier_tracking_code; t.dispatchEvent(new Event("input", { bubbles:true })); }
           }
 
+          // Success UX: close the Edit modal after we have the label & invoked print
+          try {
+            const modalEl = document.getElementById("ccEditModal");
+            if (modalEl) modalEl.style.display = "none";
+          } catch {}
           M.toast?.({ html: "Label printed." });
         } catch (err) {
           console.error(err);
           M.toast?.({ html: "Buy/print failed: " + (err.message || err) });
         } finally {
           window.ccSpin?.(false);
+         // Always unmute after the flow completes
+         window.ccMuteIdInput = false;
         }
       }
 
