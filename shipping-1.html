@@ -3830,7 +3830,7 @@ function metalToBadge(label){
       /* Main flow: buy → poll → print (no new tab) */      
       async function buyCcThenPrint() {
         try {
-          window.ccSpin?.(true);
+
           // No stub window: we will print inline in the same tab.
           // Mute ccShipmentId 'input' side-effects during Buy so it doesn't auto-refresh.
           window.ccPostBuyFrozen = true; // freeze immediately on Buy
@@ -3886,7 +3886,7 @@ function metalToBadge(label){
           console.error(err);
           M.toast?.({ html: "Buy/print failed: " + (err.message || err) });
         } finally {
-          window.ccSpin?.(false);
+
           // Only unmute if we did NOT freeze (i.e., only on failure path)
           if (!window.ccPostBuyFrozen) window.ccMuteIdInput = false;
         }
