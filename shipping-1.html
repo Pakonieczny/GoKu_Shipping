@@ -3263,7 +3263,9 @@ function metalToBadge(label){
           return partial || list[0] || null;
         }
 
-        async function refreshFromOrderIfChitChats(){        const orderId = (orderInp?.value || "").trim();
+        async function refreshFromOrderIfChitChats(){
+        if (window.ccPostBuyFrozen) return;        
+        const orderId = (orderInp?.value || "").trim();
         if (!orderId) return;
         try {
           // Fast pass (vendor search / id match only)
@@ -3285,6 +3287,7 @@ function metalToBadge(label){
 
       /* NEW: search by tracking number (mirrors order flow) */
       async function refreshFromTrackingIfChitChats(){
+        if (window.ccPostBuyFrozen) return;
         const tracking = (trackingInp?.value || "").trim();
         if (!tracking) return;
         try {
@@ -3455,13 +3458,17 @@ function metalToBadge(label){
       const idInput   = document.getElementById("ccShipmentId");
       // Single source of truth: once we buy, freeze auto-refreshes that key off ccShipmentId
       window.ccPostBuyFrozen ??= false;
-      // Capture-phase guard so we intercept before any other listener
-      idInput?.addEventListener("input", (e) => {
+      // Capture-phase guard: block all ccShipmentId-driven rechecks after Buy
+      const blockIfFrozen = (e) => {
         if (window.ccPostBuyFrozen) {
           e.stopImmediatePropagation();
           e.preventDefault();
         }
-      }, true);
+      };
+      idInput?.addEventListener("input",  blockIfFrozen, true);
+      idInput?.addEventListener("change", blockIfFrozen, true);
+      idInput?.addEventListener("keydown",blockIfFrozen, true);
+      idInput?.addEventListener("keyup",  blockIfFrozen, true);
 
       const fnBase    = "/.netlify/functions";
 
@@ -3591,6 +3598,9 @@ function metalToBadge(label){
       }
 
       async function modalOpen(){
+       // New session: allow ccShipmentId to drive lookups again
+        window.ccPostBuyFrozen = false;
+        window.ccMuteIdInput   = false;
         /* INSERT inside modalOpen(), near the top after local refs */
         {
           // Make sure we have the transactions for this order before showing Step 1
@@ -3619,11 +3629,16 @@ function metalToBadge(label){
         modal.style.display = "block";
         // Do NOT call showStep(1) here; verify must appear first.
         // Kick off the verification flow immediately:
-       // Fill again when the Edit modal opens
-       prefillCustomsFromEtsy();
+        // Fill again when the Edit modal opens
+        prefillCustomsFromEtsy();
         maybeVerifyAddressBeforeStep1(true);
       }
-      function modalClose(){ modal.style.display = "none"; }
+       function modalClose(){
+        modal.style.display = "none";
+        // Optional: also thaw here to be extra safe
+        window.ccPostBuyFrozen = false;
+        window.ccMuteIdInput   = false;
+      }
 
       /* ---------- Enhanced fetch wrapper (keeps raw error for mapping) ---------- */
       async function callCc(method, body, qs=""){
