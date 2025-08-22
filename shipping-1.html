@@ -3682,8 +3682,6 @@ function metalToBadge(label){
         return win;
       }
 
-      const sleep = (ms) => new Promise(r => setTimeout(r, ms));
-
       /* Poll GET ?resource=shipment&id=… until label URLs appear (Chit Chats returns them when status turns ready) */
       async function waitForLabelUrls(shipmentId, attempts = 10, delayMs = 2000) {
         for (let i = 0; i < attempts; i++) {
