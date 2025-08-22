@@ -4113,6 +4113,13 @@ function metalToBadge(label){
         }
       }
 
+       // Normalize money to a Number with 2-decimal precision (no strings)
+       function fix2(n){
+         const v = Number(n || 0);
+         if (!Number.isFinite(v)) return 0;
+         return Math.round(v * 100) / 100;
+       }
+
       function buildShipmentPayload(){
         const to = {
           to_name: document.getElementById("cc_to_name").value.trim(),
@@ -4139,6 +4146,33 @@ function metalToBadge(label){
         // Prefer the UI's Grand Total if present (sums `.cc_item_value`), else fall back
         const grandInput = Number(document.getElementById("cc_grand_total")?.value || 0);
         const grandTotal = (Number.isFinite(grandInput) && grandInput > 0) ? grandInput : totalValue;
+        // map to numeric items
+        const items = lines.map(li => ({
+          description: li.description,
+          sku        : li.sku || undefined,
+          quantity   : Number(li.quantity) || 1,
+          unit_value : fix2(li.unit_value),
+          value      : fix2(li.value || (li.unit_value * li.quantity)),
+          origin_country              : li.origin_country || undefined,
+          hs_tariff_code              : li.hs_tariff_code || undefined,
+          manufacture_country         : li.manufacture_country || undefined,
+          manufacturer_contact        : li.manufacturer_contact || undefined,
+          manufacturer_street         : li.manufacturer_street || undefined,
+          manufacturer_city           : li.manufacturer_city || undefined,
+          manufacturer_province_code  : li.manufacturer_province_code || undefined,
+          manufacturer_postal_code    : li.manufacturer_postal_code || undefined,
+          manufacturer_phone          : li.manufacturer_phone || undefined,
+          manufacturer_email          : li.manufacturer_email || undefined
+        }));
+
+        const customs = {
+          // Some responses nest within `customs.items`; others flatten to `line_items`.
+          // Send both keys for compatibility.
+          items: items,
+          line_items: items,
+          value: fix2(grandTotal),
+          value_currency: valueCurrency
+        };
         const pkg = {
           package_type: document.getElementById("cc_package_type").value,
           size_unit   : document.getElementById("cc_size_unit").value,
@@ -4157,6 +4191,10 @@ function metalToBadge(label){
           package_contents: document.getElementById("cc_package_contents").value,
           customs_tax_reference_number: (document.getElementById("cc_customs_tax_reference_number")?.value || "").trim() || null,
           description    : first.description,
+          value: fix2(grandTotal),
+          value_currency: valueCurrency,
+          line_items: lines,
+          customs,
           // NEW: Grand Total → shipment.value
           value          : String(grandTotal),
           value_currency : valueCurrency,
@@ -4215,6 +4253,36 @@ function metalToBadge(label){
         if (sy > 0) payload.size_y = sy;
         if (sz > 0) payload.size_z = sz;
       }
+
+      // 🔁 Also forward current customs + totals on refresh so Chit Chats reflects edits
+      const toCountry     = document.getElementById("cc_to_country_code").value.trim().toUpperCase();
+      const valueCurrency = (document.getElementById("cc_value_currency")?.value || (toCountry === "CA" ? "CAD" : "USD"));
+      const lines         = collectCcLineItems();
+      const totalValue    = lines.reduce((sum, li) => sum + (Number(li.unit_value||0) * Number(li.quantity||0)), 0);
+      const grandInput    = Number(document.getElementById("cc_grand_total")?.value || 0);
+      const grandTotal    = (Number.isFinite(grandInput) && grandInput > 0) ? grandInput : totalValue;
+      const items = lines.map(li => ({
+        description: li.description,
+        sku        : li.sku || undefined,
+        quantity   : Number(li.quantity) || 1,
+        unit_value : fix2(li.unit_value),
+        value      : fix2(li.value || (li.unit_value * li.quantity)),
+        origin_country             : li.origin_country || undefined,
+        hs_tariff_code             : li.hs_tariff_code || undefined,
+        manufacture_country        : li.manufacture_country || undefined,
+        manufacturer_contact       : li.manufacturer_contact || undefined,
+        manufacturer_street        : li.manufacturer_street || undefined,
+        manufacturer_city          : li.manufacturer_city || undefined,
+        manufacturer_province_code : li.manufacturer_province_code || undefined,
+        manufacturer_postal_code   : li.manufacturer_postal_code || undefined,
+        manufacturer_phone         : li.manufacturer_phone || undefined,
+        manufacturer_email         : li.manufacturer_email || undefined
+      }));
+      payload.value          = fix2(grandTotal);
+      payload.value_currency = valueCurrency;
+      payload.line_items     = items;
+      payload.customs        = { items, line_items: items, value: fix2(grandTotal), value_currency: valueCurrency };
+
       return payload;
     }
 
