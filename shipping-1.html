@@ -3598,9 +3598,7 @@ function metalToBadge(label){
       }
 
       async function modalOpen(){
-       // New session: allow ccShipmentId to drive lookups again
-        window.ccPostBuyFrozen = false;
-        window.ccMuteIdInput   = false;
+      // Keep ccShipmentId locked post-purchase (no re-checks). Do not thaw here.
         /* INSERT inside modalOpen(), near the top after local refs */
         {
           // Make sure we have the transactions for this order before showing Step 1
@@ -3635,9 +3633,7 @@ function metalToBadge(label){
       }
        function modalClose(){
         modal.style.display = "none";
-        // Optional: also thaw here to be extra safe
-        window.ccPostBuyFrozen = false;
-        window.ccMuteIdInput   = false;
+        // Do not thaw post-purchase; keep re-checks disabled for this session.
       }
 
       /* ---------- Enhanced fetch wrapper (keeps raw error for mapping) ---------- */
