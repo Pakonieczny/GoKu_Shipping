@@ -4170,6 +4170,7 @@ function metalToBadge(label){
               (Number.isFinite(Number(li.value)) && Number(li.value) > 0)
                 ? Number(li.value)
                 : (Number(li.unit_value||0) * Number(li.quantity||0))
+                ),
             origin_country      : li.origin_country,
             hs_tariff_code      : li.hs_tariff_code,
             manufacture_country : li.manufacture_country,
