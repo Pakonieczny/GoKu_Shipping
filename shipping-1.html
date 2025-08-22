@@ -3753,19 +3753,35 @@ function metalToBadge(label){
       }
 
       function buildRefreshPayload(){
-      return {
-        weight_unit: document.getElementById("cc_weight_unit").value,
-        weight     : Number(document.getElementById("cc_weight").value || 0),
-        size_unit  : document.getElementById("cc_size_unit").value,
-        size_x     : Number(document.getElementById("cc_size_x").value || 0),
-        size_y     : Number(document.getElementById("cc_size_y").value || 0),
-        size_z     : Number(document.getElementById("cc_size_z").value || 0),
-        package_type: document.getElementById("cc_package_type").value,
-        ship_date  : normalizeShipDate(document.getElementById("cc_ship_date").value),
+      const wUnit = document.getElementById("cc_weight_unit").value;
+      const weight = Number(document.getElementById("cc_weight").value || 0);
+      const sUnit = document.getElementById("cc_size_unit").value;
+      const sx = Number(document.getElementById("cc_size_x").value || 0);
+      const sy = Number(document.getElementById("cc_size_y").value || 0);
+      const sz = Number(document.getElementById("cc_size_z").value || 0);
+      const pkgType = document.getElementById("cc_package_type").value;
+
+      const payload = {
+        package_type: pkgType,
+        ship_date   : normalizeShipDate(document.getElementById("cc_ship_date").value),
         insurance_requested : document.getElementById("cc_insurance_requested").value === "true",
         media_mail_requested: document.getElementById("cc_media_mail_requested").value === "true",
         signature_requested : document.getElementById("cc_signature_requested").value === "true"
       };
+      // Only include weight when valid
+      if (Number.isFinite(weight) && weight > 0) {
+        payload.weight = weight;
+        payload.weight_unit = wUnit;
+      }
+      // Dimensions are optional; include only if provided (>0)
+      const anyDim = (sx > 0) || (sy > 0) || (sz > 0);
+      if (anyDim) {
+        payload.size_unit = sUnit;
+        if (sx > 0) payload.size_x = sx;
+        if (sy > 0) payload.size_y = sy;
+        if (sz > 0) payload.size_z = sz;
+      }
+      return payload;
     }
 
       function renderRates(s){
@@ -3795,20 +3811,13 @@ function metalToBadge(label){
           id = (created?.id || idInput.value || "").trim();
           if (!id) { M.toast?.({ html: "Create the shipment first" }); return; }
         }
-        const payload = {
-          weight_unit: document.getElementById("cc_weight_unit").value,
-          weight     : Number(document.getElementById("cc_weight").value || 0),
-          size_unit  : document.getElementById("cc_size_unit").value,
-          size_x     : Number(document.getElementById("cc_size_x").value || 0),
-          size_y     : Number(document.getElementById("cc_size_y").value || 0),
-          size_z     : Number(document.getElementById("cc_size_z").value || 0),
-          package_type: document.getElementById("cc_package_type").value,
-          ship_date  : getShipDateForApi(),
-          insurance_requested : document.getElementById("cc_insurance_requested").value === "true",
-          media_mail_requested: document.getElementById("cc_media_mail_requested").value === "true",
-          signature_requested : document.getElementById("cc_signature_requested").value === "true"
-          // 🚫 no postage_type here
-        };
+      const payload = buildRefreshPayload();
+      // hard guard: weight must be present and > 0 for rates
+      if (!(Number.isFinite(payload.weight) && payload.weight > 0)) {
+        M.toast?.({ html: "Weight must be greater than 0 to refresh rates." });
+        markMissing(2, ["cc_weight"]);
+        return;
+      }
         const out = await callCc("PATCH", { action:"refresh", shipment_id:id, payload });
         renderRates(out.shipment || out);
       }
@@ -3974,8 +3983,21 @@ function metalToBadge(label){
           // All good for Step 1
         } else if (step === 2) {
 
-        // Package fields actually used by payload + refresh
-          req = ["cc_weight","cc_size_x","cc_size_y","cc_size_z","cc_value_currency"];
+        // Require positive weight; dimensions optional but, if present, must be > 0
+        const wEl  = document.getElementById("cc_weight");
+        const wVal = Number(wEl?.value);
+        if (!Number.isFinite(wVal) || wVal <= 0) {
+          markMissing(step, ["cc_weight"]);
+          return false;
+        }
+        const dimIds = ["cc_size_x","cc_size_y","cc_size_z"];
+        const badDims = dimIds.filter(id => {
+          const v = String(document.getElementById(id)?.value || "").trim();
+          return v && !(Number(v) > 0);
+        });
+        if (badDims.length) { markMissing(step, badDims); return false; }
+        // Keep currency required
+        req = ["cc_value_currency"];
         }
         const missing = req.filter(id => !String(document.getElementById(id)?.value || "").trim());
         if (missing.length) {
