@@ -4120,6 +4120,12 @@ function metalToBadge(label){
          return Math.round(v * 100) / 100;
        }
 
+        function toMoney(n){
+         const v = Number(n || 0);
+         if (!Number.isFinite(v)) return "0.00";
+         return (Math.round(v * 100)/100).toFixed(2);
+       }
+
       function buildShipmentPayload(){
         const to = {
           to_name: document.getElementById("cc_to_name").value.trim(),
@@ -4192,14 +4198,14 @@ function metalToBadge(label){
           customs_tax_reference_number: (document.getElementById("cc_customs_tax_reference_number")?.value || "").trim() || null,
           description    : first.description,
           // Chit Chats requires grand total + lowercase value_currency
-          value          : String(fix2(grandTotal)),
+          value          : toMoney(grandTotal),
           value_currency : valueCurrency.toLowerCase(),
           postage_type   : "unknown",
           // Map UI → API line_items shape (value_amount + currency_code)
           line_items     : lines.map(li => ({
             description   : li.description,
             quantity      : Number(li.quantity) || 1,
-            value_amount  : String(fix2(li.value || (li.unit_value * li.quantity))),
+            value_amount  : toMoney(li.value || (li.unit_value * li.quantity)),
             currency_code : valueCurrency.toLowerCase(),
             hs_tariff_code: li.hs_tariff_code || undefined,
             sku_code      : li.sku || undefined,
@@ -4250,13 +4256,13 @@ function metalToBadge(label){
       const items = lines.map(li => ({
         description   : li.description,
         quantity      : Number(li.quantity) || 1,
-        value_amount  : String(fix2(li.value || (li.unit_value * li.quantity))),
+        value_amount  : toMoney(li.value || (li.unit_value * li.quantity)),
         currency_code : valueCurrency.toLowerCase(),
         hs_tariff_code: li.hs_tariff_code || undefined,
         sku_code      : li.sku || undefined,
         origin_country: (li.origin_country || "").toUpperCase() || undefined
       }));
-      payload.value          = String(fix2(grandTotal));
+      payload.value          = toMoney(grandTotal);
       payload.value_currency = valueCurrency.toLowerCase();
       payload.line_items     = items;
       // do not include non-API field `customs`
