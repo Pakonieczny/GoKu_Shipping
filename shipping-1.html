@@ -4191,34 +4191,19 @@ function metalToBadge(label){
           package_contents: document.getElementById("cc_package_contents").value,
           customs_tax_reference_number: (document.getElementById("cc_customs_tax_reference_number")?.value || "").trim() || null,
           description    : first.description,
-          value: fix2(grandTotal),
-          value_currency: valueCurrency,
-          line_items: lines,
-          customs,
-          // NEW: Grand Total → shipment.value
-          value          : String(grandTotal),
-          value_currency : valueCurrency,
+          // Chit Chats requires grand total + lowercase value_currency
+          value          : String(fix2(grandTotal)),
+          value_currency : valueCurrency.toLowerCase(),
           postage_type   : "unknown",
+          // Map UI → API line_items shape (value_amount + currency_code)
           line_items     : lines.map(li => ({
-            description: li.description,
-            quantity   : li.quantity,
-            unit_value : String(li.unit_value),
-            // NEW: per-line total → line_items[].value, fallback to unit_value * quantity
-            value      : String(
-              (Number.isFinite(Number(li.value)) && Number(li.value) > 0)
-                ? Number(li.value)
-                : (Number(li.unit_value||0) * Number(li.quantity||0))
-                ),
-            origin_country      : li.origin_country,
-            hs_tariff_code      : li.hs_tariff_code,
-            manufacture_country : li.manufacture_country,
-            manufacturer_contact       : li.manufacturer_contact,
-            manufacturer_street        : li.manufacturer_street,
-            manufacturer_city          : li.manufacturer_city,
-            manufacturer_province_code : li.manufacturer_province_code,
-            manufacturer_postal_code   : li.manufacturer_postal_code,
-            manufacturer_phone         : li.manufacturer_phone,
-            manufacturer_email         : li.manufacturer_email
+            description   : li.description,
+            quantity      : Number(li.quantity) || 1,
+            value_amount  : String(fix2(li.value || (li.unit_value * li.quantity))),
+            currency_code : valueCurrency.toLowerCase(),
+            hs_tariff_code: li.hs_tariff_code || undefined,
+            sku_code      : li.sku || undefined,
+            origin_country: (li.origin_country || "").toUpperCase() || undefined
           })),
           ...pkg
         };
@@ -4261,27 +4246,20 @@ function metalToBadge(label){
       const totalValue    = lines.reduce((sum, li) => sum + (Number(li.unit_value||0) * Number(li.quantity||0)), 0);
       const grandInput    = Number(document.getElementById("cc_grand_total")?.value || 0);
       const grandTotal    = (Number.isFinite(grandInput) && grandInput > 0) ? grandInput : totalValue;
+      // Refresh payload must mirror API schema so totals update server-side
       const items = lines.map(li => ({
-        description: li.description,
-        sku        : li.sku || undefined,
-        quantity   : Number(li.quantity) || 1,
-        unit_value : fix2(li.unit_value),
-        value      : fix2(li.value || (li.unit_value * li.quantity)),
-        origin_country             : li.origin_country || undefined,
-        hs_tariff_code             : li.hs_tariff_code || undefined,
-        manufacture_country        : li.manufacture_country || undefined,
-        manufacturer_contact       : li.manufacturer_contact || undefined,
-        manufacturer_street        : li.manufacturer_street || undefined,
-        manufacturer_city          : li.manufacturer_city || undefined,
-        manufacturer_province_code : li.manufacturer_province_code || undefined,
-        manufacturer_postal_code   : li.manufacturer_postal_code || undefined,
-        manufacturer_phone         : li.manufacturer_phone || undefined,
-        manufacturer_email         : li.manufacturer_email || undefined
+        description   : li.description,
+        quantity      : Number(li.quantity) || 1,
+        value_amount  : String(fix2(li.value || (li.unit_value * li.quantity))),
+        currency_code : valueCurrency.toLowerCase(),
+        hs_tariff_code: li.hs_tariff_code || undefined,
+        sku_code      : li.sku || undefined,
+        origin_country: (li.origin_country || "").toUpperCase() || undefined
       }));
-      payload.value          = fix2(grandTotal);
-      payload.value_currency = valueCurrency;
+      payload.value          = String(fix2(grandTotal));
+      payload.value_currency = valueCurrency.toLowerCase();
       payload.line_items     = items;
-      payload.customs        = { items, line_items: items, value: fix2(grandTotal), value_currency: valueCurrency };
+      // do not include non-API field `customs`
 
       return payload;
     }
