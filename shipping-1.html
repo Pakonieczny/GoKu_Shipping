@@ -1451,71 +1451,33 @@ function metalToBadge(label){
     }
   }
 
-  /** Money helper → 2 decimals as number */
-  function fix2(n){ return Number((+n || 0).toFixed(2)); }
-
-  /** 🔁 Recompute the footer grand total */
-  function recomputeGrandTotal(items){
-    const total = (items ?? collectCcLineItemsRaw())
-      .reduce((sum, li) => sum + fix2((+li.qty||0) * (+li.unit||0)), 0);
-    const cur = (document.getElementById("cc_value_currency")?.value || "USD").toUpperCase();
-    document.getElementById("cc_grand_total_currency").textContent = cur;
-    const gt = document.getElementById("cc_grand_total");
-    if (gt) gt.value = fix2(total);
-    return { total: fix2(total), currency: cur };
-  }
-
-  /** Read raw UI fields (qty/unit/value shown in the grid) */
-  function collectCcLineItemsRaw(){
-    const rows = Array.from(document.querySelectorAll("#cc_line_items_container .cc-line-item"));
-    return rows.map(row => ({
-      desc : row.querySelector(".cc_item_description")?.value?.trim() || "Item",
-      sku  : row.querySelector(".cc_item_sku")?.value?.trim() || "",
-      qty  : Number(row.querySelector(".cc_item_qty")?.value) || 1,
-      unit : Number(row.querySelector(".cc_item_unit_value")?.value) || 0,
-      val  : Number(row.querySelector(".cc_item_value")?.value) || 0,
-      hs   : row.querySelector(".cc_item_hs_tariff_code")?.value?.trim() || "",
-      origin: row.querySelector(".cc_item_origin_country")?.value?.trim() || "",
-      mfg_country: row.querySelector(".cc_item_manufacture_country")?.value?.trim() || "",
-      mfg_contact: row.querySelector(".cc_item_manufacturer_contact")?.value?.trim() || "",
-      mfg_street : row.querySelector(".cc_item_manufacturer_street")?.value?.trim() || "",
-      mfg_city   : row.querySelector(".cc_item_manufacturer_city")?.value?.trim() || "",
-      mfg_province: row.querySelector(".cc_item_manufacturer_province_code")?.value?.trim() || "",
-      mfg_postal : row.querySelector(".cc_item_manufacturer_postal_code")?.value?.trim() || "",
-      mfg_phone  : row.querySelector(".cc_item_manufacturer_phone")?.value?.trim() || "",
-      mfg_email  : row.querySelector(".cc_item_manufacturer_email")?.value?.trim() || "",
-    }));
-  }
-
-  /** ✅ Exact API mapping for Chit Chats: quantity + value_amount + currency_code */
   function collectCcLineItems(){
-    const currency = (document.getElementById("cc_value_currency")?.value || "USD").toUpperCase();
-    const raw = collectCcLineItemsRaw();
-    return raw.map(r => {
-      const lineTotal = fix2(r.qty * (r.unit || 0));   // API wants value_amount (not unit)
-      return {
-        quantity      : r.qty,
-        description   : r.desc.slice(0, 95),
-        value_amount  : lineTotal,
-        currency_code : currency,
-        ...(r.hs     ? { hs_tariff_code: r.hs } : {}),
-        ...(r.sku    ? { sku_code      : r.sku } : {}),
-        ...(r.origin ? { origin_country: r.origin.toUpperCase() } : {}),
-        // Optional manufacturer fields are not official line_item keys; keep them client-side only
+    const out = [];
+    const nodes = document.querySelectorAll("#cc_line_items_container .cc-line-item");
+    nodes.forEach(node => {
+      const $ = sel => node.querySelector(sel);
+      const line = {
+        description: ($(".cc_item_description")?.value || "").trim(),
+        sku         : ($(".cc_item_sku")?.value || "").trim() || null,
+        quantity    : Number($(".cc_item_qty")?.value || 1),
+        unit_value  : Number($(".cc_item_unit_value")?.value || 0),
+        // NEW: total item value from the UI field (falls back later if blank)
+        value       : Number($(".cc_item_value")?.value || 0),
+        origin_country      : ($(".cc_item_origin_country")?.value || "").trim().toUpperCase() || null,
+        hs_tariff_code      : ($(".cc_item_hs_tariff_code")?.value || "").trim() || null,
+        manufacture_country : ($(".cc_item_manufacture_country")?.value || "").trim().toUpperCase() || null,
+        manufacturer_contact       : ($(".cc_item_manufacturer_contact")?.value || "").trim() || null,
+        manufacturer_street        : ($(".cc_item_manufacturer_street")?.value || "").trim() || null,
+        manufacturer_city          : ($(".cc_item_manufacturer_city")?.value || "").trim() || null,
+        manufacturer_province_code : ($(".cc_item_manufacturer_province_code")?.value || "").trim() || null,
+        manufacturer_postal_code   : ($(".cc_item_manufacturer_postal_code")?.value || "").trim() || null,
+        manufacturer_phone         : ($(".cc_item_manufacturer_phone")?.value || "").trim() || null,
+        manufacturer_email         : ($(".cc_item_manufacturer_email")?.value || "").trim() || null
       };
+      if (line.description) out.push(line);
     });
+    return out;
   }
-
-  /** Auto-update “Item value” & Grand Total whenever qty/unit changes */
-  document.getElementById("cc_line_items_container")?.addEventListener("input", (e) => {
-    if (!e.target.matches(".cc_item_qty, .cc_item_unit_value")) return;
-    const row = e.target.closest(".cc-line-item");
-    const qty  = Number(row.querySelector(".cc_item_qty")?.value) || 0;
-    const unit = Number(row.querySelector(".cc_item_unit_value")?.value) || 0;
-    const val  = row.querySelector(".cc_item_value");
-    if (val) val.value = fix2(qty * unit);
-    recomputeGrandTotal();  // also updates cc_grand_total + currency label
-  });
 
   /* 🆕 Sum all ".cc_item_value" and show it in #cc_grand_total */
   function updateGrandTotal(){
