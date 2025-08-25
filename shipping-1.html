@@ -4166,9 +4166,7 @@ async function ccValidateAgainstApi(step){
 
       const idNow = (document.getElementById("ccShipmentId")?.value || "").trim();
       if (idNow) {
-        await callCc("PATCH", {
-          action: "refresh",
-          shipment_id: idNow,
+        await callCc("PATCH", { action: "update", shipment_id: idNow,
           shipment: lite,
           payload: lite
         });
@@ -4244,11 +4242,10 @@ async function ccValidateAgainstApi(step){
 
         const customs = {
           // Some responses nest within `customs.items`; others flatten to `line_items`.
-          // Send both keys for compatibility.
-          items: items,
-          line_items: items,
-          value: fix2(grandTotal),
-          value_currency: valueCurrency
+          // Build nested customs.items from computed `customsItems`
+          items: customsItems,
+          value: toMoney(grandTotal),
+          value_currency: valueCurrency.toLowerCase()
         };
         const pkg = {
           package_type: document.getElementById("cc_package_type").value,
