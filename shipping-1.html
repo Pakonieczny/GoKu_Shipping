@@ -4964,7 +4964,18 @@ function buildRefreshPayload(){
        if (!sugg){
          try{
            M.toast?.({ html: "Checking carrier verification…" });
-           const out = await callCc("POST", { action:"verify_to", to: orig });
+           const toForApi = {
+            name:           orig.to_name,
+            address_1:      orig.to_address_1,
+            address_2:      orig.to_address_2,
+            city:           orig.to_city,
+            province_code:  orig.to_province_code,
+            postal_code:    orig.to_postal_code,
+            country_code:   (orig.to_country_code || "").toUpperCase(),
+            email:          orig.to_email,
+            phone:          orig.to_phone
+          };
+          const out = await callCc("POST", { action: "verify_to", to: toForApi });
            const raw = (out?.suggested ?? out?.normalized ?? out?.address ?? null);
            sugg = raw ? normalizeToAddressShape(raw) : null;
          }catch(e){ log("Carrier verify failed", e); }
