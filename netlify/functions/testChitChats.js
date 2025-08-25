@@ -208,6 +208,71 @@ exports.handler = async (event) => {
       return out;
     }
 
+    // ---- helpers to detect purchased shipments and perform delete → recreate ----
+function isPostagePurchased(sh) {
+  const s = (sh && (sh.shipment || sh)) || {};
+  const status = String(s.status || "").toLowerCase();
+  // Treat as purchased if label URLs or tracking exist, or status signals label-ready
+  return Boolean(
+    s.postage_label_pdf_url || s.postage_label_png_url || s.postage_label_zpl_url ||
+    s.tracking || s.tracking_code || s.tracking_number ||
+    (status === "ready")
+  );
+}
+
+async function recreateShipmentIfUnbought(id, desiredClientPayload, { authH, url, wrap }) {
+  // 1) Fetch current to confirm purchase status
+  const r = await fetch(url(`/shipments/${encodeURIComponent(id)}`), { headers: authH });
+  const o = await wrap(r);
+  if (!o.ok) return { ok: false, status: o.status, data: o.data };
+  const curr = o.data?.shipment || o.data || {};
+
+  if (isPostagePurchased(curr)) {
+    return {
+      ok: false,
+      status: 409,
+      data: { message: "Shipment already has postage; refund/void before replacing" }
+    };
+  }
+
+  // 2) DELETE existing draft shipment
+  const d  = await fetch(url(`/shipments/${encodeURIComponent(id)}`), {
+    method: "DELETE",
+    headers: authH
+  });
+  const od = await wrap(d);
+  if (!od.ok) return { ok: false, status: od.status, data: od.data };
+
+  // 3) POST create new shipment with corrected data (flattened to API schema)
+  const newShipment = adaptClientShipment(desiredClientPayload || {});
+  if (!newShipment.country_code) {
+    return { ok: false, status: 400, data: { message: "country_code required" } };
+  }
+
+  const c  = await fetch(url(`/shipments`), {
+    method: "POST",
+    headers: authH,
+    body: JSON.stringify(newShipment)
+  });
+  const oc = await wrap(c);
+  if (!oc.ok) return { ok: false, status: oc.status, data: oc.data };
+
+  const loc   = oc.resp.headers.get("Location") || "";
+  const newId = loc.split("/").filter(Boolean).pop() || null;
+
+  // Optional: fetch the full created object for convenience
+  let created = null;
+  if (newId) {
+    try {
+      const r2 = await fetch(url(`/shipments/${encodeURIComponent(newId)}`), { headers: authH });
+      const o2 = await wrap(r2);
+      if (o2.ok) created = o2.data;
+    } catch {}
+  }
+
+  return { ok: true, status: 200, data: { success: true, id: newId, shipment: created } };
+}
+
     // --- Pending/open-batch filter (correct scope) ---
     let _openBatchIdsCache = null;
     async function getOpenBatchIdsSet() {
@@ -558,6 +623,18 @@ exports.handler = async (event) => {
         const out = await wrap(resp);
         if (!out.ok) return bad(out.status, out.data);
         return ok(out.data);
+      }
+
+      // (A2) Shipment: replace (DELETE → POST) when not purchased
+      if (action === "replace_shipment" || action === "replace" || action === "delete_recreate") {
+        const qp     = event.queryStringParameters || {};
+        const id     = String(body.shipment_id || body.id || qp.id || "");
+        if (!id) return bad(400, "shipment_id required for replace_shipment");
+
+        const clientPayload = body.shipment || body.payload || {};
+        const rr = await recreateShipmentIfUnbought(id, clientPayload, { authH, url, wrap });
+        if (!rr.ok) return bad(rr.status, rr.data);
+        return ok(rr.data);
       }
 
       // (B) Shipment: buy postage
