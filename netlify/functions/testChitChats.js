@@ -106,6 +106,27 @@ exports.handler = async (event) => {
       return out.data.count;
     };
 
+    // Fill country_code from the existing shipment when the refresh payload doesn't include it
+    async function ensureCountryCodeForRefresh(id, payload) {
+      if (payload.country_code) return payload;
+      try {
+        const r = await fetch(url(`/shipments/${encodeURIComponent(id)}`), { headers: authH });
+        const o = await wrap(r);
+        if (o.ok) {
+          const s  = o.data?.shipment || o.data || {};
+          const cc = String(
+            s.country_code ||
+            s.to?.country_code ||
+            s.destination?.country_code ||
+            s.to_country_code ||
+            ""
+          ).toUpperCase();
+          if (cc) payload.country_code = cc;
+        }
+      } catch {}
+      return payload;
+    }
+
     // --- Flatten nested client payload → API's flat schema ---
     function adaptClientShipment(client = {}) {
       const to      = client.to      || {};
@@ -483,12 +504,11 @@ exports.handler = async (event) => {
       if (action === "refresh") {
         const id = String(body.shipment_id || body.id || qp.id || "");
         if (!id) return bad(400, "shipment_id required for refresh");
-        const clientPayload = body.payload || {};
-        const payload = adaptClientShipment(clientPayload);
-        payload.ship_date = normalizeShipDateServer(payload.ship_date); // ensure normalized
-        if (!payload.country_code) {
-          return bad(400, { message: "country_code required" });
-        }
+        // Flatten client payload and ensure required bits
+        let payload = adaptClientShipment(body.payload || {});
+        payload.ship_date = normalizeShipDateServer(payload.ship_date);
+        // 🔁 Auto-fill country_code from the existing shipment if missing
+        payload = await ensureCountryCodeForRefresh(id, payload);
         const resp = await fetch(url(`/shipments/${encodeURIComponent(id)}/refresh`), {
           method: "PATCH", headers: authH, body: JSON.stringify(payload)
         });

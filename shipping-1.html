@@ -1847,6 +1847,14 @@ function metalToBadge(label){
         // finishOAuthIfNeeded();
       });
     })();
+
+      // Money helpers (global + idempotent)
+      if (typeof window.toMoney !== "function") {
+        window.toMoney = function toMoney(n){
+          const v = Number(n || 0);
+          return Number.isFinite(v) ? (Math.round(v * 100)/100).toFixed(2) : "0.00";
+        };
+      }
     
 // — OAuth query handling (self-contained; safe to return inside)
 (() => {
