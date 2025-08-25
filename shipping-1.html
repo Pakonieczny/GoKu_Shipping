@@ -4114,20 +4114,38 @@ function metalToBadge(label){
         // So we delete any existing unpaid shipment, then POST a fresh one with full body.
         if (step === 1) {
           const idNow = (document.getElementById("ccShipmentId")?.value || "").trim();
+          if (!idNow) return []; // already created earlier or will be created later
 
-          if (idNow) {
-            try {
-              await callCc("DELETE", null, `?resource=shipment&id=${encodeURIComponent(idNow)}`);
-            } catch (e) {
-              console.warn("Delete failed or not allowed; proceeding to create:", e?.message || e);
-            }
-          }
+          const toCountry     = document.getElementById("cc_to_country_code").value.trim().toUpperCase();
+          const valueCurrency = (document.getElementById("cc_value_currency")?.value || (toCountry === "CA" ? "CAD" : "USD"));
+          const lines         = collectCcLineItems();
+          const grandInput    = Number(document.getElementById("cc_grand_total")?.value || 0);
+          const totalViaUnits = lines.reduce((s, li) => s + (Number(li.unit_value||0) * Number(li.quantity||0)), 0);
+          const grandTotal    = (Number.isFinite(grandInput) && grandInput > 0) ? grandInput : totalViaUnits;
 
-          const created = await callCc("POST", {
-            action  : "create_shipment",
-            shipment: buildShipmentPayload()
+          const line_items = lines.map(li => ({
+            description    : li.description,
+            quantity       : Number(li.quantity) || 1,
+            value_amount   : toMoney(li.value || (li.unit_value * li.quantity)),
+            currency_code  : valueCurrency.toLowerCase(),
+            hs_tariff_code : li.hs_tariff_code || undefined,
+            sku_code       : li.sku || undefined,
+            origin_country : (li.origin_country || "").toUpperCase() || undefined
+          }));
+
+          const patch = {
+            package_contents: document.getElementById("cc_package_contents").value,
+            value           : toMoney(grandTotal),
+            value_currency  : valueCurrency.toLowerCase(),
+            line_items,
+            vat_reference   : (document.getElementById("cc_customs_tax_reference_number")?.value || "").trim() || null
+          };
+
+          await callCc("PATCH", {
+            action     : "refresh",
+            shipment_id: idNow,
+            payload    : patch
           });
-          pushShipmentId(created?.id || created?.shipment?.id);
         }
 
         return [];
@@ -4139,19 +4157,19 @@ function metalToBadge(label){
       }
     }
 
-      function buildTo(){
-        return {
-          to_name        : document.getElementById("cc_to_name").value.trim(),
-          to_address_1   : document.getElementById("cc_to_address_1").value.trim(),
-          to_address_2   : document.getElementById("cc_to_address_2").value.trim() || null,
-          to_city        : document.getElementById("cc_to_city").value.trim(),
-          to_province_code: document.getElementById("cc_to_province_code").value.trim(),
-          to_postal_code : document.getElementById("cc_to_postal_code").value.trim(),
-          to_country_code: document.getElementById("cc_to_country_code").value.trim().toUpperCase(),
-          to_phone       : document.getElementById("cc_to_phone").value.trim() || null,
-          to_email       : document.getElementById("cc_to_email").value.trim() || null
-        };
-      }
+       function buildTo(){
+         return {
+           name          : document.getElementById("cc_to_name").value.trim(),
+           address_1     : document.getElementById("cc_to_address_1").value.trim(),
+           address_2     : document.getElementById("cc_to_address_2").value.trim() || null,
+           city          : document.getElementById("cc_to_city").value.trim(),
+           province_code : document.getElementById("cc_to_province_code").value.trim(),
+           postal_code   : document.getElementById("cc_to_postal_code").value.trim(),
+           country_code  : document.getElementById("cc_to_country_code").value.trim().toUpperCase(),
+           phone         : document.getElementById("cc_to_phone").value.trim() || null,
+           email         : document.getElementById("cc_to_email").value.trim() || null
+         };
+       }
 
        // Normalize money to a Number with 2-decimal precision (no strings)
        function fix2(n){
@@ -4167,8 +4185,8 @@ function metalToBadge(label){
        }
 
       function buildShipmentPayload(){
-        const toObj        = buildTo();
-        const toCountry    = toObj.to_country_code;
+        const toObj         = buildTo();
+        const toCountry     = toObj.country_code;
         const valueCurrency = (document.getElementById("cc_value_currency")?.value || (toCountry === "CA" ? "CAD" : "USD"));
 
         // ⬇️ multi-item support
@@ -4179,14 +4197,14 @@ function metalToBadge(label){
         const grandInput  = Number(document.getElementById("cc_grand_total")?.value || 0);
         const grandTotal  = (Number.isFinite(grandInput) && grandInput > 0) ? grandInput : totalValue;
 
-        const customsItems = lines.map(li => ({
-          description                   : li.description,
-          sku                           : li.sku || undefined,
-          quantity                      : Number(li.quantity) || 1,
-          unit_value                    : fix2(li.unit_value),
-          value                         : fix2(li.value || (li.unit_value * li.quantity)),
-          origin_country                : li.origin_country || undefined,
-          hs_tariff_code                : li.hs_tariff_code || undefined,
+        const line_items = lines.map(li => ({
+          description    : li.description,
+          quantity       : Number(li.quantity) || 1,
+          value_amount   : toMoney(li.value || (li.unit_value * li.quantity)),
+          currency_code  : valueCurrency.toLowerCase(),
+          hs_tariff_code : li.hs_tariff_code || undefined,
+          sku_code       : li.sku || undefined,
+          origin_country : (li.origin_country || "").toUpperCase() || undefined
           manufacture_country           : li.manufacture_country || undefined,
           manufacturer_contact          : li.manufacturer_contact || undefined,
           manufacturer_street           : li.manufacturer_street || undefined,
@@ -4210,7 +4228,17 @@ function metalToBadge(label){
           media_mail_requested: document.getElementById("cc_media_mail_requested").value === "true",
           ship_date           : normalizeShipDate(document.getElementById("cc_ship_date").value)
         };
-        return {
+          return {
+          to     : toObj,
+          package: pkg,
+          customs: {
+            package_contents: document.getElementById("cc_package_contents").value,
+            value           : toMoney(grandTotal),
+            value_currency  : valueCurrency.toLowerCase(),
+            line_items,
+            vat_reference   : (document.getElementById("cc_customs_tax_reference_number")?.value || "").trim() || null
+          }
+        };
           ...toObj,
 
           package_contents: document.getElementById("cc_package_contents").value,
