@@ -12,13 +12,16 @@
     .btn.secondary { background:#333; }
     .grid { display:grid; grid-template-columns: repeat(auto-fill, minmax(280px,1fr)); gap:12px; padding:16px; }
     .card { background:#121212; border:1px solid #222; border-radius:14px; overflow:hidden; display:flex; flex-direction:column; }
-    /* zoom wrapper for primary image */
-    .thumb-wrap {
-      width: 100%;
-      aspect-ratio: 1 / 1;
-      overflow: hidden;
-      background: #151515;
-      position: relative;
+    /* base image state: fit fully, not cropped; start at scale(1) */
+    .thumb{
+      width:100%;
+      height:100%;
+      object-fit: contain;           /* was cover (appears “zoomed”) */
+      background:#151515;
+      user-select:none;
+      transform: scale(1);           /* explicit baseline */
+      transform-origin: var(--ox, 50%) var(--oy, 50%);
+      transition: transform .05s linear;
     }
 
     /* green checkmark box */
@@ -198,6 +201,17 @@ function attachZoom(wrap, img){
   let scale = 1;
   const MIN = 1, MAX = 5, STEP = 0.2;
 
+  const reset = () => {
+    scale = 1;
+    img.style.transform = "scale(1)";
+    img.style.setProperty("--ox", "50%");
+    img.style.setProperty("--oy", "50%");
+  };
+
+  // ensure pristine state immediately and whenever the image source finishes loading
+  reset();
+  img.addEventListener("load", reset, { once: true });
+
   wrap.addEventListener("wheel", (e) => {
     e.preventDefault();
     const rect = wrap.getBoundingClientRect();
@@ -211,13 +225,8 @@ function attachZoom(wrap, img){
     img.style.transform = `scale(${scale})`;
   }, { passive: false });
 
-  // quick reset
-  wrap.addEventListener("dblclick", () => {
-    scale = 1;
-    img.style.transform = "scale(1)";
-    img.style.setProperty("--ox", "50%");
-    img.style.setProperty("--oy", "50%");
-  });
+  // quick reset to baseline
+  wrap.addEventListener("dblclick", reset);
 }
 
 /** ============ Listings UI ============ */
