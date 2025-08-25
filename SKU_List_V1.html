@@ -12,7 +12,28 @@
     .btn.secondary { background:#333; }
     .grid { display:grid; grid-template-columns: repeat(auto-fill, minmax(280px,1fr)); gap:12px; padding:16px; }
     .card { background:#121212; border:1px solid #222; border-radius:14px; overflow:hidden; display:flex; flex-direction:column; }
-    .thumb { width:100%; aspect-ratio: 1 / 1; object-fit:cover; background:#151515; }
+    /* zoom wrapper for primary image */
+    .thumb-wrap {
+      width: 100%;
+      aspect-ratio: 1 / 1;
+      overflow: hidden;
+      background: #151515;
+      position: relative;
+    }
+
+    /* green checkmark box */
+    .selectBox {
+      width: 18px;
+      height: 18px;
+      accent-color: #2e7d32; /* modern browsers: green check */
+      cursor: pointer;
+    }
+
+    /* selected card highlight */
+    .card.selected {
+      outline: 2px solid #2e7d32;
+      outline-offset: -1px;
+    }
     .meta { padding:12px; display:flex; flex-direction:column; gap:6px; }
     .title { font-size:14px; line-height:1.3; color:#fafafa; font-weight:600; }
     .sku { font-size:12px; color:#bbb; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
@@ -161,6 +182,44 @@ async function apiFetch(path, init={}){
   return fetch(`${functionsBaseUrl}${path}`, { ...init, headers });
 }
 
+/** ============ Selection persistence ============ */
+const SELECT_KEY = "sku_selected_ids_v1";
+function loadSelectedSet(){
+  try { return new Set(JSON.parse(localStorage.getItem(SELECT_KEY) || "[]")); }
+  catch { return new Set(); }
+}
+function saveSelectedSet(set){
+  localStorage.setItem(SELECT_KEY, JSON.stringify([...set]));
+}
+let selectedSet = loadSelectedSet();
+
+/** ============ Image zoom helpers ============ */
+function attachZoom(wrap, img){
+  let scale = 1;
+  const MIN = 1, MAX = 5, STEP = 0.2;
+
+  wrap.addEventListener("wheel", (e) => {
+    e.preventDefault();
+    const rect = wrap.getBoundingClientRect();
+    const ox = ((e.clientX - rect.left) / rect.width) * 100;
+    const oy = ((e.clientY - rect.top)  / rect.height) * 100;
+    img.style.setProperty("--ox", ox + "%");
+    img.style.setProperty("--oy", oy + "%");
+
+    const delta = e.deltaY < 0 ? STEP : -STEP;
+    scale = Math.min(MAX, Math.max(MIN, +(scale + delta).toFixed(2)));
+    img.style.transform = `scale(${scale})`;
+  }, { passive: false });
+
+  // quick reset
+  wrap.addEventListener("dblclick", () => {
+    scale = 1;
+    img.style.transform = "scale(1)";
+    img.style.setProperty("--ox", "50%");
+    img.style.setProperty("--oy", "50%");
+  });
+}
+
 /** ============ Listings UI ============ */
 const listContainer = document.getElementById("listContainer");
 const pageNumEl     = document.getElementById("pageNum");
@@ -190,11 +249,18 @@ function renderListings(items){
   for (const it of items){
     if (!titlePassesFilter(it.title)) continue;
 
+    // ——— image + zoom wrapper ———
+    const wrap = document.createElement("div");
+    wrap.className = "thumb-wrap";
+
     const img = document.createElement("img");
     img.className = "thumb";
     img.alt = it.title || "Listing image";
     img.src = it.primary_image || "";
+    wrap.appendChild(img);
+    attachZoom(wrap, img);
 
+    // ——— meta block ———
     const meta = document.createElement("div");
     meta.className = "meta";
 
@@ -209,12 +275,34 @@ function renderListings(items){
 
     const row = document.createElement("div");
     row.className = "row";
+
+    // ——— new: persistent selection checkbox ———
+    const cb = document.createElement("input");
+    cb.type = "checkbox";
+    cb.className = "selectBox";
+    cb.title = "Select listing";
+    cb.checked = selectedSet.has(it.listing_id);
+    cb.addEventListener("change", () => {
+      const cardEl = cb.closest(".card");
+      if (cb.checked){
+        selectedSet.add(it.listing_id);
+        if (cardEl) cardEl.classList.add("selected");
+      } else {
+        selectedSet.delete(it.listing_id);
+        if (cardEl) cardEl.classList.remove("selected");
+      }
+      saveSelectedSet(selectedSet);
+    });
+    row.appendChild(cb);
+
     const idPill = document.createElement("span");
     idPill.className = "pill";
     idPill.textContent = `#${it.listing_id}`;
+
     const pricePill = document.createElement("span");
     pricePill.className = "pill";
     if (it.price) pricePill.textContent = `${it.price.amount/100} ${it.price.currency_code}`;
+
     row.appendChild(idPill);
     if (it.price) row.appendChild(pricePill);
 
@@ -230,11 +318,10 @@ function renderListings(items){
     const genBtn = document.createElement("button");
     genBtn.className = "btn";
     genBtn.textContent = "Generate";
-    genBtn.dataset.role = "gen-btn"; // identify per-card button
+    genBtn.dataset.role = "gen-btn";
     genBtn.addEventListener("click", () => generateAndSaveSku(it, genBtn));
     row.appendChild(genBtn);
 
-    // If no SKU from Etsy → highlight Generate button
     if (!firstSku) {
       genBtn.style.background = "OrangeRed";
       genBtn.title = "No SKU yet — click Generate";
@@ -244,10 +331,15 @@ function renderListings(items){
     meta.appendChild(sku);
     meta.appendChild(row);
 
+    // ——— card assembly ———
     const card = document.createElement("div");
     card.className = "card";
-    card.appendChild(img);
+    card.appendChild(wrap);   // ⟵ replaced: was card.appendChild(img)
     card.appendChild(meta);
+
+    // selected highlight on initial render
+    if (cb.checked) card.classList.add("selected");
+
     // 🔹 SKU editor container (hidden until opened)
     const editor = document.createElement("div");
     editor.className = "meta";
