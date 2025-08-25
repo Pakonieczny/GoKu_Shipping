@@ -3853,6 +3853,7 @@ function metalToBadge(label){
 
       async function ensureShipment(){
         const id = (idInput.value || "").trim();
+
         // Creating a shipment? Hard-fail if country is missing.
         if (!id) {
           const to = buildTo();
@@ -3863,6 +3864,7 @@ function metalToBadge(label){
             throw new Error("Missing recipient country_code");
           }
         }
+
         if (id) return await callCc("GET", null, `?resource=shipment&id=${encodeURIComponent(id)}`);
         const out = await callCc("POST", { action:"create_shipment", shipment: buildShipmentPayload() });
         pushShipmentId(out?.id);
@@ -3874,32 +3876,20 @@ function metalToBadge(label){
       /* Feature flag: leave QZ code in the file, but disable it by default */
       const USE_QZ = false;
 
-      // Refund (if purchased) or delete/void (if not), then create a new shipment
+
       async function replaceShipmentWithCorrections() {
-        const id = (document.getElementById("ccShipmentId")?.value || "").trim();
-        const hasId = /^[A-Za-z0-9_-]{8,}$/.test(id);
-
-        if (hasId) {
-          try {
-            const out = await callCc("GET", null, `?resource=shipment&id=${encodeURIComponent(id)}`);
-            const s   = out?.shipment || out || {};
-            const hasLabel =
-              !!(s.label_url || s.labelUrl || s.label_download_url ||
-                 (s.label && (s.label.url || s.label.download_url)) ||
-                 (Array.isArray(s.labels) && (s.labels[0]?.url || s.labels[0]?.label_url)));
-
-            // If a label exists, try refund; otherwise try delete/void (both are safe to ignore on failure)
-            if (hasLabel) {
-              try { await callCc("PATCH", { action: "refund", shipment_id: id }); } catch (_) {}
-            } else {
-              try { await callCc("PATCH", { action: "delete", shipment_id: id }); } catch (_) {}
-            }
-          } catch (_) {
-            // if GET fails, we still proceed to create a fresh one
-          }
+        // Hard guard: a create requires country_code
+        const to = buildTo();
+        if (!to.country_code) {
+          markMissing(0, ["cc_to_country_code"]);
+          M.toast?.({ html: "Country is required (e.g., CA or US)." });
+          showStep(0);
+          throw new Error("Missing recipient country_code");
         }
 
-        // Create new shipment with corrected recipient + line_items (preferred)
+        // ⚠️ Proxy only supports PATCH: refresh|buy|add|remove
+        // So we DO NOT call refund/delete here.
+        // We simply create a new shipment with corrected recipient + line_items.
         const created = await callCc("POST", { action: "create_shipment", shipment: buildShipmentPayload() });
         const newId   = created?.id || created?.shipment?.id;
         if (newId) pushShipmentId(newId);
