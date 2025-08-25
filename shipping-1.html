@@ -4089,8 +4089,13 @@ function metalToBadge(label){
         if (canRefresh) {
           // Server-side validate/update existing shipment (now safe)
           const refreshPayload = buildRefreshPayload();
-          await callCc("PATCH", { action: "refresh", shipment_id: rawId, payload: refreshPayload });
-          pushShipmentId(rawId); // keep window.ccShipmentId in sync
+          await callCc("PATCH", {
+            action: "update_shipment",
+            shipment_id: rawId,
+            shipment: refreshPayload,
+            payload: refreshPayload // compatibility with older function code
+          });
+          pushShipmentId(rawId);
           return [];
         }
         if (step === 0) {
@@ -4102,6 +4107,24 @@ function metalToBadge(label){
         if (!hasValidId) {
           const out = await callCc("POST", { action: "create_shipment", shipment: payload });
           pushShipmentId(out?.id || out?.shipment?.id); // <- populate immediately
+        }
+        // NEW: persist Step 1 edits (line items, totals, currency, contents) right away
+        if (step === 1) {
+          const lite = {
+            package_contents: payload.package_contents,
+            value: payload.value,
+            value_currency: payload.value_currency,
+            line_items: payload.line_items
+          };
+          const idNow = (document.getElementById("ccShipmentId")?.value || "").trim();
+          if (idNow) {
+            await callCc("PATCH", {
+              action: "update_shipment",
+              shipment_id: idNow,
+              shipment: lite,
+              payload: lite // compatibility
+            });
+          }
         }
         return [];
         } catch (e) {
@@ -4304,8 +4327,13 @@ function metalToBadge(label){
         markMissing(2, ["cc_weight"]);
         return;
       }
-        const out = await callCc("PATCH", { action:"refresh", shipment_id:id, payload });
-        renderRates(out.shipment || out);
+      const out = await callCc("PATCH", {
+        action: "update_shipment",          // <- update instead of "refresh"
+        shipment_id: id,
+        shipment: payload,                  // <- primary shape most proxies expect
+        payload                             // <- keep for backward compatibility
+      });
+      renderRates(out.shipment || out);
       }
 
       async function buySelected(){
