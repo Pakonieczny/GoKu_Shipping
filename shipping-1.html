@@ -4142,9 +4142,11 @@ async function ccValidateAgainstApi(step){
 
       const idNow = (document.getElementById("ccShipmentId")?.value || "").trim();
       if (idNow) {
-        await callCc("PATCH", { action: "refresh", shipment_id: idNow,
-          shipment: lite,
-          payload: lite
+        await callCc("PATCH", {
+          action     : "refresh",
+          shipment_id: idNow,
+          shipment   : patch,
+          payload    : patch
         });
       }
     }
@@ -4268,7 +4270,7 @@ function buildRefreshPayload(){
   const sy = Number(document.getElementById("cc_size_y").value || 0);
   const sz = Number(document.getElementById("cc_size_z").value || 0);
 
-  // compute totals + API-shape line_items first
+  // compute totals & items first
   const toCountry     = document.getElementById("cc_to_country_code").value.trim().toUpperCase();
   const valueCurrency = (document.getElementById("cc_value_currency")?.value || (toCountry === "CA" ? "CAD" : "USD"));
   const lines         = collectCcLineItems();
@@ -4285,7 +4287,7 @@ function buildRefreshPayload(){
     origin_country: (li.origin_country || "").toUpperCase() || undefined
   }));
 
-  // build minimal refresh payload (no `customs` here)
+  // now assemble payload
   const payload = {
     package_type        : document.getElementById("cc_package_type").value,
     ship_date           : normalizeShipDate(document.getElementById("cc_ship_date").value),
@@ -4309,7 +4311,6 @@ function buildRefreshPayload(){
   }
   return payload;
 }
-
       function renderRates(s){
         const rates = (s && s.rates) || [];
         ratesList.innerHTML = "";
