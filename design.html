@@ -2567,6 +2567,7 @@ const selectRow = async (row) => {
 
    // 👇 keep the legacy checks happy
    const REQUIRED = active.slice();      // ← NEW LINE
+   const selSet = new Set([...selectedOrders].map(String));
  
    if (!active.length) {                       // nothing selected at all
      M.toast({html:"Enable at least one metal filter before printing labels"});
@@ -2599,13 +2600,15 @@ const selectRow = async (row) => {
     multiMetalOrders.forEach(rid => greenIDs.add(rid));
 
     document.querySelectorAll("#photoGridContainer .wrap-preview").forEach(w => {
-      if (w.style.display === "none")          return;               // hidden
-        const metal = canonicalMetal(w.dataset.metal);
-        if(!metal){ skippedOrders.add(w.dataset.receipt); return; }    // unknown → skip
-        if (!active.includes(metal))             return;               // wrong filter
+      const rid   = String(w.dataset.receipt);
+      const metal = canonicalMetal(w.dataset.metal);
+      const isSelected = selSet.has(rid);
 
-      const rid = w.dataset.receipt;
-      if (multiMetalOrders.has(rid))           return;   // skip mixed‐metal in pure pass
+      if (!metal) { skippedOrders.add(rid); return; }
+      // If the order is selected, include it even if the current metal filter hides it
+      if (!isSelected && !active.includes(metal)) return;
+
+      if (multiMetalOrders.has(rid)) return;
       greenIDs.add(rid);
       if (!listsByMetal[metal].includes(rid)) listsByMetal[metal].push(rid);
     });
@@ -2616,6 +2619,22 @@ const selectRow = async (row) => {
     }
 
     /* 3️⃣  Defer UI cleanup—will run after “Print Labels” */
+    // Ensure all selected orders are included, even if hidden or metal flipped late
+    [...selectedOrders].forEach(ridRaw => {
+      const rid = String(ridRaw);
+      if (greenIDs.has(rid) || skippedOrders.has(rid)) return;
+
+      const txs = orderCache[rid] || [];
+      let k = "";
+      for (const tx of txs) { k = deriveMetalKeyFromVariations(tx); if (k) break; }
+
+      if (k && listsByMetal[k]) {
+        if (!listsByMetal[k].includes(rid)) listsByMetal[k].push(rid);
+        greenIDs.add(rid);
+      } else {
+        skippedOrders.add(rid);
+      }
+    });
      multiMetalOrders.forEach(rid=>{
          const metals = Array.from(metalSets[rid]).filter(m => listsByMetal[m]);
          if(!metals.length){
