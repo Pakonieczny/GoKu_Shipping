@@ -10,6 +10,8 @@
     .btn { background:#2962ff; color:#fff; border:0; border-radius:8px; padding:10px 14px; cursor:pointer; font-weight:600;}
     .btn:disabled { opacity:.6; cursor:default;}
     .btn.secondary { background:#333; }
+    /* toggle state for filter button */
+    .btn.active { background:#00695c; }
     .grid { display:grid; grid-template-columns: repeat(auto-fill, minmax(280px,1fr)); gap:12px; padding:16px; }
     .card { background:#121212; border:1px solid #222; border-radius:14px; overflow:hidden; display:flex; flex-direction:column; }
     /* base image state: fit fully, not cropped; start at scale(1) */
@@ -56,6 +58,8 @@
     <button id="connectEtsyBtn" class="btn">Connect Etsy</button>
     <button id="refreshBtn" class="btn secondary">Refresh</button>
 
+    <button id="filterCompleteBtn" class="btn secondary" title="Show only items without the green checkmark">Filter Complete</button>
+
     <div class="search">
       <input id="searchInput" placeholder="Filter by title… (client-side)" />
     </div>
@@ -72,6 +76,9 @@
       Page <span id="pageNum">1</span>
       &nbsp;•&nbsp; Page size
       <input id="pageSize" type="number" min="1" max="100" value="100" />
+      &nbsp;•&nbsp; Go to
+      <input id="pageJump" type="number" min="1" placeholder="Page" />
+      <button id="goBtn" class="btn secondary">Go</button>
     </span>
   </footer>
 
@@ -239,9 +246,13 @@ const prevBtn       = document.getElementById("prevBtn");
 const nextBtn       = document.getElementById("nextBtn");
 const refreshBtn    = document.getElementById("refreshBtn");
 const connectBtn    = document.getElementById("connectEtsyBtn");
+const filterCompleteBtn = document.getElementById("filterCompleteBtn");
+const pageJumpEl    = document.getElementById("pageJump");
+const goBtn         = document.getElementById("goBtn");
 
 let page = 1;
 let lastBatch = [];
+let filterIncompleteOnly = false; // show ONLY items without the green checkmark
 
 function setAuthBadge(){
   authStatusEl.textContent = getAccessToken() ? "Connected" : "Not connected";
@@ -257,6 +268,8 @@ function renderListings(items){
   listContainer.innerHTML = "";
   for (const it of items){
     if (!titlePassesFilter(it.title)) continue;
+    // If filtering, hide anything already “checked/complete”
+    if (filterIncompleteOnly && selectedSet.has(it.listing_id)) continue;
 
     // ——— image + zoom wrapper ———
     const wrap = document.createElement("div");
@@ -637,6 +650,24 @@ document.addEventListener("DOMContentLoaded", async () => {
   document.getElementById("nextBtn").addEventListener("click", () => { page++; loadPage(page); });
   document.getElementById("pageSize").addEventListener("change", () => { page = 1; loadPage(page); });
   document.getElementById("searchInput").addEventListener("input", () => renderListings(lastBatch));
+
+  // Toggle: show only items WITHOUT green checkmark (unchecked)
+  filterCompleteBtn.addEventListener("click", () => {
+    filterIncompleteOnly = !filterIncompleteOnly;
+    filterCompleteBtn.classList.toggle("active", filterIncompleteOnly);
+    renderListings(lastBatch);
+  });
+  // Jump to page (button + Enter key)
+  goBtn.addEventListener("click", () => {
+    const n = Math.max(1, Number(pageJumpEl.value || 1));
+    page = n; loadPage(page);
+  });
+  pageJumpEl.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") {
+      const n = Math.max(1, Number(pageJumpEl.value || 1));
+      page = n; loadPage(page);
+    }
+  });
 
   if (getAccessToken()) loadPage(1);
 });
