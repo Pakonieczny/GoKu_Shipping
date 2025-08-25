@@ -4085,9 +4085,9 @@ async function ccValidateAgainstApi(step){
   const canRefresh = hasValidId && step >= 2 && !window.ccPostBuyFrozen;
 
   try {
-    // Step ≥2: server-side refresh of an existing shipment using the full refresh payload
+    // Step ≥2: refresh using full refresh payload
     if (canRefresh) {
-      const refreshPayload = buildRefreshPayload(); // includes customs, dims, weight, etc.
+      const refreshPayload = buildRefreshPayload();
       await callCc("PATCH", {
         action     : "refresh",
         shipment_id: rawId,
@@ -4097,7 +4097,7 @@ async function ccValidateAgainstApi(step){
       return [];
     }
 
-    // Step 0: verify address only (send a proper 'to' object)
+    // Step 0: verify address only
     if (step === 0) {
       await callCc("POST", { action: "verify_to", to: buildTo() });
       return [];
@@ -4109,16 +4109,11 @@ async function ccValidateAgainstApi(step){
       pushShipmentId(out?.id || out?.shipment?.id);
     }
 
-    // Step 1: use the SAME full refresh payload as Step ≥2
+    // ✅ Step 1: REFRESH (with nested customs) — no deletion, no recreation
     if (step === 1) {
       const idNow = (document.getElementById("ccShipmentId")?.value || "").trim();
-      if (!idNow) return []; // created above; nothing to refresh yet
-
-      const full = buildRefreshPayload();
-      // keep contents/type in sync on refresh
-      full.package_type     ??= document.getElementById("cc_package_type").value;
-      full.package_contents  = document.getElementById("cc_package_contents").value;
-
+      if (!idNow) return [];
+      const full = buildRefreshPayload();  // now includes { customs:{...} }
       await callCc("PATCH", {
         action     : "refresh",
         shipment_id: idNow,
@@ -4241,27 +4236,37 @@ function buildRefreshPayload(){
   const totalViaUnits = lines.reduce((s, li) => s + (Number(li.unit_value||0) * Number(li.quantity||0)), 0);
   const grandInput    = Number(document.getElementById("cc_grand_total")?.value || 0);
   const grandTotal    = (Number.isFinite(grandInput) && grandInput > 0) ? grandInput : totalViaUnits;
-  const line_items    = lines.map(li => ({
-    description   : li.description,
-    quantity      : Number(li.quantity) || 1,
-    value_amount  : toMoney(li.value || (li.unit_value * li.quantity)),
-    currency_code : valueCurrency.toLowerCase(),
-    hs_tariff_code: li.hs_tariff_code || undefined,
-    sku_code      : li.sku || undefined,
-    origin_country: (li.origin_country || "").toUpperCase() || undefined
+
+  // customs line items (currency uppercased)
+  const line_items = lines.map(li => ({
+    description    : li.description,
+    quantity       : Number(li.quantity) || 1,
+    value_amount   : toMoney(li.value || (li.unit_value * li.quantity)),
+    currency_code  : valueCurrency.toUpperCase(),
+    hs_tariff_code : li.hs_tariff_code || undefined,
+    sku_code       : li.sku || undefined,
+    origin_country : (li.origin_country || "").toUpperCase() || undefined
   }));
 
-  // now assemble payload
+  // assemble refresh payload
   const payload = {
     package_type        : document.getElementById("cc_package_type").value,
     ship_date           : normalizeShipDate(document.getElementById("cc_ship_date").value),
     insurance_requested : document.getElementById("cc_insurance_requested").value === "true",
     media_mail_requested: document.getElementById("cc_media_mail_requested").value === "true",
     signature_requested : document.getElementById("cc_signature_requested").value === "true",
-    value               : toMoney(grandTotal),
-    value_currency      : valueCurrency.toLowerCase(),
-    line_items
+
+    // ✅ NEST customs for refresh so item details/description apply
+    customs: {
+      package_contents: document.getElementById("cc_package_contents").value,
+      value           : toMoney(grandTotal),
+      value_currency  : valueCurrency.toUpperCase(),
+      line_items,
+      vat_reference   : (document.getElementById("cc_customs_tax_reference_number")?.value || "").trim() || null
+    }
   };
+
+  // weight & dims (only if provided)
   if (Number.isFinite(weight) && weight > 0) {
     payload.weight = weight;
     payload.weight_unit = wUnit;
@@ -4273,6 +4278,7 @@ function buildRefreshPayload(){
     if (sy > 0) payload.size_y = sy;
     if (sz > 0) payload.size_z = sz;
   }
+
   return payload;
 }
       function renderRates(s){
