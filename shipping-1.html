@@ -4078,84 +4078,64 @@ function metalToBadge(label){
         }
       }
 
-    async function ccValidateAgainstApi(step){
-      const payload    = buildShipmentPayload();
-      const rawId      = (document.getElementById("ccShipmentId")?.value || "").trim();
-      const hasValidId = /^[A-Za-z0-9_-]{8,}$/.test(rawId);
-      const canRefresh = hasValidId && step >= 2 && !window.ccPostBuyFrozen;
+async function ccValidateAgainstApi(step){
+  const payload    = buildShipmentPayload();
+  const rawId      = (document.getElementById("ccShipmentId")?.value || "").trim();
+  const hasValidId = /^[A-Za-z0-9_-]{8,}$/.test(rawId);
+  const canRefresh = hasValidId && step >= 2 && !window.ccPostBuyFrozen;
 
-      try {
-        // Step ≥2: server-side refresh of an existing shipment using the full refresh payload
-        if (canRefresh) {
-          const refreshPayload = buildRefreshPayload(); // includes customs, dims, weight, contents, etc.
-          await callCc("PATCH", {
-            action     : "refresh",
-            shipment_id: rawId,
-            payload    : refreshPayload
-          });
-          pushShipmentId(rawId);
-          return [];
-        }
-
-        // Step 0: verify address only (send a proper 'to' object)
-        if (step === 0) {
-          await callCc("POST", { action: "verify_to", to: buildTo() });
-          return [];
-        }
-
-        // Create on step 1 if ID is missing
-        if (!hasValidId) {
-          const out = await callCc("POST", { action: "create_shipment", shipment: payload });
-          pushShipmentId(out?.id || out?.shipment?.id);
-        }
-
-        // Step 1: apply customs & values by (re)creating the shipment
-        // NOTE: /shipments/{id}/refresh ignores customs fields (line_items, value, etc.)
-        // So we delete any existing unpaid shipment, then POST a fresh one with full body.
-        if (step === 1) {
-          const idNow = (document.getElementById("ccShipmentId")?.value || "").trim();
-          if (!idNow) return []; // already created earlier or will be created later
-
-          const toCountry     = document.getElementById("cc_to_country_code").value.trim().toUpperCase();
-          const valueCurrency = (document.getElementById("cc_value_currency")?.value || (toCountry === "CA" ? "CAD" : "USD"));
-          const lines         = collectCcLineItems();
-          const grandInput    = Number(document.getElementById("cc_grand_total")?.value || 0);
-          const totalViaUnits = lines.reduce((s, li) => s + (Number(li.unit_value||0) * Number(li.quantity||0)), 0);
-          const grandTotal    = (Number.isFinite(grandInput) && grandInput > 0) ? grandInput : totalViaUnits;
-
-          const line_items = lines.map(li => ({
-            description    : li.description,
-            quantity       : Number(li.quantity) || 1,
-            value_amount   : toMoney(li.value || (li.unit_value * li.quantity)),
-            currency_code  : valueCurrency.toLowerCase(),
-            hs_tariff_code : li.hs_tariff_code || undefined,
-            sku_code       : li.sku || undefined,
-            origin_country : (li.origin_country || "").toUpperCase() || undefined
-          }));
-
-          const patch = {
-            package_contents: document.getElementById("cc_package_contents").value,
-            value           : toMoney(grandTotal),
-            value_currency  : valueCurrency.toLowerCase(),
-            line_items,
-            vat_reference   : (document.getElementById("cc_customs_tax_reference_number")?.value || "").trim() || null
-          };
-
-          await callCc("PATCH", {
-            action     : "refresh",
-            shipment_id: idNow,
-            payload    : patch
-          });
-        }
-
-        return [];
-      } catch (e) {
-        handleCcApiError(step, e);
-        const stepEl = document.getElementById("ccStep" + step);
-        const ids = Array.from(stepEl.querySelectorAll(".cc-field.cc-missing [id]")).map(n => n.id);
-        return ids;
-      }
+  try {
+    // Step ≥2: server-side refresh of an existing shipment using the full refresh payload
+    if (canRefresh) {
+      const refreshPayload = buildRefreshPayload(); // includes customs, dims, weight, etc.
+      await callCc("PATCH", {
+        action     : "refresh",
+        shipment_id: rawId,
+        payload    : refreshPayload
+      });
+      pushShipmentId(rawId);
+      return [];
     }
+
+    // Step 0: verify address only (send a proper 'to' object)
+    if (step === 0) {
+      await callCc("POST", { action: "verify_to", to: buildTo() });
+      return [];
+    }
+
+    // Create on step 1 if ID is missing
+    if (!hasValidId) {
+      const out = await callCc("POST", { action: "create_shipment", shipment: payload });
+      pushShipmentId(out?.id || out?.shipment?.id);
+    }
+
+    // Step 1: use the SAME full refresh payload as Step ≥2
+    if (step === 1) {
+      const idNow = (document.getElementById("ccShipmentId")?.value || "").trim();
+      if (!idNow) return []; // created above; nothing to refresh yet
+
+      const full = buildRefreshPayload();
+      // keep contents/type in sync on refresh
+      full.package_type     ??= document.getElementById("cc_package_type").value;
+      full.package_contents  = document.getElementById("cc_package_contents").value;
+
+      await callCc("PATCH", {
+        action     : "refresh",
+        shipment_id: idNow,
+        payload    : full
+      });
+      pushShipmentId(idNow);
+      return [];
+    }
+
+    return [];
+  } catch (e) {
+    handleCcApiError(step, e);
+    const stepEl = document.getElementById("ccStep" + step);
+    const ids = Array.from(stepEl.querySelectorAll(".cc-field.cc-missing [id]")).map(n => n.id);
+    return ids;
+  }
+}
 
        function buildTo(){
          return {
