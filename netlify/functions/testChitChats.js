@@ -106,6 +106,49 @@ exports.handler = async (event) => {
       return out.data.count;
     };
 
+    // --- Flatten nested client payload → API's flat schema ---
+    function adaptClientShipment(client = {}) {
+      const to      = client.to      || {};
+      const pkg     = client.package || {};
+      const customs = client.customs || {};
+
+      const out = {
+        // Recipient (top level)
+        name          : to.name ?? client.name ?? "",
+        address_1     : to.address_1 ?? client.address_1 ?? "",
+        address_2     : to.address_2 ?? client.address_2 ?? undefined,
+        city          : to.city ?? client.city ?? "",
+        province_code : to.province_code ?? client.province_code ?? "",
+        postal_code   : to.postal_code ?? client.postal_code ?? "",
+        country_code  : String(to.country_code ?? client.country_code ?? "").toUpperCase(),
+        phone         : to.phone ?? client.phone ?? undefined,
+        email         : to.email ?? client.email ?? undefined,
+
+        // Package / required top-levels
+        package_type  : pkg.package_type  ?? client.package_type,
+        size_unit     : pkg.size_unit     ?? client.size_unit,
+        size_x        : numberish(pkg.size_x ?? client.size_x),
+        size_y        : numberish(pkg.size_y ?? client.size_y),
+        size_z        : numberish(pkg.size_z ?? client.size_z),
+        weight_unit   : pkg.weight_unit   ?? client.weight_unit,
+        weight        : numberish(pkg.weight ?? client.weight),
+        ship_date     : normalizeShipDateServer(pkg.ship_date ?? client.ship_date ?? "today"),
+        postage_type  : pkg.postage_type  ?? client.postage_type, // may be "unknown" or omitted
+
+        // Customs / value
+        package_contents : customs.package_contents ?? client.package_contents ?? "merchandise",
+        description      : customs.description     ?? client.description,
+        value            : String((customs.value ?? client.value ?? 0)),
+        value_currency   : String((customs.value_currency ?? client.value_currency ?? "cad")).toLowerCase(),
+        order_id         : client.order_id ?? client.reference ?? client.order,
+        line_items       : Array.isArray(customs.line_items) ? customs.line_items : undefined
+      };
+
+      // prune undefined/null to keep payload tidy
+      Object.keys(out).forEach(k => (out[k] == null) && delete out[k]);
+      return out;
+    }
+
     // --- Pending/open-batch filter (correct scope) ---
     let _openBatchIdsCache = null;
     async function getOpenBatchIdsSet() {
@@ -230,49 +273,6 @@ exports.handler = async (event) => {
           // normalize: some envs return array; others wrap under .batches/.data
           const list = Array.isArray(out.data) ? out.data : (out.data?.batches || out.data?.data || []);
           return ok({ success: true, batches: list });
-        } catch (e) {
-          return bad(500, e);
-        }
-      }
-
-      // NEW: fetch a label payload (ZPL/PDF/PNG) via proxy to avoid CORS and enable QZ printing
-      if (resource === "label" && qp.id) {
-        try {
-          const fmt = String(qp.format || "zpl").toLowerCase();
-          const sid = String(qp.id);
-          // 1) Load shipment to discover label URLs
-          const r0  = await fetch(url(`/shipments/${encodeURIComponent(sid)}`), { headers: authH });
-          const o0  = await wrap(r0);
-          if (!o0.ok) return bad(o0.status, o0.data);
-          const s = o0.data || {};
-          const zpl = s.postage_label_zpl_url || s.postageLabelZplUrl || s.label_zpl_url || s.labelZplUrl;
-          const pdf = s.postage_label_pdf_url || s.postageLabelPdfUrl || s.label_pdf_url || s.labelPdfUrl;
-          const png = s.postage_label_png_url || s.postageLabelPngUrl || s.label_png_url || s.labelPngUrl;
-          const target = fmt === "pdf" ? pdf : (fmt === "png" ? png : zpl);
-          if (!target) return bad(404, "label not ready");
-          // 2) Fetch the label content (try with auth, then without for public URLs)
-          let r = await fetch(target, { headers: authH });
-          if (!r.ok && (r.status === 401 || r.status === 403)) {
-            r = await fetch(target);
-          }
-          if (!r.ok) return bad(r.status, await r.text());
-          const ct = r.headers.get("Content-Type") || (
-            fmt === "pdf" ? "application/pdf"
-            : fmt === "png" ? "image/png"
-            : "text/plain; charset=utf-8"
-          );
-          if (fmt === "zpl") {
-            const text = await r.text();
-            return okText(text, ct);
-          } else {
-            const buf = Buffer.from(await r.arrayBuffer());
-            return {
-              statusCode: 200,
-              headers: { ...CORS, "Content-Type": ct },
-              body: buf.toString("base64"),
-              isBase64Encoded: true
-            };
-          }
         } catch (e) {
           return bad(500, e);
         }
@@ -438,11 +438,20 @@ exports.handler = async (event) => {
         return ok({ success: true, id, location: loc || null });
       }
 
-      // (2) create shipment
+      // (2) create shipment  ✅ FLATTEN + validate
       if (action === "create_shipment") {
-        const shipment = body.shipment || body.payload || {};
-        shipment.ship_date = normalizeShipDateServer(shipment.ship_date);
-        const resp = await fetch(url(`/shipments`), { method: "POST", headers: authH, body: JSON.stringify(shipment) });
+        const clientPayload = body.shipment || body.payload || {};
+        const shipment = adaptClientShipment(clientPayload);
+
+        if (!shipment.country_code) {
+          return bad(400, { message: "country_code required" });
+        }
+
+        const resp = await fetch(url(`/shipments`), {
+          method: "POST",
+          headers: authH,
+          body: JSON.stringify(shipment)
+        });
         const out  = await wrap(resp);
         if (!out.ok) return bad(out.status, out.data);
 
@@ -470,12 +479,16 @@ exports.handler = async (event) => {
       const body   = safeJSON(event.body);
       const action = (body.action || "").toLowerCase();
 
-      // (A) Shipment: refresh rates / update pkg details
+      // (A) Shipment: refresh rates / update pkg details  ✅ FLATTEN + validate
       if (action === "refresh") {
         const id = String(body.shipment_id || body.id || qp.id || "");
         if (!id) return bad(400, "shipment_id required for refresh");
-        const payload = body.payload || {};
-        payload.ship_date = normalizeShipDateServer(payload.ship_date); // <-- REQUIRED
+        const clientPayload = body.payload || {};
+        const payload = adaptClientShipment(clientPayload);
+        payload.ship_date = normalizeShipDateServer(payload.ship_date); // ensure normalized
+        if (!payload.country_code) {
+          return bad(400, { message: "country_code required" });
+        }
         const resp = await fetch(url(`/shipments/${encodeURIComponent(id)}/refresh`), {
           method: "PATCH", headers: authH, body: JSON.stringify(payload)
         });
