@@ -4123,8 +4123,9 @@ async function ccValidateAgainstApi(step){
 
       // customs for the Edit panel details
       const customs = {
-        value: toMoney(grandTotal),
-        value_currency: valueCurrency.toLowerCase(),
+        // send numeric + uppercase currency for API compatibility
+        value: fix2(grandTotal),
+        value_currency: valueCurrency.toUpperCase(),
         items: lines.map(li => ({
           description: li.description,
           quantity   : Number(li.quantity) || 1,
@@ -4147,8 +4148,10 @@ async function ccValidateAgainstApi(step){
       const line_items = lines.map(li => ({
         description   : li.description,
         quantity      : Number(li.quantity) || 1,
-        value_amount  : (Math.round(((li.value || (li.unit_value * li.quantity)) || 0) * 100)/100).toFixed(2),
-        currency_code : valueCurrency.toLowerCase(),
+        // numeric amount; not a string
+        value_amount  : fix2(li.value || (li.unit_value * li.quantity)),
+        // ISO 4217 in uppercase
+        currency_code : valueCurrency.toUpperCase(),
         hs_tariff_code: li.hs_tariff_code || undefined,
         sku_code      : li.sku || undefined,
         origin_country: (li.origin_country || "").toUpperCase() || undefined
@@ -4158,8 +4161,9 @@ async function ccValidateAgainstApi(step){
         package_contents: document.getElementById("cc_package_contents").value,
         customs_tax_reference_number: (document.getElementById("cc_customs_tax_reference_number")?.value || "").trim() || null,
         description: (lines[0]?.description || "Items"),
-        value: (Math.round(grandTotal * 100)/100).toFixed(2),
-        value_currency: valueCurrency.toLowerCase(),
+        // numeric total + uppercase currency
+        value: fix2(grandTotal),
+        value_currency: valueCurrency.toUpperCase(),
         line_items,
         customs
       };
