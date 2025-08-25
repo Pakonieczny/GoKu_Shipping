@@ -4202,45 +4202,9 @@ function metalToBadge(label){
       const canRefresh = hasValidId && step >= 2 && !window.ccPostBuyFrozen;
 
       try {
-        // Step ≥2: refresh using full refresh payload
+        // Step ≥2: NO refresh here — only ccStep2→Next triggers PATCH
         if (canRefresh) {
-          // before calling callCc(...)
-          const items = buildLineItems(); // each has value_amount (string), currency_code
-          const currency = items[0]?.currency_code || "CAD";
-          const total = items
-            .reduce((s, i) => s + Number(i.value_amount || 0), 0)
-            .toFixed(2);
-
-          const payload = {
-            package_type: "thick_envelope",
-            ship_date: "2025-08-25",
-            insurance_requested: false,
-            signature_requested: false,
-            customs: {
-              package_contents: "merchandise",
-              value: total,                 // ← derived once
-              value_currency: currency,     // ← derived once
-              line_items: items,            // ← authoritative per-item data
-              vat_reference: null
-            },
-            media_mail_requested: false,
-            weight: 0.25,
-            weight_unit: "lb",
-            size_unit: "in",
-            size_x: 6,
-            size_y: 4,
-            size_z: 1
-          };
-
-          // hand the snippet-built payload to the API
-          const refreshPayload = payload;
-
-          await callCc("PATCH", {
-            action     : "refresh",
-            shipment_id: rawId,
-            payload    : refreshPayload
-          });
-          pushShipmentId(rawId);
+          // NO refresh here — only ccStep2→Next triggers PATCH
           return [];
         }
 
@@ -4250,24 +4214,7 @@ function metalToBadge(label){
           return [];
         }
 
-      // ✅ Step 1: recipient/items changed → delete + recreate draft (server-side)
-      if (step === 1) {
-        // Example: inside your existing ccValidateAgainstApi(step) when you detect structural changes
-        const rawId = (document.getElementById("ccShipmentId")?.value || "").trim();
-
-        const response = await callCc("PATCH", {
-          action     : "replace_shipment",
-          shipment_id: rawId,
-          payload    : buildShipmentPayload()   // your existing builder with to/customs/etc.
-        });
-
-        // Use response.id as the NEW shipment id (update your UI field and local history)
-        if (response?.id) {
-          pushShipmentId(response.id); // if you maintain a recent IDs stack
-          document.getElementById("ccShipmentId").value = response.id;
-        }
-        return [];
-      }
+      /* Step 1 server-side replace_shipment disabled — rely on single PATCH at ccStep2→Next */
 
         return [];
       } catch (e) {
@@ -4447,22 +4394,54 @@ function buildRefreshPayload(){
         });
       }
 
-      async function refreshRates(){
-        let id = (idInput.value || "").trim();
-        if (!id) {
-          const created = await ensureShipment();
-          id = (created?.id || idInput.value || "").trim();
-          if (!id) { M.toast?.({ html: "Create the shipment first" }); return; }
+      // One-at-a-time protection to avoid double-click duplicates
+      let ccPatchInFlight = false;
+
+      async function refreshRates(opts = {}) {
+        const { source } = opts; // must be "step2-next" to PATCH
+        const idInput = document.getElementById("ccShipmentId");
+        let id = (idInput?.value || "").trim();
+
+        // If called from anywhere except ccStep2→Next, do NOT PATCH.
+        if (source !== "step2-next") {
+          console.log("[refreshRates] suppressed: only allowed from ccStep2 Next");
+          // Still ensure the shipment exists (may create if needed), but never PATCH here
+          await ensureShipment(); // POST create_shipment only if empty
+          return null;
         }
-      const payload = buildRefreshPayload();
-      // hard guard: weight must be present and > 0 for rates
-      if (!(Number.isFinite(payload.weight) && payload.weight > 0)) {
-        M.toast?.({ html: "Weight must be greater than 0 to refresh rates." });
-        markMissing(2, ["cc_weight"]);
-        return;
-      }
-      const out = await callCc("PATCH", { action: "refresh", shipment_id: id, payload });
-      renderRates(out.shipment || out);
+
+        if (ccPatchInFlight) {
+          console.log("[refreshRates] already in flight; skip");
+          return null;
+        }
+
+        ccPatchInFlight = true;
+        try {
+          // Make sure we have an id first (may POST once if brand new)
+          if (!id) {
+            const created = await ensureShipment();
+            id = (created?.id || idInput.value || "").trim();
+            if (!id) { M.toast?.({ html: "Create the shipment first" }); return; }
+          }
+
+          const payload = buildRefreshPayload();
+          // hard guard: weight must be present and > 0 for rates
+          if (!(Number.isFinite(payload.weight) && payload.weight > 0)) {
+            M.toast?.({ html: "Weight must be greater than 0 to refresh rates." });
+            markMissing(2, ["cc_weight"]);
+            return;
+          }
+
+          const out = await callCc("PATCH", {
+            action     : "refresh",
+            shipment_id: id,
+            payload
+          });
+          renderRates(out.shipment || out);
+          return out?.shipment || out || null;
+        } finally {
+          ccPatchInFlight = false;
+        }
       }
 
       async function buySelected(){
@@ -5435,17 +5414,35 @@ function parseIntlAddressBlock(blockText = "", fallbackCountryCode = "") {
            }
           if (currentStep === 2){
             setBtnLoading(btnNext, true);
-            if (!(await validateStep(2))) { setBtnLoading(btnNext, false); return; }
-            await ensureShipment();
-            const id = (idInput.value || "").trim();
-            if (!id) {
-              M.toast?.({ html: "Could not create shipment — check Recipient & Description." });
+
+            // Mute any input listeners tied to ccShipmentId while we run the single PATCH
+            const prevMute = window.ccMuteIdInput;
+            window.ccMuteIdInput = true;
+            try {
+              const ok = await validateStep(2);
+              if (!ok) { setBtnLoading(btnNext, false); window.ccMuteIdInput = prevMute; return; }
+
+              // Ensure we have a draft shipment id (may POST once if empty)
+              await ensureShipment();
+              const id = (idInput.value || "").trim();
+              if (!id) {
+                M.toast?.({ html: "Could not create shipment — check Recipient & Description." });
+                setBtnLoading(btnNext, false);
+                window.ccMuteIdInput = prevMute;
+                return;
+              }
+
+              // 🔒 The ONLY place we PATCH refresh
+              await refreshRates({ source: "step2-next" });
+
+              showStep(3);
+            } catch (err) {
+              handleCcApiError(err);
+            } finally {
+              window.ccMuteIdInput = prevMute;
               setBtnLoading(btnNext, false);
-              return;
             }
-            await refreshRates();
-            setBtnLoading(btnNext, false);
-            showStep(3);
+            return;
           }
         } catch (err) {
           setBtnLoading(btnNext, false);
@@ -5454,13 +5451,10 @@ function parseIntlAddressBlock(blockText = "", fallbackCountryCode = "") {
       });
 
       btnRefresh.addEventListener("click", async () => {
-        try{
-          if (!(await validateStep(2))) return;
-          await ensureShipment();
-          await refreshRates();
-        }catch(err){
-          handleCcApiError(err);
-        }
+        // No PATCH here — rates refresh only occurs via Next on Step 2
+        M.toast?.({ html: "Rates refresh is now triggered by Next on Step 2." });
+        // Optionally ensure a shipment exists so the ID field is populated:
+        await ensureShipment();
       });
      // Wrap Buy with spinner while purchasing + fetching label via proxy
       document.getElementById("ccBuy")?.addEventListener("click", async (e) => {
