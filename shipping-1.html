@@ -4109,44 +4109,25 @@ function metalToBadge(label){
           pushShipmentId(out?.id || out?.shipment?.id);
         }
 
-        // Step 1: persist edits immediately with a minimal, API-compliant refresh payload
+        // Step 1: apply customs & values by (re)creating the shipment
+        // NOTE: /shipments/{id}/refresh ignores customs fields (line_items, value, etc.)
+        // So we delete any existing unpaid shipment, then POST a fresh one with full body.
         if (step === 1) {
-          const toCountry     = document.getElementById("cc_to_country_code").value.trim().toUpperCase();
-          const valueCurrency = (document.getElementById("cc_value_currency")?.value || (toCountry === "CA" ? "CAD" : "USD"));
-          const lines         = collectCcLineItems();
-
-          const grandInput    = Number(document.getElementById("cc_grand_total")?.value || 0);
-          const totalViaUnits = lines.reduce((s, li) => s + (Number(li.unit_value||0) * Number(li.quantity||0)), 0);
-          const grandTotal    = (Number.isFinite(grandInput) && grandInput > 0) ? grandInput : totalViaUnits;
-
-          const line_items = lines.map(li => ({
-            description    : li.description,
-            quantity       : Number(li.quantity) || 1,
-            value_amount   : toMoney(li.value || (li.unit_value * li.quantity)),
-            currency_code  : valueCurrency.toLowerCase(),
-            hs_tariff_code : li.hs_tariff_code || undefined,
-            sku_code       : li.sku || undefined,
-            origin_country : (li.origin_country || "").toUpperCase() || undefined
-          }));
-
-          // Include package_contents so Step 1 mirrors Step 2 behavior
-          const patch = {
-            package_contents: document.getElementById("cc_package_contents").value,
-            value           : toMoney(grandTotal),
-            value_currency  : valueCurrency.toLowerCase(),
-            line_items,
-            // tax reference is called 'vat_reference' in the API
-            vat_reference   : (document.getElementById("cc_customs_tax_reference_number")?.value || "").trim() || null
-          };
-
           const idNow = (document.getElementById("ccShipmentId")?.value || "").trim();
+
           if (idNow) {
-            await callCc("PATCH", {
-              action     : "refresh",
-              shipment_id: idNow,
-              payload    : patch
-            });
+            try {
+              await callCc("DELETE", null, `?resource=shipment&id=${encodeURIComponent(idNow)}`);
+            } catch (e) {
+              console.warn("Delete failed or not allowed; proceeding to create:", e?.message || e);
+            }
           }
+
+          const created = await callCc("POST", {
+            action  : "create_shipment",
+            shipment: buildShipmentPayload()
+          });
+          pushShipmentId(created?.id || created?.shipment?.id);
         }
 
         return [];
