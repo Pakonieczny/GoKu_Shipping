@@ -4166,7 +4166,7 @@ async function ccValidateAgainstApi(step){
 
       const idNow = (document.getElementById("ccShipmentId")?.value || "").trim();
       if (idNow) {
-        await callCc("PATCH", { action: "update", shipment_id: idNow,
+        await callCc("PATCH", { action: "refresh", shipment_id: idNow,
           shipment: lite,
           payload: lite
         });
