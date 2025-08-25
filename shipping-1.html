@@ -4079,62 +4079,50 @@ function metalToBadge(label){
       }
 
       async function ccValidateAgainstApi(step){
-        // 1) Build minimal payload from current form
-        const payload = buildShipmentPayload();
-        // 2) Only treat the id as valid if it looks like a real one
-        const rawId      = (document.getElementById("ccShipmentId")?.value || "").trim();
-        const hasValidId = /^[A-Za-z0-9_-]{8,}$/.test(rawId);
-        const canRefresh = hasValidId && step >= 2 && !window.ccPostBuyFrozen;
-        try {
+      // 1) Build minimal payload from current form
+      const payload    = buildShipmentPayload();
+      // 2) Only treat the id as valid if it looks like a real one
+      const rawId      = (document.getElementById("ccShipmentId")?.value || "").trim();
+      const hasValidId = /^[A-Za-z0-9_-]{8,}$/.test(rawId);
+      const canRefresh = hasValidId && step >= 2 && !window.ccPostBuyFrozen;
+
+      try {
         if (canRefresh) {
-          // Server-side validate/update existing shipment (now safe)
+          // Server-side validate/update existing shipment via proxy-allowed action
           const refreshPayload = buildRefreshPayload();
           await callCc("PATCH", {
-            action: "update_shipment",
+            action: "refresh",
             shipment_id: rawId,
-            shipment: refreshPayload,
-            payload: refreshPayload // compatibility with older function code
+            payload: refreshPayload
           });
           pushShipmentId(rawId);
           return [];
         }
+
         if (step === 0) {
           // Step 0: verify address only; never create/refresh here
           await callCc("POST", { action: "verify_to", to: payload.to });
           return [];
         }
-        // Step 1 may not have full pkg info; only create if we don't have an id yet
+
+        // Step 1+: only create if we don't have an id yet
         if (!hasValidId) {
           const out = await callCc("POST", { action: "create_shipment", shipment: payload });
-          pushShipmentId(out?.id || out?.shipment?.id); // <- populate immediately
+          const newId = out?.id || out?.shipment?.id;
+          if (newId) pushShipmentId(newId);
         }
-        // NEW: persist Step 1 edits (line items, totals, currency, contents) right away
-        if (step === 1) {
-          const lite = {
-            package_contents: payload.package_contents,
-            value: payload.value,
-            value_currency: payload.value_currency,
-            line_items: payload.line_items
-          };
-          const idNow = (document.getElementById("ccShipmentId")?.value || "").trim();
-          if (idNow) {
-            await callCc("PATCH", {
-              action: "update_shipment",
-              shipment_id: idNow,
-              shipment: lite,
-              payload: lite // compatibility
-            });
-          }
-        }
+
+        // NOTE: No PATCH on Step 1. Proxy only accepts refresh|buy|add|remove.
+        // Edits persist when Step ≥ 2 triggers the refresh above.
         return [];
-        } catch (e) {
-          // Highlight server-reported fields and stop advancing
-          handleCcApiError(step, e);
-          const stepEl = document.getElementById("ccStep" + step);
-          const ids = Array.from(stepEl.querySelectorAll(".cc-field.cc-missing [id]")).map(n => n.id);
-          return ids;
-        }
+      } catch (e) {
+        // Highlight server-reported fields and stop advancing
+        handleCcApiError(step, e);
+        const stepEl = document.getElementById("ccStep" + step);
+        const ids = Array.from(stepEl.querySelectorAll(".cc-field.cc-missing [id]")).map(n => n.id);
+        return ids;
       }
+    }
 
        // Normalize money to a Number with 2-decimal precision (no strings)
        function fix2(n){
@@ -4327,12 +4315,7 @@ function metalToBadge(label){
         markMissing(2, ["cc_weight"]);
         return;
       }
-      const out = await callCc("PATCH", {
-        action: "update_shipment",          // <- update instead of "refresh"
-        shipment_id: id,
-        shipment: payload,                  // <- primary shape most proxies expect
-        payload                             // <- keep for backward compatibility
-      });
+      const out = await callCc("PATCH", { action: "refresh", shipment_id: id, payload });
       renderRates(out.shipment || out);
       }
 
