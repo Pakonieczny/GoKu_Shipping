@@ -170,6 +170,44 @@ exports.handler = async (event) => {
       return out;
     }
 
+    // --- Build a REFRESH payload that preserves nested `customs` ---
+    function adaptRefreshPayload(client = {}) {
+      // First: reuse your existing flattener to normalize dims, address, etc.
+      const flat = adaptClientShipment(client);
+      const out  = { ...flat };
+
+      // Prefer the caller's explicit `customs` block; fallback to any flattened fields
+      const src = client.customs || {};
+      const customs = {};
+
+      if (src.package_contents != null) customs.package_contents = src.package_contents;
+      else if (flat.package_contents != null) customs.package_contents = flat.package_contents;
+
+      if (src.description != null) customs.description = src.description;
+      else if (flat.description != null) customs.description = flat.description;
+
+      if (src.value != null) customs.value = String(src.value);
+      else if (flat.value != null) customs.value = String(flat.value);
+
+      const vc = (src.value_currency ?? flat.value_currency);
+      if (vc != null) customs.value_currency = String(vc).toUpperCase(); // UPPERCASE for refresh
+
+      if (Array.isArray(src.line_items)) customs.line_items = src.line_items;
+      else if (Array.isArray(flat.line_items)) customs.line_items = flat.line_items;
+
+      // Only attach if we actually have something
+      if (Object.keys(customs).length) out.customs = customs;
+
+      // Remove flattened copies so the API sees `customs.*` (not top-level)
+      delete out.package_contents;
+      delete out.description;
+      delete out.value;
+      delete out.value_currency;
+      delete out.line_items;
+
+      return out;
+    }
+
     // --- Pending/open-batch filter (correct scope) ---
     let _openBatchIdsCache = null;
     async function getOpenBatchIdsSet() {
@@ -500,17 +538,22 @@ exports.handler = async (event) => {
       const body   = safeJSON(event.body);
       const action = (body.action || "").toLowerCase();
 
-      // (A) Shipment: refresh rates / update pkg details  ✅ FLATTEN + validate
+      // (A) Shipment: refresh rates / update pkg details  ✅ PRESERVE `customs` + validate
       if (action === "refresh") {
         const id = String(body.shipment_id || body.id || qp.id || "");
         if (!id) return bad(400, "shipment_id required for refresh");
-        // Flatten client payload and ensure required bits
-        let payload = adaptClientShipment(body.payload || {});
+
+        // Rebuild a refresh-safe payload that nests `customs` and uppercases currency.
+        let payload = adaptRefreshPayload(body.payload || {});
         payload.ship_date = normalizeShipDateServer(payload.ship_date);
-        // 🔁 Auto-fill country_code from the existing shipment if missing
+
+        // Ensure top-level country_code (API requires it even on refresh)
         payload = await ensureCountryCodeForRefresh(id, payload);
+
         const resp = await fetch(url(`/shipments/${encodeURIComponent(id)}/refresh`), {
-          method: "PATCH", headers: authH, body: JSON.stringify(payload)
+          method: "PATCH",
+          headers: authH,
+          body   : JSON.stringify(payload)
         });
         const out = await wrap(resp);
         if (!out.ok) return bad(out.status, out.data);
