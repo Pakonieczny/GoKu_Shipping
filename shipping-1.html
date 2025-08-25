@@ -4089,12 +4089,11 @@ async function ccValidateAgainstApi(step){
     if (canRefresh) {
       // Server-side refresh/update of an existing shipment
       const refreshPayload = buildRefreshPayload(); // now includes customs too
-      await callCc("PATCH", {
-        action: "refresh",               // your proxy accepts refresh/buy/add/remove
-        shipment_id: rawId,
-        shipment: refreshPayload,        // primary shape
-        payload: refreshPayload          // backward compatibility
-      });
+        await callCc("PATCH", {
+          action     : "refresh",
+          shipment_id: idNow,
+          shipment   : patch
+        });
       pushShipmentId(rawId);
       return [];
     }
@@ -4111,7 +4110,7 @@ async function ccValidateAgainstApi(step){
       pushShipmentId(out?.id || out?.shipment?.id);
     }
 
-    // Persist Step 1 edits immediately (now with customs!)
+    // Persist Step 1 edits immediately (refresh with allowed fields)
     if (step === 1) {
       const toCountry     = document.getElementById("cc_to_country_code").value.trim().toUpperCase();
       const valueCurrency = (document.getElementById("cc_value_currency")?.value || (toCountry === "CA" ? "CAD" : "USD"));
@@ -4121,51 +4120,24 @@ async function ccValidateAgainstApi(step){
       const totalViaUnits = lines.reduce((s, li) => s + (Number(li.unit_value||0) * Number(li.quantity||0)), 0);
       const grandTotal = (Number.isFinite(grandInput) && grandInput > 0) ? grandInput : totalViaUnits;
 
-      // customs for the Edit panel details
-      const customs = {
-        // send numeric + uppercase currency for API compatibility
-        value: fix2(grandTotal),
-        value_currency: valueCurrency.toUpperCase(),
-        items: lines.map(li => ({
-          description: li.description,
-          quantity   : Number(li.quantity) || 1,
-          unit_value : fix2(li.unit_value),
-          value      : fix2(li.value || (li.unit_value * li.quantity)),
-          origin_country             : (li.origin_country || "").toUpperCase() || undefined,
-          hs_tariff_code             : li.hs_tariff_code || undefined,
-          manufacture_country        : li.manufacture_country || undefined,
-          manufacturer_contact       : li.manufacturer_contact || undefined,
-          manufacturer_street        : li.manufacturer_street || undefined,
-          manufacturer_city          : li.manufacturer_city || undefined,
-          manufacturer_province_code : li.manufacturer_province_code || undefined,
-          manufacturer_postal_code   : li.manufacturer_postal_code || undefined,
-          manufacturer_phone         : li.manufacturer_phone || undefined,
-          manufacturer_email         : li.manufacturer_email || undefined
-        }))
-      };
-
-      // top-level line_items → used by rates/total calc
+      // API-compliant line_items for refresh (snake_case, currency_code lowercased)
       const line_items = lines.map(li => ({
         description   : li.description,
         quantity      : Number(li.quantity) || 1,
-        // numeric amount; not a string
-        value_amount  : fix2(li.value || (li.unit_value * li.quantity)),
-        // ISO 4217 in uppercase
-        currency_code : valueCurrency.toUpperCase(),
+        value_amount  : toMoney(li.value || (li.unit_value * li.quantity)),
+        currency_code : valueCurrency.toLowerCase(),
         hs_tariff_code: li.hs_tariff_code || undefined,
         sku_code      : li.sku || undefined,
         origin_country: (li.origin_country || "").toUpperCase() || undefined
       }));
 
-      const lite = {
-        package_contents: document.getElementById("cc_package_contents").value,
-        customs_tax_reference_number: (document.getElementById("cc_customs_tax_reference_number")?.value || "").trim() || null,
-        description: (lines[0]?.description || "Items"),
-        // numeric total + uppercase currency
-        value: fix2(grandTotal),
-        value_currency: valueCurrency.toUpperCase(),
+      // Minimal, allowed keys on refresh per Chit Chats docs
+      const patch = {
+        value          : toMoney(grandTotal),
+        value_currency : valueCurrency.toLowerCase(),
         line_items,
-        customs
+        // tax reference is called 'vat_reference' in API
+        vat_reference  : (document.getElementById("cc_customs_tax_reference_number")?.value || "").trim() || null
       };
 
       const idNow = (document.getElementById("ccShipmentId")?.value || "").trim();
@@ -4267,18 +4239,11 @@ async function ccValidateAgainstApi(step){
         return {
           ...to,
         package_contents: document.getElementById("cc_package_contents").value,
-        customs_tax_reference_number: (document.getElementById("cc_customs_tax_reference_number")?.value || "").trim() || null,
+        vat_reference: (document.getElementById("cc_customs_tax_reference_number")?.value || "").trim() || null,
         description    : lines[0]?.description || "Items",
         value          : toMoney(grandTotal),
         value_currency : valueCurrency.toLowerCase(),
         postage_type   : "unknown",
-
-        // ✔️ nested customs for things the Edit page shows
-        customs: {
-          value: toMoney(grandTotal),
-          value_currency: valueCurrency.toLowerCase(),
-          items: customsItems
-        },
 
         // ✔️ top-level line_items for totals/rates
         line_items: lines.map(li => ({
@@ -4294,58 +4259,56 @@ async function ccValidateAgainstApi(step){
         };
       }
 
- function buildRefreshPayload(){
-   const wUnit = document.getElementById("cc_weight_unit").value;
-   const weight = Number(document.getElementById("cc_weight").value || 0);
-   const sUnit = document.getElementById("cc_size_unit").value;
-   const sx = Number(document.getElementById("cc_size_x").value || 0);
-   const sy = Number(document.getElementById("cc_size_y").value || 0);
-   const sz = Number(document.getElementById("cc_size_z").value || 0);
+function buildRefreshPayload(){
+  // gather units/dims
+  const wUnit = document.getElementById("cc_weight_unit").value;
+  const weight = Number(document.getElementById("cc_weight").value || 0);
+  const sUnit = document.getElementById("cc_size_unit").value;
+  const sx = Number(document.getElementById("cc_size_x").value || 0);
+  const sy = Number(document.getElementById("cc_size_y").value || 0);
+  const sz = Number(document.getElementById("cc_size_z").value || 0);
 
-   // Compute totals and line_items first (per API: snake_case, lower-cased currency)
-   const toCountry     = document.getElementById("cc_to_country_code").value.trim().toUpperCase();
-   const valueCurrency = (document.getElementById("cc_value_currency")?.value || (toCountry === "CA" ? "CAD" : "USD"));
-   const lines         = collectCcLineItems();
+  // compute totals + API-shape line_items first
+  const toCountry     = document.getElementById("cc_to_country_code").value.trim().toUpperCase();
+  const valueCurrency = (document.getElementById("cc_value_currency")?.value || (toCountry === "CA" ? "CAD" : "USD"));
+  const lines         = collectCcLineItems();
+  const totalViaUnits = lines.reduce((s, li) => s + (Number(li.unit_value||0) * Number(li.quantity||0)), 0);
+  const grandInput    = Number(document.getElementById("cc_grand_total")?.value || 0);
+  const grandTotal    = (Number.isFinite(grandInput) && grandInput > 0) ? grandInput : totalViaUnits;
+  const line_items    = lines.map(li => ({
+    description   : li.description,
+    quantity      : Number(li.quantity) || 1,
+    value_amount  : toMoney(li.value || (li.unit_value * li.quantity)),
+    currency_code : valueCurrency.toLowerCase(),
+    hs_tariff_code: li.hs_tariff_code || undefined,
+    sku_code      : li.sku || undefined,
+    origin_country: (li.origin_country || "").toUpperCase() || undefined
+  }));
 
-   const totalViaUnits = lines.reduce((s, li) => s + (Number(li.unit_value||0) * Number(li.quantity||0)), 0);
-   const grandInput    = Number(document.getElementById("cc_grand_total")?.value || 0);
-   const grandTotal    = (Number.isFinite(grandInput) && grandInput > 0) ? grandInput : totalViaUnits;
-
-   const line_items = lines.map(li => ({
-     description   : li.description,
-     quantity      : Number(li.quantity) || 1,
-     value_amount  : toMoney(li.value || (li.unit_value * li.quantity)),
-     currency_code : valueCurrency.toLowerCase(),
-     hs_tariff_code: li.hs_tariff_code || undefined,
-     sku_code      : li.sku || undefined,
-     origin_country: (li.origin_country || "").toUpperCase() || undefined
-   }));
-
-   // Build payload after values are known. Avoid non-API fields here.
-   const payload = {
-     package_type: document.getElementById("cc_package_type").value,
-     ship_date   : normalizeShipDate(document.getElementById("cc_ship_date").value),
-     insurance_requested : document.getElementById("cc_insurance_requested").value === "true",
-     media_mail_requested: document.getElementById("cc_media_mail_requested").value === "true",
-     signature_requested : document.getElementById("cc_signature_requested").value === "true",
-     value          : toMoney(grandTotal),
-     value_currency : valueCurrency.toLowerCase(),
-     line_items
-   };
-
-   if (Number.isFinite(weight) && weight > 0) {
-     payload.weight = weight;
-     payload.weight_unit = wUnit;
-   }
-   const anyDim = (sx > 0) || (sy > 0) || (sz > 0);
-   if (anyDim) {
-     payload.size_unit = sUnit;
-     if (sx > 0) payload.size_x = sx;
-     if (sy > 0) payload.size_y = sy;
-     if (sz > 0) payload.size_z = sz;
-   }
-   return payload;
- }
+  // build minimal refresh payload (no `customs` here)
+  const payload = {
+    package_type        : document.getElementById("cc_package_type").value,
+    ship_date           : normalizeShipDate(document.getElementById("cc_ship_date").value),
+    insurance_requested : document.getElementById("cc_insurance_requested").value === "true",
+    media_mail_requested: document.getElementById("cc_media_mail_requested").value === "true",
+    signature_requested : document.getElementById("cc_signature_requested").value === "true",
+    value               : toMoney(grandTotal),
+    value_currency      : valueCurrency.toLowerCase(),
+    line_items
+  };
+  if (Number.isFinite(weight) && weight > 0) {
+    payload.weight = weight;
+    payload.weight_unit = wUnit;
+  }
+  const anyDim = (sx > 0) || (sy > 0) || (sz > 0);
+  if (anyDim) {
+    payload.size_unit = sUnit;
+    if (sx > 0) payload.size_x = sx;
+    if (sy > 0) payload.size_y = sy;
+    if (sz > 0) payload.size_z = sz;
+  }
+  return payload;
+}
 
       function renderRates(s){
         const rates = (s && s.rates) || [];
