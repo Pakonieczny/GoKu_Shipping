@@ -1514,6 +1514,22 @@ function metalToBadge(label){
     return out;
   }
 
+  /* 🆕 Build Chit Chats-ready line items for your snippet */
+  function buildLineItems(){
+    const toCountry = (document.getElementById("cc_to_country_code")?.value || "").trim().toUpperCase();
+    const currency  = (document.getElementById("cc_value_currency")?.value || (toCountry === "CA" ? "CAD" : "USD")).toUpperCase();
+
+    return collectCcLineItems().map(li => ({
+      description   : li.description,
+      quantity      : Number(li.quantity) || 1,
+      value_amount  : toMoney(li.value || (li.unit_value * li.quantity)), // string like "20.80"
+      currency_code : currency,
+      hs_tariff_code: li.hs_tariff_code || undefined,
+      sku_code      : li.sku || undefined,
+      origin_country: (li.origin_country || "").toUpperCase() || undefined
+    }));
+  }
+
   /* 🆕 Sum all ".cc_item_value" and show it in #cc_grand_total */
   function updateGrandTotal(){
     try{
@@ -4147,16 +4163,46 @@ async function ccValidateAgainstApi(step){
 
   try {
     // Step ≥2: refresh using full refresh payload
-    if (canRefresh) {
-      const refreshPayload = buildRefreshPayload();
-      await callCc("PATCH", {
-        action     : "refresh",
-        shipment_id: rawId,
-        payload    : refreshPayload
-      });
-      pushShipmentId(rawId);
-      return [];
-    }
+  if (canRefresh) {
+    // before calling callCc(...)
+    const items = buildLineItems(); // each has value_amount (string), currency_code
+    const currency = items[0]?.currency_code || "CAD";
+    const total = items
+      .reduce((s, i) => s + Number(i.value_amount || 0), 0)
+      .toFixed(2);
+
+    const payload = {
+      package_type: "thick_envelope",
+      ship_date: "2025-08-25",
+      insurance_requested: false,
+      signature_requested: false,
+      customs: {
+        package_contents: "merchandise",
+        value: total,                 // ← derived once
+        value_currency: currency,     // ← derived once
+        line_items: items,            // ← authoritative per-item data
+        vat_reference: null
+      },
+      media_mail_requested: false,
+      weight: 0.25,
+      weight_unit: "lb",
+      size_unit: "in",
+      size_x: 6,
+      size_y: 4,
+      size_z: 1
+    };
+
+    // hand the snippet-built payload to the API
+    const refreshPayload = payload;
+
+    await callCc("PATCH", {
+      action     : "refresh",
+      shipment_id: rawId,
+      payload    : refreshPayload
+    });
+    pushShipmentId(rawId);
+    return [];
+  }
 
     // Step 0: verify address only
     if (step === 0) {
