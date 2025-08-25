@@ -4253,83 +4253,60 @@ function metalToBadge(label){
         };
       }
 
-      // === REPLACE YOUR ENTIRE buildRefreshPayload FUNCTION WITH THIS ===
       function buildRefreshPayload(){
-        // Currency for top-level + each line_item
-        const currency = (document.getElementById("cc_value_currency")?.value || "USD").toUpperCase();
+      const wUnit = document.getElementById("cc_weight_unit").value;
+      const weight = Number(document.getElementById("cc_weight").value || 0);
+      const sUnit = document.getElementById("cc_size_unit").value;
+      const sx = Number(document.getElementById("cc_size_x").value || 0);
+      const sy = Number(document.getElementById("cc_size_y").value || 0);
+      const sz = Number(document.getElementById("cc_size_z").value || 0);
+      const pkgType = document.getElementById("cc_package_type").value;
 
-        // Line items must already map to API keys: quantity, description, value_amount, currency_code
-        // (expects the collectCcLineItems() from Point #1)
-        const items = collectCcLineItems();
-
-        // Grand total = sum of value_amount per line (2dp)
-        const total = Number(
-          items.reduce((sum, li) => sum + (Number(li.value_amount) || 0), 0).toFixed(2)
-        );
-
-        // Physicals + defaults (as per your preferred UI defaults)
-        const pkgType    = document.getElementById("cc_package_type")?.value || "thick_envelope";
-        const sizeUnit   = document.getElementById("cc_size_unit")?.value || "in";
-        const sx         = Number(document.getElementById("cc_size_x")?.value) || 6;
-        const sy         = Number(document.getElementById("cc_size_y")?.value) || 4;
-        const sz         = Number(document.getElementById("cc_size_z")?.value) || 1;
-        const weightUnit = document.getElementById("cc_weight_unit")?.value || "lb";
-        const weight     = Number(document.getElementById("cc_weight")?.value) || 0.25;
-
-        // Flat "to" address fields (Use Suggested Address should fill these before calling)
-        const to_name          = document.getElementById("cc_to_name")?.value || "";
-        const to_address_1     = document.getElementById("cc_to_address_1")?.value || "";
-        const to_address_2     = document.getElementById("cc_to_address_2")?.value || "";
-        const to_city          = document.getElementById("cc_to_city")?.value || "";
-        const to_province_code = document.getElementById("cc_to_province_code")?.value || "";
-        const to_postal_code   = document.getElementById("cc_to_postal_code")?.value || "";
-        const to_country_code  = document.getElementById("cc_to_country_code")?.value || "";
-        const to_phone         = document.getElementById("cc_to_phone")?.value || "";
-        const to_email         = document.getElementById("cc_to_email")?.value || "";
-
-        // Description + contents
-        const contents    = document.getElementById("cc_package_contents")?.value || "merchandise";
-        const description = (items[0]?.description || "Items");
-
-        return {
-          // 👉 flat address fields
-          name         : to_name,
-          address_1    : to_address_1,
-          address_2    : to_address_2,
-          city         : to_city,
-          province_code: to_province_code,
-          postal_code  : to_postal_code,
-          country_code : to_country_code,
-          phone        : to_phone,
-          email        : to_email,
-
-          // 👉 shipment description/value
-          package_contents: contents,
-          description,
-
-          // 👉 grand total for the shipment
-          value         : total,
-          value_currency: currency,
-
-          // 👉 physicals
-          package_type: pkgType,
-          size_unit   : sizeUnit,
-          size_x      : sx,
-          size_y      : sy,
-          size_z      : sz,
-          weight_unit : weightUnit,
-          weight      : weight,
-
-          // 👉 rating/buy context
-          postage_type: "unknown",
-          ship_date   : (typeof normalizeShipDate === "function"
-                          ? normalizeShipDate(document.getElementById("cc_ship_date")?.value)
-                          : (document.getElementById("cc_ship_date")?.value || "today")),
-
-          // 👉 the stars of the show
-          line_items  : items
-        };
+      const payload = {
+        package_type: pkgType,
+        ship_date   : normalizeShipDate(document.getElementById("cc_ship_date").value),
+        insurance_requested : document.getElementById("cc_insurance_requested").value === "true",
+        media_mail_requested: document.getElementById("cc_media_mail_requested").value === "true",
+        signature_requested : document.getElementById("cc_signature_requested").value === "true"
+      };
+      // Only include weight when valid
+      if (Number.isFinite(weight) && weight > 0) {
+        payload.weight = weight;
+        payload.weight_unit = wUnit;
       }
+      // Dimensions are optional; include only if provided (>0)
+      const anyDim = (sx > 0) || (sy > 0) || (sz > 0);
+      if (anyDim) {
+        payload.size_unit = sUnit;
+        if (sx > 0) payload.size_x = sx;
+        if (sy > 0) payload.size_y = sy;
+        if (sz > 0) payload.size_z = sz;
+      }
+
+      // 🔁 Also forward current customs + totals on refresh so Chit Chats reflects edits
+      const toCountry     = document.getElementById("cc_to_country_code").value.trim().toUpperCase();
+      const valueCurrency = (document.getElementById("cc_value_currency")?.value || (toCountry === "CA" ? "CAD" : "USD"));
+      const lines         = collectCcLineItems();
+      const totalValue    = lines.reduce((sum, li) => sum + (Number(li.unit_value||0) * Number(li.quantity||0)), 0);
+      const grandInput    = Number(document.getElementById("cc_grand_total")?.value || 0);
+      const grandTotal    = (Number.isFinite(grandInput) && grandInput > 0) ? grandInput : totalValue;
+      // Refresh payload must mirror API schema so totals update server-side
+      const items = lines.map(li => ({
+        description   : li.description,
+        quantity      : Number(li.quantity) || 1,
+        value_amount  : toMoney(li.value || (li.unit_value * li.quantity)),
+        currency_code : valueCurrency.toLowerCase(),
+        hs_tariff_code: li.hs_tariff_code || undefined,
+        sku_code      : li.sku || undefined,
+        origin_country: (li.origin_country || "").toUpperCase() || undefined
+      }));
+      payload.value          = toMoney(grandTotal);
+      payload.value_currency = valueCurrency.toLowerCase();
+      payload.line_items     = items;
+      // do not include non-API field `customs`
+
+      return payload;
+    }
 
       function renderRates(s){
         const rates = (s && s.rates) || [];
