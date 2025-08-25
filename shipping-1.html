@@ -4241,13 +4241,6 @@ function metalToBadge(label){
         };
           ...toObj,
 
-          package_contents: document.getElementById("cc_package_contents").value,
-          vat_reference   : (document.getElementById("cc_customs_tax_reference_number")?.value || "").trim() || null,
-          description     : lines[0]?.description || "Items",
-          value           : toMoney(grandTotal),
-          value_currency  : valueCurrency.toLowerCase(),
-          postage_type    : "unknown",
-
           // top-level line_items for totals/rates
           line_items: lines.map(li => ({
             description    : li.description,
