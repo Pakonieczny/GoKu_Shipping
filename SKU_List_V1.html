@@ -12,9 +12,7 @@
     .btn.secondary { background:#333; }
     .grid { display:grid; grid-template-columns: repeat(auto-fill, minmax(280px,1fr)); gap:12px; padding:16px; }
     .card { background:#121212; border:1px solid #222; border-radius:14px; overflow:hidden; display:flex; flex-direction:column; }
-    /* zoomable image inside a fixed-ratio wrapper */
-    .thumb { width:100%; height:100%; object-fit:cover; background:#151515; user-select:none; transform-origin: var(--ox, 50%) var(--oy, 50%); transition: transform .05s linear; }
-    .thumb-wrap { width:100%; aspect-ratio: 1 / 1; overflow:hidden; background:#151515; position:relative; }
+    .thumb { width:100%; aspect-ratio: 1 / 1; object-fit:cover; background:#151515; }
     .meta { padding:12px; display:flex; flex-direction:column; gap:6px; }
     .title { font-size:14px; line-height:1.3; color:#fafafa; font-weight:600; }
     .sku { font-size:12px; color:#bbb; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
@@ -26,10 +24,6 @@
     input[type="number"]{ background:#181818; color:#ddd; border:1px solid #2a2a2a; border-radius:8px; padding:8px; width:90px;}
     .search { flex: 1; }
     .search input { width:100%; background:#181818; color:#ddd; border:1px solid #2a2a2a; border-radius:8px; padding:10px 12px; }
-
-    /* persistent selection UI */
-    .selectBox { width:18px; height:18px; accent-color:#2e7d32; cursor:pointer; }
-    .card.selected { outline:2px solid #2e7d32; outline-offset:-1px; }
   </style>
 </head>
 <body>
@@ -167,42 +161,6 @@ async function apiFetch(path, init={}){
   return fetch(`${functionsBaseUrl}${path}`, { ...init, headers });
 }
 
-/** ============ Selection persistence + Zoom helpers ============ */
-const SELECT_KEY = "sku_selected_ids_v1";
-function loadSelectedSet(){
-  try { return new Set(JSON.parse(localStorage.getItem(SELECT_KEY) || "[]")); }
-  catch { return new Set(); }
-}
-function saveSelectedSet(set){
-  localStorage.setItem(SELECT_KEY, JSON.stringify([...set]));
-}
-let selectedSet = loadSelectedSet();
-
-function attachZoom(wrap, img){
-  let scale = 1;
-  const MIN = 1, MAX = 5, STEP = 0.2;
-
-  wrap.addEventListener("wheel", (e) => {
-    e.preventDefault();
-    const rect = wrap.getBoundingClientRect();
-    const ox = ((e.clientX - rect.left) / rect.width) * 100;
-    const oy = ((e.clientY - rect.top)  / rect.height) * 100;
-    img.style.setProperty("--ox", ox + "%");
-    img.style.setProperty("--oy", oy + "%");
-
-    const delta = e.deltaY < 0 ? STEP : -STEP;
-    scale = Math.min(MAX, Math.max(MIN, +(scale + delta).toFixed(2)));
-    img.style.transform = `scale(${scale})`;
-  }, { passive: false });
-
-  wrap.addEventListener("dblclick", () => {
-    scale = 1;
-    img.style.transform = "scale(1)";
-    img.style.setProperty("--ox", "50%");
-    img.style.setProperty("--oy", "50%");
-  });
-}
-
 /** ============ Listings UI ============ */
 const listContainer = document.getElementById("listContainer");
 const pageNumEl     = document.getElementById("pageNum");
@@ -232,16 +190,10 @@ function renderListings(items){
   for (const it of items){
     if (!titlePassesFilter(it.title)) continue;
 
-    // image + zoom wrapper
-    const wrap = document.createElement("div");
-    wrap.className = "thumb-wrap";
-
     const img = document.createElement("img");
     img.className = "thumb";
     img.alt = it.title || "Listing image";
     img.src = it.primary_image || "";
-    wrap.appendChild(img);
-    attachZoom(wrap, img);
 
     const meta = document.createElement("div");
     meta.className = "meta";
@@ -257,38 +209,16 @@ function renderListings(items){
 
     const row = document.createElement("div");
     row.className = "row";
-
-    // persistent selection checkbox
-    const cb = document.createElement("input");
-    cb.type = "checkbox";
-    cb.className = "selectBox";
-    cb.title = "Select listing";
-    cb.checked = selectedSet.has(it.listing_id);
-    cb.addEventListener("change", () => {
-      const cardEl = cb.closest(".card");
-      if (cb.checked){
-        selectedSet.add(it.listing_id);
-        if (cardEl) cardEl.classList.add("selected");
-      } else {
-        selectedSet.delete(it.listing_id);
-        if (cardEl) cardEl.classList.remove("selected");
-      }
-      saveSelectedSet(selectedSet);
-    });
-    row.appendChild(cb);
-
     const idPill = document.createElement("span");
     idPill.className = "pill";
     idPill.textContent = `#${it.listing_id}`;
-
     const pricePill = document.createElement("span");
     pricePill.className = "pill";
     if (it.price) pricePill.textContent = `${it.price.amount/100} ${it.price.currency_code}`;
-
     row.appendChild(idPill);
     if (it.price) row.appendChild(pricePill);
 
-    // Edit SKUs button
+    // 🔹 Edit SKUs button
     const editBtn = document.createElement("button");
     editBtn.className = "btn secondary";
     editBtn.textContent = "Edit SKUs";
@@ -296,14 +226,15 @@ function renderListings(items){
     editBtn.addEventListener("click", () => openSkuEditor(it));
     row.appendChild(editBtn);
 
-    // Generate button
+    // 🔹 Generate button
     const genBtn = document.createElement("button");
     genBtn.className = "btn";
     genBtn.textContent = "Generate";
-    genBtn.dataset.role = "gen-btn";
+    genBtn.dataset.role = "gen-btn"; // identify per-card button
     genBtn.addEventListener("click", () => generateAndSaveSku(it, genBtn));
     row.appendChild(genBtn);
 
+    // If no SKU from Etsy → highlight Generate button
     if (!firstSku) {
       genBtn.style.background = "OrangeRed";
       genBtn.title = "No SKU yet — click Generate";
@@ -315,11 +246,9 @@ function renderListings(items){
 
     const card = document.createElement("div");
     card.className = "card";
-    card.appendChild(wrap);
+    card.appendChild(img);
     card.appendChild(meta);
-
-    if (cb.checked) card.classList.add("selected");
-
+    // 🔹 SKU editor container (hidden until opened)
     const editor = document.createElement("div");
     editor.className = "meta";
     editor.style.display = "none";
@@ -354,6 +283,7 @@ function buildSkuEditorDom(listing, products){
   hdr.textContent = "Edit SKU (Variant 1)";
   editor.appendChild(hdr);
 
+  // Use only the first product (Variant 1)
   const p = (Array.isArray(products) && products.length) ? products[0] : { product_id: null, sku: "" };
 
   const row = document.createElement("div");
@@ -394,12 +324,14 @@ function buildSkuEditorDom(listing, products){
     const item = { product_id: Number(el.dataset.productId), sku: el.value.trim() };
     save.disabled = true;
     try {
-      const ok = await saveSkuUpdates(listing.listing_id, [item]);
+      const ok = await saveSkuUpdates(listing.listing_id, [item]); // only Variant 1
       if (ok){
+        // Update visible SKU line on card
         listing.skus = [item.sku].filter(Boolean);
         const skuLine = card.querySelector(".sku");
         const firstSku = (Array.isArray(listing.skus) && listing.skus.length) ? listing.skus[0] : "";
         skuLine.textContent = firstSku ? `SKU: ${firstSku} (Variant 1)` : "SKU: —";
+        // Reset Generate button color if SKU now exists
         const genBtn = card.querySelector('[data-role="gen-btn"]');
         if (genBtn) genBtn.style.background = firstSku ? "" : "OrangeRed";
         editor.style.display = "none";
@@ -446,6 +378,7 @@ async function fetchListingDescription(listingId){
   const r = await apiFetch(`/etsyListingGetProxy?listingId=${encodeURIComponent(listingId)}`);
   if (!r.ok) return "";
   const js = await r.json();
+  // Etsy may return description as a long string; guard just in case
   return typeof js.description === "string" ? js.description : "";
 }
 
@@ -527,7 +460,7 @@ async function loadPage(p=1){
     item.skus = (skus || []).slice(0, 1); // Variant 1 only
     return item;
   })) {
-    // no-op
+    // no-op; iteration fills in place
   }
 
   lastBatch = base;
@@ -540,16 +473,22 @@ async function loadPage(p=1){
 async function generateAndSaveSku(listing, btn){
   try {
     btn.disabled = true;
+    // 1) Build SKU from TITLE ONLY
     const computedSku = makeSkuFrom(listing.title || "", listing.listing_id);
+
+    // 2) Get Variant 1 product_id
     const products = await fetchInventoryDetail(listing.listing_id);
     const p0 = (Array.isArray(products) && products.length) ? products[0] : null;
     if (!p0 || p0.product_id == null) throw new Error("Missing Variant 1");
+
+    // 3) Save (server enforces consistency across all variants)
     const ok = await saveSkuUpdates(listing.listing_id, [{ product_id: Number(p0.product_id), sku: computedSku }]);
     if (ok){
       listing.skus = [computedSku];
       const card = findCardFor(listing.listing_id);
       const skuLine = card?.querySelector(".sku");
       if (skuLine) skuLine.textContent = `SKU: ${computedSku} (Variant 1)`;
+      // Remove warning color now that SKU exists
       if (btn) btn.style.background = "";
     }
   } catch (e){
@@ -560,18 +499,22 @@ async function generateAndSaveSku(listing, btn){
 }
 
 /** ============ Boot ============ */
+function setAuthBadge(){ authStatusEl.textContent = getAccessToken() ? "Connected" : "Not connected"; }
+
 document.addEventListener("DOMContentLoaded", async () => {
   // Handle OAuth returns
   const url = new URLSearchParams(location.search);
 
+  // If we already have tokens in the URL (server redirect), store and clean URL
   const access_token  = url.get("access_token");
   const refresh_token = url.get("refresh_token");
   const expires_in    = url.get("expires_in");
   const issued_at     = url.get("issued_at");
   if (access_token && refresh_token && expires_in && issued_at){
     setTokens({ access_token, refresh_token, expires_in, issued_at });
-    history.replaceState({}, "", ORIGIN + location.pathname);
+    history.replaceState({}, "", ORIGIN + location.pathname); // clean query
   } else {
+    // Standard OAuth code return → pass code to the server for exchange
     const code = url.get("code");
     if (code){
       const v = localStorage.getItem("etsy_code_verifier");
