@@ -3853,6 +3853,16 @@ function metalToBadge(label){
 
       async function ensureShipment(){
         const id = (idInput.value || "").trim();
+        // Creating a shipment? Hard-fail if country is missing.
+        if (!id) {
+          const to = buildTo();
+          if (!to.country_code) {
+            markMissing(0, ["cc_to_country_code"]);
+            M.toast?.({ html: "Country is required (e.g., CA or US)." });
+            showStep(0);
+            throw new Error("Missing recipient country_code");
+          }
+        }
         if (id) return await callCc("GET", null, `?resource=shipment&id=${encodeURIComponent(id)}`);
         const out = await callCc("POST", { action:"create_shipment", shipment: buildShipmentPayload() });
         pushShipmentId(out?.id);
@@ -4620,6 +4630,24 @@ function buildRefreshPayload(){
           // All good for Step 1
         } else if (step === 2) {
 
+          // If we're about to create (no shipment id yet), require Step 0 fields first
+          const hasValidId = /^[A-Za-z0-9_-]{8,}$/.test(
+            (document.getElementById("ccShipmentId")?.value || "").trim()
+          );
+          if (!hasValidId) {
+            const req0 = [
+              "cc_to_name","cc_to_address_1","cc_to_city",
+              "cc_to_province_code","cc_to_postal_code","cc_to_country_code"
+            ];
+            const miss0 = req0.filter(id => !String(document.getElementById(id)?.value || "").trim());
+            if (miss0.length) {
+              markMissing(0, miss0);
+              M.toast?.({ html: "Recipient is incomplete — please finish Step 0." });
+              showStep(0);
+              return false;
+            }
+          }
+
         // Require positive weight; dimensions optional but, if present, must be > 0
         const wEl  = document.getElementById("cc_weight");
         const wVal = Number(wEl?.value);
@@ -4672,6 +4700,15 @@ function buildRefreshPayload(){
           });
         }
         const extra = details.length ? ` — missing/invalid: ${details.join(", ")}` : "";
+        // Fallback: message-only errors (e.g., "country_code required")
+        if (!details.length) {
+          const msg = String(err.message || "").toLowerCase();
+          if (msg.includes("country_code") && msg.includes("required")) {
+            details.push("to_country_code");
+            markMissing(0, ["cc_to_country_code"]);
+            showStep(0);
+          }
+        }
         M.toast?.({ html:`Chit Chats error: ${err.message}${extra}` });
       }
 
