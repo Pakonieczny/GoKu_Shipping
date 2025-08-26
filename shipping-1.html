@@ -4330,11 +4330,6 @@ function buildRefreshPayload(){
   const grandInput    = Number(document.getElementById("cc_grand_total")?.value || 0);
   const grandTotal    = (Number.isFinite(grandInput) && grandInput > 0) ? grandInput : totalViaUnits;
 
-  // Build a customs description for refresh (top-level description is ignored on refresh)
-  const firstLineDesc = (lines.find(li => (li.description || "").trim())?.description || "").trim();
-  const uiDesc        = (document.getElementById("cc_item_description")?.value || "").trim();
-  const customsDescription = (uiDesc || firstLineDesc || "").slice(0, 255); // API-friendly length cap
-
   // customs line items (currency uppercased)
   const line_items = lines.map(li => ({
     description    : li.description,
@@ -4348,24 +4343,22 @@ function buildRefreshPayload(){
 
   // assemble refresh payload
   const payload = {
-    // Lock the destination for refresh to avoid any server-side inference
-    country_code       : toCountry, // <- new
-    package_type       : document.getElementById("cc_package_type").value,
-    ship_date          : normalizeShipDate(document.getElementById("cc_ship_date").value),
-    insurance_requested: document.getElementById("cc_insurance_requested").value === "true",
+    package_type        : document.getElementById("cc_package_type").value,
+    ship_date           : normalizeShipDate(document.getElementById("cc_ship_date").value),
+    insurance_requested : document.getElementById("cc_insurance_requested").value === "true",
     media_mail_requested: document.getElementById("cc_media_mail_requested").value === "true",
     signature_requested : document.getElementById("cc_signature_requested").value === "true",
 
-    // Keep customs nested so item fields actually update on refresh
+    // ✅ NEST customs for refresh so item details/description apply
     customs: {
       package_contents: document.getElementById("cc_package_contents").value,
-      description     : customsDescription || undefined,           // <- new
       value           : toMoney(grandTotal),
       value_currency  : valueCurrency.toUpperCase(),
       line_items,
       vat_reference   : (document.getElementById("cc_customs_tax_reference_number")?.value || "").trim() || null
     }
   };
+
   // weight & dims (only if provided)
   if (Number.isFinite(weight) && weight > 0) {
     payload.weight = weight;
@@ -4396,11 +4389,6 @@ function buildRefreshPayload(){
           li.addEventListener("click", () => {
             [...ratesList.children].forEach(n => n.classList.remove("selected"));
             li.classList.add("selected"); selectedPostageType = li.dataset.postageType; btnBuy.disabled = !selectedPostageType;
-          const rates = (s && s.rates) || [];
-          rates.sort((a,b) =>
-            Number(a?.payment_amount ?? a?.rate ?? Infinity) -
-            Number(b?.payment_amount ?? b?.rate ?? Infinity)
-            );
           });
           ratesList.appendChild(li);
         });
