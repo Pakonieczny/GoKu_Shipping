@@ -2274,30 +2274,38 @@ function metalToBadge(label){
             .catch(err => M.toast({ html: "Copy failed: " + err.message }));
         });
 
-        /* ── Paste: Order Number (+ auto-Enter) ───────────────── */
-        document.getElementById("pasteOrderBtn")
-          ?.addEventListener("click", async () => {
-            try {
-              const txt = (await navigator.clipboard.readText() || "").trim();
-              if (!txt) { M.toast?.({ html: "Clipboard is empty" }); return; }
+      /* ── Paste: Order Number (+ auto-Enter) ───────────────── */
+      document.getElementById("pasteOrderBtn")
+        ?.addEventListener("click", async () => {
+          try {
+            // 🔓 New order → thaw post-buy freeze, clear CC id, refresh batches
+            window.ccPostBuyFrozen = false;
+            window.ccMuteIdInput   = false;
+            const idEl = document.getElementById("ccShipmentId");
+            if (idEl) { idEl.value = ""; idEl.dataset.setAt = String(Date.now()); }
+            window.ccShipmentId = "";
+            try { await fetchBatches(); } catch {}
 
-              const inp = document.getElementById("etsyOrderNumber");
-              inp.value = txt;
-              inp.dispatchEvent(new Event("input", { bubbles: true }));
-              M.toast?.({ html: "Order # pasted" });
+            const txt = (await navigator.clipboard.readText() || "").trim();
+            if (!txt) { M.toast?.({ html: "Clipboard is empty" }); return; }
 
-              // 🔎 Also refresh ccShipmentId 500ms after paste (independent of auto-Enter)
-              setTimeout(() => window.refreshFromOrderIfChitChats?.(), 500);
-              // focus, then simulate pressing Enter after 100ms
-              inp.focus();
-              setTimeout(() => {
-                const ev = new KeyboardEvent("keydown", { key: "Enter", bubbles: true });
-                inp.dispatchEvent(ev);
-              }, 100);
-            } catch (err) {
-              M.toast?.({ html: "Paste failed: " + err.message });
-            }
-          });
+            const inp = document.getElementById("etsyOrderNumber");
+            inp.value = txt;
+            inp.dispatchEvent(new Event("input", { bubbles: true }));
+            M.toast?.({ html: "Order # pasted" });
+
+            // 🔎 Also refresh ccShipmentId 500ms after paste (independent of auto-Enter)
+            setTimeout(() => window.refreshFromOrderIfChitChats?.(), 500);
+            // focus, then simulate pressing Enter after 100ms
+            inp.focus();
+            setTimeout(() => {
+              const ev = new KeyboardEvent("keydown", { key: "Enter", bubbles: true });
+              inp.dispatchEvent(ev);
+            }, 100);
+          } catch (err) {
+            M.toast?.({ html: "Paste failed: " + err.message });
+          }
+        });
 
         /* ── Paste: Tracking Number ───────────────────────── */
         document.getElementById("pasteTrackingBtn")
@@ -2348,16 +2356,25 @@ function metalToBadge(label){
         connectEtsyBtn.addEventListener("click", () => startOAuth("manual"));
       }
 
-    var etsyOrderInput = document.getElementById("etsyOrderNumber");
-    etsyOrderInput.addEventListener("keydown", async function(e){
-      if (e.key !== "Enter") return;
+      var etsyOrderInput = document.getElementById("etsyOrderNumber");
+      etsyOrderInput.addEventListener("keydown", async function(e){
+        if (e.key !== "Enter") return;
 
-      const orderNumber = etsyOrderInput.value.trim();
-      if (!orderNumber) return;
+        // 🔓 New order → thaw post-buy freeze, clear CC id, refresh batches
+        window.ccPostBuyFrozen = false;
+        window.ccMuteIdInput   = false;
+        const idEl = document.getElementById("ccShipmentId");
+        if (idEl) { idEl.value = ""; idEl.dataset.setAt = String(Date.now()); }
+        window.ccShipmentId = "";
+        try { await fetchBatches(); } catch {}
 
-      const orderData = await pullEtsyOrderDetails(orderNumber);
-      await loadShipToAddress(orderNumber);
-      await loadGiftMessage(orderNumber);
+        const orderNumber = etsyOrderInput.value.trim();
+        if (!orderNumber) return;
+
+        const orderData = await pullEtsyOrderDetails(orderNumber);
+        await loadShipToAddress(orderNumber);
+        await loadGiftMessage(orderNumber);
+      });
 
       // Prefer transactions (they carry quantity + unit price) for customs autofill
       const tx = await maybeLoadEtsyTransactions(orderNumber);
@@ -3479,9 +3496,19 @@ function metalToBadge(label){
       orderInp?.addEventListener("keydown", (e) => {
         if (e.key === "Enter") {
           e.preventDefault();
+
+          // 🔓 New order → thaw post-buy freeze, clear CC id, refresh batches
+          window.ccPostBuyFrozen = false;
+          window.ccMuteIdInput   = false;
+          const idEl = document.getElementById("ccShipmentId");
+          if (idEl) { idEl.value = ""; idEl.dataset.setAt = String(Date.now()); }
+          window.ccShipmentId = "";
+          try { fetchBatches(); } catch {}
+
           if (e.isTrusted) setTimeout(() => window.refreshFromOrderIfChitChats?.(), 500); // ← 500ms delay
         }
       });
+      
       // Tracking remains immediate on Enter
       trackingInp?.addEventListener("keydown", (e) => {
         if (e.key === "Enter") {
