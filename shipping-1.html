@@ -1522,7 +1522,7 @@ function metalToBadge(label){
     return collectCcLineItems().map(li => ({
       description   : li.description,
       quantity      : Number(li.quantity) || 1,
-      value_amount  : toMoney(li.value || (li.unit_value * li.quantity)), // string like "20.80"
+      value_amount  : toMoney(li.unit_value), // per-unit; Chit Chats multiplies by quantity
       currency_code : currency,
       hs_tariff_code: li.hs_tariff_code || undefined,
       sku_code      : li.sku || undefined,
@@ -1530,10 +1530,10 @@ function metalToBadge(label){
     }));
   }
 
-  /* 🆕 Sum all "cc_item_unit_value" and show it in #cc_grand_total */
+  /* 🆕 Sum all ".cc_item_value" and show it in #cc_grand_total */
   function updateGrandTotal(){
     try{
-      const vals = Array.from(document.querySelectorAll("#cc_line_items_container .cc_item_unit_value"))
+      const vals = Array.from(document.querySelectorAll("#cc_line_items_container .cc_item_value"))
         .map(el => Number(el.value || 0))
         .filter(n => Number.isFinite(n));
       const total = vals.reduce((a,b)=>a+b, 0);
@@ -4322,7 +4322,7 @@ function metalToBadge(label){
     const line_items = lines.map(li => ({
       description                     : li.description,
       quantity                        : Number(li.quantity) || 1,
-      value_amount                    : toMoney(li.value || (li.unit_value * li.quantity)),
+      value_amount                    : toMoney(li.unit_value),
       currency_code                   : valueCurrency.toLowerCase(),
       hs_tariff_code                  : li.hs_tariff_code || undefined,
       sku_code                        : li.sku || undefined,
@@ -4388,7 +4388,7 @@ function buildRefreshPayload(){
   const line_items = lines.map(li => ({
     description    : li.description,
     quantity       : Number(li.quantity) || 1,
-    value_amount   : toMoney(li.value || (li.unit_value * li.quantity)),
+    value_amount   : toMoney(li.unit_value),
     currency_code  : valueCurrency.toUpperCase(),
     hs_tariff_code : li.hs_tariff_code || undefined,
     sku_code       : li.sku || undefined,
