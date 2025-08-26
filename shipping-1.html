@@ -4405,26 +4405,21 @@ function buildRefreshPayload(){
 
   // assemble refresh payload
   const payload = {
-    package_type: "thick_envelope",
-    // ensure API always knows the destination on refresh
-    country_code: detectDestCountryCode(),
+    package_type        : document.getElementById("cc_package_type").value,
     ship_date           : normalizeShipDate(document.getElementById("cc_ship_date").value),
     insurance_requested : document.getElementById("cc_insurance_requested").value === "true",
     media_mail_requested: document.getElementById("cc_media_mail_requested").value === "true",
     signature_requested : document.getElementById("cc_signature_requested").value === "true",
 
-    // nest customs for refresh
+    // ✅ NEST customs for refresh so item details/description apply
     customs: {
       package_contents: document.getElementById("cc_package_contents").value,
-      description     : undefined,
       value           : toMoney(grandTotal),
-      value_currency  : (valueCurrency || "").toUpperCase(),
-      line_items
+      value_currency  : valueCurrency.toUpperCase(),
+      line_items,
+      vat_reference   : (document.getElementById("cc_customs_tax_reference_number")?.value || "").trim() || null
     }
   };
-
-  const vatRef = sanitizeVatRef(document.getElementById("cc_customs_tax_reference_number")?.value);
-  if (vatRef) payload.vat_reference = vatRef;
 
   // weight & dims (only if provided)
   if (Number.isFinite(weight) && weight > 0) {
@@ -4438,6 +4433,18 @@ function buildRefreshPayload(){
     if (sy > 0) payload.size_y = sy;
     if (sz > 0) payload.size_z = sz;
   }
+
+  // add VAT/IOSS/EORI at top-level for refresh too
+    const vatRef = sanitizeVatRef(document.getElementById("cc_customs_tax_reference_number")?.value);
+    if (vatRef) payload.vat_reference = vatRef;
+
+    // add customs needed for intl rates (use UPPERCASE currency on refresh)
+    payload.customs = {
+      package_contents: document.getElementById("cc_package_contents").value,
+      value          : toMoney(grandTotal),
+      value_currency : (valueCurrency || "").toUpperCase(),
+      line_items     : line_items
+    };
 
       return payload;
     }
@@ -4461,15 +4468,15 @@ function buildRefreshPayload(){
         });
       }
 
-        async function refreshRates(){
-          // Hard guard: never price while in Step 0/1
-          if (window.ccBlockRatesUntilStep2 || (typeof currentStep === "number" && currentStep < 2)) {
-            return;
-          }
-          // Defensive: never price before package step
-          if (typeof currentStep === "number" && currentStep < 2) {
-            return; // silently ignore any accidental early calls
-          }
+      async function refreshRates(){
+        // Hard guard: never price while in Step 0/1
+        if (window.ccBlockRatesUntilStep2 || (typeof currentStep === "number" && currentStep < 2)) {
+          return;
+        }
+        // Defensive: never price before package step
+        if (typeof currentStep === "number" && currentStep < 2) {
+          return; // silently ignore any accidental early calls
+        }
 
         let id = (idInput.value || "").trim();
         if (!id) {
@@ -4621,13 +4628,13 @@ function buildRefreshPayload(){
         first?.focus();
       }
 
-        async function validateStep(step){
-          clearMissing(step);
+      async function validateStep(step){
+        clearMissing(step);
 
-          // 🔒 Steps 0–1 may talk to server (verify/create/replace). Steps ≥2: NO rate calls here.
-          if (step <= 1) {
-            const apiMissing = await ccValidateAgainstApi(step);
-            if (apiMissing.length) return false;
+        // 🔒 Steps 0–1 may talk to server (verify/create/replace). Steps ≥2: NO rate calls here.
+        if (step <= 1) {
+          const apiMissing = await ccValidateAgainstApi(step);
+          if (apiMissing.length) return false;
         }
 
         // 2) Fallback to local minimal checks (keeps UX snappy offline)
@@ -5100,9 +5107,6 @@ function buildRefreshPayload(){
         const input = document.getElementById("cc_customs_tax_reference_number");
         if (!input) return;
 
-        // NEW: determine destination country code from the field or freeform address
-        const dest = detectDestCountryCode();
-
         if (dest === "GB") {
           // Use GB-prefixed value; sanitizeVatRef will keep only A–Z0–9 → "GB370600428"
           input.value = "GB370600428";
@@ -5113,6 +5117,7 @@ function buildRefreshPayload(){
           input.value = "";
         }
       }
+
 // ISO2 lookup for common names → code (minimal; expand as needed)
 const COUNTRY_TO_ISO2 = {
   "italy":"IT","italia":"IT","united states":"US","usa":"US","canada":"CA","france":"FR","germany":"DE","spain":"ES"
@@ -5428,34 +5433,34 @@ function parseIntlAddressBlock(blockText = "", fallbackCountryCode = "") {
           }
 
           // ✅ Step 1: validate only — NO pricing
-          if (currentStep === 1){
-            setBtnLoading(btnNext, true);
-            try {
-              if (!(await validateStep(1))) return;
-              showStep(2);
-            } finally { setBtnLoading(btnNext, false); }
-            return;
-          }
+              if (currentStep === 1){
+                setBtnLoading(btnNext, true);
+                try {
+                  if (!(await validateStep(1))) return;
+                  showStep(2);
+                } finally { setBtnLoading(btnNext, false); }
+                return;
+              }
 
-          // ✅ Step 2: price, then move to Step 3
-          if (currentStep === 2){
-            setBtnLoading(btnNext, true);
-            try {
-              if (!(await validateStep(2))) return;
-              await ensureShipment();
-              const idInput = document.getElementById("ccShipmentId");
-              const id = (idInput?.value || "").trim();
-              if (!id) { M.toast?.({ html: "Could not create shipment — check Recipient & Description." }); return; }
-              await refreshRates();    // ← pricing happens here only
-              showStep(3);
-            } finally { setBtnLoading(btnNext, false); }
-            return;
-          }
-        } catch (err) {
-          setBtnLoading(btnNext, false);
-          handleCcApiError(err);
-        }
-      });
+              // ✅ Step 2: price, then move to Step 3
+              if (currentStep === 2){
+                setBtnLoading(btnNext, true);
+                try {
+                  if (!(await validateStep(2))) return;
+                  await ensureShipment();
+                  const idInput = document.getElementById("ccShipmentId");
+                  const id = (idInput?.value || "").trim();
+                  if (!id) { M.toast?.({ html: "Could not create shipment — check Recipient & Description." }); return; }
+                  await refreshRates();    // ← pricing happens here only
+                  showStep(3);
+                } finally { setBtnLoading(btnNext, false); }
+                return;
+              }
+            } catch (err) {
+              setBtnLoading(btnNext, false);
+              handleCcApiError(err);
+            }
+          });
 
       btnRefresh.addEventListener("click", async () => {
         try{
