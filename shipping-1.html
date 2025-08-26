@@ -5100,11 +5100,10 @@ function buildRefreshPayload(){
         const input = document.getElementById("cc_customs_tax_reference_number");
         if (!input) return;
 
+        const dest = detectDestCountryCode();   // ← compute locally (client)
         if (dest === "GB") {
-          // Use GB-prefixed value; sanitizeVatRef will keep only A–Z0–9 → "GB370600428"
           input.value = "GB370600428";
         } else if (isEU(dest)) {
-          // IOSS (EU): sanitizeVatRef keeps "IM3720000224"
           input.value = "IM3720000224";
         } else {
           input.value = "";
