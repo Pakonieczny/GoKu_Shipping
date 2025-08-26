@@ -5096,6 +5096,25 @@ function buildRefreshPayload(){
 
       function isEU(code){ return EU_CODES.has(code); }
 
+      function autoFillCustomsTaxRef(){
+        const input = document.getElementById("cc_customs_tax_reference_number");
+        if (!input) return;
+
+        if (!dest) {
+          input.value = "";
+          return;
+        }
+
+        if (dest === "GB") {
+          // UK VAT
+          input.value = "GB370600428";
+        } else if (isEU27(dest)) {
+          // EU IOSS
+          input.value = "IM3720000224";
+        } else {
+          input.value = "";
+        }
+      }
 // ISO2 lookup for common names → code (minimal; expand as needed)
 const COUNTRY_TO_ISO2 = {
   "italy":"IT","italia":"IT","united states":"US","usa":"US","canada":"CA","france":"FR","germany":"DE","spain":"ES"
@@ -5354,54 +5373,6 @@ function parseIntlAddressBlock(blockText = "", fallbackCountryCode = "") {
         }
         document.getElementById("ccVerifyModal").style.display = "none";
       });
-
-      /* === Auto-fill Customs Tax Reference (IOSS / VAT / EORI) ============== */
-(function(){
-  const EU = new Set([
-    "AT","BE","BG","HR","CY","CZ","DK","EE","FI","FR","DE","GR","HU",
-    "IE","IT","LV","LT","LU","MT","NL","PL","PT","RO","SK","SI","ES","SE"
-  ]);
-
-  function readDestCountry(){
-    const box = document.getElementById("cc_to_country_code");
-    const explicit = (box?.value || "").trim().toUpperCase();
-    if (explicit) return explicit;
-
-    // Fallback: try to guess from the Ship To text area (last 2-letter token)
-    const ship = (document.getElementById("shipAddressBox")?.value || "").toUpperCase();
-    const m = ship.match(/\b([A-Z]{2})\b(?!.*\b[A-Z]{2}\b)/);
-    return m ? m[1] : "";
-  }
-
-  function getSavedRef(key){
-    return (localStorage.getItem(key) || window[key] || "").trim();
-  }
-
-  function cleanRef(s){
-    const fn = (window.sanitizeVatRef || (t => String(t||"")
-      .toUpperCase().replace(/[^A-Z0-9]/g,"").slice(0,20)));
-    return fn(s);
-  }
-
-  function autoFillCustomsTaxRef(){
-    const el = document.getElementById("cc_customs_tax_reference_number");
-    if (!el) return;
-
-    // Don't override what the user already typed
-    if ((el.value || "").trim()) return;
-
-    const dest = readDestCountry();
-    let ref = "";
-
-    if (EU.has(dest))      ref = getSavedRef("IM3720000224");     // e.g., IM************
-    else if (dest === "GB")ref = getSavedRef("GB_VAT_370600428");   // e.g., GB*********
-
-    if (ref) el.value = cleanRef(ref);
-  }
-
-  // Expose for other blocks/listeners
-  window.autoFillCustomsTaxRef = autoFillCustomsTaxRef;
-})();
 
       // --- Wiring: react to user edits and modal use, plus light polling for programmatic updates
       function wireCustomsAutoFill(){
