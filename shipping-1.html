@@ -5096,28 +5096,21 @@ function buildRefreshPayload(){
 
       function isEU(code){ return EU_CODES.has(code); }
 
-      // UI-only helper; do NOT import/require this in your Netlify function
       function autoFillCustomsTaxRef(){
         const input = document.getElementById("cc_customs_tax_reference_number");
         if (!input) return;
 
-        // Pull the destination country the same way the user sets it in the form
-        const dest =
-          (document.getElementById("cc_to_country_code")?.value ||
-           document.getElementById("cc_country_code")?.value || "")
-            .trim().toUpperCase();
-
         if (dest === "GB") {
-          // UK VAT number (server will sanitize again)
+          // Use GB-prefixed value; sanitizeVatRef will keep only A–Z0–9 → "GB370600428"
           input.value = "GB370600428";
         } else if (isEU(dest)) {
-          // IOSS number for EU
+          // IOSS (EU): sanitizeVatRef keeps "IM3720000224"
           input.value = "IM3720000224";
         } else {
           input.value = "";
         }
       }
-      
+
 // ISO2 lookup for common names → code (minimal; expand as needed)
 const COUNTRY_TO_ISO2 = {
   "italy":"IT","italia":"IT","united states":"US","usa":"US","canada":"CA","france":"FR","germany":"DE","spain":"ES"
