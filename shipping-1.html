@@ -4405,21 +4405,26 @@ function buildRefreshPayload(){
 
   // assemble refresh payload
   const payload = {
-    package_type        : document.getElementById("cc_package_type").value,
+    package_type: "thick_envelope",
+    // ensure API always knows the destination on refresh
+    country_code: detectDestCountryCode(),
     ship_date           : normalizeShipDate(document.getElementById("cc_ship_date").value),
     insurance_requested : document.getElementById("cc_insurance_requested").value === "true",
     media_mail_requested: document.getElementById("cc_media_mail_requested").value === "true",
     signature_requested : document.getElementById("cc_signature_requested").value === "true",
 
-    // ✅ NEST customs for refresh so item details/description apply
+    // nest customs for refresh
     customs: {
       package_contents: document.getElementById("cc_package_contents").value,
+      description     : undefined,
       value           : toMoney(grandTotal),
-      value_currency  : valueCurrency.toUpperCase(),
-      line_items,
-      vat_reference   : (document.getElementById("cc_customs_tax_reference_number")?.value || "").trim() || null
+      value_currency  : (valueCurrency || "").toUpperCase(),
+      line_items
     }
   };
+
+  const vatRef = sanitizeVatRef(document.getElementById("cc_customs_tax_reference_number")?.value);
+  if (vatRef) payload.vat_reference = vatRef;
 
   // weight & dims (only if provided)
   if (Number.isFinite(weight) && weight > 0) {
@@ -4433,18 +4438,6 @@ function buildRefreshPayload(){
     if (sy > 0) payload.size_y = sy;
     if (sz > 0) payload.size_z = sz;
   }
-
-  // add VAT/IOSS/EORI at top-level for refresh too
-    const vatRef = sanitizeVatRef(document.getElementById("cc_customs_tax_reference_number")?.value);
-    if (vatRef) payload.vat_reference = vatRef;
-
-    // add customs needed for intl rates (use UPPERCASE currency on refresh)
-    payload.customs = {
-      package_contents: document.getElementById("cc_package_contents").value,
-      value          : toMoney(grandTotal),
-      value_currency : (valueCurrency || "").toUpperCase(),
-      line_items     : line_items
-    };
 
       return payload;
     }
