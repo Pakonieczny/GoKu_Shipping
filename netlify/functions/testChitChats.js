@@ -106,24 +106,39 @@ exports.handler = async (event) => {
       return out.data.count;
     };
 
-    // Fill country_code from the existing shipment when the refresh payload doesn't include it
+    // Backfill critical fields for /refresh by reading the existing shipment if necessary
     async function ensureCountryCodeForRefresh(id, payload) {
-      if (payload.country_code) return payload;
       try {
+        if (!payload || typeof payload !== "object") payload = {};
         const r = await fetch(url(`/shipments/${encodeURIComponent(id)}`), { headers: authH });
         const o = await wrap(r);
-        if (o.ok) {
-          const s  = o.data?.shipment || o.data || {};
-          const cc = String(
-            s.country_code ||
-            s.to?.country_code ||
-            s.destination?.country_code ||
-            s.to_country_code ||
-            ""
-          ).toUpperCase();
-          if (cc) payload.country_code = cc;
-        }
-      } catch {}
+        if (!o.ok) return payload;
+        const s = o.data?.shipment || o.data || {};
+
+        // country_code
+        const cc = String(
+          payload.country_code ||
+          s.country_code || s.to?.country_code || s.destination?.country_code || s.to_country_code || ""
+        ).toUpperCase();
+        if (cc) payload.country_code = cc;
+
+        // package defaults (type, dims, units, weight)
+        const pick = (a, b) => (a != null && a !== "" ? a : b);
+        payload.package_type = pick(payload.package_type, s.package_type);
+        payload.size_unit    = pick(payload.size_unit,    s.size_unit    || "in");
+        payload.weight_unit  = pick(payload.weight_unit,  s.weight_unit  || "lb");
+        payload.size_x       = numberish(pick(payload.size_x, s.size_x ?? 6));
+        payload.size_y       = numberish(pick(payload.size_y, s.size_y ?? 4));
+        payload.size_z       = numberish(pick(payload.size_z, s.size_z ?? 1));
+        payload.weight       = Number(pick(payload.weight,   s.weight ?? 0.25)) || 0.25;
+
+        // ensure positive minimums (rate engine often rejects zeros)
+        const min = (n, d) => (Number(n) > 0 ? Number(n) : d);
+        payload.size_x = min(payload.size_x, 6);
+        payload.size_y = min(payload.size_y, 4);
+        payload.size_z = min(payload.size_z, 1);
+        payload.weight = min(payload.weight, 0.01);
+      } catch { /* best effort */ }
       return payload;
     }
 
@@ -204,7 +219,17 @@ exports.handler = async (event) => {
       else if (flat.value != null) customs.value = String(flat.value);
 
       const vc = (src.value_currency ?? flat.value_currency);
-      if (vc != null) customs.value_currency = String(vc).toUpperCase(); // UPPERCASE for refresh
+      if (vc != null) customs.value_currency = String(vc).toLowerCase(); // align with create()
+
+      // If value missing or zero, derive from line_items (sum of unit value * qty)
+      if ((customs.value == null || Number(customs.value) <= 0) && Array.isArray(customs.line_items)) {
+        const sum = customs.line_items.reduce((s, li) => {
+          const q = Number(li.quantity || 1);
+          const v = Number(li.value_amount || li.value || 0);
+          return s + (q * (Number.isFinite(v) ? v : 0));
+        }, 0);
+        customs.value = sum.toFixed(2);
+      }
 
       if (Array.isArray(src.line_items)) customs.line_items = src.line_items;
       else if (Array.isArray(flat.line_items)) customs.line_items = flat.line_items;
@@ -627,8 +652,11 @@ async function recreateShipmentIfUnbought(id, desiredClientPayload, { authH, url
         // Rebuild a refresh-safe payload that nests `customs` and uppercases currency.
         let payload = adaptRefreshPayload(body.payload || {});
         payload.ship_date = normalizeShipDateServer(payload.ship_date);
+        // If ship_date is in the past, bump to today (rates can fail on past dates)
+        const today = normalizeShipDateServer("today");
+        if (payload.ship_date < today) payload.ship_date = today;
 
-        // Ensure top-level country_code (API requires it even on refresh)
+        // Ensure we include core fields the rate engine needs
         payload = await ensureCountryCodeForRefresh(id, payload);
 
         const resp = await fetch(url(`/shipments/${encodeURIComponent(id)}/refresh`), {
