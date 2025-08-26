@@ -4235,92 +4235,54 @@ function metalToBadge(label){
         }
       }
 
-    async function ccValidateAgainstApi(step){
-      const payload    = buildShipmentPayload();
-      const rawId      = (document.getElementById("ccShipmentId")?.value || "").trim();
-      const hasValidId = /^[A-Za-z0-9_-]{8,}$/.test(rawId);
-      const canRefresh = hasValidId && step >= 2 && !window.ccPostBuyFrozen;
+      async function ccValidateAgainstApi(step){
+        const payload    = buildShipmentPayload();
+        const rawId      = (document.getElementById("ccShipmentId")?.value || "").trim();
+        const hasValidId = /^[A-Za-z0-9_-]{8,}$/.test(rawId);
 
-      try {
-        // Step ≥2: refresh using full refresh payload
-        if (canRefresh) {
-          // before calling callCc(...)
-        const items    = buildLineItems();
-        const currency = items[0]?.currency_code || "CAD";
-        const total    = items.reduce((s, i) => s + Number(i.value_amount || 0), 0).toFixed(2);
+        try {
+          // ✅ Step 0: verify address only — NO rates here
+          if (step === 0) {
+            await callCc("POST", { action: "verify_to", to: buildTo() });
+            return [];
+          }
 
-        // Bring the sanitized VAT/IOSS/EORI to top-level as well
-        const vatRef   = sanitizeVatRef(document.getElementById("cc_customs_tax_reference_number")?.value);
+          // ✅ Step 1: ensure a draft shipment exists, or replace it — NO rates here
+          if (step === 1) {
+            if (!hasValidId) {
+              // Create draft (first time)
+              const created = await callCc("POST", { action: "create_shipment", shipment: buildShipmentPayload() });
+              if (created?.id) {
+                pushShipmentId(created.id);
+                const idInput = document.getElementById("ccShipmentId");
+                if (idInput) idInput.value = created.id;
+              }
+              return [];
+            }
 
-        const payload = {
-          package_type         : "thick_envelope",
-          ship_date            : normalizeShipDate(document.getElementById("cc_ship_date")?.value),
-          insurance_requested  : false,
-          signature_requested  : false,
+            // Replace existing draft (not purchased)
+            const response = await callCc("PATCH", {
+              action     : "replace_shipment",
+              shipment_id: rawId,
+              payload    : buildShipmentPayload()
+            });
+            if (response?.id) {
+              pushShipmentId(response.id);
+              const idInput = document.getElementById("ccShipmentId");
+              if (idInput) idInput.value = response.id;
+            }
+            return [];
+          }
 
-          // ✅ Top-level per API
-          vat_reference        : vatRef || undefined,
-
-          customs: {
-            package_contents : "merchandise",
-            value            : total,
-            value_currency   : currency,
-            line_items       : items
-          },
-          media_mail_requested : false,
-          weight               : 0.20,
-          weight_unit          : "lb",
-          size_unit            : "in",
-          size_x               : 6,
-          size_y               : 4,
-          size_z               : 1
-        };
-
-          // hand the snippet-built payload to the API
-          const refreshPayload = payload;
-
-          await callCc("PATCH", {
-            action     : "refresh",
-            shipment_id: rawId,
-            payload    : refreshPayload
-          });
-          pushShipmentId(rawId);
+          // 🔕 Steps ≥2: never fetch rates here; Step 2 → Next will handle it explicitly.
           return [];
+        } catch (e) {
+          handleCcApiError(step, e);
+          const stepEl = document.getElementById("ccStep" + step);
+          const ids = Array.from(stepEl.querySelectorAll(".cc-field.cc-missing [id]")).map(n => n.id);
+          return ids;
         }
-
-        // Step 0: verify address only
-        if (step === 0) {
-          await callCc("POST", { action: "verify_to", to: buildTo() });
-          return [];
-        }
-
-      // ✅ Step 1: recipient/items changed → delete + recreate draft (server-side)
-      if (step === 1) {
-        // Example: inside your existing ccValidateAgainstApi(step) when you detect structural changes
-        const rawId = (document.getElementById("ccShipmentId")?.value || "").trim();
-
-        const response = await callCc("PATCH", {
-          action     : "replace_shipment",
-          shipment_id: rawId,
-          payload    : buildShipmentPayload()   // your existing builder with to/customs/etc.
-        });
-
-        // Use response.id as the NEW shipment id (update your UI field and local history)
-        if (response?.id) {
-          pushShipmentId(response.id); // if you maintain a recent IDs stack
-          document.getElementById("ccShipmentId").value = response.id;
-        }
-        return [];
       }
-
-        return [];
-      } catch (e) {
-        handleCcApiError(step, e);
-        const stepEl = document.getElementById("ccStep" + step);
-        const ids = Array.from(stepEl.querySelectorAll(".cc-field.cc-missing [id]")).map(n => n.id);
-        return ids;
-      }
-    }
 
        function buildTo(){
          return {
@@ -4646,9 +4608,11 @@ function buildRefreshPayload(){
       async function validateStep(step){
         clearMissing(step);
 
-        // 1) Ask the server what’s actually missing
-        const apiMissing = await ccValidateAgainstApi(step);
-        if (apiMissing.length) return false;
+        // 🔒 Steps 0–1 may talk to server (verify/create/replace). Steps ≥2: NO rate calls here.
+        if (step <= 1) {
+          const apiMissing = await ccValidateAgainstApi(step);
+          if (apiMissing.length) return false;
+        }
 
         // 2) Fallback to local minimal checks (keeps UX snappy offline)
         let req = [];
