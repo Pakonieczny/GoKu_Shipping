@@ -5099,13 +5099,11 @@ function buildRefreshPayload(){
       function autoFillCustomsTaxRef(){
         const input = document.getElementById("cc_customs_tax_reference_number");
         if (!input) return;
-        // Derive the destination ISO-2 code from the form/address
-        const dest = detectDestCountryCode(); // e.g., "GB", "IT", "US"
+
+        const dest = detectDestCountryCode();   // ← define the country code
         if (dest === "GB") {
-          // UK VAT (GB…)
           input.value = "GB370600428";
         } else if (isEU(dest)) {
-          // EU IOSS (IM…)
           input.value = "IM3720000224";
         } else {
           input.value = "";
