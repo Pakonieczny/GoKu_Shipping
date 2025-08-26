@@ -220,6 +220,26 @@ function isPostagePurchased(sh) {
   );
 }
 
+    // Remove a shipment from its batch if it's in an OPEN batch; ignore errors.
+    async function removeFromBatchIfOpen(shId, batchId) {
+      if (!batchId) return;
+      try {
+        await fetch(url(`/shipments/remove_from_batch`), {
+          method: "PATCH",
+          headers: authH,
+          body: JSON.stringify({ batch_id: Number(batchId), shipment_ids: [String(shId)] })
+        });
+      } catch {}
+    }
+
+    // Delete a draft shipment by id, first removing from open batch when applicable.
+    async function deleteDraftById(id, currObj) {
+      const batchId = currObj?.batch_id == null ? "" : String(currObj.batch_id);
+      if (batchId) await removeFromBatchIfOpen(id, batchId);
+      const d = await fetch(url(`/shipments/${encodeURIComponent(id)}`), { method: "DELETE", headers: authH });
+      return await wrap(d);
+    }
+
 async function recreateShipmentIfUnbought(id, desiredClientPayload, { authH, url, wrap }) {
   // 1) Fetch current to confirm purchase status
   const r = await fetch(url(`/shipments/${encodeURIComponent(id)}`), { headers: authH });
@@ -235,12 +255,9 @@ async function recreateShipmentIfUnbought(id, desiredClientPayload, { authH, url
     };
   }
 
-  // 2) DELETE existing draft shipment
-  const d  = await fetch(url(`/shipments/${encodeURIComponent(id)}`), {
-    method: "DELETE",
-    headers: authH
-  });
-  const od = await wrap(d);
+  // 2) DELETE existing draft shipment (remove from open batch first if needed)
+  const od = await deleteDraftById(id, curr);
+  
   if (!od.ok) return { ok: false, status: od.status, data: od.data };
 
   // 3) POST create new shipment with corrected data (flattened to API schema)
