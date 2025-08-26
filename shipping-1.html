@@ -1129,6 +1129,13 @@ function metalToBadge(label){
       return (s == null ? "" : String(s)).replace(/&quot;/g, '"');
     }
 
+    function sanitizeVatRef(raw){
+      return (String(raw || "")
+        .toUpperCase()
+        .replace(/[^A-Z0-9]/g, "")
+        .slice(0, 20)) || null;
+    }
+
    // Day-only YYYY-MM-DD using local time (fixes UTC off-by-one)
    function _ymdLocal(d) {
      const yyyy = d.getFullYear();
