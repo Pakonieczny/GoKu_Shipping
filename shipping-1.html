@@ -3695,6 +3695,7 @@ function metalToBadge(label){
       const fnBase    = "/.netlify/functions";
 
       let currentStep = 0, selectedPostageType = null;
+      window.ccBlockRatesUntilStep2 = true; // 🚫 block pricing until Step 2
 
       function set(id, v) {
         const el = document.getElementById(id);
@@ -3733,6 +3734,7 @@ function metalToBadge(label){
         // Ensure the editor modal is visible when stepping between wizard pages
         if (modal && modal.style.display !== "block") modal.style.display = "block";
         currentStep = Math.max(0, Math.min(3, i));
+        window.ccBlockRatesUntilStep2 = currentStep < 2; // only allow pricing once we enter Step 2+
         steps.forEach((el,idx) => el.classList.toggle("active", idx===currentStep));
         pillNodes.forEach((el,idx) => el.classList.toggle("active", idx===currentStep));
         btnBack.disabled = currentStep === 0;
@@ -4455,6 +4457,10 @@ function buildRefreshPayload(){
       }
 
       async function refreshRates(){
+        // Hard guard: never price while in Step 0/1
+        if (window.ccBlockRatesUntilStep2 || (typeof currentStep === "number" && currentStep < 2)) {
+          return;
+        }
         // Defensive: never price before package step
         if (typeof currentStep === "number" && currentStep < 2) {
           return; // silently ignore any accidental early calls
