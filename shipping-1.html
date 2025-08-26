@@ -1530,10 +1530,10 @@ function metalToBadge(label){
     }));
   }
 
-  /* 🆕 Sum all ".cc_item_value" and show it in #cc_grand_total */
+  /* 🆕 Sum all "cc_item_unit_value" and show it in #cc_grand_total */
   function updateGrandTotal(){
     try{
-      const vals = Array.from(document.querySelectorAll("#cc_line_items_container .cc_item_value"))
+      const vals = Array.from(document.querySelectorAll("#cc_line_items_container .cc_item_unit_value"))
         .map(el => Number(el.value || 0))
         .filter(n => Number.isFinite(n));
       const total = vals.reduce((a,b)=>a+b, 0);
