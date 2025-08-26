@@ -4213,7 +4213,8 @@ function metalToBadge(label){
 
           const payload = {
             package_type: "thick_envelope",
-            ship_date: "2025-08-25",
+            // Reads cc_ship_date; falls back to today's local YYYY-MM-DD
+            ship_date: normalizeShipDate(document.getElementById("cc_ship_date")?.value),
             insurance_requested: false,
             signature_requested: false,
             customs: {
