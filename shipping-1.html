@@ -5100,21 +5100,17 @@ function buildRefreshPayload(){
         const input = document.getElementById("cc_customs_tax_reference_number");
         if (!input) return;
 
-        if (!dest) {
-          input.value = "";
-          return;
-        }
-
         if (dest === "GB") {
-          // UK VAT
+          // Use GB-prefixed value; sanitizeVatRef will keep only A–Z0–9 → "GB370600428"
           input.value = "GB370600428";
-        } else if (isEU27(dest)) {
-          // EU IOSS
+        } else if (isEU(dest)) {
+          // IOSS (EU): sanitizeVatRef keeps "IM3720000224"
           input.value = "IM3720000224";
         } else {
           input.value = "";
         }
       }
+
 // ISO2 lookup for common names → code (minimal; expand as needed)
 const COUNTRY_TO_ISO2 = {
   "italy":"IT","italia":"IT","united states":"US","usa":"US","canada":"CA","france":"FR","germany":"DE","spain":"ES"
