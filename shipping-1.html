@@ -2294,6 +2294,11 @@ function metalToBadge(label){
             inp.dispatchEvent(new Event("input", { bubbles: true }));
             M.toast?.({ html: "Order # pasted" });
 
+            /* ⛔ Cancel any in-flight ccShipmentId search and pending slow-pass */
+            try { window.ccSearchAbort?.abort(); } catch {}
+            if (window.ccSlowTimer) { clearTimeout(window.ccSlowTimer); window.ccSlowTimer = null; }
+            window.ccSpin && window.ccSpin(false);
+
             // 🔎 Also refresh ccShipmentId 500ms after paste (independent of auto-Enter)
             setTimeout(() => window.refreshFromOrderIfChitChats?.(), 500);
             // focus, then simulate pressing Enter after 100ms
@@ -2357,9 +2362,14 @@ function metalToBadge(label){
       }
 
       var etsyOrderInput = document.getElementById("etsyOrderNumber");
-      
+
       etsyOrderInput.addEventListener("keydown", async function (e) {
         if (e.key !== "Enter") return;
+
+          /* ⛔ Cancel any in-flight ccShipmentId search and pending slow-pass */
+          try { window.ccSearchAbort?.abort(); } catch {}
+          if (window.ccSlowTimer) { clearTimeout(window.ccSlowTimer); window.ccSlowTimer = null; }
+          window.ccSpin && window.ccSpin(false);
 
         // New order → thaw post-buy freeze, clear CC id, refresh batches
         window.ccPostBuyFrozen = false;
@@ -3325,6 +3335,10 @@ function metalToBadge(label){
 
       })();
 
+      // NEW: current in-flight ChitChats search + slow-pass timer
+      window.ccSearchAbort = null;
+      window.ccSlowTimer   = null;
+
       // Always use the Netlify functions base
       const fnBase = "/.netlify/functions";
       // Single source of truth for the Chit Chats proxy function name:
@@ -3376,18 +3390,35 @@ function metalToBadge(label){
       // Use the deployed proxy function (testChitChats) and its "search" resource
       // Always limit to Pending (open) batches on the server
       async function callSearch(params){
-        window.ccSpin && window.ccSpin(true);   // safe global call
+        window.ccSpin && window.ccSpin(true);
+
+        // Build query
+        const qs = new URLSearchParams({
+          fast: "1",
+          pendingOnly: String(params?.pendingOnly ?? "1"),
+          timeoutMs: "9000",
+          pageSize: String(params?.pageSize ?? "500"),
+          ...(params || {})
+        }).toString();
+
+        // 🔪 Cancel any in-flight search, then create a fresh controller
+        try { window.ccSearchAbort?.abort(); } catch {}
+        const ctrl = new AbortController();
+        window.ccSearchAbort = ctrl;
+
         try {
-       const qs = new URLSearchParams({
-         fast: "1",
-         pendingOnly: String(params?.pendingOnly ?? "1"),
-         timeoutMs: "9000",
-         pageSize: String(params?.pageSize ?? "500"),
-         ...(params || {})
-       }).toString();
-          const resp = await fetch(`${fnBase}/testChitChats?resource=search&${qs}`, { credentials: "include" });
+          const resp = await fetch(`${fnBase}/testChitChats?resource=search&${qs}`, {
+            credentials: "include",
+            signal: ctrl.signal
+          });
           return await safeJSON(resp);
+        } catch (err) {
+          // Swallow user-initiated cancels quietly
+          if (err?.name === "AbortError") return { aborted: true };
+          throw err;
         } finally {
+          // Only clear if we're still the active controller
+          if (window.ccSearchAbort === ctrl) window.ccSearchAbort = null;
           window.ccSpin && window.ccSpin(false);
         }
       }
@@ -3429,17 +3460,21 @@ function metalToBadge(label){
           return partial || list[0] || null;
         }
 
-        async function refreshFromOrderIfChitChats(){
-        if (window.ccPostBuyFrozen) return;        
+      async function refreshFromOrderIfChitChats(){
+        if (window.ccPostBuyFrozen) return;
         const orderId = (orderInp?.value || "").trim();
         if (!orderId) return;
+
+        // NEW: cancel any pending slow-pass timer from a previous lookup
+        if (window.ccSlowTimer) { clearTimeout(window.ccSlowTimer); window.ccSlowTimer = null; }
+
         try {
-          // Fast pass (vendor search / id match only)
-          const fast = await callSearch({ orderId, fast: "1", pendingOnly: "0" });          
+          const fast = await callSearch({ orderId, fast: "1", pendingOnly: "0" });
           const hit  = pickBestShipment(orderId, (fast.shipments || []));
           if (hit) { setShipmentUI(hit); return; }
-          // Slow pass (fallback pages) – runs after a short delay without clearing the field
-          setTimeout(async () => {
+
+          // Slow pass (fallback pages) – schedule and remember the timer id
+          window.ccSlowTimer = setTimeout(async () => {
             try {
               const slow = await callSearch({ orderId, fast: "0", pendingOnly: "0" });
               const s2   = pickBestShipment(orderId, (slow.shipments || []));
@@ -3497,6 +3532,11 @@ function metalToBadge(label){
           if (idEl) { idEl.value = ""; idEl.dataset.setAt = String(Date.now()); }
           window.ccShipmentId = "";
           try { fetchBatches(); } catch {}
+
+          // 🔪 kill any live CC search and pending slow-pass; we’re switching orders
+          try { window.ccSearchAbort?.abort(); } catch {}
+          if (window.ccSlowTimer) { clearTimeout(window.ccSlowTimer); window.ccSlowTimer = null; }
+          window.ccSpin && window.ccSpin(false);
 
           if (e.isTrusted) setTimeout(() => window.refreshFromOrderIfChitChats?.(), 500); // ← 500ms delay
         }
