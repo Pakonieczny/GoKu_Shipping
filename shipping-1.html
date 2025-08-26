@@ -4235,54 +4235,54 @@ function metalToBadge(label){
         }
       }
 
-      async function ccValidateAgainstApi(step){
-        const payload    = buildShipmentPayload();
-        const rawId      = (document.getElementById("ccShipmentId")?.value || "").trim();
-        const hasValidId = /^[A-Za-z0-9_-]{8,}$/.test(rawId);
+async function ccValidateAgainstApi(step){
+  const payload    = buildShipmentPayload();
+  const rawId      = (document.getElementById("ccShipmentId")?.value || "").trim();
+  const hasValidId = /^[A-Za-z0-9_-]{8,}$/.test(rawId);
 
-        try {
-          // ✅ Step 0: verify address only — NO rates here
-          if (step === 0) {
-            await callCc("POST", { action: "verify_to", to: buildTo() });
-            return [];
-          }
+  try {
+    // ✅ Step 0: verify address only — NO rates here
+    if (step === 0) {
+      await callCc("POST", { action: "verify_to", to: buildTo() });
+      return [];
+    }
 
-          // ✅ Step 1: ensure a draft shipment exists, or replace it — NO rates here
-          if (step === 1) {
-            if (!hasValidId) {
-              // Create draft (first time)
-              const created = await callCc("POST", { action: "create_shipment", shipment: buildShipmentPayload() });
-              if (created?.id) {
-                pushShipmentId(created.id);
-                const idInput = document.getElementById("ccShipmentId");
-                if (idInput) idInput.value = created.id;
-              }
-              return [];
-            }
-
-            // Replace existing draft (not purchased)
-            const response = await callCc("PATCH", {
-              action     : "replace_shipment",
-              shipment_id: rawId,
-              payload    : buildShipmentPayload()
-            });
-            if (response?.id) {
-              pushShipmentId(response.id);
-              const idInput = document.getElementById("ccShipmentId");
-              if (idInput) idInput.value = response.id;
-            }
-            return [];
-          }
-
-          // 🔕 Steps ≥2: never fetch rates here; Step 2 → Next will handle it explicitly.
-          return [];
-        } catch (e) {
-          handleCcApiError(step, e);
-          const stepEl = document.getElementById("ccStep" + step);
-          const ids = Array.from(stepEl.querySelectorAll(".cc-field.cc-missing [id]")).map(n => n.id);
-          return ids;
+    // ✅ Step 1: ensure a draft shipment exists, or replace it — NO rates here
+    if (step === 1) {
+      if (!hasValidId) {
+        // Create draft (first time)
+        const created = await callCc("POST", { action: "create_shipment", shipment: buildShipmentPayload() });
+        if (created?.id) {
+          pushShipmentId(created.id);
+          const idInput = document.getElementById("ccShipmentId");
+          if (idInput) idInput.value = created.id;
         }
+        return [];
       }
+
+      // Replace existing draft (not purchased)
+      const response = await callCc("PATCH", {
+        action     : "replace_shipment",
+        shipment_id: rawId,
+        payload    : buildShipmentPayload()
+      });
+      if (response?.id) {
+        pushShipmentId(response.id);
+        const idInput = document.getElementById("ccShipmentId");
+        if (idInput) idInput.value = response.id;
+      }
+      return [];
+    }
+
+    // 🔕 Steps ≥2: never fetch rates here; Step 2 → Next will handle it explicitly.
+    return [];
+  } catch (e) {
+    handleCcApiError(step, e);
+    const stepEl = document.getElementById("ccStep" + step);
+    const ids = Array.from(stepEl.querySelectorAll(".cc-field.cc-missing [id]")).map(n => n.id);
+    return ids;
+  }
+}
 
        function buildTo(){
          return {
@@ -4455,21 +4455,26 @@ function buildRefreshPayload(){
       }
 
       async function refreshRates(){
+        // Defensive: never price before package step
+        if (typeof currentStep === "number" && currentStep < 2) {
+          return; // silently ignore any accidental early calls
+        }
+
         let id = (idInput.value || "").trim();
         if (!id) {
           const created = await ensureShipment();
           id = (created?.id || idInput.value || "").trim();
           if (!id) { M.toast?.({ html: "Create the shipment first" }); return; }
         }
-      const payload = buildRefreshPayload();
-      // hard guard: weight must be present and > 0 for rates
-      if (!(Number.isFinite(payload.weight) && payload.weight > 0)) {
-        M.toast?.({ html: "Weight must be greater than 0 to refresh rates." });
-        markMissing(2, ["cc_weight"]);
-        return;
-      }
-      const out = await callCc("PATCH", { action: "refresh", shipment_id: id, payload });
-      renderRates(out.shipment || out);
+        const payload = buildRefreshPayload();
+        // hard guard: weight must be present and > 0 for rates
+        if (!(Number.isFinite(payload.weight) && payload.weight > 0)) {
+          M.toast?.({ html: "Weight must be greater than 0 to refresh rates." });
+          markMissing(2, ["cc_weight"]);
+          return;
+        }
+        const out = await callCc("PATCH", { action: "refresh", shipment_id: id, payload });
+        renderRates(out.shipment || out);
       }
 
       async function buySelected(){
