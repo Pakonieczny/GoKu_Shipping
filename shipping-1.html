@@ -5413,43 +5413,35 @@ function parseIntlAddressBlock(blockText = "", fallbackCountryCode = "") {
             return;
           }
 
-          // ✅ Step 1: no JSON preview — go straight to validation → Step 2 (with spinner)
-          if (currentStep === 1){
-            setBtnLoading(btnNext, true);
-            try {
-              if (!(await validateStep(1))) return;
-              showStep(2);
-            } finally {
-              setBtnLoading(btnNext, false);
-            }
-            return;
-          }
-
-          if (currentStep === 2){
-            setBtnLoading(btnNext, true);
-            try {
-              if (!(await validateStep(2))) return;
-              await ensureShipment();
-
-              // fix: ensure we read ccShipmentId in-scope for Step 2
-              const idInput = document.getElementById("ccShipmentId");
-              const id = (idInput?.value || "").trim();
-              if (!id) {
-                M.toast?.({ html: "Could not create shipment — check Recipient & Description." });
+          // ✅ Step 1: validate only — NO pricing
+              if (currentStep === 1){
+                setBtnLoading(btnNext, true);
+                try {
+                  if (!(await validateStep(1))) return;
+                  showStep(2);
+                } finally { setBtnLoading(btnNext, false); }
                 return;
               }
-              await refreshRates();
-              showStep(3);
-            } finally {
+
+              // ✅ Step 2: price, then move to Step 3
+              if (currentStep === 2){
+                setBtnLoading(btnNext, true);
+                try {
+                  if (!(await validateStep(2))) return;
+                  await ensureShipment();
+                  const idInput = document.getElementById("ccShipmentId");
+                  const id = (idInput?.value || "").trim();
+                  if (!id) { M.toast?.({ html: "Could not create shipment — check Recipient & Description." }); return; }
+                  await refreshRates();    // ← pricing happens here only
+                  showStep(3);
+                } finally { setBtnLoading(btnNext, false); }
+                return;
+              }
+            } catch (err) {
               setBtnLoading(btnNext, false);
+              handleCcApiError(err);
             }
-            return;
-          }
-        } catch (err) {
-          setBtnLoading(btnNext, false);
-          handleCcApiError(err);
-        }
-      });
+          });
 
       btnRefresh.addEventListener("click", async () => {
         try{
