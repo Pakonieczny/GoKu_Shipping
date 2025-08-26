@@ -221,56 +221,52 @@ function isPostagePurchased(sh) {
 }
 
 async function recreateShipmentIfUnbought(id, desiredClientPayload, { authH, url, wrap }) {
-  // 1) Fetch current to confirm purchase status
+  // 0) Fetch current + block if already purchased
   const r = await fetch(url(`/shipments/${encodeURIComponent(id)}`), { headers: authH });
   const o = await wrap(r);
   if (!o.ok) return { ok: false, status: o.status, data: o.data };
   const curr = o.data?.shipment || o.data || {};
-
   if (isPostagePurchased(curr)) {
-    return {
-      ok: false,
-      status: 409,
-      data: { message: "Shipment already has postage; refund/void before replacing" }
-    };
+    return { ok: false, status: 409, data: { message: "Shipment already has postage; refund/void before replacing" } };
   }
 
-  // 2) DELETE existing draft shipment
-  const d  = await fetch(url(`/shipments/${encodeURIComponent(id)}`), {
-    method: "DELETE",
-    headers: authH
-  });
-  const od = await wrap(d);
-  if (!od.ok) return { ok: false, status: od.status, data: od.data };
-
-  // 3) POST create new shipment with corrected data (flattened to API schema)
-  const newShipment = adaptClientShipment(desiredClientPayload || {});
+  // 1) CREATE FIRST to avoid a "not found" gap
+  const newShipment = adaptClientShipment({ ...curr, ...(desiredClientPayload || {}) });
+  if (!newShipment.country_code) {
+    const cc = String(curr.country_code || curr.to?.country_code || curr.destination?.country_code || curr.to_country_code || "").toUpperCase();
+    if (cc) newShipment.country_code = cc;
+  }
   if (!newShipment.country_code) {
     return { ok: false, status: 400, data: { message: "country_code required" } };
   }
-
-  const c  = await fetch(url(`/shipments`), {
-    method: "POST",
-    headers: authH,
-    body: JSON.stringify(newShipment)
-  });
+  const c = await fetch(url(`/shipments`), { method: "POST", headers: authH, body: JSON.stringify(newShipment) });
   const oc = await wrap(c);
   if (!oc.ok) return { ok: false, status: oc.status, data: oc.data };
-
-  const loc   = oc.resp.headers.get("Location") || "";
+  const loc  = oc.resp.headers.get("Location") || "";
   const newId = loc.split("/").filter(Boolean).pop() || null;
 
-  // Optional: fetch the full created object for convenience
+  // 1b) Poll briefly until the new shipment is readable
   let created = null;
   if (newId) {
-    try {
-      const r2 = await fetch(url(`/shipments/${encodeURIComponent(newId)}`), { headers: authH });
-      const o2 = await wrap(r2);
-      if (o2.ok) created = o2.data;
-    } catch {}
+    for (let i = 0; i < 4; i++) {
+      try {
+        const r2 = await fetch(url(`/shipments/${encodeURIComponent(newId)}`), { headers: authH });
+        const o2 = await wrap(r2);
+        if (o2.ok) { created = o2.data; break; }
+      } catch {}
+      await new Promise(res => setTimeout(res, 250));
+    }
   }
 
-  return { ok: true, status: 200, data: { success: true, id: newId, shipment: created } };
+  // 2) DELETE the old draft (best-effort)
+  let deleteOk = false;
+  try {
+    const d = await fetch(url(`/shipments/${encodeURIComponent(id)}`), { method: "DELETE", headers: authH });
+    const od = await wrap(d);
+    deleteOk = od.ok;
+  } catch {}
+
+  return { ok: true, status: 200, data: { success: true, id: newId, deleted_old: deleteOk, shipment: created } };
 }
 
     // --- Pending/open-batch filter (correct scope) ---
