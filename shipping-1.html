@@ -3873,8 +3873,18 @@ function metalToBadge(label){
           }
         }
 
-        if (id) return await callCc("GET", null, `?resource=shipment&id=${encodeURIComponent(id)}`);
-        const out = await callCc("POST", { action:"create_shipment", shipment: buildShipmentPayload() });
+        if (id) {
+          try {
+            return await callCc("GET", null, `?resource=shipment&id=${encodeURIComponent(id)}`);
+          } catch (e) {
+            if (e.status === 404 && window.ccShipmentId && window.ccShipmentId !== id) {
+              // Old shipment was replaced → switch to the fresh id we recorded earlier
+              pushShipmentId(window.ccShipmentId);
+              return await callCc("GET", null, `?resource=shipment&id=${encodeURIComponent(window.ccShipmentId)}`);
+            }
+            throw e;
+          }
+        }        const out = await callCc("POST", { action:"create_shipment", shipment: buildShipmentPayload() });
         pushShipmentId(out?.id);
         return out.shipment || (out.id ? await callCc("GET", null, `?resource=shipment&id=${encodeURIComponent(out.id)}`) : null);
       }
@@ -4261,10 +4271,11 @@ function metalToBadge(label){
           payload    : buildShipmentPayload()   // your existing builder with to/customs/etc.
         });
 
-        // Use response.id as the NEW shipment id (update your UI field and local history)
-        if (response?.id) {
-          pushShipmentId(response.id); // if you maintain a recent IDs stack
-          document.getElementById("ccShipmentId").value = response.id;
+        // Use the NEW shipment id from response.id OR response.shipment.id
+        const newId = response?.id || response?.shipment?.id;
+        if (newId) {
+          pushShipmentId(newId);                // sync global + input + emit guarded input event
+          document.getElementById("ccShipmentId").value = newId; // belt & suspenders
         }
         return [];
       }

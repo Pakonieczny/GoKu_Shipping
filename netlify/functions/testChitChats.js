@@ -257,12 +257,15 @@ async function recreateShipmentIfUnbought(id, desiredClientPayload, { authH, url
   const oc = await wrap(c);
   if (!oc.ok) return { ok: false, status: oc.status, data: oc.data };
 
-  const loc   = oc.resp.headers.get("Location") || "";
-  const newId = loc.split("/").filter(Boolean).pop() || null;
+  const loc   = oc.resp?.headers?.get("Location") || "";
+  let   newId = loc.split("/").filter(Boolean).pop() || null;
+  // 👇 Fallback to body if Location is missing
+  const body  = oc.data?.shipment || oc.data || {};
+  if (!newId) newId = String(body.id || body.shipment_id || "");
 
-  // Optional: fetch the full created object for convenience
-  let created = null;
-  if (newId) {
+  // Prefer the body we already have; otherwise fetch once by id
+  let created = (body && body.id) ? body : null;
+  if (!created && newId) {
     try {
       const r2 = await fetch(url(`/shipments/${encodeURIComponent(newId)}`), { headers: authH });
       const o2 = await wrap(r2);
@@ -271,7 +274,6 @@ async function recreateShipmentIfUnbought(id, desiredClientPayload, { authH, url
   }
 
   return { ok: true, status: 200, data: { success: true, id: newId, shipment: created } };
-}
 
     // --- Pending/open-batch filter (correct scope) ---
     let _openBatchIdsCache = null;
