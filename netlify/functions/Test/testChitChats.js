@@ -4,6 +4,7 @@
  *   - GET  ?resource=batches[&status=open]           → list batches
  *   - GET  ?resource=shipment&id=<shipmentId>        → fetch one shipment
  *   - GET  ?resource=search&orderId=..&tracking=..   → best-effort search (paginates all pages)
+ *   - GET  ?resource=label&id=<shipmentId>&format=zpl|pdf|png → fetch label payload (proxy)
  *   - GET  (no resource)                             → quick shipments ping (status=ready)
  *   - POST { action:"create", description? }         → create batch
  *   - POST { action:"create_shipment", shipment:{} } → create shipment
@@ -50,6 +51,12 @@ exports.handler = async (event) => {
       return { ok: resp.ok, status: resp.status, data, resp };
     };
     const ok  = (data)       => ({ statusCode: 200, headers: CORS, body: JSON.stringify(data) });
+    // raw (non-JSON) success for ZPL/plain text (so the browser hands it to QZ as-is)
+    const okText = (text, contentType = "text/plain; charset=utf-8") => ({
+      statusCode: 200,
+      headers: { ...CORS, "Content-Type": contentType },
+      body: text
+    });
     const bad = (code, err)  => ({
       statusCode: code,
       headers: CORS,
@@ -98,6 +105,169 @@ exports.handler = async (event) => {
       if (!out.ok || typeof out.data?.count !== "number") return null;
       return out.data.count;
     };
+
+    // Fill country_code from the existing shipment when the refresh payload doesn't include it
+    async function ensureCountryCodeForRefresh(id, payload) {
+      if (payload.country_code) return payload;
+      try {
+        const r = await fetch(url(`/shipments/${encodeURIComponent(id)}`), { headers: authH });
+        const o = await wrap(r);
+        if (o.ok) {
+          const s  = o.data?.shipment || o.data || {};
+          const cc = String(
+            s.country_code ||
+            s.to?.country_code ||
+            s.destination?.country_code ||
+            s.to_country_code ||
+            ""
+          ).toUpperCase();
+          if (cc) payload.country_code = cc;
+        }
+      } catch {}
+      return payload;
+    }
+
+    // --- Flatten nested client payload → API's flat schema ---
+    function adaptClientShipment(client = {}) {
+      const to      = client.to      || {};
+      const pkg     = client.package || {};
+      const customs = client.customs || {};
+
+      const out = {
+        // Recipient (top level)
+        name          : to.name ?? client.name ?? "",
+        address_1     : to.address_1 ?? client.address_1 ?? "",
+        address_2     : to.address_2 ?? client.address_2 ?? undefined,
+        city          : to.city ?? client.city ?? "",
+        province_code : to.province_code ?? client.province_code ?? "",
+        postal_code   : to.postal_code ?? client.postal_code ?? "",
+        country_code  : String(to.country_code ?? client.country_code ?? "").toUpperCase(),
+        phone         : to.phone ?? client.phone ?? undefined,
+        email         : to.email ?? client.email ?? undefined,
+
+        // Package / required top-levels
+        package_type  : pkg.package_type  ?? client.package_type,
+        size_unit     : pkg.size_unit     ?? client.size_unit,
+        size_x        : numberish(pkg.size_x ?? client.size_x),
+        size_y        : numberish(pkg.size_y ?? client.size_y),
+        size_z        : numberish(pkg.size_z ?? client.size_z),
+        weight_unit   : pkg.weight_unit   ?? client.weight_unit,
+        weight        : numberish(pkg.weight ?? client.weight),
+        ship_date     : normalizeShipDateServer(pkg.ship_date ?? client.ship_date ?? "today"),
+        postage_type  : pkg.postage_type  ?? client.postage_type, // may be "unknown" or omitted
+
+        // Customs / value
+        package_contents : customs.package_contents ?? client.package_contents ?? "merchandise",
+        description      : customs.description     ?? client.description,
+        value            : String((customs.value ?? client.value ?? 0)),
+        value_currency   : String((customs.value_currency ?? client.value_currency ?? "cad")).toLowerCase(),
+        order_id         : client.order_id ?? client.reference ?? client.order,
+        line_items       : Array.isArray(customs.line_items) ? customs.line_items : undefined
+      };
+
+      // prune undefined/null to keep payload tidy
+      Object.keys(out).forEach(k => (out[k] == null) && delete out[k]);
+      return out;
+    }
+
+    // --- Build a REFRESH payload that preserves nested `customs` ---
+    function adaptRefreshPayload(client = {}) {
+      // First: reuse your existing flattener to normalize dims, address, etc.
+      const flat = adaptClientShipment(client);
+      const out  = { ...flat };
+
+      // Prefer the caller's explicit `customs` block; fallback to any flattened fields
+      const src = client.customs || {};
+      const customs = {};
+
+      if (src.package_contents != null) customs.package_contents = src.package_contents;
+      else if (flat.package_contents != null) customs.package_contents = flat.package_contents;
+
+      if (src.description != null) customs.description = src.description;
+      else if (flat.description != null) customs.description = flat.description;
+
+      if (src.value != null) customs.value = String(src.value);
+      else if (flat.value != null) customs.value = String(flat.value);
+
+      const vc = (src.value_currency ?? flat.value_currency);
+      if (vc != null) customs.value_currency = String(vc).toUpperCase(); // UPPERCASE for refresh
+
+      if (Array.isArray(src.line_items)) customs.line_items = src.line_items;
+      else if (Array.isArray(flat.line_items)) customs.line_items = flat.line_items;
+
+      // Only attach if we actually have something
+      if (Object.keys(customs).length) out.customs = customs;
+
+      // Remove flattened copies so the API sees `customs.*` (not top-level)
+      delete out.package_contents;
+      delete out.description;
+      delete out.value;
+      delete out.value_currency;
+      delete out.line_items;
+
+      return out;
+    }
+
+    // ---- helpers to detect purchased shipments and perform delete → recreate ----
+function isPostagePurchased(sh) {
+  const s = (sh && (sh.shipment || sh)) || {};
+  const status = String(s.status || "").toLowerCase();
+  // Treat as purchased if label URLs or tracking exist, or status signals label-ready
+  return Boolean(
+    s.postage_label_pdf_url || s.postage_label_png_url || s.postage_label_zpl_url ||
+    s.tracking || s.tracking_code || s.tracking_number ||
+    (status === "ready")
+  );
+}
+
+async function recreateShipmentIfUnbought(id, desiredClientPayload, { authH, url, wrap }) {
+  // 0) Fetch current + block if already purchased
+  const r = await fetch(url(`/shipments/${encodeURIComponent(id)}`), { headers: authH });
+  const o = await wrap(r);
+  if (!o.ok) return { ok: false, status: o.status, data: o.data };
+  const curr = o.data?.shipment || o.data || {};
+  if (isPostagePurchased(curr)) {
+    return { ok: false, status: 409, data: { message: "Shipment already has postage; refund/void before replacing" } };
+  }
+
+  // 1) CREATE FIRST to avoid a "not found" gap
+  const newShipment = adaptClientShipment({ ...curr, ...(desiredClientPayload || {}) });
+  if (!newShipment.country_code) {
+    const cc = String(curr.country_code || curr.to?.country_code || curr.destination?.country_code || curr.to_country_code || "").toUpperCase();
+    if (cc) newShipment.country_code = cc;
+  }
+  if (!newShipment.country_code) {
+    return { ok: false, status: 400, data: { message: "country_code required" } };
+  }
+  const c = await fetch(url(`/shipments`), { method: "POST", headers: authH, body: JSON.stringify(newShipment) });
+  const oc = await wrap(c);
+  if (!oc.ok) return { ok: false, status: oc.status, data: oc.data };
+  const loc  = oc.resp.headers.get("Location") || "";
+  const newId = loc.split("/").filter(Boolean).pop() || null;
+
+  // 1b) Poll briefly until the new shipment is readable
+  let created = null;
+  if (newId) {
+    for (let i = 0; i < 4; i++) {
+      try {
+        const r2 = await fetch(url(`/shipments/${encodeURIComponent(newId)}`), { headers: authH });
+        const o2 = await wrap(r2);
+        if (o2.ok) { created = o2.data; break; }
+      } catch {}
+      await new Promise(res => setTimeout(res, 250));
+    }
+  }
+
+  // 2) DELETE the old draft (best-effort)
+  let deleteOk = false;
+  try {
+    const d = await fetch(url(`/shipments/${encodeURIComponent(id)}`), { method: "DELETE", headers: authH });
+    const od = await wrap(d);
+    deleteOk = od.ok;
+  } catch {}
+
+  return { ok: true, status: 200, data: { success: true, id: newId, deleted_old: deleteOk, shipment: created } };
+}
 
     // --- Pending/open-batch filter (correct scope) ---
     let _openBatchIdsCache = null;
@@ -170,6 +340,44 @@ exports.handler = async (event) => {
     if (event.httpMethod === "GET") {
       const qp = event.queryStringParameters || {};
       const resource = (qp.resource || "").toLowerCase();
+
+      // Proxy actual label bytes (solves browser CORS for ZPL/PDF/PNG)
+      if (resource === "label") {
+        const id  = String(qp.id || "");
+        const fmt = String(qp.format || "zpl").toLowerCase();
+        if (!id) return bad(400, "id required");
+
+        // 1) Read shipment → find label URLs
+        const rs  = await fetch(url(`/shipments/${encodeURIComponent(id)}`), { headers: authH });
+        const os  = await wrap(rs);
+        if (!os.ok) return bad(os.status, os.data);
+        const s   = os.data?.shipment || os.data || {};
+        const pick = fmt === "zpl" ? (s.postage_label_zpl_url || s.postageLabelZplUrl)
+                   : fmt === "pdf" ? (s.postage_label_pdf_url || s.postageLabelPdfUrl || s.label_pdf_url || s.labelPdfUrl)
+                                   : (s.postage_label_png_url || s.postageLabelPngUrl || s.label_png_url || s.labelPngUrl);
+        if (!pick) return bad(404, "Label not ready");
+
+        // 2) Fetch label from Chit Chats
+        const lr = await fetch(pick);
+        if (!lr.ok) return bad(lr.status, await lr.text());
+        const ctype = lr.headers.get("content-type") || (fmt === "zpl"
+                       ? "text/plain; charset=utf-8"
+                       : fmt === "pdf" ? "application/pdf" : "image/png");
+
+        if (fmt === "zpl") {
+          const txt = await lr.text();
+          return { statusCode: 200, headers: { ...CORS, "Content-Type": ctype }, body: txt };
+        } else {
+          const ab  = await lr.arrayBuffer();
+          const b64 = Buffer.from(ab).toString("base64");
+          return {
+            statusCode: 200,
+            headers: { ...CORS, "Content-Type": ctype },
+            isBase64Encoded: true,
+            body: b64
+          };
+        }
+      }
 
       // Allow controlling the pending filter (default on)
       const pendingOnlyOn = !["0","false"].includes(String(qp.pendingOnly ?? "1").toLowerCase());
@@ -350,11 +558,20 @@ exports.handler = async (event) => {
         return ok({ success: true, id, location: loc || null });
       }
 
-      // (2) create shipment
+      // (2) create shipment  ✅ FLATTEN + validate
       if (action === "create_shipment") {
-        const shipment = body.shipment || body.payload || {};
-        shipment.ship_date = normalizeShipDateServer(shipment.ship_date);
-        const resp = await fetch(url(`/shipments`), { method: "POST", headers: authH, body: JSON.stringify(shipment) });
+        const clientPayload = body.shipment || body.payload || {};
+        const shipment = adaptClientShipment(clientPayload);
+
+        if (!shipment.country_code) {
+          return bad(400, { message: "country_code required" });
+        }
+
+        const resp = await fetch(url(`/shipments`), {
+          method: "POST",
+          headers: authH,
+          body: JSON.stringify(shipment)
+        });
         const out  = await wrap(resp);
         if (!out.ok) return bad(out.status, out.data);
 
@@ -382,18 +599,38 @@ exports.handler = async (event) => {
       const body   = safeJSON(event.body);
       const action = (body.action || "").toLowerCase();
 
-      // (A) Shipment: refresh rates / update pkg details
+      // (A) Shipment: refresh rates / update pkg details  ✅ PRESERVE `customs` + validate
       if (action === "refresh") {
         const id = String(body.shipment_id || body.id || qp.id || "");
         if (!id) return bad(400, "shipment_id required for refresh");
-        const payload = body.payload || {};
-        payload.ship_date = normalizeShipDateServer(payload.ship_date); // <-- REQUIRED
+
+        // Rebuild a refresh-safe payload that nests `customs` and uppercases currency.
+        let payload = adaptRefreshPayload(body.payload || {});
+        payload.ship_date = normalizeShipDateServer(payload.ship_date);
+
+        // Ensure top-level country_code (API requires it even on refresh)
+        payload = await ensureCountryCodeForRefresh(id, payload);
+
         const resp = await fetch(url(`/shipments/${encodeURIComponent(id)}/refresh`), {
-          method: "PATCH", headers: authH, body: JSON.stringify(payload)
+          method: "PATCH",
+          headers: authH,
+          body   : JSON.stringify(payload)
         });
         const out = await wrap(resp);
         if (!out.ok) return bad(out.status, out.data);
         return ok(out.data);
+      }
+
+      // (A2) Shipment: replace (DELETE → POST) when not purchased
+      if (action === "replace_shipment" || action === "replace" || action === "delete_recreate") {
+        const qp     = event.queryStringParameters || {};
+        const id     = String(body.shipment_id || body.id || qp.id || "");
+        if (!id) return bad(400, "shipment_id required for replace_shipment");
+
+        const clientPayload = body.shipment || body.payload || {};
+        const rr = await recreateShipmentIfUnbought(id, clientPayload, { authH, url, wrap });
+        if (!rr.ok) return bad(rr.status, rr.data);
+        return ok(rr.data);
       }
 
       // (B) Shipment: buy postage

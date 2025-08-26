@@ -106,46 +106,25 @@ exports.handler = async (event) => {
       return out.data.count;
     };
 
-    // Backfill critical fields for /refresh by reading the existing shipment if necessary
+    // Fill country_code from the existing shipment when the refresh payload doesn't include it
     async function ensureCountryCodeForRefresh(id, payload) {
+      if (payload.country_code) return payload;
       try {
-        if (!payload || typeof payload !== "object") payload = {};
         const r = await fetch(url(`/shipments/${encodeURIComponent(id)}`), { headers: authH });
         const o = await wrap(r);
-        if (!o.ok) return payload;
-        const s = o.data?.shipment || o.data || {};
-
-        // country_code
-        const cc = String(
-          payload.country_code ||
-          s.country_code || s.to?.country_code || s.destination?.country_code || s.to_country_code || ""
-        ).toUpperCase();
-        if (cc) payload.country_code = cc;
-
-        // package defaults (type, dims, units, weight)
-        const pick = (a, b) => (a != null && a !== "" ? a : b);
-        payload.package_type = pick(payload.package_type, s.package_type);
-        payload.size_unit    = pick(payload.size_unit,    s.size_unit    || "in");
-        payload.weight_unit  = pick(payload.weight_unit,  s.weight_unit  || "lb");
-        payload.size_x       = numberish(pick(payload.size_x, s.size_x ?? 6));
-        payload.size_y       = numberish(pick(payload.size_y, s.size_y ?? 4));
-        payload.size_z       = numberish(pick(payload.size_z, s.size_z ?? 1));
-        payload.weight       = Number(pick(payload.weight,   s.weight ?? 0.25)) || 0.25;
-
-        // ensure positive minimums (rate engine often rejects zeros)
-        const min = (n, d) => (Number(n) > 0 ? Number(n) : d);
-        payload.size_x = min(payload.size_x, 6);
-        payload.size_y = min(payload.size_y, 4);
-        payload.size_z = min(payload.size_z, 1);
-        payload.weight = min(payload.weight, 0.01);
-      } catch { /* best effort */ }
+        if (o.ok) {
+          const s  = o.data?.shipment || o.data || {};
+          const cc = String(
+            s.country_code ||
+            s.to?.country_code ||
+            s.destination?.country_code ||
+            s.to_country_code ||
+            ""
+          ).toUpperCase();
+          if (cc) payload.country_code = cc;
+        }
+      } catch {}
       return payload;
-    }
-
-     // IOSS / VAT / VOEC / EORI sanitizer: A–Z 0–9, max 20 chars
-    function sanitizeVatRef(v) {
-      const s = String(v || "").toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 20);
-      return s || undefined;
     }
 
     // --- Flatten nested client payload → API's flat schema ---
@@ -186,18 +165,22 @@ exports.handler = async (event) => {
         line_items       : Array.isArray(customs.line_items) ? customs.line_items : undefined
       };
 
-      // Pass through the top-level customs tax reference number
-      const vatRef = sanitizeVatRef(
-        client.vat_reference ?? customs.vat_reference ?? client.tax_reference ?? client.ioss ?? client.eori
-      );
+      // 🔗 Map all common aliases to top-level `vat_reference` (as the API expects)
+      const vatRefSource =
+        client.vat_reference ??
+        client.customs_tax_reference_number ?? client.tax_reference_number ??
+        client.ioss ?? client.ioss_number ??
+        client.vat  ?? client.vat_number  ??
+        client.eori ?? client.eori_number ??
+        customs.vat_reference ?? customs.tax_reference_number ??
+        customs.ioss_number ?? customs.vat_number ?? customs.eori_number;
+      const vatRef = sanitizeVatRef(vatRefSource);
       if (vatRef) out.vat_reference = vatRef;
 
       // prune undefined/null to keep payload tidy
       Object.keys(out).forEach(k => (out[k] == null) && delete out[k]);
       return out;
     }
-
-
 
     // --- Build a REFRESH payload that preserves nested `customs` ---
     function adaptRefreshPayload(client = {}) {
@@ -219,17 +202,7 @@ exports.handler = async (event) => {
       else if (flat.value != null) customs.value = String(flat.value);
 
       const vc = (src.value_currency ?? flat.value_currency);
-      if (vc != null) customs.value_currency = String(vc).toLowerCase(); // align with create()
-
-      // If value missing or zero, derive from line_items (sum of unit value * qty)
-      if ((customs.value == null || Number(customs.value) <= 0) && Array.isArray(customs.line_items)) {
-        const sum = customs.line_items.reduce((s, li) => {
-          const q = Number(li.quantity || 1);
-          const v = Number(li.value_amount || li.value || 0);
-          return s + (q * (Number.isFinite(v) ? v : 0));
-        }, 0);
-        customs.value = sum.toFixed(2);
-      }
+      if (vc != null) customs.value_currency = String(vc).toUpperCase(); // UPPERCASE for refresh
 
       if (Array.isArray(src.line_items)) customs.line_items = src.line_items;
       else if (Array.isArray(flat.line_items)) customs.line_items = flat.line_items;
@@ -244,11 +217,19 @@ exports.handler = async (event) => {
       delete out.value_currency;
       delete out.line_items;
 
-      // Also propagate vat_reference at the TOP level on refresh
-      const vatRef = sanitizeVatRef(
-        client.vat_reference ?? client.customs?.vat_reference ?? client.tax_reference ?? client.ioss ?? client.eori
-      );
-      if (vatRef) out.vat_reference = vatRef;
+      // 🔒 Keep/sanitize VAT/IOSS/EORI on refresh (top-level per API)
+      const refreshVatRefSource =
+        client.vat_reference ??
+        client.customs_tax_reference_number ?? client.tax_reference_number ??
+        client.ioss ?? client.ioss_number ??
+        client.vat  ?? client.vat_number  ??
+        client.eori ?? client.eori_number ??
+        (client.customs ? (client.customs.vat_reference || client.customs.tax_reference_number ||
+                           client.customs.ioss_number || client.customs.vat_number || client.customs.eori_number) : null) ??
+        out.vat_reference;
+      const refreshVatRef = sanitizeVatRef(refreshVatRefSource);
+      if (refreshVatRef) out.vat_reference = refreshVatRef;
+      else delete out.vat_reference;
 
       return out;
     }
@@ -652,11 +633,8 @@ async function recreateShipmentIfUnbought(id, desiredClientPayload, { authH, url
         // Rebuild a refresh-safe payload that nests `customs` and uppercases currency.
         let payload = adaptRefreshPayload(body.payload || {});
         payload.ship_date = normalizeShipDateServer(payload.ship_date);
-        // If ship_date is in the past, bump to today (rates can fail on past dates)
-        const today = normalizeShipDateServer("today");
-        if (payload.ship_date < today) payload.ship_date = today;
 
-        // Ensure we include core fields the rate engine needs
+        // Ensure top-level country_code (API requires it even on refresh)
         payload = await ensureCountryCodeForRefresh(id, payload);
 
         const resp = await fetch(url(`/shipments/${encodeURIComponent(id)}/refresh`), {
@@ -737,3 +715,8 @@ function numberish(v) {
   const n = Number(v);
   return Number.isFinite(n) ? n : 0;
 }
+  // Normalize VAT/IOSS/EORI per Chit Chats guidance: ≤20 chars, A–Z/0–9 only
+  function sanitizeVatRef(raw) {
+   const s = String(raw || "").toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 20);
+    return s || undefined;
+  }
