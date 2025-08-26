@@ -3886,7 +3886,7 @@ function metalToBadge(label){
 
 
       async function replaceShipmentWithCorrections() {
-        // Hard guard: a create requires country_code
+        // Require a country (same guard you have today)
         const to = buildTo();
         if (!to.country_code) {
           markMissing(0, ["cc_to_country_code"]);
@@ -3895,10 +3895,26 @@ function metalToBadge(label){
           throw new Error("Missing recipient country_code");
         }
 
-        // ⚠️ Proxy only supports PATCH: refresh|buy|add|remove
-        // So we DO NOT call refund/delete here.
-        // We simply create a new shipment with corrected recipient + line_items.
-        const created = await callCc("POST", { action: "create_shipment", shipment: buildShipmentPayload() });
+        const oldId  = (document.getElementById("ccShipmentId").value || "").trim();
+        const payload = buildShipmentPayload();
+
+        // If we already have a shipment, do a DELETE→POST via the proxy (server guarantees deletion)
+        if (oldId) {
+          const res = await callCc("PATCH", {
+            action: "replace_shipment",
+            shipment_id: oldId,
+            payload
+          });
+          const newId = res?.id || res?.shipment?.id;
+          if (newId) {
+            pushShipmentId(newId);
+            M.toast?.({ html: "Replaced shipment and deleted the old draft ✔️" });
+          }
+          return res;
+        }
+
+        // No previous shipment? Just create a new one (same as before).
+        const created = await callCc("POST", { action: "create_shipment", shipment: payload });
         const newId   = created?.id || created?.shipment?.id;
         if (newId) pushShipmentId(newId);
         return created;
