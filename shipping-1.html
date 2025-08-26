@@ -4439,18 +4439,6 @@ function buildRefreshPayload(){
     if (sz > 0) payload.size_z = sz;
   }
 
-  // add VAT/IOSS/EORI at top-level for refresh too
-    const vatRef = sanitizeVatRef(document.getElementById("cc_customs_tax_reference_number")?.value);
-    if (vatRef) payload.vat_reference = vatRef;
-
-    // add customs needed for intl rates (use UPPERCASE currency on refresh)
-    payload.customs = {
-      package_contents: document.getElementById("cc_package_contents").value,
-      value          : toMoney(grandTotal),
-      value_currency : (valueCurrency || "").toUpperCase(),
-      line_items     : line_items
-    };
-
       return payload;
     }
       function renderRates(s){
