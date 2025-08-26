@@ -4461,15 +4461,15 @@ function buildRefreshPayload(){
         });
       }
 
-      async function refreshRates(){
-        // Hard guard: never price while in Step 0/1
-        if (window.ccBlockRatesUntilStep2 || (typeof currentStep === "number" && currentStep < 2)) {
-          return;
-        }
-        // Defensive: never price before package step
-        if (typeof currentStep === "number" && currentStep < 2) {
-          return; // silently ignore any accidental early calls
-        }
+        async function refreshRates(){
+          // Hard guard: never price while in Step 0/1
+          if (window.ccBlockRatesUntilStep2 || (typeof currentStep === "number" && currentStep < 2)) {
+            return;
+          }
+          // Defensive: never price before package step
+          if (typeof currentStep === "number" && currentStep < 2) {
+            return; // silently ignore any accidental early calls
+          }
 
         let id = (idInput.value || "").trim();
         if (!id) {
@@ -4621,13 +4621,13 @@ function buildRefreshPayload(){
         first?.focus();
       }
 
-      async function validateStep(step){
-        clearMissing(step);
+        async function validateStep(step){
+          clearMissing(step);
 
-        // 🔒 Steps 0–1 may talk to server (verify/create/replace). Steps ≥2: NO rate calls here.
-        if (step <= 1) {
-          const apiMissing = await ccValidateAgainstApi(step);
-          if (apiMissing.length) return false;
+          // 🔒 Steps 0–1 may talk to server (verify/create/replace). Steps ≥2: NO rate calls here.
+          if (step <= 1) {
+            const apiMissing = await ccValidateAgainstApi(step);
+            if (apiMissing.length) return false;
         }
 
         // 2) Fallback to local minimal checks (keeps UX snappy offline)
@@ -5428,34 +5428,34 @@ function parseIntlAddressBlock(blockText = "", fallbackCountryCode = "") {
           }
 
           // ✅ Step 1: validate only — NO pricing
-              if (currentStep === 1){
-                setBtnLoading(btnNext, true);
-                try {
-                  if (!(await validateStep(1))) return;
-                  showStep(2);
-                } finally { setBtnLoading(btnNext, false); }
-                return;
-              }
+          if (currentStep === 1){
+            setBtnLoading(btnNext, true);
+            try {
+              if (!(await validateStep(1))) return;
+              showStep(2);
+            } finally { setBtnLoading(btnNext, false); }
+            return;
+          }
 
-              // ✅ Step 2: price, then move to Step 3
-              if (currentStep === 2){
-                setBtnLoading(btnNext, true);
-                try {
-                  if (!(await validateStep(2))) return;
-                  await ensureShipment();
-                  const idInput = document.getElementById("ccShipmentId");
-                  const id = (idInput?.value || "").trim();
-                  if (!id) { M.toast?.({ html: "Could not create shipment — check Recipient & Description." }); return; }
-                  await refreshRates();    // ← pricing happens here only
-                  showStep(3);
-                } finally { setBtnLoading(btnNext, false); }
-                return;
-              }
-            } catch (err) {
-              setBtnLoading(btnNext, false);
-              handleCcApiError(err);
-            }
-          });
+          // ✅ Step 2: price, then move to Step 3
+          if (currentStep === 2){
+            setBtnLoading(btnNext, true);
+            try {
+              if (!(await validateStep(2))) return;
+              await ensureShipment();
+              const idInput = document.getElementById("ccShipmentId");
+              const id = (idInput?.value || "").trim();
+              if (!id) { M.toast?.({ html: "Could not create shipment — check Recipient & Description." }); return; }
+              await refreshRates();    // ← pricing happens here only
+              showStep(3);
+            } finally { setBtnLoading(btnNext, false); }
+            return;
+          }
+        } catch (err) {
+          setBtnLoading(btnNext, false);
+          handleCcApiError(err);
+        }
+      });
 
       btnRefresh.addEventListener("click", async () => {
         try{
