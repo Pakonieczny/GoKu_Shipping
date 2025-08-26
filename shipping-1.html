@@ -1146,6 +1146,13 @@ function metalToBadge(label){
        return _ymdLocal(d);
      }
 
+     function sanitizeVatRef(raw){
+      return (String(raw || "")
+        .toUpperCase()
+        .replace(/[^A-Z0-9]/g, "")
+        .slice(0, 20)) || null;
+    }
+
     // Prefer API's 'today' token or pass-through YYYY-MM-DD; avoid parsing
    function getShipDateForApi(){
      const el = document.getElementById("cc_ship_date");
@@ -4231,33 +4238,36 @@ function metalToBadge(label){
         // Step ≥2: refresh using full refresh payload
         if (canRefresh) {
           // before calling callCc(...)
-          const items = buildLineItems(); // each has value_amount (string), currency_code
-          const currency = items[0]?.currency_code || "CAD";
-          const total = items
-            .reduce((s, i) => s + Number(i.value_amount || 0), 0)
-            .toFixed(2);
+        const items    = buildLineItems();
+        const currency = items[0]?.currency_code || "CAD";
+        const total    = items.reduce((s, i) => s + Number(i.value_amount || 0), 0).toFixed(2);
 
-          const payload = {
-            package_type: "thick_envelope",
-            // Reads cc_ship_date; falls back to today's local YYYY-MM-DD
-            ship_date: normalizeShipDate(document.getElementById("cc_ship_date")?.value),
-            insurance_requested: false,
-            signature_requested: false,
-            customs: {
-              package_contents: "merchandise",
-              value: total,                 // ← derived once
-              value_currency: currency,     // ← derived once
-              line_items: items,            // ← authoritative per-item data
-              vat_reference: null
-            },
-            media_mail_requested: false,
-            weight: 0.25,
-            weight_unit: "lb",
-            size_unit: "in",
-            size_x: 6,
-            size_y: 4,
-            size_z: 1
-          };
+        // Bring the sanitized VAT/IOSS/EORI to top-level as well
+        const vatRef   = sanitizeVatRef(document.getElementById("cc_customs_tax_reference_number")?.value);
+
+        const payload = {
+          package_type         : "thick_envelope",
+          ship_date            : normalizeShipDate(document.getElementById("cc_ship_date")?.value),
+          insurance_requested  : false,
+          signature_requested  : false,
+
+          // ✅ Top-level per API
+          vat_reference        : vatRef || undefined,
+
+          customs: {
+            package_contents : "merchandise",
+            value            : total,
+            value_currency   : currency,
+            line_items       : items
+          },
+          media_mail_requested : false,
+          weight               : 0.20,
+          weight_unit          : "lb",
+          size_unit            : "in",
+          size_x               : 6,
+          size_y               : 4,
+          size_z               : 1
+        };
 
           // hand the snippet-built payload to the API
           const refreshPayload = payload;
@@ -4332,66 +4342,67 @@ function metalToBadge(label){
          return (Math.round(v * 100)/100).toFixed(2);
        }
 
-  function buildShipmentPayload(){
-    const toObj         = buildTo();
-    const toCountry     = toObj.country_code;
-    // FIX: correct element id (was "...alue_currency")
-    const valueCurrency = (document.getElementById("cc_value_currency")?.value || (toCountry === "CA" ? "CAD" : "USD"));
+        function buildShipmentPayload(){
+          const toObj         = buildTo();
+          const toCountry     = toObj.country_code;
+          const valueCurrency = (document.getElementById("cc_value_currency")?.value || (toCountry === "CA" ? "CAD" : "USD"));
 
-    // multi-item support
-    const lines        = collectCcLineItems();
-    const totalValue   = lines.reduce((sum, li) => sum + (Number(li.unit_value||0) * Number(li.quantity||0)), 0);
-    const grandInput   = Number(document.getElementById("cc_grand_total")?.value || 0);
-    const grandTotal   = (Number.isFinite(grandInput) && grandInput > 0) ? grandInput : totalValue;
+          // multi-item support
+          const lines      = collectCcLineItems();
+          const totalValue = lines.reduce((sum, li) => sum + (Number(li.unit_value||0) * Number(li.quantity||0)), 0);
+          const grandInput = Number(document.getElementById("cc_grand_total")?.value || 0);
+          const grandTotal = (Number.isFinite(grandInput) && grandInput > 0) ? grandInput : totalValue;
 
-    // customs line items
-    const line_items = lines.map(li => ({
-      description                     : li.description,
-      quantity                        : Number(li.quantity) || 1,
-      value_amount                    : toMoney(li.unit_value),
-      currency_code                   : valueCurrency.toLowerCase(),
-      hs_tariff_code                  : li.hs_tariff_code || undefined,
-      sku_code                        : li.sku || undefined,
-      origin_country                  : (li.origin_country || "").toUpperCase() || undefined,
-      // keep manufacturer fields you had (harmless if undefined)
-      manufacture_country             : li.manufacture_country || undefined,
-      manufacturer_contact            : li.manufacturer_contact || undefined,
-      manufacturer_street             : li.manufacturer_street || undefined,
-      manufacturer_city               : li.manufacturer_city || undefined,
-      manufacturer_province_code      : li.manufacturer_province_code || undefined,
-      manufacturer_postal_code        : li.manufacturer_postal_code || undefined,
-      manufacturer_phone              : li.manufacturer_phone || undefined,
-      manufacturer_email              : li.manufacturer_email || undefined
-    }));
+          // customs line items
+          const line_items = lines.map(li => ({
+            description                : li.description,
+            quantity                   : Number(li.quantity) || 1,
+            value_amount               : toMoney(li.unit_value),
+            currency_code              : valueCurrency.toLowerCase(),
+            hs_tariff_code             : li.hs_tariff_code || undefined,
+            sku_code                   : li.sku || undefined,
+            origin_country             : (li.origin_country || "").toUpperCase() || undefined,
+            manufacture_country        : li.manufacture_country || undefined,
+            manufacturer_contact       : li.manufacturer_contact || undefined,
+            manufacturer_street        : li.manufacturer_street || undefined,
+            manufacturer_city          : li.manufacturer_city || undefined,
+            manufacturer_province_code : li.manufacturer_province_code || undefined,
+            manufacturer_postal_code   : li.manufacturer_postal_code || undefined,
+            manufacturer_phone         : li.manufacturer_phone || undefined,
+            manufacturer_email         : li.manufacturer_email || undefined
+          }));
 
-    // package block
-    const pkg = {
-      package_type        : document.getElementById("cc_package_type").value,
-      size_unit           : document.getElementById("cc_size_unit").value,
-      size_x              : Number(document.getElementById("cc_size_x").value || 0),
-      size_y              : Number(document.getElementById("cc_size_y").value || 0),
-      size_z              : Number(document.getElementById("cc_size_z").value || 0),
-      weight_unit         : document.getElementById("cc_weight_unit").value,
-      weight              : Number(document.getElementById("cc_weight").value || 0),
-      insurance_requested : document.getElementById("cc_insurance_requested").value === "true",
-      signature_requested : document.getElementById("cc_signature_requested").value === "true",
-      media_mail_requested: document.getElementById("cc_media_mail_requested").value === "true",
-      ship_date           : normalizeShipDate(document.getElementById("cc_ship_date").value)
-    };
+          // package block
+          const pkg = {
+            package_type         : document.getElementById("cc_package_type").value,
+            size_unit            : document.getElementById("cc_size_unit").value,
+            size_x               : Number(document.getElementById("cc_size_x").value || 0),
+            size_y               : Number(document.getElementById("cc_size_y").value || 0),
+            size_z               : Number(document.getElementById("cc_size_z").value || 0),
+            weight_unit          : document.getElementById("cc_weight_unit").value,
+            weight               : Number(document.getElementById("cc_weight").value || 0),
+            insurance_requested  : document.getElementById("cc_insurance_requested").value === "true",
+            signature_requested  : document.getElementById("cc_signature_requested").value === "true",
+            media_mail_requested : document.getElementById("cc_media_mail_requested").value === "true",
+            ship_date            : normalizeShipDate(document.getElementById("cc_ship_date").value)
+          };
 
-    // FINAL: return a valid Create-Shipment payload
-    return {
-      to     : toObj,
-      package: pkg,
-      customs: {
-        package_contents: document.getElementById("cc_package_contents").value,
-        value           : toMoney(grandTotal),
-        value_currency  : valueCurrency.toLowerCase(),
-        line_items,
-        vat_reference   : (document.getElementById("cc_customs_tax_reference_number")?.value || "").trim() || null
-      }
-    };
-  }
+          // ✅ top-level vat_reference (required placement by Chit Chats API)
+          const vatRef = sanitizeVatRef(document.getElementById("cc_customs_tax_reference_number")?.value);
+
+          return {
+            to           : toObj,
+            package      : pkg,
+            vat_reference: vatRef || undefined,
+            customs      : {
+              package_contents: document.getElementById("cc_package_contents").value,
+              value           : toMoney(grandTotal),
+              value_currency  : valueCurrency.toLowerCase(),
+              line_items
+              // (no nested vat_reference — top-level is authoritative)
+            }
+          };
+        }
 
 function buildRefreshPayload(){
   // gather units/dims
