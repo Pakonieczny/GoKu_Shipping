@@ -127,6 +127,12 @@ exports.handler = async (event) => {
       return payload;
     }
 
+     // IOSS / VAT / VOEC / EORI sanitizer: A–Z 0–9, max 20 chars
+    function sanitizeVatRef(v) {
+      const s = String(v || "").toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 20);
+      return s || undefined;
+    }
+
     // --- Flatten nested client payload → API's flat schema ---
     function adaptClientShipment(client = {}) {
       const to      = client.to      || {};
@@ -165,10 +171,18 @@ exports.handler = async (event) => {
         line_items       : Array.isArray(customs.line_items) ? customs.line_items : undefined
       };
 
+      // Pass through the top-level customs tax reference number
+      const vatRef = sanitizeVatRef(
+        client.vat_reference ?? customs.vat_reference ?? client.tax_reference ?? client.ioss ?? client.eori
+      );
+      if (vatRef) out.vat_reference = vatRef;
+
       // prune undefined/null to keep payload tidy
       Object.keys(out).forEach(k => (out[k] == null) && delete out[k]);
       return out;
     }
+
+
 
     // --- Build a REFRESH payload that preserves nested `customs` ---
     function adaptRefreshPayload(client = {}) {
@@ -204,6 +218,12 @@ exports.handler = async (event) => {
       delete out.value;
       delete out.value_currency;
       delete out.line_items;
+
+      // Also propagate vat_reference at the TOP level on refresh
+      const vatRef = sanitizeVatRef(
+        client.vat_reference ?? client.customs?.vat_reference ?? client.tax_reference ?? client.ioss ?? client.eori
+      );
+      if (vatRef) out.vat_reference = vatRef;
 
       return out;
     }
