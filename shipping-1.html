@@ -4449,7 +4449,7 @@ function buildRefreshPayload(){
           right.innerHTML = `<div style="font-weight:700">$${Number(r.payment_amount || r.rate || 0).toFixed(2)}</div>`;
           li.appendChild(left); li.appendChild(right);
           li.addEventListener("click", () => {
-            [...ratesList.children].forEach(n => n.classList.remove("selected"));
+            Array.from(ratesList.children).forEach(n => n.classList.remove("selected"));
             li.classList.add("selected"); selectedPostageType = li.dataset.postageType; btnBuy.disabled = !selectedPostageType;
           });
           ratesList.appendChild(li);
