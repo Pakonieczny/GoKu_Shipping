@@ -5098,6 +5098,10 @@ function buildRefreshPayload(){
 
       function autoFillCustomsTaxRef(){
         const input = document.getElementById("cc_customs_tax_reference_number");
+          const dest   = detectDestCountryCode();           // ← fixes "dest is not defined"
+          const isUS   = (dest === "US" || dest === "USA" || dest === "UNITED STATES");
+          const euLike = isEU(dest);
+          const el = (id) => document.getElementById(id);
         if (!input) return;
 
         if (dest === "GB") {
@@ -5370,13 +5374,21 @@ function parseIntlAddressBlock(blockText = "", fallbackCountryCode = "") {
         document.getElementById("ccVerifyModal").style.display = "none";
       });
 
+
+
       // --- Wiring: react to user edits and modal use, plus light polling for programmatic updates
-      function wireCustomsAutoFill(){
+      // Guard so one failure never blocks other listeners
+      const safeAutoFill = () => {
+        try { safeAutoFill(); }
+        catch (e) { console.warn("autoFillCustomsTaxRef failed:", e); }
+      };
+
+        function wireCustomsAutoFill(){
         // Fire on country edits and when opening the Edit Shipment modal
-        document.getElementById("cc_to_country_code")?.addEventListener("input",  autoFillCustomsTaxRef);
-        document.getElementById("cc_to_country_code")?.addEventListener("change", autoFillCustomsTaxRef);
-        document.getElementById("shipAddressBox")    ?.addEventListener("input",  autoFillCustomsTaxRef);
-        document.getElementById("ccEditBtn")         ?.addEventListener("click",  () => setTimeout(autoFillCustomsTaxRef, 0));
+        document.getElementById("cc_to_country_code")?.addEventListener("input",  safeAutoFill);
+        document.getElementById("cc_to_country_code")?.addEventListener("change", safeAutoFill);
+        document.getElementById("shipAddressBox")    ?.addEventListener("input",  safeAutoFill);
+        document.getElementById("ccEditBtn")         ?.addEventListener("click",  () => setTimeout(safeAutoFill, 0));
 
         // In case values are set programmatically (no input/change fired), do a cheap snapshot poll.
         let lastSig = "";
@@ -5386,12 +5398,12 @@ function parseIntlAddressBlock(blockText = "", fallbackCountryCode = "") {
           const sig = a + " | " + c;
           if (sig !== lastSig) {
             lastSig = sig;
-            autoFillCustomsTaxRef();
+            safeAutoFill();
           }
         }, 1200);
 
         // Initial attempt on page ready
-        autoFillCustomsTaxRef();
+        safeAutoFill();
       }
 
       document.addEventListener("DOMContentLoaded", wireCustomsAutoFill);
