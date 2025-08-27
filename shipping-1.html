@@ -5379,10 +5379,9 @@ function parseIntlAddressBlock(blockText = "", fallbackCountryCode = "") {
       // --- Wiring: react to user edits and modal use, plus light polling for programmatic updates
       // Guard so one failure never blocks other listeners
       const safeAutoFill = () => {
-        try { safeAutoFill(); }
+        try { autoFillCustomsTaxRef(); }
         catch (e) { console.warn("autoFillCustomsTaxRef failed:", e); }
       };
-
         function wireCustomsAutoFill(){
         // Fire on country edits and when opening the Edit Shipment modal
         document.getElementById("cc_to_country_code")?.addEventListener("input",  safeAutoFill);
