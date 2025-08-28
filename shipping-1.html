@@ -2637,13 +2637,25 @@ function metalToBadge(label){
           // Use current Chit Chats shipment (if visible) as source-of-truth
           const ccId = (document.getElementById("ccShipmentId")?.value || "").trim();
 
+          if (carrier === "chitchats") {
+            M.toast({ html: "Chit Chats will sync tracking to Etsy when you buy the label. No extra step needed." });
+            // Optional: hide the button once it's not needed
+            // document.getElementById("completeOrderBtn").style.display = "none";
+            return;  // ⬅️ important: bail out BEFORE any server call
+          }
+
+          // Only needed if you're pushing directly to Etsy (e.g., for USPS direct)
+          // Ensure you actually have an Etsy token, then call your function
+          if (typeof ensureFreshToken === "function") await ensureFreshToken();
+          const etsyAccess = (window.TOKEN_KEYS && localStorage.getItem(TOKEN_KEYS.access)) || "";
+
           const resp = await window.callCc("PATCH", {
-            action           : "complete",
-            receipt_id       : receiptId,
-            shipment_id      : ccId,
-            tracking         : tracking,
-            carrier          : carrier,       // "usps" | "chitchats"
-            notify           : true,
+            action: "complete",
+            receipt_id: receiptId,
+            shipment_id: ccId,
+            tracking: tracking,
+            carrier: carrier,         // "usps" only makes sense here
+            notify: true,
             etsy_access_token: etsyAccess
           });
 
