@@ -3077,6 +3077,48 @@ window.receiptGiftMessageFrom = String((data.buyer_email || data.buyer_name || "
       });
     }
 
+      // Global address helpers (guarded so we don't double-define)
+  if (typeof window.normalizeToAddressShape !== "function") {
+    window.normalizeToAddressShape = function normalizeToAddressShape(raw){
+      // Accept Chit Chats shapes: { to:{…} }, { address:{…} }, or flat
+      const src = raw && typeof raw === "object" ? (raw.to || raw.address || raw) : {};
+      const get = (...keys) => {
+        for (const k of keys) {
+          const v = src?.[k];
+          if (v != null && String(v).trim() !== "") return String(v).trim();
+        }
+        return "";
+      };
+      const cc = (get("to_country_code","country_code","country","country_iso2") || "").toUpperCase();
+      return {
+        to_name          : get("to_name","name","recipient_name","full_name"),
+        to_address_1     : get("to_address_1","address_1","address1","street1","line1","street"),
+        to_address_2     : get("to_address_2","address_2","address2","street2","line2","unit","suite","apt","apartment","unit_number"),
+        to_city          : get("to_city","city","locality","town"),
+        to_province_code : get("to_province_code","province_code","state_code","state","province","region","administrative_area"),
+        to_postal_code   : get("to_postal_code","postal_code","zip","zip_code","postcode"),
+        to_country_code  : cc
+      };
+    };
+  }
+
+  if (typeof window.fmtAddress !== "function") {
+    window.fmtAddress = function fmtAddress(a){
+      if (!a) return "";
+      const name = a.to_name || "";
+      const l1   = a.to_address_1 || "";
+      const l2   = a.to_address_2 || "";
+      const city = a.to_city || "";
+      const prov = a.to_province_code || "";
+      const pc   = a.to_postal_code || "";
+      const cc   = (a.to_country_code || "").toUpperCase();
+      const country  = cc === "US" ? "United States" : cc === "CA" ? "Canada" : cc;
+      const street   = [l1, l2].filter(Boolean).join("\n");
+      const cityLine = city && prov ? `${city}, ${prov} ${pc}` : [city, prov, pc].filter(Boolean).join(" ");
+      return [name, street, cityLine, country].filter(Boolean).join("\n");
+    };
+  }
+
       /* ===== ShipStation — load “Ship To” by orderNumber ======================= */
   async function loadShipToAddress(orderNumber){
   try {
