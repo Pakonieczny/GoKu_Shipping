@@ -626,7 +626,7 @@
                   <input class="cc_item_origin_country" placeholder="CA">
                 </div>
                 <div class="cc-field"><label>HS code</label>
-                  <input class="cc_item_hs_tariff_code" placeholder="7113.19.5080">
+                  <input class="cc_item_hs_tariff_code" placeholder="7113.19.5091">
                 </div>
                 <div class="cc-field"><label>Country of manufacture</label>
                   <input class="cc_item_manufacture_country" placeholder="CA">
@@ -1402,7 +1402,7 @@ function metalToBadge(label){
     // sensible defaults (mirror old single-field defaults)
     const defaults = {
       origin_country: "CA",
-      hs: "7113.19.5080",
+      hs: "7113.19.5091",
       manuf_country: "CA",
       m_contact: "Brites Jewelry Inc.",
       m_street:  "450 Matheson Blvd, East",
@@ -2627,14 +2627,6 @@ function metalToBadge(label){
         if (!tracking)  { M.toast({ html: "Enter tracking #" }); return; }
         if (!carrier)   { M.toast({ html: "Choose carrier"  }); return; }
 
-        /* helper → perform one POST via resilient apiFetch */
-        const postTracking = () =>
-          apiFetch("/trackOrderProxy", {
-            method : "POST",
-            headers: { "Content-Type": "application/json" },
-            body   : JSON.stringify({ receiptId, tracking, carrier })
-          });
-
         try {
           // Ensure Etsy access token is fresh, then read it
           if (typeof ensureFreshToken === "function") {
@@ -2645,14 +2637,14 @@ function metalToBadge(label){
           // Use current Chit Chats shipment (if visible) as source-of-truth
           const ccId = (document.getElementById("ccShipmentId")?.value || "").trim();
 
-          const resp = await callCc("PATCH", {
+          const resp = await window.callCc("PATCH", {
             action           : "complete",
-            receipt_id       : order,            // Etsy receipt/order id already read above
-            shipment_id      : ccId,             // lets the proxy fetch tracking if missing
-            tracking         : tn,               // manual override if user typed one
-            carrier          : carrierSel.value, // "usps" | "chitchats" (your select)
-            notify           : true,             // email buyer
-            etsy_access_token: etsyAccess        // pass token straight to the proxy
+            receipt_id       : receiptId,
+            shipment_id      : ccId,
+            tracking         : tracking,
+            carrier          : carrier,       // "usps" | "chitchats"
+            notify           : true,
+            etsy_access_token: etsyAccess
           });
 
           if (!resp || resp.error) {
@@ -3753,7 +3745,7 @@ if (!to.to_address_1) console.debug("No street in shipment:", { keys:Object.keys
       // (C) Static defaults you requested
       // NOTE: These fields are sent as ISO/codes to Chit Chats later; we’ll set sensible values.
       set("cc_item_origin_country", "CA");           // API prefers 2-letter country code
-      set("cc_item_hs_tariff_code", "7113.19.5080");
+      set("cc_item_hs_tariff_code", "7113.19.5091");
       set("cc_item_manufacture_country", "CA");      // API prefers 2-letter country code
       set("cc_item_manufacturer_contact", "Brites Jewelry Inc.");
       set("cc_item_manufacturer_street",  "450 Matheson Blvd, East");
@@ -3855,6 +3847,7 @@ if (!to.to_address_1) console.debug("No street in shipment:", { keys:Object.keys
 
       /* ---------- Enhanced fetch wrapper (keeps raw error for mapping) ---------- */
       async function callCc(method, body, qs=""){
+        window.callCc = callCc;
         const resp = await fetch(`${getCcEndpoint()}${qs}`, {     
           method,
           headers: { "Content-Type":"application/json" },
@@ -4947,7 +4940,7 @@ function renderRates(s){
 
     // (B) Static defaults (API prefers ISO codes where applicable)
     set("cc_item_origin_country",             "CA");            // Canada
-    set("cc_item_hs_tariff_code",             "7113.19.5080");
+    set("cc_item_hs_tariff_code",             "7113.19.5091");
     set("cc_item_manufacture_country",        "CA");            // Canada
     set("cc_item_manufacturer_contact",       "Brites Jewelry Inc.");
     set("cc_item_manufacturer_street",        "450 Matheson Blvd, East");
