@@ -3107,37 +3107,16 @@ window.receiptGiftMessageFrom = String((data.buyer_email || data.buyer_name || "
     const detail = await shipResp.json();
     const sh = detail.shipment || detail;
 
-    const ship = {
-      name       : sh.to_name || "",
-      street1    : sh.address_1 || "",
-      street2    : sh.address_2 || "",
-      street3    : sh.address_3 || "",
-      city       : sh.city || "",
-      state      : (sh.province_code || sh.state || ""),
-      postalCode : sh.postal_code || "",
-      country    : (sh.country || sh.country_code || ""),
-      countryCode: (sh.country_code || ""),
-      phone      : sh.phone || ""
-    };
-
-    // 3) Render exactly like before
-    const lines = [];
-    const add = v => { if (v) lines.push(String(v)); };
-    add(ship.name);
-    const street = [ship.street1, ship.street2, ship.street3].filter(Boolean).join(" ");
-    add(street);
-    const cityLine = (ship.city && ship.state)
-      ? `${ship.city}, ${ship.state}${ship.postalCode ? " " + ship.postalCode : ""}`
-      : [ship.city, ship.state, ship.postalCode].filter(Boolean).join(" ");
-    add(cityLine);
-    const countryRaw = (ship.country || ship.countryCode || "").toString().trim();
-    add(countryRaw);
-    box.value = "SHIP TO:\\n" + lines.filter(Boolean).join("\\n");
+// 3) Normalize + format (handles {to:{…}} | {address:{…}} | flat)
+const to = normalizeToAddressShape(sh);
+box.value = "SHIP TO:\\n" + fmtAddress(to);
+// debug (optional): see what keys were present if street didn't render
+if (!to.to_address_1) console.debug("No street in shipment:", { keys:Object.keys(sh||{}), to:sh?.to });
 
     // 4) Auto-pick carrier: USPS for US domestic, ChitChats for everything else
     const carrierSelectEl = document.getElementById("carrierSelect");
     if (carrierSelectEl) {
-      const c = (ship.countryCode || ship.country || "").toString().toUpperCase();
+      const c = String(to.to_country_code || "").toUpperCase();
       const target = (c === "US" || c === "USA" || c.includes("UNITED STATES")) ? "usps" : "chitchats";
       carrierSelectEl.value = target;
       carrierSelectEl.dispatchEvent(new Event("change", { bubbles: true }));
@@ -3150,7 +3129,7 @@ window.receiptGiftMessageFrom = String((data.buyer_email || data.buyer_name || "
     }
 
     // 5) Colorize for international (non US/CA)
-    const c2 = (ship.country || ship.countryCode || "").toString().trim().toLowerCase();
+    const c2 = String(to.to_country_code || "").trim().toLowerCase();
     const isUS = c2.startsWith("united states") || c2 === "usa" || c2 === "us" || c2 === "u.s." || c2 === "u.s.a.";
     const isCA = c2 === "canada" || c2 === "ca";
     box.style.color = (isUS || isCA) ? "" : "orangered";
@@ -4757,8 +4736,8 @@ function buildRefreshPayload(){
       }
       // Normalize various API shapes → our "to_*" keys
          function normalizeToAddressShape(raw){
-           // Accept either a flat object or { address: { … } }
-           const src = raw && typeof raw === "object" ? (raw.address || raw) : {};
+  // Accept Chit Chats shapes: { to:{…} }, { address:{…} }, or flat
+  const src = raw && typeof raw === "object" ? (raw.to || raw.address || raw) : {};
            const get = (...keys) => {
              for (const k of keys) {
                const v = src?.[k];
