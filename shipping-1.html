@@ -2644,10 +2644,7 @@ function metalToBadge(label){
             return;  // ⬅️ important: bail out BEFORE any server call
           }
 
-          // Only needed if you're pushing directly to Etsy (e.g., for USPS direct)
-          // Ensure you actually have an Etsy token, then call your function
-          if (typeof ensureFreshToken === "function") await ensureFreshToken();
-          const etsyAccess = (window.TOKEN_KEYS && localStorage.getItem(TOKEN_KEYS.access)) || "";
+
 
           const resp = await window.callCc("PATCH", {
             action: "complete",
