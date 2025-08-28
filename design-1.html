@@ -3631,28 +3631,33 @@ if (!origFuncTxt.includes("window._lastDisplayReceipts")) {
   );
 }
 
+let __obsBusy = false;
+
 /** observer detects page changes and triggers initial render --------- */
 const observer = new MutationObserver(async () => {
+  if (__obsBusy) return;
   if (window._lastDisplayReceipts && window._lastDisplayReceipts !== currentReceipts) {
-    /* lightweight receipts landed — hydrate them BEFORE we draw rows */
-    currentReceipts = window._lastDisplayReceipts;
+    __obsBusy = true;
+    try {
+      /* lightweight receipts landed — hydrate them BEFORE we draw rows */
+      currentReceipts = window._lastDisplayReceipts;
 
-    /* FULL HYDRATE: pull transactions for EVERY receipt -------------- */
-    await Promise.all(
-      currentReceipts.map(async r => {
-        const id = String(r.receipt_id);
-        if (!orderCache[id]) {
-          try {
-            const ord = await pullEtsyOrderDetails(id);   // heavy call
-            orderCache[id] = ord?.transactions || [];
-          } catch (err) {
-            console.warn("Detail pull failed for", id, err);
-            orderCache[id] = [];
+      /* FULL HYDRATE: pull transactions for EVERY receipt -------------- */
+      await Promise.all(
+        currentReceipts.map(async r => {
+          const id = String(r.receipt_id);
+          if (!orderCache[id]) {
+            try {
+              const ord = await pullEtsyOrderDetails(id);
+              orderCache[id] = ord?.transactions || [];
+            } catch (err) {
+              console.warn("Detail pull failed for", id, err);
+              orderCache[id] = [];
+            }
           }
-        }
-        r.transactions = orderCache[id];                  // attach full data
-      })
-    );
+          r.transactions = orderCache[id];
+        })
+      );
 
     /* helper fields for sorting + metal counts ----------------------- */
     currentReceipts.forEach(r => {
@@ -3721,7 +3726,7 @@ const observer = new MutationObserver(async () => {
 
     // Drop anything already completed (server or local ledger)
     currentReceipts = currentReceipts.filter(r => !completedOrders.has(String(r.receipt_id)));
-    
+
     renderOrderBoxes(currentReceipts);
     applyAllLocksToDOM();   // ← repaint light-red locks after the list is rebuilt
 
@@ -3729,6 +3734,9 @@ const observer = new MutationObserver(async () => {
     await refreshStaffNoteIDs();
     markStaffNoteOrders();
 
+    } finally {
+      __obsBusy = false;
+    }
   }
 });
 observer.observe(document.getElementById("newOrderContainer"), { childList: true });
