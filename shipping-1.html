@@ -2647,6 +2647,16 @@ function metalToBadge(label){
             etsy_access_token: etsyAccess
           });
 
+          try {
+            M.toast({ html: "Chit Chats will sync tracking to Etsy when you buy the label. No extra step needed." });
+            // Optional: hide the button now that it’s unused
+            // document.getElementById("completeOrderBtn").style.display = "none";
+            return;
+          } catch (err) {
+            console.error(err);
+            M.toast({ html: "Complete failed: " + err.message });
+          }
+
           if (!resp || resp.error) {
             throw new Error(resp?.error || "Server error");
           }
