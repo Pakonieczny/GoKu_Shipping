@@ -2636,44 +2636,7 @@ function metalToBadge(label){
           });
 
         try {
-          // Run Etsy completion and (if applicable) Chit Chats fulfillment
-          const maybeFulfillViaChitChats = async () => {
-            try {
-              const carrier = (document.getElementById("shippingCarrier")?.value || "").toLowerCase();
-              if (carrier !== "chitchats") return; // only CC when selected
-
-              const orderId   = document.getElementById("etsyOrderNumber")?.value?.trim();
-              const tracking  = document.getElementById("shippingTrackingNumber")?.value?.trim();
-              const ccRaw     = (document.getElementById("ccShipmentId")?.value || window.ccShipmentId || "").trim();
-              const ccIdMatch = (ccRaw.match(/\d+/) || [])[0]; // tolerate formats like "CC-123456"
-              if (!orderId || !tracking || !ccIdMatch) return;
-
-              const resp = await fetch(getCcEndpoint(), {
-                method: "PATCH",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({
-                  action:       "fulfill",
-                  order_id:     orderId,
-                  shipment_id:  ccIdMatch,
-                  carrier:      "Chit Chats",
-                  tracking:     tracking,
-                  shipped_at:   new Date().toISOString()
-                })
-              });
-              const data = await (async()=>{ try{ return await resp.json(); } catch{ return {}; } })();
-              if (!resp.ok || data?.error) throw new Error(data?.error || `Chit Chats fulfill failed (HTTP ${resp.status})`);
-              window.M?.toast && M.toast({ html: "Chit Chats fulfillment recorded ✅" });
-            } catch (e) {
-              console.error("Chit Chats fulfill error:", e);
-              window.M?.toast && M.toast({ html: "Chit Chats fulfill failed (check console)", classes: "red darken-2" });
-            }
-          };
-
-          // Fire both paths (Etsy completion + CC fulfill) without blocking each other
-          const [resp] = await Promise.all([
-            postTracking(),
-            maybeFulfillViaChitChats()
-          ]);
+          let resp         = await postTracking();
           let payload      = await resp.text();              // Etsy proxy returns raw text
           let errMsg       = "";
 

@@ -647,31 +647,6 @@ async function recreateShipmentIfUnbought(id, desiredClientPayload, { authH, url
         return ok(out.data);
       }
 
-        case "fulfill": {
-        // Create a fulfillment record so CC can sync tracking to the marketplace.
-        // Fields accepted from the client:
-        //   order_id, shipment_id, carrier, tracking, shipped_at
-        const p = {
-          order_id:     body.order_id,
-          shipment_id:  body.shipment_id,
-          carrier:      body.carrier || "Chit Chats",
-          tracking:     body.tracking,
-          shipped_at:   body.shipped_at || new Date().toISOString()
-        };
-        // Primary endpoint: /orders/fulfillments
-        let r = await fetch(url(`/orders/fulfillments`), {
-          method: "POST", headers: authH, body: JSON.stringify(p)
-        }).then(wrap);
-        // If a workspace has legacy routing, try a shipment-scoped fallback
-        if (!r.ok && r.status === 404 && p.shipment_id) {
-          r = await fetch(url(`/shipments/${encodeURIComponent(p.shipment_id)}/fulfillments`), {
-            method: "POST", headers: authH, body: JSON.stringify({ carrier: p.carrier, tracking: p.tracking, shipped_at: p.shipped_at })
-          }).then(wrap);
-        }
-        if (!r.ok) return bad(r.status || 400, r.data || "Chit Chats fulfillment failed");
-        return ok(r.data);
-      }
-
       // (A2) Shipment: replace (DELETE → POST) when not purchased
       if (action === "replace_shipment" || action === "replace" || action === "delete_recreate") {
         const qp     = event.queryStringParameters || {};
