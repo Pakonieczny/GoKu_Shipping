@@ -921,7 +921,33 @@ const SELECTED_KEY   = "selectedOrders";         // orange-list
 const LAST_PURGE_KEY = "completed_last_purge";   // ISO month stamp
 const completedOrders = new Set();               // IDs that are already green
 
+// Sticky tombstones: once completed, never resurrect unless user explicitly Undoes.
+const STICKY_KEY = "design_completed_tombstones_v1";
+const STICKY_TTL_DAYS = 60;
 
+let stickyCompleted = (() => {
+  try {
+    const raw = localStorage.getItem(STICKY_KEY);
+    const obj = raw ? JSON.parse(raw) : {};
+    const now = Date.now();
+    const ttl = STICKY_TTL_DAYS * 24 * 60 * 60 * 1000;
+    const pruned = {};
+    for (const [id, ts] of Object.entries(obj)) {
+      const t = Number(ts) || 0;
+      if (t && now - t <= ttl) pruned[id] = t;
+    }
+    if (Object.keys(pruned).length !== Object.keys(obj).length) {
+      localStorage.setItem(STICKY_KEY, JSON.stringify(pruned));
+    }
+    return pruned;
+  } catch (_) {
+    return {};
+  }
+})();
+
+function saveSticky()        { try { localStorage.setItem(STICKY_KEY, JSON.stringify(stickyCompleted)); } catch(_){} }
+function markSticky(id)      { stickyCompleted[String(id)] = Date.now(); saveSticky(); }
+function clearSticky(id)     { delete stickyCompleted[String(id)];       saveSticky(); }
 
 let croppedImagesArray = [];
 let userImagesArray = [];
@@ -1124,6 +1150,8 @@ function startCompletedRealtime(){
   // When a completion is undone elsewhere, bring the row back locally.
   async function reAddUndone(ids){
     for (const rid of ids.map(String)) {
+      // Hard guard: never resurrect something the local user completed
+      if (stickyCompleted[rid]) continue;
       // If it's already visible, just strip green and refresh UI.
       const existing = document.querySelector(`.new-order-box[data-receipt='${rid}']`);
       if (existing) {
@@ -1202,12 +1230,14 @@ function startCompletedRealtime(){
     const j   = await r.json();
     const live = new Set((j.orderNumbers || []).map(String));
     removeIfCompleted(live);
-    // reconcile "undo" (completed earlier but now missing)
-    const undone = [...knownCompleted].filter(id => !live.has(id));
-    if (undone.length) await reAddUndone(undone);
-    knownCompleted = live;
-    return { changed: live.size > 0 || undone.length > 0 };
-  }
+
+   // Only consider an UNDO if it’s NOT tombstoned locally.
+   const undone = [...knownCompleted].filter(id => !live.has(id) && !stickyCompleted[String(id)]);
+   if (undone.length) await reAddUndone(undone);
+   // Monotonic within session to avoid flapping on transient server gaps
+   knownCompleted = new Set([ ...knownCompleted, ...live ]);
+   return { changed: live.size > 0 };
+    }
 
   // adaptive cadence, sleeps until UI interaction resumes
   let t=null, idle=0;
@@ -1847,6 +1877,7 @@ const selectRow = async (row) => {
 
     /* — mark as completed — */
     completedOrders.add(rid);             // global Set   [oai_citation:2‡design.html](file-service://file-UD87qPNcvFGdsBetdyBDoA)
+    markSticky(rid);
     selectedOrders.delete(rid);
 
     /* remove/hide UI elements */
@@ -2512,8 +2543,9 @@ const selectRow = async (row) => {
            delete orderCache[rid];
            selectedOrders.delete(String(rid));
 
-           // 4) Finally mark as completed (so future removals skip as intended)
-           completedOrders.add(String(rid));
+         // 4) Finally mark as completed (so future removals skip as intended)
+         completedOrders.add(String(rid));
+         markSticky(rid);
          });
     
         allOpenReceipts = allOpenReceipts
@@ -2706,6 +2738,7 @@ const selectRow = async (row) => {
 
     for (const rid of lastClearedReceipts){
       completedOrders.delete(rid);        // remove green status
+      clearSticky(rid);                   // allow reappearance after explicit undo
       selectedOrders.add(rid);            // mark orange again (for the undoing user)
 
       const _row = document.querySelector(`.new-order-box[data-receipt='${rid}']`);
@@ -3662,6 +3695,13 @@ const observer = new MutationObserver(async () => {
       else if (mc.Silver)    r._rowMetal = "silver";
       else if (mc.Gold)      r._rowMetal = "gold";
       else                   r._rowMetal = "";         // no metal detected
+    });
+
+    /* INSERT ↓↓↓  never render completed/tombstoned rows */
+    const _stickySet = new Set(Object.keys(stickyCompleted));
+    currentReceipts = currentReceipts.filter(r => {
+      const id = String(r.receipt_id);
+      return !completedOrders.has(id) && !_stickySet.has(id);
     });
 
     /* initial sort direction ---------------------------------------- */

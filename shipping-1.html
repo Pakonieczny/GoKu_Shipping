@@ -2636,28 +2636,32 @@ function metalToBadge(label){
           });
 
         try {
-          let resp         = await postTracking();
-          let payload      = await resp.text();              // Etsy proxy returns raw text
-          let errMsg       = "";
+          // Ensure Etsy access token is fresh, then read it
+          if (typeof ensureFreshToken === "function") {
+            await ensureFreshToken();
+          }
+          const etsyAccess = (window.TOKEN_KEYS && localStorage.getItem(TOKEN_KEYS.access)) || "";
 
-          /* 401s are auto-handled inside apiFetch (refresh + headless OAuth). */
+          // Use current Chit Chats shipment (if visible) as source-of-truth
+          const ccId = (document.getElementById("ccShipmentId")?.value || "").trim();
 
-          /* ── forbidden (403) usually means missing shipping permission scope ── */
-          if (resp.status === 403) {
-            errMsg = "Forbidden – Etsy says this action isn’t allowed.";
-          } else if (!resp.ok) {
-            /* try to JSON-parse any error payload, else show raw text */
-          try   { errMsg = JSON.parse(payload).error || "Server error"; }
-          catch (e) { errMsg = payload || "Server error"; }
+          const resp = await callCc("PATCH", {
+            action           : "complete",
+            receipt_id       : order,            // Etsy receipt/order id already read above
+            shipment_id      : ccId,             // lets the proxy fetch tracking if missing
+            tracking         : tn,               // manual override if user typed one
+            carrier          : carrierSel.value, // "usps" | "chitchats" (your select)
+            notify           : true,             // email buyer
+            etsy_access_token: etsyAccess        // pass token straight to the proxy
+          });
+
+          if (!resp || resp.error) {
+            throw new Error(resp?.error || "Server error");
           }
 
-          if (errMsg) throw new Error(errMsg);
-
-          /* 🎉 success */
           M.toast({ html: "Etsy order marked complete 🎉" });
           trackingInp.value        = "";
           carrierSel.selectedIndex = 0;
-
         } catch (err) {
           console.error(err);
           M.toast({ html: "Complete failed: " + err.message });
