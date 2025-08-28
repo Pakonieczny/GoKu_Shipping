@@ -4430,25 +4430,61 @@ function buildRefreshPayload(){
 
       return payload;
     }
-      function renderRates(s){
-        const rates = (s && s.rates) || [];
-        ratesList.innerHTML = "";
-        rates.forEach(r => {
-          const li = document.createElement("li");
-          li.dataset.postageType = r.postage_type;
-          const left = document.createElement("div");
-          left.innerHTML = `<div style="font-weight:600">${r.service_name || r.postage_type}</div>
-                            <div style="font-size:12px;opacity:.8">${(r.estimated_delivery_days || r.delivery_days || "")} business days</div>`;
-          const right = document.createElement("div");
-          right.innerHTML = `<div style="font-weight:700">$${Number(r.payment_amount || r.rate || 0).toFixed(2)}</div>`;
-          li.appendChild(left); li.appendChild(right);
-          li.addEventListener("click", () => {
-            Array.from(ratesList.children).forEach(n => n.classList.remove("selected"));
-            li.classList.add("selected"); selectedPostageType = li.dataset.postageType; btnBuy.disabled = !selectedPostageType;
-          });
-          ratesList.appendChild(li);
-        });
-      }
+function renderRates(s){
+  // Accept a variety of API shapes: { shipment:{...} }, { rates:[...] }, { postage_types:[...] }, etc.
+  const raw =
+    (s && (s.rates ||
+           s.postage_types ||
+           s.available_rates ||
+           s.postageTypes ||
+           s.availableRates)) || [];
+
+  // Normalize each rate into a single shape the UI expects
+  const rates = raw.map(r => ({
+    postage_type:  r.postage_type || r.code || r.postageType,
+    service_name:  r.service_name || r.name || r.serviceName || r.postage_type || r.code,
+    amount_num:    Number(r.payment_amount ?? r.rate ?? r.price ?? 0),
+    days:          r.estimated_delivery_days ?? r.delivery_days ?? r.days ?? ""
+  })).filter(r => r.postage_type);
+
+  // Reset UI
+  ratesList.innerHTML = "";
+  selectedPostageType = null;
+  btnBuy.disabled = true;
+
+  // Helpful empty-state so it’s obvious something returned but had no options
+  if (!rates.length){
+    const li = document.createElement("li");
+    li.innerHTML = `<div style="opacity:.8">No rates returned. Check destination, weight, ship date, and customs total.</div>`;
+    ratesList.appendChild(li);
+    return;
+  }
+
+  // Render options
+  rates.forEach(r => {
+    const li = document.createElement("li");
+    li.dataset.postageType = r.postage_type;
+
+    const left = document.createElement("div");
+    left.innerHTML = `<div style="font-weight:600">${r.service_name}</div>
+                      <div style="font-size:12px;opacity:.8">${r.days ? `${r.days} business days` : ""}</div>`;
+
+    const right = document.createElement("div");
+    right.innerHTML = `<div style="font-weight:700">$${r.amount_num.toFixed(2)}</div>`;
+
+    li.appendChild(left);
+    li.appendChild(right);
+
+    li.addEventListener("click", () => {
+      Array.from(ratesList.children).forEach(n => n.classList.remove("selected"));
+      li.classList.add("selected");
+      selectedPostageType = li.dataset.postageType;
+      btnBuy.disabled = !selectedPostageType;
+    });
+
+    ratesList.appendChild(li);
+  });
+}
 
       async function refreshRates(){
         // Hard guard: never price while in Step 0/1
