@@ -3124,7 +3124,7 @@ window.receiptGiftMessageFrom = String((data.buyer_email || data.buyer_name || "
   try {
     const box = document.getElementById("shipAddressBox");
     if (!box) return;
-    box.value = "SHIP TO:\\n(Loading...)";
+    box.value = "SHIP TO:\n(Loading...)";
 
     const fnBase = "/.netlify/functions";
 
@@ -3136,7 +3136,7 @@ window.receiptGiftMessageFrom = String((data.buyer_email || data.buyer_name || "
     const searchData = await searchResp.json();
     const hit = (searchData.shipments || [])[0];
     if (!hit) {
-      box.value = "SHIP TO:\\n(Not found)";
+      box.value = "SHIP TO:\n(Not found)";
       box.style.color = "";
       return;
     }
@@ -3151,7 +3151,7 @@ window.receiptGiftMessageFrom = String((data.buyer_email || data.buyer_name || "
 
 // 3) Normalize + format (handles {to:{…}} | {address:{…}} | flat)
 const to = normalizeToAddressShape(sh);
-box.value = "SHIP TO:\\n" + fmtAddress(to);
+box.value = "SHIP TO:\n" + fmtAddress(to);
 // debug (optional): see what keys were present if street didn't render
 if (!to.to_address_1) console.debug("No street in shipment:", { keys:Object.keys(sh||{}), to:sh?.to });
 
@@ -3179,7 +3179,7 @@ if (!to.to_address_1) console.debug("No street in shipment:", { keys:Object.keys
     console.error("loadShipToAddress (CC):", e);
     const box = document.getElementById("shipAddressBox");
     if (box) {
-      box.value = "SHIP TO:\\n(Error loading)";
+      box.value = "SHIP TO:\n(Error loading)";
       box.style.color = "";
     }
   }
