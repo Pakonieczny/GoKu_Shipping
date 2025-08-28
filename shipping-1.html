@@ -3845,12 +3845,12 @@ if (!to.to_address_1) console.debug("No street in shipment:", { keys:Object.keys
         // Do not thaw post-purchase; keep re-checks disabled for this session.
       }
 
-      /* ---------- Enhanced fetch wrapper (keeps raw error for mapping) ---------- */
-      async function callCc(method, body, qs=""){
-        window.callCc = callCc;
-        const resp = await fetch(`${getCcEndpoint()}${qs}`, {     
+    
+      // ---------- Enhanced fetch wrapper (global) ----------
+      window.callCc = async function callCc(method, body, qs = "") {
+        const resp = await fetch(`${getCcEndpoint()}${qs}`, {
           method,
-          headers: { "Content-Type":"application/json" },
+          headers: { "Content-Type": "application/json" },
           body: body ? JSON.stringify(body) : undefined
         });
         const text = await resp.text();
@@ -3858,18 +3858,14 @@ if (!to.to_address_1) console.debug("No street in shipment:", { keys:Object.keys
 
         if (!resp.ok) {
           const pick = k => (data && typeof data[k] === "string" ? data[k] : null);
-          const message = typeof data === "string"
-            ? data
-            : (pick("error") || pick("message") || JSON.stringify(data, null, 2));
-
+          const message = typeof data === "string" ? data : (pick("error") || pick("message") || JSON.stringify(data, null, 2));
           const e = new Error(message);
           e.status = resp.status;
           e.raw    = data;
-          try { console.debug("ChitChats proxy error", resp.status, data); } catch {}
           throw e;
         }
         return data;
-      }
+      };
 
       // Keep the ID field and global in sync wherever a shipment gets created/refreshed
       function pushShipmentId(id){
