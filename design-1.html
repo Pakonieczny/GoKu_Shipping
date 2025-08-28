@@ -1197,16 +1197,19 @@ function startCompletedRealtime(){
   async function pollCompletedTargeted(){
     const ids = visibleReceipts();
     if (!ids.length) return { changed:false };
+
     const qs  = encodeURIComponent(ids.join(","));
     const r   = await fetch(`${functionsBaseUrl}/firebaseOrders?dcFor=${qs}`);
     const j   = await r.json();
     const live = new Set((j.orderNumbers || []).map(String));
-    removeIfCompleted(live);
-    // reconcile "undo" (completed earlier but now missing)
-    const undone = [...knownCompleted].filter(id => !live.has(id));
-    if (undone.length) await reAddUndone(undone);
-    knownCompleted = live;
-    return { changed: live.size > 0 || undone.length > 0 };
+
+    // Remove any rows that are confirmed as completed (server truth is additive)
+    removeIfCompleted(live); // paints + removes rows, updates UI
+
+    // Monotonic: once completed, we remember it locally until explicit Undo
+    knownCompleted = new Set([...knownCompleted, ...live]);
+
+    return { changed: live.size > 0 };
   }
 
   // adaptive cadence, sleeps until UI interaction resumes
@@ -2660,12 +2663,43 @@ const selectRow = async (row) => {
       return; 
   }
 
+  /* LOCAL, write-once completion ledger (immutable unless explicit Undo) */
+  const LOCAL_COMPLETED_KEY = "designCompletedLedger.v1";
+
+  function loadLocalCompleted(){
+    try {
+      const m = JSON.parse(localStorage.getItem(LOCAL_COMPLETED_KEY) || "{}");
+      return new Set(Object.keys(m).map(String));
+    } catch (_) {
+      return new Set();
+    }
+  }
+
+  function addToLocalCompleted(ids){
+    try {
+      const m = JSON.parse(localStorage.getItem(LOCAL_COMPLETED_KEY) || "{}");
+      const now = Date.now();
+      (ids || []).map(String).forEach(id => { m[id] = now; });
+      localStorage.setItem(LOCAL_COMPLETED_KEY, JSON.stringify(m));
+    } catch (_) {}
+  }
+
+  function removeFromLocalCompleted(ids){
+    try {
+      const m = JSON.parse(localStorage.getItem(LOCAL_COMPLETED_KEY) || "{}");
+      (ids || []).map(String).forEach(id => { delete m[id]; });
+      localStorage.setItem(LOCAL_COMPLETED_KEY, JSON.stringify(m));
+    } catch (_) {}
+  }
 
   /* ── save completed list to Firebase (optionally accept a subset) ── */
   async function persistCompleted(ids){
     try{
       const list = Array.isArray(ids) ? ids.map(String) : [...completedOrders];
       if (!list.length) return;
+
+
+      addToLocalCompleted(list);   // ← NEW: make the completion sticky locally
 
       // Use bulk when possible to minimize round-trips
       const resp = await fetch(`${functionsBaseUrl}/firebaseOrders`, {
@@ -2770,6 +2804,7 @@ const selectRow = async (row) => {
 
     /* sync everything back to server (removes from Completed so others re-add) */
     await unsetDesignCompletedBulk(lastClearedReceipts);
+    removeFromLocalCompleted(lastClearedReceipts); // ← NEW
 
     persistSelection();
     updateCounters();
@@ -2845,6 +2880,9 @@ const selectRow = async (row) => {
       if (json.success && Array.isArray(json.orderNumbers)) {
         json.orderNumbers.forEach(id => completedOrders.add(String(id)));
       }
+
+      // NEW: merge local sticky completions
+      loadLocalCompleted().forEach(id => completedOrders.add(String(id)));
 
       // paint & tidy
       highlightCompletedRows();
@@ -3680,6 +3718,10 @@ const observer = new MutationObserver(async () => {
     currentReceipts.sort(
       (a, b) => (b.order_number || b.receipt_id) - (a.order_number || a.receipt_id)
     );
+
+    // Drop anything already completed (server or local ledger)
+    currentReceipts = currentReceipts.filter(r => !completedOrders.has(String(r.receipt_id)));
+    
     renderOrderBoxes(currentReceipts);
     applyAllLocksToDOM();   // ← repaint light-red locks after the list is rebuilt
 
