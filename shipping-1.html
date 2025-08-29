@@ -3283,32 +3283,52 @@ function metalToBadge(label){
       (function guardCcShipmentId(){
         const el = document.getElementById("ccShipmentId");
         if (!el || el._guarded) return;
+
         const desc = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value");
         if (!desc || typeof desc.get !== "function" || typeof desc.set !== "function") return;
+
         Object.defineProperty(el, "value", {
           configurable: true,
           get(){ return desc.get.call(this); },
           set(v){
-            const isBlank = v == null || String(v).trim() === "";
-            const fresh   = this.dataset.setAt && (Date.now() - Number(this.dataset.setAt)) < 2000;
-            if (fresh && isBlank) return;     // 🚫 ignore “just after set” blanking
-            desc.set.call(this, v);
-           // ✅ stop spinner immediately when a real value lands
-        if (!isBlank) { window.ccSpin && window.ccSpin(false); }          }
+            try {
+              const isBlank = v == null || String(v).trim() === "";
+              const setAtMs = Number(this.dataset?.setAt || 0);
+              const fresh   = setAtMs && (Date.now() - setAtMs) < 2000;
+
+              // 🚫 ignore “just after set” blanking
+              if (fresh && isBlank) return;
+
+              // forward the assignment
+              desc.set.call(this, v);
+
+              // ✅ stop spinner immediately when a real value lands
+              if (!isBlank && typeof window !== "undefined" && typeof window.ccSpin === "function") {
+                window.ccSpin(false);
+              }
+            } catch (err) {
+              // Never allow setter errors to break init wiring
+              try { desc.set.call(this, v); } catch (_) {}
+            }
+          }
         });
+
         el._guarded = true;
 
-      // Spinner just for Chit Chats shipment-id lookups
-      const ccSpinnerEl = document.getElementById("ccIdSpinner");
-      let _ccSpinDepth = 0;
-      function ccSpin(on){
-        if (!ccSpinnerEl) return;
-        if (on) { _ccSpinDepth++; ccSpinnerEl.style.display = "inline-block"; }
-        else    { _ccSpinDepth = Math.max(0, _ccSpinDepth - 1);
-                  if (_ccSpinDepth === 0) ccSpinnerEl.style.display = "none"; }
-      }
-      window.ccSpin = ccSpin; // ← expose globally
-
+        // Spinner just for Chit Chats shipment-id lookups
+        const ccSpinnerEl = document.getElementById("ccIdSpinner");
+        let _ccSpinDepth = 0;
+        function ccSpin(on){
+          if (!ccSpinnerEl) return;
+          if (on) {
+            _ccSpinDepth++;
+            ccSpinnerEl.style.display = "inline-block";
+          } else {
+            _ccSpinDepth = Math.max(0, _ccSpinDepth - 1);
+            if (_ccSpinDepth === 0) ccSpinnerEl.style.display = "none";
+          }
+        }
+        window.ccSpin = ccSpin; // ← expose globally
       })();
 
       // NEW: current in-flight ChitChats search + slow-pass timer
@@ -3322,14 +3342,19 @@ function metalToBadge(label){
 
       // expose globally so any IIFE/module can access it
       window.chitChatsFn = chitChatsFn;
-      
+
       // Resolve the proxy endpoint even if the global isn't set yet
       function getCcEndpoint(){
         if (typeof window !== "undefined" && window.chitChatsFn) return window.chitChatsFn;
-        const base = location.hostname.includes("goldenspike")
-          ? "https://shipping-1.goldenspike.app/.netlify/functions"
-          : "/.netlify/functions";
-        return `${base}/testChitChats`;
+        try {
+          const base = location.hostname.includes("goldenspike")
+            ? "https://shipping-1.goldenspike.app/.netlify/functions"
+            : "/.netlify/functions";
+          return `${base}/testChitChats`;
+        } catch (_) {
+          // very defensive fallback (e.g., SSR or unusual sandbox)
+          return "/.netlify/functions/testChitChats";
+        }
       }
 
       // --- Utils
