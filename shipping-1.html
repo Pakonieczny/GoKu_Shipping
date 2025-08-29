@@ -4369,6 +4369,8 @@ async function ccValidateAgainstApi(step){
          };
        }
 
+       function buildToAddress(){ return buildTo(); }
+
        // Normalize money to a Number with 2-decimal precision (no strings)
        function fix2(n){
          const v = Number(n || 0);
@@ -5486,7 +5488,7 @@ function parseIntlAddressBlock(blockText = "", fallbackCountryCode = "") {
       /* ────────────────────────────────────────────────────────────── */
 
         async function ccVerifyAddressOnly(){
-        const to = buildToAddress(); // pull from ccShip1 fields
+        const to = buildTo(); // pull from ccShip1 fields
         try {
           await callCc("POST", { action: "verify_to", to });  // best effort; never throws server 500 by design
         } catch {}
