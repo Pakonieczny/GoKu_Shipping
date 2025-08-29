@@ -431,8 +431,10 @@ async function recreateShipmentIfUnbought(id, desiredClientPayload, { authH, url
         const want     = orderId || tracking;
         if (!want) return ok({ shipments: [] });
 
-        const fastMode = String(qp.fast || "").toLowerCase() === "1" || String(qp.fast || "").toLowerCase() === "true";
-        const pageSize = qp.pageSize ? Number(qp.pageSize) : 500;
+        // Hard cap the total work this search will do (defaults to 9s if not provided)
+        const timeoutMs = Math.max(1000, Number(qp.timeoutMs || 9000));
+        const deadline  = Date.now() + timeoutMs;
+        const timedOut  = () => Date.now() > deadline;
 
         // helpers
         const norm = (s) => String(s || "").toLowerCase().replace(/[^a-z0-9]/g, "");
@@ -489,7 +491,7 @@ async function recreateShipmentIfUnbought(id, desiredClientPayload, { authH, url
             search: want,
             pageSize,
             // Stop early if we already have a hit to reduce calls
-            stopEarlyIf: (sh) => matches(sh)
+            stopEarlyIf: (sh) => timedOut() || matches(sh)
           });
           const hits = (all || []).filter(matches);
           const kept = await applyPendingFilter(hits);
@@ -499,10 +501,16 @@ async function recreateShipmentIfUnbought(id, desiredClientPayload, { authH, url
         // 3) If fast mode, stop after a full vendor pagination
         if (fastMode) return ok({ shipments: [] });
 
-        // 4) Deep fallback: scan by status pools with pagination & local filter
-        const pools = ["archived", "processing", "ready"];
+        // 4) Deep fallback: prefer fresh pools first, respect time budget
+        const pools = ["ready", "processing", "archived"];
         for (const st of pools) {
-          const pageResults = await paginateShipments({ status: st, pageSize });
+          if (timedOut()) return ok({ shipments: [] });
+          const pageResults = await paginateShipments({
+            status: st,
+            pageSize,
+            // bail mid-page if we run out of time or find a match
+            stopEarlyIf: (sh) => timedOut() || matches(sh)
+          });
           const hits = pageResults.filter(matches);
           const kept = await applyPendingFilter(hits);
           if (kept.length) return ok({ shipments: kept });
@@ -510,6 +518,8 @@ async function recreateShipmentIfUnbought(id, desiredClientPayload, { authH, url
 
         return ok({ shipments: [] });
       }
+
+      if (timedOut()) return ok({ shipments: [] });
 
       // Fetch a single shipment
       if (resource === "shipment" && qp.id) {
