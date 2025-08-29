@@ -20,7 +20,7 @@
 
 const CORS = {
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "Content-Type,Authorization,Access-Token",
+  "Access-Control-Allow-Headers": "Content-Type,Authorization,Access-Token,X-Api-Key,x-api-key",  
   "Access-Control-Allow-Methods": "GET,POST,OPTIONS,PATCH"
 };
 
