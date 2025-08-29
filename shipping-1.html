@@ -3471,7 +3471,7 @@ function metalToBadge(label){
 
             try {
               // fast, pending-only, smaller page window
-              const fast = await callSearch({ orderId, fast: "1", pendingOnly: "1", pageSize: "250", timeoutMs: "15000" });
+              const fast = await callSearch({ orderId, fast: "1", pendingOnly: "1", pageSize: "500", timeoutMs: "15000" });
               if (fast?.aborted) return;
               const hit = pickBestShipment(orderId, (fast.shipments || []));
               if (hit) { setShipmentUI(hit); return; }
@@ -3500,14 +3500,14 @@ function metalToBadge(label){
             if (!tracking) return;
 
             try {
-              const fast = await callSearch({ tracking, fast: "1", pendingOnly: "1", pageSize: "250", timeoutMs: "15000" });
+              const fast = await callSearch({ tracking, fast: "1", pendingOnly: "1", pageSize: "500", timeoutMs: "20000" });
               if (fast?.aborted) return;
               const hit = pickBestShipment(tracking, (fast.shipments || []));
               if (hit) { setShipmentUI(hit); return; }
 
               setTimeout(async () => {
                 try {
-                  const slow = await callSearch({ tracking, fast: "0", pendingOnly: "1", pageSize: "300", timeoutMs: "25000" });
+                  const slow = await callSearch({ tracking, fast: "0", pendingOnly: "1", pageSize: "300", timeoutMs: "20000" });
                   if (slow?.aborted) return;
                   const s2 = pickBestShipment(tracking, (slow.shipments || []));
                   if (s2) setShipmentUI(s2);
