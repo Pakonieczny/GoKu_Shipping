@@ -525,8 +525,6 @@ async function recreateShipmentIfUnbought(id, desiredClientPayload, { authH, url
         return ok({ shipments: [] });
       }
 
-      if (timedOut()) return ok({ shipments: [] });
-
       // Fetch a single shipment
       if (resource === "shipment" && qp.id) {
         try {
