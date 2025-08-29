@@ -5092,16 +5092,6 @@ function buildRefreshPayload(){
                 if (v != null) document.getElementById(map[k]).value = v;
               });
 
-
-                // 🆕 If still blank & destination is international, set fallback
-                const ccCode = String(
-                  fromCc.to_country_code || det?.to?.country_code || det?.country_code || ""
-                ).toUpperCase();
-                if (ccCode && ccCode !== "CA" && ccCode !== "US") {
-                  const el = document.getElementById("cc_to_phone");
-                  if (el && !el.value.trim()) el.value = "416-606-2476";
-                }
-
               // 🆕 Also try the raw API shape for phone (normalize helper may omit it)
               const phoneFromApi =
                 det?.phone ||
