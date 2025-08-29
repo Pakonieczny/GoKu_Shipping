@@ -1,85 +1,66 @@
-// trackOrderProxy.js — Netlify function
-// Env: SS_API_KEY, SS_API_SECRET
+// trackOrderProxy.js  — proxy → ShipStation → Etsy
+// Requires two Netlify env-vars:
+//   SS_API_KEY    = your ShipStation “API Key”
+//   SS_API_SECRET = the matching “API Secret”
+
 const fetch = require("node-fetch");
 
-exports.handler = async (event) => {
+exports.handler = async event => {
   try {
+    /* Front-end sends { receiptId, tracking, carrier } — keep names intact */
     const {
-      receiptId: orderNumber,
-      tracking: trackingNumber,
-      carrier,
-      shipDate, // optional: "YYYY-MM-DD" or "today"
+      receiptId:   orderNumber,
+      tracking:    trackingNumber,
+      carrier:     carrierCode,
+      shipDate
     } = JSON.parse(event.body || "{}");
 
-    if (!orderNumber || !trackingNumber || !carrier) {
-      return resp(400, { error: "Missing orderNumber / trackingNumber / carrier" });
+    /* Basic validation */
+    if (!orderNumber || !trackingNumber || !carrierCode) {
+      return {
+        statusCode: 400,
+        body: JSON.stringify({ error: "Missing orderNumber / trackingNumber / carrierCode" })
+      };
     }
 
+    /* ShipStation V1 uses Basic auth: base64(key:secret) */
     const auth = Buffer.from(
       `${process.env.SS_API_KEY}:${process.env.SS_API_SECRET}`
     ).toString("base64");
-
-    const baseURL = "https://ssapi.shipstation.com";
     const headers = { Authorization: `Basic ${auth}` };
+    const baseURL = "https://ssapi.shipstation.com";
 
-    // 1) Find the SS order by Etsy receiptId
-    const lookup = await fetch(
-      `${baseURL}/orders?orderNumber=${encodeURIComponent(orderNumber)}`,
-      { headers }
-    );
-    if (!lookup.ok) return rawForward(lookup);
+    /* 1️⃣  Find the ShipStation order that matches the Etsy receiptId */
+    const lookupURL = `${baseURL}/orders?orderNumber=${encodeURIComponent(orderNumber)}`;
+    const lookupResp = await fetch(lookupURL, { headers });
 
-    const { orders = [] } = await lookup.json();
+    if (!lookupResp.ok) {
+      return { statusCode: lookupResp.status, body: await lookupResp.text() };
+    }
+
+    const { orders } = await lookupResp.json();
     const orderId = orders?.[0]?.orderId;
-    if (!orderId) return resp(404, { error: "Order not found in ShipStation" });
 
-    // 2) Normalize carrier for SS
-    const norm = normalizeCarrier(carrier);
+    if (!orderId) {
+      return { statusCode: 404, body: "Order not found in ShipStation" };
+    }
 
-    // 3) Mark as shipped (notify customer + Etsy)
-    const mark = await fetch(`${baseURL}/orders/markasshipped`, {
+    /* 2️⃣  Mark the order as shipped (ShipStation notifies Etsy automatically) */
+    const markResp = await fetch(`${baseURL}/orders/markasshipped`, {
       method: "POST",
       headers: { ...headers, "Content-Type": "application/json" },
       body: JSON.stringify({
         orderId,
-        carrierCode: norm.carrierCode,
-        carrierName: norm.carrierName,       // only used when code === "other"
+        carrierCode,
         trackingNumber,
         shipDate: shipDate || new Date().toISOString().slice(0, 10),
         notifyCustomer: true,
-        notifySalesChannel: true,
-      }),
+        notifySalesChannel: true
+      })
     });
 
-    // Forward ShipStation's response body + status as JSON
-    const text = await mark.text();
-    let body;
-    try { body = JSON.parse(text); } catch { body = { raw: text }; }
-    return resp(mark.status, body);
+    return { statusCode: markResp.status, body: await markResp.text() };
   } catch (err) {
-    return resp(500, { error: err.message });
+    return { statusCode: 500, body: JSON.stringify({ error: err.message }) };
   }
 };
-
-// --- helpers ---
-function normalizeCarrier(value) {
-  const v = String(value || "").trim().toLowerCase();
-  // Known ShipStation codes we care about here:
-  if (v === "usps") return { carrierCode: "usps", carrierName: undefined };
-
-  // Fall back to "other" while labeling clearly so it shows up in Etsy
-  const label = v === "chitchats" ? "Chit Chats" : capitalize(v || "Other");
-  return { carrierCode: "other", carrierName: label };
-}
-
-function capitalize(s) { return s.charAt(0).toUpperCase() + s.slice(1); }
-
-async function rawForward(res) {
-  const text = await res.text();
-  let body; try { body = JSON.parse(text); } catch { body = { raw: text }; }
-  return resp(res.status, body);
-}
-
-function resp(statusCode, body) {
-  return { statusCode, body: JSON.stringify(body) };
-}

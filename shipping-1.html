@@ -2632,28 +2632,30 @@ function metalToBadge(label){
           apiFetch("/trackOrderProxy", {
             method : "POST",
             headers: { "Content-Type": "application/json" },
-            body   : JSON.stringify({
-              receiptId,
-              tracking,
-              carrier,
-              shipDate: getShipDateForApi()   // ✅ send the selected date (or "today")
-            })
+            body   : JSON.stringify({ receiptId, tracking, carrier })
           });
 
         try {
-          const resp    = await postTracking();
-          const payload = await resp.json().catch(() => ({}));
+          let resp         = await postTracking();
+          let payload      = await resp.text();              // Etsy proxy returns raw text
+          let errMsg       = "";
 
-          if (!resp.ok) {
-            const errMsg = payload?.error || payload?.raw || "Server error";
-            throw new Error(errMsg);
+          /* ── forbidden (403) usually means missing shipping permission scope ── */
+          if (resp.status === 403) {
+            errMsg = "Forbidden – Etsy says this action isn’t allowed.";
+          } else if (!resp.ok) {
+            /* try to JSON-parse any error payload, else show raw text */
+          try   { errMsg = JSON.parse(payload).error || "Server error"; }
+          catch (e) { errMsg = payload || "Server error"; }
           }
 
-          // 🎉 success (make the message accurate)
-          M.toast({ html: "Marked shipped in ShipStation; Etsy notified 🎉" });
+          if (errMsg) throw new Error(errMsg);
 
+          /* 🎉 success */
+          M.toast({ html: "Etsy order marked complete 🎉" });
           trackingInp.value        = "";
           carrierSel.selectedIndex = 0;
+
         } catch (err) {
           console.error(err);
           M.toast({ html: "Complete failed: " + err.message });
