@@ -1922,7 +1922,6 @@ function metalToBadge(label){
         localStorage.setItem("etsy_code_verifier", codeVerifier);
         const codeChallenge = await generateCodeChallenge(codeVerifier);
         const CLIENT_ID   = "k75zdspz4r99txpqdji7i2em";
-        window.ETSY_CLIENT_ID = CLIENT_ID; // expose for server call header
         const redirectUri = "https://shipping-1.goldenspike.app";
         const scope       = "listings_w listings_r transactions_r transactions_w";
         const state       = `reconnect_${Date.now()}_${reason}`;
@@ -2271,8 +2270,7 @@ function metalToBadge(label){
             if (!txt) { M.toast?.({ html: "Clipboard is empty" }); return; }
 
             const inp = document.getElementById("etsyOrderNumber");
-            inp.value = txt;
-            inp.dispatchEvent(new Event("input", { bubbles: true }));
+            inp.value = txt; // no auto-lookup from typing/paste
             M.toast?.({ html: "Order # pasted" });
 
             /* ⛔ Cancel any in-flight ccShipmentId search and pending slow-pass */
@@ -2300,8 +2298,7 @@ function metalToBadge(label){
               const txt = (await navigator.clipboard.readText() || "").trim();
               if (!txt) { M.toast?.({ html: "Clipboard is empty" }); return; }
               const inp = document.getElementById("trackingNumberInput");
-              inp.value = txt;
-              inp.dispatchEvent(new Event("input", { bubbles: true }));
+              inp.value = txt; // no auto-lookup from typing/paste
               M.toast?.({ html: "Tracking # pasted" });
             } catch (err) {
               M.toast?.({ html: "Paste failed: " + err.message });
@@ -2365,7 +2362,7 @@ function metalToBadge(label){
 
         const orderData = await pullEtsyOrderDetails(orderNumber);
         await loadShipToAddress(orderNumber);
-        // (Gift message now sourced from Etsy receipt; no ShipStation call)
+        await loadGiftMessage(orderNumber);
 
         // ✅ Moved INSIDE the async handler:
         // Prefer transactions (they carry quantity + unit price) for customs autofill
@@ -2622,44 +2619,41 @@ function metalToBadge(label){
       completeBtn.addEventListener("click", async () => {
         const receiptId = document.getElementById("etsyOrderNumber").value.trim();
         const tracking  = (trackingInp.value || "").trim();
-        const carrier   = carrierSel.value; // "chitchats" | "usps"
+        const carrier   = carrierSel.value;          // "chitchats" | "usps"
 
         if (!receiptId) { M.toast({ html: "Enter order #"   }); return; }
         if (!tracking)  { M.toast({ html: "Enter tracking #" }); return; }
         if (!carrier)   { M.toast({ html: "Choose carrier"  }); return; }
 
-        try {
-          // 1) Ensure Etsy token is fresh and read it
-          if (typeof ensureFreshToken === "function") {
-            await ensureFreshToken();
-          }
-          const etsyAccess =
-            localStorage.getItem((typeof TOKEN_KEYS !== "undefined" && TOKEN_KEYS?.access)
-              ? TOKEN_KEYS.access : "access_token") || "";
-
-          // 2) Use current Chit Chats shipment (if any) as reference
-          const ccId = (document.getElementById("ccShipmentId")?.value || "").trim();
-
-          // 3) Always call the server to COMPLETE (ShipStation + Etsy)
-          //    - server uses carrier to branch (USPS vs Chit Chats)
-          const resp = await window.callCc("PATCH", {
-            action          : "complete",
-            receipt_id      : receiptId,
-            shipment_id     : ccId,
-            tracking        : tracking,
-            carrier         : carrier,      // "chitchats" or "usps"
-            notify          : true,
-            etsy_access_token: etsyAccess
+        /* helper → perform one POST via resilient apiFetch */
+        const postTracking = () =>
+          apiFetch("/trackOrderProxy", {
+            method : "POST",
+            headers: { "Content-Type": "application/json" },
+            body   : JSON.stringify({ receiptId, tracking, carrier })
           });
 
-          if (!resp || resp.error) {
-            throw new Error(resp?.error || "Server error");
+        try {
+          let resp         = await postTracking();
+          let payload      = await resp.text();              // Etsy proxy returns raw text
+          let errMsg       = "";
+
+          /* ── forbidden (403) usually means missing shipping permission scope ── */
+          if (resp.status === 403) {
+            errMsg = "Forbidden – Etsy says this action isn’t allowed.";
+          } else if (!resp.ok) {
+            /* try to JSON-parse any error payload, else show raw text */
+          try   { errMsg = JSON.parse(payload).error || "Server error"; }
+          catch (e) { errMsg = payload || "Server error"; }
           }
 
-          // 4) Success UI
+          if (errMsg) throw new Error(errMsg);
+
+          /* 🎉 success */
           M.toast({ html: "Etsy order marked complete 🎉" });
           trackingInp.value        = "";
           carrierSel.selectedIndex = 0;
+
         } catch (err) {
           console.error(err);
           M.toast({ html: "Complete failed: " + err.message });
@@ -2951,33 +2945,32 @@ function metalToBadge(label){
       prefillCustomsFromEtsy();
     }
 
-      async function fetchListingImages(listingId){
-        const responseLI = await apiFetch(`/etsyImages?listingId=${encodeURIComponent(listingId)}`);
-        if (!responseLI.ok) {
-          const t = await responseLI.text();
-          throw new Error(`Error fetching images for listing ${listingId}: ${responseLI.status} ${t}`);
-        }
-        const dataLI = await responseLI.json();
-        return dataLI.results;
+    async function fetchListingImages(listingId){
+      const responseLI = await fetch("/.netlify/functions/etsyImages?listingId=" + listingId, {
+        headers: { "access-token": localStorage.getItem("access_token") }
+      });
+      if(!responseLI.ok){
+        throw new Error("Error fetching images for listing " + listingId + ": " + responseLI.statusText);
       }
+      const dataLI = await responseLI.json();
+      return dataLI.results;
+    }
 
     function pullEtsyOrderDetails(orderNumber){
       console.log("Pulling Etsy order details for order number:", orderNumber);
-      return apiFetch(`/etsyOrderProxy?orderId=${encodeURIComponent(orderNumber)}`)
-        .then(async (r) => {
-          if (!r.ok) {
-            const t = await r.text();
-            throw new Error(`etsyOrderProxy ${r.status}: ${t}`);
-          }
-          return r.json();
-        })
-    .then(function(data){        console.log("Etsy Order Data:", data);
+      var token = localStorage.getItem("access_token");
+      return fetch("/.netlify/functions/etsyOrderProxy?orderId=" + encodeURIComponent(orderNumber), {
+        headers: { "access-token": token }
+      })
+      .then(function(r){ return r.json(); })
+      .then(function(data){
+        console.log("Etsy Order Data:", data);
         // Gift fields now sourced from Etsy receipt
         window.receiptIsGift = Boolean(data.is_gift);
 
-        // 🎁 Pull from Etsy (gift_message if present, else buyer message)
-        window.receiptGiftMessage     = String((data.gift_message || data.message_from_buyer || "")).trim();
-        window.receiptGiftMessageFrom = String((data.buyer_email || data.buyer_name || "")).trim();
+        // 🎁  Gift message now fetched from ShipStation (see loadGiftMessage)
+        window.receiptGiftMessage     = "";
+        window.receiptGiftMessageFrom = "";
 
         // Etsy receipts include gift_wrap_price as a money object { amount, divisor, currency_code }
         const gwp = data.gift_wrap_price;
@@ -3080,132 +3073,143 @@ function metalToBadge(label){
       });
     }
 
-      // Global address helpers (guarded so we don't double-define)
-  if (typeof window.normalizeToAddressShape !== "function") {
-    window.normalizeToAddressShape = function normalizeToAddressShape(raw){
-      // Accept Chit Chats shapes: { to:{…} }, { address:{…} }, or flat
-      const src = raw && typeof raw === "object" ? (raw.to || raw.address || raw) : {};
-      const get = (...keys) => {
-        for (const k of keys) {
-          const v = src?.[k];
-          if (v != null && String(v).trim() !== "") return String(v).trim();
-        }
-        return "";
-      };
-      const cc = (get("to_country_code","country_code","country","country_iso2") || "").toUpperCase();
-      return {
-        to_name          : get("to_name","name","recipient_name","full_name"),
-        to_address_1     : get("to_address_1","address_1","address1","street1","line1","street"),
-        to_address_2     : get("to_address_2","address_2","address2","street2","line2","unit","suite","apt","apartment","unit_number"),
-        to_city          : get("to_city","city","locality","town"),
-        to_province_code : get("to_province_code","province_code","state_code","state","province","region","administrative_area"),
-        to_postal_code   : get("to_postal_code","postal_code","zip","zip_code","postcode"),
-        to_country_code  : cc
-      };
-    };
-  }
-
-  if (typeof window.fmtAddress !== "function") {
-    window.fmtAddress = function fmtAddress(a){
-      if (!a) return "";
-      const name = a.to_name || "";
-      const l1   = a.to_address_1 || "";
-      const l2   = a.to_address_2 || "";
-      const city = a.to_city || "";
-      const prov = a.to_province_code || "";
-      const pc   = a.to_postal_code || "";
-      const cc   = (a.to_country_code || "").toUpperCase();
-      const country  = cc === "US" ? "United States" : cc === "CA" ? "Canada" : cc;
-      const street   = [l1, l2].filter(Boolean).join("\n");
-      const cityLine = city && prov ? `${city}, ${prov} ${pc}` : [city, prov, pc].filter(Boolean).join(" ");
-      return [name, street, cityLine, country].filter(Boolean).join("\n");
-    };
-  }
-
       /* ===== ShipStation — load “Ship To” by orderNumber ======================= */
-  async function loadShipToAddress(orderNumber){
-  try {
-    const box = document.getElementById("shipAddressBox");
-    if (!box) return;
-    box.value = "SHIP TO:\n(Loading...)";
+      async function loadShipToAddress(orderNumber){
+        try {
+          const box = document.getElementById("shipAddressBox");
+          if (!box) return;
+          box.value = "SHIP TO:\n(Loading...)";
 
-    const fnBase = "/.netlify/functions";
+          const resp = await fetch(
+            "/.netlify/functions/ssGetOrderAddress?orderNumber=" + encodeURIComponent(orderNumber)
+          );
+          if (!resp.ok) {
+            box.value = "SHIP TO:\n(Not found)";
+            box.style.color = "";
+            return;
+          }
 
-    // 1) Find the imported Chit Chats shipment by Etsy order/receipt id
-    const searchResp = await fetch(
-      `${fnBase}/chitChatSearch?orderId=${encodeURIComponent(orderNumber)}&pendingOnly=0&fast=1&timeoutMs=9000&pageSize=500`
-    );
-    if (!searchResp.ok) throw new Error("ChitChats search " + searchResp.status);
-    const searchData = await searchResp.json();
-    const hit = (searchData.shipments || [])[0];
-    if (!hit) {
-      box.value = "SHIP TO:\n(Not found)";
-      box.style.color = "";
-      return;
-    }
+          const data = await resp.json();
+          const ship = data.shipTo || null;
+          if (!ship) {
+            box.value = "SHIP TO:\n(Not found)";
+            box.style.color = "";
+            return;
+          }
 
-    // 2) Hydrate the full shipment to get address fields
-    const shipResp = await fetch(
-      `${fnBase}/testChitChats?resource=shipment&id=${encodeURIComponent(hit.id)}`
-    );
-    if (!shipResp.ok) throw new Error("ChitChats shipment " + shipResp.status);
-    const detail = await shipResp.json();
-    const sh = detail.shipment || detail;
+          // NEW: set Shipping Priority box from SS
+          const prEl = document.getElementById("shippingPriority");
+          if (prEl) {
+            const svc = (data.serviceCode || "").toString();
+            const carrier = (data.carrierCode || "").toString();
 
-// 3) Normalize + format (handles {to:{…}} | {address:{…}} | flat)
-const to = normalizeToAddressShape(sh);
-box.value = "SHIP TO:\n" + fmtAddress(to);
-// debug (optional): see what keys were present if street didn't render
-if (!to.to_address_1) console.debug("No street in shipment:", { keys:Object.keys(sh||{}), to:sh?.to });
+            const amount = (typeof data.shippingAmount === "number")
+              ? data.shippingAmount
+              : (data.shippingAmount && typeof data.shippingAmount.amount === "number")
+                ? data.shippingAmount.amount
+                : null;
 
-    // 4) Auto-pick carrier: USPS for US domestic, ChitChats for everything else
-    const carrierSelectEl = document.getElementById("carrierSelect");
-    if (carrierSelectEl) {
-      const c = String(to.to_country_code || "").toUpperCase();
-      const target = (c === "US" || c === "USA" || c.includes("UNITED STATES")) ? "usps" : "chitchats";
-      carrierSelectEl.value = target;
-      carrierSelectEl.dispatchEvent(new Event("change", { bubbles: true }));
-      try {
-        let inst = M.FormSelect.getInstance(carrierSelectEl);
-        if (inst) inst.destroy();
-        inst = M.FormSelect.init(carrierSelectEl);
-        if (inst && inst.input) inst.input.value = (target === "usps" ? "USPS" : "ChitChats");
-      } catch {}
-    }
+            const cost = (amount != null)
+              ? amount.toLocaleString(undefined, { style: "currency", currency: "USD" })
+              : "—";
 
-    // 5) Colorize for international (non US/CA)
-    const c2 = String(to.to_country_code || "").trim().toLowerCase();
-    const isUS = c2.startsWith("united states") || c2 === "usa" || c2 === "us" || c2 === "u.s." || c2 === "u.s.a.";
-    const isCA = c2 === "canada" || c2 === "ca";
-    box.style.color = (isUS || isCA) ? "" : "orangered";
-  } catch (e) {
-    console.error("loadShipToAddress (CC):", e);
-    const box = document.getElementById("shipAddressBox");
-    if (box) {
-      box.value = "SHIP TO:\n(Error loading)";
-      box.style.color = "";
-    }
-  }
-}
+            const label = [carrier, svc].filter(Boolean).join(" / ");
+            prEl.value = label ? `${label} • ${cost}` : `${cost}`;
+
+            // Make it bold (CSS also enforces this, but we set it here too for safety)
+            prEl.style.fontWeight = "bold";
+
+            // If price is exactly $18 or $55 → orange
+            const amt = Number(amount);
+            prEl.style.color = (amt === 18 || amt === 55) ? "orange" : "";
+          }
+
+
+          // If a tile is selected, refresh details to show gift fields
+          const sel = document.querySelector(".preview-box.selected");
+          if (sel) {
+            const idx = parseInt(sel.id.replace("previewCell",""), 10);
+            if (!Number.isNaN(idx)) showItemDetails(idx);
+          }
+
+          const lines = [];
+          const add = v => { if (v) lines.push(String(v)); };
+
+          add(ship.name || "");
+          const street = [ship.street1, ship.street2, ship.street3].filter(Boolean).join(" ");
+          add(street);
+          const cityLine = (ship.city && ship.state)
+          ? `${ship.city}, ${ship.state}${ship.postalCode ? " " + ship.postalCode : ""}`
+          : [ship.city, ship.state, ship.postalCode].filter(Boolean).join(" ");
+          add(cityLine);
+          add(ship.country);
+          if (ship.phone) add("Phone: " + ship.phone);
+
+          box.value = "SHIP TO:\n" + lines.filter(Boolean).join("\n");
+
+          // ── Auto-select Carrier based on destination country (match shipping-1.html) ──
+          const carrierSelectEl = document.getElementById("carrierSelect");
+          if (carrierSelectEl) {
+            const countryRaw = (ship.countryCode || ship.country || "").toString().trim().toUpperCase();
+            const isUS = (countryRaw === "US" || countryRaw === "USA" || countryRaw === "UNITED STATES");
+            const target = isUS ? "usps" : "chitchats";
+
+            // set native <select> value
+            carrierSelectEl.value = target;
+            carrierSelectEl.dispatchEvent(new Event("change", { bubbles: true }));
+
+            // refresh Materialize wrapper so the visible label updates
+            try {
+              let inst = M.FormSelect.getInstance(carrierSelectEl);
+              if (inst) inst.destroy();
+              inst = M.FormSelect.init(carrierSelectEl);
+              if (inst && inst.input) {
+                inst.input.value = (target === "usps" ? "USPS" : "ChitChats");
+              }
+            } catch (_) { /* Materialize not ready? safe to ignore */ }
+          }
+
+          // Text color only for international (non-US/CA) addresses
+          const countryRaw = (ship.country || ship.countryCode || "").toString().trim();
+          const c = countryRaw.toLowerCase();
+          const isUS = c.startsWith("united states") || c === "usa" || c === "us" || c === "u.s." || c === "u.s.a.";
+          const isCA = c === "canada" || c === "ca";
+          box.style.color = (isUS || isCA) ? "" : "orangered";
+        } catch (e) {
+          console.error("loadShipToAddress:", e);
+          const box = document.getElementById("shipAddressBox");
+          if (box) {
+            box.value = "SHIP TO:\n(Error loading)";
+            box.style.color = "";
+          }
+        }
+      }
 
       /* ===== ShipStation — Gift Message (orderNumber) ===================== */
       async function loadGiftMessage(orderNumber) {
-  try {
-    // Use what pullEtsyOrderDetails already fetched
-    const fromEtsy = String(window.receiptGiftMessage || window.buyerMessageText || "").trim();
-    window.receiptGiftMessage     = fromEtsy;
-    window.receiptGiftMessageFrom = String(window.receiptGiftMessageFrom || "").trim();
-    const sel = document.querySelector(".preview-box.selected");
-    if (sel) {
-      const idx = parseInt(sel.id.replace("previewCell", ""), 10);
-      if (!Number.isNaN(idx)) showItemDetails(idx);
-    }
-  } catch (err) {
-    console.error("loadGiftMessage (no-SS):", err);
-    window.receiptGiftMessage     = "";
-    window.receiptGiftMessageFrom = "";
-  }
-}
+        try {
+          const resp = await fetch(
+            "/.netlify/functions/ssGetGiftMessage?orderNumber=" +
+            encodeURIComponent(orderNumber)
+          );
+          if (!resp.ok) throw new Error("ShipStation response " + resp.status);
+
+          const data = await resp.json();
+          window.receiptGiftMessage     = (data.giftMessage || "").trim();
+          window.receiptGiftMessageFrom = (data.giftFrom    || "").trim();
+
+          /* refresh details pane if a tile is selected */
+          const sel = document.querySelector(".preview-box.selected");
+          if (sel) {
+            const idx = parseInt(sel.id.replace("previewCell", ""), 10);
+            if (!Number.isNaN(idx)) showItemDetails(idx);
+          }
+        } catch (err) {
+          console.error("loadGiftMessage:", err);
+          window.receiptGiftMessage     = "";
+          window.receiptGiftMessageFrom = "";
+        }
+      }
 
     /* ---------------------------------------------------------
      *  Firestore listener for employee-scanned order numbers
@@ -3488,8 +3492,6 @@ if (!to.to_address_1) console.debug("No street in shipment:", { keys:Object.keys
       // --- Listeners (debounced + change)
       orderInp   ?.addEventListener("input",  debounce(refreshFromOrderIfChitChats, 250));
       orderInp   ?.addEventListener("change", refreshFromOrderIfChitChats);
-      trackingInp?.addEventListener("input",  debounce(refreshFromTrackingIfChitChats, 250));
-      trackingInp?.addEventListener("change", refreshFromTrackingIfChitChats);
 
       // Enter-to-search for reliability (manual entry/paste)
       // 🔁 Order: run lookup 500ms after a *real* Enter press so UI settles first.
@@ -3524,7 +3526,7 @@ if (!to.to_address_1) console.debug("No street in shipment:", { keys:Object.keys
 
       // Kick if fields already have values
       if ((orderInp?.value || "").trim())    refreshFromOrderIfChitChats();
-      if ((trackingInp?.value || "").trim()) refreshFromTrackingIfChitChats();
+
 
       // --- Batches
       async function fetchBatches(){
@@ -3852,64 +3854,58 @@ if (!to.to_address_1) console.debug("No street in shipment:", { keys:Object.keys
         // Do not thaw post-purchase; keep re-checks disabled for this session.
       }
 
-    
-      // ---------- Enhanced fetch wrapper (global) ----------
-      window.callCc = async function callCc(method, body, qs = "") {
-        // 1) Ensure token is fresh
-        try { if (typeof ensureFreshToken === "function") await ensureFreshToken(); } catch {}
-
-        // 2) Read token robustly (supports TOKEN_KEYS or plain 'access_token')
-        const token =
-          localStorage.getItem((typeof TOKEN_KEYS !== "undefined" && TOKEN_KEYS?.access)
-            ? TOKEN_KEYS.access : "access_token") || "";
-
-        // 3) Build headers; server reads 'access-token' (case-insensitive)
-        const headers = { "Content-Type": "application/json" };
-        if (token) headers["access-token"] = token;
-        if (window.ETSY_CLIENT_ID) headers["x-api-key"] = window.ETSY_CLIENT_ID; // ← required by Etsy v3
-
-        // 4) Include token in body as a fallback if we're sending JSON
-        let finalBody = undefined;
-        if (body && typeof body === "object" && !(body instanceof FormData)) {
-          if (token && !body.etsy_access_token) {
-            body = { ...body, etsy_access_token: token };
-          }
-          finalBody = JSON.stringify(body);
-        }
-
-        // 5) Timeout guard to avoid UI hangs on cold starts/upstream slowness
-        const ctrl = new AbortController();
-        const to   = setTimeout(() => ctrl.abort(), 25000);
-
-        let resp, text;
-        try {
-          resp = await fetch(`${getCcEndpoint()}${qs}`, {
-            method,
-            headers,
-            body: finalBody,
-            signal: ctrl.signal
-          });
-          text = await resp.text();
-        } catch (err) {
-          clearTimeout(to);
-          const e = new Error(err?.name === "AbortError" ? "ChitChats request timed out" : (err?.message || "ChitChats request failed"));
-          e.status = 504;
-          throw e;
-        }
-        clearTimeout(to);
-
+      /* ---------- Enhanced fetch wrapper (keeps raw error for mapping) ---------- */
+      async function callCc(method, body, qs=""){
+        const resp = await fetch(`${getCcEndpoint()}${qs}`, {     
+          method,
+          headers: { "Content-Type":"application/json" },
+          body: body ? JSON.stringify(body) : undefined
+        });
+        const text = await resp.text();
         let data; try { data = JSON.parse(text); } catch { data = text; }
 
         if (!resp.ok) {
           const pick = k => (data && typeof data[k] === "string" ? data[k] : null);
-          const message = typeof data === "string" ? data : (pick("error") || pick("message") || JSON.stringify(data, null, 2));
+          const message = typeof data === "string"
+            ? data
+            : (pick("error") || pick("message") || JSON.stringify(data, null, 2));
+
           const e = new Error(message);
           e.status = resp.status;
           e.raw    = data;
+          try { console.debug("ChitChats proxy error", resp.status, data); } catch {}
           throw e;
         }
         return data;
-      };
+      }
+
+      /* ---------- Enhanced fetch wrapper (keeps raw error for mapping) ---------- */
+      async function callCc(method, body, qs=""){
+        const resp = await fetch(`${getCcEndpoint()}${qs}`, {     
+          method,
+          headers: { "Content-Type":"application/json" },
+          body: body ? JSON.stringify(body) : undefined
+        });
+        const text = await resp.text();
+        let data; try { data = JSON.parse(text); } catch { data = text; }
+
+        if (!resp.ok) {
+          const pick = k => (data && typeof data[k] === "string" ? data[k] : null);
+          const message = typeof data === "string"
+            ? data
+            : (pick("error") || pick("message") || JSON.stringify(data, null, 2));
+
+          const e = new Error(message);
+          e.status = resp.status;
+          e.raw    = data;
+          try { console.debug("ChitChats proxy error", resp.status, data); } catch {}
+          throw e;
+        }
+        return data;
+      }
+
+/* ADD THIS → expose globally for any external handlers/modules */
+window.callCc = callCc;
 
       // Keep the ID field and global in sync wherever a shipment gets created/refreshed
       function pushShipmentId(id){
@@ -4155,7 +4151,7 @@ if (!to.to_address_1) console.debug("No street in shipment:", { keys:Object.keys
           // (Optional UI updates)
           if (shipment?.carrier_tracking_code) {
             const t = document.getElementById("trackingNumberInput");
-            if (t) { t.value = shipment.carrier_tracking_code; t.dispatchEvent(new Event("input", { bubbles:true })); }
+            if (t) { t.value = shipment.carrier_tracking_code; } // don't wake CC search
           }
 
           // Success UX: close the Edit modal after we have the label & invoked print
@@ -4467,61 +4463,25 @@ function buildRefreshPayload(){
 
       return payload;
     }
-function renderRates(s){
-  // Accept a variety of API shapes: { shipment:{...} }, { rates:[...] }, { postage_types:[...] }, etc.
-  const raw =
-    (s && (s.rates ||
-           s.postage_types ||
-           s.available_rates ||
-           s.postageTypes ||
-           s.availableRates)) || [];
-
-  // Normalize each rate into a single shape the UI expects
-  const rates = raw.map(r => ({
-    postage_type:  r.postage_type || r.code || r.postageType,
-    service_name:  r.service_name || r.name || r.serviceName || r.postage_type || r.code,
-    amount_num:    Number(r.payment_amount ?? r.rate ?? r.price ?? 0),
-    days:          r.estimated_delivery_days ?? r.delivery_days ?? r.days ?? ""
-  })).filter(r => r.postage_type);
-
-  // Reset UI
-  ratesList.innerHTML = "";
-  selectedPostageType = null;
-  btnBuy.disabled = true;
-
-  // Helpful empty-state so it’s obvious something returned but had no options
-  if (!rates.length){
-    const li = document.createElement("li");
-    li.innerHTML = `<div style="opacity:.8">No rates returned. Check destination, weight, ship date, and customs total.</div>`;
-    ratesList.appendChild(li);
-    return;
-  }
-
-  // Render options
-  rates.forEach(r => {
-    const li = document.createElement("li");
-    li.dataset.postageType = r.postage_type;
-
-    const left = document.createElement("div");
-    left.innerHTML = `<div style="font-weight:600">${r.service_name}</div>
-                      <div style="font-size:12px;opacity:.8">${r.days ? `${r.days} business days` : ""}</div>`;
-
-    const right = document.createElement("div");
-    right.innerHTML = `<div style="font-weight:700">$${r.amount_num.toFixed(2)}</div>`;
-
-    li.appendChild(left);
-    li.appendChild(right);
-
-    li.addEventListener("click", () => {
-      Array.from(ratesList.children).forEach(n => n.classList.remove("selected"));
-      li.classList.add("selected");
-      selectedPostageType = li.dataset.postageType;
-      btnBuy.disabled = !selectedPostageType;
-    });
-
-    ratesList.appendChild(li);
-  });
-}
+      function renderRates(s){
+        const rates = (s && s.rates) || [];
+        ratesList.innerHTML = "";
+        rates.forEach(r => {
+          const li = document.createElement("li");
+          li.dataset.postageType = r.postage_type;
+          const left = document.createElement("div");
+          left.innerHTML = `<div style="font-weight:600">${r.service_name || r.postage_type}</div>
+                            <div style="font-size:12px;opacity:.8">${(r.estimated_delivery_days || r.delivery_days || "")} business days</div>`;
+          const right = document.createElement("div");
+          right.innerHTML = `<div style="font-weight:700">$${Number(r.payment_amount || r.rate || 0).toFixed(2)}</div>`;
+          li.appendChild(left); li.appendChild(right);
+          li.addEventListener("click", () => {
+            Array.from(ratesList.children).forEach(n => n.classList.remove("selected"));
+            li.classList.add("selected"); selectedPostageType = li.dataset.postageType; btnBuy.disabled = !selectedPostageType;
+          });
+          ratesList.appendChild(li);
+        });
+      }
 
       async function refreshRates(){
         // Hard guard: never price while in Step 0/1
@@ -4582,35 +4542,6 @@ function renderRates(s){
         }
         M.toast?.({ html:"Label purchased; still generating at Chit Chats." });
           }
-
-         // 4) Populate Etsy "Complete Order" inputs (tracking + carrier) from the shipment we just bought
-          try {
-            const endpoint = (typeof getCcEndpoint === "function" ? getCcEndpoint() : "/.netlify/functions/testChitChats");
-            const latest   = await fetch(`${endpoint}?resource=shipment&id=${encodeURIComponent(id)}`).then(r => r.json());
-            const s        = latest.shipment || latest || {};
-            const tn       = s.carrier_tracking_code || "";
-            if (tn) {
-              const tEl = document.getElementById("trackingNumberInput");
-              if (tEl) tEl.value = tn;
-            }
-            // Carrier: USPS if destination is US; otherwise ChitChats
-            const cs = document.getElementById("carrierSelect");
-            if (cs) {
-              const ccode  = String(s.to_country_code || s.country_code || s.country || "").toUpperCase();
-              const target = (ccode === "US" || ccode.includes("UNITED STATES")) ? "usps" : "chitchats";
-              cs.value = target;
-              cs.dispatchEvent(new Event("change", { bubbles: true }));
-              try {
-                let inst = M.FormSelect.getInstance(cs);
-                if (inst) inst.destroy();
-                inst = M.FormSelect.init(cs);
-                if (inst && inst.input) inst.input.value = (target === "usps" ? "USPS" : "ChitChats");
-              } catch {}
-            }
-          } catch (e) {
-            console.warn("post-buy autopopulate failed", e);
-          }
-
         } catch(err){
           handleCcApiError?.(err);
         } finally {
@@ -4851,8 +4782,8 @@ function renderRates(s){
       }
       // Normalize various API shapes → our "to_*" keys
          function normalizeToAddressShape(raw){
-  // Accept Chit Chats shapes: { to:{…} }, { address:{…} }, or flat
-  const src = raw && typeof raw === "object" ? (raw.to || raw.address || raw) : {};
+           // Accept either a flat object or { address: { … } }
+           const src = raw && typeof raw === "object" ? (raw.address || raw) : {};
            const get = (...keys) => {
              for (const k of keys) {
                const v = src?.[k];
