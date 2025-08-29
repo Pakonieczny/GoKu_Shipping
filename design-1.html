@@ -3578,41 +3578,43 @@ async function refreshStaffNoteIDs(opts = {}) {
   loadPositions();   // re-apply positions now that #orderHeaderBar exists
 
   /* 2.  SORT ROUTINE ---------------------------------------------------- */
-  bar.addEventListener("click", ev => {
-    const hdr = ev.target.closest(".hdr");
-    if (!hdr) return;
+    bar.addEventListener("click", ev => {
+      const hdr = ev.target.closest(".hdr");
+      if (!hdr) return;
 
-    /* toggle dir / remember key */
-    const key = hdr.dataset.key;
-    sortDir = (sortKey === key) ? -sortDir : 1;
-    sortKey = key;
+      // toggle dir / remember key
+      const key = hdr.dataset.key;
+      sortDir = (sortKey === key) ? -sortDir : 1;
+      sortKey = key;
 
-    /* run the sort */
-    currentReceipts.sort((a, b) => {
-      switch (key) {
-        case "order":  return sortDir * ((a.order_number || a.receipt_id) - (b.order_number || b.receipt_id));
-        case "ship":   return sortDir * ((a._shipTS || 0) - (b._shipTS || 0));
-        case "gold":   return sortDir * ((a._metalCounts.Gold || 0) - (b._metalCounts.Gold || 0));
-        case "silver": return sortDir * ((a._metalCounts.Silver || 0) - (b._metalCounts.Silver || 0));
-        case "rose":   return sortDir * ((a._metalCounts["Rose G"] || 0) - (b._metalCounts["Rose G"] || 0));
-        case "14k":    return sortDir * ((a._metalCounts["14K"] || 0)   - (b._metalCounts["14K"] || 0));
-      }
-      return 0;
+      // run the sort
+      currentReceipts.sort((a, b) => {
+        switch (key) {
+          case "order":  return sortDir * ((a.order_number || a.receipt_id) - (b.order_number || b.receipt_id));
+          case "ship":   return sortDir * ((a._shipTS || 0) - (b._shipTS || 0));
+          case "gold":   return sortDir * ((a._metalCounts.Gold || 0) - (b._metalCounts.Gold || 0));
+          case "silver": return sortDir * ((a._metalCounts.Silver || 0) - (b._metalCounts.Silver || 0));
+          case "rose":   return sortDir * ((a._metalCounts["Rose G"] || 0) - (b._metalCounts["Rose G"] || 0));
+          case "14k":    return sortDir * ((a._metalCounts["14K"] || 0)   - (b._metalCounts["14K"] || 0));
+        }
+        return 0;
+      });
+
+      // arrow colour logic
+      bar.querySelectorAll(".chev .up, .chev .down").forEach(el => (el.style.color = "#ffffff"));
+      if (sortDir === 1) hdr.querySelector(".chev .up").style.color = "#2196F3";
+      else               hdr.querySelector(".chev .down").style.color = "#2196F3";
+
+      // ✅ re-render now (single click)
+      currentReceipts = currentReceipts.filter(r => !completedOrders.has(String(r.receipt_id)));
+      renderOrderBoxes(currentReceipts);
+      reapplySelectionAndLocks?.();
+      applyMetalFilter?.();
+      markStaffNoteOrders?.();
+      requestAnimationFrame(highlightCompletedRows);
     });
 
-    /* arrow colour logic ------------------------------------------- */
-    bar.querySelectorAll(".chev .up, .chev .down")
-       .forEach(el => (el.style.color = "#ffffff"));        // reset all
 
-    if (sortDir === 1) {
-      hdr.querySelector(".chev .up").style.color   = "#2196F3";  // ASC
-    } else {
-      hdr.querySelector(".chev .down").style.color = "#2196F3";  // DESC
-    }
-
-    renderOrderBoxes(currentReceipts);
-    applyAllLocksToDOM(); // repaint locks on the new DOM
-  });
 
 /* 3. HOOK INTO buildNewOrderList() — pass-through only -------------- */
 const originalBuild = buildNewOrderList;
