@@ -677,6 +677,39 @@ async function recreateShipmentIfUnbought(id, desiredClientPayload, { authH, url
       if (action === "buy") {
         const id = String(body.shipment_id || body.id || qp.id || "");
         if (!id) return bad(400, "shipment_id required for buy");
+
+        // 🆕 Preflight: read shipment and ensure intl phone exists
+        try {
+          const rs = await fetch(url(`/shipments/${encodeURIComponent(id)}`), { headers: authH });
+          const os = await wrap(rs);
+          if (!os.ok) return bad(os.status, os.data);
+
+          const s  = os.data?.shipment || os.data || {};
+          const cc = String(
+            s.country_code ||
+            s.to?.country_code ||
+            s.destination?.country_code ||
+            s.to_country_code ||
+            ""
+          ).toUpperCase();
+          const hasPhone = !!(s.phone || s.to?.phone);
+
+          // Intl (non-CA/US) shipments must have a phone
+          if (cc && cc !== "CA" && cc !== "US" && !hasPhone) {
+            const refreshPayload = { phone: "416-606-2476", country_code: cc };
+            const r2 = await fetch(url(`/shipments/${encodeURIComponent(id)}/refresh`), {
+              method: "PATCH",
+              headers: authH,
+              body: JSON.stringify(refreshPayload)
+            });
+            const o2 = await wrap(r2);
+            if (!o2.ok) return bad(o2.status, o2.data);
+          }
+        } catch (e) {
+          // If the preflight fails, surface the real error
+          return bad(400, { error: e?.message || String(e) });
+        }
+
         const payload = { postage_type: (body.postage_type || body.postageType || "unknown") };
         const resp = await fetch(url(`/shipments/${encodeURIComponent(id)}/buy`), {
           method: "PATCH", headers: authH, body: JSON.stringify(payload)
