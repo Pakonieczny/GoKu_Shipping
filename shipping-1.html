@@ -5542,7 +5542,7 @@ function parseIntlAddressBlock(blockText = "", fallbackCountryCode = "") {
             } catch (e) {
               console.warn("ccShip1 verify-only encountered an error:", e);
             }
-            goToStep(2);
+            showStep(2);
             return;
           }
 
