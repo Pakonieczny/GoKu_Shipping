@@ -686,9 +686,16 @@ async function recreateShipmentIfUnbought(id, desiredClientPayload, { authH, url
         // Prefer SHOP_ID env; fall back to legacy ETSY_SHOP_ID or body.shop_id
         const shopId      = String(process.env.SHOP_ID || body.shop_id || "").trim();
 
+         // NEW: Etsy requires x-api-key on every v3 call
+          const xApiKey     = String(
+            hdrs["x-api-key"] || hdrs["X-Api-Key"] ||
+            process.env.ETSY_CLIENT_ID || process.env.ETSY_KEYSTRING || ""
+          ).trim();
+
         if (!receiptId)  return bad(400, "receipt_id required");
         if (!etsyToken)  return bad(401, "Missing Etsy access token");
         if (!shopId)     return bad(500, "Missing SHOP_ID");
+        if (!xApiKey)    return bad(500, "Missing x-api-key (Etsy app keystring)");
 
         // If caller didn’t supply tracking, pull it from the referenced shipment
         let shipmentId = String(body.shipment_id || body.shipmentId || "").trim();
@@ -723,6 +730,7 @@ async function recreateShipmentIfUnbought(id, desiredClientPayload, { authH, url
             method: "POST",
             headers: {
               "Authorization": `Bearer ${etsyToken}`,
+              "x-api-key"   : xApiKey,
               "Content-Type": "application/json"
             },
             body: JSON.stringify({

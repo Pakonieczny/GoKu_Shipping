@@ -1922,6 +1922,7 @@ function metalToBadge(label){
         localStorage.setItem("etsy_code_verifier", codeVerifier);
         const codeChallenge = await generateCodeChallenge(codeVerifier);
         const CLIENT_ID   = "k75zdspz4r99txpqdji7i2em";
+        window.ETSY_CLIENT_ID = CLIENT_ID; // expose for server call header
         const redirectUri = "https://shipping-1.goldenspike.app";
         const scope       = "listings_w listings_r transactions_r transactions_w";
         const state       = `reconnect_${Date.now()}_${reason}`;
@@ -3882,6 +3883,7 @@ if (!to.to_address_1) console.debug("No street in shipment:", { keys:Object.keys
         // 3) Build headers; server reads 'access-token' (case-insensitive)
         const headers = { "Content-Type": "application/json" };
         if (token) headers["access-token"] = token;
+        if (window.ETSY_CLIENT_ID) headers["x-api-key"] = window.ETSY_CLIENT_ID; // ← required by Etsy v3
 
         // 4) Include token in body as a fallback if we're sending JSON
         let finalBody = undefined;
