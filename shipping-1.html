@@ -4321,7 +4321,12 @@ async function ccValidateAgainstApi(step){
       return { id: idVal };
     } else {
       const out = await callCc("POST", { action: "create_shipment", shipment: payload });
-      if (out?.id) { idInput.value = out.id; idInput.dispatchEvent(new Event("input",{bubbles:true})); }
+      if (out?.id) {
+      // 🔇 Mute any input-driven side-effects until Step 2
+      const prevMute = window.ccMuteIdInput;
+      window.ccMuteIdInput = true;
+      try { pushShipmentId(out.id); } finally { window.ccMuteIdInput = prevMute; }
+    }
       return out;
     }
   }
@@ -4506,6 +4511,9 @@ function buildRefreshPayload(){
       }
 
       async function refreshRates(){
+      // 🚧 Hard guard: do not fetch pricing until user is on Step 2
+      if (typeof window.currentStep === "number" && window.currentStep < 2) return;
+      if (window.ccBlockRatesUntilStep2) return;
         // Hard guard: never price while in Step 0/1
         if (window.ccBlockRatesUntilStep2 || (typeof currentStep === "number" && currentStep < 2)) {
           return;
