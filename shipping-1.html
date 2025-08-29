@@ -4307,42 +4307,52 @@ window.callCc = callCc;
       }
 
 async function ccValidateAgainstApi(step){
-  const idInput = document.getElementById("ccShipmentId");
-  const idVal   = (idInput?.value || "").trim();
+  const idInput    = document.getElementById("ccShipmentId");
+  const rawId      = (idInput?.value || "").trim();
+  const hasValidId = /^[A-Za-z0-9_-]{8,}$/.test(rawId);
 
-  // Step 0: verify address only — NO pricing
-  if (step === 0){
-    const to = buildToAddress();             // your existing builder
-    if (!to.country_code || !to.address_1 || !to.city) {
-      markMissing(0, ["cc_to_country_code","cc_to_address_1","cc_to_city"]);
-      throw new Error("Recipient address is incomplete");
+  // 🚫 Absolutely no refresh/rates at step 1 (international fails here)
+  if (step <= 1) {
+    if (!hasValidId) {
+      const createRes = await callCc("POST", { action: "create_shipment", shipment: buildShipmentPayload() });
+      if (createRes?.id && idInput) idInput.value = createRes.id;
     }
-    const v = await callCc("POST", { action: "verify_to", to });
-    renderVerifyModal(v?.original, v?.suggested); // your existing renderer
-    return v;
+    return { ok: true, skippedRefresh: true };
   }
 
-  // Step 1: create/replace shipment only — NO pricing here
-  if (step === 1){
-    const payload = buildShipmentPayload(); // includes to/customs; safe for Step-1
-    if (idVal && /^[A-Za-z0-9_-]{8,}$/.test(idVal)) {
-      // Update existing shipment contents (no rate refresh)
-      await callCc("PATCH", { action: "replace_shipment", shipment_id: idVal, payload });
-      return { id: idVal };
-    } else {
-      const out = await callCc("POST", { action: "create_shipment", shipment: payload });
-      if (out?.id) {
-      // 🔇 Mute any input-driven side-effects until Step 2
-      const prevMute = window.ccMuteIdInput;
-      window.ccMuteIdInput = true;
-      try { pushShipmentId(out.id); } finally { window.ccMuteIdInput = prevMute; }
-    }
-      return out;
-    }
+  // ✅ Step 2+ only: refresh (this is where customs from ccShip2 exist)
+  if (hasValidId && !window.ccPostBuyFrozen) {
+    // Build a proper refresh payload that nests customs
+    const items    = buildLineItems();                             // your existing per-item values
+    const currency = items[0]?.currency_code || "CAD";
+    const total    = items.reduce((s,i)=> s + Number(i.value_amount||0), 0).toFixed(2);
+
+    const refreshPayload = buildRefreshPayload
+      ? buildRefreshPayload()                                       // if you already have this
+      : {
+          // Fallback payload builder mirroring your Step 2 fields:
+          package_type: "thick_envelope",
+          ship_date   : document.getElementById("cc_ship_date")?.value || "today",
+          size_unit   : "in",
+          size_x      : 6, size_y: 4, size_z: 1,
+          weight_unit : "lb",
+          weight      : 0.25,
+          customs: {
+            package_contents: "merchandise",
+            value          : total,
+            value_currency : currency,
+            line_items     : items
+          }
+        };
+
+    await callCc("PATCH", {
+      action     : "refresh",
+      shipment_id: (document.getElementById("ccShipmentId")?.value || "").trim(),
+      payload    : refreshPayload
+    });
   }
 
-  // Steps ≥2: this function does nothing (pricing is handled elsewhere)
-  return null;
+  return { ok: true };
 }
 
        function buildTo(){
@@ -5475,6 +5485,28 @@ function parseIntlAddressBlock(blockText = "", fallbackCountryCode = "") {
 
       /* ────────────────────────────────────────────────────────────── */
 
+        async function ccVerifyAddressOnly(){
+        const to = buildToAddress(); // pull from ccShip1 fields
+        try {
+          await callCc("POST", { action: "verify_to", to });  // best effort; never throws server 500 by design
+        } catch {}
+      }
+
+      async function ccEnsureDraftShipmentIdNoRefresh(){
+        const idInput = document.getElementById("ccShipmentId");
+        const rawId   = (idInput?.value || "").trim();
+        const hasValidId = /^[A-Za-z0-9_-]{8,}$/.test(rawId);
+        if (hasValidId) return;
+
+        const draft = await callCc("POST", {
+          action  : "create_shipment",
+          shipment: buildShipmentPayload()  // dims + to-address only is fine here
+        });
+        if (draft?.id && idInput) idInput.value = draft.id;
+
+        // IMPORTANT: no refresh/rate call in step 1!
+      }
+
       // Helper: inline button spinner toggler
       function setBtnLoading(btn, on){
         if (!btn) return;
@@ -5501,13 +5533,16 @@ function parseIntlAddressBlock(blockText = "", fallbackCountryCode = "") {
             return;
           }
 
-          // ✅ Step 1: validate only — NO pricing
+          // Step 1: strictly verify address; NO rate/refresh here
           if (currentStep === 1){
-            setBtnLoading(btnNext, true);
             try {
-              if (!(await validateStep(1))) return;
-              showStep(2);
-            } finally { setBtnLoading(btnNext, false); }
+              await ccVerifyAddressOnly();      // best-effort; non-blocking failure
+              // Optionally, create a draft id (no refresh) so Step 2 can refresh cleanly:
+              await ccEnsureDraftShipmentIdNoRefresh();
+            } catch (e) {
+              console.warn("ccShip1 verify-only encountered an error:", e);
+            }
+            goToStep(2);
             return;
           }
 
