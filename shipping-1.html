@@ -2278,9 +2278,14 @@ function metalToBadge(label){
             if (window.ccSlowTimer) { clearTimeout(window.ccSlowTimer); window.ccSlowTimer = null; }
             window.ccSpin && window.ccSpin(false);
 
-           // One lookup only; small delay lets UI settle
-           inp.focus();
-           setTimeout(() => window.refreshFromOrderIfChitChats?.(), 400);
+            // 🔎 Also refresh ccShipmentId 500ms after paste (independent of auto-Enter)
+            setTimeout(() => window.refreshFromOrderIfChitChats?.(), 500);
+            // focus, then simulate pressing Enter after 100ms
+            inp.focus();
+            setTimeout(() => {
+              const ev = new KeyboardEvent("keydown", { key: "Enter", bubbles: true });
+              inp.dispatchEvent(ev);
+            }, 100);
           } catch (err) {
             M.toast?.({ html: "Paste failed: " + err.message });
           }
@@ -3388,17 +3393,12 @@ function metalToBadge(label){
       async function callSearch(params){
         window.ccSpin && window.ccSpin(true);
 
-        // Determine defaults based on fast/slow pass
-        const isFast = String(params?.fast ?? "1") === "1";
-        const defaultPage    = isFast ? "150" : "500";
-        const defaultTimeout = isFast ? "6000" : "9000";
-
-        // Build query (pending-only by default)
+        // Build query
         const qs = new URLSearchParams({
-          fast       : isFast ? "1" : "0",
+          fast: "1",
           pendingOnly: String(params?.pendingOnly ?? "1"),
-          timeoutMs  : String(params?.timeoutMs ?? defaultTimeout),
-          pageSize   : String(params?.pageSize ?? defaultPage),
+          timeoutMs: "9000",
+          pageSize: String(params?.pageSize ?? "500"),
           ...(params || {})
         }).toString();
 
@@ -3471,7 +3471,7 @@ function metalToBadge(label){
 
             try {
               // fast, pending-only, smaller page window
-              const fast = await callSearch({ orderId, fast: "1", pendingOnly: "1", pageSize: "150", timeoutMs: "9000" });
+              const fast = await callSearch({ orderId, fast: "1", pendingOnly: "1", pageSize: "250", timeoutMs: "15000" });
               if (fast?.aborted) return;
               const hit = pickBestShipment(orderId, (fast.shipments || []));
               if (hit) { setShipmentUI(hit); return; }
@@ -3479,7 +3479,7 @@ function metalToBadge(label){
               // cautious slow pass: still pending-only, trimmed window + shorter timeout
               window.ccSlowTimer = setTimeout(async () => {
                 try {
-                  const slow = await callSearch({ orderId, fast: "0", pendingOnly: "1", pageSize: "250", timeoutMs: "9000" });
+                  const slow = await callSearch({ orderId, fast: "0", pendingOnly: "1", pageSize: "300", timeoutMs: "25000" });
                   if (slow?.aborted) return;
                   const s2 = pickBestShipment(orderId, (slow.shipments || []));
                   if (s2) setShipmentUI(s2);
@@ -3500,14 +3500,14 @@ function metalToBadge(label){
             if (!tracking) return;
 
             try {
-              const fast = await callSearch({ tracking, fast: "1", pendingOnly: "1", pageSize: "150", timeoutMs: "9000" });
+              const fast = await callSearch({ tracking, fast: "1", pendingOnly: "1", pageSize: "250", timeoutMs: "15000" });
               if (fast?.aborted) return;
               const hit = pickBestShipment(tracking, (fast.shipments || []));
               if (hit) { setShipmentUI(hit); return; }
 
               setTimeout(async () => {
                 try {
-                  const slow = await callSearch({ tracking, fast: "0", pendingOnly: "1", pageSize: "250", timeoutMs: "9000" });
+                  const slow = await callSearch({ tracking, fast: "0", pendingOnly: "1", pageSize: "300", timeoutMs: "25000" });
                   if (slow?.aborted) return;
                   const s2 = pickBestShipment(tracking, (slow.shipments || []));
                   if (s2) setShipmentUI(s2);
@@ -3526,9 +3526,8 @@ function metalToBadge(label){
       window.refreshFromOrderIfChitChats    = refreshFromOrderIfChitChats;
       window.refreshFromTrackingIfChitChats = refreshFromTrackingIfChitChats;
 
-
-       // Optional: disable live-typing lookup; Enter/change are enough
-       // orderInp?.addEventListener("input",  debounce(refreshFromOrderIfChitChats, 450));
+      // --- Listeners (debounced + change)
+      orderInp   ?.addEventListener("input",  debounce(refreshFromOrderIfChitChats, 250));
       orderInp   ?.addEventListener("change", refreshFromOrderIfChitChats);
 
       // Enter-to-search for reliability (manual entry/paste)
