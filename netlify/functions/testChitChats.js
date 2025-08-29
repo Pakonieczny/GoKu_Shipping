@@ -683,11 +683,12 @@ async function recreateShipmentIfUnbought(id, desiredClientPayload, { authH, url
         const hdrs = event.headers || {};
         const headerToken = hdrs["access-token"] || hdrs["Access-Token"] || hdrs["ACCESS-TOKEN"];
         const etsyToken   = String(body.etsy_access_token || headerToken || "").trim();
-        const shopId      = process.env.ETSY_SHOP_ID || String(body.shop_id || "").trim();
+        // Prefer SHOP_ID env; fall back to legacy ETSY_SHOP_ID or body.shop_id
+        const shopId      = String(process.env.SHOP_ID || body.shop_id || "").trim();
 
         if (!receiptId)  return bad(400, "receipt_id required");
         if (!etsyToken)  return bad(401, "Missing Etsy access token");
-        if (!shopId)     return bad(500, "Missing ETSY_SHOP_ID");
+        if (!shopId)     return bad(500, "Missing SHOP_ID");
 
         // If caller didn’t supply tracking, pull it from the referenced shipment
         let shipmentId = String(body.shipment_id || body.shipmentId || "").trim();
