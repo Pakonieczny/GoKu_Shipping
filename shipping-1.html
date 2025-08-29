@@ -5093,17 +5093,6 @@ function buildRefreshPayload(){
               });
 
 
-                // 🆕 Also try the raw API shape for phone (normalize helper may omit it)
-                const phoneFromApi =
-                  det?.phone ||
-                  det?.to?.phone ||
-                  det?.recipient?.phone ||
-                  det?.ship_to?.phone || null;
-                if (phoneFromApi) {
-                  const el = document.getElementById("cc_to_phone");
-                  if (el && !el.value.trim()) el.value = String(phoneFromApi);
-                }
-
                 // 🆕 If still blank & destination is international, set fallback
                 const ccCode = String(
                   fromCc.to_country_code || det?.to?.country_code || det?.country_code || ""
