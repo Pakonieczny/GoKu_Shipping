@@ -20,7 +20,7 @@
 
 const CORS = {
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "Content-Type,Authorization,Access-Token,X-Api-Key,x-api-key",  
+  "Access-Control-Allow-Headers": "Content-Type,Authorization",
   "Access-Control-Allow-Methods": "GET,POST,OPTIONS,PATCH"
 };
 
@@ -672,81 +672,6 @@ async function recreateShipmentIfUnbought(id, desiredClientPayload, { authH, url
         return ok(out.data);
       }
 
-      // (B_1) Complete: push tracking to Etsy (using Chit Chats data when needed)
-      if (action === "complete") {
-        const receiptId  = String(body.receipt_id || body.order_id || "").trim();
-        let   tracking   = String(body.tracking || "").trim();
-        let   carrierIn  = String(body.carrier  || "").trim().toLowerCase();
-        const notify     = body.notify !== false;
-
-        // Accept Etsy token via header or body (we prefer header, but body works too)
-        const hdrs = event.headers || {};
-        const headerToken = hdrs["access-token"] || hdrs["Access-Token"] || hdrs["ACCESS-TOKEN"];
-        const etsyToken   = String(body.etsy_access_token || headerToken || "").trim();
-        // Prefer SHOP_ID env; fall back to legacy ETSY_SHOP_ID or body.shop_id
-        const shopId      = String(process.env.SHOP_ID || body.shop_id || "").trim();
-
-         // NEW: Etsy requires x-api-key on every v3 call
-          const xApiKey     = String(
-            hdrs["x-api-key"] || hdrs["X-Api-Key"] ||
-            process.env.ETSY_CLIENT_ID || process.env.ETSY_KEYSTRING || ""
-          ).trim();
-
-        if (!receiptId)  return bad(400, "receipt_id required");
-        if (!etsyToken)  return bad(401, "Missing Etsy access token");
-        if (!shopId)     return bad(500, "Missing SHOP_ID");
-        if (!xApiKey)    return bad(500, "Missing x-api-key (Etsy app keystring)");
-
-        // If caller didn’t supply tracking, pull it from the referenced shipment
-        let shipmentId = String(body.shipment_id || body.shipmentId || "").trim();
-        if (!tracking && shipmentId) {
-          try {
-            const rs = await fetch(url(`/shipments/${encodeURIComponent(shipmentId)}`), { headers: authH });
-            const os = await wrap(rs);
-            if (os.ok) {
-              const s = os.data?.shipment || os.data || {};
-              tracking = String(
-                s.carrier_tracking_code || s.tracking_code || s.tracking || s.trackingNumber || ""
-              ).trim();
-              // If no explicit carrier provided, infer from destination
-              if (!carrierIn) {
-                const ccode = String(s.to_country_code || s.country_code || s.country || "").toUpperCase();
-                carrierIn = (ccode === "US" || ccode.includes("UNITED STATES")) ? "usps" : "chitchats";
-              }
-            }
-          } catch (e) {
-            // non-fatal – continue; Etsy will reject if tracking still missing
-          }
-        }
-
-        if (!tracking) return bad(400, "tracking required");
-
-        const carrierName = mapCarrierForEtsy(carrierIn);
-
-        // Post to Etsy v3
-        const etsyResp = await fetch(
-          `https://openapi.etsy.com/v3/application/shops/${encodeURIComponent(shopId)}/receipts/${encodeURIComponent(receiptId)}/tracking`,
-          {
-            method: "POST",
-            headers: {
-              "Authorization": `Bearer ${etsyToken}`,
-              "x-api-key"   : xApiKey,
-              "Content-Type": "application/json"
-            },
-            body: JSON.stringify({
-              tracking_code: tracking,
-              carrier_name : carrierName,
-              send_buyer_notification: !!notify
-            })
-          }
-        );
-
-        const etsyOut = await wrap(etsyResp);
-        if (!etsyOut.ok) return bad(etsyOut.status, etsyOut.data);
-
-        return ok({ success: true, receipt_id: receiptId, tracking_code: tracking, carrier_name: carrierName });
-      }
-
       // (C) Batches: add/remove shipments
       const batchId = numberish(body.batch_id ?? body.batchId ?? qp.batch_id ?? qp.batchId);
       const oneIdFromQuery = qp.id ? String(qp.id) : "";
@@ -795,10 +720,3 @@ function numberish(v) {
    const s = String(raw || "").toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 20);
     return s || undefined;
   }
-  function mapCarrierForEtsy(x){
-  const s = String(x || "").toLowerCase();
-  if (s === "usps" || s.includes("usps")) return "USPS";
-  if (s === "chitchats" || s.includes("chit")) return "Chit Chats";
-  if (s === "canadapost" || s === "canada_post" || s.includes("canada")) return "Canada Post";
-  return s.toUpperCase() || "OTHER";
-}
