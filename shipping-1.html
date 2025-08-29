@@ -3868,9 +3868,21 @@ if (!to.to_address_1) console.debug("No street in shipment:", { keys:Object.keys
     
       // ---------- Enhanced fetch wrapper (global) ----------
       window.callCc = async function callCc(method, body, qs = "") {
+        // Forward a fresh Etsy token on every request so server-side 'complete' can read it
+        let etsyHeader = "";
+        try {
+          if (typeof ensureFreshToken === "function") {
+            await ensureFreshToken();
+          }
+          if (window.TOKEN_KEYS) {
+            etsyHeader = localStorage.getItem(TOKEN_KEYS.access) || "";
+          }
+        } catch {}
+        const headers = { "Content-Type": "application/json" };
+        if (etsyHeader) headers["Access-Token"] = etsyHeader; // server checks header or body
         const resp = await fetch(`${getCcEndpoint()}${qs}`, {
           method,
-          headers: { "Content-Type": "application/json" },
+          headers,
           body: body ? JSON.stringify(body) : undefined
         });
         const text = await resp.text();
