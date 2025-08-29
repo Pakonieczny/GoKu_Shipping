@@ -3974,7 +3974,17 @@ window.callCc = callCc;
           }
         }
 
-        if (id) return await callCc("GET", null, `?resource=shipment&id=${encodeURIComponent(id)}`);
+        if (id) {
+          try {
+            return await callCc("GET", null, `?resource=shipment&id=${encodeURIComponent(id)}`);
+          } catch (e) {
+            if (e.status === 404) {
+              // stale / foreign ID → wipe and proceed to create a fresh one
+              idInput.value = "";
+              pushShipmentId("");
+            } else { throw e; }
+          }
+        }
         const out = await callCc("POST", { action:"create_shipment", shipment: buildShipmentPayload() });
         pushShipmentId(out?.id);
         return out.shipment || (out.id ? await callCc("GET", null, `?resource=shipment&id=${encodeURIComponent(out.id)}`) : null);
