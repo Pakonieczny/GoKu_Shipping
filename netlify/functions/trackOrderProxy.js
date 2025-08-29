@@ -30,6 +30,20 @@ exports.handler = async event => {
     const headers = { Authorization: `Basic ${auth}` };
     const baseURL = "https://ssapi.shipstation.com";
 
+    // Build a storeId → marketplaceName map so we can prefer Etsy orders
+      async function loadStoreMap(headers, baseURL) {
+        try {
+          const r = await fetch(`${baseURL}/stores`, { headers });
+          if (!r.ok) return new Map();
+          const stores = await r.json();
+          const m = new Map();
+          for (const s of stores || []) m.set(s.storeId, String(s.marketplaceName || "").toLowerCase());
+          return m;
+        } catch {
+          return new Map();
+        }
+      }
+
     /* 1️⃣  Find the ShipStation order that matches the Etsy receiptId */
     const lookupURL = `${baseURL}/orders?orderNumber=${encodeURIComponent(orderNumber)}`;
     const lookupResp = await fetch(lookupURL, { headers });
@@ -39,10 +53,18 @@ exports.handler = async event => {
     }
 
     const { orders } = await lookupResp.json();
-    const orderId = orders?.[0]?.orderId;
+    if (!orders || !orders.length) {
+      return { statusCode: 404, body: "Order not found in ShipStation" };
+    }
+
+    // Prefer the Etsy store’s copy if multiples exist
+    const storeMap = await loadStoreMap(headers, baseURL);
+    const etsyOrder = orders.find(o => /etsy/.test(storeMap.get(o.storeId) || ""));
+    const chosen    = etsyOrder || orders[0];
+    const orderId   = chosen?.orderId;
 
     if (!orderId) {
-      return { statusCode: 404, body: "Order not found in ShipStation" };
+      return { statusCode: 404, body: "Order not found in ShipStation (no Etsy match)" };
     }
 
     /* 2️⃣  Mark the order as shipped (ShipStation notifies Etsy automatically) */
