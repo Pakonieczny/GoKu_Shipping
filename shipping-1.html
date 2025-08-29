@@ -3471,7 +3471,7 @@ function metalToBadge(label){
 
             try {
               // fast, pending-only, smaller page window
-              const fast = await callSearch({ orderId, fast: "1", pendingOnly: "1", pageSize: "50", timeoutMs: "15000" });
+              const fast = await callSearch({ orderId, fast: "1", pendingOnly: "1", pageSize: "50", timeoutMs: "20000" });
               if (fast?.aborted) return;
               const hit = pickBestShipment(orderId, (fast.shipments || []));
               if (hit) { setShipmentUI(hit); return; }
@@ -3479,7 +3479,7 @@ function metalToBadge(label){
               // cautious slow pass: still pending-only, trimmed window + shorter timeout
               window.ccSlowTimer = setTimeout(async () => {
                 try {
-                  const slow = await callSearch({ orderId, fast: "0", pendingOnly: "1", pageSize: "300", timeoutMs: "25000" });
+                  const slow = await callSearch({ orderId, fast: "0", pendingOnly: "1", pageSize: "100", timeoutMs: "15000" });
                   if (slow?.aborted) return;
                   const s2 = pickBestShipment(orderId, (slow.shipments || []));
                   if (s2) setShipmentUI(s2);
@@ -3507,7 +3507,7 @@ function metalToBadge(label){
 
               setTimeout(async () => {
                 try {
-                  const slow = await callSearch({ tracking, fast: "0", pendingOnly: "1", pageSize: "300", timeoutMs: "20000" });
+                  const slow = await callSearch({ tracking, fast: "0", pendingOnly: "1", pageSize: "100", timeoutMs: "15000" });
                   if (slow?.aborted) return;
                   const s2 = pickBestShipment(tracking, (slow.shipments || []));
                   if (s2) setShipmentUI(s2);
@@ -4297,52 +4297,37 @@ window.callCc = callCc;
       }
 
 async function ccValidateAgainstApi(step){
-  const payload    = buildShipmentPayload();
-  const rawId      = (document.getElementById("ccShipmentId")?.value || "").trim();
-  const hasValidId = /^[A-Za-z0-9_-]{8,}$/.test(rawId);
+  const idInput = document.getElementById("ccShipmentId");
+  const idVal   = (idInput?.value || "").trim();
 
-  try {
-    // ✅ Step 0: verify address only — NO rates here
-    if (step === 0) {
-      await callCc("POST", { action: "verify_to", to: buildTo() });
-      return [];
+  // Step 0: verify address only — NO pricing
+  if (step === 0){
+    const to = buildToAddress();             // your existing builder
+    if (!to.country_code || !to.address_1 || !to.city) {
+      markMissing(0, ["cc_to_country_code","cc_to_address_1","cc_to_city"]);
+      throw new Error("Recipient address is incomplete");
     }
-
-    // ✅ Step 1: ensure a draft shipment exists, or replace it — NO rates here
-    if (step === 1) {
-      if (!hasValidId) {
-        // Create draft (first time)
-        const created = await callCc("POST", { action: "create_shipment", shipment: buildShipmentPayload() });
-        if (created?.id) {
-          pushShipmentId(created.id);
-          const idInput = document.getElementById("ccShipmentId");
-          if (idInput) idInput.value = created.id;
-        }
-        return [];
-      }
-
-      // Replace existing draft (not purchased)
-      const response = await callCc("PATCH", {
-        action     : "replace_shipment",
-        shipment_id: rawId,
-        payload    : buildShipmentPayload()
-      });
-      if (response?.id) {
-        pushShipmentId(response.id);
-        const idInput = document.getElementById("ccShipmentId");
-        if (idInput) idInput.value = response.id;
-      }
-      return [];
-    }
-
-    // 🔕 Steps ≥2: never fetch rates here; Step 2 → Next will handle it explicitly.
-    return [];
-  } catch (e) {
-    handleCcApiError(step, e);
-    const stepEl = document.getElementById("ccStep" + step);
-    const ids = Array.from(stepEl.querySelectorAll(".cc-field.cc-missing [id]")).map(n => n.id);
-    return ids;
+    const v = await callCc("POST", { action: "verify_to", to });
+    renderVerifyModal(v?.original, v?.suggested); // your existing renderer
+    return v;
   }
+
+  // Step 1: create/replace shipment only — NO pricing here
+  if (step === 1){
+    const payload = buildShipmentPayload(); // includes to/customs; safe for Step-1
+    if (idVal && /^[A-Za-z0-9_-]{8,}$/.test(idVal)) {
+      // Update existing shipment contents (no rate refresh)
+      await callCc("PATCH", { action: "replace_shipment", shipment_id: idVal, payload });
+      return { id: idVal };
+    } else {
+      const out = await callCc("POST", { action: "create_shipment", shipment: payload });
+      if (out?.id) { idInput.value = out.id; idInput.dispatchEvent(new Event("input",{bubbles:true})); }
+      return out;
+    }
+  }
+
+  // Steps ≥2: this function does nothing (pricing is handled elsewhere)
+  return null;
 }
 
        function buildTo(){
@@ -5499,34 +5484,34 @@ function parseIntlAddressBlock(blockText = "", fallbackCountryCode = "") {
           }
 
           // ✅ Step 1: validate only — NO pricing
-              if (currentStep === 1){
-                setBtnLoading(btnNext, true);
-                try {
-                  if (!(await validateStep(1))) return;
-                  showStep(2);
-                } finally { setBtnLoading(btnNext, false); }
-                return;
-              }
+          if (currentStep === 1){
+            setBtnLoading(btnNext, true);
+            try {
+              if (!(await validateStep(1))) return;
+              showStep(2);
+            } finally { setBtnLoading(btnNext, false); }
+            return;
+          }
 
-              // ✅ Step 2: price, then move to Step 3
-              if (currentStep === 2){
-                setBtnLoading(btnNext, true);
-                try {
-                  if (!(await validateStep(2))) return;
-                  await ensureShipment();
-                  const idInput = document.getElementById("ccShipmentId");
-                  const id = (idInput?.value || "").trim();
-                  if (!id) { M.toast?.({ html: "Could not create shipment — check Recipient & Description." }); return; }
-                  await refreshRates();    // ← pricing happens here only
-                  showStep(3);
-                } finally { setBtnLoading(btnNext, false); }
-                return;
-              }
-            } catch (err) {
-              setBtnLoading(btnNext, false);
-              handleCcApiError(err);
-            }
-          });
+          // ✅ Step 2: price, then move to Step 3
+          if (currentStep === 2){
+            setBtnLoading(btnNext, true);
+            try {
+              if (!(await validateStep(2))) return;
+              await ensureShipment();
+              const idInput = document.getElementById("ccShipmentId");
+              const id = (idInput?.value || "").trim();
+              if (!id) { M.toast?.({ html: "Could not... create shipment — check Recipient & Description." }); return; }
+              await refreshRates();    // ← pricing happens here only
+              showStep(3);
+            } finally { setBtnLoading(btnNext, false); }
+            return;
+          }
+        } catch (err) {
+          setBtnLoading(btnNext, false);
+          handleCcApiError(err);
+        }
+      });
 
       btnRefresh.addEventListener("click", async () => {
         try{
