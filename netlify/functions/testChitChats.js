@@ -697,6 +697,11 @@ async function recreateShipmentIfUnbought(id, desiredClientPayload, { authH, url
           // Intl (non-CA/US) shipments must have a phone
           if (cc && cc !== "CA" && cc !== "US" && !hasPhone) {
             const refreshPayload = { phone: "416-606-2476", country_code: cc };
+            // Build a refresh payload the same way our /refresh path does
+            let refreshPayload = adaptRefreshPayload({ to: { phone: "416-606-2476", country_code: cc }, country_code: cc });
+            refreshPayload = await ensureCountryCodeForRefresh(id, refreshPayload);
+            // Also keep a top-level phone for tenants that expect it there
+            if (!refreshPayload.phone) refreshPayload.phone = "416-606-2476";
             const r2 = await fetch(url(`/shipments/${encodeURIComponent(id)}/refresh`), {
               method: "PATCH",
               headers: authH,
