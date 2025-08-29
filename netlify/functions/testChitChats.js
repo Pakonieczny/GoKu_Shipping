@@ -429,6 +429,9 @@ async function recreateShipmentIfUnbought(id, desiredClientPayload, { authH, url
         const orderId  = (qp.orderId || "").toString().trim();
         const tracking = (qp.tracking || "").toString().trim();
         const want     = orderId || tracking;
+          // query toggles / sizing
+        const fastMode = ["1","true","yes"].includes(String(qp.fast || "").toLowerCase());
+        const pageSize = qp.pageSize ? Number(qp.pageSize) : 500;
         if (!want) return ok({ shipments: [] });
 
         // Hard cap the total work this search will do (defaults to 9s if not provided)
@@ -478,9 +481,12 @@ async function recreateShipmentIfUnbought(id, desiredClientPayload, { authH, url
           try {
             const r = await fetch(url(`/shipments/${encodeURIComponent(want)}`), { headers: authH });
             const o = await wrap(r);
-            if (o.ok && o.data && o.data.id) {
-              const kept = await applyPendingFilter([o.data]);
-              return ok({ shipments: kept });
+            if (o.ok) {
+              const one = o.data?.shipment || o.data;
+              if (one && one.id) {
+                const kept = await applyPendingFilter([one]);
+                return ok({ shipments: kept });
+              }
             }
           } catch {}
         }
@@ -504,7 +510,7 @@ async function recreateShipmentIfUnbought(id, desiredClientPayload, { authH, url
         // 4) Deep fallback: prefer fresh pools first, respect time budget
         const pools = ["ready", "processing", "archived"];
         for (const st of pools) {
-          if (timedOut()) return ok({ shipments: [] });
+
           const pageResults = await paginateShipments({
             status: st,
             pageSize,
