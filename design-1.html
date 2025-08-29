@@ -3721,17 +3721,27 @@ const observer = new MutationObserver(async () => {
       : activeChev.querySelector(".down")
     ).style.color = "#2196F3";
 
-    /* render fully-hydrated rows ------------------------------------ */
-    currentReceipts.sort(
-      (a, b) => (b.order_number || b.receipt_id) - (a.order_number || a.receipt_id)
-    );
+    /* render fully-hydrated rows — RESPECT current sortKey/sortDir */
+    (function applyCurrentSort(){
+      const key = sortKey || "order";
+      currentReceipts.sort((a, b) => {
+        switch (key) {
+          case "order":  return sortDir * ((a.order_number || a.receipt_id) - (b.order_number || b.receipt_id));
+          case "ship":   return sortDir * ((a._shipTS || 0) - (b._shipTS || 0));
+          case "gold":   return sortDir * ((a._metalCounts?.Gold   || 0) - (b._metalCounts?.Gold   || 0));
+          case "silver": return sortDir * ((a._metalCounts?.Silver || 0) - (b._metalCounts?.Silver || 0));
+          case "rose":   return sortDir * ((a._metalCounts?.["Rose G"] || 0) - (b._metalCounts?.["Rose G"] || 0));
+          case "14k":    return sortDir * ((a._metalCounts?.["14K"]   || 0) - (b._metalCounts?.["14K"]   || 0));
+          default:       return 0;
+        }
+      });
+    })();
 
-    // Drop anything already completed (server or local ledger)
-    currentReceipts = currentReceipts.filter(r => !completedOrders.has(String(r.receipt_id)));
+/* keep completed rows hidden */
+currentReceipts = currentReceipts.filter(r => !completedOrders.has(String(r.receipt_id)));
 
-    renderOrderBoxes(currentReceipts);
-    applyAllLocksToDOM();   // ← repaint light-red locks after the list is rebuilt
-
+renderOrderBoxes(currentReceipts);
+applyAllLocksToDOM();   // repaint locks after the list is rebuilt
     /* ─── INSERT ↓↓↓  (exactly here) ───────────────────────────── */
     await refreshStaffNoteIDs();
     markStaffNoteOrders();
