@@ -2632,7 +2632,10 @@ function metalToBadge(label){
           if (typeof ensureFreshToken === "function") {
             await ensureFreshToken();
           }
-          const etsyAccess = (window.TOKEN_KEYS && localStorage.getItem(TOKEN_KEYS.access)) || "";
+           // Always read the live token; no window.TOKEN_KEYS guard needed
+            const etsyAccess =
+              localStorage.getItem((typeof TOKEN_KEYS !== "undefined" && TOKEN_KEYS?.access)
+                ? TOKEN_KEYS.access : "access_token") || "";
 
           // Use current Chit Chats shipment (if visible) as source-of-truth
           const ccId = (document.getElementById("ccShipmentId")?.value || "").trim();
@@ -3868,24 +3871,48 @@ if (!to.to_address_1) console.debug("No street in shipment:", { keys:Object.keys
     
       // ---------- Enhanced fetch wrapper (global) ----------
       window.callCc = async function callCc(method, body, qs = "") {
-        // Forward a fresh Etsy token on every request so server-side 'complete' can read it
-        let etsyHeader = "";
-        try {
-          if (typeof ensureFreshToken === "function") {
-            await ensureFreshToken();
-          }
-          if (window.TOKEN_KEYS) {
-            etsyHeader = localStorage.getItem(TOKEN_KEYS.access) || "";
-          }
-        } catch {}
+        // 1) Ensure token is fresh
+        try { if (typeof ensureFreshToken === "function") await ensureFreshToken(); } catch {}
+
+        // 2) Read token robustly (supports TOKEN_KEYS or plain 'access_token')
+        const token =
+          localStorage.getItem((typeof TOKEN_KEYS !== "undefined" && TOKEN_KEYS?.access)
+            ? TOKEN_KEYS.access : "access_token") || "";
+
+        // 3) Build headers; server reads 'access-token' (case-insensitive)
         const headers = { "Content-Type": "application/json" };
-        if (etsyHeader) headers["Access-Token"] = etsyHeader; // server checks header or body
-        const resp = await fetch(`${getCcEndpoint()}${qs}`, {
-          method,
-          headers,
-          body: body ? JSON.stringify(body) : undefined
-        });
-        const text = await resp.text();
+        if (token) headers["access-token"] = token;
+
+        // 4) Include token in body as a fallback if we're sending JSON
+        let finalBody = undefined;
+        if (body && typeof body === "object" && !(body instanceof FormData)) {
+          if (token && !body.etsy_access_token) {
+            body = { ...body, etsy_access_token: token };
+          }
+          finalBody = JSON.stringify(body);
+        }
+
+        // 5) Timeout guard to avoid UI hangs on cold starts/upstream slowness
+        const ctrl = new AbortController();
+        const to   = setTimeout(() => ctrl.abort(), 25000);
+
+        let resp, text;
+        try {
+          resp = await fetch(`${getCcEndpoint()}${qs}`, {
+            method,
+            headers,
+            body: finalBody,
+            signal: ctrl.signal
+          });
+          text = await resp.text();
+        } catch (err) {
+          clearTimeout(to);
+          const e = new Error(err?.name === "AbortError" ? "ChitChats request timed out" : (err?.message || "ChitChats request failed"));
+          e.status = 504;
+          throw e;
+        }
+        clearTimeout(to);
+
         let data; try { data = JSON.parse(text); } catch { data = text; }
 
         if (!resp.ok) {
