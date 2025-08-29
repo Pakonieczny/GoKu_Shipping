@@ -2640,8 +2640,6 @@ function metalToBadge(label){
           let payload      = await resp.text();              // Etsy proxy returns raw text
           let errMsg       = "";
 
-          /* 401s are auto-handled inside apiFetch (refresh + headless OAuth). */
-
           /* ── forbidden (403) usually means missing shipping permission scope ── */
           if (resp.status === 403) {
             errMsg = "Forbidden – Etsy says this action isn’t allowed.";
@@ -3884,6 +3882,34 @@ function metalToBadge(label){
         }
         return data;
       }
+
+      /* ---------- Enhanced fetch wrapper (keeps raw error for mapping) ---------- */
+      async function callCc(method, body, qs=""){
+        const resp = await fetch(`${getCcEndpoint()}${qs}`, {     
+          method,
+          headers: { "Content-Type":"application/json" },
+          body: body ? JSON.stringify(body) : undefined
+        });
+        const text = await resp.text();
+        let data; try { data = JSON.parse(text); } catch { data = text; }
+
+        if (!resp.ok) {
+          const pick = k => (data && typeof data[k] === "string" ? data[k] : null);
+          const message = typeof data === "string"
+            ? data
+            : (pick("error") || pick("message") || JSON.stringify(data, null, 2));
+
+          const e = new Error(message);
+          e.status = resp.status;
+          e.raw    = data;
+          try { console.debug("ChitChats proxy error", resp.status, data); } catch {}
+          throw e;
+        }
+        return data;
+      }
+
+/* ADD THIS → expose globally for any external handlers/modules */
+window.callCc = callCc;
 
       // Keep the ID field and global in sync wherever a shipment gets created/refreshed
       function pushShipmentId(id){
