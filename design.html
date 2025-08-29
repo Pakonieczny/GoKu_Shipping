@@ -1197,16 +1197,19 @@ function startCompletedRealtime(){
   async function pollCompletedTargeted(){
     const ids = visibleReceipts();
     if (!ids.length) return { changed:false };
+
     const qs  = encodeURIComponent(ids.join(","));
     const r   = await fetch(`${functionsBaseUrl}/firebaseOrders?dcFor=${qs}`);
     const j   = await r.json();
     const live = new Set((j.orderNumbers || []).map(String));
-    removeIfCompleted(live);
-    // reconcile "undo" (completed earlier but now missing)
-    const undone = [...knownCompleted].filter(id => !live.has(id));
-    if (undone.length) await reAddUndone(undone);
-    knownCompleted = live;
-    return { changed: live.size > 0 || undone.length > 0 };
+
+    // Remove any rows that are confirmed as completed (server truth is additive)
+    removeIfCompleted(live); // paints + removes rows, updates UI
+
+    // Monotonic: once completed, we remember it locally until explicit Undo
+    knownCompleted = new Set([...knownCompleted, ...live]);
+
+    return { changed: live.size > 0 };
   }
 
   // adaptive cadence, sleeps until UI interaction resumes
@@ -2660,12 +2663,43 @@ const selectRow = async (row) => {
       return; 
   }
 
+  /* LOCAL, write-once completion ledger (immutable unless explicit Undo) */
+  const LOCAL_COMPLETED_KEY = "designCompletedLedger.v1";
+
+  function loadLocalCompleted(){
+    try {
+      const m = JSON.parse(localStorage.getItem(LOCAL_COMPLETED_KEY) || "{}");
+      return new Set(Object.keys(m).map(String));
+    } catch (_) {
+      return new Set();
+    }
+  }
+
+  function addToLocalCompleted(ids){
+    try {
+      const m = JSON.parse(localStorage.getItem(LOCAL_COMPLETED_KEY) || "{}");
+      const now = Date.now();
+      (ids || []).map(String).forEach(id => { m[id] = now; });
+      localStorage.setItem(LOCAL_COMPLETED_KEY, JSON.stringify(m));
+    } catch (_) {}
+  }
+
+  function removeFromLocalCompleted(ids){
+    try {
+      const m = JSON.parse(localStorage.getItem(LOCAL_COMPLETED_KEY) || "{}");
+      (ids || []).map(String).forEach(id => { delete m[id]; });
+      localStorage.setItem(LOCAL_COMPLETED_KEY, JSON.stringify(m));
+    } catch (_) {}
+  }
 
   /* ── save completed list to Firebase (optionally accept a subset) ── */
   async function persistCompleted(ids){
     try{
       const list = Array.isArray(ids) ? ids.map(String) : [...completedOrders];
       if (!list.length) return;
+
+
+      addToLocalCompleted(list);   // ← NEW: make the completion sticky locally
 
       // Use bulk when possible to minimize round-trips
       const resp = await fetch(`${functionsBaseUrl}/firebaseOrders`, {
@@ -2770,6 +2804,7 @@ const selectRow = async (row) => {
 
     /* sync everything back to server (removes from Completed so others re-add) */
     await unsetDesignCompletedBulk(lastClearedReceipts);
+    removeFromLocalCompleted(lastClearedReceipts); // ← NEW
 
     persistSelection();
     updateCounters();
@@ -2845,6 +2880,9 @@ const selectRow = async (row) => {
       if (json.success && Array.isArray(json.orderNumbers)) {
         json.orderNumbers.forEach(id => completedOrders.add(String(id)));
       }
+
+      // NEW: merge local sticky completions
+      loadLocalCompleted().forEach(id => completedOrders.add(String(id)));
 
       // paint & tidy
       highlightCompletedRows();
@@ -3540,41 +3578,43 @@ async function refreshStaffNoteIDs(opts = {}) {
   loadPositions();   // re-apply positions now that #orderHeaderBar exists
 
   /* 2.  SORT ROUTINE ---------------------------------------------------- */
-  bar.addEventListener("click", ev => {
-    const hdr = ev.target.closest(".hdr");
-    if (!hdr) return;
+    bar.addEventListener("click", ev => {
+      const hdr = ev.target.closest(".hdr");
+      if (!hdr) return;
 
-    /* toggle dir / remember key */
-    const key = hdr.dataset.key;
-    sortDir = (sortKey === key) ? -sortDir : 1;
-    sortKey = key;
+      // toggle dir / remember key
+      const key = hdr.dataset.key;
+      sortDir = (sortKey === key) ? -sortDir : 1;
+      sortKey = key;
 
-    /* run the sort */
-    currentReceipts.sort((a, b) => {
-      switch (key) {
-        case "order":  return sortDir * ((a.order_number || a.receipt_id) - (b.order_number || b.receipt_id));
-        case "ship":   return sortDir * ((a._shipTS || 0) - (b._shipTS || 0));
-        case "gold":   return sortDir * ((a._metalCounts.Gold || 0) - (b._metalCounts.Gold || 0));
-        case "silver": return sortDir * ((a._metalCounts.Silver || 0) - (b._metalCounts.Silver || 0));
-        case "rose":   return sortDir * ((a._metalCounts["Rose G"] || 0) - (b._metalCounts["Rose G"] || 0));
-        case "14k":    return sortDir * ((a._metalCounts["14K"] || 0)   - (b._metalCounts["14K"] || 0));
-      }
-      return 0;
+      // run the sort
+      currentReceipts.sort((a, b) => {
+        switch (key) {
+          case "order":  return sortDir * ((a.order_number || a.receipt_id) - (b.order_number || b.receipt_id));
+          case "ship":   return sortDir * ((a._shipTS || 0) - (b._shipTS || 0));
+          case "gold":   return sortDir * ((a._metalCounts.Gold || 0) - (b._metalCounts.Gold || 0));
+          case "silver": return sortDir * ((a._metalCounts.Silver || 0) - (b._metalCounts.Silver || 0));
+          case "rose":   return sortDir * ((a._metalCounts["Rose G"] || 0) - (b._metalCounts["Rose G"] || 0));
+          case "14k":    return sortDir * ((a._metalCounts["14K"] || 0)   - (b._metalCounts["14K"] || 0));
+        }
+        return 0;
+      });
+
+      // arrow colour logic
+      bar.querySelectorAll(".chev .up, .chev .down").forEach(el => (el.style.color = "#ffffff"));
+      if (sortDir === 1) hdr.querySelector(".chev .up").style.color = "#2196F3";
+      else               hdr.querySelector(".chev .down").style.color = "#2196F3";
+
+      // ✅ re-render now (single click)
+      currentReceipts = currentReceipts.filter(r => !completedOrders.has(String(r.receipt_id)));
+      renderOrderBoxes(currentReceipts);
+      reapplySelectionAndLocks?.();
+      applyMetalFilter?.();
+      markStaffNoteOrders?.();
+      requestAnimationFrame(highlightCompletedRows);
     });
 
-    /* arrow colour logic ------------------------------------------- */
-    bar.querySelectorAll(".chev .up, .chev .down")
-       .forEach(el => (el.style.color = "#ffffff"));        // reset all
 
-    if (sortDir === 1) {
-      hdr.querySelector(".chev .up").style.color   = "#2196F3";  // ASC
-    } else {
-      hdr.querySelector(".chev .down").style.color = "#2196F3";  // DESC
-    }
-
-    renderOrderBoxes(currentReceipts);
-    applyAllLocksToDOM(); // repaint locks on the new DOM
-  });
 
 /* 3. HOOK INTO buildNewOrderList() — pass-through only -------------- */
 const originalBuild = buildNewOrderList;
@@ -3593,28 +3633,33 @@ if (!origFuncTxt.includes("window._lastDisplayReceipts")) {
   );
 }
 
+let __obsBusy = false;
+
 /** observer detects page changes and triggers initial render --------- */
 const observer = new MutationObserver(async () => {
+  if (__obsBusy) return;
   if (window._lastDisplayReceipts && window._lastDisplayReceipts !== currentReceipts) {
-    /* lightweight receipts landed — hydrate them BEFORE we draw rows */
-    currentReceipts = window._lastDisplayReceipts;
+    __obsBusy = true;
+    try {
+      /* lightweight receipts landed — hydrate them BEFORE we draw rows */
+      currentReceipts = window._lastDisplayReceipts;
 
-    /* FULL HYDRATE: pull transactions for EVERY receipt -------------- */
-    await Promise.all(
-      currentReceipts.map(async r => {
-        const id = String(r.receipt_id);
-        if (!orderCache[id]) {
-          try {
-            const ord = await pullEtsyOrderDetails(id);   // heavy call
-            orderCache[id] = ord?.transactions || [];
-          } catch (err) {
-            console.warn("Detail pull failed for", id, err);
-            orderCache[id] = [];
+      /* FULL HYDRATE: pull transactions for EVERY receipt -------------- */
+      await Promise.all(
+        currentReceipts.map(async r => {
+          const id = String(r.receipt_id);
+          if (!orderCache[id]) {
+            try {
+              const ord = await pullEtsyOrderDetails(id);
+              orderCache[id] = ord?.transactions || [];
+            } catch (err) {
+              console.warn("Detail pull failed for", id, err);
+              orderCache[id] = [];
+            }
           }
-        }
-        r.transactions = orderCache[id];                  // attach full data
-      })
-    );
+          r.transactions = orderCache[id];
+        })
+      );
 
     /* helper fields for sorting + metal counts ----------------------- */
     currentReceipts.forEach(r => {
@@ -3676,17 +3721,34 @@ const observer = new MutationObserver(async () => {
       : activeChev.querySelector(".down")
     ).style.color = "#2196F3";
 
-    /* render fully-hydrated rows ------------------------------------ */
-    currentReceipts.sort(
-      (a, b) => (b.order_number || b.receipt_id) - (a.order_number || a.receipt_id)
-    );
-    renderOrderBoxes(currentReceipts);
-    applyAllLocksToDOM();   // ← repaint light-red locks after the list is rebuilt
+    /* render fully-hydrated rows — RESPECT current sortKey/sortDir */
+    (function applyCurrentSort(){
+      const key = sortKey || "order";
+      currentReceipts.sort((a, b) => {
+        switch (key) {
+          case "order":  return sortDir * ((a.order_number || a.receipt_id) - (b.order_number || b.receipt_id));
+          case "ship":   return sortDir * ((a._shipTS || 0) - (b._shipTS || 0));
+          case "gold":   return sortDir * ((a._metalCounts?.Gold   || 0) - (b._metalCounts?.Gold   || 0));
+          case "silver": return sortDir * ((a._metalCounts?.Silver || 0) - (b._metalCounts?.Silver || 0));
+          case "rose":   return sortDir * ((a._metalCounts?.["Rose G"] || 0) - (b._metalCounts?.["Rose G"] || 0));
+          case "14k":    return sortDir * ((a._metalCounts?.["14K"]   || 0) - (b._metalCounts?.["14K"]   || 0));
+          default:       return 0;
+        }
+      });
+    })();
 
+/* keep completed rows hidden */
+currentReceipts = currentReceipts.filter(r => !completedOrders.has(String(r.receipt_id)));
+
+renderOrderBoxes(currentReceipts);
+applyAllLocksToDOM();   // repaint locks after the list is rebuilt
     /* ─── INSERT ↓↓↓  (exactly here) ───────────────────────────── */
     await refreshStaffNoteIDs();
     markStaffNoteOrders();
 
+    } finally {
+      __obsBusy = false;
+    }
   }
 });
 observer.observe(document.getElementById("newOrderContainer"), { childList: true });
