@@ -4170,18 +4170,23 @@ window.callCc = callCc;
           const selectedLi = ratesList?.querySelector("li.selected");
           if (selectedLi?.dataset?.postageType) postageType = selectedLi.dataset.postageType;
 
-          // 🆕 Ensure intl shipments have a phone (push to CC before /buy)
+          // ✅ Ensure intl shipments have a phone (patch the TO block before /buy)
           try {
-            const ccCode = String(document.getElementById("cc_to_country_code")?.value || "").toUpperCase();
+            const ccCode  = String(document.getElementById("cc_to_country_code")?.value || "").toUpperCase();
             const phoneEl = document.getElementById("cc_to_phone");
             const needsPhone = ccCode && ccCode !== "CA" && ccCode !== "US";
+
+            // If intl + blank phone, set your fallback into the UI
             if (needsPhone && phoneEl && !phoneEl.value.trim()) {
               phoneEl.value = "416-606-2476";
-              // Update the draft on Chit Chats so /buy won’t fail
+            }
+
+            // Push a full TO to Chit Chats so validation sees the phone on the server
+            if (needsPhone) {
               await callCc("PATCH", {
-                action: "refresh",
-                shipment_id: shipmentId,
-                payload: { phone: phoneEl.value, country_code: ccCode }
+                action     : "refresh",
+                shipment_id: (document.getElementById("ccShipmentId")?.value || "").trim(),
+                payload    : { to: buildTo(), ...refreshPayload }
               });
             }
           } catch (_) {}
@@ -4371,25 +4376,25 @@ async function ccValidateAgainstApi(step){
   return { ok: true };
 }
 
-       function buildTo(){
-         const country = (document.getElementById("cc_to_country_code").value || "").trim().toUpperCase();
-         let   phone   = (document.getElementById("cc_to_phone").value || "").trim();
-         if (country && country !== "CA" && country !== "US" && !phone) {
-           phone = "416-606-2476";
-           try { document.getElementById("cc_to_phone").value = phone; } catch {}
-         }
-         return {
-           name          : document.getElementById("cc_to_name").value.trim(),
-           address_1     : document.getElementById("cc_to_address_1").value.trim(),
-           address_2     : document.getElementById("cc_to_address_2").value.trim() || null,
-           city          : document.getElementById("cc_to_city").value.trim(),
-           province_code : document.getElementById("cc_to_province_code").value.trim(),
-           postal_code   : document.getElementById("cc_to_postal_code").value.trim(),
-           country_code  : country,
-           phone         : phone || null,
-           email         : document.getElementById("cc_to_email").value.trim() || null
-         };
-       }
+        function buildTo(){
+          const country = (document.getElementById("cc_to_country_code").value || "").trim().toUpperCase();
+          let   phone   = (document.getElementById("cc_to_phone").value || "").trim();
+          if (country && country !== "CA" && country !== "US" && !phone) {
+            phone = "416-606-2476";
+            try { document.getElementById("cc_to_phone").value = phone; } catch {}
+          }
+          return {
+            name         : document.getElementById("cc_to_name").value.trim(),
+            address_1    : document.getElementById("cc_to_address_1").value.trim(),
+            address_2    : document.getElementById("cc_to_address_2").value.trim() || null,
+            city         : document.getElementById("cc_to_city").value.trim(),
+            province_code: document.getElementById("cc_to_province_code").value.trim(),
+            postal_code  : document.getElementById("cc_to_postal_code").value.trim(),
+            country_code : country,
+            phone        : phone || null,
+            email        : document.getElementById("cc_to_email").value.trim() || null
+          };
+        }
 
        function buildToAddress(){ return buildTo(); }
 
@@ -5084,6 +5089,7 @@ function buildRefreshPayload(){
                 to_name:"cc_to_name", to_address_1:"cc_to_address_1", to_address_2:"cc_to_address_2",
                 to_city:"cc_to_city", to_province_code:"cc_to_province_code",
                 to_postal_code:"cc_to_postal_code", to_country_code:"cc_to_country_code",
+                
                 // 🆕 try to fill phone when normalizeToAddressShape provided it
                 to_phone:"cc_to_phone"
               };
@@ -5091,26 +5097,6 @@ function buildRefreshPayload(){
                 const v = fromCc[k];
                 if (v != null) document.getElementById(map[k]).value = v;
               });
-
-              // 🆕 Also try the raw API shape for phone (normalize helper may omit it)
-              const phoneFromApi =
-                det?.phone ||
-                det?.to?.phone ||
-                det?.recipient?.phone ||
-                det?.ship_to?.phone || null;
-              if (phoneFromApi) {
-                const el = document.getElementById("cc_to_phone");
-                if (el && !el.value.trim()) el.value = String(phoneFromApi);
-              }
-
-              // 🆕 If still blank & destination is international, set fallback
-              const ccCode = String(
-                fromCc.to_country_code || det?.to?.country_code || det?.country_code || ""
-              ).toUpperCase();
-              if (ccCode && ccCode !== "CA" && ccCode !== "US") {
-                const el = document.getElementById("cc_to_phone");
-                if (el && !el.value.trim()) el.value = "416-606-2476";
-              }
 
               orig = fromCc;
             }
