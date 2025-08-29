@@ -2964,32 +2964,33 @@ function metalToBadge(label){
       prefillCustomsFromEtsy();
     }
 
-    async function fetchListingImages(listingId){
-      const responseLI = await fetch("/.netlify/functions/etsyImages?listingId=" + listingId, {
-        headers: { "access-token": localStorage.getItem("access_token") }
-      });
-      if(!responseLI.ok){
-        throw new Error("Error fetching images for listing " + listingId + ": " + responseLI.statusText);
+      async function fetchListingImages(listingId){
+        const responseLI = await apiFetch(`/etsyImages?listingId=${encodeURIComponent(listingId)}`);
+        if (!responseLI.ok) {
+          const t = await responseLI.text();
+          throw new Error(`Error fetching images for listing ${listingId}: ${responseLI.status} ${t}`);
+        }
+        const dataLI = await responseLI.json();
+        return dataLI.results;
       }
-      const dataLI = await responseLI.json();
-      return dataLI.results;
-    }
 
     function pullEtsyOrderDetails(orderNumber){
       console.log("Pulling Etsy order details for order number:", orderNumber);
-      var token = localStorage.getItem("access_token");
-      return fetch("/.netlify/functions/etsyOrderProxy?orderId=" + encodeURIComponent(orderNumber), {
-        headers: { "access-token": token }
-      })
-      .then(function(r){ return r.json(); })
-      .then(function(data){
-        console.log("Etsy Order Data:", data);
+      return apiFetch(`/etsyOrderProxy?orderId=${encodeURIComponent(orderNumber)}`)
+        .then(async (r) => {
+          if (!r.ok) {
+            const t = await r.text();
+            throw new Error(`etsyOrderProxy ${r.status}: ${t}`);
+          }
+          return r.json();
+        })
+    .then(function(data){        console.log("Etsy Order Data:", data);
         // Gift fields now sourced from Etsy receipt
         window.receiptIsGift = Boolean(data.is_gift);
 
-// 🎁 Pull from Etsy (gift_message if present, else buyer message)
-window.receiptGiftMessage     = String((data.gift_message || data.message_from_buyer || "")).trim();
-window.receiptGiftMessageFrom = String((data.buyer_email || data.buyer_name || "")).trim();
+        // 🎁 Pull from Etsy (gift_message if present, else buyer message)
+        window.receiptGiftMessage     = String((data.gift_message || data.message_from_buyer || "")).trim();
+        window.receiptGiftMessageFrom = String((data.buyer_email || data.buyer_name || "")).trim();
 
         // Etsy receipts include gift_wrap_price as a money object { amount, divisor, currency_code }
         const gwp = data.gift_wrap_price;
