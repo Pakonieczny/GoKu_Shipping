@@ -3279,186 +3279,248 @@ function metalToBadge(label){
       window.refreshFromOrderIfChitChats    = refreshFromOrderIfChitChats;
       window.refreshFromTrackingIfChitChats = refreshFromTrackingIfChitChats;
 
-/* ── Guard: ignore immediate blank rewrites of #ccShipmentId ─────────── */
-(function guardCcShipmentId(){
-  const el = document.getElementById("ccShipmentId");
-  if (!el || el._guarded) return;
+      /* ── Guard: ignore immediate blank rewrites of #ccShipmentId ─────────── */
+      (function guardCcShipmentId(){
+        const el = document.getElementById("ccShipmentId");
+        if (!el || el._guarded) return;
 
-  const desc = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value");
-  if (!desc || typeof desc.get !== "function" || typeof desc.set !== "function") return;
+        const desc = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value");
+        if (!desc || typeof desc.get !== "function" || typeof desc.set !== "function") return;
 
-  Object.defineProperty(el, "value", {
-    configurable: true,
-    get(){ return desc.get.call(this); },
-    set(v){
-      try {
-        const isBlank = v == null || String(v).trim() === "";
-        const setAtMs = Number(this.dataset?.setAt || 0);
-        const fresh   = setAtMs && (Date.now() - setAtMs) < 2000;
+        Object.defineProperty(el, "value", {
+          configurable: true,
+          get(){ return desc.get.call(this); },
+          set(v){
+            try {
+              const isBlank = v == null || String(v).trim() === "";
+              const setAtMs = Number(this.dataset?.setAt || 0);
+              const fresh   = setAtMs && (Date.now() - setAtMs) < 2000;
 
-        // 🚫 ignore “just after set” blanking
-        if (fresh && isBlank) return;
+              // 🚫 ignore “just after set” blanking
+              if (fresh && isBlank) return;
 
-        // forward the assignment
-        desc.set.call(this, v);
+              // forward the assignment
+              desc.set.call(this, v);
 
-        // ✅ stop spinner immediately when a real value lands
-        if (!isBlank && typeof window !== "undefined" && typeof window.ccSpin === "function") {
-          window.ccSpin(false);
+              // ✅ stop spinner immediately when a real value lands
+              if (!isBlank && typeof window !== "undefined" && typeof window.ccSpin === "function") {
+                window.ccSpin(false);
+              }
+            } catch (err) {
+              // Never allow setter errors to break init wiring
+              try { desc.set.call(this, v); } catch (_) {}
+            }
+          }
+        });
+
+        el._guarded = true;
+
+        // Spinner just for Chit Chats shipment-id lookups
+        const ccSpinnerEl = document.getElementById("ccIdSpinner");
+        let _ccSpinDepth = 0;
+        function ccSpin(on){
+          if (!ccSpinnerEl) return;
+          if (on) {
+            _ccSpinDepth++;
+            ccSpinnerEl.style.display = "inline-block";
+          } else {
+            _ccSpinDepth = Math.max(0, _ccSpinDepth - 1);
+            if (_ccSpinDepth === 0) ccSpinnerEl.style.display = "none";
+          }
         }
-      } catch {
-        // Never allow setter errors to break init wiring
-        try { desc.set.call(this, v); } catch {}
+        window.ccSpin = ccSpin; // ← expose globally
+      })();
+
+      // NEW: current in-flight ChitChats search + slow-pass timer
+      window.ccSearchAbort = null;
+      window.ccSlowTimer   = null;
+
+      // Always use the Netlify functions base
+      const fnBase = "/.netlify/functions";
+      // Single source of truth for the Chit Chats proxy function name:
+      const chitChatsFn = `${fnBase}/testChitChats`; // ← change 'testChitChats' here if your function is named differently
+
+      // expose globally so any IIFE/module can access it
+      window.chitChatsFn = chitChatsFn;
+
+      // Resolve the proxy endpoint even if the global isn't set yet
+      function getCcEndpoint(){
+        if (typeof window !== "undefined" && window.chitChatsFn) return window.chitChatsFn;
+        try {
+          const base = location.hostname.includes("goldenspike")
+            ? "https://shipping-1.goldenspike.app/.netlify/functions"
+            : "/.netlify/functions";
+          return `${base}/testChitChats`;
+        } catch (_) {
+          // very defensive fallback (e.g., SSR or unusual sandbox)
+          return "/.netlify/functions/testChitChats";
+        }
       }
-    }
-  });
 
-  el._guarded = true;
+      // --- Utils
+      const debounce = (fn, ms=250) => { let t; return (...a)=>{ clearTimeout(t); t = setTimeout(()=>fn(...a), ms); }; };
+      const reinitSelect = (el) => {
+        try {
+          if (window.M && window.M.FormSelect) {
+            const inst = window.M.FormSelect.getInstance(el);
+            if (inst) inst.destroy();
+            window.M.FormSelect.init(el);
+          }
+        } catch {}
+      };
 
-  // Spinner just for Chit Chats shipment-id lookups
-  const ccSpinnerEl = document.getElementById("ccIdSpinner");
-  let _ccSpinDepth = 0;
-  function ccSpin(on){
-    if (!ccSpinnerEl) return;
-    if (on) { _ccSpinDepth++; ccSpinnerEl.style.display = "inline-block"; }
-    else {
-      _ccSpinDepth = Math.max(0, _ccSpinDepth - 1);
-      if (_ccSpinDepth === 0) ccSpinnerEl.style.display = "none";
-    }
-  }
-  window.ccSpin = ccSpin; // ← expose globally
-})();
+      // Remember a batch we want to select (only if it’s still open)
+      let _desiredBatchId = "";
 
-// NEW: current in-flight ChitChats search + slow-pass timer
-window.ccSearchAbort = null;
-window.ccSlowTimer   = null;
+      /** Try to select a batch id if it exists in the current open-only options */
+      function preselectBatchIfOpen(id){
+        _desiredBatchId = String(id || "").trim();
+        if (!_desiredBatchId || !ccBatchSelect) return;
 
-// Always use the Netlify functions base
-const fnBase = "/.netlify/functions";
-// Single source of truth for the Chit Chats proxy function name:
-const chitChatsFn = `${fnBase}/testChitChats`; // ← change 'testChitChats' here if your function is named differently
+        const has = Array.from(ccBatchSelect.options || []).some(o => o.value === _desiredBatchId);
+        if (has) {
+          ccBatchSelect.value = _desiredBatchId;
+          reinitSelect(ccBatchSelect);
+        }
+      }
 
-// expose globally so any IIFE/module can access it
-window.chitChatsFn = chitChatsFn;
+      async function safeJSON(resp){
+        const txt = await resp.text();
+        try { return JSON.parse(txt); } catch { return { error: txt.slice(0,200) }; }
+      }
+      // Use the deployed proxy function (testChitChats) and its "search" resource
+      // Always limit to Pending (open) batches on the server
+      async function callSearch(params){
+        window.ccSpin && window.ccSpin(true);
 
-// Resolve the proxy endpoint even if the global isn't set yet (defensive)
-function getCcEndpoint(){
-  if (typeof window !== "undefined" && window.chitChatsFn) return window.chitChatsFn;
-  try {
-    const base = location.hostname.includes("goldenspike")
-      ? "https://shipping-1.goldenspike.app/.netlify/functions"
-      : "/.netlify/functions";
-    return `${base}/testChitChats`;
-  } catch (_) {
-    return "/.netlify/functions/testChitChats";
-  }
-}
+        // Build query
+        const qs = new URLSearchParams({
+          fast: "1",
+          pendingOnly: String(params?.pendingOnly ?? "1"),
+          timeoutMs: "9000",
+          pageSize: String(params?.pageSize ?? "500"),
+          ...(params || {})
+        }).toString();
 
-/* ---------- Utils used by search ---------- */
-async function safeJSON(resp){
-  const txt = await resp.text();
-  try { return JSON.parse(txt); } catch { return { error: txt.slice(0,200) }; }
-}
+        // 🔪 Cancel any in-flight search, then create a fresh controller
+        try { window.ccSearchAbort?.abort(); } catch {}
+        const ctrl = new AbortController();
+        window.ccSearchAbort = ctrl;
 
-/* ---------- Hardened search wrapper ---------- */
-// Uses a short client-side timeout to avoid hanging UIs (even if server 504s)
-async function callSearch(params){
-  window.ccSpin && window.ccSpin(true);
+        try {
+          const resp = await fetch(`${fnBase}/testChitChats?resource=search&${qs}`, {
+            credentials: "include",
+            signal: ctrl.signal
+          });
+          return await safeJSON(resp);
+        } catch (err) {
+          // Swallow user-initiated cancels quietly
+          if (err?.name === "AbortError") return { aborted: true };
+          throw err;
+        } finally {
+          // Only clear if we're still the active controller
+          if (window.ccSearchAbort === ctrl) window.ccSearchAbort = null;
+          window.ccSpin && window.ccSpin(false);
+        }
+      }
 
-  // Base defaults; caller can override explicitly via params
-  const isFast = String(params?.fast ?? "1") === "1";
-  const qs = new URLSearchParams({
-    // keep server-aware knobs
-    fast: isFast ? "1" : "0",
-    pendingOnly: String(params?.pendingOnly ?? (isFast ? "1" : "1")), // keep search narrow first
-    pageSize: String(params?.pageSize ?? (isFast ? 100 : 250)),
-    timeoutMs: String(params?.timeoutMs ?? (isFast ? 6000 : 9000)),
-    ...(params || {})
-  }).toString();
+      // --- UI setters
+      function setShipmentUI(s){
+        if (!s) {
+          // Do not wipe a previously found id on a miss/timeout. Keep showing the last good value.
+          return;
+        }
 
-  // AbortController + client-side kill switch
-  try { window.ccSearchAbort?.abort(); } catch {}
-  const ctrl = new AbortController();
-  window.ccSearchAbort = ctrl;
+        const sid = s?.id != null ? String(s.id) : "";
+        if (ccShipEl) {
+          ccShipEl.value = sid;
+          ccShipEl.dataset.setAt = String(Date.now()); // 🕒 stamp when we set it
+          // ✅ hide spinner as soon as the textbox updates
+          window.ccSpin && window.ccSpin(false);
+        }        
+        window.ccShipmentId    = sid;
+        window.currentCarrier  = "ChitChats";
+        window.currentTracking = s.carrier_tracking_code || sid || window.currentTracking;
 
-  // client-side timeout (abort fetch if server is slow)
-  const clientTimeoutMs = isFast ? 6000 : 9000;
-  const kill = setTimeout(() => { try { ctrl.abort(); } catch {} }, clientTimeoutMs);
+        // If this shipment already belongs to a batch, try to preselect it (only if it’s open)
+        if (s.batch_id != null) {
+          preselectBatchIfOpen(String(s.batch_id));
+        }
+      }
 
-  try {
-    const resp = await fetch(`${fnBase}/testChitChats?resource=search&${qs}`, {
-      credentials: "include",
-      signal: ctrl.signal
-    });
-    return await safeJSON(resp);
-  } catch (err) {
-    if (err?.name === "AbortError") return { aborted: true, clientTimeout: true };
-    throw err;
-  } finally {
-    clearTimeout(kill);
-    if (window.ccSearchAbort === ctrl) window.ccSearchAbort = null;
-    window.ccSpin && window.ccSpin(false);
-  }
-}
+        // --- Lookups
+         function pickBestShipment(target, list = []){
+          const norm = (s) => String(s || "").toLowerCase().replace(/[^a-z0-9]/g,"");
+          const t = norm(target);
+          const fields = (s) => [s.order_id, s.order_number, s.reference, s.reference_number, s.reference_value, s.carrier_tracking_code, s.tracking_code, s.tracking_number];
+          const exact = list.find(s => fields(s).some(v => norm(v) === t));
+          if (exact) return exact;
+          const partial = list.find(s => fields(s).some(v => {
+            const n = norm(v); return n && (n.includes(t) || t.includes(n));
+          }));
+          return partial || list[0] || null;
+        }
 
-/* ---------- Order/tracking lookups (light → fallback) ---------- */
-async function refreshFromOrderIfChitChats(){
-  if (window.ccPostBuyFrozen) return;
-  const orderId = (orderInp?.value || "").trim();
-  if (!orderId) return;
+          async function refreshFromOrderIfChitChats(){
+            if (window.ccPostBuyFrozen) return;
+            const orderId = (orderInp?.value || "").trim();
+            if (!orderId) return;
 
-  // cancel any previous fallback timer
-  if (window.ccSlowTimer) { clearTimeout(window.ccSlowTimer); window.ccSlowTimer = null; }
+            // kill any previous slow-pass timer
+            if (window.ccSlowTimer) { clearTimeout(window.ccSlowTimer); window.ccSlowTimer = null; }
 
-  try {
-    // Fast pass: narrow + small page
-    const fast = await callSearch({ orderId, fast: "1", pendingOnly: "1" });
-    const hit  = pickBestShipment(orderId, (fast.shipments || []));
-    if (hit) { setShipmentUI(hit); return; }
+            try {
+              // fast, pending-only, smaller page window
+              const fast = await callSearch({ orderId, fast: "1", pendingOnly: "1", pageSize: "150", timeoutMs: "6000" });
+              if (fast?.aborted) return;
+              const hit = pickBestShipment(orderId, (fast.shipments || []));
+              if (hit) { setShipmentUI(hit); return; }
 
-    // Slow pass: still bounded; broaden only if needed
-    window.ccSlowTimer = setTimeout(async () => {
-      try {
-        const slow = await callSearch({ orderId, fast: "0", pendingOnly: "1", pageSize: 250 });
-        const s1   = pickBestShipment(orderId, (slow.shipments || []));
-        if (s1) { setShipmentUI(s1); return; }
+              // cautious slow pass: still pending-only, trimmed window + shorter timeout
+              window.ccSlowTimer = setTimeout(async () => {
+                try {
+                  const slow = await callSearch({ orderId, fast: "0", pendingOnly: "1", pageSize: "150", timeoutMs: "7000" });
+                  if (slow?.aborted) return;
+                  const s2 = pickBestShipment(orderId, (slow.shipments || []));
+                  if (s2) setShipmentUI(s2);
+                } catch (err) {
+                  if (err?.status === 504) {
+                    try { M.toast?.({ html: "Chit Chats search timed out. Open ‘Edit Shipment’ → Next to create/find." }); } catch {}
+                  }
+                }
+              }, 600);
+            } catch (e) {
+              console.warn("order search failed", e);
+            }
+          }
 
-        // Optional last resort: one more broadened try, but tiny page + short timeout
-        const broad = await callSearch({ orderId, fast: "0", pendingOnly: "0", pageSize: 100, timeoutMs: 6000 });
-        const s2    = pickBestShipment(orderId, (broad.shipments || []));
-        if (s2) setShipmentUI(s2);
-      } catch {}
-    }, 900);
-  } catch (e) {
-    console.warn("order search failed", e);
-  }
-}
+          async function refreshFromTrackingIfChitChats(){
+            if (window.ccPostBuyFrozen) return;
+            const tracking = (trackingInp?.value || "").trim();
+            if (!tracking) return;
 
-async function refreshFromTrackingIfChitChats(){
-  if (window.ccPostBuyFrozen) return;
-  const tracking = (trackingInp?.value || "").trim();
-  if (!tracking) return;
+            try {
+              const fast = await callSearch({ tracking, fast: "1", pendingOnly: "1", pageSize: "150", timeoutMs: "6000" });
+              if (fast?.aborted) return;
+              const hit = pickBestShipment(tracking, (fast.shipments || []));
+              if (hit) { setShipmentUI(hit); return; }
 
-  try {
-    const fast = await callSearch({ tracking, fast: "1", pendingOnly: "1" });
-    const hit  = pickBestShipment(tracking, (fast.shipments || []));
-    if (hit) { setShipmentUI(hit); return; }
-
-    setTimeout(async () => {
-      try {
-        const slow = await callSearch({ tracking, fast: "0", pendingOnly: "1", pageSize: 250 });
-        const s1   = pickBestShipment(tracking, (slow.shipments || []));
-        if (s1) { setShipmentUI(s1); return; }
-
-        const broad = await callSearch({ tracking, fast: "0", pendingOnly: "0", pageSize: 100, timeoutMs: 6000 });
-        const s2    = pickBestShipment(tracking, (broad.shipments || []));
-        if (s2) setShipmentUI(s2);
-      } catch {}
-    }, 900);
-  } catch (e) {
-    console.warn("tracking search failed", e);
-  }
-}
+              setTimeout(async () => {
+                try {
+                  const slow = await callSearch({ tracking, fast: "0", pendingOnly: "1", pageSize: "150", timeoutMs: "7000" });
+                  if (slow?.aborted) return;
+                  const s2 = pickBestShipment(tracking, (slow.shipments || []));
+                  if (s2) setShipmentUI(s2);
+                } catch (err) {
+                  if (err?.status === 504) {
+                    try { M.toast?.({ html: "Chit Chats search timed out. Use Edit Shipment to proceed." }); } catch {}
+                  }
+                }
+              }, 600);
+            } catch (e) {
+              console.warn("tracking search failed", e);
+            }
+          }
 
       // make accessible to the Paste button’s 500ms trigger
       window.refreshFromOrderIfChitChats    = refreshFromOrderIfChitChats;
