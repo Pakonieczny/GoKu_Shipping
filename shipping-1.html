@@ -2610,60 +2610,61 @@ function metalToBadge(label){
       });
     }
 
-    /* =========================================================
-     *  Complete Order – POST tracking to Etsy (via Netlify)
-     * =======================================================*/
-    const completeBtn = document.getElementById("completeOrderBtn");
-    const trackingInp = document.getElementById("trackingNumberInput");
-    const carrierSel  = document.getElementById("carrierSelect");
+      /* =========================================================
+       *  Complete Order – POST tracking to Etsy (via Netlify)
+       * =======================================================*/
+      const completeBtn = document.getElementById("completeOrderBtn");
+      const trackingInp = document.getElementById("trackingNumberInput");
+      const carrierSel  = document.getElementById("carrierSelect");
 
-    if (completeBtn) {
-      completeBtn.addEventListener("click", async () => {
-        const receiptId = document.getElementById("etsyOrderNumber").value.trim();
-        const tracking  = (trackingInp.value || "").trim();
-        const carrier   = carrierSel.value;          // "chitchats" | "usps"
+      if (completeBtn) {
+        completeBtn.addEventListener("click", async () => {
+          const receiptId = document.getElementById("etsyOrderNumber").value.trim();
+          const tracking  = (trackingInp.value || "").trim();
+          const carrier   = carrierSel.value; // "chitchats" | "usps"
 
-        if (!receiptId) { M.toast({ html: "Enter order #"   }); return; }
-        if (!tracking)  { M.toast({ html: "Enter tracking #" }); return; }
-        if (!carrier)   { M.toast({ html: "Choose carrier"  }); return; }
+          if (!receiptId) { M.toast({ html: "Enter order #"   }); return; }
+          if (!tracking)  { M.toast({ html: "Enter tracking #" }); return; }
+          if (!carrier)   { M.toast({ html: "Choose carrier"  }); return; }
 
-        /* helper → perform one POST via resilient apiFetch */
-        const postTracking = () =>
-          apiFetch("/trackOrderProxy", {
-            method : "POST",
-            headers: { "Content-Type": "application/json" },
-            body   : JSON.stringify({ receiptId, tracking, carrier })
-          });
+          try {
+            // 1) Ensure Etsy token is fresh and read it
+            if (typeof ensureFreshToken === "function") {
+              await ensureFreshToken();
+            }
+            const etsyAccess =
+              localStorage.getItem((typeof TOKEN_KEYS !== "undefined" && TOKEN_KEYS?.access)
+                ? TOKEN_KEYS.access : "access_token") || "";
 
-        try {
-          let resp         = await postTracking();
-          let payload      = await resp.text();              // Etsy proxy returns raw text
-          let errMsg       = "";
+            // 2) Use current Chit Chats shipment (if any) as reference
+            const ccId = (document.getElementById("ccShipmentId")?.value || "").trim();
 
-          /* 401s are auto-handled inside apiFetch (refresh + headless OAuth). */
+            // 3) Always call the server to COMPLETE (ShipStation + Etsy)
+            //    - server uses carrier to branch (USPS vs Chit Chats)
+            const resp = await window.callCc("PATCH", {
+              action          : "complete",
+              receipt_id      : receiptId,
+              shipment_id     : ccId,
+              tracking        : tracking,
+              carrier         : carrier,      // "chitchats" or "usps"
+              notify          : true,
+              etsy_access_token: etsyAccess
+            });
 
-          /* ── forbidden (403) usually means missing shipping permission scope ── */
-          if (resp.status === 403) {
-            errMsg = "Forbidden – Etsy says this action isn’t allowed.";
-          } else if (!resp.ok) {
-            /* try to JSON-parse any error payload, else show raw text */
-          try   { errMsg = JSON.parse(payload).error || "Server error"; }
-          catch (e) { errMsg = payload || "Server error"; }
+            if (!resp || resp.error) {
+              throw new Error(resp?.error || "Server error");
+            }
+
+            // 4) Success UI
+            M.toast({ html: "Etsy order marked complete 🎉" });
+            trackingInp.value        = "";
+            carrierSel.selectedIndex = 0;
+          } catch (err) {
+            console.error(err);
+            M.toast({ html: "Complete failed: " + err.message });
           }
-
-          if (errMsg) throw new Error(errMsg);
-
-          /* 🎉 success */
-          M.toast({ html: "Etsy order marked complete 🎉" });
-          trackingInp.value        = "";
-          carrierSel.selectedIndex = 0;
-
-        } catch (err) {
-          console.error(err);
-          M.toast({ html: "Complete failed: " + err.message });
-        }
-      });
-    }
+        });
+      }
 
     async function updateImageGrid(data){
       var items = [];
