@@ -4474,85 +4474,75 @@ async function ccValidateAgainstApi(step){
           };
         }
 
-        function buildRefreshPayload(){
-          // gather units/dims
-          const wUnit = document.getElementById("cc_weight_unit").value;
-          const weight = Number(document.getElementById("cc_weight").value || 0);
-          const sUnit = document.getElementById("cc_size_unit").value;
-          const sx = Number(document.getElementById("cc_size_x").value || 0);
-          const sy = Number(document.getElementById("cc_size_y").value || 0);
-          const sz = Number(document.getElementById("cc_size_z").value || 0);
+function buildRefreshPayload(){
+  // gather units/dims
+  const wUnit = document.getElementById("cc_weight_unit").value;
+  const weight = Number(document.getElementById("cc_weight").value || 0);
+  const sUnit = document.getElementById("cc_size_unit").value;
+  const sx = Number(document.getElementById("cc_size_x").value || 0);
+  const sy = Number(document.getElementById("cc_size_y").value || 0);
+  const sz = Number(document.getElementById("cc_size_z").value || 0);
 
-          // compute totals & items first
-          const toCountry     = (document.getElementById("cc_to_country_code").value || "").trim().toUpperCase();
-          const valueCurrency = (document.getElementById("cc_value_currency")?.value || (toCountry === "CA" ? "CAD" : "USD"));
-          const lines         = collectCcLineItems();
-          const totalViaUnits = lines.reduce((s, li) => s + (Number(li.unit_value||0) * Number(li.quantity||0)), 0);
-          const grandInput    = Number(document.getElementById("cc_grand_total")?.value || 0);
-          const grandTotal    = (Number.isFinite(grandInput) && grandInput > 0) ? grandInput : totalViaUnits;
+  // compute totals & items first
+  const toCountry     = document.getElementById("cc_to_country_code").value.trim().toUpperCase();
+  const valueCurrency = (document.getElementById("cc_value_currency")?.value || (toCountry === "CA" ? "CAD" : "USD"));
+  const lines         = collectCcLineItems();
+  const totalViaUnits = lines.reduce((s, li) => s + (Number(li.unit_value||0) * Number(li.quantity||0)), 0);
+  const grandInput    = Number(document.getElementById("cc_grand_total")?.value || 0);
+  const grandTotal    = (Number.isFinite(grandInput) && grandInput > 0) ? grandInput : totalViaUnits;
 
-          const line_items = lines.map(li => ({
-            description    : li.description,
-            quantity       : Number(li.quantity) || 1,
-            value_amount   : toMoney(li.unit_value),
-            currency_code  : valueCurrency.toUpperCase(),
-            hs_tariff_code : li.hs_tariff_code || undefined,
-            sku_code       : li.sku || undefined,
-            origin_country : (li.origin_country || "").toUpperCase() || undefined
-          }));
+  // customs line items (currency uppercased)
+  const line_items = lines.map(li => ({
+    description    : li.description,
+    quantity       : Number(li.quantity) || 1,
+    value_amount   : toMoney(li.unit_value),
+    currency_code  : valueCurrency.toUpperCase(),
+    hs_tariff_code : li.hs_tariff_code || undefined,
+    sku_code       : li.sku || undefined,
+    origin_country : (li.origin_country || "").toUpperCase() || undefined
+  }));
 
-          // 🔎 Destination context for intl pricing
-          const dest = (detectDestCountryCode() || "").toUpperCase();           // GB, FR, etc.
-          const toPostal = (document.getElementById("cc_to_postal_code")?.value || "").trim().toUpperCase() || undefined;
-          const toCity   = (document.getElementById("cc_to_city")?.value || "").trim() || undefined;
-          const rawProv  = (document.getElementById("cc_to_province_code")?.value || "");
-          const prov     = sanitizeProvinceForCountry(rawProv, dest) || undefined;
+  // assemble refresh payload
+  const payload = {
+    package_type: "thick_envelope",
+    // ensure API always knows the destination on refresh
+    country_code: detectDestCountryCode(),
+    ship_date           : normalizeShipDate(document.getElementById("cc_ship_date").value),
+    insurance_requested : document.getElementById("cc_insurance_requested").value === "true",
+    media_mail_requested: document.getElementById("cc_media_mail_requested").value === "true",
+    signature_requested : document.getElementById("cc_signature_requested").value === "true",
 
-          // 📞 Ensure intl phone is present on refresh payload (server promotes to top-level)
-          const rawPhone = (document.getElementById("cc_to_phone")?.value || "").trim();
-          const phone    = rawPhone || ((dest && dest !== "CA" && dest !== "US") ? "416-606-2476" : undefined);
+    // nest customs for refresh
+    customs: {
+      package_contents: document.getElementById("cc_package_contents").value,
+      description     : undefined,
+      value           : toMoney(grandTotal),
+      value_currency  : (valueCurrency || "").toUpperCase(),
+      line_items
+    }
+  };
 
-          const payload = {
-            // Safer default for intl quoting than "thick_envelope"
-            package_type: (dest && dest !== "US" && dest !== "CA") ? "package" : "thick_envelope",
+  const vatRef = sanitizeVatRef(document.getElementById("cc_customs_tax_reference_number")?.value);
+  if (vatRef) {
+    payload.customs ??= {};
+    payload.customs.vat_reference = vatRef;
+  }
 
-            country_code        : dest,             // keep explicit for refresh
-            postal_code         : toPostal,         // <-- adds postal context
-            city                : toCity,           // <-- adds city context
-            province_code       : prov,             // <-- blanked for EU/UK automatically
-            phone               : phone,            // <-- ensures intl phone is available
+  // weight & dims (only if provided)
+  if (Number.isFinite(weight) && weight > 0) {
+    payload.weight = weight;
+    payload.weight_unit = wUnit;
+  }
+  const anyDim = (sx > 0) || (sy > 0) || (sz > 0);
+  if (anyDim) {
+    payload.size_unit = sUnit;
+    if (sx > 0) payload.size_x = sx;
+    if (sy > 0) payload.size_y = sy;
+    if (sz > 0) payload.size_z = sz;
+  }
 
-            ship_date           : normalizeShipDate(document.getElementById("cc_ship_date").value),
-            insurance_requested : document.getElementById("cc_insurance_requested").value === "true",
-            media_mail_requested: document.getElementById("cc_media_mail_requested").value === "true",
-            signature_requested : document.getElementById("cc_signature_requested").value === "true",
-
-            customs: {
-              package_contents: document.getElementById("cc_package_contents").value,
-              description     : undefined,
-              value           : toMoney(grandTotal),
-              value_currency  : (valueCurrency || "").toUpperCase(),
-              line_items
-            }
-          };
-
-          const vatRef = sanitizeVatRef(document.getElementById("cc_customs_tax_reference_number")?.value);
-          if (vatRef) payload.vat_reference = vatRef;
-
-          if (Number.isFinite(weight) && weight > 0) {
-            payload.weight = weight;
-            payload.weight_unit = wUnit;
-          }
-          const anyDim = (sx > 0) || (sy > 0) || (sz > 0);
-          if (anyDim) {
-            payload.size_unit = sUnit;
-            if (sx > 0) payload.size_x = sx;
-            if (sy > 0) payload.size_y = sy;
-            if (sz > 0) payload.size_z = sz;
-          }
-
-          return payload;
-        }
+      return payload;
+    }
       function renderRates(s){
         const rates = (s && s.rates) || [];
         ratesList.innerHTML = "";
@@ -4612,6 +4602,7 @@ async function ccValidateAgainstApi(step){
             package_contents: replacePayload?.customs?.package_contents,
             value: replacePayload?.customs?.value,
             value_currency: (replacePayload?.customs?.value_currency || "").toUpperCase(),
+            vat_reference: replacePayload?.customs?.vat_reference,     // ← add this
             line_items: (replacePayload?.customs?.line_items || []).map(li => ({
               description: li.description,
               quantity: Number(li.quantity),
@@ -4631,10 +4622,7 @@ async function ccValidateAgainstApi(step){
           }
         });
 
-         const destCC = (detectDestCountryCode() || "").toUpperCase();
-         const forceIntlReplace = destCC && destCC !== "US" && destCC !== "CA";
-
-        if (forceIntlReplace || replaceSig !== window.ccLastReplaceSig) {
+        if (replaceSig !== window.ccLastReplaceSig) {
           // 🔁 Replace (delete → recreate), then continue with refresh for rates
           const rep = await callCc("PATCH", {
             action: "replace_shipment",
