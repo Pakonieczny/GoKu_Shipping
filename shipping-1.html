@@ -3948,11 +3948,11 @@ function metalToBadge(label){
           // await callCc("PATCH", { action: "refund", shipment_id: shipmentId });
           return false;
         }
+      }
 
           // ✅ make it globally callable for sweepDuplicatesForOrder/replaceDraftShipment
           globalThis.deleteCcShipment = deleteCcShipment;
           window.deleteCcShipment     = deleteCcShipment;
-      }
 
         async function replaceDraftShipment(oldId, shipment){
           // 🔄 Server doesn’t accept PATCH replace — create a new draft directly, then delete the old one.
@@ -3973,7 +3973,9 @@ function metalToBadge(label){
 
         // If we really replaced with a different id, remove the old one now
         if (newId && oldId && newId !== oldId) {
-          await globalThis.deleteCcShipment?.(oldId);
+          if (typeof globalThis.deleteCcShipment === "function") {
+          await globalThis.deleteCcShipment(oldId);
+        }
 
           // Optional: sweep any other open dupes for this order number
           const orderId = (document.getElementById("etsyOrderNumber")?.value || "").trim();
