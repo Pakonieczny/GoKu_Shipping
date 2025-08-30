@@ -4461,6 +4461,7 @@ async function ccValidateAgainstApi(step){
 
           return {
             to           : toObj,
+            country_code : (toObj?.country_code || "").toUpperCase(),
             package      : pkg,
             vat_reference: vatRef || undefined,
             customs      : {
@@ -4560,32 +4561,81 @@ function buildRefreshPayload(){
       }
 
       async function refreshRates(){
-      // 🚧 Hard guard: do not fetch pricing until user is on Step 2
-      if (typeof window.currentStep === "number" && window.currentStep < 2) return;
-      if (window.ccBlockRatesUntilStep2) return;
-        // Hard guard: never price while in Step 0/1
-        if (window.ccBlockRatesUntilStep2 || (typeof currentStep === "number" && currentStep < 2)) {
-          return;
-        }
-        // Defensive: never price before package step
-        if (typeof currentStep === "number" && currentStep < 2) {
-          return; // silently ignore any accidental early calls
-        }
+        // 🚧 Hard guard: do not fetch pricing until user is on Step 2
+        if (window.ccBlockRatesUntilStep2) return;
+        if (typeof currentStep === "number" && currentStep < 2) return;
 
+        // 0) Ensure we have a draft id
         let id = (idInput.value || "").trim();
         if (!id) {
           const created = await ensureShipment();
           id = (created?.id || idInput.value || "").trim();
           if (!id) { M.toast?.({ html: "Create the shipment first" }); return; }
         }
-        const payload = buildRefreshPayload();
+
+        // 1) Build payloads once
+        const refreshPayload = buildRefreshPayload();
         // hard guard: weight must be present and > 0 for rates
-        if (!(Number.isFinite(payload.weight) && payload.weight > 0)) {
+        if (!(Number.isFinite(refreshPayload.weight) && refreshPayload.weight > 0)) {
           M.toast?.({ html: "Weight must be greater than 0 to refresh rates." });
           markMissing(2, ["cc_weight"]);
           return;
         }
-        const out = await callCc("PATCH", { action: "refresh", shipment_id: id, payload });
+        const replacePayload = buildShipmentPayload();   // includes to/phone/customs etc.
+
+        // 2) Compute a "structural" signature; if changed → replace
+        const replaceSig = JSON.stringify({
+          to: {
+            name: replacePayload?.to?.name,
+            address_1: replacePayload?.to?.address_1,
+            address_2: replacePayload?.to?.address_2,
+            city: replacePayload?.to?.city,
+            province_code: replacePayload?.to?.province_code,
+            postal_code: replacePayload?.to?.postal_code,
+            country_code: (replacePayload?.to?.country_code || "").toUpperCase(),
+            phone: replacePayload?.to?.phone
+          },
+          customs: {
+            package_contents: replacePayload?.customs?.package_contents,
+            value: replacePayload?.customs?.value,
+            value_currency: (replacePayload?.customs?.value_currency || "").toUpperCase(),
+            line_items: (replacePayload?.customs?.line_items || []).map(li => ({
+              description: li.description,
+              quantity: Number(li.quantity),
+              value_amount: li.value_amount,
+              currency_code: (li.currency_code || "").toUpperCase(),
+              hs_tariff_code: li.hs_tariff_code,
+              sku_code: li.sku_code,
+              origin_country: (li.origin_country || "").toUpperCase()
+            }))
+          },
+          pkg: {
+            package_type: refreshPayload.package_type,
+            weight: refreshPayload.weight,
+            weight_unit: refreshPayload.weight_unit,
+            size_unit: refreshPayload.size_unit,
+            size_x: refreshPayload.size_x, size_y: refreshPayload.size_y, size_z: refreshPayload.size_z
+          }
+        });
+
+        if (replaceSig !== window.ccLastReplaceSig) {
+          // 🔁 Replace (delete → recreate), then continue with refresh for rates
+          const rep = await callCc("PATCH", {
+            action: "replace_shipment",
+            shipment_id: id,
+            payload: replacePayload
+          });
+          // server may return the new shipment (or an id field)
+          const newId = rep?.id || rep?.shipment?.id;
+          if (newId && newId !== id) {
+            id = newId;
+            idInput.value = newId;
+          }
+          window.ccLastReplaceSig = replaceSig;
+        }
+
+        // 3) Price the (possibly replaced) shipment
+        const out = await callCc("PATCH", { action: "refresh", shipment_id: id, payload: refreshPayload });
         renderRates(out.shipment || out);
       }
 
