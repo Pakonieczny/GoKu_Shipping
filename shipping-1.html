@@ -3968,22 +3968,6 @@ function metalToBadge(label){
           return created;
         }
 
-        // Identify new id from either shape
-        const newId = created?.id || created?.shipment?.id;
-
-        // If we really replaced with a different id, remove the old one now
-        if (newId && oldId && newId !== oldId) {
-          if (typeof globalThis.deleteCcShipment === "function") {
-          await globalThis.deleteCcShipment(oldId);
-        }
-
-          // Optional: sweep any other open dupes for this order number
-          const orderId = (document.getElementById("etsyOrderNumber")?.value || "").trim();
-          if (orderId) { sweepDuplicatesForOrder(orderId, newId); } // fire-and-forget
-        }
-
-        return created;
-      }
       window.replaceDraftShipment = replaceDraftShipment;
 
       // Keep the ID field and global in sync wherever a shipment gets created/refreshed
