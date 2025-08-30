@@ -1887,6 +1887,7 @@ function metalToBadge(label){
           return "/.netlify/functions/testChitChats";
         }
       }
+      
       window.getCcEndpoint = getCcEndpoint; // ← add this
       window.chitChatsFn   = window.chitChatsFn || DEFAULT_FN;
     })();
@@ -3338,20 +3339,6 @@ function metalToBadge(label){
       // expose globally so any IIFE/module can access it
       window.chitChatsFn = chitChatsFn;
 
-      // Resolve the proxy endpoint even if the global isn't set yet
-      function getCcEndpoint(){
-        if (typeof window !== "undefined" && window.chitChatsFn) return window.chitChatsFn;
-        try {
-          const base = location.hostname.includes("goldenspike")
-            ? "https://shipping-1.goldenspike.app/.netlify/functions"
-            : "/.netlify/functions";
-          return `${base}/testChitChats`;
-        } catch (_) {
-          // very defensive fallback (e.g., SSR or unusual sandbox)
-          return "/.netlify/functions/testChitChats";
-        }
-      }
-
       // --- Utils
       const debounce = (fn, ms=250) => { let t; return (...a)=>{ clearTimeout(t); t = setTimeout(()=>fn(...a), ms); }; };
       const reinitSelect = (el) => {
@@ -3961,29 +3948,23 @@ function metalToBadge(label){
           // await callCc("PATCH", { action: "refund", shipment_id: shipmentId });
           return false;
         }
-        globalThis.deleteCcShipment = deleteCcShipment; // expose across closures/modules
+
+          // ✅ make it globally callable for sweepDuplicatesForOrder/replaceDraftShipment
+          globalThis.deleteCcShipment = deleteCcShipment;
       }
 
-      async function replaceDraftShipment(oldId, shipment){
-        let created = null;
+        async function replaceDraftShipment(oldId, shipment){
+          // 🔄 Server doesn’t accept PATCH replace — create a new draft directly, then delete the old one.
+          const created = await callCc("POST", { action: "create_shipment", shipment });
+          const newId   = created?.id || created?.shipment?.id;
 
-        // Try native replace first
-        try {
-          created = await callCc("PATCH", {
-            action      : "replace_shipment",
-            shipment_id : oldId,
-            shipment
-          });
-        } catch (e) {
-          const msg = String(e?.message || "").toLowerCase();
-          // Fallback path if action isn't implemented server-side
-          if (e.status === 400 || e.status === 404 || e.status === 405 ||
-              msg.includes("unknown action") || msg.includes("not implemented")) {
-            // Create a new corrected draft
-            created = await callCc("POST", { action: "create_shipment", shipment });
-          } else {
-            throw e; // non-action errors bubble up
+          if (newId && oldId && newId !== oldId) {
+            try { await globalThis.deleteCcShipment?.(oldId); } catch {}
+            // Sweep any other open dupes for this order
+            const orderId = (document.getElementById("etsyOrderNumber")?.value || "").trim();
+            if (orderId) { try { sweepDuplicatesForOrder(orderId, newId); } catch {} }
           }
+          return created;
         }
 
         // Identify new id from either shape
