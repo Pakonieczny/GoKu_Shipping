@@ -1153,13 +1153,6 @@ function metalToBadge(label){
        return _ymdLocal(d);
      }
 
-     function sanitizeVatRef(raw){
-      return (String(raw || "")
-        .toUpperCase()
-        .replace(/[^A-Z0-9]/g, "")
-        .slice(0, 20)) || null;
-    }
-
     // Prefer API's 'today' token or pass-through YYYY-MM-DD; avoid parsing
    function getShipDateForApi(){
      const el = document.getElementById("cc_ship_date");
@@ -4393,11 +4386,7 @@ async function ccValidateAgainstApi(step){
           let   phone   = (document.getElementById("cc_to_phone").value || "").trim();
           if (country && country !== "CA" && country !== "US" && !phone) {
             phone = "416-606-2476";
-            try {
-               document.getElementById("cc_to_phone").value = phone;
-             } catch (err) {
-               console.warn("Failed to autofill phone:", err);
-             }
+            try { document.getElementById("cc_to_phone").value = phone; } catch {}
           }
           return {
             name         : document.getElementById("cc_to_name").value.trim(),
