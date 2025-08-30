@@ -1877,16 +1877,17 @@ function metalToBadge(label){
       const DEFAULT_FN = `${fnBase}/testChitChats`; // rename if your function name differs
 
       function getCcEndpoint(){
-        if (window.chitChatsFn) return window.chitChatsFn; // prefer explicit global if set
-        const base = location.hostname.includes("goldenspike")
-          ? "https://shipping-1.goldenspike.app/.netlify/functions"
-          : "/.netlify/functions";
-        return `${base}/testChitChats`; // keep this in sync with your function name
+        if (typeof window !== "undefined" && window.chitChatsFn) return window.chitChatsFn;
+        try {
+          const base = location.hostname.includes("goldenspike")
+            ? "https://shipping-1.goldenspike.app/.netlify/functions"
+            : "/.netlify/functions";
+          return `${base}/testChitChats`;
+        } catch (_) {
+          return "/.netlify/functions/testChitChats";
+        }
       }
-
-      // Expose both, so either style of call site works
-
-      window.getCcEndpoint = getCcEndpoint;
+      window.getCcEndpoint = getCcEndpoint; // ← add this
       window.chitChatsFn   = window.chitChatsFn || DEFAULT_FN;
     })();
 
@@ -4030,15 +4031,9 @@ function metalToBadge(label){
           throw new Error("Missing recipient country_code");
         }
 
-        // ⚠️ Proxy only supports PATCH: refresh|buy|add|remove
-        // So we DO NOT call refund/delete here.
-        // We simply create a new shipment with corrected recipient + line_items.
         const currentId = (document.getElementById("ccShipmentId")?.value || "").trim();
-        const created = await replaceDraftShipment(currentId, buildShipmentPayload());
-        const newId   = created?.id || created?.shipment?.id;
-        if (newId) pushShipmentId(newId);
-        return created;
-        const newId   = created?.id || created?.shipment?.id;
+        const created   = await replaceDraftShipment(currentId, buildShipmentPayload());
+        const newId     = created?.id || created?.shipment?.id;
         if (newId) pushShipmentId(newId);
         return created;
       }
@@ -4647,16 +4642,16 @@ function buildRefreshPayload(){
         });
 
       
-        if (replaceSig !== window.ccLastReplaceSig) {
-          // Structural change → create a new draft with corrected recipient + customs
-          const rep = await replaceDraftShipment(id, replacePayload);
-          const newId = rep?.id || rep?.shipment?.id;
-          if (newId && newId !== id) {
-            id = newId;
-            idInput.value = newId;
-            try { pushShipmentId(newId); } catch {}
+          if (replaceSig !== window.ccLastReplaceSig) {
+            const rep   = await replaceDraftShipment(id, replacePayload);
+            const newId = rep?.id || rep?.shipment?.id;
+            if (newId && newId !== id) {
+              id = newId;
+              idInput.value = newId;
+              try { pushShipmentId(newId); } catch {}
+            }
+            window.ccLastReplaceSig = replaceSig;
           }
-          window.ccLastReplaceSig = replaceSig;
           const newId = rep?.id || rep?.shipment?.id;
           if (newId && newId !== id) {
             id = newId;
