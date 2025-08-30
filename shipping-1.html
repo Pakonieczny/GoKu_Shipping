@@ -4393,7 +4393,11 @@ async function ccValidateAgainstApi(step){
           let   phone   = (document.getElementById("cc_to_phone").value || "").trim();
           if (country && country !== "CA" && country !== "US" && !phone) {
             phone = "416-606-2476";
-            try { document.getElementById("cc_to_phone").value = phone; } catch {}
+            try {
+               document.getElementById("cc_to_phone").value = phone;
+             } catch (err) {
+               console.warn("Failed to autofill phone:", err);
+             }
           }
           return {
             name         : document.getElementById("cc_to_name").value.trim(),
