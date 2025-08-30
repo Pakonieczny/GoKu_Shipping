@@ -2267,7 +2267,7 @@ function metalToBadge(label){
             M.toast?.({ html: "Order # pasted" });
 
             /* ⛔ Cancel any in-flight ccShipmentId search and pending slow-pass */
-            try { window.ccSearchAbort?.abort(); } catch {}
+            try { window.ccSearchAbort?.abort(); } catch (e) {}
             if (window.ccSlowTimer) { clearTimeout(window.ccSlowTimer); window.ccSlowTimer = null; }
             window.ccSpin && window.ccSpin(false);
 
@@ -2338,7 +2338,7 @@ function metalToBadge(label){
         if (e.key !== "Enter") return;
 
           /* ⛔ Cancel any in-flight ccShipmentId search and pending slow-pass */
-          try { window.ccSearchAbort?.abort(); } catch {}
+          try { window.ccSearchAbort?.abort(); } catch (e) {}
           if (window.ccSlowTimer) { clearTimeout(window.ccSlowTimer); window.ccSlowTimer = null; }
           window.ccSpin && window.ccSpin(false);
 
@@ -3359,7 +3359,7 @@ function metalToBadge(label){
             if (inst) inst.destroy();
             window.M.FormSelect.init(el);
           }
-        } catch {}
+        } catch (e) {}
       };
 
       // Remember a batch we want to select (only if it’s still open)
@@ -3379,7 +3379,7 @@ function metalToBadge(label){
 
       async function safeJSON(resp){
         const txt = await resp.text();
-        try { return JSON.parse(txt); } catch { return { error: txt.slice(0,200) }; }
+        try { return JSON.parse(txt); } catch (e) { return { error: txt.slice(0,200) }; }
       }
       // Use the deployed proxy function (testChitChats) and its "search" resource
       // Always limit to Pending (open) batches on the server
@@ -3396,7 +3396,7 @@ function metalToBadge(label){
         }).toString();
 
         // 🔪 Cancel any in-flight search, then create a fresh controller
-        try { window.ccSearchAbort?.abort(); } catch {}
+        try { window.ccSearchAbort?.abort(); } catch (e) {}
         const ctrl = new AbortController();
         window.ccSearchAbort = ctrl;
 
@@ -3538,7 +3538,7 @@ function metalToBadge(label){
           try { fetchBatches(); } catch {}
 
           // 🔪 kill any live CC search and pending slow-pass; we’re switching orders
-          try { window.ccSearchAbort?.abort(); } catch {}
+          try { window.ccSearchAbort?.abort(); } catch (e) {}
           if (window.ccSlowTimer) { clearTimeout(window.ccSlowTimer); window.ccSlowTimer = null; }
           window.ccSpin && window.ccSpin(false);
 
@@ -5112,6 +5112,8 @@ function buildRefreshPayload(){
             detail?.vat_number  ?? detail?.vat  ??
             detail?.eori_number ?? detail?.eori ?? null;
           if (taxRef) set("cc_customs_tax_reference_number", String(taxRef));
+
+    } catch (_) {}
   }
 
       // ───────────────── Smarty: client proxy caller ─────────────────
