@@ -4546,6 +4546,17 @@ function buildRefreshPayload(){
     if (sz > 0) payload.size_z = sz;
   }
 
+  const dest = String(payload.country_code || detectDestCountryCode()).toUpperCase();
+    if (dest === "CA" || dest === "US") {
+      // Domestic: no customs, no phone needed
+      delete payload.customs;        // avoids 400 on refresh for CA/US
+      delete payload.phone;
+    } else {
+      // International: phone is required
+      const p = (document.getElementById("cc_to_phone")?.value || "").trim();
+      if (!p) payload.phone = "416-606-2476"; // your existing fallback
+    }
+
       return payload;
     }
       function renderRates(s){
