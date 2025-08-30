@@ -3995,6 +3995,15 @@ window.callCc = callCc;
       /* Feature flag: leave QZ code in the file, but disable it by default */
       const USE_QZ = false;
 
+      // Force a one-time replace for international (or when VAT/IOSS provided)
+      try {
+        const country = (document.getElementById("cc_to_country_code")?.value || "").trim().toUpperCase();
+        const hasVat  = !!sanitizeVatRef(document.getElementById("cc_customs_tax_reference_number")?.value);
+        if ((country && country !== "US" && country !== "CA") || hasVat) {
+          window.ccLastReplaceSig = null;
+        }
+      } catch {}
+
 
       async function replaceShipmentWithCorrections() {
         // Hard guard: a create requires country_code
