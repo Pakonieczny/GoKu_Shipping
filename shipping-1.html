@@ -3956,7 +3956,11 @@ function metalToBadge(label){
 
         async function replaceDraftShipment(oldId, shipment){
           // 🔄 Server doesn’t accept PATCH replace — create a new draft directly, then delete the old one.
-          const created = await callCc("POST", { action: "create_shipment", shipment });
+            const orderId = (document.getElementById("etsyOrderNumber")?.value || "").trim();
+            const created = await callCc("POST", {
+              action: "create_shipment",
+              shipment: { ...shipment, ...(orderId ? { order_id: orderId } : {}) }
+            });
           const newId   = created?.id || created?.shipment?.id;
 
           if (newId && oldId && newId !== oldId) {
@@ -3984,22 +3988,6 @@ function metalToBadge(label){
             try { el.dispatchEvent(new Event("input", { bubbles: true })); } catch {}
           }
         }
-      }
-
-      function orderNumberFromUI(){
-        return (document.getElementById("etsyOrderNumber")?.value || "").trim();
-      }
-      function getOrderRefPayload(){
-        const ord = orderNumberFromUI();
-        if (!ord) return {};
-        // Be liberal: CC accepts multiple ref fields across endpoints
-        return {
-          order_id: ord,
-          order_number: ord,
-          reference: ord,
-          reference_number: ord,
-          reference_value: ord
-        };
       }
 
       async function ensureShipment(){
@@ -4469,6 +4457,7 @@ async function ccValidateAgainstApi(step){
           const toObj         = buildTo();
           const toCountry     = toObj.country_code;
           const valueCurrency = (document.getElementById("cc_value_currency")?.value || (toCountry === "CA" ? "CAD" : "USD"));
+          const orderId       = (document.getElementById("etsyOrderNumber")?.value || "").trim();
 
           // multi-item support
           const lines      = collectCcLineItems();
@@ -4512,9 +4501,8 @@ async function ccValidateAgainstApi(step){
 
           // ✅ top-level vat_reference (required placement by Chit Chats API)
           const vatRef = sanitizeVatRef(document.getElementById("cc_customs_tax_reference_number")?.value);
-          const orderRefs = getOrderRefPayload();
+
           return {
-            ...orderRefs,                 // ← ADD (puts order_id/order_number/reference* on the root)
             to           : toObj,
             country_code : (toObj?.country_code || "").toUpperCase(),
             package      : pkg,
@@ -4525,7 +4513,8 @@ async function ccValidateAgainstApi(step){
               value_currency  : valueCurrency.toLowerCase(),
               line_items
               // (no nested vat_reference — top-level is authoritative)
-            }
+            },
+            ...(orderId ? { order_id: orderId } : {})
           };
         }
 
