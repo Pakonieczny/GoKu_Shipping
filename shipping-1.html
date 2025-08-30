@@ -2257,7 +2257,7 @@ function metalToBadge(label){
             const idEl = document.getElementById("ccShipmentId");
             if (idEl) { idEl.value = ""; idEl.dataset.setAt = String(Date.now()); }
             window.ccShipmentId = "";
-            try { await fetchBatches(); } catch {}
+            try { await fetchBatches(); } catch (e) {}
 
             const txt = (await navigator.clipboard.readText() || "").trim();
             if (!txt) { M.toast?.({ html: "Clipboard is empty" }); return; }
@@ -2348,7 +2348,7 @@ function metalToBadge(label){
         const idEl = document.getElementById("ccShipmentId");
         if (idEl) { idEl.value = ""; idEl.dataset.setAt = String(Date.now()); }
         window.ccShipmentId = "";
-        try { await fetchBatches(); } catch {}
+        try { await fetchBatches(); } catch (e) {}
 
         const orderNumber = etsyOrderInput.value.trim();
         if (!orderNumber) return;
@@ -4139,7 +4139,7 @@ window.callCc = callCc;
       /* Browser fallback: open the label and trigger native print */
       async function openAndAutoPrintLabel(url, win) {
         let target = (win && !win.closed) ? win : null;
-        if (!target) { try { target = window.open("", "_blank", "noopener,noreferrer"); } catch {} }
+        if (!target) { try { target = window.open("", "_blank", "noopener,noreferrer"); } catch (e) {} }
         if (!target) { window.location.href = url; return; }
         const isPdf = /\.pdf(\?|$)/i.test(url);
         const html = isPdf
@@ -4321,11 +4321,11 @@ window.callCc = callCc;
                <\/script>
              </body></html>`;
         try {
-        target.document.open();
-        target.document.write(html);
-        target.document.close();
-        } catch {
-          try { target.location.href = url; } catch {}
+          target.document.open();
+          target.document.write(html);
+          target.document.close();
+        } catch (e) {
+          try { target.location.href = url; } catch (e2) {}
         }
       }
 
