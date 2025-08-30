@@ -1887,7 +1887,7 @@ function metalToBadge(label){
           return "/.netlify/functions/testChitChats";
         }
       }
-      
+
       window.getCcEndpoint = getCcEndpoint; // ← add this
       window.chitChatsFn   = window.chitChatsFn || DEFAULT_FN;
     })();
@@ -3951,6 +3951,7 @@ function metalToBadge(label){
 
           // ✅ make it globally callable for sweepDuplicatesForOrder/replaceDraftShipment
           globalThis.deleteCcShipment = deleteCcShipment;
+          window.deleteCcShipment     = deleteCcShipment;
       }
 
         async function replaceDraftShipment(oldId, shipment){
