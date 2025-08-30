@@ -4366,7 +4366,10 @@ async function ccValidateAgainstApi(step){
           size_unit   : "in",
           size_x      : 6, size_y: 4, size_z: 1,
           weight_unit : "lb",
-          weight      : 0.25,
+          weight      : 0.20,
+          country_code: (document.getElementById("cc_to_country_code")?.value || "").trim().toUpperCase(),
+          phone       : (document.getElementById("cc_to_phone")?.value || "416-606-2476").trim(),
+          vat_reference: (document.getElementById("cc_customs_tax_reference_number")?.value || "").trim(),
           customs: {
             package_contents: "merchandise",
             value          : total,
@@ -4663,11 +4666,12 @@ function buildRefreshPayload(){
          // 0) Open a print tab *now* to avoid popup blocking
          const printWin = openPrintStub();
 
-          // 1) Ensure intl phone exists on the server before Buy
+          // 1) Ensure phone exists on the server before Buy (ALL destinations)
           try {
             const country = (document.getElementById("cc_to_country_code")?.value || "").trim().toUpperCase();
             const phoneEl = document.getElementById("cc_to_phone");
-            const phone   = (phoneEl?.value || "").trim() || ((country && country !== "CA" && country !== "US") ? "416-606-2476" : "");
+            const phone   = (phoneEl?.value || "").trim() || "416-606-2476";
+            if (phone) {
             if (country && country !== "CA" && country !== "US" && phone) {
               if (phoneEl && !phoneEl.value.trim()) phoneEl.value = phone;
               await callCc("PATCH", { action:"refresh", shipment_id:id, payload:{ country_code: country, phone } });

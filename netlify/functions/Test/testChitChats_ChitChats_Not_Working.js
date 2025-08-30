@@ -142,7 +142,7 @@ exports.handler = async (event) => {
         province_code : to.province_code ?? client.province_code ?? "",
         postal_code   : to.postal_code ?? client.postal_code ?? "",
         country_code  : String(to.country_code ?? client.country_code ?? "").toUpperCase(),
-        phone         : (to.phone ?? client.phone ?? "416-606-2476"),
+        phone         : to.phone ?? client.phone ?? undefined,
         email         : to.email ?? client.email ?? undefined,
 
         // Package / required top-levels
@@ -694,9 +694,9 @@ async function recreateShipmentIfUnbought(id, desiredClientPayload, { authH, url
           ).toUpperCase();
           const hasPhone = !!(s.phone || s.to?.phone);
 
-          // All shipments must have a phone (unified pipeline rule)
-          if (!hasPhone) {
-            const refreshPayload = { phone: "416-606-2476", country_code: cc || undefined };
+          // Intl (non-CA/US) shipments must have a phone
+          if (cc && cc !== "CA" && cc !== "US" && !hasPhone) {
+            const refreshPayload = { phone: "416-606-2476", country_code: cc };
             const r2 = await fetch(url(`/shipments/${encodeURIComponent(id)}/refresh`), {
               method: "PATCH",
               headers: authH,
