@@ -21,7 +21,7 @@
 const CORS = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": "Content-Type,Authorization",
-  "Access-Control-Allow-Methods": "GET,POST,OPTIONS,PATCH"
+  "Access-Control-Allow-Methods": "GET,POST,OPTIONS,PATCH,DELETE"
 };
 
 exports.handler = async (event) => {
@@ -742,6 +742,21 @@ async function recreateShipmentIfUnbought(id, desiredClientPayload, { authH, url
       const out  = await wrap(resp);
       if (!out.ok) return bad(out.status, out.data);
       return ok({ success: true });
+    }
+
+    // ---------- DELETE (delete a shipment) ----------
+    if (event.httpMethod === "DELETE") {
+      const qp = event.queryStringParameters || {};
+      if ((qp.resource || "").toLowerCase() === "shipment" && qp.id) {
+        const resp = await fetch(url(`/shipments/${encodeURIComponent(qp.id)}`), {
+          method: "DELETE",
+          headers: authH
+        });
+        const out = await wrap(resp);
+        if (!out.ok) return bad(out.status, out.data);
+        return ok({ success: true });
+      }
+      return bad(400, "resource=shipment & id required");
     }
 
     // ---------- Fallback ----------
