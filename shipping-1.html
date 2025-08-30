@@ -1885,6 +1885,7 @@ function metalToBadge(label){
       }
 
       // Expose both, so either style of call site works
+      
       window.getCcEndpoint = getCcEndpoint;
       window.chitChatsFn   = window.chitChatsFn || DEFAULT_FN;
     })();
@@ -3689,6 +3690,16 @@ function metalToBadge(label){
         });
       }
 
+      // Client-side normalization to match server behavior
+      function normalizeShipDate(v){
+        const t = String(v || "").trim().toLowerCase();
+        if (!t || t === "today") return "today";
+        if (t === "tomorrow") return "tomorrow";
+        if (/^\d{4}-\d{2}-\d{2}$/.test(t)) return t;
+        const d = new Date(t);
+        return Number.isNaN(d.getTime()) ? "today" : d.toISOString().slice(0,10);
+      }
+
     /* ===== Chit Chats Edit Shipment Wizard (create → refresh rates → buy) ===== */
     (function(){
       const modal     = document.getElementById("ccEditModal");
@@ -3984,7 +3995,12 @@ function metalToBadge(label){
         // ⚠️ Proxy only supports PATCH: refresh|buy|add|remove
         // So we DO NOT call refund/delete here.
         // We simply create a new shipment with corrected recipient + line_items.
-        const created = await callCc("POST", { action: "create_shipment", shipment: buildShipmentPayload() });
+        const currentId = (document.getElementById("ccShipmentId")?.value || "").trim();
+        const created = await callCc("PATCH", {
+          action      : "replace_shipment",
+          shipment_id : currentId,
+          shipment    : buildShipmentPayload()
+        });
         const newId   = created?.id || created?.shipment?.id;
         if (newId) pushShipmentId(newId);
         return created;
@@ -4596,9 +4612,10 @@ function buildRefreshPayload(){
       
         if (replaceSig !== window.ccLastReplaceSig) {
           // Structural change → create a new draft with corrected recipient + customs
-          const rep = await callCc("POST", {
-            action: "create_shipment",
-            shipment: replacePayload
+          const rep = await callCc("PATCH", {
+            action      : "replace_shipment",
+            shipment_id : id,
+            shipment    : replacePayload
           });
           const newId = rep?.id || rep?.shipment?.id;
           if (newId && newId !== id) {
@@ -4764,8 +4781,8 @@ function buildRefreshPayload(){
 
         // 🔒 Steps 0–1 may talk to server (verify/create/replace). Steps ≥2: NO rate calls here.
         if (step <= 1) {
-          const apiMissing = await ccValidateAgainstApi(step);
-          if (apiMissing.length) return false;
+        const apiRes = await ccValidateAgainstApi(step);
+        if (apiRes && apiRes.ok === false) return false;
         }
 
         // 2) Fallback to local minimal checks (keeps UX snappy offline)
