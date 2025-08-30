@@ -3884,11 +3884,11 @@ function metalToBadge(label){
         // Do not thaw post-purchase; keep re-checks disabled for this session.
       }
 
-      /* ---------- Enhanced fetch wrapper (keeps raw error for mapping) ---------- */
-      async function callCc(method, body, qs=""){
-        const resp = await fetch(`${getCcEndpoint()}${qs}`, {     
+      async function callCc(method, body, qs = "") {
+        const resp = await fetch(`${getCcEndpoint()}${qs}`, {
           method,
-          headers: { "Content-Type":"application/json" },
+          headers: { "Content-Type": "application/json" },
+          credentials: "include",                 // ← add this
           body: body ? JSON.stringify(body) : undefined
         });
         const text = await resp.text();
@@ -3908,34 +3908,7 @@ function metalToBadge(label){
         }
         return data;
       }
-
-      /* ---------- Enhanced fetch wrapper (keeps raw error for mapping) ---------- */
-      async function callCc(method, body, qs=""){
-        const resp = await fetch(`${getCcEndpoint()}${qs}`, {     
-          method,
-          headers: { "Content-Type":"application/json" },
-          body: body ? JSON.stringify(body) : undefined
-        });
-        const text = await resp.text();
-        let data; try { data = JSON.parse(text); } catch { data = text; }
-
-        if (!resp.ok) {
-          const pick = k => (data && typeof data[k] === "string" ? data[k] : null);
-          const message = typeof data === "string"
-            ? data
-            : (pick("error") || pick("message") || JSON.stringify(data, null, 2));
-
-          const e = new Error(message);
-          e.status = resp.status;
-          e.raw    = data;
-          try { console.debug("ChitChats proxy error", resp.status, data); } catch {}
-          throw e;
-        }
-        return data;
-      }
-
-/* ADD THIS → expose globally for any external handlers/modules */
-window.callCc = callCc;
+      window.callCc = callCc;
 
       // Keep the ID field and global in sync wherever a shipment gets created/refreshed
       function pushShipmentId(id){
@@ -4185,10 +4158,11 @@ window.callCc = callCc;
 
             // Push a full TO to Chit Chats so validation sees the phone on the server
             if (needsPhone) {
+            const rp = (typeof buildRefreshPayload === "function") ? buildRefreshPayload() : {};
               await callCc("PATCH", {
                 action     : "refresh",
                 shipment_id: (document.getElementById("ccShipmentId")?.value || "").trim(),
-                payload    : { to: buildTo(), ...refreshPayload }
+                payload    : { to: buildTo(), ...rp }
               });
             }
           } catch (_) {}
@@ -4498,15 +4472,8 @@ function buildRefreshPayload(){
   const grandInput = Number(document.getElementById("cc_grand_total")?.value || 0);
   const grandTotal = (Number.isFinite(grandInput) && grandInput > 0) ? grandInput : totalViaUnits;
 
-  const line_items = lines.map(li => ({
-    description   : li.description,
-    quantity      : Number(li.quantity) || 1,
-    value_amount  : toMoney(li.unit_value),
-    currency_code : (valueCurrency || "CAD").toUpperCase(),
-    hs_tariff_code: li.hs_tariff_code || undefined,
-    sku_code      : li.sku || undefined,
-    origin_country: (li.origin_country || "").toUpperCase() || undefined
-  }));
+  // Use the unified mapper that now guarantees origin_country for non-US dests
+  const line_items = buildLineItems();
 
   const payload = {
     package_type         : "thick_envelope",
@@ -4626,18 +4593,19 @@ function buildRefreshPayload(){
           }
         });
 
+      
         if (replaceSig !== window.ccLastReplaceSig) {
-          // 🔁 Replace (delete → recreate), then continue with refresh for rates
-          const rep = await callCc("PATCH", {
-            action: "replace_shipment",
-            shipment_id: id,
-            payload: replacePayload
+          // Structural change → create a new draft with corrected recipient + customs
+          const rep = await callCc("POST", {
+            action: "create_shipment",
+            shipment: replacePayload
           });
-          // server may return the new shipment (or an id field)
           const newId = rep?.id || rep?.shipment?.id;
           if (newId && newId !== id) {
             id = newId;
             idInput.value = newId;
+            // keep globals/UI in sync everywhere
+            try { pushShipmentId(newId); } catch {}
           }
           window.ccLastReplaceSig = replaceSig;
         }
