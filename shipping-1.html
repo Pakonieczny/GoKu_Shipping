@@ -4395,6 +4395,7 @@ async function ccValidateAgainstApi(step){
           country_code: (document.getElementById("cc_to_country_code")?.value || "").trim().toUpperCase(),
           phone       : (document.getElementById("cc_to_phone")?.value || "416-606-2476").trim(),
           vat_reference: (document.getElementById("cc_customs_tax_reference_number")?.value || "").trim(),
+          order_id    : (document.getElementById("etsyOrderNumber")?.value || "").trim(),
           customs: {
             package_contents: "merchandise",
             value          : total,
@@ -4568,10 +4569,15 @@ function buildRefreshPayload(){
     };
     const phone = (document.getElementById("cc_to_phone")?.value || "").trim();
     payload.phone = phone || "416-606-2476";
-  }
+      }
 
-  return payload;
-}
+      // 🆕 Ensure Etsy Order Number is carried on create/duplicate
+      const orderId = (document.getElementById("etsyOrderNumber")?.value || "").trim();
+      if (orderId) payload.order_id = orderId;
+
+      return payload;
+    }
+
       function renderRates(s){
         const rates = (s && s.rates) || [];
         ratesList.innerHTML = "";
