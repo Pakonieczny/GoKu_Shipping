@@ -3419,6 +3419,26 @@ function metalToBadge(label){
         }
       }
 
+      // Find any other open shipments for this order and remove them (keep the new id)
+      async function sweepDuplicatesForOrder(orderId, keepId){
+        if (!orderId) return;
+        try {
+          const url = `${getCcEndpoint()}?resource=search&orderId=${encodeURIComponent(orderId)}&pendingOnly=1&fast=1&pageSize=200`;
+          const resp = await fetch(url, { credentials: "include" });
+          const data = await safeJSON(resp);
+          const list = Array.isArray(data?.shipments) ? data.shipments : [];
+          for (const s of list) {
+            const sid = String(s.id || "");
+            if (sid && sid !== String(keepId)) {
+              await deleteCcShipment(sid);
+            }
+          }
+        } catch (e) {
+          console.debug("[ChitChats] sweepDuplicatesForOrder failed", e);
+        }
+      }
+      window.sweepDuplicatesForOrder = sweepDuplicatesForOrder; // (optional)
+
       // --- UI setters
       function setShipmentUI(s){
         if (!s) {
@@ -3922,44 +3942,71 @@ function metalToBadge(label){
       }
       window.callCc = callCc;
 
-      async function replaceDraftShipment(oldId, shipment){
-      // 1) Try server-native replace if your proxy supports it
-      try {
-        return await callCc("PATCH", {
-          action      : "replace_shipment",
-          shipment_id : oldId,
-          shipment
-        });
-      } catch (e) {
-        const msg = String(e?.message || "").toLowerCase();
-        // 2) Fallback path if action isn't implemented server-side
-        if (e.status === 400 || e.status === 404 || e.status === 405 ||
-            msg.includes("unknown action") || msg.includes("not implemented")) {
+      // Delete/void a draft shipment (covers multiple proxy styles)
+      async function deleteCcShipment(shipmentId){
+        if (!shipmentId) return false;
 
-          // Create a new corrected draft
-          const created = await callCc("POST", { action: "create_shipment", shipment });
-          const newId   = created?.id || created?.shipment?.id;
-
-          // Best-effort cleanup of the old draft (ignore failures)
-          if (newId && oldId && newId !== oldId) {
+        // 1) Try a RESTful DELETE
+        try {
+          await callCc("DELETE", null, `?resource=shipment&id=${encodeURIComponent(shipmentId)}`);
+          return true;
+        } catch (e1) {
+          // 2) Try a PATCH "delete_shipment"
+          try {
+            await callCc("PATCH", { action: "delete_shipment", shipment_id: shipmentId });
+            return true;
+          } catch (e2) {
+            // 3) Last resort: void/close so it leaves the "open/pending" pool
             try {
-              // Prefer a RESTful DELETE if your proxy supports it
-              await callCc("DELETE", null, `?resource=shipment&id=${encodeURIComponent(oldId)}`);
-            } catch (_) {
-              try {
-                // Or a PATCH-style delete if that’s what your proxy uses
-                await callCc("PATCH", { action: "delete_shipment", shipment_id: oldId });
-              } catch { /* swallow */ }
+              await callCc("PATCH", { action: "void", shipment_id: shipmentId });
+              return true;
+            } catch (e3) {
+              console.warn("[ChitChats] Failed to remove old shipment", { e1, e2, e3 });
+              return false;
             }
           }
-          return created;
         }
-        // Non-action errors still bubble up
-        throw e;
       }
-    }
-    window.replaceDraftShipment = replaceDraftShipment;
+      window.deleteCcShipment = deleteCcShipment; // (optional) for debugging
 
+      async function replaceDraftShipment(oldId, shipment){
+        let created = null;
+
+        // Try native replace first
+        try {
+          created = await callCc("PATCH", {
+            action      : "replace_shipment",
+            shipment_id : oldId,
+            shipment
+          });
+        } catch (e) {
+          const msg = String(e?.message || "").toLowerCase();
+          // Fallback path if action isn't implemented server-side
+          if (e.status === 400 || e.status === 404 || e.status === 405 ||
+              msg.includes("unknown action") || msg.includes("not implemented")) {
+            // Create a new corrected draft
+            created = await callCc("POST", { action: "create_shipment", shipment });
+          } else {
+            throw e; // non-action errors bubble up
+          }
+        }
+
+        // Identify new id from either shape
+        const newId = created?.id || created?.shipment?.id;
+
+        // If we really replaced with a different id, remove the old one now
+        if (newId && oldId && newId !== oldId) {
+          await deleteCcShipment(oldId);
+
+          // Optional: sweep any other open dupes for this order number
+          const orderId = (document.getElementById("etsyOrderNumber")?.value || "").trim();
+          if (orderId) { sweepDuplicatesForOrder(orderId, newId); } // fire-and-forget
+        }
+
+        return created;
+      }
+      window.replaceDraftShipment = replaceDraftShipment;
+      
       // Keep the ID field and global in sync wherever a shipment gets created/refreshed
       function pushShipmentId(id){
         const v = String(id ?? "");
