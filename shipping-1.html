@@ -4496,16 +4496,6 @@ async function ccValidateAgainstApi(step){
           // ✅ top-level vat_reference (required placement by Chit Chats API)
           const vatRef = sanitizeVatRef(document.getElementById("cc_customs_tax_reference_number")?.value);
 
-          // ——— Order linkage: push Etsy order number into the Chit Chats shipment ———
-          try {
-            const orderNum = (document.getElementById("etsyOrderNumber")?.value || "").trim();
-            if (orderNum) {
-              payload.order_id = orderNum;
-              // (Optional) help in CC UI/search; do not override if you already set description elsewhere
-              if (!payload.description) payload.description = `Order ${orderNum}`;
-            }
-          } catch {}
-
           return {
             to           : toObj,
             country_code : (toObj?.country_code || "").toUpperCase(),
@@ -4670,12 +4660,6 @@ async function refreshRates(){
     }
     window.ccLastReplaceSig = replaceSig;
   }
-
-    // Attach order number on refresh as well (keeps linkage even after edits)
-    try {
-      const orderNum = (document.getElementById("etsyOrderNumber")?.value || "").trim();
-      if (orderNum) refreshPayload.order_id = orderNum;
-    } catch {}
 
   // 3) Price the (possibly replaced) shipment
   const out = await callCc("PATCH", { action: "refresh", shipment_id: id, payload: refreshPayload });
