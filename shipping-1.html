@@ -3942,32 +3942,26 @@ function metalToBadge(label){
       }
       window.callCc = callCc;
 
-      // Delete/void a draft shipment (covers multiple proxy styles)
+      // Delete if allowed; otherwise just remove from any batch
       async function deleteCcShipment(shipmentId){
         if (!shipmentId) return false;
 
-        // 1) Try a RESTful DELETE
+        // Try the official DELETE /shipments/{id}
         try {
           await callCc("DELETE", null, `?resource=shipment&id=${encodeURIComponent(shipmentId)}`);
-          return true;
-        } catch (e1) {
-          // 2) Try a PATCH "delete_shipment"
+          return true; // deleted
+        } catch (e) {
+          // If API says we can’t delete (e.g., purchased/received), fall back to un-batching
+          // Docs: shipments that are purchased/received cannot be deleted.  [oai_citation:2‡Chit Chats](https://chitchats.com/docs/api/v1)
           try {
-            await callCc("PATCH", { action: "delete_shipment", shipment_id: shipmentId });
-            return true;
-          } catch (e2) {
-            // 3) Last resort: void/close so it leaves the "open/pending" pool
-            try {
-              await callCc("PATCH", { action: "void", shipment_id: shipmentId });
-              return true;
-            } catch (e3) {
-              console.warn("[ChitChats] Failed to remove old shipment", { e1, e2, e3 });
-              return false;
-            }
-          }
+            const removed = await removeFromAnyBatch(shipmentId);
+            if (removed) return true;         // un-batched successfully
+          } catch (_) {}
+          // Optional: you could offer a refund path here if you want to actually void the label:
+          // await callCc("PATCH", { action: "refund", shipment_id: shipmentId });
+          return false;
         }
       }
-      window.deleteCcShipment = deleteCcShipment; // (optional) for debugging
 
       async function replaceDraftShipment(oldId, shipment){
         let created = null;
@@ -4006,7 +4000,7 @@ function metalToBadge(label){
         return created;
       }
       window.replaceDraftShipment = replaceDraftShipment;
-      
+
       // Keep the ID field and global in sync wherever a shipment gets created/refreshed
       function pushShipmentId(id){
         const v = String(id ?? "");
