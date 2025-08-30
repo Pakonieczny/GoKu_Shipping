@@ -4480,7 +4480,7 @@ async function ccValidateAgainstApi(step){
         }
 
 function buildRefreshPayload(){
-  // gather units/dims
+  // units/dims
   const wUnit = document.getElementById("cc_weight_unit").value;
   const weight = Number(document.getElementById("cc_weight").value || 0);
   const sUnit = document.getElementById("cc_size_unit").value;
@@ -4488,78 +4488,65 @@ function buildRefreshPayload(){
   const sy = Number(document.getElementById("cc_size_y").value || 0);
   const sz = Number(document.getElementById("cc_size_z").value || 0);
 
-  // compute totals & items first
-  const toCountry     = document.getElementById("cc_to_country_code").value.trim().toUpperCase();
-  const valueCurrency = (document.getElementById("cc_value_currency")?.value || (toCountry === "CA" ? "CAD" : "USD"));
-  const lines         = collectCcLineItems();
-  const totalViaUnits = lines.reduce((s, li) => s + (Number(li.unit_value||0) * Number(li.quantity||0)), 0);
-  const grandInput    = Number(document.getElementById("cc_grand_total")?.value || 0);
-  const grandTotal    = (Number.isFinite(grandInput) && grandInput > 0) ? grandInput : totalViaUnits;
+  // destination + currency
+  const dest = (document.getElementById("cc_to_country_code")?.value || "").trim().toUpperCase() || detectDestCountryCode();
+  const valueCurrency = (document.getElementById("cc_value_currency")?.value || (dest === "CA" ? "CAD" : "USD"));
 
-  // customs line items (currency uppercased)
+  // customs line items + totals pulled from Step 2
+  const lines = collectCcLineItems();
+  const totalViaUnits = lines.reduce((s, li) => s + (Number(li.unit_value||0) * Number(li.quantity||0)), 0);
+  const grandInput = Number(document.getElementById("cc_grand_total")?.value || 0);
+  const grandTotal = (Number.isFinite(grandInput) && grandInput > 0) ? grandInput : totalViaUnits;
+
   const line_items = lines.map(li => ({
-    description    : li.description,
-    quantity       : Number(li.quantity) || 1,
-    value_amount   : toMoney(li.unit_value),
-    currency_code  : valueCurrency.toUpperCase(),
-    hs_tariff_code : li.hs_tariff_code || undefined,
-    sku_code       : li.sku || undefined,
-    origin_country : (li.origin_country || "").toUpperCase() || undefined
+    description   : li.description,
+    quantity      : Number(li.quantity) || 1,
+    value_amount  : toMoney(li.unit_value),
+    currency_code : (valueCurrency || "CAD").toUpperCase(),
+    hs_tariff_code: li.hs_tariff_code || undefined,
+    sku_code      : li.sku || undefined,
+    origin_country: (li.origin_country || "").toUpperCase() || undefined
   }));
 
-  // assemble refresh payload
   const payload = {
-    package_type: "thick_envelope",
-    // ensure API always knows the destination on refresh
-    country_code: detectDestCountryCode(),
-    ship_date           : normalizeShipDate(document.getElementById("cc_ship_date").value),
-    insurance_requested : document.getElementById("cc_insurance_requested").value === "true",
-    media_mail_requested: document.getElementById("cc_media_mail_requested").value === "true",
-    signature_requested : document.getElementById("cc_signature_requested").value === "true",
-
-    // nest customs for refresh
-    customs: {
-      package_contents: document.getElementById("cc_package_contents").value,
-      description     : undefined,
-      value           : toMoney(grandTotal),
-      value_currency  : (valueCurrency || "").toUpperCase(),
-      line_items
-    }
+    package_type         : "thick_envelope",
+    country_code         : (dest || "").toUpperCase(),
+    ship_date            : normalizeShipDate(document.getElementById("cc_ship_date").value),
+    insurance_requested  : document.getElementById("cc_insurance_requested").value === "true",
+    media_mail_requested : document.getElementById("cc_media_mail_requested").value === "true",
+    signature_requested  : document.getElementById("cc_signature_requested").value === "true"
   };
 
-  const vatRef = sanitizeVatRef(document.getElementById("cc_customs_tax_reference_number")?.value);
-
-    if (vatRef) {
-    payload.vat_reference = vatRef;      // ✅ correct placement
-    if (payload.customs) delete payload.customs.vat_reference;
-  }
-
-  // weight & dims (only if provided)
+  // add weight/dims if provided
   if (Number.isFinite(weight) && weight > 0) {
     payload.weight = weight;
     payload.weight_unit = wUnit;
   }
-  const anyDim = (sx > 0) || (sy > 0) || (sz > 0);
-  if (anyDim) {
+  if (sx > 0 || sy > 0 || sz > 0) {
     payload.size_unit = sUnit;
     if (sx > 0) payload.size_x = sx;
     if (sy > 0) payload.size_y = sy;
     if (sz > 0) payload.size_z = sz;
   }
 
-  const dest = String(payload.country_code || detectDestCountryCode()).toUpperCase();
-    if (dest === "CA" || dest === "US") {
-      // Domestic: no customs, no phone needed
-      delete payload.customs;        // avoids 400 on refresh for CA/US
-      delete payload.phone;
-    } else {
-      // International: phone is required
-      const p = (document.getElementById("cc_to_phone")?.value || "").trim();
-      if (!p) payload.phone = "416-606-2476"; // your existing fallback
-    }
+  // VAT/IOSS goes on the root (NOT inside customs)
+  const vatRef = sanitizeVatRef(document.getElementById("cc_customs_tax_reference_number")?.value);
+  if (vatRef) payload.vat_reference = vatRef;
 
-      return payload;
-    }
+  // Customs and phone ONLY for international
+  if (payload.country_code !== "CA" && payload.country_code !== "US") {
+    payload.customs = {
+      package_contents: document.getElementById("cc_package_contents").value || "merchandise",
+      value           : toMoney(grandTotal),
+      value_currency  : (valueCurrency || "CAD").toLowerCase(),
+      line_items
+    };
+    const phone = (document.getElementById("cc_to_phone")?.value || "").trim();
+    payload.phone = phone || "416-606-2476";
+  }
+
+  return payload;
+}
       function renderRates(s){
         const rates = (s && s.rates) || [];
         ratesList.innerHTML = "";
