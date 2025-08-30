@@ -4664,12 +4664,12 @@ function buildRefreshPayload(){
             const country = (document.getElementById("cc_to_country_code")?.value || "").trim().toUpperCase();
             const phoneEl = document.getElementById("cc_to_phone");
             const phone   = (phoneEl?.value || "").trim() || "416-606-2476";
-            if (phone) {
+
             if (country && country !== "CA" && country !== "US" && phone) {
-              if (phoneEl && !phoneEl.value.trim()) phoneEl.value = phone;
+            if (phoneEl && !phoneEl.value.trim()) phoneEl.value = phone;
               await callCc("PATCH", { action:"refresh", shipment_id:id, payload:{ country_code: country, phone } });
             }
-          } catch(_) {}
+          } catch (e) {}
           // 2) Buy the label
           await callCc("PATCH", { action:"buy", shipment_id:id, postage_type:selectedPostageType });
 
