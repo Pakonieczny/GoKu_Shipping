@@ -4528,9 +4528,10 @@ function buildRefreshPayload(){
   };
 
   const vatRef = sanitizeVatRef(document.getElementById("cc_customs_tax_reference_number")?.value);
-  if (vatRef) {
-    payload.customs ??= {};
-    payload.customs.vat_reference = vatRef;
+
+    if (vatRef) {
+    payload.vat_reference = vatRef;      // ✅ correct placement
+    if (payload.customs) delete payload.customs.vat_reference;
   }
 
   // weight & dims (only if provided)
@@ -4618,7 +4619,7 @@ function buildRefreshPayload(){
             package_contents: replacePayload?.customs?.package_contents,
             value: replacePayload?.customs?.value,
             value_currency: (replacePayload?.customs?.value_currency || "").toUpperCase(),
-            vat_reference: replacePayload?.customs?.vat_reference,     // ← add this
+            vat_reference: replacePayload?.vat_reference,   // ✅ from root
             line_items: (replacePayload?.customs?.line_items || []).map(li => ({
               description: li.description,
               quantity: Number(li.quantity),
