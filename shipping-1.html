@@ -4618,7 +4618,10 @@ function buildRefreshPayload(){
           }
         });
 
-        if (replaceSig !== window.ccLastReplaceSig) {
+         const destCC = (detectDestCountryCode() || "").toUpperCase();
+         const forceIntlReplace = destCC && destCC !== "US" && destCC !== "CA";
+
+        if (forceIntlReplace || replaceSig !== window.ccLastReplaceSig) {
           // 🔁 Replace (delete → recreate), then continue with refresh for rates
           const rep = await callCc("PATCH", {
             action: "replace_shipment",
