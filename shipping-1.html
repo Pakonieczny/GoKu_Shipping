@@ -1885,7 +1885,7 @@ function metalToBadge(label){
       }
 
       // Expose both, so either style of call site works
-      
+
       window.getCcEndpoint = getCcEndpoint;
       window.chitChatsFn   = window.chitChatsFn || DEFAULT_FN;
     })();
@@ -3921,6 +3921,44 @@ function metalToBadge(label){
       }
       window.callCc = callCc;
 
+      async function replaceDraftShipment(oldId, shipment){
+      // 1) Try server-native replace if your proxy supports it
+      try {
+        return await callCc("PATCH", {
+          action      : "replace_shipment",
+          shipment_id : oldId,
+          shipment
+        });
+      } catch (e) {
+        const msg = String(e?.message || "").toLowerCase();
+        // 2) Fallback path if action isn't implemented server-side
+        if (e.status === 400 || e.status === 404 || e.status === 405 ||
+            msg.includes("unknown action") || msg.includes("not implemented")) {
+
+          // Create a new corrected draft
+          const created = await callCc("POST", { action: "create_shipment", shipment });
+          const newId   = created?.id || created?.shipment?.id;
+
+          // Best-effort cleanup of the old draft (ignore failures)
+          if (newId && oldId && newId !== oldId) {
+            try {
+              // Prefer a RESTful DELETE if your proxy supports it
+              await callCc("DELETE", null, `?resource=shipment&id=${encodeURIComponent(oldId)}`);
+            } catch (_) {
+              try {
+                // Or a PATCH-style delete if that’s what your proxy uses
+                await callCc("PATCH", { action: "delete_shipment", shipment_id: oldId });
+              } catch { /* swallow */ }
+            }
+          }
+          return created;
+        }
+        // Non-action errors still bubble up
+        throw e;
+      }
+    }
+    window.replaceDraftShipment = replaceDraftShipment;
+
       // Keep the ID field and global in sync wherever a shipment gets created/refreshed
       function pushShipmentId(id){
         const v = String(id ?? "");
@@ -3996,11 +4034,10 @@ function metalToBadge(label){
         // So we DO NOT call refund/delete here.
         // We simply create a new shipment with corrected recipient + line_items.
         const currentId = (document.getElementById("ccShipmentId")?.value || "").trim();
-        const created = await callCc("PATCH", {
-          action      : "replace_shipment",
-          shipment_id : currentId,
-          shipment    : buildShipmentPayload()
-        });
+        const created = await replaceDraftShipment(currentId, buildShipmentPayload());
+        const newId   = created?.id || created?.shipment?.id;
+        if (newId) pushShipmentId(newId);
+        return created;
         const newId   = created?.id || created?.shipment?.id;
         if (newId) pushShipmentId(newId);
         return created;
@@ -4612,11 +4649,14 @@ function buildRefreshPayload(){
       
         if (replaceSig !== window.ccLastReplaceSig) {
           // Structural change → create a new draft with corrected recipient + customs
-          const rep = await callCc("PATCH", {
-            action      : "replace_shipment",
-            shipment_id : id,
-            shipment    : replacePayload
-          });
+          const rep = await replaceDraftShipment(id, replacePayload);
+          const newId = rep?.id || rep?.shipment?.id;
+          if (newId && newId !== id) {
+            id = newId;
+            idInput.value = newId;
+            try { pushShipmentId(newId); } catch {}
+          }
+          window.ccLastReplaceSig = replaceSig;
           const newId = rep?.id || rep?.shipment?.id;
           if (newId && newId !== id) {
             id = newId;
