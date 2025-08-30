@@ -3430,7 +3430,7 @@ function metalToBadge(label){
           for (const s of list) {
             const sid = String(s.id || "");
             if (sid && sid !== String(keepId)) {
-              await deleteCcShipment(sid);
+              await globalThis.deleteCcShipment?.(sid);
             }
           }
         } catch (e) {
@@ -3961,6 +3961,7 @@ function metalToBadge(label){
           // await callCc("PATCH", { action: "refund", shipment_id: shipmentId });
           return false;
         }
+        globalThis.deleteCcShipment = deleteCcShipment; // expose across closures/modules
       }
 
       async function replaceDraftShipment(oldId, shipment){
@@ -3990,7 +3991,7 @@ function metalToBadge(label){
 
         // If we really replaced with a different id, remove the old one now
         if (newId && oldId && newId !== oldId) {
-          await deleteCcShipment(oldId);
+          await globalThis.deleteCcShipment?.(oldId);
 
           // Optional: sweep any other open dupes for this order number
           const orderId = (document.getElementById("etsyOrderNumber")?.value || "").trim();
