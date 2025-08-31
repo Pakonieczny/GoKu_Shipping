@@ -4442,7 +4442,8 @@ async function ccValidateAgainstApi(step){
 }
 
         function buildTo(){
-          const country = (document.getElementById("cc_to_country_code").value || "").trim().toUpperCase();
+          let country = (document.getElementById("cc_to_country_code").value || "").trim().toUpperCase();
+          if (country === "UK") country = "GB";
           let   phone   = (document.getElementById("cc_to_phone").value || "").trim();
           if (country && country !== "CA" && country !== "US" && !phone) {
             phone = "416-606-2476";
@@ -4542,6 +4543,7 @@ async function ccValidateAgainstApi(step){
         }
 
 function buildRefreshPayload(){
+  const to = buildTo();              // includes .phone if present
   // units/dims
   const wUnit = document.getElementById("cc_weight_unit").value;
   const weight = Number(document.getElementById("cc_weight").value || 0);
@@ -4589,16 +4591,16 @@ function buildRefreshPayload(){
   if (vatRef) payload.vat_reference = vatRef;
 
   // Customs and phone ONLY for international
-  if (payload.country_code !== "CA" && payload.country_code !== "US") {
+  if (to.country_code !== "CA" && to.country_code !== "US") {
     payload.customs = {
       package_contents: document.getElementById("cc_package_contents").value || "merchandise",
       value           : toMoney(grandTotal),
       value_currency  : (valueCurrency || "CAD").toLowerCase(),
       line_items
     };
-    const phone = (document.getElementById("cc_to_phone")?.value || "").trim();
-    payload.phone = phone || "416-606-2476";
-      }
+    // Ensure phone exists on the TO object, not root
+    if (!to.phone) payload.to.phone = "416-606-2476";
+     }
 
       // 🆕 Ensure Etsy Order Number is carried on create/duplicate
       const orderId = (document.getElementById("etsyOrderNumber")?.value || "").trim();
@@ -4809,6 +4811,7 @@ async function refreshRates(){
         insurance_requested: "cc_insurance_requested",
         signature_requested: "cc_signature_requested",
         media_mail_requested: "cc_media_mail_requested"
+        ,to: to                          // ← ensure recipient (with phone) is on the refresh payload
       };
 
        // Fallback selectors for the multi-tranche UI
