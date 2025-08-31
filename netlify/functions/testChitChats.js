@@ -183,96 +183,58 @@ exports.handler = async (event) => {
     }
 
     // --- Build a REFRESH payload that preserves nested `customs` ---
+// Replace your refresh builder to FLATTEN customs onto the root:
 function adaptRefreshPayload(client = {}) {
-  // 1) Flatten as you already do
+  // 1) Start from the same flattener you already use
   const flat = adaptClientShipment(client);
   const out  = { ...flat };
 
-  // 2) Build customs, prefer nested client.customs
+  // 2) Derive customs from either client.customs or flattened fields
   const src = client.customs || {};
-  const customs = {};
+  const customs = {
+    package_contents: src.package_contents ?? flat.package_contents ?? "merchandise",
+    description     : src.description     ?? flat.description,
+    value           : String(src.value ?? flat.value ?? 0),
+    value_currency  : String(src.value_currency ?? flat.value_currency ?? "cad").toLowerCase(),
+    line_items      : Array.isArray(src.line_items) ? src.line_items
+                     : Array.isArray(flat.line_items) ? flat.line_items
+                     : []
+  };
 
-  if (src.package_contents != null) customs.package_contents = src.package_contents;
-  else if (flat.package_contents != null) customs.package_contents = flat.package_contents;
+  // 3) Normalize line_items for Intl (origin_country, hs code, value_amount as string, currency_code UPPER)
+  customs.line_items = (customs.line_items || []).map(li => {
+    const o = { ...li };
+    if (o.description) o.description = asciiify(o.description).slice(0, 95);
+    if (o.currency_code) o.currency_code = String(o.currency_code).toUpperCase();
+    if (o.value_amount != null) o.value_amount = String(o.value_amount);
+    const hs = cleanHs(o.hs_tariff_code || o.hts_code || o.harmonized_code);
+    if (hs) o.hs_tariff_code = hs;
 
-  if (src.value != null) customs.value = String(src.value);
-  else if (flat.value != null) customs.value = String(flat.value);
-
-  const vc = (src.value_currency ?? flat.value_currency);
-  if (vc != null) customs.value_currency = String(vc).toUpperCase();
-
-  // Line items (normalize per-item for Intl)
-  const from = Array.isArray(src.line_items) ? src.line_items
-            : Array.isArray(flat.line_items) ? flat.line_items
-            : [];
-  const dest = String(
-    client.country_code || flat.country_code || client?.to?.country_code || ""
-  ).toUpperCase();
-
-  if (from.length) {
-    customs.line_items = from.map(li => {
-      const o = { ...li };
-
-      // Description must be ASCII and short(ish)
-      if (o.description) o.description = asciiify(o.description).slice(0, 95);
-
-      // Currency code uppercased; amount as string
-      if (o.currency_code) o.currency_code = String(o.currency_code).toUpperCase();
-      if (o.value_amount != null) o.value_amount = String(o.value_amount);
-
-      // HS code: digits only
-      const hs = cleanHs(o.hs_tariff_code || o.hts_code || o.harmonized_code);
-      if (hs) o.hs_tariff_code = hs;
-
-      // Country of origin (mandatory for Intl Tracked)
-      let oc = (o.origin_country || o.manufacture_country ||
-                client.origin_country || client.manufacture_country || "CA");
-      oc = String(oc).toUpperCase();
-      if (oc === "UK") oc = "GB";
-      if (dest && dest !== "CA" && dest !== "US") o.origin_country = oc;
-
-      return o;
-    });
-  }
-
-  if (Object.keys(customs).length) out.customs = customs;
-
-  // 3) Remove flattened customs copies
-  delete out.package_contents;
-  delete out.description;
-  delete out.value;
-  delete out.value_currency;
-  delete out.line_items;
-
-  // 4) Sanitize top-level recipient/address fields (ASCII)
-  ["name","address_1","address_2","city","province_code","postal_code"].forEach(k => {
-    if (out[k] != null) out[k] = asciiify(out[k]);
+    // Require origin_country for US & Intl
+    const dest = String(out.country_code || out.to?.country_code || "").toUpperCase();
+    let oc = (o.origin_country || o.manufacture_country || client.origin_country || client.manufacture_country || "CA");
+    oc = String(oc).toUpperCase(); if (oc === "UK") oc = "GB";
+    if (dest && dest !== "CA") o.origin_country = oc;
+    return o;
   });
 
-  // 5) Dims: drop zero/blank so we don’t send invalid 0s
-  ["size_x","size_y","size_z"].forEach(k => { if (!(Number(out[k]) > 0)) delete out[k]; });
+  // 4) FLATTEN onto root; do NOT send a nested `customs` key
+  Object.assign(out, customs);
+  delete out.customs;
 
-  // 6) Intl ergonomics: correct package_type & phone
-  if (dest && dest !== "CA" && dest !== "US") {
-    const bad = out.package_type === "letter" || out.package_type === "flat_envelope";
-    if (bad) out.package_type = "thick_envelope"; // surfaces Intl Tracked
-    if (!out.phone) out.phone = "416-606-2476";
-  }
-
-  // 7) Keep/sanitize VAT/IOSS/EORI (top-level)
-  const refreshVatRefSource =
+  // 5) Keep VAT/IOSS/EORI on the root
+  const vatRefSource =
     client.vat_reference ??
     client.customs_tax_reference_number ?? client.tax_reference_number ??
     client.ioss ?? client.ioss_number ??
     client.vat  ?? client.vat_number  ??
-    client.eori ?? client.eori_number ??
-    (client.customs ? (client.customs.vat_reference || client.customs.tax_reference_number ||
-                       client.customs.ioss_number || client.customs.vat_number || client.customs.eori_number) : null) ??
-    out.vat_reference;
-  const refreshVatRef = sanitizeVatRef(refreshVatRefSource);
-  if (refreshVatRef) out.vat_reference = refreshVatRef;
-  else delete out.vat_reference;
+    client.eori ?? client.eori_number;
+  const vatRef = sanitizeVatRef(vatRefSource);
+  if (vatRef) out.vat_reference = vatRef; else delete out.vat_reference;
 
+  // 6) Tidy
+  ["size_x","size_y","size_z"].forEach(k => { if (!(Number(out[k]) > 0)) delete out[k]; });
+  Object.keys(out).forEach(k => (out[k] == null) && delete out[k]);
   return out;
 }
 
