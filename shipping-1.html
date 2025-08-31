@@ -3714,14 +3714,22 @@ function metalToBadge(label){
       }
 
       // Client-side normalization to match server behavior
-      function normalizeShipDate(v){
-        const t = String(v || "").trim().toLowerCase();
-        if (!t || t === "today") return "today";
-        if (t === "tomorrow") return "tomorrow";
-        if (/^\d{4}-\d{2}-\d{2}$/.test(t)) return t;
-        const d = new Date(t);
-        return Number.isNaN(d.getTime()) ? "today" : d.toISOString().slice(0,10);
-      }
+     function normalizeShipDate(v){
+       const raw = String(v || "").trim();
+       const toYMD = (d) => {
+         const yy = d.getFullYear();
+         const mm = String(d.getMonth() + 1).padStart(2, "0");
+         const dd = String(d.getDate()).padStart(2, "0");
+         return `${yy}-${mm}-${dd}`;          // local calendar date, not UTC ISO
+       };
+       if (!raw)              return toYMD(new Date());
+       const low = raw.toLowerCase();
+       if (low === "today")   return toYMD(new Date());
+       if (low === "tomorrow"){ const d = new Date(); d.setDate(d.getDate() + 1); return toYMD(d); }
+       if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return raw;
+       const d = new Date(raw);
+       return Number.isNaN(d.getTime()) ? toYMD(new Date()) : toYMD(d);
+     }
 
     /* ===== Chit Chats Edit Shipment Wizard (create → refresh rates → buy) ===== */
     (function(){
