@@ -204,8 +204,16 @@ exports.handler = async (event) => {
       const vc = (src.value_currency ?? flat.value_currency);
       if (vc != null) customs.value_currency = String(vc).toUpperCase(); // UPPERCASE for refresh
 
-      if (Array.isArray(src.line_items)) customs.line_items = src.line_items;
-      else if (Array.isArray(flat.line_items)) customs.line_items = flat.line_items;
+      const pickItems = Array.isArray(src.line_items) ? src.line_items
+                        : (Array.isArray(flat.line_items) ? flat.line_items : null);
+      if (pickItems) {
+        customs.line_items = pickItems.map(li => ({
+          ...li,
+          // normalize per-item fields the API is strict about
+          currency_code : String(li.currency_code || customs.value_currency || "CAD").toUpperCase(),
+          origin_country: String(li.origin_country || out.country_code || "").toUpperCase()
+        }));
+      }
 
       // Only attach if we actually have something
       if (Object.keys(customs).length) out.customs = customs;
