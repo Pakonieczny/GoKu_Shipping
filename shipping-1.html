@@ -4572,6 +4572,7 @@ function buildRefreshPayload(){
     insurance_requested  : document.getElementById("cc_insurance_requested").value === "true",
     media_mail_requested : document.getElementById("cc_media_mail_requested").value === "true",
     signature_requested  : document.getElementById("cc_signature_requested").value === "true"
+    ,to: to
   };
 
   // add weight/dims if provided
@@ -4811,7 +4812,6 @@ async function refreshRates(){
         insurance_requested: "cc_insurance_requested",
         signature_requested: "cc_signature_requested",
         media_mail_requested: "cc_media_mail_requested"
-        ,to: to                          // ← ensure recipient (with phone) is on the refresh payload
       };
 
        // Fallback selectors for the multi-tranche UI
