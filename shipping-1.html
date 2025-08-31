@@ -1495,8 +1495,8 @@ function metalToBadge(label){
     return collectCcLineItems().map(li => ({
       description   : li.description,
       quantity      : Number(li.quantity) || 1,
-      value_amount  : fix2(li.unit_value),
-      currency_code : valueCurrency.toUpperCase(),
+      value_amount  : toMoney(li.unit_value), // per-unit; Chit Chats multiplies by quantity
+      currency_code : currency,
       hs_tariff_code: li.hs_tariff_code || undefined,
       sku_code      : li.sku || undefined,
       origin_country: (li.origin_country || "").toUpperCase() || undefined
@@ -3275,16 +3275,6 @@ function metalToBadge(label){
       window.refreshFromOrderIfChitChats    = refreshFromOrderIfChitChats;
       window.refreshFromTrackingIfChitChats = refreshFromTrackingIfChitChats;
 
-      // ---- money utils (global) ----
-      window.fix2 = window.fix2 || function(n){
-        const v = Number(n || 0);
-        return Number.isFinite(v) ? Math.round(v * 100) / 100 : 0;
-      };
-      window.toMoney = window.toMoney || function(n){
-        const v = Number(n || 0);
-        return Number.isFinite(v) ? (Math.round(v * 100) / 100).toFixed(2) : "0.00";
-      };
-
       /* ── Guard: ignore immediate blank rewrites of #ccShipmentId ─────────── */
       (function guardCcShipmentId(){
         const el = document.getElementById("ccShipmentId");
@@ -3324,7 +3314,6 @@ function metalToBadge(label){
         // Spinner just for Chit Chats shipment-id lookups
         const ccSpinnerEl = document.getElementById("ccIdSpinner");
         let _ccSpinDepth = 0;
-
         function ccSpin(on){
           if (!ccSpinnerEl) return;
           if (on) {
@@ -4504,8 +4493,8 @@ async function ccValidateAgainstApi(step){
           const line_items = lines.map(li => ({
             description                : li.description,
             quantity                   : Number(li.quantity) || 1,
-             value_amount  : window.fix2(li.unit_value),
-             currency_code : (valueCurrency || "CAD").toUpperCase(),
+            value_amount               : toMoney(li.unit_value),
+            currency_code              : valueCurrency.toLowerCase(),
             hs_tariff_code             : li.hs_tariff_code || undefined,
             sku_code                   : li.sku || undefined,
             origin_country             : (li.origin_country || "").toUpperCase() || undefined,
@@ -4545,8 +4534,8 @@ async function ccValidateAgainstApi(step){
             vat_reference: vatRef || undefined,
             customs      : {
               package_contents: document.getElementById("cc_package_contents").value,
-              value          : window.fix2(grandTotal),
-              value_currency  : (valueCurrency || "CAD").toUpperCase(),
+              value           : toMoney(grandTotal),
+              value_currency  : valueCurrency.toLowerCase(),
               line_items
               // (no nested vat_reference — top-level is authoritative)
             }
@@ -4606,8 +4595,8 @@ function buildRefreshPayload(){
   if (to.country_code !== "CA" && to.country_code !== "US") {
     payload.customs = {
       package_contents: document.getElementById("cc_package_contents").value || "merchandise",
-      value           : fix2(grandTotal),
-      value_currency  : (valueCurrency || "CAD").toUpperCase(),
+      value           : toMoney(grandTotal),
+      value_currency  : (valueCurrency || "CAD").toLowerCase(),
       line_items
     };
     // Ensure phone exists on the TO object, not root
