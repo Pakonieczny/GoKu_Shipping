@@ -3406,37 +3406,40 @@ function metalToBadge(label){
         }
       }
 
-      // Find any other open shipments for this order and remove them (keep the new id)
-        async function sweepDuplicatesForOrder(orderId, keepId){
-          const keep = String(keepId || "").trim();
-          if (!orderId || !keep) return;             // ❗ never sweep without a target to keep
+      // REPLACE the entire function with this version (safer + ES2018-compatible)
+      async function sweepDuplicatesForOrder(orderId, keepId){
+        const keep = String(keepId || "").trim();
+        if (!orderId || !keep) return; // never sweep without a valid target to keep
 
-          // Wait briefly until the new shipment shows up in search (handles CC indexing lag)
-          const deadline = Date.now() + 5000; // ~5s
-          let list = [];
-          do {
-            try {
-              const url = `${getCcEndpoint()}?resource=search&orderId=${encodeURIComponent(orderId)}&pendingOnly=1&fast=1&pageSize=200`;
-              const resp = await fetch(url, { credentials: "include" });
-              const data = await safeJSON(resp);
-              list = Array.isArray(data?.shipments) ? data.shipments : [];
-              if (list.some(s => String(s.id || "") === keep)) break;  // found the one we keep
-            } catch {}
-            await new Promise(r => setTimeout(r, 300));
-          } while (Date.now() < deadline);
-
-          const ids = list.map(s => String(s.id || "")).filter(Boolean);
-          if (!ids.includes(keep)) {
-            console.debug("[ChitChats] sweep: keepId not found in search; skipping delete.");
-            return;                                     // ❗ don’t risk deleting the only copy
+        // Wait briefly for the new shipment to appear in search (handles CC indexing lag)
+        const deadline = Date.now() + 5000; // ~5s patience
+        let list = [];
+        do {
+          try {
+            const url = `${getCcEndpoint()}?resource=search&orderId=${encodeURIComponent(orderId)}&pendingOnly=1&fast=1&pageSize=200`;
+            const resp = await fetch(url, { credentials: "include" });
+            const data = await safeJSON(resp);
+            list = Array.isArray(data?.shipments) ? data.shipments : [];
+            const found = list.some(s => String(s.id || "") === keep);
+            if (found) break; // keepId is visible; safe to proceed
+          } catch (e) {
+            // swallow and retry until deadline
           }
+          await new Promise(r => setTimeout(r, 300));
+        } while (Date.now() < deadline);
 
-          for (const sid of ids) {
-            if (sid !== keep) {
-              try { await globalThis.deleteCcShipment?.(sid); } catch {}
-            }
+        const ids = list.map(s => String(s.id || "")).filter(Boolean);
+        if (!ids.includes(keep)) {
+          try { console.debug("[ChitChats] sweep: keepId not found in search; skipping delete."); } catch (e) {}
+          return; // don’t risk deleting the only copy
+        }
+
+        for (const sid of ids) {
+          if (sid !== keep) {
+            try { await globalThis.deleteCcShipment?.(sid); } catch (e) {}
           }
         }
+      }
 
           console.debug("[ChitChats] sweepDuplicatesForOrder failed", e);
         }
@@ -3971,24 +3974,23 @@ function metalToBadge(label){
           globalThis.deleteCcShipment = deleteCcShipment;
           window.deleteCcShipment     = deleteCcShipment;
 
-        async function replaceDraftShipment(oldId, shipment){
-          const created = await callCc("POST", { action: "create_shipment", shipment });
-          const newId   = created?.id || created?.shipment?.id;
+      async function replaceDraftShipment(oldId, shipment){
+        const created = await callCc("POST", { action: "create_shipment", shipment });
+        const newId   = created?.id || created?.shipment?.id;
 
-          // ❗If create didn’t return an id, do NOT delete anything.
-          if (!newId) {
-            M.toast?.({ html: "Chit Chats didn’t return a new shipment id — keeping the original." });
-            return created;
-          }
-
-          if (oldId && newId !== oldId) {
-            // Optional: sweep only after we know the new one is visible to search
-            const orderId = (document.getElementById("etsyOrderNumber")?.value || "").trim();
-            if (orderId) { try { await sweepDuplicatesForOrder(orderId, newId); } catch {} }
-            try { await globalThis.deleteCcShipment?.(oldId); } catch {}
-          }
+        // If create didn’t return an id, do NOT delete anything.
+        if (!newId) {
+          try { M.toast?.({ html: "Chit Chats didn’t return a new shipment id — keeping the original." }); } catch (e) {}
           return created;
         }
+
+        if (oldId && newId !== oldId) {
+          const orderId = (document.getElementById("etsyOrderNumber")?.value || "").trim();
+          if (orderId) { try { await sweepDuplicatesForOrder(orderId, newId); } catch (e) {} }
+          try { await globalThis.deleteCcShipment?.(oldId); } catch (e) {}
+        }
+        return created;
+      }
 
       window.replaceDraftShipment = replaceDraftShipment;
 
