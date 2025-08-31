@@ -3407,20 +3407,37 @@ function metalToBadge(label){
       }
 
       // Find any other open shipments for this order and remove them (keep the new id)
-      async function sweepDuplicatesForOrder(orderId, keepId){
-        if (!orderId) return;
-        try {
-          const url = `${getCcEndpoint()}?resource=search&orderId=${encodeURIComponent(orderId)}&pendingOnly=1&fast=1&pageSize=200`;
-          const resp = await fetch(url, { credentials: "include" });
-          const data = await safeJSON(resp);
-          const list = Array.isArray(data?.shipments) ? data.shipments : [];
-          for (const s of list) {
-            const sid = String(s.id || "");
-            if (sid && sid !== String(keepId)) {
-              await globalThis.deleteCcShipment?.(sid);
+        async function sweepDuplicatesForOrder(orderId, keepId){
+          const keep = String(keepId || "").trim();
+          if (!orderId || !keep) return;             // ❗ never sweep without a target to keep
+
+          // Wait briefly until the new shipment shows up in search (handles CC indexing lag)
+          const deadline = Date.now() + 5000; // ~5s
+          let list = [];
+          do {
+            try {
+              const url = `${getCcEndpoint()}?resource=search&orderId=${encodeURIComponent(orderId)}&pendingOnly=1&fast=1&pageSize=200`;
+              const resp = await fetch(url, { credentials: "include" });
+              const data = await safeJSON(resp);
+              list = Array.isArray(data?.shipments) ? data.shipments : [];
+              if (list.some(s => String(s.id || "") === keep)) break;  // found the one we keep
+            } catch {}
+            await new Promise(r => setTimeout(r, 300));
+          } while (Date.now() < deadline);
+
+          const ids = list.map(s => String(s.id || "")).filter(Boolean);
+          if (!ids.includes(keep)) {
+            console.debug("[ChitChats] sweep: keepId not found in search; skipping delete.");
+            return;                                     // ❗ don’t risk deleting the only copy
+          }
+
+          for (const sid of ids) {
+            if (sid !== keep) {
+              try { await globalThis.deleteCcShipment?.(sid); } catch {}
             }
           }
-        } catch (e) {
+        }
+        catch (e) {
           console.debug("[ChitChats] sweepDuplicatesForOrder failed", e);
         }
       }
@@ -3955,15 +3972,20 @@ function metalToBadge(label){
           window.deleteCcShipment     = deleteCcShipment;
 
         async function replaceDraftShipment(oldId, shipment){
-          // 🔄 Server doesn’t accept PATCH replace — create a new draft directly, then delete the old one.
           const created = await callCc("POST", { action: "create_shipment", shipment });
           const newId   = created?.id || created?.shipment?.id;
 
-          if (newId && oldId && newId !== oldId) {
-            try { await globalThis.deleteCcShipment?.(oldId); } catch {}
-            // Sweep any other open dupes for this order
+          // ❗If create didn’t return an id, do NOT delete anything.
+          if (!newId) {
+            M.toast?.({ html: "Chit Chats didn’t return a new shipment id — keeping the original." });
+            return created;
+          }
+
+          if (oldId && newId !== oldId) {
+            // Optional: sweep only after we know the new one is visible to search
             const orderId = (document.getElementById("etsyOrderNumber")?.value || "").trim();
-            if (orderId) { try { sweepDuplicatesForOrder(orderId, newId); } catch {} }
+            if (orderId) { try { await sweepDuplicatesForOrder(orderId, newId); } catch {} }
+            try { await globalThis.deleteCcShipment?.(oldId); } catch {}
           }
           return created;
         }
@@ -4501,7 +4523,7 @@ async function ccValidateAgainstApi(step){
           return {
             to           : toObj,
             country_code : (toObj?.country_code || "").toUpperCase(),
-            order_id     : orderId || undefined,
+            order_id     : (orderId || undefined),
             package      : pkg,
             vat_reference: vatRef || undefined,
             customs      : {
