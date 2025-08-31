@@ -3406,13 +3406,12 @@ function metalToBadge(label){
         }
       }
 
-      // REPLACE the entire function with this version (safer + ES2018-compatible)
       async function sweepDuplicatesForOrder(orderId, keepId){
         const keep = String(keepId || "").trim();
         if (!orderId || !keep) return; // never sweep without a valid target to keep
 
         // Wait briefly for the new shipment to appear in search (handles CC indexing lag)
-        const deadline = Date.now() + 5000; // ~5s patience
+        const deadline = Date.now() + 5000; // ~5s
         let list = [];
         do {
           try {
@@ -3440,11 +3439,7 @@ function metalToBadge(label){
           }
         }
       }
-
-          console.debug("[ChitChats] sweepDuplicatesForOrder failed", e);
-        }
-      
-      window.sweepDuplicatesForOrder = sweepDuplicatesForOrder; // (optional)
+      window.sweepDuplicatesForOrder = sweepDuplicatesForOrder; // (keep this export)
 
       // --- UI setters
       function setShipmentUI(s){
