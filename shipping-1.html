@@ -1495,8 +1495,8 @@ function metalToBadge(label){
     return collectCcLineItems().map(li => ({
       description   : li.description,
       quantity      : Number(li.quantity) || 1,
-      value_amount  : toMoney(li.unit_value), // per-unit; Chit Chats multiplies by quantity
-      currency_code : currency,
+      value_amount  : fix2(li.unit_value),
+      currency_code : valueCurrency.toUpperCase(),
       hs_tariff_code: li.hs_tariff_code || undefined,
       sku_code      : li.sku || undefined,
       origin_country: (li.origin_country || "").toUpperCase() || undefined
@@ -4534,8 +4534,8 @@ async function ccValidateAgainstApi(step){
             vat_reference: vatRef || undefined,
             customs      : {
               package_contents: document.getElementById("cc_package_contents").value,
-              value           : toMoney(grandTotal),
-              value_currency  : valueCurrency.toLowerCase(),
+              value           : fix2(grandTotal),
+              value_currency  : (valueCurrency || "CAD").toUpperCase(),
               line_items
               // (no nested vat_reference — top-level is authoritative)
             }
@@ -4595,8 +4595,8 @@ function buildRefreshPayload(){
   if (to.country_code !== "CA" && to.country_code !== "US") {
     payload.customs = {
       package_contents: document.getElementById("cc_package_contents").value || "merchandise",
-      value           : toMoney(grandTotal),
-      value_currency  : (valueCurrency || "CAD").toLowerCase(),
+      value           : fix2(grandTotal),
+      value_currency  : (valueCurrency || "CAD").toUpperCase(),
       line_items
     };
     // Ensure phone exists on the TO object, not root
