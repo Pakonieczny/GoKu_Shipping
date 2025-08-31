@@ -183,64 +183,98 @@ exports.handler = async (event) => {
     }
 
     // --- Build a REFRESH payload that preserves nested `customs` ---
-    function adaptRefreshPayload(client = {}) {
-      // First: reuse your existing flattener to normalize dims, address, etc.
-      const flat = adaptClientShipment(client);
-      const out  = { ...flat };
+function adaptRefreshPayload(client = {}) {
+  // 1) Flatten as you already do
+  const flat = adaptClientShipment(client);
+  const out  = { ...flat };
 
-      // Prefer the caller's explicit `customs` block; fallback to any flattened fields
-      const src = client.customs || {};
-      const customs = {};
+  // 2) Build customs, prefer nested client.customs
+  const src = client.customs || {};
+  const customs = {};
 
-      if (src.package_contents != null) customs.package_contents = src.package_contents;
-      else if (flat.package_contents != null) customs.package_contents = flat.package_contents;
+  if (src.package_contents != null) customs.package_contents = src.package_contents;
+  else if (flat.package_contents != null) customs.package_contents = flat.package_contents;
 
-      if (src.description != null) customs.description = src.description;
-      else if (flat.description != null) customs.description = flat.description;
+  if (src.value != null) customs.value = String(src.value);
+  else if (flat.value != null) customs.value = String(flat.value);
 
-      if (src.value != null) customs.value = String(src.value);
-      else if (flat.value != null) customs.value = String(flat.value);
+  const vc = (src.value_currency ?? flat.value_currency);
+  if (vc != null) customs.value_currency = String(vc).toUpperCase();
 
-      const vc = (src.value_currency ?? flat.value_currency);
-      if (vc != null) customs.value_currency = String(vc).toUpperCase(); // UPPERCASE for refresh
+  // Line items (normalize per-item for Intl)
+  const from = Array.isArray(src.line_items) ? src.line_items
+            : Array.isArray(flat.line_items) ? flat.line_items
+            : [];
+  const dest = String(
+    client.country_code || flat.country_code || client?.to?.country_code || ""
+  ).toUpperCase();
 
-      const pickItems = Array.isArray(src.line_items) ? src.line_items
-                        : (Array.isArray(flat.line_items) ? flat.line_items : null);
-      if (pickItems) {
-        customs.line_items = pickItems.map(li => ({
-          ...li,
-          // normalize per-item fields the API is strict about
-          currency_code : String(li.currency_code || customs.value_currency || "CAD").toUpperCase(),
-          origin_country: String(li.origin_country || out.country_code || "").toUpperCase()
-        }));
-      }
+  if (from.length) {
+    customs.line_items = from.map(li => {
+      const o = { ...li };
 
-      // Only attach if we actually have something
-      if (Object.keys(customs).length) out.customs = customs;
+      // Description must be ASCII and short(ish)
+      if (o.description) o.description = asciiify(o.description).slice(0, 95);
 
-      // Remove flattened copies so the API sees `customs.*` (not top-level)
-      delete out.package_contents;
-      delete out.description;
-      delete out.value;
-      delete out.value_currency;
-      delete out.line_items;
+      // Currency code uppercased; amount as string
+      if (o.currency_code) o.currency_code = String(o.currency_code).toUpperCase();
+      if (o.value_amount != null) o.value_amount = String(o.value_amount);
 
-      // 🔒 Keep/sanitize VAT/IOSS/EORI on refresh (top-level per API)
-      const refreshVatRefSource =
-        client.vat_reference ??
-        client.customs_tax_reference_number ?? client.tax_reference_number ??
-        client.ioss ?? client.ioss_number ??
-        client.vat  ?? client.vat_number  ??
-        client.eori ?? client.eori_number ??
-        (client.customs ? (client.customs.vat_reference || client.customs.tax_reference_number ||
-                           client.customs.ioss_number || client.customs.vat_number || client.customs.eori_number) : null) ??
-        out.vat_reference;
-      const refreshVatRef = sanitizeVatRef(refreshVatRefSource);
-      if (refreshVatRef) out.vat_reference = refreshVatRef;
-      else delete out.vat_reference;
+      // HS code: digits only
+      const hs = cleanHs(o.hs_tariff_code || o.hts_code || o.harmonized_code);
+      if (hs) o.hs_tariff_code = hs;
 
-      return out;
-    }
+      // Country of origin (mandatory for Intl Tracked)
+      let oc = (o.origin_country || o.manufacture_country ||
+                client.origin_country || client.manufacture_country || "CA");
+      oc = String(oc).toUpperCase();
+      if (oc === "UK") oc = "GB";
+      if (dest && dest !== "CA" && dest !== "US") o.origin_country = oc;
+
+      return o;
+    });
+  }
+
+  if (Object.keys(customs).length) out.customs = customs;
+
+  // 3) Remove flattened customs copies
+  delete out.package_contents;
+  delete out.description;
+  delete out.value;
+  delete out.value_currency;
+  delete out.line_items;
+
+  // 4) Sanitize top-level recipient/address fields (ASCII)
+  ["name","address_1","address_2","city","province_code","postal_code"].forEach(k => {
+    if (out[k] != null) out[k] = asciiify(out[k]);
+  });
+
+  // 5) Dims: drop zero/blank so we don’t send invalid 0s
+  ["size_x","size_y","size_z"].forEach(k => { if (!(Number(out[k]) > 0)) delete out[k]; });
+
+  // 6) Intl ergonomics: correct package_type & phone
+  if (dest && dest !== "CA" && dest !== "US") {
+    const bad = out.package_type === "letter" || out.package_type === "flat_envelope";
+    if (bad) out.package_type = "thick_envelope"; // surfaces Intl Tracked
+    if (!out.phone) out.phone = "416-606-2476";
+  }
+
+  // 7) Keep/sanitize VAT/IOSS/EORI (top-level)
+  const refreshVatRefSource =
+    client.vat_reference ??
+    client.customs_tax_reference_number ?? client.tax_reference_number ??
+    client.ioss ?? client.ioss_number ??
+    client.vat  ?? client.vat_number  ??
+    client.eori ?? client.eori_number ??
+    (client.customs ? (client.customs.vat_reference || client.customs.tax_reference_number ||
+                       client.customs.ioss_number || client.customs.vat_number || client.customs.eori_number) : null) ??
+    out.vat_reference;
+  const refreshVatRef = sanitizeVatRef(refreshVatRefSource);
+  if (refreshVatRef) out.vat_reference = refreshVatRef;
+  else delete out.vat_reference;
+
+  return out;
+}
 
     // ---- helpers to detect purchased shipments and perform delete → recreate ----
 function isPostagePurchased(sh) {
@@ -776,6 +810,18 @@ async function recreateShipmentIfUnbought(id, desiredClientPayload, { authH, url
 };
 
 // ---------- small utilities ----------
+// ASCII-only (strip diacritics, emoji, non-printables)
+function asciiify(s) {
+  return String(s || "")
+    .normalize("NFKD").replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^\x20-\x7E]/g, "");
+}
+// HS codes must be digits only (6–12 digits OK)
+function cleanHs(code) {
+  const d = String(code || "").replace(/\D/g, "");
+  return d ? d.slice(0, 12) : undefined;
+}
+
 function safeJSON(txt) {
   if (!txt) return {};
   try { return JSON.parse(txt); } catch { return {}; }
