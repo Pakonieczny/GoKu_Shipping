@@ -3956,11 +3956,7 @@ function metalToBadge(label){
 
         async function replaceDraftShipment(oldId, shipment){
           // 🔄 Server doesn’t accept PATCH replace — create a new draft directly, then delete the old one.
-            const orderId = (document.getElementById("etsyOrderNumber")?.value || "").trim();
-            const created = await callCc("POST", {
-              action: "create_shipment",
-              shipment: { ...shipment, ...(orderId ? { order_id: orderId } : {}) }
-            });
+          const created = await callCc("POST", { action: "create_shipment", shipment });
           const newId   = created?.id || created?.shipment?.id;
 
           if (newId && oldId && newId !== oldId) {
@@ -4513,8 +4509,7 @@ async function ccValidateAgainstApi(step){
               value_currency  : valueCurrency.toLowerCase(),
               line_items
               // (no nested vat_reference — top-level is authoritative)
-            },
-            ...(orderId ? { order_id: orderId } : {})
+            }
           };
         }
 
