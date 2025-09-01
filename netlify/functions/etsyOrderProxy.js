@@ -1,5 +1,5 @@
 // etsyOrderProxy.js  – DROP-IN REPLACEMENT
-const fetch = require("node-fetch");
+const { etsyFetch } = require("./_shared/etsyRateLimiter");
 
 exports.handler = async function (event) {
   try {
@@ -26,7 +26,7 @@ exports.handler = async function (event) {
     /* ------------------------------------------------------------------
      * 3.  MAKE REQUEST
      * ------------------------------------------------------------------ */
-    const response = await fetch(etsyUrl, {
+    const response = await etsyFetch(etsyUrl, {
       method: "GET",
       headers: {
         Authorization: `Bearer ${accessToken}`,

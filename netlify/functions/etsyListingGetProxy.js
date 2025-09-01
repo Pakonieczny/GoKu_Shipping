@@ -1,5 +1,5 @@
 // netlify/functions/etsyListingGetProxy.js
-const fetch = require("node-fetch");
+const { etsyFetch } = require("./_shared/etsyRateLimiter");
 
 exports.handler = async (event) => {
   try {
@@ -12,7 +12,7 @@ exports.handler = async (event) => {
     if (!clientId)    return { statusCode: 500, body: JSON.stringify({ error: "Missing CLIENT_ID" }) };
 
     const url = `https://openapi.etsy.com/v3/application/listings/${listingId}`;
-    const resp = await fetch(url, {
+    const resp = await etsyFetch(url, {
       headers: {
         Authorization: `Bearer ${accessToken}`,
         "x-api-key": clientId,

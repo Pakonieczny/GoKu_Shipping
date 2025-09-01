@@ -1,4 +1,4 @@
-const fetch = require('node-fetch');
+const { etsyFetch } = require("./_shared/etsyRateLimiter");
 
 exports.handler = async function(event, context) {
   try {
@@ -10,11 +10,13 @@ exports.handler = async function(event, context) {
     if (!accessToken) {
       return { statusCode: 400, body: JSON.stringify({ error: "Missing access token" }) };
     }
-    const etsyUrl = `https://api.etsy.com/v3/application/listings/${listingId}`;
-    const response = await fetch(etsyUrl, {
+    const clientId = process.env.CLIENT_ID;
+    const etsyUrl  = `https://openapi.etsy.com/v3/application/listings/${listingId}`;
+    const response = await etsyFetch(etsyUrl, {
       method: "GET",
       headers: {
         "Authorization": `Bearer ${accessToken}`,
+        "x-api-key": clientId,
         "Content-Type": "application/json"
       }
     });

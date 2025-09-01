@@ -1,5 +1,5 @@
 // netlify/functions/etsyUpdateListingInventoryProxy.js
-const fetch = require("node-fetch");
+const { etsyFetch } = require("./_shared/etsyRateLimiter");
 
 exports.handler = async (event) => {
   try {
@@ -21,7 +21,7 @@ exports.handler = async (event) => {
 
     // 1) Fetch current inventory (we PUT the full document back with SKU edits)
     const getUrl = `https://openapi.etsy.com/v3/application/listings/${listingId}/inventory`;
-    const getResp = await fetch(getUrl, {
+    const getResp = await etsyFetch(getUrl, {
       headers: {
         Authorization: `Bearer ${accessToken}`,
         "x-api-key": clientId,
