@@ -33,6 +33,8 @@ exports.handler = async (event) => {
     const BASE         = process.env.CHIT_CHATS_BASE_URL || "https://chitchats.com/api/v1";
     const CLIENT_ID    = process.env.CHIT_CHATS_CLIENT_ID;
     const ACCESS_TOKEN = process.env.CHIT_CHATS_ACCESS_TOKEN;
+    // Toggle via environment: ALLOW_CC_VAT_REFERENCE=true to re-enable
+    const ALLOW_CC_VAT_REFERENCE = /^(1|true|yes)$/i.test(process.env.ALLOW_CC_VAT_REFERENCE || "");
 
     if (!CLIENT_ID || !ACCESS_TOKEN) {
       return bad(500, "Missing CHIT_CHATS_CLIENT_ID or CHIT_CHATS_ACCESS_TOKEN");
@@ -174,8 +176,9 @@ exports.handler = async (event) => {
         client.eori ?? client.eori_number ??
         customs.vat_reference ?? customs.tax_reference_number ??
         customs.ioss_number ?? customs.vat_number ?? customs.eori_number;
-      const vatRef = sanitizeVatRef(vatRefSource);
-      if (vatRef) out.vat_reference = vatRef;
+        const vatRef = sanitizeVatRef(vatRefSource);
+        // Temporarily disabled: do not send VAT/IOSS/EORI to Chit Chats
+        if (ALLOW_CC_VAT_REFERENCE && vatRef) out.vat_reference = vatRef; else delete out.vat_reference;
 
       // prune undefined/null to keep payload tidy
       Object.keys(out).forEach(k => (out[k] == null) && delete out[k]);
@@ -229,8 +232,9 @@ function adaptRefreshPayload(client = {}) {
     client.ioss ?? client.ioss_number ??
     client.vat  ?? client.vat_number  ??
     client.eori ?? client.eori_number;
-  const vatRef = sanitizeVatRef(vatRefSource);
-  if (vatRef) out.vat_reference = vatRef; else delete out.vat_reference;
+    const vatRef = sanitizeVatRef(vatRefSource);
+    // Temporarily disabled unless explicitly re-enabled via env
+    if (ALLOW_CC_VAT_REFERENCE && vatRef) out.vat_reference = vatRef; else delete out.vat_reference;
 
   // 6) Tidy
   ["size_x","size_y","size_z"].forEach(k => { if (!(Number(out[k]) > 0)) delete out[k]; });
