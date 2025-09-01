@@ -2493,6 +2493,10 @@ function metalToBadge(label){
 
               metalBox.value = " Metal: " + deQuote(metalSel || "No Metal");
             }
+          } catch (err) {
+            console.error("updateImageGrid item render:", err);
+            cell.innerHTML = "No image";
+          }
           } else {
             cell.innerHTML = "Empty";
             cell.style.cursor = "default";
