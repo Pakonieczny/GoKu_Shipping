@@ -39,6 +39,7 @@ exports.handler = async (event) => {
        const {
          orderId,
          orderNumber: on,
+         orderStatus = "",
          shipTo = null,
          gift = false,
          giftMessage = "",
@@ -49,12 +50,28 @@ exports.handler = async (event) => {
          items = []
        } = order;
 
+      // 🔎 Also fetch shipments so the UI can show tracking details
+      let shipments = [];
+      try {
+        const sUrl  = `${baseURL}/shipments?orderId=${encodeURIComponent(orderId)}`;
+        const sResp = await fetch(sUrl, { headers });
+        if (sResp.ok) {
+          const sJson = await sResp.json();
+          const raw   = Array.isArray(sJson.shipments) ? sJson.shipments : [];
+          shipments   = raw.map(x => ({
+            carrier_name : x.carrierCode || "",
+            tracking_code: x.trackingNumber || ""
+          }));
+        }
+      } catch (_) { /* non-fatal */ }
+
       return {
         statusCode: 200,
         headers: { "Content-Type": "application/json" },
          body: JSON.stringify({
            orderId,
            orderNumber: on,
+           orderStatus,
            shipTo,
            gift,
            giftMessage,
@@ -69,7 +86,8 @@ exports.handler = async (event) => {
              unitPrice: typeof i.unitPrice === "number" ? i.unitPrice : Number(i.unitPrice || 0),
              originCountry: (i.productCountryOfOrigin || "").toUpperCase() || null,
              hsCode: i.productHarmonizedCode || null
-           }))
+           })),
+           shipments
          })
       };
   } catch (err) {
