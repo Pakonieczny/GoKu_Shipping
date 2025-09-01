@@ -4526,8 +4526,8 @@ async function ccValidateAgainstApi(step){
           // ✅ top-level vat_reference (required placement by Chit Chats API)
           const vatRef = sanitizeVatRef(document.getElementById("cc_customs_tax_reference_number")?.value);
           const dest = String((toObj?.country_code || "")).toUpperCase();
-          // (EU set no longer needed just for DDP; you can remove it if unused)
 
+          return {
             to           : toObj,
             country_code : (toObj?.country_code || "").toUpperCase(),
             order_id     : (orderId || undefined),
