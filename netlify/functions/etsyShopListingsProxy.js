@@ -1,5 +1,5 @@
 // netlify/functions/etsyShopListingsProxy.js
-const { etsyFetch } = require("./_shared/etsyRateLimiter");
+const fetch = require("node-fetch");
 
 exports.handler = async function(event) {
   try {
@@ -18,7 +18,7 @@ exports.handler = async function(event) {
 
     const url = `https://openapi.etsy.com/v3/application/shops/${shopId}/listings?limit=${limit}&offset=${offset}&state=${encodeURIComponent(state)}`;
 
-    const resp = await etsyFetch(url, {
+    const resp = await fetch(url, {
       headers: {
         Authorization: `Bearer ${accessToken}`,
         "x-api-key": clientId,

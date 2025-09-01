@@ -1,5 +1,5 @@
 // lib/etsyAuth.js — server-side Etsy OAuth token manager (auto-refresh)
- const { etsyFetch } = require("./_shared/etsyRateLimiter");
+ const fetch = require("node-fetch");
  const admin = require("firebase-admin");
  
  if (!admin.apps.length) {

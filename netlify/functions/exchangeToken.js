@@ -4,7 +4,7 @@
 // else if "goldenspike.app" => uses that
 // else => defaults to goldenspike (you can invert this default if you wish).
 
-const { etsyFetch } = require("./_shared/etsyRateLimiter");
+const fetch  = require("node-fetch");
 const crypto = require("crypto");
 
 // We only allow these two final domains:

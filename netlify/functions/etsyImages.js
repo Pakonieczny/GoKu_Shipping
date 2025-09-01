@@ -1,5 +1,5 @@
 // etsyImages.js
-const { etsyFetch } = require("./_shared/etsyRateLimiter");
+const fetch = require("node-fetch");
 
 exports.handler = async function(event, context) {
   try {
@@ -19,7 +19,7 @@ exports.handler = async function(event, context) {
     const etsyUrl = `https://api.etsy.com/v3/application/listings/${listingId}/images`;
     
     // Make the API call.
-    const response = await etsyFetch(etsyUrl, {
+    const response = await fetch(etsyUrl, {
       method: "GET",
       headers: {
         "Authorization": `Bearer ${accessToken}`,
