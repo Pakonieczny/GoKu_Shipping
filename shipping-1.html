@@ -4532,7 +4532,6 @@ async function ccValidateAgainstApi(step){
              ? !!document.getElementById("cc_duties_paid_requested").checked
              : undefined,
 
-          return {
             to           : toObj,
             country_code : (toObj?.country_code || "").toUpperCase(),
             order_id     : (orderId || undefined),
