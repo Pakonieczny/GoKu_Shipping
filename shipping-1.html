@@ -3488,7 +3488,7 @@ function metalToBadge(label){
 
             try {
               // fast, pending-only, smaller page window
-              const fast = await callSearch({ orderId, fast: "1", pendingOnly: "1", pageSize: "50", timeoutMs: "20000" });
+              const fast = await callSearch({ orderId, fast: "1", pendingOnly: "1", pageSize: "25", timeoutMs: "20000" });
               if (fast?.aborted) return;
               const hit = pickBestShipment(orderId, (fast.shipments || []));
               if (hit) { setShipmentUI(hit); return; }
