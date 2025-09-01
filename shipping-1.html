@@ -1569,8 +1569,25 @@ function metalToBadge(label){
 
     /* ShipStation: browser does not hold marketplace tokens.
        Functions handle auth via server-side Basic Auth. */
+
+    // Ensure a global base for Netlify Functions
+    if (typeof window.functionsBaseUrl !== "string" || !window.functionsBaseUrl) {
+      try {
+        window.functionsBaseUrl = location.hostname.includes("goldenspike")
+          ? "https://shipping-1.goldenspike.app/.netlify/functions"
+          : "/.netlify/functions";
+      } catch (_) {
+        window.functionsBaseUrl = "/.netlify/functions";
+      }
+    }
+
     async function apiFetch(path, init = {}){
-      return fetch(`${functionsBaseUrl}${path}`, init);
+      // If an absolute URL or already a full Netlify path, don't re-prefix
+      if (/^https?:\/\//.test(path) || path.startsWith("/.netlify/functions/")) {
+        return fetch(path, init);
+      }
+      const sep = path.startsWith("/") ? "" : "/";
+      return fetch(`${window.functionsBaseUrl}${sep}${path}`, init);
     }
 
     (function () {
@@ -2664,8 +2681,9 @@ function metalToBadge(label){
     async function pullShipStationOrderDetails(orderNumber){
       try{
         // Reuse the same SS function as address; augment on server to include fields we need.
-        const resp = await apiFetch(`/.netlify/functions/ssGetOrderAddress?orderNumber=${encodeURIComponent(orderNumber)}`);
-        if(!resp.ok) throw new Error("ShipStation " + resp.status);
+        const resp = await apiFetch(`/ssGetOrderAddress?orderNumber=${encodeURIComponent(orderNumber)}`);
+        // Gracefully handle not-found without noisy error logs
+        if (!resp.ok) return null;
         const data = await resp.json();  // shipTo, orderStatus, shipments?, items?, giftMessage?
 
         // 🎁 Gift flags/messages (from SS)
