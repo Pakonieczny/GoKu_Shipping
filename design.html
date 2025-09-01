@@ -3941,7 +3941,9 @@ async function buildNewOrderList(offset = 0) {
   /* ❷ slice requested page – skip receipts already completed */
   const filtered     = allOpenReceipts.filter(r => !completedOrders.has(String(r.receipt_id)));
   const page         = filtered.slice(offset, offset + 100);
-  window._lastDisplayReceipts = page;            // expose current page
+  // expose the current page using the exact name the console hint expects
+  const displayReceipts = page;
+  window._lastDisplayReceipts = displayReceipts;
 
   const totalPages   = Math.ceil(filtered.length / 100);
   const currentPage  = Math.floor(offset / 100) + 1;
