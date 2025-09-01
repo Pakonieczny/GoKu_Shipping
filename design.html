@@ -588,6 +588,24 @@ function makeQueue(max = 4) {
 // Limit concurrent image calls; tune 3–6 based on your quota.
 const runImageTask = makeQueue(3);
 
+// ───────────────── Etsy request pacing (one start every 225 ms) ─────────────────
+function makeSpacingQueue(spacingMs = 250) {
+  let lastStart = 0;
+  let chain = Promise.resolve();
+  return (fn) => {
+    chain = chain.then(async () => {
+      const wait = Math.max(0, spacingMs - (Date.now() - lastStart));
+      if (wait) await new Promise(r => setTimeout(r, wait));
+      lastStart = Date.now();
+      return fn();
+    });
+    return chain;
+  };
+}
+// Group all Etsy-facing proxy routes behind the same pacing queue
+const isEtsyPath  = (p) => /^\/(etsy|listOpenOrders|etsyImages)/i.test(p);
+const runEtsyTask = makeSpacingQueue(250);
+
   // ---- Global image helper (single definition, shared everywhere) ----
   // Uses your Netlify imageProxy to avoid CORS and returns a data: URL.
   // If another copy already defined it, we reuse that.
@@ -614,20 +632,23 @@ async function apiFetch(path, init = {}) {
 
   // 2) attempt with current token
   let token = localStorage.getItem(TOKEN_KEYS.access) || "";
-  let resp  = await fetch(`${functionsBaseUrl}${path}`, {
+  const doFetch = () => fetch(`${functionsBaseUrl}${path}`, {
     ...init,
     headers: { ...(init.headers || {}), "access-token": token }
   });
+  // 🚦 pace Etsy endpoints at ~4.44 req/s (225 ms between starts)
+  let resp  = isEtsyPath(path)
+    ? await runEtsyTask(() => doFetch())
+    : await doFetch();
 
   // 3) on 401 → single-flight refresh, then retry once
   if (resp.status === 401) {
     try {
       await refreshAccessToken();
       token = localStorage.getItem(TOKEN_KEYS.access) || "";
-      resp  = await fetch(`${functionsBaseUrl}${path}`, {
-        ...init,
-        headers: { ...(init.headers || {}), "access-token": token }
-      });
+      resp  = isEtsyPath(path)
+        ? await runEtsyTask(() => doFetch())
+        : await doFetch();
     } catch (_) {
       // refresh failed → fall through
     }
@@ -647,10 +668,9 @@ async function apiFetch(path, init = {}) {
       const raMs = Number.isFinite(Number(retryAfter)) ? Number(retryAfter) * 1000 : 0;
       const backoff = Math.max(raMs, 300 * Math.pow(2, attempt)); // 300, 600, 1200, 2400...
       await new Promise(r => setTimeout(r, backoff));
-      resp = await fetch(`${functionsBaseUrl}${path}`, {
-        ...init,
-        headers: { ...(init.headers || {}), "access-token": token }
-      });
+      resp = isEtsyPath(path)
+        ? await runEtsyTask(() => doFetch())  // retry still respects pacing
+        : await doFetch();
       attempt++;
     }
   }
