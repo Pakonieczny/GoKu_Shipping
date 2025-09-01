@@ -4526,12 +4526,19 @@ async function ccValidateAgainstApi(step){
           // ✅ top-level vat_reference (required placement by Chit Chats API)
           const vatRef = sanitizeVatRef(document.getElementById("cc_customs_tax_reference_number")?.value);
 
+          // 🧾 DDP toggle (EU/GB) when VAT/IOSS provided
+          const dest = String((toObj?.country_code || "")).toUpperCase();
+          const EU = new Set(["AT","BE","BG","HR","CY","CZ","DK","EE","FI","FR","DE","GR","HU","IE","IT","LV","LT","LU","MT","NL","PL","PT","RO","SK","SI","ES","SE"]);
+          const ddp = Boolean(vatRef && (dest === "GB" || EU.has(dest)));
+
           return {
             to           : toObj,
             country_code : (toObj?.country_code || "").toUpperCase(),
             order_id     : (orderId || undefined),
             package      : pkg,
             vat_reference: vatRef || undefined,
+            // Only included if true (undefined is dropped by JSON.stringify)
+            duties_paid_requested: ddp ? true : undefined,
             customs      : {
               package_contents: document.getElementById("cc_package_contents").value,
               value           : toMoney(grandTotal),
@@ -4590,6 +4597,15 @@ function buildRefreshPayload(){
   // VAT/IOSS goes on the root (NOT inside customs)
   const vatRef = sanitizeVatRef(document.getElementById("cc_customs_tax_reference_number")?.value);
   if (vatRef) payload.vat_reference = vatRef;
+
+  // 🧾 DDP toggle (EU/GB) when VAT/IOSS provided
+  {
+    const dest = String((payload?.country_code || to?.country_code || "")).toUpperCase();
+    const EU = new Set(["AT","BE","BG","HR","CY","CZ","DK","EE","FI","FR","DE","GR","HU","IE","IT","LV","LT","LU","MT","NL","PL","PT","RO","SK","SI","ES","SE"]);
+    if (vatRef && (dest === "GB" || EU.has(dest))) {
+      payload.duties_paid_requested = true;
+    }
+  }
 
   // Customs and phone ONLY for international
   if (to.country_code !== "CA" && to.country_code !== "US") {
