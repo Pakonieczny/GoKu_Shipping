@@ -4739,11 +4739,11 @@ function reflowGrid(){
       /* fetch only the missing ones */
       if (needReceipts.length){
         loadBatchEtsyOrders(needReceipts)
-          .then(()=>{ reflowGrid(); updateCounters(); })
+          .then(()=>{ reflowGrid(); window.updateCounters?.(); })
           .catch(err => console.error("Completed sync error:", err));
       }else{
         reflowGrid();
-        updateCounters();
+        window.updateCounters?.();
       }
     }
 
@@ -4793,7 +4793,7 @@ function reflowGrid(){
       if (needReceipts.length) {
         await loadBatchEtsyOrders(needReceipts);     // uses addPreviewBox
           reflowGrid();            // 🆕 pack the grid tightly
-          updateCounters();        // 🆕 keep the badges honest
+          window.updateCounters?.(); // 🆕 keep the badges honest (safe)
       }
 
       /* D. mark every visible wrap for a selected receipt */
@@ -4823,7 +4823,7 @@ function reflowGrid(){
             completedOrders.has(wrap.dataset.receipt) ? "" : "none";
         });
         reflowGrid();
-        updateCounters();           // counters stay metal-only
+        window.updateCounters?.();  // counters stay metal-only
         return;
       }
 
@@ -4861,7 +4861,7 @@ function reflowGrid(){
       });
 
       reflowGrid();
-      updateCounters();             // keep top counters in sync
+      window.updateCounters?.();    // keep top counters in sync
 
        /* one more pass in the next frame — guarantees nothing strips the outline */
        requestAnimationFrame(() => {
