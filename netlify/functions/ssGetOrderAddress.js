@@ -36,22 +36,27 @@ exports.handler = async (event) => {
       return { statusCode: 404, body: JSON.stringify({ error: "Order not found" }) };
     }
 
-       const {
-         orderId,
-         orderNumber: on,
-         orderStatus = "",
-         shipTo = null,
-         gift = false,
-         giftMessage = "",
-         customerNotes = "",
-         carrierCode = "",
-         serviceCode = "",
-         shippingAmount = null,
-         items = []
-       } = order;
+      const {
+        orderId,
+        orderNumber: on,
+        orderStatus = "",
+        shipTo = null,
+        gift = false,
+        giftMessage = "",
+        customerNotes = "",
+        carrierCode = "",
+        serviceCode = "",
+        shippingAmount = null,
+        createDate = null,   // ← used for dateOrdered
+        orderDate = null,    // ← fallback
+        shipByDate = null,   // ← used for shipDate
+        shipDate = null,     // ← sometimes present on order
+        items = []
+      } = order;
 
-      // 🔎 Also fetch shipments so the UI can show tracking details
-      let shipments = [];
+      // 🔎 Also fetch shipments so the UI can show tracking + shipped date
+      let shipments   = [];
+      let shippedDate = shipDate || null; // prefer order.shipDate if present
       try {
         const sUrl  = `${baseURL}/shipments?orderId=${encodeURIComponent(orderId)}`;
         const sResp = await fetch(sUrl, { headers });
@@ -60,35 +65,45 @@ exports.handler = async (event) => {
           const raw   = Array.isArray(sJson.shipments) ? sJson.shipments : [];
           shipments   = raw.map(x => ({
             carrier_name : x.carrierCode || "",
-            tracking_code: x.trackingNumber || ""
+            tracking_code: x.trackingNumber || "",
+            shipDate     : x.shipDate || x.createDate || null
           }));
+          if (!shippedDate && raw.length) {
+            shippedDate = raw[0].shipDate || raw[0].createDate || null;
+          }
         }
       } catch (_) { /* non-fatal */ }
 
       return {
         statusCode: 200,
         headers: { "Content-Type": "application/json" },
-         body: JSON.stringify({
-           orderId,
-           orderNumber: on,
-           orderStatus,
-           shipTo,
-           gift,
-           giftMessage,
-           customerNotes,
-           carrierCode,
-           serviceCode,
-           shippingAmount,
-           items: (Array.isArray(items) ? items : []).map(i => ({
-             name: i.name,
-             sku: i.sku || null,
-             quantity: Number(i.quantity || 1),
-             unitPrice: typeof i.unitPrice === "number" ? i.unitPrice : Number(i.unitPrice || 0),
-             originCountry: (i.productCountryOfOrigin || "").toUpperCase() || null,
-             hsCode: i.productHarmonizedCode || null
-           })),
-           shipments
-         })
+        body: JSON.stringify({
+          orderId,
+          orderNumber: on,
+          orderStatus,
+          shipTo,
+          gift,
+          giftMessage,
+          customerNotes,
+          carrierCode,
+          serviceCode,
+          shippingAmount,
+          // 🗓️ feed the UI
+          createDate: createDate || orderDate || null,
+          shipByDate: shipByDate || null,
+          shippedDate,
+          // 🖼️ include image URL hints from SS
+          items: (Array.isArray(items) ? items : []).map(i => ({
+            name         : i.name,
+            sku          : i.sku || null,
+            quantity     : Number(i.quantity || 1),
+            unitPrice    : typeof i.unitPrice === "number" ? i.unitPrice : Number(i.unitPrice || 0),
+            originCountry: (i.productCountryOfOrigin || "").toUpperCase() || null,
+            hsCode       : i.productHarmonizedCode || null,
+            imageUrl     : i.imageUrl || i.imageURL || i.thumbnailUrl || null
+          })),
+          shipments
+        })
       };
   } catch (err) {
     return { statusCode: 500, body: JSON.stringify({ error: err.message }) };
