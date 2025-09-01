@@ -1296,14 +1296,7 @@ function metalToBadge(label){
      ********************************************************/
     const functionsBaseUrl = window.location.origin + "/.netlify/functions";
 
-    /* ===== Etsy OAuth boot + auto-refresh wiring (match design/sorting) ===== */
-    const TOKEN_KEYS = {
-      access  : "access_token",
-      refresh : "refresh_token",
-      expires : "token_expires_at"   // epoch seconds
-    };
 
-    let __refreshPromise = null;  // single-flight guard
 
     // Extract a numeric unit price from Etsy's various shapes
     function extractUnitPriceFromEtsy(item){
@@ -1666,158 +1659,20 @@ function metalToBadge(label){
       }
     }
 
-    function scheduleTokenRefresh(){
-      clearTimeout(window.__etsyRefreshTimer);
-      const exp = Number(localStorage.getItem(TOKEN_KEYS.expires) || 0);
-      if (!exp){
-        if (localStorage.getItem(TOKEN_KEYS.refresh)){
-          window.__etsyRefreshTimer = setTimeout(refreshAccessToken, 55 * 60 * 1000);
-        }
-        return;
-      }
-      const now = Math.floor(Date.now()/1000);
-      const leadSec = 120;
-      const delayMs = Math.max(5000, (exp - now - leadSec) * 1000);
-      window.__etsyRefreshTimer = setTimeout(refreshAccessToken, delayMs);
-    }
-
-    function setTokens({ access_token, refresh_token, expires_in, issued_at }){
-      if (access_token)  localStorage.setItem(TOKEN_KEYS.access,  access_token);
-      if (refresh_token) localStorage.setItem(TOKEN_KEYS.refresh, refresh_token);
-      const now = Math.floor(Date.now()/1000);
-      const iat = Number(issued_at || now);
-      const exp = iat + Number(expires_in || 3600);
-      localStorage.setItem(TOKEN_KEYS.expires, String(exp));
-      scheduleTokenRefresh();
-    }
-
-    async function refreshAccessToken(){
-      if (__refreshPromise) return __refreshPromise;
-      const rt = localStorage.getItem(TOKEN_KEYS.refresh);
-      if (!rt) return;
-      __refreshPromise = (async () => {
-        try{
-          const resp = await fetch(`${functionsBaseUrl}/refreshEtsyToken`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ refresh_token: rt })
-          });
-          if (!resp.ok) throw new Error("HTTP " + resp.status);
-          const data = await resp.json();
-          setTokens({
-            access_token : data.access_token,
-            // Etsy rotates refresh_token; if omitted, keep old
-            refresh_token: data.refresh_token || rt,
-            expires_in   : data.expires_in,
-            issued_at    : data.issued_at || Math.floor(Date.now()/1000)
-          });
-          M.toast?.({ html: "Etsy token refreshed" });
-          return true;
-        }catch(err){
-          console.warn("Token refresh failed:", err);
-          // Clear & start headless OAuth (no button clicks)
-          localStorage.removeItem(TOKEN_KEYS.access);
-          localStorage.removeItem(TOKEN_KEYS.expires);
-          await startOAuth("refresh-failed");
-          throw err;
-        }finally{
-          __refreshPromise = null;
-        }
-      })();
-      return __refreshPromise;
-    }
-
-    async function ensureFreshToken(){
-      const exp = Number(localStorage.getItem(TOKEN_KEYS.expires) || 0);
-      if (!exp) return;
-      const now = Math.floor(Date.now()/1000);
-      if (exp - now <= 120) await refreshAccessToken();
-    }
-
-    /* Resilient fetch against our Functions:
-       - ensures token freshness
-       - retries once on 401 after refresh
-       - if still 401, kicks off headless OAuth and throws */
+    /* ShipStation: browser does not hold marketplace tokens.
+       Functions handle auth via server-side Basic Auth. */
     async function apiFetch(path, init = {}){
-      await ensureFreshToken();
-      let token = localStorage.getItem(TOKEN_KEYS.access) || "";
-
-      let resp = await fetch(`${functionsBaseUrl}${path}`, {
-        ...init,
-        headers: { ...(init.headers || {}), "access-token": token }
-      });
-
-      if (resp.status === 401){
-        try{
-          await refreshAccessToken();
-          token = localStorage.getItem(TOKEN_KEYS.access) || "";
-          resp  = await fetch(`${functionsBaseUrl}${path}`, {
-            ...init,
-            headers: { ...(init.headers || {}), "access-token": token }
-          });
-        }catch(_){}
-      }
-
-      if (resp.status === 401){
-        localStorage.removeItem(TOKEN_KEYS.access);
-        localStorage.removeItem(TOKEN_KEYS.expires);
-        await startOAuth("401");
-        throw new Error("Unauthorized");
-      }
-      return resp;
+      return fetch(`${functionsBaseUrl}${path}`, init);
     }
 
     (function () {
-      // Handle OAuth callback & wire up page events (fully closed)
-      const url = new URL(window.location.href);
-      const oauthCode  = url.searchParams.get("code");
-      const oauthState = url.searchParams.get("state");
-      const hasCallback = Boolean(oauthCode);
-
-      // Legacy (server-initiated) OAuth kept for reference but NOT used
-      async function startOAuthLegacy(reason = "manual") {
-        try {
-          const resp = await fetch(`${functionsBaseUrl}/startEtsyOAuth`, { method: "POST" });
-          if (!resp.ok) throw new Error("HTTP " + resp.status);
-          const { authUrl } = await resp.json();
-          if (!authUrl) throw new Error("No authUrl from server");
-          window.location.href = authUrl;
-        } catch (err) {
-          console.error("startOAuth failed:", err);
-          M.toast?.({ html: "OAuth error: " + err.message });
-        }
-      }
-    
-      async function finishOAuthIfNeeded() {
-        if (!hasCallback) return;
-        try {
-          const resp = await fetch(`${functionsBaseUrl}/completeEtsyOAuth`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ code: oauthCode, state: oauthState })
-          });
-          if (!resp.ok) throw new Error("HTTP " + resp.status);
-          const data = await resp.json();
-          setTokens({
-            access_token : data.access_token,
-            refresh_token: data.refresh_token,
-            expires_in   : data.expires_in,
-            issued_at    : data.issued_at
-          });
-          window.history.replaceState({}, document.title, window.location.pathname);
-          M.toast?.({ html: "Etsy connected" });
-        } catch (err) {
-          console.error("OAuth completion failed:", err);
-          M.toast?.({ html: "OAuth completion failed" });
-        }
-      }
-
+      // ShipStation: nothing to do client-side; show a passive “connected” state.
       document.addEventListener("DOMContentLoaded", () => {
-        // Route button to HEADLESS PKCE flow defined later (global)
-        document.getElementById("connectEtsyBtn")
-          ?.addEventListener("click", () => window.startOAuth?.("manual"));
-        // Headless PKCE handles its own callback via /exchangeToken; no legacy finish step
-        // finishOAuthIfNeeded();
+        const btn = document.getElementById("connectEtsyBtn");
+        if (btn){
+          btn.textContent = "ShipStation Connected";
+          btn.disabled = true;
+        }
       });
     })();
 
@@ -1828,48 +1683,6 @@ function metalToBadge(label){
           return Number.isFinite(v) ? (Math.round(v * 100)/100).toFixed(2) : "0.00";
         };
       }
-    
-// — OAuth query handling (self-contained; safe to return inside)
-(() => {
-  const qs = new URLSearchParams(window.location.search);
-
-      // Tokens returned by exchangeToken.js (access, refresh, expires_in, issued_at)
-      const a = qs.get("access_token");
-      if (a) {
-        setTokens({
-          access_token : a,
-          refresh_token: qs.get("refresh_token"),
-          expires_in   : qs.get("expires_in"),
-          issued_at    : qs.get("issued_at")
-        });
-        window.history.replaceState({}, document.title, window.location.pathname);
-        M.toast?.({ html: "Connection Successful!" });
-        return;
-      }
-
-      // Standard OAuth code return → hand back to server for code→tokens
-      const code = qs.get("code");
-      if (code) {
-        const v = localStorage.getItem("etsy_code_verifier");
-        if (v) {
-          const next = new URLSearchParams({ code, code_verifier: v, redirect_domain: "shipping-1" });
-          window.location.href = "/.netlify/functions/exchangeToken?" + next.toString();
-          return;
-        } else {
-          console.error("No code verifier found in localStorage.");
-        }
-      }
-
-      // Page load without query: rehydrate or refresh or boot OAuth
-      if (localStorage.getItem(TOKEN_KEYS.access)) {
-        scheduleTokenRefresh();
-      } else if (localStorage.getItem(TOKEN_KEYS.refresh)) {
-        refreshAccessToken();
-      } else {
-        // No tokens at all → start OAuth silently (like design/sorting)
-        startOAuth("boot");
-      }
-    })();
 
     // Ensure a single, global source of truth for the proxy endpoint
     (function(){
@@ -1906,34 +1719,6 @@ function metalToBadge(label){
       var digest = await crypto.subtle.digest("SHA-256", data);
       var base64String = btoa(String.fromCharCode.apply(null, new Uint8Array(digest)));
       return base64String.replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
-    }
-
-     // Headless OAuth starter (no UI clicks needed)
-    let __oauthInFlight = false;
-    async function startOAuth(reason = "auto"){
-      if (__oauthInFlight) return;
-      __oauthInFlight = true;
-      try{
-        const codeVerifier = generateRandomString(64);
-        localStorage.setItem("etsy_code_verifier", codeVerifier);
-        const codeChallenge = await generateCodeChallenge(codeVerifier);
-        const CLIENT_ID   = "k75zdspz4r99txpqdji7i2em";
-        const redirectUri = "https://shipping-1.goldenspike.app";
-        const scope       = "listings_w listings_r transactions_r transactions_w";
-        const state       = `reconnect_${Date.now()}_${reason}`;
-        const etsyAuthUrl =
-          "https://www.etsy.com/oauth/connect?response_type=code" +
-          "&client_id=" + CLIENT_ID +
-          "&redirect_uri=" + encodeURIComponent(redirectUri) +
-          "&scope=" + encodeURIComponent(scope) +
-          "&state=" + encodeURIComponent(state) +
-          "&code_challenge=" + encodeURIComponent(codeChallenge) +
-          "&code_challenge_method=S256";
-        window.location.href = etsyAuthUrl;
-      }catch(e){
-        console.error("OAuth boot failed:", e);
-        __oauthInFlight = false;
-      }
     }
 
     /*
@@ -2332,7 +2117,8 @@ function metalToBadge(label){
 
       const connectEtsyBtn = document.getElementById("connectEtsyBtn");
       if (connectEtsyBtn){
-        connectEtsyBtn.addEventListener("click", () => startOAuth("manual"));
+        connectEtsyBtn.textContent = "ShipStation Connected";
+        connectEtsyBtn.disabled = true;
       }
 
       var etsyOrderInput = document.getElementById("etsyOrderNumber");
@@ -3687,6 +3473,32 @@ function metalToBadge(label){
     }
     window.getShipDateForApi = getShipDateForApi; // optional, explicit
 
+     /* ──────────────────────────────────────────────────────────────
+     * NEW: Single helper to post tracking back to Etsy
+     * Uses your Netlify function: /.netlify/functions/trackOrderProxy
+     * Expects: { receiptId, tracking, carrier, shipDate }
+     * ────────────────────────────────────────────────────────────── */
+    async function postTrackingToEtsy(receiptId, tracking, carrier, shipDate = getShipDateForApi()) {
+      if (!receiptId || !tracking) return;
+      try {
+        await fetch("/.netlify/functions/trackOrderProxy", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          credentials: "include",
+          body: JSON.stringify({
+            receiptId,
+            tracking,
+            carrier: carrier || "Chit Chats",
+            shipDate
+          })
+        });
+        try { M.toast?.({ html: "Etsy updated with tracking." }); } catch {}
+      } catch (e) {
+        console.warn("[trackOrderProxy] failed", e);
+        try { M.toast?.({ html: "Couldn’t update Etsy with tracking (non-blocking)." }); } catch {}
+      }
+    }
+
       // 🆕 Promise-based payload preview modal
       async function openCcPayloadModal(previewList){
         const modal   = document.getElementById("ccPayloadModal");
@@ -4348,6 +4160,15 @@ function metalToBadge(label){
             if (t) { t.value = shipment.carrier_tracking_code; } // don't wake CC search
           }
 
+           // ── NEW: Post tracking back to Etsy ─────────────────────
+            const receiptId = (document.getElementById("etsyOrderNumber")?.value || "").trim();
+            const tracking  = shipment?.carrier_tracking_code || "";
+            const carrier   = "Chit Chats";
+            if (receiptId && tracking) {
+              await postTrackingToEtsy(receiptId, tracking, carrier, getShipDateForApi());
+            }
+            // ────────────────────────────────────────────────────────
+
           // Success UX: close the Edit modal after we have the label & invoked print
           try {
             const modalEl = document.getElementById("ccEditModal");
@@ -4856,6 +4677,21 @@ async function refreshRates(){
           if (url) {
             await openAndAutoPrintLabel(url, printWin);
             M.toast?.({ html:"Label opened for printing." });
+
+          // ── NEW: Post tracking back to Etsy ──────────────────────────
+          try {
+            // Re-fetch shipment details to obtain the tracking code reliably
+            const det = await callCc("GET", null, `?resource=shipment&id=${encodeURIComponent(id)}`);
+            const tracking  = det?.shipment?.carrier_tracking_code || det?.carrier_tracking_code || "";
+            const receiptId = (document.getElementById("etsyOrderNumber")?.value || "").trim();
+            if (receiptId && tracking) {
+              await postTrackingToEtsy(receiptId, tracking, "Chit Chats", getShipDateForApi());
+            }
+          } catch (e) {
+            console.warn("[post-to-etsy after buy]", e);
+          }
+          // ─────────────────────────────────────────────────────────────
+
           } else {
           if (printWin && !printWin.closed) {
           try {
