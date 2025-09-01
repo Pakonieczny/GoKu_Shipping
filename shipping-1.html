@@ -2411,14 +2411,22 @@ function metalToBadge(label){
                 console.error("Listing image error:", errA);
                 cell.innerHTML = "No image";
               }
-            } else {
-              // ShipStation path: clean fallback tile with SKU/name
-              const label = escapeHtml(item.title || item.name || item.sku || "Item");
-              cell.innerHTML = `
-                <div class="noimg" style="display:flex;align-items:center;justify-content:center;width:100%;height:100%;background:#f5f7fa;border:1px dashed #cfd6df;border-radius:8px;font-size:13px;color:#546372;text-align:center;padding:6px;">
-                  ${label}
-                </div>`;
-            }
+              } else {
+                // ShipStation path: prefer the product image if provided
+                const srcRaw = (item.imageUrl || "").trim();
+                if (srcRaw) {
+                  const srcSafe = srcRaw.replace(/"/g, "&quot;"); // simple quote-safe
+                  cell.innerHTML =
+                    `<img src="${srcSafe}" alt="Item ${i}" data-scale="1" data-offsetX="0" data-offsetY="0">`;
+                } else {
+                  // fallback label tile
+                  const label = escapeHtml(item.title || item.name || item.sku || "Item");
+                  cell.innerHTML = `
+                    <div class="noimg" style="display:flex;align-items:center;justify-content:center;width:100%;height:100%;background:#f5f7fa;border:1px dashed #cfd6df;border-radius:8px;font-size:13px;color:#546372;text-align:center;padding:6px;">
+                      ${label}
+                    </div>`;
+                }
+              }
             cell.style.cursor = "pointer";
             (function(idx){
             cell.onclick = function(){
