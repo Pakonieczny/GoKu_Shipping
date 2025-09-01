@@ -176,16 +176,10 @@ exports.handler = async (event) => {
         customs.ioss_number ?? customs.vat_number ?? customs.eori_number;
       const vatRef = sanitizeVatRef(vatRefSource);
       if (vatRef) out.vat_reference = vatRef;
-      // 🧾 DDP toggle (EU/GB) when VAT/IOSS provided
-      {
-        const dest = String(out.country_code || out.to?.country_code || "").toUpperCase();
-        const EU = new Set(["AT","BE","BG","HR","CY","CZ","DK","EE","FI","FR","DE","GR","HU","IE","IT","LV","LT","LU","MT","NL","PL","PT","RO","SK","SI","ES","SE"]);
-        if (out.vat_reference && (dest === "GB" || EU.has(dest))) {
-          out.duties_paid_requested = true;
-        } else {
-          delete out.duties_paid_requested;
-        }
-      }
+       // Only set DDP if the client explicitly asked for it
+       if ('duties_paid_requested' in client) {
+         out.duties_paid_requested = !!client.duties_paid_requested;
+       }
 
       // prune undefined/null to keep payload tidy
       Object.keys(out).forEach(k => (out[k] == null) && delete out[k]);
@@ -242,16 +236,10 @@ function adaptRefreshPayload(client = {}) {
   const vatRef = sanitizeVatRef(vatRefSource);
   if (vatRef) out.vat_reference = vatRef; else delete out.vat_reference;
 
-  // 🧾 DDP toggle (EU/GB) when VAT/IOSS provided
-  {
-    const dest = String(out.country_code || out.to?.country_code || "").toUpperCase();
-    const EU = new Set(["AT","BE","BG","HR","CY","CZ","DK","EE","FI","FR","DE","GR","HU","IE","IT","LV","LT","LU","MT","NL","PL","PT","RO","SK","SI","ES","SE"]);
-    if (out.vat_reference && (dest === "GB" || EU.has(dest))) {
-      out.duties_paid_requested = true;
-    } else {
-      delete out.duties_paid_requested;
-    }
-  }
+ // Only set DDP if the client explicitly asked for it
+ if ('duties_paid_requested' in client) {
+   out.duties_paid_requested = !!client.duties_paid_requested;
+ }
 
   // 6) Tidy
   ["size_x","size_y","size_z"].forEach(k => { if (!(Number(out[k]) > 0)) delete out[k]; });
