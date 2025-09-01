@@ -968,15 +968,15 @@ function abortAllUpdateWork(){
  * Firebase Initialization (REQUIRED)
  ********************************************************/
 const firebaseConfig = {
-  apiKey: "YourApiKeyHere",
-  authDomain: "YourAuthDomainHere",
+  apiKey: "AIzaSyBXhQLsYRa4i0bX1TPTRiElF9Zjy5vSHlA",
+  authDomain: "gokudatabase.firebaseapp.com",
   projectId: "gokudatabase",
   storageBucket: "gokudatabase.firebasestorage.app",
   messagingSenderId: "1078662308113",
   appId: "1:1078662308113:web:41df0e5d229ff2af7a6cb0"
 };
 
-firebase.initializeApp(firebaseConfig);
+if (!firebase.apps?.length) firebase.initializeApp(firebaseConfig);
 const db = firebase.firestore();
 
 // Ensure the client is authenticated (anon is fine for rules below)
