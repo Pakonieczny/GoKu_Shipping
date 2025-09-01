@@ -4647,6 +4647,10 @@ function buildRefreshPayload(){
       }
 
 async function refreshRates(){
+  // 🔒 Freeze any ccShipmentId-driven rechecks while we replace→refresh
+  const prevMute = !!window.ccMuteIdInput;
+  window.ccMuteIdInput = true;
+  try {
   // 🚧 Hard guard: do not fetch pricing until user is on Step 2
   if (window.ccBlockRatesUntilStep2) return;
   if (typeof currentStep === "number" && currentStep < 2) return;
@@ -4667,6 +4671,8 @@ async function refreshRates(){
     return;
   }
   const replacePayload = buildShipmentPayload();   // includes to/phone/customs etc.
+  // Snapshot the ID we *intend* to price (will be updated if we replace)
+  let idUsedForPricing = (idInput.value || "").trim();
 
   // 2) Compute a "structural" signature; if changed → replace
   const replaceSig = JSON.stringify({
@@ -4710,17 +4716,36 @@ async function refreshRates(){
     if (newId && newId !== id) {
       id = newId;
       idInput.value = newId;
+      idUsedForPricing = newId;       // ← keep our local pointer aligned
       try { pushShipmentId(newId); } catch {}
     }
     window.ccLastReplaceSig = replaceSig;
+  } else {
+    idUsedForPricing = id;            // ← explicit in the no-replace branch
   }
 
-  // 3) Price the (possibly replaced) shipment
-  const out = await callCc("PATCH", { action: "refresh", shipment_id: id, payload: refreshPayload });
-  renderRates(out.shipment || out);
-}
+    // 3) Price the (possibly replaced) shipment
+    const out = await callCc("PATCH", { action: "refresh", shipment_id: idUsedForPricing, payload: refreshPayload });
 
-      async function buySelected(){
+    // Prefer explicit `used_id` if server provides it; else fall back to shipment.id/out.id
+    const respondedId = String(out?.used_id || out?.shipment?.id || out?.id || "").trim();
+
+    if (respondedId && respondedId !== idUsedForPricing) {
+      // 🔍 Mismatch means something rewired the ID underneath us — fix it and re-price once
+      try { console.warn("[CC Rates] ID mismatch; retrying", { sent:idUsedForPricing, got:respondedId }); } catch {}
+      pushShipmentId(respondedId);
+      const out2 = await callCc("PATCH", { action: "refresh", shipment_id: respondedId, payload: refreshPayload });
+      renderRates(out2.shipment || out2);
+      } else {
+        renderRates(out.shipment || out);
+      }
+        } finally {
+          // restore prior mute state
+          window.ccMuteIdInput = prevMute;
+        }
+      }
+
+        async function buySelected(){
         const id = (idInput.value || "").trim();
         if (!id || !selectedPostageType) return;
         btnBuy.disabled = true;

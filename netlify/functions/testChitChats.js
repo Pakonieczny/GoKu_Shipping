@@ -676,14 +676,17 @@ async function recreateShipmentIfUnbought(id, desiredClientPayload, { authH, url
         // Ensure top-level country_code (API requires it even on refresh)
         payload = await ensureCountryCodeForRefresh(id, payload);
 
-        const resp = await fetch(url(`/shipments/${encodeURIComponent(id)}/refresh`), {
-          method: "PATCH",
-          headers: authH,
-          body   : JSON.stringify(payload)
-        });
-        const out = await wrap(resp);
-        if (!out.ok) return bad(out.status, out.data);
-        return ok(out.data);
+      const resp = await fetch(url(`/shipments/${encodeURIComponent(id)}/refresh`), {
+        method: "PATCH",
+        headers: authH,
+        body: JSON.stringify(payload)
+      });
+      const out  = await wrap(resp);
+      if (!out.ok) return bad(out.status, out.data);
+
+      // 👇 Wrap without breaking callers that expect a shipment object
+      const shipment = out.data?.shipment || out.data || {};
+      return ok({ used_id: id, shipment });
       }
 
       // (A2) Shipment: replace (DELETE → POST) when not purchased
