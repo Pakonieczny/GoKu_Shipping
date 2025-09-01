@@ -4526,17 +4526,17 @@ async function ccValidateAgainstApi(step){
           // ✅ top-level vat_reference (required placement by Chit Chats API)
           const vatRef = sanitizeVatRef(document.getElementById("cc_customs_tax_reference_number")?.value);
           const dest = String((toObj?.country_code || "")).toUpperCase();
-          const EU = new Set(["AT","BE","BG","HR","CY","CZ","DK","EE","FI","FR","DE","GR","HU","IE","IT","LV","LT","LU","MT","NL","PL","PT","RO","SK","SI","ES","SE"]);
-           // DDP is explicit (checkbox); omit unless user really wants it
-           duties_paid_requested: document.getElementById("cc_duties_paid_requested")
-             ? !!document.getElementById("cc_duties_paid_requested").checked
-             : undefined,
+          // (EU set no longer needed just for DDP; you can remove it if unused)
 
             to           : toObj,
             country_code : (toObj?.country_code || "").toUpperCase(),
             order_id     : (orderId || undefined),
             package      : pkg,
             vat_reference: vatRef || undefined,
+                // DDP is explicit (checkbox); include only when checked
+                ...(document.getElementById("cc_duties_paid_requested")
+                    ? { duties_paid_requested: !!document.getElementById("cc_duties_paid_requested").checked }
+                    : {}),
             customs      : {
               package_contents: document.getElementById("cc_package_contents").value,
               value           : toMoney(grandTotal),
