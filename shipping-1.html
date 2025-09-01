@@ -4533,10 +4533,6 @@ async function ccValidateAgainstApi(step){
             order_id     : (orderId || undefined),
             package      : pkg,
             vat_reference: vatRef || undefined,
-                // DDP is explicit (checkbox); include only when checked
-                ...(document.getElementById("cc_duties_paid_requested")
-                    ? { duties_paid_requested: !!document.getElementById("cc_duties_paid_requested").checked }
-                    : {}),
             customs      : {
               package_contents: document.getElementById("cc_package_contents").value,
               value           : toMoney(grandTotal),
@@ -4595,15 +4591,6 @@ function buildRefreshPayload(){
   // VAT/IOSS goes on the root (NOT inside customs)
   const vatRef = sanitizeVatRef(document.getElementById("cc_customs_tax_reference_number")?.value);
   if (vatRef) payload.vat_reference = vatRef;
-
-  // 🧾 DDP toggle (EU/GB) when VAT/IOSS provided
-  {
-    const dest = String((payload?.country_code || to?.country_code || "")).toUpperCase();
-    const EU = new Set(["AT","BE","BG","HR","CY","CZ","DK","EE","FI","FR","DE","GR","HU","IE","IT","LV","LT","LU","MT","NL","PL","PT","RO","SK","SI","ES","SE"]);
-    if (vatRef && (dest === "GB" || EU.has(dest))) {
-      payload.duties_paid_requested = true;
-    }
-  }
 
   // Customs and phone ONLY for international
   if (to.country_code !== "CA" && to.country_code !== "US") {
