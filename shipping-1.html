@@ -1338,11 +1338,11 @@ function metalToBadge(label){
     }
 
     /* ======================= */
-    function prefillCustomsFromEtsy(){
+    function prefillCustomsFromShipStation(){
       try {
         renderCcLineItemsFromCached();
       } catch (e){
-        console.warn("prefillCustomsFromEtsy() failed:", e);
+        console.warn("prefillCustomsFromShipStation() failed:", e);
       }
     }
 
@@ -1542,7 +1542,7 @@ function metalToBadge(label){
   }
 
     /* =======================*/
-    async function maybeLoadEtsyTransactions(receiptId){
+    async function maybeLoadShipStationOrder(receiptId){
       try{
         if(!receiptId) return [];
 
@@ -1647,7 +1647,7 @@ function metalToBadge(label){
             ...it,
             __qty: qty,
             __unitValueBase: round2(baseU),     // for reference/debug
-            __unitValue: effectiveUnit,         // ← this is what prefillCustomsFromEtsy will use
+            __unitValue: effectiveUnit,         // ← this is what prefillCustomsFromShipStation will use
             __sku: extractSkuFromEtsy(it) || null,
             __discounts: {
               itemLevel: round2(itemLevelDiscount || 0),
@@ -1661,7 +1661,7 @@ function metalToBadge(label){
         window.cachedOrderItems = normalized;
         return normalized;
       } catch(err){
-        console.error("maybeLoadEtsyTransactions error:", err);
+        console.error("maybeLoadShipStationOrder error:", err);
         return [];
       }
     }
@@ -2362,7 +2362,7 @@ function metalToBadge(label){
 
         // ✅ Moved INSIDE the async handler:
         // Prefer transactions (they carry quantity + unit price) for customs autofill
-        const tx = await maybeLoadEtsyTransactions(orderNumber);
+        const tx = await maybeLoadShipStationOrder(orderNumber);
         if (tx.length) {
           await updateImageGrid({ transactions: tx });
         } else if (orderData) {
@@ -2702,7 +2702,7 @@ function metalToBadge(label){
             cell.onclick = function(){
               highlightSelectedPreview(this);
               showItemDetails(idx);
-              prefillCustomsFromEtsy();       // <— keep Step 1 in sync with selected item
+              prefillCustomsFromShipStation();       // <— keep Step 1 in sync with selected item
             };
             })(i);
             if(qtyBox){
@@ -2938,7 +2938,7 @@ function metalToBadge(label){
 
       document.getElementById("orderDetails").value = deQuote(details);
       // Auto-fill qty + unit value for the currently selected item
-      prefillCustomsFromEtsy();
+      prefillCustomsFromShipStation();
     }
 
     async function fetchListingImages(listingId){
@@ -3809,19 +3809,18 @@ function metalToBadge(label){
         btnBuy.style.display     = currentStep === 3 ? "inline-block" : "none";
         /* After toggling .active classes, trigger autofill when entering Step 1 */
         if (currentStep === 1) {
-          prefillCustomsFromEtsy();
-          // one-shot safety: if something blanks them right after open, re-fill once
+          prefillCustomsFromShipStation();
           setTimeout(() => {
             const q = document.getElementById("cc_item_qty");
             const u = document.getElementById("cc_item_unit_value");
-            if (q && !String(q.value || "").trim() && q.dataset.userEdited !== "1") prefillCustomsFromEtsy();
-            if (u && !String(u.value || "").trim() && u.dataset.userEdited !== "1") prefillCustomsFromEtsy();
+            if (q && !String(q.value || "").trim() && q.dataset.userEdited !== "1") prefillCustomsFromShipStation();
+            if (u && !String(u.value || "").trim() && u.dataset.userEdited !== "1") prefillCustomsFromShipStation();
           }, 300);
         }
       }
 
       /* (B) Removed — this ran too early and ignored the selected tile.
-      Use prefillCustomsFromEtsy() on tile selection + modal open instead. */
+      Use prefillCustomsFromShipStation() on tile selection + modal open instead. */
 
       // (C) Static defaults you requested
       // NOTE: These fields are sent as ISO/codes to Chit Chats later; we’ll set sensible values.
@@ -3887,16 +3886,82 @@ function metalToBadge(label){
         return out;
       }
 
+      // ===== ShipStation order hydration (replaces Etsy lookups) =====
+      async function maybeLoadShipStationOrder(receiptId){
+        try{
+          const base = "/.netlify/functions";
+          // 1) Get address + items
+          const r = await fetch(`${base}/ssGetOrderAddress?orderNumber=${encodeURIComponent(receiptId)}`, { credentials:"include" });
+          if (r.ok){
+            const js = await r.json();
+            // reflect address into Step 0
+            const to = js.shipTo || {};
+            const set = (id, v) => { const el=document.getElementById(id); if(el && v!=null){ el.value=String(v); } };
+            set("cc_to_name",          to.name);
+            set("cc_to_address_1",     to.street1);
+            set("cc_to_address_2",     to.street2);
+            set("cc_to_city",          to.city);
+            set("cc_to_province_code", to.state);
+            set("cc_to_postal_code",   to.postalCode);
+            set("cc_to_country_code",  (to.country || to.countryCode || "").toUpperCase());
+
+            // cache items for Step 1
+            window.cachedOrderItems = Array.isArray(js.items) ? js.items.map(i => ({
+              title: i.name,
+              quantity: Number(i.quantity || 1),
+              unitPrice: Number(i.unitPrice || 0),
+              sku: i.sku || "",
+              originCountry: (i.originCountry || "").toUpperCase(),
+              hsTariffCode: i.hsCode || ""
+            })) : [];
+          }
+
+          // 2) Gift message (optional)
+          try {
+            const g = await fetch(`${base}/ssGetGiftMessage?orderNumber=${encodeURIComponent(receiptId)}`, { credentials:"include" });
+            if (g.ok){
+              const { giftMessage, giftFrom } = await g.json();
+              const box = document.getElementById("giftMessageBox");
+              if (box && giftMessage) box.value = giftFrom ? `${giftMessage}\n— ${giftFrom}` : giftMessage;
+            }
+          } catch(_) {}
+        } catch (e){ console.warn("[SS] order hydrate failed", e); }
+      }
+
+      function prefillCustomsFromShipStation(){
+        try{
+          const items = Array.isArray(window.cachedOrderItems) ? window.cachedOrderItems : [];
+          const first = items[0] || null;
+          const set = (id, v) => { const el = document.getElementById(id); if (el && v!=null) el.value = String(v); };
+
+          // keep your existing Title fallback
+          const title = (typeof extractOrderTitle === "function") ? extractOrderTitle() : "";
+          set("cc_item_description", (title || first?.title || first?.name || "").slice(0,95));
+
+          if (first && !document.getElementById("cc_item_qty")?.dataset?.userEdited){
+            set("cc_item_qty", first.quantity || 1);
+          }
+          if (first && !document.getElementById("cc_item_unit_value")?.dataset?.userEdited){
+            const p = Number(first.unitPrice || 0);
+            set("cc_item_unit_value", Number.isFinite(p) ? p.toFixed(2) : "0.00");
+          }
+
+          // optional harmonized/origin if you surface those fields
+          if (first?.hsTariffCode)  set("cc_item_hs_tariff_code", first.hsTariffCode);
+          if (first?.originCountry) set("cc_item_origin_country", first.originCountry);
+        } catch(e){ console.warn("prefillCustomsFromShipStation failed", e); }
+      }
+
       async function modalOpen(){
       // Keep ccShipmentId locked post-purchase (no re-checks). Do not thaw here.
         /* INSERT inside modalOpen(), near the top after local refs */
         {
-          // Make sure we have the transactions for this order before showing Step 1
+          // Hydrate from ShipStation (orderNumber == your Etsy receiptId)
           const receiptId = (document.getElementById("etsyOrderNumber")?.value || "").trim();
-          if (receiptId && (!Array.isArray(window.cachedOrderItems) || window.cachedOrderItems.length === 0)) {
-            maybeLoadEtsyTransactions(receiptId).then(() => prefillCustomsFromEtsy());
+          if (receiptId) {
+            maybeLoadShipStationOrder(receiptId).then(() => prefillCustomsFromShipStation());
           } else {
-            prefillCustomsFromEtsy();
+            prefillCustomsFromShipStation();
           }
         }
         const seed = parseShipToBox();
@@ -3918,7 +3983,7 @@ function metalToBadge(label){
         // Do NOT call showStep(1) here; verify must appear first.
         // Kick off the verification flow immediately:
         // Fill again when the Edit modal opens
-        prefillCustomsFromEtsy();
+        prefillCustomsFromShipStation();
         maybeVerifyAddressBeforeStep1(true);
       }
        function modalClose(){

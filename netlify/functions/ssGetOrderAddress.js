@@ -45,7 +45,8 @@ exports.handler = async (event) => {
          customerNotes = "",
          carrierCode = "",
          serviceCode = "",
-         shippingAmount = null
+         shippingAmount = null,
+         items = []
        } = order;
 
       return {
@@ -60,7 +61,15 @@ exports.handler = async (event) => {
            customerNotes,
            carrierCode,
            serviceCode,
-           shippingAmount
+           shippingAmount,
+           items: (Array.isArray(items) ? items : []).map(i => ({
+             name: i.name,
+             sku: i.sku || null,
+             quantity: Number(i.quantity || 1),
+             unitPrice: typeof i.unitPrice === "number" ? i.unitPrice : Number(i.unitPrice || 0),
+             originCountry: (i.productCountryOfOrigin || "").toUpperCase() || null,
+             hsCode: i.productHarmonizedCode || null
+           }))
          })
       };
   } catch (err) {

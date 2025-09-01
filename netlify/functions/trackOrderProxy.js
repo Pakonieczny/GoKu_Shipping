@@ -49,14 +49,23 @@ exports.handler = async event => {
     const markResp = await fetch(`${baseURL}/orders/markasshipped`, {
       method: "POST",
       headers: { ...headers, "Content-Type": "application/json" },
-      body: JSON.stringify({
-        orderId,
-        carrierCode,
-        trackingNumber,
-        shipDate: shipDate || new Date().toISOString().slice(0, 10),
-        notifyCustomer: true,
-        notifySalesChannel: true
-      })
+       body: JSON.stringify((() => {
+         const payload = {
+           orderId,
+           trackingNumber,
+           shipDate: shipDate || new Date().toISOString().slice(0, 10),
+           notifyCustomer: true,
+           notifySalesChannel: true
+         };
+         // Map UI "ChitChats" → ShipStation 'other' w/ name
+         if ((carrierCode || "").toLowerCase() === "chitchats") {
+           payload.carrierCode = "other";
+           payload.carrierName = "Chit Chats";
+         } else {
+           payload.carrierCode = carrierCode;
+         }
+         return payload;
+       })())
     });
 
     return { statusCode: markResp.status, body: await markResp.text() };
