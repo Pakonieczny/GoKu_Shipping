@@ -4353,25 +4353,22 @@ function metalToBadge(label){
 
         const { currency, contents, taxRef, items, total } = getStep1Snapshot();
 
-        // Header (bold, standard size)
+        // Header (bold, standard size) — NO divider immediately after
         line("ITEM & TAX INFORMATION", STD, true);
 
-        // NEW: divider between header and contents
-        rule();
-
-        line("Contents: " + (contents || "merchandise"), STD);
-
-        // Tax Ref: label normal, value bold ONLY
+        // Tax Ref: label normal, value bold only
         if (taxRef) lineLabelValue("Tax Ref (IOSS/EORI): ", taxRef, STD);
 
-        // Keep the divider between Tax Ref and Order Number
+        // Divider between Tax Ref and Order Number (keep this one)
         rule();
 
-        // Order Number directly under Tax Ref (NO second divider after it)
+        // Order Number directly under Tax Ref — and NO divider after it
         const etsyOrder = (document.getElementById("etsyOrderNumber")?.value || "").trim();
         if (etsyOrder) line("Order Number: " + etsyOrder, STD);
 
-        rule();
+        // Contents should sit directly above the first item title
+        line("Contents: " + (contents || "merchandise"), STD);
+
         items.slice(0, 8).forEach((li, idx) => {
           const qty   = Number(li.quantity || 1);
           const unit  = Number(li.unit_value || li.unitValue || 0);
@@ -4379,22 +4376,18 @@ function metalToBadge(label){
 
           // 3-word max title (punctuation stripped by sanitizeItemTitle)
           const title = sanitizeItemTitle(li.description || "Item");
-          line(`${idx + 1} ${title}`, STD); // no trailing punctuation, no qty
 
+          // Title line right after "Contents"
+          line(`${idx + 1} ${title}`, STD);
+
+          // Always render HS first, then Manufacture on its own next line
           const hs    = (li.hs_tariff_code || li.hs_tariff || "").trim();
           const manuf = (li.manufacture_country || "").toUpperCase();
 
-          // Always render HS first, then Manufacture on its own next line
           if (hs)    line(`HS ${hs}`, STD);
           if (manuf) line(`Manufacture ${manuf}`, STD);
 
-          // 🚫 No "Origin …" on the label
-          const tail = [
-            hs    ? `HS ${hs}`         : "",
-            manuf ? `Manufacture ${manuf}` : ""
-          ].filter(Boolean).join(" • ");
-          if (tail) line(tail, STD);
-
+          // Monetary line (no qty text shown on label)
           line(`Item value ${value} ${currency}`, STD);
         });
 
