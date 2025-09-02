@@ -436,6 +436,21 @@
 
   </style>
 
+  <!-- 🆕 Etsy counters overlay styles -->
+  <style id="etsyCountersStyles">
+    #etsyCounters{
+      position:fixed; right:10px; top:10px;
+      background:rgba(0,0,0,0.65);
+      color:#fff; font:12px/1.2 monospace;
+      padding:8px 10px; border-radius:10px;
+      z-index:99999; box-shadow:0 2px 8px rgba(0,0,0,0.25);
+      user-select:none;
+    }
+    #etsyCounters .row{ display:flex; gap:6px; align-items:baseline; }
+    #etsyCounters .label{ opacity:0.85; }
+    #etsyCounters .value{ font-weight:700; }
+  </style>
+
    <!-- QR-Preview dependency -->
    <script src="https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js"></script>
 
@@ -463,6 +478,13 @@
 
 <!-- NEW container that will hold the stacked boxes -->
 <div id="newOrderContainer"></div>
+
+<!-- 🆕 Etsy request counters -->
+<div id="etsyCounters">
+  <div class="row"><span class="label">Etsy Max QPS:</span><span id="etsyMaxQps" class="value">0</span></div>
+  <div class="row"><span class="label">Etsy Total:</span><span id="etsyTotal"  class="value">0</span></div>
+  <!-- keep this ultra-minimal & temporary -->
+</div>
 
 <!-- Page-jump buttons will appear here -->
 <div id="pageButtonsContainer"></div>
@@ -535,6 +557,51 @@ let searchActive = false;     // true ⇢ we’re inside single-order search
  * Base URL & Global Variables
  ********************************************************/
 const functionsBaseUrl = window.location.origin + "/.netlify/functions";
+
+// ── 🆕 Etsy-call counters (temp instrumentation) ─────────────────────────────
+(function(){
+  if (window.__etsyFetchWrapped) return;     // idempotent
+  window.__etsyFetchWrapped = true;
+
+  // live state
+  const state = (window.__etsyQ = { total: 0, times: [], maxQps: 0 });
+
+  // classify: count only Etsy-facing function calls
+  const isEtsyCall = (input) => {
+    try{
+      const url = (typeof input === "string") ? input : (input && input.url) || "";
+      // match our known Etsy proxies & token endpoint
+      return /\/\.netlify\/functions\/(etsy|etsyImages|etsyOrderProxy|trackOrderProxy|refreshEtsyToken|exchangeToken)\b/i.test(url);
+    }catch(_){ return false; }
+  };
+
+  const updateCounters = () => {
+    const maxEl = document.getElementById("etsyMaxQps");
+    const totEl = document.getElementById("etsyTotal");
+    if (maxEl) maxEl.textContent = String(state.maxQps);
+    if (totEl) totEl.textContent = String(state.total);
+  };
+
+  const mark = () => {
+    const now = Date.now();
+    state.total += 1;
+    state.times.push(now);
+    // prune to last 1s window
+    const cutoff = now - 1000;
+    while (state.times.length && state.times[0] < cutoff) state.times.shift();
+    // window size = instantaneous QPS; track the max
+    const curQps = state.times.length;
+    if (curQps > state.maxQps) state.maxQps = curQps;
+    updateCounters();
+  };
+
+  const origFetch = window.fetch;
+  window.fetch = function(input, init){
+    if (isEtsyCall(input)) mark();
+    return origFetch.apply(this, arguments);
+  };
+})();  
+
 const selectedOrders = new Set();      // receipt_id strings
 const orderCache     = {};             // receipt_id → transactions[]
 const gridElements   = new Map();      // transaction_id → wrapper DOM
@@ -666,7 +733,7 @@ async function apiFetch(path, init = {}) {
     while (attempt < 4 && resp.status === 429) {
       const retryAfter = resp.headers?.get?.("retry-after");
       const raMs = Number.isFinite(Number(retryAfter)) ? Number(retryAfter) * 1000 : 0;
-      const backoff = Math.max(raMs, 300 * Math.pow(2, attempt)); // 300, 600, 1200, 2400...
+      const backoff = Math.max(raMs, 500 * Math.pow(2, attempt)); // 500, 1000, 1500, 2000...
       await new Promise(r => setTimeout(r, backoff));
       resp = isEtsyPath(path)
         ? await runEtsyTask(() => doFetch())  // retry still respects pacing
@@ -696,8 +763,8 @@ async function fetchReceiptRobust(rid, { signal, retries = 2 } = {}){
       // Abort means caller cancelled → bubble out
       if (e?.name === "AbortError") throw e;
       lastErr = e;
-      // small backoff: 150ms, 300ms
-      await new Promise(r => setTimeout(r, 150 * Math.pow(2, attempt)));
+      // small backoff: 250ms, 500ms
+      await new Promise(r => setTimeout(r, 250 * Math.pow(2, attempt)));
     }
     attempt++;
   }
@@ -4555,13 +4622,13 @@ async function fetchListingImages(listingId) {
   // 3) Run inside the queue with built-in 429 tolerance via apiFetch
   const task = runImageTask(async () => {
     let attempt = 0;
-    while (attempt < 5) {
+    while (attempt < 4) {
       const resp = await apiFetch(`/etsyImages?listingId=${encodeURIComponent(key)}`);
       if (resp.status === 429) {
         // Extra defense: apiFetch already retried, keep spacing calls if still 429
         const retryAfter = resp.headers?.get?.("retry-after");
         const raMs = Number.isFinite(Number(retryAfter)) ? Number(retryAfter) * 1000 : 0;
-        const backoff = Math.max(raMs, 350 * Math.pow(2, attempt)); // 350ms, 700ms, 1400ms...
+        const backoff = Math.max(raMs, 500 * Math.pow(2, attempt)); // 350ms, 700ms, 1400ms...
         await new Promise(r => setTimeout(r, backoff));
         attempt++;
         continue;
