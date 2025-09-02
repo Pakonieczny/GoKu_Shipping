@@ -4147,6 +4147,50 @@ function metalToBadge(label){
         });
       }
 
+
+      // Convert a Blob (PDF/PNG/JPG) into PDF bytes
+      async function _blobAsPdfBytes(blob) {
+        const PDFLib = await ensurePdfLib();
+        const buf = new Uint8Array(await blob.arrayBuffer());
+        const isPdf = (blob.type || "").includes("pdf");
+        if (isPdf) return buf;
+        // image -> single-page PDF
+        const doc = await PDFLib.PDFDocument.create();
+        let img;
+        if ((blob.type || "").includes("png")) img = await doc.embedPng(buf);
+        else                                   img = await doc.embedJpg(buf);
+        const page = doc.addPage([img.width, img.height]);
+        page.drawImage(img, { x: 0, y: 0, width: img.width, height: img.height });
+        return await doc.save();
+      }
+
+      // If a cached "ITEM & TAX INFORMATION" PDF exists, append it after the label and return a merged Blob.
+      // Returns null when no cached temp PDF exists.
+      async function mergeLabelWithTempIfAny(labelBlob) {
+        const temp = window._intlTempPdfBlob;
+        if (!temp) return null;
+        const PDFLib = await ensurePdfLib();
+        const [labelBytes, tempBytes] = await Promise.all([
+          _blobAsPdfBytes(labelBlob),
+          temp.arrayBuffer()
+        ]);
+        const out  = await PDFLib.PDFDocument.create();
+        const lDoc = await PDFLib.PDFDocument.load(labelBytes);
+        const tDoc = await PDFLib.PDFDocument.load(tempBytes);
+        const addAll = async (src) => {
+          const pages = await out.copyPages(src, src.getPageIndices());
+          pages.forEach(p => out.addPage(p));
+        };
+        await addAll(lDoc);
+        await addAll(tDoc);
+        const mergedBytes = await out.save();
+        // Clear cache after a successful merge so the sheet doesn't re-append next time
+        try { if (window._intlTempPdfUrl) URL.revokeObjectURL(window._intlTempPdfUrl); } catch {}
+        window._intlTempPdfBlob = null;
+        window._intlTempPdfUrl  = null;
+        return new Blob([mergedBytes], { type: "application/pdf" });
+      }
+
       /* Poll GET ?resource=shipment&id=… until label URLs appear (Chit Chats returns them when status turns ready) */
       async function waitForLabelUrls(shipmentId, attempts = 10, delayMs = 2000) {
         for (let i = 0; i < attempts; i++) {
@@ -4379,12 +4423,12 @@ function metalToBadge(label){
       /* Orchestrator: generate + print (uses existing openAndAutoPrintLabel) */
       async function generateAndPrintIntlTempPdf(){
         const blob = await buildIntlTempPdfBlob();
-        const url  = URL.createObjectURL(blob);
-        try {
-          await openAndAutoPrintLabel(url);
-        } finally {
-          setTimeout(() => URL.revokeObjectURL(url), 60000);
-        }
+        // keep only the latest cached temp sheet
+        try { if (window._intlTempPdfUrl) URL.revokeObjectURL(window._intlTempPdfUrl); } catch {}
+        window._intlTempPdfBlob = blob;
+        window._intlTempPdfUrl  = URL.createObjectURL(blob); // optional (debug)
+        // UX hint: no new tab, no print yet; we’ll merge with the label when it’s ready
+        if (window.M?.toast) M.toast({ html: "ITEM & TAX INFORMATION prepared for printing with the label." });
       }
 
       /* Main flow: buy → poll → print (no new tab) */      
@@ -4433,17 +4477,19 @@ function metalToBadge(label){
           // 4) Poll for label URLs (Chit Chats may return postage_requested first)
           const { zpl, pdf, png, shipment } = await waitForLabelUrls(shipmentId, 12, 1500);
 
-          // 5) Preferred: inline browser print (PDF first, then PNG). No tabs, no redirect.
+          // 5) Preferred: inline browser print (PDF first, then PNG). Merge the cached temp sheet if available.
           let printed = false;
           try {
-            const pdfBlob = await fetchCcLabelBlob("pdf", shipmentId);
-            await printBlobInPlace(pdfBlob);
+            const labelPdfBlob = await fetchCcLabelBlob("pdf", shipmentId);
+            const merged = await mergeLabelWithTempIfAny(labelPdfBlob);
+            await printBlobInPlace(merged || labelPdfBlob);
             printed = true;
           } catch {}  // fall through to PNG
           if (!printed) {
             try {
-              const pngBlob = await fetchCcLabelBlob("png", shipmentId);
-              await printBlobInPlace(pngBlob);
+              const labelPngBlob = await fetchCcLabelBlob("png", shipmentId);
+              const merged = await mergeLabelWithTempIfAny(labelPngBlob);
+              await printBlobInPlace(merged || labelPngBlob);
               printed = true;
             } catch {}
           }
