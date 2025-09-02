@@ -329,8 +329,8 @@ async function recreateShipmentIfUnbought(id, desiredClientPayload, { authH, url
     }
 
     // Generic paginator over /shipments that walks every page until exhausted.
-    async function paginateShipments({ status, search, pageSize = 500, stopEarlyIf }) {
-      const PAGE_SIZE = Math.min(Math.max(Number(pageSize) || 500, 1), 1000); // docs say max 1000
+    async function paginateShipments({ status, search, pageSize = 150, stopEarlyIf }) {
+      const PAGE_SIZE = Math.min(Math.max(Number(pageSize) || 150, 1), 250); // docs say max 1000
       const qsCore = [
         status ? `status=${encodeURIComponent(status)}` : "",
         search ? `search=${encodeURIComponent(search)}` : "",
