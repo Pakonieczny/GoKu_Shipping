@@ -4296,6 +4296,26 @@ function metalToBadge(label){
           // wrap long text
           const words = String(txt||"").split(/\s+/);
           let cur = "";
+
+          function lineLabelValue(label, value, size = STD){
+          const lbl = String(label || "");
+          const val = String(value || "");
+          const max = 144 - pad*2;
+          const wLbl = font.widthOfTextAtSize(lbl, size);
+          const wVal = bold.widthOfTextAtSize(val, size);
+
+          // If it fits on one row, draw both at once (label normal, value bold)
+          if (wLbl + 3 + wVal <= max){
+            y -= size + 2;
+            page.drawText(lbl, { x: pad, y, size, font });
+            page.drawText(val, { x: pad + wLbl + 3, y, size, font: bold });
+          } else {
+            // Fallback: label on one line, bold value on next line
+            line(lbl, size, false);
+            line(val, size, true);
+          }
+        }
+
           function flush(){
             if (!cur) return;
             y -= size + 2;
@@ -4314,19 +4334,23 @@ function metalToBadge(label){
 
         const { currency, contents, taxRef, items, total } = getStep1Snapshot();
 
-        // Header (keep bold, but same size as everything else)
+        // Header (bold, standard size)
         line("ITEM & TAX INFORMATION", STD, true);
 
-        // Contents (NOT bold)
+        // NEW: divider between header and contents
+        rule();
+
         line("Contents: " + (contents || "merchandise"), STD);
 
-        // Tax Ref (NOT bold), then a separator line, then Order Number
-        if (taxRef) line("Tax Ref (IOSS/EORI): " + taxRef, STD);
+        // Tax Ref: label normal, value bold ONLY
+        if (taxRef) lineLabelValue("Tax Ref (IOSS/EORI): ", taxRef, STD);
+
+        // Keep the divider between Tax Ref and Order Number
         rule();
 
+        // Order Number directly under Tax Ref (NO second divider after it)
         const etsyOrder = (document.getElementById("etsyOrderNumber")?.value || "").trim();
         if (etsyOrder) line("Order Number: " + etsyOrder, STD);
-        rule();
 
         rule();
         items.slice(0, 8).forEach((li, idx) => {
@@ -4340,6 +4364,10 @@ function metalToBadge(label){
 
           const hs    = (li.hs_tariff_code || li.hs_tariff || "").trim();
           const manuf = (li.manufacture_country || "").toUpperCase();
+
+          // Always render HS first, then Manufacture on its own next line
+          if (hs)   line(`HS ${hs}`, STD);
+          if (manuf) line(`Manufacture ${manuf}`, STD);
 
           // 🚫 No "Origin …" on the label
           const tail = [
