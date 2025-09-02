@@ -972,6 +972,17 @@
     window.orderShipments = [];
     window.currentTracking = null;
     window.currentCarrier = null;
+    window.CC_DEFAULT_BATCH_ID = "3903775";
+
+   // On load, pre-select the batch if it exists in #ccBatchSelect
+    document.addEventListener("DOMContentLoaded", () => {
+      try {
+        const sel = document.getElementById("ccBatchSelect");
+        if (sel && Array.from(sel.options).some(o => String(o.value) === String(window.CC_DEFAULT_BATCH_ID))) {
+          sel.value = String(window.CC_DEFAULT_BATCH_ID);
+        }
+      } catch (e) { console.warn("batch preselect skipped:", e); }
+    });
 
     /* ─── helper: keep only one .selected box ─── */
     function highlightSelectedPreview(box){
@@ -3375,13 +3386,21 @@ function metalToBadge(label){
       async function callSearch(params){
         window.ccSpin && window.ccSpin(true);
 
+        // Always scope to a batch:
+        // 1) <select id="ccBatchSelect"> value if present
+        // 2) fallback to window.CC_DEFAULT_BATCH_ID ("3903775")
+        const batchIdSel   = String(document.getElementById("ccBatchSelect")?.value || "").trim();
+        const fallbackId   = String(window.CC_DEFAULT_BATCH_ID || "");
+        const chosenBatch  = batchIdSel || fallbackId;
+        const allParams    = Object.assign({}, (params || {}), (chosenBatch ? { batchId: chosenBatch } : {}));
+
         // Build query
         const qs = new URLSearchParams({
           fast: "1",
-          pendingOnly: String(params?.pendingOnly ?? "1"),
-          timeoutMs: "9000",
-          pageSize: String(params?.pageSize ?? "500"),
-          ...(params || {})
+          pendingOnly: String(allParams?.pendingOnly ?? "1"),
+          timeoutMs: "25000",
+          pageSize: String(allParams?.pageSize ?? "250"),
+          ...(allParams || {})
         }).toString();
 
         // 🔪 Cancel any in-flight search, then create a fresh controller
@@ -3488,7 +3507,7 @@ function metalToBadge(label){
 
             try {
               // fast, pending-only, smaller page window
-              const fast = await callSearch({ orderId, fast: "1", pendingOnly: "0", pageSize: "250", timeoutMs: "25000" });
+              const fast = await callSearch({ orderId, fast: "1", pendingOnly: "1", pageSize: "150", timeoutMs: "25000" });
               if (fast?.aborted) return;
               const hit = pickBestShipment(orderId, (fast.shipments || []));
               if (hit) { setShipmentUI(hit); return; }

@@ -33,6 +33,7 @@ exports.handler = async (event) => {
     const BASE         = process.env.CHIT_CHATS_BASE_URL || "https://chitchats.com/api/v1";
     const CLIENT_ID    = process.env.CHIT_CHATS_CLIENT_ID;
     const ACCESS_TOKEN = process.env.CHIT_CHATS_ACCESS_TOKEN;
+    const DEFAULT_BATCH_ID = "3903775";
     // Toggle via environment: ALLOW_CC_VAT_REFERENCE=true to re-enable
     const ALLOW_CC_VAT_REFERENCE = /^(1|true|yes)$/i.test(process.env.ALLOW_CC_VAT_REFERENCE || "");
 
@@ -329,11 +330,12 @@ async function recreateShipmentIfUnbought(id, desiredClientPayload, { authH, url
     }
 
     // Generic paginator over /shipments that walks every page until exhausted.
-    async function paginateShipments({ status, search, pageSize = 150, stopEarlyIf }) {
-      const PAGE_SIZE = Math.min(Math.max(Number(pageSize) || 150, 1), 250); // docs say max 1000
+    async function paginateShipments({ status, q, batchId, pageSize = 500, stopEarlyIf }) {
+      const PAGE_SIZE = Math.min(Math.max(Number(pageSize) || 500, 1), 1000); // docs say max 1000
       const qsCore = [
-        status ? `status=${encodeURIComponent(status)}` : "",
-        search ? `search=${encodeURIComponent(search)}` : "",
+        status   ? `status=${encodeURIComponent(status)}`     : "",
+        q        ? `q=${encodeURIComponent(q)}`               : "",
+        batchId  ? `batch_id=${encodeURIComponent(batchId)}`  : "",
         `limit=${PAGE_SIZE}`
       ].filter(Boolean).join("&");
 
@@ -502,7 +504,8 @@ async function recreateShipmentIfUnbought(id, desiredClientPayload, { authH, url
         // 2) Vendor search across *all pages*
         try {
           const all = await paginateShipments({
-            search: want,
+            q: want,
+            batchId: qp.batchId,
             pageSize,
             // Stop early if we already have a hit to reduce calls
             stopEarlyIf: (sh) => timedOut() || matches(sh)
