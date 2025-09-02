@@ -1296,14 +1296,7 @@ function metalToBadge(label){
      ********************************************************/
     const functionsBaseUrl = window.location.origin + "/.netlify/functions";
 
-    /* ===== Etsy OAuth boot + auto-refresh wiring (match design/sorting) ===== */
-    const TOKEN_KEYS = {
-      access  : "access_token",
-      refresh : "refresh_token",
-      expires : "token_expires_at"   // epoch seconds
-    };
 
-    let __refreshPromise = null;  // single-flight guard
 
     // Extract a numeric unit price from Etsy's various shapes
     function extractUnitPriceFromEtsy(item){
@@ -1338,11 +1331,11 @@ function metalToBadge(label){
     }
 
     /* ======================= */
-    function prefillCustomsFromEtsy(){
+    function prefillCustomsFromShipStation(){
       try {
         renderCcLineItemsFromCached();
       } catch (e){
-        console.warn("prefillCustomsFromEtsy() failed:", e);
+        console.warn("prefillCustomsFromShipStation() failed:", e);
       }
     }
 
@@ -1542,282 +1535,69 @@ function metalToBadge(label){
   }
 
     /* =======================*/
-    async function maybeLoadEtsyTransactions(receiptId){
+    async function maybeLoadShipStationOrder(orderNumber){
       try{
-        if(!receiptId) return [];
+        if(!orderNumber) return [];
+        // Ask our SS function for the order core + items (see server diff below)
+        const res = await apiFetch(`/ssGetOrderAddress?orderNumber=${encodeURIComponent(orderNumber)}`);
+        if(!res.ok) return [];
+        const data = await res.json();        // { shipTo, items, orderStatus, shipments?, shippingAmount? ... }
 
-        // Always use apiFetch so we inherit token refresh/retry behavior
-        const res = await apiFetch(`/etsyOrderProxy?orderId=${encodeURIComponent(receiptId)}&include=transactions`);
-        if(!res?.ok) return [];
-        const out = await res.json();
-
-        // ---- normalize "transactions" array out of various shapes ----
-        let items = [];
-        if (Array.isArray(out)) items = out;
-        else if (Array.isArray(out?.transactions)) items = out.transactions;
-        else if (Array.isArray(out?.data?.transactions)) items = out.data.transactions;
-        else if (Array.isArray(out?.results)) items = out.results;
-
-        // ---- helpers ----
-        function parseMoney(m){
-          if (!m && m !== 0) return null;
-          if (typeof m === "number" || typeof m === "string") return Number(m);
-          if (typeof m === "object"){
-            if (typeof m.amount === "number" && typeof m.divisor === "number" && m.divisor) return m.amount / m.divisor;
-            if (typeof m.value  === "number") return m.value;
-            if (typeof m.cents  === "number") return m.cents / 100;
-            if (typeof m.amount === "string") return Number(m.amount);
-          }
-          return null;
-        }
+        const items = Array.isArray(data.items) ? data.items : [];
         const round2 = n => Math.round((Number(n)||0) * 100) / 100;
 
-        // ----- extract an order-level discount if present -----
-        const orderDiscountCandidates = [
-          out?.discount_amt, out?.discount_amount, out?.total_discounts,
-          out?.receipt?.discount_amt, out?.receipt?.discount_amount, out?.receipt?.total_discounts,
-          out?.data?.discount_amt, out?.data?.discount_amount, out?.data?.total_discounts,
-          out?.data?.receipt?.discount_amt, out?.data?.receipt?.discount_amount, out?.data?.receipt?.total_discounts
-        ];
-        let orderLevelDiscount = 0;
-        for (const c of orderDiscountCandidates){
-          const v = parseMoney(c);
-          if (v && v > 0){ orderLevelDiscount = v; break; }
-        }
+        // Normalize ShipStation items to your "transaction-like" shape used elsewhere
+        const normalized = items.map(it => ({
+          title       : it.name || it.sku || "Item",
+          sku         : it.sku || "",
+          quantity    : Number(it.quantity || 1),
+          // effective per-unit (ShipStation already gives unitPrice)
+          __unitValue : round2(Number(it.unitPrice || 0)),
+          variations  : Array.isArray(it.options) ? it.options.map(op => ({
+            formatted_name  : op.name  || "",
+            formatted_value : op.value || ""
+          })) : []
+        }));
 
-        // ----- first pass: derive qty and BASE (pre-discount) unit value -----
-        const baseNormalized = items.map(it => {
-          const qty = it.quantity ?? it.qty ?? it.purchase_quantity ?? it.count ?? null;
-
-          const baseUnit =
-            parseMoney(it.price) ??
-            parseMoney(it.unit_price) ??
-            parseMoney(it.original_unit_price) ??
-            parseMoney(it.variation_price) ?? null;
-
-          return {
-            ...it,
-            __qty: (qty!=null ? Number(qty) : null),
-            __unitValueBase: (baseUnit!=null ? Number(baseUnit) : null)
-          };
-        });
-
-        // ----- compute total pre-discount line value for pro-rating -----
-        const totalPreDiscount = baseNormalized.reduce((sum, it) => {
-          const q = (typeof it.__qty === "number" && isFinite(it.__qty)) ? it.__qty : 0;
-          const u = (typeof it.__unitValueBase === "number" && isFinite(it.__unitValueBase)) ? it.__unitValueBase : 0;
-          return sum + (q > 0 && u >= 0 ? (q * u) : 0);
-        }, 0);
-
-        // ----- second pass: apply item-level + pro-rated order-level discounts -----
-        const normalized = baseNormalized.map(it => {
-          const qty = (typeof it.__qty === "number" && isFinite(it.__qty) && it.__qty > 0) ? it.__qty : 1;
-          const baseU = (typeof it.__unitValueBase === "number" && isFinite(it.__unitValueBase) && it.__unitValueBase >= 0)
-            ? it.__unitValueBase : 0;
-
-          // pull any item-specific discount fields we might see
-          let itemLevelDiscount = 0;
-          const itemDiscountCandidates = [
-            it.discount_amt, it.discount_amount, it.item_discount, it.order_discount, it.total_discount,
-            it.seller_coupon_discount_amount, it.price_discount, it.price_discount_amount
-          ];
-          for (const c of itemDiscountCandidates){
-            const v = parseMoney(c);
-            if (v && v > 0) itemLevelDiscount += v;
-          }
-          // arrays like applied_discounts: [{amount}, ...]
-          if (Array.isArray(it.applied_discounts)){
-            for (const d of it.applied_discounts){
-              const v = parseMoney(d?.amount ?? d?.discount_amount);
-              if (v && v > 0) itemLevelDiscount += v;
-            }
-          }
-
-          // pro-rate any order-level discount by line share of the pre-discount total
-          const linePre = baseU * qty;
-          const share = (orderLevelDiscount > 0 && totalPreDiscount > 0) ? (linePre / totalPreDiscount) : 0;
-          const orderDiscountForLine = orderLevelDiscount * share;
-
-          const totalDiscountForLine = (itemLevelDiscount || 0) + (orderDiscountForLine || 0);
-          const perUnitDiscount = totalDiscountForLine / qty;
-
-          const effectiveUnit = round2(Math.max(0, baseU - perUnitDiscount));
-
-          return {
-            ...it,
-            __qty: qty,
-            __unitValueBase: round2(baseU),     // for reference/debug
-            __unitValue: effectiveUnit,         // ← this is what prefillCustomsFromEtsy will use
-            __sku: extractSkuFromEtsy(it) || null,
-            __discounts: {
-              itemLevel: round2(itemLevelDiscount || 0),
-              orderLevelAllocated: round2(orderDiscountForLine || 0),
-              perUnitApplied: round2(perUnitDiscount || 0)
-            }
-          };
-        });
-
-        // Cache for the UI prefill + preview tiles
         window.cachedOrderItems = normalized;
         return normalized;
       } catch(err){
-        console.error("maybeLoadEtsyTransactions error:", err);
+        console.error("maybeLoadShipStationOrder error:", err);
         return [];
       }
     }
 
-    function scheduleTokenRefresh(){
-      clearTimeout(window.__etsyRefreshTimer);
-      const exp = Number(localStorage.getItem(TOKEN_KEYS.expires) || 0);
-      if (!exp){
-        if (localStorage.getItem(TOKEN_KEYS.refresh)){
-          window.__etsyRefreshTimer = setTimeout(refreshAccessToken, 55 * 60 * 1000);
-        }
-        return;
+    /* ShipStation: browser does not hold marketplace tokens.
+       Functions handle auth via server-side Basic Auth. */
+
+    // Ensure a global base for Netlify Functions
+    if (typeof window.functionsBaseUrl !== "string" || !window.functionsBaseUrl) {
+      try {
+        window.functionsBaseUrl = location.hostname.includes("goldenspike")
+          ? "https://shipping-1.goldenspike.app/.netlify/functions"
+          : "/.netlify/functions";
+      } catch (_) {
+        window.functionsBaseUrl = "/.netlify/functions";
       }
-      const now = Math.floor(Date.now()/1000);
-      const leadSec = 120;
-      const delayMs = Math.max(5000, (exp - now - leadSec) * 1000);
-      window.__etsyRefreshTimer = setTimeout(refreshAccessToken, delayMs);
     }
 
-    function setTokens({ access_token, refresh_token, expires_in, issued_at }){
-      if (access_token)  localStorage.setItem(TOKEN_KEYS.access,  access_token);
-      if (refresh_token) localStorage.setItem(TOKEN_KEYS.refresh, refresh_token);
-      const now = Math.floor(Date.now()/1000);
-      const iat = Number(issued_at || now);
-      const exp = iat + Number(expires_in || 3600);
-      localStorage.setItem(TOKEN_KEYS.expires, String(exp));
-      scheduleTokenRefresh();
-    }
-
-    async function refreshAccessToken(){
-      if (__refreshPromise) return __refreshPromise;
-      const rt = localStorage.getItem(TOKEN_KEYS.refresh);
-      if (!rt) return;
-      __refreshPromise = (async () => {
-        try{
-          const resp = await fetch(`${functionsBaseUrl}/refreshEtsyToken`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ refresh_token: rt })
-          });
-          if (!resp.ok) throw new Error("HTTP " + resp.status);
-          const data = await resp.json();
-          setTokens({
-            access_token : data.access_token,
-            // Etsy rotates refresh_token; if omitted, keep old
-            refresh_token: data.refresh_token || rt,
-            expires_in   : data.expires_in,
-            issued_at    : data.issued_at || Math.floor(Date.now()/1000)
-          });
-          M.toast?.({ html: "Etsy token refreshed" });
-          return true;
-        }catch(err){
-          console.warn("Token refresh failed:", err);
-          // Clear & start headless OAuth (no button clicks)
-          localStorage.removeItem(TOKEN_KEYS.access);
-          localStorage.removeItem(TOKEN_KEYS.expires);
-          await startOAuth("refresh-failed");
-          throw err;
-        }finally{
-          __refreshPromise = null;
-        }
-      })();
-      return __refreshPromise;
-    }
-
-    async function ensureFreshToken(){
-      const exp = Number(localStorage.getItem(TOKEN_KEYS.expires) || 0);
-      if (!exp) return;
-      const now = Math.floor(Date.now()/1000);
-      if (exp - now <= 120) await refreshAccessToken();
-    }
-
-    /* Resilient fetch against our Functions:
-       - ensures token freshness
-       - retries once on 401 after refresh
-       - if still 401, kicks off headless OAuth and throws */
     async function apiFetch(path, init = {}){
-      await ensureFreshToken();
-      let token = localStorage.getItem(TOKEN_KEYS.access) || "";
-
-      let resp = await fetch(`${functionsBaseUrl}${path}`, {
-        ...init,
-        headers: { ...(init.headers || {}), "access-token": token }
-      });
-
-      if (resp.status === 401){
-        try{
-          await refreshAccessToken();
-          token = localStorage.getItem(TOKEN_KEYS.access) || "";
-          resp  = await fetch(`${functionsBaseUrl}${path}`, {
-            ...init,
-            headers: { ...(init.headers || {}), "access-token": token }
-          });
-        }catch(_){}
+      // If an absolute URL or already a full Netlify path, don't re-prefix
+      if (/^https?:\/\//.test(path) || path.startsWith("/.netlify/functions/")) {
+        return fetch(path, init);
       }
-
-      if (resp.status === 401){
-        localStorage.removeItem(TOKEN_KEYS.access);
-        localStorage.removeItem(TOKEN_KEYS.expires);
-        await startOAuth("401");
-        throw new Error("Unauthorized");
-      }
-      return resp;
+      const sep = path.startsWith("/") ? "" : "/";
+      return fetch(`${window.functionsBaseUrl}${sep}${path}`, init);
     }
 
     (function () {
-      // Handle OAuth callback & wire up page events (fully closed)
-      const url = new URL(window.location.href);
-      const oauthCode  = url.searchParams.get("code");
-      const oauthState = url.searchParams.get("state");
-      const hasCallback = Boolean(oauthCode);
-
-      // Legacy (server-initiated) OAuth kept for reference but NOT used
-      async function startOAuthLegacy(reason = "manual") {
-        try {
-          const resp = await fetch(`${functionsBaseUrl}/startEtsyOAuth`, { method: "POST" });
-          if (!resp.ok) throw new Error("HTTP " + resp.status);
-          const { authUrl } = await resp.json();
-          if (!authUrl) throw new Error("No authUrl from server");
-          window.location.href = authUrl;
-        } catch (err) {
-          console.error("startOAuth failed:", err);
-          M.toast?.({ html: "OAuth error: " + err.message });
-        }
-      }
-    
-      async function finishOAuthIfNeeded() {
-        if (!hasCallback) return;
-        try {
-          const resp = await fetch(`${functionsBaseUrl}/completeEtsyOAuth`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ code: oauthCode, state: oauthState })
-          });
-          if (!resp.ok) throw new Error("HTTP " + resp.status);
-          const data = await resp.json();
-          setTokens({
-            access_token : data.access_token,
-            refresh_token: data.refresh_token,
-            expires_in   : data.expires_in,
-            issued_at    : data.issued_at
-          });
-          window.history.replaceState({}, document.title, window.location.pathname);
-          M.toast?.({ html: "Etsy connected" });
-        } catch (err) {
-          console.error("OAuth completion failed:", err);
-          M.toast?.({ html: "OAuth completion failed" });
-        }
-      }
-
+      // ShipStation: nothing to do client-side; show a passive “connected” state.
       document.addEventListener("DOMContentLoaded", () => {
-        // Route button to HEADLESS PKCE flow defined later (global)
-        document.getElementById("connectEtsyBtn")
-          ?.addEventListener("click", () => window.startOAuth?.("manual"));
-        // Headless PKCE handles its own callback via /exchangeToken; no legacy finish step
-        // finishOAuthIfNeeded();
+        const btn = document.getElementById("connectEtsyBtn");
+        if (btn){
+          btn.textContent = "ShipStation Connected";
+          btn.disabled = true;
+        }
       });
     })();
 
@@ -1828,48 +1608,6 @@ function metalToBadge(label){
           return Number.isFinite(v) ? (Math.round(v * 100)/100).toFixed(2) : "0.00";
         };
       }
-    
-// — OAuth query handling (self-contained; safe to return inside)
-(() => {
-  const qs = new URLSearchParams(window.location.search);
-
-      // Tokens returned by exchangeToken.js (access, refresh, expires_in, issued_at)
-      const a = qs.get("access_token");
-      if (a) {
-        setTokens({
-          access_token : a,
-          refresh_token: qs.get("refresh_token"),
-          expires_in   : qs.get("expires_in"),
-          issued_at    : qs.get("issued_at")
-        });
-        window.history.replaceState({}, document.title, window.location.pathname);
-        M.toast?.({ html: "Connection Successful!" });
-        return;
-      }
-
-      // Standard OAuth code return → hand back to server for code→tokens
-      const code = qs.get("code");
-      if (code) {
-        const v = localStorage.getItem("etsy_code_verifier");
-        if (v) {
-          const next = new URLSearchParams({ code, code_verifier: v, redirect_domain: "shipping-1" });
-          window.location.href = "/.netlify/functions/exchangeToken?" + next.toString();
-          return;
-        } else {
-          console.error("No code verifier found in localStorage.");
-        }
-      }
-
-      // Page load without query: rehydrate or refresh or boot OAuth
-      if (localStorage.getItem(TOKEN_KEYS.access)) {
-        scheduleTokenRefresh();
-      } else if (localStorage.getItem(TOKEN_KEYS.refresh)) {
-        refreshAccessToken();
-      } else {
-        // No tokens at all → start OAuth silently (like design/sorting)
-        startOAuth("boot");
-      }
-    })();
 
     // Ensure a single, global source of truth for the proxy endpoint
     (function(){
@@ -1906,34 +1644,6 @@ function metalToBadge(label){
       var digest = await crypto.subtle.digest("SHA-256", data);
       var base64String = btoa(String.fromCharCode.apply(null, new Uint8Array(digest)));
       return base64String.replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
-    }
-
-     // Headless OAuth starter (no UI clicks needed)
-    let __oauthInFlight = false;
-    async function startOAuth(reason = "auto"){
-      if (__oauthInFlight) return;
-      __oauthInFlight = true;
-      try{
-        const codeVerifier = generateRandomString(64);
-        localStorage.setItem("etsy_code_verifier", codeVerifier);
-        const codeChallenge = await generateCodeChallenge(codeVerifier);
-        const CLIENT_ID   = "k75zdspz4r99txpqdji7i2em";
-        const redirectUri = "https://shipping-1.goldenspike.app";
-        const scope       = "listings_w listings_r transactions_r transactions_w";
-        const state       = `reconnect_${Date.now()}_${reason}`;
-        const etsyAuthUrl =
-          "https://www.etsy.com/oauth/connect?response_type=code" +
-          "&client_id=" + CLIENT_ID +
-          "&redirect_uri=" + encodeURIComponent(redirectUri) +
-          "&scope=" + encodeURIComponent(scope) +
-          "&state=" + encodeURIComponent(state) +
-          "&code_challenge=" + encodeURIComponent(codeChallenge) +
-          "&code_challenge_method=S256";
-        window.location.href = etsyAuthUrl;
-      }catch(e){
-        console.error("OAuth boot failed:", e);
-        __oauthInFlight = false;
-      }
     }
 
     /*
@@ -2332,7 +2042,8 @@ function metalToBadge(label){
 
       const connectEtsyBtn = document.getElementById("connectEtsyBtn");
       if (connectEtsyBtn){
-        connectEtsyBtn.addEventListener("click", () => startOAuth("manual"));
+        connectEtsyBtn.textContent = "ShipStation Connected";
+        connectEtsyBtn.disabled = true;
       }
 
       var etsyOrderInput = document.getElementById("etsyOrderNumber");
@@ -2356,13 +2067,13 @@ function metalToBadge(label){
         const orderNumber = etsyOrderInput.value.trim();
         if (!orderNumber) return;
 
-        const orderData = await pullEtsyOrderDetails(orderNumber);
+        const orderData = await pullShipStationOrderDetails(orderNumber);
         await loadShipToAddress(orderNumber);
         await loadGiftMessage(orderNumber);
 
         // ✅ Moved INSIDE the async handler:
-        // Prefer transactions (they carry quantity + unit price) for customs autofill
-        const tx = await maybeLoadEtsyTransactions(orderNumber);
+        // Prefer SS items (normalized) for customs autofill
+        const tx = await maybeLoadShipStationOrder(orderNumber);
         if (tx.length) {
           await updateImageGrid({ transactions: tx });
         } else if (orderData) {
@@ -2686,23 +2397,42 @@ function metalToBadge(label){
           if(i < items.length){
             var item = items[i];
             try {
-              var images = await fetchListingImages(item.listing_id);
-              if(images && images.length > 0){
-                cell.innerHTML =
-                  '<img src="' + images[0].url_fullxfull + '" alt="Listing Image ' + i + '" data-scale="1" data-offsetX="0" data-offsetY="0">';
-              } else {
-                cell.innerHTML = "No images found";
+            if (item.listing_id){
+              // Legacy path (if any legacy records still have Etsy listing ids)
+              try {
+                var images = await fetchListingImages(item.listing_id);
+                if(images && images.length > 0){
+                  cell.innerHTML =
+                    '<img src="' + images[0].url_fullxfull + '" alt="Listing Image ' + i + '" data-scale="1" data-offsetX="0" data-offsetY="0">';
+                } else {
+                  cell.innerHTML = "No images found";
+                }
+              } catch(errA){
+                console.error("Listing image error:", errA);
+                cell.innerHTML = "No image";
               }
-            } catch(errA){
-              console.error("Error fetching listing " + item.listing_id + ": ", errA);
-              cell.innerHTML = "Error loading image";
-            }
+              } else {
+                // ShipStation path: prefer the product image if provided
+                const srcRaw = (item.imageUrl || "").trim();
+                if (srcRaw) {
+                  const srcSafe = srcRaw.replace(/"/g, "&quot;"); // simple quote-safe
+                  cell.innerHTML =
+                    `<img src="${srcSafe}" alt="Item ${i}" data-scale="1" data-offsetX="0" data-offsetY="0">`;
+                } else {
+                  // fallback label tile
+                  const label = escapeHtml(item.title || item.name || item.sku || "Item");
+                  cell.innerHTML = `
+                    <div class="noimg" style="display:flex;align-items:center;justify-content:center;width:100%;height:100%;background:#f5f7fa;border:1px dashed #cfd6df;border-radius:8px;font-size:13px;color:#546372;text-align:center;padding:6px;">
+                      ${label}
+                    </div>`;
+                }
+              }
             cell.style.cursor = "pointer";
             (function(idx){
             cell.onclick = function(){
               highlightSelectedPreview(this);
               showItemDetails(idx);
-              prefillCustomsFromEtsy();       // <— keep Step 1 in sync with selected item
+              prefillCustomsFromShipStation();       // <— keep Step 1 in sync with selected item
             };
             })(i);
             if(qtyBox){
@@ -2788,6 +2518,10 @@ function metalToBadge(label){
 
               metalBox.value = " Metal: " + deQuote(metalSel || "No Metal");
             }
+          } catch (err) {
+            console.error("updateImageGrid item render:", err);
+            cell.innerHTML = "No image";
+          }
           } else {
             cell.innerHTML = "Empty";
             cell.style.cursor = "default";
@@ -2938,7 +2672,7 @@ function metalToBadge(label){
 
       document.getElementById("orderDetails").value = deQuote(details);
       // Auto-fill qty + unit value for the currently selected item
-      prefillCustomsFromEtsy();
+      prefillCustomsFromShipStation();
     }
 
     async function fetchListingImages(listingId){
@@ -2952,121 +2686,54 @@ function metalToBadge(label){
       return dataLI.results;
     }
 
-    function pullEtsyOrderDetails(orderNumber){
-      console.log("Pulling Etsy order details for order number:", orderNumber);
-      var token = localStorage.getItem("access_token");
-      return fetch("/.netlify/functions/etsyOrderProxy?orderId=" + encodeURIComponent(orderNumber), {
-        headers: { "access-token": token }
-      })
-      .then(function(r){ return r.json(); })
-      .then(function(data){
-        console.log("Etsy Order Data:", data);
-        // Gift fields now sourced from Etsy receipt
-        window.receiptIsGift = Boolean(data.is_gift);
+    async function pullShipStationOrderDetails(orderNumber){
+      try{
+        // Reuse the same SS function as address; augment on server to include fields we need.
+        const resp = await apiFetch(`/ssGetOrderAddress?orderNumber=${encodeURIComponent(orderNumber)}`);
+        // Gracefully handle not-found without noisy error logs
+        if (!resp.ok) return null;
+        const data = await resp.json();  // shipTo, orderStatus, shipments?, items?, giftMessage?
 
-        // 🎁  Gift message now fetched from ShipStation (see loadGiftMessage)
-        window.receiptGiftMessage     = "";
-        window.receiptGiftMessageFrom = "";
+        // 🎁 Gift flags/messages (from SS)
+        window.receiptIsGift       = Boolean(data.isGift || data.giftMessage); // heuristic
+        window.receiptGiftMessage  = (data.giftMessage || "").trim();
+        window.receiptGiftWrap     = false;
+        window.receiptGiftWrapPrice= null;
 
-        // Etsy receipts include gift_wrap_price as a money object { amount, divisor, currency_code }
-        const gwp = data.gift_wrap_price;
-        const gwAmount =
-          (gwp && typeof gwp.amount === "number" && typeof gwp.divisor === "number" && gwp.divisor)
-            ? (gwp.amount / gwp.divisor)
-            : (typeof data.gift_wrap_price === "number" ? data.gift_wrap_price : null);
-        window.receiptGiftWrapPrice =
-          (typeof gwAmount === "number" && !Number.isNaN(gwAmount)) ? gwAmount : null;
-        window.receiptGiftWrap =
-          (typeof window.receiptGiftWrapPrice === "number" && window.receiptGiftWrapPrice > 0);
+        // Buyer message from SS (Customer Notes)
+        window.buyerMessageText = (data.customerNotes || "").trim();
 
-        /* store buyer note so the chat listener can render it (still from Etsy) */
-        window.buyerMessageText  = (data.message_from_buyer || "").trim();
-        window.orderShipments = data.shipments || [];
-        var titleDate2 = document.getElementById("titleOrderDate2");
-        titleDate2.textContent = "";
-        if(data.name){
-          window.orderName = data.name;
-        } else {
-          window.orderName = "";
-        }
-        if(data.status){
-          window.orderStatus = data.status;
-        } else {
-          window.orderStatus = "";
-        }
-        if(data.is_shipped === true){
-          window.orderIsShipped = "Shipped!";
-        } else if(data.is_shipped === false){
-          window.orderIsShipped = "Not Shipped";
-        } else {
-          window.orderIsShipped = "";
-        }
-        var foundStamp = null;
-        if(data.shipped_timestamp && data.is_shipped === true){
-          foundStamp = data.shipped_timestamp;
-        }
-        else if(data.transactions && Array.isArray(data.transactions) && data.transactions.length > 0
-                && data.transactions[0].shipped_timestamp && data.is_shipped === true){
-          foundStamp = data.transactions[0].shipped_timestamp;
-        }
-        window.orderShippedTimestamp = foundStamp;
-        if(window.orderIsShipped === "Shipped!" && window.orderShippedTimestamp){
-          var d4 = new Date(window.orderShippedTimestamp * 1000);
-          var monthNames4 = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
-          var day4 = ("0" + d4.getDate()).slice(-2);
-          var mStr4 = monthNames4[d4.getMonth()];
-          var y4 = d4.getFullYear();
-          titleDate2.textContent = "Shipped On: " + day4 + " " + mStr4 + " " + y4;
-        }
+        // Shipments
+        window.orderShipments   = Array.isArray(data.shipments) ? data.shipments : [];
 
-        if(data.transactions && data.transactions.length > 0){
-          var firstTrans = data.transactions[0];
-          var monthNamesF = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
-          if(firstTrans.created_timestamp){
-            var dT = new Date(firstTrans.created_timestamp * 1000);
-            var ddT = ("0" + dT.getDate()).slice(-2);
-            var mmT = monthNamesF[dT.getMonth()];
-            var yyT = dT.getFullYear();
-            document.getElementById("dateOrdered").value = " " + ddT + " " + mmT + " " + yyT;
-          } else {
-            document.getElementById("dateOrdered").value = "";
-          }
-          var shipEl = document.getElementById("shipDate");
-          shipEl.style.color = "";
-          if(firstTrans.expected_ship_date){
-            var sTS = new Date(firstTrans.expected_ship_date * 1000);
-            var sDay = ("0" + sTS.getDate()).slice(-2);
-            var sMonth = monthNamesF[sTS.getMonth()];
-            var sYear = sTS.getFullYear();
-            shipEl.value = " " + sDay + " " + sMonth + " " + sYear;
-            if(window.orderIsShipped === "Shipped!"){
-              shipEl.style.color = "#006400";
-            } else {
-              var todayD = new Date();
-              todayD.setHours(0,0,0,0);
-              var dueDateD = new Date(sYear, sTS.getMonth(), sDay);
-              dueDateD.setHours(0,0,0,0);
-              if(dueDateD.getTime() === todayD.getTime()){
-                shipEl.style.color = "orange";
-              } else {
-                shipEl.style.color = "";
-              }
-            }
-          } else {
-            shipEl.value = "";
-          }
+        // Name / Status
+        window.orderName        = (data.customerName || data.shipTo?.name || "").trim();
+        window.orderStatus      = (data.orderStatus   || "").trim(); // awaiting_shipment, shipped, etc.
+        window.orderIsShipped   = window.orderStatus.toLowerCase() === "shipped" ? "Shipped!" : "Not Shipped";
+        window.orderShippedTimestamp = data.shippedDate ? Date.parse(data.shippedDate) : null;
+
+        // Dates
+        const monthNames = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+        if (data.createDate){
+          const d = new Date(data.createDate);
+          const dd = ("0"+d.getDate()).slice(-2), mm = monthNames[d.getMonth()], yy = d.getFullYear();
+          document.getElementById("dateOrdered").value = ` ${dd} ${mm} ${yy}`;
         } else {
           document.getElementById("dateOrdered").value = "";
-          var shipEl2 = document.getElementById("shipDate");
-          shipEl2.value = "";
-          shipEl2.style.color = "";
+        }
+        const shipEl = document.getElementById("shipDate");
+        if (data.shipByDate){
+          const s = new Date(data.shipByDate);
+          const dd = ("0"+s.getDate()).slice(-2), mm = monthNames[s.getMonth()], yy = s.getFullYear();
+          shipEl.value = ` ${dd} ${mm} ${yy}`;
+        } else {
+          shipEl.value = "";
         }
         return data;
-      })
-      .catch(function(err){
-        console.error("Error fetching Etsy order details:", err);
+      } catch(err){
+        console.error("pullShipStationOrderDetails:", err);
         return null;
-      });
+      }
     }
 
       /* ===== ShipStation — load “Ship To” by orderNumber ======================= */
@@ -3488,7 +3155,7 @@ function metalToBadge(label){
 
             try {
               // fast, pending-only, smaller page window
-              const fast = await callSearch({ orderId, fast: "1", pendingOnly: "1", pageSize: "150", timeoutMs: "25000" });
+              const fast = await callSearch({ orderId, fast: "1", pendingOnly: "1", pageSize: "25", timeoutMs: "20000" });
               if (fast?.aborted) return;
               const hit = pickBestShipment(orderId, (fast.shipments || []));
               if (hit) { setShipmentUI(hit); return; }
@@ -3496,7 +3163,7 @@ function metalToBadge(label){
               // cautious slow pass: still pending-only, trimmed window + shorter timeout
               window.ccSlowTimer = setTimeout(async () => {
                 try {
-                  const slow = await callSearch({ orderId, fast: "0", pendingOnly: "1", pageSize: "200", timeoutMs: "15000" });
+                  const slow = await callSearch({ orderId, fast: "0", pendingOnly: "1", pageSize: "100", timeoutMs: "15000" });
                   if (slow?.aborted) return;
                   const s2 = pickBestShipment(orderId, (slow.shipments || []));
                   if (s2) setShipmentUI(s2);
@@ -3687,6 +3354,32 @@ function metalToBadge(label){
     }
     window.getShipDateForApi = getShipDateForApi; // optional, explicit
 
+     /* ──────────────────────────────────────────────────────────────
+     * NEW: Single helper to post tracking back to Etsy
+     * Uses your Netlify function: /.netlify/functions/trackOrderProxy
+     * Expects: { receiptId, tracking, carrier, shipDate }
+     * ────────────────────────────────────────────────────────────── */
+    async function postTrackingToEtsy(receiptId, tracking, carrier, shipDate = getShipDateForApi()) {
+      if (!receiptId || !tracking) return;
+      try {
+        await fetch("/.netlify/functions/trackOrderProxy", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          credentials: "include",
+          body: JSON.stringify({
+            receiptId,
+            tracking,
+            carrier: carrier || "Chit Chats",
+            shipDate
+          })
+        });
+        try { M.toast?.({ html: "Etsy updated with tracking." }); } catch {}
+      } catch (e) {
+        console.warn("[trackOrderProxy] failed", e);
+        try { M.toast?.({ html: "Couldn’t update Etsy with tracking (non-blocking)." }); } catch {}
+      }
+    }
+
       // 🆕 Promise-based payload preview modal
       async function openCcPayloadModal(previewList){
         const modal   = document.getElementById("ccPayloadModal");
@@ -3809,19 +3502,18 @@ function metalToBadge(label){
         btnBuy.style.display     = currentStep === 3 ? "inline-block" : "none";
         /* After toggling .active classes, trigger autofill when entering Step 1 */
         if (currentStep === 1) {
-          prefillCustomsFromEtsy();
-          // one-shot safety: if something blanks them right after open, re-fill once
+          prefillCustomsFromShipStation();
           setTimeout(() => {
             const q = document.getElementById("cc_item_qty");
             const u = document.getElementById("cc_item_unit_value");
-            if (q && !String(q.value || "").trim() && q.dataset.userEdited !== "1") prefillCustomsFromEtsy();
-            if (u && !String(u.value || "").trim() && u.dataset.userEdited !== "1") prefillCustomsFromEtsy();
+            if (q && !String(q.value || "").trim() && q.dataset.userEdited !== "1") prefillCustomsFromShipStation();
+            if (u && !String(u.value || "").trim() && u.dataset.userEdited !== "1") prefillCustomsFromShipStation();
           }, 300);
         }
       }
 
       /* (B) Removed — this ran too early and ignored the selected tile.
-      Use prefillCustomsFromEtsy() on tile selection + modal open instead. */
+      Use prefillCustomsFromShipStation() on tile selection + modal open instead. */
 
       // (C) Static defaults you requested
       // NOTE: These fields are sent as ISO/codes to Chit Chats later; we’ll set sensible values.
@@ -3887,16 +3579,82 @@ function metalToBadge(label){
         return out;
       }
 
+      // ===== ShipStation order hydration (replaces Etsy lookups) =====
+      async function maybeLoadShipStationOrder(receiptId){
+        try{
+          const base = "/.netlify/functions";
+          // 1) Get address + items
+          const r = await fetch(`${base}/ssGetOrderAddress?orderNumber=${encodeURIComponent(receiptId)}`, { credentials:"include" });
+          if (r.ok){
+            const js = await r.json();
+            // reflect address into Step 0
+            const to = js.shipTo || {};
+            const set = (id, v) => { const el=document.getElementById(id); if(el && v!=null){ el.value=String(v); } };
+            set("cc_to_name",          to.name);
+            set("cc_to_address_1",     to.street1);
+            set("cc_to_address_2",     to.street2);
+            set("cc_to_city",          to.city);
+            set("cc_to_province_code", to.state);
+            set("cc_to_postal_code",   to.postalCode);
+            set("cc_to_country_code",  (to.country || to.countryCode || "").toUpperCase());
+
+            // cache items for Step 1
+            window.cachedOrderItems = Array.isArray(js.items) ? js.items.map(i => ({
+              title: i.name,
+              quantity: Number(i.quantity || 1),
+              unitPrice: Number(i.unitPrice || 0),
+              sku: i.sku || "",
+              originCountry: (i.originCountry || "").toUpperCase(),
+              hsTariffCode: i.hsCode || ""
+            })) : [];
+          }
+
+          // 2) Gift message (optional)
+          try {
+            const g = await fetch(`${base}/ssGetGiftMessage?orderNumber=${encodeURIComponent(receiptId)}`, { credentials:"include" });
+            if (g.ok){
+              const { giftMessage, giftFrom } = await g.json();
+              const box = document.getElementById("giftMessageBox");
+              if (box && giftMessage) box.value = giftFrom ? `${giftMessage}\n— ${giftFrom}` : giftMessage;
+            }
+          } catch(_) {}
+        } catch (e){ console.warn("[SS] order hydrate failed", e); }
+      }
+
+      function prefillCustomsFromShipStation(){
+        try{
+          const items = Array.isArray(window.cachedOrderItems) ? window.cachedOrderItems : [];
+          const first = items[0] || null;
+          const set = (id, v) => { const el = document.getElementById(id); if (el && v!=null) el.value = String(v); };
+
+          // keep your existing Title fallback
+          const title = (typeof extractOrderTitle === "function") ? extractOrderTitle() : "";
+          set("cc_item_description", (title || first?.title || first?.name || "").slice(0,95));
+
+          if (first && !document.getElementById("cc_item_qty")?.dataset?.userEdited){
+            set("cc_item_qty", first.quantity || 1);
+          }
+          if (first && !document.getElementById("cc_item_unit_value")?.dataset?.userEdited){
+            const p = Number(first.unitPrice || 0);
+            set("cc_item_unit_value", Number.isFinite(p) ? p.toFixed(2) : "0.00");
+          }
+
+          // optional harmonized/origin if you surface those fields
+          if (first?.hsTariffCode)  set("cc_item_hs_tariff_code", first.hsTariffCode);
+          if (first?.originCountry) set("cc_item_origin_country", first.originCountry);
+        } catch(e){ console.warn("prefillCustomsFromShipStation failed", e); }
+      }
+
       async function modalOpen(){
       // Keep ccShipmentId locked post-purchase (no re-checks). Do not thaw here.
         /* INSERT inside modalOpen(), near the top after local refs */
         {
-          // Make sure we have the transactions for this order before showing Step 1
+          // Hydrate from ShipStation (orderNumber == your Etsy receiptId)
           const receiptId = (document.getElementById("etsyOrderNumber")?.value || "").trim();
-          if (receiptId && (!Array.isArray(window.cachedOrderItems) || window.cachedOrderItems.length === 0)) {
-            maybeLoadEtsyTransactions(receiptId).then(() => prefillCustomsFromEtsy());
+          if (receiptId) {
+            maybeLoadShipStationOrder(receiptId).then(() => prefillCustomsFromShipStation());
           } else {
-            prefillCustomsFromEtsy();
+            prefillCustomsFromShipStation();
           }
         }
         const seed = parseShipToBox();
@@ -3918,7 +3676,7 @@ function metalToBadge(label){
         // Do NOT call showStep(1) here; verify must appear first.
         // Kick off the verification flow immediately:
         // Fill again when the Edit modal opens
-        prefillCustomsFromEtsy();
+        prefillCustomsFromShipStation();
         maybeVerifyAddressBeforeStep1(true);
       }
        function modalClose(){
@@ -4283,6 +4041,15 @@ function metalToBadge(label){
             if (t) { t.value = shipment.carrier_tracking_code; } // don't wake CC search
           }
 
+           // ── NEW: Post tracking back to Etsy ─────────────────────
+            const receiptId = (document.getElementById("etsyOrderNumber")?.value || "").trim();
+            const tracking  = shipment?.carrier_tracking_code || "";
+            const carrier   = "Chit Chats";
+            if (receiptId && tracking) {
+              await postTrackingToEtsy(receiptId, tracking, carrier, getShipDateForApi());
+            }
+            // ────────────────────────────────────────────────────────
+
           // Success UX: close the Edit modal after we have the label & invoked print
           try {
             const modalEl = document.getElementById("ccEditModal");
@@ -4523,7 +4290,7 @@ async function ccValidateAgainstApi(step){
             ship_date            : normalizeShipDate(document.getElementById("cc_ship_date").value)
           };
 
-          // keep deriving vatRef (UI may use it for previews), but do NOT include in payload
+          // ✅ top-level vat_reference (required placement by Chit Chats API)
           const vatRef = sanitizeVatRef(document.getElementById("cc_customs_tax_reference_number")?.value);
           const dest = String((toObj?.country_code || "")).toUpperCase();
 
@@ -4532,12 +4299,13 @@ async function ccValidateAgainstApi(step){
             country_code : (toObj?.country_code || "").toUpperCase(),
             order_id     : (orderId || undefined),
             package      : pkg,
-            // vat_reference intentionally omitted
+            vat_reference: vatRef || undefined,
             customs      : {
               package_contents: document.getElementById("cc_package_contents").value,
               value           : toMoney(grandTotal),
               value_currency  : valueCurrency.toLowerCase(),
               line_items
+              // (no nested vat_reference — top-level is authoritative)
             }
           };
         }
@@ -4790,6 +4558,21 @@ async function refreshRates(){
           if (url) {
             await openAndAutoPrintLabel(url, printWin);
             M.toast?.({ html:"Label opened for printing." });
+
+          // ── NEW: Post tracking back to Etsy ──────────────────────────
+          try {
+            // Re-fetch shipment details to obtain the tracking code reliably
+            const det = await callCc("GET", null, `?resource=shipment&id=${encodeURIComponent(id)}`);
+            const tracking  = det?.shipment?.carrier_tracking_code || det?.carrier_tracking_code || "";
+            const receiptId = (document.getElementById("etsyOrderNumber")?.value || "").trim();
+            if (receiptId && tracking) {
+              await postTrackingToEtsy(receiptId, tracking, "Chit Chats", getShipDateForApi());
+            }
+          } catch (e) {
+            console.warn("[post-to-etsy after buy]", e);
+          }
+          // ─────────────────────────────────────────────────────────────
+
           } else {
           if (printWin && !printWin.closed) {
           try {
