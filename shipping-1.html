@@ -2261,15 +2261,34 @@ function metalToBadge(label){
             .catch(err => M.toast({ html: "Copy failed: " + err.message }));
         });
 
-      /* ── Paste: Order Number → unified manual pipeline ─────── */
+      /* ── Paste: Order Number (+ auto-Enter) ───────────────── */
       document.getElementById("pasteOrderBtn")
         ?.addEventListener("click", async () => {
           try {
+            // 🔓 New order → thaw post-buy freeze, clear CC id, refresh batches
+            window.ccPostBuyFrozen = false;
+            window.ccMuteIdInput   = false;
+            const idEl = document.getElementById("ccShipmentId");
+            if (idEl) { idEl.value = ""; idEl.dataset.setAt = String(Date.now()); }
+            window.ccShipmentId = "";
+            try { await fetchBatches(); } catch (e) {}
+
             const txt = (await navigator.clipboard.readText() || "").trim();
             if (!txt) { M.toast?.({ html: "Clipboard is empty" }); return; }
-            document.getElementById("etsyOrderNumber").value = txt;
+
+            const inp = document.getElementById("etsyOrderNumber");
+            inp.value = txt; // no auto-lookup from typing/paste
             M.toast?.({ html: "Order # pasted" });
-            await runManualOrderPipeline(txt, { source: "pasteBtn" });
+
+            /* ⛔ Cancel any in-flight ccShipmentId search and pending slow-pass */
+            try { window.ccSearchAbort?.abort(); } catch (e) {}
+            if (window.ccSlowTimer) { clearTimeout(window.ccSlowTimer); window.ccSlowTimer = null; }
+            window.ccSpin && window.ccSpin(false);
+
+            // 🔁 Use the SAME pipeline as manual typing: fire input/change on etsyOrderNumber
+            inp.focus();
+            inp.dispatchEvent(new Event("input",  { bubbles: true }));
+            inp.dispatchEvent(new Event("change", { bubbles: true }));
           } catch (err) {
             M.toast?.({ html: "Paste failed: " + err.message });
           }
@@ -2323,11 +2342,99 @@ function metalToBadge(label){
         connectEtsyBtn.addEventListener("click", () => startOAuth("manual"));
       }
 
-      const etsyOrderInput = document.getElementById("etsyOrderNumber");
+      var etsyOrderInput = document.getElementById("etsyOrderNumber");
+
       etsyOrderInput.addEventListener("keydown", async function (e) {
         if (e.key !== "Enter") return;
-        e.preventDefault();
-        await runManualOrderPipeline(this.value, { source: "enterKey" });
+
+          /* ⛔ Cancel any in-flight ccShipmentId search and pending slow-pass */
+          try { window.ccSearchAbort?.abort(); } catch (e) {}
+          if (window.ccSlowTimer) { clearTimeout(window.ccSlowTimer); window.ccSlowTimer = null; }
+          window.ccSpin && window.ccSpin(false);
+
+        // New order → thaw post-buy freeze, clear CC id, refresh batches
+        window.ccPostBuyFrozen = false;
+        window.ccMuteIdInput   = false;
+        const idEl = document.getElementById("ccShipmentId");
+        if (idEl) { idEl.value = ""; idEl.dataset.setAt = String(Date.now()); }
+        window.ccShipmentId = "";
+        try { await fetchBatches(); } catch (e) {}
+
+        const orderNumber = etsyOrderInput.value.trim();
+        if (!orderNumber) return;
+
+        const orderData = await pullEtsyOrderDetails(orderNumber);
+        await loadShipToAddress(orderNumber);
+        await loadGiftMessage(orderNumber);
+
+        // ✅ Moved INSIDE the async handler:
+        // Prefer transactions (they carry quantity + unit price) for customs autofill
+        const tx = await maybeLoadEtsyTransactions(orderNumber);
+        if (tx.length) {
+          await updateImageGrid({ transactions: tx });
+        } else if (orderData) {
+          await updateImageGrid(orderData);
+        }
+        startBritesListener(orderNumber);
+
+        try {
+          const respPD = await fetch("/.netlify/functions/firebaseOrders?orderId=" + encodeURIComponent(orderNumber));
+          const resPD  = await respPD.json();
+
+          if (!respPD.ok) {
+            if (resPD.error && resPD.error.toLowerCase().includes("not found")) {
+              document.getElementById("labelCreationDate").value = "";
+              document.getElementById("completedByEmployee").value = "";
+              document.getElementById("signatureBox").innerHTML = "Sig Box";
+              const ab = document.getElementById("shipAddressBox"); if (ab) ab.value = "";
+              document.getElementById("customerMessageHistory").innerText = "";
+              return;
+            }
+            throw new Error(resPD.error || "Unknown error from firebaseOrders function");
+          }
+
+          const docDataPD = resPD.data || {};
+          const histBox = document.getElementById("customerMessageHistory");
+          const boxIsEmpty = !histBox || !histBox.innerHTML.trim();
+          if (boxIsEmpty && typeof docDataPD["Brites Messages"] === "string") {
+            histBox.innerText = docDataPD["Brites Messages"];
+            M.toast({ html: "Brites Messages loaded!" });
+          }
+
+          if (docDataPD["Shipping Label Timestamps"]) {
+            const dt = new Date(docDataPD["Shipping Label Timestamps"]);
+            const lblDateEl = document.getElementById("labelCreationDate");
+            if (!isNaN(dt.valueOf()) && lblDateEl) {
+              const monthNamesF2 = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+              const dd = ("0" + dt.getDate()).slice(-2);
+              const mStr = monthNamesF2[dt.getMonth()];
+              const yyyy = dt.getFullYear();
+              const hh = ("0" + dt.getHours()).slice(-2);
+              const mm = ("0" + dt.getMinutes()).slice(-2);
+              lblDateEl.value = `${dd} ${mStr} ${yyyy}, ${hh}:${mm}`;
+            } else if (lblDateEl) {
+              lblDateEl.value = "";
+            }
+          } else {
+            const lblDateEl = document.getElementById("labelCreationDate");
+            if (lblDateEl) lblDateEl.value = "";
+          }
+
+          const dbEmpNameRaw = docDataPD["Employee Name"];
+          const dbEmpName = typeof dbEmpNameRaw === "string" ? dbEmpNameRaw.trim() : "";
+          const compEmpEl = document.getElementById("completedByEmployee");
+          if (compEmpEl) compEmpEl.value = dbEmpName;
+
+          const sigBox = document.getElementById("signatureBox");
+          if (dbEmpName && sigBox) {
+            const imageFile = encodeURIComponent(dbEmpName + ".jpg");
+            sigBox.innerHTML = `<img src="/assets/${imageFile}" style="width:100%; height:100%; object-fit:cover;" alt="Signature for ${dbEmpName}">`;
+          } else if (sigBox) {
+            sigBox.innerHTML = "Sig Box";
+          }
+        } catch (e2) {
+          console.error(e2);
+        }
       });
 
       document.getElementById("trackingLinkBtn").addEventListener("click", function(){
@@ -3107,103 +3214,6 @@ function metalToBadge(label){
         }
       }
 
-      /* =========================================================
-       *  Unified manual order pipeline (Typing / Paste / Enter)
-       * =======================================================*/
-      async function runManualOrderPipeline(orderNumber, opts = {}) {
-        // 0) Cancel any in-flight ccShipmentId work
-        try { window.ccSearchAbort?.abort(); } catch (e) {}
-        if (window.ccSlowTimer) { clearTimeout(window.ccSlowTimer); window.ccSlowTimer = null; }
-        window.ccSpin && window.ccSpin(false);
-
-        // 1) Thaw post-buy state, clear current CC Shipment Id, refresh batches
-        window.ccPostBuyFrozen = false;
-        window.ccMuteIdInput   = false;
-        const idEl = document.getElementById("ccShipmentId");
-        if (idEl) { idEl.value = ""; idEl.dataset.setAt = String(Date.now()); }
-        window.ccShipmentId = "";
-        try { await fetchBatches(); } catch (e) {}
-
-        // 2) Resolve canonical order number
-        const etsyOrderInput = document.getElementById("etsyOrderNumber");
-        const val = (orderNumber || "").trim() || (etsyOrderInput?.value || "").trim();
-        if (!val) { M.toast?.({ html: "Enter order #" }); return; }
-        if (etsyOrderInput) etsyOrderInput.value = val;
-
-        // 3) Pull Etsy + ShipStation facts
-        const orderData = await pullEtsyOrderDetails(val);
-        await loadShipToAddress(val);
-        await loadGiftMessage(val);
-
-        // 4) Prefer transactions for customs (then grid)
-        const tx = await maybeLoadEtsyTransactions(val);
-        if (tx.length) { await updateImageGrid({ transactions: tx }); }
-        else if (orderData) { await updateImageGrid(orderData); }
-
-        // 5) Start Brites live listener
-        startBritesListener(val);
-
-        // 6) Populate prior metadata from Firestore (unchanged logic, just centralized)
-        try {
-          const respPD = await fetch("/.netlify/functions/firebaseOrders?orderId=" + encodeURIComponent(val));
-          const resPD  = await respPD.json();
-
-          if (!respPD.ok) {
-            if (resPD.error && resPD.error.toLowerCase().includes("not found")) {
-              document.getElementById("labelCreationDate").value = "";
-              document.getElementById("completedByEmployee").value = "";
-              document.getElementById("signatureBox").innerHTML = "Sig Box";
-              const ab = document.getElementById("shipAddressBox"); if (ab) ab.value = "";
-              document.getElementById("customerMessageHistory").innerText = "";
-              return;
-            }
-            throw new Error(resPD.error || "Unknown error from firebaseOrders function");
-          }
-
-          const docDataPD = resPD.data || {};
-          const histBox = document.getElementById("customerMessageHistory");
-          const boxIsEmpty = !histBox || !histBox.innerHTML.trim();
-          if (boxIsEmpty && typeof docDataPD["Brites Messages"] === "string") {
-            histBox.innerText = docDataPD["Brites Messages"];
-            M.toast({ html: "Brites Messages loaded!" });
-          }
-
-          if (docDataPD["Shipping Label Timestamps"]) {
-            const dt = new Date(docDataPD["Shipping Label Timestamps"]);
-            const lblDateEl = document.getElementById("labelCreationDate");
-            if (!isNaN(dt.valueOf()) && lblDateEl) {
-              const monthNamesF2 = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
-              const dd = ("0" + dt.getDate()).slice(-2);
-              const mStr = monthNamesF2[dt.getMonth()];
-              const yyyy = dt.getFullYear();
-              const hh = ("0" + dt.getHours()).slice(-2);
-              const mm = ("0" + dt.getMinutes()).slice(-2);
-              lblDateEl.value = `${dd} ${mStr} ${yyyy}, ${hh}:${mm}`;
-            } else if (lblDateEl) {
-              lblDateEl.value = "";
-            }
-          } else {
-            const lblDateEl = document.getElementById("labelCreationDate");
-            if (lblDateEl) lblDateEl.value = "";
-          }
-
-          const dbEmpNameRaw = docDataPD["Employee Name"];
-          const dbEmpName = typeof dbEmpNameRaw === "string" ? dbEmpNameRaw.trim() : "";
-          const compEmpEl = document.getElementById("completedByEmployee");
-          if (compEmpEl) compEmpEl.value = dbEmpName;
-
-          const sigBox = document.getElementById("signatureBox");
-          if (dbEmpName && sigBox) {
-            const imageFile = encodeURIComponent(dbEmpName + ".jpg");
-            sigBox.innerHTML = `<img src="/assets/${imageFile}" style="width:100%; height:100%; object-fit:cover;" alt="Signature for ${dbEmpName}">`;
-          } else if (sigBox) {
-            sigBox.innerHTML = "Sig Box";
-          }
-        } catch (e2) {
-          console.error(e2);
-        }
-      }
-
     /* ---------------------------------------------------------
      *  Firestore listener for employee-scanned order numbers
      * --------------------------------------------------------*/
@@ -3552,26 +3562,9 @@ function metalToBadge(label){
       orderInp   ?.addEventListener("input",  debounce(refreshFromOrderIfChitChats, 250));
       orderInp   ?.addEventListener("change", refreshFromOrderIfChitChats);
 
-      // Enter-to-search for reliability (manual entry/paste)
-      // 🔁 Order: run lookup 500ms after a *real* Enter press so UI settles first.
-      orderInp?.addEventListener("keydown", (e) => {
-        if (e.key === "Enter") {
-          e.preventDefault();
-
-          // 🔓 New order → thaw post-buy freeze, clear CC id, refresh batches
-          window.ccPostBuyFrozen = false;
-          window.ccMuteIdInput   = false;
-          const idEl = document.getElementById("ccShipmentId");
-          if (idEl) { idEl.value = ""; idEl.dataset.setAt = String(Date.now()); }
-          window.ccShipmentId = "";
-          try { fetchBatches(); } catch {}
-
-          // 🔪 kill any live CC search and pending slow-pass; we’re switching orders
-          try { window.ccSearchAbort?.abort(); } catch (e) {}
-          if (window.ccSlowTimer) { clearTimeout(window.ccSlowTimer); window.ccSlowTimer = null; }
-          window.ccSpin && window.ccSpin(false);
-
-          if (e.isTrusted) setTimeout(() => window.refreshFromOrderIfChitChats?.(), 500); // ← 500ms delay
+          // 🔁 Use the SAME pipeline as manual typing
+          orderInp.dispatchEvent(new Event("input",  { bubbles: true }));
+          orderInp.dispatchEvent(new Event("change", { bubbles: true }));
         }
       });
 
