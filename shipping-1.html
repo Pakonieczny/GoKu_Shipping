@@ -4365,7 +4365,8 @@ function metalToBadge(label){
         // Order Number directly under Tax Ref — and NO divider after it
         const etsyOrder = (document.getElementById("etsyOrderNumber")?.value || "").trim();
         if (etsyOrder) line("Order Number: " + etsyOrder, STD);
-
+        
+        rule();
         // Contents should sit directly above the first item title
         line("Contents: " + (contents || "merchandise"), STD);
 
