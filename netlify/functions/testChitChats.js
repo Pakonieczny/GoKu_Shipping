@@ -33,7 +33,7 @@ exports.handler = async (event) => {
     const BASE         = process.env.CHIT_CHATS_BASE_URL || "https://chitchats.com/api/v1";
     const CLIENT_ID    = process.env.CHIT_CHATS_CLIENT_ID;
     const ACCESS_TOKEN = process.env.CHIT_CHATS_ACCESS_TOKEN;
-    const DEFAULT_BATCH_ID = "3903775";
+
     // Toggle via environment: ALLOW_CC_VAT_REFERENCE=true to re-enable
     const ALLOW_CC_VAT_REFERENCE = /^(1|true|yes)$/i.test(process.env.ALLOW_CC_VAT_REFERENCE || "");
 
@@ -322,6 +322,7 @@ async function recreateShipmentIfUnbought(id, desiredClientPayload, { authH, url
     async function keepPendingOnly(list, enabled = true) {
       if (!enabled) return list || [];
       const open = await getOpenBatchIdsSet();
+      // keep: shipments with no batch yet OR in any currently open (pending) batch
       return (list || []).filter(sh => {
         const bid = sh?.batch_id == null ? "" : String(sh.batch_id);
         // keep: no batch yet OR in an open (pending) batch
@@ -342,7 +343,11 @@ async function recreateShipmentIfUnbought(id, desiredClientPayload, { authH, url
       // Try to estimate total pages from /shipments/count (if available)
       let estPages = null;
       try {
-        const countQs = status ? `status=${encodeURIComponent(status)}` : "";
+          const countQs = [
+          status ? `status=${encodeURIComponent(status)}` : "",
+          q       ? `q=${encodeURIComponent(q)}`          : "",
+          batchId ? `batch_id=${encodeURIComponent(batchId)}` : ""
+        ].filter(Boolean).join("&");
         const cnt = await getCount(countQs);
         if (typeof cnt === "number" && cnt >= 0) {
           estPages = Math.max(1, Math.ceil(cnt / PAGE_SIZE));
@@ -501,16 +506,40 @@ async function recreateShipmentIfUnbought(id, desiredClientPayload, { authH, url
           } catch {}
         }
 
-        // 2) Vendor search across *all pages*
         try {
-          const all = await paginateShipments({
-            q: want,
-            batchId: qp.batchId,
-            pageSize,
-            // Stop early if we already have a hit to reduce calls
-            stopEarlyIf: (sh) => timedOut() || matches(sh)
-          });
-          const hits = (all || []).filter(matches);
+          let hits = [];
+          if (pendingOnlyOn) {
+            // 🔒 Scope to *open (pending)* batches only
+            const openSet = await getOpenBatchIdsSet();
+            const openIds = Array.from(openSet);
+            let found = false;
+            for (const bid of openIds) {
+              if (timedOut()) break;
+              const page = await paginateShipments({
+                q: want,
+                batchId: bid,
+                pageSize,
+                // Stop early inside the batch if we already have a local hit
+                stopEarlyIf: (sh) => {
+                  const hit = matches(sh);
+                  if (hit) found = true;
+                  return timedOut() || hit;
+                }
+              });
+              hits = hits.concat((page || []).filter(matches));
+              if (found) break; // ✅ stop after the first batch hit to minimize calls
+            }
+          } else {
+            // Legacy: search across all shipments when pending filter is off
+            const all = await paginateShipments({
+              q: want,
+              pageSize,
+              stopEarlyIf: (sh) => timedOut() || matches(sh)
+            });
+            hits = (all || []).filter(matches);
+          }
+
+          // Safety: still apply pending filter (no-ops if pendingOnlyOn === false)
           const kept = await applyPendingFilter(hits);
           if (kept.length) return ok({ shipments: kept });
         } catch { /* non-fatal; continue */ }
