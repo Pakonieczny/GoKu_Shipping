@@ -386,6 +386,20 @@
 
   </style>
 
+    <style id="etsyCountersStyles">
+    #etsyCounters{
+      position:fixed; right:10px; top:10px;
+      background:rgba(0,0,0,0.65);
+      color:#fff; font:12px/1.2 monospace;
+      padding:8px 10px; border-radius:10px;
+      z-index:99999; box-shadow:0 2px 8px rgba(0,0,0,0.25);
+      user-select:none;
+    }
+    #etsyCounters .row{ display:flex; gap:6px; align-items:baseline; }
+    #etsyCounters .label{ opacity:0.85; }
+    #etsyCounters .value{ font-weight:700; }
+  </style>
+
 </head>
 
 <body>
@@ -574,6 +588,11 @@
     </button>
     <!-- ▲▲ END new controls ▲▲ -->
 
+  </div>
+
+    <div id="etsyCounters">
+    <div class="row"><span class="label">Etsy Max QPS:</span><span id="etsyMaxQps" class="value">0</span></div>
+    <div class="row"><span class="label">Etsy Total:</span><span id="etsyTotal"  class="value">0</span></div>
   </div>
 
   <div id="secondaryContainer"></div>
@@ -870,6 +889,57 @@ function metalToBadge(label){
      * Base URL & Global Variables
      ********************************************************/
     const functionsBaseUrl = window.location.origin + "/.netlify/functions";
+
+    // ── Etsy-call counters (temp instrumentation) ─────────────────────────────
+    (function(){
+      if (window.__etsyFetchWrapped) return;     // idempotent
+      window.__etsyFetchWrapped = true;
+
+      // live state
+      const state = (window.__etsyQ = {
+        total: 0,
+        times: [],      // ms timestamps of each Etsy call start
+        maxQps: 0
+      });
+
+      // classify: count only Etsy-facing function calls
+      const isEtsyCall = (input) => {
+        try{
+          const url = (typeof input === "string") ? input : (input && input.url) || "";
+          // match our known Etsy proxies & token endpoint
+          return /\/\.netlify\/functions\/(etsy|etsyImages|etsyOrderProxy|trackOrderProxy|refreshEtsyToken|exchangeToken)\b/i.test(url);
+        }catch(_){ return false; }
+      };
+
+      const updateCounters = () => {
+        const maxEl = document.getElementById("etsyMaxQps");
+        const totEl = document.getElementById("etsyTotal");
+        if (maxEl) maxEl.textContent = String(state.maxQps);
+        if (totEl) totEl.textContent = String(state.total);
+      };
+
+      const mark = () => {
+        const now = Date.now();
+        state.total += 1;
+        state.times.push(now);
+
+        // prune to last 1s window
+        const cutoff = now - 1000;
+        while (state.times.length && state.times[0] < cutoff) state.times.shift();
+
+        // current window size is instantaneous QPS; keep the max
+        const curQps = state.times.length;
+        if (curQps > state.maxQps) state.maxQps = curQps;
+
+        updateCounters();
+      };
+
+      const origFetch = window.fetch;
+      window.fetch = function(input, init){
+        if (isEtsyCall(input)) mark();
+        return origFetch.apply(this, arguments);
+      };
+    })();
 
     /* ===== Etsy OAuth boot + auto-refresh wiring (match design/sorting) ===== */
     const TOKEN_KEYS = {
