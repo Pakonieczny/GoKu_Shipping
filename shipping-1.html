@@ -4278,134 +4278,100 @@ function metalToBadge(label){
     }
 
       /* Build a 2×4 inch (144×288pt) temporary PDF from ccStep1 */
-      async function buildIntlTempPdfBlob(){
+      async function buildIntlTempPdfBlob() {
         await ensurePdfLib();
-        const { PDFDocument, StandardFonts, rgb } = window.PDFLib;
+        const { PDFDocument, StandardFonts } = window.PDFLib;
+
         const doc  = await PDFDocument.create();
-        const page = doc.addPage([144, 288]); // width, height in points (72 pt/in)
+        const page = doc.addPage([144, 288]);            // 2×4 in @ 72 pt/in
         const font = await doc.embedFont(StandardFonts.Helvetica);
         const bold = await doc.embedFont(StandardFonts.HelveticaBold);
-        const STD = 8; // single, consistent font size across the label
 
+        const STD = 8;
         const pad = 6;
         let y = 288 - pad;
 
-        function line(txt, size=8, useBold=false){
-          const f = useBold ? bold : font;
-          const max = 144 - pad*2;
-          // wrap long text
-          const words = String(txt||"").split(/\s+/);
-          let cur = "";
+        function spacer(lines = 1, size = STD) {
+          y -= lines * (size + 2);
+        }
 
-          function lineLabelValue(label, value, size = STD){
+        function flush(text, size = STD, useBold = false) {
+          if (!text) return;
+          y -= size + 2;
+          page.drawText(String(text), { x: pad, y, size, font: useBold ? bold : font });
+        }
+
+        function line(text, size = STD, useBold = false) {
+          const f = useBold ? bold : font;
+          const max = 144 - pad * 2;
+          const words = String(text || "").split(/\s+/);
+          let cur = "";
+          for (const w of words) {
+            const t = cur ? cur + " " + w : w;
+            if (f.widthOfTextAtSize(t, size) > max) {
+              flush(cur, size, useBold);
+              cur = w;
+            } else {
+              cur = t;
+            }
+          }
+          if (cur) flush(cur, size, useBold);
+        }
+
+        function lineLabelValue(label, value, size = STD) {
           const lbl = String(label || "");
           const val = String(value || "");
-          const max = 144 - pad*2;
+          const max = 144 - pad * 2;
           const wLbl = font.widthOfTextAtSize(lbl, size);
           const wVal = bold.widthOfTextAtSize(val, size);
 
-          // If it fits on one row, draw both at once (label normal, value bold)
-          if (wLbl + 3 + wVal <= max){
+          if (wLbl + 3 + wVal <= max) {
             y -= size + 2;
             page.drawText(lbl, { x: pad, y, size, font });
             page.drawText(val, { x: pad + wLbl + 3, y, size, font: bold });
           } else {
-            // Fallback: label on one line, bold value on next line
             line(lbl, size, false);
             line(val, size, true);
           }
         }
 
-          // one blank text line worth of vertical space
-          function spacer(lines = 1, size = STD){
-            y -= (size + 2) * lines;
-          }
-
-          function flush(){
-            if (!cur) return;
-            y -= size + 2;
-            page.drawText(cur, { x: pad, y, size, font: f, color: rgb(0,0,0) });
-            cur = "";
-          }
-          for (const w of words){
-            const test = cur ? cur + " " + w : w;
-            if (f.widthOfTextAtSize(test, size) > max) { flush(); cur = w; }
-            else { cur = test; }
-          }
-          flush();
+        function rule() {
+          y -= 2;
+          page.drawLine({ start: { x: pad, y }, end: { x: 144 - pad, y }, thickness: 0.5 });
+          y -= 2;
         }
 
-        function rule(){ y -= 2; page.drawLine({ start:{x:pad,y}, end:{x:144-pad,y}, thickness:0.5, color:rgb(0,0,0) }); y -= 2; }
+        // ——— content ———
+        const { currency, contents, taxRef, items, total, toCC } = getStep1Snapshot();
 
-          // Bold only the value part on a single line (label normal, value bold)
-          function lineLabelValue(label, value, size){
-            const lbl = String(label || "");
-            const val = String(value || "");
-            const max = 144 - pad*2;
-            const wLbl = font.widthOfTextAtSize(lbl, size);
-            const wVal = bold.widthOfTextAtSize(val, size);
-
-            if (wLbl + 3 + wVal <= max){
-              y -= size + 2;
-              page.drawText(lbl, { x: pad, y, size, font });
-              page.drawText(val, { x: pad + wLbl + 3, y, size, font: bold });
-            } else {
-              // fallback: wrap across two lines keeping value bold
-              line(lbl, size, false);
-              line(val, size, true);
-            }
-          }
-
-        const { currency, contents, taxRef, items, total } = getStep1Snapshot();
-
-        // Header (bold, standard size) — NO divider immediately after
-        line("ITEM & TAX INFORMATION", STD, true);
-
-        // Tax Ref: label normal, value bold only
-        if (taxRef) lineLabelValue("Tax Ref (IOSS/EORI): ", taxRef, STD);
-
-        // Divider between Tax Ref and Order Number (keep this one)
-        rule();
-
-        // Order Number directly under Tax Ref — and NO divider after it
-        const etsyOrder = (document.getElementById("etsyOrderNumber")?.value || "").trim();
-        if (etsyOrder) line("Order Number: " + etsyOrder, STD);
+        if (toCC)   lineLabelValue("Dest.", toCC);
+        if (taxRef) lineLabelValue("Tax ref", taxRef);
 
         rule();
-        // Contents should sit directly above the first item title
         line("Contents: " + (contents || "merchandise"), STD);
 
-        items.slice(0, 8).forEach((li, idx) => {
-          const list = items.slice(0, 8);
-          list.forEach((li, idx) => {
+        const list = (items || []).slice(0, 8);
+        list.forEach((li, idx) => {
           const qty   = Number(li.quantity || 1);
           const unit  = Number(li.unit_value || li.unitValue || 0);
           const value = (qty * unit).toFixed(2);
-
-          // 3-word max title (punctuation stripped by sanitizeItemTitle)
-          const title = sanitizeItemTitle(li.description || "Item");
-
-          // Title line right after "Contents"
-          line(`${idx + 1} ${title}`, STD);
-
-          // Always render HS first, then Manufacture on its own next line
           const hs    = (li.hs_tariff_code || li.hs_tariff || "").trim();
           const manuf = (li.manufacture_country || "").toUpperCase();
 
+          const title = sanitizeItemTitle(li.description || "Item");
+          line(`${idx + 1} ${title}`, STD);
           if (hs)    line(`HS ${hs}`, STD);
           if (manuf) line(`Manufacture ${manuf}`, STD);
-
-          // Monetary line (no qty text shown on label)
           line(`Item value ${value} ${currency}`, STD);
-          // add a single empty line between items (but not after the last)
+
           if (list.length > 1 && idx < list.length - 1) spacer(1, STD);
         });
 
         rule();
-        const grand = (Number.isFinite(total) ? total : Number(total||0)).toFixed(2);
+        const grand = (Number.isFinite(total) ? total : Number(total || 0)).toFixed(2);
         line(`Grand total: ${grand} ${currency}`, STD, true);
 
-        const bytes = await doc.save();
+        const bytes = await doc.save();                   // ← safely inside async body
         return new Blob([bytes], { type: "application/pdf" });
       }
 
