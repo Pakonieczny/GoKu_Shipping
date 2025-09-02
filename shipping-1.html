@@ -2285,10 +2285,14 @@ function metalToBadge(label){
             if (window.ccSlowTimer) { clearTimeout(window.ccSlowTimer); window.ccSlowTimer = null; }
             window.ccSpin && window.ccSpin(false);
 
-            // 🔁 Use the SAME pipeline as manual typing: fire input/change on etsyOrderNumber
+            // 🔎 Also refresh ccShipmentId 500ms after paste (independent of auto-Enter)
+            setTimeout(() => window.refreshFromOrderIfChitChats?.(), 500);
+            // focus, then simulate pressing Enter after 100ms
             inp.focus();
-            inp.dispatchEvent(new Event("input",  { bubbles: true }));
-            inp.dispatchEvent(new Event("change", { bubbles: true }));
+            setTimeout(() => {
+              const ev = new KeyboardEvent("keydown", { key: "Enter", bubbles: true });
+              inp.dispatchEvent(ev);
+            }, 100);
           } catch (err) {
             M.toast?.({ html: "Paste failed: " + err.message });
           }
@@ -3561,6 +3565,29 @@ function metalToBadge(label){
       // --- Listeners (debounced + change)
       orderInp   ?.addEventListener("input",  debounce(refreshFromOrderIfChitChats, 250));
       orderInp   ?.addEventListener("change", refreshFromOrderIfChitChats);
+
+      // Enter-to-search for reliability (manual entry/paste)
+      // 🔁 Order: run lookup 500ms after a *real* Enter press so UI settles first.
+      orderInp?.addEventListener("keydown", (e) => {
+        if (e.key === "Enter") {
+          e.preventDefault();
+
+          // 🔓 New order → thaw post-buy freeze, clear CC id, refresh batches
+          window.ccPostBuyFrozen = false;
+          window.ccMuteIdInput   = false;
+          const idEl = document.getElementById("ccShipmentId");
+          if (idEl) { idEl.value = ""; idEl.dataset.setAt = String(Date.now()); }
+          window.ccShipmentId = "";
+          try { fetchBatches(); } catch {}
+
+          // 🔪 kill any live CC search and pending slow-pass; we’re switching orders
+          try { window.ccSearchAbort?.abort(); } catch (e) {}
+          if (window.ccSlowTimer) { clearTimeout(window.ccSlowTimer); window.ccSlowTimer = null; }
+          window.ccSpin && window.ccSpin(false);
+
+          if (e.isTrusted) setTimeout(() => window.refreshFromOrderIfChitChats?.(), 500); // ← 500ms delay
+        }
+      });
 
       // Tracking remains immediate on Enter
       trackingInp?.addEventListener("keydown", (e) => {
