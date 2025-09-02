@@ -4332,6 +4332,25 @@ function metalToBadge(label){
 
         function rule(){ y -= 2; page.drawLine({ start:{x:pad,y}, end:{x:144-pad,y}, thickness:0.5, color:rgb(0,0,0) }); y -= 2; }
 
+          // Bold only the value part on a single line (label normal, value bold)
+          function lineLabelValue(label, value, size){
+            const lbl = String(label || "");
+            const val = String(value || "");
+            const max = 144 - pad*2;
+            const wLbl = font.widthOfTextAtSize(lbl, size);
+            const wVal = bold.widthOfTextAtSize(val, size);
+
+            if (wLbl + 3 + wVal <= max){
+              y -= size + 2;
+              page.drawText(lbl, { x: pad, y, size, font });
+              page.drawText(val, { x: pad + wLbl + 3, y, size, font: bold });
+            } else {
+              // fallback: wrap across two lines keeping value bold
+              line(lbl, size, false);
+              line(val, size, true);
+            }
+          }
+
         const { currency, contents, taxRef, items, total } = getStep1Snapshot();
 
         // Header (bold, standard size)
@@ -4366,7 +4385,7 @@ function metalToBadge(label){
           const manuf = (li.manufacture_country || "").toUpperCase();
 
           // Always render HS first, then Manufacture on its own next line
-          if (hs)   line(`HS ${hs}`, STD);
+          if (hs)    line(`HS ${hs}`, STD);
           if (manuf) line(`Manufacture ${manuf}`, STD);
 
           // 🚫 No "Origin …" on the label
