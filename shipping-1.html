@@ -4316,6 +4316,11 @@ function metalToBadge(label){
           }
         }
 
+          // one blank text line worth of vertical space
+          function spacer(lines = 1, size = STD){
+            y -= (size + 2) * lines;
+          }
+
           function flush(){
             if (!cur) return;
             y -= size + 2;
@@ -4365,12 +4370,14 @@ function metalToBadge(label){
         // Order Number directly under Tax Ref — and NO divider after it
         const etsyOrder = (document.getElementById("etsyOrderNumber")?.value || "").trim();
         if (etsyOrder) line("Order Number: " + etsyOrder, STD);
-        
+
         rule();
         // Contents should sit directly above the first item title
         line("Contents: " + (contents || "merchandise"), STD);
 
         items.slice(0, 8).forEach((li, idx) => {
+          const list = items.slice(0, 8);
+          list.forEach((li, idx) => {
           const qty   = Number(li.quantity || 1);
           const unit  = Number(li.unit_value || li.unitValue || 0);
           const value = (qty * unit).toFixed(2);
@@ -4390,6 +4397,8 @@ function metalToBadge(label){
 
           // Monetary line (no qty text shown on label)
           line(`Item value ${value} ${currency}`, STD);
+          // add a single empty line between items (but not after the last)
+          if (list.length > 1 && idx < list.length - 1) spacer(1, STD);
         });
 
         rule();
