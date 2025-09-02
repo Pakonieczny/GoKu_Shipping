@@ -4231,6 +4231,118 @@ function metalToBadge(label){
         target.document.open(); target.document.write(html); target.document.close();
       }
 
+      /* ────────────────────────────────────────────────────────────── */
+      /* Intl TEMP 2×4 PDF (EU/GB only) from ccStep1                    */
+      /* ────────────────────────────────────────────────────────────── */
+
+      function isEUorGB(countryCodeRaw){
+        const cc = String(countryCodeRaw||"").trim().toUpperCase();
+        const EU = new Set([
+          "AT","BE","BG","HR","CY","CZ","DK","EE","FI","FR","DE","GR","HU",
+          "IE","IT","LV","LT","LU","MT","NL","PL","PT","RO","SK","SI","ES","SE"
+        ]);
+        return cc === "GB" || cc === "UK" || cc === "XI" || EU.has(cc);
+      }
+
+      function getStep1Snapshot(){
+        const currency  = (document.getElementById("cc_value_currency")?.value || "").toUpperCase();
+        const contents  = (document.getElementById("cc_package_contents")?.value || "");
+        const taxRef    = (document.getElementById("cc_customs_tax_reference_number")?.value || "").trim();
+        const items     = collectCcLineItems(); // existing helper: raw Step 1 values
+        const totalStr  = (document.getElementById("cc_grand_total")?.value || "0");
+        const total     = Number(totalStr || 0);
+        const toCC      = (document.getElementById("cc_to_country_code")?.value || "").trim().toUpperCase();
+        return { currency, contents, taxRef, items, total, toCC };
+      }
+
+      /* Load pdf-lib on demand (one-time) */
+      function ensurePdfLib(){
+        return new Promise((resolve, reject) => {
+          if (window.PDFLib && window.PDFLib.PDFDocument) return resolve(window.PDFLib);
+          const s = document.createElement("script");
+          s.src = "https://unpkg.com/pdf-lib/dist/pdf-lib.min.js";
+          s.async = true;
+          s.onload = () => resolve(window.PDFLib);
+          s.onerror = () => reject(new Error("Failed to load pdf-lib"));
+          document.head.appendChild(s);
+        });
+      }
+
+      /* Build a 2×4 inch (144×288pt) temporary PDF from ccStep1 */
+      async function buildIntlTempPdfBlob(){
+        await ensurePdfLib();
+        const { PDFDocument, StandardFonts, rgb } = window.PDFLib;
+        const doc  = await PDFDocument.create();
+        const page = doc.addPage([144, 288]); // width, height in points (72 pt/in)
+        const font = await doc.embedFont(StandardFonts.Helvetica);
+        const bold = await doc.embedFont(StandardFonts.HelveticaBold);
+
+        const pad = 6;
+        let y = 288 - pad;
+
+        function line(txt, size=8, useBold=false){
+          const f = useBold ? bold : font;
+          const max = 144 - pad*2;
+          // wrap long text
+          const words = String(txt||"").split(/\s+/);
+          let cur = "";
+          function flush(){
+            if (!cur) return;
+            y -= size + 2;
+            page.drawText(cur, { x: pad, y, size, font: f, color: rgb(0,0,0) });
+            cur = "";
+          }
+          for (const w of words){
+            const test = cur ? cur + " " + w : w;
+            if (f.widthOfTextAtSize(test, size) > max) { flush(); cur = w; }
+            else { cur = test; }
+          }
+          flush();
+        }
+
+        function rule(){ y -= 2; page.drawLine({ start:{x:pad,y}, end:{x:144-pad,y}, thickness:0.5, color:rgb(0,0,0) }); y -= 2; }
+
+        const { currency, contents, taxRef, items, total } = getStep1Snapshot();
+
+        // Header
+        line("TEMPORARY INTL CONTENTS LABEL", 9, true);
+        rule();
+        line("Contents: " + (contents || "merchandise"), 8, true);
+        if (taxRef) line("Tax Ref (IOSS/EORI): " + taxRef, 8);
+
+        rule();
+        // Items (compact — this is a 2×4)
+        items.slice(0, 8).forEach((li, idx) => {
+          const qty   = Number(li.quantity||1);
+          const unit  = Number(li.unit_value||li.unitValue||0);
+          const value = (qty * unit).toFixed(2);
+          line(`${idx+1}. ${li.description || "Item"} (${qty} × ${unit})`, 8);
+          const hs     = (li.hs_tariff_code || "").trim();
+          const origin = (li.origin_country || li.manufacture_country || "").toUpperCase();
+          const tail   = [hs ? "HS "+hs : "", origin ? "Origin "+origin : ""].filter(Boolean).join(" • ");
+          if (tail) line(tail, 7);
+          line(`Item value ${value} ${currency}`, 8);
+        });
+
+        rule();
+        const grand = (Number.isFinite(total) ? total : Number(total||0)).toFixed(2);
+        line(`Grand total: ${grand} ${currency}`, 9, true);
+
+        const bytes = await doc.save();
+        return new Blob([bytes], { type: "application/pdf" });
+      }
+
+      /* Orchestrator: generate + print (uses existing openAndAutoPrintLabel) */
+      async function generateAndPrintIntlTempPdf(){
+        const blob = await buildIntlTempPdfBlob();
+        const url  = URL.createObjectURL(blob);
+        try {
+          await openAndAutoPrintLabel(url);
+        } finally {
+          setTimeout(() => URL.revokeObjectURL(url), 60000);
+        }
+      }
+
       /* Main flow: buy → poll → print (no new tab) */      
       async function buyCcThenPrint() {
         try {
@@ -5767,18 +5879,31 @@ function parseIntlAddressBlock(blockText = "", fallbackCountryCode = "") {
             return;
           }
 
-          // Step 1: strictly verify address; NO rate/refresh here
-          if (currentStep === 1){
-            try {
-              await ccVerifyAddressOnly();      // best-effort; non-blocking failure
-              // Optionally, create a draft id (no refresh) so Step 2 can refresh cleanly:
-              await ccEnsureDraftShipmentIdNoRefresh();
-            } catch (e) {
-              console.warn("ccShip1 verify-only encountered an error:", e);
-            }
-            showStep(2);
-            return;
+        // Step 1: strictly verify address; then (EU/GB only) generate a TEMP 2×4 PDF, then continue
+        if (currentStep === 1){
+          try {
+            await ccVerifyAddressOnly();      // best-effort; non-blocking failure
+            await ccEnsureDraftShipmentIdNoRefresh();
+          } catch (e) {
+            console.warn("ccShip1 verify-only encountered an error:", e);
           }
+
+          // 🆕 Intl-only (EU/GB): build & print a 2×4 temporary PDF from ccStep1 before pricing
+          try {
+            const dest = (document.getElementById("cc_to_country_code")?.value || "").trim().toUpperCase();
+            if (isEUorGB(dest)) {
+              setBtnLoading(btnNext, true);
+              try { await generateAndPrintIntlTempPdf(); }
+              catch (e) { console.warn("Intl temp 2×4 PDF failed:", e); }
+              finally { setBtnLoading(btnNext, false); }
+            }
+          } catch(e) {
+            console.warn("Intl PDF gate failed:", e);
+          }
+
+          showStep(2);
+          return;
+        }
 
           // ✅ Step 2: price, then move to Step 3
           if (currentStep === 2){
