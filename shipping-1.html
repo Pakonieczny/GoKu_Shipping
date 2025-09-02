@@ -2285,12 +2285,9 @@ function metalToBadge(label){
             if (window.ccSlowTimer) { clearTimeout(window.ccSlowTimer); window.ccSlowTimer = null; }
             window.ccSpin && window.ccSpin(false);
 
-            // 🔁 Use the SAME pipeline as manual typing: fire input/change on etsyOrderNumber
-            inp.focus();
+            // 🔁 Use the SAME pipeline as manual typing
             inp.dispatchEvent(new Event("input",  { bubbles: true }));
             inp.dispatchEvent(new Event("change", { bubbles: true }));
-          } catch (err) {
-            M.toast?.({ html: "Paste failed: " + err.message });
           }
         });
 
@@ -3561,12 +3558,6 @@ function metalToBadge(label){
       // --- Listeners (debounced + change)
       orderInp   ?.addEventListener("input",  debounce(refreshFromOrderIfChitChats, 250));
       orderInp   ?.addEventListener("change", refreshFromOrderIfChitChats);
-
-          // 🔁 Use the SAME pipeline as manual typing
-          orderInp.dispatchEvent(new Event("input",  { bubbles: true }));
-          orderInp.dispatchEvent(new Event("change", { bubbles: true }));
-        }
-      });
 
       // Tracking remains immediate on Enter
       trackingInp?.addEventListener("keydown", (e) => {
