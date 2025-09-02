@@ -3488,7 +3488,7 @@ function metalToBadge(label){
 
             try {
               // fast, pending-only, smaller page window
-              const fast = await callSearch({ orderId, fast: "1", pendingOnly: "1", pageSize: "10", timeoutMs: "25000" });
+              const fast = await callSearch({ orderId, fast: "1", pendingOnly: "1", pageSize: "75", timeoutMs: "25000" });
               if (fast?.aborted) return;
               const hit = pickBestShipment(orderId, (fast.shipments || []));
               if (hit) { setShipmentUI(hit); return; }
@@ -3496,7 +3496,7 @@ function metalToBadge(label){
               // cautious slow pass: still pending-only, trimmed window + shorter timeout
               window.ccSlowTimer = setTimeout(async () => {
                 try {
-                  const slow = await callSearch({ orderId, fast: "0", pendingOnly: "1", pageSize: "25", timeoutMs: "15000" });
+                  const slow = await callSearch({ orderId, fast: "0", pendingOnly: "1", pageSize: "125", timeoutMs: "15000" });
                   if (slow?.aborted) return;
                   const s2 = pickBestShipment(orderId, (slow.shipments || []));
                   if (s2) setShipmentUI(s2);
