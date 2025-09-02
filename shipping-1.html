@@ -2285,9 +2285,12 @@ function metalToBadge(label){
             if (window.ccSlowTimer) { clearTimeout(window.ccSlowTimer); window.ccSlowTimer = null; }
             window.ccSpin && window.ccSpin(false);
 
-            // 🔁 Use the SAME pipeline as manual typing
+            // 🔁 Use the SAME pipeline as manual typing: fire input/change on etsyOrderNumber
+            inp.focus();
             inp.dispatchEvent(new Event("input",  { bubbles: true }));
             inp.dispatchEvent(new Event("change", { bubbles: true }));
+          } catch (err) {
+            M.toast?.({ html: "Paste failed: " + err.message });
           }
         });
 
