@@ -4285,6 +4285,7 @@ function metalToBadge(label){
         const page = doc.addPage([144, 288]); // width, height in points (72 pt/in)
         const font = await doc.embedFont(StandardFonts.Helvetica);
         const bold = await doc.embedFont(StandardFonts.HelveticaBold);
+        const STD = 8; // single, consistent font size across the label
 
         const pad = 6;
         let y = 288 - pad;
@@ -4313,11 +4314,19 @@ function metalToBadge(label){
 
         const { currency, contents, taxRef, items, total } = getStep1Snapshot();
 
-        // Header
-        line("ITEM & TAX INFORMATION", 9, true);
+        // Header (keep bold, but same size as everything else)
+        line("ITEM & TAX INFORMATION", STD, true);
+
+        // Contents (NOT bold)
+        line("Contents: " + (contents || "merchandise"), STD);
+
+        // Tax Ref (NOT bold), then a separator line, then Order Number
+        if (taxRef) line("Tax Ref (IOSS/EORI): " + taxRef, STD);
         rule();
-        line("Contents: " + (contents || "merchandise"), 8, true);
-        if (taxRef) line("Tax Ref (IOSS/EORI): " + taxRef, 8, true);
+
+        const etsyOrder = (document.getElementById("etsyOrderNumber")?.value || "").trim();
+        if (etsyOrder) line("Order Number: " + etsyOrder, STD);
+        rule();
 
         rule();
         items.slice(0, 8).forEach((li, idx) => {
@@ -4325,29 +4334,26 @@ function metalToBadge(label){
           const unit  = Number(li.unit_value || li.unitValue || 0);
           const value = (qty * unit).toFixed(2);
 
-          // 3-word max title, no visible punctuation; no quantity shown
+          // 3-word max title (punctuation stripped by sanitizeItemTitle)
           const title = sanitizeItemTitle(li.description || "Item");
-          line(`${idx + 1} ${title}`, 8); // note: no trailing "."
+          line(`${idx + 1} ${title}`, STD); // no trailing punctuation, no qty
 
-          const hs     = (li.hs_tariff_code || li.hs_tariff || "").trim();
-          const origin = (li.origin_country || "").toUpperCase();
-          const manuf  = (li.manufacture_country || "").toUpperCase();
+          const hs    = (li.hs_tariff_code || li.hs_tariff || "").trim();
+          const manuf = (li.manufacture_country || "").toUpperCase();
 
-          // Include Country of Manufacture
+          // 🚫 No "Origin …" on the label
           const tail = [
-            hs     ? `HS ${hs}`           : "",
-            origin ? `Origin ${origin}`   : "",
-            manuf  ? `Manufacture ${manuf}` : ""
+            hs    ? `HS ${hs}`         : "",
+            manuf ? `Manufacture ${manuf}` : ""
           ].filter(Boolean).join(" • ");
-          if (tail) line(tail, 7);
+          if (tail) line(tail, STD);
 
-          // Keep the computed value, just not the qty display
-          line(`Item value ${value} ${currency}`, 8);
+          line(`Item value ${value} ${currency}`, STD);
         });
 
         rule();
         const grand = (Number.isFinite(total) ? total : Number(total||0)).toFixed(2);
-        line(`Grand total: ${grand} ${currency}`, 9, true);
+        line(`Grand total: ${grand} ${currency}`, STD, true);
 
         const bytes = await doc.save();
         return new Blob([bytes], { type: "application/pdf" });
