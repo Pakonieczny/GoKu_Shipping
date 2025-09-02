@@ -4343,6 +4343,8 @@ function metalToBadge(label){
 
         // ——— content ———
         const { currency, contents, taxRef, items, total, toCC } = getStep1Snapshot();
+        // PDF title (bold); no divider directly under this
+        line("ITEM & TAX INFORMATION", STD, true);
 
         if (toCC)   lineLabelValue("Dest.", toCC);
         if (taxRef) lineLabelValue("Tax ref", taxRef);
