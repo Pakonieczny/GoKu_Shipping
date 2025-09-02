@@ -717,6 +717,23 @@
         </div>
       </div>
 
+      <!-- 🆕 Not Enough Credits Modal -->
+      <div id="ccCreditModal" role="dialog" aria-modal="true"
+           style="display:none; position:fixed; inset:0; background:rgba(0,0,0,.45); z-index:11000;">
+        <div style="position:absolute; left:50%; top:50%; transform:translate(-50%,-50%);
+                    width:360px; background:#fff; border-radius:12px; box-shadow:0 18px 60px rgba(0,0,0,.25);">
+          <div style="padding:14px 18px; border-bottom:1px solid #eee; font-weight:700;">
+            Heads up
+          </div>
+          <div style="padding:16px 18px;">
+            <p id="ccCreditMsg" style="margin:0 0 12px;">
+              Not Enough Credits in your Chit Chats account.
+            </p>
+            <button id="ccCreditOk" class="btn" style="width:100%;">OK</button>
+          </div>
+        </div>
+      </div>
+
       <div class="cc-body" style="padding:18px 20px;">
         <h4 style="margin:0 0 6px;">Verify shipping address</h4>
         <p style="margin-top:0; color:#444;">
@@ -5054,6 +5071,27 @@ async function refreshRates(){
        *  JS HELPERS (validation + toasts + address compare)
        * ────────────────────────────────────────────────────────────── */
 
+      // 🆕 Credit modal helpers
+      function openCreditModal(msg){
+        const modal = document.getElementById("ccCreditModal");
+        const p = document.getElementById("ccCreditMsg");
+        if (p && msg) p.textContent = msg;
+        if (modal) {
+          modal.style.display = "block";
+          // focus OK for quick keyboard dismiss
+          setTimeout(()=>document.getElementById("ccCreditOk")?.focus(), 0);
+        }
+      }
+      function closeCreditModal(){
+        const modal = document.getElementById("ccCreditModal");
+        if (modal) modal.style.display = "none";
+      }
+      document.getElementById("ccCreditOk")?.addEventListener("click", closeCreditModal);
+      // Click outside the card closes too
+      document.getElementById("ccCreditModal")?.addEventListener("click", (e)=>{
+        if (e.target?.id === "ccCreditModal") closeCreditModal();
+      });
+
       // map API field names → DOM ids
       const FIELD_MAP = {
         // step 0 - recipient
@@ -5246,6 +5284,19 @@ async function refreshRates(){
             showStep(0);
           }
         }
+        // 🆕 Special-case: insufficient credits/funds → show small modal and stop here
+        {
+          const lowerMsg = String(err?.message || err?.raw?.error?.message || err?.raw?.message || "").toLowerCase();
+          if (
+            lowerMsg.includes("not enough credits") ||
+            lowerMsg.includes("insufficient credit") ||
+            lowerMsg.includes("insufficient funds")
+          ){
+            openCreditModal("Not Enough Credits in your Chit Chats account. Please add funds and try again.");
+            return;
+          }
+        }
+        // Fallback for all other errors
         M.toast?.({ html:`Chit Chats error: ${err.message}${extra}` });
       }
 
