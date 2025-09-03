@@ -21,7 +21,7 @@
 const CORS = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": "Content-Type,Authorization",
-  "Access-Control-Allow-Methods": "GET,POST,OPTIONS,PATCH"
+  "Access-Control-Allow-Methods": "GET,POST,OPTIONS,PATCH,DELETE"
 };
 
 exports.handler = async (event) => {
@@ -33,6 +33,9 @@ exports.handler = async (event) => {
     const BASE         = process.env.CHIT_CHATS_BASE_URL || "https://chitchats.com/api/v1";
     const CLIENT_ID    = process.env.CHIT_CHATS_CLIENT_ID;
     const ACCESS_TOKEN = process.env.CHIT_CHATS_ACCESS_TOKEN;
+
+    // Toggle via environment: ALLOW_CC_VAT_REFERENCE=true to re-enable
+    const ALLOW_CC_VAT_REFERENCE = /^(1|true|yes)$/i.test(process.env.ALLOW_CC_VAT_REFERENCE || "");
 
     if (!CLIENT_ID || !ACCESS_TOKEN) {
       return bad(500, "Missing CHIT_CHATS_CLIENT_ID or CHIT_CHATS_ACCESS_TOKEN");
@@ -142,7 +145,7 @@ exports.handler = async (event) => {
         province_code : to.province_code ?? client.province_code ?? "",
         postal_code   : to.postal_code ?? client.postal_code ?? "",
         country_code  : String(to.country_code ?? client.country_code ?? "").toUpperCase(),
-        phone         : to.phone ?? client.phone ?? undefined,
+        phone         : (to.phone ?? client.phone ?? "416-606-2476"),
         email         : to.email ?? client.email ?? undefined,
 
         // Package / required top-levels
@@ -165,48 +168,80 @@ exports.handler = async (event) => {
         line_items       : Array.isArray(customs.line_items) ? customs.line_items : undefined
       };
 
+      // 🔗 Map all common aliases to top-level `vat_reference` (as the API expects)
+      const vatRefSource =
+        client.vat_reference ??
+        client.customs_tax_reference_number ?? client.tax_reference_number ??
+        client.ioss ?? client.ioss_number ??
+        client.vat  ?? client.vat_number  ??
+        client.eori ?? client.eori_number ??
+        customs.vat_reference ?? customs.tax_reference_number ??
+        customs.ioss_number ?? customs.vat_number ?? customs.eori_number;
+        const vatRef = sanitizeVatRef(vatRefSource);
+        // Temporarily disabled: do not send VAT/IOSS/EORI to Chit Chats
+        if (ALLOW_CC_VAT_REFERENCE && vatRef) out.vat_reference = vatRef; else delete out.vat_reference;
+
       // prune undefined/null to keep payload tidy
       Object.keys(out).forEach(k => (out[k] == null) && delete out[k]);
       return out;
     }
 
     // --- Build a REFRESH payload that preserves nested `customs` ---
-    function adaptRefreshPayload(client = {}) {
-      // First: reuse your existing flattener to normalize dims, address, etc.
-      const flat = adaptClientShipment(client);
-      const out  = { ...flat };
+// Replace your refresh builder to FLATTEN customs onto the root:
+function adaptRefreshPayload(client = {}) {
+  // 1) Start from the same flattener you already use
+  const flat = adaptClientShipment(client);
+  const out  = { ...flat };
 
-      // Prefer the caller's explicit `customs` block; fallback to any flattened fields
-      const src = client.customs || {};
-      const customs = {};
+  // 2) Derive customs from either client.customs or flattened fields
+  const src = client.customs || {};
+  const customs = {
+    package_contents: src.package_contents ?? flat.package_contents ?? "merchandise",
+    description     : src.description     ?? flat.description,
+    value           : String(src.value ?? flat.value ?? 0),
+    value_currency  : String(src.value_currency ?? flat.value_currency ?? "cad").toLowerCase(),
+    line_items      : Array.isArray(src.line_items) ? src.line_items
+                     : Array.isArray(flat.line_items) ? flat.line_items
+                     : []
+  };
 
-      if (src.package_contents != null) customs.package_contents = src.package_contents;
-      else if (flat.package_contents != null) customs.package_contents = flat.package_contents;
+  // 3) Normalize line_items for Intl (origin_country, hs code, value_amount as string, currency_code UPPER)
+  customs.line_items = (customs.line_items || []).map(li => {
+    const o = { ...li };
+    if (o.description) o.description = asciiify(o.description).slice(0, 95);
+    if (o.currency_code) o.currency_code = String(o.currency_code).toUpperCase();
+    if (o.value_amount != null) o.value_amount = String(o.value_amount);
+    const hs = cleanHs(o.hs_tariff_code || o.hts_code || o.harmonized_code);
+    if (hs) o.hs_tariff_code = hs;
 
-      if (src.description != null) customs.description = src.description;
-      else if (flat.description != null) customs.description = flat.description;
+    // Require origin_country for US & Intl
+    const dest = String(out.country_code || out.to?.country_code || "").toUpperCase();
+    let oc = (o.origin_country || o.manufacture_country || client.origin_country || client.manufacture_country || "CA");
+    oc = String(oc).toUpperCase(); if (oc === "UK") oc = "GB";
+    if (dest && dest !== "CA") o.origin_country = oc;
+    return o;
+  });
 
-      if (src.value != null) customs.value = String(src.value);
-      else if (flat.value != null) customs.value = String(flat.value);
+  // 4) FLATTEN onto root; do NOT send a nested `customs` key
+  Object.assign(out, customs);
+  delete out.customs;
 
-      const vc = (src.value_currency ?? flat.value_currency);
-      if (vc != null) customs.value_currency = String(vc).toUpperCase(); // UPPERCASE for refresh
+  // 5) Keep VAT/IOSS/EORI on the root
+  const vatRefSource =
+    client.vat_reference ??
+    client.customs_tax_reference_number ?? client.tax_reference_number ??
+    client.ioss ?? client.ioss_number ??
+    client.vat  ?? client.vat_number  ??
+    client.eori ?? client.eori_number;
+    const vatRef = sanitizeVatRef(vatRefSource);
+    // Temporarily disabled unless explicitly re-enabled via env
+    if (ALLOW_CC_VAT_REFERENCE && vatRef) out.vat_reference = vatRef; else delete out.vat_reference;
 
-      if (Array.isArray(src.line_items)) customs.line_items = src.line_items;
-      else if (Array.isArray(flat.line_items)) customs.line_items = flat.line_items;
-
-      // Only attach if we actually have something
-      if (Object.keys(customs).length) out.customs = customs;
-
-      // Remove flattened copies so the API sees `customs.*` (not top-level)
-      delete out.package_contents;
-      delete out.description;
-      delete out.value;
-      delete out.value_currency;
-      delete out.line_items;
-
-      return out;
-    }
+  // 6) Tidy
+  ["size_x","size_y","size_z"].forEach(k => { if (!(Number(out[k]) > 0)) delete out[k]; });
+  Object.keys(out).forEach(k => (out[k] == null) && delete out[k]);
+  return out;
+}
 
     // ---- helpers to detect purchased shipments and perform delete → recreate ----
 function isPostagePurchased(sh) {
@@ -287,6 +322,7 @@ async function recreateShipmentIfUnbought(id, desiredClientPayload, { authH, url
     async function keepPendingOnly(list, enabled = true) {
       if (!enabled) return list || [];
       const open = await getOpenBatchIdsSet();
+      // keep: shipments with no batch yet OR in any currently open (pending) batch
       return (list || []).filter(sh => {
         const bid = sh?.batch_id == null ? "" : String(sh.batch_id);
         // keep: no batch yet OR in an open (pending) batch
@@ -295,18 +331,23 @@ async function recreateShipmentIfUnbought(id, desiredClientPayload, { authH, url
     }
 
     // Generic paginator over /shipments that walks every page until exhausted.
-    async function paginateShipments({ status, search, pageSize = 500, stopEarlyIf }) {
+    async function paginateShipments({ status, q, batchId, pageSize = 500, stopEarlyIf }) {
       const PAGE_SIZE = Math.min(Math.max(Number(pageSize) || 500, 1), 1000); // docs say max 1000
       const qsCore = [
-        status ? `status=${encodeURIComponent(status)}` : "",
-        search ? `search=${encodeURIComponent(search)}` : "",
+        status   ? `status=${encodeURIComponent(status)}`     : "",
+        q        ? `q=${encodeURIComponent(q)}`               : "",
+        batchId  ? `batch_id=${encodeURIComponent(batchId)}`  : "",
         `limit=${PAGE_SIZE}`
       ].filter(Boolean).join("&");
 
       // Try to estimate total pages from /shipments/count (if available)
       let estPages = null;
       try {
-        const countQs = status ? `status=${encodeURIComponent(status)}` : "";
+          const countQs = [
+          status ? `status=${encodeURIComponent(status)}` : "",
+          q       ? `q=${encodeURIComponent(q)}`          : "",
+          batchId ? `batch_id=${encodeURIComponent(batchId)}` : ""
+        ].filter(Boolean).join("&");
         const cnt = await getCount(countQs);
         if (typeof cnt === "number" && cnt >= 0) {
           estPages = Math.max(1, Math.ceil(cnt / PAGE_SIZE));
@@ -403,10 +444,15 @@ async function recreateShipmentIfUnbought(id, desiredClientPayload, { authH, url
         const orderId  = (qp.orderId || "").toString().trim();
         const tracking = (qp.tracking || "").toString().trim();
         const want     = orderId || tracking;
+          // query toggles / sizing
+        const fastMode = ["1","true","yes"].includes(String(qp.fast || "").toLowerCase());
+        const pageSize = qp.pageSize ? Number(qp.pageSize) : 500;
         if (!want) return ok({ shipments: [] });
 
-        const fastMode = String(qp.fast || "").toLowerCase() === "1" || String(qp.fast || "").toLowerCase() === "true";
-        const pageSize = qp.pageSize ? Number(qp.pageSize) : 500;
+        // Hard cap the total work this search will do (defaults to 9s if not provided)
+        const timeoutMs = Math.max(1000, Number(qp.timeoutMs || 9000));
+        const deadline  = Date.now() + timeoutMs;
+        const timedOut  = () => Date.now() > deadline;
 
         // helpers
         const norm = (s) => String(s || "").toLowerCase().replace(/[^a-z0-9]/g, "");
@@ -443,29 +489,67 @@ async function recreateShipmentIfUnbought(id, desiredClientPayload, { authH, url
           );
         };
 
-        const applyPendingFilter = (list) => keepPendingOnly(list, pendingOnlyOn);
+        const applyPendingFilter = async (list) => {
+        if (!pendingOnlyOn) return list || [];
+        const uiBid = String((qp.batchId || "")).trim();
+        if (uiBid) {
+          // Keep: unbatched OR in the UI-selected (presumed open) batch
+          return (list || []).filter(sh => {
+            const bid = sh?.batch_id == null ? "" : String(sh.batch_id);
+            return !bid || bid === uiBid;
+          });
+        }
+        // Fallback: use server-fetched open batches
+        return keepPendingOnly(list, true);
+      };
 
         // 1) Direct by ID if the input looks like a shipment id
         if (looksLikeId(want)) {
           try {
             const r = await fetch(url(`/shipments/${encodeURIComponent(want)}`), { headers: authH });
             const o = await wrap(r);
-            if (o.ok && o.data && o.data.id) {
-              const kept = await applyPendingFilter([o.data]);
-              return ok({ shipments: kept });
+            if (o.ok) {
+              const one = o.data?.shipment || o.data;
+              if (one && one.id) {
+                const kept = await applyPendingFilter([one]);
+                return ok({ shipments: kept });
+              }
             }
           } catch {}
         }
 
-        // 2) Vendor search across *all pages*
         try {
-          const all = await paginateShipments({
-            search: want,
-            pageSize,
-            // Stop early if we already have a hit to reduce calls
-            stopEarlyIf: (sh) => matches(sh)
-          });
-          const hits = (all || []).filter(matches);
+          let hits = [];
+          if (pendingOnlyOn) {
+            const uiBid = String((qp.batchId || "")).trim();
+            const openIds = uiBid ? [uiBid] : Array.from(await getOpenBatchIdsSet());
+            let found = false;
+            for (const bid of openIds) {
+              if (timedOut()) break;
+              const page = await paginateShipments({
+                q: want,
+                batchId: bid,
+                pageSize,
+                stopEarlyIf: (sh) => {
+                  const hit = matches(sh);
+                  if (hit) found = true;
+                  return timedOut() || hit;
+                }
+              });
+              hits = hits.concat((page || []).filter(matches));
+              if (found) break;
+            }
+          } else {
+            // Legacy: search across all shipments when pending filter is off
+            const all = await paginateShipments({
+              q: want,
+              pageSize,
+              stopEarlyIf: (sh) => timedOut() || matches(sh)
+            });
+            hits = (all || []).filter(matches);
+          }
+
+          // Safety: still apply pending filter (no-ops if pendingOnlyOn === false)
           const kept = await applyPendingFilter(hits);
           if (kept.length) return ok({ shipments: kept });
         } catch { /* non-fatal; continue */ }
@@ -473,10 +557,16 @@ async function recreateShipmentIfUnbought(id, desiredClientPayload, { authH, url
         // 3) If fast mode, stop after a full vendor pagination
         if (fastMode) return ok({ shipments: [] });
 
-        // 4) Deep fallback: scan by status pools with pagination & local filter
-        const pools = ["archived", "processing", "ready"];
+        // 4) Deep fallback: prefer fresh pools first, respect time budget
+        const pools = ["ready", "processing", "archived"];
         for (const st of pools) {
-          const pageResults = await paginateShipments({ status: st, pageSize });
+
+          const pageResults = await paginateShipments({
+            status: st,
+            pageSize,
+            // bail mid-page if we run out of time or find a match
+            stopEarlyIf: (sh) => timedOut() || matches(sh)
+          });
           const hits = pageResults.filter(matches);
           const kept = await applyPendingFilter(hits);
           if (kept.length) return ok({ shipments: kept });
@@ -611,14 +701,17 @@ async function recreateShipmentIfUnbought(id, desiredClientPayload, { authH, url
         // Ensure top-level country_code (API requires it even on refresh)
         payload = await ensureCountryCodeForRefresh(id, payload);
 
-        const resp = await fetch(url(`/shipments/${encodeURIComponent(id)}/refresh`), {
-          method: "PATCH",
-          headers: authH,
-          body   : JSON.stringify(payload)
-        });
-        const out = await wrap(resp);
-        if (!out.ok) return bad(out.status, out.data);
-        return ok(out.data);
+      const resp = await fetch(url(`/shipments/${encodeURIComponent(id)}/refresh`), {
+        method: "PATCH",
+        headers: authH,
+        body: JSON.stringify(payload)
+      });
+      const out  = await wrap(resp);
+      if (!out.ok) return bad(out.status, out.data);
+
+      // 👇 Wrap without breaking callers that expect a shipment object
+      const shipment = out.data?.shipment || out.data || {};
+      return ok({ used_id: id, shipment });
       }
 
       // (A2) Shipment: replace (DELETE → POST) when not purchased
@@ -637,6 +730,39 @@ async function recreateShipmentIfUnbought(id, desiredClientPayload, { authH, url
       if (action === "buy") {
         const id = String(body.shipment_id || body.id || qp.id || "");
         if (!id) return bad(400, "shipment_id required for buy");
+
+        // 🆕 Preflight: read shipment and ensure intl phone exists
+        try {
+          const rs = await fetch(url(`/shipments/${encodeURIComponent(id)}`), { headers: authH });
+          const os = await wrap(rs);
+          if (!os.ok) return bad(os.status, os.data);
+
+          const s  = os.data?.shipment || os.data || {};
+          const cc = String(
+            s.country_code ||
+            s.to?.country_code ||
+            s.destination?.country_code ||
+            s.to_country_code ||
+            ""
+          ).toUpperCase();
+          const hasPhone = !!(s.phone || s.to?.phone);
+
+          // All shipments must have a phone (unified pipeline rule)
+          if (!hasPhone) {
+            const refreshPayload = { phone: "416-606-2476", country_code: cc || undefined };
+            const r2 = await fetch(url(`/shipments/${encodeURIComponent(id)}/refresh`), {
+              method: "PATCH",
+              headers: authH,
+              body: JSON.stringify(refreshPayload)
+            });
+            const o2 = await wrap(r2);
+            if (!o2.ok) return bad(o2.status, o2.data);
+          }
+        } catch (e) {
+          // If the preflight fails, surface the real error
+          return bad(400, { error: e?.message || String(e) });
+        }
+
         const payload = { postage_type: (body.postage_type || body.postageType || "unknown") };
         const resp = await fetch(url(`/shipments/${encodeURIComponent(id)}/buy`), {
           method: "PATCH", headers: authH, body: JSON.stringify(payload)
@@ -671,6 +797,21 @@ async function recreateShipmentIfUnbought(id, desiredClientPayload, { authH, url
       return ok({ success: true });
     }
 
+    // ---------- DELETE (delete a shipment) ----------
+    if (event.httpMethod === "DELETE") {
+      const qp = event.queryStringParameters || {};
+      if ((qp.resource || "").toLowerCase() === "shipment" && qp.id) {
+        const resp = await fetch(url(`/shipments/${encodeURIComponent(qp.id)}`), {
+          method: "DELETE",
+          headers: authH
+        });
+        const out = await wrap(resp);
+        if (!out.ok) return bad(out.status, out.data);
+        return ok({ success: true });
+      }
+      return bad(400, "resource=shipment & id required");
+    }
+
     // ---------- Fallback ----------
     return { statusCode: 405, headers: CORS, body: "Method Not Allowed" };
 
@@ -680,6 +821,18 @@ async function recreateShipmentIfUnbought(id, desiredClientPayload, { authH, url
 };
 
 // ---------- small utilities ----------
+// ASCII-only (strip diacritics, emoji, non-printables)
+function asciiify(s) {
+  return String(s || "")
+    .normalize("NFKD").replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^\x20-\x7E]/g, "");
+}
+// HS codes must be digits only (6–12 digits OK)
+function cleanHs(code) {
+  const d = String(code || "").replace(/\D/g, "");
+  return d ? d.slice(0, 12) : undefined;
+}
+
 function safeJSON(txt) {
   if (!txt) return {};
   try { return JSON.parse(txt); } catch { return {}; }
@@ -689,3 +842,8 @@ function numberish(v) {
   const n = Number(v);
   return Number.isFinite(n) ? n : 0;
 }
+  // Normalize VAT/IOSS/EORI per Chit Chats guidance: ≤20 chars, A–Z/0–9 only
+  function sanitizeVatRef(raw) {
+   const s = String(raw || "").toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 20);
+    return s || undefined;
+  }
