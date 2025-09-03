@@ -2,13 +2,6 @@
   publish = "."
   functions = "netlify/functions"
 
-[functions]
-  directory = "netlify/functions"
-  node_bundler = "esbuild"
-
-[build.environment]
-  NODE_VERSION = "18"  
-
 [[redirects]]
   from = "https://scanner.goldenspike.app"
   to = "/scanner.html"
