@@ -1322,14 +1322,14 @@ function metalToBadge(label){
     /********************************************************
      * Base URL & Global Variables
      ********************************************************/
-
-    // Single source of truth for Functions base URL (+ legacy alias)
-    const functionsBaseUrl =
-      (typeof window.baseURL === "string" && window.baseURL)
-        ? window.baseURL
-        : (window.location.origin + "/.netlify/functions");
-    window.baseURL = functionsBaseUrl;           // keep legacy alias in sync
-    const baseURL  = window.baseURL;     
+    // Define once, safely, and make it usable everywhere.
+    // Use `var` so future re-parses won't explode on redeclaration.
+    var functionsBaseUrl = (typeof functionsBaseUrl === "string" && functionsBaseUrl)
+      ? functionsBaseUrl
+      : (window.location.origin + "/.netlify/functions");
+    window.functionsBaseUrl = functionsBaseUrl;           // keep global in sync
+    window.baseURL = window.baseURL || functionsBaseUrl;  // legacy alias
+    const baseURL  = window.baseURL;                      // optional local alias 
 
     /* ===== Etsy OAuth boot + auto-refresh wiring (match design/sorting) ===== */
     const TOKEN_KEYS = {
@@ -2717,13 +2717,18 @@ function metalToBadge(label){
         if (!tracking)  { M.toast({ html: "Enter tracking #" }); return; }
         if (!carrier)   { M.toast({ html: "Choose carrier"  }); return; }
 
-        /* helper → perform one POST via resilient apiFetch */
-        const postTracking = () =>
-          apiFetch("/trackOrderProxy", {
-            method : "POST",
-            headers: { "Content-Type": "application/json" },
-            body   : JSON.stringify({ receiptId, tracking, carrier })
-          });
+       const postTracking = () =>
+         apiFetch("/trackOrderProxy", {
+           method : "POST",
+           headers: { "Content-Type": "application/json" },
+           // send synonyms so backend (and future tools) always have what they need
+           body   : JSON.stringify({
+             receiptId, tracking, carrier,
+             orderNumber   : receiptId,
+             trackingNumber: tracking,
+             carrierCode   : carrier
+           })
+         });
 
         try {
           let resp         = await postTracking();
@@ -2733,6 +2738,14 @@ function metalToBadge(label){
           /* ── forbidden (403) usually means missing shipping permission scope ── */
           if (resp.status === 403) {
             errMsg = "Forbidden – Etsy says this action isn’t allowed.";
+            } else if (resp.status === 404) {
+            // Back-end now returns helpful JSON when ShipStation can't find the order.
+            try {
+              const j = JSON.parse(payload || "{}");
+              errMsg = j.error || `ShipStation cannot find order ${receiptId}`;
+            } catch {
+              errMsg = `ShipStation cannot find order ${receiptId}`;
+            }
           } else if (!resp.ok) {
             /* try to JSON-parse any error payload, else show raw text */
             try   { errMsg = JSON.parse(payload).error || `HTTP ${resp.status}`; }
