@@ -4108,6 +4108,8 @@ function metalToBadge(label){
       }
 
       async function ensureShipment(){
+      async function ensureShipment(opts = {}){
+      const skipFetchIfIdExists = !!opts.skipFetchIfIdExists;
         const id = (idInput.value || "").trim();
 
         // Creating a shipment? Hard-fail if country is missing.
@@ -4122,6 +4124,7 @@ function metalToBadge(label){
         }
 
         if (id) {
+        if (skipFetchIfIdExists) return { id }; // 🔥 skip needless GET roundtrip
           try {
             return await callCc("GET", null, `?resource=shipment&id=${encodeURIComponent(id)}`);
           } catch (e) {
@@ -4932,6 +4935,8 @@ function buildRefreshPayload(){
       }
 
 async function refreshRates(){
+  if (window._priceInFlight) { try { await window._priceInFlight; } catch (_) {} return; }
+  window._priceInFlight = (async () => {
   // 🔒 Freeze any ccShipmentId-driven rechecks while we replace→refresh
   const prevMute = !!window.ccMuteIdInput;
   window.ccMuteIdInput = true;
@@ -4950,6 +4955,12 @@ async function refreshRates(){
 
   // 1) Build payloads once
   const refreshPayload = buildRefreshPayload();
+  // If VAT/IOSS present and not US, force DDU in the first pass to avoid DDP→DDU flip
+  const dest = (document.getElementById("cc_to_country_code")?.value || "").trim().toUpperCase();
+  const hasVatRef = !!sanitizeVatRef(document.getElementById("cc_customs_tax_reference_number")?.value);
+  if (hasVatRef && dest !== "US") {
+    refreshPayload.duties_paid_requested = false;
+  }
   if (!(Number.isFinite(refreshPayload.weight) && refreshPayload.weight > 0)) {
     M.toast?.({ html: "Weight must be greater than 0 to refresh rates." });
     markMissing(2, ["cc_weight"]);
@@ -4960,6 +4971,7 @@ async function refreshRates(){
   let idUsedForPricing = (idInput.value || "").trim();
 
   // 2) Compute a "structural" signature; if changed → replace
+  const shouldConsiderReplace = ((dest && dest !== "US" && dest !== "CA") || hasVatRef);
   const replaceSig = JSON.stringify({
     to: {
       name: replacePayload?.to?.name,
@@ -4995,7 +5007,7 @@ async function refreshRates(){
     }
   });
 
-  if (replaceSig !== window.ccLastReplaceSig) {
+  if (shouldConsiderReplace && replaceSig !== window.ccLastReplaceSig) {
     const rep = await replaceDraftShipment(id, replacePayload);
     const newId = rep?.id || rep?.shipment?.id;
     if (newId && newId !== id) {
@@ -5016,43 +5028,19 @@ async function refreshRates(){
     const dest = (document.getElementById("cc_to_country_code")?.value || "").trim().toUpperCase();
     const hasVatRef = !!sanitizeVatRef(document.getElementById("cc_customs_tax_reference_number")?.value);
 
-    /* 👉 NEW: If API bounced us to DDP but this isn’t US, flip back to DDU and re-price */
-    if (hasVatRef && dest !== "US" && responded.is_delivery_duties_paid_requested === true) {
-      try {
-        await callCc("PATCH", {
-          action: "refresh",
-          shipment_id: idUsedForPricing,
-          payload: { duties_paid_requested: false }
-        });
-        const out2 = await callCc("PATCH", {
-          action: "refresh",
-          shipment_id: idUsedForPricing,
-          payload: refreshPayload
-        });
-        renderRates(out2.shipment || out2);
-        return; // done
-      } catch (_) { /* fall through and render original */ }
-    }
-
     renderRates(responded);
 
     // Prefer explicit `used_id` if server provides it; else fall back to shipment.id/out.id
     const respondedId = String(out?.used_id || out?.shipment?.id || out?.id || "").trim();
-
-    if (respondedId && respondedId !== idUsedForPricing) {
-      // 🔍 Mismatch means something rewired the ID underneath us — fix it and re-price once
-      try { console.warn("[CC Rates] ID mismatch; retrying", { sent:idUsedForPricing, got:respondedId }); } catch {}
-      pushShipmentId(respondedId);
-      const out2 = await callCc("PATCH", { action: "refresh", shipment_id: respondedId, payload: refreshPayload });
-      renderRates(out2.shipment || out2);
-      } else {
-        renderRates(out.shipment || out);
-      }
+    if (respondedId && respondedId !== idUsedForPricing) { pushShipmentId(respondedId); }
+     renderRates(out.shipment || out);
         } finally {
           // restore prior mute state
           window.ccMuteIdInput = prevMute;
         }
-      }
+        })(); 
+        try { await window._priceInFlight; } finally { window._priceInFlight = null; }
+       }
 
         async function buySelected(){
         const id = (idInput.value || "").trim();
@@ -6066,6 +6054,10 @@ function parseIntlAddressBlock(blockText = "", fallbackCountryCode = "") {
         sp.style.display = on ? "inline-block" : "none";
       }
 
+      // 🔒 Prevent duplicate wiring if this block appears more than once in the file
+      if (!window._wiredCcStepHandlers) {
+      window._wiredCcStepHandlers = true;
+
       btnNext.addEventListener("click", async () => {
         try {
           if (currentStep === 0){
@@ -6109,13 +6101,14 @@ function parseIntlAddressBlock(blockText = "", fallbackCountryCode = "") {
             setBtnLoading(btnNext, true);
             try {
               if (!(await validateStep(2))) return;
-              await ensureShipment();
+              await ensureShipment({ skipFetchIfIdExists: true }); // ← no GET roundtrip
               const idInput = document.getElementById("ccShipmentId");
               const id = (idInput?.value || "").trim();
               if (!id) { M.toast?.({ html: "Could not... create shipment — check Recipient & Description." }); return; }
               await refreshRates();    // ← pricing happens here only
               showStep(3);
-            } finally { setBtnLoading(btnNext, false); }
+            } 
+            finally { setBtnLoading(btnNext, false); }
             return;
           }
         } catch (err) {
@@ -6127,7 +6120,7 @@ function parseIntlAddressBlock(blockText = "", fallbackCountryCode = "") {
       btnRefresh.addEventListener("click", async () => {
         try{
           if (!(await validateStep(2))) return;
-          await ensureShipment();
+          await ensureShipment({ skipFetchIfIdExists: true }); // ← no GET roundtrip
           await refreshRates();
         }catch(err){
           handleCcApiError(err);
@@ -6145,7 +6138,7 @@ function parseIntlAddressBlock(blockText = "", fallbackCountryCode = "") {
           setBtnLoading(btn, false);
         }
       });
-
+     } // <-- end idempotent wiring guard
     })();
 
   </script>
