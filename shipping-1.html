@@ -1487,6 +1487,7 @@ function metalToBadge(label){
       const qQty  = $(".cc_item_qty");
       const qUnit = $(".cc_item_unit_value");
       const qVal  = $(".cc_item_value");
+      const qHS   = $(".cc_item_hs_tariff_code"); // ← define before use
 
       qDesc.value = g.desc || "Item";
       qSku.value  = (g.sku || (g.raw ? extractSkuFromEtsy(g.raw) : "") || "") + "";
@@ -1519,7 +1520,7 @@ function metalToBadge(label){
 
       // defaults
       $(".cc_item_origin_country").value             = defaults.origin_country;
-      $(".cc_item_hs_tariff_code").value             = defaults.hs;
+      { const el = $(".cc_item_hs_tariff_code"); if (el && !el.value) el.value = defaults.hs; }
       $(".cc_item_manufacture_country").value        = defaults.manuf_country;
       $(".cc_item_manufacturer_contact").value       = defaults.m_contact;
       $(".cc_item_manufacturer_street").value        = defaults.m_street;
