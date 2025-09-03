@@ -2,10 +2,26 @@
 // Requires two Netlify env-vars:
 //   SS_API_KEY    = your ShipStation “API Key”
 //   SS_API_SECRET = the matching “API Secret”
-
+//
+// NOTE: Do NOT use the frontend's baseURL here. This runs on Netlify.
 const fetch = require("node-fetch");
+const SS_BASE = "https://ssapi.shipstation.com";
+const { SS_API_KEY, SS_API_SECRET } = process.env;
+const SS_AUTH    = Buffer.from(`${SS_API_KEY || ""}:${SS_API_SECRET || ""}`).toString("base64");
+const SS_HEADERS = {
+  Authorization : `Basic ${SS_AUTH}`,
+  "Content-Type": "application/json",
+  Accept        : "application/json"
+};
 
 exports.handler = async event => {
+  // Guard: missing credentials → explicit 500 with clear message
+  if (!SS_API_KEY || !SS_API_SECRET) {
+    return {
+      statusCode: 500,
+      body: JSON.stringify({ error: "Missing SS_API_KEY/SS_API_SECRET environment variables" })
+    };
+  }
   try {
     /* Front-end sends { receiptId, tracking, carrier } — keep names intact */
     const {
@@ -24,10 +40,10 @@ exports.handler = async event => {
     }
 
     /* 1️⃣  Mark the order as shipped by orderNumber (ShipStation can notify marketplace) */
-    const markResp = await fetch(`${baseURL}/orders/markasshipped`, {
-      method: "POST",
-      headers: { ...headers, "Content-Type": "application/json" },
-       body: JSON.stringify((() => {
+    const markResp = await fetch(`${SS_BASE}/orders/markasshipped`, {
+      method : "POST",
+      headers: SS_HEADERS,
+      body   : JSON.stringify((() => {
         const payload = {
           orderNumber,
           trackingNumber,
