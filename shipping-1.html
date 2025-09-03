@@ -626,7 +626,7 @@
                   <input class="cc_item_origin_country" placeholder="CA">
                 </div>
                 <div class="cc-field"><label>HS code</label>
-                  <input class="cc_item_hs_tariff_code" placeholder="7113.20.5000">
+                  <input class="cc_item_hs_tariff_code" placeholder="7113205000">
                 </div>
                 <div class="cc-field"><label>Country of manufacture</label>
                   <input class="cc_item_manufacture_country" placeholder="CA">
@@ -1221,7 +1221,7 @@ function metalToBadge(label){
         setIfBlank("cc_size_x", "6");     // Length (X)
         setIfBlank("cc_size_y", "4");     // Width (Y)
         setIfBlank("cc_size_z", "1");     // Height (Z)
-        setIfBlank("cc_weight", "0.25");  // Weight
+        setIfBlank("cc_weight", "0.20");  // Weight
       })();
 
       // 🆕 keep currency badge in sync with selector
@@ -1410,6 +1410,48 @@ function metalToBadge(label){
     return Array.from(map.values());
   }
 
+  // 🆕 Metal → {hs, sku} helpers (Order Details–driven with item fallback)
+  function detectCanonMetalFromOrderDetails(){
+    const txt = document.getElementById("orderDetails")?.value || "";
+    // Order Details prints "Metal Choice: ..." already, we parse it:
+    // e.g. "... Metal Choice: Rose Gold"
+    const m = txt.match(/^\s*Metal Choice\s*:\s*(.+)$/mi);
+    return m ? normalizeMetalLabel(m[1]) : null;  // normalize to: Gold | Rose Gold | 14K | Gold Filled | Silver
+  }
+
+  function detectCanonMetalFromItem(it){
+    try{
+      const props =
+        (Array.isArray(it?.variations) && it.variations) ||
+        (Array.isArray(it?.property_values) && it.property_values) || [];
+      const hit = props.find(p => {
+        const name = (p?.formatted_name || p?.name || p?.property_name || "").toLowerCase().trim();
+        const val  = (p?.formatted_value || (Array.isArray(p?.values)? p.values[0] : p?.value) || "").toString();
+        return (
+          name.includes("metal") ||
+          name.startsWith("color") || name.startsWith("colour") ||
+          /rose\s*gold|rosegold|gold\s*filled|goldfilled|\bgold\b|silv[ae]?r|sterling\s*silver|14k/.test(val.toLowerCase())
+        );
+      });
+      const raw = hit ? (hit.formatted_value || (Array.isArray(hit?.values)? hit.values[0] : hit?.value) || "") : "";
+      return raw ? normalizeMetalLabel(String(raw)) : null;
+    } catch { return null; }
+  }
+
+  function mapHsSkuForCanon(canon){
+    if (!canon) return null;
+    const c = canon.toLowerCase();
+    // Silver family
+    if (c === "silver" || c === "sterling silver") {
+      return { hs: "7113115000", sku: "SS_187" };
+    }
+    // Gold family (Gold, Rose Gold, 14K, Gold Filled)
+    if (c === "gold" || c === "rose gold" || c === "14k" || c === "gold filled") {
+      return { hs: "7113205000", sku: "GF_187" };
+    }
+    return null;
+  }
+
   function renderCcLineItemsFromCached(){
     const container = document.getElementById("cc_line_items_container");
     const tpl = document.getElementById("cc_line_item_tpl");
@@ -1423,7 +1465,7 @@ function metalToBadge(label){
     // sensible defaults (mirror old single-field defaults)
     const defaults = {
       origin_country: "CA",
-      hs: "7113.20.5000",
+      hs: "7113205000",
       manuf_country: "CA",
       m_contact: "Brites Jewelry Inc.",
       m_street:  "450 Matheson Blvd, East",
@@ -1451,6 +1493,21 @@ function metalToBadge(label){
       qQty.value  = String(Math.max(1, Math.round(g.qty || 1)));
       qUnit.value = (Number(g.unit || 0)).toFixed(2);
       qVal.value  = (Number(qQty.value) * Number(qUnit.value)).toFixed(2);
+
+      // ▶︎ Conditional autofill for HS code + SKU (Order Details → item fallback)
+      (function(){
+        const canonFromOrder = detectCanonMetalFromOrderDetails();
+        const canonFromItem  = detectCanonMetalFromItem(g.raw);
+        const canon          = canonFromOrder || canonFromItem;
+        const mapped         = mapHsSkuForCanon(canon);
+        if (mapped){
+          qHS.value  = mapped.hs;     // 7113205000 for gold-family • 7113115000 for silver-family
+          qSku.value = mapped.sku;    // GF_187 for gold-family • SS_187 for silver-family
+        } else {
+          // If nothing detected, keep existing SKU and ensure HS has a sane default
+          if (!qHS.value) qHS.value = defaults.hs;
+        }
+      })();
 
       const bindRecalc = () => {
         const iv = (Number(qQty.value || 0) * Number(qUnit.value || 0));
@@ -3862,7 +3919,7 @@ function metalToBadge(label){
       // (C) Static defaults you requested
       // NOTE: These fields are sent as ISO/codes to Chit Chats later; we’ll set sensible values.
       set("cc_item_origin_country", "CA");           // API prefers 2-letter country code
-      set("cc_item_hs_tariff_code", "7113.20.5000");
+      set("cc_item_hs_tariff_code", "7113205000");
       set("cc_item_manufacture_country", "CA");      // API prefers 2-letter country code
       set("cc_item_manufacturer_contact", "Brites Jewelry Inc.");
       set("cc_item_manufacturer_street",  "450 Matheson Blvd, East");
@@ -5442,7 +5499,7 @@ async function refreshRates(){
 
     // (B) Static defaults (API prefers ISO codes where applicable)
     set("cc_item_origin_country",             "CA");            // Canada
-    set("cc_item_hs_tariff_code",             "7113.20.5000");
+    set("cc_item_hs_tariff_code",             "7113205000");
     set("cc_item_manufacture_country",        "CA");            // Canada
     set("cc_item_manufacturer_contact",       "Brites Jewelry Inc.");
     set("cc_item_manufacturer_street",        "450 Matheson Blvd, East");
