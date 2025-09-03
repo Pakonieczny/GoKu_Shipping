@@ -1322,7 +1322,7 @@ function metalToBadge(label){
     /********************************************************
      * Base URL & Global Variables
      ********************************************************/
-    const functionsBaseUrl = window.location.origin + "/.netlify/functions";
+
     // Alias for legacy code that still expects `baseURL`
     window.baseURL = window.baseURL || functionsBaseUrl;
     const baseURL  = window.baseURL; // optional local alias    
@@ -1831,7 +1831,10 @@ function metalToBadge(label){
       await ensureFreshToken();
       let token = localStorage.getItem(TOKEN_KEYS.access) || "";
 
-      let resp = await fetch(`${functionsBaseUrl}${path}`, {
+      const base = (typeof window.baseURL === "string" && window.baseURL)
+        ? window.baseURL
+        : functionsBaseUrl;
+      let resp = await fetch(`${base}${path}`, {
         ...init,
         headers: { ...(init.headers || {}), "access-token": token }
       });
@@ -1840,7 +1843,7 @@ function metalToBadge(label){
         try{
           await refreshAccessToken();
           token = localStorage.getItem(TOKEN_KEYS.access) || "";
-          resp  = await fetch(`${functionsBaseUrl}${path}`, {
+          resp  = await fetch(`${base}${path}`, {
             ...init,
             headers: { ...(init.headers || {}), "access-token": token }
           });
@@ -2720,7 +2723,7 @@ function metalToBadge(label){
 
         try {
           let resp         = await postTracking();
-          let payload      = await resp.text();              // Etsy proxy returns raw text
+          let payload      = await resp.text();              // raw text (or JSON)
           let errMsg       = "";
 
           /* ── forbidden (403) usually means missing shipping permission scope ── */
@@ -2728,8 +2731,9 @@ function metalToBadge(label){
             errMsg = "Forbidden – Etsy says this action isn’t allowed.";
           } else if (!resp.ok) {
             /* try to JSON-parse any error payload, else show raw text */
-          try   { errMsg = JSON.parse(payload).error || "Server error"; }
-          catch (e) { errMsg = payload || "Server error"; }
+            try   { errMsg = JSON.parse(payload).error || `HTTP ${resp.status}`; }
+            catch (e) { errMsg = payload || `HTTP ${resp.status}`; }
+            console.error("trackOrderProxy failed", { status: resp.status, payload });
           }
 
           if (errMsg) throw new Error(errMsg);
@@ -2740,8 +2744,8 @@ function metalToBadge(label){
           carrierSel.selectedIndex = 0;
 
         } catch (err) {
-          console.error(err);
-          M.toast({ html: "Complete failed: " + err.message });
+          console.error("Complete Order error:", err);
+          M.toast({ html: `Complete failed: ${err.message}` });
         }
       });
     }
