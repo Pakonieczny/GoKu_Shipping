@@ -51,21 +51,16 @@ exports.handler = async (event) => {
     }
 
     // 1) Resolve orderId from orderNumber (exact match preferred).
-    const desiredStoreId = Number(input.storeId || input.preferEtsyStoreId) || null;
     const listUrl  = `${SS_BASE}/orders?orderNumber=${encodeURIComponent(orderNumber)}`;
     const listResp = await fetch(listUrl, { method: "GET", headers: SS_HEADERS_JSON });
     const listText = await listResp.text();
     let listJson   = {};
     try { listJson = JSON.parse(listText); } catch {}
-    const orders = Array.isArray(listJson?.orders) ? listJson.orders : [];
-    const exact  = orders.filter(o => String(o.orderNumber) === String(orderNumber));
-    let hit      = exact[0] || orders[0];
-    if (desiredStoreId) {
-      hit = exact.find(o => o.advancedOptions?.storeId === desiredStoreId)
-         || orders.find(o => o.advancedOptions?.storeId === desiredStoreId)
-         || hit;
-    }
-    const orderId = hit?.orderId;
+    const orders   = Array.isArray(listJson?.orders) ? listJson.orders : [];
+    const exact    = orders.find(o => String(o.orderNumber) === String(orderNumber));
+    const hit      = exact || orders[0];
+    const orderId  = hit?.orderId;
+
     if (!orderId) {
       return {
         statusCode: 404,
