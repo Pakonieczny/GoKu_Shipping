@@ -762,10 +762,29 @@ async function recreateShipmentIfUnbought(id, desiredClientPayload, { authH, url
             ""
           ).toUpperCase();
           const hasPhone = !!(s.phone || s.to?.phone);
+          const hasEmail = !!(s.email || s.to?.email);
 
-          // All shipments must have a phone (unified pipeline rule)
-          if (!hasPhone) {
-            const refreshPayload = { phone: "416-606-2476", country_code: cc || undefined };
+          // Build a single refresh payload only if anything is missing
+          const refreshPayload = { country_code: cc || undefined };
+          if (cc && cc !== "CA" && cc !== "US" && !hasPhone) {
+            refreshPayload.phone = "416-606-2476";
+          }
+
+          // EU/GB must have a recipient email
+          const EU_CODES = new Set([
+            "AT","BE","BG","HR","CY","CZ","DK","EE","FI","FR","DE","GR","HU",
+            "IE","IT","LV","LT","LU","MT","NL","PL","PT","RO","SK","SI","ES","SE"
+          ]);
+          if ((EU_CODES.has(cc) || cc === "GB") && !hasEmail) {
+            refreshPayload.email = (
+              process.env.CC_FALLBACK_EMAIL ||
+              process.env.CHITCHATS_DEFAULT_EMAIL ||
+              "custombrites@gmail.com"
+            );
+          }
+
+          // Only call refresh if we’re actually adding something
+          if (refreshPayload.phone || refreshPayload.email) {
             const r2 = await fetch(url(`/shipments/${encodeURIComponent(id)}/refresh`), {
               method: "PATCH",
               headers: authH,
