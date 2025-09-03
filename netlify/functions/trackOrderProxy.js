@@ -77,7 +77,7 @@ exports.handler = async (event) => {
       carrierCode,
       shipDate,
       trackingNumber,
-      notifyCustomer    : false,
+      notifyCustomer    : true,
       notifySalesChannel: true
     };
 
