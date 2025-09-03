@@ -4,7 +4,7 @@
 //   SS_API_SECRET = the matching “API Secret”
 //
 // NOTE: Do NOT use the frontend's baseURL here. This runs on Netlify.
-const fetch = require("node-fetch");
+// Netlify (Node 18+) has global fetch — no dependency required.
 const SS_BASE = "https://ssapi.shipstation.com";
 const { SS_API_KEY, SS_API_SECRET } = process.env;
 const SS_AUTH    = Buffer.from(`${SS_API_KEY || ""}:${SS_API_SECRET || ""}`).toString("base64");
@@ -22,6 +22,12 @@ exports.handler = async event => {
       body: JSON.stringify({ error: "Missing SS_API_KEY/SS_API_SECRET environment variables" })
     };
   }
+
+  // Health check for easy debugging in the browser:
+  if ((event.httpMethod || "").toUpperCase() === "GET") {
+    return { statusCode: 200, body: JSON.stringify({ ok: true, fn: "trackOrderProxy" }) };
+  }
+
   try {
     /* Front-end sends { receiptId, tracking, carrier } — keep names intact */
     const {
