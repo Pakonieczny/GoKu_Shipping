@@ -1323,9 +1323,13 @@ function metalToBadge(label){
      * Base URL & Global Variables
      ********************************************************/
 
-    // Alias for legacy code that still expects `baseURL`
-    window.baseURL = window.baseURL || functionsBaseUrl;
-    const baseURL  = window.baseURL; // optional local alias    
+    // Single source of truth for Functions base URL (+ legacy alias)
+    const functionsBaseUrl =
+      (typeof window.baseURL === "string" && window.baseURL)
+        ? window.baseURL
+        : (window.location.origin + "/.netlify/functions");
+    window.baseURL = functionsBaseUrl;           // keep legacy alias in sync
+    const baseURL  = window.baseURL;     
 
     /* ===== Etsy OAuth boot + auto-refresh wiring (match design/sorting) ===== */
     const TOKEN_KEYS = {
