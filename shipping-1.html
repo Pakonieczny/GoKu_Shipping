@@ -4191,36 +4191,74 @@ function metalToBadge(label){
         return new Blob([buf], { type: ct });
       }
 
-      function printBlobInPlace(blob) {
-        return new Promise((resolve, reject) => {
-          const url = URL.createObjectURL(blob);
-          const iframe = document.createElement("iframe");
-          iframe.style.position = "fixed";
-          iframe.style.right = "0";
-          iframe.style.bottom = "0";
-          iframe.style.width = "0";
-          iframe.style.height = "0";
-          iframe.style.border = "0";
-          iframe.onload = () => {
-            try {
-              const w = iframe.contentWindow;
-              // Let the PDF viewer initialize before printing
-              setTimeout(() => {
-                w.focus();
-                w.print();
-                resolve();
-                setTimeout(() => { URL.revokeObjectURL(url); iframe.remove(); }, 1000);
-              }, 250);
-            } catch (e) {
-              URL.revokeObjectURL(url);
-              iframe.remove();
-              reject(e);
+       function printBlobInPlace(blob) {
+         return new Promise((resolve, reject) => {
+           const url    = URL.createObjectURL(blob);
+           const iframe = document.createElement("iframe");
+           iframe.style.position = "fixed";
+           iframe.style.right    = "0";
+           iframe.style.bottom   = "0";
+           iframe.style.width    = "0";
+           iframe.style.height   = "0";
+           iframe.style.border   = "0";
+
+           let cleaned = false;
+           const createdAt = Date.now();
+           const MIN_LIFE_MS = 8000;     // stay alive at least 8s on slow machines
+           const HARD_FALLBACK_MS = 120000; // force cleanup after 2 minutes
+
+           const cleanup = () => {
+             if (cleaned) return;
+             cleaned = true;
+             const wait = Math.max(0, MIN_LIFE_MS - (Date.now() - createdAt));
+             setTimeout(() => {
+               try { URL.revokeObjectURL(url); } catch {}
+               try { iframe.remove(); } catch {}
+             }, wait);
+           };
+
+           const attachAfterprint = (w) => {
+             try {
+               const onAfter = () => { cleanup(); };
+               w.addEventListener("afterprint", onAfter, { once: true });
+             } catch {}
+             // Safari/Firefox quirk fallback via matchMedia
+             try {
+               const mql = w.matchMedia && w.matchMedia("print");
+               if (mql && typeof mql.addListener === "function") {
+                 let seenPrint = false;
+                 const handler = (e) => {
+                   if (e.matches) seenPrint = true;
+                   else if (seenPrint) { mql.removeListener(handler); cleanup(); }
+                 };
+                 mql.addListener(handler);
+               }
+             } catch {}
+           };
+
+           iframe.onload = () => {
+             try {
+               const w = iframe.contentWindow;
+               attachAfterprint(w);
+               attachAfterprint(window);
+               // Let the PDF viewer initialize before printing
+               setTimeout(() => {
+                 try { w.focus(); } catch {}
+                 try { w.print(); } catch {}
+                 // resolve immediately so caller can continue UI flow
+                 resolve();
+               }, 600);
+               // If afterprint never fires (e.g., OS dialog canceled silently), still clean up eventually
+               setTimeout(cleanup, HARD_FALLBACK_MS);
+             } catch (e) {
+               cleanup();
+               reject(e);
             }
-          };
-          iframe.src = url;
-          document.body.appendChild(iframe);
-        });
-      }
+           };
+           iframe.src = url;
+           document.body.appendChild(iframe);
+         });
+       }
 
 
       // Convert a Blob (PDF/PNG/JPG) into PDF bytes
