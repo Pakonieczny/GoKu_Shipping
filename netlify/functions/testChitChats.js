@@ -140,7 +140,11 @@ exports.handler = async (event) => {
         // Recipient (top level)
         name          : to.name ?? client.name ?? "",
         address_1     : to.address_1 ?? client.address_1 ?? "",
-        address_2     : to.address_2 ?? client.address_2 ?? undefined,
+        address_2     : (
+        to.address_2 && to.address_2.trim().toLowerCase() !== "apt b204"
+          ? to.address_2
+          : undefined
+        ),
         city          : to.city ?? client.city ?? "",
         province_code : to.province_code ?? client.province_code ?? "",
         postal_code   : to.postal_code ?? client.postal_code ?? "",
