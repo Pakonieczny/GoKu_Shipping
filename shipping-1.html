@@ -3457,22 +3457,17 @@ function metalToBadge(label){
         try { return JSON.parse(txt); } catch (e) { return { error: txt.slice(0,200) }; }
       }
       // Use the deployed proxy function (testChitChats) and its "search" resource
-      // Always limit to Pending (open) batches on the server unless caller requests all
+      // Always limit to Pending (open) batches on the server
       async function callSearch(params){
         window.ccSpin && window.ccSpin(true);
 
-        // Always scope to a batch unless caller explicitly passes batchId:""
-        const batchIdSel  = String(document.getElementById("ccBatchSelect")?.value || "").trim();
-        const fallbackId  = String(window.CC_DEFAULT_BATCH_ID || "");
-        const chosenBatch = batchIdSel || fallbackId;
-        const userWantsAllBatches =
-          params && Object.prototype.hasOwnProperty.call(params, "batchId") && String(params.batchId) === "";
-
-        const allParams = Object.assign(
-          {},
-          (params || {}),
-          (!userWantsAllBatches && chosenBatch ? { batchId: chosenBatch } : {})
-        );
+        // Always scope to a batch:
+        // 1) <select id="ccBatchSelect"> value if present
+        // 2) fallback to window.CC_DEFAULT_BATCH_ID ("3903775")
+        const batchIdSel   = String(document.getElementById("ccBatchSelect")?.value || "").trim();
+        const fallbackId   = String(window.CC_DEFAULT_BATCH_ID || "");
+        const chosenBatch  = batchIdSel || fallbackId;
+        const allParams    = Object.assign({}, (params || {}), (chosenBatch ? { batchId: chosenBatch } : {}));
 
         // Build query
         const qs = new URLSearchParams({
@@ -3484,20 +3479,22 @@ function metalToBadge(label){
         }).toString();
 
         // 🔪 Cancel any in-flight search, then create a fresh controller
-        try { window.ccSearchAbort?.abort(); } catch {}
+        try { window.ccSearchAbort?.abort(); } catch (e) {}
         const ctrl = new AbortController();
         window.ccSearchAbort = ctrl;
 
         try {
-          const resp = await fetch(`${getCcEndpoint()}?resource=search&${qs}`, {
+          const resp = await fetch(`${fnBase}/testChitChats?resource=search&${qs}`, {
             credentials: "include",
             signal: ctrl.signal
           });
           return await safeJSON(resp);
         } catch (err) {
+          // Swallow user-initiated cancels quietly
           if (err?.name === "AbortError") return { aborted: true };
           throw err;
         } finally {
+          // Only clear if we're still the active controller
           if (window.ccSearchAbort === ctrl) window.ccSearchAbort = null;
           window.ccSpin && window.ccSpin(false);
         }
