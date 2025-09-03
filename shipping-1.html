@@ -6066,9 +6066,6 @@ function parseIntlAddressBlock(blockText = "", fallbackCountryCode = "") {
         sp.style.display = on ? "inline-block" : "none";
       }
 
-      if (!window._wiredCcStepHandlers) {
-      window._wiredCcStepHandlers = true;
-
       btnNext.addEventListener("click", async () => {
         try {
           if (currentStep === 0){
@@ -6118,8 +6115,7 @@ function parseIntlAddressBlock(blockText = "", fallbackCountryCode = "") {
               if (!id) { M.toast?.({ html: "Could not... create shipment — check Recipient & Description." }); return; }
               await refreshRates();    // ← pricing happens here only
               showStep(3);
-            } 
-            finally { setBtnLoading(btnNext, false); }
+            } finally { setBtnLoading(btnNext, false); }
             return;
           }
         } catch (err) {
@@ -6150,7 +6146,7 @@ function parseIntlAddressBlock(blockText = "", fallbackCountryCode = "") {
         }
       });
 
-
+    })();
 
   </script>
 
