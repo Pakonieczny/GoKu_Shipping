@@ -489,7 +489,19 @@ async function recreateShipmentIfUnbought(id, desiredClientPayload, { authH, url
           );
         };
 
-        const applyPendingFilter = (list) => keepPendingOnly(list, pendingOnlyOn);
+        const applyPendingFilter = async (list) => {
+        if (!pendingOnlyOn) return list || [];
+        const uiBid = String((qp.batchId || "")).trim();
+        if (uiBid) {
+          // Keep: unbatched OR in the UI-selected (presumed open) batch
+          return (list || []).filter(sh => {
+            const bid = sh?.batch_id == null ? "" : String(sh.batch_id);
+            return !bid || bid === uiBid;
+          });
+        }
+        // Fallback: use server-fetched open batches
+        return keepPendingOnly(list, true);
+      };
 
         // 1) Direct by ID if the input looks like a shipment id
         if (looksLikeId(want)) {
@@ -509,9 +521,8 @@ async function recreateShipmentIfUnbought(id, desiredClientPayload, { authH, url
         try {
           let hits = [];
           if (pendingOnlyOn) {
-            // 🔒 Scope to *open (pending)* batches only
-            const openSet = await getOpenBatchIdsSet();
-            const openIds = Array.from(openSet);
+            const uiBid = String((qp.batchId || "")).trim();
+            const openIds = uiBid ? [uiBid] : Array.from(await getOpenBatchIdsSet());
             let found = false;
             for (const bid of openIds) {
               if (timedOut()) break;
@@ -519,7 +530,6 @@ async function recreateShipmentIfUnbought(id, desiredClientPayload, { authH, url
                 q: want,
                 batchId: bid,
                 pageSize,
-                // Stop early inside the batch if we already have a local hit
                 stopEarlyIf: (sh) => {
                   const hit = matches(sh);
                   if (hit) found = true;
@@ -527,7 +537,7 @@ async function recreateShipmentIfUnbought(id, desiredClientPayload, { authH, url
                 }
               });
               hits = hits.concat((page || []).filter(matches));
-              if (found) break; // ✅ stop after the first batch hit to minimize calls
+              if (found) break;
             }
           } else {
             // Legacy: search across all shipments when pending filter is off
