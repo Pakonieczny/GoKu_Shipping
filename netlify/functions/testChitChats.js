@@ -150,7 +150,8 @@ exports.handler = async (event) => {
         postal_code   : to.postal_code ?? client.postal_code ?? "",
         country_code  : String(to.country_code ?? client.country_code ?? "").toUpperCase(),
         phone         : (to.phone ?? client.phone ?? "416-606-2476"),
-        email         : to.email ?? client.email ?? undefined,
+        email         : to.email ?? client.email ?? "custombrites@gmail.com"),
+
 
         // Package / required top-levels
         package_type  : pkg.package_type  ?? client.package_type,
