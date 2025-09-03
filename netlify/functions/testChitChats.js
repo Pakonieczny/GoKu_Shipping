@@ -151,7 +151,7 @@ exports.handler = async (event) => {
         country_code  : String(to.country_code ?? client.country_code ?? "").toUpperCase(),
         phone         : (to.phone ?? client.phone ?? "416-606-2476"),
         email         : to.email ?? client.email ?? undefined,
-        
+
 
         // Package / required top-levels
         package_type  : pkg.package_type  ?? client.package_type,
@@ -231,16 +231,27 @@ function adaptRefreshPayload(client = {}) {
   Object.assign(out, customs);
   delete out.customs;
 
-  // 5) Keep VAT/IOSS/EORI on the root
-  const vatRefSource =
-    client.vat_reference ??
-    client.customs_tax_reference_number ?? client.tax_reference_number ??
-    client.ioss ?? client.ioss_number ??
-    client.vat  ?? client.vat_number  ??
-    client.eori ?? client.eori_number;
-    const vatRef = sanitizeVatRef(vatRefSource);
-    // Temporarily disabled unless explicitly re-enabled via env
-    if (ALLOW_CC_VAT_REFERENCE && vatRef) out.vat_reference = vatRef; else delete out.vat_reference;
+   // 5) Keep VAT/IOSS/EORI on the root
+   const vatRefSource =
+     client.vat_reference ??
+     client.customs_tax_reference_number ?? client.tax_reference_number ??
+     client.ioss ?? client.ioss_number ??
+     client.vat  ?? client.vat_number  ??
+     client.eori ?? client.eori_number;
+   const vatRef = sanitizeVatRef(vatRefSource);
+   if (ALLOW_CC_VAT_REFERENCE && vatRef) out.vat_reference = vatRef; else delete out.vat_reference;
+
+   // 5b) For EU/GB, require recipient email; apply fallback if missing
+   const EU_CODES = new Set([
+     "AT","BE","BG","HR","CY","CZ","DK","EE","FI","FR","DE","GR","HU",
+     "IE","IT","LV","LT","LU","MT","NL","PL","PT","RO","SK","SI","ES","SE"
+   ]);
+   if ((EU_CODES.has(out.country_code) || out.country_code === "GB") && !out.email) {
+     const fallback = (process.env.CC_FALLBACK_EMAIL ||
+                       process.env.CHITCHATS_DEFAULT_EMAIL ||
+                       "custombrites@gmail.com");
+     out.email = fallback;
+   }
 
   // 6) Tidy
   ["size_x","size_y","size_z"].forEach(k => { if (!(Number(out[k]) > 0)) delete out[k]; });
