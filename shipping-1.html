@@ -1322,10 +1322,7 @@ function metalToBadge(label){
     /********************************************************
      * Base URL & Global Variables
      ********************************************************/
-
-    // Alias for legacy code that still expects `baseURL`
-    window.baseURL = window.baseURL || functionsBaseUrl;
-    const baseURL  = window.baseURL; // optional local alias    
+    const functionsBaseUrl = window.location.origin + "/.netlify/functions";
 
     /* ===== Etsy OAuth boot + auto-refresh wiring (match design/sorting) ===== */
     const TOKEN_KEYS = {
@@ -1831,10 +1828,7 @@ function metalToBadge(label){
       await ensureFreshToken();
       let token = localStorage.getItem(TOKEN_KEYS.access) || "";
 
-      const base = (typeof window.baseURL === "string" && window.baseURL)
-        ? window.baseURL
-        : functionsBaseUrl;
-      let resp = await fetch(`${base}${path}`, {
+      let resp = await fetch(`${functionsBaseUrl}${path}`, {
         ...init,
         headers: { ...(init.headers || {}), "access-token": token }
       });
@@ -1843,7 +1837,7 @@ function metalToBadge(label){
         try{
           await refreshAccessToken();
           token = localStorage.getItem(TOKEN_KEYS.access) || "";
-          resp  = await fetch(`${base}${path}`, {
+          resp  = await fetch(`${functionsBaseUrl}${path}`, {
             ...init,
             headers: { ...(init.headers || {}), "access-token": token }
           });
@@ -2723,7 +2717,7 @@ function metalToBadge(label){
 
         try {
           let resp         = await postTracking();
-          let payload      = await resp.text();              // raw text (or JSON)
+          let payload      = await resp.text();              // Etsy proxy returns raw text
           let errMsg       = "";
 
           /* ── forbidden (403) usually means missing shipping permission scope ── */
