@@ -5901,10 +5901,12 @@ function parseIntlAddressBlock(blockText = "", fallbackCountryCode = "") {
   // Maintain a cursor after name
   let idx = (to_name ? 1 : 0);
 
-  // 3) STREET: next line is almost always the street
-  let to_address_1 = lines[idx++] || "";
-  // 3b) Optional Address 2 line (apt/suite/unit/etc.)
-  if (idx < lines.length) {
+    // 3) STREET: next line is almost always the street
+    let to_address_1 = lines[idx++] || "";
+    // IMPORTANT: declare before possible assignment
+    let to_address_2 = "";
+    // 3b) Optional Address 2 line (apt/suite/unit/etc.)
+    if (idx < lines.length) {
     const maybeUnit = lines[idx] || "";
     const unitRe = /\b(?:APT|APARTMENT|UNIT|STE|SUITE|BLDG|BUILDING|FLOOR|PO BOX|DEPT|DEPARTMENT|ROOM|RM|LOT|#)\b/i;
 
@@ -5921,7 +5923,6 @@ function parseIntlAddressBlock(blockText = "", fallbackCountryCode = "") {
       idx++;
     }
   }
-  let to_address_2 = "";
 
   // 4) CITY / PROVINCE: try to split a comma line e.g. "Cesenatico, FORLÌ-CESENA"
   let to_city = "", to_province_code = "";
