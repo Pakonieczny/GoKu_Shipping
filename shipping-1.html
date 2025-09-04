@@ -4235,36 +4235,45 @@ function metalToBadge(label){
         return new Blob([buf], { type: ct });
       }
 
-      function printBlobInPlace(blob) {
-        return new Promise((resolve, reject) => {
-          const url = URL.createObjectURL(blob);
-          const iframe = document.createElement("iframe");
-          iframe.style.position = "fixed";
-          iframe.style.right = "0";
-          iframe.style.bottom = "0";
-          iframe.style.width = "0";
-          iframe.style.height = "0";
-          iframe.style.border = "0";
-          iframe.onload = () => {
-            try {
-              const w = iframe.contentWindow;
-              // Let the PDF viewer initialize before printing
-              setTimeout(() => {
-                w.focus();
-                w.print();
-                resolve();
-                setTimeout(() => { URL.revokeObjectURL(url); iframe.remove(); }, 1000);
-              }, 250);
-            } catch (e) {
-              URL.revokeObjectURL(url);
-              iframe.remove();
-              reject(e);
-            }
-          };
-          iframe.src = url;
-          document.body.appendChild(iframe);
-        });
-      }
+        function printBlobInPlace(blob) {
+          return new Promise((resolve, reject) => {
+            const url = URL.createObjectURL(blob);
+            const iframe = document.createElement("iframe");
+            Object.assign(iframe.style, {
+              position: "fixed", right: "0", bottom: "0", width: "0", height: "0", border: "0"
+            });
+
+            let done = false;
+            const finish = () => {
+              if (done) return;
+              done = true;
+              // small grace to let dialog fully settle before DOM cleanup
+              setTimeout(() => { try { URL.revokeObjectURL(url); } catch {} iframe.remove(); resolve(); }, 300);
+              w?.removeEventListener?.("afterprint", finish);
+              window.removeEventListener("afterprint", finish);
+            };
+
+            iframe.onload = () => {
+              try {
+                const w = iframe.contentWindow;
+                // listen on both the frame and the parent (different browsers fire on different windows)
+                w.addEventListener?.("afterprint", finish);
+                window.addEventListener("afterprint", finish);
+                // let the viewer initialize a tick before printing
+                setTimeout(() => { w.focus(); w.print(); }, 250);
+                // ultimate fallback in case afterprint never fires (Safari edge cases, etc.)
+                setTimeout(finish, 60000);
+              } catch (e) {
+                try { URL.revokeObjectURL(url); } catch {}
+                iframe.remove();
+                reject(e);
+              }
+            };
+
+            iframe.src = url;
+            document.body.appendChild(iframe);
+          });
+        }
 
 
       // Convert a Blob (PDF/PNG/JPG) into PDF bytes
