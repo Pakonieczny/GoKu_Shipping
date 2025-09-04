@@ -4562,20 +4562,25 @@ function metalToBadge(label){
           // 3) Buy label
           // 🆕 Ensure EU/GB email before buy
            {
-             const EU_CODES = new Set([
-               "AT","BE","BG","HR","CY","CZ","DK","EE","FI","FR","DE","GR","HU",
-               "IE","IT","LV","LT","LU","MT","NL","PL","PT","RO","SK","SI","ES","SE"
-             ]);
-             const cc = String(document.getElementById("cc_to_country_code")?.value || "").toUpperCase();
-             const hasEmail = !!(document.getElementById("cc_to_email")?.value || "").trim();
-             const isEUorGB = EU_CODES.has(cc) || cc === "GB";
-             if (isEUorGB && !hasEmail) {
-               const fallback = (window.CC_FALLBACK_EMAIL || "custombrites@gmail.com");
-               await callCc("PATCH", {
-                 action     : "refresh",
-                 shipment_id: shipmentId,
-                 payload    : { email: fallback, country_code: cc }
-               });
+              const EU_CODES = new Set(["AT","BE","BG","HR","CY","CZ","DK","EE","FI","FR","DE","GR","HU","IE","IT","LV","LT","LU","MT","NL","PL","PT","RO","SK","SI","ES","SE"]);
+              const codeRaw = (document.getElementById("cc_to_country_code")?.value || "").trim().toUpperCase();
+              const countryCode = (codeRaw === "UK" ? "GB" : codeRaw);
+              const isEUorGB = EU_CODES.has(countryCode) || countryCode === "GB";
+
+              const emailInput = document.getElementById("cc_to_email");
+              const currentEmail = (emailInput?.value || "").trim();
+
+              if (isEUorGB && !currentEmail) {
+                // choose a sensible fallback (adjust if you keep one in env/config)
+                const fallback = "support@goldenspike.app";
+                if (emailInput) emailInput.value = fallback; // reflect in UI
+
+                // Rebuild full shipment with root-level email and REPLACE the draft.
+                const rawId = (document.getElementById("ccShipmentId")?.value || "").trim();
+                const replacePayload = buildShipmentPayload();
+                replacePayload.email = fallback; // <-- root-level (required)
+                await replaceDraftShipment(rawId, replacePayload); // updates ccShipmentId internally
+              }
              }
            }
 
