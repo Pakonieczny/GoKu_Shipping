@@ -5846,27 +5846,56 @@ const COUNTRY_TO_ISO2 = {
    "GB","UK","IM","JE","GG"
  ]);
 
-  // Accept only real region codes/names; drop 1–2 letter junk like "As" unless whitelisted.
+  // Accept real region codes and full names; normalize to canonical codes for US/CA.
   function sanitizeProvinceForCountry(raw, country){
-    const s = String(raw || "").trim();
-    if (!s) return "";
+    const input = String(raw || "").trim();
+    if (!input) return "";
+    const cc = String(country || "").toUpperCase();
+    // 🔒 For all UK + EU orders, we never keep a province/state
+    if (EU_UK_CODES.has(cc)) return "";
 
-   const cc = String(country || "").toUpperCase();
-   // 🔒 For all UK + EU orders, we never keep a province/state
-   if (EU_UK_CODES.has(cc)) return "";
+    // Normalize: strip diacritics, spaces, and dots for robust matching
+    const strip = (x) => x.normalize?.('NFD').replace(/[\u0300-\u036f]/g,"").toUpperCase().replace(/[.\s]/g,"");
+    const s = strip(input);
 
-  const US = new Set(["AL","AK","AZ","AR","CA","CO","CT","DE","FL","GA","HI","ID","IL","IN","IA","KS","KY","LA","ME","MD","MA","MI","MN","MS","MO","MT","NE","NV","NH","NJ","NM","NY","NC","ND","OH","OK","OR","PA","RI","SC","SD","TN","TX","UT","VT","VA","WA","WV","WI","WY","DC","PR"]);
-  const CA = new Set(["AB","BC","MB","NB","NL","NS","NT","NU","ON","PE","QC","SK","YT"]);
-  const AU = new Set(["ACT","NSW","NT","QLD","SA","TAS","VIC","WA"]);
+    // Canonical codes
+    const US = new Set(["AL","AK","AZ","AR","CA","CO","CT","DE","FL","GA","HI","ID","IL","IN","IA","KS","KY","LA","ME","MD","MA","MI","MN","MS","MO","MT","NE","NV","NH","NJ","NM","NY","NC","ND","OH","OK","OR","PA","RI","SC","SD","TN","TX","UT","VT","VA","WA","WV","WI","WY","DC","PR"]);
+    const CA = new Set(["AB","BC","MB","NB","NL","NS","NT","NU","ON","PE","QC","SK","YT"]);
+    const AU = new Set(["ACT","NSW","NT","QLD","SA","TAS","VIC","WA"]);
 
-  const up = s.toUpperCase();
-  if (country === "US") return US.has(up) ? up : "";
-  if (country === "CA") return CA.has(up) ? up : "";
-  if (country === "AU") return AU.has(up) ? up : (s.length >= 3 ? s : "");
+    // Full-name → code maps (space/dot-insensitive)
+    const US_NAME = new Map([
+      ["ALABAMA","AL"],["ALASKA","AK"],["ARIZONA","AZ"],["ARKANSAS","AR"],["CALIFORNIA","CA"],["COLORADO","CO"],
+      ["CONNECTICUT","CT"],["DELAWARE","DE"],["FLORIDA","FL"],["GEORGIA","GA"],["HAWAII","HI"],["IDAHO","ID"],
+      ["ILLINOIS","IL"],["INDIANA","IN"],["IOWA","IA"],["KANSAS","KS"],["KENTUCKY","KY"],["LOUISIANA","LA"],
+      ["MAINE","ME"],["MARYLAND","MD"],["MASSACHUSETTS","MA"],["MICHIGAN","MI"],["MINNESOTA","MN"],["MISSISSIPPI","MS"],
+      ["MISSOURI","MO"],["MONTANA","MT"],["NEBRASKA","NE"],["NEVADA","NV"],["NEWHAMPSHIRE","NH"],["NEWJERSEY","NJ"],
+      ["NEWMEXICO","NM"],["NEWYORK","NY"],["NORTHCAROLINA","NC"],["NORTHDAKOTA","ND"],["OHIO","OH"],["OKLAHOMA","OK"],
+      ["OREGON","OR"],["PENNSYLVANIA","PA"],["RHODEISLAND","RI"],["SOUTHCAROLINA","SC"],["SOUTHDAKOTA","SD"],
+      ["TENNESSEE","TN"],["TEXAS","TX"],["UTAH","UT"],["VERMONT","VT"],["VIRGINIA","VA"],["WASHINGTON","WA"],
+      ["WESTVIRGINIA","WV"],["WISCONSIN","WI"],["WYOMING","WY"],["DISTRICTOFCOLUMBIA","DC"],["WASHINGTONDC","DC"],
+      ["PUERTORICO","PR"]
+    ]);
+    const CA_NAME = new Map([
+      ["ALBERTA","AB"],["BRITISHCOLUMBIA","BC"],["MANITOBA","MB"],["NEWBRUNSWICK","NB"],
+      ["NEWFOUNDLANDANDLABRADOR","NL"],["NEWFOUNDLAND","NL"],["LABRADOR","NL"],
+      ["NOVASCOTIA","NS"],["NORTHWESTTERRITORIES","NT"],["NUNAVUT","NU"],
+      ["ONTARIO","ON"],["PRINCEEDWARDISLAND","PE"],["QUEBEC","QC"],["QUEBE","QC"], /* QUÉBEC */
+      ["SASKATCHEWAN","SK"],["YUKON","YT"],["YUKONTER","YT"]
+    ]);
 
-  // Everyone else: require ≥3 letters to look like a real region name
-  return /[A-Za-z]{3,}/.test(s) ? s : "";
-}
+    // Keep canonical codes as-is
+    if (cc === "US" && US.has(s)) return s;
+    if (cc === "CA" && CA.has(s)) return s;
+    if (cc === "AU") return AU.has(s) ? s : (input.length >= 3 ? input : "");
+
+    // Map full names → 2-letter codes for US/CA
+    if (cc === "US") return US_NAME.get(s) || "";
+    if (cc === "CA") return CA_NAME.get(s) || "";
+
+    // Everyone else: require ≥3 letters to look real; return original formatting
+    return /[A-Z]{3,}/.test(s) ? input : "";
+  }
 
 // Robust, locale-agnostic parser for pasted multi-line addresses
 function parseIntlAddressBlock(blockText = "", fallbackCountryCode = "") {
