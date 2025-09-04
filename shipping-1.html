@@ -5054,19 +5054,10 @@ async function refreshRates(){
     }
   });
 
-  if (replaceSig !== window.ccLastReplaceSig) {
-    const rep = await replaceDraftShipment(id, replacePayload);
-    const newId = rep?.id || rep?.shipment?.id;
-    if (newId && newId !== id) {
-      id = newId;
-      idInput.value = newId;
-      idUsedForPricing = newId;       // ← keep our local pointer aligned
-      try { pushShipmentId(newId); } catch {}
-    }
-    window.ccLastReplaceSig = replaceSig;
-  } else {
-    idUsedForPricing = id;            // ← explicit in the no-replace branch
-  }
+  // ⏱️ Performance: defer any REPLACE to the Buy step.
+  // Creating/deleting drafts here adds a full extra round-trip for no pricing benefit.
+  window.ccLastReplaceSig = replaceSig; // remember latest state for Buy-time check
+  idUsedForPricing = id;  
 
     // 3) Price the (possibly replaced) shipment
     const out = await callCc("PATCH", { action: "refresh", shipment_id: idUsedForPricing, payload: refreshPayload });
