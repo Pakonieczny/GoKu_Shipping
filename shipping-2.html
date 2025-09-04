@@ -2364,14 +2364,8 @@ function metalToBadge(label){
             window.ccShipmentId = "";
             try { await fetchBatches(); } catch (e) {}
 
-            // 🔄 NEW: always clear Address 2 for a fresh order
-            try {
-              const addr2 = document.getElementById("cc_to_address_2");
-              if (addr2) {
-                addr2.value = "";
-                addr2.dataset.userEdited = "0";
-              }
-            } catch (_) {}
+            // 🔄 New order: fully reset Recipient & visible address UI
+            try { resetRecipientFields(); } catch(_) {}
 
             const txt = (await navigator.clipboard.readText() || "").trim();
             if (!txt) { M.toast?.({ html: "Clipboard is empty" }); return; }
@@ -2464,14 +2458,8 @@ function metalToBadge(label){
         window.ccShipmentId = "";
         try { await fetchBatches(); } catch (e) {}
 
-        // 🔄 NEW: always clear Address 2 for a fresh order
-        try {
-          const addr2 = document.getElementById("cc_to_address_2");
-          if (addr2) {
-            addr2.value = "";
-            addr2.dataset.userEdited = "0";
-          }
-        } catch (_) {}
+        // 🔄 New order: fully reset Recipient & visible address UI
+        try { resetRecipientFields(); } catch(_) {}
 
         const orderNumber = etsyOrderInput.value.trim();
         if (!orderNumber) return;
@@ -3361,12 +3349,16 @@ function metalToBadge(label){
               window.ccShipmentId = "";
               try { await fetchBatches(); } catch (e) {}
 
+              // fresh order → wipe any prior recipient values
+              try { resetRecipientFields(); } catch(_) {}
+
               /* Cancel any in-flight ccShipmentId search and pending slow-pass */
               try { window.ccSearchAbort?.abort(); } catch (e) {}
               if (window.ccSlowTimer) { clearTimeout(window.ccSlowTimer); window.ccSlowTimer = null; }
               window.ccSpin && window.ccSpin(false);
 
-              /* Write the scanned order to input */
+              /* Fresh slate for new scanned order */
+              try { resetRecipientFields(); } catch(_) {}
               const etsyOrderInput = document.getElementById("etsyOrderNumber");
               etsyOrderInput.value = orderNumber;
 
@@ -5212,6 +5204,28 @@ async function refreshRates(){
       /* ──────────────────────────────────────────────────────────────
        *  JS HELPERS (validation + toasts + address compare)
        * ────────────────────────────────────────────────────────────── */
+
+      // 🧹 Reset all recipient UI before loading a new order
+      function resetRecipientFields(){
+        const ids = [
+          "cc_to_name","cc_to_email","cc_to_address_1","cc_to_address_2",
+          "cc_to_city","cc_to_province_code","cc_to_postal_code",
+          "cc_to_country_code","cc_to_phone"
+        ];
+        ids.forEach(id => {
+          const el = document.getElementById(id);
+          if (el) { el.value = ""; el.dataset.userEdited = "0"; }
+        });
+
+        const ship = document.getElementById("shipAddressBox");
+        if (ship) ship.value = "SHIP TO:\n(loading…)";
+
+        // wipe any prior address-compare UI
+        const orig = document.getElementById("ccVerifyOriginal");
+        const sugg = document.getElementById("ccVerifySuggested");
+        if (orig) orig.textContent = "";
+        if (sugg) sugg.textContent = "";
+      }
 
       // 🆕 Credit modal helpers
       function openCreditModal(msg){
