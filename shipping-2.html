@@ -6401,6 +6401,41 @@ function parseIntlAddressBlock(blockText = "", fallbackCountryCode = "") {
           try {
             await ccVerifyAddressOnly();      // best-effort; non-blocking failure
             await ccEnsureDraftShipmentIdNoRefresh();
+         // 🇺🇸🇨🇦 Kick off manual Update/Delete/Create before entering Step 2 (US/CA only)
+          try {
+            const dest = (document.getElementById("cc_to_country_code")?.value || "").trim().toUpperCase();
+            if (dest === "US" || dest === "CA") {
+              // prime flags so Step-2 can wait/bypass
+              window.ccManualIdUpdateInFlight = true;
+              window.ccManualIdUpdateDone     = false;
+              let resolvePromise;
+              window.ccManualIdUpdatePromise = new Promise(res => (resolvePromise = res));
+
+              const idEl    = document.getElementById("ccShipmentId");
+              const oldId   = (idEl?.value || "").trim();
+              const payload = buildShipmentPayload();
+
+              // Run asynchronously; Step 2 waits via refreshRates gating
+              (async () => {
+                try {
+                  const created = await replaceDraftShipment(oldId, payload); // create new, sweep dupes, delete old
+                  const newId   = created?.id || created?.shipment?.id || "";
+                  if (newId && newId !== oldId) {
+                    try { pushShipmentId(newId); idEl.value = newId; } catch {}
+                  }
+                  window.ccManualIdUpdateDone = true;   // ✅ Step-2 will bypass duplicate replace
+                  resolvePromise?.();
+                  M.toast?.({ html: "Shipment updated for pricing." });
+                } catch (e) {
+                  try { handleCcApiError?.(e); } catch {}
+                } finally {
+                  window.ccManualIdUpdateInFlight = false;
+                }
+              })();
+            }
+          } catch (e) {
+            console.warn("US/CA manual Update-ID kickoff failed:", e);
+          }
           } catch (e) {
             console.warn("ccShip1 verify-only encountered an error:", e);
           }
