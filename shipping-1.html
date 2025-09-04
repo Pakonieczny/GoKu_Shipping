@@ -4530,9 +4530,9 @@ function metalToBadge(label){
           // Mute ccShipmentId 'input' side-effects during Buy so it doesn't auto-refresh.
           window.ccPostBuyFrozen = true; // freeze immediately on Buy
 
-          // 1) Ensure we have a shipment (create if missing)
-          const s0 = await ensureShipment();
-          const shipmentId = (s0?.shipment?.id ?? s0?.id ?? idInput?.value ?? "").toString();
+         // 1) Ensure we have a shipment (create if missing)
+         const s0 = await ensureShipment();
+         let shipmentId = (s0?.shipment?.id ?? s0?.id ?? idInput?.value ?? "").toString();
           if (!shipmentId) throw new Error("No shipment id");
 
           // 2) Pick selected rate’s postage_type (required by Chit Chats /buy)
@@ -4555,7 +4555,11 @@ function metalToBadge(label){
               const rawId = (document.getElementById("ccShipmentId")?.value || "").trim();
               const payload = buildShipmentPayload();
               payload.email = chosen; // root-level
-              await replaceDraftShipment(rawId, payload);
+            const created = await replaceDraftShipment(rawId, payload);
+            const newId = created?.id || created?.shipment?.id;
+            if (newId && newId !== shipmentId) {
+              shipmentId = String(newId);
+              try { pushShipmentId(shipmentId); } catch {}
             }
           }
            
