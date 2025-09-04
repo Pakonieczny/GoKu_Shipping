@@ -2359,8 +2359,7 @@ function metalToBadge(label){
             // 🔓 New order → thaw post-buy freeze, clear CC id, refresh batches
             window.ccPostBuyFrozen = false;
             window.ccMuteIdInput   = false;
-            const idEl    = document.getElementById("ccShipmentId");
-            const prevCcId = (idEl?.value || "").trim(); // ← NEW: remember old CC shipment id
+            const idEl = document.getElementById("ccShipmentId");
             if (idEl) { idEl.value = ""; idEl.dataset.setAt = String(Date.now()); }
             window.ccShipmentId = "";
             try { await fetchBatches(); } catch (e) {}
@@ -2472,20 +2471,6 @@ function metalToBadge(label){
           await updateImageGrid(orderData);
         }
         startBritesListener(orderNumber);
-
-        // NEW: Immediately replace the Chit Chats draft for this just-loaded order
-        try {
-          const created = await replaceDraftShipment(prevCcId, buildShipmentPayload());
-          const newId   = created?.id || created?.shipment?.id;
-          if (newId) {
-            pushShipmentId(newId);                       // keep UI/global in sync
-            try { await sweepDuplicatesForOrder(orderNumber, newId); } catch {}
-            M.toast?.({ html: "Chit Chats draft refreshed for this order." });
-          }
-        } catch (err) {
-          console.warn("CC replace on order load failed", err);
-          M.toast?.({ html: "Couldn’t refresh Chit Chats draft (check console)" });
-        }
 
         try {
           const respPD = await fetch("/.netlify/functions/firebaseOrders?orderId=" + encodeURIComponent(orderNumber));
