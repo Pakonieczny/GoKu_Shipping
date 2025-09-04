@@ -6168,10 +6168,6 @@ function parseIntlAddressBlock(blockText = "", fallbackCountryCode = "") {
             setBtnLoading(btnNext, true);
             try {
               if (!(await validateStep(2))) return;
-              await ensureShipment();
-              const idInput = document.getElementById("ccShipmentId");
-              const id = (idInput?.value || "").trim();
-              if (!id) { M.toast?.({ html: "Could not... create shipment — check Recipient & Description." }); return; }
               await refreshRates();    // ← pricing happens here only
               showStep(3);
             } finally { setBtnLoading(btnNext, false); }
