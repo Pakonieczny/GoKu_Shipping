@@ -743,8 +743,8 @@ async function recreateShipmentIfUnbought(id, desiredClientPayload, { authH, url
       }
 
       // (B) Shipment: buy postage
-      if (action === "buy") {
-        const id = String(body.shipment_id || body.id || qp.id || "");
+        if (action === "buy") {
+          let id = String(body.shipment_id || body.id || qp.id || "");
         if (!id) return bad(400, "shipment_id required for buy");
 
         // 🆕 Preflight: read shipment and ensure intl phone exists
@@ -775,12 +775,11 @@ async function recreateShipmentIfUnbought(id, desiredClientPayload, { authH, url
             "AT","BE","BG","HR","CY","CZ","DK","EE","FI","FR","DE","GR","HU",
             "IE","IT","LV","LT","LU","MT","NL","PL","PT","RO","SK","SI","ES","SE"
           ]);
+           const fallbackEmail = (
+            process.env.CC_FALLBACK_EMAIL ||
+            process.env.CHITCHATS_DEFAULT_EMAIL ||
+            "custombrites@gmail.com"
           if ((EU_CODES.has(cc) || cc === "GB") && !hasEmail) {
-            refreshPayload.email = (
-              process.env.CC_FALLBACK_EMAIL ||
-              process.env.CHITCHATS_DEFAULT_EMAIL ||
-              "custombrites@gmail.com"
-            );
           }
 
           // Only call refresh if we’re actually adding something
@@ -792,6 +791,26 @@ async function recreateShipmentIfUnbought(id, desiredClientPayload, { authH, url
             });
             const o2 = await wrap(r2);
             if (!o2.ok) return bad(o2.status, o2.data);
+          }
+          // Re-read shipment after refresh to confirm email requirement satisfied
+          let verifiedEmail = hasEmail;
+          if ((EU_CODES.has(cc) || cc === "GB") && !hasEmail) {
+            try {
+              const r3 = await fetch(url(`/shipments/${encodeURIComponent(id)}`), { headers: authH });
+              const o3 = await wrap(r3);
+              if (!o3.ok) return bad(o3.status, o3.data);
+              const s2 = o3.data?.shipment || o3.data || {};
+              verifiedEmail = !!(s2.email || s2.to?.email);
+            } catch {}
+          }
+
+          // If email still missing (refresh ignored it), recreate draft with email
+          if ((EU_CODES.has(cc) || cc === "GB") && !verifiedEmail) {
+            const rr = await recreateShipmentIfUnbought(id, { email: fallbackEmail }, { authH, url, wrap });
+            if (!rr.ok) return bad(rr.status, rr.data);
+            if (rr.data?.id) {
+              id = rr.data.id; // use brand new shipment id
+            }
           }
         } catch (e) {
           // If the preflight fails, surface the real error
