@@ -5785,20 +5785,36 @@ async function refreshRates(){
         if (!text) return "";
         const lower = text.toLowerCase();
 
-        // Name contains (robust)
+        // 1) Strong match by full country name
         for (const [name, code] of Object.entries(NAME_TO_CODE)) {
           if (lower.includes(name)) return code;
         }
 
-        // Scan from last non-empty line for 2-letter tokens that look like ISO codes
+        // 2) Conservative token scan: only last 1–2 lines, only lines with NO digits,
+        //    only real ISO2 country codes, and NEVER US state / CA province codes.
         const lines = lower.split(/\r?\n/).map(s=>s.trim()).filter(Boolean);
-        for (let i = lines.length - 1; i >= 0; i--) {
-          const tokens = lines[i].toUpperCase().match(/\b[A-Z]{2}\b/g);
-          if (tokens) {
-            for (let t of tokens) {
-              if (t === "UK") t = "GB";          // normalize
-              if (/^[A-Z]{2}$/.test(t)) return t;
-            }
+        const UPPER = (s) => s.toUpperCase();
+        const COUNTRY_ISO2 = new Set([
+          "US","CA","GB","AU","NZ","FR","DE","IT","ES","PT","NL","BE","LU","DK","SE","NO","FI","IE","AT","CH",
+          "PL","CZ","SK","HU","RO","BG","GR","SI","HR","EE","LV","LT","MX","BR","AR","CL","JP","KR","CN","HK",
+          "SG","MY","PH","TH","VN","IN","AE","SA","IL"
+        ]);
+        const US_STATES = new Set([
+          "AL","AK","AZ","AR","CA","CO","CT","DE","FL","GA","HI","ID","IL","IN","IA","KS","KY","LA","ME","MD","MA","MI",
+          "MN","MS","MO","MT","NE","NV","NH","NJ","NM","NY","NC","ND","OH","OK","OR","PA","RI","SC","SD","TN","TX","UT",
+          "VT","VA","WA","WV","WI","WY","DC","PR"
+        ]);
+        const CA_PROVS = new Set(["AB","BC","MB","NB","NL","NS","NT","NU","ON","PE","QC","SK","YT"]);
+
+        for (let i = lines.length - 1; i >= Math.max(0, lines.length - 2); i--) {
+          const line = UPPER(lines[i]);
+          if (/\d/.test(line)) continue;             // skip city/state/ZIP lines
+          const tokens = line.match(/\b[A-Z]{2}\b/g);
+          if (!tokens) continue;
+          for (let t of tokens) {
+            if (t === "UK") t = "GB";
+            if (US_STATES.has(t) || CA_PROVS.has(t)) continue; // don't confuse states/provinces with countries
+            if (COUNTRY_ISO2.has(t)) return t;
           }
         }
         return "";
