@@ -5076,19 +5076,16 @@ async function refreshRates(){
     const hasVatRef = !!sanitizeVatRef(document.getElementById("cc_customs_tax_reference_number")?.value);
 
     renderRates(responded);
-
-    // Prefer explicit `used_id` if server provides it; else fall back to shipment.id/out.id
+    // ⚡ Sync ID if the server rewired it, but DO NOT auto re-price (saves a PATCH)
     const respondedId = String(out?.used_id || out?.shipment?.id || out?.id || "").trim();
-
     if (respondedId && respondedId !== idUsedForPricing) {
-      // 🔍 Mismatch means something rewired the ID underneath us — fix it and re-price once
-      try { console.warn("[CC Rates] ID mismatch; retrying", { sent:idUsedForPricing, got:respondedId }); } catch {}
-      pushShipmentId(respondedId);
-      const out2 = await callCc("PATCH", { action: "refresh", shipment_id: respondedId, payload: refreshPayload });
-      renderRates(out2.shipment || out2);
-      } else {
-        renderRates(out.shipment || out);
-      }
+      try {
+        pushShipmentId(respondedId);
+        idInput.value = respondedId;
+        // M.toast?.({ html: "Shipment ID updated by server." }); // optional UX
+      } catch(_) {}
+    }
+    
         } finally {
           // restore prior mute state
           window.ccMuteIdInput = prevMute;
