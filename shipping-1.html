@@ -5085,7 +5085,7 @@ async function refreshRates(){
         // M.toast?.({ html: "Shipment ID updated by server." }); // optional UX
       } catch(_) {}
     }
-    
+
         } finally {
           // restore prior mute state
           window.ccMuteIdInput = prevMute;
@@ -6161,7 +6161,7 @@ function parseIntlAddressBlock(blockText = "", fallbackCountryCode = "") {
       btnRefresh.addEventListener("click", async () => {
         try{
           if (!(await validateStep(2))) return;
-          await ensureShipment();
+          
           await refreshRates();
         }catch(err){
           handleCcApiError(err);
