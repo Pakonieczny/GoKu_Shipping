@@ -1958,24 +1958,40 @@ function metalToBadge(label){
     })();
 
     // Ensure a single, global source of truth for the proxy endpoint
-    (function(){
+    (async function(){
       const fnBase = "/.netlify/functions";
-      const DEFAULT_FN = `${fnBase}/testChitChats`; // rename if your function name differs
+      const candidates = [
+        // explicit override first (set this from server if you like)
+        window.CHITCHATS_FN,
+        // common names you’ve used
+        `${fnBase}/testChitChats`,
+        `${fnBase}/chitChatsProxy`,
+        `${fnBase}/chitChats`,
+      ].filter(Boolean);
 
-      function getCcEndpoint(){
-        if (typeof window !== "undefined" && window.chitChatsFn) return window.chitChatsFn;
-        try {
-          const base = location.hostname.includes("goldenspike")
-            ? "https://shipping-1.goldenspike.app/.netlify/functions"
-            : "/.netlify/functions";
-          return `${base}/testChitChats`;
-        } catch (_) {
-          return "/.netlify/functions/testChitChats";
+      async function pickAlive(urls){
+        for (const u of urls){
+          try {
+            const resp = await fetch(u + "?resource=ping", { method:"GET", credentials:"include" });
+            if (resp.ok) return u;
+          } catch {}
         }
+        return urls[0]; // last resort
       }
 
-      window.getCcEndpoint = getCcEndpoint; // ← add this
-      window.chitChatsFn   = window.chitChatsFn || DEFAULT_FN;
+      let chosen = candidates[0];
+      try {
+        // prefer same-origin functions in prod domains
+        const base = location.hostname.includes("goldenspike")
+          ? "https://shipping-1.goldenspike.app/.netlify/functions"
+          : "/.netlify/functions";
+        const pool = candidates.length ? candidates : [`${base}/testChitChats`];
+        chosen = await pickAlive(pool);
+      } catch {}
+
+      function getCcEndpoint(){ return chosen; }
+      window.getCcEndpoint = getCcEndpoint;
+      window.chitChatsFn   = chosen;
     })();
 
     function generateRandomString(length){
@@ -4526,30 +4542,23 @@ function metalToBadge(label){
 
 
           // 3) Buy label
-          // 🆕 Ensure EU/GB email before buy
-           {
-              const EU_CODES = new Set(["AT","BE","BG","HR","CY","CZ","DK","EE","FI","FR","DE","GR","HU","IE","IT","LV","LT","LU","MT","NL","PL","PT","RO","SK","SI","ES","SE"]);
-              const codeRaw = (document.getElementById("cc_to_country_code")?.value || "").trim().toUpperCase();
-              const countryCode = (codeRaw === "UK" ? "GB" : codeRaw);
-              const isEUorGB = EU_CODES.has(countryCode) || countryCode === "GB";
-
+          // ✅ Ensure EU/GB payload has ROOT email and persist it server-side before Buy
+          {
+            const EU_CODES = new Set(["AT","BE","BG","HR","CY","CZ","DK","EE","FI","FR","DE","GR","HU","IE","IT","LV","LT","LU","MT","NL","PL","PT","RO","SK","SI","ES","SE"]);
+            const codeRaw = (document.getElementById("cc_to_country_code")?.value || "").trim().toUpperCase();
+            const countryCode = (codeRaw === "UK" ? "GB" : codeRaw);
+            const isEUorGB = EU_CODES.has(countryCode) || countryCode === "GB";
+            if (isEUorGB) {
               const emailInput = document.getElementById("cc_to_email");
-              const currentEmail = (emailInput?.value || "").trim();
-
-              if (isEUorGB && !currentEmail) {
-                // choose a sensible fallback (adjust if you keep one in env/config)
-                const fallback = "support@goldenspike.app";
-                if (emailInput) emailInput.value = fallback; // reflect in UI
-
-                // Rebuild full shipment with root-level email and REPLACE the draft.
-                const rawId = (document.getElementById("ccShipmentId")?.value || "").trim();
-                const replacePayload = buildShipmentPayload();
-                replacePayload.email = fallback; // <-- root-level (required)
-                await replaceDraftShipment(rawId, replacePayload); // updates ccShipmentId internally
-              }
-             }
+              const chosen = (emailInput?.value || "").trim() || "support@goldenspike.app";
+              if (emailInput && !emailInput.value.trim()) emailInput.value = chosen; // reflect in UI
+              const rawId = (document.getElementById("ccShipmentId")?.value || "").trim();
+              const payload = buildShipmentPayload();
+              payload.email = chosen; // root-level
+              await replaceDraftShipment(rawId, payload);
+            }
+          }
            
-
            await callCc("PATCH", { action: "buy", shipment_id: shipmentId, postage_type: postageType });
 
           // 4) Poll for label URLs (Chit Chats may return postage_requested first)
@@ -4826,7 +4835,7 @@ async function ccValidateAgainstApi(step){
           const vatRef = sanitizeVatRef(document.getElementById("cc_customs_tax_reference_number")?.value);
           const dest = String((toObj?.country_code || "")).toUpperCase();
 
-          return {
+          const out = {
             to           : toObj,
             country_code : (toObj?.country_code || "").toUpperCase(),
             order_id     : (orderId || undefined),
@@ -4839,6 +4848,17 @@ async function ccValidateAgainstApi(step){
               line_items
             }
           };
+          // ✅ EU/GB require ROOT-LEVEL email (not just to.email)
+          (function ensureRootEmail(){
+            const EU_CODES = new Set(["AT","BE","BG","HR","CY","CZ","DK","EE","FI","FR","DE","GR","HU","IE","IT","LV","LT","LU","MT","NL","PL","PT","RO","SK","SI","ES","SE"]);
+            const code = String(toCountry || "").toUpperCase();
+            const isEUorGB = EU_CODES.has(code) || code === "GB";
+            if (isEUorGB) {
+              const fallback = "support@goldenspike.app";
+              out.email = (toObj.email || "").trim() || fallback;
+            }
+          })();
+          return out;
         }
 
 function buildRefreshPayload(){
