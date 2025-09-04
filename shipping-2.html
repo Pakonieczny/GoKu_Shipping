@@ -5962,29 +5962,40 @@ function parseIntlAddressBlock(blockText = "", fallbackCountryCode = "") {
     }
   }
 
-  // 4) CITY / PROVINCE: try to split a comma line e.g. "Cesenatico, FORLÌ-CESENA"
+  // 4) CITY / PROVINCE (robust):
+  // Prefer comma split: "City With Two Words, FL 34761-3114"
+  // Fallback: no-comma US/CA: "City With Two Words FL 34761-3114" or "City Name QC H2X1A1"
   let to_city = "", to_province_code = "";
-  let to_postal_code = ""; // moved up to avoid TDZ (assigned earlier if found on same line)
+  let to_postal_code = "";
   if (idx < lines.length) {
-    const cityProv = lines[idx] || "";
-    const m = cityProv.match(/^(.+?)[,\s]+(.+)$/u);
-    if (m) {
-       to_city = m[1].trim();
-       const right = m[2].trim();
-       // pull ZIP if it trails after province/region on the same line
-       // Only match real ZIPs: 4–6 digits OR UK/CA formats (AB1 2CD, A1A1A1, etc.)
-       const mZipOnRight = right.match(/\b\d{5}(?:-\d{4})?\b|\b\d{4,6}\b|\b(?:[A-Z]\d[A-Z]\s?\d[A-Z]\d|[A-Z]{1,3}\d[A-Z\d]?\s?\d[A-Z]{2})\b/i);
-       if (mZipOnRight) {
-         to_postal_code = mZipOnRight[0].toUpperCase();
-         to_province_code = right.replace(mZipOnRight[0], "").replace(/[-, ]+$/,"").trim();
-       } else {
-         to_province_code = right;
-       }
-       idx++;
-     } else {
-      // If no comma, assume it's the city line
-      to_city = cityProv.trim();
-      idx++;
+    const cityProv = (lines[idx] || "").trim();
+    if (cityProv.includes(",")) {
+      const commaIdx = cityProv.indexOf(",");
+      to_city = cityProv.slice(0, commaIdx).trim();
+      const right = cityProv.slice(commaIdx + 1).trim();
+      const mZipOnRight = right.match(/\b\d{5}(?:-\d{4})?\b|\b\d{4,6}\b|\b(?:[A-Z]\d[A-Z]\s?\d[A-Z]\d|[A-Z]{1,3}\d[A-Z\d]?\s?\d[A-Z]{2})\b/i);
+      if (mZipOnRight) {
+        to_postal_code = mZipOnRight[0].toUpperCase();
+        to_province_code = right.replace(mZipOnRight[0], "").replace(/[-, ]+$/,"").trim();
+      } else {
+        to_province_code = right;
+      }
+     idx++;
+    } else {
+      // No comma: try explicit City ST ZIP (US) or City PR A1A 1A1 (CA)
+      const mUS = cityProv.match(/^(.+?)\s+([A-Z]{2})\s+(\d{5}(?:-\d{4})?)$/);
+      const mCA = !mUS && cityProv.match(/^(.+?)\s+([A-Z]{2})\s+([A-Z]\d[A-Z]\s?\d[A-Z]\d)$/i);
+      if (mUS || mCA) {
+        const m = mUS || mCA;
+        to_city = m[1].trim();
+        to_province_code = m[2].trim();
+        to_postal_code = m[3].toUpperCase();
+        idx++;
+      } else {
+        // Pure city line; province/zip will be picked up on following lines
+        to_city = cityProv;
+        idx++;
+      }
     }
   }
 
