@@ -4253,8 +4253,8 @@ function metalToBadge(label){
                 w.focus();
                 w.print();
                 resolve();
-                setTimeout(() => { URL.revokeObjectURL(url); iframe.remove(); }, 1000);
-              }, 250);
+                setTimeout(() => { URL.revokeObjectURL(url); iframe.remove(); }, 2000);
+              }, 350);
             } catch (e) {
               URL.revokeObjectURL(url);
               iframe.remove();
@@ -5047,6 +5047,19 @@ async function refreshRates(){
   const replacePayload = buildShipmentPayload();   // includes to/phone/customs etc.
   // Snapshot the ID we *intend* to price (will be updated if we replace)
   let idUsedForPricing = (idInput.value || "").trim();
+
+ // 🇺🇸 US-only rule: delete old → create new BEFORE pricing
+ const destCountry = (document.getElementById("cc_to_country_code")?.value || "")
+   .trim().toUpperCase() || detectDestCountryCode();
+ if (destCountry === "US") {
+   // Replace the draft now: create a fresh shipment and delete the old one.
+   const created = await replaceDraftShipment(id, replacePayload);
+   const newId = created?.id || created?.shipment?.id || idUsedForPricing;
+   if (newId && newId !== idUsedForPricing) {
+     try { pushShipmentId(newId); idInput.value = newId; } catch (_) {}
+     idUsedForPricing = newId;
+   }
+ }
 
   // 2) Compute a *recipient/customs-only* signature; package is priced via `refresh`,
   //    so excluding it avoids an unnecessary REPLACE call on Step 2 changes.
