@@ -3321,7 +3321,7 @@ function metalToBadge(label){
       let firstSnap = true;                       // 🔑 skip the initial payload
       db.collection("Brites_Orders")
         .doc("shipping-scan-1")
-        .onSnapshot(docSnap => {
+        .onSnapshot(async docSnap => {
           if (!window.isEmployeeLoggedIn) return;
 
           /* ignore Firestore’s first delivery; wait for *changes* */
@@ -3333,13 +3333,37 @@ function metalToBadge(label){
               const orderNumber   = data["Order Number"];
               if (orderNumber === lastScanProcessed) return;   // duplicate → ignore
               lastScanProcessed = orderNumber;                 // remember newest hit
+              /* ────────────────────────────────────────────────────────────────
+                 Mirror the Paste-button preflight so CC id refreshes on scan
+                 ───────────────────────────────────────────────────────────── */
+              window.ccPostBuyFrozen = false;
+              window.ccMuteIdInput   = false;
+              const idEl = document.getElementById("ccShipmentId");
+              if (idEl) { idEl.value = ""; idEl.dataset.setAt = String(Date.now()); }
+              window.ccShipmentId = "";
+              try { await fetchBatches(); } catch (e) {}
+
+              /* Cancel any in-flight ccShipmentId search and pending slow-pass */
+              try { window.ccSearchAbort?.abort(); } catch (e) {}
+              if (window.ccSlowTimer) { clearTimeout(window.ccSlowTimer); window.ccSlowTimer = null; }
+              window.ccSpin && window.ccSpin(false);
+
+              /* Write the scanned order to input */
               const etsyOrderInput = document.getElementById("etsyOrderNumber");
               etsyOrderInput.value = orderNumber;
 
-              /* simulate user hitting Enter → kicks off full load */
-              etsyOrderInput.dispatchEvent(
-                new KeyboardEvent("keydown", { key:"Enter", keyCode:13, which:13 })
-              );
+              /* Kick a CC refresh shortly after (independent of auto-Enter) */
+              setTimeout(() => window.refreshFromOrderIfChitChats?.(), 500);
+
+              /* Focus, then simulate Enter to run the full load */
+              etsyOrderInput.focus();
+              setTimeout(() => {
+                const ev = new KeyboardEvent("keydown", { key:"Enter", bubbles:true });
+                etsyOrderInput.dispatchEvent(ev);
+              }, 100);
+
+              /* one-shot: wipe the field so it can’t be reused (kept) */
+              // (leave your existing wipe code below intact)
 
               /* one-shot: wipe the field so it can’t be reused */
               db.collection("Brites_Orders")
