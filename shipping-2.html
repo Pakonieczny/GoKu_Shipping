@@ -5855,7 +5855,6 @@ const COUNTRY_TO_ISO2 = {
     if (EU_UK_CODES.has(cc)) return "";
 
     // Normalize: strip diacritics, spaces, and dots for robust matching
-    const strip = (x) => x.normalize?.('NFD').replace(/[\u0300-\u036f]/g,"").toUpperCase().replace(/[.\s]/g,"");
     const strip = (x) => x
       .normalize?.('NFD')
       .replace(/[\u0300-\u036f]/g,"")
