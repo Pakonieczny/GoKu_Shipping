@@ -512,10 +512,10 @@
       title="Looking up shipment in Chit Chats"></span>
 
       <!-- NEW: Update ID button -->
-      <!-- <button id="ccUpdateIdBtn" class="btn"
+     <button id="ccUpdateIdBtn" class="btn"
               style="height:24px; line-height:24px; font-size:0.8em; margin-left:6px;">
         Update ID
-      </button> -->
+      </button> 
 
       <!-- Batch dropdown (wrapped so Config can move/resize the visible control) -->
       <div id="ccBatchSelectWrap"
@@ -2149,7 +2149,7 @@ function metalToBadge(label){
       ccCreateBatchBtn:      { left: 1400, top: 170, width: 175, height: 45 },
       ccAddToBatchBtn:       { left: 1400, top: 200, width: 175, height: 45 },
       ccRemoveFromBatchBtn:  { left: 1400, top: 230, width: 175, height: 45 },
-      //ccUpdateIdBtn:         { left: 1604, top: 80, width: 95,  height: 24 },
+      ccUpdateIdBtn:         { left: 1604, top: 80, width: 95,  height: 24 },
       ccEditBtn:             { left: 50,   top: 225, width: 120, height: 28 }
 
     };
@@ -6353,36 +6353,40 @@ function parseIntlAddressBlock(blockText = "", fallbackCountryCode = "") {
         sp.style.display = on ? "inline-block" : "none";
       }
 
-      // NEW: "Update ID" button → manually perform Update/Delete/Create
-      document.getElementById("ccUpdateIdBtn")?.addEventListener("click", async () => {
-        const btn = document.getElementById("ccUpdateIdBtn");
-        try {
-          setBtnLoading(btn, true);
-          // prime flags so Step-2 Next can wait/bypass
-          window.ccManualIdUpdateInFlight = true;
-          window.ccManualIdUpdateDone     = false;
-          let resolvePromise;
-          window.ccManualIdUpdatePromise = new Promise(res => (resolvePromise = res));
+// NEW: "Update ID" button → run Update/Delete/Create fully in the background
+document.getElementById("ccUpdateIdBtn")?.addEventListener("click", () => {
+  const btn = document.getElementById("ccUpdateIdBtn");
+  setBtnLoading(btn, true);
+  // Prime flags so Step-2 Next can wait or bypass (US/CA logic in refreshRates)
+  window.ccManualIdUpdateInFlight = true;
+  window.ccManualIdUpdateDone     = false;
+  let resolvePromise;
+  window.ccManualIdUpdatePromise  = new Promise(res => (resolvePromise = res));
 
-          const idEl   = document.getElementById("ccShipmentId");
-          const oldId  = (idEl?.value || "").trim();
-          const payload = buildShipmentPayload();                // using your existing builder
+  const idEl   = document.getElementById("ccShipmentId");
+  const oldId  = (idEl?.value || "").trim();
+  // Snapshot ALL current fields from ccStep0/1/2
+  const payload = buildShipmentPayload();
 
-          const created = await replaceDraftShipment(oldId, payload); // create new, sweep dupes, delete old
-          const newId   = created?.id || created?.shipment?.id || "";
-          if (newId && newId !== oldId) {
-            try { pushShipmentId(newId); idEl.value = newId; } catch {}
-          }
-          window.ccManualIdUpdateDone = true;  // ✅ Next can bypass replace for US/CA
-          M.toast?.({ html: "Shipment ID updated." });
-          resolvePromise?.();
-        } catch (e) {
-          try { handleCcApiError?.(e); } catch {}
-        } finally {
-          window.ccManualIdUpdateInFlight = false;
-          setBtnLoading(btn, false);
-        }
-      });
+  // Fire-and-forget: no modals, no step navigation; UI stays responsive
+  (async () => {
+    try {
+      const created = await replaceDraftShipment(oldId, payload); // create new → sweep dupes → delete old
+      const newId   = created?.id || created?.shipment?.id || "";
+      if (newId && newId !== oldId) {
+        try { pushShipmentId(newId); idEl.value = newId; } catch {}
+      }
+      window.ccManualIdUpdateDone = true;     // ✅ Step-2 can bypass duplicate replace
+      M.toast?.({ html: "Shipment ID updated in background." });
+      resolvePromise?.();
+    } catch (e) {
+      try { handleCcApiError?.(e); } catch {}
+    } finally {
+      window.ccManualIdUpdateInFlight = false;
+      setBtnLoading(btn, false);
+    }
+  })();
+});
 
       btnNext.addEventListener("click", async () => {
         try {
