@@ -5996,6 +5996,12 @@ function parseIntlAddressBlock(blockText = "", fallbackCountryCode = "") {
     };
   }
 
+  function sanitizeAddress2(raw){
+  const s = String(raw || "").trim();
+  // treat common “empty” placeholders as empty
+  return /^(?:na|n\/a|none|-|—|--|n\.a\.)$/i.test(s) ? "" : s;
+  }
+
   // ▼ Define the missing helper (global scope)
   function collectRecipientAddress(){
     const block   = (document.getElementById("shipAddressBox")?.value || "").trim();
@@ -6010,11 +6016,14 @@ function parseIntlAddressBlock(blockText = "", fallbackCountryCode = "") {
       const to = {
         to_name         : parsed.to_name          || fields.to_name,
         to_address_1    : parsed.to_address_1     || fields.to_address_1,
-        to_address_2    : parsed.to_address_2     || fields.to_address_2,
+        // 🚫 no fallback: never carry over Address 2
+        to_address_2    : sanitizeAddress2(parsed.to_address_2),
         to_city         : parsed.to_city          || fields.to_city,
-        to_province_code: parsed.to_province_code || fields.to_province_code,
-        to_postal_code  : parsed.to_postal_code   || fields.to_postal_code,
-        to_country_code : (parsed.to_country_code || fields.to_country_code || "").toUpperCase()
+        // 🚫 no fallback: sanitize strictly for the detected country
+        to_country_code : (parsed.to_country_code || fields.to_country_code || "").toUpperCase(),
+        to_province_code: sanitizeProvinceForCountry(parsed.to_province_code, (parsed.to_country_code || fields.to_country_code))
+        // keep postal code behavior as you prefer:
+        ,to_postal_code : parsed.to_postal_code   || fields.to_postal_code
       };
 
      // Belt & suspenders: if UK/EU, force province empty before using anywhere else
@@ -6028,7 +6037,10 @@ function parseIntlAddressBlock(blockText = "", fallbackCountryCode = "") {
      if (elProv) elProv.value = EU_UK_CODES.has(to.to_country_code) ? "" : (to.to_province_code || "");
 
       // Hydrate Step-0 inputs so the compare modal never shows blanks
-      const set = (id, v)=>{ const el=document.getElementById(id); if(el && v) el.value=v; };
+      const set = (id, v) => {
+      const el = document.getElementById(id);
+      if (el) el.value = (v ?? "").toString().trim();
+      };
       set("cc_to_name", to.to_name);
       set("cc_to_address_1", to.to_address_1);
       set("cc_to_address_2", to.to_address_2);
