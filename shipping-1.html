@@ -4276,7 +4276,7 @@ function metalToBadge(label){
         await addAll(tDoc);
         const mergedBytes = await out.save();
         // Clear cache after a successful merge so the sheet doesn't re-append next time
-        try { if (window._intlTempPdfUrl) URL.revokeObjectURL(window._intlTempPdfUrl); } catch {}
+        try { if (window._intlTempPdfUrl) URL.revokeObjectURL(window._intlTempPdfUrl); } catch (e) {}
         window._intlTempPdfBlob = null;
         window._intlTempPdfUrl  = null;
         return new Blob([mergedBytes], { type: "application/pdf" });
@@ -4515,7 +4515,7 @@ function metalToBadge(label){
       async function generateAndPrintIntlTempPdf(){
         const blob = await buildIntlTempPdfBlob();
         // keep only the latest cached temp sheet
-        try { if (window._intlTempPdfUrl) URL.revokeObjectURL(window._intlTempPdfUrl); } catch {}
+        try { if (window._intlTempPdfUrl) URL.revokeObjectURL(window._intlTempPdfUrl); } catch (e) {}
         window._intlTempPdfBlob = blob;
         window._intlTempPdfUrl  = URL.createObjectURL(blob); // optional (debug)
         // UX hint: no new tab, no print yet; we’ll merge with the label when it’s ready
