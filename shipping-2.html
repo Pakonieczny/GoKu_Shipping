@@ -5214,7 +5214,12 @@ async function refreshRates(){
         ];
         ids.forEach(id => {
           const el = document.getElementById(id);
-          if (el) { el.value = ""; el.dataset.userEdited = "0"; }
+          if (el) {
+            // force-clear any recent “set” guards, then blank the field
+            try { el.dataset.setAt = "0"; } catch(_) {}
+            el.value = "";
+            el.dataset.userEdited = "0";
+          }
         });
 
         const ship = document.getElementById("shipAddressBox");
@@ -6014,6 +6019,13 @@ function parseIntlAddressBlock(blockText = "", fallbackCountryCode = "") {
 
      // Belt & suspenders: if UK/EU, force province empty before using anywhere else
      if (EU_UK_CODES.has(to.to_country_code)) to.to_province_code = "";
+
+     // still inside collectRecipientAddress(), after the EU/UK zeroing
+     to.to_province_code = sanitizeProvinceForCountry(to.to_province_code, to.to_country_code);
+
+     // reflect the sanitized value into the visible field right away
+     const elProv = document.getElementById("cc_to_province_code");
+     if (elProv) elProv.value = EU_UK_CODES.has(to.to_country_code) ? "" : (to.to_province_code || "");
 
       // Hydrate Step-0 inputs so the compare modal never shows blanks
       const set = (id, v)=>{ const el=document.getElementById(id); if(el && v) el.value=v; };
