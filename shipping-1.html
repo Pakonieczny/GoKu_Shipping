@@ -3691,6 +3691,10 @@ function metalToBadge(label){
       // Kick if fields already have values
       if ((orderInp?.value || "").trim())    refreshFromOrderIfChitChats();
 
+      // Ensure a callable getter exists before anyone uses it
+      if (typeof window.getCcEndpoint !== "function") {
+        window.getCcEndpoint = () => (window.chitChatsFn || "/.netlify/functions/testChitChats");
+      }
 
       // --- Batches
       async function fetchBatches(){
