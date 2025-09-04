@@ -5024,7 +5024,8 @@ async function refreshRates(){
   // Snapshot the ID we *intend* to price (will be updated if we replace)
   let idUsedForPricing = (idInput.value || "").trim();
 
-  // 2) Compute a "structural" signature; if changed → replace
+  // 2) Compute a *recipient/customs-only* signature; package is priced via `refresh`,
+  //    so excluding it avoids an unnecessary REPLACE call on Step 2 changes.
   const replaceSig = JSON.stringify({
     to: {
       name: replacePayload?.to?.name,
@@ -5050,13 +5051,6 @@ async function refreshRates(){
         sku_code: li.sku_code,
         origin_country: (li.origin_country || "").toUpperCase()
       }))
-    },
-    pkg: {
-      package_type: refreshPayload.package_type,
-      weight: refreshPayload.weight,
-      weight_unit: refreshPayload.weight_unit,
-      size_unit: refreshPayload.size_unit,
-      size_x: refreshPayload.size_x, size_y: refreshPayload.size_y, size_z: refreshPayload.size_z
     }
   });
 
