@@ -5094,7 +5094,7 @@ async function refreshRates(){
   // ⏱️ Performance: defer any REPLACE to the Buy step.
   // Creating/deleting drafts here adds a full extra round-trip for no pricing benefit.
   window.ccLastReplaceSig = replaceSig; // remember latest state for Buy-time check
-  idUsedForPricing = id;  
+  idUsedForPricing = idInput.value || id; // ensure we price the newly created shipment
 
     // 3) Price the (possibly replaced) shipment
     const out = await callCc("PATCH", { action: "refresh", shipment_id: idUsedForPricing, payload: refreshPayload });
