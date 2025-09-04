@@ -4255,31 +4255,64 @@ function metalToBadge(label){
         return await doc.save();
       }
 
+        // Quick sanity check for raw PDF bytes ("%PDF")
+        function _looksLikePdf(bytes) {
+          return bytes && bytes.length >= 4 &&
+                 bytes[0] === 0x25 && bytes[1] === 0x50 && bytes[2] === 0x44 && bytes[3] === 0x46;
+        }
+
       // If a cached "ITEM & TAX INFORMATION" PDF exists, append it after the label and return a merged Blob.
       // Returns null when no cached temp PDF exists.
       async function mergeLabelWithTempIfAny(labelBlob) {
         const temp = window._intlTempPdfBlob;
         if (!temp) return null;
-        const PDFLib = await ensurePdfLib();
-        const [labelBytes, tempBytes] = await Promise.all([
-          _blobAsPdfBytes(labelBlob),
-          temp.arrayBuffer()
-        ]);
-        const out  = await PDFLib.PDFDocument.create();
-        const lDoc = await PDFLib.PDFDocument.load(labelBytes);
-        const tDoc = await PDFLib.PDFDocument.load(tempBytes);
-        const addAll = async (src) => {
-          const pages = await out.copyPages(src, src.getPageIndices());
-          pages.forEach(p => out.addPage(p));
-        };
-        await addAll(lDoc);
-        await addAll(tDoc);
-        const mergedBytes = await out.save();
-        // Clear cache after a successful merge so the sheet doesn't re-append next time
-        try { if (window._intlTempPdfUrl) URL.revokeObjectURL(window._intlTempPdfUrl); } catch {}
-        window._intlTempPdfBlob = null;
-        window._intlTempPdfUrl  = null;
-        return new Blob([mergedBytes], { type: "application/pdf" });
+        try {
+          const PDFLib = await ensurePdfLib();
+          const [labelBytes, tempBytes] = await Promise.all([
+            _blobAsPdfBytes(labelBlob),
+            temp.arrayBuffer()
+          ]);
+          // Bail out if either side isn't a real PDF
+          if (!_looksLikePdf(labelBytes)) {
+            console.warn("mergeLabelWithTempIfAny: label bytes not a PDF; skipping merge");
+            M.toast?.({ html: "Label merge skipped (invalid label PDF). Printing label only." });
+            return null;
+          }
+          if (!_looksLikePdf(new Uint8Array(tempBytes))) {
+            console.warn("mergeLabelWithTempIfAny: temp bytes not a PDF; skipping merge");
+            M.toast?.({ html: "Label merge skipped (invalid temp PDF). Printing label only." });
+            return null;
+          }
+          let lDoc, tDoc;
+          try { lDoc = await PDFLib.PDFDocument.load(labelBytes); }
+          catch (e) {
+            console.warn("mergeLabelWithTempIfAny: failed to parse label PDF", e);
+            M.toast?.({ html: "Label merge skipped (parse error: label PDF)." });
+            return null;
+          }
+          try { tDoc = await PDFLib.PDFDocument.load(tempBytes); }
+          catch (e) {
+            console.warn("mergeLabelWithTempIfAny: failed to parse temp PDF", e);
+            M.toast?.({ html: "Label merge skipped (parse error: temp PDF)." });
+            return null;
+          }
+          const out = await PDFLib.PDFDocument.create();
+          const addAll = async (src) => {
+            const pages = await out.copyPages(src, src.getPageIndices());
+            pages.forEach(p => out.addPage(p));
+          };
+          await addAll(lDoc);
+          await addAll(tDoc);
+          const mergedBytes = await out.save();
+          // Clear cache after a successful merge so the sheet doesn't re-append next time
+          try { if (window._intlTempPdfUrl) URL.revokeObjectURL(window._intlTempPdfUrl); } catch {}
+          window._intlTempPdfBlob = null;
+          window._intlTempPdfUrl  = null;
+          return new Blob([mergedBytes], { type: "application/pdf" });
+        } catch (e) {
+          console.warn("mergeLabelWithTempIfAny: unexpected error; skipping merge", e);
+          return null;
+        }
       }
 
       /* Poll GET ?resource=shipment&id=… until label URLs appear (Chit Chats returns them when status turns ready) */
@@ -4550,7 +4583,7 @@ function metalToBadge(label){
             const isEUorGB = EU_CODES.has(countryCode) || countryCode === "GB";
             if (isEUorGB) {
               const emailInput = document.getElementById("cc_to_email");
-              const chosen = (emailInput?.value || "").trim() || "support@goldenspike.app";
+              const chosen = (emailInput?.value || "").trim() || "custombrites@gmail.com";
               if (emailInput && !emailInput.value.trim()) emailInput.value = chosen; // reflect in UI
               const rawId = (document.getElementById("ccShipmentId")?.value || "").trim();
               const payload = buildShipmentPayload();
@@ -4859,7 +4892,7 @@ async function ccValidateAgainstApi(step){
             const code = String(toCountry || "").toUpperCase();
             const isEUorGB = EU_CODES.has(code) || code === "GB";
             if (isEUorGB) {
-              const fallback = "support@goldenspike.app";
+              const fallback = "custombrites@gmail.com";
               out.email = (toObj.email || "").trim() || fallback;
             }
           })();
