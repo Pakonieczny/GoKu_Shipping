@@ -5944,7 +5944,8 @@ function parseIntlAddressBlock(blockText = "", fallbackCountryCode = "") {
     // 3b) Optional Address 2 line (apt/suite/unit/etc.)
     if (idx < lines.length) {
     const maybeUnit = lines[idx] || "";
-    const unitRe = /\b(?:APT|APARTMENT|UNIT|STE|SUITE|BLDG|BUILDING|FL|FLOOR|P\.?O\.?\s*BOX|PO\s*BOX|POBOX|BOX|DEPT|DEPARTMENT|ROOM|RM|LOT|#)\b/i;
+    const unitRe = /\b(?:APT|APARTMENT|UNIT|STE|SUITE|BLDG|BUILDING|FLOOR|FLR|P\.?O\.?\s*BOX|PO\s*BOX|POBOX|BOX|DEPT|DEPARTMENT|ROOM|RM|LOT|#)\b/i;
+    const cityStateZipRe = /^.+?,\s*[A-Z]{2}\s+\d{5}(?:-\d{4})?$/i;
 
     // Heuristic: if this line looks like a unit, or if the *next* line clearly looks like a city line,
     // treat this line as Address 2.
@@ -5954,7 +5955,8 @@ function parseIntlAddressBlock(blockText = "", fallbackCountryCode = "") {
       (to_country_code === "US" && /\b[A-Z]{2}\b\s+\d{5}(?:-\d{4})?$/.test(next)) ||
       (to_country_code === "CA" && /\b[A-Z]{2}\b\s+[A-Z]\d[A-Z]\s?\d[A-Z]\d$/.test(next));
 
-    if (unitRe.test(maybeUnit) || (!/,/.test(maybeUnit) && looksLikeCityNext)) {
+    if (!cityStateZipRe.test(maybeUnit) &&
+      (unitRe.test(maybeUnit) || (!/,/.test(maybeUnit) && looksLikeCityNext))) {
       to_address_2 = maybeUnit.trim();
       idx++;
     }
@@ -6037,6 +6039,10 @@ function parseIntlAddressBlock(blockText = "", fallbackCountryCode = "") {
   const clean = (s)=>s.replace(/\s{2,}/g," ").trim();
   // ✅ Final guard: zero province for UK/EU, and sanitize everywhere else
   to_province_code = sanitizeProvinceForCountry(to_province_code, to_country_code);
+
+  if (to_address_2 && /^.+?,\s*[A-Z]{2}\s+\d{5}(?:-\d{4})?$/i.test(to_address_2)) {
+    to_address_2 = "";
+  }
 
    // FIX GUARD: if city was mis-assigned to the country (e.g., "US"), try to recover
   if (to_city && to_country_code && to_city.toUpperCase() === to_country_code) {
