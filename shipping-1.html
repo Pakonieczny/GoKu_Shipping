@@ -1974,7 +1974,7 @@ function metalToBadge(label){
           try {
             const resp = await fetch(u + "?resource=ping", { method:"GET", credentials:"include" });
             if (resp.ok) return u;
-          } catch (e) {}
+          } catch {}
         }
         return urls[0]; // last resort
       }
@@ -1987,7 +1987,7 @@ function metalToBadge(label){
           : "/.netlify/functions";
         const pool = candidates.length ? candidates : [`${base}/testChitChats`];
         chosen = await pickAlive(pool);
-      } catch (e) {}
+      } catch {}
 
       function getCcEndpoint(){ return chosen; }
       window.getCcEndpoint = getCcEndpoint;
@@ -3612,7 +3612,7 @@ function metalToBadge(label){
                   if (s2) setShipmentUI(s2);
                 } catch (err) {
                   if (err?.status === 504) {
-                    try { M.toast?.({ html: "Chit Chats search timed out. Open ‘Edit Shipment’ → Next to create/find." }); } catch (e) {}
+                    try { M.toast?.({ html: "Chit Chats search timed out. Open ‘Edit Shipment’ → Next to create/find." }); } catch {}
                   }
                 }
               }, 600);
@@ -3640,7 +3640,7 @@ function metalToBadge(label){
                   if (s2) setShipmentUI(s2);
                 } catch (err) {
                   if (err?.status === 504) {
-                    try { M.toast?.({ html: "Chit Chats search timed out. Use Edit Shipment to proceed." }); } catch (e) {}
+                    try { M.toast?.({ html: "Chit Chats search timed out. Use Edit Shipment to proceed." }); } catch {}
                   }
                 }
               }, 600);
@@ -3669,7 +3669,7 @@ function metalToBadge(label){
           const idEl = document.getElementById("ccShipmentId");
           if (idEl) { idEl.value = ""; idEl.dataset.setAt = String(Date.now()); }
           window.ccShipmentId = "";
-          try { fetchBatches(); } catch (e) {}
+          try { fetchBatches(); } catch {}
 
           // 🔪 kill any live CC search and pending slow-pass; we’re switching orders
           try { window.ccSearchAbort?.abort(); } catch (e) {}
@@ -3882,7 +3882,7 @@ function metalToBadge(label){
         const isCcId = id === "ccShipmentId";
         const suppress = isCcId && (window.ccMuteIdInput || window.ccPostBuyFrozen);
         if (!suppress) {
-          try { el.dispatchEvent(new Event("input", { bubbles: true })); } catch (e) {}
+          try { el.dispatchEvent(new Event("input", { bubbles: true })); } catch {}
         }
       }
 
@@ -3895,7 +3895,7 @@ function metalToBadge(label){
         if (hasVal) return;
         if (val == null || (typeof val === "number" && !Number.isFinite(val))) return;
         el.value = String(val);
-        try { el.dispatchEvent(new Event("input", { bubbles: true })); } catch (e) {}
+        try { el.dispatchEvent(new Event("input", { bubbles: true })); } catch {}
       }
     
       // NEW: mark qty/unit_value as user-edited when the user types
@@ -4044,7 +4044,7 @@ function metalToBadge(label){
           body: body ? JSON.stringify(body) : undefined
         });
         const text = await resp.text();
-        let data; try { data = JSON.parse(text); } catch (e) { data = text; }
+        let data; try { data = JSON.parse(text); } catch { data = text; }
 
         if (!resp.ok) {
           const pick = k => (data && typeof data[k] === "string" ? data[k] : null);
@@ -4055,7 +4055,7 @@ function metalToBadge(label){
           const e = new Error(message);
           e.status = resp.status;
           e.raw    = data;
-          try { console.debug("ChitChats proxy error", resp.status, data); } catch (e) {}
+          try { console.debug("ChitChats proxy error", resp.status, data); } catch {}
           throw e;
         }
         return data;
@@ -4118,7 +4118,7 @@ function metalToBadge(label){
           el.dataset.setAt = String(Date.now());
           // ⛔ do not fire 'input' if muted or frozen
           if (!window.ccMuteIdInput && !window.ccPostBuyFrozen && v !== prev) {
-            try { el.dispatchEvent(new Event("input", { bubbles: true })); } catch (e) {}
+            try { el.dispatchEvent(new Event("input", { bubbles: true })); } catch {}
           }
         }
       }
@@ -4165,7 +4165,7 @@ function metalToBadge(label){
         if ((country && country !== "US" && country !== "CA") || hasVat) {
           window.ccLastReplaceSig = null;
         }
-      } catch (e) {}
+      } catch {}
 
 
       async function replaceShipmentWithCorrections() {
@@ -4276,7 +4276,7 @@ function metalToBadge(label){
         await addAll(tDoc);
         const mergedBytes = await out.save();
         // Clear cache after a successful merge so the sheet doesn't re-append next time
-        try { if (window._intlTempPdfUrl) URL.revokeObjectURL(window._intlTempPdfUrl); } catch (e) {}
+        try { if (window._intlTempPdfUrl) URL.revokeObjectURL(window._intlTempPdfUrl); } catch {}
         window._intlTempPdfBlob = null;
         window._intlTempPdfUrl  = null;
         return new Blob([mergedBytes], { type: "application/pdf" });
@@ -4515,7 +4515,7 @@ function metalToBadge(label){
       async function generateAndPrintIntlTempPdf(){
         const blob = await buildIntlTempPdfBlob();
         // keep only the latest cached temp sheet
-        try { if (window._intlTempPdfUrl) URL.revokeObjectURL(window._intlTempPdfUrl); } catch (e) {}
+        try { if (window._intlTempPdfUrl) URL.revokeObjectURL(window._intlTempPdfUrl); } catch {}
         window._intlTempPdfBlob = blob;
         window._intlTempPdfUrl  = URL.createObjectURL(blob); // optional (debug)
         // UX hint: no new tab, no print yet; we’ll merge with the label when it’s ready
@@ -4559,7 +4559,7 @@ function metalToBadge(label){
             const newId = created?.id || created?.shipment?.id;
             if (newId && newId !== shipmentId) {
               shipmentId = String(newId);
-              try { pushShipmentId(shipmentId); } catch (e) {}
+              try { pushShipmentId(shipmentId); } catch {}
             }
           }
            
@@ -4575,14 +4575,14 @@ function metalToBadge(label){
             const merged = await mergeLabelWithTempIfAny(labelPdfBlob);
             await printBlobInPlace(merged || labelPdfBlob);
             printed = true;
-          } catch (e) {} // fall through to PNG
+          } catch {}  // fall through to PNG
           if (!printed) {
             try {
               const labelPngBlob = await fetchCcLabelBlob("png", shipmentId);
               const merged = await mergeLabelWithTempIfAny(labelPngBlob);
               await printBlobInPlace(merged || labelPngBlob);
               printed = true;
-            } catch (e) {}
+            } catch {}
           }
           if (!printed) throw new Error("Label purchased, but not ready yet.");
 
@@ -4599,7 +4599,7 @@ function metalToBadge(label){
           try {
             const modalEl = document.getElementById("ccEditModal");
             if (modalEl) modalEl.style.display = "none";
-          } catch (e) {}
+          } catch {}
           M.toast?.({ html: "Label printed." });
         } catch (err) {
           console.error(err);
@@ -4619,7 +4619,7 @@ function metalToBadge(label){
       // Open a placeholder print window right away to preserve user gesture
       function openPrintStub(){
         let win = null;
-        try { win = window.open("", "_blank", "noopener,noreferrer"); } catch (e) {}
+        try { win = window.open("", "_blank", "noopener,noreferrer"); } catch {}
         if (!win) return null;
         const html = `<!doctype html><html><head><meta charset="utf-8"><title>Generating label…</title>
           <style>
@@ -4633,7 +4633,7 @@ function metalToBadge(label){
               <div>Generating label in Chit Chats… don’t close this tab.</div>
             </div>
           </body></html>`;
-        try { win.document.open(); win.document.write(html); win.document.close(); } catch (e) {}
+        try { win.document.open(); win.document.write(html); win.document.close(); } catch {}
         return win;
       }
 
@@ -4663,7 +4663,7 @@ function metalToBadge(label){
       async function openAndAutoPrintLabel(url, win) {
         let target = (win && !win.closed) ? win : null;
         if (!target) {
-          try { target = window.open("", "_blank", "noopener,noreferrer"); } catch (e) {}
+          try { target = window.open("", "_blank", "noopener,noreferrer"); } catch {}
         }
         if (!target) {
           // Popup blocked → fallback to same-tab open
@@ -4759,7 +4759,7 @@ async function ccValidateAgainstApi(step){
           let   phone   = (document.getElementById("cc_to_phone").value || "").trim();
           if (country && country !== "CA" && country !== "US" && !phone) {
             phone = "416-606-2476";
-            try { document.getElementById("cc_to_phone").value = phone; } catch (e) {}
+            try { document.getElementById("cc_to_phone").value = phone; } catch {}
           }
           return {
             name         : document.getElementById("cc_to_name").value.trim(),
@@ -5029,7 +5029,7 @@ async function refreshRates(){
       id = newId;
       idInput.value = newId;
       idUsedForPricing = newId;       // ← keep our local pointer aligned
-      try { pushShipmentId(newId); } catch (e) {}
+      try { pushShipmentId(newId); } catch {}
     }
     window.ccLastReplaceSig = replaceSig;
   } else {
@@ -5068,7 +5068,7 @@ async function refreshRates(){
 
     if (respondedId && respondedId !== idUsedForPricing) {
       // 🔍 Mismatch means something rewired the ID underneath us — fix it and re-price once
-      try { console.warn("[CC Rates] ID mismatch; retrying", { sent:idUsedForPricing, got:respondedId }); } catch (e) {}
+      try { console.warn("[CC Rates] ID mismatch; retrying", { sent:idUsedForPricing, got:respondedId }); } catch {}
       pushShipmentId(respondedId);
       const out2 = await callCc("PATCH", { action: "refresh", shipment_id: respondedId, payload: refreshPayload });
       renderRates(out2.shipment || out2);
@@ -5120,7 +5120,7 @@ async function refreshRates(){
               `<p style="font:14px/1.4 system-ui,Arial;margin-top:10px">
                  Still generating… open from your Chit Chats dashboard if this doesn’t auto-print.
                </p>`;
-          } catch (e) {}
+          } catch {}
         }
         M.toast?.({ html:"Label purchased; still generating at Chit Chats." });
           }
@@ -5133,7 +5133,7 @@ async function refreshRates(){
 
       if (editBtn) editBtn.addEventListener("click", async () => {
         // Ensure Step-0 inputs are hydrated so the verify modal isn't blank
-        try { window.collectRecipientAddress?.(); } catch (e) {}
+        try { window.collectRecipientAddress?.(); } catch {}
 
         // Keep the editor hidden until explicitly requested
         if (modal) modal.style.display = "none";
@@ -5511,7 +5511,7 @@ async function refreshRates(){
           const t = String(window.cachedOrderItems[0]?.title || "");
           return t.split(" ").slice(0, 12).join(" ").trim();
         }
-      } catch (e) {}
+      } catch {}
       return "";
     }
 
@@ -5627,14 +5627,13 @@ async function refreshRates(){
 
               orig = fromCc;
             }
-          } catch(e){ try{ console.debug("[Verify] CC shipment fetch failed", e);}
-          catch(e){}
+          } catch(e){ try{ console.debug("[Verify] CC shipment fetch failed", e);}catch{} }
         }
         return orig;
       }
 
      async function maybeVerifyAddressBeforeStep1(force = false){
-       const log  = (...a)=>{ try{ console.debug("[Verify]", ...a);}catch(e){} };
+       const log  = (...a)=>{ try{ console.debug("[Verify]", ...a);}catch{} };
        const orig = await pickOrigAddress(); // prefer CC's own shipment address
 
        // Try Smarty (US only); otherwise fall back to carrier verify.
@@ -6062,7 +6061,7 @@ function parseIntlAddressBlock(blockText = "", fallbackCountryCode = "") {
         const to = buildTo(); // pull from ccShip1 fields
         try {
           await callCc("POST", { action: "verify_to", to });  // best effort; never throws server 500 by design
-        } catch (e) {}
+        } catch {}
       }
 
       async function ccEnsureDraftShipmentIdNoRefresh(){
