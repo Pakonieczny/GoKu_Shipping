@@ -4253,8 +4253,8 @@ function metalToBadge(label){
                 w.focus();
                 w.print();
                 resolve();
-                setTimeout(() => { URL.revokeObjectURL(url); iframe.remove(); }, 2000);
-              }, 350);
+                setTimeout(() => { URL.revokeObjectURL(url); iframe.remove(); }, 60000);
+              }, 250);
             } catch (e) {
               URL.revokeObjectURL(url);
               iframe.remove();
