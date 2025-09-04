@@ -4524,41 +4524,6 @@ function metalToBadge(label){
           const selectedLi = ratesList?.querySelector("li.selected");
           if (selectedLi?.dataset?.postageType) postageType = selectedLi.dataset.postageType;
 
-          // ✅ Ensure intl shipments have required contact info (phone for non-CA/US; email for EU/GB)
-          try {
-            const ccRaw   = String(document.getElementById("cc_to_country_code")?.value || "").toUpperCase();
-            const ccCode  = (ccRaw === "UK" ? "GB" : ccRaw);
-            const phoneEl = document.getElementById("cc_to_phone");
-            const emailEl = document.getElementById("cc_to_email");
-
-            const isIntl     = !!ccCode && ccCode !== "CA" && ccCode !== "US";
-            const EU_CODES   = new Set(["AT","BE","BG","HR","CY","CZ","DK","EE","FI","FR","DE","GR","HU","IE","IT","LV","LT","LU","MT","NL","PL","PT","RO","SK","SI","ES","SE"]);
-            const needsPhone = isIntl;
-            const needsEmail = EU_CODES.has(ccCode) || ccCode === "GB";
-
-            let touched = false;
-
-            if (needsPhone && phoneEl && !phoneEl.value.trim()) {
-              phoneEl.value = "416-606-2476";
-              touched = true;
-            }
-            if (needsEmail && emailEl && !emailEl.value.trim()) {
-              // Overrideable fallback
-              emailEl.value = (window.CC_FALLBACK_EMAIL || "custombrites@gmail.com");
-              touched = true;
-            }
-
-            // Push updated TO so /buy sees the new phone/email on the server
-            if (isIntl && touched) {
-              const rp = (typeof buildRefreshPayload === "function") ? buildRefreshPayload() : {};
-              await callCc("PATCH", {
-                action     : "refresh",
-                shipment_id: (document.getElementById("ccShipmentId")?.value || "").trim(),
-                payload    : { to: buildTo(), ...rp }
-              });
-            }
-          } catch (_) {}
-
           // 3) Buy label
           // 🆕 Ensure EU/GB email before buy
            {
@@ -4582,7 +4547,7 @@ function metalToBadge(label){
                 await replaceDraftShipment(rawId, replacePayload); // updates ccShipmentId internally
               }
              }
-           }
+           
 
            await callCc("PATCH", { action: "buy", shipment_id: shipmentId, postage_type: postageType });
 
