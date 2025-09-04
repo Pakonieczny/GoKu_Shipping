@@ -5593,8 +5593,8 @@ async function refreshRates(){
 
     async function autofillFromVerifyModal() {
     const set = (id, v) => {
-      const el = document.getElementById(id);
-      if (el) el.value = String(v);
+    const el = document.getElementById(id);
+    if (el) el.value = (v ?? "").toString().trim();
     };
 
     // (A) Description from Order Details → Title:
@@ -5903,6 +5903,24 @@ function parseIntlAddressBlock(blockText = "", fallbackCountryCode = "") {
 
   // 3) STREET: next line is almost always the street
   let to_address_1 = lines[idx++] || "";
+  // 3b) Optional Address 2 line (apt/suite/unit/etc.)
+  if (idx < lines.length) {
+    const maybeUnit = lines[idx] || "";
+    const unitRe = /\b(?:APT|APARTMENT|UNIT|STE|SUITE|BLDG|BUILDING|FLOOR|PO BOX|DEPT|DEPARTMENT|ROOM|RM|LOT|#)\b/i;
+
+    // Heuristic: if this line looks like a unit, or if the *next* line clearly looks like a city line,
+    // treat this line as Address 2.
+    const next = lines[idx + 1] || "";
+    const looksLikeCityNext =
+      /,/.test(next) ||
+      (to_country_code === "US" && /\b[A-Z]{2}\b\s+\d{5}(?:-\d{4})?$/.test(next)) ||
+      (to_country_code === "CA" && /\b[A-Z]{2}\b\s+[A-Z]\d[A-Z]\s?\d[A-Z]\d$/.test(next));
+
+    if (unitRe.test(maybeUnit) || (!/,/.test(maybeUnit) && looksLikeCityNext)) {
+      to_address_2 = maybeUnit.trim();
+      idx++;
+    }
+  }
   let to_address_2 = "";
 
   // 4) CITY / PROVINCE: try to split a comma line e.g. "Cesenatico, FORLÌ-CESENA"
@@ -6101,7 +6119,10 @@ function parseIntlAddressBlock(blockText = "", fallbackCountryCode = "") {
         const s = window.__lastVerifySuggested;
         if (s) {
           // Push suggestion back into Step-0 inputs
-          const set = (id, v) => { const el = document.getElementById(id); if (el) el.value = v || ""; };
+          const set = (id, v) => {
+          const el = document.getElementById(id);
+          if (el) el.value = (v ?? "").toString().trim();
+          };
           set("cc_to_name",           s.to_name);
           set("cc_to_address_1",      s.to_address_1);
           set("cc_to_address_2",      s.to_address_2);
