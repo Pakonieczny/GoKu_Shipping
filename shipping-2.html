@@ -5856,6 +5856,17 @@ const COUNTRY_TO_ISO2 = {
 
     // Normalize: strip diacritics, spaces, and dots for robust matching
     const strip = (x) => x.normalize?.('NFD').replace(/[\u0300-\u036f]/g,"").toUpperCase().replace(/[.\s]/g,"");
+    const strip = (x) => x
+      .normalize?.('NFD')
+      .replace(/[\u0300-\u036f]/g,"")
+      .toUpperCase()
+      .replace(/[.\s-]/g,""); // also strip hyphens for robust name matching
+    const s = strip(input);
+
+    // NEW: if it begins with a 2-letter code, honor it for US/CA
+    const two = s.slice(0,2);
+    if (cc === "US" && US.has(two)) return two;
+    if (cc === "CA" && CA.has(two)) return two;
     const s = strip(input);
 
     // Canonical codes
@@ -5969,9 +5980,13 @@ function parseIntlAddressBlock(blockText = "", fallbackCountryCode = "") {
     if (m) {
        to_city = m[1].trim();
        const right = m[2].trim();
-       // pull ZIP if it trails after province/region on the same line
-       // Only match real ZIPs: 4–6 digits OR UK/CA formats (AB1 2CD, A1A1A1, etc.)
-       const mZipOnRight = right.match(/\b\d{4,6}\b|\b(?:[A-Z]\d[A-Z]\s?\d[A-Z]\d|[A-Z]{1,3}\d[A-Z\d]?\s?\d[A-Z]{2})\b/i);
+       // Only match real ZIPs:
+       // - US 5 or 5+4 (12345 or 12345-6789)
+       // - Fallback 4–6 numeric
+       // - UK/CA formats (AB1 2CD, A1A1A1, etc.)
+       const mZipOnRight = right.match(
+         /\b\d{5}(?:-\d{4})?\b|\b\d{4,6}\b|\b(?:[A-Z]\d[A-Z]\s?\d[A-Z]\d|[A-Z]{1,3}\d[A-Z\d]?\s?\d[A-Z]{2})\b/i
+       );
        if (mZipOnRight) {
          to_postal_code = mZipOnRight[0].toUpperCase();
          to_province_code = right.replace(mZipOnRight[0], "").replace(/[, ]+$/,"").trim();
