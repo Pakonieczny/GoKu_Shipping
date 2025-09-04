@@ -5075,24 +5075,6 @@ async function refreshRates(){
     const dest = (document.getElementById("cc_to_country_code")?.value || "").trim().toUpperCase();
     const hasVatRef = !!sanitizeVatRef(document.getElementById("cc_customs_tax_reference_number")?.value);
 
-    /* 👉 NEW: If API bounced us to DDP but this isn’t US, flip back to DDU and re-price */
-    if (hasVatRef && dest !== "US" && responded.is_delivery_duties_paid_requested === true) {
-      try {
-        await callCc("PATCH", {
-          action: "refresh",
-          shipment_id: idUsedForPricing,
-          payload: { duties_paid_requested: false }
-        });
-        const out2 = await callCc("PATCH", {
-          action: "refresh",
-          shipment_id: idUsedForPricing,
-          payload: refreshPayload
-        });
-        renderRates(out2.shipment || out2);
-        return; // done
-      } catch (_) { /* fall through and render original */ }
-    }
-
     renderRates(responded);
 
     // Prefer explicit `used_id` if server provides it; else fall back to shipment.id/out.id
