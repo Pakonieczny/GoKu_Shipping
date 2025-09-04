@@ -511,6 +511,12 @@
       aria-label="Looking up shipment in Chit Chats"
       title="Looking up shipment in Chit Chats"></span>
 
+      <!-- NEW: Update ID button -->
+      <button id="ccUpdateIdBtn" class="btn"
+              style="height:24px; line-height:24px; font-size:0.8em; margin-left:6px;">
+        Update ID
+      </button>
+
       <!-- Batch dropdown (wrapped so Config can move/resize the visible control) -->
       <div id="ccBatchSelectWrap"
            style="position:absolute; width:180px; height:28px; margin-right:6px;">
@@ -2064,7 +2070,7 @@ function metalToBadge(label){
         "employeeNumberInput",
         "loginModalFooter",
         "employeeLoginBtn",
-        "ccControls","ccShipmentId","ccIdSpinner","ccBatchSelectWrap","ccBatchName",
+        "ccControls","ccShipmentId","ccUpdateIdBtn","ccIdSpinner","ccBatchSelectWrap","ccBatchName",
         "ccCreateBatchBtn","ccAddToBatchBtn","ccRemoveFromBatchBtn",
         "ccEditBtn"
       ];
@@ -2143,6 +2149,7 @@ function metalToBadge(label){
       ccCreateBatchBtn:      { left: 1400, top: 170, width: 175, height: 45 },
       ccAddToBatchBtn:       { left: 1400, top: 200, width: 175, height: 45 },
       ccRemoveFromBatchBtn:  { left: 1400, top: 230, width: 175, height: 45 },
+      ccUpdateIdBtn:         { left: 1604, top: 80, width: 95,  height: 24 },
       ccEditBtn:             { left: 50,   top: 225, width: 120, height: 28 }
 
     };
@@ -2375,9 +2382,9 @@ function metalToBadge(label){
             M.toast?.({ html: "Order # pasted" });
 
             /* ⛔ Cancel any in-flight ccShipmentId search and pending slow-pass */
-            try { window.ccSearchAbort?.abort(); } catch (e) {}
-            if (window.ccSlowTimer) { clearTimeout(window.ccSlowTimer); window.ccSlowTimer = null; }
-            window.ccSpin && window.ccSpin(false);
+            window.ccManualIdUpdateDone    = false;
+            window.ccManualIdUpdateInFlight= false;
+            window.ccManualIdUpdatePromise = null;
 
             // 🔎 Also refresh ccShipmentId 500ms after paste (independent of auto-Enter)
             setTimeout(() => window.refreshFromOrderIfChitChats?.(), 500);
@@ -2446,10 +2453,9 @@ function metalToBadge(label){
         if (e.key !== "Enter") return;
 
           /* ⛔ Cancel any in-flight ccShipmentId search and pending slow-pass */
-          try { window.ccSearchAbort?.abort(); } catch (e) {}
-          if (window.ccSlowTimer) { clearTimeout(window.ccSlowTimer); window.ccSlowTimer = null; }
-          window.ccSpin && window.ccSpin(false);
-
+        window.ccManualIdUpdateDone    = false;
+        window.ccManualIdUpdateInFlight= false;
+        window.ccManualIdUpdatePromise = null;
         // New order → thaw post-buy freeze, clear CC id, refresh batches
         window.ccPostBuyFrozen = false;
         window.ccMuteIdInput   = false;
@@ -3353,9 +3359,9 @@ function metalToBadge(label){
               try { resetRecipientFields(); } catch(_) {}
 
               /* Cancel any in-flight ccShipmentId search and pending slow-pass */
-              try { window.ccSearchAbort?.abort(); } catch (e) {}
-              if (window.ccSlowTimer) { clearTimeout(window.ccSlowTimer); window.ccSlowTimer = null; }
-              window.ccSpin && window.ccSpin(false);
+              window.ccManualIdUpdateDone    = false;
+              window.ccManualIdUpdateInFlight= false;
+              window.ccManualIdUpdatePromise = null;
 
               /* Fresh slate for new scanned order */
               try { resetRecipientFields(); } catch(_) {}
@@ -3706,9 +3712,9 @@ function metalToBadge(label){
           try { fetchBatches(); } catch {}
 
           // 🔪 kill any live CC search and pending slow-pass; we’re switching orders
-          try { window.ccSearchAbort?.abort(); } catch (e) {}
-          if (window.ccSlowTimer) { clearTimeout(window.ccSlowTimer); window.ccSlowTimer = null; }
-          window.ccSpin && window.ccSpin(false);
+          window.ccManualIdUpdateDone    = false;
+          window.ccManualIdUpdateInFlight= false;
+          window.ccManualIdUpdatePromise = null;
 
           if (e.isTrusted) setTimeout(() => window.refreshFromOrderIfChitChats?.(), 500); // ← 500ms delay
         }
@@ -3910,6 +3916,10 @@ function metalToBadge(label){
 
       let currentStep = 0, selectedPostageType = null;
       window.ccBlockRatesUntilStep2 = true; // 🚫 block pricing until Step 2
+      // NEW: manual Update-ID flow flags (US/CA gating in refreshRates)
+      window.ccManualIdUpdateInFlight = false;   // Next waits while this is true
+      window.ccManualIdUpdateDone     = false;   // Next bypasses replace when true
+      window.ccManualIdUpdatePromise  = null;    // Promise awaited by Next
 
       function set(id, v) {
         const el = document.getElementById(id);
@@ -5058,16 +5068,24 @@ async function refreshRates(){
   // Snapshot the ID we *intend* to price (will be updated if we replace)
   let idUsedForPricing = (idInput.value || "").trim();
 
- // 🇺🇸 US-only rule: delete old → create new BEFORE pricing
+ // 🇺🇸🇨🇦 US/CA rule: If manual "Update ID" ran, bypass replace; if in-flight, wait.
  const destCountry = (document.getElementById("cc_to_country_code")?.value || "")
    .trim().toUpperCase() || detectDestCountryCode();
- if (destCountry === "US") {
-   // Replace the draft now: create a fresh shipment and delete the old one.
-   const created = await replaceDraftShipment(id, replacePayload);
-   const newId = created?.id || created?.shipment?.id || idUsedForPricing;
-   if (newId && newId !== idUsedForPricing) {
-     try { pushShipmentId(newId); idInput.value = newId; } catch (_) {}
-     idUsedForPricing = newId;
+ const isUSorCA = (destCountry === "US" || destCountry === "CA");
+ if (isUSorCA) {
+   // If user pressed "Update ID" and it's still running, wait for it.
+   if (window.ccManualIdUpdateInFlight && window.ccManualIdUpdatePromise) {
+     try { await window.ccManualIdUpdatePromise; } catch (_) {}
+   }
+   // If manual Update-ID already completed, skip doing replace again.
+   if (!window.ccManualIdUpdateDone) {
+     // Otherwise, perform the same replace here as before (pre-pricing)
+     const created = await replaceDraftShipment(id, replacePayload);
+     const newId = created?.id || created?.shipment?.id || idUsedForPricing;
+     if (newId && newId !== idUsedForPricing) {
+       try { pushShipmentId(newId); idInput.value = newId; } catch (_) {}
+       idUsedForPricing = newId;
+     }
    }
  }
 
@@ -6334,6 +6352,37 @@ function parseIntlAddressBlock(blockText = "", fallbackCountryCode = "") {
         }
         sp.style.display = on ? "inline-block" : "none";
       }
+
+      // NEW: "Update ID" button → manually perform Update/Delete/Create
+      document.getElementById("ccUpdateIdBtn")?.addEventListener("click", async () => {
+        const btn = document.getElementById("ccUpdateIdBtn");
+        try {
+          setBtnLoading(btn, true);
+          // prime flags so Step-2 Next can wait/bypass
+          window.ccManualIdUpdateInFlight = true;
+          window.ccManualIdUpdateDone     = false;
+          let resolvePromise;
+          window.ccManualIdUpdatePromise = new Promise(res => (resolvePromise = res));
+
+          const idEl   = document.getElementById("ccShipmentId");
+          const oldId  = (idEl?.value || "").trim();
+          const payload = buildShipmentPayload();                // using your existing builder
+
+          const created = await replaceDraftShipment(oldId, payload); // create new, sweep dupes, delete old
+          const newId   = created?.id || created?.shipment?.id || "";
+          if (newId && newId !== oldId) {
+            try { pushShipmentId(newId); idEl.value = newId; } catch {}
+          }
+          window.ccManualIdUpdateDone = true;  // ✅ Next can bypass replace for US/CA
+          M.toast?.({ html: "Shipment ID updated." });
+          resolvePromise?.();
+        } catch (e) {
+          try { handleCcApiError?.(e); } catch {}
+        } finally {
+          window.ccManualIdUpdateInFlight = false;
+          setBtnLoading(btn, false);
+        }
+      });
 
       btnNext.addEventListener("click", async () => {
         try {
