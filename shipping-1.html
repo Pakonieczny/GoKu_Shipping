@@ -2364,6 +2364,15 @@ function metalToBadge(label){
             window.ccShipmentId = "";
             try { await fetchBatches(); } catch (e) {}
 
+            // 🔄 NEW: always clear Address 2 for a fresh order
+            try {
+              const addr2 = document.getElementById("cc_to_address_2");
+              if (addr2) {
+                addr2.value = "";
+                addr2.dataset.userEdited = "0";
+              }
+            } catch (_) {}
+
             const txt = (await navigator.clipboard.readText() || "").trim();
             if (!txt) { M.toast?.({ html: "Clipboard is empty" }); return; }
 
@@ -2454,6 +2463,15 @@ function metalToBadge(label){
         if (idEl) { idEl.value = ""; idEl.dataset.setAt = String(Date.now()); }
         window.ccShipmentId = "";
         try { await fetchBatches(); } catch (e) {}
+
+        // 🔄 NEW: always clear Address 2 for a fresh order
+        try {
+          const addr2 = document.getElementById("cc_to_address_2");
+          if (addr2) {
+            addr2.value = "";
+            addr2.dataset.userEdited = "0";
+          }
+        } catch (_) {}
 
         const orderNumber = etsyOrderInput.value.trim();
         if (!orderNumber) return;
