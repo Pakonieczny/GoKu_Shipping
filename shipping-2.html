@@ -5855,22 +5855,13 @@ const COUNTRY_TO_ISO2 = {
     if (EU_UK_CODES.has(cc)) return "";
 
     // Normalize: strip diacritics, spaces, and dots for robust matching
-    const strip = (x) => x
-      .normalize?.('NFD')
-      .replace(/[\u0300-\u036f]/g,"")
-      .toUpperCase()
-      .replace(/[.\s-]/g,""); // also strip hyphens for robust name matching
+    const strip = (x) => x.normalize?.('NFD').replace(/[\u0300-\u036f]/g,"").toUpperCase().replace(/[.\s]/g,"");
     const s = strip(input);
 
-    // Canonical codes (declare BEFORE any use)
+    // Canonical codes
     const US = new Set(["AL","AK","AZ","AR","CA","CO","CT","DE","FL","GA","HI","ID","IL","IN","IA","KS","KY","LA","ME","MD","MA","MI","MN","MS","MO","MT","NE","NV","NH","NJ","NM","NY","NC","ND","OH","OK","OR","PA","RI","SC","SD","TN","TX","UT","VT","VA","WA","WV","WI","WY","DC","PR"]);
     const CA = new Set(["AB","BC","MB","NB","NL","NS","NT","NU","ON","PE","QC","SK","YT"]);
     const AU = new Set(["ACT","NSW","NT","QLD","SA","TAS","VIC","WA"]);
-
-    // NEW: if it begins with a 2-letter code, honor it for US/CA
-    const two = s.slice(0,2);
-    if (cc === "US" && US.has(two)) return two;
-    if (cc === "CA" && CA.has(two)) return two;
 
     // Full-name → code maps (space/dot-insensitive)
     const US_NAME = new Map([
@@ -5978,13 +5969,9 @@ function parseIntlAddressBlock(blockText = "", fallbackCountryCode = "") {
     if (m) {
        to_city = m[1].trim();
        const right = m[2].trim();
-       // Only match real ZIPs:
-       // - US 5 or 5+4 (12345 or 12345-6789)
-       // - Fallback 4–6 numeric
-       // - UK/CA formats (AB1 2CD, A1A1A1, etc.)
-       const mZipOnRight = right.match(
-         /\b\d{5}(?:-\d{4})?\b|\b\d{4,6}\b|\b(?:[A-Z]\d[A-Z]\s?\d[A-Z]\d|[A-Z]{1,3}\d[A-Z\d]?\s?\d[A-Z]{2})\b/i
-       );
+       // pull ZIP if it trails after province/region on the same line
+       // Only match real ZIPs: 4–6 digits OR UK/CA formats (AB1 2CD, A1A1A1, etc.)
+       const mZipOnRight = right.match(/\b\d{4,6}\b|\b(?:[A-Z]\d[A-Z]\s?\d[A-Z]\d|[A-Z]{1,3}\d[A-Z\d]?\s?\d[A-Z]{2})\b/i);
        if (mZipOnRight) {
          to_postal_code = mZipOnRight[0].toUpperCase();
          to_province_code = right.replace(mZipOnRight[0], "").replace(/[, ]+$/,"").trim();
