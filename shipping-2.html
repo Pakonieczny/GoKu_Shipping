@@ -6280,7 +6280,11 @@ function parseIntlAddressBlock(blockText = "", fallbackCountryCode = "") {
         to_country_code : (parsed.to_country_code || fields.to_country_code || "").toUpperCase(),
         to_province_code: sanitizeProvinceForCountry(parsed.to_province_code, (parsed.to_country_code || fields.to_country_code))
         // keep postal code behavior as you prefer:
-        ,to_postal_code : parsed.to_postal_code   || fields.to_postal_code
+        ,to_postal_code : (
+        EU_UK_CODES.has((parsed.to_country_code || fields.to_country_code || "").toUpperCase())
+          ? (parsed.to_postal_code || "")
+          : (parsed.to_postal_code || fields.to_postal_code)
+      )
       };
 
      // Belt & suspenders: if UK/EU, force province empty before using anywhere else
