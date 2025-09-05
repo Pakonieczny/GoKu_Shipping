@@ -3920,6 +3920,8 @@ function metalToBadge(label){
       window.ccManualIdUpdateInFlight = false;   // Next waits while this is true
       window.ccManualIdUpdateDone     = false;   // Next bypasses replace when true
       window.ccManualIdUpdatePromise  = null;    // Promise awaited by Next
+      // NEW: force-bypass Step-1 auto Update/Delete/Create when true (one-shot)
+      window.ccBypassStep1Update = false;
 
       function set(id, v) {
         const el = document.getElementById(id);
@@ -6363,6 +6365,8 @@ function parseIntlAddressBlock(blockText = "", fallbackCountryCode = "") {
 // NEW: "Update ID" button → run Update/Delete/Create fully in the background
 document.getElementById("ccUpdateIdBtn")?.addEventListener("click", () => {
   const btn = document.getElementById("ccUpdateIdBtn");
+  // Signal that the next Step-1 "Next" should bypass the auto Update/Delete/Create kickoff
+  window.ccBypassStep1Update = true;
   const d = document.getElementById("cc_ship_date");              // (optional guard)
   if (d && !d.value) d.value = new Date().toISOString().slice(0,10); // ensure non-empty date
   setBtnLoading(btn, true);
@@ -6418,7 +6422,7 @@ document.getElementById("ccUpdateIdBtn")?.addEventListener("click", () => {
          // 🇺🇸🇨🇦 Kick off manual Update/Delete/Create before entering Step 2 (US/CA only)
           try {
             const dest = (document.getElementById("cc_to_country_code")?.value || "").trim().toUpperCase();
-            if (dest === "US" || dest === "CA") {
+            if (!window.ccBypassStep1Update && (dest === "US" || dest === "CA")) {
               // prime flags so Step-2 can wait/bypass
               window.ccManualIdUpdateInFlight = true;
               window.ccManualIdUpdateDone     = false;
@@ -6446,6 +6450,13 @@ document.getElementById("ccUpdateIdBtn")?.addEventListener("click", () => {
                   window.ccManualIdUpdateInFlight = false;
                 }
               })();
+
+              } else if (window.ccBypassStep1Update) {
+              // One-shot short-circuit: treat as already updated so Step-2 won’t re-run replaceDraftShipment
+              window.ccManualIdUpdateInFlight = false;
+              window.ccManualIdUpdateDone     = true;
+              window.ccBypassStep1Update      = false; // consume the flag
+
             }
           } catch (e) {
             console.warn("US/CA manual Update-ID kickoff failed:", e);
