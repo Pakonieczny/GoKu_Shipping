@@ -3849,11 +3849,12 @@ function metalToBadge(label){
       fetchBatches();
       document.getElementById("openConfigBtn")?.addEventListener("click", fetchBatches);
 
-      // Keep the menu open: stop global "outside click" closers at capture
+      // Keep the menu open: stop outside-click closers, but only *after* the dropdown gets the event
       const batchWrap = document.getElementById("ccBatchSelectWrap");
       if (batchWrap){
-        ["mousedown","mouseup","click","touchstart"].forEach(evt=>{
-          batchWrap.addEventListener(evt, ev => { ev.stopPropagation(); }, true); // capture
+        ["click","touchstart"].forEach(evt=>{
+          // bubble-phase (no 3rd arg): allow target handlers to run, then stop at the wrapper
+          batchWrap.addEventListener(evt, ev => ev.stopPropagation());
         });
         // Refresh options only after the menu is closed (prevents instant collapse)
         batchWrap.addEventListener("click", () => {
