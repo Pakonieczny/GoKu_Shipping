@@ -3923,6 +3923,55 @@ function metalToBadge(label){
       // NEW: force-bypass Step-1 auto Update/Delete/Create when true (one-shot)
       window.ccBypassStep1Update = false;
 
+      // ---- Update-ID latch (explicit, UI-safe) -----------------------------------
+      const ccUpdateIdLatch = { running: false };
+
+      function ccDisableRateControls(on) {
+        ["ccNext","ccRefreshRates","ccBuy"].forEach(id => {
+          const el = document.getElementById(id);
+          if (el) el.disabled = !!on;
+        });
+      }
+
+      function ccUpdateIdStart() {
+        ccUpdateIdLatch.running = true;
+        ccDisableRateControls(true);
+        // Mirror existing flags so all legacy code keeps working
+        window.ccManualIdUpdateInFlight = true;
+        window.ccManualIdUpdateDone     = false;
+
+        let _resolve;
+        window.ccManualIdUpdatePromise = new Promise(res => { _resolve = res; });
+        // Keep a handle so we can resolve from anywhere
+        window.__resolveCcUpdateId = () => { try { _resolve?.(); } catch {} };
+      }
+
+      function ccUpdateIdFinish() {
+        window.ccManualIdUpdateDone     = true;
+        window.ccManualIdUpdateInFlight = false;
+        try { window.__resolveCcUpdateId?.(); } catch {}
+        ccUpdateIdLatch.running = false;
+        ccDisableRateControls(false);
+      }
+
+      // Await if Update-ID is in-flight (used where we price)
+      async function ensureUpdateIdSettled() {
+        if (window.ccManualIdUpdatePromise && !window.ccManualIdUpdateDone) {
+          try { await window.ccManualIdUpdatePromise; } catch {}
+        }
+      }
+
+      // Optional: also wait for the little spinner that tracks ID lookups
+      async function waitForCcSpinnerToHide(timeoutMs = 20000) {
+        const spin = document.getElementById("ccIdSpinner");
+        if (!spin) return;
+        const isVisible = () => getComputedStyle(spin).display !== "none";
+        const until = Date.now() + timeoutMs;
+        while (isVisible() && Date.now() < until) {
+          await new Promise(r => setTimeout(r, 75));
+        }
+      }
+
       // 🔶 Helper: await Update-ID completion before pricing (used by Step-2 → Next)
        async function waitForUpdateIdIfNeeded({ showToast = true } = {}){
          try{
@@ -6394,11 +6443,7 @@ document.getElementById("ccUpdateIdBtn")?.addEventListener("click", () => {
   const d = document.getElementById("cc_ship_date");              // (optional guard)
   if (d && !d.value) d.value = new Date().toISOString().slice(0,10); // ensure non-empty date
   setBtnLoading(btn, true);
-  // Prime flags so Step-2 Next can wait or bypass (US/CA logic in refreshRates)
-  window.ccManualIdUpdateInFlight = true;
-  window.ccManualIdUpdateDone     = false;
-  let resolvePromise;
-  window.ccManualIdUpdatePromise  = new Promise(res => (resolvePromise = res));
+  ccUpdateIdStart();
 
   const idEl   = document.getElementById("ccShipmentId");
   const oldId  = (idEl?.value || "").trim();
@@ -6420,11 +6465,8 @@ document.getElementById("ccUpdateIdBtn")?.addEventListener("click", () => {
     } catch (e) {
       try { handleCcApiError?.(e); } catch {}
     } finally {
-      // ✅ treat as "completed" even on error so waiters don't hang
-      if (!window.ccManualIdUpdateDone) window.ccManualIdUpdateDone = true;
-      try { resolvePromise?.(); } catch {}
       window.ccBypassStep1Update = false;     // consume one-shot bypass
-      window.ccManualIdUpdateInFlight = false;
+      ccUpdateIdFinish();                     // resolve + re-enable buttons
       setBtnLoading(btn, false);
     }
   })();
@@ -6515,10 +6557,12 @@ document.getElementById("ccUpdateIdBtn")?.addEventListener("click", () => {
             setBtnLoading(btnNext, true);
             try {
               if (!(await validateStep(2))) return;
-              // 🛑 If Update-ID background run is active (flag ON), wait before pricing
-              await waitForUpdateIdIfNeeded({ showToast: true });
-              await refreshRates();    // ← pricing happens here only
-              showStep(3);
+            // 🛑 If Update-ID background run is active (flag ON), wait before pricing
+            await waitForUpdateIdIfNeeded({ showToast: true });
+            await ensureUpdateIdSettled();         // hard gate on latch
+            await waitForCcSpinnerToHide();        // optional UI spinner gate
+            await refreshRates();                  // ← pricing happens here only
+            showStep(3);
             } finally { setBtnLoading(btnNext, false); }
             return;
           }
@@ -6531,7 +6575,12 @@ document.getElementById("ccUpdateIdBtn")?.addEventListener("click", () => {
       btnRefresh.addEventListener("click", async () => {
         try{
           if (!(await validateStep(2))) return;
-          
+
+          // Never price while Update-ID work is in flight
+          await waitForUpdateIdIfNeeded({ showToast: true });
+          await ensureUpdateIdSettled();
+          await waitForCcSpinnerToHide();
+
           await refreshRates();
         }catch(err){
           handleCcApiError(err);
