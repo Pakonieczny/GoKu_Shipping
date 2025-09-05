@@ -2457,13 +2457,9 @@ function metalToBadge(label){
 
           /* ⛔ Cancel any in-flight ccShipmentId search and pending slow-pass */
         window.ccManualIdUpdateDone    = false;
-        /* ⛔ If an Update-ID latch is running from a previous order, resolve it cleanly */
-        if (window.ccManualIdUpdateInFlight && typeof window.__resolveCcUpdateId === "function") {
-          try { window.__resolveCcUpdateId(); } catch {}
-        }
-        window.ccManualIdUpdateDone    = false;
         window.ccManualIdUpdateInFlight= false;
         window.ccManualIdUpdatePromise = null;
+        // New order → thaw post-buy freeze, clear CC id, refresh batches
         window.ccPostBuyFrozen = false;
         window.ccMuteIdInput   = false;
         const idEl = document.getElementById("ccShipmentId");
@@ -3963,7 +3959,7 @@ function metalToBadge(label){
 
       // Await if Update-ID is in-flight (used where we price)
       async function ensureUpdateIdSettled() {
-        if (window.ccManualIdUpdatePromise) {
+        if (window.ccManualIdUpdatePromise && !window.ccManualIdUpdateDone) {
           try { await window.ccManualIdUpdatePromise; } catch {}
         }
       }
@@ -3980,9 +3976,21 @@ function metalToBadge(label){
       }
 
       // 🔶 Helper: await Update-ID completion before pricing (used by Step-2 → Next)
+       async function waitForUpdateIdIfNeeded({ showToast = true } = {}){
+         try{
+           if (window.ccManualIdUpdatePromise && !window.ccManualIdUpdateDone){
+             if (showToast) window.M?.toast?.({ html:"Waiting for Update ID to finish…", classes:"blue darken-2" });
+             await window.ccManualIdUpdatePromise;
+           }
+         }catch(e){
+           console.warn("waitForUpdateIdIfNeeded:", e);
+         }
+       }
+
+      // 🔶 Helper: await Update-ID completion before pricing (used by Step-2 → Next)
       async function waitForUpdateIdIfNeeded({ showToast = true } = {}){
         try{
-          if (window.ccManualIdUpdatePromise){
+          if (window.ccManualIdUpdatePromise && !window.ccManualIdUpdateDone){
             if (showToast) window.M?.toast?.({ html:"Waiting for Update ID to finish…", classes:"blue darken-2" });
             await window.ccManualIdUpdatePromise;
           }
@@ -3990,7 +3998,6 @@ function metalToBadge(label){
           console.warn("waitForUpdateIdIfNeeded:", e);
         }
       }
-
 
       function set(id, v) {
         const el = document.getElementById(id);
@@ -4156,15 +4163,15 @@ function metalToBadge(label){
       }
 
       async function callCc(method, body, qs = "") {
-      // --- HARD GATE: never price while Update-ID is running ---
+        // --- HARD GATE: never price while Update-ID is running ---
         try {
-      if (body && body.action === "refresh") {
-        if (window.ccManualIdUpdatePromise) {
-          window.M?.toast?.({ html: "Waiting for Update ID to finish…", classes: "blue darken-2" });
-          await window.ccManualIdUpdatePromise;   // wait for Update/Delete/Create
-        }
-        await waitForCcSpinnerToHide();           // optional UI settle
-      }
+          if (body && body.action === "refresh") {
+            if (window.ccManualIdUpdatePromise && !window.ccManualIdUpdateDone) {
+              window.M?.toast?.({ html: "Waiting for Update ID to finish…", classes: "blue darken-2" });
+              await window.ccManualIdUpdatePromise;   // wait for Update/Delete/Create
+            }
+            await waitForCcSpinnerToHide();           // optional UI settle
+          }
         } catch {}
         const resp = await fetch(`${getCcEndpoint()}${qs}`, {
           method,
@@ -4704,32 +4711,21 @@ function metalToBadge(label){
 
 
           // 3) Buy label
-          // ✅ EU/GB: ensure ROOT email; if Update-ID was engaged, SKIP replaceDraftShipment on Buy
+          // ✅ Ensure EU/GB payload has ROOT email and persist it server-side before Buy
           {
             const EU_CODES = new Set(["AT","BE","BG","HR","CY","CZ","DK","EE","FI","FR","DE","GR","HU","IE","IT","LV","LT","LU","MT","NL","PL","PT","RO","SK","SI","ES","SE"]);
             const codeRaw = (document.getElementById("cc_to_country_code")?.value || "").trim().toUpperCase();
             const countryCode = (codeRaw === "UK" ? "GB" : codeRaw);
             const isEUorGB = EU_CODES.has(countryCode) || countryCode === "GB";
-            let newId = null;
             if (isEUorGB) {
               const emailInput = document.getElementById("cc_to_email");
               const chosen = (emailInput?.value || "").trim() || "custombrites@gmail.com";
               if (emailInput && !emailInput.value.trim()) emailInput.value = chosen; // reflect in UI
-              // If Update-ID is running, wait; if it already completed, SKIP replace on Buy.
-              if (window.ccManualIdUpdatePromise && !window.ccManualIdUpdateDone) {
-                await waitForUpdateIdIfNeeded({ showToast: true });
-              }
-              const updateWasEngaged = !!(window.ccManualIdUpdateDone);
-              if (!updateWasEngaged) {
-                const rawId = (document.getElementById("ccShipmentId")?.value || "").trim();
-                const payload = buildShipmentPayload();
-                payload.email = chosen; // root-level
-                const created = await replaceDraftShipment(rawId, payload);
-                newId = created?.id || created?.shipment?.id;
-                if (newId) {
-                  try { pushShipmentId(newId); document.getElementById("ccShipmentId").value = newId; } catch {}
-                }
-              } // else: Update-ID already did Update/Delete/Create → do not repeat here
+              const rawId = (document.getElementById("ccShipmentId")?.value || "").trim();
+              const payload = buildShipmentPayload();
+              payload.email = chosen; // root-level
+            const created = await replaceDraftShipment(rawId, payload);
+            const newId = created?.id || created?.shipment?.id;
             if (newId && newId !== shipmentId) {
               shipmentId = String(newId);
               try { pushShipmentId(shipmentId); } catch {}
@@ -6455,57 +6451,42 @@ function parseIntlAddressBlock(blockText = "", fallbackCountryCode = "") {
         sp.style.display = on ? "inline-block" : "none";
       }
 
-      // NEW: "Update ID" button → run Update/Delete/Create fully in the background
-      document.getElementById("ccUpdateIdBtn")?.addEventListener("click", () => {
-        const btn = document.getElementById("ccUpdateIdBtn");
-        // Signal that the next Step-1 "Next" should bypass the auto Update/Delete/Create kickoff
-        window.ccBypassStep1Update = true;
-        const d = document.getElementById("cc_ship_date");              // (optional guard)
-        if (d && !d.value) d.value = new Date().toISOString().slice(0,10); // ensure non-empty date
-        setBtnLoading(btn, true);
-        ccUpdateIdStart();
+// NEW: "Update ID" button → run Update/Delete/Create fully in the background
+document.getElementById("ccUpdateIdBtn")?.addEventListener("click", () => {
+  const btn = document.getElementById("ccUpdateIdBtn");
+  // Signal that the next Step-1 "Next" should bypass the auto Update/Delete/Create kickoff
+  window.ccBypassStep1Update = true;
+  const d = document.getElementById("cc_ship_date");              // (optional guard)
+  if (d && !d.value) d.value = new Date().toISOString().slice(0,10); // ensure non-empty date
+  setBtnLoading(btn, true);
+  ccUpdateIdStart();
 
-        const idEl   = document.getElementById("ccShipmentId");
-        const oldId  = (idEl?.value || "").trim();
-        // 🔶 STRICT: prime Step-0 using your existing parser, then snapshot ALL ccStep0/1/2 fields
-        try { primeCcStep0Background(); } catch(_) {}
-        const payload = buildShipmentPayload();
+  const idEl   = document.getElementById("ccShipmentId");
+  const oldId  = (idEl?.value || "").trim();
+  // 🔶 STRICT: prime Step-0 using your existing parser, then snapshot ALL ccStep0/1/2 fields
+  try { primeCcStep0Background(); } catch(_) {}
+  const payload = buildShipmentPayload();
 
-        // If International (EU/GB), guarantee ROOT-level email in the payload
-        try {
-          const codeRaw = (document.getElementById("cc_to_country_code")?.value || "").trim().toUpperCase();
-          const countryCode = (codeRaw === "UK" ? "GB" : codeRaw);
-          const EU_CODES = new Set(["AT","BE","BG","HR","CY","CZ","DK","EE","FI","FR","DE","GR","HU","IE","IT","LV","LT","LU","MT","NL","PL","PT","RO","SK","SI","ES","SE"]);
-          const isEUorGB = EU_CODES.has(countryCode) || countryCode === "GB";
-          let newId = null;
-          if (isEUorGB) {
-            const emailInput = document.getElementById("cc_to_email");
-            const chosen = (emailInput?.value || "").trim() || "custombrites@gmail.com";
-            if (emailInput && !emailInput.value.trim()) emailInput.value = chosen; // reflect UI
-            payload.email = chosen; // persist server-side during Update/Delete/Create
-          }
-        } catch (_) {}
+  // Fire-and-forget: no modals, no step navigation; UI stays responsive
+  (async () => {
+    try {
+      const created = await replaceDraftShipment(oldId, payload); // create new → sweep dupes → delete old
+      const newId   = created?.id || created?.shipment?.id || "";
+      if (newId && newId !== oldId) {
+        try { pushShipmentId(newId); idEl.value = newId; } catch {}
+      }
+      window.ccManualIdUpdateDone = true;     // ✅ mark completion (success)
+      M.toast?.({ html: "Shipment ID updated in background." });
 
-        // Fire-and-forget: no modals, no step navigation; UI stays responsive
-        (async () => {
-          try {
-            const created = await replaceDraftShipment(oldId, payload); // create new → sweep dupes → delete old
-            const newId   = created?.id || created?.shipment?.id || "";
-            if (newId && newId !== oldId) {
-              try { pushShipmentId(newId); idEl.value = newId; } catch {}
-            }
-
-            M.toast?.({ html: "Shipment ID updated in background." });
-
-          } catch (e) {
-            try { handleCcApiError?.(e); } catch {}
-          } finally {
-            window.ccBypassStep1Update = false;     // consume one-shot bypass
-            ccUpdateIdFinish();                     // resolve + re-enable buttons
-            setBtnLoading(btn, false);
-          }
-        })();
-      });
+    } catch (e) {
+      try { handleCcApiError?.(e); } catch {}
+    } finally {
+      window.ccBypassStep1Update = false;     // consume one-shot bypass
+      ccUpdateIdFinish();                     // resolve + re-enable buttons
+      setBtnLoading(btn, false);
+    }
+  })();
+});
 
       btnNext.addEventListener("click", async () => {
         try {
@@ -6543,7 +6524,7 @@ function parseIntlAddressBlock(blockText = "", fallbackCountryCode = "") {
                   if (newId && newId !== oldId) {
                     try { pushShipmentId(newId); idEl.value = newId; } catch {}
                   }
-
+                  window.ccManualIdUpdateDone = true;   // mark success
                   M.toast?.({ html: "Shipment updated for pricing." });
                 } catch (e) {
                   try { handleCcApiError?.(e); } catch {}
@@ -6629,11 +6610,12 @@ function parseIntlAddressBlock(blockText = "", fallbackCountryCode = "") {
         } finally {
           setBtnLoading(btn, false);
         }
-     // Final safety net: ensure ANY refreshRates waits for Update-ID
+      });
       (function(){
         const __origRefresh = window.refreshRates;
         if (typeof __origRefresh === "function") {
           window.refreshRates = async function(...args){
+            // If the Update-ID promise exists and hasn't completed, await it
             if (window.ccManualIdUpdatePromise && !window.ccManualIdUpdateDone) {
               try { await window.ccManualIdUpdatePromise; } catch {}
             }
@@ -6642,8 +6624,7 @@ function parseIntlAddressBlock(blockText = "", fallbackCountryCode = "") {
           };
         }
       })();
-      });
-
+      
     })();
 
   </script>
