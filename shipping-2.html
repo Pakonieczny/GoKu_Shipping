@@ -6088,6 +6088,8 @@ function parseIntlAddressBlock(blockText = "", fallbackCountryCode = "") {
     const cc = (to_country_code || "").toUpperCase();
     const usZip = /\b\d{5}(?:-\d{4})?\b/i;
     const caPc  = /\b[A-Z]\d[A-Z]\s?\d[A-Z]\d\b/i;
+    // UK postcodes: group parts so we can reinsert the canonical space
+    const ukPc  = /\b([A-Z]{1,2}\d[A-Z\d]?)\s*-?\s*(\d[A-Z]{2})\b/i;
 
     const takeUS = (m) => {
       to_city = m[1].trim();
@@ -6136,13 +6138,24 @@ function parseIntlAddressBlock(blockText = "", fallbackCountryCode = "") {
         const commaIdx = cityProv.lastIndexOf(",");
         to_city = cityProv.slice(0, commaIdx).trim();
         const right = cityProv.slice(commaIdx + 1).trim();
-        const mZipOnRight = right.match(usZip) || right.match(caPc) || right.match(/\b\d{4,6}\b/);
-        if (mZipOnRight) {
-          to_postal_code = mZipOnRight[0].toUpperCase();
-          to_province_code = right.replace(mZipOnRight[0], "").replace(/[-, ]+$/,"").trim();
-        } else {
-          to_province_code = right;
-        }
+        // Prefer UK format first, then CA/US/numeric
+        const mUk  = right.match(ukPc);
+        const mAny = mUk || right.match(caPc) || right.match(usZip) || right.match(/\b\d{4,6}\b/);
+        if (mAny) {
+         // Normalize UK like "ZE1 0HS" (add/force the single space)
+         if (mUk) {
+           to_postal_code = (mUk[1] + " " + mUk[2]).toUpperCase();
+         } else {
+           to_postal_code = mAny[0].toUpperCase();
+         }
+         const matched = mAny[0];
+         to_province_code = right
+           .replace(matched, "")
+           .replace(/[-, ]+$/,"")
+           .trim();
+       } else {
+         to_province_code = right;
+       }
         idx++;
       } else {
         to_city = cityProv; // province/postal picked up later
