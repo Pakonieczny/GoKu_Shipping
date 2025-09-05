@@ -522,7 +522,7 @@
       <div id="ccBatchSelectWrap"
            style="position:absolute; width:180px; height:28px; margin-right:6px;">
         <select id="ccBatchSelect" style="width:100%; height:100%; font-size:0.9em;">
-          <!-- <option value="">Select Batch…</option> -->
+          <option value="">Select Batch…</option>
         </select>
       </div>
 
@@ -3800,7 +3800,7 @@ function metalToBadge(label){
           scored.sort((a, z) => z.ts - a.ts);
 
           const seen = new Set();
-          // const options = ['<option value="">Select Batch…</option>'];
+          const options = [];
 
           // First append all NON-default batches (deduped, newest → oldest)
           for (const { b } of scored) {
