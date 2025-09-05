@@ -2457,9 +2457,13 @@ function metalToBadge(label){
 
           /* ⛔ Cancel any in-flight ccShipmentId search and pending slow-pass */
         window.ccManualIdUpdateDone    = false;
+        /* ⛔ If an Update-ID latch is running from a previous order, resolve it cleanly */
+        if (window.ccManualIdUpdateInFlight && typeof window.__resolveCcUpdateId === "function") {
+          try { window.__resolveCcUpdateId(); } catch {}
+        }
+        window.ccManualIdUpdateDone    = false;
         window.ccManualIdUpdateInFlight= false;
         window.ccManualIdUpdatePromise = null;
-        // New order → thaw post-buy freeze, clear CC id, refresh batches
         window.ccPostBuyFrozen = false;
         window.ccMuteIdInput   = false;
         const idEl = document.getElementById("ccShipmentId");
@@ -4163,7 +4167,7 @@ function metalToBadge(label){
       }
 
       async function callCc(method, body, qs = "") {
-        // --- HARD GATE: never price while Update-ID is running ---
+      // --- HARD GATE: never price while Update-ID is running ---
         try {
           if (body && body.action === "refresh") {
             if (window.ccManualIdUpdatePromise && !window.ccManualIdUpdateDone) {
@@ -6610,12 +6614,11 @@ document.getElementById("ccUpdateIdBtn")?.addEventListener("click", () => {
         } finally {
           setBtnLoading(btn, false);
         }
-      });
+     // Final safety net: ensure ANY refreshRates waits for Update-ID
       (function(){
         const __origRefresh = window.refreshRates;
         if (typeof __origRefresh === "function") {
           window.refreshRates = async function(...args){
-            // If the Update-ID promise exists and hasn't completed, await it
             if (window.ccManualIdUpdatePromise && !window.ccManualIdUpdateDone) {
               try { await window.ccManualIdUpdatePromise; } catch {}
             }
@@ -6624,7 +6627,8 @@ document.getElementById("ccUpdateIdBtn")?.addEventListener("click", () => {
           };
         }
       })();
-      
+      });
+
     })();
 
   </script>
