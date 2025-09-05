@@ -3833,7 +3833,7 @@ function metalToBadge(label){
 
       // Live refresh: refetch shortly after the dropdown opens (avoid closing it)
       document.getElementById("ccBatchSelectWrap")?.addEventListener("click", () => {
-        setTimeout(fetchBatches, 120);
+        setTimeout(fetchBatches, 250); // fetch shortly after the menu opens
       });
 
       // Create a named batch
