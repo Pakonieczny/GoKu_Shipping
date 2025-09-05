@@ -6268,7 +6268,7 @@ function parseIntlAddressBlock(blockText = "", fallbackCountryCode = "") {
   function collectRecipientAddress(){
     const block   = (document.getElementById("shipAddressBox")?.value || "").trim();
     const country = (document.getElementById("cc_to_country_code")?.value || "").trim();
-    const block   = (document.getElementById("shipAddressBox")?.value || "").trim();
+    // const block   = (document.getElementById("shipAddressBox")?.value || "").trim();
     const country = (document.getElementById("cc_to_country_code")?.value || "").trim();
     // Decide pipeline up front
     const detected = (window.detectDestCountryCode?.() || country || "").toUpperCase();
