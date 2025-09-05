@@ -6461,7 +6461,7 @@ document.getElementById("ccUpdateIdBtn")?.addEventListener("click", () => {
       }
       window.ccManualIdUpdateDone = true;     // ✅ mark completion (success)
       M.toast?.({ html: "Shipment ID updated in background." });
-      resolvePromise?.();                     // ✅ always resolve the waiter
+
     } catch (e) {
       try { handleCcApiError?.(e); } catch {}
     } finally {
@@ -6512,7 +6512,7 @@ document.getElementById("ccUpdateIdBtn")?.addEventListener("click", () => {
                     try { pushShipmentId(newId); idEl.value = newId; } catch {}
                   }
                   window.ccManualIdUpdateDone = true;   // ✅ Step-2 will bypass duplicate replace
-                  resolvePromise?.();
+
                   M.toast?.({ html: "Shipment updated for pricing." });
                 } catch (e) {
                   try { handleCcApiError?.(e); } catch {}
