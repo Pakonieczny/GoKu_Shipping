@@ -6535,7 +6535,7 @@ function parseIntlAddressBlock(blockText = "", fallbackCountryCode = "") {
           const countryCode = (codeRaw === "UK" ? "GB" : codeRaw);
           const isEUorGB_cc = isEUorGB(countryCode);
           let newId = null;
-          if (isEUorGB) {
+          if (isEUorGB_cc) {
             const emailInput = document.getElementById("cc_to_email");
             const chosen = (emailInput?.value || "").trim() || "custombrites@gmail.com";
             if (emailInput && !emailInput.value.trim()) emailInput.value = chosen; // reflect UI
