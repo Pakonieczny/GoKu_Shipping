@@ -522,8 +522,13 @@
       <div id="ccBatchSelectWrap"
            style="position:absolute; width:180px; height:28px; margin-right:6px;">
         <select id="ccBatchSelect" style="width:100%; height:100%; font-size:0.9em;">
-          <option value="">Select Batch…</option>
+          <!-- Placeholder stays selected for the trigger text but won't appear in the dropdown list -->
+          <option value="" class="placeholder" disabled selected hidden>Select Batch…</option>
         </select>
+        <style id="hideCcBatchPlaceholder">
+          /* Hide the placeholder row in Materialize's generated dropdown for this select */
+          ul#select-options-ccBatchSelect li.disabled:first-child { display: none !important; }
+        </style>
       </div>
 
       <!-- Optional name for *new* batches -->
