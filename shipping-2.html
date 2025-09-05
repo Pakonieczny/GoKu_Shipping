@@ -3493,14 +3493,33 @@ function metalToBadge(label){
       const debounce = (fn, ms=250) => { let t; return (...a)=>{ clearTimeout(t); t = setTimeout(()=>fn(...a), ms); }; };
       const reinitSelect = (el) => {
         try {
-          if (window.M && window.M.FormSelect) {
-            const inst = window.M.FormSelect.getInstance(el);
-            if (inst) inst.destroy();
-            window.M.FormSelect.init(el);
+          if (!window.M || !window.M.FormSelect) return;
+          const inst = window.M.FormSelect.getInstance(el);
+          const wasOpen =
+            !!inst?.dropdown?.isOpen ||
+            (inst?.input && inst.input.getAttribute("aria-expanded") === "true");
+          if (inst) inst.destroy();
+          const newInst = window.M.FormSelect.init(el, {
+            dropdownOptions: { coverTrigger: false }
+          });
+          // If it was open before, do not collapse it due to re-init
+          if (wasOpen && newInst?.dropdown && !newInst.dropdown.isOpen) {
+            requestAnimationFrame(() => newInst.dropdown.open());
           }
         } catch (e) {}
       };
 
+      // Robust helper: is the Batch menu currently open?
+      function isBatchMenuOpen(){
+        try {
+          const inst = window.M?.FormSelect?.getInstance(ccBatchSelect);
+          if (inst?.dropdown?.isOpen) return true;
+          const input =
+            inst?.input ||
+            ccBatchSelect?.closest(".select-wrapper")?.querySelector("input.select-dropdown");
+          return input?.getAttribute("aria-expanded") === "true";
+        } catch (_) { return false; }
+      }
       // Remember a batch we want to select (only if it’s still open)
       let _desiredBatchId = "";
 
@@ -3799,8 +3818,7 @@ function metalToBadge(label){
 
         // Don't mutate while open; update right away if closed, otherwise defer until it closes
         const inst  = window.M?.FormSelect?.getInstance(ccBatchSelect);
-        const open  = !!inst?.dropdown?.isOpen;
-
+        const open  = isBatchMenuOpen();
         if (!open) {
           // Safe: menu is closed — rebuild now
           ccBatchSelect.innerHTML = options.join("");
@@ -3831,38 +3849,19 @@ function metalToBadge(label){
       fetchBatches();
       document.getElementById("openConfigBtn")?.addEventListener("click", fetchBatches);
 
-      // ── Refresh first, then open the Materialize select ───────────────────
-      (function setupCcBatchOpenAfterRefresh(){
-        const wrap   = document.getElementById("ccBatchSelectWrap");
-        const select = wrap?.querySelector("select");
-        if (!wrap || !select) return;
-
-        async function refreshThenOpen(){
-          try { await fetchBatches(); }
-          catch (e) { console.warn("fetchBatches (pre-open) failed", e); }
-          // Ensure the select has a FormSelect instance, then open
-          let inst = window.M?.FormSelect?.getInstance(select);
-          if (!inst) { window.M?.FormSelect?.init(select); inst = window.M?.FormSelect?.getInstance(select); }
-          select.focus();
-          inst?.dropdown?.open();
-        }
-
-        // Use capture so we intercept BEFORE Materialize opens the dropdown
-        wrap.addEventListener("mousedown", (e) => {
-          const inst   = window.M?.FormSelect?.getInstance(select);
-          const isOpen = !!inst?.dropdown?.isOpen;
-          if (!isOpen) {
-            e.preventDefault();      // stop native opening
-            e.stopPropagation();     // block other click handlers
-            refreshThenOpen();       // refresh first, then open with fresh data
-          }
-        }, true);
-      })();
-
-      // Live refresh: refetch shortly after the dropdown opens (avoid closing it)
-      document.getElementById("ccBatchSelectWrap")?.addEventListener("click", () => {
-        setTimeout(fetchBatches, 250); // fetch shortly after the menu opens
-      });
+      // Keep the menu open: stop global "outside click" closers at capture
+      const batchWrap = document.getElementById("ccBatchSelectWrap");
+      if (batchWrap){
+        ["mousedown","mouseup","click","touchstart"].forEach(evt=>{
+          batchWrap.addEventListener(evt, ev => { ev.stopPropagation(); }, true); // capture
+        });
+        // Refresh options only after the menu is closed (prevents instant collapse)
+        batchWrap.addEventListener("click", () => {
+          setTimeout(() => {
+            if (!isBatchMenuOpen()) fetchBatches();
+          }, 250);
+        });
+      }
 
       // Create a named batch
       createBtn?.addEventListener("click", async () => {
