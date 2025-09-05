@@ -3924,6 +3924,18 @@ function metalToBadge(label){
       window.ccBypassStep1Update = false;
 
       // 🔶 Helper: await Update-ID completion before pricing (used by Step-2 → Next)
+       async function waitForUpdateIdIfNeeded({ showToast = true } = {}){
+         try{
+           if (window.ccManualIdUpdatePromise && !window.ccManualIdUpdateDone){
+             if (showToast) window.M?.toast?.({ html:"Waiting for Update ID to finish…", classes:"blue darken-2" });
+             await window.ccManualIdUpdatePromise;
+           }
+         }catch(e){
+           console.warn("waitForUpdateIdIfNeeded:", e);
+         }
+       }
+
+      // 🔶 Helper: await Update-ID completion before pricing (used by Step-2 → Next)
       async function waitForUpdateIdIfNeeded({ showToast = true } = {}){
         try{
           if (window.ccManualIdUpdatePromise && !window.ccManualIdUpdateDone){
