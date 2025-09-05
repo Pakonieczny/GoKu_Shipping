@@ -6310,7 +6310,7 @@ function parseIntlAddressBlock(blockText = "", fallbackCountryCode = "") {
       const fields = gatherRecipientFromInputs();
 
       // Merge parsed with field fallbacks + normalize country
-      const to = {
+      let to = {
         to_name         : parsed.to_name          || fields.to_name,
         to_address_1    : parsed.to_address_1     || fields.to_address_1,
         // 🚫 no fallback: never carry over Address 2
@@ -6473,6 +6473,7 @@ function parseIntlAddressBlock(blockText = "", fallbackCountryCode = "") {
       // Expose helpers used by Step 2 refresh/build payload
       window.detectDestCountryCode = detectDestCountryCode;
       window.isEU = isEU; // (optional, keeps parity)
+      window.isEUorGB = isEUorGB; // expose router globally
         })();
 
       /* ────────────────────────────────────────────────────────────── */
