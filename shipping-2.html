@@ -3963,7 +3963,7 @@ function metalToBadge(label){
 
       // Await if Update-ID is in-flight (used where we price)
       async function ensureUpdateIdSettled() {
-        if (window.ccManualIdUpdatePromise && !window.ccManualIdUpdateDone) {
+        if (window.ccManualIdUpdatePromise) {
           try { await window.ccManualIdUpdatePromise; } catch {}
         }
       }
@@ -3980,21 +3980,9 @@ function metalToBadge(label){
       }
 
       // 🔶 Helper: await Update-ID completion before pricing (used by Step-2 → Next)
-       async function waitForUpdateIdIfNeeded({ showToast = true } = {}){
-         try{
-           if (window.ccManualIdUpdatePromise && !window.ccManualIdUpdateDone){
-             if (showToast) window.M?.toast?.({ html:"Waiting for Update ID to finish…", classes:"blue darken-2" });
-             await window.ccManualIdUpdatePromise;
-           }
-         }catch(e){
-           console.warn("waitForUpdateIdIfNeeded:", e);
-         }
-       }
-
-      // 🔶 Helper: await Update-ID completion before pricing (used by Step-2 → Next)
       async function waitForUpdateIdIfNeeded({ showToast = true } = {}){
         try{
-          if (window.ccManualIdUpdatePromise && !window.ccManualIdUpdateDone){
+          if (window.ccManualIdUpdatePromise){
             if (showToast) window.M?.toast?.({ html:"Waiting for Update ID to finish…", classes:"blue darken-2" });
             await window.ccManualIdUpdatePromise;
           }
@@ -4002,6 +3990,7 @@ function metalToBadge(label){
           console.warn("waitForUpdateIdIfNeeded:", e);
         }
       }
+
 
       function set(id, v) {
         const el = document.getElementById(id);
@@ -4169,13 +4158,13 @@ function metalToBadge(label){
       async function callCc(method, body, qs = "") {
       // --- HARD GATE: never price while Update-ID is running ---
         try {
-          if (body && body.action === "refresh") {
-            if (window.ccManualIdUpdatePromise && !window.ccManualIdUpdateDone) {
-              window.M?.toast?.({ html: "Waiting for Update ID to finish…", classes: "blue darken-2" });
-              await window.ccManualIdUpdatePromise;   // wait for Update/Delete/Create
-            }
-            await waitForCcSpinnerToHide();           // optional UI settle
-          }
+      if (body && body.action === "refresh") {
+        if (window.ccManualIdUpdatePromise) {
+          window.M?.toast?.({ html: "Waiting for Update ID to finish…", classes: "blue darken-2" });
+          await window.ccManualIdUpdatePromise;   // wait for Update/Delete/Create
+        }
+        await waitForCcSpinnerToHide();           // optional UI settle
+      }
         } catch {}
         const resp = await fetch(`${getCcEndpoint()}${qs}`, {
           method,
@@ -6455,42 +6444,42 @@ function parseIntlAddressBlock(blockText = "", fallbackCountryCode = "") {
         sp.style.display = on ? "inline-block" : "none";
       }
 
-// NEW: "Update ID" button → run Update/Delete/Create fully in the background
-document.getElementById("ccUpdateIdBtn")?.addEventListener("click", () => {
-  const btn = document.getElementById("ccUpdateIdBtn");
-  // Signal that the next Step-1 "Next" should bypass the auto Update/Delete/Create kickoff
-  window.ccBypassStep1Update = true;
-  const d = document.getElementById("cc_ship_date");              // (optional guard)
-  if (d && !d.value) d.value = new Date().toISOString().slice(0,10); // ensure non-empty date
-  setBtnLoading(btn, true);
-  ccUpdateIdStart();
+      // NEW: "Update ID" button → run Update/Delete/Create fully in the background
+      document.getElementById("ccUpdateIdBtn")?.addEventListener("click", () => {
+        const btn = document.getElementById("ccUpdateIdBtn");
+        // Signal that the next Step-1 "Next" should bypass the auto Update/Delete/Create kickoff
+        window.ccBypassStep1Update = true;
+        const d = document.getElementById("cc_ship_date");              // (optional guard)
+        if (d && !d.value) d.value = new Date().toISOString().slice(0,10); // ensure non-empty date
+        setBtnLoading(btn, true);
+        ccUpdateIdStart();
 
-  const idEl   = document.getElementById("ccShipmentId");
-  const oldId  = (idEl?.value || "").trim();
-  // 🔶 STRICT: prime Step-0 using your existing parser, then snapshot ALL ccStep0/1/2 fields
-  try { primeCcStep0Background(); } catch(_) {}
-  const payload = buildShipmentPayload();
+        const idEl   = document.getElementById("ccShipmentId");
+        const oldId  = (idEl?.value || "").trim();
+        // 🔶 STRICT: prime Step-0 using your existing parser, then snapshot ALL ccStep0/1/2 fields
+        try { primeCcStep0Background(); } catch(_) {}
+        const payload = buildShipmentPayload();
 
-  // Fire-and-forget: no modals, no step navigation; UI stays responsive
-  (async () => {
-    try {
-      const created = await replaceDraftShipment(oldId, payload); // create new → sweep dupes → delete old
-      const newId   = created?.id || created?.shipment?.id || "";
-      if (newId && newId !== oldId) {
-        try { pushShipmentId(newId); idEl.value = newId; } catch {}
-      }
-      window.ccManualIdUpdateDone = true;     // ✅ mark completion (success)
-      M.toast?.({ html: "Shipment ID updated in background." });
+        // Fire-and-forget: no modals, no step navigation; UI stays responsive
+        (async () => {
+          try {
+            const created = await replaceDraftShipment(oldId, payload); // create new → sweep dupes → delete old
+            const newId   = created?.id || created?.shipment?.id || "";
+            if (newId && newId !== oldId) {
+              try { pushShipmentId(newId); idEl.value = newId; } catch {}
+            }
 
-    } catch (e) {
-      try { handleCcApiError?.(e); } catch {}
-    } finally {
-      window.ccBypassStep1Update = false;     // consume one-shot bypass
-      ccUpdateIdFinish();                     // resolve + re-enable buttons
-      setBtnLoading(btn, false);
-    }
-  })();
-});
+            M.toast?.({ html: "Shipment ID updated in background." });
+
+          } catch (e) {
+            try { handleCcApiError?.(e); } catch {}
+          } finally {
+            window.ccBypassStep1Update = false;     // consume one-shot bypass
+            ccUpdateIdFinish();                     // resolve + re-enable buttons
+            setBtnLoading(btn, false);
+          }
+        })();
+      });
 
       btnNext.addEventListener("click", async () => {
         try {
@@ -6528,7 +6517,7 @@ document.getElementById("ccUpdateIdBtn")?.addEventListener("click", () => {
                   if (newId && newId !== oldId) {
                     try { pushShipmentId(newId); idEl.value = newId; } catch {}
                   }
-                  window.ccManualIdUpdateDone = true;   // mark success
+
                   M.toast?.({ html: "Shipment updated for pricing." });
                 } catch (e) {
                   try { handleCcApiError?.(e); } catch {}
