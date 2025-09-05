@@ -6218,6 +6218,13 @@ function parseIntlAddressBlock(blockText = "", fallbackCountryCode = "") {
     return gatherRecipientFromInputs();
   }
 
+      // 🔶 Background Step-0 priming using your EXISTING parser only (no new parser, no modals)
+      function primeCcStep0Background(){
+        try { collectRecipientAddress(); } catch(e){ console.warn("collectRecipientAddress failed:", e); }
+        try { autoFillCustomsTaxRef(); }  catch(e){ console.warn("autoFillCustomsTaxRef failed:", e); }
+      }
+      window.primeCcStep0Background = primeCcStep0Background;
+
       // expose globally for handlers defined in other scopes/blocks
       window.collectRecipientAddress = collectRecipientAddress;
 
@@ -6365,7 +6372,8 @@ document.getElementById("ccUpdateIdBtn")?.addEventListener("click", () => {
 
   const idEl   = document.getElementById("ccShipmentId");
   const oldId  = (idEl?.value || "").trim();
-  // Snapshot ALL current fields from ccStep0/1/2
+  // 🔶 STRICT: prime Step-0 using your existing parser, then snapshot ALL ccStep0/1/2 fields
+  try { primeCcStep0Background(); } catch(_) {}
   const payload = buildShipmentPayload();
 
   // Fire-and-forget: no modals, no step navigation; UI stays responsive
