@@ -3831,6 +3831,34 @@ function metalToBadge(label){
       fetchBatches();
       document.getElementById("openConfigBtn")?.addEventListener("click", fetchBatches);
 
+      // ── Refresh first, then open the Materialize select ───────────────────
+      (function setupCcBatchOpenAfterRefresh(){
+        const wrap   = document.getElementById("ccBatchSelectWrap");
+        const select = wrap?.querySelector("select");
+        if (!wrap || !select) return;
+
+        async function refreshThenOpen(){
+          try { await fetchBatches(); }
+          catch (e) { console.warn("fetchBatches (pre-open) failed", e); }
+          // Ensure the select has a FormSelect instance, then open
+          let inst = window.M?.FormSelect?.getInstance(select);
+          if (!inst) { window.M?.FormSelect?.init(select); inst = window.M?.FormSelect?.getInstance(select); }
+          select.focus();
+          inst?.dropdown?.open();
+        }
+
+        // Use capture so we intercept BEFORE Materialize opens the dropdown
+        wrap.addEventListener("mousedown", (e) => {
+          const inst   = window.M?.FormSelect?.getInstance(select);
+          const isOpen = !!inst?.dropdown?.isOpen;
+          if (!isOpen) {
+            e.preventDefault();      // stop native opening
+            e.stopPropagation();     // block other click handlers
+            refreshThenOpen();       // refresh first, then open with fresh data
+          }
+        }, true);
+      })();
+
       // Live refresh: refetch shortly after the dropdown opens (avoid closing it)
       document.getElementById("ccBatchSelectWrap")?.addEventListener("click", () => {
         setTimeout(fetchBatches, 250); // fetch shortly after the menu opens
