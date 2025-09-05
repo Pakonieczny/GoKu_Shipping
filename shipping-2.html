@@ -4097,6 +4097,8 @@ function metalToBadge(label){
       function ccUpdateIdFinish() {
         window.ccManualIdUpdateDone     = true;
         window.ccManualIdUpdateInFlight = false;
+        // A successful Update/Delete/Create means server now reflects latest edits
+        window.ccForceReplaceOnEdit     = false;
         try { window.__resolveCcUpdateId?.(); } catch {}
         ccUpdateIdLatch.running = false;
         ccDisableRateControls(false);
@@ -4165,6 +4167,38 @@ function metalToBadge(label){
           el?.addEventListener("input", () => { el.dataset.userEdited = "1"; });
         });
       });
+
+      // Flag: user manually changed shipment inputs → force a replace on next price/buy
+      window.ccUserAdjusted = false;
+      window.ccForceReplaceOnEdit = false;
+
+      // One place to mark a genuine user edit (ignores programmatic .dispatchEvent('input'))
+      function markManualEdit(e){
+        try {
+          if (e && e.isTrusted === false) return;          // ignore synthetic events
+          const t = e?.currentTarget;
+          if (t) t.dataset.userEdited = "1";               // remember field-level edits
+        } catch {}
+        window.ccUserAdjusted = true;
+        window.ccForceReplaceOnEdit = true;
+        // Nudge any signature-based debounce logic to allow a fresh replace
+        try { window.ccLastReplaceSig = null; } catch {}
+      }
+
+      // Watch every <input>, <textarea>, <select> within ccStep0/1/2
+      document.addEventListener("DOMContentLoaded", () => {
+        ["ccStep0","ccStep1","ccStep2"].forEach(stepId => {
+          const root = document.getElementById(stepId);
+          if (!root) return;
+          root.querySelectorAll("input, textarea, select").forEach(el => {
+            // never treat the ID field itself as a "manual" content edit
+            if (el.id === "ccShipmentId") return;
+            el.addEventListener("input",  markManualEdit, { passive: true });
+            el.addEventListener("change", markManualEdit, { passive: true });
+          });
+        });
+      });
+
 
       function showStep(i){
         // Ensure the editor modal is visible when stepping between wizard pages
@@ -4843,6 +4877,21 @@ function metalToBadge(label){
           const selectedLi = ratesList?.querySelector("li.selected");
           if (selectedLi?.dataset?.postageType) postageType = selectedLi.dataset.postageType;
 
+          // If user edited anything after last replace, force Update/Delete/Create before buying
+          if (window.ccForceReplaceOnEdit) {
+            try {
+              await ensureUpdateIdSettled(); // respect any in-flight Update-ID run
+              const freshPayload = buildShipmentPayload();
+              const created = await replaceDraftShipment(shipmentId, freshPayload);
+              const newId = created?.id || created?.shipment?.id;
+              if (newId && newId !== shipmentId) {
+                pushShipmentId(newId);
+                shipmentId = newId;
+              }
+            } finally {
+              window.ccForceReplaceOnEdit = false; // consume the one-shot force
+            }
+          }
 
           // 3) Buy label
           // ✅ EU/GB: ensure ROOT email; if Update-ID was engaged, SKIP replaceDraftShipment on Buy
@@ -5325,6 +5374,22 @@ async function refreshRates(){
   const replacePayload = buildShipmentPayload();   // includes to/phone/customs etc.
   // Snapshot the ID we *intend* to price (will be updated if we replace)
   let idUsedForPricing = (idInput.value || "").trim();
+
+  // If the user manually edited fields, force an Update/Delete/Create now
+  if (window.ccForceReplaceOnEdit) {
+    try {
+      // if a background Update-ID run is in flight, wait for it first
+      await ensureUpdateIdSettled();
+      const created = await replaceDraftShipment(id, replacePayload);
+      const newId = created?.id || created?.shipment?.id || idUsedForPricing;
+      if (newId && newId !== idUsedForPricing) {
+        try { pushShipmentId(newId); idInput.value = newId; } catch {}
+        idUsedForPricing = newId;
+      }
+    } finally {
+      window.ccForceReplaceOnEdit = false; // consume the one-shot force
+    }
+  }
 
  // 🇺🇸🇨🇦 US/CA rule: If manual "Update ID" ran, bypass replace; if in-flight, wait.
  const destCountry = (document.getElementById("cc_to_country_code")?.value || "")
