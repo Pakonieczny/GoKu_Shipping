@@ -20,13 +20,6 @@
       transition: opacity 0s; /* fade-in controlled by JS */
     }
 
-
-    #ccRates .no-rates {
-      padding: 14px;
-      text-align: center;
-      opacity: .8;
-    }
-
     /* Main UI Buttons */
     #connectEtsyBtn {
       position: absolute;
@@ -415,6 +408,7 @@
     #ccRates{list-style:none;padding:0;margin:0;display:flex;flex-direction:column;gap:10px}
     #ccRates li{border:1px solid #ddd;border-radius:10px;padding:10px 12px;display:flex;justify-content:space-between;align-items:center;cursor:pointer}
     #ccRates li.selected{outline:2px solid #1976d2}
+    #ccRates .no-rates { padding: 14px; text-align: center; opacity: .8; }  /* ← add here */
     #ccEditFoot{display:flex;justify-content:space-between;align-items:center;padding:12px 16px;border-top:1px solid #ececec;background:#fafafa;border-radius:0 0 12px 12px}
     #ccEditFoot button{padding:9px 14px;border-radius:8px;border:0;background:#333;color:#fff;cursor:pointer}
     #ccEditFoot button[disabled]{opacity:.5;cursor:not-allowed}
