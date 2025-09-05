@@ -3802,19 +3802,21 @@ function metalToBadge(label){
           const seen = new Set();
           const options = ['<option value="">Select Batch…</option>'];
 
-          // Always show default first
-          options.push(`<option value="${defaultId}">Batch ${defaultId} • Default</option>`);
-          seen.add(defaultId);
-
-          // Then append the rest (deduped)
+          // First append all NON-default batches (deduped, newest → oldest)
           for (const { b } of scored) {
             const id = String(b.id);
+            if (id === defaultId) continue;           // skip default now; add it last
             if (seen.has(id)) continue;
             seen.add(id);
             const labelBase = (b.description || b.name || `Batch ${b.id}`);
             const label = `${labelBase}${b.status ? ` • ${b.status}` : ""}`;
             options.push(`<option value="${id}">${label}</option>`);
           }
+
+          // Always append the DEFAULT batch LAST with the requested label text
+          const preLabel = `${defaultId}-PRE`;        // "3903775-PRE"
+          options.push(`<option value="${defaultId}">${preLabel}</option>`);
+          seen.add(defaultId);
 
         // Don't mutate while open; update right away if closed, otherwise defer until it closes
         const inst  = window.M?.FormSelect?.getInstance(ccBatchSelect);
