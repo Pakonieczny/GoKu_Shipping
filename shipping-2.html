@@ -3797,25 +3797,27 @@ function metalToBadge(label){
             options.push(`<option value="${id}">${label}</option>`);
           }
 
-          // Purge & rebuild
+        // Don't mutate while open; update right away if closed, otherwise defer until it closes
+        const inst  = window.M?.FormSelect?.getInstance(ccBatchSelect);
+        const open  = !!inst?.dropdown?.isOpen;
+
+        if (!open) {
+          // Safe: menu is closed — rebuild now
           ccBatchSelect.innerHTML = options.join("");
-
-          // Don't re-init while the dropdown is open (that would collapse it)
-          const inst  = window.M?.FormSelect?.getInstance(ccBatchSelect);
-          const open  = !!inst?.dropdown?.isOpen;
-
-          if (!open) {
-            reinitSelect(ccBatchSelect);
-          } else {
-            // Optionally re-init after it closes so the next open is fresh
-            const prevClose = inst.dropdown.options.onCloseEnd;
-            inst.dropdown.options.onCloseEnd = () => {
-              try { reinitSelect(ccBatchSelect); } finally {
-                // restore any existing onCloseEnd hook
-                inst.dropdown.options.onCloseEnd = prevClose || null;
-              }
-            };
-          }
+          reinitSelect(ccBatchSelect);
+        } else {
+          // Defer: capture the HTML and apply after the user closes the menu
+          const html = options.join("");
+          const prevClose = inst.dropdown.options.onCloseEnd;
+          inst.dropdown.options.onCloseEnd = () => {
+            try {
+              ccBatchSelect.innerHTML = html;
+              reinitSelect(ccBatchSelect);
+            } finally {
+              inst.dropdown.options.onCloseEnd = prevClose || null;
+            }
+          };
+        }
 
           // If a shipment requested a batch preselect, try to apply it (only if still open)
           if (_desiredBatchId) preselectBatchIfOpen(_desiredBatchId);
