@@ -4913,8 +4913,7 @@ async function ccValidateAgainstApi(step){
             weight               : Number(document.getElementById("cc_weight").value || 0),
             insurance_requested  : document.getElementById("cc_insurance_requested").value === "true",
             signature_requested  : document.getElementById("cc_signature_requested").value === "true",
-            media_mail_requested : document.getElementById("cc_media_mail_requested").value === "true",
-            ship_date            : normalizeShipDate(document.getElementById("cc_ship_date").value)
+            media_mail_requested : document.getElementById("cc_media_mail_requested").value === "true"
           };
 
           // keep deriving vatRef (UI may use it for previews), but do NOT include in payload
@@ -4926,6 +4925,7 @@ async function ccValidateAgainstApi(step){
             country_code : (toObj?.country_code || "").toUpperCase(),
             order_id     : (orderId || undefined),
             package      : pkg,
+            ship_date    : getShipDateForApi(),
             // vat_reference intentionally omitted
             customs      : {
               package_contents: document.getElementById("cc_package_contents").value,
@@ -6363,6 +6363,8 @@ function parseIntlAddressBlock(blockText = "", fallbackCountryCode = "") {
 // NEW: "Update ID" button → run Update/Delete/Create fully in the background
 document.getElementById("ccUpdateIdBtn")?.addEventListener("click", () => {
   const btn = document.getElementById("ccUpdateIdBtn");
+  const d = document.getElementById("cc_ship_date");              // (optional guard)
+  if (d && !d.value) d.value = new Date().toISOString().slice(0,10); // ensure non-empty date
   setBtnLoading(btn, true);
   // Prime flags so Step-2 Next can wait or bypass (US/CA logic in refreshRates)
   window.ccManualIdUpdateInFlight = true;
