@@ -3747,22 +3747,61 @@ function metalToBadge(label){
       // --- Batches
       async function fetchBatches(){
         try {
-          // Open-only (pending) batches; received/closed are excluded by the API filter
+          // Keep using open batches from the API, then we’ll filter by age
           const resp = await fetch(`${window.getCcEndpoint()}?resource=batches&status=open`, { credentials: "include" });
           const data = await safeJSON(resp);
           const raw  = (data && (data.batches ?? data.data)) ?? data;
           const list = Array.isArray(raw) ? raw : [];
 
-          ccBatchSelect.innerHTML =
-            `<option value="">Select Batch…</option>` +
-            list.map(b => {
-              const label = (b.description || b.name || `Batch ${b.id}`) + (b.status ? ` • ${b.status}` : "");
-              return `<option value="${b.id}">${label}</option>`;
-            }).join("");
+          // Always include this default batch ID (already set globally in your file)
+          const defaultId = String(window.CC_DEFAULT_BATCH_ID || "3903775");
 
+          // Age filter: keep items created in the last 7 days
+          const now = Date.now();
+          const weekMs = 7 * 24 * 60 * 60 * 1000;
+
+          const recent = list.filter(b => {
+            if (String(b.id) === defaultId) return true; // keep even if old
+            const createdISO = b.created_at || b.createdAt || b.created || b.created_on;
+            if (!createdISO) return false;
+            const t = Date.parse(createdISO);
+            return Number.isFinite(t) && (now - t) <= weekMs;
+          });
+
+          // If default batch isn’t present from API, add a simple fallback option
+          if (!recent.some(b => String(b.id) === defaultId)) {
+            recent.unshift({ id: defaultId, description: `Batch ${defaultId}`, status: "" });
+          }
+
+          // Sort by created desc (when available), but keep default at the very top
+          const scored = recent.map(b => ({
+            b,
+            ts: Date.parse(b.created_at || b.createdAt || b.created || 0) || 0
+          }));
+          scored.sort((a, z) => z.ts - a.ts);
+
+          const seen = new Set();
+          const options = ['<option value="">Select Batch…</option>'];
+
+          // Always show default first
+          options.push(`<option value="${defaultId}">Batch ${defaultId} • Default</option>`);
+          seen.add(defaultId);
+
+          // Then append the rest (deduped)
+          for (const { b } of scored) {
+            const id = String(b.id);
+            if (seen.has(id)) continue;
+            seen.add(id);
+            const labelBase = (b.description || b.name || `Batch ${b.id}`);
+            const label = `${labelBase}${b.status ? ` • ${b.status}` : ""}`;
+            options.push(`<option value="${id}">${label}</option>`);
+          }
+
+          // Purge & rebuild
+          ccBatchSelect.innerHTML = options.join("");
           reinitSelect(ccBatchSelect);
 
-          // If a shipment just told us its batch, try to apply it now (only works if still open)
+          // If a shipment requested a batch preselect, try to apply it (only if still open)
           if (_desiredBatchId) preselectBatchIfOpen(_desiredBatchId);
         } catch (e) {
           console.warn("fetchBatches failed", e);
@@ -3773,6 +3812,9 @@ function metalToBadge(label){
       // Call once on load, and whenever config opens
       fetchBatches();
       document.getElementById("openConfigBtn")?.addEventListener("click", fetchBatches);
+
+      // Live refresh: when the batch dropdown area is clicked, re-fetch latest
+      document.getElementById("ccBatchSelectWrap")?.addEventListener("mousedown", fetchBatches);
 
       // Create a named batch
       createBtn?.addEventListener("click", async () => {
