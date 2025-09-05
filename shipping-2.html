@@ -3805,7 +3805,7 @@ function metalToBadge(label){
           scored.sort((a, z) => z.ts - a.ts);
 
           const seen = new Set();
-          const options = ['<option value="">Select Batch…</option>'];
+          const options = ['<option value="" class="placeholder" disabled selected hidden>Select Batch…</option>'];
 
           // First append all NON-default batches (deduped, newest → oldest)
           for (const { b } of scored) {
