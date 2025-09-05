@@ -3799,7 +3799,23 @@ function metalToBadge(label){
 
           // Purge & rebuild
           ccBatchSelect.innerHTML = options.join("");
-          reinitSelect(ccBatchSelect);
+
+          // Don't re-init while the dropdown is open (that would collapse it)
+          const inst  = window.M?.FormSelect?.getInstance(ccBatchSelect);
+          const open  = !!inst?.dropdown?.isOpen;
+
+          if (!open) {
+            reinitSelect(ccBatchSelect);
+          } else {
+            // Optionally re-init after it closes so the next open is fresh
+            const prevClose = inst.dropdown.options.onCloseEnd;
+            inst.dropdown.options.onCloseEnd = () => {
+              try { reinitSelect(ccBatchSelect); } finally {
+                // restore any existing onCloseEnd hook
+                inst.dropdown.options.onCloseEnd = prevClose || null;
+              }
+            };
+          }
 
           // If a shipment requested a batch preselect, try to apply it (only if still open)
           if (_desiredBatchId) preselectBatchIfOpen(_desiredBatchId);
@@ -3813,8 +3829,10 @@ function metalToBadge(label){
       fetchBatches();
       document.getElementById("openConfigBtn")?.addEventListener("click", fetchBatches);
 
-      // Live refresh: when the batch dropdown area is clicked, re-fetch latest
-      document.getElementById("ccBatchSelectWrap")?.addEventListener("mousedown", fetchBatches);
+      // Live refresh: refetch shortly after the dropdown opens (avoid closing it)
+      document.getElementById("ccBatchSelectWrap")?.addEventListener("click", () => {
+        setTimeout(fetchBatches, 120);
+      });
 
       // Create a named batch
       createBtn?.addEventListener("click", async () => {
