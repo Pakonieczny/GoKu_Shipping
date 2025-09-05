@@ -3923,6 +3923,18 @@ function metalToBadge(label){
       // NEW: force-bypass Step-1 auto Update/Delete/Create when true (one-shot)
       window.ccBypassStep1Update = false;
 
+      // 🔶 Helper: await Update-ID completion before pricing (used by Step-2 → Next)
+      async function waitForUpdateIdIfNeeded({ showToast = true } = {}){
+        try{
+          if (window.ccManualIdUpdatePromise && !window.ccManualIdUpdateDone){
+            if (showToast) window.M?.toast?.({ html:"Waiting for Update ID to finish…", classes:"blue darken-2" });
+            await window.ccManualIdUpdatePromise;
+          }
+        }catch(e){
+          console.warn("waitForUpdateIdIfNeeded:", e);
+        }
+      }
+
       function set(id, v) {
         const el = document.getElementById(id);
         if (!el) return;
@@ -6390,12 +6402,16 @@ document.getElementById("ccUpdateIdBtn")?.addEventListener("click", () => {
       if (newId && newId !== oldId) {
         try { pushShipmentId(newId); idEl.value = newId; } catch {}
       }
-      window.ccManualIdUpdateDone = true;     // ✅ Step-2 can bypass duplicate replace
+      window.ccManualIdUpdateDone = true;     // ✅ mark completion (success)
       M.toast?.({ html: "Shipment ID updated in background." });
-      resolvePromise?.();
+      resolvePromise?.();                     // ✅ always resolve the waiter
     } catch (e) {
       try { handleCcApiError?.(e); } catch {}
     } finally {
+      // ✅ treat as "completed" even on error so waiters don't hang
+      if (!window.ccManualIdUpdateDone) window.ccManualIdUpdateDone = true;
+      try { resolvePromise?.(); } catch {}
+      window.ccBypassStep1Update = false;     // consume one-shot bypass
       window.ccManualIdUpdateInFlight = false;
       setBtnLoading(btn, false);
     }
@@ -6482,11 +6498,13 @@ document.getElementById("ccUpdateIdBtn")?.addEventListener("click", () => {
           return;
         }
 
-          // ✅ Step 2: price, then move to Step 3
+          // ✅ Step 2: (possibly) wait for Update-ID, then price, then move to Step 3
           if (currentStep === 2){
             setBtnLoading(btnNext, true);
             try {
               if (!(await validateStep(2))) return;
+              // 🛑 If Update-ID background run is active (flag ON), wait before pricing
+              await waitForUpdateIdIfNeeded({ showToast: true });
               await refreshRates();    // ← pricing happens here only
               showStep(3);
             } finally { setBtnLoading(btnNext, false); }
