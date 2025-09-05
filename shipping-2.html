@@ -6461,7 +6461,7 @@ document.getElementById("ccUpdateIdBtn")?.addEventListener("click", () => {
       }
       window.ccManualIdUpdateDone = true;     // ✅ mark completion (success)
       M.toast?.({ html: "Shipment ID updated in background." });
-      resolvePromise?.();                     // ✅ always resolve the waiter
+      // Promise resolution handled by ccUpdateIdFinish() (via window.__resolveCcUpdateId)
     } catch (e) {
       try { handleCcApiError?.(e); } catch {}
     } finally {
