@@ -20,6 +20,13 @@
       transition: opacity 0s; /* fade-in controlled by JS */
     }
 
+
+    #ccRates .no-rates {
+      padding: 14px;
+      text-align: center;
+      opacity: .8;
+    }
+
     /* Main UI Buttons */
     #connectEtsyBtn {
       position: absolute;
@@ -5112,25 +5119,47 @@ function buildRefreshPayload(){
       return payload;
     }
 
-      function renderRates(s){
-        const rates = (s && s.rates) || [];
-        ratesList.innerHTML = "";
-        rates.forEach(r => {
-          const li = document.createElement("li");
-          li.dataset.postageType = r.postage_type;
-          const left = document.createElement("div");
-          left.innerHTML = `<div style="font-weight:600">${r.service_name || r.postage_type}</div>
-                            <div style="font-size:12px;opacity:.8">${(r.estimated_delivery_days || r.delivery_days || "")} business days</div>`;
-          const right = document.createElement("div");
-          right.innerHTML = `<div style="font-weight:700">$${Number(r.payment_amount || r.rate || 0).toFixed(2)}</div>`;
-          li.appendChild(left); li.appendChild(right);
-          li.addEventListener("click", () => {
-            Array.from(ratesList.children).forEach(n => n.classList.remove("selected"));
-            li.classList.add("selected"); selectedPostageType = li.dataset.postageType; btnBuy.disabled = !selectedPostageType;
-          });
-          ratesList.appendChild(li);
-        });
+    function renderRates(s){
+      const rates = (s && Array.isArray(s.rates)) ? s.rates : [];
+
+      // reset selection + button state
+      selectedPostageType = "";
+      if (typeof btnBuy !== "undefined") btnBuy.disabled = true;
+
+      // clear the list area where the rate cards live
+      ratesList.innerHTML = "";
+
+      // 🔴 No rates: show placeholder text inside ccEditCard (in the list area)
+      if (!rates.length) {
+        ratesList.innerHTML =
+          '<li class="no-rates" style="padding:14px;text-align:center;opacity:.8">No rates available!</li>';
+        return;
       }
+
+      // ✅ Have rates: render the usual cards
+      rates.forEach(r => {
+        const li = document.createElement("li");
+        li.dataset.postageType = r.postage_type;
+
+        const left = document.createElement("div");
+        left.innerHTML = `<div style="font-weight:600">${r.service_name || r.postage_type}</div>
+                          <div style="font-size:12px;opacity:.8">${(r.estimated_delivery_days || r.delivery_days || "")} business days</div>`;
+
+        const right = document.createElement("div");
+        right.innerHTML = `<div style="font-weight:700">$${Number(r.payment_amount || r.rate || 0).toFixed(2)}</div>`;
+
+        li.appendChild(left);
+        li.appendChild(right);
+        li.addEventListener("click", () => {
+          Array.from(ratesList.children).forEach(n => n.classList.remove("selected"));
+          li.classList.add("selected");
+          selectedPostageType = li.dataset.postageType;
+          if (typeof btnBuy !== "undefined") btnBuy.disabled = !selectedPostageType;
+        });
+
+        ratesList.appendChild(li);
+      });
+    }
 
 async function refreshRates(){
   // 🔒 Freeze any ccShipmentId-driven rechecks while we replace→refresh
