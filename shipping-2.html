@@ -2381,7 +2381,10 @@ function metalToBadge(label){
             inp.value = txt; // no auto-lookup from typing/paste
             M.toast?.({ html: "Order # pasted" });
 
-            /* ⛔ Cancel any in-flight ccShipmentId search and pending slow-pass */
+            /* ⛔ If an Update-ID latch is running from a previous order, resolve it cleanly */
+            if (window.ccManualIdUpdateInFlight && typeof window.__resolveCcUpdateId === "function") {
+              try { window.__resolveCcUpdateId(); } catch {}
+            }
             window.ccManualIdUpdateDone    = false;
             window.ccManualIdUpdateInFlight= false;
             window.ccManualIdUpdatePromise = null;
@@ -5124,6 +5127,9 @@ async function refreshRates(){
   if (window.ccBlockRatesUntilStep2) return;
   if (typeof currentStep === "number" && currentStep < 2) return;
 
+  // ⏳ If Update/Delete/Create is still finishing, wait here too
+  await ensureUpdateIdSettled();
+
   // 0) Ensure we have a draft id
   let id = (idInput.value || "").trim();
   if (!id) {
@@ -6493,31 +6499,28 @@ document.getElementById("ccUpdateIdBtn")?.addEventListener("click", () => {
           try {
             const dest = (document.getElementById("cc_to_country_code")?.value || "").trim().toUpperCase();
             if (!window.ccBypassStep1Update && (dest === "US" || dest === "CA")) {
-              // prime flags so Step-2 can wait/bypass
-              window.ccManualIdUpdateInFlight = true;
-              window.ccManualIdUpdateDone     = false;
-              let resolvePromise;
-              window.ccManualIdUpdatePromise = new Promise(res => (resolvePromise = res));
+              // Use the global latch so Step-2 and refreshRates can await reliably
+              ccUpdateIdStart();
 
               const idEl    = document.getElementById("ccShipmentId");
               const oldId   = (idEl?.value || "").trim();
               const payload = buildShipmentPayload();
 
-              // Run asynchronously; Step 2 waits via refreshRates gating
+              // Run asynchronously; Step-2/Refresh will await the latch
               (async () => {
                 try {
-                  const created = await replaceDraftShipment(oldId, payload); // create new, sweep dupes, delete old
+                  const created = await replaceDraftShipment(oldId, payload); // create → sweep dupes → delete old
                   const newId   = created?.id || created?.shipment?.id || "";
                   if (newId && newId !== oldId) {
                     try { pushShipmentId(newId); idEl.value = newId; } catch {}
                   }
-                  window.ccManualIdUpdateDone = true;   // ✅ Step-2 will bypass duplicate replace
-
+                  window.ccManualIdUpdateDone = true;   // mark success
                   M.toast?.({ html: "Shipment updated for pricing." });
                 } catch (e) {
                   try { handleCcApiError?.(e); } catch {}
                 } finally {
-                  window.ccManualIdUpdateInFlight = false;
+                  // Resolves the shared Promise and flips inFlight=false
+                  ccUpdateIdFinish();
                 }
               })();
 
@@ -6730,51 +6733,6 @@ document.getElementById("ccUpdateIdBtn")?.addEventListener("click", () => {
 <!-- QZ Tray client for direct printing -->
 <script src="https://cdn.jsdelivr.net/npm/qz-tray@2.2.5/qz-tray.js"></script>
 
-<!-- 🧰 Strict Step-2 gate: ensure “Next” waits for Update-ID to finish before pricing -->
-<script>
-(function installStrictStep2Gate(){
-  if (window.__ccStrictStep2Gate) return; window.__ccStrictStep2Gate = true;
-
-  const isOnStep2 = () => {
-    const s2 = document.getElementById("ccStep2");
-    return !!s2 && s2.classList.contains("active");
-  };
-
-  function attachGuard(el, isNext){
-    if (!el || el.__strictGuardInstalled) return;
-    el.__strictGuardInstalled = true;
-    el.addEventListener("click", async (e) => {
-      if (!isOnStep2()) return;           // only guard on Step 2
-      e.preventDefault();
-      e.stopImmediatePropagation();        // preempt older/bubbling listeners
-      try {
-        if (typeof setBtnLoading === "function") setBtnLoading(el, true);
-        if (typeof validateStep === "function") {
-          const ok = await validateStep(2);
-          if (!ok) return;
-        }
-        // 🔒 Hard gates — wait for Update/Delete/Create to fully settle
-        if (typeof waitForUpdateIdIfNeeded === "function") await waitForUpdateIdIfNeeded({ showToast: true });
-        if (typeof ensureUpdateIdSettled === "function")  await ensureUpdateIdSettled();
-        if (typeof waitForCcSpinnerToHide === "function") await waitForCcSpinnerToHide();
-
-        // Price
-        if (typeof refreshRates === "function") await refreshRates();
-
-        // Advance only for the Next button
-        if (isNext && typeof showStep === "function") showStep(3);
-      } catch (err){
-        try { handleCcApiError?.(err); } catch {}
-      } finally {
-        if (typeof setBtnLoading === "function") setBtnLoading(el, false);
-      }
-    }, { capture: true });                 // run before bubble-phase listeners
-  }
-
-  attachGuard(document.getElementById("ccNext"),          true);
-  attachGuard(document.getElementById("ccRefreshRates"),  false);
-})();
-</script>
 
 </body>
 </html>
