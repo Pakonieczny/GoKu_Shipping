@@ -6264,6 +6264,35 @@ function parseIntlAddressBlock(blockText = "", fallbackCountryCode = "") {
     return { addr1: addr1 || s, addr2: unit };
   }
 
+  // Pull postal code out of the City field for EU/GB if it's missing
+  function compensatePostalFromCity(to){
+    const cc = String(to?.to_country_code || "").toUpperCase();
+    if (!cc || !(cc === "GB" || EU_CODES.has(cc))) return to;
+    if (to.to_postal_code) return to;
+
+    const city = String(to.to_city || "");
+    if (!city) return to;
+
+    // UK postcodes (e.g., M30 0UR, SW1A 1AA, W1F 8ZT, EC1A 1BB)
+    const ukRe = /\b([A-Z]{1,2}\d[A-Z\d]?)\s*(\d[A-Z]{2})\b/i;
+
+    // NL format (e.g., 1012 AB); generic EU numeric (e.g., 45309)
+    const nlRe = /\b[1-9]\d{3}\s?[A-Z]{2}\b/i;
+    const euNumRe = /\b\d{4,6}\b/;
+
+    let m = city.match(ukRe) || city.match(nlRe) || city.match(euNumRe);
+    if (!m) return to;
+
+    // Build canonical postcode text
+    const pc = m.length === 3
+      ? (m[1] + " " + m[2]).toUpperCase().replace(/\s+/g," ").trim()
+      : m[0].toUpperCase();
+
+    to.to_postal_code = pc;
+    to.to_city = city.replace(m[0], "").replace(/[,-]/g," ").replace(/\s{2,}/g," ").trim();
+    return to;
+  }
+
   // ▼ Define the missing helper (global scope)
   function collectRecipientAddress(){
     const block   = (document.getElementById("shipAddressBox")?.value || "").trim();
@@ -6303,6 +6332,10 @@ function parseIntlAddressBlock(blockText = "", fallbackCountryCode = "") {
 
      // still inside collectRecipientAddress(), after the EU/UK zeroing
      to.to_province_code = sanitizeProvinceForCountry(to.to_province_code, to.to_country_code);
+
+
+     // ⭐ Compensate: GB/EU often paste "City POSTCODE" into City — split it out
+     to = compensatePostalFromCity(to);
 
      // reflect the sanitized value into the visible field right away
      const elProv = document.getElementById("cc_to_province_code");
