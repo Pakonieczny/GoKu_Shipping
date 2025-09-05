@@ -4710,6 +4710,7 @@ function metalToBadge(label){
             const codeRaw = (document.getElementById("cc_to_country_code")?.value || "").trim().toUpperCase();
             const countryCode = (codeRaw === "UK" ? "GB" : codeRaw);
             const isEUorGB = EU_CODES.has(countryCode) || countryCode === "GB";
+            let newId = null;
             if (isEUorGB) {
               const emailInput = document.getElementById("cc_to_email");
               const chosen = (emailInput?.value || "").trim() || "custombrites@gmail.com";
@@ -4724,7 +4725,7 @@ function metalToBadge(label){
                 const payload = buildShipmentPayload();
                 payload.email = chosen; // root-level
                 const created = await replaceDraftShipment(rawId, payload);
-                const newId = created?.id || created?.shipment?.id;
+                newId = created?.id || created?.shipment?.id;
                 if (newId) {
                   try { pushShipmentId(newId); document.getElementById("ccShipmentId").value = newId; } catch {}
                 }
@@ -6476,6 +6477,7 @@ function parseIntlAddressBlock(blockText = "", fallbackCountryCode = "") {
           const countryCode = (codeRaw === "UK" ? "GB" : codeRaw);
           const EU_CODES = new Set(["AT","BE","BG","HR","CY","CZ","DK","EE","FI","FR","DE","GR","HU","IE","IT","LV","LT","LU","MT","NL","PL","PT","RO","SK","SI","ES","SE"]);
           const isEUorGB = EU_CODES.has(countryCode) || countryCode === "GB";
+          let newId = null;
           if (isEUorGB) {
             const emailInput = document.getElementById("cc_to_email");
             const chosen = (emailInput?.value || "").trim() || "custombrites@gmail.com";
