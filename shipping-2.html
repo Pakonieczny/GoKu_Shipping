@@ -3549,12 +3549,11 @@ function metalToBadge(label){
       async function callSearch(params){
         window.ccSpin && window.ccSpin(true);
 
-        // Always scope to a batch:
-        // 1) <select id="ccBatchSelect"> value if present
-        // 2) fallback to window.CC_DEFAULT_BATCH_ID ("3903775")
+        // Batch scoping (supports explicit override):
         const batchIdSel   = String(document.getElementById("ccBatchSelect")?.value || "").trim();
         const fallbackId   = String(window.CC_DEFAULT_BATCH_ID || "");
-        const chosenBatch  = batchIdSel || fallbackId;
+        const explicit     = (params && params.batchId != null) ? String(params.batchId) : "";
+        const chosenBatch  = explicit || batchIdSel || fallbackId;
         const allParams    = Object.assign({}, (params || {}), (chosenBatch ? { batchId: chosenBatch } : {}));
 
         // Build query
@@ -3660,6 +3659,44 @@ function metalToBadge(label){
           return partial || list[0] || null;
         }
 
+        // === Fallback sweep across currently visible (filtered) batches =====================
+        function visibleBatchIds(){
+          const sel = document.getElementById("ccBatchSelect");
+          if (!sel) return [];
+          return Array.from(sel.options || [])
+            .filter(o => !o.disabled && !o.hidden && !(o.classList && o.classList.contains("placeholder")))
+            .map(o => String(o.value || "").trim())
+            .filter(Boolean);
+        }
+
+        /**
+         * Try other visible batches (still pending-only) for a shipment hit.
+         * @param {string} target - orderId or tracking value
+         * @param {"orderId"|"tracking"} key
+         * @returns {Promise<object|null>} shipment or null
+         */
+        async function sweepBatchesForHit(target, key){
+          const ids = visibleBatchIds();
+          const current = String(document.getElementById("ccBatchSelect")?.value || "") || String(window.CC_DEFAULT_BATCH_ID || "");
+          for (const bid of ids) {
+            if (!bid || bid === current) continue; // skip current
+            try {
+              const res = await callSearch({
+                [key]: target,
+                fast: "1",
+                pendingOnly: "1",
+                pageSize: "150",
+                timeoutMs: "15000",
+                batchId: bid // explicit override respected by callSearch
+              });
+              if (res?.aborted) return null;
+              const hit = pickBestShipment(target, res?.shipments || []);
+              if (hit) return hit;
+            } catch (_) {}
+          }
+          return null;
+        }
+
           async function refreshFromOrderIfChitChats(){
             if (window.ccPostBuyFrozen) return;
             const orderId = (orderInp?.value || "").trim();
@@ -3681,7 +3718,10 @@ function metalToBadge(label){
                   const slow = await callSearch({ orderId, fast: "0", pendingOnly: "1", pageSize: "200", timeoutMs: "15000" });
                   if (slow?.aborted) return;
                   const s2 = pickBestShipment(orderId, (slow.shipments || []));
-                  if (s2) setShipmentUI(s2);
+                  if (s2) { setShipmentUI(s2); return; }
+                  // Fallback: sweep only batches visible in the dropdown
+                  const s3 = await sweepBatchesForHit(orderId, "orderId");
+                  if (s3) setShipmentUI(s3);
                 } catch (err) {
                   if (err?.status === 504) {
                     try { M.toast?.({ html: "Chit Chats search timed out. Open ‘Edit Shipment’ → Next to create/find." }); } catch {}
@@ -3709,7 +3749,10 @@ function metalToBadge(label){
                   const slow = await callSearch({ tracking, fast: "0", pendingOnly: "1", pageSize: "100", timeoutMs: "15000" });
                   if (slow?.aborted) return;
                   const s2 = pickBestShipment(tracking, (slow.shipments || []));
-                  if (s2) setShipmentUI(s2);
+                  if (s2) { setShipmentUI(s2); return; }
+                  // Fallback: sweep only batches visible in the dropdown
+                  const s3 = await sweepBatchesForHit(tracking, "tracking");
+                  if (s3) setShipmentUI(s3);
                 } catch (err) {
                   if (err?.status === 504) {
                     try { M.toast?.({ html: "Chit Chats search timed out. Use Edit Shipment to proceed." }); } catch {}
