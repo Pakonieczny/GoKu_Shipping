@@ -633,10 +633,14 @@ function pfStartCell(i, etsyTitle){
   const box = document.createElement("div");
   box.className = "pf-cell";
   box.id = "pf-cell-" + i;
-  box.innerHTML = `
+  const parsed = String(etsyTitle || "");
+  const origArr = Array.isArray(window.cachedOrderItems) ? window.cachedOrderItems : [];
+  const orig = escapeHtml(String(origArr[i]?.title || ""));
+  box.innerHTML = 
     <div class="pf-head">
       <div><b>Cell ${i}</b></div>
-      <small>Title: ${escapeHtml(String(etsyTitle||"").slice(0,120))}</small>
+      <small>Title (orig): ${orig.slice(0,120)}</small><br/>
+      <small>Title (parsed): ${escapeHtml(parsed)}</small>
     </div>
     <ul class="pf-list" id="pf-list-${i}"></ul>
     <div class="pf-sent" id="pf-sent-${i}"></div>`;
@@ -655,6 +659,24 @@ function pfMarkSent(i, count){
 }
 function escapeHtml(s){
   return String(s).replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
+}
+
+/**
+ * normalizeTitleForPrefilter(title)
+ * - lowercase
+ * - remove ALL punctuation (keep only a–z, 0–9 and spaces)
+ * - collapse whitespace
+ * - keep FIRST 4 words only
+ */
+function normalizeTitleForPrefilter(title){
+  return String(title || "")
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/gi, " ")   // strip ALL punctuation
+    .replace(/\s+/g, " ")            // collapse runs of whitespace
+    .trim()
+    .split(" ")
+    .slice(0, 4)                     // FIRST 4 words only
+    .join(" ");
 }
 
 /********************************************************
@@ -2644,9 +2666,9 @@ async function loadBatchEtsyOrders(orderNumbers) {
       }
     }
 
-      // Cache cell titles → localStorage.etsyTitlesByCell
+      // Persist titles for prefilter: PARSED (lowercase, no punctuation, first 4 words)
       try {
-        const titlesByCell = combinedItems.map(t => String(t.title || "").toLowerCase());
+        const titlesByCell = combinedItems.map(t => normalizeTitleForPrefilter(t?.title));
         localStorage.setItem("etsyTitlesByCell", JSON.stringify(titlesByCell));
       } catch (e) {
         console.warn("Failed to cache etsyTitlesByCell:", e);
@@ -2795,15 +2817,13 @@ async function compareImages(userImage, croppedGridImage, cellIndex, userImageNa
  * sendAndMatch with metal filter logic
  ********************************************************/
 async function sendAndMatch() {
- // Ensure Etsy titles are cached before *any* matching begins
+  // Ensure Etsy titles cache exists in parsed form (first 4 words, no punctuation)
   (function ensureTitlesCache(){
     try {
       const k = "etsyTitlesByCell";
-      const curr = JSON.parse(localStorage.getItem(k) || "[]");
-      if ((!curr || !curr.length) && Array.isArray(window.cachedOrderItems)) {
-        const titles = window.cachedOrderItems.map(it => String(it.title || "").trim());
-        localStorage.setItem(k, JSON.stringify(titles));
-      }
+      const items  = Array.isArray(window.cachedOrderItems) ? window.cachedOrderItems : [];
+      const titles = items.map(it => normalizeTitleForPrefilter(it?.title));
+      localStorage.setItem(k, JSON.stringify(titles));  // overwrite each run to stay fresh
     } catch (e) { console.warn("ensureTitlesCache failed:", e); }
   })();
   /* --- progress setup --- */
@@ -2865,8 +2885,8 @@ async function sendAndMatch() {
   function passesTitlePrefilter(cellIdx, userImgName) {
     let titlesArr = [];
     try { titlesArr = JSON.parse(localStorage.getItem("etsyTitlesByCell") || "[]"); } catch (_) {}
-    const rawTitle = String(titlesArr[cellIdx] || "");
-    const title    = rawTitle.toLowerCase();
+    const rawTitle = String(titlesArr[cellIdx] || "");  // already normalized (first 4 words, no punctuation)
+    const title    = rawTitle;    
     if (!title) return true; // no title → don't block
 
     let descMap = {};
