@@ -1812,11 +1812,51 @@ async function openAIAnalyzePhoto(base64Image) {
     finalColor = "Unknown";
   }
 
+  /* ───────────────────── PASS 3 : two-word charm descriptor ───────────────────── */
+  const ctrlDesc = new AbortController();
+  pendingFetchControllers.push(ctrlDesc);
+  const descPrompt = [
+    "You will be shown ONE jewelry charm photo.",
+    "Return ONLY two (2) lowercase words that best describe the depicted charm type.",
+    "Do not mention metal, color, engraving text, or counts.",
+    "Exactly two words, separated by a single space. No punctuation, no extra text."
+  ].join("\n");
+  let desc2 = "";
+  try {
+    const r3 = await fetch(functionsBaseUrl + "/openaiProxy", {
+      method : "POST",
+      headers: { "Content-Type": "application/json" },
+      body   : JSON.stringify({
+        model: "gpt-4o-mini",
+        messages: [
+          { role: "user", content: [
+            { type: "text", text: descPrompt },
+            { type: "image_url", image_url: { url: base64Image, detail: "high" } }
+          ]}
+        ],
+        max_tokens: 8
+      }),
+      signal : ctrlDesc.signal
+    });
+    const d3 = await r3.json();
+    desc2 = (d3.choices?.[0]?.message?.content || "")
+      .toLowerCase()
+      .replace(/[^a-z\s]/g, " ")
+      .trim()
+      .replace(/\s+/g, " ");
+    // keep exactly two tokens if more slipped in
+    desc2 = desc2.split(" ").slice(0,2).join(" ");
+  } catch (e) {
+    console.warn("[openAIAnalyzePhoto] PASS 3 (desc2) error:", e);
+    desc2 = "";
+  }
+
   /* ───────────────────── RETURN consolidated result ───────────────────── */
   return {
     topRightNumber : topNumber,
     color          : finalColor,
-    charmPresent   : charmFlag
+    charmPresent   : charmFlag,
+    desc2
   };
 }
 
@@ -1877,6 +1917,18 @@ async function analyzeUserImagesViaOpenAI() {
     imgObj.analyzed = true;
 
     const baseName  = stripExtension(imgObj.name);       // keep this line
+    // Persist the 2-word descriptor for this Matrix photo
+    try {
+      const k = "matrixCharm2Words";
+      const map = JSON.parse(localStorage.getItem(k) || "{}");
+      if (result.desc2) {
+        map[baseName] = result.desc2;          // e.g., "paw print"
+        localStorage.setItem(k, JSON.stringify(map));
+      }
+      imgObj.desc2 = result.desc2 || "";
+    } catch (e) {
+      console.warn("matrixCharm2Words persist failed:", e);
+    }
 
       /* ---------- charm‑present handling ---------- */
       if (result.charmPresent === "no") {
@@ -2526,6 +2578,13 @@ async function loadBatchEtsyOrders(orderNumbers) {
       }
     }
 
+      // Cache cell titles → localStorage.etsyTitlesByCell
+      try {
+        const titlesByCell = combinedItems.map(t => String(t.title || "").toLowerCase());
+        localStorage.setItem("etsyTitlesByCell", JSON.stringify(titlesByCell));
+      } catch (e) {
+        console.warn("Failed to cache etsyTitlesByCell:", e);
+      }
       // Then fill the UI with combined results
       await fillPreviewBoxes(combinedItems);
 
@@ -2725,6 +2784,24 @@ async function sendAndMatch() {
     return true; // unknown listing metal → don’t block
   }
 
+  // Title-word prefilter — require ≥1 word overlap between a Matrix 2-word tag and the Etsy cell title
+  function passesTitlePrefilter(cellIdx, userImgName) {
+    let titlesArr = [];
+    try { titlesArr = JSON.parse(localStorage.getItem("etsyTitlesByCell") || "[]"); } catch (_) {}
+    const title = String(titlesArr[cellIdx] || "").toLowerCase();
+    if (!title) return true; // no title → don't block
+
+    let descMap = {};
+    try { descMap = JSON.parse(localStorage.getItem("matrixCharm2Words") || "{}"); } catch (_) {}
+    const base = String(userImgName || "").replace(/\.(jpg|jpeg|png|webp)$/i, "");
+    const two  = String(descMap[base] || "").toLowerCase().trim();
+    if (!two) return true; // no descriptor → don't block
+
+    const parts = two.split(/\s+/).filter(Boolean).slice(0,2);
+    const w1 = parts[0] || "", w2 = parts[1] || "";
+    return (w1 && title.includes(w1)) || (w2 && title.includes(w2));
+  }
+
     // --- NEW: helpers to render names and to keep filling until have >= need ---
     function namesForCell(i){
       return (cellMatches[i] || [])
@@ -2744,6 +2821,7 @@ async function sendAndMatch() {
         const pool = userImagesArray.filter(u =>
           !u.skipForCharm &&
           metalFilterOk(metalVal, u.name) &&
+          passesTitlePrefilter(i, u.name) &&
           !matchedUserNames.has(u.name)
         );
         if (!pool.length) break;
@@ -2814,9 +2892,11 @@ async function sendAndMatch() {
     const matchBox = document.getElementById("matchCell" + i);
     const metalVal = document.getElementById("metalCell" + i).value || "";
 
-    /* 🔥 Filter out skipForCharm as well */
+    /* 🔥 Filter out skipForCharm + metal + title pref */
     const validUserImages = userImagesArray.filter(
-        (u) => !u.skipForCharm && metalFilterOk(metalVal, u.name)
+        (u) => !u.skipForCharm
+           &&  metalFilterOk(metalVal, u.name)
+           &&  passesTitlePrefilter(i, u.name)
     );
 
     let firstImg = null;   // remembers first earring photo for this cell
@@ -2994,153 +3074,6 @@ async function sendAndMatch() {
       // G) bail out so Second Pass is skipped
       return;
     }
-
-    /*  ===== SECOND PASS DISABLED (Aug 2025) – BEGIN =====
-
-  const mirrorChecklist = Object.keys(earringCells)
-    .filter(idx => cellMatches[idx] && cellMatches[idx].length === 1)
-    .map(Number);                      // earrings still missing a twin
-
-  unmatchedCells = [];
-  for (let i = 0; i < croppedImagesArray.length; i++) {
-    // include normal unmatched cells + earrings that still need a twin
-     const need = expectedSlots(window.cachedOrderItems?.[i] || {});
-     const have = (cellMatches[i]||[]).filter(m=>m && m.userImage).length;
-     if (mirrorChecklist.includes(i) || have < need) {
-      unmatchedCells.push(i);
-    }
-  }
-
-  smTotal += unmatchedCells.length;
-  document.getElementById("progressTitle").textContent =
-    "Matching Images... (Second Pass)";
-
-  for (const i of unmatchedCells) {
-    if (runId !== globalRunId) return;
-
-    const matchBox = document.getElementById("matchCell" + i);
-    const metalVal = document.getElementById("metalCell" + i).value || "";
-
-
-    const validUserImages = userImagesArray.filter(
-      (u) => !u.skipForCharm && metalFilterOk(metalVal, u.name)
-    );
-
-    
-    const compareTarget = mirrorChecklist.includes(i) && earringState[i]?.firstImg
-        ? earringState[i].firstImg        // compare candidate vs first user photo
-        : croppedImagesArray[i];          // normal source
-
-    const comparisonPromises = validUserImages.map((user, j) => {
-      return new Promise((resolve) => {
-        setTimeout(() => {
-          if (runId !== globalRunId) return resolve({ result: { score: 0 }, user });
-          if ( matchedUserNames.has(user.name) || ((cellMatches[i]||[]).filter(m=>m && m.userImage).length >= expectedSlots(window.cachedOrderItems?.[i] || {})) ) {
-            return resolve({ result: { score: 0 }, user });
-          }
-          compareImages(user.data, compareTarget, i, user.name)
-            .then((result) => resolve({ result, user }))
-            .catch((err) => {
-              console.error("Second‑pass compare error:", i, user.name, err);
-              resolve({ result: { score: 0 }, user });
-            });
-        }, j * 120);
-      });
-    });
-
-    const results = await Promise.all(comparisonPromises);
-
-    if (runId !== globalRunId) return;        
-
-    results.sort((a, b) => b.result.score - a.result.score);
-
-    if (!results.length || results[0].result.score === 0) {
-      M.toast({ html: `Cell ${i}: No valid matches found in second pass.` });
-    } else {
-      const topCandidate = results[0];
-      const topScore = topCandidate.result.score;
-      const topScorePerc = (topScore * 100).toFixed(2);
-      const matchName = topCandidate.user.name.replace(/(\.jpg|\.png)$/i, "");
-
-      M.toast({
-        html: `Cell ${i}: Best candidate => ${matchName} (${topScorePerc}%)`
-      });
-
-      if (topScore === 1.0 || topScore >= 0.98) {
-        if (matchBox) {
- 
-          if (earringCells[i] && cellMatches[i] && cellMatches[i].length === 1) {
-            matchBox.value += `, ${matchName}`;
-          } else {
-            matchBox.value  =  matchName;
-          }
-          matchBox.style.fontWeight = "";
-          matchBox.style.color = "";
-        }
-        if (!cellMatches[i]) cellMatches[i] = [];
-        cellMatches[i].push({
-          userName: matchName,
-          userImage: topCandidate.user.data,
-          score: topScore
-        });
-
-        matchedUserNames.add(topCandidate.user.name);
-
-  
-           {
-             const need = expectedSlots(window.cachedOrderItems?.[i] || {});
-             const have = (cellMatches[i]||[]).filter(m=>m && m.userImage).length;
-             if (have >= need) matchedCellIndices.add(i);
-           }
-
-        userImagesArray = userImagesArray.filter(u => u.name !== topCandidate.user.name);
-
-      } else if (topScore >= 0.88) {
-
-        if (matchBox) {
-          if (earringCells[i] && cellMatches[i] && cellMatches[i].length === 1) {
-            matchBox.value += `, ${matchName}`;
-          } else {
-            matchBox.value  =  matchName;
-          }
-          matchBox.style.fontWeight = "bold";
-          matchBox.style.color = "orangered";
-        }
-
-        if (!cellMatches[i]) cellMatches[i] = [];
-        cellMatches[i].push({
-          userName: matchName,
-          userImage: topCandidate.user.data,
-          score: topScore
-        });
-
-        matchedUserNames.add(topCandidate.user.name);
-         
-           {
-             const need = expectedSlots(window.cachedOrderItems?.[i] || {});
-             const have = (cellMatches[i]||[]).filter(m=>m && m.userImage).length;
-             if (have >= need) matchedCellIndices.add(i);
-           }
-
-        userImagesArray = userImagesArray.filter(u => u.name !== topCandidate.user.name);
-
-      } else {
-        M.toast({ html: `Cell ${i}: Score ${topScorePerc}% < 88%. No match.` });
-      }
-    }
-
-    // NEW: fill any remaining slots sequentially for multi-qty items (reuse compareTarget)
-    await fillRemaining(i, compareTarget, document.getElementById("matchCell" + i));
-
-   
-    smDone++;
-    updateProgressModal(smDone, smTotal);
-
-    // adaptive cooldown (second pass)
-    await adaptiveCooldown((validUserImages && validUserImages.length) || 1);
-  }
-
-  ===== SECOND PASS DISABLED – END ===== */
 
   /* ---------- HIGHLIGHT unmatched cells ---------- */
   for (let i = 0; i < croppedImagesArray.length; i++) {
