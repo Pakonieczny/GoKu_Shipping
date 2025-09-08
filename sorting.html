@@ -636,14 +636,15 @@ function pfStartCell(i, etsyTitle){
   const parsed = String(etsyTitle || "");
   const origArr = Array.isArray(window.cachedOrderItems) ? window.cachedOrderItems : [];
   const orig = escapeHtml(String(origArr[i]?.title || ""));
-  box.innerHTML = 
+  box.innerHTML = `
     <div class="pf-head">
       <div><b>Cell ${i}</b></div>
       <small>Title (orig): ${orig.slice(0,120)}</small><br/>
       <small>Title (parsed): ${escapeHtml(parsed)}</small>
     </div>
     <ul class="pf-list" id="pf-list-${i}"></ul>
-    <div class="pf-sent" id="pf-sent-${i}"></div>`;
+    <div class="pf-sent" id="pf-sent-${i}"></div>
+  `;
   inner.appendChild(box);
 }
 function pfAddCandidate(i, userName, desc2, hitWord){
