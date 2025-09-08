@@ -223,6 +223,11 @@
     .pf-list li { margin:0 0 4px 0; }
     .pf-hit { font-weight:600; }
     .pf-sent { font-size:.8em; color:#666; padding:0 8px 6px; }
+    /* tiny pill for the 2-word descriptor */
+    .pf-tag {
+      display:inline-block; padding:2px 6px; border:1px solid #ddd;
+      border-radius:999px; font-size:.75em; margin-left:6px; background:#f9f9f9;
+    }
 
   </style>
 </head>
@@ -650,8 +655,9 @@ function pfStartCell(i, etsyTitle){
 function pfAddCandidate(i, userName, desc2, hitWord){
   const list = document.getElementById("pf-list-" + i); if (!list) return;
   const li = document.createElement("li");
+  const d2  = normalizeTwoWordDescriptor(desc2 || "");
   const hit = hitWord ? ` <span class="pf-hit">[${hitWord}]</span>` : "";
-  li.innerHTML = `${escapeHtml(userName)} <small>— ${escapeHtml(desc2||"")}</small>${hit}`;
+  li.innerHTML = `${escapeHtml(userName)} <span class="pf-tag" title="Charm descriptor">${escapeHtml(d2)}</span>${hit}`;
   list.appendChild(li);
 }
 function pfMarkSent(i, count){
@@ -677,6 +683,18 @@ function normalizeTitleForPrefilter(title){
     .trim()
     .split(" ")
     .slice(0, 4)                     // FIRST 4 words only
+    .join(" ");
+}
+
+// Lowercase, strip punctuation, collapse spaces, keep ONLY first 2 words
+function normalizeTwoWordDescriptor(s){
+  return String(s || "")
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/gi, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .split(" ")
+    .slice(0, 2)
     .join(" ");
 }
 
@@ -2010,11 +2028,12 @@ async function analyzeUserImagesViaOpenAI() {
     try {
       const k = "matrixCharm2Words";
       const map = JSON.parse(localStorage.getItem(k) || "{}");
-      if (result.desc2) {
-        map[baseName] = result.desc2;          // e.g., "paw print"
+      const norm = normalizeTwoWordDescriptor(result.desc2);
+      if (norm) {
+        map[baseName] = norm;                  // e.g., "paw print"
         localStorage.setItem(k, JSON.stringify(map));
       }
-      imgObj.desc2 = result.desc2 || "";
+      imgObj.desc2 = norm || "";
     } catch (e) {
       console.warn("matrixCharm2Words persist failed:", e);
     }
