@@ -2729,6 +2729,17 @@ async function compareImages(userImage, croppedGridImage, cellIndex, userImageNa
  * sendAndMatch with metal filter logic
  ********************************************************/
 async function sendAndMatch() {
+ // Ensure Etsy titles are cached before *any* matching begins
+  (function ensureTitlesCache(){
+    try {
+      const k = "etsyTitlesByCell";
+      const curr = JSON.parse(localStorage.getItem(k) || "[]");
+      if ((!curr || !curr.length) && Array.isArray(window.cachedOrderItems)) {
+        const titles = window.cachedOrderItems.map(it => String(it.title || "").trim());
+        localStorage.setItem(k, JSON.stringify(titles));
+      }
+    } catch (e) { console.warn("ensureTitlesCache failed:", e); }
+  })();
   /* --- progress setup --- */
   let smDone  = 0;
   let smTotal = 0;
@@ -2784,11 +2795,12 @@ async function sendAndMatch() {
     return true; // unknown listing metal → don’t block
   }
 
-  // Title-word prefilter — require ≥1 word overlap between a Matrix 2-word tag and the Etsy cell title
+  // Title-word prefilter — require ≥1 *word* overlap between Matrix 2-word tag and Etsy cell title
   function passesTitlePrefilter(cellIdx, userImgName) {
     let titlesArr = [];
     try { titlesArr = JSON.parse(localStorage.getItem("etsyTitlesByCell") || "[]"); } catch (_) {}
-    const title = String(titlesArr[cellIdx] || "").toLowerCase();
+    const rawTitle = String(titlesArr[cellIdx] || "");
+    const title    = rawTitle.toLowerCase();
     if (!title) return true; // no title → don't block
 
     let descMap = {};
@@ -2798,8 +2810,11 @@ async function sendAndMatch() {
     if (!two) return true; // no descriptor → don't block
 
     const parts = two.split(/\s+/).filter(Boolean).slice(0,2);
-    const w1 = parts[0] || "", w2 = parts[1] || "";
-    return (w1 && title.includes(w1)) || (w2 && title.includes(w2));
+    const [w1, w2] = [parts[0] || "", parts[1] || ""];
+    const wordIn = (w) => w && new RegExp(`\\b${w.replace(/[.*+?^${}()|[\\]\\\\]/g, '\\\\$&')}\\b`).test(title);
+    const ok = wordIn(w1) || wordIn(w2);
+    console.debug("prefilter", { cellIdx, base, two, title: rawTitle, ok });
+    return ok;
   }
 
     // --- NEW: helpers to render names and to keep filling until have >= need ---
@@ -2894,9 +2909,9 @@ async function sendAndMatch() {
 
     /* 🔥 Filter out skipForCharm + metal + title pref */
     const validUserImages = userImagesArray.filter(
-        (u) => !u.skipForCharm
-           &&  metalFilterOk(metalVal, u.name)
-           &&  passesTitlePrefilter(i, u.name)
+      (u) => !u.skipForCharm &&
+             metalFilterOk(metalVal, u.name) &&
+             passesTitlePrefilter(i, u.name)
     );
 
     let firstImg = null;   // remembers first earring photo for this cell
@@ -2992,6 +3007,7 @@ async function sendAndMatch() {
             if (cand.skipForCharm) continue;
             if (!metalFilterOk(metalVal, cand.name)) continue;
             if (matchedUserNames.has(cand.name)) continue;
+            if (!passesTitlePrefilter(i, cand.name)) continue; // 🔒 enforce title prefilter
 
             const { score: s1 } = await compareImages(cand.data, firstImgFixed, i, cand.name);
             const flipped       = await flipImageHorizontal(cand.data);
