@@ -206,6 +206,24 @@
       background-color:var(--outlineBlue) !important;
       color:#fff !important;
     }
+
+   /* ===== Pre-Filter Monitor (temporary debug UI) ===== */
+    #prefilterPanel {
+      position:absolute;
+      left:1460px; top:70px; width:360px; height:650px;
+      border:1px solid #ccc; background:#fff; overflow:auto; padding:8px;
+      box-shadow:0 2px 6px rgba(0,0,0,.08); border-radius:8px;
+      font-size:.85em;
+    }
+    #prefilterPanel h6 { margin:4px 0 8px 0; font-weight:600; }
+    .pf-cell { margin-bottom:10px; border:1px solid #e5e5e5; border-radius:6px; }
+    .pf-head { background:#f7f7f7; padding:6px 8px; border-bottom:1px solid #eee; }
+    .pf-head small { color:#777; }
+    .pf-list { list-style:none; padding:6px 8px; margin:0; }
+    .pf-list li { margin:0 0 4px 0; }
+    .pf-hit { font-weight:600; }
+    .pf-sent { font-size:.8em; color:#666; padding:0 8px 6px; }
+
   </style>
 </head>
 <body>
@@ -251,6 +269,12 @@
   <!-- Container for dynamically generated preview boxes and detail boxes -->
   <div id="photoGridContainer">
     <!-- Preview boxes and detail boxes will be created dynamically -->
+  </div>
+
+ <!-- ===== TEMP: Pre-Filter Monitor (real-time) ===== -->
+  <div id="prefilterPanel" aria-live="polite">
+    <h6>Pre-Filter Monitor</h6>
+    <div id="pfInner"></div>
   </div>
 
   <!-- Config Modal -->
@@ -594,6 +618,45 @@ function closeProgressModal() {
   ensureProgressModal().close();
 }
 
+/* =========================================================
+ * Pre-Filter Monitor helpers
+ * =======================================================*/
+function pfReset(title="Pre-Filter Monitor"){
+  const wrap = document.getElementById("prefilterPanel");
+  if (!wrap) return;
+  const inner = document.getElementById("pfInner");
+  if (inner) inner.innerHTML = "";
+  wrap.querySelector("h6").textContent = title;
+}
+function pfStartCell(i, etsyTitle){
+  const inner = document.getElementById("pfInner"); if (!inner) return;
+  const box = document.createElement("div");
+  box.className = "pf-cell";
+  box.id = "pf-cell-" + i;
+  box.innerHTML = `
+    <div class="pf-head">
+      <div><b>Cell ${i}</b></div>
+      <small>Title: ${escapeHtml(String(etsyTitle||"").slice(0,120))}</small>
+    </div>
+    <ul class="pf-list" id="pf-list-${i}"></ul>
+    <div class="pf-sent" id="pf-sent-${i}"></div>`;
+  inner.appendChild(box);
+}
+function pfAddCandidate(i, userName, desc2, hitWord){
+  const list = document.getElementById("pf-list-" + i); if (!list) return;
+  const li = document.createElement("li");
+  const hit = hitWord ? ` <span class="pf-hit">[${hitWord}]</span>` : "";
+  li.innerHTML = `${escapeHtml(userName)} <small>— ${escapeHtml(desc2||"")}</small>${hit}`;
+  list.appendChild(li);
+}
+function pfMarkSent(i, count){
+  const sent = document.getElementById("pf-sent-" + i); if (!sent) return;
+  sent.textContent = `→ sending ${count} candidate${count===1?"":"s"} to OpenAI…`;
+}
+function escapeHtml(s){
+  return String(s).replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
+}
+
 /********************************************************
  * Firebase Initialization (REQUIRED)
  ********************************************************/
@@ -766,6 +829,7 @@ const configIDs = [
   "matchPrintBtn",
   "titleEtsyOrderNumber",
   "titleImageMatrixDrop",
+  "prefilterPanel",
   "titleUnmatchedImages"
 ];
 
@@ -809,6 +873,7 @@ etsyOrderInput.addEventListener("keydown", async function (e) {
     // Clear UI
     document.getElementById("photoGridContainer").innerHTML = "";
     document.getElementById("unmatchedContainer").innerHTML = "";
+    pfReset();  // ← clear pre-filter UI for a fresh run
 
     disableSendMatch();
     disableMatchPrintFlow();
@@ -1365,6 +1430,7 @@ function openIframePrinterForListing(cellIndex) {
       userImage:                { left:0,   top:0,   width:100, height:100 },
       saveConfigBtn:            { left:10,  top:3,   width:85,  height:35 },
       sendMatchBtn:             { left:20,  top:255, width:210, height:35 },
+      prefilterPanel:           { left:1460, top:68, width:360, height:650 },
       testOpenAIBtn:            { left:20,  top:65,  width:140, height:35 }
     };
 
@@ -1827,7 +1893,7 @@ async function openAIAnalyzePhoto(base64Image) {
       method : "POST",
       headers: { "Content-Type": "application/json" },
       body   : JSON.stringify({
-        model: "gpt-4o-mini",
+        model: "gpt-4o",
         messages: [
           { role: "user", content: [
             { type: "text", text: descPrompt },
@@ -2841,6 +2907,23 @@ async function sendAndMatch() {
         );
         if (!pool.length) break;
 
+       // Also visualize these extra pre-filtered candidates before sending
+        (function renderFillList(){
+          const titlesArr = JSON.parse(localStorage.getItem("etsyTitlesByCell") || "[]");
+          const etsyTitle = titlesArr[i] || "";
+          const descMap   = JSON.parse(localStorage.getItem("matrixCharm2Words") || "{}");
+          const tagOf = (nm) => descMap[String(nm).replace(/\.(jpg|jpeg|png|webp)$/i, "")] || "";
+          const hitWord = (tag, title) => {
+            const parts = String(tag).toLowerCase().split(/\s+/).slice(0,2);
+            const wordIn = (w) => w && new RegExp(`\\b${w.replace(/[.*+?^${}()|[\\]\\\\]/g,'\\\\$&')}\\b`).test(String(title).toLowerCase());
+           return (wordIn(parts[0]) && parts[0]) || (wordIn(parts[1]) && parts[1]) || "";
+          };
+          // Only add a new block header if this cell wasn't started in FIRST PASS (fallback safe)
+          if (!document.getElementById("pf-cell-" + i)) pfStartCell(i, etsyTitle);
+          pool.forEach(u => pfAddCandidate(i, u.name, tagOf(u.name), hitWord(tagOf(u.name), etsyTitle)));
+          pfMarkSent(i, pool.length);
+        })();
+
         const promises = pool.map((user, j) =>
           new Promise(resolve => {
             setTimeout(() => {
@@ -2908,11 +2991,26 @@ async function sendAndMatch() {
     const metalVal = document.getElementById("metalCell" + i).value || "";
 
     /* 🔥 Filter out skipForCharm + metal + title pref */
-    const validUserImages = userImagesArray.filter(
-      (u) => !u.skipForCharm &&
-             metalFilterOk(metalVal, u.name) &&
-             passesTitlePrefilter(i, u.name)
-    );
+    // Build the pre-filter list FIRST
+    const titlesArr = JSON.parse(localStorage.getItem("etsyTitlesByCell") || "[]");
+    const etsyTitle = titlesArr[i] || "";
+    pfStartCell(i, etsyTitle);
+
+    // Visualize every candidate that survived the pre-filter (before OpenAI calls)
+    (function renderPrefilterList(){
+      const descMap = JSON.parse(localStorage.getItem("matrixCharm2Words") || "{}");
+      const tagOf = (nm) => descMap[String(nm).replace(/\.(jpg|jpeg|png|webp)$/i, "")] || "";
+      const hitWord = (tag, title) => {
+        const parts = String(tag).toLowerCase().split(/\s+/).slice(0,2);
+        const wordIn = (w) => w && new RegExp(`\\b${w.replace(/[.*+?^${}()|[\\]\\\\]/g,'\\\\$&')}\\b`).test(String(title).toLowerCase());
+        return (wordIn(parts[0]) && parts[0]) || (wordIn(parts[1]) && parts[1]) || "";
+      };
+      validUserImages.forEach(u => {
+        const tag = tagOf(u.name);
+        pfAddCandidate(i, u.name, tag, hitWord(tag, etsyTitle));
+      });
+      pfMarkSent(i, validUserImages.length);
+    })();
 
     let firstImg = null;   // remembers first earring photo for this cell
 
