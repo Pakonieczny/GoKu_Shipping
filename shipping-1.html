@@ -408,6 +408,7 @@
     #ccRates{list-style:none;padding:0;margin:0;display:flex;flex-direction:column;gap:10px}
     #ccRates li{border:1px solid #ddd;border-radius:10px;padding:10px 12px;display:flex;justify-content:space-between;align-items:center;cursor:pointer}
     #ccRates li.selected{outline:2px solid #1976d2}
+    #ccRates .no-rates { padding: 14px; text-align: center; opacity: .8; }  /* ← add here */
     #ccEditFoot{display:flex;justify-content:space-between;align-items:center;padding:12px 16px;border-top:1px solid #ececec;background:#fafafa;border-radius:0 0 12px 12px}
     #ccEditFoot button{padding:9px 14px;border-radius:8px;border:0;background:#333;color:#fff;cursor:pointer}
     #ccEditFoot button[disabled]{opacity:.5;cursor:not-allowed}
@@ -511,12 +512,23 @@
       aria-label="Looking up shipment in Chit Chats"
       title="Looking up shipment in Chit Chats"></span>
 
+      <!-- NEW: Update ID button -->
+     <button id="ccUpdateIdBtn" class="btn"
+              style="height:24px; line-height:24px; font-size:0.8em; margin-left:6px;">
+        Update ID
+      </button> 
+
       <!-- Batch dropdown (wrapped so Config can move/resize the visible control) -->
       <div id="ccBatchSelectWrap"
            style="position:absolute; width:180px; height:28px; margin-right:6px;">
         <select id="ccBatchSelect" style="width:100%; height:100%; font-size:0.9em;">
-          <option value="">Select Batch…</option>
+          <!-- Placeholder stays selected for the trigger text but won't appear in the dropdown list -->
+          <option value="" class="placeholder" disabled selected hidden>Select Batch…</option>
         </select>
+        <style id="hideCcBatchPlaceholder">
+          /* Hide the placeholder row in Materialize's generated dropdown for this select */
+          ul#select-options-ccBatchSelect li.disabled:first-child { display: none !important; }
+        </style>
       </div>
 
       <!-- Optional name for *new* batches -->
@@ -2064,7 +2076,7 @@ function metalToBadge(label){
         "employeeNumberInput",
         "loginModalFooter",
         "employeeLoginBtn",
-        "ccControls","ccShipmentId","ccIdSpinner","ccBatchSelectWrap","ccBatchName",
+        "ccControls","ccShipmentId","ccUpdateIdBtn","ccIdSpinner","ccBatchSelectWrap","ccBatchName",
         "ccCreateBatchBtn","ccAddToBatchBtn","ccRemoveFromBatchBtn",
         "ccEditBtn"
       ];
@@ -2143,6 +2155,7 @@ function metalToBadge(label){
       ccCreateBatchBtn:      { left: 1400, top: 170, width: 175, height: 45 },
       ccAddToBatchBtn:       { left: 1400, top: 200, width: 175, height: 45 },
       ccRemoveFromBatchBtn:  { left: 1400, top: 230, width: 175, height: 45 },
+      ccUpdateIdBtn:         { left: 1604, top: 80, width: 95,  height: 24 },
       ccEditBtn:             { left: 50,   top: 225, width: 120, height: 28 }
 
     };
@@ -2364,14 +2377,8 @@ function metalToBadge(label){
             window.ccShipmentId = "";
             try { await fetchBatches(); } catch (e) {}
 
-            // 🔄 NEW: always clear Address 2 for a fresh order
-            try {
-              const addr2 = document.getElementById("cc_to_address_2");
-              if (addr2) {
-                addr2.value = "";
-                addr2.dataset.userEdited = "0";
-              }
-            } catch (_) {}
+            // 🔄 New order: fully reset Recipient & visible address UI
+            try { resetRecipientFields(); } catch(_) {}
 
             const txt = (await navigator.clipboard.readText() || "").trim();
             if (!txt) { M.toast?.({ html: "Clipboard is empty" }); return; }
@@ -2380,10 +2387,13 @@ function metalToBadge(label){
             inp.value = txt; // no auto-lookup from typing/paste
             M.toast?.({ html: "Order # pasted" });
 
-            /* ⛔ Cancel any in-flight ccShipmentId search and pending slow-pass */
-            try { window.ccSearchAbort?.abort(); } catch (e) {}
-            if (window.ccSlowTimer) { clearTimeout(window.ccSlowTimer); window.ccSlowTimer = null; }
-            window.ccSpin && window.ccSpin(false);
+            /* ⛔ If an Update-ID latch is running from a previous order, resolve it cleanly */
+            if (window.ccManualIdUpdateInFlight && typeof window.__resolveCcUpdateId === "function") {
+              try { window.__resolveCcUpdateId(); } catch {}
+            }
+            window.ccManualIdUpdateDone    = false;
+            window.ccManualIdUpdateInFlight= false;
+            window.ccManualIdUpdatePromise = null;
 
             // 🔎 Also refresh ccShipmentId 500ms after paste (independent of auto-Enter)
             setTimeout(() => window.refreshFromOrderIfChitChats?.(), 500);
@@ -2452,11 +2462,14 @@ function metalToBadge(label){
         if (e.key !== "Enter") return;
 
           /* ⛔ Cancel any in-flight ccShipmentId search and pending slow-pass */
-          try { window.ccSearchAbort?.abort(); } catch (e) {}
-          if (window.ccSlowTimer) { clearTimeout(window.ccSlowTimer); window.ccSlowTimer = null; }
-          window.ccSpin && window.ccSpin(false);
-
-        // New order → thaw post-buy freeze, clear CC id, refresh batches
+        window.ccManualIdUpdateDone    = false;
+        /* ⛔ If an Update-ID latch is running from a previous order, resolve it cleanly */
+        if (window.ccManualIdUpdateInFlight && typeof window.__resolveCcUpdateId === "function") {
+          try { window.__resolveCcUpdateId(); } catch {}
+        }
+        window.ccManualIdUpdateDone    = false;
+        window.ccManualIdUpdateInFlight= false;
+        window.ccManualIdUpdatePromise = null;
         window.ccPostBuyFrozen = false;
         window.ccMuteIdInput   = false;
         const idEl = document.getElementById("ccShipmentId");
@@ -2464,14 +2477,8 @@ function metalToBadge(label){
         window.ccShipmentId = "";
         try { await fetchBatches(); } catch (e) {}
 
-        // 🔄 NEW: always clear Address 2 for a fresh order
-        try {
-          const addr2 = document.getElementById("cc_to_address_2");
-          if (addr2) {
-            addr2.value = "";
-            addr2.dataset.userEdited = "0";
-          }
-        } catch (_) {}
+        // 🔄 New order: fully reset Recipient & visible address UI
+        try { resetRecipientFields(); } catch(_) {}
 
         const orderNumber = etsyOrderInput.value.trim();
         if (!orderNumber) return;
@@ -3361,12 +3368,16 @@ function metalToBadge(label){
               window.ccShipmentId = "";
               try { await fetchBatches(); } catch (e) {}
 
-              /* Cancel any in-flight ccShipmentId search and pending slow-pass */
-              try { window.ccSearchAbort?.abort(); } catch (e) {}
-              if (window.ccSlowTimer) { clearTimeout(window.ccSlowTimer); window.ccSlowTimer = null; }
-              window.ccSpin && window.ccSpin(false);
+              // fresh order → wipe any prior recipient values
+              try { resetRecipientFields(); } catch(_) {}
 
-              /* Write the scanned order to input */
+              /* Cancel any in-flight ccShipmentId search and pending slow-pass */
+              window.ccManualIdUpdateDone    = false;
+              window.ccManualIdUpdateInFlight= false;
+              window.ccManualIdUpdatePromise = null;
+
+              /* Fresh slate for new scanned order */
+              try { resetRecipientFields(); } catch(_) {}
               const etsyOrderInput = document.getElementById("etsyOrderNumber");
               etsyOrderInput.value = orderNumber;
 
@@ -3487,14 +3498,33 @@ function metalToBadge(label){
       const debounce = (fn, ms=250) => { let t; return (...a)=>{ clearTimeout(t); t = setTimeout(()=>fn(...a), ms); }; };
       const reinitSelect = (el) => {
         try {
-          if (window.M && window.M.FormSelect) {
-            const inst = window.M.FormSelect.getInstance(el);
-            if (inst) inst.destroy();
-            window.M.FormSelect.init(el);
+          if (!window.M || !window.M.FormSelect) return;
+          const inst = window.M.FormSelect.getInstance(el);
+          const wasOpen =
+            !!inst?.dropdown?.isOpen ||
+            (inst?.input && inst.input.getAttribute("aria-expanded") === "true");
+          if (inst) inst.destroy();
+          const newInst = window.M.FormSelect.init(el, {
+            dropdownOptions: { coverTrigger: false }
+          });
+          // If it was open before, do not collapse it due to re-init
+          if (wasOpen && newInst?.dropdown && !newInst.dropdown.isOpen) {
+            requestAnimationFrame(() => newInst.dropdown.open());
           }
         } catch (e) {}
       };
 
+      // Robust helper: is the Batch menu currently open?
+      function isBatchMenuOpen(){
+        try {
+          const inst = window.M?.FormSelect?.getInstance(ccBatchSelect);
+          if (inst?.dropdown?.isOpen) return true;
+          const input =
+            inst?.input ||
+            ccBatchSelect?.closest(".select-wrapper")?.querySelector("input.select-dropdown");
+          return input?.getAttribute("aria-expanded") === "true";
+        } catch (_) { return false; }
+      }
       // Remember a batch we want to select (only if it’s still open)
       let _desiredBatchId = "";
 
@@ -3519,12 +3549,11 @@ function metalToBadge(label){
       async function callSearch(params){
         window.ccSpin && window.ccSpin(true);
 
-        // Always scope to a batch:
-        // 1) <select id="ccBatchSelect"> value if present
-        // 2) fallback to window.CC_DEFAULT_BATCH_ID ("3903775")
+        // Batch scoping (supports explicit override):
         const batchIdSel   = String(document.getElementById("ccBatchSelect")?.value || "").trim();
         const fallbackId   = String(window.CC_DEFAULT_BATCH_ID || "");
-        const chosenBatch  = batchIdSel || fallbackId;
+        const explicit     = (params && params.batchId != null) ? String(params.batchId) : "";
+        const chosenBatch  = explicit || batchIdSel || fallbackId;
         const allParams    = Object.assign({}, (params || {}), (chosenBatch ? { batchId: chosenBatch } : {}));
 
         // Build query
@@ -3630,6 +3659,44 @@ function metalToBadge(label){
           return partial || list[0] || null;
         }
 
+        // === Fallback sweep across currently visible (filtered) batches =====================
+        function visibleBatchIds(){
+          const sel = document.getElementById("ccBatchSelect");
+          if (!sel) return [];
+          return Array.from(sel.options || [])
+            .filter(o => !o.disabled && !o.hidden && !(o.classList && o.classList.contains("placeholder")))
+            .map(o => String(o.value || "").trim())
+            .filter(Boolean);
+        }
+
+        /**
+         * Try other visible batches (still pending-only) for a shipment hit.
+         * @param {string} target - orderId or tracking value
+         * @param {"orderId"|"tracking"} key
+         * @returns {Promise<object|null>} shipment or null
+         */
+        async function sweepBatchesForHit(target, key){
+          const ids = visibleBatchIds();
+          const current = String(document.getElementById("ccBatchSelect")?.value || "") || String(window.CC_DEFAULT_BATCH_ID || "");
+          for (const bid of ids) {
+            if (!bid || bid === current) continue; // skip current
+            try {
+              const res = await callSearch({
+                [key]: target,
+                fast: "1",
+                pendingOnly: "1",
+                pageSize: "150",
+                timeoutMs: "15000",
+                batchId: bid // explicit override respected by callSearch
+              });
+              if (res?.aborted) return null;
+              const hit = pickBestShipment(target, res?.shipments || []);
+              if (hit) return hit;
+            } catch (_) {}
+          }
+          return null;
+        }
+
           async function refreshFromOrderIfChitChats(){
             if (window.ccPostBuyFrozen) return;
             const orderId = (orderInp?.value || "").trim();
@@ -3651,7 +3718,10 @@ function metalToBadge(label){
                   const slow = await callSearch({ orderId, fast: "0", pendingOnly: "1", pageSize: "200", timeoutMs: "15000" });
                   if (slow?.aborted) return;
                   const s2 = pickBestShipment(orderId, (slow.shipments || []));
-                  if (s2) setShipmentUI(s2);
+                  if (s2) { setShipmentUI(s2); return; }
+                  // Fallback: sweep only batches visible in the dropdown
+                  const s3 = await sweepBatchesForHit(orderId, "orderId");
+                  if (s3) setShipmentUI(s3);
                 } catch (err) {
                   if (err?.status === 504) {
                     try { M.toast?.({ html: "Chit Chats search timed out. Open ‘Edit Shipment’ → Next to create/find." }); } catch {}
@@ -3679,7 +3749,10 @@ function metalToBadge(label){
                   const slow = await callSearch({ tracking, fast: "0", pendingOnly: "1", pageSize: "100", timeoutMs: "15000" });
                   if (slow?.aborted) return;
                   const s2 = pickBestShipment(tracking, (slow.shipments || []));
-                  if (s2) setShipmentUI(s2);
+                  if (s2) { setShipmentUI(s2); return; }
+                  // Fallback: sweep only batches visible in the dropdown
+                  const s3 = await sweepBatchesForHit(tracking, "tracking");
+                  if (s3) setShipmentUI(s3);
                 } catch (err) {
                   if (err?.status === 504) {
                     try { M.toast?.({ html: "Chit Chats search timed out. Use Edit Shipment to proceed." }); } catch {}
@@ -3714,9 +3787,9 @@ function metalToBadge(label){
           try { fetchBatches(); } catch {}
 
           // 🔪 kill any live CC search and pending slow-pass; we’re switching orders
-          try { window.ccSearchAbort?.abort(); } catch (e) {}
-          if (window.ccSlowTimer) { clearTimeout(window.ccSlowTimer); window.ccSlowTimer = null; }
-          window.ccSpin && window.ccSpin(false);
+          window.ccManualIdUpdateDone    = false;
+          window.ccManualIdUpdateInFlight= false;
+          window.ccManualIdUpdatePromise = null;
 
           if (e.isTrusted) setTimeout(() => window.refreshFromOrderIfChitChats?.(), 500); // ← 500ms delay
         }
@@ -3741,22 +3814,80 @@ function metalToBadge(label){
       // --- Batches
       async function fetchBatches(){
         try {
-          // Open-only (pending) batches; received/closed are excluded by the API filter
+          // Keep using open batches from the API, then we’ll filter by age
           const resp = await fetch(`${window.getCcEndpoint()}?resource=batches&status=open`, { credentials: "include" });
           const data = await safeJSON(resp);
           const raw  = (data && (data.batches ?? data.data)) ?? data;
           const list = Array.isArray(raw) ? raw : [];
 
-          ccBatchSelect.innerHTML =
-            `<option value="">Select Batch…</option>` +
-            list.map(b => {
-              const label = (b.description || b.name || `Batch ${b.id}`) + (b.status ? ` • ${b.status}` : "");
-              return `<option value="${b.id}">${label}</option>`;
-            }).join("");
+          // Always include this default batch ID (already set globally in your file)
+          const defaultId = String(window.CC_DEFAULT_BATCH_ID || "3903775");
 
+          // Age filter: keep items created in the last 7 days
+          const now = Date.now();
+          const weekMs = 7 * 24 * 60 * 60 * 1000;
+
+          const recent = list.filter(b => {
+            if (String(b.id) === defaultId) return true; // keep even if old
+            const createdISO = b.created_at || b.createdAt || b.created || b.created_on;
+            if (!createdISO) return false;
+            const t = Date.parse(createdISO);
+            return Number.isFinite(t) && (now - t) <= weekMs;
+          });
+
+          // If default batch isn’t present from API, add a simple fallback option
+          if (!recent.some(b => String(b.id) === defaultId)) {
+            recent.unshift({ id: defaultId, description: `Batch ${defaultId}`, status: "" });
+          }
+
+          // Sort by created desc (when available), but keep default at the very top
+          const scored = recent.map(b => ({
+            b,
+            ts: Date.parse(b.created_at || b.createdAt || b.created || 0) || 0
+          }));
+          scored.sort((a, z) => z.ts - a.ts);
+
+          const seen = new Set();
+          const options = ['<option value="" class="placeholder" disabled selected hidden>Select Batch…</option>'];
+
+          // First append all NON-default batches (deduped, newest → oldest)
+          for (const { b } of scored) {
+            const id = String(b.id);
+            if (id === defaultId) continue;           // skip default now; add it last
+            if (seen.has(id)) continue;
+            seen.add(id);
+            const labelBase = (b.description || b.name || `Batch ${b.id}`);
+            const label = `${labelBase}${b.status ? ` • ${b.status}` : ""}`;
+            options.push(`<option value="${id}">${label}</option>`);
+          }
+
+          // Always append the DEFAULT batch LAST with the requested label text
+          const preLabel = `${defaultId}-PRE`;        // "3903775-PRE"
+          options.push(`<option value="${defaultId}">${preLabel}</option>`);
+          seen.add(defaultId);
+
+        // Don't mutate while open; update right away if closed, otherwise defer until it closes
+        const inst  = window.M?.FormSelect?.getInstance(ccBatchSelect);
+        const open  = isBatchMenuOpen();
+        if (!open) {
+          // Safe: menu is closed — rebuild now
+          ccBatchSelect.innerHTML = options.join("");
           reinitSelect(ccBatchSelect);
+        } else {
+          // Defer: capture the HTML and apply after the user closes the menu
+          const html = options.join("");
+          const prevClose = inst.dropdown.options.onCloseEnd;
+          inst.dropdown.options.onCloseEnd = () => {
+            try {
+              ccBatchSelect.innerHTML = html;
+              reinitSelect(ccBatchSelect);
+            } finally {
+              inst.dropdown.options.onCloseEnd = prevClose || null;
+            }
+          };
+        }
 
-          // If a shipment just told us its batch, try to apply it now (only works if still open)
+          // If a shipment requested a batch preselect, try to apply it (only if still open)
           if (_desiredBatchId) preselectBatchIfOpen(_desiredBatchId);
         } catch (e) {
           console.warn("fetchBatches failed", e);
@@ -3767,6 +3898,21 @@ function metalToBadge(label){
       // Call once on load, and whenever config opens
       fetchBatches();
       document.getElementById("openConfigBtn")?.addEventListener("click", fetchBatches);
+
+      // Keep the menu open: stop outside-click closers, but only *after* the dropdown gets the event
+      const batchWrap = document.getElementById("ccBatchSelectWrap");
+      if (batchWrap){
+        ["click","touchstart"].forEach(evt=>{
+          // bubble-phase (no 3rd arg): allow target handlers to run, then stop at the wrapper
+          batchWrap.addEventListener(evt, ev => ev.stopPropagation());
+        });
+        // Refresh options only after the menu is closed (prevents instant collapse)
+        batchWrap.addEventListener("click", () => {
+          setTimeout(() => {
+            if (!isBatchMenuOpen()) fetchBatches();
+          }, 250);
+        });
+      }
 
       // Create a named batch
       createBtn?.addEventListener("click", async () => {
@@ -3918,6 +4064,74 @@ function metalToBadge(label){
 
       let currentStep = 0, selectedPostageType = null;
       window.ccBlockRatesUntilStep2 = true; // 🚫 block pricing until Step 2
+      // NEW: manual Update-ID flow flags (US/CA gating in refreshRates)
+      window.ccManualIdUpdateInFlight = false;   // Next waits while this is true
+      window.ccManualIdUpdateDone     = false;   // Next bypasses replace when true
+      window.ccManualIdUpdatePromise  = null;    // Promise awaited by Next
+      // NEW: force-bypass Step-1 auto Update/Delete/Create when true (one-shot)
+      window.ccBypassStep1Update = false;
+
+      // ---- Update-ID latch (explicit, UI-safe) -----------------------------------
+      const ccUpdateIdLatch = { running: false };
+
+      function ccDisableRateControls(on) {
+        ["ccNext","ccRefreshRates","ccBuy"].forEach(id => {
+          const el = document.getElementById(id);
+          if (el) el.disabled = !!on;
+        });
+      }
+
+      function ccUpdateIdStart() {
+        ccUpdateIdLatch.running = true;
+        ccDisableRateControls(true);
+        // Mirror existing flags so all legacy code keeps working
+        window.ccManualIdUpdateInFlight = true;
+        window.ccManualIdUpdateDone     = false;
+
+        let _resolve;
+        window.ccManualIdUpdatePromise = new Promise(res => { _resolve = res; });
+        // Keep a handle so we can resolve from anywhere
+        window.__resolveCcUpdateId = () => { try { _resolve?.(); } catch {} };
+      }
+
+      function ccUpdateIdFinish() {
+        window.ccManualIdUpdateDone     = true;
+        window.ccManualIdUpdateInFlight = false;
+        try { window.__resolveCcUpdateId?.(); } catch {}
+        ccUpdateIdLatch.running = false;
+        ccDisableRateControls(false);
+      }
+
+      // Await if Update-ID is in-flight (used where we price)
+      async function ensureUpdateIdSettled() {
+        if (window.ccManualIdUpdatePromise) {
+          try { await window.ccManualIdUpdatePromise; } catch {}
+        }
+      }
+
+      // Optional: also wait for the little spinner that tracks ID lookups
+      async function waitForCcSpinnerToHide(timeoutMs = 20000) {
+        const spin = document.getElementById("ccIdSpinner");
+        if (!spin) return;
+        const isVisible = () => getComputedStyle(spin).display !== "none";
+        const until = Date.now() + timeoutMs;
+        while (isVisible() && Date.now() < until) {
+          await new Promise(r => setTimeout(r, 75));
+        }
+      }
+
+      // 🔶 Helper: await Update-ID completion before pricing (used by Step-2 → Next)
+      async function waitForUpdateIdIfNeeded({ showToast = true } = {}){
+        try{
+          if (window.ccManualIdUpdatePromise){
+            if (showToast) window.M?.toast?.({ html:"Waiting for Update ID to finish…", classes:"blue darken-2" });
+            await window.ccManualIdUpdatePromise;
+          }
+        }catch(e){
+          console.warn("waitForUpdateIdIfNeeded:", e);
+        }
+      }
+
 
       function set(id, v) {
         const el = document.getElementById(id);
@@ -4083,6 +4297,16 @@ function metalToBadge(label){
       }
 
       async function callCc(method, body, qs = "") {
+      // --- HARD GATE: never price while Update-ID is running ---
+        try {
+      if (body && body.action === "refresh") {
+        if (window.ccManualIdUpdatePromise) {
+          window.M?.toast?.({ html: "Waiting for Update ID to finish…", classes: "blue darken-2" });
+          await window.ccManualIdUpdatePromise;   // wait for Update/Delete/Create
+        }
+        await waitForCcSpinnerToHide();           // optional UI settle
+      }
+        } catch {}
         const resp = await fetch(`${getCcEndpoint()}${qs}`, {
           method,
           headers: { "Content-Type": "application/json" },
@@ -4621,21 +4845,32 @@ function metalToBadge(label){
 
 
           // 3) Buy label
-          // ✅ Ensure EU/GB payload has ROOT email and persist it server-side before Buy
+          // ✅ EU/GB: ensure ROOT email; if Update-ID was engaged, SKIP replaceDraftShipment on Buy
           {
             const EU_CODES = new Set(["AT","BE","BG","HR","CY","CZ","DK","EE","FI","FR","DE","GR","HU","IE","IT","LV","LT","LU","MT","NL","PL","PT","RO","SK","SI","ES","SE"]);
             const codeRaw = (document.getElementById("cc_to_country_code")?.value || "").trim().toUpperCase();
             const countryCode = (codeRaw === "UK" ? "GB" : codeRaw);
             const isEUorGB = EU_CODES.has(countryCode) || countryCode === "GB";
+            let newId = null;
             if (isEUorGB) {
               const emailInput = document.getElementById("cc_to_email");
               const chosen = (emailInput?.value || "").trim() || "custombrites@gmail.com";
               if (emailInput && !emailInput.value.trim()) emailInput.value = chosen; // reflect in UI
-              const rawId = (document.getElementById("ccShipmentId")?.value || "").trim();
-              const payload = buildShipmentPayload();
-              payload.email = chosen; // root-level
-            const created = await replaceDraftShipment(rawId, payload);
-            const newId = created?.id || created?.shipment?.id;
+              // If Update-ID is running, wait; if it already completed, SKIP replace on Buy.
+              if (window.ccManualIdUpdatePromise && !window.ccManualIdUpdateDone) {
+                await waitForUpdateIdIfNeeded({ showToast: true });
+              }
+              const updateWasEngaged = !!(window.ccManualIdUpdateDone);
+              if (!updateWasEngaged) {
+                const rawId = (document.getElementById("ccShipmentId")?.value || "").trim();
+                const payload = buildShipmentPayload();
+                payload.email = chosen; // root-level
+                const created = await replaceDraftShipment(rawId, payload);
+                newId = created?.id || created?.shipment?.id;
+                if (newId) {
+                  try { pushShipmentId(newId); document.getElementById("ccShipmentId").value = newId; } catch {}
+                }
+              } // else: Update-ID already did Update/Delete/Create → do not repeat here
             if (newId && newId !== shipmentId) {
               shipmentId = String(newId);
               try { pushShipmentId(shipmentId); } catch {}
@@ -4911,8 +5146,7 @@ async function ccValidateAgainstApi(step){
             weight               : Number(document.getElementById("cc_weight").value || 0),
             insurance_requested  : document.getElementById("cc_insurance_requested").value === "true",
             signature_requested  : document.getElementById("cc_signature_requested").value === "true",
-            media_mail_requested : document.getElementById("cc_media_mail_requested").value === "true",
-            ship_date            : normalizeShipDate(document.getElementById("cc_ship_date").value)
+            media_mail_requested : document.getElementById("cc_media_mail_requested").value === "true"
           };
 
           // keep deriving vatRef (UI may use it for previews), but do NOT include in payload
@@ -4924,6 +5158,7 @@ async function ccValidateAgainstApi(step){
             country_code : (toObj?.country_code || "").toUpperCase(),
             order_id     : (orderId || undefined),
             package      : pkg,
+            ship_date    : getShipDateForApi(),
             // vat_reference intentionally omitted
             customs      : {
               package_contents: document.getElementById("cc_package_contents").value,
@@ -5018,25 +5253,47 @@ function buildRefreshPayload(){
       return payload;
     }
 
-      function renderRates(s){
-        const rates = (s && s.rates) || [];
-        ratesList.innerHTML = "";
-        rates.forEach(r => {
-          const li = document.createElement("li");
-          li.dataset.postageType = r.postage_type;
-          const left = document.createElement("div");
-          left.innerHTML = `<div style="font-weight:600">${r.service_name || r.postage_type}</div>
-                            <div style="font-size:12px;opacity:.8">${(r.estimated_delivery_days || r.delivery_days || "")} business days</div>`;
-          const right = document.createElement("div");
-          right.innerHTML = `<div style="font-weight:700">$${Number(r.payment_amount || r.rate || 0).toFixed(2)}</div>`;
-          li.appendChild(left); li.appendChild(right);
-          li.addEventListener("click", () => {
-            Array.from(ratesList.children).forEach(n => n.classList.remove("selected"));
-            li.classList.add("selected"); selectedPostageType = li.dataset.postageType; btnBuy.disabled = !selectedPostageType;
-          });
-          ratesList.appendChild(li);
-        });
+    function renderRates(s){
+      const rates = (s && Array.isArray(s.rates)) ? s.rates : [];
+
+      // reset selection + button state
+      selectedPostageType = "";
+      if (typeof btnBuy !== "undefined") btnBuy.disabled = true;
+
+      // clear the list area where the rate cards live
+      ratesList.innerHTML = "";
+
+      // 🔴 No rates: show placeholder text inside ccEditCard (in the list area)
+      if (!rates.length) {
+        ratesList.innerHTML =
+          '<li class="no-rates" style="padding:14px;text-align:center;opacity:.8">No rates available!</li>';
+        return;
       }
+
+      // ✅ Have rates: render the usual cards
+      rates.forEach(r => {
+        const li = document.createElement("li");
+        li.dataset.postageType = r.postage_type;
+
+        const left = document.createElement("div");
+        left.innerHTML = `<div style="font-weight:600">${r.service_name || r.postage_type}</div>
+                          <div style="font-size:12px;opacity:.8">${(r.estimated_delivery_days || r.delivery_days || "")} business days</div>`;
+
+        const right = document.createElement("div");
+        right.innerHTML = `<div style="font-weight:700">$${Number(r.payment_amount || r.rate || 0).toFixed(2)}</div>`;
+
+        li.appendChild(left);
+        li.appendChild(right);
+        li.addEventListener("click", () => {
+          Array.from(ratesList.children).forEach(n => n.classList.remove("selected"));
+          li.classList.add("selected");
+          selectedPostageType = li.dataset.postageType;
+          if (typeof btnBuy !== "undefined") btnBuy.disabled = !selectedPostageType;
+        });
+
+        ratesList.appendChild(li);
+      });
+    }
 
 async function refreshRates(){
   // 🔒 Freeze any ccShipmentId-driven rechecks while we replace→refresh
@@ -5046,6 +5303,9 @@ async function refreshRates(){
   // 🚧 Hard guard: do not fetch pricing until user is on Step 2
   if (window.ccBlockRatesUntilStep2) return;
   if (typeof currentStep === "number" && currentStep < 2) return;
+
+  // ⏳ If Update/Delete/Create is still finishing, wait here too
+  await ensureUpdateIdSettled();
 
   // 0) Ensure we have a draft id
   let id = (idInput.value || "").trim();
@@ -5066,16 +5326,24 @@ async function refreshRates(){
   // Snapshot the ID we *intend* to price (will be updated if we replace)
   let idUsedForPricing = (idInput.value || "").trim();
 
- // 🇺🇸 US-only rule: delete old → create new BEFORE pricing
+ // 🇺🇸🇨🇦 US/CA rule: If manual "Update ID" ran, bypass replace; if in-flight, wait.
  const destCountry = (document.getElementById("cc_to_country_code")?.value || "")
    .trim().toUpperCase() || detectDestCountryCode();
- if (destCountry === "US") {
-   // Replace the draft now: create a fresh shipment and delete the old one.
-   const created = await replaceDraftShipment(id, replacePayload);
-   const newId = created?.id || created?.shipment?.id || idUsedForPricing;
-   if (newId && newId !== idUsedForPricing) {
-     try { pushShipmentId(newId); idInput.value = newId; } catch (_) {}
-     idUsedForPricing = newId;
+ const isUSorCA = (destCountry === "US" || destCountry === "CA");
+ if (isUSorCA) {
+   // If user pressed "Update ID" and it's still running, wait for it.
+   if (window.ccManualIdUpdateInFlight && window.ccManualIdUpdatePromise) {
+     try { await window.ccManualIdUpdatePromise; } catch (_) {}
+   }
+   // If manual Update-ID already completed, skip doing replace again.
+   if (!window.ccManualIdUpdateDone) {
+     // Otherwise, perform the same replace here as before (pre-pricing)
+     const created = await replaceDraftShipment(id, replacePayload);
+     const newId = created?.id || created?.shipment?.id || idUsedForPricing;
+     if (newId && newId !== idUsedForPricing) {
+       try { pushShipmentId(newId); idInput.value = newId; } catch (_) {}
+       idUsedForPricing = newId;
+     }
    }
  }
 
@@ -5212,6 +5480,33 @@ async function refreshRates(){
       /* ──────────────────────────────────────────────────────────────
        *  JS HELPERS (validation + toasts + address compare)
        * ────────────────────────────────────────────────────────────── */
+
+      // 🧹 Reset all recipient UI before loading a new order
+      function resetRecipientFields(){
+        const ids = [
+          "cc_to_name","cc_to_email","cc_to_address_1","cc_to_address_2",
+          "cc_to_city","cc_to_province_code","cc_to_postal_code",
+          "cc_to_country_code","cc_to_phone"
+        ];
+        ids.forEach(id => {
+          const el = document.getElementById(id);
+          if (el) {
+            // force-clear any recent “set” guards, then blank the field
+            try { el.dataset.setAt = "0"; } catch(_) {}
+            el.value = "";
+            el.dataset.userEdited = "0";
+          }
+        });
+
+        const ship = document.getElementById("shipAddressBox");
+        if (ship) ship.value = "SHIP TO:\n(loading…)";
+
+        // wipe any prior address-compare UI
+        const orig = document.getElementById("ccVerifyOriginal");
+        const sugg = document.getElementById("ccVerifySuggested");
+        if (orig) orig.textContent = "";
+        if (sugg) sugg.textContent = "";
+      }
 
       // 🆕 Credit modal helpers
       function openCreditModal(msg){
@@ -5574,8 +5869,8 @@ async function refreshRates(){
 
     async function autofillFromVerifyModal() {
     const set = (id, v) => {
-      const el = document.getElementById(id);
-      if (el) el.value = String(v);
+    const el = document.getElementById(id);
+    if (el) el.value = (v ?? "").toString().trim();
     };
 
     // (A) Description from Order Details → Title:
@@ -5796,6 +6091,11 @@ async function refreshRates(){
       }
 
       function isEU(code){ return EU_CODES.has(code); }
+      // Router: treat GB like EU for pipeline decisions
+      function isEUorGB(code){
+        const c = String(code || "").toUpperCase();
+        return c === "GB" || EU_CODES.has(c);
+      }
 
       function autoFillCustomsTaxRef(){
         const input = document.getElementById("cc_customs_tax_reference_number");
@@ -5818,7 +6118,7 @@ async function refreshRates(){
 
 // ISO2 lookup for common names → code (minimal; expand as needed)
 const COUNTRY_TO_ISO2 = {
-  "italy":"IT","italia":"IT","united states":"US","usa":"US","canada":"CA","france":"FR","germany":"DE","spain":"ES"
+  "italy":"IT","italia":"IT","united states":"US","united states of america":"US","usa":"US","canada":"CA","france":"FR","germany":"DE","spain":"ES"
 };
 
  // UK + EU country codes (plus crown deps aliases)
@@ -5827,27 +6127,56 @@ const COUNTRY_TO_ISO2 = {
    "GB","UK","IM","JE","GG"
  ]);
 
-  // Accept only real region codes/names; drop 1–2 letter junk like "As" unless whitelisted.
+  // Accept real region codes and full names; normalize to canonical codes for US/CA.
   function sanitizeProvinceForCountry(raw, country){
-    const s = String(raw || "").trim();
-    if (!s) return "";
+    const input = String(raw || "").trim();
+    if (!input) return "";
+    const cc = String(country || "").toUpperCase();
+    // 🔒 For all UK + EU orders, we never keep a province/state
+    if (EU_UK_CODES.has(cc)) return "";
 
-   const cc = String(country || "").toUpperCase();
-   // 🔒 For all UK + EU orders, we never keep a province/state
-   if (EU_UK_CODES.has(cc)) return "";
+    // Normalize: strip diacritics, spaces, and dots for robust matching
+    const strip = (x) => x.normalize?.('NFD').replace(/[\u0300-\u036f]/g,"").toUpperCase().replace(/[.\s-]/g,"");
+    const s = strip(input);
 
-  const US = new Set(["AL","AK","AZ","AR","CA","CO","CT","DE","FL","GA","HI","ID","IL","IN","IA","KS","KY","LA","ME","MD","MA","MI","MN","MS","MO","MT","NE","NV","NH","NJ","NM","NY","NC","ND","OH","OK","OR","PA","RI","SC","SD","TN","TX","UT","VT","VA","WA","WV","WI","WY","DC","PR"]);
-  const CA = new Set(["AB","BC","MB","NB","NL","NS","NT","NU","ON","PE","QC","SK","YT"]);
-  const AU = new Set(["ACT","NSW","NT","QLD","SA","TAS","VIC","WA"]);
+    // Canonical codes
+    const US = new Set(["AL","AK","AZ","AR","CA","CO","CT","DE","FL","GA","HI","ID","IL","IN","IA","KS","KY","LA","ME","MD","MA","MI","MN","MS","MO","MT","NE","NV","NH","NJ","NM","NY","NC","ND","OH","OK","OR","PA","RI","SC","SD","TN","TX","UT","VT","VA","WA","WV","WI","WY","DC","PR"]);
+    const CA = new Set(["AB","BC","MB","NB","NL","NS","NT","NU","ON","PE","QC","SK","YT"]);
+    const AU = new Set(["ACT","NSW","NT","QLD","SA","TAS","VIC","WA"]);
 
-  const up = s.toUpperCase();
-  if (country === "US") return US.has(up) ? up : "";
-  if (country === "CA") return CA.has(up) ? up : "";
-  if (country === "AU") return AU.has(up) ? up : (s.length >= 3 ? s : "");
+    // Full-name → code maps (space/dot-insensitive)
+    const US_NAME = new Map([
+      ["ALABAMA","AL"],["ALASKA","AK"],["ARIZONA","AZ"],["ARKANSAS","AR"],["CALIFORNIA","CA"],["COLORADO","CO"],
+      ["CONNECTICUT","CT"],["DELAWARE","DE"],["FLORIDA","FL"],["GEORGIA","GA"],["HAWAII","HI"],["IDAHO","ID"],
+      ["ILLINOIS","IL"],["INDIANA","IN"],["IOWA","IA"],["KANSAS","KS"],["KENTUCKY","KY"],["LOUISIANA","LA"],
+      ["MAINE","ME"],["MARYLAND","MD"],["MASSACHUSETTS","MA"],["MICHIGAN","MI"],["MINNESOTA","MN"],["MISSISSIPPI","MS"],
+      ["MISSOURI","MO"],["MONTANA","MT"],["NEBRASKA","NE"],["NEVADA","NV"],["NEWHAMPSHIRE","NH"],["NEWJERSEY","NJ"],
+      ["NEWMEXICO","NM"],["NEWYORK","NY"],["NORTHCAROLINA","NC"],["NORTHDAKOTA","ND"],["OHIO","OH"],["OKLAHOMA","OK"],
+      ["OREGON","OR"],["PENNSYLVANIA","PA"],["RHODEISLAND","RI"],["SOUTHCAROLINA","SC"],["SOUTHDAKOTA","SD"],
+      ["TENNESSEE","TN"],["TEXAS","TX"],["UTAH","UT"],["VERMONT","VT"],["VIRGINIA","VA"],["WASHINGTON","WA"],
+      ["WESTVIRGINIA","WV"],["WISCONSIN","WI"],["WYOMING","WY"],["DISTRICTOFCOLUMBIA","DC"],["WASHINGTONDC","DC"],
+      ["PUERTORICO","PR"]
+    ]);
+    const CA_NAME = new Map([
+      ["ALBERTA","AB"],["BRITISHCOLUMBIA","BC"],["MANITOBA","MB"],["NEWBRUNSWICK","NB"],
+      ["NEWFOUNDLANDANDLABRADOR","NL"],["NEWFOUNDLAND","NL"],["LABRADOR","NL"],
+      ["NOVASCOTIA","NS"],["NORTHWESTTERRITORIES","NT"],["NUNAVUT","NU"],
+      ["ONTARIO","ON"],["PRINCEEDWARDISLAND","PE"],["QUEBEC","QC"],["QUEBE","QC"], /* QUÉBEC */
+      ["SASKATCHEWAN","SK"],["YUKON","YT"],["YUKONTER","YT"]
+    ]);
 
-  // Everyone else: require ≥3 letters to look like a real region name
-  return /[A-Za-z]{3,}/.test(s) ? s : "";
-}
+    // Keep canonical codes as-is
+    if (cc === "US" && US.has(s)) return s;
+    if (cc === "CA" && CA.has(s)) return s;
+    if (cc === "AU") return AU.has(s) ? s : (input.length >= 3 ? input : "");
+
+    // Map full names → 2-letter codes for US/CA
+    if (cc === "US") return US_NAME.get(s) || "";
+    if (cc === "CA") return CA_NAME.get(s) || "";
+
+    // Everyone else: require ≥3 letters to look real; return original formatting
+    return /[A-Z]{3,}/.test(s) ? input : "";
+  }
 
 // Robust, locale-agnostic parser for pasted multi-line addresses
 function parseIntlAddressBlock(blockText = "", fallbackCountryCode = "") {
@@ -5882,33 +6211,119 @@ function parseIntlAddressBlock(blockText = "", fallbackCountryCode = "") {
   // Maintain a cursor after name
   let idx = (to_name ? 1 : 0);
 
-  // 3) STREET: next line is almost always the street
-  let to_address_1 = lines[idx++] || "";
-  let to_address_2 = "";
+    // 3) STREET: next line is almost always the street
+    let to_address_1 = lines[idx++] || "";
+    // IMPORTANT: declare before possible assignment
+    let to_address_2 = "";
+   // 3a.1) NEW: split inline unit from Address 1 if present
+    {
+      const split = splitAddress1InlineUnit(to_address_1);
+      to_address_1 = split.addr1;
+      if (!to_address_2 && split.addr2) to_address_2 = split.addr2;
+    }
 
-  // 4) CITY / PROVINCE: try to split a comma line e.g. "Cesenatico, FORLÌ-CESENA"
+    // 3b) Optional Address 2 line (apt/suite/unit/etc.)
+    if (idx < lines.length) {
+    const maybeUnit = lines[idx] || "";
+    const unitRe = /\b(?:APT|APARTMENT|UNIT|STE|SUITE|BLDG|BUILDING|FLOOR|FLR|P\.?O\.?\s*BOX|PO\s*BOX|POBOX|BOX|DEPT|DEPARTMENT|ROOM|RM|LOT|#)\b/i;
+    const cityStateZipRe = /^.+?,\s*[A-Z]{2}\s+\d{5}(?:-\d{4})?$/i;
+
+    // Heuristic: if this line looks like a unit, or if the *next* line clearly looks like a city line,
+    // treat this line as Address 2.
+    const next = lines[idx + 1] || "";
+    const looksLikeCityNext =
+      /,/.test(next) ||
+      (to_country_code === "US" && /\b[A-Z]{2}\b\s+\d{5}(?:-\d{4})?$/.test(next)) ||
+      (to_country_code === "CA" && /\b[A-Z]{2}\b\s+[A-Z]\d[A-Z]\s?\d[A-Z]\d$/.test(next));
+
+    if (!cityStateZipRe.test(maybeUnit) &&
+      (unitRe.test(maybeUnit) || (!/,/.test(maybeUnit) && looksLikeCityNext))) {
+      to_address_2 = maybeUnit.trim();
+      idx++;
+    }
+  }
+
+  // 4) CITY / PROVINCE / POSTAL (country-aware + two-line tolerant)
   let to_city = "", to_province_code = "";
-  let to_postal_code = ""; // moved up to avoid TDZ (assigned earlier if found on same line)
+  let to_postal_code = "";
   if (idx < lines.length) {
-    const cityProv = lines[idx] || "";
-    const m = cityProv.match(/^(.+?)[,\s]+(.+)$/u);
-    if (m) {
-       to_city = m[1].trim();
-       const right = m[2].trim();
-       // pull ZIP if it trails after province/region on the same line
-       // Only match real ZIPs: 4–6 digits OR UK/CA formats (AB1 2CD, A1A1A1, etc.)
-       const mZipOnRight = right.match(/\b\d{4,6}\b|\b(?:[A-Z]\d[A-Z]\s?\d[A-Z]\d|[A-Z]{1,3}\d[A-Z\d]?\s?\d[A-Z]{2})\b/i);
-       if (mZipOnRight) {
-         to_postal_code = mZipOnRight[0].toUpperCase();
-         to_province_code = right.replace(mZipOnRight[0], "").replace(/[, ]+$/,"").trim();
+    const cityProv = (lines[idx] || "").trim();
+    const cc = (to_country_code || "").toUpperCase();
+    const usZip = /\b\d{5}(?:-\d{4})?\b/i;
+    const caPc  = /\b[A-Z]\d[A-Z]\s?\d[A-Z]\d\b/i;
+    // UK postcodes: group parts so we can reinsert the canonical space
+    const ukPc  = /\b([A-Z]{1,2}\d[A-Z\d]?)\s*-?\s*(\d[A-Z]{2})\b/i;
+
+    const takeUS = (m) => {
+      to_city = m[1].trim();
+      to_province_code = m[2].trim();
+      if (m[3]) to_postal_code = m[3].toUpperCase();
+      idx++;
+    };
+    const takeCA = (m) => {
+      to_city = m[1].trim();
+      to_province_code = m[2].trim();
+      if (m[3]) to_postal_code = m[3].toUpperCase();
+      idx++;
+    };
+
+    if (cc === "US") {
+      // Comma form: "City With Two Words, FL 34761-3114"  or  "City With Two Words, FL"
+      let m = cityProv.match(/^([^,]+),\s*([A-Z]{2})(?:\s+(\d{5}(?:-\d{4})?))?$/);
+      if (m) { takeUS(m); }
+      else if ((m = cityProv.match(/^(.+?)\s+([A-Z]{2})\s+(\d{5}(?:-\d{4})?)$/))) { // no comma
+        takeUS(m);
+      } else {
+        // Two-line form: line N = "City With Two Words", line N+1 = "FL 34761-3114"
+        const next = (lines[idx + 1] || "").trim();
+        const m2   = next.match(/^([A-Z]{2})\s+(\d{5}(?:-\d{4})?)$/);
+        to_city = cityProv;
+        if (m2) { to_province_code = m2[1]; to_postal_code = m2[2].toUpperCase(); idx += 2; }
+        else { idx++; }
+      }
+    } else if (cc === "CA") {
+      // Comma form: "City With Two Words, QC H2X 1A1"  or  "City With Two Words, QC"
+      let m = cityProv.match(/^([^,]+),\s*([A-Z]{2})(?:\s+([A-Z]\d[A-Z]\s?\d[A-Z]\d))?$/i);
+      if (m) { takeCA(m); }
+      else if ((m = cityProv.match(/^(.+?)\s+([A-Z]{2})\s+([A-Z]\d[A-Z]\s?\d[A-Z]\d)$/i))) { // no comma
+        takeCA(m);
+      } else {
+        // Two-line form: line N = "City With Two Words", line N+1 = "QC H2X 1A1"
+        const next = (lines[idx + 1] || "").trim();
+        const m2   = next.match(/^([A-Z]{2})\s+([A-Z]\d[A-Z]\s?\d[A-Z]\d)$/i);
+        to_city = cityProv;
+        if (m2) { to_province_code = m2[1]; to_postal_code = m2[2].toUpperCase(); idx += 2; }
+        else { idx++; }
+      }
+    } else {
+      // Generic/intl: split on the LAST comma; keep entire multi-word city
+      if (cityProv.includes(",")) {
+        const commaIdx = cityProv.lastIndexOf(",");
+        to_city = cityProv.slice(0, commaIdx).trim();
+        const right = cityProv.slice(commaIdx + 1).trim();
+        // Prefer UK format first, then CA/US/numeric
+        const mUk  = right.match(ukPc);
+        const mAny = mUk || right.match(caPc) || right.match(usZip) || right.match(/\b\d{4,6}\b/);
+        if (mAny) {
+         // Normalize UK like "ZE1 0HS" (add/force the single space)
+         if (mUk) {
+           to_postal_code = (mUk[1] + " " + mUk[2]).toUpperCase();
+         } else {
+           to_postal_code = mAny[0].toUpperCase();
+         }
+         const matched = mAny[0];
+         to_province_code = right
+           .replace(matched, "")
+           .replace(/[-, ]+$/,"")
+           .trim();
        } else {
          to_province_code = right;
        }
-       idx++;
-     } else {
-      // If no comma, assume it's the city line
-      to_city = cityProv.trim();
-      idx++;
+        idx++;
+      } else {
+        to_city = cityProv; // province/postal picked up later
+        idx++;
+      }
     }
   }
 
@@ -5916,6 +6331,17 @@ function parseIntlAddressBlock(blockText = "", fallbackCountryCode = "") {
   for (let j = idx; j < lines.length; j++) {
     const raw = (lines[j] || "").trim().replace(/[.,;]+$/,"");
     // A) numeric 4–6 digits → postal; leftover letters → province
+    const mUS = raw.match(/\b\d{5}(?:-\d{4})?\b/);
+    if (mUS) {
+      to_postal_code = mUS[0].toUpperCase();
+      if (!to_province_code) {
+        const prov = raw.replace(mUS[0], "").replace(/[-,]/g," ").replace(/\s{2,}/g," ").trim();
+        if (/[A-Za-z]{3,}/.test(prov)) to_province_code = prov.toUpperCase();
+      }
+      break;
+    }
+
+    // B) Generic numeric 4–6
     const mNum = raw.match(/\b\d{4,6}\b/);
     if (mNum) {
       to_postal_code = mNum[0].toUpperCase();
@@ -5925,7 +6351,8 @@ function parseIntlAddressBlock(blockText = "", fallbackCountryCode = "") {
       }
       break;
     }
-    // B) UK/CA alphanumeric formats
+
+    // C) UK/CA alphanumeric formats
     const mAlpha = raw.match(/\b(?:[A-Z]\d[A-Z]\s?\d[A-Z]\d|[A-Z]{1,3}\d[A-Z\d]?\s?\d[A-Z]{2})\b/i);
     if (mAlpha) {
       to_postal_code = mAlpha[0].toUpperCase();
@@ -5952,6 +6379,23 @@ function parseIntlAddressBlock(blockText = "", fallbackCountryCode = "") {
   // ✅ Final guard: zero province for UK/EU, and sanitize everywhere else
   to_province_code = sanitizeProvinceForCountry(to_province_code, to_country_code);
 
+  if (to_address_2 && /^.+?,\s*[A-Z]{2}\s+\d{5}(?:-\d{4})?$/i.test(to_address_2)) {
+    to_address_2 = "";
+  }
+
+   // FIX GUARD: if city was mis-assigned to the country (e.g., "US"), try to recover
+  if (to_city && to_country_code && to_city.toUpperCase() === to_country_code) {
+    for (const L of lines) {
+      const m = L.match(/^(.+?),\s*([A-Z]{2})\s+(\d{5}(?:-\d{4})?)$/i);
+      if (m) {
+        to_city = m[1].trim();
+        to_province_code = sanitizeProvinceForCountry(m[2], to_country_code);
+        to_postal_code = m[3].toUpperCase();
+        break;
+      }
+    }
+  }
+
   return {
     to_name: clean(to_name),
     to_address_1: clean(to_address_1),
@@ -5977,32 +6421,117 @@ function parseIntlAddressBlock(blockText = "", fallbackCountryCode = "") {
     };
   }
 
+  function sanitizeAddress2(raw){
+  const s = String(raw || "").trim();
+  // treat common “empty” placeholders as empty
+  return /^(?:na|n\/a|none|-|—|--|n\.a\.)$/i.test(s) ? "" : s;
+  }
+
+  // Extract unit info that appears inline on Address 1 (e.g., "123 Main St Apt 4B")
+  function splitAddress1InlineUnit(line){
+    const s = String(line || "").trim();
+    if (!s) return { addr1: "", addr2: "" };
+    // capture a conservative unit phrase; keeps tokens like "Apt 4B", "Suite 300", "#12", "P.O. Box 7"
+    const re = /\b(?:(?:APT|APARTMENT|UNIT|STE|SUITE|BLDG|BUILDING|FLOOR|FLR|RM|ROOM|DEPT|DEPARTMENT|LOT|P\.?O\.?\s*BOX|PO\s*BOX|POBOX|BOX|#)\s*[\-:]?\s*[A-Z0-9\-]+)\b/i;
+    const m = s.match(re);
+    if (!m) return { addr1: s, addr2: "" };
+    const unit = m[0].replace(/\s+/g," ").trim();
+    const addr1 = s.replace(m[0], "").replace(/[,\s]+$/,"").trim();
+    return { addr1: addr1 || s, addr2: unit };
+  }
+
+  // Pull postal code out of the City field for EU/GB if it's missing
+  function compensatePostalFromCity(to){
+    const cc = String(to?.to_country_code || "").toUpperCase();
+    if (!cc || !(cc === "GB" || EU_CODES.has(cc))) return to;
+    if (to.to_postal_code) return to;
+
+    const city = String(to.to_city || "");
+    if (!city) return to;
+
+    // UK postcodes (e.g., M30 0UR, SW1A 1AA, W1F 8ZT, EC1A 1BB)
+    const ukRe = /\b([A-Z]{1,2}\d[A-Z\d]?)\s*(\d[A-Z]{2})\b/i;
+
+    // NL format (e.g., 1012 AB); generic EU numeric (e.g., 45309)
+    const nlRe = /\b[1-9]\d{3}\s?[A-Z]{2}\b/i;
+    const euNumRe = /\b\d{4,6}\b/;
+
+    let m = city.match(ukRe) || city.match(nlRe) || city.match(euNumRe);
+    if (!m) return to;
+
+    // Build canonical postcode text
+    const pc = m.length === 3
+      ? (m[1] + " " + m[2]).toUpperCase().replace(/\s+/g," ").trim()
+      : m[0].toUpperCase();
+
+    to.to_postal_code = pc;
+    to.to_city = city.replace(m[0], "").replace(/[,-]/g," ").replace(/\s{2,}/g," ").trim();
+    return to;
+  }
+
   // ▼ Define the missing helper (global scope)
   function collectRecipientAddress(){
     const block   = (document.getElementById("shipAddressBox")?.value || "").trim();
     const country = (document.getElementById("cc_to_country_code")?.value || "").trim();
+    // const block   = (document.getElementById("shipAddressBox")?.value || "").trim();
+    // const country = (document.getElementById("cc_to_country_code")?.value || "").trim();
+    // Decide pipeline up front
+    const detected = (window.detectDestCountryCode?.() || country || "").toUpperCase();
+    const routeIntl = isEUorGB(detected);
 
     // Prefer a real multi-line block; otherwise just use the inputs
-    if (block.split("\n").length >= 2) {
-      const parsed = parseIntlAddressBlock(block, country);   // already in your file
+    // 🔁 CHANGE: for EU/GB, always run the intl parser (even if the block is short)
+    if (routeIntl || block.split("\n").length >= 2) {
+      const parsed = parseIntlAddressBlock(block, country); // keep your existing rules
       const fields = gatherRecipientFromInputs();
 
       // Merge parsed with field fallbacks + normalize country
-      const to = {
+      let to = {
         to_name         : parsed.to_name          || fields.to_name,
         to_address_1    : parsed.to_address_1     || fields.to_address_1,
-        to_address_2    : parsed.to_address_2     || fields.to_address_2,
+        // 🚫 no fallback: never carry over Address 2
+        to_address_2    : sanitizeAddress2(parsed.to_address_2),
         to_city         : parsed.to_city          || fields.to_city,
-        to_province_code: parsed.to_province_code || fields.to_province_code,
-        to_postal_code  : parsed.to_postal_code   || fields.to_postal_code,
-        to_country_code : (parsed.to_country_code || fields.to_country_code || "").toUpperCase()
+        // 🚫 no fallback: sanitize strictly for the detected country
+        to_country_code : (parsed.to_country_code || fields.to_country_code || "").toUpperCase(),
+        to_province_code: sanitizeProvinceForCountry(parsed.to_province_code, (parsed.to_country_code || fields.to_country_code))
+        // keep postal code behavior as you prefer:
+        ,to_postal_code : (
+          isEUorGB(parsed.to_country_code || fields.to_country_code)
+             ? (parsed.to_postal_code || "")
+            : (parsed.to_postal_code || fields.to_postal_code)
+         )
       };
 
-     // Belt & suspenders: if UK/EU, force province empty before using anywhere else
-     if (EU_UK_CODES.has(to.to_country_code)) to.to_province_code = "";
+     // Belt & suspenders: EU/GB never keeps province/state
+     if (isEUorGB(to.to_country_code)) to.to_province_code = "";
+
+     // still inside collectRecipientAddress(), after the EU/UK zeroing
+     to.to_province_code = sanitizeProvinceForCountry(to.to_province_code, to.to_country_code);
+
+
+     // ⭐ Compensate: GB/EU often paste "City POSTCODE" into City — split it out
+     to = compensatePostalFromCity(to);
+
+     // reflect the sanitized value into the visible field right away
+     const elProv = document.getElementById("cc_to_province_code");
+     if (elProv) elProv.value = EU_UK_CODES.has(to.to_country_code) ? "" : (to.to_province_code || "");
+
+     // EU/GB must have Email + Phone present in the UI before proceeding
+      if (isEUorGB(to.to_country_code)) {
+        const emailEl = document.getElementById("cc_to_email");
+        const phoneEl = document.getElementById("cc_to_phone");
+        const fallbackEmail = (window.__lastCustomerEmail || "custombrites@gmail.com");
+        const fallbackPhone = (window.__lastCustomerPhone || "416-606-2476");
+        if (emailEl && !emailEl.value.trim()) { emailEl.value = fallbackEmail; }
+        if (phoneEl && !phoneEl.value.trim()) { phoneEl.value = fallbackPhone; }
+      }
 
       // Hydrate Step-0 inputs so the compare modal never shows blanks
-      const set = (id, v)=>{ const el=document.getElementById(id); if(el && v) el.value=v; };
+      const set = (id, v) => {
+      const el = document.getElementById(id);
+      if (el) el.value = (v ?? "").toString().trim();
+      };
       set("cc_to_name", to.to_name);
       set("cc_to_address_1", to.to_address_1);
       set("cc_to_address_2", to.to_address_2);
@@ -6017,6 +6546,13 @@ function parseIntlAddressBlock(blockText = "", fallbackCountryCode = "") {
     // Fallback: just the inputs
     return gatherRecipientFromInputs();
   }
+
+      // 🔶 Background Step-0 priming using your EXISTING parser only (no new parser, no modals)
+      function primeCcStep0Background(){
+        try { collectRecipientAddress(); } catch(e){ console.warn("collectRecipientAddress failed:", e); }
+        try { autoFillCustomsTaxRef(); }  catch(e){ console.warn("autoFillCustomsTaxRef failed:", e); }
+      }
+      window.primeCcStep0Background = primeCcStep0Background;
 
       // expose globally for handlers defined in other scopes/blocks
       window.collectRecipientAddress = collectRecipientAddress;
@@ -6063,7 +6599,10 @@ function parseIntlAddressBlock(blockText = "", fallbackCountryCode = "") {
         const s = window.__lastVerifySuggested;
         if (s) {
           // Push suggestion back into Step-0 inputs
-          const set = (id, v) => { const el = document.getElementById(id); if (el) el.value = v || ""; };
+          const set = (id, v) => {
+          const el = document.getElementById(id);
+          if (el) el.value = (v ?? "").toString().trim();
+          };
           set("cc_to_name",           s.to_name);
           set("cc_to_address_1",      s.to_address_1);
           set("cc_to_address_2",      s.to_address_2);
@@ -6110,6 +6649,7 @@ function parseIntlAddressBlock(blockText = "", fallbackCountryCode = "") {
       // Expose helpers used by Step 2 refresh/build payload
       window.detectDestCountryCode = detectDestCountryCode;
       window.isEU = isEU; // (optional, keeps parity)
+      window.isEUorGB = isEUorGB; // expose router globally
         })();
 
       /* ────────────────────────────────────────────────────────────── */
@@ -6150,6 +6690,57 @@ function parseIntlAddressBlock(blockText = "", fallbackCountryCode = "") {
         sp.style.display = on ? "inline-block" : "none";
       }
 
+      // NEW: "Update ID" button → run Update/Delete/Create fully in the background
+      document.getElementById("ccUpdateIdBtn")?.addEventListener("click", () => {
+        const btn = document.getElementById("ccUpdateIdBtn");
+        // Signal that the next Step-1 "Next" should bypass the auto Update/Delete/Create kickoff
+        window.ccBypassStep1Update = true;
+        const d = document.getElementById("cc_ship_date");              // (optional guard)
+        if (d && !d.value) d.value = new Date().toISOString().slice(0,10); // ensure non-empty date
+        setBtnLoading(btn, true);
+        ccUpdateIdStart();
+
+        const idEl   = document.getElementById("ccShipmentId");
+        const oldId  = (idEl?.value || "").trim();
+        // 🔶 STRICT: prime Step-0 using your existing parser, then snapshot ALL ccStep0/1/2 fields
+        try { primeCcStep0Background(); } catch(_) {}
+        const payload = buildShipmentPayload();
+
+        // If International (EU/GB), guarantee ROOT-level email in the payload
+        try {
+          const codeRaw = (document.getElementById("cc_to_country_code")?.value || "").trim().toUpperCase();
+          const countryCode = (codeRaw === "UK" ? "GB" : codeRaw);
+          const isEUorGB_cc = isEUorGB(countryCode);
+          let newId = null;
+          if (isEUorGB_cc) {
+            const emailInput = document.getElementById("cc_to_email");
+            const chosen = (emailInput?.value || "").trim() || "custombrites@gmail.com";
+            if (emailInput && !emailInput.value.trim()) emailInput.value = chosen; // reflect UI
+            payload.email = chosen; // persist server-side during Update/Delete/Create
+          }
+        } catch (_) {}
+
+        // Fire-and-forget: no modals, no step navigation; UI stays responsive
+        (async () => {
+          try {
+            const created = await replaceDraftShipment(oldId, payload); // create new → sweep dupes → delete old
+            const newId   = created?.id || created?.shipment?.id || "";
+            if (newId && newId !== oldId) {
+              try { pushShipmentId(newId); idEl.value = newId; } catch {}
+            }
+
+            M.toast?.({ html: "Shipment ID updated in background." });
+
+          } catch (e) {
+            try { handleCcApiError?.(e); } catch {}
+          } finally {
+            window.ccBypassStep1Update = false;     // consume one-shot bypass
+            ccUpdateIdFinish();                     // resolve + re-enable buttons
+            setBtnLoading(btn, false);
+          }
+        })();
+      });
+
       btnNext.addEventListener("click", async () => {
         try {
           if (currentStep === 0){
@@ -6167,6 +6758,45 @@ function parseIntlAddressBlock(blockText = "", fallbackCountryCode = "") {
           try {
             await ccVerifyAddressOnly();      // best-effort; non-blocking failure
             await ccEnsureDraftShipmentIdNoRefresh();
+         // 🇺🇸🇨🇦 Kick off manual Update/Delete/Create before entering Step 2 (US/CA only)
+          try {
+            const dest = (document.getElementById("cc_to_country_code")?.value || "").trim().toUpperCase();
+            if (!window.ccBypassStep1Update && (dest === "US" || dest === "CA")) {
+              // Use the global latch so Step-2 and refreshRates can await reliably
+              ccUpdateIdStart();
+
+              const idEl    = document.getElementById("ccShipmentId");
+              const oldId   = (idEl?.value || "").trim();
+              const payload = buildShipmentPayload();
+
+              // Run asynchronously; Step-2/Refresh will await the latch
+              (async () => {
+                try {
+                  const created = await replaceDraftShipment(oldId, payload); // create → sweep dupes → delete old
+                  const newId   = created?.id || created?.shipment?.id || "";
+                  if (newId && newId !== oldId) {
+                    try { pushShipmentId(newId); idEl.value = newId; } catch {}
+                  }
+
+                  M.toast?.({ html: "Shipment updated for pricing." });
+                } catch (e) {
+                  try { handleCcApiError?.(e); } catch {}
+                } finally {
+                  // Resolves the shared Promise and flips inFlight=false
+                  ccUpdateIdFinish();
+                }
+              })();
+
+              } else if (window.ccBypassStep1Update) {
+              // One-shot short-circuit: treat as already updated so Step-2 won’t re-run replaceDraftShipment
+              window.ccManualIdUpdateInFlight = false;
+              window.ccManualIdUpdateDone     = true;
+              window.ccBypassStep1Update      = false; // consume the flag
+
+            }
+          } catch (e) {
+            console.warn("US/CA manual Update-ID kickoff failed:", e);
+          }
           } catch (e) {
             console.warn("ccShip1 verify-only encountered an error:", e);
           }
@@ -6188,13 +6818,17 @@ function parseIntlAddressBlock(blockText = "", fallbackCountryCode = "") {
           return;
         }
 
-          // ✅ Step 2: price, then move to Step 3
+          // ✅ Step 2: (possibly) wait for Update-ID, then price, then move to Step 3
           if (currentStep === 2){
             setBtnLoading(btnNext, true);
             try {
               if (!(await validateStep(2))) return;
-              await refreshRates();    // ← pricing happens here only
-              showStep(3);
+            // 🛑 If Update-ID background run is active (flag ON), wait before pricing
+            await waitForUpdateIdIfNeeded({ showToast: true });
+            await ensureUpdateIdSettled();         // hard gate on latch
+            await waitForCcSpinnerToHide();        // optional UI spinner gate
+            await refreshRates();                  // ← pricing happens here only
+            showStep(3);
             } finally { setBtnLoading(btnNext, false); }
             return;
           }
@@ -6207,7 +6841,12 @@ function parseIntlAddressBlock(blockText = "", fallbackCountryCode = "") {
       btnRefresh.addEventListener("click", async () => {
         try{
           if (!(await validateStep(2))) return;
-          
+
+          // Never price while Update-ID work is in flight
+          await waitForUpdateIdIfNeeded({ showToast: true });
+          await ensureUpdateIdSettled();
+          await waitForCcSpinnerToHide();
+
           await refreshRates();
         }catch(err){
           handleCcApiError(err);
@@ -6224,6 +6863,19 @@ function parseIntlAddressBlock(blockText = "", fallbackCountryCode = "") {
         } finally {
           setBtnLoading(btn, false);
         }
+     // Final safety net: ensure ANY refreshRates waits for Update-ID
+      (function(){
+        const __origRefresh = window.refreshRates;
+        if (typeof __origRefresh === "function") {
+          window.refreshRates = async function(...args){
+            if (window.ccManualIdUpdatePromise && !window.ccManualIdUpdateDone) {
+              try { await window.ccManualIdUpdatePromise; } catch {}
+            }
+            await waitForCcSpinnerToHide();
+            return __origRefresh.apply(this, args);
+          };
+        }
+      })();
       });
 
     })();
@@ -6356,6 +7008,7 @@ function parseIntlAddressBlock(blockText = "", fallbackCountryCode = "") {
 </style>
 <!-- QZ Tray client for direct printing -->
 <script src="https://cdn.jsdelivr.net/npm/qz-tray@2.2.5/qz-tray.js"></script>
+
 
 </body>
 </html>
