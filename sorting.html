@@ -2990,27 +2990,34 @@ async function sendAndMatch() {
     const matchBox = document.getElementById("matchCell" + i);
     const metalVal = document.getElementById("metalCell" + i).value || "";
 
-    /* 🔥 Filter out skipForCharm + metal + title pref */
-    // Build the pre-filter list FIRST
+    /* 🔥 Build the pre-filter list FIRST (skipForCharm + metal + title) */
+    const validUserImages = userImagesArray.filter(
+      (u) =>
+        !u.skipForCharm &&
+        metalFilterOk(metalVal, u.name) &&
+        passesTitlePrefilter(i, u.name)
+    );
     const titlesArr = JSON.parse(localStorage.getItem("etsyTitlesByCell") || "[]");
     const etsyTitle = titlesArr[i] || "";
     pfStartCell(i, etsyTitle);
 
-    // Visualize every candidate that survived the pre-filter (before OpenAI calls)
-    (function renderPrefilterList(){
-      const descMap = JSON.parse(localStorage.getItem("matrixCharm2Words") || "{}");
-      const tagOf = (nm) => descMap[String(nm).replace(/\.(jpg|jpeg|png|webp)$/i, "")] || "";
-      const hitWord = (tag, title) => {
-        const parts = String(tag).toLowerCase().split(/\s+/).slice(0,2);
-        const wordIn = (w) => w && new RegExp(`\\b${w.replace(/[.*+?^${}()|[\\]\\\\]/g,'\\\\$&')}\\b`).test(String(title).toLowerCase());
-        return (wordIn(parts[0]) && parts[0]) || (wordIn(parts[1]) && parts[1]) || "";
-      };
-      validUserImages.forEach(u => {
-        const tag = tagOf(u.name);
-        pfAddCandidate(i, u.name, tag, hitWord(tag, etsyTitle));
-      });
-      pfMarkSent(i, validUserImages.length);
-    })();
+  // Visualize every candidate that survived the pre-filter (before OpenAI calls)
+  (function renderPrefilterList(valids){
+    const descMap = JSON.parse(localStorage.getItem("matrixCharm2Words") || "{}");
+    const tagOf = (nm) => descMap[String(nm).replace(/\.(jpg|jpeg|png|webp)$/i, "")] || "";
+    const hitWord = (tag, title) => {
+      const parts = String(tag).toLowerCase().split(/\s+/).slice(0,2);
+      const wordIn = (w) =>
+        w && new RegExp(`\\b${w.replace(/[.*+?^${}()|[\\]\\\\]/g,'\\\\$&')}\\b`)
+              .test(String(title).toLowerCase());
+      return (wordIn(parts[0]) && parts[0]) || (wordIn(parts[1]) && parts[1]) || "";
+    };
+    valids.forEach(u => {
+      const tag = tagOf(u.name);
+      pfAddCandidate(i, u.name, tag, hitWord(tag, etsyTitle));
+    });
+    pfMarkSent(i, valids.length);
+  })(validUserImages);
 
     let firstImg = null;   // remembers first earring photo for this cell
 
