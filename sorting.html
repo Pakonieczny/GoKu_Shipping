@@ -1924,23 +1924,37 @@ async function openAIAnalyzePhoto(base64Image) {
   const aCorr = labA - METAL_BG_A;
   const bCorr = labB - METAL_BG_B;
   const within = (x, lo, hi) => x >= lo && x <= hi;
+  // Perceptual chroma (low for Silver, higher for Gold/RoseGold)
+  const Cstar = Math.hypot(aCorr, bCorr);
+  // Project onto a "yellowness" axis (pulls Gold away from Silver).
+  // Silver tends to have low b and low a → small ySep; Gold/RoseGold push it up.
+  const ySep = bCorr - 0.55 * aCorr;
 
   // Elliptical (Mahalanobis-like) separation in a–b plane
   const C = {
-    Gold    : { mu: { a:  5, b: 26 }, sigma: { a: 6, b: 8 } },
-    RoseGold: { mu: { a: 16, b: 22 }, sigma: { a: 7, b: 7 } },
-    Silver  : { mu: { a:  1, b:  5 }, sigma: { a: 3, b: 5 } }
+    Gold    : { mu: { a:  6, b: 28 }, sigma: { a: 4.8, b: 6.5 } },
+    RoseGold: { mu: { a: 17, b: 23 }, sigma: { a: 7.0, b: 7.0 } },
+    Silver  : { mu: { a:  1, b:  6 }, sigma: { a: 3.2, b: 5.5 } }
   };
   const mDist2 = (label) => {
     const { mu, sigma } = C[label];
     const da = (aCorr - mu.a) / sigma.a;
     const db = (bCorr - mu.b) / sigma.b;
     let d2 = da*da + db*db;
-    // HSV consistency penalties tame bleed-through from speculars/background
-    if (label === "Silver"   && hsvS > 14) d2 += Math.pow((hsvS - 14) / 8, 2);
-    if (label !== "Silver"   && hsvS < 12) d2 += Math.pow((12 - hsvS) / 6, 2);
-    if (label === "Gold"     && !within(hsvH, 32, 65)) d2 += 1.2;
+    // HSV/chroma penalties → crush Silver→Gold + RoseGold→Gold bleed
+    if (label === "Silver"   && hsvS > 20) d2 += Math.pow((hsvS - 20) / 9, 2);
+    if (label !== "Silver"   && hsvS < 14) d2 += Math.pow((14 - hsvS) / 6, 2);
+    if (label === "Gold"     && !within(hsvH, 35, 65)) d2 += 1.2;
     if (label === "RoseGold" && !within(hsvH, 15, 34)) d2 += 1.2;
+    // Penalize Gold when "yellowness" is weak or chroma is silver-like
+    if (label === "Gold"     && ySep < 13)             d2 += 1.3;
+    if (label === "Gold"     && bCorr < 16)            d2 += 1.1;
+    if (label === "Gold"     && Cstar < 11.5)          d2 += 1.4;
+    if (label === "Gold"     && hsvV > 82 && hsvS < 14) d2 += 0.9;
+    // Penalize Gold in the RoseGold quadrant (high a*, warm hue window)
+    if (label === "Gold"     && aCorr >= 12 && within(hsvH, 14, 36)) d2 += 1.0;
+    // Nudge Silver away when yellowness is too high
+    if (label === "Silver"   && ySep > 15)             d2 += 1.0;
     return d2;
   };
   const d = { Gold: mDist2("Gold"), RoseGold: mDist2("RoseGold"), Silver: mDist2("Silver") };
@@ -1949,20 +1963,28 @@ async function openAIAnalyzePhoto(base64Image) {
   let label = best[0];
 
   // Hard guardrails (clear wins override distances)
-  if (hsvS <= 13 && Math.abs(aCorr) <= 4 && bCorr <= 9) label = "Silver";
-  if (bCorr >= 18 && hsvS >= 12 && hsvH >= 34)          label = "Gold";
-  if (aCorr >= 12 && bCorr >= 18 && hsvS >= 22 && within(hsvH,15,34)) label = "RoseGold";
+  // Silver: low chroma OR weak yellowness, plus low/moderate S
+  if (
+    (Cstar <= 11.5 && hsvS <= 22) ||
+    (ySep  <= 12.5 && hsvS <= 22) ||
+    (bCorr <= 13   && hsvS <= 20 && Math.abs(aCorr) <= 6)
+  ) label = "Silver";
+  // Gold: require strong yellow + adequate saturation (tougher gate)
+  if (bCorr >= 19 && hsvS >= 15 && hsvH >= 35 && ySep >= 14)                               label = "Gold";
+  // RoseGold: stronger red (a*) + yellow (b*), modest S; slightly wider window
+  if (aCorr >= 11 && bCorr >= 17 && hsvS >= 18 && within(hsvH,14,36))                    label = "RoseGold";
 
   // Margin-based confidence → ambiguous cases become Unknown (no more mislabels)
   const margin = Math.sqrt(second[1]) - Math.sqrt(best[1]);
   const confidence = 1 / (1 + Math.exp(-margin)); // 0.5..~1
-  finalColor = (confidence < 0.62) ? "Unknown" : label;
+  // Be a bit more conservative to avoid false Golds
+  finalColor = (confidence < 0.71) ? "Unknown" : label;
 
   console.log(
     "%c[openAIAnalyzePhoto] PASS 2 → final metal label:",
     "color:#8E24AA;font-weight:bold",
     finalColor, "conf:", confidence.toFixed(3),
-    { hsvH, hsvS, labA, labB, aCorr, bCorr, ranked }
+    { hsvH, hsvS, hsvV, labA, labB, aCorr, bCorr, Cstar, ySep, ranked }
   );
 
   /* ───────────────────── PASS 3 : two-word charm descriptor ───────────────────── */
