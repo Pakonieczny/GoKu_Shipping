@@ -688,8 +688,6 @@ function normalizeTitleForPrefilter(title){
 function normalizeTwoWordDescriptor(s){
   const banned = new Set(["charm","jewelry","jewellery","pendant", "cute", "fun", "big", "small", "accessory", "trinket", "bling", "flair", "piece", "play", "handmade", "trendy", "keepsake", "gift", "keeps", "item", "collection", "doodad", "toy", "dood", "quirky", "playful", "decoration", "trendy", "funky", "fashion", "ornament", "bauble"]);
 
-charm, jewelry, jewellery, pendant, cute, fun, big, small, accessory, trinket, bling, flair, piece, play, handmade, trendy, keepsake, gift, keeps, item, collection, doodad, toy, dood, quirky, playful, decoration, trendy, funky, fashion, ornament, bauble
-
   return String(s || "")
     .toLowerCase()
     .replace(/[^a-z0-9-\\s]/gi, " ")   // allow hyphen inside words
