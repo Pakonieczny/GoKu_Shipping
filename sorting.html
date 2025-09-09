@@ -206,6 +206,29 @@
       background-color:var(--outlineBlue) !important;
       color:#fff !important;
     }
+
+   /* ===== Pre-Filter Monitor (temporary debug UI) ===== */
+    #prefilterPanel {
+      position:absolute;
+      left:1460px; top:70px; width:360px; height:650px;
+      border:1px solid #ccc; background:#fff; overflow:auto; padding:8px;
+      box-shadow:0 2px 6px rgba(0,0,0,.08); border-radius:8px;
+      font-size:.85em;
+    }
+    #prefilterPanel h6 { margin:4px 0 8px 0; font-weight:600; }
+    .pf-cell { margin-bottom:10px; border:1px solid #e5e5e5; border-radius:6px; }
+    .pf-head { background:#f7f7f7; padding:6px 8px; border-bottom:1px solid #eee; }
+    .pf-head small { color:#777; }
+    .pf-list { list-style:none; padding:6px 8px; margin:0; }
+    .pf-list li { margin:0 0 4px 0; }
+    .pf-hit { font-weight:600; }
+    .pf-sent { font-size:.8em; color:#666; padding:0 8px 6px; }
+    /* tiny pill for the 2-word descriptor */
+    .pf-tag {
+      display:inline-block; padding:2px 6px; border:1px solid #ddd;
+      border-radius:999px; font-size:.75em; margin-left:6px; background:#f9f9f9;
+    }
+
   </style>
 </head>
 <body>
@@ -251,6 +274,12 @@
   <!-- Container for dynamically generated preview boxes and detail boxes -->
   <div id="photoGridContainer">
     <!-- Preview boxes and detail boxes will be created dynamically -->
+  </div>
+
+ <!-- ===== TEMP: Pre-Filter Monitor (real-time) ===== -->
+  <div id="prefilterPanel" aria-live="polite">
+    <h6>Pre-Filter Monitor</h6>
+    <div id="pfInner"></div>
   </div>
 
   <!-- Config Modal -->
@@ -594,6 +623,83 @@ function closeProgressModal() {
   ensureProgressModal().close();
 }
 
+/* =========================================================
+ * Pre-Filter Monitor helpers
+ * =======================================================*/
+function pfReset(title="Pre-Filter Monitor"){
+  const wrap = document.getElementById("prefilterPanel");
+  if (!wrap) return;
+  const inner = document.getElementById("pfInner");
+  if (inner) inner.innerHTML = "";
+  wrap.querySelector("h6").textContent = title;
+}
+function pfStartCell(i, etsyTitle){
+  const inner = document.getElementById("pfInner"); if (!inner) return;
+  const box = document.createElement("div");
+  box.className = "pf-cell";
+  box.id = "pf-cell-" + i;
+  const parsed = String(etsyTitle || "");
+  const origArr = Array.isArray(window.cachedOrderItems) ? window.cachedOrderItems : [];
+  const orig = escapeHtml(String(origArr[i]?.title || ""));
+  box.innerHTML = `
+    <div class="pf-head">
+      <div><b>Cell ${i}</b></div>
+      <small>Title (orig): ${orig.slice(0,120)}</small><br/>
+      <small>Title (parsed): ${escapeHtml(parsed)}</small>
+    </div>
+    <ul class="pf-list" id="pf-list-${i}"></ul>
+    <div class="pf-sent" id="pf-sent-${i}"></div>
+  `;
+  inner.appendChild(box);
+}
+function pfAddCandidate(i, userName, desc2, hitWord){
+  const list = document.getElementById("pf-list-" + i); if (!list) return;
+  const li = document.createElement("li");
+  const d2  = normalizeTwoWordDescriptor(desc2 || "");
+  const hit = hitWord ? ` <span class="pf-hit">[${hitWord}]</span>` : "";
+  li.innerHTML = `${escapeHtml(userName)} <span class="pf-tag" title="Charm descriptor">${escapeHtml(d2)}</span>${hit}`;
+  list.appendChild(li);
+}
+function pfMarkSent(i, count){
+  const sent = document.getElementById("pf-sent-" + i); if (!sent) return;
+  sent.textContent = `→ sending ${count} candidate${count===1?"":"s"} to OpenAI…`;
+}
+function escapeHtml(s){
+  return String(s).replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
+}
+
+/**
+ * normalizeTitleForPrefilter(title)
+ * - lowercase
+ * - remove ALL punctuation (keep only a–z, 0–9 and spaces)
+ * - collapse whitespace
+ * - keep FIRST 4 words only
+ */
+function normalizeTitleForPrefilter(title){
+  return String(title || "")
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/gi, " ")   // strip ALL punctuation
+    .replace(/\s+/g, " ")            // collapse runs of whitespace
+    .trim()
+    .split(" ")
+    .slice(0, 4)                     // FIRST 4 words only
+    .join(" ");
+}
+
+// Lowercase, strip punctuation, collapse spaces, keep ONLY first 4 words (and drop 'charm')
+function normalizeTwoWordDescriptor(s){
+  return String(s || "")
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/gi, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .split(" ")
+    .filter(Boolean)
+    .filter(w => w !== "charm")
+    .slice(0, 4)
+    .join(" ");
+}
+
 /********************************************************
  * Firebase Initialization (REQUIRED)
  ********************************************************/
@@ -766,6 +872,7 @@ const configIDs = [
   "matchPrintBtn",
   "titleEtsyOrderNumber",
   "titleImageMatrixDrop",
+  "prefilterPanel",
   "titleUnmatchedImages"
 ];
 
@@ -809,6 +916,7 @@ etsyOrderInput.addEventListener("keydown", async function (e) {
     // Clear UI
     document.getElementById("photoGridContainer").innerHTML = "";
     document.getElementById("unmatchedContainer").innerHTML = "";
+    pfReset();  // ← clear pre-filter UI for a fresh run
 
     disableSendMatch();
     disableMatchPrintFlow();
@@ -1365,6 +1473,7 @@ function openIframePrinterForListing(cellIndex) {
       userImage:                { left:0,   top:0,   width:100, height:100 },
       saveConfigBtn:            { left:10,  top:3,   width:85,  height:35 },
       sendMatchBtn:             { left:20,  top:255, width:210, height:35 },
+      prefilterPanel:           { left:1460, top:68, width:360, height:650 },
       testOpenAIBtn:            { left:20,  top:65,  width:140, height:35 }
     };
 
@@ -1534,15 +1643,28 @@ async function analyzeAndStoreSubImages(imgObjs) {
     const res = await openAIAnalyzePhoto(data);
     const isCharm = (res.charmPresent || "").toLowerCase() === "yes";
 
-    // 1) Save *every* image immediately, no skipForCharm flag
-    userImagesArray.push({
-      name    : isCharm
-                ? `${res.color||"UnknownColor"}_${res.topRightNumber||"XX"}.jpg`
-                : `${origName}.jpg`,
-      data,
-      analyzed: true
-    });
+    // 1) Decide the final filename now
+    const finalName = isCharm
+      ? `${res.color || "UnknownColor"}_${res.topRightNumber || "XX"}.jpg`
+      : `${origName}.jpg`;
+
+    // Save the image immediately
+    userImagesArray.push({ name: finalName, data, analyzed: true });
     saved++;
+
+    // 1b) Persist the 2-word descriptor mapped to this image base name
+    try {
+      const k   = "matrixCharm2Words";
+      const map = JSON.parse(localStorage.getItem(k) || "{}");
+      const base = stripExtension(finalName);
+      const norm = normalizeTwoWordDescriptor(res?.desc2 || "");
+      if (norm) {
+        map[base] = norm;           // e.g., { "Gold_2": "paw print" }
+        localStorage.setItem(k, JSON.stringify(map));
+      }
+    } catch (e) {
+      console.warn("matrixCharm2Words persist failed:", e);
+    }
 
     // 2) Update streak
     if (isCharm) {
@@ -1673,9 +1795,10 @@ function loadImage(dataUrl) {
   });
 }
 
-// --------------- Single‑Photo Analysis (TWO‑PASS hue→label + verbose logs) ---------------
+// --------------- Single-Photo Analysis (TWO-PASS hue→label + verbose logs) ---------------
+// FIX: wrap in an async function to avoid top-level await errors.
 async function openAIAnalyzePhoto(base64Image) {
-  /* ───────────────────── PASS 1 : hue / number / charm ───────────────────── */
+  /* ───────────────────── PASS 1 : hue / number / charm ───────────────────── */
   const ctrlHue = new AbortController();
   pendingFetchControllers.push(ctrlHue);
 
@@ -1690,21 +1813,17 @@ async function openAIAnalyzePhoto(base64Image) {
             text:
               "Return JSON EXACTLY like:\n" +
               '  {"hue":"<≤10-word description>", "topRightNumber":"<number or blank>", "charmPresent":"Yes|No",' +
-              '   "medianHSV":{"H":<deg>,"S":<pct>,"V":<pct>}, "medianLab":{"L":<L*>,"a":<a*>,"b":<b*>}}\n\n' +
+              '   "medianHSV":{"H":<deg>,"S":<pct>,"V":<pct>}, "medianLab":{"L":<L*>,"a":<a*>,"b*":<b*>}}\n\n' +
               "TASK 1 – Describe the dominant metal hue (≤10 words).\n" +
               "TASK 2 – Extract the top-right number (blank if none).\n" +
               "TASK 3 – Is a jewellery charm clearly visible? (Yes|No).\n" +
               "Estimate MEDIAN HSV (H° 0–360, S% 0–100, V% 0–100) and MEDIAN CIELAB (L*, a*, b*).\n" +
-
               "IMPORTANT MASKING RULES FOR MEDIANS:\n" +
               "• Exclude background/near-black pixels and any white/near-white background.\n" +
               "• Ignore pixels if (HSV.V ≤ 18% OR Lab L* ≤ 20)  ← near-black/very dark. \n" +
               "• Ignore pixels if (HSV.V ≥ 96% OR Lab L* ≥ 96)  ← near-white/very bright. \n" +
               "• Ignore pixels with very low saturation (HSV.S < 8%) to avoid gray background bleed.\n" +
-
               "Respond with JSON only."
-
-
           },
           { type: "image_url", image_url: { url: base64Image, detail: "high" } }
         ]
@@ -1713,16 +1832,16 @@ async function openAIAnalyzePhoto(base64Image) {
     max_tokens: 200
   };
 
-  console.log("%c[openAIAnalyzePhoto] PASS 1 payload:", "color:#03A9F4", huePayload);
+  console.log("%c[openAIAnalyzePhoto] PASS 1 payload:", "color:#03A9F4", huePayload);
 
   let hueText   = "";
   let topNumber = null;
   let charmFlag = "no";
   let roseHit   = false;  // ← PASS-1 Rose detector
 
-   // Medians from PASS 1 (declared in outer scope so PASS 2 can see them)
-   let hsvH = NaN, hsvS = NaN, hsvV = NaN;
-   let labL = NaN, labA = NaN, labB = NaN;
+  // Medians from PASS 1 (declared in outer scope so PASS 2 can see them)
+  let hsvH = NaN, hsvS = NaN, hsvV = NaN;
+  let labL = NaN, labA = NaN, labB = NaN;
 
   try {
     const r1 = await fetch(functionsBaseUrl + "/openaiProxy", {
@@ -1733,7 +1852,7 @@ async function openAIAnalyzePhoto(base64Image) {
     });
     const d1 = await r1.json();
     let raw1 = d1.choices?.[0]?.message?.content?.trim() || "";
-    console.log("%c[openAIAnalyzePhoto] PASS 1 raw response:", "color:#03A9F4", raw1);
+    console.log("%c[openAIAnalyzePhoto] PASS 1 raw response:", "color:#03A9F4", raw1);
 
     raw1 = raw1.replace(/^```(\w+)?/, "").replace(/```$/, "").trim();
     const obj1 = JSON.parse(raw1);
@@ -1741,9 +1860,8 @@ async function openAIAnalyzePhoto(base64Image) {
     hueText   = obj1.hue            || "";
     topNumber = obj1.topRightNumber || null;
     charmFlag = (obj1.charmPresent  || "No").toLowerCase();
-    roseHit   = /rose/i.test(hueText);  // any form: “rose”, “rose gold”, “rosegold”
+    roseHit   = /rose/i.test(hueText);
 
-     // NEW: capture medians from API (numbers expected)
     const hsv = obj1.medianHSV || {};
     const lab = obj1.medianLab || {};
     hsvH = Number(hsv.H); hsvS = Number(hsv.S); hsvV = Number(hsv.V);
@@ -1751,20 +1869,16 @@ async function openAIAnalyzePhoto(base64Image) {
     console.log("%c[openAIAnalyzePhoto] PASS 1 → medians:",
       "color:#03A9F4;font-weight:bold",
       `HSV H=${hsvH}° S=${hsvS}% V=${hsvV}% | Lab L*=${labL} a*=${labA} b*=${labB}`);
-
-    console.log(
-      "%c[openAIAnalyzePhoto] PASS 1 → hue:", "color:#03A9F4;font-weight:bold",
-      `"${hueText}"  |  topRightNumber: ${topNumber}  |  charmPresent: ${charmFlag}`
-    );
+    console.log("%c[openAIAnalyzePhoto] PASS 1 → hue:", "color:#03A9F4;font-weight:bold",
+      `"${hueText}"  |  topRightNumber: ${topNumber}  |  charmPresent: ${charmFlag}`);
   } catch (err) {
-    console.error("[openAIAnalyzePhoto] PASS 1 error:", err);
+    console.error("[openAIAnalyzePhoto] PASS 1 error:", err);
     return { topRightNumber:null, color:null, charmPresent:"no" };
   }
 
-  /* ───────────────────── PASS2 : hue ⇒ fixed label ───────────────────── */
+  /* ───────────────────── PASS 2 : hue ⇒ fixed label ───────────────────── */
   const ctrlLabel = new AbortController();
   pendingFetchControllers.push(ctrlLabel);
-
   const labelPrompt =
     `You are classifying metal color from numeric medians. APPLY THESE CUT LINES STRICTLY:\n` +
     `• HSV rule (primary): RoseGold if 15° ≤ median H ≤ 33° AND S ≥ 22%.\n` +
@@ -1779,16 +1893,12 @@ async function openAIAnalyzePhoto(base64Image) {
     `hue="${hueText}"\n` +
     `medianHSV: H=${hsvH} S=${hsvS} V=${hsvV}\n` +
     `medianLab: L=${labL} a=${labA} b=${labB}`;
-
-
   const labelPayload = {
     model: "gpt-4o",
     messages: [{ role: "user", content: labelPrompt }],
     max_tokens: 30
   };
-
   console.log("%c[openAIAnalyzePhoto] PASS 2 payload:", "color:#8E24AA", labelPayload);
-
   let finalColor = null;
   try {
     const r2 = await fetch(functionsBaseUrl + "/openaiProxy", {
@@ -1799,24 +1909,64 @@ async function openAIAnalyzePhoto(base64Image) {
     });
     const d2 = await r2.json();
     let raw2 = d2.choices?.[0]?.message?.content?.trim() || "";
-    console.log("%c[openAIAnalyzePhoto] PASS 2 raw response:", "color:#8E24AA", raw2);
-
+    console.log("%c[openAIAnalyzePhoto] PASS 2 raw response:", "color:#8E24AA", raw2);
     raw2       = raw2.replace(/[^A-Za-z]/g, "");
     finalColor = ["Gold", "RoseGold", "Silver"].includes(raw2) ? raw2 : "Unknown";
-    console.log(
-      "%c[openAIAnalyzePhoto] PASS 2 → final metal label:", "color:#8E24AA;font-weight:bold",
-      finalColor
-    );
+    console.log("%c[openAIAnalyzePhoto] PASS 2 → final metal label:", "color:#8E24AA;font-weight:bold", finalColor);
   } catch (err) {
-    console.error("[openAIAnalyzePhoto] PASS 2 error:", err);
+    console.error("[openAIAnalyzePhoto] PASS 2 error:", err);
     finalColor = "Unknown";
   }
 
-  /* ───────────────────── RETURN consolidated result ───────────────────── */
+  /* ───────────────────── PASS 3 : two-word charm descriptor ───────────────────── */
+  const ctrlDesc = new AbortController();
+  pendingFetchControllers.push(ctrlDesc);
+  const descPrompt = [
+    "You will be shown ONE jewelry charm photo.",
+    "Return EXACTLY four (4) lowercase words separated by single spaces in this order: broad1 broad2 focus1 focus2.",
+    "• broad words = general category (e.g., animal, bird, flower).",
+    "• focus words = specific type/species (e.g., humming bird, horse, rose). If the specific concept uses two words, split them across focus1 and focus2.",
+    "NEVER include the word 'charm'. Do not mention metal, color, engraving text, numbers, or counts.",
+    "Output must be exactly four words, no punctuation, no extra text."
+  ].join("\n");
+  let desc2 = "";
+  try {
+    const r3 = await fetch(functionsBaseUrl + "/openaiProxy", {
+      method : "POST",
+      headers: { "Content-Type": "application/json" },
+      body   : JSON.stringify({
+        model: "gpt-4o",
+        messages: [
+          { role: "user", content: [
+            { type: "text", text: descPrompt },
+            { type: "image_url", image_url: { url: base64Image, detail: "high" } }
+          ]}
+        ],
+        max_tokens: 12
+      }),
+      signal : ctrlDesc.signal
+    });
+    const d3 = await r3.json();
+    desc2 = (d3.choices?.[0]?.message?.content || "")
+      .toLowerCase()
+      .replace(/[^a-z0-9\s]/g, " ")
+      .replace(/\s+/g, " ")
+      .trim()
+      .split(" ")
+      .filter(Boolean)
+      .filter(w => w !== "charm")        // belt & suspenders
+      .slice(0,4)
+      .join(" ");
+  } catch (e) {
+    console.warn("[openAIAnalyzePhoto] PASS 3 (desc2) error:", e);
+    desc2 = "";
+  }
+
   return {
     topRightNumber : topNumber,
     color          : finalColor,
-    charmPresent   : charmFlag
+    charmPresent   : charmFlag,
+    desc2
   };
 }
 
@@ -1877,6 +2027,19 @@ async function analyzeUserImagesViaOpenAI() {
     imgObj.analyzed = true;
 
     const baseName  = stripExtension(imgObj.name);       // keep this line
+    // Persist the 2-word descriptor for this Matrix photo
+    try {
+      const k = "matrixCharm2Words";
+      const map = JSON.parse(localStorage.getItem(k) || "{}");
+      const norm = normalizeTwoWordDescriptor(result.desc2);
+      if (norm) {
+        map[baseName] = norm;                  // e.g., "paw print"
+        localStorage.setItem(k, JSON.stringify(map));
+      }
+      imgObj.desc2 = norm || "";
+    } catch (e) {
+      console.warn("matrixCharm2Words persist failed:", e);
+    }
 
       /* ---------- charm‑present handling ---------- */
       if (result.charmPresent === "no") {
@@ -2526,6 +2689,13 @@ async function loadBatchEtsyOrders(orderNumbers) {
       }
     }
 
+      // Persist titles for prefilter: PARSED (lowercase, no punctuation, first 4 words)
+      try {
+        const titlesByCell = combinedItems.map(t => normalizeTitleForPrefilter(t?.title));
+        localStorage.setItem("etsyTitlesByCell", JSON.stringify(titlesByCell));
+      } catch (e) {
+        console.warn("Failed to cache etsyTitlesByCell:", e);
+      }
       // Then fill the UI with combined results
       await fillPreviewBoxes(combinedItems);
 
@@ -2670,6 +2840,15 @@ async function compareImages(userImage, croppedGridImage, cellIndex, userImageNa
  * sendAndMatch with metal filter logic
  ********************************************************/
 async function sendAndMatch() {
+  // Ensure Etsy titles cache exists in parsed form (first 4 words, no punctuation)
+  (function ensureTitlesCache(){
+    try {
+      const k = "etsyTitlesByCell";
+      const items  = Array.isArray(window.cachedOrderItems) ? window.cachedOrderItems : [];
+      const titles = items.map(it => normalizeTitleForPrefilter(it?.title));
+      localStorage.setItem(k, JSON.stringify(titles));  // overwrite each run to stay fresh
+    } catch (e) { console.warn("ensureTitlesCache failed:", e); }
+  })();
   /* --- progress setup --- */
   let smDone  = 0;
   let smTotal = 0;
@@ -2725,6 +2904,28 @@ async function sendAndMatch() {
     return true; // unknown listing metal → don’t block
   }
 
+  // Title-word prefilter — require ≥1 *word* overlap between Matrix 2-word tag and Etsy cell title
+  function passesTitlePrefilter(cellIdx, userImgName) {
+    let titlesArr = [];
+    try { titlesArr = JSON.parse(localStorage.getItem("etsyTitlesByCell") || "[]"); } catch (_) {}
+    const rawTitle = String(titlesArr[cellIdx] || "");  // already normalized (first 4 words, no punctuation)
+    const title    = rawTitle;    
+    if (!title) return true; // no title → don't block
+
+    let descMap = {};
+    try { descMap = JSON.parse(localStorage.getItem("matrixCharm2Words") || "{}"); } catch (_) {}
+    const base = String(userImgName || "").replace(/\.(jpg|jpeg|png|webp)$/i, "");
+    const two  = String(descMap[base] || "").toLowerCase().trim();
+    if (!two) return true; // no descriptor → don't block
+
+    const parts = two.split(/\s+/).filter(Boolean).slice(0,2).filter(w => w !== "charm");
+    const [w1, w2] = [parts[0] || "", parts[1] || ""];
+    const wordIn = (w) => w && new RegExp(`\\b${w.replace(/[.*+?^${}()|[\\]\\\\]/g, '\\\\$&')}\\b`).test(title);
+    const ok = wordIn(w1) || wordIn(w2);
+    console.debug("prefilter", { cellIdx, base, two, title: rawTitle, ok });
+    return ok;
+  }
+
     // --- NEW: helpers to render names and to keep filling until have >= need ---
     function namesForCell(i){
       return (cellMatches[i] || [])
@@ -2744,9 +2945,33 @@ async function sendAndMatch() {
         const pool = userImagesArray.filter(u =>
           !u.skipForCharm &&
           metalFilterOk(metalVal, u.name) &&
+          passesTitlePrefilter(i, u.name) &&
           !matchedUserNames.has(u.name)
         );
         if (!pool.length) break;
+
+       // Also visualize these extra pre-filtered candidates before sending
+        (function renderFillList(){
+          const titlesArr = JSON.parse(localStorage.getItem("etsyTitlesByCell") || "[]");
+          const etsyTitle = titlesArr[i] || "";
+          const descMap   = JSON.parse(localStorage.getItem("matrixCharm2Words") || "{}");
+          const tagOf = (nm) => descMap[String(nm).replace(/\.(jpg|jpeg|png|webp)$/i, "")] || "";
+          const hitWord = (tag, title) => {
+            // Exclude "charm" from being counted as a valid hit
+            const parts = String(tag)
+              .toLowerCase()
+              .split(/\s+/)
+              .slice(0,2)
+              .filter(w => w && w !== "charm");
+            const [w1, w2] = [parts[0] || "", parts[1] || ""];
+            const wordIn = (w) => w && new RegExp(`\\b${w.replace(/[.*+?^${}()|[\\]\\\\]/g,'\\\\$&')}\\b`).test(String(title).toLowerCase());
+            return (wordIn(w1) && w1) || (wordIn(w2) && w2) || "";
+          };
+          // Only add a new block header if this cell wasn't started in FIRST PASS (fallback safe)
+          if (!document.getElementById("pf-cell-" + i)) pfStartCell(i, etsyTitle);
+          pool.forEach(u => pfAddCandidate(i, u.name, tagOf(u.name), hitWord(tagOf(u.name), etsyTitle)));
+          pfMarkSent(i, pool.length);
+        })();
 
         const promises = pool.map((user, j) =>
           new Promise(resolve => {
@@ -2814,10 +3039,34 @@ async function sendAndMatch() {
     const matchBox = document.getElementById("matchCell" + i);
     const metalVal = document.getElementById("metalCell" + i).value || "";
 
-    /* 🔥 Filter out skipForCharm as well */
+    /* 🔥 Build the pre-filter list FIRST (skipForCharm + metal + title) */
     const validUserImages = userImagesArray.filter(
-        (u) => !u.skipForCharm && metalFilterOk(metalVal, u.name)
+      (u) =>
+        !u.skipForCharm &&
+        metalFilterOk(metalVal, u.name) &&
+        passesTitlePrefilter(i, u.name)
     );
+    const titlesArr = JSON.parse(localStorage.getItem("etsyTitlesByCell") || "[]");
+    const etsyTitle = titlesArr[i] || "";
+    pfStartCell(i, etsyTitle);
+
+  // Visualize every candidate that survived the pre-filter (before OpenAI calls)
+  (function renderPrefilterList(valids){
+    const descMap = JSON.parse(localStorage.getItem("matrixCharm2Words") || "{}");
+    const tagOf = (nm) => descMap[String(nm).replace(/\.(jpg|jpeg|png|webp)$/i, "")] || "";
+    const hitWord = (tag, title) => {
+      const parts = String(tag).toLowerCase().split(/\s+/).slice(0,2);
+      const wordIn = (w) =>
+        w && new RegExp(`\\b${w.replace(/[.*+?^${}()|[\\]\\\\]/g,'\\\\$&')}\\b`)
+              .test(String(title).toLowerCase());
+      return (wordIn(parts[0]) && parts[0]) || (wordIn(parts[1]) && parts[1]) || "";
+    };
+    valids.forEach(u => {
+      const tag = tagOf(u.name);
+      pfAddCandidate(i, u.name, tag, hitWord(tag, etsyTitle));
+    });
+    pfMarkSent(i, valids.length);
+  })(validUserImages);
 
     let firstImg = null;   // remembers first earring photo for this cell
 
@@ -2912,6 +3161,7 @@ async function sendAndMatch() {
             if (cand.skipForCharm) continue;
             if (!metalFilterOk(metalVal, cand.name)) continue;
             if (matchedUserNames.has(cand.name)) continue;
+            if (!passesTitlePrefilter(i, cand.name)) continue; // 🔒 enforce title prefilter
 
             const { score: s1 } = await compareImages(cand.data, firstImgFixed, i, cand.name);
             const flipped       = await flipImageHorizontal(cand.data);
@@ -2994,153 +3244,6 @@ async function sendAndMatch() {
       // G) bail out so Second Pass is skipped
       return;
     }
-
-    /*  ===== SECOND PASS DISABLED (Aug 2025) – BEGIN =====
-
-  const mirrorChecklist = Object.keys(earringCells)
-    .filter(idx => cellMatches[idx] && cellMatches[idx].length === 1)
-    .map(Number);                      // earrings still missing a twin
-
-  unmatchedCells = [];
-  for (let i = 0; i < croppedImagesArray.length; i++) {
-    // include normal unmatched cells + earrings that still need a twin
-     const need = expectedSlots(window.cachedOrderItems?.[i] || {});
-     const have = (cellMatches[i]||[]).filter(m=>m && m.userImage).length;
-     if (mirrorChecklist.includes(i) || have < need) {
-      unmatchedCells.push(i);
-    }
-  }
-
-  smTotal += unmatchedCells.length;
-  document.getElementById("progressTitle").textContent =
-    "Matching Images... (Second Pass)";
-
-  for (const i of unmatchedCells) {
-    if (runId !== globalRunId) return;
-
-    const matchBox = document.getElementById("matchCell" + i);
-    const metalVal = document.getElementById("metalCell" + i).value || "";
-
-
-    const validUserImages = userImagesArray.filter(
-      (u) => !u.skipForCharm && metalFilterOk(metalVal, u.name)
-    );
-
-    
-    const compareTarget = mirrorChecklist.includes(i) && earringState[i]?.firstImg
-        ? earringState[i].firstImg        // compare candidate vs first user photo
-        : croppedImagesArray[i];          // normal source
-
-    const comparisonPromises = validUserImages.map((user, j) => {
-      return new Promise((resolve) => {
-        setTimeout(() => {
-          if (runId !== globalRunId) return resolve({ result: { score: 0 }, user });
-          if ( matchedUserNames.has(user.name) || ((cellMatches[i]||[]).filter(m=>m && m.userImage).length >= expectedSlots(window.cachedOrderItems?.[i] || {})) ) {
-            return resolve({ result: { score: 0 }, user });
-          }
-          compareImages(user.data, compareTarget, i, user.name)
-            .then((result) => resolve({ result, user }))
-            .catch((err) => {
-              console.error("Second‑pass compare error:", i, user.name, err);
-              resolve({ result: { score: 0 }, user });
-            });
-        }, j * 120);
-      });
-    });
-
-    const results = await Promise.all(comparisonPromises);
-
-    if (runId !== globalRunId) return;        
-
-    results.sort((a, b) => b.result.score - a.result.score);
-
-    if (!results.length || results[0].result.score === 0) {
-      M.toast({ html: `Cell ${i}: No valid matches found in second pass.` });
-    } else {
-      const topCandidate = results[0];
-      const topScore = topCandidate.result.score;
-      const topScorePerc = (topScore * 100).toFixed(2);
-      const matchName = topCandidate.user.name.replace(/(\.jpg|\.png)$/i, "");
-
-      M.toast({
-        html: `Cell ${i}: Best candidate => ${matchName} (${topScorePerc}%)`
-      });
-
-      if (topScore === 1.0 || topScore >= 0.98) {
-        if (matchBox) {
- 
-          if (earringCells[i] && cellMatches[i] && cellMatches[i].length === 1) {
-            matchBox.value += `, ${matchName}`;
-          } else {
-            matchBox.value  =  matchName;
-          }
-          matchBox.style.fontWeight = "";
-          matchBox.style.color = "";
-        }
-        if (!cellMatches[i]) cellMatches[i] = [];
-        cellMatches[i].push({
-          userName: matchName,
-          userImage: topCandidate.user.data,
-          score: topScore
-        });
-
-        matchedUserNames.add(topCandidate.user.name);
-
-  
-           {
-             const need = expectedSlots(window.cachedOrderItems?.[i] || {});
-             const have = (cellMatches[i]||[]).filter(m=>m && m.userImage).length;
-             if (have >= need) matchedCellIndices.add(i);
-           }
-
-        userImagesArray = userImagesArray.filter(u => u.name !== topCandidate.user.name);
-
-      } else if (topScore >= 0.88) {
-
-        if (matchBox) {
-          if (earringCells[i] && cellMatches[i] && cellMatches[i].length === 1) {
-            matchBox.value += `, ${matchName}`;
-          } else {
-            matchBox.value  =  matchName;
-          }
-          matchBox.style.fontWeight = "bold";
-          matchBox.style.color = "orangered";
-        }
-
-        if (!cellMatches[i]) cellMatches[i] = [];
-        cellMatches[i].push({
-          userName: matchName,
-          userImage: topCandidate.user.data,
-          score: topScore
-        });
-
-        matchedUserNames.add(topCandidate.user.name);
-         
-           {
-             const need = expectedSlots(window.cachedOrderItems?.[i] || {});
-             const have = (cellMatches[i]||[]).filter(m=>m && m.userImage).length;
-             if (have >= need) matchedCellIndices.add(i);
-           }
-
-        userImagesArray = userImagesArray.filter(u => u.name !== topCandidate.user.name);
-
-      } else {
-        M.toast({ html: `Cell ${i}: Score ${topScorePerc}% < 88%. No match.` });
-      }
-    }
-
-    // NEW: fill any remaining slots sequentially for multi-qty items (reuse compareTarget)
-    await fillRemaining(i, compareTarget, document.getElementById("matchCell" + i));
-
-   
-    smDone++;
-    updateProgressModal(smDone, smTotal);
-
-    // adaptive cooldown (second pass)
-    await adaptiveCooldown((validUserImages && validUserImages.length) || 1);
-  }
-
-  ===== SECOND PASS DISABLED – END ===== */
 
   /* ---------- HIGHLIGHT unmatched cells ---------- */
   for (let i = 0; i < croppedImagesArray.length; i++) {
