@@ -1914,121 +1914,56 @@ async function openAIAnalyzePhoto(base64Image) {
     return { topRightNumber:null, color:null, charmPresent:"no" };
   }
 
- /* ───────────────────── PASS 2 : hue ⇒ fixed label (deterministic, LLM fallback) ───────────────────── */
-   const ctrlLabel = new AbortController();
-   pendingFetchControllers.push(ctrlLabel);
+  /* ───────────────────── PASS 2 : hue ⇒ fixed label ───────────────────── */
+ // ── Deterministic Lab+HSV classifier (no network, no variance) ──
+  let finalColor = "Unknown";
 
-   // Deterministic classifier to reduce Silver→Gold bleed and stabilize Gold↔RoseGold.
-   function classifyMetal({ h, s, v, a, b, hueText }) {
-     const C = Math.hypot(a, b);                 // C*ab chroma (how colorful)
-     const inRange = (x, lo, hi) => x >= lo && x <= hi;
-     const votes = { Silver: 0, Gold: 0, RoseGold: 0 };
-     const reasons = [];
+  // Optional scene-tint correction: set these per-photo if you sample the dark grid once.
+  const METAL_BG_A = window.METAL_BG_A ?? 0;
+  const METAL_BG_B = window.METAL_BG_B ?? 0;
+  const aCorr = labA - METAL_BG_A;
+  const bCorr = labB - METAL_BG_B;
+  const within = (x, lo, hi) => x >= lo && x <= hi;
 
-     // --- SILVER (primary): very low saturation + near-neutral a*,b* OR very low chroma.
-     const silver1 = (s <= 13 && Math.abs(a) <= 4.0 && b >= -3 && b <= 8);
-     const silver2 = (C <= 13.5 && s <= 16);
-     if (silver1) { votes.Silver += 2; reasons.push("silver1"); }
-     if (silver2) { votes.Silver += 1; reasons.push("silver2"); }
+  // Elliptical (Mahalanobis-like) separation in a–b plane
+  const C = {
+    Gold    : { mu: { a:  5, b: 26 }, sigma: { a: 6, b: 8 } },
+    RoseGold: { mu: { a: 16, b: 22 }, sigma: { a: 7, b: 7 } },
+    Silver  : { mu: { a:  1, b:  5 }, sigma: { a: 3, b: 5 } }
+  };
+  const mDist2 = (label) => {
+    const { mu, sigma } = C[label];
+    const da = (aCorr - mu.a) / sigma.a;
+    const db = (bCorr - mu.b) / sigma.b;
+    let d2 = da*da + db*db;
+    // HSV consistency penalties tame bleed-through from speculars/background
+    if (label === "Silver"   && hsvS > 14) d2 += Math.pow((hsvS - 14) / 8, 2);
+    if (label !== "Silver"   && hsvS < 12) d2 += Math.pow((12 - hsvS) / 6, 2);
+    if (label === "Gold"     && !within(hsvH, 32, 65)) d2 += 1.2;
+    if (label === "RoseGold" && !within(hsvH, 15, 34)) d2 += 1.2;
+    return d2;
+  };
+  const d = { Gold: mDist2("Gold"), RoseGold: mDist2("RoseGold"), Silver: mDist2("Silver") };
+  const ranked = Object.entries(d).sort((a,b)=>a[1]-b[1]);
+  const [best, second] = ranked;
+  let label = best[0];
 
-     // --- ROSEGOLD: keep strong red component and goldish b*
-     const rgHSV  = (inRange(h, 16, 31) && s >= 28);
-     const rgLab  = (a >= 10.0 && b >= 14.0); // tightened from 7.5 to curb Gold→RoseGold bleed
-     if (rgHSV) { votes.RoseGold += 1; reasons.push("rgHSV"); }
-     if (rgLab) { votes.RoseGold += 1; reasons.push("rgLab"); }
+  // Hard guardrails (clear wins override distances)
+  if (hsvS <= 13 && Math.abs(aCorr) <= 4 && bCorr <= 9) label = "Silver";
+  if (bCorr >= 18 && hsvS >= 12 && hsvH >= 34)          label = "Gold";
+  if (aCorr >= 12 && bCorr >= 18 && hsvS >= 22 && within(hsvH,15,34)) label = "RoseGold";
 
-     // --- GOLD: require yellow hue window + enough saturation + enough chroma (to avoid silvery yellows)
-     const goldHSV     = (inRange(h, 36, 65) && s >= 15);
-     const goldLab     = (b >= 18.0 && a >= -2.5 && a <= 9.5);
-     const goldChroma  = (C >= 20);
-     if (goldHSV)    { votes.Gold += 1; reasons.push("goldHSV"); }
-     if (goldLab)    { votes.Gold += 1; reasons.push("goldLab"); }
-     if (goldChroma) { votes.Gold += 1; reasons.push("goldChroma"); }
+  // Margin-based confidence → ambiguous cases become Unknown (no more mislabels)
+  const margin = Math.sqrt(second[1]) - Math.sqrt(best[1]);
+  const confidence = 1 / (1 + Math.exp(-margin)); // 0.5..~1
+  finalColor = (confidence < 0.62) ? "Unknown" : label;
 
-     // --- Dead-zones to avoid flip-flops and bleed near boundaries
-     const nearNeutral = (s >= 12 && s <= 16) && C <= 15;
-     const nearGoldSilverBoundary = (b >= 12 && b <= 18) && s <= 17;
-     if (nearNeutral || nearGoldSilverBoundary) {
-       return { label: "Unknown", confidence: 0, votes, reasons: [...reasons, "deadzone"] };
-     }
-
-     // --- Voting + tie-breaks
-     const sorted = Object.entries(votes).sort((A, B) => B[1] - A[1]);
-     const top = sorted[0], second = sorted[1];
-     const margin = top[1] - second[1];
-
-     if (margin <= 0) {
-       // Exact tie: prefer cooler/neutral outcomes to reduce false golds
-       if (votes.Silver === votes.Gold && votes.Silver > 0) {
-         return { label: "Silver", confidence: 0.5, votes, reasons: [...reasons, "tie:SilverGold→Silver"] };
-       }
-       if (votes.RoseGold === votes.Gold && votes.Gold > 0) {
-         return { label: (a >= 11 ? "RoseGold" : "Gold"), confidence: 0.5, votes, reasons: [...reasons, "tie:RoseGoldGold→" + (a >= 11 ? "RoseGold" : "Gold")] };
-       }
-       return { label: "Unknown", confidence: 0, votes, reasons: [...reasons, "tie:Other"] };
-     }
-
-     // Small margin and low evidence → Unknown (prevent jitter)
-     if (margin === 1 && top[1] <= 2) {
-       return { label: "Unknown", confidence: 0.4, votes, reasons: [...reasons, "low-margin"] };
-     }
-
-     return { label: top[0], confidence: Math.min(0.99, 0.45 + 0.25 * top[1]), votes, reasons };
-   }
-
-   let finalColor = null;
-   const decision = classifyMetal({
-     h: hsvH, s: hsvS, v: hsvV, a: labA, b: labB, hueText
-   });
-   finalColor = decision.label;
-   console.log("%c[openAIAnalyzePhoto] PASS 2 deterministic:", "color:#8E24AA", {
-     finalColor,
-     votes: decision.votes,
-     reasons: decision.reasons,
-     hsv: { h: hsvH, s: hsvS, v: hsvV },
-     lab: { L: labL, a: labA, b: labB }
-   });
-
-   // Only if undecided, fall back to the LLM (rare).
-   if (finalColor === "Unknown") {
-     const labelPrompt =
-       `You are classifying metal color from numeric medians. APPLY THESE CUT LINES STRICTLY:\n` +
-       `• HSV rule (primary): RoseGold if 16° ≤ median H ≤ 31° AND S ≥ 28%.\n` +
-       `• CIELAB rule (cross-check): RoseGold if a* ≥ 10 AND b* ≥ 14.\n` +
-       `• Gold rule (fallback): Gold if (36° ≤ H ≤ 65 AND S ≥ 15) OR (b* ≥ 18) OR (C*ab ≥ 20).\n` +
-       `• Silver: If S ≤ 13 AND |a*| ≤ 4 AND −3 ≤ b* ≤ 8, or if C*ab ≤ 13.5 AND S ≤ 16.\n` +
-       `• Dead-zones: If near boundaries, return "Unknown".\n` +
-       `• Tie-breaking: Gold vs Silver → Silver; RoseGold vs Gold → Gold unless a* ≥ 11.\n` +
-       `• Only return exactly one word: Gold, RoseGold, Silver, or Unknown.\n\n` +
-       `INPUT\n` +
-       `hue="${hueText}"\n` +
-       `medianHSV: H=${hsvH} S=${hsvS} V=${hsvV}\n` +
-       `medianLab: L=${labL} a=${labA} b=${labB}`;
-     const labelPayload = {
-       model: "gpt-5",
-       messages: [{ role: "user", content: labelPrompt }],
-       max_tokens: 30
-     };
-     console.log("%c[openAIAnalyzePhoto] PASS 2 fallback payload:", "color:#8E24AA", labelPayload);
-     try {
-       const r2 = await fetch(functionsBaseUrl + "/openaiProxy", {
-         method : "POST",
-         headers: { "Content-Type": "application/json" },
-         body   : JSON.stringify(labelPayload),
-         signal : ctrlLabel.signal
-       });
-       const d2  = await r2.json();
-       let raw2  = d2.choices?.[0]?.message?.content?.trim() || "";
-       console.log("%c[openAIAnalyzePhoto] PASS 2 fallback raw:", "color:#8E24AA", raw2);
-       raw2        = raw2.replace(/[^A-Za-z]/g, "");
-       finalColor  = ["Gold", "RoseGold", "Silver"].includes(raw2) ? raw2 : "Unknown";
-     } catch (err) {
-       console.error("[openAIAnalyzePhoto] PASS 2 fallback error:", err);
-       finalColor = "Unknown";
-     }
-   }
-
-   console.log("%c[openAIAnalyzePhoto] PASS 2 → final metal label:", "color:#8E24AA;font-weight:bold", finalColor);
+  console.log(
+    "%c[openAIAnalyzePhoto] PASS 2 → final metal label:",
+    "color:#8E24AA;font-weight:bold",
+    finalColor, "conf:", confidence.toFixed(3),
+    { hsvH, hsvS, labA, labB, aCorr, bCorr, ranked }
+  );
 
   /* ───────────────────── PASS 3 : two-word charm descriptor ───────────────────── */
   const ctrlDesc = new AbortController();
