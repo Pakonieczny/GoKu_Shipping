@@ -1641,15 +1641,28 @@ async function analyzeAndStoreSubImages(imgObjs) {
     const res = await openAIAnalyzePhoto(data);
     const isCharm = (res.charmPresent || "").toLowerCase() === "yes";
 
-    // 1) Save *every* image immediately, no skipForCharm flag
-    userImagesArray.push({
-      name    : isCharm
-                ? `${res.color||"UnknownColor"}_${res.topRightNumber||"XX"}.jpg`
-                : `${origName}.jpg`,
-      data,
-      analyzed: true
-    });
+    // 1) Decide the final filename now
+    const finalName = isCharm
+      ? `${res.color || "UnknownColor"}_${res.topRightNumber || "XX"}.jpg`
+      : `${origName}.jpg`;
+
+    // Save the image immediately
+    userImagesArray.push({ name: finalName, data, analyzed: true });
     saved++;
+
+    // 1b) Persist the 2-word descriptor mapped to this image base name
+    try {
+      const k   = "matrixCharm2Words";
+      const map = JSON.parse(localStorage.getItem(k) || "{}");
+      const base = stripExtension(finalName);
+      const norm = normalizeTwoWordDescriptor(res?.desc2 || "");
+      if (norm) {
+        map[base] = norm;           // e.g., { "Gold_2": "paw print" }
+        localStorage.setItem(k, JSON.stringify(map));
+      }
+    } catch (e) {
+      console.warn("matrixCharm2Words persist failed:", e);
+    }
 
     // 2) Update streak
     if (isCharm) {
@@ -1782,6 +1795,44 @@ function loadImage(dataUrl) {
 
 // --------------- Single‑Photo Analysis (TWO‑PASS hue→label + verbose logs) ---------------
 async function openAIAnalyzePhoto(base64Image) {
+
+  /* ───────────────────── PASS 3 : two-word charm descriptor ───────────────────── */
+  const ctrlDesc = new AbortController();
+  pendingFetchControllers.push(ctrlDesc);
+  let desc2 = "";
+  try {
+    const prompt =
+      "Return ONLY two lowercase words that best describe the charm (e.g., 'paw print', 'butterfly', 'compass rose'). " +
+      "No punctuation or extra text.";
+    const r3 = await fetch(functionsBaseUrl + "/openaiProxy", {
+      method : "POST",
+      headers: { "Content-Type": "application/json" },
+      body   : JSON.stringify({
+        model: "gpt-4o-mini",
+        messages: [
+          { role: "user", content: [
+              { type:"text", text: prompt },
+              { type:"image_url", image_url: { url: base64Image, detail:"high" } }
+          ]}
+        ],
+        max_tokens: 8
+      }),
+      signal : ctrlDesc.signal
+    });
+    const d3 = await r3.json();
+    desc2 = (d3.choices?.[0]?.message?.content || "")
+      .toLowerCase()
+      .replace(/[^a-z0-9\s]/g, " ")
+      .replace(/\s+/g, " ")
+      .trim()
+      .split(" ")
+      .slice(0,2)
+      .join(" ");
+  } catch (e) {
+    console.warn("[openAIAnalyzePhoto] PASS 3 (desc2) error:", e);
+    desc2 = "";
+  }
+
   /* ───────────────────── PASS 1 : hue / number / charm ───────────────────── */
   const ctrlHue = new AbortController();
   pendingFetchControllers.push(ctrlHue);
