@@ -696,9 +696,31 @@ function normalizeTwoWordDescriptor(s){
     .split(" ")
     .filter(Boolean)
     .filter(w => !banned.has(w))
-    .slice(0, 8)
+    .slice(0, 6)
     .join(" ");
 }
+
+  /**
+   * augmentSixWordDescriptorOcean(desc6)
+   * If any of these appear as whole words in the 6-word descriptor:
+   *   dolphin, marine, aquatic, mammal, orca, fish, beach
+   * then append 'ocean' once (lowercase) to the descriptor words.
+   * Returns the (possibly) augmented string.
+   */
+  function augmentSixWordDescriptorOcean(desc6){
+    const triggers = new Set(["dolphin","marine","aquatic","mammal","orca","fish","beach"]);
+    const words = String(desc6 || "")
+      .toLowerCase()
+      .replace(/[^a-z0-9-\s]/g, " ")
+      .replace(/\s+/g, " ")
+      .trim()
+      .split(" ")
+      .filter(Boolean);
+    if (!words.length) return "";
+    const hasTrigger = words.some(w => triggers.has(w));
+    if (hasTrigger && !words.includes("ocean")) words.push("ocean");
+    return words.join(" ");
+  }
 
 /********************************************************
  * Firebase Initialization (REQUIRED)
@@ -1666,6 +1688,21 @@ async function analyzeAndStoreSubImages(imgObjs) {
     } catch (e) {
       console.warn("matrixCharm2Words persist failed:", e);
     }
+
+      // 1c) Persist the full 6-word descriptor, auto-appending 'ocean' on trigger
+      try {
+        const k6   = "matrixCharm6Words";
+        const map6 = JSON.parse(localStorage.getItem(k6) || "{}");
+        const base = stripExtension(finalName);
+        const raw6 = String(res?.desc2 || "");
+        const aug6 = augmentSixWordDescriptorOcean(raw6); // adds 'ocean' if dolphin/marine/aquatic/mammal/orca/fish/beach present
+        if (aug6) {
+          map6[base] = aug6;          // e.g., { "Gold_2": "animal dolphin pendant ... ocean" }
+          localStorage.setItem(k6, JSON.stringify(map6));
+        }
+      } catch (e) {
+        console.warn("matrixCharm6Words persist failed:", e);
+      }
 
     // 2) Update streak
     if (isCharm) {
