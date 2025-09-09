@@ -2910,7 +2910,7 @@ async function sendAndMatch() {
     const two  = String(descMap[base] || "").toLowerCase().trim();
     if (!two) return true; // no descriptor → don't block
 
-    const parts = two.split(/\s+/).filter(Boolean).slice(0,2);
+    const parts = two.split(/\s+/).filter(Boolean).slice(0,2).filter(w => w !== "charm");
     const [w1, w2] = [parts[0] || "", parts[1] || ""];
     const wordIn = (w) => w && new RegExp(`\\b${w.replace(/[.*+?^${}()|[\\]\\\\]/g, '\\\\$&')}\\b`).test(title);
     const ok = wordIn(w1) || wordIn(w2);
@@ -2949,9 +2949,15 @@ async function sendAndMatch() {
           const descMap   = JSON.parse(localStorage.getItem("matrixCharm2Words") || "{}");
           const tagOf = (nm) => descMap[String(nm).replace(/\.(jpg|jpeg|png|webp)$/i, "")] || "";
           const hitWord = (tag, title) => {
-            const parts = String(tag).toLowerCase().split(/\s+/).slice(0,2);
+            // Exclude "charm" from being counted as a valid hit
+            const parts = String(tag)
+              .toLowerCase()
+              .split(/\s+/)
+              .slice(0,2)
+              .filter(w => w && w !== "charm");
+            const [w1, w2] = [parts[0] || "", parts[1] || ""];
             const wordIn = (w) => w && new RegExp(`\\b${w.replace(/[.*+?^${}()|[\\]\\\\]/g,'\\\\$&')}\\b`).test(String(title).toLowerCase());
-           return (wordIn(parts[0]) && parts[0]) || (wordIn(parts[1]) && parts[1]) || "";
+            return (wordIn(w1) && w1) || (wordIn(w2) && w2) || "";
           };
           // Only add a new block header if this cell wasn't started in FIRST PASS (fallback safe)
           if (!document.getElementById("pf-cell-" + i)) pfStartCell(i, etsyTitle);
