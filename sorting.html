@@ -1914,78 +1914,46 @@ async function openAIAnalyzePhoto(base64Image) {
     return { topRightNumber:null, color:null, charmPresent:"no" };
   }
 
-  /* ───────────────────── PASS 2 : hue ⇒ fixed label ───────────────────── */
- // ── Deterministic Lab+HSV classifier (no network, no variance) ──
-  let finalColor = "Unknown";
-
-  // Optional scene-tint correction: set these per-photo if you sample the dark grid once.
-  const METAL_BG_A = window.METAL_BG_A ?? 0;
-  const METAL_BG_B = window.METAL_BG_B ?? 0;
-  const aCorr = labA - METAL_BG_A;
-  const bCorr = labB - METAL_BG_B;
-  const within = (x, lo, hi) => x >= lo && x <= hi;
-  // Perceptual chroma (low for Silver, higher for Gold/RoseGold)
-  const Cstar = Math.hypot(aCorr, bCorr);
-  // Project onto a "yellowness" axis (pulls Gold away from Silver).
-  // Silver tends to have low b and low a → small ySep; Gold/RoseGold push it up.
-  const ySep = bCorr - 0.55 * aCorr;
-
-  // Elliptical (Mahalanobis-like) separation in a–b plane
-  const C = {
-    Gold    : { mu: { a:  6, b: 28 }, sigma: { a: 4.8, b: 6.5 } },
-    RoseGold: { mu: { a: 17, b: 23 }, sigma: { a: 7.0, b: 7.0 } },
-    Silver  : { mu: { a:  1, b:  6 }, sigma: { a: 3.2, b: 5.5 } }
+/* ───────────────────── PASS 2 : hue ⇒ fixed label ───────────────────── */
+  const ctrlLabel = new AbortController();
+  pendingFetchControllers.push(ctrlLabel);
+  const labelPrompt =
+    `You are classifying metal color from numeric medians. APPLY THESE CUT LINES STRICTLY:\n` +
+    `• HSV rule (primary): RoseGold if 16° ≤ median H ≤ 31° AND S ≥ 28%.\n` +
+    `• CIELAB rule (cross-check): RoseGold if a* ≥ 7.5 AND b* ≥ 14.\n` +
+    `• Gold rule (fallback): Gold if (median H ≥ 36° AND S ≥ 12%) OR (b* ≥ 15).\n` +
+    `• Silver: If S ≤ 13% AND a* between −3 and +4 AND b* between −3 and +8.\n` +
+    `• Voting: each satisfied rule is one vote. If both rules agree, use that label.\n` +
+    `• Tie-breaking: if Gold vs Silver tie, choose Silver. If RoseGold vs Gold tie, choose Gold unless a* ≥ 8 OR hue contains "rose".\n` +
+    `• Only return exactly one word: Gold, RoseGold, or Silver.\n\n` +
+    `INPUT\n` +
+    `hue="${hueText}"\n` +
+    `medianHSV: H=${hsvH} S=${hsvS} V=${hsvV}\n` +
+    `medianLab: L=${labL} a=${labA} b=${labB}`;
+  const labelPayload = {
+    model: "gpt-5",
+    messages: [{ role: "user", content: labelPrompt }],
+    max_tokens: 30
   };
-  const mDist2 = (label) => {
-    const { mu, sigma } = C[label];
-    const da = (aCorr - mu.a) / sigma.a;
-    const db = (bCorr - mu.b) / sigma.b;
-    let d2 = da*da + db*db;
-    // HSV/chroma penalties → crush Silver→Gold + RoseGold→Gold bleed
-    if (label === "Silver"   && hsvS > 20) d2 += Math.pow((hsvS - 20) / 9, 2);
-    if (label !== "Silver"   && hsvS < 14) d2 += Math.pow((14 - hsvS) / 6, 2);
-    if (label === "Gold"     && !within(hsvH, 35, 65)) d2 += 1.2;
-    if (label === "RoseGold" && !within(hsvH, 15, 34)) d2 += 1.2;
-    // Penalize Gold when "yellowness" is weak or chroma is silver-like
-    if (label === "Gold"     && ySep < 13)             d2 += 1.3;
-    if (label === "Gold"     && bCorr < 16)            d2 += 1.1;
-    if (label === "Gold"     && Cstar < 11.5)          d2 += 1.4;
-    if (label === "Gold"     && hsvV > 82 && hsvS < 14) d2 += 0.9;
-    // Penalize Gold in the RoseGold quadrant (high a*, warm hue window)
-    if (label === "Gold"     && aCorr >= 12 && within(hsvH, 14, 36)) d2 += 1.0;
-    // Nudge Silver away when yellowness is too high
-    if (label === "Silver"   && ySep > 15)             d2 += 1.0;
-    return d2;
-  };
-  const d = { Gold: mDist2("Gold"), RoseGold: mDist2("RoseGold"), Silver: mDist2("Silver") };
-  const ranked = Object.entries(d).sort((a,b)=>a[1]-b[1]);
-  const [best, second] = ranked;
-  let label = best[0];
-
-  // Hard guardrails (clear wins override distances)
-  // Silver: low chroma OR weak yellowness, plus low/moderate S
-  if (
-    (Cstar <= 11.5 && hsvS <= 22) ||
-    (ySep  <= 12.5 && hsvS <= 22) ||
-    (bCorr <= 13   && hsvS <= 20 && Math.abs(aCorr) <= 6)
-  ) label = "Silver";
-  // Gold: require strong yellow + adequate saturation (tougher gate)
-  if (bCorr >= 19 && hsvS >= 15 && hsvH >= 35 && ySep >= 14)                               label = "Gold";
-  // RoseGold: stronger red (a*) + yellow (b*), modest S; slightly wider window
-  if (aCorr >= 11 && bCorr >= 17 && hsvS >= 18 && within(hsvH,14,36))                    label = "RoseGold";
-
-  // Margin-based confidence → ambiguous cases become Unknown (no more mislabels)
-  const margin = Math.sqrt(second[1]) - Math.sqrt(best[1]);
-  const confidence = 1 / (1 + Math.exp(-margin)); // 0.5..~1
-  // Be a bit more conservative to avoid false Golds
-  finalColor = (confidence < 0.71) ? "Unknown" : label;
-
-  console.log(
-    "%c[openAIAnalyzePhoto] PASS 2 → final metal label:",
-    "color:#8E24AA;font-weight:bold",
-    finalColor, "conf:", confidence.toFixed(3),
-    { hsvH, hsvS, hsvV, labA, labB, aCorr, bCorr, Cstar, ySep, ranked }
-  );
+  console.log("%c[openAIAnalyzePhoto] PASS 2 payload:", "color:#8E24AA", labelPayload);
+  let finalColor = null;
+  try {
+    const r2 = await fetch(functionsBaseUrl + "/openaiProxy", {
+      method : "POST",
+      headers: { "Content-Type": "application/json" },
+      body   : JSON.stringify(labelPayload),
+      signal : ctrlLabel.signal
+    });
+    const d2 = await r2.json();
+    let raw2 = d2.choices?.[0]?.message?.content?.trim() || "";
+    console.log("%c[openAIAnalyzePhoto] PASS 2 raw response:", "color:#8E24AA", raw2);
+    raw2       = raw2.replace(/[^A-Za-z]/g, "");
+    finalColor = ["Gold", "RoseGold", "Silver"].includes(raw2) ? raw2 : "Unknown";
+    console.log("%c[openAIAnalyzePhoto] PASS 2 → final metal label:", "color:#8E24AA;font-weight:bold", finalColor);
+  } catch (err) {
+    console.error("[openAIAnalyzePhoto] PASS 2 error:", err);
+    finalColor = "Unknown";
+  }
 
   /* ───────────────────── PASS 3 : two-word charm descriptor ───────────────────── */
   const ctrlDesc = new AbortController();
