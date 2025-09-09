@@ -1882,12 +1882,13 @@ async function openAIAnalyzePhoto(base64Image) {
   pendingFetchControllers.push(ctrlLabel);
   const labelPrompt =
     `You are classifying metal color from numeric medians. APPLY THESE CUT LINES STRICTLY:\n` +
-    `• HSV rule (primary): RoseGold if 16° ≤ median H ≤ 31° AND S ≥ 28%.\n` +
-    `• CIELAB rule (cross-check): RoseGold if a* ≥ 7.5 AND b* ≥ 14.\n` +
-    `• Gold rule (fallback): Gold if (median H ≥ 36° AND S ≥ 12%) OR (b* ≥ 15).\n` +
-    `• Silver: If S ≤ 13% AND a* between −3 and +4 AND b* between −3 and +8.\n` +
-    `• Voting: each satisfied rule is one vote. If both rules agree, use that label.\n` +
-    `• Tie-breaking: if Gold vs Silver tie, choose Silver. If RoseGold vs Gold tie, choose Gold unless a* ≥ 8 OR hue contains "rose".\n` +
+    `• HSV rule (primary): RoseGold if 18° ≤ median H ≤ 29° AND S ≥ 32%.\n` +
+    `• CIELAB rule (cross-check): RoseGold if a* ≥ 10.0 AND 12 ≤ b* ≤ 20.\n` +
+    `• Gold rule (fallback): Gold if (median H ≥ 37° AND S ≥ 16%) OR (b* ≥ 18 AND a* ≤ 7).\n` +
+    `• Silver: If S ≤ 15% AND a* between −4 and +4 AND b* between −4 and +9.\n` +
+    `• Guardrail: Do not vote Gold when a* ≥ 9 and median H ≤ 33° (that region skews RoseGold).\n` +
+    `• Voting: each satisfied rule is one vote. If both rules for a class vote, use that label.\n` +
+    `• Tie-breaking: Gold vs Silver → Silver. RoseGold vs Gold → Gold unless both RoseGold rules vote.\n` +
     `• Only return exactly one word: Gold, RoseGold, or Silver.\n\n` +
     `INPUT\n` +
     `hue="${hueText}"\n` +
