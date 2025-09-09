@@ -673,17 +673,14 @@ function escapeHtml(s){
  * - lowercase
  * - remove ALL punctuation (keep only a–z, 0–9 and spaces)
  * - collapse whitespace
- * - keep FIRST 4 words only
+ * - use the FULL Etsy item title (no word limit)
  */
 function normalizeTitleForPrefilter(title){
   return String(title || "")
     .toLowerCase()
     .replace(/[^a-z0-9\s]/gi, " ")   // strip ALL punctuation
     .replace(/\s+/g, " ")            // collapse runs of whitespace
-    .trim()
-    .split(" ")
-    .slice(0, 4)                     // FIRST 4 words only
-    .join(" ");
+    .trim();
 }
 
 // Lowercase, strip punctuation, collapse spaces, keep ONLY first 4 words (and drop 'charm')
