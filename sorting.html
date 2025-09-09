@@ -683,17 +683,19 @@ function normalizeTitleForPrefilter(title){
     .trim();
 }
 
-// Lowercase, strip punctuation, collapse spaces, keep ONLY first 4 words (and drop 'charm')
+// Lowercase, strip punctuation, collapse spaces, keep up to 8 words,
+// and drop banned filler tokens (e.g., "charm", "jewelry", "jewellery").
 function normalizeTwoWordDescriptor(s){
+  const banned = new Set(["charm","jewelry","jewellery"]);
   return String(s || "")
     .toLowerCase()
-    .replace(/[^a-z0-9\s]/gi, " ")
-    .replace(/\s+/g, " ")
+    .replace(/[^a-z0-9-\\s]/gi, " ")   // allow hyphen inside words
+    .replace(/\\s+/g, " ")
     .trim()
     .split(" ")
     .filter(Boolean)
-    .filter(w => w !== "charm")
-    .slice(0, 4)
+    .filter(w => !banned.has(w))
+    .slice(0, 8)
     .join(" ");
 }
 
@@ -1604,6 +1606,7 @@ function openIframePrinterForListing(cellIndex) {
     }
 
     localStorage.removeItem("userImagesArray");
+    userImagesArray = [];
 
     // Analyze every sub-image; store only those with a charm
     await analyzeAndStoreSubImages(subImagesToAnalyze);
@@ -1919,13 +1922,17 @@ async function openAIAnalyzePhoto(base64Image) {
   const ctrlDesc = new AbortController();
   pendingFetchControllers.push(ctrlDesc);
   const descPrompt = [
-    "You will be shown ONE jewelry charm photo.",
-    "Return EXACTLY four (4) lowercase words separated by single spaces in this order: broad1 broad2 focus1 focus2.",
-    "• broad words = general category (e.g., animal, bird, flower).",
-    "• focus words = specific type/species (e.g., humming bird, horse, rose). If the specific concept uses two words, split them across focus1 and focus2.",
-    "NEVER include the word 'charm'. Do not mention metal, color, engraving text, numbers, or counts.",
-    "Output must be exactly four words, no punctuation, no extra text."
-  ].join("\n");
+    "You will be shown ONE product-matrix tile image.",
+    "Return EXACTLY eight (8) lowercase words separated by single spaces in this order:",
+    "broad1 broad2 focus1 focus2 colloq1 colloq2 colloq3 colloq4",
+    "",
+    "• broad1/broad2 = general category/style/material words (no plurals)",
+    "• focus1/focus2 = more specific subject/detail words (no plurals)",
+    "• colloq1–4 = informal synonyms or colloquial variants shoppers might type",
+    "• STRICTLY ban: charm, jewelry, jewellery",
+    "• Do not mention metal color, engraving text, numbers, or counts",
+    "• Output ONLY the 8 words, no punctuation (hyphens inside a word are allowed)"
+  ].join("\\n");
   let desc2 = "";
   try {
     const r3 = await fetch(functionsBaseUrl + "/openaiProxy", {
@@ -1944,15 +1951,16 @@ async function openAIAnalyzePhoto(base64Image) {
       signal : ctrlDesc.signal
     });
     const d3 = await r3.json();
+    // Post-process to eight words, drop banned tokens, keep hyphens
     desc2 = (d3.choices?.[0]?.message?.content || "")
       .toLowerCase()
-      .replace(/[^a-z0-9\s]/g, " ")
-      .replace(/\s+/g, " ")
+      .replace(/[^a-z0-9-\\s]/g, " ")    // allow hyphen
+      .replace(/\\s+/g, " ")
       .trim()
       .split(" ")
       .filter(Boolean)
-      .filter(w => w !== "charm")        // belt & suspenders
-      .slice(0,4)
+      .filter(w => !["charm","jewelry","jewellery"].includes(w))
+      .slice(0,8)
       .join(" ");
   } catch (e) {
     console.warn("[openAIAnalyzePhoto] PASS 3 (desc2) error:", e);
@@ -2850,6 +2858,17 @@ async function sendAndMatch() {
   let smDone  = 0;
   let smTotal = 0;
   showProgressModal("Matching Images... (First Pass)", 1);
+
+ // Deduplicate userImagesArray by file name to prevent double-sending
+  if (Array.isArray(userImagesArray) && userImagesArray.length) {
+    const seen = new Set();
+    userImagesArray = userImagesArray.filter(u => {
+      const key = String((u && u.name) || "");
+      if (!key || seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+  }
 
   /* — reset earring maps for this run — */
   earringState  = {};
