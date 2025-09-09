@@ -1880,6 +1880,7 @@ async function openAIAnalyzePhoto(base64Image) {
   /* ───────────────────── PASS 2 : hue ⇒ fixed label ───────────────────── */
   const ctrlLabel = new AbortController();
   pendingFetchControllers.push(ctrlLabel);
+  const labelPrompt =
     `You are classifying metal color from numeric medians. APPLY THESE CUT LINES STRICTLY:\n` +
     `• Compute C*ab = sqrt(a*^2 + b*^2).\n` +
     `\n` +
