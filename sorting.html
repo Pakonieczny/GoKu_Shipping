@@ -1794,187 +1794,173 @@ function loadImage(dataUrl) {
 }
 
 // --------------- Single-Photo Analysis (TWO-PASS hue→label + verbose logs) ---------------
+// FIX: wrap in an async function to avoid top-level await errors.
+async function openAIAnalyzePhoto(base64Image) {
+  /* ───────────────────── PASS 1 : hue / number / charm ───────────────────── */
+  const ctrlHue = new AbortController();
+  pendingFetchControllers.push(ctrlHue);
 
-/* ───────────────────── PASS 1 : hue / number / charm ───────────────────── */
-const ctrlHue = new AbortController();
-pendingFetchControllers.push(ctrlHue);
-
-const huePayload = {
-  model: "gpt-4o",
-  messages: [
-    {
-      role: "user",
-      content: [
-        {
-          type: "text",
-          text:
-            "Return JSON EXACTLY like:\n" +
-            '  {"hue":"<≤10-word description>", "topRightNumber":"<number or blank>", "charmPresent":"Yes|No",' +
-            '   "medianHSV":{"H":<deg>,"S":<pct>,"V":<pct>}, "medianLab":{"L":<L*>,"a":<a*>,"b":<b*>}}\n\n' +
-            "TASK 1 – Describe the dominant metal hue (≤10 words).\n" +
-            "TASK 2 – Extract the top-right number (blank if none).\n" +
-            "TASK 3 – Is a jewellery charm clearly visible? (Yes|No).\n" +
-            "Estimate MEDIAN HSV (H° 0–360, S% 0–100, V% 0–100) and MEDIAN CIELAB (L*, a*, b*).\n" +
-
-            "IMPORTANT MASKING RULES FOR MEDIANS:\n" +
-            "• Exclude background/near-black pixels and any white/near-white background.\n" +
-            "• Ignore pixels if (HSV.V ≤ 18% OR Lab L* ≤ 20)  ← near-black/very dark. \n" +
-            "• Ignore pixels if (HSV.V ≥ 96% OR Lab L* ≥ 96)  ← near-white/very bright. \n" +
-            "• Ignore pixels with very low saturation (HSV.S < 8%) to avoid gray background bleed.\n" +
-
-            "Respond with JSON only."
-        },
-        { type: "image_url", image_url: { url: base64Image, detail: "high" } }
-      ]
-    }
-  ],
-  max_tokens: 200
-};
-
-console.log("%c[openAIAnalyzePhoto] PASS 1 payload:", "color:#03A9F4", huePayload);
-
-let hueText   = "";
-let topNumber = null;
-let charmFlag = "no";
-let roseHit   = false;  // ← PASS-1 Rose detector
-
-// Medians from PASS 1 (declared in outer scope so PASS 2 can see them)
-let hsvH = NaN, hsvS = NaN, hsvV = NaN;
-let labL = NaN, labA = NaN, labB = NaN;
-
-try {
-  const r1 = await fetch(functionsBaseUrl + "/openaiProxy", {
-    method : "POST",
-    headers: { "Content-Type": "application/json" },
-    body   : JSON.stringify(huePayload),
-    signal : ctrlHue.signal
-  });
-  const d1 = await r1.json();
-  let raw1 = d1.choices?.[0]?.message?.content?.trim() || "";
-  console.log("%c[openAIAnalyzePhoto] PASS 1 raw response:", "color:#03A9F4", raw1);
-
-  raw1 = raw1.replace(/^```(\w+)?/, "").replace(/```$/, "").trim();
-  const obj1 = JSON.parse(raw1);
-
-  hueText   = obj1.hue            || "";
-  topNumber = obj1.topRightNumber || null;
-  charmFlag = (obj1.charmPresent  || "No").toLowerCase();
-  roseHit   = /rose/i.test(hueText);  // any form: “rose”, “rose gold”, “rosegold”
-
-  // NEW: capture medians from API (numbers expected)
-  const hsv = obj1.medianHSV || {};
-  const lab = obj1.medianLab || {};
-  hsvH = Number(hsv.H); hsvS = Number(hsv.S); hsvV = Number(hsv.V);
-  labL = Number(lab.L); labA = Number(lab.a); labB = Number(lab.b);
-  console.log("%c[openAIAnalyzePhoto] PASS 1 → medians:",
-    "color:#03A9F4;font-weight:bold",
-    `HSV H=${hsvH}° S=${hsvS}% V=${hsvV}% | Lab L*=${labL} a*=${labA} b*=${labB}`);
-
-  console.log(
-    "%c[openAIAnalyzePhoto] PASS 1 → hue:", "color:#03A9F4;font-weight:bold",
-    `"${hueText}"  |  topRightNumber: ${topNumber}  |  charmPresent: ${charmFlag}`
-  );
-} catch (err) {
-  console.error("[openAIAnalyzePhoto] PASS 1 error:", err);
-  return { topRightNumber:null, color:null, charmPresent:"no" };
-}
-
-/* ───────────────────── PASS 2 : hue ⇒ fixed label ───────────────────── */
-const ctrlLabel = new AbortController();
-pendingFetchControllers.push(ctrlLabel);
-
-const labelPrompt =
-  `You are classifying metal color from numeric medians. APPLY THESE CUT LINES STRICTLY:\n` +
-  `• HSV rule (primary): RoseGold if 15° ≤ median H ≤ 33° AND S ≥ 22%.\n` +
-  `• CIELAB rule (cross-check): RoseGold if a* ≥ 6.25 AND b* ≥ 13.\n` +
-  `• Gold rule (fallback): Gold if (median H ≥ 34°) OR (a* ≤ 5.5) OR (b* ≤ 12).\n` +
-  `• Silver: If S ≤ 10% AND a* between −2 and +3 AND b* between −2 and +6.\n` +
-  `• Voting: each satisfied rule is one vote. If both rules agree, use that label.\n` +
-  `Voting: each satisfied rule is one vote. If both RoseGold rules vote RoseGold, use RoseGold.\n` +
-  `If rules disagree, prefer the majority.\n` +
-  `• Only return exactly one word: Gold, RoseGold, or Silver.\n\n` +
-  `INPUT\n` +
-  `hue="${hueText}"\n` +
-  `medianHSV: H=${hsvH} S=${hsvS} V=${hsvV}\n` +
-  `medianLab: L=${labL} a=${labA} b=${labB}`;
-
-const labelPayload = {
-  model: "gpt-4o",
-  messages: [{ role: "user", content: labelPrompt }],
-  max_tokens: 30
-};
-
-console.log("%c[openAIAnalyzePhoto] PASS 2 payload:", "color:#8E24AA", labelPayload);
-
-let finalColor = null;
-try {
-  const r2 = await fetch(functionsBaseUrl + "/openaiProxy", {
-    method : "POST",
-    headers: { "Content-Type": "application/json" },
-    body   : JSON.stringify(labelPayload),
-    signal : ctrlLabel.signal
-  });
-  const d2 = await r2.json();
-  let raw2 = d2.choices?.[0]?.message?.content?.trim() || "";
-  console.log("%c[openAIAnalyzePhoto] PASS 2 raw response:", "color:#8E24AA", raw2);
-
-  raw2       = raw2.replace(/[^A-Za-z]/g, "");
-  finalColor = ["Gold", "RoseGold", "Silver"].includes(raw2) ? raw2 : "Unknown";
-  console.log(
-    "%c[openAIAnalyzePhoto] PASS 2 → final metal label:", "color:#8E24AA;font-weight:bold",
-    finalColor
-  );
-} catch (err) {
-  console.error("[openAIAnalyzePhoto] PASS 2 error:", err);
-  finalColor = "Unknown";
-}
-
-/* ───────────────────── PASS 3 : two-word charm descriptor ───────────────────── */
-const ctrlDesc = new AbortController();
-pendingFetchControllers.push(ctrlDesc);
-const descPrompt = [
-  "You will be shown ONE jewelry charm photo.",
-  "Return ONLY two (2) lowercase words that best describe the depicted charm type.",
-  "Do not mention metal, color, engraving text, or counts.",
-  "Exactly two words, separated by a single space. No punctuation, no extra text."
-].join("\n");
-let desc2 = "";
-try {
-  const r3 = await fetch(functionsBaseUrl + "/openaiProxy", {
-    method : "POST",
-    headers: { "Content-Type": "application/json" },
-    body   : JSON.stringify({
-      model: "gpt-4o",
-      messages: [
-        { role: "user", content: [
-          { type: "text", text: descPrompt },
+  const huePayload = {
+    model: "gpt-4o",
+    messages: [
+      {
+        role: "user",
+        content: [
+          {
+            type: "text",
+            text:
+              "Return JSON EXACTLY like:\n" +
+              '  {"hue":"<≤10-word description>", "topRightNumber":"<number or blank>", "charmPresent":"Yes|No",' +
+              '   "medianHSV":{"H":<deg>,"S":<pct>,"V":<pct>}, "medianLab":{"L":<L*>,"a":<a*>,"b*":<b*>}}\n\n' +
+              "TASK 1 – Describe the dominant metal hue (≤10 words).\n" +
+              "TASK 2 – Extract the top-right number (blank if none).\n" +
+              "TASK 3 – Is a jewellery charm clearly visible? (Yes|No).\n" +
+              "Estimate MEDIAN HSV (H° 0–360, S% 0–100, V% 0–100) and MEDIAN CIELAB (L*, a*, b*).\n" +
+              "IMPORTANT MASKING RULES FOR MEDIANS:\n" +
+              "• Exclude background/near-black pixels and any white/near-white background.\n" +
+              "• Ignore pixels if (HSV.V ≤ 18% OR Lab L* ≤ 20)  ← near-black/very dark. \n" +
+              "• Ignore pixels if (HSV.V ≥ 96% OR Lab L* ≥ 96)  ← near-white/very bright. \n" +
+              "• Ignore pixels with very low saturation (HSV.S < 8%) to avoid gray background bleed.\n" +
+              "Respond with JSON only."
+          },
           { type: "image_url", image_url: { url: base64Image, detail: "high" } }
-        ]}
-      ],
-      max_tokens: 8
-    }),
-    signal : ctrlDesc.signal
-  });
-  const d3 = await r3.json();
-  desc2 = (d3.choices?.[0]?.message?.content || "")
-    .toLowerCase()
-    .replace(/[^a-z\s]/g, " ")
-    .trim()
-    .replace(/\s+/g, " ");
-  // keep exactly two tokens if more slipped in
-  desc2 = desc2.split(" ").slice(0,2).join(" ");
-} catch (e) {
-  console.warn("[openAIAnalyzePhoto] PASS 3 (desc2) error:", e);
-  desc2 = "";
-}
+        ]
+      }
+    ],
+    max_tokens: 200
+  };
 
-/* ───────────────────── RETURN consolidated result ───────────────────── */
-return {
-  topRightNumber : topNumber,
-  color          : finalColor,
-  charmPresent   : charmFlag,
-  desc2
-};
+  console.log("%c[openAIAnalyzePhoto] PASS 1 payload:", "color:#03A9F4", huePayload);
+
+  let hueText   = "";
+  let topNumber = null;
+  let charmFlag = "no";
+  let roseHit   = false;  // ← PASS-1 Rose detector
+
+  // Medians from PASS 1 (declared in outer scope so PASS 2 can see them)
+  let hsvH = NaN, hsvS = NaN, hsvV = NaN;
+  let labL = NaN, labA = NaN, labB = NaN;
+
+  try {
+    const r1 = await fetch(functionsBaseUrl + "/openaiProxy", {
+      method : "POST",
+      headers: { "Content-Type": "application/json" },
+      body   : JSON.stringify(huePayload),
+      signal : ctrlHue.signal
+    });
+    const d1 = await r1.json();
+    let raw1 = d1.choices?.[0]?.message?.content?.trim() || "";
+    console.log("%c[openAIAnalyzePhoto] PASS 1 raw response:", "color:#03A9F4", raw1);
+
+    raw1 = raw1.replace(/^```(\w+)?/, "").replace(/```$/, "").trim();
+    const obj1 = JSON.parse(raw1);
+
+    hueText   = obj1.hue            || "";
+    topNumber = obj1.topRightNumber || null;
+    charmFlag = (obj1.charmPresent  || "No").toLowerCase();
+    roseHit   = /rose/i.test(hueText);
+
+    const hsv = obj1.medianHSV || {};
+    const lab = obj1.medianLab || {};
+    hsvH = Number(hsv.H); hsvS = Number(hsv.S); hsvV = Number(hsv.V);
+    labL = Number(lab.L); labA = Number(lab.a); labB = Number(lab.b);
+    console.log("%c[openAIAnalyzePhoto] PASS 1 → medians:",
+      "color:#03A9F4;font-weight:bold",
+      `HSV H=${hsvH}° S=${hsvS}% V=${hsvV}% | Lab L*=${labL} a*=${labA} b*=${labB}`);
+    console.log("%c[openAIAnalyzePhoto] PASS 1 → hue:", "color:#03A9F4;font-weight:bold",
+      `"${hueText}"  |  topRightNumber: ${topNumber}  |  charmPresent: ${charmFlag}`);
+  } catch (err) {
+    console.error("[openAIAnalyzePhoto] PASS 1 error:", err);
+    return { topRightNumber:null, color:null, charmPresent:"no" };
+  }
+
+  /* ───────────────────── PASS 2 : hue ⇒ fixed label ───────────────────── */
+  const ctrlLabel = new AbortController();
+  pendingFetchControllers.push(ctrlLabel);
+  const labelPrompt =
+    `You are classifying metal color from numeric medians. APPLY THESE CUT LINES STRICTLY:\n` +
+    `• HSV rule (primary): RoseGold if 15° ≤ median H ≤ 33° AND S ≥ 22%.\n` +
+    `• CIELAB rule (cross-check): RoseGold if a* ≥ 6.25 AND b* ≥ 13.\n` +
+    `• Gold rule (fallback): Gold if (median H ≥ 34°) OR (a* ≤ 5.5) OR (b* ≤ 12).\n` +
+    `• Silver: If S ≤ 10% AND a* between −2 and +3 AND b* between −2 and +6.\n` +
+    `• Voting: each satisfied rule is one vote. If both rules agree, use that label.\n` +
+    `Voting: each satisfied rule is one vote. If both RoseGold rules vote RoseGold, use RoseGold.\n` +
+    `If rules disagree, prefer the majority.\n` +
+    `• Only return exactly one word: Gold, RoseGold, or Silver.\n\n` +
+    `INPUT\n` +
+    `hue="${hueText}"\n` +
+    `medianHSV: H=${hsvH} S=${hsvS} V=${hsvV}\n` +
+    `medianLab: L=${labL} a=${labA} b=${labB}`;
+  const labelPayload = {
+    model: "gpt-4o",
+    messages: [{ role: "user", content: labelPrompt }],
+    max_tokens: 30
+  };
+  console.log("%c[openAIAnalyzePhoto] PASS 2 payload:", "color:#8E24AA", labelPayload);
+  let finalColor = null;
+  try {
+    const r2 = await fetch(functionsBaseUrl + "/openaiProxy", {
+      method : "POST",
+      headers: { "Content-Type": "application/json" },
+      body   : JSON.stringify(labelPayload),
+      signal : ctrlLabel.signal
+    });
+    const d2 = await r2.json();
+    let raw2 = d2.choices?.[0]?.message?.content?.trim() || "";
+    console.log("%c[openAIAnalyzePhoto] PASS 2 raw response:", "color:#8E24AA", raw2);
+    raw2       = raw2.replace(/[^A-Za-z]/g, "");
+    finalColor = ["Gold", "RoseGold", "Silver"].includes(raw2) ? raw2 : "Unknown";
+    console.log("%c[openAIAnalyzePhoto] PASS 2 → final metal label:", "color:#8E24AA;font-weight:bold", finalColor);
+  } catch (err) {
+    console.error("[openAIAnalyzePhoto] PASS 2 error:", err);
+    finalColor = "Unknown";
+  }
+
+  /* ───────────────────── PASS 3 : two-word charm descriptor ───────────────────── */
+  const ctrlDesc = new AbortController();
+  pendingFetchControllers.push(ctrlDesc);
+  const descPrompt = [
+    "You will be shown ONE jewelry charm photo.",
+    "Return ONLY two (2) lowercase words that best describe the depicted charm type.",
+    "Do not mention metal, color, engraving text, or counts.",
+    "Exactly two words, separated by a single space. No punctuation, no extra text."
+  ].join("\n");
+  let desc2 = "";
+  try {
+    const r3 = await fetch(functionsBaseUrl + "/openaiProxy", {
+      method : "POST",
+      headers: { "Content-Type": "application/json" },
+      body   : JSON.stringify({
+        model: "gpt-4o",
+        messages: [
+          { role: "user", content: [
+            { type: "text", text: descPrompt },
+            { type: "image_url", image_url: { url: base64Image, detail: "high" } }
+          ]}
+        ],
+        max_tokens: 8
+      }),
+      signal : ctrlDesc.signal
+    });
+    const d3 = await r3.json();
+    desc2 = (d3.choices?.[0]?.message?.content || "")
+      .toLowerCase()
+      .replace(/[^a-z\s]/g, " ")
+      .trim()
+      .replace(/\s+/g, " ");
+    desc2 = desc2.split(" ").slice(0,2).join(" ");
+  } catch (e) {
+    console.warn("[openAIAnalyzePhoto] PASS 3 (desc2) error:", e);
+    desc2 = "";
+  }
+
+  return {
+    topRightNumber : topNumber,
+    color          : finalColor,
+    charmPresent   : charmFlag,
+    desc2
+  };
+}
 
 // --------------- Master Analysis Function ---------------
 async function analyzeUserImagesViaOpenAI() {
