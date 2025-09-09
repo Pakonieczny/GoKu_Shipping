@@ -686,7 +686,7 @@ function normalizeTitleForPrefilter(title){
 // Lowercase, strip punctuation, collapse spaces, keep up to 8 words,
 // and drop banned filler tokens (e.g., "charm", "jewelry", "jewellery").
 function normalizeTwoWordDescriptor(s){
-  const banned = new Set(["charm","jewelry","jewellery","pendant", "cute", "fun", "big", "small", "accessory", "trinket", "bling", "flair", "piece", "play", "handmade", "trendy", "keepsake", "gift", "keeps", "item", "collection", "doodad", "toy", "dood", "quirky", "playful", "decoration", "trendy", "funky", "fashion", "ornament", "bauble"]);
+  const banned = new Set(["charm","jewelry","jewellery","pendant", "cute", "fun", "big", "small", "accessory", "trinket", "bling", "flair", "piece", "play", "handmade", "trendy", "keepsake", "gift", "keeps", "item", "collection", "doodad", "dood", "quirky", "playful", "decoration", "trendy", "funky", "fashion", "ornament", "bauble"]);
 
   return String(s || "")
     .toLowerCase()
@@ -1804,7 +1804,7 @@ async function openAIAnalyzePhoto(base64Image) {
   pendingFetchControllers.push(ctrlHue);
 
   const huePayload = {
-    model: "gpt-4o",
+    model: "gpt-5",
     messages: [
       {
         role: "user",
@@ -1895,7 +1895,7 @@ async function openAIAnalyzePhoto(base64Image) {
     `medianHSV: H=${hsvH} S=${hsvS} V=${hsvV}\n` +
     `medianLab: L=${labL} a=${labA} b=${labB}`;
   const labelPayload = {
-    model: "gpt-4o",
+    model: "gpt-5",
     messages: [{ role: "user", content: labelPrompt }],
     max_tokens: 30
   };
@@ -1924,15 +1924,17 @@ async function openAIAnalyzePhoto(base64Image) {
   pendingFetchControllers.push(ctrlDesc);
   const descPrompt = [
     "You will be shown ONE product-matrix tile image.",
-    "Return EXACTLY eight (8) lowercase words separated by single spaces in this order:",
-    "broad1 broad2 focus1 focus2 colloq1 colloq2 colloq3 colloq4",
+    "Return EXACTLY eight (6) lowercase words separated by single spaces in this order:",
+    "broad1 focus1 focus2 colloq1 colloq2 synonyms",
     "",
-    "• broad1/broad2 = general category/style/material words (no plurals)",
-    "• focus1/focus2 = more specific subject/detail words (no plurals)",
-    "• colloq1–4 = informal synonyms or colloquial variants shoppers might type",
-    "• STRICTLY ban: charm, jewelry, jewellery, pendant, cute, fun, big, small, accessory, trinket, bling, flair, piece, play, handmade, trendy, keepsake, gift, keeps, item, collection, doodad, toy, dood, quirky, playful, decoration, trendy, funky, fashion, ornament, bauble",
+    "• broad1 — a single, high-level class word naming the motif’s category or purpose; singular noun only; exclude filler terms (charm, pendant, jewelry), (no plurals)"
+    "• focus1 / focus2 — two specific subject/detail words that pin down the exact motif and its defining feature or subtype; singular nouns only; avoid colors, sizes, and marketing words, (no plurals)"
+    "• colloq1 = informal synonyms or colloquial variants of broad1 shoppers might type",
+    "• colloq2 = informal synonyms or colloquial variants of focus1 shoppers might type",
+    "• synonyms = formal synonyms or variants of focus1 or focus2 that shoppers might type",
+    "• STRICTLY ban: charm, jewelry, jewellery, pendant, cute, fun, big, small, accessory, trinket, bling, flair, piece, play, handmade, trendy, keepsake, gift, keeps, item, collection, doodad, dood, quirky, playful, decoration, trendy, funky, fashion, ornament, bauble",
     "• Do not mention metal color, engraving text, numbers, or counts",
-    "• Output ONLY the 8 words, no punctuation (hyphens inside a word are allowed)"
+    "• Output ONLY the 6 words, no punctuation (hyphens inside a word are allowed)"
   ].join("\\n");
   let desc2 = "";
   try {
@@ -1940,19 +1942,19 @@ async function openAIAnalyzePhoto(base64Image) {
       method : "POST",
       headers: { "Content-Type": "application/json" },
       body   : JSON.stringify({
-        model: "gpt-4o",
+        model: "gpt-5",
         messages: [
           { role: "user", content: [
             { type: "text", text: descPrompt },
             { type: "image_url", image_url: { url: base64Image, detail: "high" } }
           ]}
         ],
-        max_tokens: 12
+        max_tokens: 20
       }),
       signal : ctrlDesc.signal
     });
     const d3 = await r3.json();
-    // Post-process to eight words, drop banned tokens, keep hyphens
+    // Post-process to six words, drop banned tokens, keep hyphens
     desc2 = (d3.choices?.[0]?.message?.content || "")
       .toLowerCase()
       .replace(/[^a-z0-9-\\s]/g, " ")    // allow hyphen
@@ -1961,7 +1963,7 @@ async function openAIAnalyzePhoto(base64Image) {
       .split(" ")
       .filter(Boolean)
       .filter(w => !["charm","jewelry","jewellery"].includes(w))
-      .slice(0,8)
+      .slice(0,6)
       .join(" ");
   } catch (e) {
     console.warn("[openAIAnalyzePhoto] PASS 3 (desc2) error:", e);
@@ -2785,7 +2787,7 @@ async function compareImages(userImage, croppedGridImage, cellIndex, userImageNa
   pendingFetchControllers.push(controller);
 
   const payload = {
-    model: "gpt-4o",
+    model: "gpt-5",
     messages: [
       {
         role: "user",
