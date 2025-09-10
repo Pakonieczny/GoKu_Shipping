@@ -957,6 +957,12 @@ document.addEventListener("DOMContentLoaded", function () {
   disableSendMatch();
   disableMatchPrintFlow();
 
+  // Cache default label for countdown text swaps
+  (function initMpLabel(){
+    const btn = document.getElementById("matchPrintBtn");
+    if (btn) { __mpDefaultLabel = btn.textContent || "Match & Print"; }
+  })();
+
   setTimeout(function () {
     loadPositions();
     document.body.style.opacity = 1;
@@ -1005,8 +1011,10 @@ etsyOrderInput.addEventListener("keydown", async function (e) {
   }
 });
 
-  // Attach "Send & Match" logic
+  // Attach "Send & Match" logic (+ start 5s Match&Print countdown)
   document.getElementById("sendMatchBtn").addEventListener("click", async function () {
+    // Start the availability timer immediately
+    startMatchPrintCountdown(5);
     try {
       console.log("Starting to crop images...");
       croppedImagesArray = [];
@@ -1175,6 +1183,7 @@ function disableMatchPrintFlow() {
   nextBtn.style.opacity = "0.5";
 
   //removeAllBlueHighlights();
+  stopMatchPrintCountdown(); // ensure label is clean if we forcibly disabled
 }
 
 function enableMatchPrintFlow() {
@@ -1190,6 +1199,61 @@ function enableMatchPrintFlow() {
 
   nextBtn.disabled = false;
   nextBtn.style.opacity = "1";
+}
+
+/* ===== Match & Print Unlock Countdown ===========================
+   - Starts when Send & Match is pressed
+   - Shows "(N)" inside the button
+   - Auto-enables the button at 0 immediately
+   - Idempotent (restarts cleanly if triggered again)
+   ===============================================================*/
+let __mpCountdownTimer = null;
+let __mpCountdownRemaining = 0;
+let __mpDefaultLabel = "Match & Print";
+
+function setMatchPrintBtnLabel(txt) {
+  const btn = document.getElementById("matchPrintBtn");
+  if (btn) btn.textContent = txt;
+}
+
+function stopMatchPrintCountdown(restoreLabel = true) {
+  if (__mpCountdownTimer) {
+    clearInterval(__mpCountdownTimer);
+    __mpCountdownTimer = null;
+  }
+  if (restoreLabel) setMatchPrintBtnLabel(__mpDefaultLabel);
+}
+
+function startMatchPrintCountdown(seconds = 5) {
+  const btn = document.getElementById("matchPrintBtn");
+  if (!btn) return;
+
+  // reset any prior run
+  stopMatchPrintCountdown(false);
+
+  // capture original label once
+  if (!__mpDefaultLabel || __mpDefaultLabel.trim() === "") {
+    __mpDefaultLabel = btn.textContent || "Match & Print";
+  }
+
+  __mpCountdownRemaining = Math.max(0, Math.floor(seconds));
+  btn.disabled = true;
+  btn.style.opacity = "0.5";
+  setMatchPrintBtnLabel(`${__mpDefaultLabel} (${__mpCountdownRemaining})`);
+
+  __mpCountdownTimer = setInterval(() => {
+    __mpCountdownRemaining -= 1;
+    if (__mpCountdownRemaining <= 0) {
+      clearInterval(__mpCountdownTimer);
+      __mpCountdownTimer = null;
+      // make the button available immediately
+      btn.disabled = false;
+      btn.style.opacity = "1";
+      setMatchPrintBtnLabel(__mpDefaultLabel);
+      return;
+    }
+    setMatchPrintBtnLabel(`${__mpDefaultLabel} (${__mpCountdownRemaining})`);
+  }, 1000);
 }
 
 
