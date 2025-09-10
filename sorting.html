@@ -683,6 +683,34 @@ function normalizeTitleForPrefilter(title){
     .trim();
 }
 
+// Build the word list we will use for title prefiltering.
+// Prefer the persisted 6-word descriptor (with potential 'ocean' augmentation),
+// and fall back to the 2-word tag if 6-word is missing.
+function descriptorWordsFor(baseName){
+  const banned = new Set([
+    "charm","jewelry","jewellery","pendant",
+    "cute","fun","big","small","accessory","trinket","bling","flair","piece","play",
+    "handmade","trendy","keepsake","gift","keeps","item","collection","doodad","dood",
+    "quirky","playful","decoration","funky","fashion","ornament","bauble"
+  ]);
+  let sixMap = {};
+  let twoMap = {};
+  try { sixMap = JSON.parse(localStorage.getItem("matrixCharm6Words") || "{}"); } catch(_) {}
+  try { twoMap = JSON.parse(localStorage.getItem("matrixCharm2Words") || "{}"); } catch(_) {}
+  const raw = String(sixMap[baseName] || twoMap[baseName] || "").toLowerCase();
+  if (!raw) return [];
+  // keep hyphens inside words, split on whitespace
+  const words = raw
+    .replace(/[^a-z0-9-\s]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .split(" ")
+    .filter(Boolean)
+    .filter(w => !banned.has(w));
+  // de-dup to reduce redundant regex checks
+  return Array.from(new Set(words)).slice(0, 12); // soft cap to avoid overly broad matches
+}
+
 // Lowercase, strip punctuation, collapse spaces, keep up to 8 words,
 // and drop banned filler tokens (e.g., "charm", "jewelry", "jewellery").
 function normalizeTwoWordDescriptor(s){
@@ -690,8 +718,8 @@ function normalizeTwoWordDescriptor(s){
 
   return String(s || "")
     .toLowerCase()
-    .replace(/[^a-z0-9-\\s]/gi, " ")   // allow hyphen inside words
-    .replace(/\\s+/g, " ")
+    .replace(/[^a-z0-9-\s]/gi, " ")   // allow hyphen inside words
+    .replace(/\s+/g, " ")
     .trim()
     .split(" ")
     .filter(Boolean)
@@ -2959,26 +2987,24 @@ async function sendAndMatch() {
     return true; // unknown listing metal → don’t block
   }
 
-  // Title-word prefilter — require ≥1 *word* overlap between Matrix 2-word tag and Etsy cell title
+  // Title-word prefilter — require ≥1 *word* overlap between Matrix descriptor words (prefer 6-word tag) and the Etsy cell title
   function passesTitlePrefilter(cellIdx, userImgName) {
     let titlesArr = [];
     try { titlesArr = JSON.parse(localStorage.getItem("etsyTitlesByCell") || "[]"); } catch (_) {}
-    const rawTitle = String(titlesArr[cellIdx] || "");  // already normalized (first 4 words, no punctuation)
+    const rawTitle = String(titlesArr[cellIdx] || "");  // already normalized (full title, no punctuation)
     const title    = rawTitle;    
     if (!title) return true; // no title → don't block
 
-    let descMap = {};
-    try { descMap = JSON.parse(localStorage.getItem("matrixCharm2Words") || "{}"); } catch (_) {}
-    const base = String(userImgName || "").replace(/\.(jpg|jpeg|png|webp)$/i, "");
-    const two  = String(descMap[base] || "").toLowerCase().trim();
-    if (!two) return true; // no descriptor → don't block
+  const base = String(userImgName || "").replace(/\.(jpg|jpeg|png|webp)$/i, "");
+  const words = descriptorWordsFor(base);
+  if (!words.length) return true; // no descriptor → don't block
 
-    const parts = two.split(/\s+/).filter(Boolean).slice(0,2).filter(w => w !== "charm");
-    const [w1, w2] = [parts[0] || "", parts[1] || ""];
-    const wordIn = (w) => w && new RegExp(`\\b${w.replace(/[.*+?^${}()|[\\]\\\\]/g, '\\\\$&')}\\b`).test(title);
-    const ok = wordIn(w1) || wordIn(w2);
-    console.debug("prefilter", { cellIdx, base, two, title: rawTitle, ok });
-    return ok;
+  const wordIn = (w) =>
+    w && new RegExp(`\\b${w.replace(/[.*+?^${}()|[\\]\\\\]/g, '\\\\$&')}\\b`).test(title);
+  const hitWord = words.find(wordIn) || "";
+  const ok = Boolean(hitWord);
+  console.debug("prefilter", { cellIdx, base, words, title: rawTitle, hitWord, ok });
+  return ok;
   }
 
     // --- NEW: helpers to render names and to keep filling until have >= need ---
@@ -3009,18 +3035,25 @@ async function sendAndMatch() {
         (function renderFillList(){
           const titlesArr = JSON.parse(localStorage.getItem("etsyTitlesByCell") || "[]");
           const etsyTitle = titlesArr[i] || "";
-          const descMap   = JSON.parse(localStorage.getItem("matrixCharm2Words") || "{}");
-          const tagOf = (nm) => descMap[String(nm).replace(/\.(jpg|jpeg|png|webp)$/i, "")] || "";
+          let sixMap = {};
+          let twoMap = {};
+          try { sixMap = JSON.parse(localStorage.getItem("matrixCharm6Words") || "{}"); } catch(_) {}
+          try { twoMap = JSON.parse(localStorage.getItem("matrixCharm2Words") || "{}"); } catch(_) {}
+          const tagOf = (nm) => {
+            const key = String(nm).replace(/\.(jpg|jpeg|png|webp)$/i, "");
+            return sixMap[key] || twoMap[key] || "";
+          };
           const hitWord = (tag, title) => {
-            // Exclude "charm" from being counted as a valid hit
-            const parts = String(tag)
+            const words = String(tag)
               .toLowerCase()
-              .split(/\s+/)
-              .slice(0,2)
-              .filter(w => w && w !== "charm");
-            const [w1, w2] = [parts[0] || "", parts[1] || ""];
+              .replace(/[^a-z0-9-\s]/g, " ")
+              .replace(/\s+/g, " ")
+              .trim()
+              .split(" ")
+              .filter(Boolean)
+              .filter(w => w !== "charm");
             const wordIn = (w) => w && new RegExp(`\\b${w.replace(/[.*+?^${}()|[\\]\\\\]/g,'\\\\$&')}\\b`).test(String(title).toLowerCase());
-            return (wordIn(w1) && w1) || (wordIn(w2) && w2) || "";
+            return words.find(wordIn) || "";
           };
           // Only add a new block header if this cell wasn't started in FIRST PASS (fallback safe)
           if (!document.getElementById("pf-cell-" + i)) pfStartCell(i, etsyTitle);
@@ -3107,14 +3140,25 @@ async function sendAndMatch() {
 
   // Visualize every candidate that survived the pre-filter (before OpenAI calls)
   (function renderPrefilterList(valids){
-    const descMap = JSON.parse(localStorage.getItem("matrixCharm2Words") || "{}");
-    const tagOf = (nm) => descMap[String(nm).replace(/\.(jpg|jpeg|png|webp)$/i, "")] || "";
+    let sixMap = {};
+    let twoMap = {};
+    try { sixMap = JSON.parse(localStorage.getItem("matrixCharm6Words") || "{}"); } catch(_) {}
+    try { twoMap = JSON.parse(localStorage.getItem("matrixCharm2Words") || "{}"); } catch(_) {}
+    const tagOf = (nm) => {
+      const key = String(nm).replace(/\.(jpg|jpeg|png|webp)$/i, "");
+      return sixMap[key] || twoMap[key] || "";
+    };
     const hitWord = (tag, title) => {
-      const parts = String(tag).toLowerCase().split(/\s+/).slice(0,2);
-      const wordIn = (w) =>
-        w && new RegExp(`\\b${w.replace(/[.*+?^${}()|[\\]\\\\]/g,'\\\\$&')}\\b`)
-              .test(String(title).toLowerCase());
-      return (wordIn(parts[0]) && parts[0]) || (wordIn(parts[1]) && parts[1]) || "";
+      const words = String(tag)
+        .toLowerCase()
+        .replace(/[^a-z0-9-\s]/g, " ")
+        .replace(/\s+/g, " ")
+        .trim()
+        .split(" ")
+        .filter(Boolean)
+        .filter(w => w !== "charm");
+      const wordIn = (w) => w && new RegExp(`\\b${w.replace(/[.*+?^${}()|[\\]\\\\]/g,'\\\\$&')}\\b`).test(String(title).toLowerCase());
+      return words.find(wordIn) || "";
     };
     valids.forEach(u => {
       const tag = tagOf(u.name);
