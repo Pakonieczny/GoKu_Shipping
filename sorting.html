@@ -272,12 +272,12 @@
     <div id="photoDragDrop">Drag & Drop</div>
     <!-- Inline progress: sits directly below the Drag & Drop box -->
     <div id="matrixProgressWrap" style="display:none; margin-top:8px;">
-      <div id="matrixProgressTitle" style="font-size:0.8em; margin-bottom:4px;">Analyzing…</div>
+      <div id="matrixProgressTitle" style="font-size:1.06em; font-weight:bold; margin-bottom:4px;">Analyzing…</div>
       <div id="matrixProgressRow" style="display:flex; align-items:center; gap:6px;">
-        <div class="progress" style="height:8px; width:219px; margin:0;">
+        <div class="progress" style="height:14px; width:219px; margin:0;">
           <div id="matrixProgressBar" class="determinate" style="width:0%"></div>
         </div>
-        <div id="matrixProgressPct" style="font-size:0.8em; min-width:32px; line-height:1;">0%</div>
+        <div id="matrixProgressPct" style="font-size:1.06em; font-weight:bold; min-width:32px; line-height:1;">0%</div>
       </div>
     </div>
     <div id="unmatchedContainer"></div>
@@ -605,12 +605,12 @@ function flipImageHorizontal(dataURL) {
      wrap.style.display = "none";
      wrap.style.marginTop = "8px";
      wrap.innerHTML = `
-      <div id="matrixProgressTitle" style="font-size:0.8em; margin-bottom:4px;">Analyzing…</div>
+     <div id="matrixProgressTitle" style="font-size:1.06em; font-weight:bold; margin-bottom:4px;">Analyzing…</div>
       <div id="matrixProgressRow" style="display:flex; align-items:center; gap:6px;">
-        <div class="progress" style="height:8px; width:219px; margin:0;">
+        <div class="progress" style="height:14px; width:219px; margin:0;">
           <div id="matrixProgressBar" class="determinate" style="width:0%"></div>
         </div>
-        <div id="matrixProgressPct" style="font-size:0.8em; min-width:32px; line-height:1;">0%</div>
+        <div id="matrixProgressPct" style="font-size:1.06em; font-weight:bold; min-width:32px; line-height:1;">0%</div>
       </div>
     `;
      ref.insertAdjacentElement("afterend", wrap);
