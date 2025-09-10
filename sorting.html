@@ -138,6 +138,8 @@
       box-shadow: none !important;
     }
 
+    #matrixProgressWrap .progress { margin:0 !important; }
+
     #unmatchedContainer {
       position: absolute;
       left: 20px;
@@ -271,11 +273,12 @@
     <!-- Inline progress: sits directly below the Drag & Drop box -->
     <div id="matrixProgressWrap" style="display:none; margin-top:8px;">
       <div id="matrixProgressTitle" style="font-size:0.8em; margin-bottom:4px;">Analyzing…</div>
-      <div class="progress" style="height:8px; width:110px;">
-        <div id="matrixProgressBar" class="determinate" style="width:0%"></div>
+      <div id="matrixProgressRow" style="display:flex; align-items:center; gap:6px;">
+        <div class="progress" style="height:8px; width:219px; margin:0;">
+          <div id="matrixProgressBar" class="determinate" style="width:0%"></div>
+        </div>
+        <div id="matrixProgressPct" style="font-size:0.8em; min-width:32px; line-height:1;">0%</div>
       </div>
-      <div id="matrixProgressPct"
-           style="display:inline-block; min-width:32px; font-size:0.8em; margin-left:6px;">0%</div>
     </div>
     <div id="unmatchedContainer"></div>
   </div>
@@ -602,12 +605,14 @@ function flipImageHorizontal(dataURL) {
      wrap.style.display = "none";
      wrap.style.marginTop = "8px";
      wrap.innerHTML = `
-       <div id="matrixProgressTitle" style="font-size:0.8em; margin-bottom:4px;">Analyzing…</div>
-       <div class="progress" style="height:8px; width:110px;">
-         <div id="matrixProgressBar" class="determinate" style="width:0%"></div>
-       </div>
-       <div id="matrixProgressPct" style="display:inline-block; min-width:32px; font-size:0.8em; margin-left:6px;">0%</div>
-     `;
+      <div id="matrixProgressTitle" style="font-size:0.8em; margin-bottom:4px;">Analyzing…</div>
+      <div id="matrixProgressRow" style="display:flex; align-items:center; gap:6px;">
+        <div class="progress" style="height:8px; width:219px; margin:0;">
+          <div id="matrixProgressBar" class="determinate" style="width:0%"></div>
+        </div>
+        <div id="matrixProgressPct" style="font-size:0.8em; min-width:32px; line-height:1;">0%</div>
+      </div>
+    `;
      ref.insertAdjacentElement("afterend", wrap);
    }
    return wrap;
