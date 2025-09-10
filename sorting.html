@@ -236,6 +236,9 @@
 <body>
   <!-- Main Buttons -->
   <button id="connectEtsyBtn" class="btn waves-effect waves-light">Connect to Etsy</button>
+  <!-- Live Search: Etsy Order Item Titles -->
+  <input id="orderSearchBox" class="browser-default" type="text" autocomplete="off"
+         placeholder="Search orders…">
   <button id="openConfigBtn" class="btn waves-effect waves-light">Open Config</button>
   <button id="mpBackBtn" class="btn waves-effect waves-light">Back</button>
   <button id="mpNextBtn" class="btn waves-effect waves-light">Next</button>
@@ -944,6 +947,7 @@ const configIDs = [
   "titleEtsyOrderNumber",
   "titleImageMatrixDrop",
   "prefilterPanel",
+  "orderSearchBox",
   "titleUnmatchedImages"
 ];
 
@@ -956,12 +960,6 @@ document.addEventListener("DOMContentLoaded", function () {
   // Disable "Send & Match", "Match & Print", "Back", "Next" on load
   disableSendMatch();
   disableMatchPrintFlow();
-
-  // Cache default label for countdown text swaps
-  (function initMpLabel(){
-    const btn = document.getElementById("matchPrintBtn");
-    if (btn) { __mpDefaultLabel = btn.textContent || "Match & Print"; }
-  })();
 
   setTimeout(function () {
     loadPositions();
@@ -1011,10 +1009,8 @@ etsyOrderInput.addEventListener("keydown", async function (e) {
   }
 });
 
-  // Attach "Send & Match" logic (+ start 5s Match&Print countdown)
+  // Attach "Send & Match" logic
   document.getElementById("sendMatchBtn").addEventListener("click", async function () {
-    // Start the availability timer immediately
-    startMatchPrintCountdown(5);
     try {
       console.log("Starting to crop images...");
       croppedImagesArray = [];
@@ -1183,7 +1179,6 @@ function disableMatchPrintFlow() {
   nextBtn.style.opacity = "0.5";
 
   //removeAllBlueHighlights();
-  stopMatchPrintCountdown(); // ensure label is clean if we forcibly disabled
 }
 
 function enableMatchPrintFlow() {
@@ -1199,61 +1194,6 @@ function enableMatchPrintFlow() {
 
   nextBtn.disabled = false;
   nextBtn.style.opacity = "1";
-}
-
-/* ===== Match & Print Unlock Countdown ===========================
-   - Starts when Send & Match is pressed
-   - Shows "(N)" inside the button
-   - Auto-enables the button at 0 immediately
-   - Idempotent (restarts cleanly if triggered again)
-   ===============================================================*/
-let __mpCountdownTimer = null;
-let __mpCountdownRemaining = 0;
-let __mpDefaultLabel = "Match & Print";
-
-function setMatchPrintBtnLabel(txt) {
-  const btn = document.getElementById("matchPrintBtn");
-  if (btn) btn.textContent = txt;
-}
-
-function stopMatchPrintCountdown(restoreLabel = true) {
-  if (__mpCountdownTimer) {
-    clearInterval(__mpCountdownTimer);
-    __mpCountdownTimer = null;
-  }
-  if (restoreLabel) setMatchPrintBtnLabel(__mpDefaultLabel);
-}
-
-function startMatchPrintCountdown(seconds = 5) {
-  const btn = document.getElementById("matchPrintBtn");
-  if (!btn) return;
-
-  // reset any prior run
-  stopMatchPrintCountdown(false);
-
-  // capture original label once
-  if (!__mpDefaultLabel || __mpDefaultLabel.trim() === "") {
-    __mpDefaultLabel = btn.textContent || "Match & Print";
-  }
-
-  __mpCountdownRemaining = Math.max(0, Math.floor(seconds));
-  btn.disabled = true;
-  btn.style.opacity = "0.5";
-  setMatchPrintBtnLabel(`${__mpDefaultLabel} (${__mpCountdownRemaining})`);
-
-  __mpCountdownTimer = setInterval(() => {
-    __mpCountdownRemaining -= 1;
-    if (__mpCountdownRemaining <= 0) {
-      clearInterval(__mpCountdownTimer);
-      __mpCountdownTimer = null;
-      // make the button available immediately
-      btn.disabled = false;
-      btn.style.opacity = "1";
-      setMatchPrintBtnLabel(__mpDefaultLabel);
-      return;
-    }
-    setMatchPrintBtnLabel(`${__mpDefaultLabel} (${__mpCountdownRemaining})`);
-  }, 1000);
 }
 
 
@@ -1610,6 +1550,7 @@ function openIframePrinterForListing(cellIndex) {
       sendMatchBtn:             { left:20,  top:255, width:210, height:35 },
       prefilterPanel:           { left:1460, top:68, width:360, height:650 },
       matrixProgressWrap:       { left:250,   top:-316, width:290,   height:50 },
+      orderSearchBox :          { left: 1417, top: 14, width: 260, height: 35 },
       testOpenAIBtn:            { left:20,  top:65,  width:140, height:35 }
     };
 
@@ -4260,7 +4201,67 @@ function createUnmatchedUserImagesPreview() {
       }
       window.cachedOrderItems = items;
       await fillPreviewBoxes(items);
+      // Re-apply any active search after grid rebuild
+      if (typeof window.applyOrderSearchFilter === "function") {
+        const v = document.getElementById("orderSearchBox")?.value || "";
+        window.applyOrderSearchFilter(v);
+      }
     }
+
+/* ────────────────────────────────────────────────────────────────────
+   Live Etsy Title Search → filters & reflows grid on every keystroke
+   ─ uses same layout constants as the builder (cols=9, stepX=125, stepY=165)
+   ─ rearranges visible cells sequentially so there are NO gaps
+   ──────────────────────────────────────────────────────────────────── */
+(function attachLiveSearch(){
+  const input = document.getElementById("orderSearchBox");
+  if (!input) return;
+
+  // public so updateImageGrid can re-apply after rebuilds
+  window.applyOrderSearchFilter = function(q){
+    const query = String(q||"").trim().toLowerCase();
+    const items = Array.isArray(window.cachedOrderItems) ? window.cachedOrderItems : [];
+
+    const COLS  = 9;
+    const STEPX = 125, STEPY = 165;
+    const rowOffsets = { order:95, qty:107, metal:119, match:131 };
+    const ids = ["previewCell","orderCell","quantityCell","metalCell","matchCell"];
+
+    let k = 0; // next visible slot
+    for (let i=0; i<items.length; i++){
+      const title = String(items[i]?.title || "").toLowerCase();
+      const hit = !query || title.includes(query);
+
+      // show/hide the 5 pieces for this index
+      for (const pre of ids){
+        const el = document.getElementById(pre + i);
+        if (el) el.style.display = hit ? "" : "none";
+      }
+      if (!hit) continue;
+
+      // sequential reflow with no gaps
+      const row = Math.floor(k / COLS), col = k % COLS;
+      const left = col * STEPX, top = row * STEPY;
+      const setPos = (elemId, l, t) => {
+        const e = document.getElementById(elemId);
+        if (e){ e.style.left = l + "px"; e.style.top = t + "px"; }
+      };
+
+      setPos("previewCell"+i,  left, top);
+      setPos("orderCell"+i,    left, top + rowOffsets.order);
+      setPos("quantityCell"+i, left, top + rowOffsets.qty);
+      setPos("metalCell"+i,    left, top + rowOffsets.metal);
+      setPos("matchCell"+i,    left, top + rowOffsets.match);
+
+      k++;
+    }
+  };
+
+  // hook up live input
+  input.addEventListener("input", () => window.applyOrderSearchFilter(input.value));
+  // keep layout tidy if the window or config changes size
+  window.addEventListener("resize", () => window.applyOrderSearchFilter(input.value));
+})();
 
   </script>
 </body>
