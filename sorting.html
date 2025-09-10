@@ -239,6 +239,7 @@
   <!-- Live Search: Etsy Order Item Titles -->
   <input id="orderSearchBox" class="browser-default" type="text" autocomplete="off"
          placeholder="Search orders…">
+  <button id="filterIncompleteBtn" class="btn waves-effect waves-light">Filter</button>
   <button id="openConfigBtn" class="btn waves-effect waves-light">Open Config</button>
   <button id="mpBackBtn" class="btn waves-effect waves-light">Back</button>
   <button id="mpNextBtn" class="btn waves-effect waves-light">Next</button>
@@ -529,6 +530,8 @@ let matchPrintFlowInProgress = false;
 let pendingFetchControllers = [];
 let globalRunId = 0;
 let currentSaveHandler = null;      // tracks active “Save” listener
+// Live grid filter: when true, only show items with missing/no matches
+window.filterIncompleteOnly = false;
 function parkSaveBtn() {
   const btn    = document.getElementById("saveMatchesBtn");
   const footer = document.querySelector("#matchesModal .modal-footer");
@@ -948,6 +951,7 @@ const configIDs = [
   "titleImageMatrixDrop",
   "prefilterPanel",
   "orderSearchBox",
+  "filterIncompleteBtn",
   "titleUnmatchedImages"
 ];
 
@@ -1028,6 +1032,19 @@ etsyOrderInput.addEventListener("keydown", async function (e) {
   // ===== NEW LINE: Start listening for QR scans from sort-scan.html =====
   startScannedSortingListener();
 });
+
+  // Filter toggle
+  const fbtn = document.getElementById("filterIncompleteBtn");
+  if (fbtn) {
+    fbtn.addEventListener("click", () => {
+      window.filterIncompleteOnly = !window.filterIncompleteOnly;
+      fbtn.textContent = window.filterIncompleteOnly ? "Show All" : "Filter";
+      const q = document.getElementById("orderSearchBox")?.value || "";
+      if (typeof window.applyOrderSearchFilter === "function") {
+        window.applyOrderSearchFilter(q);
+      }
+    });
+  }
 
 /* ==========================================================
    Global helper – click any matchCellX to open the modal
@@ -1530,7 +1547,7 @@ function openIframePrinterForListing(cellIndex) {
     const defaultPos = {
       configModal:              { left:711, top:387, width:250, height:450 },
       configTable:              { left:27,  top:7,   width:525, height:1392 },
-      connectEtsyBtn:           { left:1239,top:14,  width:170, height:35 },
+      connectEtsyBtn:           { left:1070,top:729,  width:170, height:35 },
       cropImagesBtn:            { left:20,  top:215, width:140, height:35 },
       etsyOrderNumber:          { left:20,  top:25,  width:200, height:30 },
       imageComparisonContainer: { left:0,   top:0,   width:0,   height:0 },
@@ -1550,7 +1567,8 @@ function openIframePrinterForListing(cellIndex) {
       sendMatchBtn:             { left:20,  top:255, width:210, height:35 },
       prefilterPanel:           { left:1460, top:68, width:360, height:650 },
       matrixProgressWrap:       { left:250,   top:-316, width:290,   height:50 },
-      orderSearchBox :          { left: 1417, top: 14, width: 260, height: 35 },
+      orderSearchBox :          { left: 1121, top: 15, width: 260, height: 35 },
+      filterIncompleteBtn:      { left: 1391, top: 15, width: 120, height: 35 },
       testOpenAIBtn:            { left:20,  top:65,  width:140, height:35 }
     };
 
@@ -4221,6 +4239,7 @@ function createUnmatchedUserImagesPreview() {
   window.applyOrderSearchFilter = function(q){
     const query = String(q||"").trim().toLowerCase();
     const items = Array.isArray(window.cachedOrderItems) ? window.cachedOrderItems : [];
+    const filterIncomplete = !!window.filterIncompleteOnly;
 
     const COLS  = 9;
     const STEPX = 125, STEPY = 165;
@@ -4230,7 +4249,14 @@ function createUnmatchedUserImagesPreview() {
     let k = 0; // next visible slot
     for (let i=0; i<items.length; i++){
       const title = String(items[i]?.title || "").toLowerCase();
-      const hit = !query || title.includes(query);
+      const titleHit = !query || title.includes(query);
+
+      // Incomplete if real matches < needed slots
+      const needed = expectedSlots(items[i] || {});
+      const have   = (cellMatches[i] || []).filter(m => m && m.userImage).length;
+      const incompleteHit = have < needed;   // includes "no match at all"
+
+      const hit = titleHit && (!filterIncomplete || incompleteHit);
 
       // show/hide the 5 pieces for this index
       for (const pre of ids){
