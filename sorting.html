@@ -736,7 +736,7 @@ function normalizeTwoWordDescriptor(s){
    * Returns the (possibly) augmented string.
    */
   function augmentSixWordDescriptorOcean(desc6){
-    const triggers = new Set(["dolphin","marine","aquatic","mammal","orca","fish","beach"]);
+    const triggers = new Set(["dolphin","marine","aquatic","mammal","orca","fish","beach", "whale", "water", "animal", "octopus"]);
     const words = String(desc6 || "")
       .toLowerCase()
       .replace(/[^a-z0-9-\s]/g, " ")
