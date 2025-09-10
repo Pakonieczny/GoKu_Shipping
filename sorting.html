@@ -268,6 +268,15 @@
   <!-- Image Comparison UI -->
   <div id="imageComparisonContainer">
     <div id="photoDragDrop">Drag & Drop</div>
+    <!-- Inline progress: sits directly below the Drag & Drop box -->
+    <div id="matrixProgressWrap" style="display:none; margin-top:8px;">
+      <div id="matrixProgressTitle" style="font-size:0.8em; margin-bottom:4px;">Analyzing…</div>
+      <div class="progress" style="height:8px; width:110px;">
+        <div id="matrixProgressBar" class="determinate" style="width:0%"></div>
+      </div>
+      <div id="matrixProgressPct"
+           style="display:inline-block; min-width:32px; font-size:0.8em; margin-left:6px;">0%</div>
+    </div>
     <div id="unmatchedContainer"></div>
   </div>
 
@@ -577,51 +586,57 @@ function flipImageHorizontal(dataURL) {
   });
 }
 
-/********************************************************
- * Progress‑bar modal helpers (one modal reused everywhere)
- ********************************************************/
-function ensureProgressModal() {
-  let modal = document.getElementById("progressModal");
-  if (!modal) {
-    modal            = document.createElement("div");
-    modal.id         = "progressModal";
-    modal.className  = "modal";
-    modal.style.maxWidth = "47%";          
-    modal.innerHTML = `
-      <div class="modal-content" style="text-align:center">
-        <h6 id="progressTitle" style="margin-bottom:20px"></h6>
-        <div style="display:flex; justify-content:center">
-          <div class="progress" style="width:80%; height:12px;">   <!-- bar -33% width -->
-            <div id="progressBar"
-                 class="determinate"
-                 style="width:0%; background-color:#2196f3;"></div>
-          </div>
-          <div id="progressPct"
-               style="min-width:45px; margin-left:8px; font-weight:bold;">0%</div>
-        </div>
-      </div>`;
-    document.body.appendChild(modal);
-    M.Modal.init(modal, { dismissible:false });
-  }
-  return M.Modal.getInstance(modal);
-}
+ /********************************************************
+  * Inline progress bar (no modal) — renders under #photoDragDrop
+  * NOTE: we keep the SAME function names used elsewhere so callers
+  * don’t need to change (showProgressModal / updateProgressModal / closeProgressModal).
+  ********************************************************/
+ function ensureProgressInline() {
+   // Ensure wrapper exists right after the Drag & Drop node.
+   let wrap = document.getElementById("matrixProgressWrap");
+   if (!wrap) {
+     const ref = document.getElementById("photoDragDrop");
+     if (!ref) return null;
+     wrap = document.createElement("div");
+     wrap.id = "matrixProgressWrap";
+     wrap.style.display = "none";
+     wrap.style.marginTop = "8px";
+     wrap.innerHTML = `
+       <div id="matrixProgressTitle" style="font-size:0.8em; margin-bottom:4px;">Analyzing…</div>
+       <div class="progress" style="height:8px; width:110px;">
+         <div id="matrixProgressBar" class="determinate" style="width:0%"></div>
+       </div>
+       <div id="matrixProgressPct" style="display:inline-block; min-width:32px; font-size:0.8em; margin-left:6px;">0%</div>
+     `;
+     ref.insertAdjacentElement("afterend", wrap);
+   }
+   return wrap;
+ }
 
-function showProgressModal(title, totalCount) {
-  const inst = ensureProgressModal();
-  document.getElementById("progressTitle").textContent = title;
-  updateProgressModal(0, totalCount);
-  inst.open();
-}
+ // Compatibility: same name, now drives the inline bar
+ function showProgressModal(title, totalCount) {
+   const wrap = ensureProgressInline();
+   if (!wrap) return;
+   const t = document.getElementById("matrixProgressTitle");
+   if (t) t.textContent = title || "Working…";
+   updateProgressModal(0, totalCount);
+   wrap.style.display = "block";
+ }
 
-function updateProgressModal(doneCount, totalCount) {
-  const pct = totalCount ? Math.round((doneCount / totalCount) * 100) : 0;
-  document.getElementById("progressBar").style.width = pct + "%";
-  document.getElementById("progressPct").textContent = pct + "%";
-}
+ // Compatibility: same name, updates inline bar
+ function updateProgressModal(doneCount, totalCount) {
+   const pct = totalCount ? Math.round((doneCount / totalCount) * 100) : 0;
+   const bar = document.getElementById("matrixProgressBar");
+   const txt = document.getElementById("matrixProgressPct");
+   if (bar) bar.style.width = pct + "%";
+   if (txt) txt.textContent = pct + "%";
+ }
 
-function closeProgressModal() {
-  ensureProgressModal().close();
-}
+ // Compatibility: same name, hides inline bar
+ function closeProgressModal() {
+   const wrap = ensureProgressInline();
+   if (wrap) wrap.style.display = "none";
+ }
 
 /* =========================================================
  * Pre-Filter Monitor helpers
