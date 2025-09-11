@@ -3558,19 +3558,16 @@ function openMatchPreviewModal(cellIndex) {
   if (matrixSearch) {
     matrixSearch.value = "";
 
-    // Scope to the unmatched list in the modal
-    const section = container.querySelector("#unmatchedWrapper .unmatched-scroller") || container;
-    const wrappers = Array.from(section.querySelectorAll("[data-type='unmatched']"));
-
-    // Precompute haystacks using descriptorWordsFor(baseName) → same words PF shows
-    const haystacks = new Map();
-    for (const w of wrappers) {
-      const base = w.dataset.base || "";
-      const words = descriptorWordsFor(base); // reads matrixCharm6Words/matrixCharm2Words from localStorage
-      haystacks.set(w, words.join(" "));
+    // Remove any previous handler when modal reopens
+    if (matrixSearch._ms_handler) {
+      matrixSearch.removeEventListener("input", matrixSearch._ms_handler);
     }
 
     function applyFilter(q) {
+      const section =
+        document.querySelector("#unmatchedWrapper .unmatched-scroller") ||
+        document; // be defensive
+
       const tokens = String(q || "")
         .toLowerCase()
         .replace(/[^a-z0-9-\s]/g, " ")
@@ -3578,21 +3575,28 @@ function openMatchPreviewModal(cellIndex) {
         .split(/\s+/)
         .filter(Boolean);
 
-      for (const w of wrappers) {
-        const hay = haystacks.get(w) || "";
-        const ok = tokens.length === 0 ? true : tokens.every(t => hay.includes(t));
+      // Re-query every input so it works even if tiles are rebuilt
+      const wrappers = section.querySelectorAll("[data-type='unmatched']");
+      wrappers.forEach(w => {
+        const base = w.dataset.base || ""; // set when building tiles
+        // SAME source as prefilter panel:
+        const hay = (descriptorWordsFor(base) || []).join(" ").toLowerCase();
+        const ok = tokens.length === 0 || tokens.every(t => hay.includes(t));
         w.style.display = ok ? "" : "none";
-      }
+      });
     }
 
-    // Avoid double-binding if modal reopens
-    if (matrixSearch._ms_handler) {
-      matrixSearch.removeEventListener("input", matrixSearch._ms_handler);
-    }
     matrixSearch._ms_handler = (e) => applyFilter(e.target.value);
     matrixSearch.addEventListener("input", matrixSearch._ms_handler);
 
-    // Start with all visible
+    // Optional: if the unmatched list is rebuilt dynamically, keep the current filter applied
+    const sec = document.querySelector("#unmatchedWrapper .unmatched-scroller");
+    if (sec && !sec._ms_observer) {
+      sec._ms_observer = new MutationObserver(() => applyFilter(matrixSearch.value));
+      sec._ms_observer.observe(sec, { childList: true });
+    }
+
+    // Show all initially
     applyFilter("");
   }
 
