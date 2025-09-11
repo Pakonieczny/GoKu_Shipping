@@ -1983,23 +1983,34 @@ async function openAIAnalyzePhoto(base64Image) {
   let hsvH = NaN, hsvS = NaN, hsvV = NaN;
   let labL = NaN, labA = NaN, labB = NaN;
 
-  async function withRetry(fn, retries=2){
-    let last; for (let i=0;i<=retries;i++){
-      try { return await fn(); } catch(e){ last=e; if(i<retries){ await new Promise(r=>setTimeout(r, 400*(i+1)+Math.random()*150)); } }
-    } throw last;
-  }
   try {
-    const d1 = await withRetry(async () => {
-      const r1 = await fetch(functionsBaseUrl + "/openaiProxy", {
-        method:"POST", headers:{ "Content-Type":"application/json" },
-        body: JSON.stringify(huePayload), signal: ctrlHue.signal
-      });
-      return r1.json();
+    const r1 = await fetch(functionsBaseUrl + "/openaiProxy", {
+      method : "POST",
+      headers: { "Content-Type": "application/json" },
+      body   : JSON.stringify(huePayload),
+      signal : ctrlHue.signal
     });
-    const obj1 = d1.choices?.[0]?.message?.parsed || JSON.parse(
-      (d1.choices?.[0]?.message?.content||"").replace(/^```(\w+)?/,"").replace(/```$/,"").trim()
-    );
-    // ... (rest unchanged)
+    const d1 = await r1.json();
+    let raw1 = d1.choices?.[0]?.message?.content?.trim() || "";
+    console.log("%c[openAIAnalyzePhoto] PASS 1 raw response:", "color:#03A9F4", raw1);
+
+    raw1 = raw1.replace(/^```(\w+)?/, "").replace(/```$/, "").trim();
+    const obj1 = JSON.parse(raw1);
+
+    hueText   = obj1.hue            || "";
+    topNumber = obj1.topRightNumber || null;
+    charmFlag = (obj1.charmPresent  || "No").toLowerCase();
+    roseHit   = /rose/i.test(hueText);
+
+    const hsv = obj1.medianHSV || {};
+    const lab = obj1.medianLab || {};
+    hsvH = Number(hsv.H); hsvS = Number(hsv.S); hsvV = Number(hsv.V);
+    labL = Number(lab.L); labA = Number(lab.a); labB = Number(lab.b);
+    console.log("%c[openAIAnalyzePhoto] PASS 1 → medians:",
+      "color:#03A9F4;font-weight:bold",
+      `HSV H=${hsvH}° S=${hsvS}% V=${hsvV}% | Lab L*=${labL} a*=${labA} b*=${labB}`);
+    console.log("%c[openAIAnalyzePhoto] PASS 1 → hue:", "color:#03A9F4;font-weight:bold",
+      `"${hueText}"  |  topRightNumber: ${topNumber}  |  charmPresent: ${charmFlag}`);
   } catch (err) {
     console.error("[openAIAnalyzePhoto] PASS 1 error:", err);
     return { topRightNumber:null, color:null, charmPresent:"no" };
