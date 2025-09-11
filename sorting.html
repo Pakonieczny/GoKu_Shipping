@@ -74,6 +74,17 @@
 
       }
 
+      /* Make only the Unmatched area scroll inside matchesModal */
+      #matchesModal .modal-content {
+        overflow-y: hidden;            /* prevent whole modal from scrolling */
+      }
+
+      #matchesModal #unmatchedWrapper .unmatched-scroller {
+        max-height: 260px;             /* tweak to taste */
+        overflow-y: auto;              /* own scrollbar */
+        padding-right: 6px;            /* room for scrollbar, avoids jitter */
+      }
+
       /* highlight on drag-hover */
       #photoDragDrop.drag-hover {
         border: 2px dashed #2196F3 !important;   /* blue dashed outline */
@@ -1567,8 +1578,8 @@ function openIframePrinterForListing(cellIndex) {
       sendMatchBtn:             { left:20,  top:255, width:210, height:35 },
       prefilterPanel:           { left:1460, top:68, width:360, height:650 },
       matrixProgressWrap:       { left:250,   top:-316, width:290,   height:50 },
-      orderSearchBox :          { left: 1121, top: 15, width: 260, height: 35 },
-      filterIncompleteBtn:      { left: 1391, top: 15, width: 120, height: 35 },
+      orderSearchBox :          { left: 1053, top: 15, width: 260, height: 35 },
+      filterIncompleteBtn:      { left: 1328, top: 15, width: 120, height: 35 },
       testOpenAIBtn:            { left:20,  top:65,  width:140, height:35 }
     };
 
@@ -3730,6 +3741,7 @@ container.appendChild(matchedWrapper);       // ← keep this line
   unmatchedSection.style.display = "flex";
   unmatchedSection.style.flexWrap = "wrap";
   unmatchedSection.style.gap = "5px";
+  unmatchedSection.classList.add("unmatched-scroller");   // ← give it its own scroller
 
   /* -------------------------------------------------------------
    * Either one placeholder, or all unmatched images with filename
@@ -4067,6 +4079,7 @@ container.appendChild(matchedWrapper);       // ← keep this line
       unmatchedSection.style.display  = "flex";
       unmatchedSection.style.flexWrap = "wrap";
       unmatchedSection.style.gap      = "10px";
+      unmatchedSection.classList.add("unmatched-scroller");   // ensure scroller on reuse too
       unmatchedWrapper.appendChild(unmatchedSection);
 
       /* attach once */
