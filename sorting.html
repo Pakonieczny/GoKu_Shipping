@@ -1982,6 +1982,42 @@ async function edgeDensityExcludingTopRight(dataUrl){
   return edges / Math.max(1,total); // 0..1
 }
 
+// --- Warm-metal coverage (excludes the top-right number region) ---
+async function warmMetalCoverageExcludingTopRight(dataUrl){
+  const img = await loadImage(dataUrl);
+  const w = img.naturalWidth, h = img.naturalHeight;
+  const canvas = document.createElement("canvas");
+  canvas.width = w; canvas.height = h;
+  const ctx = canvas.getContext("2d");
+  ctx.drawImage(img, 0, 0);
+  const { data } = ctx.getImageData(0, 0, w, h);
+  const exW = Math.floor(0.28*w), exH = Math.floor(0.28*h);
+  const exX0 = w - exW, exY0 = 0, exX1 = w-1, exY1 = exH-1;
+
+  let warm=0, total=0;
+  for (let y=0; y<h; y++){
+    for (let x=0; x<w; x++){
+      if (x>=exX0 && x<=exX1 && y>=exY0 && y<=exY1) continue; // skip number box
+      const i = (y*w + x) * 4;
+      const r=data[i], g=data[i+1], b=data[i+2];
+      // RGB→HSV (compact)
+      const mx=Math.max(r,g,b), mn=Math.min(r,g,b), d=mx-mn;
+      let hDeg=0;
+      if (d){
+        if (mx===r) hDeg=((g-b)/d)%6;
+        else if (mx===g) hDeg=(b-r)/d+2; else hDeg=(r-g)/d+4;
+        hDeg=Math.round(hDeg*60); if (hDeg<0) hDeg+=360;
+      }
+      const v = mx/255*100;
+      const s = mx? (d/mx*100):0;
+      // warm-metal band: ~copper/rose 16–35°, decent S, not too dark
+      if (hDeg>=16 && hDeg<=35 && s>=18 && v>=45) warm++;
+      total++;
+    }
+  }
+  return warm / Math.max(1,total); // 0..1 fraction
+}
+
 // --------------- Single-Photo Analysis (TWO-PASS hue→label + verbose logs) ---------------
 // FIX: wrap in an async function to avoid top-level await errors.
 async function openAIAnalyzePhoto(base64Image) {
@@ -2015,7 +2051,8 @@ async function openAIAnalyzePhoto(base64Image) {
               "IMPORTANT MASKING RULES FOR MEDIANS:\n" +
                "• Exclude background/near-black and near-white backgrounds.\n" +
                "• Near-black cutoff: Ignore pixels if (HSV.V ≤ 12% OR Lab L* ≤ 16).\n" +
-               "• Near-white cutoff: Ignore pixels if (HSV.V ≥ 96% OR Lab L* ≥ 96).\n" +
+               "• Near-white cutoff: Ignore pixels only if (HSV.V ≥ 98% AND HSV.S ≤ 6%) OR Lab L* ≥ 98.\n" +
+               "• Keep bright metallic highlights: do NOT exclude high-V pixels when S > 6% (e.g., rose gold/copper).\n" +
                "• DO NOT discard low-saturation metal: Keep pixels with HSV.S < 8% when\n" +
                "  (HSV.V ≥ 28% OR Lab L* ≥ 30) to retain neutral SILVER highlights.\n" +
               "Respond with JSON only."
