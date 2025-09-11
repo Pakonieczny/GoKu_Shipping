@@ -2138,6 +2138,37 @@ async function analyzeUserImagesViaOpenAI() {
   let noCharmStreak = 0;
   const noCharmList = [];            // store refs to the latest “No‑charm” objects
 
+  imgObj.name     = `${finalColor}_${numTxt}.jpg`;
+  imgObj.analyzed = true;
+
+  // Persist descriptors for search: 2-word + 6-word (with 'ocean' augmentation)
+    try {
+      const baseName = stripExtension(imgObj.name);
+      // 2-word map
+      (function(){
+        const k = "matrixCharm2Words";
+        const map = JSON.parse(localStorage.getItem(k) || "{}");
+        const norm = normalizeTwoWordDescriptor(result?.desc2 || "");
+        if (norm) {
+          map[baseName] = norm;
+          localStorage.setItem(k, JSON.stringify(map));
+        }
+      })();
+      // 6-word map
+      (function(){
+        const k6 = "matrixCharm6Words";
+        const map6 = JSON.parse(localStorage.getItem(k6) || "{}");
+        const raw6 = String(result?.desc2 || "");
+        const aug6 = augmentSixWordDescriptorOcean(raw6);
+        if (aug6) {
+          map6[baseName] = aug6;
+          localStorage.setItem(k6, JSON.stringify(map6));
+        }
+      })();
+    } catch (e) {
+      console.warn("Descriptor persistence (single-image) failed:", e);
+    }
+
   // helper: scrub one baseName from cellMatches + partialMatches
   function purgeBaseName(baseName) {
     Object.keys(cellMatches).forEach(idx => {
@@ -3524,22 +3555,20 @@ function openMatchPreviewModal(cellIndex) {
 
 
 
-  // === Matrix Image Search: filter "Unmatched User Photos" by 6-word descriptors ===
+  // === Matrix Image Search: filter "Unmatched User Photos" by descriptors ===
   const matrixSearch = document.getElementById("matrixSearchBox");
   if (matrixSearch) {
-    // reset per open
-    matrixSearch.value = "";
+    matrixSearch.value = ""; // reset per open
     const sixMap = JSON.parse(localStorage.getItem("matrixCharm6Words") || "{}");
+    const twoMap = JSON.parse(localStorage.getItem("matrixCharm2Words")  || "{}");
     const section = container.querySelector("#unmatchedWrapper .unmatched-scroller") || container;
 
     const applyFilter = () => {
       const q = matrixSearch.value.trim().toLowerCase();
       const tokens = q.split(/\s+/).filter(Boolean);
-      // Show/hide wrappers; flex flow collapses gaps so no empty spaces remain
       section.querySelectorAll('div[data-type="unmatched"]').forEach(w => {
-        // Prefer data-base; fall back to first child text if missing
         const base = w.dataset.base || (w.firstChild && w.firstChild.textContent || "").trim();
-        const hay  = (sixMap[base] || "").toLowerCase();
+        const hay  = ((sixMap[base] || twoMap[base] || "")).toLowerCase();
         const match = tokens.every(t => hay.includes(t));
         w.style.display = match ? "flex" : "none";
       });
