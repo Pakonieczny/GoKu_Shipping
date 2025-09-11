@@ -2082,7 +2082,7 @@ async function openAIAnalyzePhoto(base64Image) {
     `• Gold rule (fallback): Gold if (median H ≥ 36° AND S ≥ 12%) OR (b* ≥ 15).\n` +
     `• Silver: If S ≤ 13% AND a* between −3 and +4 AND b* between −3 and +8.\n` +
     `• Voting: each satisfied rule is one vote. If both rules agree, use that label.\n` +
-    `• Tie-breaking: if Gold vs Silver tie, choose Silver. If RoseGold vs Gold tie, choose Gold unless a* ≥ 8 OR hue contains "rose".\n` +
+    `• Tie-breaking: if Gold vs Silver tie, choose Silver. If RoseGold vs Gold tie, choose RoseGold unless a* ≥ 8 OR hue contains "rose".\n` +
     `• Only return exactly one word: Gold, RoseGold, or Silver.\n\n` +
     `INPUT\n` +
     `hue="${hueText}"\n` +
