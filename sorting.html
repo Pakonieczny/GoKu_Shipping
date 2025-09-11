@@ -75,8 +75,15 @@
       }
 
       /* Make only the Unmatched area scroll inside matchesModal */
+      /* 1) STOP the parent modal from scrolling (Materialize sets overflow on .modal) */
+      #matchesModal.modal {
+        overflow-y: hidden !important;   /* <- key line: kill modal-level scroll */
+        max-height: none !important;     /* remove the 70% cap that forces scrollbars */
+        height: auto !important;
+      }
+      /* 2) Let the modal content itself be free of its own scrollbar */
       #matchesModal .modal-content {
-        overflow-y: hidden;            /* prevent whole modal from scrolling */
+        overflow-y: visible;             /* children manage their own scroll */
       }
 
       #matchesModal #unmatchedWrapper .unmatched-scroller {
