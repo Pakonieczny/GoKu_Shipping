@@ -710,7 +710,7 @@ function pfAddCandidate(i, userName, desc2, hitWord){
   const li = document.createElement("li");
   const d2  = normalizeTwoWordDescriptor(desc2 || "");
   const hit = hitWord ? ` <span class="pf-hit">[${hitWord}]</span>` : "";
-  li.innerHTML = `${escapeHtml(userName)} <span class="pf-tag" title="Charm descriptor">${escapeHtml(d2)}</span>${hit}`;
+  li.innerHTML = `<span class="pf-name">${escapeHtml(userName)}</span> <span class="pf-tag" title="Charm descriptor">${escapeHtml(d2)}</span>${hit}`;
   list.appendChild(li);
 }
 function pfMarkSent(i, count){
@@ -3563,12 +3563,24 @@ function openMatchPreviewModal(cellIndex) {
     const twoMap = JSON.parse(localStorage.getItem("matrixCharm2Words")  || "{}");
     const section = container.querySelector("#unmatchedWrapper .unmatched-scroller") || container;
 
+    const pfMap = (() => {
+      const m = {};
+      const ul = document.getElementById("pf-list-" + cellIndex);
+      if (!ul) return m;
+      ul.querySelectorAll("li").forEach(li => {
+        const name = li.querySelector(".pf-name")?.textContent?.trim();
+        const tag  = li.querySelector(".pf-tag")?.textContent?.trim();
+        if (name && tag) m[name] = tag;
+      });
+      return m;
+    })();
+
     const applyFilter = () => {
       const q = matrixSearch.value.trim().toLowerCase();
       const tokens = q.split(/\s+/).filter(Boolean);
       section.querySelectorAll('div[data-type="unmatched"]').forEach(w => {
         const base = w.dataset.base || (w.firstChild && w.firstChild.textContent || "").trim();
-        const hay  = ((sixMap[base] || twoMap[base] || "")).toLowerCase();
+        const hay  = String(pfMap[base] || "").toLowerCase();
         const match = tokens.every(t => hay.includes(t));
         w.style.display = match ? "flex" : "none";
       });
