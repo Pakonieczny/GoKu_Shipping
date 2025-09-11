@@ -3553,39 +3553,47 @@ function openMatchPreviewModal(cellIndex) {
 
   /* ---------- build modal content (unchanged) ---------- */
 
-
-
-  // === Matrix Image Search: filter "Unmatched User Photos" by descriptors ===
+  // === Matrix Image Search: use the EXACT same descriptor source as the prefilter panel ===
   const matrixSearch = document.getElementById("matrixSearchBox");
   if (matrixSearch) {
-    matrixSearch.value = ""; // reset per open
-    const sixMap = JSON.parse(localStorage.getItem("matrixCharm6Words") || "{}");
-    const twoMap = JSON.parse(localStorage.getItem("matrixCharm2Words")  || "{}");
+    matrixSearch.value = "";
+
+    // Scope to the unmatched list in the modal
     const section = container.querySelector("#unmatchedWrapper .unmatched-scroller") || container;
+    const wrappers = Array.from(section.querySelectorAll("[data-type='unmatched']"));
 
-    const pfMap = (() => {
-      const m = {};
-      const ul = document.getElementById("pf-list-" + cellIndex);
-      if (!ul) return m;
-      ul.querySelectorAll("li").forEach(li => {
-        const name = li.querySelector(".pf-name")?.textContent?.trim();
-        const tag  = li.querySelector(".pf-tag")?.textContent?.trim();
-        if (name && tag) m[name] = tag;
-      });
-      return m;
-    })();
+    // Precompute haystacks using descriptorWordsFor(baseName) → same words PF shows
+    const haystacks = new Map();
+    for (const w of wrappers) {
+      const base = w.dataset.base || "";
+      const words = descriptorWordsFor(base); // reads matrixCharm6Words/matrixCharm2Words from localStorage
+      haystacks.set(w, words.join(" "));
+    }
 
-    const applyFilter = () => {
-      const q = matrixSearch.value.trim().toLowerCase();
-      const tokens = q.split(/\s+/).filter(Boolean);
-      section.querySelectorAll('div[data-type="unmatched"]').forEach(w => {
-        const base = w.dataset.base || (w.firstChild && w.firstChild.textContent || "").trim();
-        const hay  = String(pfMap[base] || "").toLowerCase();
-        const match = tokens.every(t => hay.includes(t));
-        w.style.display = match ? "flex" : "none";
-      });
-    };
-    matrixSearch.oninput = applyFilter; // dynamic on every keystroke
+    function applyFilter(q) {
+      const tokens = String(q || "")
+        .toLowerCase()
+        .replace(/[^a-z0-9-\s]/g, " ")
+        .trim()
+        .split(/\s+/)
+        .filter(Boolean);
+
+      for (const w of wrappers) {
+        const hay = haystacks.get(w) || "";
+        const ok = tokens.length === 0 ? true : tokens.every(t => hay.includes(t));
+        w.style.display = ok ? "" : "none";
+      }
+    }
+
+    // Avoid double-binding if modal reopens
+    if (matrixSearch._ms_handler) {
+      matrixSearch.removeEventListener("input", matrixSearch._ms_handler);
+    }
+    matrixSearch._ms_handler = (e) => applyFilter(e.target.value);
+    matrixSearch.addEventListener("input", matrixSearch._ms_handler);
+
+    // Start with all visible
+    applyFilter("");
   }
 
 
