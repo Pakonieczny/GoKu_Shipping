@@ -1933,6 +1933,55 @@ function loadImage(dataUrl) {
   });
 }
 
+// --- Edge density detector (excludes top-right number tile region) ---
+async function edgeDensityExcludingTopRight(dataUrl){
+  const img = await loadImage(dataUrl);
+  const w = img.naturalWidth, h = img.naturalHeight;
+  const canvas = document.createElement("canvas");
+  canvas.width = w; canvas.height = h;
+  const ctx = canvas.getContext("2d");
+  ctx.drawImage(img, 0, 0);
+  const { data } = ctx.getImageData(0, 0, w, h);
+
+  // grayscale
+  const gray = new Uint8ClampedArray(w*h);
+  for (let y=0, i=0, p=0; y<h; y++){
+    for (let x=0; x<w; x++, i++, p+=4){
+      const r=data[p], g=data[p+1], b=data[p+2];
+      gray[i] = (0.299*r + 0.587*g + 0.114*b)|0;
+    }
+  }
+  // exclude top-right square (~28% width/height) where the number sits
+  const exW = Math.floor(0.28*w), exH = Math.floor(0.28*h);
+  const exX0 = w - exW, exY0 = 0, exX1 = w-1, exY1 = exH-1;
+
+  // Sobel
+  const kx = [-1,0,1,-2,0,2,-1,0,1];
+  const ky = [-1,-2,-1,0,0,0,1,2,1];
+  let edges = 0, total = 0;
+  const thr = 60; // edge threshold
+  for (let y=1; y<h-1; y++){
+    for (let x=1; x<w-1; x++){
+      if (x>=exX0 && x<=exX1 && y>=exY0 && y<=exY1) continue; // skip number tile
+      const i = y*w + x;
+      let gx=0, gy=0, t=0;
+      t = gray[i-w-1]; gx += kx[0]*t; gy += ky[0]*t;
+      t = gray[i-w  ]; gx += kx[1]*t; gy += ky[1]*t;
+      t = gray[i-w+1]; gx += kx[2]*t; gy += ky[2]*t;
+      t = gray[i-1   ]; gx += kx[3]*t; gy += ky[3]*t;
+      t = gray[i     ]; gx += kx[4]*t; gy += ky[4]*t;
+      t = gray[i+1   ]; gx += kx[5]*t; gy += ky[5]*t;
+      t = gray[i+w-1 ]; gx += kx[6]*t; gy += ky[6]*t;
+      t = gray[i+w   ]; gx += kx[7]*t; gy += ky[7]*t;
+      t = gray[i+w+1 ]; gx += kx[8]*t; gy += ky[8]*t;
+      const mag = Math.hypot(gx, gy);
+      if (mag > thr) edges++;
+      total++;
+    }
+  }
+  return edges / Math.max(1,total); // 0..1
+}
+
 // --------------- Single-Photo Analysis (TWO-PASS hue→label + verbose logs) ---------------
 // FIX: wrap in an async function to avoid top-level await errors.
 async function openAIAnalyzePhoto(base64Image) {
@@ -1957,12 +2006,18 @@ async function openAIAnalyzePhoto(base64Image) {
               "TASK 1 – Describe the dominant metal hue (≤10 words).\n" +
               "TASK 2 – Extract the top-right number (blank if none).\n" +
               "TASK 3 – Is a jewellery charm clearly visible? (Yes|No).\n" +
+               "DEFINITION for charmPresent=Yes: any discrete metal object including\n" +
+               "thin rectangular nameplates with two end-holes, bars, rings, or pendants.\n" +
+               "Ignore the white number square; its presence does not negate a charm.\n" +
+               "If a thin metallic bar occupies ≥0.4% of the tile with clear edges or\n" +
+               "specular highlights, answer Yes.\n" +
               "Estimate MEDIAN HSV (H° 0–360, S% 0–100, V% 0–100) and MEDIAN CIELAB (L*, a*, b*).\n" +
               "IMPORTANT MASKING RULES FOR MEDIANS:\n" +
-              "• Exclude background/near-black pixels and any white/near-white background.\n" +
-              "• Ignore pixels if (HSV.V ≤ 18% OR Lab L* ≤ 20)  ← near-black/very dark. \n" +
-              "• Ignore pixels if (HSV.V ≥ 96% OR Lab L* ≥ 96)  ← near-white/very bright. \n" +
-              "• Ignore pixels with very low saturation (HSV.S < 8%) to avoid gray background bleed.\n" +
+               "• Exclude background/near-black and near-white backgrounds.\n" +
+               "• Near-black cutoff: Ignore pixels if (HSV.V ≤ 12% OR Lab L* ≤ 16).\n" +
+               "• Near-white cutoff: Ignore pixels if (HSV.V ≥ 96% OR Lab L* ≥ 96).\n" +
+               "• DO NOT discard low-saturation metal: Keep pixels with HSV.S < 8% when\n" +
+               "  (HSV.V ≥ 28% OR Lab L* ≥ 30) to retain neutral SILVER highlights.\n" +
               "Respond with JSON only."
           },
           { type: "image_url", image_url: { url: base64Image, detail: "high" } }
