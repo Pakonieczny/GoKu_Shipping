@@ -3566,7 +3566,7 @@ function openMatchPreviewModal(cellIndex) {
     function applyFilter(q) {
       const section =
         document.querySelector("#unmatchedWrapper .unmatched-scroller") ||
-        document; // be defensive
+        document;
 
       const tokens = String(q || "")
         .toLowerCase()
@@ -3575,13 +3575,19 @@ function openMatchPreviewModal(cellIndex) {
         .split(/\s+/)
         .filter(Boolean);
 
-      // Re-query every input so it works even if tiles are rebuilt
+      // Re-query so it still works if the list gets rebuilt
       const wrappers = section.querySelectorAll("[data-type='unmatched']");
       wrappers.forEach(w => {
-        const base = w.dataset.base || ""; // set when building tiles
-        // SAME source as prefilter panel:
-        const hay = (descriptorWordsFor(base) || []).join(" ").toLowerCase();
-        const ok = tokens.length === 0 || tokens.every(t => hay.includes(t));
+        // 1) Robust base: prefer data-base, else derive from <img alt>
+        const img = w.querySelector("img");
+        const base = w.dataset.base || (img && (img.alt || "").replace(/\.\w+$/, "")) || "";
+
+        // 2) SAME descriptor source the prefilter uses:
+        const words = descriptorWordsFor(base) || [];   // reads 6-word + 2-word maps
+        const hay = words.join(" ").toLowerCase();
+
+        // 3) Fail-open: if we have no descriptors for this tile, don't hide it
+        const ok = tokens.length === 0 || (words.length === 0 ? true : tokens.every(t => hay.includes(t)));
         w.style.display = ok ? "" : "none";
       });
     }
