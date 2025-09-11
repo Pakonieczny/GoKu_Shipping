@@ -363,15 +363,20 @@
              type="text"
              readonly
              placeholder="Customer Notes"
-             style="display:block; margin-top:0; width:250px; height:30px; margin-bottom:5px;" />
+             style="display:block; margin-top:0; width:500px; height:35px; margin-bottom:10px;" />
       <div
         id="matchesGridContainer"
         style="display: flex; flex-wrap: wrap; gap: 10px;"
       ></div>
     </div>
-    <div class="modal-footer">
-      <!-- “Save” button that will perform the array updates and then close the modal -->
-      <a href="#!" id="saveMatchesBtn" class="waves-effect waves-green btn">Save</a>
+ <div class="modal-footer">
+   <input id="matrixSearchBox"
+          class="browser-default"
+          type="text"
+          placeholder="Matrix Image Search"
+          style="width:260px; margin-right:10px;" />
+   <!-- “Save” button that will perform the array updates and then close the modal -->
+   <a href="#!" id="saveMatchesBtn" class="waves-effect waves-green btn">Save</a>
       <!-- “Cancel” button that closes the modal without saving changes -->
       <a href="#!" class="modal-close waves-effect waves-red btn">Cancel</a>
     </div>
@@ -3518,6 +3523,31 @@ function openMatchPreviewModal(cellIndex) {
   /* ---------- build modal content (unchanged) ---------- */
 
 
+
+  // === Matrix Image Search: filter "Unmatched User Photos" by 6-word descriptors ===
+  const matrixSearch = document.getElementById("matrixSearchBox");
+  if (matrixSearch) {
+    // reset per open
+    matrixSearch.value = "";
+    const sixMap = JSON.parse(localStorage.getItem("matrixCharm6Words") || "{}");
+    const section = container.querySelector("#unmatchedWrapper .unmatched-scroller") || container;
+
+    const applyFilter = () => {
+      const q = matrixSearch.value.trim().toLowerCase();
+      const tokens = q.split(/\s+/).filter(Boolean);
+      // Show/hide wrappers; flex flow collapses gaps so no empty spaces remain
+      section.querySelectorAll('div[data-type="unmatched"]').forEach(w => {
+        // Prefer data-base; fall back to first child text if missing
+        const base = w.dataset.base || (w.firstChild && w.firstChild.textContent || "").trim();
+        const hay  = (sixMap[base] || "").toLowerCase();
+        const match = tokens.every(t => hay.includes(t));
+        w.style.display = match ? "flex" : "none";
+      });
+    };
+    matrixSearch.oninput = applyFilter; // dynamic on every keystroke
+  }
+
+
   // helper: create a 55×7 read‑only row that sits in normal flow
   function makeDetail(txt, isBold = false) {
     const row = document.createElement("div");
@@ -3786,6 +3816,9 @@ container.appendChild(matchedWrapper);       // ← keep this line
       wrapper.style.width = "66px";
       wrapper.dataset.type  = "unmatched";
       wrapper.dataset.index = idx;
+      // Store base filename (no extension) for search lookups
+      const base = stripExtension(uImg.name || "");
+      wrapper.dataset.base = base;
 
       /* 66×66 image box */
       const box = document.createElement("div");
