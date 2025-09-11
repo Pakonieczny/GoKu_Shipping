@@ -2006,7 +2006,7 @@ async function openAIAnalyzePhoto(base64Image) {
               "TASK 1 – Describe the dominant metal hue (≤10 words).\n" +
               "TASK 2 – Extract the top-right number (blank if none).\n" +
               "TASK 3 – Is a jewellery charm clearly visible? (Yes|No).\n" +
-               "DEFINITION for charmPresent=Yes: any discrete metal object including\n" +
+               "DEFINITION for charmPresent=Yes: any discrete metal object including, include rounded, wavy, and spherical items (coins, discs, domed orbs, shells, pebbles, slippers, circular medallions) as charms even if small or glossy\n" +
                "thin rectangular nameplates with two end-holes, bars, rings, or pendants.\n" +
                "Ignore the white number square; its presence does not negate a charm.\n" +
                "If a thin metallic bar occupies ≥0.4% of the tile with clear edges or\n" +
@@ -2079,7 +2079,7 @@ async function openAIAnalyzePhoto(base64Image) {
     `You are classifying metal color from numeric medians. APPLY THESE CUT LINES STRICTLY:\n` +
     `• HSV rule (primary): RoseGold if 15° ≤ median H ≤ 30° AND S ≥ 30%.\n` +
     `• CIELAB rule (cross-check): RoseGold if a* ≥ 8 AND b* ≥ 15.\n` +
-    `• Gold rule (fallback): Gold if (median H ≥ 36° AND S ≥ 12%) OR (b* ≥ 15).\n` +
+    `• Gold rule (fallback): Gold if (median H ≥ 36° AND S ≥ 12%) OR (b* ≥ 16).\n` +
     `• Silver: If S ≤ 13% AND a* between −3 and +4 AND b* between −3 and +8.\n` +
     `• Voting: each satisfied rule is one vote. If both rules agree, use that label.\n` +
     `• Tie-breaking: if Gold vs Silver tie, choose Silver. If RoseGold vs Gold tie, choose Gold unless a* ≥ 8 OR hue contains "rose".\n` +
