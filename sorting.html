@@ -3922,7 +3922,7 @@ function openMatchPreviewModal(cellIndex) {
    metalRow.style.height   = "16px";
    etsyWrapper.appendChild(metalRow);
 
-  // ▼▼ Replace the whole variations block with this ▼▼
+  // ▼▼ Variations: robust buyer-selections extraction ▼▼
   (() => {
     // Return up to two non-metal variation pairs as [{name, value}, …]
     function collectChosenVariations(item) {
@@ -3930,60 +3930,82 @@ function openMatchPreviewModal(cellIndex) {
       const seen = new Set();
 
       const pushPair = (rawName, rawVal) => {
-        const name = String(rawName || "").trim();
+        const name  = String(rawName || "").trim();
         const value = String(rawVal  || "").trim();
         if (!name || !value) return;
-
         const lname = name.toLowerCase();
         const looksMetal = lname.includes("metal") || lname.startsWith("color") || lname.startsWith("colour");
         if (looksMetal) return; // Metal already shown above
-
         const key = `${lname}|${value.toLowerCase()}`;
         if (seen.has(key)) return;
         seen.add(key);
         out.push({ name, value });
       };
 
-      // 1) Preferred: transaction-level variations
-      if (Array.isArray(item?.variations)) {
-        for (const v of item.variations) {
-          const n = v.formatted_name ?? v.name ?? v.property_name;
-          const val = v.formatted_value
-            ?? v.value
-            ?? (Array.isArray(v.values) ? v.values.join(", ") : v.display_value);
+      // Extract text from lots of possible shapes
+      const extract = (v) => {
+        if (v == null) return "";
+        if (Array.isArray(v)) return v.map(extract).filter(Boolean).join(", ");
+        if (typeof v === "object") {
+          // common fields or nested holders
+          return (
+            extract(v.formatted_value) ||
+            extract(v.value) ||
+            extract(v.display_value) ||
+            extract(v.name) ||
+            extract(v.label) ||
+            extract(v.option) ||
+            extract(v.choice) ||
+            (Array.isArray(v.values) ? extract(v.values) : "")
+          );
+        }
+        return String(v);
+      };
+
+      const tryArray = (arr, getName, getVal) => {
+        if (!Array.isArray(arr)) return;
+        for (const v of arr) {
+          const n = extract(getName(v));
+          const val = extract(getVal(v));
           pushPair(n, val);
           if (out.length >= 2) break;
         }
+      };
+
+      // 1) Preferred: transaction-level variations
+      tryArray(item?.variations,
+        v => v.formatted_name ?? v.name ?? v.property_name ?? v.property ?? v.title,
+        v => v.formatted_value ?? v.value ?? v.display_value ?? v.values ?? v.selected_value ?? v.selected
+      );
+
+      // 2) Alternate: sometimes Etsy surfaces selections here
+      if (out.length < 2) {
+        tryArray(item?.selected_variations,
+          v => v.formatted_name ?? v.name ?? v.property_name,
+          v => v.formatted_value ?? v.value ?? v.display_value ?? v.values
+        );
       }
 
-      // 2) Fallback: product_data.property_values (some shops expose choices here)
-      if (out.length < 2 && Array.isArray(item?.product_data?.property_values)) {
-        for (const pv of item.product_data.property_values) {
-          const n = pv.property_name ?? pv.formatted_name;
-          const val = (Array.isArray(pv.values) && pv.values.length)
-            ? pv.values.join(", ")
-            : (pv.formatted_value ?? pv.value ?? pv.display_value ?? "");
-          pushPair(n, val);
-          if (out.length >= 2) break;
-        }
+      // 3) Fallback: product_data.property_values
+      if (out.length < 2) {
+        tryArray(item?.product_data?.property_values,
+          pv => pv.property_name ?? pv.formatted_name,
+          pv => pv.values ?? pv.formatted_value ?? pv.value ?? pv.display_value
+        );
       }
 
       return out.slice(0, 2);
     }
 
-    const pairs = collectChosenVariations(window.cachedOrderItems?.[cellIndex] || {});
+    // `item` is the current Etsy order item for this cell
+    const pairs = collectChosenVariations(item);
 
-    // Render each variation as "Name: Value" under the Metal row
-    pairs.forEach(({ name, value }) => {
-      const row = makeDetail(`${name}: ${value}`);
+    // Render rows like "Length: 18 in"
+    for (const { name, value } of pairs) {
+      const row = makeDetail(`${name}: ${value}`, true);
       row.style.fontSize = "0.9em";
       row.style.height   = "16px";
       etsyWrapper.appendChild(row);
-    });
-
-    // Optional: dev visibility if nothing was found
-    if (pairs.length === 0) {
-      console.debug("[matchesModal] No buyer-selected variations found for item", item);
     }
   })();
 
