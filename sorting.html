@@ -3922,39 +3922,69 @@ function openMatchPreviewModal(cellIndex) {
    metalRow.style.height   = "16px";
    etsyWrapper.appendChild(metalRow);
 
-   // ▼▼ NEW: show both Etsy variations under the Metal row ▼▼
+  // ▼▼ Replace the whole variations block with this ▼▼
   (() => {
-    const item = (window.cachedOrderItems && window.cachedOrderItems[cellIndex]) || {};
-    if (!item || !Array.isArray(item.variations)) return;
+    // Return up to two non-metal variation pairs as [{name, value}, …]
+    function collectChosenVariations(item) {
+      const out = [];
+      const seen = new Set();
 
-    // Normalize and collect up to two variations (skip "Metal"/colour to avoid duplication)
-    const out = [];
-    const seen = new Set();
+      const pushPair = (rawName, rawVal) => {
+        const name = String(rawName || "").trim();
+        const value = String(rawVal  || "").trim();
+        if (!name || !value) return;
 
-    for (const v of item.variations) {
-      const nameRaw = String(v.formatted_name || v.name || v.property_name || "").trim();
-      const valRaw  = String(v.formatted_value || v.value || "").trim();
-      if (!nameRaw || !valRaw) continue;
+        const lname = name.toLowerCase();
+        const looksMetal = lname.includes("metal") || lname.startsWith("color") || lname.startsWith("colour");
+        if (looksMetal) return; // Metal already shown above
 
-      const lname = nameRaw.toLowerCase();
-      const looksMetal = lname.includes("metal") || lname.startsWith("color") || lname.startsWith("colour");
-      if (looksMetal) continue; // Metal is already shown above
+        const key = `${lname}|${value.toLowerCase()}`;
+        if (seen.has(key)) return;
+        seen.add(key);
+        out.push({ name, value });
+      };
 
-      const key = `${lname}|${valRaw.toLowerCase()}`;
-      if (seen.has(key)) continue;
-      seen.add(key);
+      // 1) Preferred: transaction-level variations
+      if (Array.isArray(item?.variations)) {
+        for (const v of item.variations) {
+          const n = v.formatted_name ?? v.name ?? v.property_name;
+          const val = v.formatted_value
+            ?? v.value
+            ?? (Array.isArray(v.values) ? v.values.join(", ") : v.display_value);
+          pushPair(n, val);
+          if (out.length >= 2) break;
+        }
+      }
 
-      out.push({ name: nameRaw, value: valRaw });
-      if (out.length === 2) break; // show at most two
+      // 2) Fallback: product_data.property_values (some shops expose choices here)
+      if (out.length < 2 && Array.isArray(item?.product_data?.property_values)) {
+        for (const pv of item.product_data.property_values) {
+          const n = pv.property_name ?? pv.formatted_name;
+          const val = (Array.isArray(pv.values) && pv.values.length)
+            ? pv.values.join(", ")
+            : (pv.formatted_value ?? pv.value ?? pv.display_value ?? "");
+          pushPair(n, val);
+          if (out.length >= 2) break;
+        }
+      }
+
+      return out.slice(0, 2);
     }
 
-    // Render each variation as "Name: Value"
-    out.forEach(({ name, value }) => {
+    const pairs = collectChosenVariations(item);
+
+    // Render each variation as "Name: Value" under the Metal row
+    pairs.forEach(({ name, value }) => {
       const row = makeDetail(`${name}: ${value}`);
       row.style.fontSize = "0.9em";
       row.style.height   = "16px";
       etsyWrapper.appendChild(row);
     });
+
+    // Optional: dev visibility if nothing was found
+    if (pairs.length === 0) {
+      console.debug("[matchesModal] No buyer-selected variations found for item", item);
+    }
   })();
 
   // -----------------------------------------------------------------------
