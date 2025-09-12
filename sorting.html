@@ -74,6 +74,13 @@
 
       }
 
+      #unmatchedContainer {
+      position: absolute;
+      left: 20px;
+      top: 420px; /* ~100px below #photoDragDrop which starts at top:310px */
+      width: 600px;
+    }
+
       /* Make only the Unmatched area scroll inside matchesModal */
       /* 1) STOP the parent modal from scrolling (Materialize sets overflow on .modal) */
       #matchesModal.modal {
@@ -167,6 +174,12 @@
       left: 20px;
       top: 420px; /* ~100px below #photoDragDrop which starts at top:310px */
       width: 600px;
+      /* Dedicated scroller for "titleUnmatchedImages" section */
+      overflow-y: auto;
+      padding-right: 6px;     /* scrollbar gutter */
+      border: 1px solid #e5e5e5;
+      border-radius: 8px;
+      background: #fff;
     }
 
     /* pointer-events enabled on read-only inputs */
@@ -263,6 +276,11 @@
          placeholder="Search orders…">
   <button id="filterIncompleteBtn" class="btn waves-effect waves-light">Filter</button>
   <button id="openConfigBtn" class="btn waves-effect waves-light">Open Config</button>
+  <!-- Live counter for ALL Etsy Order Items -->
+  <div id="orderItemsCounter"
+       style="position:absolute; font-weight:600; font-size:0.95em; line-height:35px; height:35px; padding:0 8px; border:1px solid #e0e0e0; border-radius:8px; background:#fafafa;">
+    Order Items: 0
+  </div>
   <button id="mpBackBtn" class="btn waves-effect waves-light">Back</button>
   <button id="mpNextBtn" class="btn waves-effect waves-light">Next</button>
   <button id="sendMatchBtn" class="btn waves-effect waves-light">Send & Match</button>
@@ -984,6 +1002,7 @@ const configIDs = [
   "filterIncompleteBtn",
   "startMatrixAnalysisBtn",
   "matrixQueueList",
+  "orderItemsCounter",
   "titleUnmatchedImages"
 ];
 
@@ -1026,6 +1045,7 @@ etsyOrderInput.addEventListener("keydown", async function (e) {
     partialMatches = {};
     window.cachedOrderItems = [];
     matchPrintFlowInProgress = false;
+    updateOrderItemCounter(); // show 0 while loading
 
     // Clear UI
     document.getElementById("photoGridContainer").innerHTML = "";
@@ -1045,6 +1065,7 @@ etsyOrderInput.addEventListener("keydown", async function (e) {
       .filter((x) => x);
 
     await loadBatchEtsyOrders(orderNumbers);
+    updateOrderItemCounter(); // total after load completes
   }
 
   // Start Matrix Analysis (process queued masters sequentially)
@@ -1633,7 +1654,7 @@ function openIframePrinterForListing(cellIndex) {
       titleEtsyOrderNumber:     { left:20,  top:2,   width:145, height:20 },
       titleImageMatrixDrop:     { left:20,  top:91,  width:145, height:20 },
       titleUnmatchedImages:     { left:21,  top:437, width:145, height:20 },
-      unmatchedContainer:       { left:0,   top:152, width:600, height:0 },
+      unmatchedContainer:       { left:20,  top:420, width:600, height:260 },
       userImage:                { left:0,   top:0,   width:100, height:100 },
       saveConfigBtn:            { left:10,  top:3,   width:85,  height:35 },
       sendMatchBtn:             { left:20,  top:301, width:210, height:35 },
@@ -1643,6 +1664,7 @@ function openIframePrinterForListing(cellIndex) {
       filterIncompleteBtn:      { left: 1328, top: 15, width: 120, height: 35 },
       startMatrixAnalysisBtn:   { left:0,  top:-86, width:210, height:35 },
       matrixQueueList:          { left:0,  top:-46, width:290, height:20 },
+      orderItemsCounter:        { left:610, top:15,  width:120, height:35 },
       testOpenAIBtn:            { left:20,  top:65,  width:140, height:35 }
     };
 
@@ -3930,6 +3952,13 @@ function openMatchPreviewModal(cellIndex) {
     row.style.setProperty("font-weight", isBold ? "700" : "400", "important"); // ← forces bold
 
     return row;
+  }
+
+    function updateOrderItemCounter() {
+    const el = document.getElementById("orderItemsCounter");
+    if (!el) return;
+    const n = Array.isArray(window.cachedOrderItems) ? window.cachedOrderItems.length : 0;
+    el.textContent = `Order Items: ${n}`;
   }
 
   /* ============================================================
