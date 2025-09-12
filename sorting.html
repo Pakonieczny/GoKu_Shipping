@@ -3350,7 +3350,9 @@ async function sendAndMatch() {
           const nm = top.user.name.replace(/(\.jpg|\.png)$/i, "");
           cellMatches[i].push({ userName: nm, userImage: top.user.data, score: top.result.score });
           matchedUserNames.add(top.user.name);
-          userImagesArray = userImagesArray.filter(u => u.name !== top.user.name);
+          userImagesArray = userImagesArray.filter(
+             u => String(u.origName || u.name) !== keyTop
+           );
 
           if (matchBox) matchBox.value = namesForCell(i).join(", ");
         } else {
@@ -3466,7 +3468,8 @@ async function sendAndMatch() {
       const topScorePerc = (topScore * 100).toFixed(2);
       const matchName = topCandidate.user.name.replace(/(\.jpg|\.png)$/i, "");
 
-    if (!matchedUserNames.has(topCandidate.user.name) &&
+      const keyTop = String(topCandidate.user.origName || topCandidate.user.name);
+      if (!matchedUserNames.has(keyTop) &&
           ((cellMatches[i]||[]).filter(m=>m && m.userImage).length < expectedSlots(window.cachedOrderItems?.[i] || {})) ) {
 
         /* Pre‑computed values already in your loop */
@@ -3481,12 +3484,13 @@ async function sendAndMatch() {
             matchBox.style.color  = "black";
           }
           if (!cellMatches[i]) cellMatches[i] = [];
-          safePushMatch(i,{
-            userName  : matchName,
-            userImage : topCandidate.user.data,   // ← use topCandidate
-            score     : topScore
-          });
-          matchedUserNames.add(topCandidate.user.name);
+           safePushMatch(i,{
+             userName  : matchName,
+             userImage : topCandidate.user.data,
+             score     : topScore,
+             origName  : keyTop
+           });
+           matchedUserNames.add(keyTop);
 
            /* Mark complete only when have >= need */
            {
@@ -3521,7 +3525,8 @@ async function sendAndMatch() {
           for (const cand of userImagesArray.slice()) {
             if (cand.skipForCharm) continue;
             if (!metalFilterOk(metalVal, cand.name)) continue;
-            if (matchedUserNames.has(cand.name)) continue;
+            const uniq = String(cand.origName || cand.name);
+            if (matchedUserNames.has(uniq)) continue;
             if (!passesTitlePrefilter(i, cand.name)) continue; // 🔒 enforce title prefilter
 
             const { score: s1 } = await compareImages(cand.data, firstImgFixed, i, cand.name);
@@ -3532,10 +3537,11 @@ async function sendAndMatch() {
 
              const twinName = cand.name.replace(/(\.jpg|\.png)$/i, "");
              /* safe push — silently skips if we already have enough     */
-             if (safePushMatch(i, { userName : twinName,
-                                    userImage: cand.data,
-                                    score    : bestScore })) {
-               matchedUserNames.add(cand.name);   // record only if kept
+              if (safePushMatch(i, { userName : twinName,
+                                     userImage: cand.data,
+                                     score    : bestScore,
+                                     origName : uniq })) {
+                matchedUserNames.add(uniq);        // record only if kept
              }
 
             /* Mark complete only when have >= need */
@@ -3792,14 +3798,15 @@ function openMatchPreviewModal(cellIndex) {
   }
 
   /* ---------- build unmatchedImages (exclude every matched name) ---------- */
-  const matchedNames = matchedImages
-    .filter(m => m.userName)                         // ignore placeholders
-    .map(m => m.userName);
+  const matchedKeys = matchedImages
+    .filter(m => m && m.userImage)                   // ignore placeholders
+    .map(m => m.origName || m.userName);
 
   let unmatchedImages = userImagesArray.filter((uImg) => {
     if (uImg.skipForCharm) return false;
     if (partialMatches[uImg.name]) return false;
-    return !matchedNames.includes(stripExtension(uImg.name));
+    const uKey = String(uImg.origName || stripExtension(uImg.name));
+    return !matchedKeys.includes(uKey);
   });
 
   /* --- live grid values pulled from main screen --- */
