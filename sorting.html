@@ -1756,7 +1756,7 @@ function openIframePrinterForListing(cellIndex) {
       const file = files[i];
       const dataUrl = await readAsDataURL(file);
       // store for later tiling + analysis
-      window.__matrixQueue.push({ name: file.name, dataUrl });
+      window.__matrixQueue.push({ name: file.name, dataUrl, masterId: genId() });
       M.toast({ html: `Queued master: ${file.name}` });
     }
     updateMatrixQueueBadge();
@@ -1799,6 +1799,7 @@ async function startMatrixAnalysis() {
   // Process each master independently so streaks/progress reset per master
   for (let i = 0; i < queue.length; i++) {
     const master = queue[i];
+    const masterId = master.masterId || (master.masterId = genId());
     const label  = `Analyzing Matrix Images (${i+1}/${queue.length})`;
 
     // Tile the current master (configurable rows/cols inside extract)
@@ -1810,10 +1811,12 @@ async function startMatrixAnalysis() {
       const cropped   = await cropTo512(tiles[q]);
       const corrected = await reduceRedTone(cropped, 0.85);
       batch.push({
-       origName: `${stripExtension(master.name)}_Q${q}`,
-       data: corrected,
-       master: master.name
-    });    }
+        origName: `${stripExtension(master.name)}_${masterId}_Q${q}`,
+        data: corrected,
+        master: master.name,
+        masterId
+      });
+    }
 
     // Analyze this master only; progress title shows which master is running
     await analyzeAndStoreSubImages(batch, label);
@@ -1863,8 +1866,9 @@ async function analyzeAndStoreSubImages(imgObjs, title = "Analyzing Photos...") 
      name: finalName,
      data,
      analyzed: true,
-     origName,                 // ← unique per tile across masters
-     master: toRun[i].master || ""
+       origName,                 // ← now includes masterId to avoid cross-master collisions
+       master: toRun[i].master || "",
+       masterId: toRun[i].masterId || ""
   });
     saved++;
 
@@ -1952,6 +1956,14 @@ async function readAsDataURL(file) {
     reader.onerror = reject;
     reader.readAsDataURL(file);
   });
+}
+
+// Tiny unique ID for each master (offline-safe, no crypto dependency)
+function genId() {
+  return (
+    Date.now().toString(36) +
+    Math.random().toString(36).slice(2, 8)
+  );
 }
 
 /********************************************************
