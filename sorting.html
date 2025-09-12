@@ -3971,7 +3971,7 @@ function openMatchPreviewModal(cellIndex) {
       return out.slice(0, 2);
     }
 
-    const pairs = collectChosenVariations(item);
+    const pairs = collectChosenVariations(window.cachedOrderItems?.[cellIndex] || {});
 
     // Render each variation as "Name: Value" under the Metal row
     pairs.forEach(({ name, value }) => {
