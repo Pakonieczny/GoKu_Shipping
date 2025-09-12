@@ -1,107 +1,52 @@
-// netlify/functions/etsyOrderProxy.js  — DROP-IN REPLACEMENT
-// Returns buyer selections via transactions endpoint.
-// Env vars expected: SHOP_ID, CLIENT_ID
-// Header expected from client: "access-token: <OAuth Bearer>"
-// Optional: "Authorization: Bearer <token>"
-
+// etsyOrderProxy.js  – DROP-IN REPLACEMENT
 const fetch = require("node-fetch");
 
 exports.handler = async function (event) {
   try {
-    // ---- Inputs & Env ----------------------------------------------------
-    const receiptId = (event.queryStringParameters?.orderId || "").trim(); // Etsy receipt_id
-    if (!receiptId) return json(400, { error: "Missing orderId (receipt_id)" });
+    /* ------------------------------------------------------------------
+     * 1.  INPUTS & ENV
+     * ------------------------------------------------------------------ */
+    const orderId     = event.queryStringParameters.orderId;          // Etsy “receipt_id”
+    const accessToken = event.headers["access-token"] || event.headers["Access-Token"];
+    const shopId      = process.env.SHOP_ID;
+    const clientId    = process.env.CLIENT_ID;
 
-    // Accept multiple header spellings + Authorization
-    const headerToken =
-      event.headers["access-token"] ||
-      event.headers["Access-Token"] ||
-      event.headers["authorization"] ||
-      event.headers["Authorization"];
+    if (!orderId)      return { statusCode: 400, body: JSON.stringify({ error: "Missing orderId parameter" }) };
+    if (!accessToken)  return { statusCode: 400, body: JSON.stringify({ error: "Missing access token" }) };
+    if (!shopId)       return { statusCode: 500, body: JSON.stringify({ error: "Missing SHOP_ID environment variable" }) };
+    if (!clientId)     return { statusCode: 500, body: JSON.stringify({ error: "Missing CLIENT_ID environment variable" }) };
 
-    const accessToken = headerToken
-      ? headerToken.replace(/^Bearer\s+/i, "")
-      : "";
+    /* ------------------------------------------------------------------
+     * 2.  BUILD URL  — one call returns receipt + transactions
+     * ------------------------------------------------------------------ */
+    const etsyUrl =
+      `https://openapi.etsy.com/v3/application/shops/${shopId}` +
+      `/receipts/${orderId}?includes=` +
+      [
+        "Transactions",
+        "Transactions.personalization",
+        "Transactions.variations"       // ← ensure buyer selections are returned
+      ].join(",");
 
-    if (!accessToken) return json(401, { error: "Missing access token" });
-
-    const shopId = process.env.SHOP_ID;
-    const apiKey = process.env.CLIENT_ID; // Etsy calls this the Keystring/client id
-    if (!shopId || !apiKey) {
-      return json(500, { error: "Server missing SHOP_ID or CLIENT_ID" });
-    }
-
-    // ---- Etsy v3: transactions by receipt -------------------------------
-    // Keep domain consistent with your existing codebase.
-    const base = "https://openapi.etsy.com/v3/application";
-    const url = `${base}/shops/${encodeURIComponent(
-      shopId
-    )}/receipts/${encodeURIComponent(receiptId)}/transactions?limit=100`;
-
-    const resp = await fetch(url, {
+    /* ------------------------------------------------------------------
+     * 3.  MAKE REQUEST
+     * ------------------------------------------------------------------ */
+    const response = await fetch(etsyUrl, {
       method: "GET",
       headers: {
-        "x-api-key": apiKey,
         Authorization: `Bearer ${accessToken}`,
-        Accept: "application/json",
-      },
+        "x-api-key": clientId,
+        "Content-Type": "application/json"
+      }
     });
 
-    // Non-2xx: bubble up details to help debugging
-    if (!resp.ok) {
-      const detail = await safeText(resp);
-      return json(resp.status, {
-        error: "Etsy API error",
-        status: resp.status,
-        detail: detail || resp.statusText,
-      });
-    }
-
-    const data = await resp.json();
-    const transactions = Array.isArray(data?.results) ? data.results : [];
-
-    // Normalize shape for front-end use (variations included)
-    const out = {
-      receipt_id: receiptId,
-      transactions: transactions.map((t) => ({
-        transaction_id: t.transaction_id,
-        listing_id: t.listing_id,
-        product_id: t.product_id,
-        title: t.title,
-        quantity: t.quantity,
-        price: t.price,
-        is_gift: t.is_gift,
-        personalization: t.personalization,
-        variations: t.variations,               // ← buyer’s chosen options (formatted_name/value)
-        selected_variations: t.selected_variations, // sometimes present
-        product_data: t.product_data,           // contains property_values in some flows
-        expected_ship_date: t.expected_ship_date,
-      })),
-      // Optional: keep raw for diagnostics (comment out if you prefer lean payloads)
-      raw: data,
+    const payload = await response.json();
+    return {
+      statusCode: response.status,
+      body: JSON.stringify(payload)
     };
 
-    return json(200, out);
   } catch (err) {
-    return json(500, { error: "Proxy failure", detail: String(err?.message || err) });
+    return { statusCode: 500, body: JSON.stringify({ error: err.message }) };
   }
 };
-
-function json(status, body) {
-  return {
-    statusCode: status,
-    headers: {
-      "Content-Type": "application/json",
-      "Access-Control-Allow-Origin": "*",
-    },
-    body: JSON.stringify(body),
-  };
-}
-
-async function safeText(resp) {
-  try {
-    return await resp.text();
-  } catch {
-    return "";
-  }
-}
