@@ -296,6 +296,8 @@
   <!-- Image Comparison UI -->
   <div id="imageComparisonContainer">
     <div id="photoDragDrop">Drag & Drop</div>
+    <button id="startMatrixAnalysisBtn" class="btn waves-effect waves-light">Start Matrix Analysis</button>
+    <div id="matrixQueueList" style="margin-top:6px; font-size:0.9em; color:#555;"></div>
     <!-- Inline progress: sits directly below the Drag & Drop box -->
     <div id="matrixProgressWrap" style="display:none; margin-top:8px;">
       <div id="matrixProgressTitle" style="font-size:1.06em; font-weight:bold; margin-bottom:4px;">Analyzing…</div>
@@ -979,6 +981,7 @@ const configIDs = [
   "prefilterPanel",
   "orderSearchBox",
   "filterIncompleteBtn",
+  "startMatrixAnalysisBtn",
   "titleUnmatchedImages"
 ];
 
@@ -1037,6 +1040,14 @@ etsyOrderInput.addEventListener("keydown", async function (e) {
       .filter((x) => x);
 
     await loadBatchEtsyOrders(orderNumbers);
+  }
+
+  // Start Matrix Analysis (process queued masters sequentially)
+  const startBtn = document.getElementById("startMatrixAnalysisBtn");
+  if (startBtn) {
+    startBtn.addEventListener("click", startMatrixAnalysis);
+    // disabled until something is queued
+    startBtn.disabled = !(window.__matrixQueue || []).length;
   }
 });
 
@@ -1596,6 +1607,7 @@ function openIframePrinterForListing(cellIndex) {
       matrixProgressWrap:       { left:250,   top:-316, width:290,   height:50 },
       orderSearchBox :          { left: 1053, top: 15, width: 260, height: 35 },
       filterIncompleteBtn:      { left: 1328, top: 15, width: 120, height: 35 },
+      startMatrixAnalysisBtn:   { left:20,  top:215, width:210, height:35 },
       testOpenAIBtn:            { left:20,  top:65,  width:140, height:35 }
     };
 
@@ -1703,41 +1715,69 @@ function openIframePrinterForListing(cellIndex) {
     const files = e.dataTransfer.files;
     if (!files || files.length === 0) return;
 
-    /* Collect every 400×400 quadrant here for one-time AI analysis */
-    const subImagesToAnalyze = [];
-
+   // === NEW: Queue masters for later analysis ===
+    window.__matrixQueue = window.__matrixQueue || [];
     for (let i = 0; i < files.length; i++) {
       const file = files[i];
+      const dataUrl = await readAsDataURL(file);
+      // store for later tiling + analysis
+      window.__matrixQueue.push({ name: file.name, dataUrl });
+      M.toast({ html: `Queued master: ${file.name}` });
+    }
+    updateMatrixQueueBadge();
 
-      // Convert the dropped file to a DataURL
-      const fileDataUrl = await readAsDataURL(file);
+    // Don’t analyze here—user will click “Start Matrix Analysis”
 
-      // Slice into 10×14 = 140 tiles
-      const subImages = await extractSubImages144(fileDataUrl);
+  });
 
-      for (let q = 0; q < subImages.length; q++) {
-         const cropped   = await cropTo512(subImages[q]);
-         const corrected = await reduceRedTone(cropped, 0.85);   // NEW
- 
-         // Push to temporary array; NOT yet stored in userImagesArray
-        subImagesToAnalyze.push({ origName: file.name + "_Q" + q, data: cropped });
-              }
+  // Small readout under the button: “N master(s) queued)”
+  function updateMatrixQueueBadge() {
+    const el = document.getElementById("matrixQueueList");
+    const q  = (window.__matrixQueue || []);
+    if (!el) return;
+    if (!q.length) {
+      el.textContent = "No masters queued.";
+    } else {
+      const names = q.map(x => x.name).join(", ");
+      el.textContent = `${q.length} master(s) queued: ${names}`;
+    }
+    const startBtn = document.getElementById("startMatrixAnalysisBtn");
+    if (startBtn) startBtn.disabled = q.length === 0;
+  }
 
-      M.toast({
-        html: `File ${file.name}: Extracted 140 individual images`
-      });
+  @@
+async function startMatrixAnalysis() {
+  const queue = (window.__matrixQueue || []);
+  if (!queue.length) {
+    M.toast({ html: "Nothing to analyze — queue is empty." });
+    return;
+  }
+
+  // Process each master independently so streaks/progress reset per master
+  for (let i = 0; i < queue.length; i++) {
+    const master = queue[i];
+    const label  = `Analyzing ${master.name} (${i+1}/${queue.length})`;
+
+    // Tile the current master (configurable rows/cols inside extract)
+    const tiles = await extractSubImages144(master.dataUrl);
+
+    // Prepare exactly one batch (per master) of 140-ish tiles
+    const batch = [];
+    for (let q = 0; q < tiles.length; q++) {
+      const cropped   = await cropTo512(tiles[q]);
+      const corrected = await reduceRedTone(cropped, 0.85);
+      batch.push({ origName: `${stripExtension(master.name)}_Q${q}`, data: corrected });
     }
 
-    localStorage.removeItem("userImagesArray");
-    userImagesArray = [];
+    // Analyze this master only; progress title shows which master is running
+    await analyzeAndStoreSubImages(batch, label);
+  }
 
-    // Analyze every sub-image; store only those with a charm
-    await analyzeAndStoreSubImages(subImagesToAnalyze);
-
-    /* NOTE:
-       We do NOT refresh unmatchedContainer here.
-       That preview is shown ONLY after Send-and-Match finishes.  */
-  });
+  // Clear queue and update UI
+  window.__matrixQueue = [];
+  updateMatrixQueueBadge();
+  M.toast({ html: "All queued masters analyzed." });
+}
 
 /* ──────────────────────────────────────────────────────────────
    analyzeAndStoreSubImages(imgObjs)
@@ -1749,13 +1789,11 @@ function openIframePrinterForListing(cellIndex) {
    • If you process all 140 without a 4-streak, keep all.
    • Persists names only, so downstream send&match sees every tile.
 ────────────────────────────────────────────────────────────── */
-async function analyzeAndStoreSubImages(imgObjs) {
+async function analyzeAndStoreSubImages(imgObjs, title = "Analyzing Photos...") {
   if (!imgObjs || imgObjs.length === 0) return;
 
-  const MAX = 140;
-  const toRun = imgObjs.slice(0, MAX);
-
-  showProgressModal("Analyzing Photos...", toRun.length);
+  const toRun = imgObjs; // analyze exactly what was passed (per master batch)
+  showProgressModal(title, toRun.length);
 
   let done    = 0;
   let streak  = 0;
@@ -1864,12 +1902,14 @@ async function extractSubImages144(baseDataUrl) {
 
   const fullW = img.naturalWidth;
   const fullH = img.naturalHeight;
-  const cellW = fullW / 10;          // ← changed from /10
-  const cellH = fullH / 14;          // ← changed from /14
+  const COLS  = (window.MATRIX_COLS || 10);
+  const ROWS  = (window.MATRIX_ROWS || 14);
+  const cellW = fullW / COLS;
+  const cellH = fullH / ROWS;
 
   const results = [];
-  for (let r = 0; r < 14; r++) {     // ← rows: 14 tall
-    for (let c = 0; c < 10; c++) {   // ← cols: 10 wide
+  for (let r = 0; r < ROWS; r++) {
+    for (let c = 0; c < COLS; c++) {
       const canvas = document.createElement("canvas");
       canvas.width  = cellW;
       canvas.height = cellH;
@@ -1883,7 +1923,7 @@ async function extractSubImages144(baseDataUrl) {
       results.push(canvas.toDataURL("image/jpeg", 0.85));
     }
   }
-  return results;     // 140 sub-images
+  return results; // ROWS×COLS sub-images (defaults to 140)
 }
 
 // cropTo400: forcibly resize each quadrant to 400×400
