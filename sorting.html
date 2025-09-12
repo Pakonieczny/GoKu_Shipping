@@ -982,6 +982,7 @@ const configIDs = [
   "orderSearchBox",
   "filterIncompleteBtn",
   "startMatrixAnalysisBtn",
+  "matrixQueueList",
   "titleUnmatchedImages"
 ];
 
@@ -999,6 +1000,9 @@ document.addEventListener("DOMContentLoaded", function () {
     loadPositions();
     document.body.style.opacity = 1;
   }, 200);
+
+  // Initial gate check for Send & Match
+  updateSendMatchAvailability();
 
   // Connect Etsy (manual) – reuse headless starter
   document.getElementById("connectEtsyBtn").addEventListener("click", () => startOAuth("manual"));
@@ -1161,6 +1165,18 @@ function enableSendMatch() {
   const btn = document.getElementById("sendMatchBtn");
   btn.disabled = false;
   btn.style.opacity = "1";
+}
+
+/* Gatekeeper: enable only when no queue, not running, and we have a pool */
+function updateSendMatchAvailability() {
+  const queueLen = (window.__matrixQueue || []).length;
+  const running  = !!window.__matrixAnalysisRunning;
+  const hasPool  = Array.isArray(window.userImagesArray) && window.userImagesArray.length > 0;
+  if (queueLen > 0 || running || !hasPool) {
+    disableSendMatch();
+  } else {
+    enableSendMatch();
+  }
 }
 
 /********************************************************
@@ -1393,7 +1409,7 @@ function initMatchAndPrintFlow() {
   // 2) If there are no orders, bail out
   if (!uniqueOrders.length) {
     M.toast({ html: "No orders found to highlight." });
-    enableSendMatch();  // re-enable “Send & Match”
+    updateSendMatchAvailability();  // only if all masters are processed
     return;
   }
 
@@ -1524,7 +1540,7 @@ function initMatchAndPrintFlow() {
     if (currentIndex >= uniqueOrders.length) {
       M.toast({ html: "Congrats, You’re Done!" });
       removeAllHighlightsAndPrintButtons(); // remove leftover blue lines + “Print” button
-      enableSendMatch(); // re-enable “Send & Match” or do whatever you want here
+      updateSendMatchAvailability(); // respect queue/analysis status
       return;
     }
     highlightOrder(uniqueOrders[currentIndex]);
@@ -1589,7 +1605,7 @@ function openIframePrinterForListing(cellIndex) {
       cropImagesBtn:            { left:20,  top:215, width:140, height:35 },
       etsyOrderNumber:          { left:20,  top:25,  width:200, height:30 },
       imageComparisonContainer: { left:0,   top:0,   width:0,   height:0 },
-      matchPrintBtn:            { left:20,  top:315, width:210, height:35 },
+      matchPrintBtn:            { left:20,  top:352, width:210, height:35 },
       matchesModal:             { left:0,   top:0,   width:55,  height:0 },
       mpBackBtn:                { left:720, top:15,  width:100, height:35 },
       mpNextBtn:                { left:850, top:15,  width:100, height:35 },
@@ -1602,12 +1618,13 @@ function openIframePrinterForListing(cellIndex) {
       unmatchedContainer:       { left:0,   top:152, width:600, height:0 },
       userImage:                { left:0,   top:0,   width:100, height:100 },
       saveConfigBtn:            { left:10,  top:3,   width:85,  height:35 },
-      sendMatchBtn:             { left:20,  top:255, width:210, height:35 },
+      sendMatchBtn:             { left:20,  top:301, width:210, height:35 },
       prefilterPanel:           { left:1460, top:68, width:360, height:650 },
-      matrixProgressWrap:       { left:250,   top:-316, width:290,   height:50 },
+      matrixProgressWrap:       { left:250,   top:-316, width:330,   height:50 },
       orderSearchBox :          { left: 1053, top: 15, width: 260, height: 35 },
       filterIncompleteBtn:      { left: 1328, top: 15, width: 120, height: 35 },
-      startMatrixAnalysisBtn:   { left:20,  top:215, width:210, height:35 },
+      startMatrixAnalysisBtn:   { left:0,  top:-86, width:210, height:35 },
+      matrixQueueList:          { left:0,  top:-46, width:330, height:20 },
       testOpenAIBtn:            { left:20,  top:65,  width:140, height:35 }
     };
 
@@ -1743,13 +1760,21 @@ function openIframePrinterForListing(cellIndex) {
     }
     const startBtn = document.getElementById("startMatrixAnalysisBtn");
     if (startBtn) startBtn.disabled = q.length === 0;
+    // Re-evaluate availability (queue presence => disabled)
+    updateSendMatchAvailability();
   }
 
 
 async function startMatrixAnalysis() {
+  window.__matrixAnalysisRunning = true;
+  updateSendMatchAvailability();
+  const startBtn = document.getElementById("startMatrixAnalysisBtn");
+  if (startBtn) startBtn.disabled = true;
   const queue = (window.__matrixQueue || []);
   if (!queue.length) {
     M.toast({ html: "Nothing to analyze — queue is empty." });
+    window.__matrixAnalysisRunning = false;
+    updateSendMatchAvailability();
     return;
   }
 
@@ -1777,6 +1802,8 @@ async function startMatrixAnalysis() {
   window.__matrixQueue = [];
   updateMatrixQueueBadge();
   M.toast({ html: "All queued masters analyzed." });
+  window.__matrixAnalysisRunning = false;
+  updateSendMatchAvailability();
 }
 
 /* ──────────────────────────────────────────────────────────────
@@ -1872,6 +1899,10 @@ async function analyzeAndStoreSubImages(imgObjs, title = "Analyzing Photos...") 
   } catch (err) {
     console.warn("localStorage quota exceeded:", err.message);
   }
+
+  // Persist the growing pool and re-evaluate the gate
+  try { localStorage.setItem("userImagesArray", JSON.stringify(window.userImagesArray || userImagesArray || [])); } catch(_){}
+  updateSendMatchAvailability();
 
   enableSendMatch();
   M.toast({ html: `Analysis complete – processed ${done} photos, saved ${saved}.` });
