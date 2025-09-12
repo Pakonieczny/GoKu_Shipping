@@ -3699,6 +3699,25 @@ function openMatchPreviewModal(cellIndex) {
   parkSaveBtn();
   const modalElem = document.getElementById("matchesModal");
   const container = document.getElementById("matchesGridContainer");
+  // NEW: resolve the order item for this cell and guard against missing
+  const item =
+    (Array.isArray(window.cachedOrderItems) && window.cachedOrderItems[cellIndex])
+      ? window.cachedOrderItems[cellIndex]
+      : {};
+  if (!Object.keys(item).length) {
+    console.warn("openMatchPreviewModal: no cachedOrderItems at index", cellIndex);
+    const notes = document.getElementById("customerNotes");
+    if (notes) notes.value = "";
+    // Optional: uncomment to stop building the modal when item is missing
+    // return;
+  }
+
+  // Populate the read-only Customer Notes field (safe fallbacks)
+  const notesInput = document.getElementById("customerNotes");
+  if (notesInput) {
+    const note = item.customerNotes || item.personalization || item.note || "";
+    notesInput.value = String(note || "");
+  }
 
   /* ——— clear previous unmatched wrapper so header doesn’t duplicate ——— */
   const oldWrapper = container.querySelector("#unmatchedWrapper");
