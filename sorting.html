@@ -3922,6 +3922,41 @@ function openMatchPreviewModal(cellIndex) {
    metalRow.style.height   = "16px";
    etsyWrapper.appendChild(metalRow);
 
+   // ▼▼ NEW: show both Etsy variations under the Metal row ▼▼
+  (() => {
+    const item = (window.cachedOrderItems && window.cachedOrderItems[cellIndex]) || {};
+    if (!item || !Array.isArray(item.variations)) return;
+
+    // Normalize and collect up to two variations (skip "Metal"/colour to avoid duplication)
+    const out = [];
+    const seen = new Set();
+
+    for (const v of item.variations) {
+      const nameRaw = String(v.formatted_name || v.name || v.property_name || "").trim();
+      const valRaw  = String(v.formatted_value || v.value || "").trim();
+      if (!nameRaw || !valRaw) continue;
+
+      const lname = nameRaw.toLowerCase();
+      const looksMetal = lname.includes("metal") || lname.startsWith("color") || lname.startsWith("colour");
+      if (looksMetal) continue; // Metal is already shown above
+
+      const key = `${lname}|${valRaw.toLowerCase()}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+
+      out.push({ name: nameRaw, value: valRaw });
+      if (out.length === 2) break; // show at most two
+    }
+
+    // Render each variation as "Name: Value"
+    out.forEach(({ name, value }) => {
+      const row = makeDetail(`${name}: ${value}`);
+      row.style.fontSize = "0.9em";
+      row.style.height   = "16px";
+      etsyWrapper.appendChild(row);
+    });
+  })();
+
   // -----------------------------------------------------------------------
   // B) Matched Photo (shifted 75px right)   ← UPDATED BLOCK
   // -----------------------------------------------------------------------
