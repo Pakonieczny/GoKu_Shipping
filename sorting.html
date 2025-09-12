@@ -1809,8 +1809,11 @@ async function startMatrixAnalysis() {
     for (let q = 0; q < tiles.length; q++) {
       const cropped   = await cropTo512(tiles[q]);
       const corrected = await reduceRedTone(cropped, 0.85);
-      batch.push({ origName: `${stripExtension(master.name)}_Q${q}`, data: corrected });
-    }
+      batch.push({
+       origName: `${stripExtension(master.name)}_Q${q}`,
+       data: corrected,
+       master: master.name
+    });    }
 
     // Analyze this master only; progress title shows which master is running
     await analyzeAndStoreSubImages(batch, label);
@@ -1856,7 +1859,13 @@ async function analyzeAndStoreSubImages(imgObjs, title = "Analyzing Photos...") 
       : `${origName}.jpg`;
 
     // Save the image immediately
-    userImagesArray.push({ name: finalName, data, analyzed: true });
+     userImagesArray.push({
+     name: finalName,
+     data,
+     analyzed: true,
+     origName,                 // ← unique per tile across masters
+     master: toRun[i].master || ""
+  });
     saved++;
 
     // 1b) Persist the 2-word descriptor mapped to this image base name
@@ -3178,11 +3187,12 @@ async function sendAndMatch() {
   let smTotal = 0;
   showProgressModal("Matching Images... (First Pass)", 1);
 
- // Deduplicate userImagesArray by file name to prevent double-sending
+  // Deduplicate by origName (unique per tile across masters).
+  // If origName missing (older entries), fall back to name.
   if (Array.isArray(userImagesArray) && userImagesArray.length) {
     const seen = new Set();
     userImagesArray = userImagesArray.filter(u => {
-      const key = String((u && u.name) || "");
+      const key = String((u && (u.origName || u.name)) || "");
       if (!key || seen.has(key)) return false;
       seen.add(key);
       return true;
