@@ -553,6 +553,7 @@ async function apiFetch(path, init = {}){
 
 let croppedImagesArray = [];
 let userImagesArray = [];
+window.userImagesArray = userImagesArray;
 let cellMatches = {};
 let partialMatches = {};
 let matchPrintFlowInProgress = false;
@@ -1165,7 +1166,9 @@ function enableSendMatch() {
   // Only enable if gate allows it
   const queueLen = (window.__matrixQueue || []).length;
   const running  = !!window.__matrixAnalysisRunning;
-  const hasPool  = Array.isArray(window.userImagesArray) && window.userImagesArray.length > 0;
+  const poolArr = Array.isArray(window.userImagesArray) ? window.userImagesArray
+                 : (Array.isArray(userImagesArray) ? userImagesArray : []);
+  const hasPool  = poolArr.length > 0;
 
   const btn = document.getElementById("sendMatchBtn");
   if (!btn) return;
@@ -1184,7 +1187,9 @@ function enableSendMatch() {
 function updateSendMatchAvailability() {
   const queueLen = (window.__matrixQueue || []).length;
   const running  = !!window.__matrixAnalysisRunning;
-  const hasPool  = Array.isArray(window.userImagesArray) && window.userImagesArray.length > 0;
+  const poolArr = Array.isArray(window.userImagesArray) ? window.userImagesArray
+                 : (Array.isArray(userImagesArray) ? userImagesArray : []);
+  const hasPool  = poolArr.length > 0;
   if (queueLen > 0 || running || !hasPool) {
     disableSendMatch();
   } else {
@@ -1914,8 +1919,9 @@ async function analyzeAndStoreSubImages(imgObjs, title = "Analyzing Photos...") 
     console.warn("localStorage quota exceeded:", err.message);
   }
 
-  // Persist the growing pool and re-evaluate the gate
-  try { localStorage.setItem("userImagesArray", JSON.stringify(window.userImagesArray || userImagesArray || [])); } catch(_){}
+  // 6) After analysis completes: refresh alias + persist full pool + re-gate
+  window.userImagesArray = userImagesArray;
+  try { localStorage.setItem("userImagesArray", JSON.stringify(userImagesArray)); } catch(_){}
   updateSendMatchAvailability();
 
   enableSendMatch();
