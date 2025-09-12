@@ -2076,20 +2076,18 @@ async function openAIAnalyzePhoto(base64Image) {
   const ctrlLabel = new AbortController();
   pendingFetchControllers.push(ctrlLabel);
   const labelPrompt =
-    `Classify metal using these STRICT numeric rules (ignore descriptive words unless numeric gates pass):\n` +
-    `• SILVER: S ≤ 13% AND −3 ≤ a* ≤ +4 AND −3 ≤ b* ≤ +8.\n` +
-    `• ROSEGOLD (needs real red chroma): 16° ≤ H ≤ 31° AND S ≥ 32% AND a* ≥ 10 AND b* ≥ 13 AND (a*/b*) ≥ 0.45.\n` +
-    `• GOLD GUARD (favor Gold over Rose): ((H ≥ 34° AND S ≥ 14% AND b* ≥ 15 AND a* ≤ 12) OR (b* − 0.6·a* ≥ 15) OR (b* ≥ 22 AND a* ≤ 9)).\n` +
-    `• If SILVER true → Silver.\n` +
-    `• Else if ROSEGOLD true AND GOLD GUARD false → RoseGold.\n` +
-    `• Else if GOLD GUARD true → Gold.\n` +
-    `• Else if 29° ≤ H ≤ 34° (ambiguous band), prefer Gold.\n` +
+    `You are classifying metal color from numeric medians. APPLY THESE CUT LINES STRICTLY:\n` +
+    `• HSV rule (primary): RoseGold if 15° ≤ median H ≤ 30° AND S ≥ 31%.\n` +
+    `• CIELAB rule (cross-check): RoseGold if a* ≥ 8.5 AND b* ≥ 14.\n` +
+    `• Gold rule (fallback): Gold if (median H ≥ 36° AND S ≥ 18%) OR (b* ≥ 15).\n` +
+    `• Silver: If S ≤ 13% AND a* between −3 and +4 AND b* between −3 and +8.\n` +
+    `• Voting: each satisfied rule is one vote. If both rules agree, use that label.\n` +
+    `• Tie-breaking: if Gold vs Silver tie, choose Silver. If RoseGold vs Gold tie, choose Gold unless a* ≥ 8 OR hue contains "rose".\n` +
     `• Only return exactly one word: Gold, RoseGold, or Silver.\n\n` +
     `INPUT\n` +
     `hue="${hueText}"\n` +
     `medianHSV: H=${hsvH} S=${hsvS} V=${hsvV}\n` +
-    `medianLab: L=${labL} a=${labA} b*=${labB}\n` +
-    `Note: Do NOT pick RoseGold solely because hue contains "rose" unless numeric ROSEGOLD rule passes.`;
+    `medianLab: L=${labL} a=${labA} b=${labB}`;
   const labelPayload = {
     model: "gpt-5",
     messages: [{ role: "user", content: labelPrompt }],
