@@ -296,8 +296,6 @@
   <!-- Image Comparison UI -->
   <div id="imageComparisonContainer">
     <div id="photoDragDrop">Drag & Drop</div>
-    <button id="startMatrixAnalysisBtn" class="btn waves-effect waves-light">Start Matrix Analysis</button>
-    <div id="matrixQueueList" style="margin-top:6px; font-size:0.9em; color:#555;"></div>
     <!-- Inline progress: sits directly below the Drag & Drop box -->
     <div id="matrixProgressWrap" style="display:none; margin-top:8px;">
       <div id="matrixProgressTitle" style="font-size:1.06em; font-weight:bold; margin-bottom:4px;">Analyzing…</div>
@@ -981,8 +979,6 @@ const configIDs = [
   "prefilterPanel",
   "orderSearchBox",
   "filterIncompleteBtn",
-  "startMatrixAnalysisBtn",
-  "matrixQueueList",
   "titleUnmatchedImages"
 ];
 
@@ -1000,9 +996,6 @@ document.addEventListener("DOMContentLoaded", function () {
     loadPositions();
     document.body.style.opacity = 1;
   }, 200);
-
-  // Initial gate check for Send & Match
-  updateSendMatchAvailability();
 
   // Connect Etsy (manual) – reuse headless starter
   document.getElementById("connectEtsyBtn").addEventListener("click", () => startOAuth("manual"));
@@ -1044,14 +1037,6 @@ etsyOrderInput.addEventListener("keydown", async function (e) {
       .filter((x) => x);
 
     await loadBatchEtsyOrders(orderNumbers);
-  }
-
-  // Start Matrix Analysis (process queued masters sequentially)
-  const startBtn = document.getElementById("startMatrixAnalysisBtn");
-  if (startBtn) {
-    startBtn.addEventListener("click", startMatrixAnalysis);
-    // disabled until something is queued
-    startBtn.disabled = !(window.__matrixQueue || []).length;
   }
 });
 
@@ -1165,18 +1150,6 @@ function enableSendMatch() {
   const btn = document.getElementById("sendMatchBtn");
   btn.disabled = false;
   btn.style.opacity = "1";
-}
-
-/* Gatekeeper: enable only when no queue, not running, and we have a pool */
-function updateSendMatchAvailability() {
-  const queueLen = (window.__matrixQueue || []).length;
-  const running  = !!window.__matrixAnalysisRunning;
-  const hasPool  = Array.isArray(window.userImagesArray) && window.userImagesArray.length > 0;
-  if (queueLen > 0 || running || !hasPool) {
-    disableSendMatch();
-  } else {
-    enableSendMatch();
-  }
 }
 
 /********************************************************
@@ -1409,7 +1382,7 @@ function initMatchAndPrintFlow() {
   // 2) If there are no orders, bail out
   if (!uniqueOrders.length) {
     M.toast({ html: "No orders found to highlight." });
-    updateSendMatchAvailability();  // only if all masters are processed
+    enableSendMatch();  // re-enable “Send & Match”
     return;
   }
 
@@ -1540,7 +1513,7 @@ function initMatchAndPrintFlow() {
     if (currentIndex >= uniqueOrders.length) {
       M.toast({ html: "Congrats, You’re Done!" });
       removeAllHighlightsAndPrintButtons(); // remove leftover blue lines + “Print” button
-      updateSendMatchAvailability(); // respect queue/analysis status
+      enableSendMatch(); // re-enable “Send & Match” or do whatever you want here
       return;
     }
     highlightOrder(uniqueOrders[currentIndex]);
@@ -1605,7 +1578,7 @@ function openIframePrinterForListing(cellIndex) {
       cropImagesBtn:            { left:20,  top:215, width:140, height:35 },
       etsyOrderNumber:          { left:20,  top:25,  width:200, height:30 },
       imageComparisonContainer: { left:0,   top:0,   width:0,   height:0 },
-      matchPrintBtn:            { left:20,  top:352, width:210, height:35 },
+      matchPrintBtn:            { left:20,  top:315, width:210, height:35 },
       matchesModal:             { left:0,   top:0,   width:55,  height:0 },
       mpBackBtn:                { left:720, top:15,  width:100, height:35 },
       mpNextBtn:                { left:850, top:15,  width:100, height:35 },
@@ -1618,13 +1591,11 @@ function openIframePrinterForListing(cellIndex) {
       unmatchedContainer:       { left:0,   top:152, width:600, height:0 },
       userImage:                { left:0,   top:0,   width:100, height:100 },
       saveConfigBtn:            { left:10,  top:3,   width:85,  height:35 },
-      sendMatchBtn:             { left:20,  top:301, width:210, height:35 },
+      sendMatchBtn:             { left:20,  top:255, width:210, height:35 },
       prefilterPanel:           { left:1460, top:68, width:360, height:650 },
-      matrixProgressWrap:       { left:250,   top:-316, width:330,   height:50 },
+      matrixProgressWrap:       { left:250,   top:-316, width:290,   height:50 },
       orderSearchBox :          { left: 1053, top: 15, width: 260, height: 35 },
       filterIncompleteBtn:      { left: 1328, top: 15, width: 120, height: 35 },
-      startMatrixAnalysisBtn:   { left:0,  top:-86, width:210, height:35 },
-      matrixQueueList:          { left:0,  top:-46, width:290, height:20 },
       testOpenAIBtn:            { left:20,  top:65,  width:140, height:35 }
     };
 
@@ -1732,79 +1703,41 @@ function openIframePrinterForListing(cellIndex) {
     const files = e.dataTransfer.files;
     if (!files || files.length === 0) return;
 
-   // === NEW: Queue masters for later analysis ===
-    window.__matrixQueue = window.__matrixQueue || [];
+    /* Collect every 400×400 quadrant here for one-time AI analysis */
+    const subImagesToAnalyze = [];
+
     for (let i = 0; i < files.length; i++) {
       const file = files[i];
-      const dataUrl = await readAsDataURL(file);
-      // store for later tiling + analysis
-      window.__matrixQueue.push({ name: file.name, dataUrl });
-      M.toast({ html: `Queued master: ${file.name}` });
+
+      // Convert the dropped file to a DataURL
+      const fileDataUrl = await readAsDataURL(file);
+
+      // Slice into 10×14 = 140 tiles
+      const subImages = await extractSubImages144(fileDataUrl);
+
+      for (let q = 0; q < subImages.length; q++) {
+         const cropped   = await cropTo512(subImages[q]);
+         const corrected = await reduceRedTone(cropped, 0.85);   // NEW
+ 
+         // Push to temporary array; NOT yet stored in userImagesArray
+        subImagesToAnalyze.push({ origName: file.name + "_Q" + q, data: cropped });
+              }
+
+      M.toast({
+        html: `File ${file.name}: Extracted 140 individual images`
+      });
     }
-    updateMatrixQueueBadge();
 
-    // Don’t analyze here—user will click “Start Matrix Analysis”
+    localStorage.removeItem("userImagesArray");
+    userImagesArray = [];
 
+    // Analyze every sub-image; store only those with a charm
+    await analyzeAndStoreSubImages(subImagesToAnalyze);
+
+    /* NOTE:
+       We do NOT refresh unmatchedContainer here.
+       That preview is shown ONLY after Send-and-Match finishes.  */
   });
-
-  // Small readout under the button: “N master(s) queued)”
-  function updateMatrixQueueBadge() {
-    const el = document.getElementById("matrixQueueList");
-    const q  = (window.__matrixQueue || []);
-    if (!el) return;
-    if (!q.length) {
-      el.textContent = "No masters queued.";
-    } else {
-    el.textContent = `${q.length} master(s) queued`;
-    
-    }
-    const startBtn = document.getElementById("startMatrixAnalysisBtn");
-    if (startBtn) startBtn.disabled = q.length === 0;
-    // Re-evaluate availability (queue presence => disabled)
-    updateSendMatchAvailability();
-  }
-
-
-async function startMatrixAnalysis() {
-  window.__matrixAnalysisRunning = true;
-  updateSendMatchAvailability();
-  const startBtn = document.getElementById("startMatrixAnalysisBtn");
-  if (startBtn) startBtn.disabled = true;
-  const queue = (window.__matrixQueue || []);
-  if (!queue.length) {
-    M.toast({ html: "Nothing to analyze — queue is empty." });
-    window.__matrixAnalysisRunning = false;
-    updateSendMatchAvailability();
-    return;
-  }
-
-  // Process each master independently so streaks/progress reset per master
-  for (let i = 0; i < queue.length; i++) {
-    const master = queue[i];
-    const label  = `Analyzing Matrix Images (${i+1}/${queue.length})`;
-
-    // Tile the current master (configurable rows/cols inside extract)
-    const tiles = await extractSubImages144(master.dataUrl);
-
-    // Prepare exactly one batch (per master) of 140-ish tiles
-    const batch = [];
-    for (let q = 0; q < tiles.length; q++) {
-      const cropped   = await cropTo512(tiles[q]);
-      const corrected = await reduceRedTone(cropped, 0.85);
-      batch.push({ origName: `${stripExtension(master.name)}_Q${q}`, data: corrected });
-    }
-
-    // Analyze this master only; progress title shows which master is running
-    await analyzeAndStoreSubImages(batch, label);
-  }
-
-  // Clear queue and update UI
-  window.__matrixQueue = [];
-  updateMatrixQueueBadge();
-  M.toast({ html: "All queued masters analyzed." });
-  window.__matrixAnalysisRunning = false;
-  updateSendMatchAvailability();
-}
 
 /* ──────────────────────────────────────────────────────────────
    analyzeAndStoreSubImages(imgObjs)
@@ -1816,11 +1749,13 @@ async function startMatrixAnalysis() {
    • If you process all 140 without a 4-streak, keep all.
    • Persists names only, so downstream send&match sees every tile.
 ────────────────────────────────────────────────────────────── */
-async function analyzeAndStoreSubImages(imgObjs, title = "Analyzing Photos...") {
+async function analyzeAndStoreSubImages(imgObjs) {
   if (!imgObjs || imgObjs.length === 0) return;
 
-  const toRun = imgObjs; // analyze exactly what was passed (per master batch)
-  showProgressModal(title, toRun.length);
+  const MAX = 140;
+  const toRun = imgObjs.slice(0, MAX);
+
+  showProgressModal("Analyzing Photos...", toRun.length);
 
   let done    = 0;
   let streak  = 0;
@@ -1900,10 +1835,6 @@ async function analyzeAndStoreSubImages(imgObjs, title = "Analyzing Photos...") 
     console.warn("localStorage quota exceeded:", err.message);
   }
 
-  // Persist the growing pool and re-evaluate the gate
-  try { localStorage.setItem("userImagesArray", JSON.stringify(window.userImagesArray || userImagesArray || [])); } catch(_){}
-  updateSendMatchAvailability();
-
   enableSendMatch();
   M.toast({ html: `Analysis complete – processed ${done} photos, saved ${saved}.` });
 }
@@ -1933,14 +1864,12 @@ async function extractSubImages144(baseDataUrl) {
 
   const fullW = img.naturalWidth;
   const fullH = img.naturalHeight;
-  const COLS  = (window.MATRIX_COLS || 10);
-  const ROWS  = (window.MATRIX_ROWS || 14);
-  const cellW = fullW / COLS;
-  const cellH = fullH / ROWS;
+  const cellW = fullW / 10;          // ← changed from /10
+  const cellH = fullH / 14;          // ← changed from /14
 
   const results = [];
-  for (let r = 0; r < ROWS; r++) {
-    for (let c = 0; c < COLS; c++) {
+  for (let r = 0; r < 14; r++) {     // ← rows: 14 tall
+    for (let c = 0; c < 10; c++) {   // ← cols: 10 wide
       const canvas = document.createElement("canvas");
       canvas.width  = cellW;
       canvas.height = cellH;
@@ -1954,7 +1883,7 @@ async function extractSubImages144(baseDataUrl) {
       results.push(canvas.toDataURL("image/jpeg", 0.85));
     }
   }
-  return results; // ROWS×COLS sub-images (defaults to 140)
+  return results;     // 140 sub-images
 }
 
 // cropTo400: forcibly resize each quadrant to 400×400
