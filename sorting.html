@@ -3846,13 +3846,17 @@ function openMatchPreviewModal(cellIndex) {
   // helper: create a 55×7 read‑only row that sits in normal flow
   function makeDetail(txt, isBold = false) {
     const row = document.createElement("div");
-    row.textContent   = txt;
-    row.style.width   = "100px";
-    row.style.height  = "12px";
+    row.textContent = txt;
+    row.style.width = "160px";            // ← was 100px
+    row.style.minHeight = "12px";         // ← use min-height, not fixed height
+    row.style.lineHeight = "1.2em";
     row.style.fontSize = "0.6em";
-    row.style.marginTop = "0px";          // 0px between rows
+    row.style.marginTop = "0px";
     row.style.fontWeight = isBold ? "700" : "400";
-    row.style.overflow = "hidden";        // keeps long text inside 100px
+    row.style.whiteSpace = "normal";      // ← allow wrapping
+    row.style.wordBreak = "break-word";   // ← wrap long values
+    row.style.overflow = "hidden";
+    row.style.textOverflow = "ellipsis";
     return row;
   }
 
@@ -3932,19 +3936,22 @@ function openMatchPreviewModal(cellIndex) {
   etsyBox.style.marginBottom = "0.5px";   // 0.5px space under the image
   container.appendChild(etsyWrapper);
    const orderRow = makeDetail(orderVal);           // Order number
-   orderRow.style.fontSize = "0.9em";               // was 0.6em
-   orderRow.style.height   = "16px";                // avoid clipping
-   etsyWrapper.appendChild(orderRow);
+    row.style.fontSize = "0.9em";
+    row.style.height   = "auto";        // ← let it wrap to 2 lines if needed
+    row.style.lineHeight = "1.2em";
+    etsyWrapper.appendChild(row);
    etsyBox.style.marginBottom = "0.5px";   // 0.5px space under the image
    const isQtyMulti = (window.cachedOrderItems[cellIndex]?.quantity ?? window.cachedOrderItems[cellIndex]?.qty ?? 1) > 1;
    const qtyRow = makeDetail(qtyVal, isQtyMulti);           // Qty
-   qtyRow.style.fontSize = "0.9em";   // match order number size
-   qtyRow.style.height   = "16px";    // avoid clipping
-   etsyWrapper.appendChild(qtyRow);
+    row.style.fontSize = "0.9em";
+    row.style.height   = "auto";        // ← let it wrap to 2 lines if needed
+    row.style.lineHeight = "1.2em";
+    etsyWrapper.appendChild(row);
    const metalRow = makeDetail(metalVal, true);          // Metal
-   metalRow.style.fontSize = "0.9em";    // match order number size
-   metalRow.style.height   = "16px";
-   etsyWrapper.appendChild(metalRow);
+    row.style.fontSize = "0.9em";
+    row.style.height   = "auto";        // ← let it wrap to 2 lines if needed
+    row.style.lineHeight = "1.2em";
+    etsyWrapper.appendChild(row);
 
   // ▼▼ Variations: buyer selections (assembly-1 parity) ▼▼
   (() => {
@@ -3961,9 +3968,10 @@ function openMatchPreviewModal(cellIndex) {
     // print helper
     const emitRow = (label, value, bold=false) => {
       const row = makeDetail(`${label}: ${value}`, bold);
-      row.style.fontSize = "0.9em";
-      row.style.height   = "16px";
-      etsyWrapper.appendChild(row);
+    row.style.fontSize = "0.9em";
+    row.style.height   = "auto";        // ← let it wrap to 2 lines if needed
+    row.style.lineHeight = "1.2em";
+    etsyWrapper.appendChild(row);
     };
 
     // normalize “Not requested…” etc.
