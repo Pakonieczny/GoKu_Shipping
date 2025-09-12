@@ -753,6 +753,11 @@ function escapeHtml(s){
   return String(s).replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
 }
 
+// Match assembly-1: unescape &quot; → "
+function deQuote(s){
+  return (s == null ? "" : String(s)).replace(/&quot;/g, '"');
+}
+
 /**
  * normalizeTitleForPrefilter(title)
  * - lowercase
@@ -3941,98 +3946,129 @@ function openMatchPreviewModal(cellIndex) {
    metalRow.style.height   = "16px";
    etsyWrapper.appendChild(metalRow);
 
-  // ▼▼ Variations: robust buyer-selections extraction ▼▼
+  // ▼▼ Variations: buyer selections (assembly-1 parity) ▼▼
   (() => {
-    // Return up to two non-metal variation pairs as [{name, value}, …]
-    function collectChosenVariations(item) {
-      const out = [];
-      const seen = new Set();
+    const acceptedMetalNames = [
+      "metal","metal choice","metal - engraving","metal colour","color",
+      "metal choice / engraving option","number of discs / metal","number of discs/metal",
+      "metal/necklace length","metal/necklace length/engrave"
+    ];
+    const acceptedLengthNames = [
+      "length","necklace length","metal/necklace length",
+      "metal choice / necklace length","necklace length in inches"
+    ];
 
-      const pushPair = (rawName, rawVal) => {
-        const name  = String(rawName || "").trim();
-        const value = String(rawVal  || "").trim();
-        if (!name || !value) return;
-        const lname = name.toLowerCase();
-        const looksMetal = lname.includes("metal") || lname.startsWith("color") || lname.startsWith("colour");
-        if (looksMetal) return; // Metal already shown above
-        const key = `${lname}|${value.toLowerCase()}`;
-        if (seen.has(key)) return;
-        seen.add(key);
-        out.push({ name, value });
-      };
-
-      // Extract text from lots of possible shapes
-      const extract = (v) => {
-        if (v == null) return "";
-        if (Array.isArray(v)) return v.map(extract).filter(Boolean).join(", ");
-        if (typeof v === "object") {
-          // common fields or nested holders
-          return (
-            extract(v.formatted_value) ||
-            extract(v.value) ||
-            extract(v.display_value) ||
-            extract(v.name) ||
-            extract(v.label) ||
-            extract(v.option) ||
-            extract(v.choice) ||
-            (Array.isArray(v.values) ? extract(v.values) : "")
-          );
-        }
-        return String(v);
-      };
-
-      const tryArray = (arr, getName, getVal) => {
-        if (!Array.isArray(arr)) return;
-        for (const v of arr) {
-          const n = extract(getName(v));
-          const val = extract(getVal(v));
-          pushPair(n, val);
-          if (out.length >= 2) break;
-        }
-      };
-
-      // 1) Preferred: transaction-level variations
-      tryArray(item?.variations,
-        v => v.formatted_name ?? v.name ?? v.property_name ?? v.property ?? v.title,
-        v => v.formatted_value ?? v.value ?? v.display_value ?? v.values ?? v.selected_value ?? v.selected
-      );
-
-      // 2) Alternate: sometimes Etsy surfaces selections here
-      if (out.length < 2) {
-        tryArray(item?.selected_variations,
-          v => v.formatted_name ?? v.name ?? v.property_name,
-          v => v.formatted_value ?? v.value ?? v.display_value ?? v.values
-        );
-      }
-
-      // 3) Fallback: product_data.property_values
-      if (out.length < 2) {
-        tryArray(item?.product_data?.property_values,
-          pv => pv.property_name ?? pv.formatted_name,
-          pv => pv.values ?? pv.formatted_value ?? pv.value ?? pv.display_value
-        );
-      }
-
-      return out.slice(0, 2);
-    }
-
-    // `item` is the current Etsy order item for this cell
-    const pairs = collectChosenVariations(item);
-
-    // Render rows like "Length: 18 in"
-    if (pairs.length) {
-      for (const { name, value } of pairs) {
-        const row = makeDetail(`${name}: ${value}`, true);
-        row.style.fontSize = "0.9em";
-        row.style.height   = "16px";
-        etsyWrapper.appendChild(row);
-      }
-    } else {
-      // Clean placeholder until variations arrive from API
-      const row = makeDetail("Variations: —", false);
+    // print helper
+    const emitRow = (label, value, bold=false) => {
+      const row = makeDetail(`${label}: ${value}`, bold);
       row.style.fontSize = "0.9em";
       row.style.height   = "16px";
       etsyWrapper.appendChild(row);
+    };
+
+    // normalize “Not requested…” etc.
+    const fixPersonalizationVal = (v) => {
+      const t = String(v || "").trim();
+      return (t.toLowerCase() === "not requested on this item.") ? "Not Requested" : t;
+    };
+
+    // canonicalize common necklace length encodings (same spirit as assembly-1)
+    const normalizeLength = (v) => {
+      const m = {
+        '14&quot;':"14 Inches",'16&quot;':"16 Inches",'18&quot;':"18 Inches",'20&quot;':"20 Inches",
+        '14""':"14 Inches",'16""':"16 Inches",'18""':"18 Inches",'20""':"20 Inches"
+      };
+      const raw = deQuote(v);
+      return m[raw] || raw;
+    };
+
+    // collect from several possible places, then de-dupe
+    const pairs = [];
+    const seen  = new Set();
+    const push = (name, value) => {
+      const n = String(name||"").trim();
+      const v = String(value||"").trim();
+      if (!n || !v) return;
+      const key = `${n.toLowerCase()}|${v.toLowerCase()}`;
+      if (seen.has(key)) return;
+      seen.add(key);
+      pairs.push({name:n, value:v});
+    };
+
+    const src = item || {};
+    // 1) Preferred: transaction-level variations
+    if (Array.isArray(src.variations)) {
+      for (const v of src.variations) {
+        const name  = (v.formatted_name || v.name || "").trim();
+        let   value = (v.formatted_value || v.value || "").trim();
+
+        if (!name && !value) continue;
+
+        const lname = name.toLowerCase();
+
+        // Skip Metal (you already render “Metal:” above)
+        if (acceptedMetalNames.includes(lname) || lname.includes("metal") || lname.startsWith("color") || lname.startsWith("colour")) {
+          continue;
+        }
+
+        // Personalization normalization
+        if (lname === "personalization") {
+          value = fixPersonalizationVal(value);
+        }
+
+        // Length mapping
+        if (acceptedLengthNames.includes(lname)) {
+          value = normalizeLength(value);
+        }
+
+        push(name, value);
+        if (pairs.length >= 2) break;
+      }
+    }
+
+    // 2) Fallback: selected_variations
+    if (pairs.length < 2 && Array.isArray(src.selected_variations)) {
+      for (const v of src.selected_variations) {
+        const name  = (v.formatted_name || v.name || v.property_name || "").trim();
+        let   value = (v.formatted_value || v.value || v.display_value || "").trim();
+        if (!name && !value) continue;
+        const lname = name.toLowerCase();
+        if (acceptedMetalNames.includes(lname) || lname.includes("metal")) continue;
+        if (lname === "personalization") value = fixPersonalizationVal(value);
+        if (acceptedLengthNames.includes(lname)) value = normalizeLength(value);
+        push(name, value);
+        if (pairs.length >= 2) break;
+      }
+    }
+
+    // 3) Fallback: product_data.property_values (Etsy sometimes nests here)
+    const pvs = src?.product_data?.property_values;
+    if (pairs.length < 2 && Array.isArray(pvs)) {
+      for (const pv of pvs) {
+        const name  = (pv.property_name || pv.name || "").trim();
+        let   value = Array.isArray(pv.values) ? pv.values.join(", ") : String(pv.value || pv.display_value || "");
+        if (!name && !value) continue;
+        const lname = name.toLowerCase();
+        if (acceptedMetalNames.includes(lname) || lname.includes("metal") || lname.startsWith("color") || lname.startsWith("colour")) continue;
+        if (lname === "personalization") value = fixPersonalizationVal(value);
+        if (acceptedLengthNames.includes(lname)) value = normalizeLength(value);
+        push(name, value);
+        if (pairs.length >= 2) break;
+      }
+    }
+
+    // 4) Last-chance: surface personalization text if present on the item
+    if (pairs.length < 2) {
+      const p = fixPersonalizationVal(src.personalization || src.buyer_personalization || "");
+      if (p) push("Personalization", p);
+    }
+
+    if (pairs.length) {
+      for (const {name,value} of pairs) {
+        emitRow(name, value, true);
+      }
+    } else {
+      emitRow("Variations", "—", false);
     }
   })();
 
