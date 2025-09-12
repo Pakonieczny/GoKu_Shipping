@@ -1624,7 +1624,7 @@ function openIframePrinterForListing(cellIndex) {
       orderSearchBox :          { left: 1053, top: 15, width: 260, height: 35 },
       filterIncompleteBtn:      { left: 1328, top: 15, width: 120, height: 35 },
       startMatrixAnalysisBtn:   { left:0,  top:-86, width:210, height:35 },
-      matrixQueueList:          { left:0,  top:-46, width:330, height:20 },
+      matrixQueueList:          { left:0,  top:-46, width:290, height:20 },
       testOpenAIBtn:            { left:20,  top:65,  width:140, height:35 }
     };
 
@@ -1755,8 +1755,8 @@ function openIframePrinterForListing(cellIndex) {
     if (!q.length) {
       el.textContent = "No masters queued.";
     } else {
-      const names = q.map(x => x.name).join(", ");
-      el.textContent = `${q.length} master(s) queued: ${names}`;
+    el.textContent = `${q.length} master(s) queued`;
+    
     }
     const startBtn = document.getElementById("startMatrixAnalysisBtn");
     if (startBtn) startBtn.disabled = q.length === 0;
@@ -1781,7 +1781,7 @@ async function startMatrixAnalysis() {
   // Process each master independently so streaks/progress reset per master
   for (let i = 0; i < queue.length; i++) {
     const master = queue[i];
-    const label  = `Analyzing ${master.name} (${i+1}/${queue.length})`;
+    const label  = `Analyzing Matrix Images (${i+1}/${queue.length})`;
 
     // Tile the current master (configurable rows/cols inside extract)
     const tiles = await extractSubImages144(master.dataUrl);
