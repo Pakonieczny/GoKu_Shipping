@@ -4020,8 +4020,16 @@ function openMatchPreviewModal(cellIndex) {
     const pairs = collectChosenVariations(item);
 
     // Render rows like "Length: 18 in"
-    for (const { name, value } of pairs) {
-      const row = makeDetail(`${name}: ${value}`, true);
+    if (pairs.length) {
+      for (const { name, value } of pairs) {
+        const row = makeDetail(`${name}: ${value}`, true);
+        row.style.fontSize = "0.9em";
+        row.style.height   = "16px";
+        etsyWrapper.appendChild(row);
+      }
+    } else {
+      // Clean placeholder until variations arrive from API
+      const row = makeDetail("Variations: —", false);
       row.style.fontSize = "0.9em";
       row.style.height   = "16px";
       etsyWrapper.appendChild(row);

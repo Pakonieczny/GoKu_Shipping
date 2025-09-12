@@ -140,13 +140,18 @@ exports.handler = async (event) => {
         // Recipient (top level)
         name          : to.name ?? client.name ?? "",
         address_1     : to.address_1 ?? client.address_1 ?? "",
-        address_2     : to.address_2 ?? client.address_2 ?? undefined,
+        address_2     : (
+        to.address_2 && to.address_2.trim().toLowerCase() !== "apt b204"
+          ? to.address_2
+          : undefined
+        ),
         city          : to.city ?? client.city ?? "",
         province_code : to.province_code ?? client.province_code ?? "",
         postal_code   : to.postal_code ?? client.postal_code ?? "",
         country_code  : String(to.country_code ?? client.country_code ?? "").toUpperCase(),
         phone         : (to.phone ?? client.phone ?? "416-606-2476"),
         email         : to.email ?? client.email ?? undefined,
+
 
         // Package / required top-levels
         package_type  : pkg.package_type  ?? client.package_type,
@@ -226,16 +231,27 @@ function adaptRefreshPayload(client = {}) {
   Object.assign(out, customs);
   delete out.customs;
 
-  // 5) Keep VAT/IOSS/EORI on the root
-  const vatRefSource =
-    client.vat_reference ??
-    client.customs_tax_reference_number ?? client.tax_reference_number ??
-    client.ioss ?? client.ioss_number ??
-    client.vat  ?? client.vat_number  ??
-    client.eori ?? client.eori_number;
-    const vatRef = sanitizeVatRef(vatRefSource);
-    // Temporarily disabled unless explicitly re-enabled via env
-    if (ALLOW_CC_VAT_REFERENCE && vatRef) out.vat_reference = vatRef; else delete out.vat_reference;
+   // 5) Keep VAT/IOSS/EORI on the root
+   const vatRefSource =
+     client.vat_reference ??
+     client.customs_tax_reference_number ?? client.tax_reference_number ??
+     client.ioss ?? client.ioss_number ??
+     client.vat  ?? client.vat_number  ??
+     client.eori ?? client.eori_number;
+   const vatRef = sanitizeVatRef(vatRefSource);
+   if (ALLOW_CC_VAT_REFERENCE && vatRef) out.vat_reference = vatRef; else delete out.vat_reference;
+
+   // 5b) For EU/GB, require recipient email; apply fallback if missing
+   const EU_CODES = new Set([
+     "AT","BE","BG","HR","CY","CZ","DK","EE","FI","FR","DE","GR","HU",
+     "IE","IT","LV","LT","LU","MT","NL","PL","PT","RO","SK","SI","ES","SE"
+   ]);
+   if ((EU_CODES.has(out.country_code) || out.country_code === "GB") && !out.email) {
+     const fallback = (process.env.CC_FALLBACK_EMAIL ||
+                       process.env.CHITCHATS_DEFAULT_EMAIL ||
+                       "custombrites@gmail.com");
+     out.email = fallback;
+   }
 
   // 6) Tidy
   ["size_x","size_y","size_z"].forEach(k => { if (!(Number(out[k]) > 0)) delete out[k]; });
@@ -727,8 +743,8 @@ async function recreateShipmentIfUnbought(id, desiredClientPayload, { authH, url
       }
 
       // (B) Shipment: buy postage
-      if (action === "buy") {
-        const id = String(body.shipment_id || body.id || qp.id || "");
+        if (action === "buy") {
+          let id = String(body.shipment_id || body.id || qp.id || "");
         if (!id) return bad(400, "shipment_id required for buy");
 
         // 🆕 Preflight: read shipment and ensure intl phone exists
@@ -746,10 +762,29 @@ async function recreateShipmentIfUnbought(id, desiredClientPayload, { authH, url
             ""
           ).toUpperCase();
           const hasPhone = !!(s.phone || s.to?.phone);
+          const hasEmail = !!(s.email || s.to?.email);
 
-          // All shipments must have a phone (unified pipeline rule)
-          if (!hasPhone) {
-            const refreshPayload = { phone: "416-606-2476", country_code: cc || undefined };
+          // Build a single refresh payload only if anything is missing
+          const refreshPayload = { country_code: cc || undefined };
+          if (cc && cc !== "CA" && cc !== "US" && !hasPhone) {
+            refreshPayload.phone = "416-606-2476";
+          }
+
+          // EU/GB must have a recipient email
+          const EU_CODES = new Set([
+            "AT","BE","BG","HR","CY","CZ","DK","EE","FI","FR","DE","GR","HU",
+            "IE","IT","LV","LT","LU","MT","NL","PL","PT","RO","SK","SI","ES","SE"
+          ]);
+           const fallbackEmail = (
+            process.env.CC_FALLBACK_EMAIL ||
+            process.env.CHITCHATS_DEFAULT_EMAIL ||
+            "custombrites@gmail.com"
+            );
+          if ((EU_CODES.has(cc) || cc === "GB") && !hasEmail) {
+          }
+
+          // Only call refresh if we’re actually adding something
+          if (refreshPayload.phone || refreshPayload.email) {
             const r2 = await fetch(url(`/shipments/${encodeURIComponent(id)}/refresh`), {
               method: "PATCH",
               headers: authH,
