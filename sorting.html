@@ -580,6 +580,17 @@ let globalRunId = 0;
 let currentSaveHandler = null;      // tracks active “Save” listener
 // Live grid filter: when true, only show items with missing/no matches
 window.filterIncompleteOnly = false;
+
+// Live counter — global
+function updateOrderItemCounter() {
+  const el = document.getElementById("orderItemsCounter");
+  if (!el) return;
+  const arr = Array.isArray(window.cachedOrderItems) ? window.cachedOrderItems : [];
+  el.textContent = `Order Items: ${arr.length}`;
+}
+// Ensure anyone can call it (DOM handlers, async flows, etc.)
+window.updateOrderItemCounter = updateOrderItemCounter;
+
 function parkSaveBtn() {
   const btn    = document.getElementById("saveMatchesBtn");
   const footer = document.querySelector("#matchesModal .modal-footer");
@@ -1019,6 +1030,7 @@ document.addEventListener("DOMContentLoaded", function () {
   setTimeout(function () {
     loadPositions();
     document.body.style.opacity = 1;
+    window.updateOrderItemCounter?.();
   }, 200);
 
   // Initial gate check for Send & Match
@@ -1045,6 +1057,7 @@ etsyOrderInput.addEventListener("keydown", async function (e) {
     partialMatches = {};
     window.cachedOrderItems = [];
     matchPrintFlowInProgress = false;
+    window.updateOrderItemCounter?.(); // show 0 while loading
     updateOrderItemCounter(); // show 0 while loading
 
     // Clear UI
@@ -1654,7 +1667,7 @@ function openIframePrinterForListing(cellIndex) {
       titleEtsyOrderNumber:     { left:20,  top:2,   width:145, height:20 },
       titleImageMatrixDrop:     { left:20,  top:91,  width:145, height:20 },
       titleUnmatchedImages:     { left:21,  top:437, width:145, height:20 },
-      unmatchedContainer:       { left:20,  top:420, width:600, height:260 },
+      unmatchedContainer:       { left:0,  top:152, width:230, height:310 },
       userImage:                { left:0,   top:0,   width:100, height:100 },
       saveConfigBtn:            { left:10,  top:3,   width:85,  height:35 },
       sendMatchBtn:             { left:20,  top:301, width:210, height:35 },
@@ -1664,7 +1677,7 @@ function openIframePrinterForListing(cellIndex) {
       filterIncompleteBtn:      { left: 1328, top: 15, width: 120, height: 35 },
       startMatrixAnalysisBtn:   { left:0,  top:-86, width:210, height:35 },
       matrixQueueList:          { left:0,  top:-46, width:290, height:20 },
-      orderItemsCounter:        { left:610, top:15,  width:120, height:35 },
+      orderItemsCounter:        { left:550, top:15,  width:142, height:35 },
       testOpenAIBtn:            { left:20,  top:65,  width:140, height:35 }
     };
 
@@ -4541,6 +4554,7 @@ function createUnmatchedUserImagesPreview() {
         items = data;
       }
       window.cachedOrderItems = items;
+      window.updateOrderItemCounter?.();
       await fillPreviewBoxes(items);
       // Re-apply any active search after grid rebuild
       if (typeof window.applyOrderSearchFilter === "function") {
