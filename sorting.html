@@ -3947,7 +3947,16 @@ function openMatchPreviewModal(cellIndex) {
   etsyWrapper.appendChild(qtyRow);
 
   // Metal
-  const metalRow = makeDetail(metalVal, true);
+  // helper to scrub stray length markers and "+ engraving" from Metal
+  const sanitizeMetal = (txt) => String(txt || "")
+    // remove: - 14", - 16", - 18", - 20" (quote or &quot;)
+    .replace(/\s*-\s*(?:14|16|18|20)(?:&quot;|\"|”)?/gi, "")
+    // don't show "+ engraving"
+    .replace(/\+\s*engraving/gi, "")
+    .replace(/\s{2,}/g, " ")
+    .trim();
+
+  const metalRow = makeDetail(sanitizeMetal(metalVal), true);          // Metal
   metalRow.style.fontSize = "0.9em";
   metalRow.style.height   = "16px";
   etsyWrapper.appendChild(metalRow);
@@ -3973,6 +3982,36 @@ function openMatchPreviewModal(cellIndex) {
     etsyWrapper.appendChild(row);
     };
 
+    // normalize + filter one variation; call this before emitRow
+    const HIDE_WORDS = new Set([
+      "endurance","luck/success","power","inspiration","nobility","health","hospitality","harmony","opportunity",
+      "hard work","focus","peace","immortality","fate","divine plan","guidance","justice","growth","trust","learning",
+      "dreams","fertility","awakening","inheritance","vitality","chaos/power","focus/identity","teamwork/trust",
+      "memory/learn","dreams/unity","enlightenment","fate/chance","sacred union","connection","togetherness",
+      "goals/success","heavenonearth","-"
+    ]);
+    const transformVar = (labelIn, valueIn) => {
+      let name  = String(labelIn || "").trim();
+      let value = String(valueIn  || "").trim();
+      if (!name || !value) return null;
+      name = name
+        .replace(/^viking\s*rune\s*symbol:?$/i, "Rune")
+        .replace(/^rune\s*symbol:?$/i, "Rune")
+        .replace(/^necklace\s*length\s*in\s*inches:?$/i, "Length")
+        .replace(/^necklace\s*length:?$/i, "Length")
+        .replace(/^charm\s*type:?$/i, "Charm")
+        .replace(/^length:?$/i, "Length")
+        .replace(/^LENGTH:?$/i, "Length");
+      if (/^personalization:?$/i.test(name)) return null;
+      if (/^personalization:?/i.test(name) && /not\s*requested/i.test(value)) return null;
+      value = value.replace(/\+\s*engraving/gi, "");
+      const parts = value.split(/[|/•,–—-]/).map(s => s.trim()).filter(Boolean);
+      const filtered = parts.filter(p => !HIDE_WORDS.has(p.toLowerCase()));
+      value = filtered.join(", ").replace(/\s{2,}/g, " ").trim();
+      if (!value) return null;
+      return { name, value };
+    };
+
     // normalize “Not requested…” etc.
     const fixPersonalizationVal = (v) => {
       const t = String(v || "").trim();
@@ -3993,13 +4032,12 @@ function openMatchPreviewModal(cellIndex) {
     const pairs = [];
     const seen  = new Set();
     const push = (name, value) => {
-      const n = String(name||"").trim();
-      const v = String(value||"").trim();
-      if (!n || !v) return;
-      const key = `${n.toLowerCase()}|${v.toLowerCase()}`;
+      const t = transformVar(name, value);
+      if (!t) return;
+      const key = `${t.name.toLowerCase()}|${t.value.toLowerCase()}`;
       if (seen.has(key)) return;
       seen.add(key);
-      pairs.push({name:n, value:v});
+      pairs.push({name: t.name, value: t.value});
     };
 
     const src = item || {};
