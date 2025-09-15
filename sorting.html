@@ -74,13 +74,6 @@
 
       }
 
-      #unmatchedContainer {
-      position: absolute;
-      left: 20px;
-      top: 420px; /* ~100px below #photoDragDrop which starts at top:310px */
-      width: 600px;
-    }
-
       /* Make only the Unmatched area scroll inside matchesModal */
       /* 1) STOP the parent modal from scrolling (Materialize sets overflow on .modal) */
       #matchesModal.modal {
@@ -174,12 +167,6 @@
       left: 20px;
       top: 420px; /* ~100px below #photoDragDrop which starts at top:310px */
       width: 600px;
-      /* Dedicated scroller for "titleUnmatchedImages" section */
-      overflow-y: auto;
-      padding-right: 6px;     /* scrollbar gutter */
-      border: 1px solid #e5e5e5;
-      border-radius: 8px;
-      background: #fff;
     }
 
     /* pointer-events enabled on read-only inputs */
@@ -276,11 +263,6 @@
          placeholder="Search orders…">
   <button id="filterIncompleteBtn" class="btn waves-effect waves-light">Filter</button>
   <button id="openConfigBtn" class="btn waves-effect waves-light">Open Config</button>
-  <!-- Live counter for ALL Etsy Order Items -->
-  <div id="orderItemsCounter"
-       style="position:absolute; font-weight:600; font-size:0.95em; line-height:35px; height:35px; padding:0 8px; border:1px solid #e0e0e0; border-radius:8px; background:#fafafa;">
-    Order Items: 0
-  </div>
   <button id="mpBackBtn" class="btn waves-effect waves-light">Back</button>
   <button id="mpNextBtn" class="btn waves-effect waves-light">Next</button>
   <button id="sendMatchBtn" class="btn waves-effect waves-light">Send & Match</button>
@@ -314,8 +296,6 @@
   <!-- Image Comparison UI -->
   <div id="imageComparisonContainer">
     <div id="photoDragDrop">Drag & Drop</div>
-    <button id="startMatrixAnalysisBtn" class="btn waves-effect waves-light">Start Matrix Analysis</button>
-    <div id="matrixQueueList" style="margin-top:6px; font-size:0.9em; color:#555;"></div>
     <!-- Inline progress: sits directly below the Drag & Drop box -->
     <div id="matrixProgressWrap" style="display:none; margin-top:8px;">
       <div id="matrixProgressTitle" style="font-size:1.06em; font-weight:bold; margin-bottom:4px;">Analyzing…</div>
@@ -571,7 +551,6 @@ async function apiFetch(path, init = {}){
 
 let croppedImagesArray = [];
 let userImagesArray = [];
-window.userImagesArray = userImagesArray;
 let cellMatches = {};
 let partialMatches = {};
 let matchPrintFlowInProgress = false;
@@ -580,17 +559,6 @@ let globalRunId = 0;
 let currentSaveHandler = null;      // tracks active “Save” listener
 // Live grid filter: when true, only show items with missing/no matches
 window.filterIncompleteOnly = false;
-
-// Live counter — global
-function updateOrderItemCounter() {
-  const el = document.getElementById("orderItemsCounter");
-  if (!el) return;
-  const arr = Array.isArray(window.cachedOrderItems) ? window.cachedOrderItems : [];
-  el.textContent = `Order Items: ${arr.length}`;
-}
-// Ensure anyone can call it (DOM handlers, async flows, etc.)
-window.updateOrderItemCounter = updateOrderItemCounter;
-
 function parkSaveBtn() {
   const btn    = document.getElementById("saveMatchesBtn");
   const footer = document.querySelector("#matchesModal .modal-footer");
@@ -751,11 +719,6 @@ function pfMarkSent(i, count){
 }
 function escapeHtml(s){
   return String(s).replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
-}
-
-// Match assembly-1: unescape &quot; → "
-function deQuote(s){
-  return (s == null ? "" : String(s)).replace(/&quot;/g, '"');
 }
 
 /**
@@ -1016,9 +979,6 @@ const configIDs = [
   "prefilterPanel",
   "orderSearchBox",
   "filterIncompleteBtn",
-  "startMatrixAnalysisBtn",
-  "matrixQueueList",
-  "orderItemsCounter",
   "titleUnmatchedImages"
 ];
 
@@ -1035,11 +995,7 @@ document.addEventListener("DOMContentLoaded", function () {
   setTimeout(function () {
     loadPositions();
     document.body.style.opacity = 1;
-    window.updateOrderItemCounter?.();
   }, 200);
-
-  // Initial gate check for Send & Match
-  updateSendMatchAvailability();
 
   // Connect Etsy (manual) – reuse headless starter
   document.getElementById("connectEtsyBtn").addEventListener("click", () => startOAuth("manual"));
@@ -1062,8 +1018,6 @@ etsyOrderInput.addEventListener("keydown", async function (e) {
     partialMatches = {};
     window.cachedOrderItems = [];
     matchPrintFlowInProgress = false;
-    window.updateOrderItemCounter?.(); // show 0 while loading
-    updateOrderItemCounter(); // show 0 while loading
 
     // Clear UI
     document.getElementById("photoGridContainer").innerHTML = "";
@@ -1083,15 +1037,6 @@ etsyOrderInput.addEventListener("keydown", async function (e) {
       .filter((x) => x);
 
     await loadBatchEtsyOrders(orderNumbers);
-    updateOrderItemCounter(); // total after load completes
-  }
-
-  // Start Matrix Analysis (process queued masters sequentially)
-  const startBtn = document.getElementById("startMatrixAnalysisBtn");
-  if (startBtn) {
-    startBtn.addEventListener("click", startMatrixAnalysis);
-    // disabled until something is queued
-    startBtn.disabled = !(window.__matrixQueue || []).length;
   }
 });
 
@@ -1202,38 +1147,9 @@ function disableSendMatch() {
   btn.style.opacity = "0.5";
 }
 function enableSendMatch() {
-  // Only enable if gate allows it
-  const queueLen = (window.__matrixQueue || []).length;
-  const running  = !!window.__matrixAnalysisRunning;
-  const poolArr = Array.isArray(window.userImagesArray) ? window.userImagesArray
-                 : (Array.isArray(userImagesArray) ? userImagesArray : []);
-  const hasPool  = poolArr.length > 0;
-
   const btn = document.getElementById("sendMatchBtn");
-  if (!btn) return;
-
-  if (queueLen > 0 || running || !hasPool) {
-    // Hard block: keep it disabled if anything is still in-flight or pool is empty
-    btn.disabled = true;
-    btn.style.opacity = "0.5";
-    return;
-  }
   btn.disabled = false;
   btn.style.opacity = "1";
-}
-
-/* Gatekeeper: enable only when no queue, not running, and we have a pool */
-function updateSendMatchAvailability() {
-  const queueLen = (window.__matrixQueue || []).length;
-  const running  = !!window.__matrixAnalysisRunning;
-  const poolArr = Array.isArray(window.userImagesArray) ? window.userImagesArray
-                 : (Array.isArray(userImagesArray) ? userImagesArray : []);
-  const hasPool  = poolArr.length > 0;
-  if (queueLen > 0 || running || !hasPool) {
-    disableSendMatch();
-  } else {
-    enableSendMatch();
-  }
 }
 
 /********************************************************
@@ -1466,7 +1382,7 @@ function initMatchAndPrintFlow() {
   // 2) If there are no orders, bail out
   if (!uniqueOrders.length) {
     M.toast({ html: "No orders found to highlight." });
-    updateSendMatchAvailability();  // only if all masters are processed
+    enableSendMatch();  // re-enable “Send & Match”
     return;
   }
 
@@ -1597,7 +1513,7 @@ function initMatchAndPrintFlow() {
     if (currentIndex >= uniqueOrders.length) {
       M.toast({ html: "Congrats, You’re Done!" });
       removeAllHighlightsAndPrintButtons(); // remove leftover blue lines + “Print” button
-      updateSendMatchAvailability(); // respect queue/analysis status
+      enableSendMatch(); // re-enable “Send & Match” or do whatever you want here
       return;
     }
     highlightOrder(uniqueOrders[currentIndex]);
@@ -1662,7 +1578,7 @@ function openIframePrinterForListing(cellIndex) {
       cropImagesBtn:            { left:20,  top:215, width:140, height:35 },
       etsyOrderNumber:          { left:20,  top:25,  width:200, height:30 },
       imageComparisonContainer: { left:0,   top:0,   width:0,   height:0 },
-      matchPrintBtn:            { left:20,  top:352, width:210, height:35 },
+      matchPrintBtn:            { left:20,  top:315, width:210, height:35 },
       matchesModal:             { left:0,   top:0,   width:55,  height:0 },
       mpBackBtn:                { left:720, top:15,  width:100, height:35 },
       mpNextBtn:                { left:850, top:15,  width:100, height:35 },
@@ -1672,17 +1588,14 @@ function openIframePrinterForListing(cellIndex) {
       titleEtsyOrderNumber:     { left:20,  top:2,   width:145, height:20 },
       titleImageMatrixDrop:     { left:20,  top:91,  width:145, height:20 },
       titleUnmatchedImages:     { left:21,  top:437, width:145, height:20 },
-      unmatchedContainer:       { left:0,  top:152, width:230, height:310 },
+      unmatchedContainer:       { left:0,   top:152, width:600, height:0 },
       userImage:                { left:0,   top:0,   width:100, height:100 },
       saveConfigBtn:            { left:10,  top:3,   width:85,  height:35 },
-      sendMatchBtn:             { left:20,  top:301, width:210, height:35 },
+      sendMatchBtn:             { left:20,  top:255, width:210, height:35 },
       prefilterPanel:           { left:1460, top:68, width:360, height:650 },
-      matrixProgressWrap:       { left:250,   top:-316, width:330,   height:50 },
+      matrixProgressWrap:       { left:250,   top:-316, width:290,   height:50 },
       orderSearchBox :          { left: 1053, top: 15, width: 260, height: 35 },
       filterIncompleteBtn:      { left: 1328, top: 15, width: 120, height: 35 },
-      startMatrixAnalysisBtn:   { left:0,  top:-86, width:210, height:35 },
-      matrixQueueList:          { left:0,  top:-46, width:290, height:20 },
-      orderItemsCounter:        { left:550, top:15,  width:142, height:35 },
       testOpenAIBtn:            { left:20,  top:65,  width:140, height:35 }
     };
 
@@ -1790,86 +1703,41 @@ function openIframePrinterForListing(cellIndex) {
     const files = e.dataTransfer.files;
     if (!files || files.length === 0) return;
 
-   // === NEW: Queue masters for later analysis ===
-    window.__matrixQueue = window.__matrixQueue || [];
+    /* Collect every 400×400 quadrant here for one-time AI analysis */
+    const subImagesToAnalyze = [];
+
     for (let i = 0; i < files.length; i++) {
       const file = files[i];
-      const dataUrl = await readAsDataURL(file);
-      // store for later tiling + analysis
-      window.__matrixQueue.push({ name: file.name, dataUrl, masterId: genId() });
-      M.toast({ html: `Queued master: ${file.name}` });
-    }
-    updateMatrixQueueBadge();
 
-    // Don’t analyze here—user will click “Start Matrix Analysis”
+      // Convert the dropped file to a DataURL
+      const fileDataUrl = await readAsDataURL(file);
 
-  });
+      // Slice into 10×14 = 140 tiles
+      const subImages = await extractSubImages144(fileDataUrl);
 
-  // Small readout under the button: “N master(s) queued)”
-  function updateMatrixQueueBadge() {
-    const el = document.getElementById("matrixQueueList");
-    const q  = (window.__matrixQueue || []);
-    if (!el) return;
-    if (!q.length) {
-      el.textContent = "No masters queued.";
-    } else {
-    el.textContent = `${q.length} master(s) queued`;
-    
-    }
-    const startBtn = document.getElementById("startMatrixAnalysisBtn");
-    if (startBtn) startBtn.disabled = q.length === 0;
-    // Re-evaluate availability (queue presence => disabled)
-    updateSendMatchAvailability();
-  }
+      for (let q = 0; q < subImages.length; q++) {
+         const cropped   = await cropTo512(subImages[q]);
+         const corrected = await reduceRedTone(cropped, 0.85);   // NEW
+ 
+         // Push to temporary array; NOT yet stored in userImagesArray
+        subImagesToAnalyze.push({ origName: file.name + "_Q" + q, data: cropped });
+              }
 
-
-async function startMatrixAnalysis() {
-  window.__matrixAnalysisRunning = true;
-  updateSendMatchAvailability();
-  const startBtn = document.getElementById("startMatrixAnalysisBtn");
-  if (startBtn) startBtn.disabled = true;
-  const queue = (window.__matrixQueue || []);
-  if (!queue.length) {
-    M.toast({ html: "Nothing to analyze — queue is empty." });
-    window.__matrixAnalysisRunning = false;
-    updateSendMatchAvailability();
-    return;
-  }
-
-  // Process each master independently so streaks/progress reset per master
-  for (let i = 0; i < queue.length; i++) {
-    const master = queue[i];
-    const masterId = master.masterId || (master.masterId = genId());
-    const label  = `Analyzing Matrix Images (${i+1}/${queue.length})`;
-
-    // Tile the current master (configurable rows/cols inside extract)
-    const tiles = await extractSubImages144(master.dataUrl);
-
-    // Prepare exactly one batch (per master) of 140-ish tiles
-    const batch = [];
-    for (let q = 0; q < tiles.length; q++) {
-      const cropped   = await cropTo512(tiles[q]);
-      const corrected = await reduceRedTone(cropped, 0.85);
-      batch.push({
-        origName: `${stripExtension(master.name)}_${masterId}_Q${q}`,
-        data: corrected,
-        master: master.name,
-        masterId
+      M.toast({
+        html: `File ${file.name}: Extracted 140 individual images`
       });
     }
 
-    // Analyze this master only; progress title shows which master is running
-    await analyzeAndStoreSubImages(batch, label);
-    updateSendMatchAvailability();
-  }
+    localStorage.removeItem("userImagesArray");
+    userImagesArray = [];
 
-  // Clear queue and update UI
-  window.__matrixQueue = [];
-  updateMatrixQueueBadge();
-  M.toast({ html: "All queued masters analyzed." });
-  window.__matrixAnalysisRunning = false;
-  updateSendMatchAvailability();
-}
+    // Analyze every sub-image; store only those with a charm
+    await analyzeAndStoreSubImages(subImagesToAnalyze);
+
+    /* NOTE:
+       We do NOT refresh unmatchedContainer here.
+       That preview is shown ONLY after Send-and-Match finishes.  */
+  });
 
 /* ──────────────────────────────────────────────────────────────
    analyzeAndStoreSubImages(imgObjs)
@@ -1881,11 +1749,13 @@ async function startMatrixAnalysis() {
    • If you process all 140 without a 4-streak, keep all.
    • Persists names only, so downstream send&match sees every tile.
 ────────────────────────────────────────────────────────────── */
-async function analyzeAndStoreSubImages(imgObjs, title = "Analyzing Photos...") {
+async function analyzeAndStoreSubImages(imgObjs) {
   if (!imgObjs || imgObjs.length === 0) return;
 
-  const toRun = imgObjs; // analyze exactly what was passed (per master batch)
-  showProgressModal(title, toRun.length);
+  const MAX = 140;
+  const toRun = imgObjs.slice(0, MAX);
+
+  showProgressModal("Analyzing Photos...", toRun.length);
 
   let done    = 0;
   let streak  = 0;
@@ -1902,14 +1772,7 @@ async function analyzeAndStoreSubImages(imgObjs, title = "Analyzing Photos...") 
       : `${origName}.jpg`;
 
     // Save the image immediately
-     userImagesArray.push({
-     name: finalName,
-     data,
-     analyzed: true,
-       origName,                 // ← now includes masterId to avoid cross-master collisions
-       master: toRun[i].master || "",
-       masterId: toRun[i].masterId || ""
-  });
+    userImagesArray.push({ name: finalName, data, analyzed: true });
     saved++;
 
     // 1b) Persist the 2-word descriptor mapped to this image base name
@@ -1972,11 +1835,6 @@ async function analyzeAndStoreSubImages(imgObjs, title = "Analyzing Photos...") 
     console.warn("localStorage quota exceeded:", err.message);
   }
 
-  // 6) After analysis completes: refresh alias + persist full pool + re-gate
-  window.userImagesArray = userImagesArray;
-  try { localStorage.setItem("userImagesArray", JSON.stringify(userImagesArray)); } catch(_){}
-  updateSendMatchAvailability();
-
   enableSendMatch();
   M.toast({ html: `Analysis complete – processed ${done} photos, saved ${saved}.` });
 }
@@ -1998,14 +1856,6 @@ async function readAsDataURL(file) {
   });
 }
 
-// Tiny unique ID for each master (offline-safe, no crypto dependency)
-function genId() {
-  return (
-    Date.now().toString(36) +
-    Math.random().toString(36).slice(2, 8)
-  );
-}
-
 /********************************************************
  * extractSubImages144: always slice a composite into 10×14 = 140 tiles
  ********************************************************/
@@ -2014,14 +1864,12 @@ async function extractSubImages144(baseDataUrl) {
 
   const fullW = img.naturalWidth;
   const fullH = img.naturalHeight;
-  const COLS  = (window.MATRIX_COLS || 10);
-  const ROWS  = (window.MATRIX_ROWS || 14);
-  const cellW = fullW / COLS;
-  const cellH = fullH / ROWS;
+  const cellW = fullW / 10;          // ← changed from /10
+  const cellH = fullH / 14;          // ← changed from /14
 
   const results = [];
-  for (let r = 0; r < ROWS; r++) {
-    for (let c = 0; c < COLS; c++) {
+  for (let r = 0; r < 14; r++) {     // ← rows: 14 tall
+    for (let c = 0; c < 10; c++) {   // ← cols: 10 wide
       const canvas = document.createElement("canvas");
       canvas.width  = cellW;
       canvas.height = cellH;
@@ -2035,7 +1883,7 @@ async function extractSubImages144(baseDataUrl) {
       results.push(canvas.toDataURL("image/jpeg", 0.85));
     }
   }
-  return results; // ROWS×COLS sub-images (defaults to 140)
+  return results;     // 140 sub-images
 }
 
 // cropTo400: forcibly resize each quadrant to 400×400
@@ -3239,12 +3087,11 @@ async function sendAndMatch() {
   let smTotal = 0;
   showProgressModal("Matching Images... (First Pass)", 1);
 
-  // Deduplicate by origName (unique per tile across masters).
-  // If origName missing (older entries), fall back to name.
+ // Deduplicate userImagesArray by file name to prevent double-sending
   if (Array.isArray(userImagesArray) && userImagesArray.length) {
     const seen = new Set();
     userImagesArray = userImagesArray.filter(u => {
-      const key = String((u && (u.origName || u.name)) || "");
+      const key = String((u && u.name) || "");
       if (!key || seen.has(key)) return false;
       seen.add(key);
       return true;
@@ -3402,9 +3249,7 @@ async function sendAndMatch() {
           const nm = top.user.name.replace(/(\.jpg|\.png)$/i, "");
           cellMatches[i].push({ userName: nm, userImage: top.user.data, score: top.result.score });
           matchedUserNames.add(top.user.name);
-          userImagesArray = userImagesArray.filter(
-             u => String(u.origName || u.name) !== keyTop
-           );
+          userImagesArray = userImagesArray.filter(u => u.name !== top.user.name);
 
           if (matchBox) matchBox.value = namesForCell(i).join(", ");
         } else {
@@ -3520,8 +3365,7 @@ async function sendAndMatch() {
       const topScorePerc = (topScore * 100).toFixed(2);
       const matchName = topCandidate.user.name.replace(/(\.jpg|\.png)$/i, "");
 
-      const keyTop = String(topCandidate.user.origName || topCandidate.user.name);
-      if (!matchedUserNames.has(keyTop) &&
+    if (!matchedUserNames.has(topCandidate.user.name) &&
           ((cellMatches[i]||[]).filter(m=>m && m.userImage).length < expectedSlots(window.cachedOrderItems?.[i] || {})) ) {
 
         /* Pre‑computed values already in your loop */
@@ -3536,13 +3380,12 @@ async function sendAndMatch() {
             matchBox.style.color  = "black";
           }
           if (!cellMatches[i]) cellMatches[i] = [];
-           safePushMatch(i,{
-             userName  : matchName,
-             userImage : topCandidate.user.data,
-             score     : topScore,
-             origName  : keyTop
-           });
-           matchedUserNames.add(keyTop);
+          safePushMatch(i,{
+            userName  : matchName,
+            userImage : topCandidate.user.data,   // ← use topCandidate
+            score     : topScore
+          });
+          matchedUserNames.add(topCandidate.user.name);
 
            /* Mark complete only when have >= need */
            {
@@ -3577,8 +3420,7 @@ async function sendAndMatch() {
           for (const cand of userImagesArray.slice()) {
             if (cand.skipForCharm) continue;
             if (!metalFilterOk(metalVal, cand.name)) continue;
-            const uniq = String(cand.origName || cand.name);
-            if (matchedUserNames.has(uniq)) continue;
+            if (matchedUserNames.has(cand.name)) continue;
             if (!passesTitlePrefilter(i, cand.name)) continue; // 🔒 enforce title prefilter
 
             const { score: s1 } = await compareImages(cand.data, firstImgFixed, i, cand.name);
@@ -3589,11 +3431,10 @@ async function sendAndMatch() {
 
              const twinName = cand.name.replace(/(\.jpg|\.png)$/i, "");
              /* safe push — silently skips if we already have enough     */
-              if (safePushMatch(i, { userName : twinName,
-                                     userImage: cand.data,
-                                     score    : bestScore,
-                                     origName : uniq })) {
-                matchedUserNames.add(uniq);        // record only if kept
+             if (safePushMatch(i, { userName : twinName,
+                                    userImage: cand.data,
+                                    score    : bestScore })) {
+               matchedUserNames.add(cand.name);   // record only if kept
              }
 
             /* Mark complete only when have >= need */
@@ -3704,25 +3545,6 @@ function openMatchPreviewModal(cellIndex) {
   parkSaveBtn();
   const modalElem = document.getElementById("matchesModal");
   const container = document.getElementById("matchesGridContainer");
-  // NEW: resolve the order item for this cell and guard against missing
-  const item =
-    (Array.isArray(window.cachedOrderItems) && window.cachedOrderItems[cellIndex])
-      ? window.cachedOrderItems[cellIndex]
-      : {};
-  if (!Object.keys(item).length) {
-    console.warn("openMatchPreviewModal: no cachedOrderItems at index", cellIndex);
-    const notes = document.getElementById("customerNotes");
-    if (notes) notes.value = "";
-    // Optional: uncomment to stop building the modal when item is missing
-    // return;
-  }
-
-  // Populate the read-only Customer Notes field (safe fallbacks)
-  const notesInput = document.getElementById("customerNotes");
-  if (notesInput) {
-    const note = item.customerNotes || item.personalization || item.note || "";
-    notesInput.value = String(note || "");
-  }
 
   /* ——— clear previous unmatched wrapper so header doesn’t duplicate ——— */
   const oldWrapper = container.querySelector("#unmatchedWrapper");
@@ -3846,17 +3668,13 @@ function openMatchPreviewModal(cellIndex) {
   // helper: create a 55×7 read‑only row that sits in normal flow
   function makeDetail(txt, isBold = false) {
     const row = document.createElement("div");
-    row.textContent = txt;
-    row.style.width = "160px";            // ← was 100px
-    row.style.minHeight = "12px";         // ← use min-height, not fixed height
-    row.style.lineHeight = "1.2em";
+    row.textContent   = txt;
+    row.style.width   = "100px";
+    row.style.height  = "12px";
     row.style.fontSize = "0.6em";
-    row.style.marginTop = "0px";
+    row.style.marginTop = "0px";          // 0px between rows
     row.style.fontWeight = isBold ? "700" : "400";
-    row.style.whiteSpace = "normal";      // ← allow wrapping
-    row.style.wordBreak = "break-word";   // ← wrap long values
-    row.style.overflow = "hidden";
-    row.style.textOverflow = "ellipsis";
+    row.style.overflow = "hidden";        // keeps long text inside 100px
     return row;
   }
 
@@ -3873,15 +3691,14 @@ function openMatchPreviewModal(cellIndex) {
   }
 
   /* ---------- build unmatchedImages (exclude every matched name) ---------- */
-  const matchedKeys = matchedImages
-    .filter(m => m && m.userImage)                   // ignore placeholders
-    .map(m => m.origName || m.userName);
+  const matchedNames = matchedImages
+    .filter(m => m.userName)                         // ignore placeholders
+    .map(m => m.userName);
 
   let unmatchedImages = userImagesArray.filter((uImg) => {
     if (uImg.skipForCharm) return false;
     if (partialMatches[uImg.name]) return false;
-    const uKey = String(uImg.origName || stripExtension(uImg.name));
-    return !matchedKeys.includes(uKey);
+    return !matchedNames.includes(stripExtension(uImg.name));
   });
 
   /* --- live grid values pulled from main screen --- */
@@ -3935,187 +3752,20 @@ function openMatchPreviewModal(cellIndex) {
   etsyWrapper.appendChild(etsyBox);
   etsyBox.style.marginBottom = "0.5px";   // 0.5px space under the image
   container.appendChild(etsyWrapper);
-  const orderRow = makeDetail(orderVal);
-  orderRow.style.fontSize = "0.9em";
-  orderRow.style.height   = "16px";
-  etsyWrapper.appendChild(orderRow);
+   const orderRow = makeDetail(orderVal);           // Order number
+   orderRow.style.fontSize = "0.9em";               // was 0.6em
+   orderRow.style.height   = "16px";                // avoid clipping
+   etsyWrapper.appendChild(orderRow);
    etsyBox.style.marginBottom = "0.5px";   // 0.5px space under the image
-  const isQtyMulti = (window.cachedOrderItems[cellIndex]?.quantity ?? window.cachedOrderItems[cellIndex]?.qty ?? 1) > 1;
-  const qtyRow = makeDetail(qtyVal, isQtyMulti);
-  qtyRow.style.fontSize = "0.9em";
-  qtyRow.style.height   = "16px";
-  etsyWrapper.appendChild(qtyRow);
-
-  // Metal
-  // helper to scrub stray length markers and "+ engraving" from Metal
-  const sanitizeMetal = (txt) => String(txt || "")
-    // remove: - 14", - 16", - 18", - 20" (quote or &quot;)
-    .replace(/\s*-\s*(?:14|16|18|20)(?:&quot;|\"|”)?/gi, "")
-    // don't show "+ engraving"
-    .replace(/\+\s*engraving/gi, "")
-    .replace(/\s{2,}/g, " ")
-    .trim();
-
-  const metalRow = makeDetail(sanitizeMetal(metalVal), true);          // Metal
-  metalRow.style.fontSize = "0.9em";
-  metalRow.style.height   = "16px";
-  etsyWrapper.appendChild(metalRow);
-
-  // ▼▼ Variations: buyer selections (assembly-1 parity) ▼▼
-  (() => {
-    const acceptedMetalNames = [
-      "metal","metal choice","metal - engraving","metal colour","color",
-      "metal choice / engraving option","number of discs / metal","number of discs/metal",
-      "metal/necklace length","metal/necklace length/engrave"
-    ];
-    const acceptedLengthNames = [
-      "length","necklace length","metal/necklace length",
-      "metal choice / necklace length","necklace length in inches"
-    ];
-
-    // print helper
-    const emitRow = (label, value, bold=false) => {
-      const row = makeDetail(`${label}: ${value}`, bold);
-    row.style.fontSize = "0.9em";
-    row.style.height   = "auto";        // ← let it wrap to 2 lines if needed
-    row.style.lineHeight = "1.2em";
-    etsyWrapper.appendChild(row);
-    };
-
-    // normalize + filter one variation; call this before emitRow
-    const HIDE_WORDS = new Set([
-      "endurance","luck/success","power","inspiration","nobility","health","hospitality","harmony","opportunity",
-      "hard work","focus","peace","immortality","fate","divine plan","guidance","justice","growth","trust","learning",
-      "dreams","fertility","awakening","inheritance","vitality","chaos/power","focus/identity","teamwork/trust",
-      "memory/learn","dreams/unity","enlightenment","fate/chance","sacred union","connection","togetherness",
-      "goals/success","heavenonearth","-"
-    ]);
-    const transformVar = (labelIn, valueIn) => {
-      let name  = String(labelIn || "").trim();
-      let value = String(valueIn  || "").trim();
-      if (!name || !value) return null;
-      name = name
-        .replace(/^viking\s*rune\s*symbol:?$/i, "Rune")
-        .replace(/^rune\s*symbol:?$/i, "Rune")
-        .replace(/^necklace\s*length\s*in\s*inches:?$/i, "Length")
-        .replace(/^necklace\s*length:?$/i, "Length")
-        .replace(/^charm\s*type:?$/i, "Charm")
-        .replace(/^length:?$/i, "Length")
-        .replace(/^LENGTH:?$/i, "Length");
-      if (/^personalization:?$/i.test(name)) return null;
-      if (/^personalization:?/i.test(name) && /not\s*requested/i.test(value)) return null;
-      value = value.replace(/\+\s*engraving/gi, "");
-      const parts = value.split(/[|/•,–—-]/).map(s => s.trim()).filter(Boolean);
-      const filtered = parts.filter(p => !HIDE_WORDS.has(p.toLowerCase()));
-      value = filtered.join(", ").replace(/\s{2,}/g, " ").trim();
-      if (!value) return null;
-      return { name, value };
-    };
-
-    // normalize “Not requested…” etc.
-    const fixPersonalizationVal = (v) => {
-      const t = String(v || "").trim();
-      return (t.toLowerCase() === "not requested on this item.") ? "Not Requested" : t;
-    };
-
-    // canonicalize common necklace length encodings (same spirit as assembly-1)
-    const normalizeLength = (v) => {
-      const m = {
-        '14&quot;':"14 Inches",'16&quot;':"16 Inches",'18&quot;':"18 Inches",'20&quot;':"20 Inches",
-        '14""':"14 Inches",'16""':"16 Inches",'18""':"18 Inches",'20""':"20 Inches"
-      };
-      const raw = deQuote(v);
-      return m[raw] || raw;
-    };
-
-    // collect from several possible places, then de-dupe
-    const pairs = [];
-    const seen  = new Set();
-    const push = (name, value) => {
-      const t = transformVar(name, value);
-      if (!t) return;
-      const key = `${t.name.toLowerCase()}|${t.value.toLowerCase()}`;
-      if (seen.has(key)) return;
-      seen.add(key);
-      pairs.push({name: t.name, value: t.value});
-    };
-
-    const src = item || {};
-    // 1) Preferred: transaction-level variations
-    if (Array.isArray(src.variations)) {
-      for (const v of src.variations) {
-        const name  = (v.formatted_name || v.name || "").trim();
-        let   value = (v.formatted_value || v.value || "").trim();
-
-        if (!name && !value) continue;
-
-        const lname = name.toLowerCase();
-
-        // Skip Metal (you already render “Metal:” above)
-        if (acceptedMetalNames.includes(lname) || lname.includes("metal") || lname.startsWith("color") || lname.startsWith("colour")) {
-          continue;
-        }
-
-        // Personalization normalization
-        if (lname === "personalization") {
-          value = fixPersonalizationVal(value);
-        }
-
-        // Length mapping
-        if (acceptedLengthNames.includes(lname)) {
-          value = normalizeLength(value);
-        }
-
-        push(name, value);
-        if (pairs.length >= 2) break;
-      }
-    }
-
-    // 2) Fallback: selected_variations
-    if (pairs.length < 2 && Array.isArray(src.selected_variations)) {
-      for (const v of src.selected_variations) {
-        const name  = (v.formatted_name || v.name || v.property_name || "").trim();
-        let   value = (v.formatted_value || v.value || v.display_value || "").trim();
-        if (!name && !value) continue;
-        const lname = name.toLowerCase();
-        if (acceptedMetalNames.includes(lname) || lname.includes("metal")) continue;
-        if (lname === "personalization") value = fixPersonalizationVal(value);
-        if (acceptedLengthNames.includes(lname)) value = normalizeLength(value);
-        push(name, value);
-        if (pairs.length >= 2) break;
-      }
-    }
-
-    // 3) Fallback: product_data.property_values (Etsy sometimes nests here)
-    const pvs = src?.product_data?.property_values;
-    if (pairs.length < 2 && Array.isArray(pvs)) {
-      for (const pv of pvs) {
-        const name  = (pv.property_name || pv.name || "").trim();
-        let   value = Array.isArray(pv.values) ? pv.values.join(", ") : String(pv.value || pv.display_value || "");
-        if (!name && !value) continue;
-        const lname = name.toLowerCase();
-        if (acceptedMetalNames.includes(lname) || lname.includes("metal") || lname.startsWith("color") || lname.startsWith("colour")) continue;
-        if (lname === "personalization") value = fixPersonalizationVal(value);
-        if (acceptedLengthNames.includes(lname)) value = normalizeLength(value);
-        push(name, value);
-        if (pairs.length >= 2) break;
-      }
-    }
-
-    // 4) Last-chance: surface personalization text if present on the item
-    if (pairs.length < 2) {
-      const p = fixPersonalizationVal(src.personalization || src.buyer_personalization || "");
-      if (p) push("Personalization", p);
-    }
-
-    if (pairs.length) {
-      for (const {name,value} of pairs) {
-        emitRow(name, value, true);
-      }
-    } else {
-      emitRow("Variations", "—", false);
-    }
-  })();
+   const isQtyMulti = (window.cachedOrderItems[cellIndex]?.quantity ?? window.cachedOrderItems[cellIndex]?.qty ?? 1) > 1;
+   const qtyRow = makeDetail(qtyVal, isQtyMulti);           // Qty
+   qtyRow.style.fontSize = "0.9em";   // match order number size
+   qtyRow.style.height   = "16px";    // avoid clipping
+   etsyWrapper.appendChild(qtyRow);
+   const metalRow = makeDetail(metalVal, true);          // Metal
+   metalRow.style.fontSize = "0.9em";    // match order number size
+   metalRow.style.height   = "16px";
+   etsyWrapper.appendChild(metalRow);
 
   // -----------------------------------------------------------------------
   // B) Matched Photo (shifted 75px right)   ← UPDATED BLOCK
@@ -4160,13 +3810,6 @@ function openMatchPreviewModal(cellIndex) {
     row.style.setProperty("font-weight", isBold ? "700" : "400", "important"); // ← forces bold
 
     return row;
-  }
-
-    function updateOrderItemCounter() {
-    const el = document.getElementById("orderItemsCounter");
-    if (!el) return;
-    const n = Array.isArray(window.cachedOrderItems) ? window.cachedOrderItems.length : 0;
-    el.textContent = `Order Items: ${n}`;
   }
 
   /* ============================================================
@@ -4749,7 +4392,6 @@ function createUnmatchedUserImagesPreview() {
         items = data;
       }
       window.cachedOrderItems = items;
-      window.updateOrderItemCounter?.();
       await fillPreviewBoxes(items);
       // Re-apply any active search after grid rebuild
       if (typeof window.applyOrderSearchFilter === "function") {
