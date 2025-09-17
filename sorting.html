@@ -74,28 +74,6 @@
 
       }
 
-      /* Make only the Unmatched area scroll inside matchesModal */
-      /* 1) STOP the parent modal from scrolling (Materialize sets overflow on .modal) */
-      #matchesModal.modal {
-        overflow-y: hidden !important;   /* <- key line: kill modal-level scroll */
-        max-height: none !important;     /* remove the 70% cap that forces scrollbars */
-        height: auto !important;
-      }
-      /* 2) Let the modal content itself be free of its own scrollbar */
-      #matchesModal .modal-content {
-        overflow-y: visible;             /* children manage their own scroll */
-      }
-
-      #matchesModal #unmatchedWrapper .unmatched-scroller {
-        max-height: 260px;             /* tweak to taste */
-        overflow-y: auto;              /* own scrollbar */
-        padding-right: 6px;            /* room for scrollbar, avoids jitter */
-      }
-      /* Raise the entire “Unmatched User Photos” section by 30px */
-      #matchesModal #unmatchedWrapper {
-        margin-top: -10px;
-      }
-
       /* highlight on drag-hover */
       #photoDragDrop.drag-hover {
         border: 2px dashed #2196F3 !important;   /* blue dashed outline */
@@ -159,8 +137,6 @@
       margin: 0;
       box-shadow: none !important;
     }
-
-    #matrixProgressWrap .progress { margin:0 !important; }
 
     #unmatchedContainer {
       position: absolute;
@@ -230,38 +206,11 @@
       background-color:var(--outlineBlue) !important;
       color:#fff !important;
     }
-
-   /* ===== Pre-Filter Monitor (temporary debug UI) ===== */
-    #prefilterPanel {
-      position:absolute;
-      left:1460px; top:70px; width:360px; height:650px;
-      border:1px solid #ccc; background:#fff; overflow:auto; padding:8px;
-      box-shadow:0 2px 6px rgba(0,0,0,.08); border-radius:8px;
-      font-size:.85em;
-    }
-    #prefilterPanel h6 { margin:4px 0 8px 0; font-weight:600; }
-    .pf-cell { margin-bottom:10px; border:1px solid #e5e5e5; border-radius:6px; }
-    .pf-head { background:#f7f7f7; padding:6px 8px; border-bottom:1px solid #eee; }
-    .pf-head small { color:#777; }
-    .pf-list { list-style:none; padding:6px 8px; margin:0; }
-    .pf-list li { margin:0 0 4px 0; }
-    .pf-hit { font-weight:600; }
-    .pf-sent { font-size:.8em; color:#666; padding:0 8px 6px; }
-    /* tiny pill for the 2-word descriptor */
-    .pf-tag {
-      display:inline-block; padding:2px 6px; border:1px solid #ddd;
-      border-radius:999px; font-size:.75em; margin-left:6px; background:#f9f9f9;
-    }
-
   </style>
 </head>
 <body>
   <!-- Main Buttons -->
   <button id="connectEtsyBtn" class="btn waves-effect waves-light">Connect to Etsy</button>
-  <!-- Live Search: Etsy Order Item Titles -->
-  <input id="orderSearchBox" class="browser-default" type="text" autocomplete="off"
-         placeholder="Search orders…">
-  <button id="filterIncompleteBtn" class="btn waves-effect waves-light">Filter</button>
   <button id="openConfigBtn" class="btn waves-effect waves-light">Open Config</button>
   <button id="mpBackBtn" class="btn waves-effect waves-light">Back</button>
   <button id="mpNextBtn" class="btn waves-effect waves-light">Next</button>
@@ -296,28 +245,12 @@
   <!-- Image Comparison UI -->
   <div id="imageComparisonContainer">
     <div id="photoDragDrop">Drag & Drop</div>
-    <!-- Inline progress: sits directly below the Drag & Drop box -->
-    <div id="matrixProgressWrap" style="display:none; margin-top:8px;">
-      <div id="matrixProgressTitle" style="font-size:1.06em; font-weight:bold; margin-bottom:4px;">Analyzing…</div>
-      <div id="matrixProgressRow" style="display:flex; align-items:center; gap:6px;">
-        <div class="progress" style="height:14px; width:219px; margin:0;">
-          <div id="matrixProgressBar" class="determinate" style="width:0%"></div>
-        </div>
-        <div id="matrixProgressPct" style="font-size:1.06em; font-weight:bold; min-width:32px; line-height:1;">0%</div>
-      </div>
-    </div>
     <div id="unmatchedContainer"></div>
   </div>
 
   <!-- Container for dynamically generated preview boxes and detail boxes -->
   <div id="photoGridContainer">
     <!-- Preview boxes and detail boxes will be created dynamically -->
-  </div>
-
- <!-- ===== TEMP: Pre-Filter Monitor (real-time) ===== -->
-  <div id="prefilterPanel" aria-live="polite">
-    <h6>Pre-Filter Monitor</h6>
-    <div id="pfInner"></div>
   </div>
 
   <!-- Config Modal -->
@@ -363,20 +296,15 @@
              type="text"
              readonly
              placeholder="Customer Notes"
-             style="display:block; margin-top:0; width:600px; height:35px; margin-bottom:15px;" />
+             style="display:block; margin-top:0; width:250px; height:30px; margin-bottom:5px;" />
       <div
         id="matchesGridContainer"
         style="display: flex; flex-wrap: wrap; gap: 10px;"
       ></div>
     </div>
- <div class="modal-footer">
-   <input id="matrixSearchBox"
-          class="browser-default"
-          type="text"
-          placeholder="Matrix Image Search"
-          style="width:260px; margin-right:10px;" />
-   <!-- “Save” button that will perform the array updates and then close the modal -->
-   <a href="#!" id="saveMatchesBtn" class="waves-effect waves-green btn">Save</a>
+    <div class="modal-footer">
+      <!-- “Save” button that will perform the array updates and then close the modal -->
+      <a href="#!" id="saveMatchesBtn" class="waves-effect waves-green btn">Save</a>
       <!-- “Cancel” button that closes the modal without saving changes -->
       <a href="#!" class="modal-close waves-effect waves-red btn">Cancel</a>
     </div>
@@ -557,8 +485,6 @@ let matchPrintFlowInProgress = false;
 let pendingFetchControllers = [];
 let globalRunId = 0;
 let currentSaveHandler = null;      // tracks active “Save” listener
-// Live grid filter: when true, only show items with missing/no matches
-window.filterIncompleteOnly = false;
 function parkSaveBtn() {
   const btn    = document.getElementById("saveMatchesBtn");
   const footer = document.querySelector("#matchesModal .modal-footer");
@@ -622,186 +548,51 @@ function flipImageHorizontal(dataURL) {
   });
 }
 
- /********************************************************
-  * Inline progress bar (no modal) — renders under #photoDragDrop
-  * NOTE: we keep the SAME function names used elsewhere so callers
-  * don’t need to change (showProgressModal / updateProgressModal / closeProgressModal).
-  ********************************************************/
- function ensureProgressInline() {
-   // Ensure wrapper exists right after the Drag & Drop node.
-   let wrap = document.getElementById("matrixProgressWrap");
-   if (!wrap) {
-     const ref = document.getElementById("photoDragDrop");
-     if (!ref) return null;
-     wrap = document.createElement("div");
-     wrap.id = "matrixProgressWrap";
-     wrap.style.display = "none";
-     wrap.style.marginTop = "8px";
-     wrap.innerHTML = `
-     <div id="matrixProgressTitle" style="font-size:1.06em; font-weight:bold; margin-bottom:4px;">Analyzing…</div>
-      <div id="matrixProgressRow" style="display:flex; align-items:center; gap:6px;">
-        <div class="progress" style="height:14px; width:219px; margin:0;">
-          <div id="matrixProgressBar" class="determinate" style="width:0%"></div>
+/********************************************************
+ * Progress‑bar modal helpers (one modal reused everywhere)
+ ********************************************************/
+function ensureProgressModal() {
+  let modal = document.getElementById("progressModal");
+  if (!modal) {
+    modal            = document.createElement("div");
+    modal.id         = "progressModal";
+    modal.className  = "modal";
+    modal.style.maxWidth = "47%";          
+    modal.innerHTML = `
+      <div class="modal-content" style="text-align:center">
+        <h6 id="progressTitle" style="margin-bottom:20px"></h6>
+        <div style="display:flex; justify-content:center">
+          <div class="progress" style="width:80%; height:12px;">   <!-- bar -33% width -->
+            <div id="progressBar"
+                 class="determinate"
+                 style="width:0%; background-color:#2196f3;"></div>
+          </div>
+          <div id="progressPct"
+               style="min-width:45px; margin-left:8px; font-weight:bold;">0%</div>
         </div>
-        <div id="matrixProgressPct" style="font-size:1.06em; font-weight:bold; min-width:32px; line-height:1;">0%</div>
-      </div>
-    `;
-     ref.insertAdjacentElement("afterend", wrap);
-   }
-   return wrap;
- }
-
- // Compatibility: same name, now drives the inline bar
- function showProgressModal(title, totalCount) {
-   const wrap = ensureProgressInline();
-   if (!wrap) return;
-   const t = document.getElementById("matrixProgressTitle");
-   if (t) t.textContent = title || "Working…";
-   updateProgressModal(0, totalCount);
-   wrap.style.display = "block";
- }
-
- // Compatibility: same name, updates inline bar
- function updateProgressModal(doneCount, totalCount) {
-   const pct = totalCount ? Math.round((doneCount / totalCount) * 100) : 0;
-   const bar = document.getElementById("matrixProgressBar");
-   const txt = document.getElementById("matrixProgressPct");
-   if (bar) bar.style.width = pct + "%";
-   if (txt) txt.textContent = pct + "%";
- }
-
- // Compatibility: same name, hides inline bar
- function closeProgressModal() {
-   const wrap = ensureProgressInline();
-   if (wrap) wrap.style.display = "none";
- }
-
-/* =========================================================
- * Pre-Filter Monitor helpers
- * =======================================================*/
-function pfReset(title="Pre-Filter Monitor"){
-  const wrap = document.getElementById("prefilterPanel");
-  if (!wrap) return;
-  const inner = document.getElementById("pfInner");
-  if (inner) inner.innerHTML = "";
-  wrap.querySelector("h6").textContent = title;
-}
-function pfStartCell(i, etsyTitle){
-  const inner = document.getElementById("pfInner"); if (!inner) return;
-  const box = document.createElement("div");
-  box.className = "pf-cell";
-  box.id = "pf-cell-" + i;
-  const parsed = String(etsyTitle || "");
-  const origArr = Array.isArray(window.cachedOrderItems) ? window.cachedOrderItems : [];
-  const orig = escapeHtml(String(origArr[i]?.title || ""));
-  box.innerHTML = `
-    <div class="pf-head">
-      <div><b>Cell ${i}</b></div>
-      <small>Title (orig): ${orig.slice(0,120)}</small><br/>
-      <small>Title (parsed): ${escapeHtml(parsed)}</small>
-    </div>
-    <ul class="pf-list" id="pf-list-${i}"></ul>
-    <div class="pf-sent" id="pf-sent-${i}"></div>
-  `;
-  inner.appendChild(box);
-}
-function pfAddCandidate(i, userName, desc2, hitWord){
-  const list = document.getElementById("pf-list-" + i); if (!list) return;
-  const li = document.createElement("li");
-  const d2  = normalizeTwoWordDescriptor(desc2 || "");
-  const hit = hitWord ? ` <span class="pf-hit">[${hitWord}]</span>` : "";
-  li.innerHTML = `<span class="pf-name">${escapeHtml(userName)}</span> <span class="pf-tag" title="Charm descriptor">${escapeHtml(d2)}</span>${hit}`;
-  list.appendChild(li);
-}
-function pfMarkSent(i, count){
-  const sent = document.getElementById("pf-sent-" + i); if (!sent) return;
-  sent.textContent = `→ sending ${count} candidate${count===1?"":"s"} to OpenAI…`;
-}
-function escapeHtml(s){
-  return String(s).replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
-}
-
-/**
- * normalizeTitleForPrefilter(title)
- * - lowercase
- * - remove ALL punctuation (keep only a–z, 0–9 and spaces)
- * - collapse whitespace
- * - use the FULL Etsy item title (no word limit)
- */
-function normalizeTitleForPrefilter(title){
-  return String(title || "")
-    .toLowerCase()
-    .replace(/[^a-z0-9\s]/gi, " ")   // strip ALL punctuation
-    .replace(/\s+/g, " ")            // collapse runs of whitespace
-    .trim();
-}
-
-// Build the word list we will use for title prefiltering.
-// Prefer the persisted 6-word descriptor (with potential 'ocean' augmentation),
-// and fall back to the 2-word tag if 6-word is missing.
-function descriptorWordsFor(baseName){
-  const banned = new Set([
-    "charm","jewelry","jewellery","pendant",
-    "cute","fun","big","small","accessory","trinket","bling","flair","piece","play",
-    "handmade","trendy","keepsake","gift","keeps","item","collection","doodad","dood",
-    "quirky","playful","decoration","funky","fashion","ornament","bauble"
-  ]);
-  let sixMap = {};
-  let twoMap = {};
-  try { sixMap = JSON.parse(localStorage.getItem("matrixCharm6Words") || "{}"); } catch(_) {}
-  try { twoMap = JSON.parse(localStorage.getItem("matrixCharm2Words") || "{}"); } catch(_) {}
-  const raw = String(sixMap[baseName] || twoMap[baseName] || "").toLowerCase();
-  if (!raw) return [];
-  // keep hyphens inside words, split on whitespace
-  const words = raw
-    .replace(/[^a-z0-9-\s]/g, " ")
-    .replace(/\s+/g, " ")
-    .trim()
-    .split(" ")
-    .filter(Boolean)
-    .filter(w => !banned.has(w));
-  // de-dup to reduce redundant regex checks
-  return Array.from(new Set(words)).slice(0, 12); // soft cap to avoid overly broad matches
-}
-
-// Lowercase, strip punctuation, collapse spaces, keep up to 8 words,
-// and drop banned filler tokens (e.g., "charm", "jewelry", "jewellery").
-function normalizeTwoWordDescriptor(s){
-  const banned = new Set(["charm","jewelry","jewellery","pendant", "cute", "fun", "big", "small", "accessory", "trinket", "bling", "flair", "piece", "play", "handmade", "trendy", "keepsake", "gift", "keeps", "item", "collection", "doodad", "dood", "quirky", "playful", "decoration", "trendy", "funky", "fashion", "ornament", "bauble"]);
-
-  return String(s || "")
-    .toLowerCase()
-    .replace(/[^a-z0-9-\s]/gi, " ")   // allow hyphen inside words
-    .replace(/\s+/g, " ")
-    .trim()
-    .split(" ")
-    .filter(Boolean)
-    .filter(w => !banned.has(w))
-    .slice(0, 6)
-    .join(" ");
-}
-
-  /**
-   * augmentSixWordDescriptorOcean(desc6)
-   * If any of these appear as whole words in the 6-word descriptor:
-   *   dolphin, marine, aquatic, mammal, orca, fish, beach
-   * then append 'ocean' once (lowercase) to the descriptor words.
-   * Returns the (possibly) augmented string.
-   */
-  function augmentSixWordDescriptorOcean(desc6){
-    const triggers = new Set(["dolphin","marine","aquatic","mammal","orca","fish","beach", "whale", "water", "animal", "octopus"]);
-    const words = String(desc6 || "")
-      .toLowerCase()
-      .replace(/[^a-z0-9-\s]/g, " ")
-      .replace(/\s+/g, " ")
-      .trim()
-      .split(" ")
-      .filter(Boolean);
-    if (!words.length) return "";
-    const hasTrigger = words.some(w => triggers.has(w));
-    if (hasTrigger && !words.includes("ocean")) words.push("ocean");
-    return words.join(" ");
+      </div>`;
+    document.body.appendChild(modal);
+    M.Modal.init(modal, { dismissible:false });
   }
+  return M.Modal.getInstance(modal);
+}
+
+function showProgressModal(title, totalCount) {
+  const inst = ensureProgressModal();
+  document.getElementById("progressTitle").textContent = title;
+  updateProgressModal(0, totalCount);
+  inst.open();
+}
+
+function updateProgressModal(doneCount, totalCount) {
+  const pct = totalCount ? Math.round((doneCount / totalCount) * 100) : 0;
+  document.getElementById("progressBar").style.width = pct + "%";
+  document.getElementById("progressPct").textContent = pct + "%";
+}
+
+function closeProgressModal() {
+  ensureProgressModal().close();
+}
 
 /********************************************************
  * Firebase Initialization (REQUIRED)
@@ -971,14 +762,10 @@ const configIDs = [
   "configTable",
   "saveConfigBtn",
   "photoDragDrop",
-  "matrixProgressWrap",
   "sendMatchBtn",
   "matchPrintBtn",
   "titleEtsyOrderNumber",
   "titleImageMatrixDrop",
-  "prefilterPanel",
-  "orderSearchBox",
-  "filterIncompleteBtn",
   "titleUnmatchedImages"
 ];
 
@@ -1022,7 +809,6 @@ etsyOrderInput.addEventListener("keydown", async function (e) {
     // Clear UI
     document.getElementById("photoGridContainer").innerHTML = "";
     document.getElementById("unmatchedContainer").innerHTML = "";
-    pfReset();  // ← clear pre-filter UI for a fresh run
 
     disableSendMatch();
     disableMatchPrintFlow();
@@ -1059,19 +845,6 @@ etsyOrderInput.addEventListener("keydown", async function (e) {
   // ===== NEW LINE: Start listening for QR scans from sort-scan.html =====
   startScannedSortingListener();
 });
-
-  // Filter toggle
-  const fbtn = document.getElementById("filterIncompleteBtn");
-  if (fbtn) {
-    fbtn.addEventListener("click", () => {
-      window.filterIncompleteOnly = !window.filterIncompleteOnly;
-      fbtn.textContent = window.filterIncompleteOnly ? "Show All" : "Filter";
-      const q = document.getElementById("orderSearchBox")?.value || "";
-      if (typeof window.applyOrderSearchFilter === "function") {
-        window.applyOrderSearchFilter(q);
-      }
-    });
-  }
 
 /* ==========================================================
    Global helper – click any matchCellX to open the modal
@@ -1574,7 +1347,7 @@ function openIframePrinterForListing(cellIndex) {
     const defaultPos = {
       configModal:              { left:711, top:387, width:250, height:450 },
       configTable:              { left:27,  top:7,   width:525, height:1392 },
-      connectEtsyBtn:           { left:1070,top:729,  width:170, height:35 },
+      connectEtsyBtn:           { left:1239,top:14,  width:170, height:35 },
       cropImagesBtn:            { left:20,  top:215, width:140, height:35 },
       etsyOrderNumber:          { left:20,  top:25,  width:200, height:30 },
       imageComparisonContainer: { left:0,   top:0,   width:0,   height:0 },
@@ -1592,10 +1365,6 @@ function openIframePrinterForListing(cellIndex) {
       userImage:                { left:0,   top:0,   width:100, height:100 },
       saveConfigBtn:            { left:10,  top:3,   width:85,  height:35 },
       sendMatchBtn:             { left:20,  top:255, width:210, height:35 },
-      prefilterPanel:           { left:1460, top:68, width:360, height:650 },
-      matrixProgressWrap:       { left:250,   top:-316, width:290,   height:50 },
-      orderSearchBox :          { left: 1053, top: 15, width: 260, height: 35 },
-      filterIncompleteBtn:      { left: 1328, top: 15, width: 120, height: 35 },
       testOpenAIBtn:            { left:20,  top:65,  width:140, height:35 }
     };
 
@@ -1729,7 +1498,6 @@ function openIframePrinterForListing(cellIndex) {
     }
 
     localStorage.removeItem("userImagesArray");
-    userImagesArray = [];
 
     // Analyze every sub-image; store only those with a charm
     await analyzeAndStoreSubImages(subImagesToAnalyze);
@@ -1766,43 +1534,15 @@ async function analyzeAndStoreSubImages(imgObjs) {
     const res = await openAIAnalyzePhoto(data);
     const isCharm = (res.charmPresent || "").toLowerCase() === "yes";
 
-    // 1) Decide the final filename now
-    const finalName = isCharm
-      ? `${res.color || "UnknownColor"}_${res.topRightNumber || "XX"}.jpg`
-      : `${origName}.jpg`;
-
-    // Save the image immediately
-    userImagesArray.push({ name: finalName, data, analyzed: true });
+    // 1) Save *every* image immediately, no skipForCharm flag
+    userImagesArray.push({
+      name    : isCharm
+                ? `${res.color||"UnknownColor"}_${res.topRightNumber||"XX"}.jpg`
+                : `${origName}.jpg`,
+      data,
+      analyzed: true
+    });
     saved++;
-
-    // 1b) Persist the 2-word descriptor mapped to this image base name
-    try {
-      const k   = "matrixCharm2Words";
-      const map = JSON.parse(localStorage.getItem(k) || "{}");
-      const base = stripExtension(finalName);
-      const norm = normalizeTwoWordDescriptor(res?.desc2 || "");
-      if (norm) {
-        map[base] = norm;           // e.g., { "Gold_2": "paw print" }
-        localStorage.setItem(k, JSON.stringify(map));
-      }
-    } catch (e) {
-      console.warn("matrixCharm2Words persist failed:", e);
-    }
-
-      // 1c) Persist the full 6-word descriptor, auto-appending 'ocean' on trigger
-      try {
-        const k6   = "matrixCharm6Words";
-        const map6 = JSON.parse(localStorage.getItem(k6) || "{}");
-        const base = stripExtension(finalName);
-        const raw6 = String(res?.desc2 || "");
-        const aug6 = augmentSixWordDescriptorOcean(raw6); // adds 'ocean' if dolphin/marine/aquatic/mammal/orca/fish/beach present
-        if (aug6) {
-          map6[base] = aug6;          // e.g., { "Gold_2": "animal dolphin pendant ... ocean" }
-          localStorage.setItem(k6, JSON.stringify(map6));
-        }
-      } catch (e) {
-        console.warn("matrixCharm6Words persist failed:", e);
-      }
 
     // 2) Update streak
     if (isCharm) {
@@ -1880,7 +1620,7 @@ async function extractSubImages144(baseDataUrl) {
         c * cellW, r * cellH, cellW, cellH,   // src
         0, 0, cellW, cellH                    // dest
       );
-      results.push(canvas.toDataURL("image/jpeg", 0.85));
+      results.push(canvas.toDataURL("image/jpeg", 0.7));
     }
   }
   return results;     // 140 sub-images
@@ -1894,7 +1634,7 @@ async function cropTo512(dataUrl) {
   canvas.height = 400;
   const ctx = canvas.getContext("2d");
   ctx.drawImage(loaded, 0, 0, 400, 400);
-  return canvas.toDataURL("image/jpeg", 0.85);
+  return canvas.toDataURL("image/jpeg", 0.7);
 }
 
  /* === NEW : reduceRedTone — dims the R-channel by 15 % === */
@@ -1933,66 +1673,14 @@ function loadImage(dataUrl) {
   });
 }
 
-// --- Edge density detector (excludes top-right number tile region) ---
-async function edgeDensityExcludingTopRight(dataUrl){
-  const img = await loadImage(dataUrl);
-  const w = img.naturalWidth, h = img.naturalHeight;
-  const canvas = document.createElement("canvas");
-  canvas.width = w; canvas.height = h;
-  const ctx = canvas.getContext("2d");
-  ctx.drawImage(img, 0, 0);
-  const { data } = ctx.getImageData(0, 0, w, h);
-
-  // grayscale
-  const gray = new Uint8ClampedArray(w*h);
-  for (let y=0, i=0, p=0; y<h; y++){
-    for (let x=0; x<w; x++, i++, p+=4){
-      const r=data[p], g=data[p+1], b=data[p+2];
-      gray[i] = (0.299*r + 0.587*g + 0.114*b)|0;
-    }
-  }
-  // exclude top-right square (~28% width/height) where the number sits
-  const exW = Math.floor(0.28*w), exH = Math.floor(0.28*h);
-  const exX0 = w - exW, exY0 = 0, exX1 = w-1, exY1 = exH-1;
-
-  // Sobel
-  const kx = [-1,0,1,-2,0,2,-1,0,1];
-  const ky = [-1,-2,-1,0,0,0,1,2,1];
-  let edges = 0, total = 0;
-  const thr = 60; // edge threshold
-  for (let y=1; y<h-1; y++){
-    for (let x=1; x<w-1; x++){
-      if (x>=exX0 && x<=exX1 && y>=exY0 && y<=exY1) continue; // skip number tile
-      const i = y*w + x;
-      let gx=0, gy=0, t=0;
-      t = gray[i-w-1]; gx += kx[0]*t; gy += ky[0]*t;
-      t = gray[i-w  ]; gx += kx[1]*t; gy += ky[1]*t;
-      t = gray[i-w+1]; gx += kx[2]*t; gy += ky[2]*t;
-      t = gray[i-1   ]; gx += kx[3]*t; gy += ky[3]*t;
-      t = gray[i     ]; gx += kx[4]*t; gy += ky[4]*t;
-      t = gray[i+1   ]; gx += kx[5]*t; gy += ky[5]*t;
-      t = gray[i+w-1 ]; gx += kx[6]*t; gy += ky[6]*t;
-      t = gray[i+w   ]; gx += kx[7]*t; gy += ky[7]*t;
-      t = gray[i+w+1 ]; gx += kx[8]*t; gy += ky[8]*t;
-      const mag = Math.hypot(gx, gy);
-      if (mag > thr) edges++;
-      total++;
-    }
-  }
-  return edges / Math.max(1,total); // 0..1
-}
-
-// --------------- Single-Photo Analysis (TWO-PASS hue→label + verbose logs) ---------------
-// FIX: wrap in an async function to avoid top-level await errors.
+// --------------- Single‑Photo Analysis (TWO‑PASS hue→label + verbose logs) ---------------
 async function openAIAnalyzePhoto(base64Image) {
-  /* ───────────────────── PASS 1 : hue / number / charm ───────────────────── */
+  /* ───────────────────── PASS 1 : hue / number / charm ───────────────────── */
   const ctrlHue = new AbortController();
   pendingFetchControllers.push(ctrlHue);
 
   const huePayload = {
-    model: "gpt-5",
-    response_format: { type: "json_object" },
-    temperature: 0,
+    model: "gpt-4o",
     messages: [
       {
         role: "user",
@@ -2002,24 +1690,21 @@ async function openAIAnalyzePhoto(base64Image) {
             text:
               "Return JSON EXACTLY like:\n" +
               '  {"hue":"<≤10-word description>", "topRightNumber":"<number or blank>", "charmPresent":"Yes|No",' +
-              '   "medianHSV":{"H":<deg>,"S":<pct>,"V":<pct>}, "medianLab":{"L":<L*>,"a":<a*>,"b*":<b*>}}\n\n' +
+              '   "medianHSV":{"H":<deg>,"S":<pct>,"V":<pct>}, "medianLab":{"L":<L*>,"a":<a*>,"b":<b*>}}\n\n' +
               "TASK 1 – Describe the dominant metal hue (≤10 words).\n" +
               "TASK 2 – Extract the top-right number (blank if none).\n" +
               "TASK 3 – Is a jewellery charm clearly visible? (Yes|No).\n" +
-               "DEFINITION for charmPresent=Yes: any discrete metal object including, include rounded, wavy, and spherical items (coins, discs, domed orbs, shells, pebbles, slippers, circular medallions) as charms even if small or glossy\n" +
-               "thin rectangular nameplates with two end-holes, bars, rings, or pendants.\n" +
-               "Ignore the white number square; its presence does not negate a charm.\n" +
-               "If a thin metallic bar occupies ≥0.4% of the tile with clear edges or\n" +
-               "specular highlights, answer Yes.\n" +
               "Estimate MEDIAN HSV (H° 0–360, S% 0–100, V% 0–100) and MEDIAN CIELAB (L*, a*, b*).\n" +
+
               "IMPORTANT MASKING RULES FOR MEDIANS:\n" +
-               "• Exclude background/near-black and near-white backgrounds.\n" +
-               "• Near-black cutoff: Ignore pixels if (HSV.V ≤ 12% OR Lab L* ≤ 16).\n" +
-               "• Near-white cutoff: Ignore pixels only if (HSV.V ≥ 98%) OR Lab L* ≥ 98.\n" +
-               "• Keep bright metallic highlights: do NOT exclude high-V pixels when S > 6% (e.g., rose gold/copper).\n" +
-               "• DO NOT discard low-saturation metal: Keep pixels with HSV.S < 8% when\n" +
-               "  (HSV.V ≥ 28% OR Lab L* ≥ 30) to retain neutral SILVER highlights.\n" +
+              "• Exclude background/near-black pixels and any white/near-white background.\n" +
+              "• Ignore pixels if (HSV.V ≤ 18% OR Lab L* ≤ 20)  ← near-black/very dark. \n" +
+              "• Ignore pixels if (HSV.V ≥ 96% OR Lab L* ≥ 96)  ← near-white/very bright. \n" +
+              "• Ignore pixels with very low saturation (HSV.S < 8%) to avoid gray background bleed.\n" +
+
               "Respond with JSON only."
+
+
           },
           { type: "image_url", image_url: { url: base64Image, detail: "high" } }
         ]
@@ -2028,16 +1713,16 @@ async function openAIAnalyzePhoto(base64Image) {
     max_tokens: 200
   };
 
-  console.log("%c[openAIAnalyzePhoto] PASS 1 payload:", "color:#03A9F4", huePayload);
+  console.log("%c[openAIAnalyzePhoto] PASS 1 payload:", "color:#03A9F4", huePayload);
 
   let hueText   = "";
   let topNumber = null;
   let charmFlag = "no";
   let roseHit   = false;  // ← PASS-1 Rose detector
 
-  // Medians from PASS 1 (declared in outer scope so PASS 2 can see them)
-  let hsvH = NaN, hsvS = NaN, hsvV = NaN;
-  let labL = NaN, labA = NaN, labB = NaN;
+   // Medians from PASS 1 (declared in outer scope so PASS 2 can see them)
+   let hsvH = NaN, hsvS = NaN, hsvV = NaN;
+   let labL = NaN, labA = NaN, labB = NaN;
 
   try {
     const r1 = await fetch(functionsBaseUrl + "/openaiProxy", {
@@ -2048,7 +1733,7 @@ async function openAIAnalyzePhoto(base64Image) {
     });
     const d1 = await r1.json();
     let raw1 = d1.choices?.[0]?.message?.content?.trim() || "";
-    console.log("%c[openAIAnalyzePhoto] PASS 1 raw response:", "color:#03A9F4", raw1);
+    console.log("%c[openAIAnalyzePhoto] PASS 1 raw response:", "color:#03A9F4", raw1);
 
     raw1 = raw1.replace(/^```(\w+)?/, "").replace(/```$/, "").trim();
     const obj1 = JSON.parse(raw1);
@@ -2056,8 +1741,9 @@ async function openAIAnalyzePhoto(base64Image) {
     hueText   = obj1.hue            || "";
     topNumber = obj1.topRightNumber || null;
     charmFlag = (obj1.charmPresent  || "No").toLowerCase();
-    roseHit   = /rose/i.test(hueText);
+    roseHit   = /rose/i.test(hueText);  // any form: “rose”, “rose gold”, “rosegold”
 
+     // NEW: capture medians from API (numbers expected)
     const hsv = obj1.medianHSV || {};
     const lab = obj1.medianLab || {};
     hsvH = Number(hsv.H); hsvS = Number(hsv.S); hsvV = Number(hsv.V);
@@ -2065,35 +1751,44 @@ async function openAIAnalyzePhoto(base64Image) {
     console.log("%c[openAIAnalyzePhoto] PASS 1 → medians:",
       "color:#03A9F4;font-weight:bold",
       `HSV H=${hsvH}° S=${hsvS}% V=${hsvV}% | Lab L*=${labL} a*=${labA} b*=${labB}`);
-    console.log("%c[openAIAnalyzePhoto] PASS 1 → hue:", "color:#03A9F4;font-weight:bold",
-      `"${hueText}"  |  topRightNumber: ${topNumber}  |  charmPresent: ${charmFlag}`);
+
+    console.log(
+      "%c[openAIAnalyzePhoto] PASS 1 → hue:", "color:#03A9F4;font-weight:bold",
+      `"${hueText}"  |  topRightNumber: ${topNumber}  |  charmPresent: ${charmFlag}`
+    );
   } catch (err) {
-    console.error("[openAIAnalyzePhoto] PASS 1 error:", err);
+    console.error("[openAIAnalyzePhoto] PASS 1 error:", err);
     return { topRightNumber:null, color:null, charmPresent:"no" };
   }
 
-/* ───────────────────── PASS 2 : hue ⇒ fixed label ───────────────────── */
+  /* ───────────────────── PASS2 : hue ⇒ fixed label ───────────────────── */
   const ctrlLabel = new AbortController();
   pendingFetchControllers.push(ctrlLabel);
+
   const labelPrompt =
     `You are classifying metal color from numeric medians. APPLY THESE CUT LINES STRICTLY:\n` +
-    `• HSV rule (primary): RoseGold if 15° ≤ median H ≤ 30° AND S ≥ 31%.\n` +
-    `• CIELAB rule (cross-check): RoseGold if a* ≥ 8.5 AND b* ≥ 14.\n` +
-    `• Gold rule (fallback): Gold if (median H ≥ 36° AND S ≥ 18%) OR (b* ≥ 15).\n` +
-    `• Silver: If S ≤ 13% AND a* between −3 and +4 AND b* between −3 and +8.\n` +
+    `• HSV rule (primary): RoseGold if 15° ≤ median H ≤ 33° AND S ≥ 22%.\n` +
+    `• CIELAB rule (cross-check): RoseGold if a* ≥ 6.25 AND b* ≥ 13.\n` +
+    `• Gold rule (fallback): Gold if (median H ≥ 34°) OR (a* ≤ 5.5) OR (b* ≤ 12).\n` +
+    `• Silver: If S ≤ 10% AND a* between −2 and +3 AND b* between −2 and +6.\n` +
     `• Voting: each satisfied rule is one vote. If both rules agree, use that label.\n` +
-    `• Tie-breaking: if Gold vs Silver tie, choose Silver. If RoseGold vs Gold tie, choose Gold unless a* ≥ 8 OR hue contains "rose".\n` +
+    `Voting: each satisfied rule is one vote. If both RoseGold rules vote RoseGold, use RoseGold.\n` +
+    `If rules disagree, prefer the majority.\n` +
     `• Only return exactly one word: Gold, RoseGold, or Silver.\n\n` +
     `INPUT\n` +
     `hue="${hueText}"\n` +
     `medianHSV: H=${hsvH} S=${hsvS} V=${hsvV}\n` +
     `medianLab: L=${labL} a=${labA} b=${labB}`;
+
+
   const labelPayload = {
-    model: "gpt-5",
+    model: "gpt-4o",
     messages: [{ role: "user", content: labelPrompt }],
     max_tokens: 30
   };
+
   console.log("%c[openAIAnalyzePhoto] PASS 2 payload:", "color:#8E24AA", labelPayload);
+
   let finalColor = null;
   try {
     const r2 = await fetch(functionsBaseUrl + "/openaiProxy", {
@@ -2104,71 +1799,24 @@ async function openAIAnalyzePhoto(base64Image) {
     });
     const d2 = await r2.json();
     let raw2 = d2.choices?.[0]?.message?.content?.trim() || "";
-    console.log("%c[openAIAnalyzePhoto] PASS 2 raw response:", "color:#8E24AA", raw2);
+    console.log("%c[openAIAnalyzePhoto] PASS 2 raw response:", "color:#8E24AA", raw2);
+
     raw2       = raw2.replace(/[^A-Za-z]/g, "");
     finalColor = ["Gold", "RoseGold", "Silver"].includes(raw2) ? raw2 : "Unknown";
-    console.log("%c[openAIAnalyzePhoto] PASS 2 → final metal label:", "color:#8E24AA;font-weight:bold", finalColor);
+    console.log(
+      "%c[openAIAnalyzePhoto] PASS 2 → final metal label:", "color:#8E24AA;font-weight:bold",
+      finalColor
+    );
   } catch (err) {
-    console.error("[openAIAnalyzePhoto] PASS 2 error:", err);
+    console.error("[openAIAnalyzePhoto] PASS 2 error:", err);
     finalColor = "Unknown";
   }
 
-  /* ───────────────────── PASS 3 : two-word charm descriptor ───────────────────── */
-  const ctrlDesc = new AbortController();
-  pendingFetchControllers.push(ctrlDesc);
-  const descPrompt = [
-    "You will be shown ONE product-matrix tile image.",
-    "Return EXACTLY eight (6) lowercase words separated by single spaces in this order:",
-    "broad1 focus1 focus2 colloq1 colloq2 synonyms",
-    "",
-    "• broad1 — a single, high-level class word naming the motif’s category, purpose, function; singular noun only; exclude filler terms (charm, pendant, jewelry), (no plurals)",
-    "• focus1 / focus2 — two specific subject/detail words that pin down the exact motif and its defining feature, subtype, purpose, function; singular nouns only; avoid colors, sizes, and marketing words, (no plurals)",
-    "• colloq1 = informal synonyms or colloquial variants of broad1 shoppers might type",
-    "• colloq2 = informal synonyms or colloquial variants of focus1 shoppers might type",
-    "• synonyms = formal synonyms or variants of focus1 or focus2 that shoppers might type",
-    "• STRICTLY ban: charm, jewelry, jewellery, pendant, cute, fun, big, small, accessory, trinket, bling, flair, piece, play, handmade, trendy, keepsake, gift, keeps, item, collection, doodad, dood, quirky, playful, decoration, trendy, funky, fashion, ornament, bauble",
-    "• Do not mention metal color, engraving text, numbers, or counts",
-    "• Output ONLY the 6 words, no punctuation (hyphens inside a word are allowed)"
-  ].join("\\n");
-  let desc2 = "";
-  try {
-    const r3 = await fetch(functionsBaseUrl + "/openaiProxy", {
-      method : "POST",
-      headers: { "Content-Type": "application/json" },
-      body   : JSON.stringify({
-        model: "gpt-5",
-        messages: [
-          { role: "user", content: [
-            { type: "text", text: descPrompt },
-            { type: "image_url", image_url: { url: base64Image, detail: "high" } }
-          ]}
-        ],
-        max_tokens: 20
-      }),
-      signal : ctrlDesc.signal
-    });
-    const d3 = await r3.json();
-    // Post-process to six words, drop banned tokens, keep hyphens
-    desc2 = (d3.choices?.[0]?.message?.content || "")
-      .toLowerCase()
-      .replace(/[^a-z0-9-\\s]/g, " ")    // allow hyphen
-      .replace(/\\s+/g, " ")
-      .trim()
-      .split(" ")
-      .filter(Boolean)
-      .filter(w => !["charm","jewelry","jewellery"].includes(w))
-      .slice(0,6)
-      .join(" ");
-  } catch (e) {
-    console.warn("[openAIAnalyzePhoto] PASS 3 (desc2) error:", e);
-    desc2 = "";
-  }
-
+  /* ───────────────────── RETURN consolidated result ───────────────────── */
   return {
     topRightNumber : topNumber,
     color          : finalColor,
-    charmPresent   : charmFlag,
-    desc2
+    charmPresent   : charmFlag
   };
 }
 
@@ -2195,37 +1843,6 @@ async function analyzeUserImagesViaOpenAI() {
   let doneCount     = 0;
   let noCharmStreak = 0;
   const noCharmList = [];            // store refs to the latest “No‑charm” objects
-
-  imgObj.name     = `${finalColor}_${numTxt}.jpg`;
-  imgObj.analyzed = true;
-
-  // Persist descriptors for search: 2-word + 6-word (with 'ocean' augmentation)
-    try {
-      const baseName = stripExtension(imgObj.name);
-      // 2-word map
-      (function(){
-        const k = "matrixCharm2Words";
-        const map = JSON.parse(localStorage.getItem(k) || "{}");
-        const norm = normalizeTwoWordDescriptor(result?.desc2 || "");
-        if (norm) {
-          map[baseName] = norm;
-          localStorage.setItem(k, JSON.stringify(map));
-        }
-      })();
-      // 6-word map
-      (function(){
-        const k6 = "matrixCharm6Words";
-        const map6 = JSON.parse(localStorage.getItem(k6) || "{}");
-        const raw6 = String(result?.desc2 || "");
-        const aug6 = augmentSixWordDescriptorOcean(raw6);
-        if (aug6) {
-          map6[baseName] = aug6;
-          localStorage.setItem(k6, JSON.stringify(map6));
-        }
-      })();
-    } catch (e) {
-      console.warn("Descriptor persistence (single-image) failed:", e);
-    }
 
   // helper: scrub one baseName from cellMatches + partialMatches
   function purgeBaseName(baseName) {
@@ -2260,19 +1877,6 @@ async function analyzeUserImagesViaOpenAI() {
     imgObj.analyzed = true;
 
     const baseName  = stripExtension(imgObj.name);       // keep this line
-    // Persist the 2-word descriptor for this Matrix photo
-    try {
-      const k = "matrixCharm2Words";
-      const map = JSON.parse(localStorage.getItem(k) || "{}");
-      const norm = normalizeTwoWordDescriptor(result.desc2);
-      if (norm) {
-        map[baseName] = norm;                  // e.g., "paw print"
-        localStorage.setItem(k, JSON.stringify(map));
-      }
-      imgObj.desc2 = norm || "";
-    } catch (e) {
-      console.warn("matrixCharm2Words persist failed:", e);
-    }
 
       /* ---------- charm‑present handling ---------- */
       if (result.charmPresent === "no") {
@@ -2922,13 +2526,6 @@ async function loadBatchEtsyOrders(orderNumbers) {
       }
     }
 
-      // Persist titles for prefilter: PARSED (lowercase, no punctuation, first 4 words)
-      try {
-        const titlesByCell = combinedItems.map(t => normalizeTitleForPrefilter(t?.title));
-        localStorage.setItem("etsyTitlesByCell", JSON.stringify(titlesByCell));
-      } catch (e) {
-        console.warn("Failed to cache etsyTitlesByCell:", e);
-      }
       // Then fill the UI with combined results
       await fillPreviewBoxes(combinedItems);
 
@@ -3012,7 +2609,7 @@ async function compareImages(userImage, croppedGridImage, cellIndex, userImageNa
   pendingFetchControllers.push(controller);
 
   const payload = {
-    model: "gpt-5",
+    model: "gpt-4o",
     messages: [
       {
         role: "user",
@@ -3073,30 +2670,10 @@ async function compareImages(userImage, croppedGridImage, cellIndex, userImageNa
  * sendAndMatch with metal filter logic
  ********************************************************/
 async function sendAndMatch() {
-  // Ensure Etsy titles cache exists in parsed form (first 4 words, no punctuation)
-  (function ensureTitlesCache(){
-    try {
-      const k = "etsyTitlesByCell";
-      const items  = Array.isArray(window.cachedOrderItems) ? window.cachedOrderItems : [];
-      const titles = items.map(it => normalizeTitleForPrefilter(it?.title));
-      localStorage.setItem(k, JSON.stringify(titles));  // overwrite each run to stay fresh
-    } catch (e) { console.warn("ensureTitlesCache failed:", e); }
-  })();
   /* --- progress setup --- */
   let smDone  = 0;
   let smTotal = 0;
   showProgressModal("Matching Images... (First Pass)", 1);
-
- // Deduplicate userImagesArray by file name to prevent double-sending
-  if (Array.isArray(userImagesArray) && userImagesArray.length) {
-    const seen = new Set();
-    userImagesArray = userImagesArray.filter(u => {
-      const key = String((u && u.name) || "");
-      if (!key || seen.has(key)) return false;
-      seen.add(key);
-      return true;
-    });
-  }
 
   /* — reset earring maps for this run — */
   earringState  = {};
@@ -3148,26 +2725,6 @@ async function sendAndMatch() {
     return true; // unknown listing metal → don’t block
   }
 
-  // Title-word prefilter — require ≥1 *word* overlap between Matrix descriptor words (prefer 6-word tag) and the Etsy cell title
-  function passesTitlePrefilter(cellIdx, userImgName) {
-    let titlesArr = [];
-    try { titlesArr = JSON.parse(localStorage.getItem("etsyTitlesByCell") || "[]"); } catch (_) {}
-    const rawTitle = String(titlesArr[cellIdx] || "");  // already normalized (full title, no punctuation)
-    const title    = rawTitle;    
-    if (!title) return true; // no title → don't block
-
-  const base = String(userImgName || "").replace(/\.(jpg|jpeg|png|webp)$/i, "");
-  const words = descriptorWordsFor(base);
-  if (!words.length) return true; // no descriptor → don't block
-
-  const wordIn = (w) =>
-    w && new RegExp(`\\b${w.replace(/[.*+?^${}()|[\\]\\\\]/g, '\\\\$&')}\\b`).test(title);
-  const hitWord = words.find(wordIn) || "";
-  const ok = Boolean(hitWord);
-  console.debug("prefilter", { cellIdx, base, words, title: rawTitle, hitWord, ok });
-  return ok;
-  }
-
     // --- NEW: helpers to render names and to keep filling until have >= need ---
     function namesForCell(i){
       return (cellMatches[i] || [])
@@ -3187,40 +2744,9 @@ async function sendAndMatch() {
         const pool = userImagesArray.filter(u =>
           !u.skipForCharm &&
           metalFilterOk(metalVal, u.name) &&
-          passesTitlePrefilter(i, u.name) &&
           !matchedUserNames.has(u.name)
         );
         if (!pool.length) break;
-
-       // Also visualize these extra pre-filtered candidates before sending
-        (function renderFillList(){
-          const titlesArr = JSON.parse(localStorage.getItem("etsyTitlesByCell") || "[]");
-          const etsyTitle = titlesArr[i] || "";
-          let sixMap = {};
-          let twoMap = {};
-          try { sixMap = JSON.parse(localStorage.getItem("matrixCharm6Words") || "{}"); } catch(_) {}
-          try { twoMap = JSON.parse(localStorage.getItem("matrixCharm2Words") || "{}"); } catch(_) {}
-          const tagOf = (nm) => {
-            const key = String(nm).replace(/\.(jpg|jpeg|png|webp)$/i, "");
-            return sixMap[key] || twoMap[key] || "";
-          };
-          const hitWord = (tag, title) => {
-            const words = String(tag)
-              .toLowerCase()
-              .replace(/[^a-z0-9-\s]/g, " ")
-              .replace(/\s+/g, " ")
-              .trim()
-              .split(" ")
-              .filter(Boolean)
-              .filter(w => w !== "charm");
-            const wordIn = (w) => w && new RegExp(`\\b${w.replace(/[.*+?^${}()|[\\]\\\\]/g,'\\\\$&')}\\b`).test(String(title).toLowerCase());
-            return words.find(wordIn) || "";
-          };
-          // Only add a new block header if this cell wasn't started in FIRST PASS (fallback safe)
-          if (!document.getElementById("pf-cell-" + i)) pfStartCell(i, etsyTitle);
-          pool.forEach(u => pfAddCandidate(i, u.name, tagOf(u.name), hitWord(tagOf(u.name), etsyTitle)));
-          pfMarkSent(i, pool.length);
-        })();
 
         const promises = pool.map((user, j) =>
           new Promise(resolve => {
@@ -3288,45 +2814,10 @@ async function sendAndMatch() {
     const matchBox = document.getElementById("matchCell" + i);
     const metalVal = document.getElementById("metalCell" + i).value || "";
 
-    /* 🔥 Build the pre-filter list FIRST (skipForCharm + metal + title) */
+    /* 🔥 Filter out skipForCharm as well */
     const validUserImages = userImagesArray.filter(
-      (u) =>
-        !u.skipForCharm &&
-        metalFilterOk(metalVal, u.name) &&
-        passesTitlePrefilter(i, u.name)
+        (u) => !u.skipForCharm && metalFilterOk(metalVal, u.name)
     );
-    const titlesArr = JSON.parse(localStorage.getItem("etsyTitlesByCell") || "[]");
-    const etsyTitle = titlesArr[i] || "";
-    pfStartCell(i, etsyTitle);
-
-  // Visualize every candidate that survived the pre-filter (before OpenAI calls)
-  (function renderPrefilterList(valids){
-    let sixMap = {};
-    let twoMap = {};
-    try { sixMap = JSON.parse(localStorage.getItem("matrixCharm6Words") || "{}"); } catch(_) {}
-    try { twoMap = JSON.parse(localStorage.getItem("matrixCharm2Words") || "{}"); } catch(_) {}
-    const tagOf = (nm) => {
-      const key = String(nm).replace(/\.(jpg|jpeg|png|webp)$/i, "");
-      return sixMap[key] || twoMap[key] || "";
-    };
-    const hitWord = (tag, title) => {
-      const words = String(tag)
-        .toLowerCase()
-        .replace(/[^a-z0-9-\s]/g, " ")
-        .replace(/\s+/g, " ")
-        .trim()
-        .split(" ")
-        .filter(Boolean)
-        .filter(w => w !== "charm");
-      const wordIn = (w) => w && new RegExp(`\\b${w.replace(/[.*+?^${}()|[\\]\\\\]/g,'\\\\$&')}\\b`).test(String(title).toLowerCase());
-      return words.find(wordIn) || "";
-    };
-    valids.forEach(u => {
-      const tag = tagOf(u.name);
-      pfAddCandidate(i, u.name, tag, hitWord(tag, etsyTitle));
-    });
-    pfMarkSent(i, valids.length);
-  })(validUserImages);
 
     let firstImg = null;   // remembers first earring photo for this cell
 
@@ -3421,7 +2912,6 @@ async function sendAndMatch() {
             if (cand.skipForCharm) continue;
             if (!metalFilterOk(metalVal, cand.name)) continue;
             if (matchedUserNames.has(cand.name)) continue;
-            if (!passesTitlePrefilter(i, cand.name)) continue; // 🔒 enforce title prefilter
 
             const { score: s1 } = await compareImages(cand.data, firstImgFixed, i, cand.name);
             const flipped       = await flipImageHorizontal(cand.data);
@@ -3504,6 +2994,153 @@ async function sendAndMatch() {
       // G) bail out so Second Pass is skipped
       return;
     }
+
+    /*  ===== SECOND PASS DISABLED (Aug 2025) – BEGIN =====
+
+  const mirrorChecklist = Object.keys(earringCells)
+    .filter(idx => cellMatches[idx] && cellMatches[idx].length === 1)
+    .map(Number);                      // earrings still missing a twin
+
+  unmatchedCells = [];
+  for (let i = 0; i < croppedImagesArray.length; i++) {
+    // include normal unmatched cells + earrings that still need a twin
+     const need = expectedSlots(window.cachedOrderItems?.[i] || {});
+     const have = (cellMatches[i]||[]).filter(m=>m && m.userImage).length;
+     if (mirrorChecklist.includes(i) || have < need) {
+      unmatchedCells.push(i);
+    }
+  }
+
+  smTotal += unmatchedCells.length;
+  document.getElementById("progressTitle").textContent =
+    "Matching Images... (Second Pass)";
+
+  for (const i of unmatchedCells) {
+    if (runId !== globalRunId) return;
+
+    const matchBox = document.getElementById("matchCell" + i);
+    const metalVal = document.getElementById("metalCell" + i).value || "";
+
+
+    const validUserImages = userImagesArray.filter(
+      (u) => !u.skipForCharm && metalFilterOk(metalVal, u.name)
+    );
+
+    
+    const compareTarget = mirrorChecklist.includes(i) && earringState[i]?.firstImg
+        ? earringState[i].firstImg        // compare candidate vs first user photo
+        : croppedImagesArray[i];          // normal source
+
+    const comparisonPromises = validUserImages.map((user, j) => {
+      return new Promise((resolve) => {
+        setTimeout(() => {
+          if (runId !== globalRunId) return resolve({ result: { score: 0 }, user });
+          if ( matchedUserNames.has(user.name) || ((cellMatches[i]||[]).filter(m=>m && m.userImage).length >= expectedSlots(window.cachedOrderItems?.[i] || {})) ) {
+            return resolve({ result: { score: 0 }, user });
+          }
+          compareImages(user.data, compareTarget, i, user.name)
+            .then((result) => resolve({ result, user }))
+            .catch((err) => {
+              console.error("Second‑pass compare error:", i, user.name, err);
+              resolve({ result: { score: 0 }, user });
+            });
+        }, j * 120);
+      });
+    });
+
+    const results = await Promise.all(comparisonPromises);
+
+    if (runId !== globalRunId) return;        
+
+    results.sort((a, b) => b.result.score - a.result.score);
+
+    if (!results.length || results[0].result.score === 0) {
+      M.toast({ html: `Cell ${i}: No valid matches found in second pass.` });
+    } else {
+      const topCandidate = results[0];
+      const topScore = topCandidate.result.score;
+      const topScorePerc = (topScore * 100).toFixed(2);
+      const matchName = topCandidate.user.name.replace(/(\.jpg|\.png)$/i, "");
+
+      M.toast({
+        html: `Cell ${i}: Best candidate => ${matchName} (${topScorePerc}%)`
+      });
+
+      if (topScore === 1.0 || topScore >= 0.98) {
+        if (matchBox) {
+ 
+          if (earringCells[i] && cellMatches[i] && cellMatches[i].length === 1) {
+            matchBox.value += `, ${matchName}`;
+          } else {
+            matchBox.value  =  matchName;
+          }
+          matchBox.style.fontWeight = "";
+          matchBox.style.color = "";
+        }
+        if (!cellMatches[i]) cellMatches[i] = [];
+        cellMatches[i].push({
+          userName: matchName,
+          userImage: topCandidate.user.data,
+          score: topScore
+        });
+
+        matchedUserNames.add(topCandidate.user.name);
+
+  
+           {
+             const need = expectedSlots(window.cachedOrderItems?.[i] || {});
+             const have = (cellMatches[i]||[]).filter(m=>m && m.userImage).length;
+             if (have >= need) matchedCellIndices.add(i);
+           }
+
+        userImagesArray = userImagesArray.filter(u => u.name !== topCandidate.user.name);
+
+      } else if (topScore >= 0.88) {
+
+        if (matchBox) {
+          if (earringCells[i] && cellMatches[i] && cellMatches[i].length === 1) {
+            matchBox.value += `, ${matchName}`;
+          } else {
+            matchBox.value  =  matchName;
+          }
+          matchBox.style.fontWeight = "bold";
+          matchBox.style.color = "orangered";
+        }
+
+        if (!cellMatches[i]) cellMatches[i] = [];
+        cellMatches[i].push({
+          userName: matchName,
+          userImage: topCandidate.user.data,
+          score: topScore
+        });
+
+        matchedUserNames.add(topCandidate.user.name);
+         
+           {
+             const need = expectedSlots(window.cachedOrderItems?.[i] || {});
+             const have = (cellMatches[i]||[]).filter(m=>m && m.userImage).length;
+             if (have >= need) matchedCellIndices.add(i);
+           }
+
+        userImagesArray = userImagesArray.filter(u => u.name !== topCandidate.user.name);
+
+      } else {
+        M.toast({ html: `Cell ${i}: Score ${topScorePerc}% < 88%. No match.` });
+      }
+    }
+
+    // NEW: fill any remaining slots sequentially for multi-qty items (reuse compareTarget)
+    await fillRemaining(i, compareTarget, document.getElementById("matchCell" + i));
+
+   
+    smDone++;
+    updateProgressModal(smDone, smTotal);
+
+    // adaptive cooldown (second pass)
+    await adaptiveCooldown((validUserImages && validUserImages.length) || 1);
+  }
+
+  ===== SECOND PASS DISABLED – END ===== */
 
   /* ---------- HIGHLIGHT unmatched cells ---------- */
   for (let i = 0; i < croppedImagesArray.length; i++) {
@@ -3610,59 +3247,6 @@ function openMatchPreviewModal(cellIndex) {
   container.appendChild(skipWrapper);
 
   /* ---------- build modal content (unchanged) ---------- */
-
-  // === Matrix Image Search: use the EXACT same descriptor source as the prefilter panel ===
-  const matrixSearch = document.getElementById("matrixSearchBox");
-  if (matrixSearch) {
-    matrixSearch.value = "";
-
-    // Remove any previous handler when modal reopens
-    if (matrixSearch._ms_handler) {
-      matrixSearch.removeEventListener("input", matrixSearch._ms_handler);
-    }
-
-    function applyFilter(q) {
-      const section =
-        document.querySelector("#unmatchedWrapper .unmatched-scroller") ||
-        document;
-
-      const tokens = String(q || "")
-        .toLowerCase()
-        .replace(/[^a-z0-9-\s]/g, " ")
-        .trim()
-        .split(/\s+/)
-        .filter(Boolean);
-
-      // Re-query so it still works if the list gets rebuilt
-      const wrappers = section.querySelectorAll("[data-type='unmatched']");
-      wrappers.forEach(w => {
-        // 1) Robust base: prefer data-base, else derive from <img alt>
-        const img = w.querySelector("img");
-        const base = w.dataset.base || (img && (img.alt || "").replace(/\.\w+$/, "")) || "";
-
-        // 2) SAME descriptor source the prefilter uses:
-        const words = descriptorWordsFor(base) || [];   // reads 6-word + 2-word maps
-        const hay = words.join(" ").toLowerCase();
-
-        // 3) Fail-open: if we have no descriptors for this tile, don't hide it
-        const ok = tokens.length === 0 || (words.length === 0 ? true : tokens.every(t => hay.includes(t)));
-        w.style.display = ok ? "" : "none";
-      });
-    }
-
-    matrixSearch._ms_handler = (e) => applyFilter(e.target.value);
-    matrixSearch.addEventListener("input", matrixSearch._ms_handler);
-
-    // Optional: if the unmatched list is rebuilt dynamically, keep the current filter applied
-    const sec = document.querySelector("#unmatchedWrapper .unmatched-scroller");
-    if (sec && !sec._ms_observer) {
-      sec._ms_observer = new MutationObserver(() => applyFilter(matrixSearch.value));
-      sec._ms_observer.observe(sec, { childList: true });
-    }
-
-    // Show all initially
-    applyFilter("");
-  }
 
 
   // helper: create a 55×7 read‑only row that sits in normal flow
@@ -3899,7 +3483,6 @@ container.appendChild(matchedWrapper);       // ← keep this line
   unmatchedSection.style.display = "flex";
   unmatchedSection.style.flexWrap = "wrap";
   unmatchedSection.style.gap = "5px";
-  unmatchedSection.classList.add("unmatched-scroller");   // ← give it its own scroller
 
   /* -------------------------------------------------------------
    * Either one placeholder, or all unmatched images with filename
@@ -3933,9 +3516,6 @@ container.appendChild(matchedWrapper);       // ← keep this line
       wrapper.style.width = "66px";
       wrapper.dataset.type  = "unmatched";
       wrapper.dataset.index = idx;
-      // Store base filename (no extension) for search lookups
-      const base = stripExtension(uImg.name || "");
-      wrapper.dataset.base = base;
 
       /* 66×66 image box */
       const box = document.createElement("div");
@@ -4240,7 +3820,6 @@ container.appendChild(matchedWrapper);       // ← keep this line
       unmatchedSection.style.display  = "flex";
       unmatchedSection.style.flexWrap = "wrap";
       unmatchedSection.style.gap      = "10px";
-      unmatchedSection.classList.add("unmatched-scroller");   // ensure scroller on reuse too
       unmatchedWrapper.appendChild(unmatchedSection);
 
       /* attach once */
@@ -4393,75 +3972,7 @@ function createUnmatchedUserImagesPreview() {
       }
       window.cachedOrderItems = items;
       await fillPreviewBoxes(items);
-      // Re-apply any active search after grid rebuild
-      if (typeof window.applyOrderSearchFilter === "function") {
-        const v = document.getElementById("orderSearchBox")?.value || "";
-        window.applyOrderSearchFilter(v);
-      }
     }
-
-/* ────────────────────────────────────────────────────────────────────
-   Live Etsy Title Search → filters & reflows grid on every keystroke
-   ─ uses same layout constants as the builder (cols=9, stepX=125, stepY=165)
-   ─ rearranges visible cells sequentially so there are NO gaps
-   ──────────────────────────────────────────────────────────────────── */
-(function attachLiveSearch(){
-  const input = document.getElementById("orderSearchBox");
-  if (!input) return;
-
-  // public so updateImageGrid can re-apply after rebuilds
-  window.applyOrderSearchFilter = function(q){
-    const query = String(q||"").trim().toLowerCase();
-    const items = Array.isArray(window.cachedOrderItems) ? window.cachedOrderItems : [];
-    const filterIncomplete = !!window.filterIncompleteOnly;
-
-    const COLS  = 9;
-    const STEPX = 125, STEPY = 165;
-    const rowOffsets = { order:95, qty:107, metal:119, match:131 };
-    const ids = ["previewCell","orderCell","quantityCell","metalCell","matchCell"];
-
-    let k = 0; // next visible slot
-    for (let i=0; i<items.length; i++){
-      const title = String(items[i]?.title || "").toLowerCase();
-      const titleHit = !query || title.includes(query);
-
-      // Incomplete if real matches < needed slots
-      const needed = expectedSlots(items[i] || {});
-      const have   = (cellMatches[i] || []).filter(m => m && m.userImage).length;
-      const incompleteHit = have < needed;   // includes "no match at all"
-
-      const hit = titleHit && (!filterIncomplete || incompleteHit);
-
-      // show/hide the 5 pieces for this index
-      for (const pre of ids){
-        const el = document.getElementById(pre + i);
-        if (el) el.style.display = hit ? "" : "none";
-      }
-      if (!hit) continue;
-
-      // sequential reflow with no gaps
-      const row = Math.floor(k / COLS), col = k % COLS;
-      const left = col * STEPX, top = row * STEPY;
-      const setPos = (elemId, l, t) => {
-        const e = document.getElementById(elemId);
-        if (e){ e.style.left = l + "px"; e.style.top = t + "px"; }
-      };
-
-      setPos("previewCell"+i,  left, top);
-      setPos("orderCell"+i,    left, top + rowOffsets.order);
-      setPos("quantityCell"+i, left, top + rowOffsets.qty);
-      setPos("metalCell"+i,    left, top + rowOffsets.metal);
-      setPos("matchCell"+i,    left, top + rowOffsets.match);
-
-      k++;
-    }
-  };
-
-  // hook up live input
-  input.addEventListener("input", () => window.applyOrderSearchFilter(input.value));
-  // keep layout tidy if the window or config changes size
-  window.addEventListener("resize", () => window.applyOrderSearchFilter(input.value));
-})();
 
   </script>
 </body>
