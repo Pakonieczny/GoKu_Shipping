@@ -3371,16 +3371,14 @@ async function sendAndMatch() {
         const delta  = top.result.score - second;
 
         // Reuse the same acceptance logic for each slot
-        if (top.result.score >= 0.8){
+        if (top.result.score >= 0.95){
           if (!cellMatches[i]) cellMatches[i] = [];
           const nm = top.user.name.replace(/(\.jpg|\.png)$/i, "");
           cellMatches[i].push({ userName: nm, userImage: top.user.data, score: top.result.score });
           matchedUserNames.add(top.user.name);
-          // NEW: actually define the key we're comparing against
-          const keyTop = String(top.user.origName || top.user.name);
           userImagesArray = userImagesArray.filter(
-            u => String(u.origName || u.name) !== keyTop
-          );
+             u => String(u.origName || u.name) !== keyTop
+           );
 
           if (matchBox) matchBox.value = namesForCell(i).join(", ");
         } else {
@@ -3505,7 +3503,7 @@ async function sendAndMatch() {
         const scoreDelta  = topScore - secondScore;
 
         /* ---------- branchA: score ≥ 0.95 ---------- */
-        if (topScore >= 0.90) {
+        if (topScore >= 0.95) {
           if (matchBox) {
             matchBox.value        = matchName;
             matchBox.style.fontWeight = "400";
@@ -3561,7 +3559,7 @@ async function sendAndMatch() {
             const flipped       = await flipImageHorizontal(cand.data);
             const { score: s2 } = await compareImages(flipped, firstImgFixed, i, cand.name + "_mirror");
             const bestScore     = Math.max(s1, s2);
-            if (bestScore < 0.88) continue;          // twin threshold
+            if (bestScore < 0.95) continue;          // twin threshold
 
              const twinName = cand.name.replace(/(\.jpg|\.png)$/i, "");
              /* safe push — silently skips if we already have enough     */
@@ -3601,129 +3599,43 @@ async function sendAndMatch() {
     }
 
     // -----------------------------------------------------------------------
-    // SECOND PASS — Brute force remaining Matrix vs remaining Etsy
+    // SECOND PASS — DISABLED (Aug 2025)
     // -----------------------------------------------------------------------
+
+    // >>> Finalize immediately after First Pass (skip Second Pass entirely)
     {
-      // Build pools: only unmatched user images, only cells that are still short.
-      const stillUnmatchedUsers = userImagesArray.filter(u =>
-        !u.skipForCharm && !matchedUserNames.has(u.name)
-      );
-
-      let targetCells = [];
+      // A) mark borders
       for (let i = 0; i < croppedImagesArray.length; i++) {
-        if (!croppedImagesArray[i]) continue;
-        if (skipMatches[i]) continue;
-        const need = expectedSlots(window.cachedOrderItems?.[i] || {}); // existing helper
-        const have = (cellMatches[i] || []).filter(m => m && m.userImage).length;
-        if (have < need) targetCells.push(i);
+        evaluateBorder(i);
       }
 
-      // Nothing left to do? Finalize as usual.
-      if (!stillUnmatchedUsers.length || !targetCells.length) {
-        for (let i = 0; i < croppedImagesArray.length; i++) evaluateBorder(i);
-        attachMatchCellListeners();
-        M.toast({ html: "Finished matching (First Pass only)." });
-        if (runId !== globalRunId) return;
-        const anyOrangered = detectAnyOrangered();
-        if (!anyOrangered) enableMatchPrintFlow(); else disableMatchPrintFlow();
-        updateProgressModal(smTotal, smTotal);
-        closeProgressModal();
-        if (typeof createUnmatchedUserImagesPreview === "function") {
-          createUnmatchedUserImagesPreview();
-        }
-        enableSendMatch();
-        // no early return needed; we'll fall through to the common “done” path below
-      } else {
-        // Progress header for Second Pass
-        showProgressModal("Matching Images... (Second Pass)", 2);
-        smDone = 0;
-        smTotal = stillUnmatchedUsers.length;
-
-        // Iterate remaining Matrix images; try them against all still-open cells.
-        for (let uIndex = 0; uIndex < stillUnmatchedUsers.length; uIndex++) {
-          if (runId !== globalRunId) return;
-          const user = stillUnmatchedUsers[uIndex];
-
-          // Candidate cells: still short & metal-compatible. (No descriptor/title prefilter.)
-          const candidates = targetCells.filter(ci => {
-            const need = expectedSlots(window.cachedOrderItems?.[ci] || {});
-            const have = (cellMatches[ci] || []).filter(m => m && m.userImage).length;
-            if (have >= need) return false;
-            const metalVal = document.getElementById("metalCell" + ci).value || "";
-            return metalFilterOk(metalVal, user.name); // existing helper; not a descriptor filter
-          });
-
-          if (candidates.length) {
-            // Compare this user image to every candidate cell (throttled & guarded).
-            const promises = candidates.map((ci, j) =>
-              new Promise(resolve => {
-                setTimeout(() => {
-                  if (runId !== globalRunId) return resolve({ score: 0, cellIdx: ci });
-                  compareImages(user.data, croppedImagesArray[ci], ci, user.name)
-                    .then(res => resolve({ score: res.score || 0, cellIdx: ci }))
-                    .catch(() => resolve({ score: 0, cellIdx: ci }));
-                }, j * 120);
-              })
-            );
-
-            const results = await Promise.all(promises);
-            if (runId !== globalRunId) return;
-
-            results.sort((a, b) => b.score - a.score);
-            const best = results[0] || { score: 0, cellIdx: -1 };
-
-            // Use the same acceptance bar as First Pass
-            if (best.score >= 0.9) {
-              const ci = best.cellIdx;
-              if (!cellMatches[ci]) cellMatches[ci] = [];
-              const nm = String(user.name).replace(/(\.jpg|\.jpeg|\.png|\.webp)$/i, "");
-              cellMatches[ci].push({ userName: nm, userImage: user.data, score: best.score });
-              matchedUserNames.add(user.name);
-
-              // Remove from further attempts globally
-              userImagesArray = userImagesArray.filter(
-                u => String(u.origName || u.name) !== String(user.origName || user.name)
-              );
-
-              // Update UI for that cell
-              const matchBox = document.getElementById("matchCell" + ci);
-              if (matchBox) matchBox.value = namesForCell(ci).join(", "); // existing helper
-              evaluateBorder(ci);
-
-              // If the cell is now full, drop it from targets so we don't waste calls later.
-              const haveNow = (cellMatches[ci] || []).filter(m => m && m.userImage).length;
-              const needNow = expectedSlots(window.cachedOrderItems?.[ci] || {});
-              if (haveNow >= needNow) {
-                targetCells = targetCells.filter(x => x !== ci);
-              }
-            }
-
-            // Cooldown scaled to the number of calls we just made (existing helper).
-            await adaptiveCooldown(candidates.length || 1);
-          }
-
-          // Progress tick
-          smDone++;
-          updateProgressModal(smDone, smTotal);
-        }
-      }
-
-      // ---------- Common finalize (unchanged behaviors) ----------
-      for (let i = 0; i < croppedImagesArray.length; i++) evaluateBorder(i);
+      // B) wire up click handlers
       attachMatchCellListeners();
-      M.toast({ html: "Finished matching passes." });
 
+      // C) done message
+      M.toast({ html: "Finished matching (First Pass only)." });
+
+      // D) enable/disable Match & Print depending on remaining incomplete cells
       if (runId !== globalRunId) return;
       const anyOrangered = detectAnyOrangered();
-      if (!anyOrangered) { enableMatchPrintFlow(); } else { disableMatchPrintFlow(); }
+      if (!anyOrangered) {
+        enableMatchPrintFlow();
+      } else {
+        disableMatchPrintFlow();
+      }
 
+      // E) close progress UI
       updateProgressModal(smTotal, smTotal);
       closeProgressModal();
 
+      // F) rebuild unmatched preview and re-enable button
       if (typeof createUnmatchedUserImagesPreview === "function") {
         createUnmatchedUserImagesPreview();
       }
       enableSendMatch();
+
+      // G) bail out so Second Pass is skipped
+      return;
     }
 
   /* ---------- HIGHLIGHT unmatched cells ---------- */
