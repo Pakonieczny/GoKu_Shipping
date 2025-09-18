@@ -1848,11 +1848,10 @@ async function startMatrixAnalysis() {
     // Prepare exactly one batch (per master) of 140-ish tiles
     const batch = [];
     for (let q = 0; q < tiles.length; q++) {
-      const cropped   = await cropTo512(tiles[q]);
-      const corrected = await reduceRedTone(cropped, 0.85);
+      const cropped = await cropTo512(tiles[q]);
       batch.push({
         origName: `${stripExtension(master.name)}_${masterId}_Q${q}`,
-        data: corrected,
+        data: cropped,
         master: master.name,
         masterId
       });
@@ -2048,31 +2047,6 @@ async function cropTo512(dataUrl) {
   ctx.drawImage(loaded, 0, 0, 400, 400);
   return canvas.toDataURL("image/jpeg", 0.85);
 }
-
- /* === NEW : reduceRedTone — dims the R-channel by 15 % === */
- async function reduceRedTone(dataURL, factor = 0.85) {
-   return new Promise((resolve, reject) => {
-     const img = new Image();
-     img.crossOrigin = "Anonymous";
-     img.onload = () => {
-       const canvas = document.createElement("canvas");
-       canvas.width  = img.width;
-       canvas.height = img.height;
-       const ctx = canvas.getContext("2d");
-       ctx.drawImage(img, 0, 0);
- 
-       const imgData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-       const data    = imgData.data;
-       for (let i = 0; i < data.length; i += 4) {
-         data[i] = Math.round(data[i] * factor);   // R channel ↓30 %
-       }
-       ctx.putImageData(imgData, 0, 0);
-       resolve(canvas.toDataURL("image/png"));
-     };
-     img.onerror = reject;
-     img.src = dataURL;
-   });
- }
 
 // Utility: load a DataURL into <img> so we can measure width/height
 function loadImage(dataUrl) {
@@ -3988,7 +3962,7 @@ function openMatchPreviewModal(cellIndex) {
       "hard work","focus","peace","immortality","fate","divine plan","guidance","justice","growth","trust","learning",
       "dreams","fertility","awakening","inheritance","vitality","chaos/power","focus/identity","teamwork/trust",
       "memory/learn","dreams/unity","enlightenment","fate/chance","sacred union","connection","togetherness",
-      "goals/success","heavenonearth","-"
+      "goals/success","heavenonearth","-", ", Luck, Success", ", Goals, Success"
     ]);
     const transformVar = (labelIn, valueIn) => {
       let name  = String(labelIn || "").trim();
