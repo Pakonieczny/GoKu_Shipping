@@ -1895,10 +1895,10 @@ async function analyzeAndStoreSubImages(imgObjs, title = "Analyzing Photos...") 
     const res = await openAIAnalyzePhoto(data);
     const isCharm = (res.charmPresent || "").toLowerCase() === "yes";
 
-    // 1) Decide the final filename now
-    const finalName = isCharm
-      ? `${res.color || "UnknownColor"}_${res.topRightNumber || "XX"}.jpg`
-      : `${origName}.jpg`;
+    // 1) Decide the final filename now (+Ear if two charms present)
+    const _base     = `${res.color || "UnknownColor"}_${res.topRightNumber || "XX"}`;
+    const _withEar  = (String(res.twoCharmsPresent || "").toLowerCase() === "yes") ? (_base + "Ear") : _base;
+    const finalName = isCharm ? `${_withEar}.jpg` : `${origName}.jpg`;
 
     // Save the image immediately
      userImagesArray.push({
@@ -2126,12 +2126,14 @@ async function openAIAnalyzePhoto(base64Image) {
           {
             type: "text",
             text:
-              "Return JSON EXACTLY like:\n" +
-              '  {"hue":"<≤10-word description>", "topRightNumber":"<number or blank>", "charmPresent":"Yes|No",' +
-              '   "medianHSV":{"H":<deg>,"S":<pct>,"V":<pct>}, "medianLab":{"L":<L*>,"a":<a*>,"b*":<b*>}}\n\n' +
+               "Return JSON EXACTLY like:\n" +
+               '  {"hue":"<≤10-word description>", "topRightNumber":"<number or blank>", "charmPresent":"Yes|No", "twoCharmsPresent":"Yes|No",' +
+               '   "medianHSV":{"H":<deg>,"S":<pct>,"V":<pct>}, "medianLab":{"L":<L*>,"a":<a*>,"b*":<b*>}}\n\n' +
               "TASK 1 – Describe the dominant metal hue (≤10 words).\n" +
               "TASK 2 – Extract the top-right number (blank if none).\n" +
               "TASK 3 – Is a jewellery charm clearly visible? (Yes|No).\n" +
+              "TASK 3b – Are there TWO separate charm bodies present? (Yes|No).\n" +
+              "Count only the main metal charm bodies; ignore the printed number square, chains, hooks, jump rings, or earring backs. If two bodies/charms are clearly present (even if slightly touching), answer Yes.\n" +
                "DEFINITION for charmPresent=Yes: any discrete metal object including, include rounded, wavy, and spherical items (coins, discs, domed orbs, shells, pebbles, slippers, circular medallions) as charms even if small or glossy\n" +
                "thin rectangular nameplates with two end-holes, bars, rings, or pendants.\n" +
                "Ignore the white number square; its presence does not negate a charm.\n" +
@@ -2159,6 +2161,7 @@ async function openAIAnalyzePhoto(base64Image) {
   let hueText   = "";
   let topNumber = null;
   let charmFlag = "no";
+  let pairFlag  = "no";
   let roseHit   = false;  // ← PASS-1 Rose detector
 
   // Medians from PASS 1 (declared in outer scope so PASS 2 can see them)
@@ -2179,9 +2182,10 @@ async function openAIAnalyzePhoto(base64Image) {
     raw1 = raw1.replace(/^```(\w+)?/, "").replace(/```$/, "").trim();
     const obj1 = JSON.parse(raw1);
 
-    hueText   = obj1.hue            || "";
-    topNumber = obj1.topRightNumber || null;
-    charmFlag = (obj1.charmPresent  || "No").toLowerCase();
+    hueText   = obj1.hue                || "";
+    topNumber = obj1.topRightNumber     || null;
+    charmFlag = (obj1.charmPresent      || "No").toLowerCase();
+    pairFlag  = (obj1.twoCharmsPresent  || "No").toLowerCase();
     roseHit   = /rose/i.test(hueText);
 
     const hsv = obj1.medianHSV || {};
@@ -2294,6 +2298,7 @@ async function openAIAnalyzePhoto(base64Image) {
     topRightNumber : topNumber,
     color          : finalColor,
     charmPresent   : charmFlag,
+    twoCharmsPresent: pairFlag,
     desc2
   };
 }
@@ -2322,7 +2327,7 @@ async function analyzeUserImagesViaOpenAI() {
   let noCharmStreak = 0;
   const noCharmList = [];            // store refs to the latest “No‑charm” objects
 
-  imgObj.name     = `${finalColor}_${numTxt}.jpg`;
+  imgObj.name     = `${finalColor}_${numTxt}${String(result.twoCharmsPresent || "").toLowerCase()==="yes" ? "Ear" : ""}.jpg`;
   imgObj.analyzed = true;
 
   // Persist descriptors for search: 2-word + 6-word (with 'ocean' augmentation)
@@ -2382,7 +2387,7 @@ async function analyzeUserImagesViaOpenAI() {
     const finalColor = result.color || "UnknownColor";   // Gold | RoseGold | Silver | Unknown
     const numTxt     = result.topRightNumber || "XX";
 
-    imgObj.name     = `${finalColor}_${numTxt}.jpg`;
+    imgObj.name     = `${finalColor}_${numTxt}${String(result.twoCharmsPresent || "").toLowerCase()==="yes" ? "Ear" : ""}.jpg`;
     imgObj.analyzed = true;
 
     const baseName  = stripExtension(imgObj.name);       // keep this line
@@ -3371,7 +3376,7 @@ async function sendAndMatch() {
         const delta  = top.result.score - second;
 
         // Reuse the same acceptance logic for each slot
-        if (top.result.score >= 0.85){
+        if (top.result.score >= 0.80){
           if (!cellMatches[i]) cellMatches[i] = [];
           const nm = top.user.name.replace(/(\.jpg|\.png)$/i, "");
           cellMatches[i].push({ userName: nm, userImage: top.user.data, score: top.result.score });
@@ -3505,7 +3510,7 @@ async function sendAndMatch() {
         const scoreDelta  = topScore - secondScore;
 
         /* ---------- branchA: score ≥ 0.95 ---------- */
-        if (topScore >= 0.85) {
+        if (topScore >= 0.80) {
           if (matchBox) {
             matchBox.value        = matchName;
             matchBox.style.fontWeight = "400";
