@@ -3376,9 +3376,11 @@ async function sendAndMatch() {
           const nm = top.user.name.replace(/(\.jpg|\.png)$/i, "");
           cellMatches[i].push({ userName: nm, userImage: top.user.data, score: top.result.score });
           matchedUserNames.add(top.user.name);
+          // NEW: actually define the key we're comparing against
+          const keyTop = String(top.user.origName || top.user.name);
           userImagesArray = userImagesArray.filter(
-             u => String(u.origName || u.name) !== keyTop
-           );
+            u => String(u.origName || u.name) !== keyTop
+          );
 
           if (matchBox) matchBox.value = namesForCell(i).join(", ");
         } else {
@@ -3671,7 +3673,7 @@ async function sendAndMatch() {
             const best = results[0] || { score: 0, cellIdx: -1 };
 
             // Use the same acceptance bar as First Pass
-            if (best.score >= 0.8) {
+            if (best.score >= 0.9) {
               const ci = best.cellIdx;
               if (!cellMatches[ci]) cellMatches[ci] = [];
               const nm = String(user.name).replace(/(\.jpg|\.jpeg|\.png|\.webp)$/i, "");
