@@ -781,7 +781,7 @@ function descriptorWordsFor(baseName){
     "charm","jewelry","jewellery","pendant",
     "cute","fun","big","small","accessory","trinket","bling","flair","piece","play",
     "handmade","trendy","keepsake","gift","keeps","item","collection","doodad","dood",
-    "quirky","playful","decoration","funky","fashion","ornament","bauble"
+    "quirky","playful","decoration","funky","fashion","ornament","bauble","animal"
   ]);
   let sixMap = {};
   let twoMap = {};
@@ -804,7 +804,7 @@ function descriptorWordsFor(baseName){
 // Lowercase, strip punctuation, collapse spaces, keep up to 8 words,
 // and drop banned filler tokens (e.g., "charm", "jewelry", "jewellery").
 function normalizeTwoWordDescriptor(s){
-  const banned = new Set(["charm","jewelry","jewellery","pendant", "cute", "fun", "big", "small", "accessory", "trinket", "bling", "flair", "piece", "play", "handmade", "trendy", "keepsake", "gift", "keeps", "item", "collection", "doodad", "dood", "quirky", "playful", "decoration", "trendy", "funky", "fashion", "ornament", "bauble"]);
+  const banned = new Set(["charm","jewelry","jewellery","pendant", "cute", "fun", "big", "small", "accessory", "trinket", "bling", "flair", "piece", "play", "handmade", "trendy", "keepsake", "gift", "keeps", "item", "collection", "doodad", "dood", "quirky", "playful", "decoration", "trendy", "funky", "fashion", "ornament", "bauble","animal"]);
 
   return String(s || "")
     .toLowerCase()
@@ -3371,7 +3371,7 @@ async function sendAndMatch() {
         const delta  = top.result.score - second;
 
         // Reuse the same acceptance logic for each slot
-        if (top.result.score >= 0.90){
+        if (top.result.score >= 0.85){
           if (!cellMatches[i]) cellMatches[i] = [];
           const nm = top.user.name.replace(/(\.jpg|\.png)$/i, "");
           cellMatches[i].push({ userName: nm, userImage: top.user.data, score: top.result.score });
@@ -3505,7 +3505,7 @@ async function sendAndMatch() {
         const scoreDelta  = topScore - secondScore;
 
         /* ---------- branchA: score ≥ 0.95 ---------- */
-        if (topScore >= 0.90) {
+        if (topScore >= 0.85) {
           if (matchBox) {
             matchBox.value        = matchName;
             matchBox.style.fontWeight = "400";
@@ -3561,7 +3561,7 @@ async function sendAndMatch() {
             const flipped       = await flipImageHorizontal(cand.data);
             const { score: s2 } = await compareImages(flipped, firstImgFixed, i, cand.name + "_mirror");
             const bestScore     = Math.max(s1, s2);
-            if (bestScore < 0.90) continue;          // twin threshold
+            if (bestScore < 0.85) continue;          // twin threshold
 
              const twinName = cand.name.replace(/(\.jpg|\.png)$/i, "");
              /* safe push — silently skips if we already have enough     */
