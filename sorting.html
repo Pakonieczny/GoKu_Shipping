@@ -3307,6 +3307,31 @@ async function sendAndMatch() {
   return ok;
   }
 
+ // NEW: Hard earring gate for names that include the token "Ear"
+  // If the Matrix image name contains "Ear" (as a standalone token),
+  // only allow matching when the Etsy title includes one of:
+  // "stud", "stud earrings", "earring", "earrings",
+  // "huggie", "huggies", "huggie earrings", "hoop", "hoops", "hoop earrings"
+  function earringTitleGate(cellIdx, userImgName){
+    // normalize name → treat underscores/hyphens as spaces, drop extension
+    const base = String(userImgName || "")
+      .toLowerCase()
+      .replace(/\.(jpg|jpeg|png|webp)$/i, "")
+      .replace(/[_\-]+/g, " ")
+      .trim();
+    const isEarTagged = /\bear\b/.test(base);  // “Ear” as a standalone token
+    if (!isEarTagged) return true;             // not tagged → do not block
+
+    // title is already stored normalized (lowercase, no punctuation)
+    let titlesArr = [];
+    try { titlesArr = JSON.parse(localStorage.getItem("etsyTitlesByCell") || "[]"); } catch (_){}
+    const title = String(titlesArr[cellIdx] || "").toLowerCase();
+
+    // allow if ANY of the allowed tokens are present
+    const earOk = /\b(stud|earring|earrings|huggie|huggies|hoop|hoops)\b/.test(title);
+    return earOk;
+  }
+
     // --- NEW: helpers to render names and to keep filling until have >= need ---
     function namesForCell(i){
       return (cellMatches[i] || [])
@@ -3327,6 +3352,7 @@ async function sendAndMatch() {
           !u.skipForCharm &&
           metalFilterOk(metalVal, u.name) &&
           passesTitlePrefilter(i, u.name) &&
+          earringTitleGate(i, u.name) &&
           !matchedUserNames.has(u.name)
         );
         if (!pool.length) break;
@@ -3436,7 +3462,8 @@ async function sendAndMatch() {
       (u) =>
         !u.skipForCharm &&
         metalFilterOk(metalVal, u.name) &&
-        passesTitlePrefilter(i, u.name)
+        passesTitlePrefilter(i, u.name) &&
+        earringTitleGate(i, u.name)
     );
     const titlesArr = JSON.parse(localStorage.getItem("etsyTitlesByCell") || "[]");
     const etsyTitle = titlesArr[i] || "";
@@ -3568,6 +3595,7 @@ async function sendAndMatch() {
             const uniq = String(cand.origName || cand.name);
             if (matchedUserNames.has(uniq)) continue;
             if (!passesTitlePrefilter(i, cand.name)) continue; // 🔒 enforce title prefilter
+            if (!earringTitleGate(i, cand.name)) continue;      // 🔒 new Ear→earring-title gate
 
             const { score: s1 } = await compareImages(cand.data, firstImgFixed, i, cand.name);
             const flipped       = await flipImageHorizontal(cand.data);          // currently skipped by the flag
