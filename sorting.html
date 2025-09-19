@@ -1356,18 +1356,20 @@ function enableMatchPrintFlow() {
 
     /* =========================================================
      expectedSlots(item)
-     – Returns Qty × (2 if earring, else 1)
+     – Central source of truth for “how many images are required”
+       Qty × (2 if earring), EXCEPT: single-qty earrings need only 1.
      =======================================================*/
     function expectedSlots(item = {}) {
-      const qty  = Number(item.qty  || item.quantity || 1) || 1;        // listing quantity
-      const disc = Number(item.discCount || 0);                         // 0-5
+      const qty  = Number(item.qty  || item.quantity || 1) || 1;  // pairs for earrings
+      const disc = Number(item.discCount || 0);                    // 0–5
+      let base   = (disc > 0) ? qty * disc : qty;
 
-      /* Treat each disc as its own matrix-photo target. If discCount is 0,
-         fall back to the normal listing quantity logic. */
-      let base = disc > 0 ? qty * disc : qty;
-
-      /* Earrings still double the slot requirement */
-      return base * (item.isEarring ? 2 : 1);
+      if (item.isEarring) {
+        // Business rule: DO NOT require a mirror match for a single-qty earring item.
+        if (qty === 1 && disc === 0) return 1;
+        return base * 2; // multi-qty (or disc’d) earrings: left+right per target
+      }
+      return base;
     }
 
    /* ==============================================================
