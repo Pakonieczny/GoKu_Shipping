@@ -1904,7 +1904,7 @@ async function analyzeAndStoreSubImages(imgObjs, title = "Analyzing Photos...") 
 
     // 1) Decide the final filename now (+Ear if two charms present)
     const _base     = `${res.color || "UnknownColor"}_${res.topRightNumber || "XX"}`;
-    const _withEar  = (String(res.twoCharmsPresent || "").toLowerCase() === "yes") ? (_base + "Ear") : _base;
+    const _withEar  = (String(res.twoCharmsPresent || "").toLowerCase() === "yes") ? `${_base}_Ear` : _base;
     const finalName = isCharm ? `${_withEar}.jpg` : `${origName}.jpg`;
 
     // Save the image immediately
