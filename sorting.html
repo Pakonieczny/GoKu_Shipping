@@ -3307,30 +3307,33 @@ async function sendAndMatch() {
   return ok;
   }
 
-  // HARD GATE: If the Matrix image name looks earring-related, only allow it
-  // to match Etsy items whose title is also earring-related.
-  function earringTitleGate(cellIdx, userImgName){
-    // Normalize name → treat underscores/hyphens as spaces, drop extension
-    const base = String(userImgName || "")
-      .toLowerCase()
-      .replace(/\.(jpg|jpeg|png|webp)$/i, "")
-      .replace(/[_\-]+/g, " ")
-      .trim();
+  // NEW: Hard earring gate for names that include the token "Ear"
+ // If the Matrix image name contains "Ear" (standalone token),
+ // block outright for NON-earring items, regardless of title text.
+ // For true earring items, still require a reasonable ear-term in the title.
+ function earringTitleGate(cellIdx, userImgName){
+   // normalize name → treat underscores/hyphens as spaces, drop extension
+   const base = String(userImgName || "")
+     .toLowerCase()
+     .replace(/\.(jpg|jpeg|png|webp)$/i, "")
+     .replace(/[_\-]+/g, " ")
+     .trim();
+   const isEarTagged = /\b(ear|earring|earrings|stud|studs|huggie|huggies|hoop|hoops)\b/.test(base);
+   if (!isEarTagged) return true;             // not tagged → do not block
 
-    // Anything that clearly signals earrings in the *image name*
-    // (covers: ear, earring(s), ear cuff(s), climber(s), crawler(s), stud(s), huggie(s), hoop(s))
-    const nameIsEarringish = /\b(ear|earring|earrings|earcuff|earcuffs|ear cuff|ear cuffs|ear climber|ear climbers|ear crawler|ear crawlers|stud|studs|huggie|huggies|hoop|hoops)\b/.test(base);
-    if (!nameIsEarringish) return true; // image name isn't earring-related → don't block
+   // Look up the target item and use the computed isEarring flag
+   const item = (Array.isArray(window.cachedOrderItems) ? window.cachedOrderItems[cellIdx] : null) || {};
+   if (item.isEarring === false) {
+     // 🚫 Non-earring item → never allow “Ear” images into the pool
+     return false;
+   }
 
-    // Title is stored normalized (lowercase, no punctuation)
-    let titlesArr = [];
-    try { titlesArr = JSON.parse(localStorage.getItem("etsyTitlesByCell") || "[]"); } catch (_){}
-    const title = String(titlesArr[cellIdx] || "").toLowerCase();
-
-    // Only allow if the *Etsy item title* is earring-related
-    const titleIsEarringish = /\b(earring|earrings|earcuff|earcuffs|ear cuff|ear cuffs|ear climber|ear climbers|ear crawler|ear crawlers|stud|studs|huggie|huggies|hoop|hoops)\b/.test(title);
-    return titleIsEarringish;
-  }
+   // For earring items, keep the light sanity check on the title text
+   let titlesArr = [];
+   try { titlesArr = JSON.parse(localStorage.getItem("etsyTitlesByCell") || "[]"); } catch (_){}
+   const title = String(titlesArr[cellIdx] || "").toLowerCase();
+   return /\b(stud|earring|earrings|huggie|huggies|hoop|hoops)\b/.test(title);
+ }
 
     // --- NEW: helpers to render names and to keep filling until have >= need ---
     function namesForCell(i){
