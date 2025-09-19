@@ -741,11 +741,12 @@ function pfStartCell(i, etsyTitle){
   `;
   inner.appendChild(box);
 }
-function pfAddCandidate(i, userName, desc2, hitWord){
+function pfAddCandidate(i, userName, desc2, hitWords){
   const list = document.getElementById("pf-list-" + i); if (!list) return;
   const li = document.createElement("li");
   const d2  = normalizeTwoWordDescriptor(desc2 || "");
-  const hit = hitWord ? ` <span class="pf-hit">[${hitWord}]</span>` : "";
+  const hits = Array.isArray(hitWords) ? hitWords : (hitWords ? [hitWords] : []);
+  const hit  = hits.length ? ` <span class="pf-hit">[${hits.join(", ")}]</span>` : "";
   li.innerHTML = `<span class="pf-name">${escapeHtml(userName)}</span> <span class="pf-tag" title="Charm descriptor">${escapeHtml(d2)}</span>${hit}`;
   list.appendChild(li);
 }
@@ -3301,9 +3302,9 @@ async function sendAndMatch() {
 
   const wordIn = (w) =>
     w && new RegExp(`\\b${w.replace(/[.*+?^${}()|[\\]\\\\]/g, '\\\\$&')}\\b`).test(title);
-  const hitWord = words.find(wordIn) || "";
-  const ok = Boolean(hitWord);
-  console.debug("prefilter", { cellIdx, base, words, title: rawTitle, hitWord, ok });
+  const hits = words.filter(wordIn);
+  const ok = hits.length > 0;
+  console.debug("prefilter", { cellIdx, base, words, title: rawTitle, hitWords: hits, ok });
   return ok;
   }
 
@@ -3380,7 +3381,7 @@ async function sendAndMatch() {
             const key = String(nm).replace(/\.(jpg|jpeg|png|webp)$/i, "");
             return sixMap[key] || twoMap[key] || "";
           };
-          const hitWord = (tag, title) => {
+          const hitWords = (tag, title) => {
             const words = String(tag)
               .toLowerCase()
               .replace(/[^a-z0-9-\s]/g, " ")
@@ -3390,11 +3391,11 @@ async function sendAndMatch() {
               .filter(Boolean)
               .filter(w => w !== "charm");
             const wordIn = (w) => w && new RegExp(`\\b${w.replace(/[.*+?^${}()|[\\]\\\\]/g,'\\\\$&')}\\b`).test(String(title).toLowerCase());
-            return words.find(wordIn) || "";
+            return words.filter(wordIn);
           };
           // Only add a new block header if this cell wasn't started in FIRST PASS (fallback safe)
           if (!document.getElementById("pf-cell-" + i)) pfStartCell(i, etsyTitle);
-          pool.forEach(u => pfAddCandidate(i, u.name, tagOf(u.name), hitWord(tagOf(u.name), etsyTitle)));
+          pool.forEach(u => pfAddCandidate(i, u.name, tagOf(u.name), hitWords(tagOf(u.name), etsyTitle)));
           pfMarkSent(i, pool.length);
         })();
 
@@ -3490,7 +3491,7 @@ async function sendAndMatch() {
       const key = String(nm).replace(/\.(jpg|jpeg|png|webp)$/i, "");
       return sixMap[key] || twoMap[key] || "";
     };
-    const hitWord = (tag, title) => {
+    const hitWords = (tag, title) => {
       const words = String(tag)
         .toLowerCase()
         .replace(/[^a-z0-9-\s]/g, " ")
@@ -3500,11 +3501,11 @@ async function sendAndMatch() {
         .filter(Boolean)
         .filter(w => w !== "charm");
       const wordIn = (w) => w && new RegExp(`\\b${w.replace(/[.*+?^${}()|[\\]\\\\]/g,'\\\\$&')}\\b`).test(String(title).toLowerCase());
-      return words.find(wordIn) || "";
+      return words.filter(wordIn);
     };
     valids.forEach(u => {
       const tag = tagOf(u.name);
-      pfAddCandidate(i, u.name, tag, hitWord(tag, etsyTitle));
+      pfAddCandidate(i, u.name, tag, hitWords(tag, etsyTitle));
     });
     pfMarkSent(i, valids.length);
   })(validUserImages);
