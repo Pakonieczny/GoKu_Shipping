@@ -777,56 +777,6 @@ function normalizeTitleForPrefilter(title){
     .trim();
 }
 
-// === Ear / Earring positive-gate helpers =====================================
-// Whole-word, camelCase-safe checks for ear terms (incl. plurals/common forms)
-const EAR_TERM_RE = /\b(ear|earring|earrings|ear\s?cuff(?:s)?|ear\s?clip(?:s)?|ear\s?hook(?:s)?|ear\s?wire(?:s)?|ear\s?post(?:s)?|stud(?:s)?|huggie(?:s)?|hoop(?:s)?|hoop\s?earring(?:s)?|stud\s?earring(?:s)?|huggie\s?earring(?:s)?)\b/i;
-
-// Normalize a filename for matching: split camelCase, treat "_" and "-" as spaces
-function normalizeMatrixName(raw) {
-  return String(raw || "")
-    .replace(/\.(jpg|jpeg|png|webp|gif)$/i, "")
-    .replace(/([a-z])([A-Z])/g, "$1 $2")
-    .replace(/[_\-]+/g, " ")
-    .toLowerCase()
-    .trim();
-}
-
-// Pull any 6-word / 2-word tags we persisted for a matrix image key
-function readMatrixTags(baseKey) {
-  let six = {}, two = {};
-  try { six = JSON.parse(localStorage.getItem("matrixCharm6Words") || "{}"); } catch (_){}
-  try { two = JSON.parse(localStorage.getItem("matrixCharm2Words") || "{}"); } catch (_){}
-  const tags = String(six[baseKey] || two[baseKey] || "");
-  return tags.toLowerCase();
-}
-
-// Does the MATRIX image name/tags explicitly contain an ear term?
-function hasEarTermInMatrix(userImgName) {
-  const base = normalizeMatrixName(userImgName);
-  const tags = readMatrixTags(base);
-  return EAR_TERM_RE.test(base) || EAR_TERM_RE.test(tags);
-}
-
-// Does the **Etsy item title** require an ear-term match?
-function requiresEarMatchForCell(cellIdx) {
-  // Prefer stored title array if present
-  let titlesArr = [];
-  try { titlesArr = JSON.parse(localStorage.getItem("etsyTitlesByCell") || "[]"); } catch (_){}
-  // Fallback: live cache
-  const fromCache = (Array.isArray(window.cachedOrderItems) ? window.cachedOrderItems[cellIdx]?.title : "") || "";
-  const title = String(titlesArr[cellIdx] || fromCache || "").toLowerCase();
-
-  // Only these title cues trigger the strict requirement (your list)
-  const TITLE_RE = /\b(stud|stud\s+earrings|earring|earrings|huggie|huggies|huggie\s+earrings|hoop|hoops|hoop\s+earrings)\b/i;
-  return TITLE_RE.test(title);
-}
-
-// Final gate: if the Etsy title is an earring, the matrix image MUST have an ear term.
-function requireEarTermGate(cellIdx, userImgName) {
-  if (!requiresEarMatchForCell(cellIdx)) return true;        // not an earring item → no special requirement
-  return hasEarTermInMatrix(userImgName);                    // earring item → only allow ear-tagged images
-}
-
 // Build the word list we will use for title prefiltering.
 // Prefer the persisted 6-word descriptor (with potential 'ocean' augmentation),
 // and fall back to the 2-word tag if 6-word is missing.
@@ -3357,43 +3307,6 @@ async function sendAndMatch() {
   return ok;
   }
 
-  // --- Hard gate to prevent "Ear" images on NON-earring items -----------------
-function earringTitleGate(cellIdx, userImgName){
-  const raw = String(userImgName || "");
-
-  // Normalize filename: split camelCase, treat _ and - as spaces, drop extension
-  const base = raw
-    .replace(/\.(jpg|jpeg|png|webp)$/i, "")
-    .replace(/([a-z])([A-Z])/g, "$1 $2")      // EarHoop -> Ear Hoop
-    .replace(/[_\-]+/g, " ")
-    .toLowerCase()
-    .trim();
-
-  // Accept a broad but precise set of ear/earring terms (word-boundary safe)
-  const EAR_WORD = /\b(ear|earring|earrings|ear\s?cuff(?:s)?|ear\s?clip(?:s)?|ear\s?hook(?:s)?|ear\s?wire(?:s)?|ear\s?post(?:s)?|stud(?:s)?|huggie(?:s)?|hoop(?:s)?)\b/i;
-
-  // Also check descriptor tags (6-word / 2-word) in case filenames lack “ear…”
-  let sixMap = {}, twoMap = {};
-  try { sixMap = JSON.parse(localStorage.getItem("matrixCharm6Words") || "{}"); } catch(_) {}
-  try { twoMap = JSON.parse(localStorage.getItem("matrixCharm2Words") || "{}"); } catch(_) {}
-  const key  = raw.replace(/\.(jpg|jpeg|png|webp)$/i, "");
-  const tags = String(sixMap[key] || twoMap[key] || "").toLowerCase();
-
-  const isEarTagged = EAR_WORD.test(base) || EAR_WORD.test(tags);
-  if (!isEarTagged) return true;                 // no ear signal → don’t block
-
-  // Only allow ear-tagged images when the order item is truly an earring
-  const item = (Array.isArray(window.cachedOrderItems) ? window.cachedOrderItems[cellIdx] : null) || {};
-  if (item.isEarring === false) return false;    // 🚫 block outright
-
-  // For true earring items, require the Etsy title to also mention ear terms
-  let titlesArr = [];
-  try { titlesArr = JSON.parse(localStorage.getItem("etsyTitlesByCell") || "[]"); } catch(_){}
-  const title = String(titlesArr[cellIdx] || "").toLowerCase();
-
-  return /\b(stud|earring|earrings|huggie|huggies|hoop|hoops|ear\s?cuff|ear\s?clip|ear\s?hook|ear\s?wire|ear\s?post)\b/.test(title);
-}
-
   // NEW: Hard earring gate for names that include the token "Ear"
  // If the Matrix image name contains "Ear" (standalone token),
  // block outright for NON-earring items, regardless of title text.
@@ -3447,7 +3360,8 @@ function earringTitleGate(cellIdx, userImgName){
           !u.skipForCharm &&
           metalFilterOk(metalVal, u.name) &&
           passesTitlePrefilter(i, u.name) &&
-          requireEarTermGate(i, u.name)         // ★ NEW: positive ear gate in remainder pass
+          earringTitleGate(i, u.name) &&
+          !matchedUserNames.has(u.name)
         );
         if (!pool.length) break;
 
@@ -3557,8 +3471,8 @@ function earringTitleGate(cellIdx, userImgName){
         !u.skipForCharm &&
         metalFilterOk(metalVal, u.name) &&
         passesTitlePrefilter(i, u.name) &&
-        requireEarTermGate(i, u.name)          // ★ NEW: only allow ear-tagged images for earring titles
-);
+        earringTitleGate(i, u.name)
+    );
     const titlesArr = JSON.parse(localStorage.getItem("etsyTitlesByCell") || "[]");
     const etsyTitle = titlesArr[i] || "";
     pfStartCell(i, etsyTitle);
