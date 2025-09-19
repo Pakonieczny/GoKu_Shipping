@@ -605,6 +605,10 @@ let skipMatches = {};   // { cellIndex: true }
 let earringCells  = {};            // { cellIdx : true }
 let earringState  = {};            // { cellIdx : { firstImg:null } }
 
+ // TEMP: disable mirror-pair matching during Send & Match
+ // Toggle to true to re-enable the mirror logic.
+ const ENABLE_EARRING_MIRROR_MATCH = false;
+
 /* ===== ADAPTIVE COOLDOWN CONFIG (ADD) =========================== */
 let lastRateLimitAt = 0;     // timestamp of most recent 429 / rate-limit
 let burstCalls      = 0;     // running count of OpenAI compare calls this page load
@@ -1160,7 +1164,10 @@ function evaluateBorder(cellIdx) {
   /* B) count ONLY real images, ignore placeholders */
   const realCount = (cellMatches[cellIdx] || [])
     .filter(m => m && m.userImage).length;
-  const needed    = expectedSlots(window.cachedOrderItems[cellIdx]);
+  const item      = window.cachedOrderItems?.[cellIdx] || {};
+  let needed      = expectedSlots(item);
+  const rawQty    = Number(item.qty || item.quantity || 1) || 1;
+  if (item.isEarring && rawQty === 1) needed = 1;  // cap for single-qty earrings
 
   pb.style.border = realCount >= needed
     ? "1px solid #000"          // complete
@@ -3549,9 +3556,9 @@ async function sendAndMatch() {
            MIRROR‑PAIR LOGIC – runs for ANY accepted earring half
         ============================================================== */
         /* Only run when this order actually expects TWO slots          */
-         const needSlots = expectedSlots(window.cachedOrderItems?.[i] || {});
-         if (needSlots > 1 && earringCells[i] && cellMatches[i] && cellMatches[i].length === 1) {          
-         const firstImgFixed = cellMatches[i][0].userImage;
+        const needSlots = expectedSlots(window.cachedOrderItems?.[i] || {});
+        if (ENABLE_EARRING_MIRROR_MATCH && needSlots > 1 && earringCells[i] && cellMatches[i] && cellMatches[i].length === 1) {
+          const firstImgFixed = cellMatches[i][0].userImage;
           if (!earringState[i]) earringState[i] = {};
           earringState[i].firstImg = firstImgFixed;
 
@@ -3563,10 +3570,10 @@ async function sendAndMatch() {
             if (!passesTitlePrefilter(i, cand.name)) continue; // 🔒 enforce title prefilter
 
             const { score: s1 } = await compareImages(cand.data, firstImgFixed, i, cand.name);
-            const flipped       = await flipImageHorizontal(cand.data);
+            const flipped       = await flipImageHorizontal(cand.data);          // currently skipped by the flag
             const { score: s2 } = await compareImages(flipped, firstImgFixed, i, cand.name + "_mirror");
             const bestScore     = Math.max(s1, s2);
-            if (bestScore < 0.85) continue;          // twin threshold
+            if (bestScore < 0.85) continue;
 
              const twinName = cand.name.replace(/(\.jpg|\.png)$/i, "");
              /* safe push — silently skips if we already have enough     */
@@ -3844,12 +3851,16 @@ function openMatchPreviewModal(cellIndex) {
   const etsyDerived = croppedImagesArray[cellIndex];
   const needSlots = expectedSlots(window.cachedOrderItems[cellIndex]);   // NEW
 
+  // UX CAP: if this is an earring but listing quantity is exactly 1, only show ONE matched slot
+  const rawQty  = Number(item.qty || item.quantity || 1) || 1;
+  const capSlots = (item.isEarring && rawQty === 1) ? 1 : needSlots;
+
   /* ---------- build matchedImages sized to needSlots ---------- */
   let matchedImages = cellMatches[cellIndex]
     ? [...cellMatches[cellIndex]]
     : [];
-  matchedImages = matchedImages.slice(0, needSlots);
-  while (matchedImages.length < needSlots) {
+  matchedImages = matchedImages.slice(0, capSlots);
+  while (matchedImages.length < capSlots) {
     matchedImages.push({ userName:"", userImage:null, score:0 });
   }
 
@@ -4115,7 +4126,7 @@ function openMatchPreviewModal(cellIndex) {
   matchedWrapper.appendChild(matchedTitle);
 
   /* ---------- build a fixed set of slots ---------- */
-  const maxSlots = needSlots;
+  const maxSlots = capSlots;
   const matchedSection = document.createElement("div");
   matchedSection.style.display      = "flex";
   matchedSection.style.flexWrap     = "wrap";
@@ -4358,7 +4369,7 @@ container.appendChild(matchedWrapper);       // ← keep this line
         .join(", ");
 
       const realCount = matchedImages.filter(m => m && m.userImage).length;
-      const needed    = expectedSlots(window.cachedOrderItems[cellIndex]);
+      const needed    = capSlots;  // single-qty earrings only need 1 in the UI
 
       if (realCount < needed) {                 // still incomplete
         if (!earringCells[cellIndex]) {         // << non‑earring rows: show orangered text
