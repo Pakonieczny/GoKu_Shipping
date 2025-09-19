@@ -3307,53 +3307,29 @@ async function sendAndMatch() {
   return ok;
   }
 
-  // NEW (symmetric gate): if the Etsy title looks like earrings,
-  // only allow user images whose name includes the standalone token "Ear".
-  function earringOrderGate(cellIdx, userImgName){
-    // 1) Title side: is this Etsy item likely an earring?
-    let titlesArr = [];
-    try { titlesArr = JSON.parse(localStorage.getItem("etsyTitlesByCell") || "[]"); } catch (_){}
-    const title = String(titlesArr[cellIdx] || "").toLowerCase();
-    const titleIsEarring = /\b(stud|earring|earrings|huggie|huggies|hoop|hoops)\b/.test(title);
-
-    // If not an earring title → do not block
-    if (!titleIsEarring) return true;
-
-    // 2) Image side: does the matrix image name contain the token "Ear"?
-    const base = String(userImgName || "")
-      .toLowerCase()
-      .replace(/\.(jpg|jpeg|png|webp)$/i, "")
-      .replace(/[_\-]+/g, " ")
-      .trim();
-
-    // Require the standalone token "ear" (not just substring inside another word)
-    const hasEarToken = /\bear\b/.test(base);
-    return hasEarToken;
-  }
-
- // NEW: Hard earring gate for names that include the token "Ear"
-  // If the Matrix image name contains "Ear" (as a standalone token),
-  // only allow matching when the Etsy title includes one of:
-  // "stud", "stud earrings", "earring", "earrings",
-  // "huggie", "huggies", "huggie earrings", "hoop", "hoops", "hoop earrings"
+  // HARD GATE: If the Matrix image name looks earring-related, only allow it
+  // to match Etsy items whose title is also earring-related.
   function earringTitleGate(cellIdx, userImgName){
-    // normalize name → treat underscores/hyphens as spaces, drop extension
+    // Normalize name → treat underscores/hyphens as spaces, drop extension
     const base = String(userImgName || "")
       .toLowerCase()
       .replace(/\.(jpg|jpeg|png|webp)$/i, "")
       .replace(/[_\-]+/g, " ")
       .trim();
-    const isEarTagged = /\bear\b/.test(base);  // “Ear” as a standalone token
-    if (!isEarTagged) return true;             // not tagged → do not block
 
-    // title is already stored normalized (lowercase, no punctuation)
+    // Anything that clearly signals earrings in the *image name*
+    // (covers: ear, earring(s), ear cuff(s), climber(s), crawler(s), stud(s), huggie(s), hoop(s))
+    const nameIsEarringish = /\b(ear|earring|earrings|earcuff|earcuffs|ear cuff|ear cuffs|ear climber|ear climbers|ear crawler|ear crawlers|stud|studs|huggie|huggies|hoop|hoops)\b/.test(base);
+    if (!nameIsEarringish) return true; // image name isn't earring-related → don't block
+
+    // Title is stored normalized (lowercase, no punctuation)
     let titlesArr = [];
     try { titlesArr = JSON.parse(localStorage.getItem("etsyTitlesByCell") || "[]"); } catch (_){}
     const title = String(titlesArr[cellIdx] || "").toLowerCase();
 
-    // allow if ANY of the allowed tokens are present
-    const earOk = /\b(stud|earring|earrings|huggie|huggies|hoop|hoops)\b/.test(title);
-    return earOk;
+    // Only allow if the *Etsy item title* is earring-related
+    const titleIsEarringish = /\b(earring|earrings|earcuff|earcuffs|ear cuff|ear cuffs|ear climber|ear climbers|ear crawler|ear crawlers|stud|studs|huggie|huggies|hoop|hoops)\b/.test(title);
+    return titleIsEarringish;
   }
 
     // --- NEW: helpers to render names and to keep filling until have >= need ---
@@ -3382,7 +3358,6 @@ async function sendAndMatch() {
           metalFilterOk(metalVal, u.name) &&
           passesTitlePrefilter(i, u.name) &&
           earringTitleGate(i, u.name) &&
-          earringOrderGate(i, u.name) &&
           !matchedUserNames.has(u.name)
         );
         if (!pool.length) break;
@@ -3493,8 +3468,7 @@ async function sendAndMatch() {
         !u.skipForCharm &&
         metalFilterOk(metalVal, u.name) &&
         passesTitlePrefilter(i, u.name) &&
-        earringTitleGate(i, u.name) &&   // image has "Ear" → only compare to earring-like titles
-        earringOrderGate(i, u.name)      // earring-like titles → only compare to images with "Ear"
+        earringTitleGate(i, u.name)
     );
     const titlesArr = JSON.parse(localStorage.getItem("etsyTitlesByCell") || "[]");
     const etsyTitle = titlesArr[i] || "";
