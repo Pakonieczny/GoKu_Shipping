@@ -3307,33 +3307,36 @@ async function sendAndMatch() {
   return ok;
   }
 
-  // NEW: Hard earring gate for names that include the token "Ear"
- // If the Matrix image name contains "Ear" (standalone token),
- // block outright for NON-earring items, regardless of title text.
- // For true earring items, still require a reasonable ear-term in the title.
- function earringTitleGate(cellIdx, userImgName){
-   // normalize name → treat underscores/hyphens as spaces, drop extension
-   const base = String(userImgName || "")
-     .toLowerCase()
-     .replace(/\.(jpg|jpeg|png|webp)$/i, "")
-     .replace(/[_\-]+/g, " ")
-     .trim();
-   const isEarTagged = /\b(ear|earring|earrings|stud|studs|huggie|huggies|hoop|hoops)\b/.test(base);
-   if (!isEarTagged) return true;             // not tagged → do not block
+  // NEW: Title-driven EAR guard (strict)
+  // Rule:
+  //  • If Etsy title contains any of these phrases:
+  //    stud | stud earrings | earring | earrings | huggie | huggies | huggie earrings | hoop | hoops | hoop earrings
+  //      ⇒ ONLY allow Matrix images whose name contains the word "ear" (standalone).
+  //  • Else (no such phrase in title) ⇒ REJECT Matrix images whose name contains the word "ear".
+  function earringTitleGate(cellIdx, userImgName){
+    // 1) Normalize Etsy title (we cache normalized titles in localStorage)
+    let titlesArr = [];
+    try { titlesArr = JSON.parse(localStorage.getItem("etsyTitlesByCell") || "[]"); } catch (_){}
+    const title = String(titlesArr[cellIdx] || "").toLowerCase();
 
-   // Look up the target item and use the computed isEarring flag
-   const item = (Array.isArray(window.cachedOrderItems) ? window.cachedOrderItems[cellIdx] : null) || {};
-   if (item.isEarring === false) {
-     // 🚫 Non-earring item → never allow “Ear” images into the pool
-     return false;
-   }
+    // 2) Does the title indicate an earring?
+    //    Use strict whole-word matching; handle multi-word phrases too.
+    const hasEarTerm =
+      /\bstud earrings\b|\bhuggie earrings\b|\bhoop earrings\b|\bearrings?\b|\bhuggies?\b|\bhoops?\b|\bstud\b/.test(title);
 
-   // For earring items, keep the light sanity check on the title text
-   let titlesArr = [];
-   try { titlesArr = JSON.parse(localStorage.getItem("etsyTitlesByCell") || "[]"); } catch (_){}
-   const title = String(titlesArr[cellIdx] || "").toLowerCase();
-   return /\b(stud|earring|earrings|huggie|huggies|hoop|hoops)\b/.test(title);
- }
+    // 3) Does the Matrix image NAME include the standalone word "ear"?
+    //    Treat underscores/hyphens as spaces, drop extension.
+    const base = String(userImgName || "")
+      .toLowerCase()
+      .replace(/\.(jpg|jpeg|png|webp)$/i, "")
+      .replace(/[_\-]+/g, " ")
+      .trim();
+
+    const imgHasEarWord = /\bear\b/.test(base);
+
+    // 4) Apply the two-way guard
+    return hasEarTerm ? imgHasEarWord : !imgHasEarWord;
+  }
 
     // --- NEW: helpers to render names and to keep filling until have >= need ---
     function namesForCell(i){
