@@ -3307,29 +3307,44 @@ async function sendAndMatch() {
   return ok;
   }
 
- // NEW: Hard earring gate for names that include the token "Ear"
-  // If the Matrix image name contains "Ear" (as a standalone token),
-  // only allow matching when the Etsy title includes one of:
-  // "stud", "stud earrings", "earring", "earrings",
-  // "huggie", "huggies", "huggie earrings", "hoop", "hoops", "hoop earrings"
-  function earringTitleGate(cellIdx, userImgName){
-    // normalize name → treat underscores/hyphens as spaces, drop extension
+  // STRICT earring gate:
+  // If the Etsy cell is an earring item, ONLY allow Matrix images whose filename
+  // contains the standalone token "Ear" (case-insensitive).
+  // For non-earring items, if the filename *does* contain "Ear", only allow it
+  // when the title clearly mentions earring terms (so ear-tagged files don't
+  // leak onto necklace/bracelet listings).
+  function earringTitleGate(cellIdx, userImgName) {
+    // normalize filename → treat underscores/hyphens as spaces, drop extension
     const base = String(userImgName || "")
       .toLowerCase()
       .replace(/\.(jpg|jpeg|png|webp)$/i, "")
       .replace(/[_\-]+/g, " ")
       .trim();
-    const isEarTagged = /\bear\b/.test(base);  // “Ear” as a standalone token
-    if (!isEarTagged) return true;             // not tagged → do not block
 
-    // title is already stored normalized (lowercase, no punctuation)
+    const hasEarToken = /\bear\b/.test(base); // "Ear" as standalone token
+
+    // detect if the Etsy item for this cell is earrings
+    const items = Array.isArray(window.cachedOrderItems) ? window.cachedOrderItems : [];
+    const byFlag = Boolean(items[cellIdx]?.isEarring);          // set during grid build
+    const byCell = Boolean((typeof earringCells !== "undefined") && earringCells[cellIdx]);
+
     let titlesArr = [];
-    try { titlesArr = JSON.parse(localStorage.getItem("etsyTitlesByCell") || "[]"); } catch (_){}
+    try { titlesArr = JSON.parse(localStorage.getItem("etsyTitlesByCell") || "[]"); } catch (_) {}
     const title = String(titlesArr[cellIdx] || "").toLowerCase();
+    const titleMentionsEarrings = /\b(stud|studs|earring|earrings|huggie|huggies|hoop|hoops)\b/.test(title);
 
-    // allow if ANY of the allowed tokens are present
-    const earOk = /\b(stud|earring|earrings|huggie|huggies|hoop|hoops)\b/.test(title);
-    return earOk;
+    const isEarringItem = byFlag || byCell || titleMentionsEarrings;
+
+    // (A) If this Etsy cell is for earrings ⇒ require "Ear" in the Matrix filename
+    if (isEarringItem) return hasEarToken;
+
+    // (B) For NON-earring items:
+    //     If the Matrix filename is ear-tagged, only allow it when the title
+    //     itself is clearly earrings (otherwise keep it off non-earring listings).
+    if (hasEarToken) return titleMentionsEarrings;
+
+    // (C) Otherwise fine
+    return true;
   }
 
     // --- NEW: helpers to render names and to keep filling until have >= need ---
@@ -3340,7 +3355,12 @@ async function sendAndMatch() {
     }
 
     async function fillRemaining(i, compareTarget, matchBox){
-      while (true){
+      // ⛔ Skip any auto second-fill for earrings when mirror pairing is disabled.
+      // This prevents Send & Match from subjecting earrings to a "mirror-like" second search.
+      if (earringCells[i] && ENABLE_EARRING_MIRROR_MATCH === false) {
+        return;
+      }      
+        while (true){
         if (runId !== globalRunId) return;
 
         const need = expectedSlots(window.cachedOrderItems?.[i] || {});
