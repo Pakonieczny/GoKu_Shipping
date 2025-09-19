@@ -3277,7 +3277,8 @@ async function sendAndMatch() {
     const userIsSilver = (tag === "silver");
 
     // Listing metal (treat 14K as Gold unless explicitly "rose gold")
-    const listingIsRose   = /\brose\s*gold\b|\brosegold\b/.test(m);
+    // Also catch plain “Rose” selections (some listings use just "Rose")
+    const listingIsRose   = /\brose\s*gold\b|\brosegold\b|\brose\b/.test(m);
     const listingIs14k    = /\b14\s*k(?:t|arat)?\b/.test(m) && !listingIsRose;
     const listingIsGold   = /\bgold\b/.test(m) && !listingIsRose;
     const listingIsSilver = /\bsilver\b|sterling/.test(m);
@@ -3286,6 +3287,42 @@ async function sendAndMatch() {
     if (listingIs14k || listingIsGold) return userIsGold;     // 14K/Gold ↔ Gold only (never Rose)
     if (listingIsSilver)               return userIsSilver;   // Silver ↔ Silver only
     return true; // unknown listing metal → don’t block
+  }
+
+  // ----- STRICT metal equality at acceptance time (defensive) -----
+  function normalizeUserMetalFromName(userName){
+    const tag = String(userName || "")
+      .toLowerCase()
+      .replace(/\.(jpg|jpeg|png|webp)$/,'')
+      .split('_')[0];
+    if (tag === 'rosegold' || tag === 'rose') return 'rose';
+    if (tag === 'silver') return 'silver';
+    if (tag === 'gold' || tag === '14k' || tag === 'yellow') return 'gold';
+    return 'unknown';
+  }
+
+  function normalizeListingMetal(metalVal, titleMaybe){
+    const m = String(metalVal || '').toLowerCase();
+    const t = String(titleMaybe || '').toLowerCase();
+    const hay = m + ' ' + t;
+    const rose   = /\brose\s*gold\b|\brosegold\b|\brose\b/.test(hay);
+    const silver = /\bsterling\b|\bsilver\b/.test(hay);
+    const gold   = (/\b14\s*k(?:t|arat)?\b/.test(hay) || /\byellow\s*gold\b|\bgold\b/.test(hay)) && !rose;
+    if (rose) return 'rose';
+    if (silver) return 'silver';
+    if (gold) return 'gold';
+    return 'unknown';
+  }
+
+  function metalsStrictEqual(cellIdx, metalVal, userName){
+    // Prefer the metal cell; supplement with cached normalized title
+    let titlesArr = [];
+    try { titlesArr = JSON.parse(localStorage.getItem('etsyTitlesByCell') || '[]'); } catch(_){}
+    const effListing = normalizeListingMetal(metalVal, titlesArr[cellIdx] || '');
+    const userTag    = normalizeUserMetalFromName(userName);
+    // If either side is unknown, do not hard-block at acceptance time
+    if (effListing === 'unknown' || userTag === 'unknown') return true;
+    return effListing === userTag;
   }
 
   // Title-word prefilter — require ≥1 *word* overlap between Matrix descriptor words (prefer 6-word tag) and the Etsy cell title
@@ -3422,6 +3459,15 @@ async function sendAndMatch() {
 
         // Reuse the same acceptance logic for each slot
         if (top.result.score >= 0.80){
+          // 🔒 Metal mismatch hard-stop (defensive)
+          const metalValNow = document.getElementById("metalCell" + i).value || "";
+          if (!metalsStrictEqual(i, metalValNow, top.user.name)) {
+            console.warn("Blocked metal mismatch (fillRemaining)", { cell:i, listing: metalValNow, user: top.user.name });
+            // Remove this candidate from consideration and try again
+            const keyTop = String(top.user.origName || top.user.name);
+            userImagesArray = userImagesArray.filter(u => String(u.origName || u.name) !== keyTop);
+            continue;
+          }
           if (!cellMatches[i]) cellMatches[i] = [];
           const nm = top.user.name.replace(/(\.jpg|\.png)$/i, "");
           cellMatches[i].push({ userName: nm, userImage: top.user.data, score: top.result.score });
