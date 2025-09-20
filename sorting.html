@@ -2069,7 +2069,7 @@ function genId() {
     return 1 - (d - FULL) / (FEATHER - FULL);
   }
 
-  async function desaturateRedsByPercent(baseDataUrl, percent = 0.15) {
+  async function desaturateRedsByPercent(baseDataUrl, percent = 0.25) {
     const img = await loadImage(baseDataUrl);
     const w = img.naturalWidth, h = img.naturalHeight;
     const canvas = document.createElement("canvas");
