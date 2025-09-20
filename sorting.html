@@ -2034,11 +2034,11 @@ async function extractSubImages144(baseDataUrl) {
   //    6→1.00, 7→1.005, 8→1.01, 9→1.02, others→1.00
   const wFactors = Array.from({ length: COLS }, (_, c) => {
     switch (c) {
-      case 0:  return 0.88;
+      case 0:  return 0.875;
       case 1:  return 1.035;
-      case 2:  return 1.05;
-      case 3:  return 1.055;
-      case 4:  return 1.050;
+      case 2:  return 1.04;
+      case 3:  return 1.045;
+      case 4:  return 1.025;
       case 5:  return 1.00;
       case 6:  return 0.99;
       case 7:  return 0.975;
