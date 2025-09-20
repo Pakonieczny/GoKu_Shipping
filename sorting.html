@@ -2015,44 +2015,59 @@ function genId() {
   );
 }
 
-/********************************************************
- * extractSubImages144: always slice a composite into 10×14 = 140 tiles
- ********************************************************/
-async function extractSubImages144(baseDataUrl) {
-  const img = await loadImage(baseDataUrl);
+ /********************************************************
+  * extractSubImages144 (offset-safe)
+  * - Slices a composite into 10×14 = 140 tiles.
+  * - Anchors the square crop at the TOP-LEFT of each grid cell (no rightward bias).
+  * - Honors optional global insets (manual or auto-detected) and a tiny pad.
+  ********************************************************/
+ async function extractSubImages144(baseDataUrl) {
+   const img = await loadImage(baseDataUrl);
 
-  const fullW = img.naturalWidth;
-  const fullH = img.naturalHeight;
-  const COLS  = (window.MATRIX_COLS || 10);
-  const ROWS  = (window.MATRIX_ROWS || 14);
-  const cellW = fullW / COLS;
-  const cellH = fullH / ROWS;
+   const fullW = img.naturalWidth;
+   const fullH = img.naturalHeight;
 
-  const results = [];
-  for (let r = 0; r < ROWS; r++) {
-    for (let c = 0; c < COLS; c++) {
-      // Center-square crop from each cell to ensure subject is centered
-      const s     = Math.floor(Math.min(cellW, cellH));
-      const srcX  = Math.floor(c * cellW + (cellW - s) / 2);
-      const srcY  = Math.floor(r * cellH + (cellH - s) / 2);
+   // Optional: auto-detect black borders unless explicitly disabled
+   let auto = (window.MATRIX_AUTO_INSETS !== false);
+   let autoInsets = auto ? detectOuterBlackBorderInsets(img) : {left:0, top:0, right:0, bottom:0};
 
-      const canvas = document.createElement("canvas");
-      canvas.width  = s;
-      canvas.height = s;
+   // Manual overrides (set window.MATRIX_INSET_* before running if you like)
+   const insetL = (window.MATRIX_INSET_L|0) + (autoInsets.left   |0);
+   const insetT = (window.MATRIX_INSET_T|0) + (autoInsets.top    |0);
+   const insetR = (window.MATRIX_INSET_R|0) + (autoInsets.right  |0);
+   const insetB = (window.MATRIX_INSET_B|0) + (autoInsets.bottom |0);
 
-      const ctx = canvas.getContext("2d");
-      ctx.imageSmoothingEnabled = true;
-      ctx.imageSmoothingQuality = "high";
-      ctx.drawImage(
-        img,
-        srcX, srcY, s, s,     // centered square source
-        0, 0, s, s            // square destination
-      );
-      results.push(canvas.toDataURL("image/jpeg", 0.85));
-    }
-  }
-  return results; // ROWS×COLS sub-images (defaults to 140)
-}
+   const effW = Math.max(0, fullW - insetL - insetR);
+   const effH = Math.max(0, fullH - insetT - insetB);
+
+   const COLS  = (window.MATRIX_COLS || 10);
+   const ROWS  = (window.MATRIX_ROWS || 14);
+   const cellW = effW / COLS;
+   const cellH = effH / ROWS;
+
+   // Small safety pad keeps us off gridlines/numerals
+   const padX = (window.MATRIX_PAD_X ?? 2);
+   const padY = (window.MATRIX_PAD_Y ?? 2);
+
+   const results = [];
+   for (let r = 0; r < ROWS; r++) {
+     for (let c = 0; c < COLS; c++) {
+       const s = Math.floor(Math.min(cellW, cellH) - 2 * Math.max(padX, padY));
+       const srcX = Math.floor(insetL + c * cellW + padX); // ← top-left anchored (fixes right shift)
+       const srcY = Math.floor(insetT + r * cellH + padY);
+
+       const canvas = document.createElement("canvas");
+       canvas.width  = s;
+       canvas.height = s;
+       const ctx = canvas.getContext("2d");
+       ctx.imageSmoothingEnabled = true;
+       ctx.imageSmoothingQuality = "high";
+       ctx.drawImage(img, srcX, srcY, s, s, 0, 0, s, s);
+       results.push(canvas.toDataURL("image/jpeg", 0.85));
+     }
+   }
+   return results;
+ }
 
 // cropTo400: forcibly resize each quadrant to 400×400
 async function cropTo512(dataUrl) {
@@ -4330,7 +4345,7 @@ container.appendChild(matchedWrapper);       // ← keep this line
   unmatchedWrapper.id = "unmatchedWrapper";        // ← add this line
   unmatchedWrapper.style.display = "flex";
   unmatchedWrapper.style.flexDirection = "column";
-  unmatchedWrapper.style.marginLeft = "0px"; // shift right
+  unmatchedWrapper.style.marginLeft = "187px"; // shift right
 
   const unmatchedTitle = document.createElement("div");
   unmatchedTitle.textContent = "Unmatched User Photos:";
@@ -4670,7 +4685,7 @@ container.appendChild(matchedWrapper);       // ← keep this line
       unmatchedWrapper.id               = "unmatchedWrapper";
       unmatchedWrapper.style.display       = "flex";
       unmatchedWrapper.style.flexDirection = "column";
-      unmatchedWrapper.style.marginLeft    = "0px";           // same offset
+      unmatchedWrapper.style.marginLeft    = "187px";           // same offset
 
       /* header */
       const unTitle = document.createElement("div");
