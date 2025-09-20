@@ -658,6 +658,29 @@ function flipImageHorizontal(dataURL) {
   });
 }
 
+ // === helper: detectOuterBlackBorderInsets ===============================
+ // Scans the master image for thin black gutters and returns insets (px).
+ // Safe, conservative; returns zeros if no border.
+ function detectOuterBlackBorderInsets(img) {
+   const w = img.naturalWidth, h = img.naturalHeight;
+   const can = document.createElement("canvas");
+   can.width = w; can.height = h;
+   const ctx = can.getContext("2d");
+   ctx.drawImage(img, 0, 0);
+   const data = ctx.getImageData(0, 0, w, h).data;
+   const step = 4;
+   const lum = (r,g,b)=>0.2126*r + 0.7152*g + 0.0722*b;
+   const colAvg = x => { let s=0,c=0; for (let y=0;y<h;y+=step){ const i=(y*w+x)*4; s+=lum(data[i],data[i+1],data[i+2]); c++; } return s/(c||1); };
+   const rowAvg = y => { let s=0,c=0; for (let x=0;x<w;x+=step){ const i=(y*w+x)*4; s+=lum(data[i],data[i+1],data[i+2]); c++; } return s/(c||1); };
+   const TH = 12; // luma threshold for “non-black”
+   let L=0; while(L<w-1 && colAvg(L)        < TH) L++;
+   let R=0; while(R<w-1 && colAvg(w-1-R)    < TH) R++;
+   let T=0; while(T<h-1 && rowAvg(T)        < TH) T++;
+   let B=0; while(B<h-1 && rowAvg(h-1-B)    < TH) B++;
+   L=Math.min(L,40); R=Math.min(R,40); T=Math.min(T,40); B=Math.min(B,40);
+   return { left:L|0, top:T|0, right:R|0, bottom:B|0 };
+ }
+
  /********************************************************
   * Inline progress bar (no modal) — renders under #photoDragDrop
   * NOTE: we keep the SAME function names used elsewhere so callers
@@ -2028,8 +2051,11 @@ function genId() {
    const fullH = img.naturalHeight;
 
    // Optional: auto-detect black borders unless explicitly disabled
-   let auto = (window.MATRIX_AUTO_INSETS !== false);
-   let autoInsets = auto ? detectOuterBlackBorderInsets(img) : {left:0, top:0, right:0, bottom:0};
+  let auto = (window.MATRIX_AUTO_INSETS !== false);
+  let autoInsets = { left:0, top:0, right:0, bottom:0 };
+  if (auto && typeof detectOuterBlackBorderInsets === "function") {
+    try { autoInsets = detectOuterBlackBorderInsets(img) || autoInsets; } catch (_) {}
+  }
 
    // Manual overrides (set window.MATRIX_INSET_* before running if you like)
    const insetL = (window.MATRIX_INSET_L|0) + (autoInsets.left   |0);
