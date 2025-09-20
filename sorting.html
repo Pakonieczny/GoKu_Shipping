@@ -2098,7 +2098,6 @@ function genId() {
  * extractSubImages144: always slice a composite into 10×14 = 140 tiles
  ********************************************************/
 async function extractSubImages144(baseDataUrl) {
-  const img = await loadImage(baseDataUrl);
   // Apply Photoshop-style Reds desat BEFORE tiling
   const adjustedUrl = await desaturateRedsByPercent(baseDataUrl, 0.12);
   const img = await loadImage(adjustedUrl);
