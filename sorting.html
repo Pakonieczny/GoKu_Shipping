@@ -2051,10 +2051,10 @@ async function extractSubImages144(baseDataUrl) {
 async function cropTo512(dataUrl) {
   const loaded = await loadImage(dataUrl);
   const canvas = document.createElement("canvas");
-  canvas.width = 400;
+  canvas.width = 380;
   canvas.height = 400;
   const ctx = canvas.getContext("2d");
-  ctx.drawImage(loaded, 0, 0, 400, 400);
+  ctx.drawImage(loaded, 0, 0, 380, 400);
   return canvas.toDataURL("image/jpeg", 0.85);
 }
 
