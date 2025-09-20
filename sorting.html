@@ -2031,15 +2031,22 @@ async function extractSubImages144(baseDataUrl) {
   const results = [];
   for (let r = 0; r < ROWS; r++) {
     for (let c = 0; c < COLS; c++) {
+      // Center-square crop from each cell to ensure subject is centered
+      const s     = Math.floor(Math.min(cellW, cellH));
+      const srcX  = Math.floor(c * cellW + (cellW - s) / 2);
+      const srcY  = Math.floor(r * cellH + (cellH - s) / 2);
+
       const canvas = document.createElement("canvas");
-      canvas.width  = cellW;
-      canvas.height = cellH;
+      canvas.width  = s;
+      canvas.height = s;
 
       const ctx = canvas.getContext("2d");
+      ctx.imageSmoothingEnabled = true;
+      ctx.imageSmoothingQuality = "high";
       ctx.drawImage(
         img,
-        c * cellW, r * cellH, cellW, cellH,   // src
-        0, 0, cellW, cellH                    // dest
+        srcX, srcY, s, s,     // centered square source
+        0, 0, s, s            // square destination
       );
       results.push(canvas.toDataURL("image/jpeg", 0.85));
     }
@@ -2051,10 +2058,10 @@ async function extractSubImages144(baseDataUrl) {
 async function cropTo512(dataUrl) {
   const loaded = await loadImage(dataUrl);
   const canvas = document.createElement("canvas");
-  canvas.width = 380;
+  canvas.width = 400;
   canvas.height = 400;
   const ctx = canvas.getContext("2d");
-  ctx.drawImage(loaded, 0, 0, 380, 400);
+  ctx.drawImage(loaded, 0, 0, 400, 400);
   return canvas.toDataURL("image/jpeg", 0.85);
 }
 
@@ -4323,7 +4330,7 @@ container.appendChild(matchedWrapper);       // ← keep this line
   unmatchedWrapper.id = "unmatchedWrapper";        // ← add this line
   unmatchedWrapper.style.display = "flex";
   unmatchedWrapper.style.flexDirection = "column";
-  unmatchedWrapper.style.marginLeft = "187px"; // shift right
+  unmatchedWrapper.style.marginLeft = "50px"; // shift right
 
   const unmatchedTitle = document.createElement("div");
   unmatchedTitle.textContent = "Unmatched User Photos:";
