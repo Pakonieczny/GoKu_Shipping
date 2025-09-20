@@ -2021,7 +2021,7 @@ function genId() {
 async function extractSubImages144(baseDataUrl) {
   const img = await loadImage(baseDataUrl);
 
-  const fullW = Math.round(img.naturalWidth * 0.93); // ↓ 7% to counter right-offset
+  const fullW = Math.round(img.naturalWidth * 0.98); // ↓ 7% to counter right-offset
   const fullH = img.naturalHeight;
   const COLS  = (window.MATRIX_COLS || 10);
   const ROWS  = (window.MATRIX_ROWS || 14);
