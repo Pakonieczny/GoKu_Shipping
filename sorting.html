@@ -2015,6 +2015,85 @@ function genId() {
   );
 }
 
+  /********************************************************
+   * Photoshop-style Hue/Saturation (Reds only) → −10% Sat
+   * - Soft feather around the Reds band with wrap-around at 360°
+   * - percent = 0.10 means “reduce saturation by 10 percentage points”
+   ********************************************************/
+  function rgbToHsl(r, g, b) {
+    r /= 255; g /= 255; b /= 255;
+    const max = Math.max(r, g, b), min = Math.min(r, g, b);
+    let h, s, l = (max + min) / 2;
+    if (max === min) { h = s = 0; }
+    else {
+      const d = max - min;
+      s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+      switch (max) {
+        case r: h = (g - b) / d + (g < b ? 6 : 0); break;
+        case g: h = (b - r) / d + 2; break;
+        default: h = (r - g) / d + 4; break;
+      }
+      h /= 6;
+    }
+    return { h, s, l }; // h,s,l in [0..1]
+  }
+
+  function hslToRgb(h, s, l) {
+    let r, g, b;
+    if (s === 0) { r = g = b = l; }
+    else {
+      const hue2rgb = (p, q, t) => {
+        if (t < 0) t += 1;
+        if (t > 1) t -= 1;
+        if (t < 1/6) return p + (q - p) * 6 * t;
+        if (t < 1/2) return q;
+        if (t < 2/3) return p + (q - p) * (2/3 - t) * 6;
+        return p;
+      };
+      const q = l < 0.5 ? l * (1 + s) : l + s - l * s;
+      const p = 2 * l - q;
+      r = hue2rgb(p, q, h + 1/3);
+      g = hue2rgb(p, q, h);
+      b = hue2rgb(p, q, h - 1/3);
+    }
+    return { r: Math.round(r * 255), g: Math.round(g * 255), b: Math.round(b * 255) };
+  }
+
+  // Weight 0..1 for how “red” a hue is, with soft feather (Photoshop-like).
+  // FULL band = ±20°, linear feather to 0 by ±40° (wraps at 360°).
+  function redFeatherWeight(hDeg) {
+    const FULL = 20, FEATHER = 40;
+    const d = Math.min(Math.abs(hDeg - 0), Math.abs(hDeg - 360));
+    if (d <= FULL) return 1;
+    if (d >= FEATHER) return 0;
+    return 1 - (d - FULL) / (FEATHER - FULL);
+  }
+
+  async function desaturateRedsByPercent(baseDataUrl, percent = 0.10) {
+    const img = await loadImage(baseDataUrl);
+    const w = img.naturalWidth, h = img.naturalHeight;
+    const canvas = document.createElement("canvas");
+    canvas.width = w; canvas.height = h;
+    const ctx = canvas.getContext("2d", { willReadFrequently: true });
+    ctx.drawImage(img, 0, 0, w, h);
+    const imgData = ctx.getImageData(0, 0, w, h);
+    const a = imgData.data;
+    for (let i = 0; i < a.length; i += 4) {
+      const r = a[i], g = a[i + 1], b = a[i + 2];
+      const { h: H, s: S, l: L } = rgbToHsl(r, g, b);
+      const hueDeg = (H * 360);
+      const wRed = redFeatherWeight(hueDeg);
+      if (wRed > 0) {
+        const sNew = Math.max(0, S - percent * wRed);
+        const { r: R, g: G, b: B } = hslToRgb(H, sNew, L);
+        a[i] = R; a[i + 1] = G; a[i + 2] = B;
+      }
+    }
+    ctx.putImageData(imgData, 0, 0);
+    // JPEG keeps memory use reasonable; tweak quality if needed
+    return canvas.toDataURL("image/jpeg", 0.92);
+  }
+
 /********************************************************
  * extractSubImages144: always slice a composite into 10×14 = 140 tiles
  ********************************************************/
