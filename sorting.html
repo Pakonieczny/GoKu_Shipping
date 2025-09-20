@@ -2032,7 +2032,7 @@ async function extractSubImages144(baseDataUrl) {
   const wFactors = Array.from({ length: COLS }, (_, c) => {
     if (c === 0) return 0.90;
     if (c === 1) return 0.98;
-    return 0.98 + (c - 1) * 0.0025;
+    return 1.00 + (c - 1) * 0.00;
   });
 
   // Per-column cell widths (derived from each column's scaled full width)
