@@ -417,6 +417,16 @@
  * Base URL & Global Variables
  ********************************************************/
 
+window.MATRIX_AUTO_INSETS ??= true;   // auto-trim thin black gutters
+window.MATRIX_INSET_L    ??= 0;       // manual nudge if ever needed
+window.MATRIX_INSET_T    ??= 0;
+window.MATRIX_INSET_R    ??= 0;
+window.MATRIX_INSET_B    ??= 0;
+window.MATRIX_COLS       ??= 10;
+window.MATRIX_ROWS       ??= 14;
+window.MATRIX_PAD_X      ??= 2;       // tiny safety pad off gridlines/digits
+window.MATRIX_PAD_Y      ??= 2;
+
 // === Image fetch caches + tiny queue (match design.html expectations) ===
 window.__imagesCache  = window.__imagesCache  || new Map();   // listingId -> [images]
 window.__imagesFlight = window.__imagesFlight || new Map();   // listingId -> in-flight Promise
@@ -2038,62 +2048,59 @@ function genId() {
   );
 }
 
- /********************************************************
-  * extractSubImages144 (offset-safe)
-  * - Slices a composite into 10×14 = 140 tiles.
-  * - Anchors the square crop at the TOP-LEFT of each grid cell (no rightward bias).
-  * - Honors optional global insets (manual or auto-detected) and a tiny pad.
-  ********************************************************/
- async function extractSubImages144(baseDataUrl) {
-   const img = await loadImage(baseDataUrl);
+/********************************************************
+ * extractSubImages144 (offset-safe)
+ * - 10×14 tiling, trims outer gutters, and crops square
+ *   tiles ANCHORED to the TOP-LEFT of each grid cell.
+ ********************************************************/
+async function extractSubImages144(baseDataUrl) {
+  const img = await loadImage(baseDataUrl);
 
-   const fullW = img.naturalWidth;
-   const fullH = img.naturalHeight;
+  const fullW = img.naturalWidth;
+  const fullH = img.naturalHeight;
 
-   // Optional: auto-detect black borders unless explicitly disabled
-  let auto = (window.MATRIX_AUTO_INSETS !== false);
+  // Auto-detect thin black gutters unless explicitly disabled
   let autoInsets = { left:0, top:0, right:0, bottom:0 };
-  if (auto && typeof detectOuterBlackBorderInsets === "function") {
+  if (window.MATRIX_AUTO_INSETS !== false && typeof detectOuterBlackBorderInsets === "function") {
     try { autoInsets = detectOuterBlackBorderInsets(img) || autoInsets; } catch (_) {}
   }
 
-   // Manual overrides (set window.MATRIX_INSET_* before running if you like)
-   const insetL = (window.MATRIX_INSET_L|0) + (autoInsets.left   |0);
-   const insetT = (window.MATRIX_INSET_T|0) + (autoInsets.top    |0);
-   const insetR = (window.MATRIX_INSET_R|0) + (autoInsets.right  |0);
-   const insetB = (window.MATRIX_INSET_B|0) + (autoInsets.bottom |0);
+  // Manual overrides (add to auto-detected amounts)
+  const insetL = (window.MATRIX_INSET_L|0) + (autoInsets.left   |0);
+  const insetT = (window.MATRIX_INSET_T|0) + (autoInsets.top    |0);
+  const insetR = (window.MATRIX_INSET_R|0) + (autoInsets.right  |0);
+  const insetB = (window.MATRIX_INSET_B|0) + (autoInsets.bottom |0);
 
-   const effW = Math.max(0, fullW - insetL - insetR);
-   const effH = Math.max(0, fullH - insetT - insetB);
+  const effW = Math.max(0, fullW - insetL - insetR);
+  const effH = Math.max(0, fullH - insetT - insetB);
 
-   const COLS  = (window.MATRIX_COLS || 10);
-   const ROWS  = (window.MATRIX_ROWS || 14);
-   const cellW = effW / COLS;
-   const cellH = effH / ROWS;
+  const COLS  = (window.MATRIX_COLS || 10);
+  const ROWS  = (window.MATRIX_ROWS || 14);
+  const cellW = effW / COLS;
+  const cellH = effH / ROWS;
 
-   // Small safety pad keeps us off gridlines/numerals
-   const padX = (window.MATRIX_PAD_X ?? 2);
-   const padY = (window.MATRIX_PAD_Y ?? 2);
+  const padX = (window.MATRIX_PAD_X ?? 2);
+  const padY = (window.MATRIX_PAD_Y ?? 2);
 
-   const results = [];
-   for (let r = 0; r < ROWS; r++) {
-     for (let c = 0; c < COLS; c++) {
-       const s = Math.floor(Math.min(cellW, cellH) - 2 * Math.max(padX, padY));
-       const srcX = Math.floor(insetL + c * cellW + padX); // ← top-left anchored (fixes right shift)
-       const srcY = Math.floor(insetT + r * cellH + padY);
+  const results = [];
+  for (let r = 0; r < ROWS; r++) {
+    for (let c = 0; c < COLS; c++) {
+      // Square size, then **top-left anchored** crop (removes right-shift)
+      const s = Math.floor(Math.min(cellW, cellH) - 2 * Math.max(padX, padY));
+      const srcX = Math.floor(insetL + c * cellW + padX); // key fix
+      const srcY = Math.floor(insetT + r * cellH + padY); // key fix
 
-       const canvas = document.createElement("canvas");
-       canvas.width  = s;
-       canvas.height = s;
-       const ctx = canvas.getContext("2d");
-       ctx.imageSmoothingEnabled = true;
-       ctx.imageSmoothingQuality = "high";
-       ctx.drawImage(img, srcX, srcY, s, s, 0, 0, s, s);
-       results.push(canvas.toDataURL("image/jpeg", 0.85));
-     }
-   }
-   return results;
- }
+      const canvas = document.createElement("canvas");
+      canvas.width = s; canvas.height = s;
+      const ctx = canvas.getContext("2d");
+      ctx.imageSmoothingEnabled = true;
+      ctx.imageSmoothingQuality = "high";
+      ctx.drawImage(img, srcX, srcY, s, s, 0, 0, s, s);
+      results.push(canvas.toDataURL("image/jpeg", 0.85));
+    }
+  }
+  return results;
+}
 
 // cropTo400: forcibly resize each quadrant to 400×400
 async function cropTo512(dataUrl) {
