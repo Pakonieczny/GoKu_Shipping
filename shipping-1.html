@@ -705,12 +705,10 @@
           <button id="ccClose">Close</button>
           <button id="ccBack">Back</button>
         </div>
-      <div style="display:flex;gap:8px">
-        <button id="ccNext">Next</button>
-        <button id="ccRefreshRates">Refresh Rates</button>
-        <button id="ccBuy" disabled>Buy & Print</button>
-        <button id="ccPrintLabel" disabled>Print Label</button>
-      </div>
+        <div style="display:flex;gap:8px">
+          <button id="ccNext">Next</button>
+          <button id="ccRefreshRates">Refresh Rates</button>
+          <button id="ccBuy" disabled>Buy & Print</button>
         </div>
       </div>
     </div>
@@ -2079,7 +2077,7 @@ function metalToBadge(label){
         "loginModalFooter",
         "employeeLoginBtn",
         "ccControls","ccShipmentId","ccUpdateIdBtn","ccIdSpinner","ccBatchSelectWrap","ccBatchName",
-        "ccCreateBatchBtn","ccAddToBatchBtn","ccRemoveFromBatchBtn","ccPrintLabel",
+        "ccCreateBatchBtn","ccAddToBatchBtn","ccRemoveFromBatchBtn",
         "ccEditBtn"
       ];
 
@@ -2158,7 +2156,6 @@ function metalToBadge(label){
       ccAddToBatchBtn:       { left: 1400, top: 200, width: 175, height: 45 },
       ccRemoveFromBatchBtn:  { left: 1400, top: 230, width: 175, height: 45 },
       ccUpdateIdBtn:         { left: 1604, top: 80, width: 95,  height: 24 },
-      ccPrintLabel:          { left: 1525, top: 230, width: 175, height: 45 },
       ccEditBtn:             { left: 50,   top: 225, width: 120, height: 28 }
 
     };
@@ -4048,7 +4045,6 @@ function metalToBadge(label){
       const btnNext   = document.getElementById("ccNext");
       const btnRefresh= document.getElementById("ccRefreshRates");
       const btnBuy    = document.getElementById("ccBuy");
-      const btnPrint  = document.getElementById("ccPrintLabel");
       const idInput   = document.getElementById("ccShipmentId");
       // Single source of truth: once we buy, freeze auto-refreshes that key off ccShipmentId
       window.ccPostBuyFrozen ??= false;
@@ -4067,88 +4063,6 @@ function metalToBadge(label){
       const fnBase    = "/.netlify/functions";
 
       let currentStep = 0, selectedPostageType = null;
-      // --- Print Label: enable only when Chit Chats confirms a purchased label exists ---
-      const ccDebounce = (fn, ms = 300) => { let t; return (...a) => { clearTimeout(t); t = setTimeout(() => fn(...a), ms); }; };
-
-      async function _fetchShipment(shipmentId) {
-        const out = await callCc("GET", null, `?resource=shipment&id=${encodeURIComponent(shipmentId)}`);
-        return out?.shipment || out || null; // your code normalizes both shapes
-      }
-
-      function _hasAnyLabelUrls(s) {
-        // Reuse the same mapping logic your buy flow relies on
-        const { zpl, pdf, png } = pickLabelFromShipment(s || {});
-        return !!(zpl || pdf || png);
-      }
-
-      async function hasPurchasedLabel(shipmentId) {
-        if (!shipmentId) return false;
-        try { return _hasAnyLabelUrls(await _fetchShipment(shipmentId)); }
-        catch { return false; }
-      }
-
-      async function refreshPrintButtonState() {
-        if (!btnPrint) return;
-        const id = (idInput?.value || "").trim();
-        if (!id) { btnPrint.disabled = true; return; }
-        btnPrint.disabled = !(await hasPurchasedLabel(id));
-      }
-
-      // Keep the state fresh while user edits/sets ccShipmentId
-      const _refreshDebounced = ccDebounce(refreshPrintButtonState, 250);
-      ["input","change","keyup","blur"].forEach(ev => idInput?.addEventListener(ev, _refreshDebounced));
-      window.addEventListener("focus", _refreshDebounced);
-      // Initial check
-      setTimeout(refreshPrintButtonState, 0);
-
-      // --- Click → fetch existing label → (EU/GB: merge 2nd sheet) → print ---
-      btnPrint?.addEventListener("click", async () => {
-        const sid = (idInput?.value || "").trim();
-        if (!sid) { M.toast?.({ html: "Missing shipment id." }); return; }
-
-        btnPrint.disabled = true;
-        try {
-          const s = await _fetchShipment(sid);
-          if (!_hasAnyLabelUrls(s)) throw new Error("No purchased label on this shipment.");
-
-          // EU/GB handling: build the temp 2×4 “ITEM & TAX INFORMATION” sheet exactly like ccBuy
-          // Prefer country from server; fall back to current Step 1 snapshot.
-          const toCC = String(
-            s?.to?.country_code || s?.to?.countryCode || (getStep1Snapshot?.().toCC || "")
-          ).toUpperCase();
-
-          if (typeof isEUorGB === "function" && isEUorGB(toCC)) {
-            try { await generateAndPrintIntlTempPdf?.(); } catch {}
-          }
-
-          // Prefer PDF; fallback to PNG; both paths merge cached temp PDF when present
-          let printed = false;
-          try {
-            const labelPdf = await fetchCcLabelBlob("pdf", sid);
-            const merged   = await mergeLabelWithTempIfAny?.(labelPdf);
-            await printBlobInPlace(merged || labelPdf);
-            printed = true;
-          } catch {}
-
-          if (!printed) {
-            const labelPng = await fetchCcLabelBlob("png", sid);
-            const merged   = await mergeLabelWithTempIfAny?.(labelPng);
-            await printBlobInPlace(merged || labelPng);
-            printed = true;
-          }
-
-          if (!printed) throw new Error("Label not ready. Try again in a moment.");
-          M.toast?.({ html: "Label opened for printing." });
-
-        } catch (err) {
-          console.error(err);
-          M.toast?.({ html: "Print failed: " + (err.message || err) });
-        } finally {
-          btnPrint.disabled = false;
-          // Re-check state after attempting to print
-          try { await refreshPrintButtonState(); } catch {}
-        }
-      });
       window.ccBlockRatesUntilStep2 = true; // 🚫 block pricing until Step 2
       // NEW: manual Update-ID flow flags (US/CA gating in refreshRates)
       window.ccManualIdUpdateInFlight = false;   // Next waits while this is true
@@ -4371,7 +4285,6 @@ function metalToBadge(label){
 
 
         modal.style.display = "block";
-        try { await refreshPrintButtonState(); } catch {}
         // Do NOT call showStep(1) here; verify must appear first.
         // Kick off the verification flow immediately:
         // Fill again when the Edit modal opens
