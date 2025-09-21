@@ -4048,8 +4048,8 @@ function metalToBadge(label){
       const btnNext   = document.getElementById("ccNext");
       const btnRefresh= document.getElementById("ccRefreshRates");
       const btnBuy    = document.getElementById("ccBuy");
-      const idInput   = document.getElementById("ccShipmentId");
       const btnPrint  = document.getElementById("ccPrintLabel");
+      const idInput   = document.getElementById("ccShipmentId");
       // Single source of truth: once we buy, freeze auto-refreshes that key off ccShipmentId
       window.ccPostBuyFrozen ??= false;
       // Capture-phase guard: block all ccShipmentId-driven rechecks after Buy
@@ -4371,6 +4371,7 @@ function metalToBadge(label){
 
 
         modal.style.display = "block";
+        try { await refreshPrintButtonState(); } catch {}
         // Do NOT call showStep(1) here; verify must appear first.
         // Kick off the verification flow immediately:
         // Fill again when the Edit modal opens
