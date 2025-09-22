@@ -2082,7 +2082,7 @@ function genId() {
     return 1 - (d - FULL) / (FEATHER - FULL);
   }
 
-async function desaturateRoseByPercent(baseDataUrl, percent = (window.ROSE_DESAT ?? 0.00)) {
+async function desaturateRoseByPercent(baseDataUrl, percent = (window.ROSE_DESAT ?? 0.05)) {
   const img = await loadImage(baseDataUrl);
   const w = img.naturalWidth, h = img.naturalHeight;
   const canvas = document.createElement("canvas");
@@ -2111,7 +2111,7 @@ async function desaturateRoseByPercent(baseDataUrl, percent = (window.ROSE_DESAT
  ********************************************************/
 async function extractSubImages144(baseDataUrl) {
   // Apply Photoshop-style Rose-band desat BEFORE tiling
-  const adjustedUrl = await desaturateRoseByPercent(baseDataUrl, (window.ROSE_DESAT ?? 0.00));
+  const adjustedUrl = await desaturateRoseByPercent(baseDataUrl, (window.ROSE_DESAT ?? 0.05));
   const img = await loadImage(adjustedUrl);
 
   // --- Dynamic per-column width factors (applied for every row) ---
@@ -2294,36 +2294,26 @@ async function openAIAnalyzePhoto(base64Image) {
           "  Step A: Convert each hue hi (deg) to unit circle: xi=cos(hi·π/180), yi=sin(hi·π/180).\n" +
           "  Step B: Let µ = atan2(mean(yi), mean(xi)) (deg). Rotate all hues by −µ, wrap to (−180,180].\n" +
           "  Step C: Take the ordinary linear median of the rotated angles, then add µ and wrap to [0,360) → this is median H.\n" +
-  "• Also report quantiles p10/p50/p90 for H (circular, via Step B pivot), S, and V as diagnostics.\n" +
-  "• S and V medians: ordinary linear medians on eligible pixels (no 5-step rounding).\n" +
-  "HISTOGRAM OUTPUT (MANDATORY)\n" +
-  "• Emit histograms from the FINAL eligible pixels (after masking + exclusions):\n" +
-  "  histograms.H_1deg = an array of EXACTLY 360 non-negative integers, index i = degree i (0..359), no smoothing, no 5° buckets.\n" +
-  "• Sum consistency: sum(histograms.H_1deg) MUST equal diagnostics.pixelsUsed.\n" +
-  "• If token pressure forces omission, lower diagnostics.confidence ≤ 0.4 — but DO NOT round p10/p50/p90 to multiples of 5.\n" +
+ "• Quantiles: Compute p10/p50/p90 from the unsmoothed per-pixel distributions. For Hue, compute quantiles in the rotated space from Step B (linear), then back-rotate; DO NOT round to 5s — use 1-degree resolution only.\n" +
 
- "NUMERIC FORMAT & RANGES\n" +
- "• Report H in integer degrees [0,360) (increments of 1). If a decimal is printed, it MUST be .0.\n" +
- "• Report S and V as integer percents [0,100] (increments of 1). If a decimal is printed, it MUST be .0.\n" +
- "STRICT NO-ROUNDING RULE\n" +
- "• NEVER snap H quantiles to {…,30,35,40,45,50,…}. Use the true empirical positions from the 1° data. Multiples of 5 are allowed ONLY when they are the exact empirical cut.\n" +
+          "NUMERIC FORMAT & RANGES\n" +
+          "• Report H in degrees [0,360) with 0.1 precision; S and V in percent [0,100] with 0.1 precision.\n" +
           "• diagnostics.maskCoveragePct = 100 × (eligible masked pixels / total tile pixels). pixelsUsed is an integer count of eligible pixels.\n" +
- "• diagnostics.confidence ∈ [0,1], where ~0.95 = clear single charm with large mask; <0.5 if masking is uncertain or pixelsUsed < 200.\n" +
- "• diagnostics.HSV_quantiles.H.p10/p50/p90 MUST be integers (1° steps). S and V quantiles, if present, MUST be integers (1% steps).\n" +
+          "• diagnostics.confidence ∈ [0,1], where ~0.95 = clear single charm with large mask; <0.5 if masking is uncertain or pixelsUsed < 200.\n" +
 
           "GUARDS\n" +
           "• If after exclusions pixelsUsed < 200, still return medians but set diagnostics.confidence ≤ 0.4.\n" +
           "• The printed number square MUST NOT influence medians; exclude it explicitly.\n" +
 
           "OUTPUT KEYS YOU MUST INCLUDE\n" +
-          "• hue, topRightNumber, charmPresent, twoCharmsPresent, medianHSV{H,S,V}, medianLab{L,a,b*}, diagnostics{…}\n" +
+          "• topRightNumber, charmPresent, twoCharmsPresent, medianHSV{H,S,V}, diagnostics{…}\n" +
           "Respond with JSON only."
           },
           { type: "image_url", image_url: { url: base64Image, detail: "high" } }
         ]
       }
     ],
-    max_tokens: 900
+    max_tokens: 600
   };
 
   console.log("%c[openAIAnalyzePhoto] PASS 1 payload:", "color:#03A9F4", huePayload);
@@ -2352,59 +2342,6 @@ async function openAIAnalyzePhoto(base64Image) {
     raw1 = raw1.replace(/^```(\w+)?/, "").replace(/```$/, "").trim();
     const obj1 = JSON.parse(raw1);
 
-  // ---------- Recompute H quantiles & median from 1° histogram (if present) ----------
-  try {
-    const hist = obj1?.histograms?.H_1deg;
-    const diag = obj1?.diagnostics || {};
-    if (Array.isArray(hist) && hist.length === 360) {
-      // 1) Basic checks
-      const sum = hist.reduce((a,b)=>a+(Number.isFinite(b)?b:0), 0);
-      const px  = Number(diag.pixelsUsed || 0);
-      if (sum > 0 && (!px || Math.abs(sum - px) <= Math.max(50, 0.01*sum))) {
-        // 2) Circular mean µ (deg) for stable unwrapping
-        let sx = 0, sy = 0;
-        for (let d=0; d<360; d++){
-          const c = hist[d]|0;
-          const rad = d * Math.PI/180;
-          sx += c * Math.cos(rad);
-          sy += c * Math.sin(rad);
-        }
-        let mu = Math.atan2(sy, sx) * 180/Math.PI;
-        mu = (mu + 360) % 360;
-        const cut = Math.round(mu) % 360; // integer pivot
-
-        // 3) Rotate histogram so we can do linear quantiles
-        const rot = new Array(360);
-        for (let i=0;i<360;i++){
-          rot[i] = hist[(i + cut) % 360] | 0;
-        }
-        const cdfHits = [0.10*sum, 0.50*sum, 0.90*sum];
-        const pickQuant = (target) => {
-          let acc = 0;
-          for (let i=0;i<360;i++){
-            acc += rot[i];
-            if (acc >= target) return (i + cut) % 360; // back-rotate
-          }
-          return (cut+359)%360; // safety
-        };
-        const H10 = pickQuant(cdfHits[0]);
-        const H50 = pickQuant(cdfHits[1]);
-        const H90 = pickQuant(cdfHits[2]);
-
-        // 4) Median override from histogram
-        if (obj1.medianHSV && Number.isFinite(obj1.medianHSV.H)) {
-          obj1.medianHSV.H = H50; // snap to 1° median from bins
-        }
-        // 5) Diagnostics override (guaranteed 1° steps)
-        if (!obj1.diagnostics) obj1.diagnostics = {};
-        if (!obj1.diagnostics.HSV_quantiles) obj1.diagnostics.HSV_quantiles = { H:{}, S:{}, V:{} };
-        obj1.diagnostics.HSV_quantiles.H = { p10:H10, p50:H50, p90:H90 };
-      }
-    }
-  } catch (e) {
-    console.warn("Histogram-based H quantile calc skipped:", e);
-  }
-
     hueText   = obj1.hue                || "";
     topNumber = obj1.topRightNumber     || null;
     charmFlag = (obj1.charmPresent      || "No").toLowerCase();
@@ -2424,7 +2361,6 @@ async function openAIAnalyzePhoto(base64Image) {
     console.error("[openAIAnalyzePhoto] PASS 1 error:", err);
     return { topRightNumber:null, color:null, charmPresent:"no" };
   }
-
 
 /* ───────────────────── PASS 2 : hue ⇒ fixed label ───────────────────── */
   const ctrlLabel = new AbortController();
