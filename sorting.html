@@ -2069,7 +2069,7 @@ function genId() {
     return 1 - (d - FULL) / (FEATHER - FULL);
   }
 
-  async function desaturateRedsByPercent(baseDataUrl, percent = -0.7) {
+  async function desaturateRedsByPercent(baseDataUrl, percent = 0.10) {
     const img = await loadImage(baseDataUrl);
     const w = img.naturalWidth, h = img.naturalHeight;
     const canvas = document.createElement("canvas");
@@ -2099,7 +2099,7 @@ function genId() {
  ********************************************************/
 async function extractSubImages144(baseDataUrl) {
   // Apply Photoshop-style Reds desat BEFORE tiling
-  const adjustedUrl = await desaturateRedsByPercent(baseDataUrl, -0.7);
+  const adjustedUrl = await desaturateRedsByPercent(baseDataUrl, 0.10);
   const img = await loadImage(adjustedUrl);
 
   // --- Dynamic per-column width factors (applied for every row) ---
@@ -2337,12 +2337,11 @@ async function openAIAnalyzePhoto(base64Image) {
   pendingFetchControllers.push(ctrlLabel);
   const labelPrompt =
     `You are classifying metal color from numeric medians. APPLY THESE CUT LINES STRICTLY:\n` +
-    `• HSV rule (primary): RoseGold if 15° ≤ median H ≤ 39° AND S ≥ 50%.\n` +
-    `• CIELAB rule (cross-check): RoseGold if a* ≥ 8.5.\n` +
-    `• Gold rule (fallback): Gold if (median H ≥ 40° AND S ≥ 50%).\n` +
-    `• Silver: If S ≤ 11% AND b* between −3 and +4.\n` +
+    `• HSV rule (primary): RoseGold if median H ≤ 39°\n` +
+    `• Gold rule (fallback): Gold if median H ≥ 40°\n` +
+    `• Silver: If H ≤ 20 \n` +
     `• Voting: each satisfied rule is one vote. If both rules agree, use that label.\n` +
-    `• Tie-breaking: if Gold vs Silver tie, choose Silver. If RoseGold vs Gold tie, choose RoseGold unless a* ≥ 8 OR hue contains "rose".\n` +
+    `• Tie-breaking: If RoseGold vs Gold tie, choose RoseGold unless a* ≥ 8 OR hue contains "rose".\n` +
     `• Only return exactly one word: Gold, RoseGold, or Silver.\n\n` +
     `INPUT\n` +
     `hue="${hueText}"\n` +
