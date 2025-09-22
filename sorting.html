@@ -2082,7 +2082,7 @@ function genId() {
     return 1 - (d - FULL) / (FEATHER - FULL);
   }
 
-async function desaturateRoseByPercent(baseDataUrl, percent = (window.ROSE_DESAT ?? 0.10)) {
+async function desaturateRoseByPercent(baseDataUrl, percent = (window.ROSE_DESAT ?? 0.0)) {
   const img = await loadImage(baseDataUrl);
   const w = img.naturalWidth, h = img.naturalHeight;
   const canvas = document.createElement("canvas");
@@ -2111,7 +2111,7 @@ async function desaturateRoseByPercent(baseDataUrl, percent = (window.ROSE_DESAT
  ********************************************************/
 async function extractSubImages144(baseDataUrl) {
   // Apply Photoshop-style Rose-band desat BEFORE tiling
-  const adjustedUrl = await desaturateRoseByPercent(baseDataUrl, (window.ROSE_DESAT ?? 0.10));
+  const adjustedUrl = await desaturateRoseByPercent(baseDataUrl, (window.ROSE_DESAT ?? 0.0));
   const img = await loadImage(adjustedUrl);
 
   // --- Dynamic per-column width factors (applied for every row) ---
