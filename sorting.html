@@ -2069,37 +2069,49 @@ function genId() {
     return 1 - (d - FULL) / (FEATHER - FULL);
   }
 
-  async function desaturateRedsByPercent(baseDataUrl, percent = 0.20) {
-    const img = await loadImage(baseDataUrl);
-    const w = img.naturalWidth, h = img.naturalHeight;
-    const canvas = document.createElement("canvas");
-    canvas.width = w; canvas.height = h;
-    const ctx = canvas.getContext("2d", { willReadFrequently: true });
-    ctx.drawImage(img, 0, 0, w, h);
-    const imgData = ctx.getImageData(0, 0, w, h);
-    const a = imgData.data;
-    for (let i = 0; i < a.length; i += 4) {
-      const r = a[i], g = a[i + 1], b = a[i + 2];
-      const { h: H, s: S, l: L } = rgbToHsl(r, g, b);
-      const hueDeg = (H * 360);
-      const wRed = redFeatherWeight(hueDeg);
-      if (wRed > 0) {
-        const sNew = Math.max(0, S - percent * wRed);
-        const { r: R, g: G, b: B } = hslToRgb(H, sNew, L);
-        a[i] = R; a[i + 1] = G; a[i + 2] = B;
-      }
-    }
-    ctx.putImageData(imgData, 0, 0);
-    // JPEG keeps memory use reasonable; tweak quality if needed
-    return canvas.toDataURL("image/jpeg", 0.92);
+  // Weight 0..1 for how “rose” a hue is, centered ~23.5° (mid of 16–31°).
+  // FULL weight inside ±7.5°, feather to 0 by ±15° (Photoshop-like falloff).
+  function roseFeatherWeight(hDeg) {
+    const CENTER = 23.5;   // Rose band center (deg)
+    const FULL   = 7.5;    // full weight within ±7.5°
+    const FEATHER= 15;     // fade to 0 by ±15°
+    const dRaw   = Math.abs(hDeg - CENTER);
+    const d      = Math.min(dRaw, 360 - dRaw); // circular distance
+    if (d <= FULL)   return 1;
+    if (d >= FEATHER) return 0;
+    return 1 - (d - FULL) / (FEATHER - FULL);
   }
+
+async function desaturateRoseByPercent(baseDataUrl, percent = (window.ROSE_DESAT ?? 0.187)) {
+  const img = await loadImage(baseDataUrl);
+  const w = img.naturalWidth, h = img.naturalHeight;
+  const canvas = document.createElement("canvas");
+  canvas.width = w; canvas.height = h;
+  const ctx = canvas.getContext("2d", { willReadFrequently: true });
+  ctx.drawImage(img, 0, 0, w, h);
+  const imgData = ctx.getImageData(0, 0, w, h);
+  const a = imgData.data;
+  for (let i = 0; i < a.length; i += 4) {
+    const r = a[i], g = a[i + 1], b = a[i + 2];
+    const { h: H, s: S, l: L } = rgbToHsl(r, g, b);
+    const hueDeg = (H * 360);
+    const wRose = roseFeatherWeight(hueDeg);
+    if (wRose > 0) {
+      const sNew = Math.max(0, S - percent * wRose);
+      const { r: R, g: G, b: B } = hslToRgb(H, sNew, L);
+      a[i] = R; a[i + 1] = G; a[i + 2] = B;
+    }
+  }
+  ctx.putImageData(imgData, 0, 0);
+  return canvas.toDataURL("image/jpeg", 0.92);
+}
 
 /********************************************************
  * extractSubImages144: always slice a composite into 10×14 = 140 tiles
  ********************************************************/
 async function extractSubImages144(baseDataUrl) {
-  // Apply Photoshop-style Reds desat BEFORE tiling
-  const adjustedUrl = await desaturateRedsByPercent(baseDataUrl, 0.20);
+  // Apply Photoshop-style Rose-band desat BEFORE tiling
+  const adjustedUrl = await desaturateRoseByPercent(baseDataUrl, (window.ROSE_DESAT ?? 0.187));
   const img = await loadImage(adjustedUrl);
 
   // --- Dynamic per-column width factors (applied for every row) ---
@@ -2265,7 +2277,7 @@ async function openAIAnalyzePhoto(base64Image) {
                "Ignore the white number square; its presence does not negate a charm.\n" +
                "If a thin metallic bar occupies ≥0.4% of the tile with clear edges or\n" +
                "specular highlights, answer Yes.\n" +
-              "Estimate MEDIAN HSV (H° 0–360, S% 0–100, V% 0–100) and MEDIAN CIELAB (L*, a*, b*).\n" +
+              "Estimate MEDIAN HSV (H° 0–360, S% 0–100, V% 0–100).\n" +
               "PRECISION RULES FOR MEDIANS:\n" +
                "• Report H as a decimal with exactly one digit (0.1° precision), e.g., 32.4 — do NOT round to 5s/10s.\n" +
                "• Report S and V as integers 0–100 (no decimals).\n" +
