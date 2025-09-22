@@ -2082,7 +2082,7 @@ function genId() {
     return 1 - (d - FULL) / (FEATHER - FULL);
   }
 
-async function desaturateRoseByPercent(baseDataUrl, percent = (window.ROSE_DESAT ?? 0.187)) {
+async function desaturateRoseByPercent(baseDataUrl, percent = (window.ROSE_DESAT ?? 0.07)) {
   const img = await loadImage(baseDataUrl);
   const w = img.naturalWidth, h = img.naturalHeight;
   const canvas = document.createElement("canvas");
@@ -2111,7 +2111,7 @@ async function desaturateRoseByPercent(baseDataUrl, percent = (window.ROSE_DESAT
  ********************************************************/
 async function extractSubImages144(baseDataUrl) {
   // Apply Photoshop-style Rose-band desat BEFORE tiling
-  const adjustedUrl = await desaturateRoseByPercent(baseDataUrl, (window.ROSE_DESAT ?? 0.187));
+  const adjustedUrl = await desaturateRoseByPercent(baseDataUrl, (window.ROSE_DESAT ?? 0.07));
   const img = await loadImage(adjustedUrl);
 
   // --- Dynamic per-column width factors (applied for every row) ---
@@ -2277,11 +2277,7 @@ async function openAIAnalyzePhoto(base64Image) {
                "Ignore the white number square; its presence does not negate a charm.\n" +
                "If a thin metallic bar occupies ≥0.4% of the tile with clear edges or\n" +
                "specular highlights, answer Yes.\n" +
-              "Estimate MEDIAN HSV (H° 0–360, S% 0–100, V% 0–100).\n" +
-              "PRECISION RULES FOR MEDIANS:\n" +
-               "• Report H as a decimal with exactly one digit (0.1° precision), e.g., 32.4 — do NOT round to 5s/10s.\n" +
-               "• Report S and V as integers 0–100 (no decimals).\n" +
-               "• Avoid anchoring: do not default to 30, 38, 40, 45, or 50 unless that is the mathematically nearest median.\n" +
+              "Calculate a detailed MEDIAN HSV (H° 0–360, S% 0–100, V% 0–100).\n" +
               "IMPORTANT MASKING RULES FOR MEDIANS:\n" +
                "• Exclude background/near-black and near-white backgrounds.\n" +
                "• Near-black cutoff: Ignore pixels if (HSV.V ≤ 12% OR Lab L* ≤ 16).\n" +
