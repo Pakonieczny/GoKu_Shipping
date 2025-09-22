@@ -2267,9 +2267,9 @@ async function openAIAnalyzePhoto(base64Image) {
                "specular highlights, answer Yes.\n" +
               "Estimate MEDIAN HSV (H° 0–360, S% 0–100, V% 0–100) and MEDIAN CIELAB (L*, a*, b*).\n" +
               "PRECISION RULES FOR MEDIANS:\n" +
-              "• Report H as an integer degree with 1° precision (0–360). Do NOT snap to 5s/10s; values like 32 or 37 are valid when correct.\n" +
-              "• Report S and V as integers 0–100 (no decimals).\n" +
-              "• Choose the nearest integer to the true median of metal pixels; do not bias toward 30, 38, 40, 45, or 50.\n" +
+               "• Report H as a decimal with exactly one digit (0.1° precision), e.g., 32.4 — do NOT round to 5s/10s.\n" +
+               "• Report S and V as integers 0–100 (no decimals).\n" +
+               "• Avoid anchoring: do not default to 30, 38, 40, 45, or 50 unless that is the mathematically nearest median.\n" +
               "IMPORTANT MASKING RULES FOR MEDIANS:\n" +
                "• Exclude background/near-black and near-white backgrounds.\n" +
                "• Near-black cutoff: Ignore pixels if (HSV.V ≤ 12% OR Lab L* ≤ 16).\n" +
@@ -2337,10 +2337,10 @@ async function openAIAnalyzePhoto(base64Image) {
   pendingFetchControllers.push(ctrlLabel);
   const labelPrompt =
     `You are classifying metal color from numeric medians. APPLY THESE CUT LINES STRICTLY:\n` +
-    `• HSV rule (primary): RoseGold if 15° ≤ median H ≤ 39° AND S ≥ 31%.\n` +
-    `• CIELAB rule (cross-check): RoseGold if a* ≥ 8.5 AND b* ≥ 14.\n` +
-    `• Gold rule (fallback): Gold if (median H ≥ 40° AND S ≥ 16%) OR (b* ≥ 17).\n` +
-    `• Silver: If S ≤ 11% AND a* between −3 and +3 AND b* between −3 and +6.\n` +
+    `• HSV rule (primary): RoseGold if 15° ≤ median H ≤ 39° AND S ≥ 50%.\n` +
+    `• CIELAB rule (cross-check): RoseGold if a* ≥ 8.5.\n` +
+    `• Gold rule (fallback): Gold if (median H ≥ 40° AND S ≥ 50%).\n` +
+    `• Silver: If S ≤ 11% AND b* between −3 and +4.\n` +
     `• Voting: each satisfied rule is one vote. If both rules agree, use that label.\n` +
     `• Tie-breaking: if Gold vs Silver tie, choose Silver. If RoseGold vs Gold tie, choose RoseGold unless a* ≥ 8 OR hue contains "rose".\n` +
     `• Only return exactly one word: Gold, RoseGold, or Silver.\n\n` +
