@@ -2082,6 +2082,45 @@ function genId() {
     return 1 - (d - FULL) / (FEATHER - FULL);
   }
 
+  // Weight 0..1 for how “yellow” a hue is, centered around ~55° (Photoshop-like).
+  // FULL weight inside ±12°, feather to 0 by ±22°.
+  function yellowFeatherWeight(hDeg) {
+    const CENTER = 55;   // Yellow band center (deg)
+    const FULL   = 12;   // full weight within ±12°
+    const FEATHER= 22;   // fade to 0 by ±22°
+    const dRaw   = Math.abs(hDeg - CENTER);
+    const d      = Math.min(dRaw, 360 - dRaw); // circular distance
+    if (d <= FULL)   return 1;
+    if (d >= FEATHER) return 0;
+    return 1 - (d - FULL) / (FEATHER - FULL);
+  }
+
+  // Photoshop-style Hue/Saturation (Yellows only) → +percent Sat (default +10%)
+  // Uses soft feather around the Yellow band with wrap-around at 360°.
+  async function saturateYellowByPercent(baseDataUrl, percent = (window.YELLOW_BOOST ?? 0.10)) {
+    const img = await loadImage(baseDataUrl);
+    const w = img.naturalWidth, h = img.naturalHeight;
+    const canvas = document.createElement("canvas");
+    canvas.width = w; canvas.height = h;
+    const ctx = canvas.getContext("2d", { willReadFrequently: true });
+    ctx.drawImage(img, 0, 0, w, h);
+    const imgData = ctx.getImageData(0, 0, w, h);
+    const a = imgData.data;
+    for (let i = 0; i < a.length; i += 4) {
+      const r = a[i], g = a[i + 1], b = a[i + 2];
+      const { h: H, s: S, l: L } = rgbToHsl(r, g, b);   // helpers already in file
+      const hueDeg = (H * 360);
+      const wYel = yellowFeatherWeight(hueDeg);
+      if (wYel > 0) {
+        const sNew = Math.min(1, S + percent * wYel);
+        const { r: R, g: G, b: B } = hslToRgb(H, sNew, L);
+        a[i] = R; a[i + 1] = G; a[i + 2] = B;
+      }
+    }
+    ctx.putImageData(imgData, 0, 0);
+    return canvas.toDataURL("image/jpeg", 0.92);
+ }
+
 async function desaturateRoseByPercent(baseDataUrl, percent = (window.ROSE_DESAT ?? 0.08)) {
   const img = await loadImage(baseDataUrl);
   const w = img.naturalWidth, h = img.naturalHeight;
@@ -2110,8 +2149,9 @@ async function desaturateRoseByPercent(baseDataUrl, percent = (window.ROSE_DESAT
  * extractSubImages144: always slice a composite into 10×14 = 140 tiles
  ********************************************************/
 async function extractSubImages144(baseDataUrl) {
-  // Apply Photoshop-style Rose-band desat BEFORE tiling
-  const adjustedUrl = await desaturateRoseByPercent(baseDataUrl, (window.ROSE_DESAT ?? 0.08));
+  // Apply Rose-band desat, then give Yellows a slight +sat BEFORE tiling
+  const roseAdjusted = await desaturateRoseByPercent(baseDataUrl, (window.ROSE_DESAT ?? 0.08));
+  const adjustedUrl  = await saturateYellowByPercent(roseAdjusted, (window.YELLOW_BOOST ?? 0.10));
   const img = await loadImage(adjustedUrl);
 
   // --- Dynamic per-column width factors (applied for every row) ---
