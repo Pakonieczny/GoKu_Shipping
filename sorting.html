@@ -2288,19 +2288,22 @@ async function openAIAnalyzePhoto(base64Image) {
           "• Deep shadow: drop the bottom 1% darkest V pixels.\n" +
           "• Preserve neutral SILVER: DO NOT drop low-S pixels when (HSV.V ≥ 28% OR Lab L* ≥ 30). Low-S metal is valid.\n" +
 
-          "MEDIAN CALCULATION (direct formulas)\n" +
-          "• Hue is ANGULAR (0–360). Compute the circular median:\n" +
+ "MEDIAN CALCULATION (direct formulas)\n" +
+ "• RESOLUTION: All calculations MUST use per-pixel values without bucketing into 5-degree steps. If you internally use a histogram for speed, Hue bins MUST be 1° wide (exactly 360 bins: 0..359). Saturation and Value bins, if used, MUST be 1% wide.\n" +
+ "• Hue is ANGULAR (0–360). Compute the circular median:\n" +
           "  Step A: Convert each hue hi (deg) to unit circle: xi=cos(hi·π/180), yi=sin(hi·π/180).\n" +
           "  Step B: Let µ = atan2(mean(yi), mean(xi)) (deg). Rotate all hues by −µ, wrap to (−180,180].\n" +
           "  Step C: Take the ordinary linear median of the rotated angles, then add µ and wrap to [0,360) → this is median H.\n" +
-          "• S and V medians: ordinary linear medians on eligible pixels.\n" +
-          "• Also report quantiles p10/p50/p90 for H (circular, via Step B pivot), S, and V as diagnostics.\n" +
+ "• S and V medians: ordinary linear medians on eligible pixels (no 5-step rounding).\n" +
+ "• Quantiles: Compute p10/p50/p90 from the unsmoothed per-pixel distributions. For Hue, compute quantiles in the rotated space from Step B (linear), then back-rotate; DO NOT round to 5s — use 1-degree resolution only.\n" +
 
-          "NUMERIC FORMAT & RANGES\n" +
-          "• Report H in degrees [0,360) with 0.1 precision; S and V in percent [0,100] with 0.1 precision.\n" +
+ "NUMERIC FORMAT & RANGES\n" +
+ "• Report H in integer degrees [0,360) (increments of 1). If a decimal is printed, it MUST be .0.\n" +
+ "• Report S and V as integer percents [0,100] (increments of 1). If a decimal is printed, it MUST be .0.\n" +
           "• Report Lab L*, a*, b* from the SAME eligible pixels (median each; a*,b* can be fractional).\n" +
           "• diagnostics.maskCoveragePct = 100 × (eligible masked pixels / total tile pixels). pixelsUsed is an integer count of eligible pixels.\n" +
-          "• diagnostics.confidence ∈ [0,1], where ~0.95 = clear single charm with large mask; <0.5 if masking is uncertain or pixelsUsed < 200.\n" +
+ "• diagnostics.confidence ∈ [0,1], where ~0.95 = clear single charm with large mask; <0.5 if masking is uncertain or pixelsUsed < 200.\n" +
+ "• diagnostics.HSV_quantiles.H.p10/p50/p90 MUST be integers (1° steps). S and V quantiles, if present, MUST be integers (1% steps).\n" +
 
           "GUARDS\n" +
           "• If after exclusions pixelsUsed < 200, still return medians but set diagnostics.confidence ≤ 0.4.\n" +
