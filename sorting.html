@@ -2266,6 +2266,10 @@ async function openAIAnalyzePhoto(base64Image) {
                "If a thin metallic bar occupies ≥0.4% of the tile with clear edges or\n" +
                "specular highlights, answer Yes.\n" +
               "Estimate MEDIAN HSV (H° 0–360, S% 0–100, V% 0–100) and MEDIAN CIELAB (L*, a*, b*).\n" +
+              "PRECISION RULES FOR MEDIANS:\n" +
+              "• Report H as an integer degree with 1° precision (0–360). Do NOT snap to 5s/10s; values like 32 or 37 are valid when correct.\n" +
+              "• Report S and V as integers 0–100 (no decimals).\n" +
+              "• Choose the nearest integer to the true median of metal pixels; do not bias toward 30, 38, 40, 45, or 50.\n" +
               "IMPORTANT MASKING RULES FOR MEDIANS:\n" +
                "• Exclude background/near-black and near-white backgrounds.\n" +
                "• Near-black cutoff: Ignore pixels if (HSV.V ≤ 12% OR Lab L* ≤ 16).\n" +
