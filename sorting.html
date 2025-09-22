@@ -2425,9 +2425,6 @@ async function openAIAnalyzePhoto(base64Image) {
     return { topRightNumber:null, color:null, charmPresent:"no" };
   }
 
-if (!obj1?.histograms?.H_1deg) {
-  console.warn("OpenAI omitted H_1deg histogram; quantiles may look coarse. Lowered confidence:", obj1?.diagnostics?.confidence);
-}
 
 /* ───────────────────── PASS 2 : hue ⇒ fixed label ───────────────────── */
   const ctrlLabel = new AbortController();
