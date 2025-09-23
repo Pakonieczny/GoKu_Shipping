@@ -1030,8 +1030,9 @@ const configIDs = [
 /********************************************************
  * DOMContentLoaded: Disable buttons & attach logic
  ********************************************************/
-resetLabelMode();
 document.addEventListener("DOMContentLoaded", function () {
+  // Safe: LABEL_MODE_KEY has been initialized by the time this fires
+  resetLabelMode();
   M.AutoInit();
 
   // Disable "Send & Match", "Match & Print", "Back", "Next" on load
@@ -1928,7 +1929,8 @@ function openIframePrinterForListing(cellIndex) {
 
 
 async function startMatrixAnalysis() {
-  resetLabelMode();                 // Gold-first by default
+  // Always start each run in Gold-mode
+  resetLabelMode();
   window.__matrixAnalysisRunning = true;
   updateSendMatchAvailability();
   const startBtn = document.getElementById("startMatrixAnalysisBtn");
