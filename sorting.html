@@ -2279,7 +2279,10 @@ async function openAIAnalyzePhoto(base64Image) {
                "specular highlights, answer Yes.\n" +
               "Calculate a detailed MEDIAN HSV (H° 0–360, S% 0–100, V% 0–100).\n" +
               "Ensure to provide detailed MEDIAN HSV values with increments of 0.1 for all HSV values.\n" +
-              "IMPORTANT MASKING RULES FOR MEDIANS:\n" +
+              "IMPORTANT MASKING & CENTER-LOCALIZATION RULES FOR MEDIANS:\n" +
+               "• Use the FIRST image (center-cropped) ONLY to compute MEDIAN HSV and MEDIAN Lab.\n" +
+               "• Focus on the central region: sample only within an inner ellipse (≈45% of the shorter dimension radius), centered on the main charm body.\n"+ 
+               "• Additionally ignore an outer border of ≥12% of width/height to avoid rims, backgrounds, and the printed number square.\n" +
                "• Exclude background/near-black and near-white backgrounds.\n" +
                "• Near-black cutoff: Ignore pixels if (HSV.V ≤ 12% OR Lab L* ≤ 16).\n" +
                "• Near-white cutoff: Ignore pixels only if (HSV.V ≥ 98%) OR Lab L* ≥ 98.\n" +
