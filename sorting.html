@@ -2123,7 +2123,7 @@ function genId() {
   }
 
   // Photoshop-style Hue/Saturation (Oranges) → same math as Reds
-  async function desaturateOrangesByPercent(baseDataUrl, percent = -0.14) {
+  async function desaturateOrangesByPercent(baseDataUrl, percent = 0.14) {
     const img = await loadImage(baseDataUrl);
     const w = img.naturalWidth, h = img.naturalHeight;
     const canvas = document.createElement("canvas");
@@ -2148,7 +2148,7 @@ function genId() {
     return canvas.toDataURL("image/jpeg", 0.92);
   }
 
-  async function desaturateRedsByPercent(baseDataUrl, percent = -0.14) {
+  async function desaturateRedsByPercent(baseDataUrl, percent = 0.14) {
     const img = await loadImage(baseDataUrl);
     const w = img.naturalWidth, h = img.naturalHeight;
     const canvas = document.createElement("canvas");
@@ -2178,8 +2178,8 @@ function genId() {
  ********************************************************/
 async function extractSubImages144(baseDataUrl) {
 // Apply Photoshop-style Reds then Oranges desat BEFORE tiling
-let adjustedUrl = await desaturateRedsByPercent(baseDataUrl, -0.14);
-adjustedUrl = await desaturateOrangesByPercent(adjustedUrl, -0.14);
+let adjustedUrl = await desaturateRedsByPercent(baseDataUrl, 0.14);
+adjustedUrl = await desaturateOrangesByPercent(adjustedUrl, 0.14);
 const img = await loadImage(adjustedUrl);
 
   // --- Dynamic per-column width factors (applied for every row) ---
