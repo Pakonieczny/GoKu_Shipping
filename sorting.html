@@ -659,6 +659,45 @@ function flipImageHorizontal(dataURL) {
 }
 
  /********************************************************
+  * makeCentralCrop(baseDataUrl, insetPct=0.16, feather=true)
+  * Returns a dataURL where only the central ellipse is kept.
+  * - insetPct: % of the shorter dimension to ignore as outer border
+  * - feather: apply a soft vignette to de-emphasize edges further
+  ********************************************************/
+ async function makeCentralCrop(baseDataUrl, insetPct = 0.16, feather = true) {
+   const img = await loadImage(baseDataUrl);
+   const w = img.naturalWidth, h = img.naturalHeight;
+   const cx = w / 2, cy = h / 2;
+   const margin = Math.min(w, h) * insetPct;
+   const rx = (w / 2) - margin;
+   const ry = (h / 2) - margin;
+   const canvas = document.createElement("canvas");
+   canvas.width = w; canvas.height = h;
+   const ctx = canvas.getContext("2d");
+
+   // Clip to inner ellipse before drawing the image
+   ctx.save();
+   ctx.beginPath();
+   ctx.ellipse(cx, cy, rx, ry, 0, 0, Math.PI * 2);
+   ctx.clip();
+   ctx.drawImage(img, 0, 0, w, h);
+   ctx.restore();
+
+   if (feather) {
+     // Soft radial falloff toward edges of ellipse
+     const g = ctx.createRadialGradient(cx, cy, Math.min(rx, ry) * 0.65, cx, cy, Math.min(rx, ry));
+     g.addColorStop(0.0, "rgba(0,0,0,1)");
+     g.addColorStop(1.0, "rgba(0,0,0,0)");
+     ctx.globalCompositeOperation = "destination-in";
+     ctx.fillStyle = g;
+     ctx.fillRect(0, 0, w, h);
+     ctx.globalCompositeOperation = "source-over";
+   }
+   return canvas.toDataURL("image/jpeg", 0.92);
+ }
+
+
+ /********************************************************
   * Inline progress bar (no modal) — renders under #photoDragDrop
   * NOTE: we keep the SAME function names used elsewhere so callers
   * don’t need to change (showProgressModal / updateProgressModal / closeProgressModal).
@@ -2253,6 +2292,8 @@ async function openAIAnalyzePhoto(base64Image) {
   const ctrlHue = new AbortController();
   pendingFetchControllers.push(ctrlHue);
 
+  // Produce a center-cropped version to stabilize medians against rim/edge bias
+  const centralUrl = await makeCentralCrop(base64Image, 0.16, true);
   const huePayload = {
     model: "gpt-5",
     response_format: { type: "json_object" },
@@ -2291,6 +2332,9 @@ async function openAIAnalyzePhoto(base64Image) {
                "  (HSV.V ≥ 28% OR Lab L* ≥ 30) to retain neutral SILVER highlights.\n" +
               "Respond with JSON only."
           },
+           // Image 1: center-cropped for medians
+          { type: "image_url", image_url: { url: centralUrl, detail: "high" } },
+          // Image 2: full frame for number OCR + charm presence
           { type: "image_url", image_url: { url: base64Image, detail: "high" } }
         ]
       }
