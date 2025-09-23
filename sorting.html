@@ -2069,7 +2069,7 @@ function genId() {
     return 1 - (d - FULL) / (FEATHER - FULL);
   }
 
-  async function desaturateRedsByPercent(baseDataUrl, percent = 0.12) {
+  async function desaturateRedsByPercent(baseDataUrl, percent = 0.15) {
     const img = await loadImage(baseDataUrl);
     const w = img.naturalWidth, h = img.naturalHeight;
     const canvas = document.createElement("canvas");
@@ -2099,7 +2099,7 @@ function genId() {
  ********************************************************/
 async function extractSubImages144(baseDataUrl) {
   // Apply Photoshop-style Reds desat BEFORE tiling
-  const adjustedUrl = await desaturateRedsByPercent(baseDataUrl, 0.12);
+  const adjustedUrl = await desaturateRedsByPercent(baseDataUrl, 0.15);
   const img = await loadImage(adjustedUrl);
 
   // --- Dynamic per-column width factors (applied for every row) ---
@@ -2336,7 +2336,7 @@ async function openAIAnalyzePhoto(base64Image) {
   const labelPrompt =
     `You are classifying metal color from numeric stats. APPLY THESE CUT LINES STRICTLY:\n` +
     `• HSV rule (primary): RoseGold if average H ≤ 38°.\n` +
-    `• Gold rule (fallback): Gold if average H ≥ 38°.\n` +
+    `• Gold rule (fallback): Gold if average H ≥ 40°.\n` +
     `• Silver: If H ≤ 25% .\n` +
     `• Voting: each satisfied rule is one vote. If both rules agree, use that label.\n` +
     `• Tie-breaking: if Gold vs Silver tie, choose Silver. If RoseGold vs Gold tie, choose Gold unless hue contains "rose".\n` +
