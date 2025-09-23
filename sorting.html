@@ -2082,7 +2082,7 @@ function genId() {
     return 1 - (d - FULL) / (FEATHER - FULL);
   }
 
-async function desaturateRoseByPercent(baseDataUrl, percent = (window.ROSE_DESAT ?? 0.10)) {
+async function desaturateRoseByPercent(baseDataUrl, percent = (window.ROSE_DESAT ?? 0.15)) {
   const img = await loadImage(baseDataUrl);
   const w = img.naturalWidth, h = img.naturalHeight;
   const canvas = document.createElement("canvas");
@@ -2097,7 +2097,7 @@ async function desaturateRoseByPercent(baseDataUrl, percent = (window.ROSE_DESAT
     const hueDeg = (H * 360);
     const wRose = roseFeatherWeight(hueDeg);
     if (wRose > 0) {
-      const sNew = Math.max(0, S + percent * wRose);
+      const sNew = Math.max(0, S - percent * wRose);
       const { r: R, g: G, b: B } = hslToRgb(H, sNew, L);
       a[i] = R; a[i + 1] = G; a[i + 2] = B;
     }
@@ -2111,7 +2111,7 @@ async function desaturateRoseByPercent(baseDataUrl, percent = (window.ROSE_DESAT
  ********************************************************/
 async function extractSubImages144(baseDataUrl) {
   // Apply Photoshop-style Rose-band desat BEFORE tiling
-  const adjustedUrl = await desaturateRoseByPercent(baseDataUrl, (window.ROSE_DESAT ?? 0.10));
+  const adjustedUrl = await desaturateRoseByPercent(baseDataUrl, (window.ROSE_DESAT ?? 0.15));
   const img = await loadImage(adjustedUrl);
 
   // --- Dynamic per-column width factors (applied for every row) ---
@@ -2346,8 +2346,8 @@ async function openAIAnalyzePhoto(base64Image) {
   pendingFetchControllers.push(ctrlLabel);
   const labelPrompt =
     `You are classifying metal color from numeric medians. APPLY THESE CUT LINES STRICTLY:\n` +
-    `• HSV rule (primary): RoseGold if median H ≤ 38.5°\n` +
-    `• Gold rule (fallback): Gold if median H ≥ 39°\n` +
+    `• HSV rule (primary): RoseGold if median H ≤ 39°\n` +
+    `• Gold rule (fallback): Gold if median H ≥ 40°\n` +
     `• Silver: If H ≤ 25 \n` +
     `• Voting: each satisfied rule is one vote. If both rules agree, use that label.\n` +
     `• Tie-breaking: If RoseGold vs Gold tie, choose Gold unless a* ≥ 8 OR hue contains "rose".\n` +
