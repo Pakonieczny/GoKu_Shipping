@@ -1458,11 +1458,35 @@ function metalToBadge(label){
       return { hs: "7113115000", sku: "SS_187" };
     }
     // Gold family (Gold, Rose Gold, 14K, Gold Filled)
-    if (c === "gold" || c === "rose gold" || c === "14k" || c === "gold filled") {
+    if (c === "gold" || c === "rose gold" || c === "14k" || c === "gold filled" || c === "rose") {
       return { hs: "7113205000", sku: "GF_187" };
     }
     return null;
   }
+
+  // NEW: force Step-1 line items to reflect the CURRENT order
+  function syncLineItemsWithCurrentOrder(){
+   try{
+     const orderNumber = (document.getElementById("etsyOrderNumber")?.value || "").trim();
+     const container = document.getElementById("cc_line_items_container");
+     if (!container) return;
+ 
+     // If the container was populated for a different order, wipe it first
+     const bound = container.dataset.boundOrder || "";
+     if (orderNumber && bound !== orderNumber) {
+       container.innerHTML = "";
+     }
+ 
+     // Rebuild from the authoritative cache set by updateImageGrid(...)
+     // (This uses groupUniqueItems(...) + maps HS/SKU from metal, etc.)
+     renderCcLineItemsFromCached();
+ 
+     // Tag the DOM with the order we just bound to
+     if (orderNumber) container.dataset.boundOrder = orderNumber;
+   } catch (e) {
+     console.warn("syncLineItemsWithCurrentOrder:", e);
+   }
+ }
 
   function renderCcLineItemsFromCached(){
     const container = document.getElementById("cc_line_items_container");
@@ -6702,8 +6726,11 @@ function parseIntlAddressBlock(blockText = "", fallbackCountryCode = "") {
 
         const idEl   = document.getElementById("ccShipmentId");
         const oldId  = (idEl?.value || "").trim();
-        // 🔶 STRICT: prime Step-0 using your existing parser, then snapshot ALL ccStep0/1/2 fields
+        // 🔶 STRICT: prime Step-0, then FORCE Step-1 to reflect the CURRENT order
         try { primeCcStep0Background(); } catch(_) {}
+        // If line items belong to a different order (or are stale), rebuild them now
+        try { syncLineItemsWithCurrentOrder(); } catch(_) {}
+        // Now that Step-0/1 are up to date, snapshot all ccStep0/1/2 fields
         const payload = buildShipmentPayload();
 
         // If International (EU/GB), guarantee ROOT-level email in the payload
