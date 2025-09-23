@@ -6511,22 +6511,18 @@ function parseIntlAddressBlock(blockText = "", fallbackCountryCode = "") {
 
       // Merge parsed with field fallbacks + normalize country
       let to = {
-        to_name         : parsed.to_name          || fields.to_name,
-        to_address_1    : parsed.to_address_1     || fields.to_address_1,
-        // 🚫 no fallback: never carry over Address 2
-        to_address_2    : sanitizeAddress2(parsed.to_address_2),
-        to_city         : parsed.to_city          || fields.to_city,
-        // 🚫 no fallback: sanitize strictly for the detected country
-        to_country_code : (parsed.to_country_code || fields.to_country_code || "").toUpperCase(),
-        to_province_code: sanitizeProvinceForCountry(parsed.to_province_code, (parsed.to_country_code || fields.to_country_code))
-        // keep postal code behavior as you prefer:
-        ,to_postal_code : (
-          isEUorGB(parsed.to_country_code || fields.to_country_code)
-             ? (parsed.to_postal_code || "")
-            : (parsed.to_postal_code || fields.to_postal_code)
-         )
+        // Fields ALWAYS win; only fall back to parsed block if a field is blank.
+        to_name         : (fields.to_name || parsed.to_name || "").trim(),
+        to_address_1    : (fields.to_address_1 || parsed.to_address_1 || "").trim(),
+        to_address_2    : sanitizeAddress2(fields.to_address_2 || parsed.to_address_2),
+        to_city         : (fields.to_city || parsed.to_city || "").trim(),
+        to_country_code : (fields.to_country_code || parsed.to_country_code || "").toUpperCase(),
+        to_province_code: sanitizeProvinceForCountry(
+                            (fields.to_province_code || parsed.to_province_code),
+                            (fields.to_country_code  || parsed.to_country_code)
+                          ),
+        to_postal_code  : (fields.to_postal_code || parsed.to_postal_code || "").trim()
       };
-
      // Belt & suspenders: EU/GB never keeps province/state
      if (isEUorGB(to.to_country_code)) to.to_province_code = "";
 
