@@ -1801,6 +1801,8 @@ function openIframePrinterForListing(cellIndex) {
     function resetLabelMode() {
       localStorage.setItem(LABEL_MODE_KEY, "gold");
       window.__markerSwitchTriggered = false;
+      // reflect immediately; if a run is underway, keep “Analyzing …”
+      applyStartBtnModeUI("gold", !!window.__matrixAnalysisRunning);
     }
 
     // Switch mid-run → Rose mode for the rest of this batch
@@ -1808,9 +1810,29 @@ function openIframePrinterForListing(cellIndex) {
       localStorage.setItem(LABEL_MODE_KEY, "rose");
       window.__markerSwitchTriggered = true;
     }
+   // update button while we’re still analyzing
+   applyStartBtnModeUI("rose", true);
 
     function getLabelMode() {
       return localStorage.getItem(LABEL_MODE_KEY) || "gold";
+    }
+
+    // Visually reflect current mode on the Start button
+    function applyStartBtnModeUI(mode = "gold", analyzing = false) {
+      const btn = document.getElementById("startMatrixAnalysisBtn");
+      if (!btn) return;
+      const base = analyzing ? "Analyzing Matrix Images" : "Start Matrix Analysis";
+      if (mode === "rose") {
+        btn.textContent = base + " — Rose HSV";
+        btn.style.backgroundColor = "#ffeaf2";
+        btn.style.border = "1px solid #e91e63";
+        btn.style.color = "#e91e63";
+      } else {
+        btn.textContent = base;
+        btn.style.backgroundColor = "";
+        btn.style.border = "";
+        btn.style.color = "";
+      }
     }
 
     // --- Simple similarity test vs stored marker (fast MSE on 64×64 gray) ---
@@ -1822,6 +1844,9 @@ function openIframePrinterForListing(cellIndex) {
           const c = document.createElement("canvas");
           c.width = s; c.height = s;
           const g = c.getContext("2d", { willReadFrequently: true });
+          // Fill white first so transparent Marker pixels don't skew the vector
+          g.fillStyle = "#ffffff";
+          g.fillRect(0, 0, s, s);
           g.drawImage(img, 0, 0, s, s);
           const d = g.getImageData(0, 0, s, s).data;
           const v = new Float32Array(s * s);
@@ -1886,7 +1911,7 @@ function openIframePrinterForListing(cellIndex) {
       if (!m) return false;
       const v = await imageDataUrlToVec64Gray(candidateDataUrl);
       const err = mseVec(m, v);
-      return err < 0.006;  // tweak if you change image size/format
+      return err < 0.012;  // alpha-normalized; slightly looser to catch true matches
     }
 
     // Initialize (optional seed)
@@ -1975,7 +2000,11 @@ async function startMatrixAnalysis() {
   window.__matrixAnalysisRunning = true;
   updateSendMatchAvailability();
   const startBtn = document.getElementById("startMatrixAnalysisBtn");
-  if (startBtn) startBtn.disabled = true;
+  if (startBtn) {
+    startBtn.disabled = true;
+    // “Analyzing …” text in Gold mode until Marker flips us
+    applyStartBtnModeUI(getLabelMode(), true);
+  }
   const queue = (window.__matrixQueue || []);
   if (!queue.length) {
     M.toast({ html: "Nothing to analyze — queue is empty." });
@@ -2016,6 +2045,8 @@ async function startMatrixAnalysis() {
   M.toast({ html: "All queued masters analyzed." });
   window.__matrixAnalysisRunning = false;
   updateSendMatchAvailability();
+  // Back to idle Gold UI
+  applyStartBtnModeUI("gold", false);
 }
 
 /* ──────────────────────────────────────────────────────────────
@@ -2043,7 +2074,7 @@ async function analyzeAndStoreSubImages(imgObjs, title = "Analyzing Photos...") 
     // NEW: marker-guard — skip this tile and switch modes if marker detected
     if (await isMarkerImage(data)) {
       if (!window.__markerSwitchTriggered) {
-        switchToRoseMode();
+        switchToRoseMode(); // also updates the Start button UI
         M.toast({ html: "Marker detected → switching HSV rule to RoseGold for remaining tiles." });
       }
       done++;
