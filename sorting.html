@@ -2084,7 +2084,7 @@ function genId() {
       const hueDeg = (H * 360);
       const wRed = redFeatherWeight(hueDeg);
       if (wRed > 0) {
-        const sNew = Math.max(0, S - percent * wRed);
+        const sNew = Math.max(0, S + percent * wRed);
         const { r: R, g: G, b: B } = hslToRgb(H, sNew, L);
         a[i] = R; a[i + 1] = G; a[i + 2] = B;
       }
