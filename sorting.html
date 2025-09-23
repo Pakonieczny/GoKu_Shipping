@@ -659,45 +659,6 @@ function flipImageHorizontal(dataURL) {
 }
 
  /********************************************************
-  * makeCentralCrop(baseDataUrl, insetPct=0.16, feather=true)
-  * Returns a dataURL where only the central ellipse is kept.
-  * - insetPct: % of the shorter dimension to ignore as outer border
-  * - feather: apply a soft vignette to de-emphasize edges further
-  ********************************************************/
- async function makeCentralCrop(baseDataUrl, insetPct = 0.16, feather = true) {
-   const img = await loadImage(baseDataUrl);
-   const w = img.naturalWidth, h = img.naturalHeight;
-   const cx = w / 2, cy = h / 2;
-   const margin = Math.min(w, h) * insetPct;
-   const rx = (w / 2) - margin;
-   const ry = (h / 2) - margin;
-   const canvas = document.createElement("canvas");
-   canvas.width = w; canvas.height = h;
-   const ctx = canvas.getContext("2d");
-
-   // Clip to inner ellipse before drawing the image
-   ctx.save();
-   ctx.beginPath();
-   ctx.ellipse(cx, cy, rx, ry, 0, 0, Math.PI * 2);
-   ctx.clip();
-   ctx.drawImage(img, 0, 0, w, h);
-   ctx.restore();
-
-   if (feather) {
-     // Soft radial falloff toward edges of ellipse
-     const g = ctx.createRadialGradient(cx, cy, Math.min(rx, ry) * 0.65, cx, cy, Math.min(rx, ry));
-     g.addColorStop(0.0, "rgba(0,0,0,1)");
-     g.addColorStop(1.0, "rgba(0,0,0,0)");
-     ctx.globalCompositeOperation = "destination-in";
-     ctx.fillStyle = g;
-     ctx.fillRect(0, 0, w, h);
-     ctx.globalCompositeOperation = "source-over";
-   }
-   return canvas.toDataURL("image/jpeg", 0.92);
- }
-
-
- /********************************************************
   * Inline progress bar (no modal) — renders under #photoDragDrop
   * NOTE: we keep the SAME function names used elsewhere so callers
   * don’t need to change (showProgressModal / updateProgressModal / closeProgressModal).
@@ -2108,7 +2069,7 @@ function genId() {
     return 1 - (d - FULL) / (FEATHER - FULL);
   }
 
-  async function desaturateRedsByPercent(baseDataUrl, percent = 0.10) {
+  async function desaturateRedsByPercent(baseDataUrl, percent = 0.0) {
     const img = await loadImage(baseDataUrl);
     const w = img.naturalWidth, h = img.naturalHeight;
     const canvas = document.createElement("canvas");
@@ -2123,7 +2084,7 @@ function genId() {
       const hueDeg = (H * 360);
       const wRed = redFeatherWeight(hueDeg);
       if (wRed > 0) {
-        const sNew = Math.max(0, S + percent * wRed);
+        const sNew = Math.max(0, S - percent * wRed);
         const { r: R, g: G, b: B } = hslToRgb(H, sNew, L);
         a[i] = R; a[i + 1] = G; a[i + 2] = B;
       }
@@ -2138,7 +2099,7 @@ function genId() {
  ********************************************************/
 async function extractSubImages144(baseDataUrl) {
   // Apply Photoshop-style Reds desat BEFORE tiling
-  const adjustedUrl = await desaturateRedsByPercent(baseDataUrl, 0.10);
+  const adjustedUrl = await desaturateRedsByPercent(baseDataUrl, 0.0);
   const img = await loadImage(adjustedUrl);
 
   // --- Dynamic per-column width factors (applied for every row) ---
@@ -2280,8 +2241,6 @@ async function openAIAnalyzePhoto(base64Image) {
   const ctrlHue = new AbortController();
   pendingFetchControllers.push(ctrlHue);
 
-  // Produce a center-cropped version to stabilize medians against rim/edge bias
-  const centralUrl = await makeCentralCrop(base64Image, 0.16, true);
   const huePayload = {
     model: "gpt-5",
     response_format: { type: "json_object" },
@@ -2295,7 +2254,7 @@ async function openAIAnalyzePhoto(base64Image) {
             text:
                "Return JSON EXACTLY like:\n" +
                '  {"hue":"<≤10-word description>", "topRightNumber":"<number or blank>", "charmPresent":"Yes|No", "twoCharmsPresent":"Yes|No",' +
-               '   "medianHSV":{"H":<deg>,"S":<pct>,"V":<pct>}}\n\n' +
+               '   "medianHSV":{"H":<deg>,"S":<pct>,"V":<pct>}, "medianLab":{"L":<L*>,"a":<a*>,"b*":<b*>}}\n\n' +
               "TASK 1 – Describe the dominant metal hue (≤10 words).\n" +
               "TASK 2 – Extract the top-right number (blank if none).\n" +
               "TASK 3 – Is a jewellery charm clearly visible? (Yes|No).\n" +
@@ -2306,12 +2265,8 @@ async function openAIAnalyzePhoto(base64Image) {
                "Ignore the white number square; its presence does not negate a charm.\n" +
                "If a thin metallic bar occupies ≥0.4% of the tile with clear edges or\n" +
                "specular highlights, answer Yes.\n" +
-              "Calculate a detailed MEDIAN HSV (H° 0–360, S% 0–100, V% 0–100).\n" +
-              "Ensure to provide detailed MEDIAN HSV values with increments of 0.1 for all HSV values.\n" +
-              "IMPORTANT MASKING & CENTER-LOCALIZATION RULES FOR MEDIANS:\n" +
-               "• Use the FIRST image (center-cropped) ONLY to compute MEDIAN HSV and MEDIAN Lab.\n" +
-               "• Focus on the central region: sample only within an inner ellipse (≈45% of the shorter dimension radius), centered on the main charm body.\n"+ 
-               "• Additionally ignore an outer border of ≥12% of width/height to avoid rims, backgrounds, and the printed number square.\n" +
+              "Estimate MEDIAN HSV (H° 0–360, S% 0–100, V% 0–100) and MEDIAN CIELAB (L*, a*, b*).\n" +
+              "IMPORTANT MASKING RULES FOR MEDIANS:\n" +
                "• Exclude background/near-black and near-white backgrounds.\n" +
                "• Near-black cutoff: Ignore pixels if (HSV.V ≤ 12% OR Lab L* ≤ 16).\n" +
                "• Near-white cutoff: Ignore pixels only if (HSV.V ≥ 98%) OR Lab L* ≥ 98.\n" +
@@ -2320,14 +2275,11 @@ async function openAIAnalyzePhoto(base64Image) {
                "  (HSV.V ≥ 28% OR Lab L* ≥ 30) to retain neutral SILVER highlights.\n" +
               "Respond with JSON only."
           },
-           // Image 1: center-cropped for medians
-          { type: "image_url", image_url: { url: centralUrl, detail: "high" } },
-          // Image 2: full frame for number OCR + charm presence
           { type: "image_url", image_url: { url: base64Image, detail: "high" } }
         ]
       }
     ],
-    max_tokens: 400
+    max_tokens: 200
   };
 
   console.log("%c[openAIAnalyzePhoto] PASS 1 payload:", "color:#03A9F4", huePayload);
@@ -2381,11 +2333,12 @@ async function openAIAnalyzePhoto(base64Image) {
   pendingFetchControllers.push(ctrlLabel);
   const labelPrompt =
     `You are classifying metal color from numeric medians. APPLY THESE CUT LINES STRICTLY:\n` +
-    `• HSV rule (primary): RoseGold if median H ≤ 38°\n` +
-    `• Gold rule (fallback): Gold if median H ≥ 38°\n` +
-    `• Silver: If H ≤ 25 \n` +
+    `• HSV rule (primary): RoseGold if 15° ≤ median H ≤ 30° AND S ≥ 31%.\n` +
+    `• CIELAB rule (cross-check): RoseGold if a* ≥ 8.5 AND b* ≥ 14.\n` +
+    `• Gold rule (fallback): Gold if (median H ≥ 36° AND S ≥ 18%) OR (b* ≥ 15).\n` +
+    `• Silver: If S ≤ 13% AND a* between −3 and +4 AND b* between −3 and +8.\n` +
     `• Voting: each satisfied rule is one vote. If both rules agree, use that label.\n` +
-    `• Tie-breaking: If RoseGold vs Gold tie, choose Gold.\n` +
+    `• Tie-breaking: if Gold vs Silver tie, choose Silver. If RoseGold vs Gold tie, choose Gold unless a* ≥ 8 OR hue contains "rose".\n` +
     `• Only return exactly one word: Gold, RoseGold, or Silver.\n\n` +
     `INPUT\n` +
     `hue="${hueText}"\n` +
