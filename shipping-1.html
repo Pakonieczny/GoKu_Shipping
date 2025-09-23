@@ -6551,18 +6551,20 @@ function parseIntlAddressBlock(blockText = "", fallbackCountryCode = "") {
         if (phoneEl && !phoneEl.value.trim()) { phoneEl.value = fallbackPhone; }
       }
 
-      // Hydrate Step-0 inputs so the compare modal never shows blanks
-      const set = (id, v) => {
-      const el = document.getElementById(id);
-      if (el) el.value = (v ?? "").toString().trim();
-      };
-      set("cc_to_name", to.to_name);
-      set("cc_to_address_1", to.to_address_1);
-      set("cc_to_address_2", to.to_address_2);
-      set("cc_to_city", to.to_city);
-      set("cc_to_province_code", to.to_province_code);
-      set("cc_to_postal_code", to.to_postal_code);
-      set("cc_to_country_code", to.to_country_code);
+      // Hydrate Step-0 inputs so the compare modal never shows blanks — but don't clobber manual edits
+      if (!window.__ccRecipientDirty) {
+        const set = (id, v) => {
+          const el = document.getElementById(id);
+          if (el) el.value = (v ?? "").toString().trim();
+        };
+        set("cc_to_name", to.to_name);
+        set("cc_to_address_1", to.to_address_1);
+        set("cc_to_address_2", to.to_address_2);
+        set("cc_to_city", to.to_city);
+        set("cc_to_province_code", to.to_province_code);
+        set("cc_to_postal_code", to.to_postal_code);
+        set("cc_to_country_code", to.to_country_code);
+      }
 
       return to;
     }
@@ -6670,6 +6672,26 @@ function parseIntlAddressBlock(blockText = "", fallbackCountryCode = "") {
       }
 
       document.addEventListener('DOMContentLoaded', wireCustomsAutoFill);
+      function wireRecipientEditsDirtyFlag(){
+        window.__ccRecipientDirty = false;
+        const ids = [
+          "cc_to_name","cc_to_address_1","cc_to_address_2",
+          "cc_to_city","cc_to_province_code","cc_to_postal_code",
+          "cc_to_country_code","cc_to_phone","cc_to_email"
+        ];
+        ids.forEach(id => {
+          const el = document.getElementById(id);
+          if (!el) return;
+          el.addEventListener("input",  () => window.__ccRecipientDirty = true);
+          el.addEventListener("change", () => window.__ccRecipientDirty = true);
+        });
+
+        // Reset the flag for programmatic flows (optional, but nice UX)
+        document.getElementById("ccEditBtn")?.addEventListener("click",  () => { window.__ccRecipientDirty = false; });
+        document.getElementById("ccUseSuggested")?.addEventListener("click", () => { window.__ccRecipientDirty = false; });
+        document.getElementById("ccKeepOriginal")?.addEventListener("click", () => { window.__ccRecipientDirty = false; });
+      }
+      document.addEventListener('DOMContentLoaded', wireRecipientEditsDirtyFlag);
       // Expose helpers used by Step 2 refresh/build payload
       window.detectDestCountryCode = detectDestCountryCode;
       window.isEU = isEU; // (optional, keeps parity)
