@@ -274,6 +274,9 @@
   <!-- Live Search: Etsy Order Item Titles -->
   <input id="orderSearchBox" class="browser-default" type="text" autocomplete="off"
          placeholder="Search orders…">
+  <!-- New: R.G. Marker input -->
+  <input id="rgMarkerInput" class="browser-default" type="text" autocomplete="off"
+         placeholder="R.G. Marker (e.g., 22,38)">
   <button id="filterIncompleteBtn" class="btn waves-effect waves-light">Filter</button>
   <button id="openConfigBtn" class="btn waves-effect waves-light">Open Config</button>
   <!-- Live counter for ALL Etsy Order Items -->
@@ -1024,6 +1027,7 @@ const configIDs = [
   "startMatrixAnalysisBtn",
   "matrixQueueList",
   "orderItemsCounter",
+  "rgMarkerInput",
   "titleUnmatchedImages"
 ];
 
@@ -1031,8 +1035,6 @@ const configIDs = [
  * DOMContentLoaded: Disable buttons & attach logic
  ********************************************************/
 document.addEventListener("DOMContentLoaded", function () {
-  // Safe: LABEL_MODE_KEY has been initialized by the time this fires
-  resetLabelMode();
   M.AutoInit();
 
   // Disable "Send & Match", "Match & Print", "Back", "Next" on load
@@ -1695,6 +1697,7 @@ function openIframePrinterForListing(cellIndex) {
       startMatrixAnalysisBtn:   { left:0,  top:-86, width:210, height:35 },
       matrixQueueList:          { left:0,  top:-46, width:290, height:20 },
       orderItemsCounter:        { left:550, top:15,  width:142, height:35 },
+      rgMarkerInput:            { left:20,  top:115, width:210, height:30 },
       testOpenAIBtn:            { left:20,  top:65,  width:140, height:35 }
     };
 
@@ -1781,142 +1784,6 @@ function openIframePrinterForListing(cellIndex) {
       });
     }
 
-    // --------------- Marker bootstrap & helpers (local-only)  ------------>
-    const MARKER_IMG_KEY = "markerImageData";      // dataURL of Marker.png (stored locally)
-    const MARKER_NAME_KEY = "markerImageName";     // always "Marker.png"
-    const LABEL_MODE_KEY  = "__labelPromptMode";   // "gold" | "rose"
-
-    // Optional: seed a default Marker image (data URL). Leave empty if you’ll drop Marker.png once.
-    const DEFAULT_MARKER_DATAURL = ""; // data:image/png;base64,AAAA...  (optional seed)
-
-    function ensureMarkerStored() {
-      if (!localStorage.getItem(MARKER_IMG_KEY) && DEFAULT_MARKER_DATAURL) {
-        localStorage.setItem(MARKER_IMG_KEY, DEFAULT_MARKER_DATAURL);
-        localStorage.setItem(MARKER_NAME_KEY, "Marker.png");
-        console.log("[Marker] Seeded default marker to localStorage.");
-      }
-    }
-
-    // Reset rule mode at the start of each analysis run
-    function resetLabelMode() {
-      localStorage.setItem(LABEL_MODE_KEY, "gold");
-      window.__markerSwitchTriggered = false;
-      // reflect immediately; if a run is underway, keep “Analyzing …”
-      applyStartBtnModeUI("gold", !!window.__matrixAnalysisRunning);
-    }
-
-    // Switch mid-run → Rose mode for the rest of this batch
-    function switchToRoseMode() {
-      localStorage.setItem(LABEL_MODE_KEY, "rose");
-      window.__markerSwitchTriggered = true;
-    }
-   // update button while we’re still analyzing
-   applyStartBtnModeUI("rose", true);
-
-    function getLabelMode() {
-      return localStorage.getItem(LABEL_MODE_KEY) || "gold";
-    }
-
-    // Visually reflect current mode on the Start button
-    function applyStartBtnModeUI(mode = "gold", analyzing = false) {
-      const btn = document.getElementById("startMatrixAnalysisBtn");
-      if (!btn) return;
-      const base = analyzing ? "Analyzing Matrix Images" : "Start Matrix Analysis";
-      if (mode === "rose") {
-        btn.textContent = base + " — Rose HSV";
-        btn.style.backgroundColor = "#ffeaf2";
-        btn.style.border = "1px solid #e91e63";
-        btn.style.color = "#e91e63";
-      } else {
-        btn.textContent = base;
-        btn.style.backgroundColor = "";
-        btn.style.border = "";
-        btn.style.color = "";
-      }
-    }
-
-    // --- Simple similarity test vs stored marker (fast MSE on 64×64 gray) ---
-    let __markerVecCache = null;
-    async function imageDataUrlToVec64Gray(dataUrl) {
-      return new Promise(resolve => {
-        const s = 64, img = new Image();
-        img.onload = () => {
-          const c = document.createElement("canvas");
-          c.width = s; c.height = s;
-          const g = c.getContext("2d", { willReadFrequently: true });
-          // Fill white first so transparent Marker pixels don't skew the vector
-          g.fillStyle = "#ffffff";
-          g.fillRect(0, 0, s, s);
-          g.drawImage(img, 0, 0, s, s);
-          const d = g.getImageData(0, 0, s, s).data;
-          const v = new Float32Array(s * s);
-          for (let i = 0, j = 0; i < d.length; i += 4, j++) {
-            v[j] = (0.299*d[i] + 0.587*d[i+1] + 0.114*d[i+2]) / 255;
-          }
-          resolve(v);
-        };
-        img.src = dataUrl;
-      });
-    }
-
- // Downscale any dataURL square so we can safely persist under storage quotas
- async function scaleDataUrlToSquare(dataUrl, size = 96) {
-   return new Promise((resolve, reject) => {
-     const img = new Image();
-     img.onload = () => {
-       const c = document.createElement("canvas");
-       c.width = size; c.height = size;
-       const g = c.getContext("2d");
-       g.drawImage(img, 0, 0, size, size);
-       try {
-         resolve(c.toDataURL("image/png"));
-       } catch (e) { reject(e); }
-     };
-     img.onerror = reject;
-     img.src = dataUrl;
-   });
- }
-
- function isQuotaExceededError(err) {
-   return err && (
-     err.name === "QuotaExceededError" ||
-     err.name === "NS_ERROR_DOM_QUOTA_REACHED" ||
-     err.code === 22 || err.code === 1014
-   );
- }
-
- async function getMarkerVec() {
-   if (__markerVecCache) return __markerVecCache;
-   const markerUrl =
-     localStorage.getItem(MARKER_IMG_KEY) ||
-     (typeof window.__markerImageTemp === "string" ? window.__markerImageTemp : "");
-   if (!markerUrl) return null;
-   __markerVecCache = await imageDataUrlToVec64Gray(markerUrl);
-   return __markerVecCache;
- }
-
-    function mseVec(a, b) {
-      if (!a || !b || a.length !== b.length) return Number.POSITIVE_INFINITY;
-      let s = 0;
-      for (let i = 0; i < a.length; i++) {
-        const d = a[i] - b[i];
-        s += d*d;
-      }
-      return s / a.length;
-    }
-
-    // Heuristic: small threshold detects the SAME tile image (not a general motif)
-    async function isMarkerImage(candidateDataUrl) {
-      const m = await getMarkerVec();
-      if (!m) return false;
-      const v = await imageDataUrlToVec64Gray(candidateDataUrl);
-      const err = mseVec(m, v);
-      return err < 0.012;  // alpha-normalized; slightly looser to catch true matches
-    }
-
-    // Initialize (optional seed)
-    ensureMarkerStored();
-
     // --------------- Drag-and-drop logic ---------------    /* ⇢ anchor */
     const photoDragDropElem = document.getElementById("photoDragDrop");
 
@@ -1943,29 +1810,6 @@ function openIframePrinterForListing(cellIndex) {
     for (let i = 0; i < files.length; i++) {
       const file = files[i];
       const dataUrl = await readAsDataURL(file);
-
-       // NEW: If user dropped the marker, persist a small (96x96) version to avoid quota errors.
-       if (file.name.toLowerCase() === "marker.png") {
-         try {
-           const tiny = await scaleDataUrlToSquare(dataUrl, 96);
-           localStorage.setItem(MARKER_IMG_KEY, tiny);
-           localStorage.setItem(MARKER_NAME_KEY, "Marker.png");
-           __markerVecCache = null; // recompute from the scaled marker
-           M.toast({ html: `Saved Marker (scaled 96×96) to local storage.` });
-         } catch (err) {
-           // Quota (or private mode): keep an in-memory copy so the run still works.
-           if (isQuotaExceededError(err)) {
-             window.__markerImageTemp = await scaleDataUrlToSquare(dataUrl, 96);
-             __markerVecCache = null;
-             M.toast({ html: `Loaded Marker temporarily (storage quota).` });
-           } else {
-             console.error("Marker store failed:", err);
-             M.toast({ html: `Failed to save Marker.` });
-           }
-         }
-         continue; // do not add to matrix queue
-       }
-
       // store for later tiling + analysis
       window.__matrixQueue.push({ name: file.name, dataUrl, masterId: genId() });
       M.toast({ html: `Queued master: ${file.name}` });
@@ -1995,16 +1839,19 @@ function openIframePrinterForListing(cellIndex) {
 
 
 async function startMatrixAnalysis() {
-  // Always start each run in Gold-mode
-  resetLabelMode();
   window.__matrixAnalysisRunning = true;
+  // R.G. Marker: parse numbers and reset switch for this run
+  {
+    const raw = (document.getElementById("rgMarkerInput")?.value || "").trim();
+    const nums = (raw.match(/\d+/g) || [])
+      .map(s => s.replace(/^0+/, "") || "0"); // normalize, keep "0" if all zeros
+    window.__rgMarkers = new Set(nums);
+    window.__rgPromptActive = false;
+    console.log("[R.G. Marker] Loaded markers:", [...window.__rgMarkers]);
+  }
   updateSendMatchAvailability();
   const startBtn = document.getElementById("startMatrixAnalysisBtn");
-  if (startBtn) {
-    startBtn.disabled = true;
-    // “Analyzing …” text in Gold mode until Marker flips us
-    applyStartBtnModeUI(getLabelMode(), true);
-  }
+  if (startBtn) startBtn.disabled = true;
   const queue = (window.__matrixQueue || []);
   if (!queue.length) {
     M.toast({ html: "Nothing to analyze — queue is empty." });
@@ -2044,9 +1891,8 @@ async function startMatrixAnalysis() {
   updateMatrixQueueBadge();
   M.toast({ html: "All queued masters analyzed." });
   window.__matrixAnalysisRunning = false;
+  window.__rgPromptActive = false; // reset for next run
   updateSendMatchAvailability();
-  // Back to idle Gold UI
-  applyStartBtnModeUI("gold", false);
 }
 
 /* ──────────────────────────────────────────────────────────────
@@ -2071,17 +1917,6 @@ async function analyzeAndStoreSubImages(imgObjs, title = "Analyzing Photos...") 
 
   for (let i = 0; i < toRun.length; i++) {
     const { origName, data } = toRun[i];
-    // NEW: marker-guard — skip this tile and switch modes if marker detected
-    if (await isMarkerImage(data)) {
-      if (!window.__markerSwitchTriggered) {
-        switchToRoseMode(); // also updates the Start button UI
-        M.toast({ html: "Marker detected → switching HSV rule to RoseGold for remaining tiles." });
-      }
-      done++;
-      updateProgressModal(done, toRun.length);
-      continue;
-    }
-
     const res = await openAIAnalyzePhoto(data);
     const isCharm = (res.charmPresent || "").toLowerCase() === "yes";
 
@@ -2513,25 +2348,49 @@ async function openAIAnalyzePhoto(base64Image) {
 /* ───────────────────── PASS 2 : hue ⇒ fixed label ───────────────────── */
   const ctrlLabel = new AbortController();
   pendingFetchControllers.push(ctrlLabel);
-const mode = getLabelMode();  // "gold" | "rose"
-const primaryLine =
-  (mode === "rose")
-    ? `• HSV rule (primary): RoseGold if average H ≥ 30°.\n`
-    : `• HSV rule (primary): Gold if average H ≥ 30°.\n`;
+  // R.G. latch: if this tile’s number hits, flip the switch for remainder of run
+  try {
+    const tnum = String(topNumber ?? "").replace(/^0+/, "") || "";
+    if (!window.__rgPromptActive &&
+        tnum &&
+        window.__rgMarkers instanceof Set &&
+        window.__rgMarkers.has(tnum)) {
+      window.__rgPromptActive = true;
+      console.log(`[R.G. Marker] Matched ${tnum} → switching to RG prompt for remainder of run`);
+    }
+  } catch {}
 
-const labelPrompt =
-  `You are classifying metal color from numeric stats. APPLY THESE CUT LINES STRICTLY:\n` +
-  primaryLine +
-  `• Silver: If H ≤ 25% .\n` +
-  `• Voting: each satisfied rule is one vote. If both rules agree, use that label.\n` +
-  `• Only return exactly one word: Gold, RoseGold, or Silver.\n\n` +
-  `NOTE ON INPUT STATS:\n` +
-  `• H is the AVERAGE of kept hue samples (circular mean in degrees).\n` +
-  `• S and V are MEDIANS of kept samples.\n\n` +
-  `INPUT\n` +
-  `hue="${hueText}"\n` +
-  `medianHSV: H=${hsvH} S=${hsvS} V=${hsvV}\n` +
-  `medianLab: L=${labL} a=${labA} b=${labB}`;
+  // Rose-Gold prompt (activated after first marker match)
+  const rgLabelPrompt =
+    `You are classifying metal color from numeric stats. APPLY THESE CUT LINES STRICTLY:\n` +
+    `• HSV rule (primary): RoseGold if average H ≥ 30°.\n` +
+    `• Silver: If H ≤ 25% .\n` +
+    `• Voting: each satisfied rule is one vote. If both rules agree, use that label.\n` +
+    `• Only return exactly one word: Gold, RoseGold, or Silver.\n\n` +
+    `NOTE ON INPUT STATS:\n` +
+    `• H is the AVERAGE of kept hue samples (circular mean in degrees).\n` +
+    `• S and V are MEDIANS of kept samples.\n\n` +
+    `INPUT\n` +
+    `hue="${hueText}"\n` +
+    `medianHSV: H=${hsvH} S=${hsvS} V=${hsvV}\n` +
+    `medianLab: L=${labL} a=${labA} b=${labB}`;
+
+  // Default prompt (pre-latch behavior)
+  const defaultLabelPrompt =
+    `You are classifying metal color from numeric stats. APPLY THESE CUT LINES STRICTLY:\n` +
+    `• Gold rule (fallback): Gold if average H ≥ 30°.\n` +
+    `• Silver: If H ≤ 25% .\n` +
+    `• Voting: each satisfied rule is one vote. If both rules agree, use that label.\n` +
+    `• Only return exactly one word: Gold, RoseGold, or Silver.\n\n` +
+    `NOTE ON INPUT STATS:\n` +
+    `• H is the AVERAGE of kept hue samples (circular mean in degrees).\n` +
+    `• S and V are MEDIANS of kept samples.\n\n` +
+    `INPUT\n` +
+    `hue="${hueText}"\n` +
+    `medianHSV: H=${hsvH} S=${hsvS} V=${hsvV}\n` +
+    `medianLab: L=${labL} a=${labA} b=${labB}`;
+
+  const labelPrompt = (window.__rgPromptActive ? rgLabelPrompt : defaultLabelPrompt);
   const labelPayload = {
     model: "gpt-5",
     messages: [{ role: "user", content: labelPrompt }],
