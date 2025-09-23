@@ -1103,12 +1103,26 @@ etsyOrderInput.addEventListener("keydown", async function (e) {
   // Attach "Send & Match" logic
   document.getElementById("sendMatchBtn").addEventListener("click", async function () {
     try {
+      // RESET: every run starts with GOLD-first rule set and clears prior marker flags
+      window.__labelMode = "GOLD";
+      if (Array.isArray(window.userImagesArray)) {
+        window.userImagesArray.forEach(u => delete u.skipMarker);
+      }
+
       console.log("Starting to crop images...");
       croppedImagesArray = [];
       await cropAllImages();
       console.log("Done cropping. Pausing 250ms...");
       await new Promise(r => setTimeout(r, 250));
+      
+       // If the saved Marker appears in any Matrix tile, skip it and flip rules
+      const markerHit = await checkAndFlagMarkerImagesOnce(0.92);
+      if (markerHit) {
+        window.__labelMode = "ROSE";   // switch for the remainder of this run
+      }
+
       console.log("Now sending & matching...");
+
       await sendAndMatch();
     } catch (err) {
       console.error("Error in combined Crop + Send & Match:", err);
@@ -1805,6 +1819,13 @@ function openIframePrinterForListing(cellIndex) {
     for (let i = 0; i < files.length; i++) {
       const file = files[i];
       const dataUrl = await readAsDataURL(file);
+
+      // NEW: if the user drops "Marker.png", save locally and do NOT queue it
+      if (/^marker\.png$/i.test(file.name)) {
+        await saveMarkerDataUrl(dataUrl);
+        continue;
+      }
+
       // store for later tiling + analysis
       window.__matrixQueue.push({ name: file.name, dataUrl, masterId: genId() });
       M.toast({ html: `Queued master: ${file.name}` });
@@ -2333,13 +2354,16 @@ async function openAIAnalyzePhoto(base64Image) {
 /* ───────────────────── PASS 2 : hue ⇒ fixed label ───────────────────── */
   const ctrlLabel = new AbortController();
   pendingFetchControllers.push(ctrlLabel);
+  const primaryLine =
+    (window.__labelMode === "ROSE")
+      ? `• HSV rule (primary): RoseGold if average H ≥ 30°.\n`
+      : `• HSV rule (primary): Gold if average H ≥ 30°.\n`;
+
   const labelPrompt =
     `You are classifying metal color from numeric stats. APPLY THESE CUT LINES STRICTLY:\n` +
-    `• HSV rule (primary): RoseGold if average H ≤ 39°.\n` +
-    `• Gold rule (fallback): Gold if average H ≥ 40°.\n` +
+    primaryLine +
     `• Silver: If H ≤ 25% .\n` +
     `• Voting: each satisfied rule is one vote. If both rules agree, use that label.\n` +
-    //`• Tie-breaking: if Gold vs Silver tie, choose Silver. If RoseGold vs Gold tie, choose Gold unless hue contains "rose".\n` +
     `• Only return exactly one word: Gold, RoseGold, or Silver.\n\n` +
     `NOTE ON INPUT STATS:\n` +
     `• H is the AVERAGE of kept hue samples (circular mean in degrees).\n` +
@@ -3330,6 +3354,71 @@ async function compareImages(userImage, croppedGridImage, cellIndex, userImageNa
   }
 }
 
+/* ========= Marker storage & detection (local-first) ========= */
+const MARKER_LS_KEY  = "localMarkerImage";
+const MARKER_HASH_KEY = "localMarkerHash";
+
+function getMarkerDataUrl() {
+  return localStorage.getItem(MARKER_LS_KEY) || "";
+}
+
+async function dataURLToUint8(dataUrl) {
+  const base64 = String(dataUrl).split(",")[1] || "";
+  const bin = atob(base64);
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  return bytes;
+}
+
+async function sha256HexFromDataUrl(dataUrl) {
+  try {
+    const bytes = await dataURLToUint8(dataUrl);
+    const digest = await crypto.subtle.digest("SHA-256", bytes);
+    return Array.from(new Uint8Array(digest))
+      .map(b => b.toString(16).padStart(2,"0")).join("");
+  } catch { return ""; }
+}
+
+async function saveMarkerDataUrl(dataUrl) {
+  try {
+    localStorage.setItem(MARKER_LS_KEY, dataUrl);
+    const hash = await sha256HexFromDataUrl(dataUrl);
+    localStorage.setItem(MARKER_HASH_KEY, hash);
+    window.__markerHash = hash;
+    M.toast({ html: "Saved Marker.png locally." });
+  } catch (e) {
+    console.warn("Failed to save marker:", e);
+  }
+}
+
+/**
+ * Compare each Matrix tile to the saved Marker once.
+ * If any hit ≥ threshold, flag & skip that tile and return true (first-hit wins).
+ * Uses your existing compareImages() OpenAI call.
+ */
+async function checkAndFlagMarkerImagesOnce(threshold = 0.92) {
+  const marker = getMarkerDataUrl();
+  if (!marker || !Array.isArray(window.userImagesArray)) return false;
+  for (const u of window.userImagesArray) {
+    try {
+      const { score } = await compareImages(u.data, marker, -1, (u.name || "markerCheck"));
+      if (score >= threshold) {
+        u.skipMarker = true;                       // hard-skip this tile
+        M.toast({ html: `Marker found & skipped: ${u.name}` });
+        return true;                               // first match ⇒ switch rules
+      }
+    } catch (e) {
+      console.warn("Marker compare failed:", e);
+    }
+  }
+  return false;
+}
+
+// Global rule-set switch used by openAIAnalyzePhoto PASS-2
+// Resets to "GOLD" at the start of every Send & Match run; may flip to "ROSE"
+// if the Marker is detected in any Matrix tile during this run.
+window.__labelMode = "GOLD";
+
 /********************************************************
  * sendAndMatch with metal filter logic
  ********************************************************/
@@ -3641,6 +3730,7 @@ async function sendAndMatch() {
     const validUserImages = userImagesArray.filter(
       (u) =>
         !u.skipForCharm &&
+        !u.skipMarker &&                         // NEW: skip Marker tiles
         metalFilterOk(metalVal, u.name) &&
         passesTitlePrefilter(i, u.name) &&
         earringTitleGate(i, u.name)
