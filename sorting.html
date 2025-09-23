@@ -1030,6 +1030,7 @@ const configIDs = [
 /********************************************************
  * DOMContentLoaded: Disable buttons & attach logic
  ********************************************************/
+resetLabelMode();
 document.addEventListener("DOMContentLoaded", function () {
   M.AutoInit();
 
@@ -1103,26 +1104,12 @@ etsyOrderInput.addEventListener("keydown", async function (e) {
   // Attach "Send & Match" logic
   document.getElementById("sendMatchBtn").addEventListener("click", async function () {
     try {
-      // RESET: every run starts with GOLD-first rule set and clears prior marker flags
-      window.__labelMode = "GOLD";
-      if (Array.isArray(window.userImagesArray)) {
-        window.userImagesArray.forEach(u => delete u.skipMarker);
-      }
-
       console.log("Starting to crop images...");
       croppedImagesArray = [];
       await cropAllImages();
       console.log("Done cropping. Pausing 250ms...");
       await new Promise(r => setTimeout(r, 250));
-      
-       // If the saved Marker appears in any Matrix tile, skip it and flip rules
-      const markerHit = await checkAndFlagMarkerImagesOnce(0.92);
-      if (markerHit) {
-        window.__labelMode = "ROSE";   // switch for the remainder of this run
-      }
-
       console.log("Now sending & matching...");
-
       await sendAndMatch();
     } catch (err) {
       console.error("Error in combined Crop + Send & Match:", err);
@@ -1793,6 +1780,89 @@ function openIframePrinterForListing(cellIndex) {
       });
     }
 
+    <!-- ===== Marker bootstrap & helpers (local-only) ===== -->
+    const MARKER_IMG_KEY = "markerImageData";      // dataURL of Marker.png (stored locally)
+    const MARKER_NAME_KEY = "markerImageName";     // always "Marker.png"
+    const LABEL_MODE_KEY  = "__labelPromptMode";   // "gold" | "rose"
+
+    // Optional: seed a default Marker image (data URL). Leave empty if you’ll drop Marker.png once.
+    const DEFAULT_MARKER_DATAURL = ""; // data:image/png;base64,AAAA...  (optional seed)
+
+    function ensureMarkerStored() {
+      if (!localStorage.getItem(MARKER_IMG_KEY) && DEFAULT_MARKER_DATAURL) {
+        localStorage.setItem(MARKER_IMG_KEY, DEFAULT_MARKER_DATAURL);
+        localStorage.setItem(MARKER_NAME_KEY, "Marker.png");
+        console.log("[Marker] Seeded default marker to localStorage.");
+      }
+    }
+
+    // Reset rule mode at the start of each analysis run
+    function resetLabelMode() {
+      localStorage.setItem(LABEL_MODE_KEY, "gold");
+      window.__markerSwitchTriggered = false;
+    }
+
+    // Switch mid-run → Rose mode for the rest of this batch
+    function switchToRoseMode() {
+      localStorage.setItem(LABEL_MODE_KEY, "rose");
+      window.__markerSwitchTriggered = true;
+    }
+
+    function getLabelMode() {
+      return localStorage.getItem(LABEL_MODE_KEY) || "gold";
+    }
+
+    // --- Simple similarity test vs stored marker (fast MSE on 64×64 gray) ---
+    let __markerVecCache = null;
+    async function imageDataUrlToVec64Gray(dataUrl) {
+      return new Promise(resolve => {
+        const s = 64, img = new Image();
+        img.onload = () => {
+          const c = document.createElement("canvas");
+          c.width = s; c.height = s;
+          const g = c.getContext("2d", { willReadFrequently: true });
+          g.drawImage(img, 0, 0, s, s);
+          const d = g.getImageData(0, 0, s, s).data;
+          const v = new Float32Array(s * s);
+          for (let i = 0, j = 0; i < d.length; i += 4, j++) {
+            v[j] = (0.299*d[i] + 0.587*d[i+1] + 0.114*d[i+2]) / 255;
+          }
+          resolve(v);
+        };
+        img.src = dataUrl;
+      });
+    }
+
+    async function getMarkerVec() {
+      if (__markerVecCache) return __markerVecCache;
+      const markerUrl = localStorage.getItem(MARKER_IMG_KEY);
+      if (!markerUrl) return null;
+      __markerVecCache = await imageDataUrlToVec64Gray(markerUrl);
+      return __markerVecCache;
+    }
+
+    function mseVec(a, b) {
+      if (!a || !b || a.length !== b.length) return Number.POSITIVE_INFINITY;
+      let s = 0;
+      for (let i = 0; i < a.length; i++) {
+        const d = a[i] - b[i];
+        s += d*d;
+      }
+      return s / a.length;
+    }
+
+    // Heuristic: small threshold detects the SAME tile image (not a general motif)
+    async function isMarkerImage(candidateDataUrl) {
+      const m = await getMarkerVec();
+      if (!m) return false;
+      const v = await imageDataUrlToVec64Gray(candidateDataUrl);
+      const err = mseVec(m, v);
+      return err < 0.006;  // tweak if you change image size/format
+    }
+
+    // Initialize (optional seed)
+    ensureMarkerStored();
+
     // --------------- Drag-and-drop logic ---------------    /* ⇢ anchor */
     const photoDragDropElem = document.getElementById("photoDragDrop");
 
@@ -1820,10 +1890,13 @@ function openIframePrinterForListing(cellIndex) {
       const file = files[i];
       const dataUrl = await readAsDataURL(file);
 
-      // NEW: if the user drops "Marker.png", save locally and do NOT queue it
-      if (/^marker\.png$/i.test(file.name)) {
-        await saveMarkerDataUrl(dataUrl);
-        continue;
+      // NEW: If user dropped the marker, store it locally for future runs and skip queueing.
+      if (file.name.toLowerCase() === "marker.png") {
+        localStorage.setItem(MARKER_IMG_KEY, dataUrl);
+        localStorage.setItem(MARKER_NAME_KEY, "Marker.png");
+        __markerVecCache = null; // clear cached vector so it recomputes
+        M.toast({ html: `Saved ${file.name} locally as analysis marker.` });
+        continue; // do not add to matrix queue
       }
 
       // store for later tiling + analysis
@@ -1855,6 +1928,7 @@ function openIframePrinterForListing(cellIndex) {
 
 
 async function startMatrixAnalysis() {
+  resetLabelMode();                 // Gold-first by default
   window.__matrixAnalysisRunning = true;
   updateSendMatchAvailability();
   const startBtn = document.getElementById("startMatrixAnalysisBtn");
@@ -1923,6 +1997,17 @@ async function analyzeAndStoreSubImages(imgObjs, title = "Analyzing Photos...") 
 
   for (let i = 0; i < toRun.length; i++) {
     const { origName, data } = toRun[i];
+    // NEW: marker-guard — skip this tile and switch modes if marker detected
+    if (await isMarkerImage(data)) {
+      if (!window.__markerSwitchTriggered) {
+        switchToRoseMode();
+        M.toast({ html: "Marker detected → switching HSV rule to RoseGold for remaining tiles." });
+      }
+      done++;
+      updateProgressModal(done, toRun.length);
+      continue;
+    }
+
     const res = await openAIAnalyzePhoto(data);
     const isCharm = (res.charmPresent || "").toLowerCase() === "yes";
 
@@ -2354,24 +2439,25 @@ async function openAIAnalyzePhoto(base64Image) {
 /* ───────────────────── PASS 2 : hue ⇒ fixed label ───────────────────── */
   const ctrlLabel = new AbortController();
   pendingFetchControllers.push(ctrlLabel);
-  const primaryLine =
-    (window.__labelMode === "ROSE")
-      ? `• HSV rule (primary): RoseGold if average H ≥ 30°.\n`
-      : `• HSV rule (primary): Gold if average H ≥ 30°.\n`;
+const mode = getLabelMode();  // "gold" | "rose"
+const primaryLine =
+  (mode === "rose")
+    ? `• HSV rule (primary): RoseGold if average H ≥ 30°.\n`
+    : `• HSV rule (primary): Gold if average H ≥ 30°.\n`;
 
-  const labelPrompt =
-    `You are classifying metal color from numeric stats. APPLY THESE CUT LINES STRICTLY:\n` +
-    primaryLine +
-    `• Silver: If H ≤ 25% .\n` +
-    `• Voting: each satisfied rule is one vote. If both rules agree, use that label.\n` +
-    `• Only return exactly one word: Gold, RoseGold, or Silver.\n\n` +
-    `NOTE ON INPUT STATS:\n` +
-    `• H is the AVERAGE of kept hue samples (circular mean in degrees).\n` +
-    `• S and V are MEDIANS of kept samples.\n\n` +
-    `INPUT\n` +
-    `hue="${hueText}"\n` +
-    `medianHSV: H=${hsvH} S=${hsvS} V=${hsvV}\n` +
-    `medianLab: L=${labL} a=${labA} b=${labB}`;
+const labelPrompt =
+  `You are classifying metal color from numeric stats. APPLY THESE CUT LINES STRICTLY:\n` +
+  primaryLine +
+  `• Silver: If H ≤ 25% .\n` +
+  `• Voting: each satisfied rule is one vote. If both rules agree, use that label.\n` +
+  `• Only return exactly one word: Gold, RoseGold, or Silver.\n\n` +
+  `NOTE ON INPUT STATS:\n` +
+  `• H is the AVERAGE of kept hue samples (circular mean in degrees).\n` +
+  `• S and V are MEDIANS of kept samples.\n\n` +
+  `INPUT\n` +
+  `hue="${hueText}"\n` +
+  `medianHSV: H=${hsvH} S=${hsvS} V=${hsvV}\n` +
+  `medianLab: L=${labL} a=${labA} b=${labB}`;
   const labelPayload = {
     model: "gpt-5",
     messages: [{ role: "user", content: labelPrompt }],
@@ -3354,71 +3440,6 @@ async function compareImages(userImage, croppedGridImage, cellIndex, userImageNa
   }
 }
 
-/* ========= Marker storage & detection (local-first) ========= */
-const MARKER_LS_KEY  = "localMarkerImage";
-const MARKER_HASH_KEY = "localMarkerHash";
-
-function getMarkerDataUrl() {
-  return localStorage.getItem(MARKER_LS_KEY) || "";
-}
-
-async function dataURLToUint8(dataUrl) {
-  const base64 = String(dataUrl).split(",")[1] || "";
-  const bin = atob(base64);
-  const bytes = new Uint8Array(bin.length);
-  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
-  return bytes;
-}
-
-async function sha256HexFromDataUrl(dataUrl) {
-  try {
-    const bytes = await dataURLToUint8(dataUrl);
-    const digest = await crypto.subtle.digest("SHA-256", bytes);
-    return Array.from(new Uint8Array(digest))
-      .map(b => b.toString(16).padStart(2,"0")).join("");
-  } catch { return ""; }
-}
-
-async function saveMarkerDataUrl(dataUrl) {
-  try {
-    localStorage.setItem(MARKER_LS_KEY, dataUrl);
-    const hash = await sha256HexFromDataUrl(dataUrl);
-    localStorage.setItem(MARKER_HASH_KEY, hash);
-    window.__markerHash = hash;
-    M.toast({ html: "Saved Marker.png locally." });
-  } catch (e) {
-    console.warn("Failed to save marker:", e);
-  }
-}
-
-/**
- * Compare each Matrix tile to the saved Marker once.
- * If any hit ≥ threshold, flag & skip that tile and return true (first-hit wins).
- * Uses your existing compareImages() OpenAI call.
- */
-async function checkAndFlagMarkerImagesOnce(threshold = 0.92) {
-  const marker = getMarkerDataUrl();
-  if (!marker || !Array.isArray(window.userImagesArray)) return false;
-  for (const u of window.userImagesArray) {
-    try {
-      const { score } = await compareImages(u.data, marker, -1, (u.name || "markerCheck"));
-      if (score >= threshold) {
-        u.skipMarker = true;                       // hard-skip this tile
-        M.toast({ html: `Marker found & skipped: ${u.name}` });
-        return true;                               // first match ⇒ switch rules
-      }
-    } catch (e) {
-      console.warn("Marker compare failed:", e);
-    }
-  }
-  return false;
-}
-
-// Global rule-set switch used by openAIAnalyzePhoto PASS-2
-// Resets to "GOLD" at the start of every Send & Match run; may flip to "ROSE"
-// if the Marker is detected in any Matrix tile during this run.
-window.__labelMode = "GOLD";
-
 /********************************************************
  * sendAndMatch with metal filter logic
  ********************************************************/
@@ -3730,7 +3751,6 @@ async function sendAndMatch() {
     const validUserImages = userImagesArray.filter(
       (u) =>
         !u.skipForCharm &&
-        !u.skipMarker &&                         // NEW: skip Marker tiles
         metalFilterOk(metalVal, u.name) &&
         passesTitlePrefilter(i, u.name) &&
         earringTitleGate(i, u.name)
