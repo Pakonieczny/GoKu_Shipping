@@ -2108,7 +2108,47 @@ function genId() {
     return 1 - (d - FULL) / (FEATHER - FULL);
   }
 
-  async function desaturateRedsByPercent(baseDataUrl, percent = -0.187) {
+  // Weight 0..1 for how “orange” a hue is, using the SAME feathering as Reds.
+  // Centered at 30° (Photoshop-like “Oranges”). FULL band = ±20°, feather to 0 by ±40°.
+  function orangeFeatherWeight(hDeg) {
+    const CENTER = 30, FULL = 20, FEATHER = 40;
+    // distance to 30° with wrap-around safety
+    const d = Math.min(
+      Math.abs(hDeg - CENTER),
+      Math.abs(hDeg - (CENTER + 360))
+    );
+    if (d <= FULL) return 1;
+    if (d >= FEATHER) return 0;
+    return 1 - (d - FULL) / (FEATHER - FULL);
+  }
+
+  // Photoshop-style Hue/Saturation (Oranges) → same math as Reds
+  async function desaturateOrangesByPercent(baseDataUrl, percent = -0.14) {
+    const img = await loadImage(baseDataUrl);
+    const w = img.naturalWidth, h = img.naturalHeight;
+    const canvas = document.createElement("canvas");
+    canvas.width = w; canvas.height = h;
+    const ctx = canvas.getContext("2d", { willReadFrequently: true });
+    ctx.drawImage(img, 0, 0, w, h);
+
+    const imgData = ctx.getImageData(0, 0, w, h);
+    const a = imgData.data;
+    for (let i = 0; i < a.length; i += 4) {
+      const r = a[i], g = a[i + 1], b = a[i + 2];
+      const { h: H, s: S, l: L } = rgbToHsl(r, g, b);
+      const hueDeg = (H * 360);
+      const wOrg = orangeFeatherWeight(hueDeg);
+      if (wOrg > 0) {
+        const sNew = Math.max(0, S - percent * wOrg);
+        const { r: R, g: G, b: B } = hslToRgb(H, sNew, L);
+        a[i] = R; a[i + 1] = G; a[i + 2] = B;
+      }
+    }
+    ctx.putImageData(imgData, 0, 0);
+    return canvas.toDataURL("image/jpeg", 0.92);
+  }
+
+  async function desaturateRedsByPercent(baseDataUrl, percent = -0.14) {
     const img = await loadImage(baseDataUrl);
     const w = img.naturalWidth, h = img.naturalHeight;
     const canvas = document.createElement("canvas");
@@ -2137,9 +2177,10 @@ function genId() {
  * extractSubImages144: always slice a composite into 10×14 = 140 tiles
  ********************************************************/
 async function extractSubImages144(baseDataUrl) {
-  // Apply Photoshop-style Reds desat BEFORE tiling
-  const adjustedUrl = await desaturateRedsByPercent(baseDataUrl, -0.187);
-  const img = await loadImage(adjustedUrl);
+// Apply Photoshop-style Reds then Oranges desat BEFORE tiling
+let adjustedUrl = await desaturateRedsByPercent(baseDataUrl, -0.14);
+adjustedUrl = await desaturateOrangesByPercent(adjustedUrl, -0.14);
+const img = await loadImage(adjustedUrl);
 
   // --- Dynamic per-column width factors (applied for every row) ---
   const COLS = (window.MATRIX_COLS || 10);
