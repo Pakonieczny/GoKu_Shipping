@@ -2108,7 +2108,7 @@ function genId() {
     return 1 - (d - FULL) / (FEATHER - FULL);
   }
 
-  async function desaturateRedsByPercent(baseDataUrl, percent = 0.5) {
+  async function desaturateRedsByPercent(baseDataUrl, percent = 0.05) {
     const img = await loadImage(baseDataUrl);
     const w = img.naturalWidth, h = img.naturalHeight;
     const canvas = document.createElement("canvas");
@@ -2138,7 +2138,7 @@ function genId() {
  ********************************************************/
 async function extractSubImages144(baseDataUrl) {
   // Apply Photoshop-style Reds desat BEFORE tiling
-  const adjustedUrl = await desaturateRedsByPercent(baseDataUrl, 0.5);
+  const adjustedUrl = await desaturateRedsByPercent(baseDataUrl, 0.05);
   const img = await loadImage(adjustedUrl);
 
   // --- Dynamic per-column width factors (applied for every row) ---
