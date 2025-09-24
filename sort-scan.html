@@ -214,7 +214,7 @@
     let lastScanned = "";
     let audioUnlocked = false; 
     let audioCtx = null;       
-    let scannedCodes = [];     // store up to 3 segments (each may contain many IDs)
+    let scannedCodes = [];     // store any number of segments (each may contain many IDs)
 
     const video        = document.getElementById("video");
     const canvas       = document.getElementById("captureCanvas");
@@ -279,11 +279,6 @@
       lastScanned = codeText;
 
       if (audioUnlocked) playBeep();
-
-      if (scannedCodes.length >= 3) {
-        M.toast({ html: "Max of 3 codes reached. Clear or Send first." });
-        return;
-      }
 
       // Decode payload to decimal CSV
       const parsed = parseScannedPayload(codeText);
