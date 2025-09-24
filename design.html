@@ -4399,6 +4399,28 @@ async function fetchEtsyOrder(orderNum){
   return await resp.json();            // { receipt, transactions, … }
 }
 
+  /* Fetch a reliable SKU for a single order item */
+  async function fetchItemSKU(item){
+    try{
+      if (item?.sku && String(item.sku).trim()) return String(item.sku).trim();
+
+      const orderId = String(item?.receipt_id || item?.orderNumber || "");
+      if (!orderId) return "";
+
+      const resp = await apiFetch(`/etsyOrderProxy?orderId=${encodeURIComponent(orderId)}`);
+      if (!resp.ok) return "";
+
+      const data = await resp.json();
+      const tx = (data.transactions || []).find(t =>
+        String(t.transaction_id) === String(item.transaction_id)
+      );
+
+      return String(tx?.sku || tx?.product_data?.sku || "").trim();
+    }catch(_){
+      return "";
+    }
+  }
+
 /********************************************************
  * loadBatchEtsyOrders, fetchListingImages, getLocalImageData
  ********************************************************/
@@ -4951,7 +4973,7 @@ function reflowGrid(){
 
     });  /* ─── END METAL FILTER INITIALISER ─── */
 
-    function openListingModal(cellIdx){
+    async function openListingModal(cellIdx){
       const item = window.cachedOrderItems[cellIdx];
       if(!item){ return; }
 
@@ -4960,6 +4982,38 @@ function reflowGrid(){
       "Order #" + (item.receipt_id || item.orderNumber || "N/A");
 
       document.getElementById("modalListingImg").src = item.image;
+
+      /* ▼ SKU row: set loading state, fetch, then enable Copy */
+      const skuTextEl  = document.getElementById("modalSkuText");
+      const skuCopyBtn = document.getElementById("modalSkuCopyBtn");
+
+      if (skuTextEl) skuTextEl.textContent = "SKU: loading…";
+      if (skuCopyBtn) skuCopyBtn.onclick = null;
+
+      try{
+        const fetched = await fetchItemSKU(item);
+        const finalSku = fetched || item.sku || "N/A";
+        if (skuTextEl) skuTextEl.textContent = "SKU: " + finalSku;
+        if (skuCopyBtn){
+          skuCopyBtn.onclick = async () => {
+            try{
+              await navigator.clipboard.writeText(finalSku);
+              M.toast({ html: "SKU copied" });
+            }catch(err){
+              // Fallback for older browsers
+              const tmp = document.createElement("textarea");
+              tmp.value = finalSku;
+              document.body.appendChild(tmp);
+              tmp.select();
+              document.execCommand("copy");
+              document.body.removeChild(tmp);
+              M.toast({ html: "SKU copied" });
+            }
+          };
+        }
+      }catch(_){
+        if (skuTextEl) skuTextEl.textContent = "SKU: N/A";
+      }
 
       /* 2. notes  */
       const lines = [];
@@ -5066,6 +5120,12 @@ function reflowGrid(){
     <!-- ▲▲ NEW COMPLETE-CHECKBOX + TITLE ▲▲ -->
 
     <h5 id="modalListingTitle"></h5>
+    <!-- ▼ SKU row ▼ -->
+    <div id="modalSkuRow" class="modal-sku-row" style="display:flex;align-items:center;gap:10px;margin:6px 0 12px;">
+      <span id="modalSkuText" class="sku-text" style="font-weight:500;">SKU: —</span>
+      <a id="modalSkuCopyBtn" href="#!" class="btn-small">Copy</a>
+    </div>
+    <!-- ▲ SKU row ▲ -->
 
     <div class="modal-flex-row">
       <img id="modalListingImg" />
