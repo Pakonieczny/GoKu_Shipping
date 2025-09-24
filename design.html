@@ -443,16 +443,19 @@
       align-items: center;
     }
 
-    /* QR Preview Modal — fixed size & centered */
     #qrPreviewModal.modal {
       position: fixed !important;
       top: 20% !important;
       left: 20% !important;
       transform: translate(-20%, -20%) !important;
-      width: 700px !important;    /* set your preferred width */
-      height: 330px !important;   /* set your preferred height */
-      max-height: none !important;
-      overflow-y: auto !important; /* scroll content if it overflows */
+      width: 860px !important;        /* a bit wider to fit more tiles per row */
+      height: auto !important;        /* allow content to define height */
+      max-height: 80vh !important;    /* cap to viewport for large batches */
+      overflow: hidden !important;    /* let .modal-content handle scrolling */
+    }
+    #qrPreviewModal .modal-content{
+      max-height: calc(80vh - 96px) !important; /* header + footer allowance */
+      overflow-y: auto !important;              /* smooth scroll for many QR tiles */
     }
 
   </style>
@@ -2554,50 +2557,74 @@ const selectRow = async (row) => {
      });
      return `B36|${metal}|`+b36.join(".");
    }
-     function showQrPreviewModal(lists){
-     const skipped = window._qrSkippedOrders || [];   // ← new
-     const grid=document.getElementById("qrPreviewGrid"); grid.innerHTML="";
-     Object.entries(lists).forEach(([m,arr])=>{
-       if(!arr.length) return;
-       const holder=document.createElement("div");
-       holder.style.cssText="width:120px;text-align:center";
-       holder.innerHTML=`<div id="qr_${m}"></div>
-         <div style="font-size:.8em;margin-top:4px;">${m.toUpperCase()} (${arr.length})</div>`;
-       grid.appendChild(holder);
-       new QRCode(holder.firstElementChild,{
-         text:encodeOrderList(arr,m), width:110, height:110,
-         correctLevel:QRCode.CorrectLevel.H
-       });
-     });
-     window._pendingMetalLists=lists;
 
-   /* ⏩  display skipped receipts */
-   const skipBox = document.getElementById("qrSkippedContainer");
-   if(skipBox){
-     if(skipped.length){
-       skipBox.innerHTML =
-         `<b>Skipped&nbsp;orders:</b> ${skipped.join(", ")}`;
-       skipBox.style.display = "";
-     }else{
-       skipBox.innerHTML = "";
-       skipBox.style.display = "none";
-     }
-   }
+    // helper: split an array into chunks (default 50)
+    function chunk(arr, size = 50){
+      const out = [];
+      for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size));
+      return out;
+    }
 
-     (M.Modal.getInstance(document.getElementById("qrPreviewModal"))
+    function showQrPreviewModal(lists){
+      const skipped = window._qrSkippedOrders || [];
+      const grid = document.getElementById("qrPreviewGrid");
+      grid.innerHTML = "";
+
+      Object.entries(lists).forEach(([m, arr]) => {
+        if (!arr.length) return;
+
+        const pieces = chunk(arr, 50);                 // ← SPLIT into ≤50 each
+        pieces.forEach((slice, idx) => {
+          const holder = document.createElement("div");
+          holder.style.cssText = "width:120px;text-align:center";
+
+          // Label shows per-slice count, total, and slice index if chunked
+          const part = pieces.length > 1 ? ` [${idx + 1}/${pieces.length}]` : "";
+          const total = arr.length > 50 ? ` of ${arr.length}` : "";
+          const label = `${m.toUpperCase()} (${slice.length}${total})${part}`;
+
+          holder.innerHTML = `
+            <div id="qr_${m}_${idx}"></div>
+            <div style="font-size:.8em;margin-top:4px;">${label}</div>`;
+          grid.appendChild(holder);
+
+          new QRCode(holder.firstElementChild, {
+            text: encodeOrderList(slice, m),           // ← PER-SLICE payload
+            width: 110,
+            height: 110,
+            correctLevel: QRCode.CorrectLevel.H
+          });
+        });
+      });
+
+      // Keep the original lists object for printing/completion logic
+      window._pendingMetalLists = lists;
+
+      /* ⏩  display skipped receipts */
+      const skipBox = document.getElementById("qrSkippedContainer");
+      if (skipBox) {
+        if (skipped.length) {
+          skipBox.innerHTML = `<b>Skipped&nbsp;orders:</b> ${skipped.join(", ")}`;
+          skipBox.style.display = "";
+        } else {
+          skipBox.innerHTML = "";
+          skipBox.style.display = "none";
+        }
+      }
+
+      (M.Modal.getInstance(document.getElementById("qrPreviewModal"))
         || M.Modal.init(document.getElementById("qrPreviewModal"))).open();
 
-       /* 🔄  (re)wire Print Labels every time the modal is built */
-       const btn = document.getElementById("qrPreviewPrintBtn");
-       if (btn && !btn.dataset.wired) {
-         btn.dataset.wired = "1";
-         btn.addEventListener("click", e => {
-           e.preventDefault();            // keep the modal steady
-           proceedToPrint(window._pendingMetalLists);
-         });
-       }
-
-   }
+      /* 🔄  (re)wire Print Labels every time the modal is built */
+      const btn = document.getElementById("qrPreviewPrintBtn");
+      if (btn && !btn.dataset.wired) {
+        btn.dataset.wired = "1";
+        btn.addEventListener("click", e => {
+          e.preventDefault();            // keep the modal steady
+          proceedToPrint(window._pendingMetalLists);
+        });
+      }
+    }
    async function proceedToPrint(lists){
      /* ── 1. bail early if there is truly nothing to print ── */
      if(!lists || !Object.values(lists).some(arr=>arr.length)){
