@@ -101,24 +101,38 @@
       align-items:flex-start;
     }
 
-/* column wrapper – sits 20 px right of the image */
-.modal-notes-col{
-  margin-left:20px;
-  display:flex;
-  flex-direction:column;
-}
+    /* column wrapper – sits 20 px right of the image */
+    .modal-notes-col{
+      margin-left:20px;
+      display:flex;
+      flex-direction:column;
+    }
 
-/* remove old left-margin so notes align with input */
-.modal-notes-col #modalListingNotes{ margin:0; }
+    /* remove old left-margin so notes align with input */
+    .modal-notes-col #modalListingNotes{ margin:0; }
 
-/* staff-note field */
-#modalStaffNote{
-  width:300px;
-  height:35px;
-  margin-top:40px;
-  padding:4px;
-  border:1px solid #999;
-}
+    /* Listing notes: +50% width (match staff note), 2× taller visual area, wrap text */
+    #modalListingNotes{
+      width:450px;                 /* give it the same wider line length */
+      min-height:140px;            /* generous vertical space (~2× typical) */
+      padding:6px;
+      border:1px solid #999;       /* match visual affordance of inputs */
+      box-sizing:border-box;
+      white-space:pre-wrap;        /* preserve \n but wrap long lines */
+      overflow-wrap:anywhere;      /* break long tokens if needed */
+    }
+
+    /* Staff note: +50% width, 2× height, wrap text */
+    #modalStaffNote{
+      width:450px;          /* was 300px */
+      height:70px;          /* was 35px  */
+      margin-top:40px;
+      padding:6px;
+      border:1px solid #999;
+      white-space:pre-wrap;           /* wrap long lines */
+      overflow-wrap:anywhere;         /* break long tokens (URLs etc.) */
+      line-height:1.25;
+    }
 
     /* fixed thumbnail size, border stays */
     #modalListingImg{
@@ -420,6 +434,20 @@
       font-size:0.9em;
       font-weight:600;
       user-select:none;
+    }
+
+    /* === listingModal: make SKU text + Copy button match the Order # (h5) size === */
+    #listingModal .modal-sku-row .sku-text{
+      font-size: 1.64rem;           /* Materialize h5 default */
+    }
+
+    #listingModal #modalSkuCopyBtn{
+      font-size: 1.64rem !important; /* match the SKU text */
+      height: auto !important;       /* let size follow the font */
+      line-height: 1.2 !important;   /* comfy click target */
+      padding: 4px 12px !important;  /* subtle breathing room */
+      display: inline-flex;          /* nice vertical alignment */
+      align-items: center;
     }
 
     /* QR Preview Modal — fixed size & centered */
@@ -5120,12 +5148,10 @@ function reflowGrid(){
     <!-- ▲▲ NEW COMPLETE-CHECKBOX + TITLE ▲▲ -->
 
     <h5 id="modalListingTitle"></h5>
-    <!-- ▼ SKU row ▼ -->
     <div id="modalSkuRow" class="modal-sku-row" style="display:flex;align-items:center;gap:10px;margin:6px 0 12px;">
       <span id="modalSkuText" class="sku-text" style="font-weight:500;">SKU: —</span>
       <a id="modalSkuCopyBtn" href="#!" class="btn-small">Copy</a>
     </div>
-    <!-- ▲ SKU row ▲ -->
 
     <div class="modal-flex-row">
       <img id="modalListingImg" />
@@ -5134,7 +5160,7 @@ function reflowGrid(){
       <div class="modal-notes-col">
         <pre id="modalListingNotes"></pre>
 
-        <input id="modalStaffNote"
+        <textarea id="modalStaffNote" placeholder="Staff Note"></textarea>
                type="text"
                placeholder="Staff Note">
       </div>
