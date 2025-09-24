@@ -128,14 +128,21 @@
       border:1px solid #ccc;
     }
 
-    /* message box sits 20 px to the right, grows with content */
     #modalListingNotes{
-      white-space:pre-wrap;
-      margin:0 0 0 20px;     /* ↑ left margin = 20 px */
-      background:#f5f5f5;
+      display:block;
+      width:300px;              /* initial; user can drag to resize */
+      height:120px;             /* initial; user can drag to resize */
+      margin:0 0 0 20px;
       padding:8px;
+      background:#f5f5f5;
+      border:1px solid #ccc;
       border-radius:4px;
-      flex:1;
+      resize: both;             /* ← enable corner dragging horizontally & vertically */
+      overflow: auto;           /* scrollbars appear when needed */
+      line-height:1.2;
+      font-family: inherit;
+      font-size: .95em;
+      /* intentionally no flex:1 so manual width/height changes persist */
     }
 
     /* --- Container that holds the stacked “newOrder” boxes --- */
@@ -424,13 +431,13 @@
 
     /* === listingModal: make SKU text + Copy button match the Order # (h5) size === */
     #listingModal .modal-sku-row .sku-text{
-      font-size: 1.64rem;           /* Materialize h5 default */
+      font-size: 1.2rem;           /* Materialize h5 default */
     }
 
     #listingModal #modalSkuCopyBtn{
-      font-size: 1.0rem !important; /* match the SKU text */
+      font-size: 1.1rem !important; /* match the SKU text */
       height: auto !important;       /* let size follow the font */
-      line-height: 1.0 !important;   /* comfy click target */
+      line-height: 1.2 !important;   /* comfy click target */
       padding: 4px 12px !important;  /* subtle breathing room */
       display: inline-flex;          /* nice vertical alignment */
       align-items: center;
@@ -5037,7 +5044,7 @@ function reflowGrid(){
       if(item.message_from_buyer){
         lines.push("Buyer Message:\n" + item.message_from_buyer.trim());
       }
-      document.getElementById("modalListingNotes").textContent =
+      document.getElementById("modalListingNotes").value =
           lines.length ? lines.join("\n\n") : "— No notes —";
 
       /* ----- build the 4 read-only fields ----- */
@@ -5144,11 +5151,10 @@ function reflowGrid(){
 
       <!-- notes + staff input stacked -->
       <div class="modal-notes-col">
-        <pre id="modalListingNotes"></pre>
+        <textarea id="modalListingNotes" readonly></textarea>
 
         <textarea id="modalStaffNote" placeholder="Staff Note"></textarea>
-               type="text"
-               placeholder="Staff Note">
+
       </div>
     </div>
 
