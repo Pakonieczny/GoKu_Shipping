@@ -2625,7 +2625,53 @@ const selectRow = async (row) => {
         });
       }
     }
-   async function proceedToPrint(lists){
+    /* ────────────────────────────────────────────────────────────────
+     * NEW: Mark Brites Messages "DESIGNED :)" for a list of orders
+     * Mirrors weld-1 flow (Netlify function), with Firestore fallback.
+     * ──────────────────────────────────────────────────────────────── */
+    async function markBritesDesigned(orderIds){
+      const ids = Array.from(new Set((orderIds || []).map(String)));
+      if (!ids.length) return;
+
+      const staff = (localStorage.getItem("employee_name") || "Design").trim();
+
+      // small batches to be gentle on Netlify/function cold starts
+      const chunk = (arr, n=10) => {
+        const out = []; for (let i=0;i<arr.length;i+=n) out.push(arr.slice(i,i+n)); return out;
+      };
+      for (const group of chunk(ids, 10)){
+        await Promise.all(group.map(async (rid) => {
+          try {
+            const resp = await fetch(`${functionsBaseUrl}/firebaseOrders`, {
+              method : "POST",
+              headers: { "Content-Type": "application/json" },
+              body   : JSON.stringify({
+                orderNumber : rid,
+                newMessage  : "DESIGNED :)",
+                employeeName: staff
+              })
+            });
+            if (!resp.ok) throw new Error("HTTP " + resp.status);
+          } catch (err) {
+            // Fallback → direct Firestore upsert + message
+            try {
+              await db.collection("Brites_Orders").doc(String(rid)).set({}, { merge:true });
+              await db.collection("Brites_Orders").doc(String(rid)).collection("messages").add({
+                text      : "DESIGNED :)",
+                senderName: staff,
+                senderRole: "staff",
+                timestamp : firebase.firestore.FieldValue.serverTimestamp()
+              });
+            } catch (ee) {
+              console.warn("markBritesDesigned fallback failed:", ee);
+            }
+          }
+        }));
+      }
+    }
+
+    async function proceedToPrint(lists){
+
      /* ── 1. bail early if there is truly nothing to print ── */
      if(!lists || !Object.values(lists).some(arr=>arr.length)){
        M.toast({ html:"No order labels to print" });
@@ -2671,6 +2717,10 @@ const selectRow = async (row) => {
         updateCounters();
         applyMetalFilter();
         M.toast({ html: `${printedIDs.length} order${printedIDs.length !== 1 ? "s" : ""} completed` });
+
+        // NEW: stamp Brites Messages before the print dialog
+        try { await markBritesDesigned(printedIDs); }
+        catch (e) { console.warn("markBritesDesigned failed:", e); }
       }
  
      printDialogOpened = true;                // mark pending-print
