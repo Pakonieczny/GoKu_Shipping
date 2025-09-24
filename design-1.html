@@ -128,14 +128,21 @@
       border:1px solid #ccc;
     }
 
-    /* message box sits 20 px to the right, grows with content */
     #modalListingNotes{
-      white-space:pre-wrap;
-      margin:0 0 0 20px;     /* ↑ left margin = 20 px */
-      background:#f5f5f5;
+      display:block;
+      width:300px;              /* initial; user can drag to resize */
+      height:120px;             /* initial; user can drag to resize */
+      margin:0 0 0 20px;
       padding:8px;
+      background:#f5f5f5;
+      border:1px solid #ccc;
       border-radius:4px;
-      flex:1;
+      resize: both;             /* ← enable corner dragging horizontally & vertically */
+      overflow: auto;           /* scrollbars appear when needed */
+      line-height:1.2;
+      font-family: inherit;
+      font-size: .95em;
+      /* intentionally no flex:1 so manual width/height changes persist */
     }
 
     /* --- Container that holds the stacked “newOrder” boxes --- */
@@ -422,16 +429,33 @@
       user-select:none;
     }
 
-    /* QR Preview Modal — fixed size & centered */
+    /* === listingModal: make SKU text + Copy button match the Order # (h5) size === */
+    #listingModal .modal-sku-row .sku-text{
+      font-size: 1.2rem;           /* Materialize h5 default */
+    }
+
+    #listingModal #modalSkuCopyBtn{
+      font-size: 1.1rem !important; /* match the SKU text */
+      height: auto !important;       /* let size follow the font */
+      line-height: 1.2 !important;   /* comfy click target */
+      padding: 4px 12px !important;  /* subtle breathing room */
+      display: inline-flex;          /* nice vertical alignment */
+      align-items: center;
+    }
+
     #qrPreviewModal.modal {
       position: fixed !important;
       top: 20% !important;
       left: 20% !important;
       transform: translate(-20%, -20%) !important;
-      width: 700px !important;    /* set your preferred width */
-      height: 330px !important;   /* set your preferred height */
-      max-height: none !important;
-      overflow-y: auto !important; /* scroll content if it overflows */
+      width: 860px !important;        /* a bit wider to fit more tiles per row */
+      height: auto !important;        /* allow content to define height */
+      max-height: 80vh !important;    /* cap to viewport for large batches */
+      overflow: hidden !important;    /* let .modal-content handle scrolling */
+    }
+    #qrPreviewModal .modal-content{
+      max-height: calc(80vh - 96px) !important; /* header + footer allowance */
+      overflow-y: auto !important;              /* smooth scroll for many QR tiles */
     }
 
   </style>
@@ -482,7 +506,8 @@
 <!-- 🆕 Etsy request counters -->
 <div id="etsyCounters">
   <div class="row"><span class="label">Etsy Max QPS:</span><span id="etsyMaxQps" class="value">0</span></div>
-  <div class="row"><span class="label">Etsy Total:</span><span id="etsyTotal" class="value">0</span></div>
+  <div class="row"><span class="label">Etsy Total:</span><span id="etsyTotal"  class="value">0</span></div>
+  <!-- keep this ultra-minimal & temporary -->
 </div>
 
 <!-- Page-jump buttons will appear here -->
@@ -599,7 +624,8 @@ const functionsBaseUrl = window.location.origin + "/.netlify/functions";
     if (isEtsyCall(input)) mark();
     return origFetch.apply(this, arguments);
   };
-})();
+})();  
+
 const selectedOrders = new Set();      // receipt_id strings
 const orderCache     = {};             // receipt_id → transactions[]
 const gridElements   = new Map();      // transaction_id → wrapper DOM
@@ -653,6 +679,24 @@ function makeQueue(max = 4) {
 // Limit concurrent image calls; tune 3–6 based on your quota.
 const runImageTask = makeQueue(3);
 
+// ───────────────── Etsy request pacing (one start every 225 ms) ─────────────────
+function makeSpacingQueue(spacingMs = 250) {
+  let lastStart = 0;
+  let chain = Promise.resolve();
+  return (fn) => {
+    chain = chain.then(async () => {
+      const wait = Math.max(0, spacingMs - (Date.now() - lastStart));
+      if (wait) await new Promise(r => setTimeout(r, wait));
+      lastStart = Date.now();
+      return fn();
+    });
+    return chain;
+  };
+}
+// Group all Etsy-facing proxy routes behind the same pacing queue
+const isEtsyPath  = (p) => /^\/(etsy|listOpenOrders|etsyImages)/i.test(p);
+const runEtsyTask = makeSpacingQueue(250);
+
   // ---- Global image helper (single definition, shared everywhere) ----
   // Uses your Netlify imageProxy to avoid CORS and returns a data: URL.
   // If another copy already defined it, we reuse that.
@@ -679,20 +723,23 @@ async function apiFetch(path, init = {}) {
 
   // 2) attempt with current token
   let token = localStorage.getItem(TOKEN_KEYS.access) || "";
-  let resp  = await fetch(`${functionsBaseUrl}${path}`, {
+  const doFetch = () => fetch(`${functionsBaseUrl}${path}`, {
     ...init,
     headers: { ...(init.headers || {}), "access-token": token }
   });
+  // 🚦 pace Etsy endpoints at ~4.44 req/s (225 ms between starts)
+  let resp  = isEtsyPath(path)
+    ? await runEtsyTask(() => doFetch())
+    : await doFetch();
 
   // 3) on 401 → single-flight refresh, then retry once
   if (resp.status === 401) {
     try {
       await refreshAccessToken();
       token = localStorage.getItem(TOKEN_KEYS.access) || "";
-      resp  = await fetch(`${functionsBaseUrl}${path}`, {
-        ...init,
-        headers: { ...(init.headers || {}), "access-token": token }
-      });
+      resp  = isEtsyPath(path)
+        ? await runEtsyTask(() => doFetch())
+        : await doFetch();
     } catch (_) {
       // refresh failed → fall through
     }
@@ -710,12 +757,11 @@ async function apiFetch(path, init = {}) {
     while (attempt < 4 && resp.status === 429) {
       const retryAfter = resp.headers?.get?.("retry-after");
       const raMs = Number.isFinite(Number(retryAfter)) ? Number(retryAfter) * 1000 : 0;
-      const backoff = Math.max(raMs, 300 * Math.pow(2, attempt)); // 300, 600, 1200, 2400...
+      const backoff = Math.max(raMs, 500 * Math.pow(2, attempt)); // 500, 1000, 1500, 2000...
       await new Promise(r => setTimeout(r, backoff));
-      resp = await fetch(`${functionsBaseUrl}${path}`, {
-        ...init,
-        headers: { ...(init.headers || {}), "access-token": token }
-      });
+      resp = isEtsyPath(path)
+        ? await runEtsyTask(() => doFetch())  // retry still respects pacing
+        : await doFetch();
       attempt++;
     }
   }
@@ -741,8 +787,8 @@ async function fetchReceiptRobust(rid, { signal, retries = 2 } = {}){
       // Abort means caller cancelled → bubble out
       if (e?.name === "AbortError") throw e;
       lastErr = e;
-      // small backoff: 150ms, 300ms
-      await new Promise(r => setTimeout(r, 150 * Math.pow(2, attempt)));
+      // small backoff: 250ms, 500ms
+      await new Promise(r => setTimeout(r, 250 * Math.pow(2, attempt)));
     }
     attempt++;
   }
@@ -1013,15 +1059,15 @@ function abortAllUpdateWork(){
  * Firebase Initialization (REQUIRED)
  ********************************************************/
 const firebaseConfig = {
-  apiKey: "YourApiKeyHere",
-  authDomain: "YourAuthDomainHere",
+  apiKey: "AIzaSyBXhQLsYRa4i0bX1TPTRiElF9Zjy5vSHlA",
+  authDomain: "gokudatabase.firebaseapp.com",
   projectId: "gokudatabase",
   storageBucket: "gokudatabase.firebasestorage.app",
   messagingSenderId: "1078662308113",
   appId: "1:1078662308113:web:41df0e5d229ff2af7a6cb0"
 };
 
-firebase.initializeApp(firebaseConfig);
+if (!firebase.apps?.length) firebase.initializeApp(firebaseConfig);
 const db = firebase.firestore();
 
 // Ensure the client is authenticated (anon is fine for rules below)
@@ -1914,7 +1960,7 @@ const selectRow = async (row) => {
     if(!rid) return;                      // safety
 
     /* — mark as completed — */
-    completedOrders.add(rid);             // global Set   [oai_citation:2‡design.html](file-service://file-UD87qPNcvFGdsBetdyBDoA)
+    completedOrders.add(rid);             // global Set   [oai_citation:2‡design-1.html](file-service://file-UD87qPNcvFGdsBetdyBDoA)
     selectedOrders.delete(rid);
 
     /* remove/hide UI elements */
@@ -2511,51 +2557,121 @@ const selectRow = async (row) => {
      });
      return `B36|${metal}|`+b36.join(".");
    }
-     function showQrPreviewModal(lists){
-     const skipped = window._qrSkippedOrders || [];   // ← new
-     const grid=document.getElementById("qrPreviewGrid"); grid.innerHTML="";
-     Object.entries(lists).forEach(([m,arr])=>{
-       if(!arr.length) return;
-       const holder=document.createElement("div");
-       holder.style.cssText="width:120px;text-align:center";
-       holder.innerHTML=`<div id="qr_${m}"></div>
-         <div style="font-size:.8em;margin-top:4px;">${m.toUpperCase()} (${arr.length})</div>`;
-       grid.appendChild(holder);
-       new QRCode(holder.firstElementChild,{
-         text:encodeOrderList(arr,m), width:110, height:110,
-         correctLevel:QRCode.CorrectLevel.H
-       });
-     });
-     window._pendingMetalLists=lists;
 
-   /* ⏩  display skipped receipts */
-   const skipBox = document.getElementById("qrSkippedContainer");
-   if(skipBox){
-     if(skipped.length){
-       skipBox.innerHTML =
-         `<b>Skipped&nbsp;orders:</b> ${skipped.join(", ")}`;
-       skipBox.style.display = "";
-     }else{
-       skipBox.innerHTML = "";
-       skipBox.style.display = "none";
-     }
-   }
+    // helper: split an array into chunks (default 50)
+    function chunk(arr, size = 50){
+      const out = [];
+      for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size));
+      return out;
+    }
 
-     (M.Modal.getInstance(document.getElementById("qrPreviewModal"))
+    function showQrPreviewModal(lists){
+      const skipped = window._qrSkippedOrders || [];
+      const grid = document.getElementById("qrPreviewGrid");
+      grid.innerHTML = "";
+
+      Object.entries(lists).forEach(([m, arr]) => {
+        if (!arr.length) return;
+
+        const pieces = chunk(arr, 50);                 // ← SPLIT into ≤50 each
+        pieces.forEach((slice, idx) => {
+          const holder = document.createElement("div");
+          holder.style.cssText = "width:120px;text-align:center";
+
+          // Label shows per-slice count, total, and slice index if chunked
+          const part = pieces.length > 1 ? ` [${idx + 1}/${pieces.length}]` : "";
+          const total = arr.length > 50 ? ` of ${arr.length}` : "";
+          const label = `${m.toUpperCase()} (${slice.length}${total})${part}`;
+
+          holder.innerHTML = `
+            <div id="qr_${m}_${idx}"></div>
+            <div style="font-size:.8em;margin-top:4px;">${label}</div>`;
+          grid.appendChild(holder);
+
+          new QRCode(holder.firstElementChild, {
+            text: encodeOrderList(slice, m),           // ← PER-SLICE payload
+            width: 110,
+            height: 110,
+            correctLevel: QRCode.CorrectLevel.H
+          });
+        });
+      });
+
+      // Keep the original lists object for printing/completion logic
+      window._pendingMetalLists = lists;
+
+      /* ⏩  display skipped receipts */
+      const skipBox = document.getElementById("qrSkippedContainer");
+      if (skipBox) {
+        if (skipped.length) {
+          skipBox.innerHTML = `<b>Skipped&nbsp;orders:</b> ${skipped.join(", ")}`;
+          skipBox.style.display = "";
+        } else {
+          skipBox.innerHTML = "";
+          skipBox.style.display = "none";
+        }
+      }
+
+      (M.Modal.getInstance(document.getElementById("qrPreviewModal"))
         || M.Modal.init(document.getElementById("qrPreviewModal"))).open();
 
-       /* 🔄  (re)wire Print Labels every time the modal is built */
-       const btn = document.getElementById("qrPreviewPrintBtn");
-       if (btn && !btn.dataset.wired) {
-         btn.dataset.wired = "1";
-         btn.addEventListener("click", e => {
-           e.preventDefault();            // keep the modal steady
-           proceedToPrint(window._pendingMetalLists);
-         });
-       }
+      /* 🔄  (re)wire Print Labels every time the modal is built */
+      const btn = document.getElementById("qrPreviewPrintBtn");
+      if (btn && !btn.dataset.wired) {
+        btn.dataset.wired = "1";
+        btn.addEventListener("click", e => {
+          e.preventDefault();            // keep the modal steady
+          proceedToPrint(window._pendingMetalLists);
+        });
+      }
+    }
+    /* ────────────────────────────────────────────────────────────────
+     * NEW: Mark Brites Messages "DESIGNED :)" for a list of orders
+     * Mirrors weld-1 flow (Netlify function), with Firestore fallback.
+     * ──────────────────────────────────────────────────────────────── */
+    async function markBritesDesigned(orderIds){
+      const ids = Array.from(new Set((orderIds || []).map(String)));
+      if (!ids.length) return;
 
-   }
-   async function proceedToPrint(lists){
+      const staff = (localStorage.getItem("employee_name") || "Design").trim();
+
+      // small batches to be gentle on Netlify/function cold starts
+      const chunk = (arr, n=10) => {
+        const out = []; for (let i=0;i<arr.length;i+=n) out.push(arr.slice(i,i+n)); return out;
+      };
+      for (const group of chunk(ids, 10)){
+        await Promise.all(group.map(async (rid) => {
+          try {
+            const resp = await fetch(`${functionsBaseUrl}/firebaseOrders`, {
+              method : "POST",
+              headers: { "Content-Type": "application/json" },
+              body   : JSON.stringify({
+                orderNumber : rid,
+                newMessage  : "DESIGNED :)",
+                employeeName: staff
+              })
+            });
+            if (!resp.ok) throw new Error("HTTP " + resp.status);
+          } catch (err) {
+            // Fallback → direct Firestore upsert + message
+            try {
+              await db.collection("Brites_Orders").doc(String(rid)).set({}, { merge:true });
+              await db.collection("Brites_Orders").doc(String(rid)).collection("messages").add({
+                text      : "DESIGNED :)",
+                senderName: staff,
+                senderRole: "staff",
+                timestamp : firebase.firestore.FieldValue.serverTimestamp()
+              });
+            } catch (ee) {
+              console.warn("markBritesDesigned fallback failed:", ee);
+            }
+          }
+        }));
+      }
+    }
+
+    async function proceedToPrint(lists){
+
      /* ── 1. bail early if there is truly nothing to print ── */
      if(!lists || !Object.values(lists).some(arr=>arr.length)){
        M.toast({ html:"No order labels to print" });
@@ -2601,17 +2717,42 @@ const selectRow = async (row) => {
         updateCounters();
         applyMetalFilter();
         M.toast({ html: `${printedIDs.length} order${printedIDs.length !== 1 ? "s" : ""} completed` });
+
+        // NEW: stamp Brites Messages before the print dialog
+        try { await markBritesDesigned(printedIDs); }
+        catch (e) { console.warn("markBritesDesigned failed:", e); }
       }
  
      printDialogOpened = true;                // mark pending-print
-     localStorage.setItem("metalOrderLists", JSON.stringify(lists));
+     // Build chunked jobs so the print page renders split QRs (≤50 per)
+     const __chunk = (arr, size = 50) => {
+       const out = [];
+       for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size));
+       return out;
+     };
+     const metalOrderJobs = [];
+     Object.entries(lists).forEach(([metal, ids]) => {
+       if (!Array.isArray(ids) || !ids.length) return;
+       const parts = __chunk(ids, 50);
+       parts.forEach((slice, idx) => {
+         metalOrderJobs.push({
+           metal,
+           ids: slice,
+           partIndex: idx + 1,
+           partTotal: parts.length,
+           total: ids.length
+         });
+       });
+     });
+     localStorage.setItem("metalOrderJobs", JSON.stringify(metalOrderJobs)); // new
+     localStorage.setItem("metalOrderLists", JSON.stringify(lists));         // back-compat
  
      /* ── 2. spawn hidden iframe *then* open system print dialog ── */
      const f = document.createElement("iframe");
      f.style.cssText="position:fixed;visibility:hidden;right:9999px;width:1px;height:1px;";
      f.src = "design-print-1.html";
 
-     // print is now triggered inside design-print.html
+     // print is now triggered inside design-print-1.html
      document.body.appendChild(f);
    }
    document.addEventListener("DOMContentLoaded",()=>{
@@ -3986,7 +4127,9 @@ async function buildNewOrderList(offset = 0) {
   /* ❷ slice requested page – skip receipts already completed */
   const filtered     = allOpenReceipts.filter(r => !completedOrders.has(String(r.receipt_id)));
   const page         = filtered.slice(offset, offset + 100);
-  window._lastDisplayReceipts = page;            // expose current page
+  // expose the current page using the exact name the console hint expects
+  const displayReceipts = page;
+  window._lastDisplayReceipts = displayReceipts;
 
   const totalPages   = Math.ceil(filtered.length / 100);
   const currentPage  = Math.floor(offset / 100) + 1;
@@ -4375,6 +4518,28 @@ async function fetchEtsyOrder(orderNum){
   return await resp.json();            // { receipt, transactions, … }
 }
 
+  /* Fetch a reliable SKU for a single order item */
+  async function fetchItemSKU(item){
+    try{
+      if (item?.sku && String(item.sku).trim()) return String(item.sku).trim();
+
+      const orderId = String(item?.receipt_id || item?.orderNumber || "");
+      if (!orderId) return "";
+
+      const resp = await apiFetch(`/etsyOrderProxy?orderId=${encodeURIComponent(orderId)}`);
+      if (!resp.ok) return "";
+
+      const data = await resp.json();
+      const tx = (data.transactions || []).find(t =>
+        String(t.transaction_id) === String(item.transaction_id)
+      );
+
+      return String(tx?.sku || tx?.product_data?.sku || "").trim();
+    }catch(_){
+      return "";
+    }
+  }
+
 /********************************************************
  * loadBatchEtsyOrders, fetchListingImages, getLocalImageData
  ********************************************************/
@@ -4598,13 +4763,13 @@ async function fetchListingImages(listingId) {
   // 3) Run inside the queue with built-in 429 tolerance via apiFetch
   const task = runImageTask(async () => {
     let attempt = 0;
-    while (attempt < 5) {
+    while (attempt < 4) {
       const resp = await apiFetch(`/etsyImages?listingId=${encodeURIComponent(key)}`);
       if (resp.status === 429) {
         // Extra defense: apiFetch already retried, keep spacing calls if still 429
         const retryAfter = resp.headers?.get?.("retry-after");
         const raMs = Number.isFinite(Number(retryAfter)) ? Number(retryAfter) * 1000 : 0;
-        const backoff = Math.max(raMs, 350 * Math.pow(2, attempt)); // 350ms, 700ms, 1400ms...
+        const backoff = Math.max(raMs, 500 * Math.pow(2, attempt)); // 350ms, 700ms, 1400ms...
         await new Promise(r => setTimeout(r, backoff));
         attempt++;
         continue;
@@ -4784,11 +4949,11 @@ function reflowGrid(){
       /* fetch only the missing ones */
       if (needReceipts.length){
         loadBatchEtsyOrders(needReceipts)
-          .then(()=>{ reflowGrid(); updateCounters(); })
+          .then(()=>{ reflowGrid(); window.updateCounters?.(); })
           .catch(err => console.error("Completed sync error:", err));
       }else{
         reflowGrid();
-        updateCounters();
+        window.updateCounters?.();
       }
     }
 
@@ -4838,7 +5003,7 @@ function reflowGrid(){
       if (needReceipts.length) {
         await loadBatchEtsyOrders(needReceipts);     // uses addPreviewBox
           reflowGrid();            // 🆕 pack the grid tightly
-          updateCounters();        // 🆕 keep the badges honest
+          window.updateCounters?.(); // 🆕 keep the badges honest (safe)
       }
 
       /* D. mark every visible wrap for a selected receipt */
@@ -4868,7 +5033,7 @@ function reflowGrid(){
             completedOrders.has(wrap.dataset.receipt) ? "" : "none";
         });
         reflowGrid();
-        updateCounters();           // counters stay metal-only
+        window.updateCounters?.();  // counters stay metal-only
         return;
       }
 
@@ -4906,7 +5071,7 @@ function reflowGrid(){
       });
 
       reflowGrid();
-      updateCounters();             // keep top counters in sync
+      window.updateCounters?.();    // keep top counters in sync
 
        /* one more pass in the next frame — guarantees nothing strips the outline */
        requestAnimationFrame(() => {
@@ -4927,7 +5092,7 @@ function reflowGrid(){
 
     });  /* ─── END METAL FILTER INITIALISER ─── */
 
-    function openListingModal(cellIdx){
+    async function openListingModal(cellIdx){
       const item = window.cachedOrderItems[cellIdx];
       if(!item){ return; }
 
@@ -4937,6 +5102,38 @@ function reflowGrid(){
 
       document.getElementById("modalListingImg").src = item.image;
 
+      /* ▼ SKU row: set loading state, fetch, then enable Copy */
+      const skuTextEl  = document.getElementById("modalSkuText");
+      const skuCopyBtn = document.getElementById("modalSkuCopyBtn");
+
+      if (skuTextEl) skuTextEl.textContent = "SKU: loading…";
+      if (skuCopyBtn) skuCopyBtn.onclick = null;
+
+      try{
+        const fetched = await fetchItemSKU(item);
+        const finalSku = fetched || item.sku || "N/A";
+        if (skuTextEl) skuTextEl.textContent = "SKU: " + finalSku;
+        if (skuCopyBtn){
+          skuCopyBtn.onclick = async () => {
+            try{
+              await navigator.clipboard.writeText(finalSku);
+              M.toast({ html: "SKU copied" });
+            }catch(err){
+              // Fallback for older browsers
+              const tmp = document.createElement("textarea");
+              tmp.value = finalSku;
+              document.body.appendChild(tmp);
+              tmp.select();
+              document.execCommand("copy");
+              document.body.removeChild(tmp);
+              M.toast({ html: "SKU copied" });
+            }
+          };
+        }
+      }catch(_){
+        if (skuTextEl) skuTextEl.textContent = "SKU: N/A";
+      }
+
       /* 2. notes  */
       const lines = [];
       if(item.personalization && item.personalization.length){
@@ -4945,7 +5142,7 @@ function reflowGrid(){
       if(item.message_from_buyer){
         lines.push("Buyer Message:\n" + item.message_from_buyer.trim());
       }
-      document.getElementById("modalListingNotes").textContent =
+      document.getElementById("modalListingNotes").value =
           lines.length ? lines.join("\n\n") : "— No notes —";
 
       /* ----- build the 4 read-only fields ----- */
@@ -5042,17 +5239,20 @@ function reflowGrid(){
     <!-- ▲▲ NEW COMPLETE-CHECKBOX + TITLE ▲▲ -->
 
     <h5 id="modalListingTitle"></h5>
+    <div id="modalSkuRow" class="modal-sku-row" style="display:flex;align-items:center;gap:10px;margin:6px 0 12px;">
+      <span id="modalSkuText" class="sku-text" style="font-weight:300;">SKU: —</span>
+      <a id="modalSkuCopyBtn" href="#!" class="btn-small">Copy</a>
+    </div>
 
     <div class="modal-flex-row">
       <img id="modalListingImg" />
 
       <!-- notes + staff input stacked -->
       <div class="modal-notes-col">
-        <pre id="modalListingNotes"></pre>
+        <textarea id="modalListingNotes" readonly></textarea>
 
-        <input id="modalStaffNote"
-               type="text"
-               placeholder="Staff Note">
+        <textarea id="modalStaffNote" placeholder="Staff Note"></textarea>
+
       </div>
     </div>
 

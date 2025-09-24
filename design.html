@@ -2724,7 +2724,28 @@ const selectRow = async (row) => {
       }
  
      printDialogOpened = true;                // mark pending-print
-     localStorage.setItem("metalOrderLists", JSON.stringify(lists));
+     // Build chunked jobs so the print page renders split QRs (≤50 per)
+     const __chunk = (arr, size = 50) => {
+       const out = [];
+       for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size));
+       return out;
+     };
+     const metalOrderJobs = [];
+     Object.entries(lists).forEach(([metal, ids]) => {
+       if (!Array.isArray(ids) || !ids.length) return;
+       const parts = __chunk(ids, 50);
+       parts.forEach((slice, idx) => {
+         metalOrderJobs.push({
+           metal,
+           ids: slice,
+           partIndex: idx + 1,
+           partTotal: parts.length,
+           total: ids.length
+         });
+       });
+     });
+     localStorage.setItem("metalOrderJobs", JSON.stringify(metalOrderJobs)); // new
+     localStorage.setItem("metalOrderLists", JSON.stringify(lists));         // back-compat
  
      /* ── 2. spawn hidden iframe *then* open system print dialog ── */
      const f = document.createElement("iframe");
