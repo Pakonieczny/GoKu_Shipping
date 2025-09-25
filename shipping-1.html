@@ -1031,11 +1031,7 @@
       
     ].forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
 
-    // — Toggleables
-    ['cc_insurance_requested','cc_signature_requested','cc_media_mail_requested']
-      .forEach(id => { const el = document.getElementById(id); if (el) el.checked = false; });
 
-    // — Rates list & step state
     const rates = document.getElementById('ccRates'); if (rates) rates.innerHTML = '';
     window.ccSelectedRateId = '';
     document.getElementById('ccBuy')?.setAttribute('disabled','true');
