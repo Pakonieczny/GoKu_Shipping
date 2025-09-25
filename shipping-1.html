@@ -2397,9 +2397,9 @@ function metalToBadge(label){
             window.ccPostBuyFrozen = false;
             window.ccMuteIdInput   = false;
             const idEl = document.getElementById("ccShipmentId");
-            if (idEl) { idEl.value = ""; }
-            window.markOrderChange?.();
+            if (idEl) { idEl.value = ""; idEl.dataset.setAt = String(Date.now()); }
             window.ccShipmentId = "";
+            try { resetRecipientFields(); } catch{}
             try { await fetchBatches(); } catch (e) {}
 
             // 🔄 New order: fully reset Recipient & visible address UI
@@ -2498,9 +2498,9 @@ function metalToBadge(label){
         window.ccPostBuyFrozen = false;
         window.ccMuteIdInput   = false;
         const idEl = document.getElementById("ccShipmentId");
-        if (idEl) { idEl.value = ""; }
-        window.markOrderChange?.();
+        if (idEl) { idEl.value = ""; idEl.dataset.setAt = String(Date.now()); }
         window.ccShipmentId = "";
+        try { resetRecipientFields(); } catch{}
         try { await fetchBatches(); } catch (e) {}
 
         // 🔄 New order: fully reset Recipient & visible address UI
@@ -3233,6 +3233,7 @@ function metalToBadge(label){
       try {
         const box = document.getElementById("shipAddressBox");
         if (!box) return;
+        try { box.dataset.boundOrder = String(orderNumber || ""); } catch(_) {}
         box.value = "SHIP TO:\n(Loading...)";
 
         const resp = await fetch(
@@ -3328,6 +3329,7 @@ function metalToBadge(label){
         if (mySeq === window.__addrLoadSeq) {
           const box = document.getElementById("shipAddressBox");
           if (box) {
+            try { box.dataset.boundOrder = String(orderNumber || ""); } catch(_) {}
             box.value = "SHIP TO:\n(Error loading)";
             box.style.color = "";
           }
@@ -3391,9 +3393,9 @@ function metalToBadge(label){
               window.ccPostBuyFrozen = false;
               window.ccMuteIdInput   = false;
               const idEl = document.getElementById("ccShipmentId");
-              if (idEl) { idEl.value = ""; }
-              window.markOrderChange?.();
+              if (idEl) { idEl.value = ""; idEl.dataset.setAt = String(Date.now()); }
               window.ccShipmentId = "";
+              try { resetRecipientFields(); } catch{}
               try { await fetchBatches(); } catch (e) {}
 
               // fresh order → wipe any prior recipient values
@@ -5485,9 +5487,6 @@ async function refreshRates(){
       }
 
       if (editBtn) editBtn.addEventListener("click", async () => {
-        // ✅ FIX: reset dirty BEFORE hydrating so we always re-prime for the current order
-        window.__ccRecipientDirty = false;
-
         // Ensure Step-0 inputs are hydrated so the verify modal isn't blank
         try { window.collectRecipientAddress?.(); } catch {}
 
@@ -5495,7 +5494,11 @@ async function refreshRates(){
         if (modal) modal.style.display = "none";
 
         const verifyEl = document.getElementById("ccVerifyModal");
+
+        // Run Smarty + render RedOrange diffs in the Verify modal
         await verifyAddressAndShowModal();
+
+        // Fallback: if verify didn't open (e.g., no country or API error), open editor wizard
         if (verifyEl && verifyEl.style.display !== "block") {
           modalOpen();
         }
@@ -5525,7 +5528,11 @@ async function refreshRates(){
         });
 
         const ship = document.getElementById("shipAddressBox");
-        if (ship) { ship.value = "SHIP TO:\n(loading…)"; ship.style.color = ""; }
+        if (ship) {
+        ship.value = "SHIP TO:\n(loading…)";
+        ship.style.color = "";
+        try { ship.dataset.boundOrder = ""; } catch(_) {}
+      }
 
         // Mark recipient UI as clean on order change
         window.__ccRecipientDirty = false;
@@ -5535,28 +5542,12 @@ async function refreshRates(){
         const sugg = document.getElementById("ccVerifySuggested");
         if (orig) orig.textContent = "";
         if (sugg) sugg.textContent = "";
-        // Also clear any cached verify suggestion so it can't leak across orders
-        try { window.__lastVerifySuggested = null; } catch(_) {}
+        // 🔒 also clear any stale verify caches / bindings
+        window.__lastVerifyOriginal  = null;
+        window.__lastVerifySuggested = null;
+        const vmod = document.getElementById("ccVerifyModal");
+        if (vmod) vmod.dataset.order = "";
       }
-
-      // Also reset when the order input changes (e.g., paste/focusout flows)
-      document.getElementById("etsyOrderNumber")?.addEventListener("change", () => {
-        try { resetRecipientFields(); } catch (_){}
-        try { window.markOrderChange?.(); } catch (_){}
-      });
-
-      // Mark the moment/order so consumers can ignore stale ccShipmentId values
-      function markOrderChange(){
-        window.__lastOrderChangeAt = Date.now();
-        try { window.__lastVerifySuggested = null; } catch (_){}
-        const idEl = document.getElementById("ccShipmentId");
-        if (idEl) {
-          idEl.dataset.setAt    = String(window.__lastOrderChangeAt);
-          idEl.dataset.forOrder = (document.getElementById("etsyOrderNumber")?.value || "").trim();
-        }
-      }
-      // Ensure listeners in other scopes/IIFEs can see it
-      window.markOrderChange = markOrderChange;
 
       // 🆕 Credit modal helpers
       function openCreditModal(msg){
@@ -5854,52 +5845,62 @@ async function refreshRates(){
       }
 
      // helper to show the verify modal (normalize first)
-     function openVerifyModal(orig, rawSugg){
-      // make available across script blocks
-      window.openVerifyModal = openVerifyModal;
-       const sugg = normalizeToAddressShape(rawSugg);
-       renderAddressDiff(orig, sugg);
-      const modal = document.getElementById("ccVerifyModal");
-      if (!modal) { M.toast?.({ html:"Address suggestion available — verify modal not found." }); return false; }
-
-      modal.style.display = "block";
-
-      // kick off autofill immediately upon opening the verify modal
-      try { autofillFromVerifyModal(); } catch (_) {}
-
-      // buttons
-      document.getElementById("ccVerifyClose").onclick = () => { modal.style.display = "none"; };
-      document.getElementById("ccAddrEdit").onclick    = () => { modal.style.display = "none"; showStep(0); };
-
-      // Keep Original → still ensure Step 1 is ready-populated
-      document.getElementById("ccKeepOriginal").onclick = () => {
-        try { autofillFromVerifyModal(); } catch (_) {}
-        modal.style.display = "none";
-        showStep(1);
-      };
-
-      // Use Suggested → populate recipient fields + ensure Step 1 prefilled
-      document.getElementById("ccUseSuggested").onclick = () => {
-        try { autofillFromVerifyModal(); } catch (_) {}
-
-        const map = {
-          to_name:"cc_to_name", to_address_1:"cc_to_address_1", to_address_2:"cc_to_address_2",
-          to_city:"cc_to_city", to_province_code:"cc_to_province_code",
-          to_postal_code:"cc_to_postal_code", to_country_code:"cc_to_country_code"
-        };
-        Object.keys(map).forEach(k => {
-          const v = sugg && sugg[k];
-          if (v != null) document.getElementById(map[k]).value = v;
-        });
-        modal.style.display = "none";
-        showStep(1);
-      };
-
-      return true;
+    function openVerifyModal(orig, rawSugg){
+    // normalize + render diffs (existing helpers in your file)
+    const sugg  = (typeof normalizeToAddressShape === "function")
+      ? normalizeToAddressShape(rawSugg) : (rawSugg || {});
+    if (typeof renderAddressDiff === "function") {
+      try { renderAddressDiff(orig, sugg); } catch(_){}
     }
 
-    // expose globally for other script blocks
-    window.openVerifyModal = openVerifyModal;
+    const modal = document.getElementById("ccVerifyModal");
+    if (!modal) { try { M.toast?.({ html:"Address suggestion available — verify modal not found." }); } catch(_) {} return false; }
+
+    // 🔐 Bind modal to the order that spawned it
+    const expectedOrder = (document.getElementById("etsyOrderNumber")?.value || "").trim();
+    modal.dataset.order = expectedOrder;
+
+    modal.style.display = "block";
+    try { typeof autofillFromVerifyModal === "function" && autofillFromVerifyModal(); } catch(_){}
+
+    // Buttons (each checks that the active order hasn't changed)
+    document.getElementById("ccVerifyClose").onclick = () => { modal.style.display = "none"; };
+    document.getElementById("ccAddrEdit").onclick    = () => { modal.style.display = "none"; showStep?.(0); };
+
+    document.getElementById("ccKeepOriginal").onclick = () => {
+      const cur = (document.getElementById("etsyOrderNumber")?.value || "").trim();
+      if (modal.dataset.order && modal.dataset.order !== cur) {
+        try { M.toast?.({ html: "Order changed. Ignoring previous verification." }); } catch(_){}
+        modal.style.display = "none"; return;
+      }
+      try { typeof autofillFromVerifyModal === "function" && autofillFromVerifyModal(); } catch(_){}
+      modal.style.display = "none";
+      showStep?.(1);
+    };
+
+    document.getElementById("ccUseSuggested").onclick = () => {
+      const cur = (document.getElementById("etsyOrderNumber")?.value || "").trim();
+      if (modal.dataset.order && modal.dataset.order !== cur) {
+        try { M.toast?.({ html: "Order changed. Ignoring previous verification." }); } catch(_){}
+        modal.style.display = "none"; return;
+      }
+      // Write suggestion into Step-0 fields
+      const map = {
+        to_name:"cc_to_name", to_address_1:"cc_to_address_1", to_address_2:"cc_to_address_2",
+        to_city:"cc_to_city", to_province_code:"cc_to_province_code",
+        to_postal_code:"cc_to_postal_code", to_country_code:"cc_to_country_code"
+      };
+      Object.keys(map).forEach(k => {
+        const v = sugg && sugg[k];
+        if (v != null) document.getElementById(map[k]).value = v;
+      });
+      modal.style.display = "none";
+      showStep?.(1);
+    };
+    return true;
+  }
+  // expose globally (some blocks call window.openVerifyModal)
+  window.openVerifyModal = openVerifyModal;
 
     /* === Helper: pull "Title:" line from the Order Details box === */
     function extractOrderTitle() {
@@ -6002,24 +6003,36 @@ async function refreshRates(){
         }
       }
 
-     // Choose the correct "orig" address source: ALWAYS start from UI; only *compare* with CC
+     // Choose the correct "orig" address source: prefer Chit Chats shipment → fallback to inputs
       async function pickOrigAddress(){
-        // Seed from current UI (fed by Ship To)
+        const id = (document.getElementById("ccShipmentId")?.value || "").trim();
+        const expectedOrder = (document.getElementById("etsyOrderNumber")?.value || "").trim();
+        // Start from whatever is currently in the inputs (seeded from Ship To)
         let orig = (window.collectRecipientAddress || collectRecipientAddress || gatherRecipientFromInputs)();
-        const idEl = document.getElementById("ccShipmentId");
-        const ccId = (idEl?.value || "").trim();
-        // Guard against stale IDs from a previous order
-        const currentOrder = (document.getElementById("etsyOrderNumber")?.value || "").trim();
-        const idForOrder   = idEl?.dataset?.forOrder || "";
-        const idSetAt      = Number(idEl?.dataset?.setAt || 0);
-        const orderChanged = Number(window.__lastOrderChangeAt || 0);
-        const idIsCurrent  = !!ccId && idForOrder === currentOrder && idSetAt >= orderChanged;
-        if (idIsCurrent) {
+        if (id) {
           try {
-            const det = await callCc("GET", null, `?resource=shipment&id=${encodeURIComponent(ccId)}`);
+            const det = await callCc("GET", null, `?resource=shipment&id=${encodeURIComponent(id)}`);
             const fromCc = normalizeToAddressShape(det?.to || det?.recipient || det?.ship_to || det?.address || det);
             if (fromCc && (fromCc.to_address_1 || fromCc.to_city || fromCc.to_postal_code)) {
-              // ⛔ Do NOT reflect CC values back into Step-0 inputs; just use for “Original”
+              // Reflect CC address into the form so everything stays in sync
+              // Reflect CC address into the form so everything stays in sync
+              const map = {
+                to_name:"cc_to_name", to_address_1:"cc_to_address_1", to_address_2:"cc_to_address_2",
+                to_city:"cc_to_city", to_province_code:"cc_to_province_code",
+                to_postal_code:"cc_to_postal_code", to_country_code:"cc_to_country_code",
+                
+                // 🆕 try to fill phone when normalizeToAddressShape provided it
+                to_phone:"cc_to_phone"
+              };
+        // Only write if the order hasn't changed mid-flight
+        const nowOrder = (document.getElementById("etsyOrderNumber")?.value || "").trim();
+        if (nowOrder === expectedOrder) {
+          Object.keys(map).forEach(k => {
+            const v = fromCc[k];
+            if (v != null) document.getElementById(map[k]).value = v;
+          });
+        }
+
               orig = fromCc;
             }
           } catch(e){ try{ console.debug("[Verify] CC shipment fetch failed", e);}catch{} }
@@ -6513,19 +6526,14 @@ function parseIntlAddressBlock(blockText = "", fallbackCountryCode = "") {
   }
 
   // ▼ Define the missing helper (global scope)
-      function collectRecipientAddress(){
-        // 🔒 If Step-0 was ever bound to a DIFFERENT order, force re-hydration.
-        const currentOrderNo = (document.getElementById("etsyOrderNumber")?.value || "").trim();
-        const idEl = document.getElementById("ccShipmentId");
-        if (idEl && idEl.dataset?.forOrder && idEl.dataset.forOrder !== currentOrderNo) {
-          window.__ccRecipientDirty = false; // ensure fresh fields for the active order
-        }
-
-        const block   = (document.getElementById("shipAddressBox")?.value || "").trim();
-        const country = (document.getElementById("cc_to_country_code")?.value || "").trim();
-        // Decide pipeline up front
-        const detected = (window.detectDestCountryCode?.() || country || "").toUpperCase();
-        const routeIntl = isEUorGB(detected);
+  function collectRecipientAddress(){
+    const block   = (document.getElementById("shipAddressBox")?.value || "").trim();
+    const country = (document.getElementById("cc_to_country_code")?.value || "").trim();
+    // const block   = (document.getElementById("shipAddressBox")?.value || "").trim();
+    // const country = (document.getElementById("cc_to_country_code")?.value || "").trim();
+    // Decide pipeline up front
+    const detected = (window.detectDestCountryCode?.() || country || "").toUpperCase();
+    const routeIntl = isEUorGB(detected);
 
     // Prefer a real multi-line block; otherwise just use the inputs
     // 🔁 CHANGE: for EU/GB, always run the intl parser (even if the block is short)
@@ -6638,25 +6646,6 @@ function parseIntlAddressBlock(blockText = "", fallbackCountryCode = "") {
 
       // Modal action buttons keep your original vs suggested choice
       document.getElementById("ccKeepOriginal")?.addEventListener("click", ()=>{
-        document.getElementById("ccVerifyModal").style.display = "none";
-      });
-
-      document.getElementById("ccUseSuggested")?.addEventListener("click", ()=>{
-        const s = window.__lastVerifySuggested;
-        if (s) {
-          // Push suggestion back into Step-0 inputs
-          const set = (id, v) => {
-          const el = document.getElementById(id);
-          if (el) el.value = (v ?? "").toString().trim();
-          };
-          set("cc_to_name",           s.to_name);
-          set("cc_to_address_1",      s.to_address_1);
-          set("cc_to_address_2",      s.to_address_2);
-          set("cc_to_city",           s.to_city);
-          set("cc_to_province_code",  s.to_province_code);
-          set("cc_to_postal_code",    s.to_postal_code);
-          set("cc_to_country_code",   s.to_country_code);
-        }
         document.getElementById("ccVerifyModal").style.display = "none";
       });
 
@@ -6794,14 +6783,9 @@ function parseIntlAddressBlock(blockText = "", fallbackCountryCode = "") {
           try {
             const created = await replaceDraftShipment(oldId, payload); // create new → sweep dupes → delete old
             const newId   = created?.id || created?.shipment?.id || "";
-         if (newId && newId !== oldId) {
-           try {
-             pushShipmentId(newId);
-             idEl.value = newId;
-             idEl.dataset.setAt   = String(Date.now());
-             idEl.dataset.forOrder = (document.getElementById("etsyOrderNumber")?.value || "").trim();
-           } catch {}
-         }
+            if (newId && newId !== oldId) {
+              try { pushShipmentId(newId); idEl.value = newId; } catch {}
+            }
 
             M.toast?.({ html: "Shipment ID updated in background." });
 
@@ -6848,14 +6832,9 @@ function parseIntlAddressBlock(blockText = "", fallbackCountryCode = "") {
                 try {
                   const created = await replaceDraftShipment(oldId, payload); // create → sweep dupes → delete old
                   const newId   = created?.id || created?.shipment?.id || "";
-               if (newId && newId !== oldId) {
-                 try {
-                   pushShipmentId(newId);
-                   idEl.value = newId;
-                   idEl.dataset.setAt   = String(Date.now());
-                   idEl.dataset.forOrder = (document.getElementById("etsyOrderNumber")?.value || "").trim();
-                 } catch {}
-               }
+                  if (newId && newId !== oldId) {
+                    try { pushShipmentId(newId); idEl.value = newId; } catch {}
+                  }
 
                   M.toast?.({ html: "Shipment updated for pricing." });
                 } catch (e) {
