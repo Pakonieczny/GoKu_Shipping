@@ -2397,7 +2397,8 @@ function metalToBadge(label){
             window.ccPostBuyFrozen = false;
             window.ccMuteIdInput   = false;
             const idEl = document.getElementById("ccShipmentId");
-            if (idEl) { idEl.value = ""; idEl.dataset.setAt = String(Date.now()); }
+            if (idEl) { idEl.value = ""; }
+            markOrderChange();
             window.ccShipmentId = "";
             try { await fetchBatches(); } catch (e) {}
 
@@ -2497,7 +2498,8 @@ function metalToBadge(label){
         window.ccPostBuyFrozen = false;
         window.ccMuteIdInput   = false;
         const idEl = document.getElementById("ccShipmentId");
-        if (idEl) { idEl.value = ""; idEl.dataset.setAt = String(Date.now()); }
+        if (idEl) { idEl.value = ""; }
+        markOrderChange();
         window.ccShipmentId = "";
         try { await fetchBatches(); } catch (e) {}
 
@@ -3389,7 +3391,8 @@ function metalToBadge(label){
               window.ccPostBuyFrozen = false;
               window.ccMuteIdInput   = false;
               const idEl = document.getElementById("ccShipmentId");
-              if (idEl) { idEl.value = ""; idEl.dataset.setAt = String(Date.now()); }
+              if (idEl) { idEl.value = ""; }
+              markOrderChange();
               window.ccShipmentId = "";
               try { await fetchBatches(); } catch (e) {}
 
@@ -5537,6 +5540,17 @@ async function refreshRates(){
         try { window.__lastVerifySuggested = null; } catch(_) {}
       }
 
+      // Mark the moment/order so consumers can ignore stale ccShipmentId values
+      function markOrderChange(){
+        window.__lastOrderChangeAt = Date.now();
+        try { window.__lastVerifySuggested = null; } catch (_){}
+        const idEl = document.getElementById("ccShipmentId");
+        if (idEl) {
+          idEl.dataset.setAt   = String(window.__lastOrderChangeAt);
+          idEl.dataset.forOrder = (document.getElementById("etsyOrderNumber")?.value || "").trim();
+        }
+      }
+
       // 🆕 Credit modal helpers
       function openCreditModal(msg){
         const modal = document.getElementById("ccCreditModal");
@@ -5981,22 +5995,26 @@ async function refreshRates(){
         }
       }
 
-     // Choose the correct "orig" address source: prefer Chit Chats shipment → fallback to inputs
+     // Choose the correct "orig" address source: ALWAYS start from UI; only *compare* with CC
       async function pickOrigAddress(){
-        const id = (document.getElementById("ccShipmentId")?.value || "").trim();
-        // Start from whatever is currently in the inputs (seeded from Ship To)
+        // Seed from current UI (fed by Ship To)
         let orig = (window.collectRecipientAddress || collectRecipientAddress || gatherRecipientFromInputs)();
-        if (id) {
+        const idEl = document.getElementById("ccShipmentId");
+        const ccId = (idEl?.value || "").trim();
+        // Guard against stale IDs from a previous order
+        const currentOrder = (document.getElementById("etsyOrderNumber")?.value || "").trim();
+        const idForOrder   = idEl?.dataset?.forOrder || "";
+        const idSetAt      = Number(idEl?.dataset?.setAt || 0);
+        const orderChanged = Number(window.__lastOrderChangeAt || 0);
+        const idIsCurrent  = !!ccId && idForOrder === currentOrder && idSetAt >= orderChanged;
+        if (idIsCurrent) {
           try {
-            const det = await callCc("GET", null, `?resource=shipment&id=${encodeURIComponent(id)}`);
+            const det = await callCc("GET", null, `?resource=shipment&id=${encodeURIComponent(ccId)}`);
             const fromCc = normalizeToAddressShape(det?.to || det?.recipient || det?.ship_to || det?.address || det);
-      if (fromCc && (fromCc.to_address_1 || fromCc.to_city || fromCc.to_postal_code)) {
-        // ⛔ Do NOT reflect CC address into Step-0 inputs here.
-        // Using a stale ccShipmentId from a previous order can overwrite the
-        // *current* order’s recipient in ccEditCard. Keep the inputs as seeded
-        // from shipAddressBox; only use CC data as the "orig" object for compare.
-        orig = fromCc;
-      }
+            if (fromCc && (fromCc.to_address_1 || fromCc.to_city || fromCc.to_postal_code)) {
+              // ⛔ Do NOT reflect CC values back into Step-0 inputs; just use for “Original”
+              orig = fromCc;
+            }
           } catch(e){ try{ console.debug("[Verify] CC shipment fetch failed", e);}catch{} }
         }
         return orig;
@@ -6764,9 +6782,14 @@ function parseIntlAddressBlock(blockText = "", fallbackCountryCode = "") {
           try {
             const created = await replaceDraftShipment(oldId, payload); // create new → sweep dupes → delete old
             const newId   = created?.id || created?.shipment?.id || "";
-            if (newId && newId !== oldId) {
-              try { pushShipmentId(newId); idEl.value = newId; } catch {}
-            }
+         if (newId && newId !== oldId) {
+           try {
+             pushShipmentId(newId);
+             idEl.value = newId;
+             idEl.dataset.setAt   = String(Date.now());
+             idEl.dataset.forOrder = (document.getElementById("etsyOrderNumber")?.value || "").trim();
+           } catch {}
+         }
 
             M.toast?.({ html: "Shipment ID updated in background." });
 
@@ -6813,9 +6836,14 @@ function parseIntlAddressBlock(blockText = "", fallbackCountryCode = "") {
                 try {
                   const created = await replaceDraftShipment(oldId, payload); // create → sweep dupes → delete old
                   const newId   = created?.id || created?.shipment?.id || "";
-                  if (newId && newId !== oldId) {
-                    try { pushShipmentId(newId); idEl.value = newId; } catch {}
-                  }
+               if (newId && newId !== oldId) {
+                 try {
+                   pushShipmentId(newId);
+                   idEl.value = newId;
+                   idEl.dataset.setAt   = String(Date.now());
+                   idEl.dataset.forOrder = (document.getElementById("etsyOrderNumber")?.value || "").trim();
+                 } catch {}
+               }
 
                   M.toast?.({ html: "Shipment updated for pricing." });
                 } catch (e) {
