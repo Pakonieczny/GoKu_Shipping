@@ -2485,6 +2485,10 @@ function metalToBadge(label){
       etsyOrderInput.addEventListener("keydown", async function (e) {
         if (e.key !== "Enter") return;
 
+      // 🔁 New: hard wipe state before loading a different order
+      resetAllOrderState("enter-key");
+      window.activeReceiptId = orderId;
+
           /* ⛔ Cancel any in-flight ccShipmentId search and pending slow-pass */
         window.ccManualIdUpdateDone    = false;
         /* ⛔ If an Update-ID latch is running from a previous order, resolve it cleanly */
@@ -3295,8 +3299,6 @@ function metalToBadge(label){
 
         if (!stillCurrent()) return;
         box.value = "SHIP TO:\n" + lines.filter(Boolean).join("\n");
-        // NEW: mark which order populated this block (prevents cross-order hydration)
-        box.dataset.order = orderNumber;
 
         // ── Auto-select Carrier by destination ───────────────────────────
         const carrierSelectEl = document.getElementById("carrierSelect");
@@ -5525,12 +5527,7 @@ async function refreshRates(){
         });
 
         const ship = document.getElementById("shipAddressBox");
-        if (ship) {
-          ship.value = "SHIP TO:\n(loading…)";
-          ship.style.color = "";
-          // NEW: make it impossible for a previous order to "own" this block
-          ship.dataset.order = "";
-        }
+        if (ship) { ship.value = "SHIP TO:\n(loading…)"; ship.style.color = ""; }
 
         // Mark recipient UI as clean on order change
         window.__ccRecipientDirty = false;
@@ -5541,6 +5538,81 @@ async function refreshRates(){
         if (orig) orig.textContent = "";
         if (sugg) sugg.textContent = "";
       }
+
+      +// 🧨 Master wipe for any time a NEW order is loaded
+      function resetAllOrderState(reason = "new-order") {
+        try { console.info("resetAllOrderState:", reason); } catch {}
+
+        // Advance the global ship sequence to invalidate late responses
+        window.__shipSeq = (window.__shipSeq | 0) + 1;
+        window.activeReceiptId = "";
+        window.activeOrderToken = String(Date.now());
+
+        // 0) Recipient/UI text block
+        resetRecipientFields(); // clears cc_to_* and shipAddressBox
+        const orderDetails = document.getElementById("orderDetails");
+        if (orderDetails) orderDetails.value = " ORDER DETAILS:\n";
+
+        // 1) Step 1 — description/customs
+        const wipe = (id) => { const el = document.getElementById(id); if (el) el.value = ""; };
+        ["cc_item_description","cc_item_qty","cc_item_unit_value","cc_item_hs_tariff_code",
+         "cc_item_origin_country","cc_item_manufacture_country","cc_grand_total"].forEach(wipe);
+        const liBox = document.getElementById("cc_line_items_container");
+        if (liBox) { liBox.innerHTML = ""; try { liBox.dataset.boundOrder = ""; } catch {} }
+        const pkgContents = document.getElementById("cc_package_contents"); if (pkgContents) pkgContents.value = "merchandise";
+        const valCurr = document.getElementById("cc_value_currency"); if (valCurr) valCurr.value = "CAD";
+        const vat = document.getElementById("cc_customs_tax_reference_number"); if (vat) vat.value = "";
+
+        // 2) Step 2 — package
+        const set = (id, v="") => { const el = document.getElementById(id); if (el) el.value = v; };
+        set("cc_package_type", "");
+        set("cc_size_unit", "cm");
+        set("cc_weight_unit", "g");
+        ["cc_size_x","cc_size_y","cc_size_z","cc_weight","cc_ship_date"].forEach(id => set(id, ""));
+        set("cc_insurance_requested","false");
+        set("cc_signature_requested","false");
+        set("cc_media_mail_requested","false");
+
+        // 3) Step 3 — rates/postage
+        const ratesUl = document.getElementById("ccRates"); // <ul id="ccRates"> lives in Step 3
+        if (ratesUl) ratesUl.innerHTML = "";
+        const buyBtn = document.getElementById("ccBuy"); if (buyBtn) buyBtn.disabled = true;
+        window.ccBlockRatesUntilStep2 = true;
+        window.ccManualIdUpdateInFlight = false;
+        window.ccManualIdUpdateDone = false;
+        window.ccManualIdUpdatePromise = null;
+
+        // 4) Shipment id & tracking
+        set("ccShipmentId", "");           // ID box on screen
+        window.ccShipmentId   = "";        // mirror in memory
+        window.currentTracking = null;     // used by trackingLinkBtn
+        window.currentCarrier  = null;
+
+        // 5) Preview grid (10 boxes) + per-cell fields (qty/metal)
+        for (let i=0; i<10; i++) {
+          const cell = document.getElementById("previewCell"+i);
+          if (cell) { cell.innerHTML = "Empty"; cell.style.cursor = "default"; cell.onclick = null; }
+          const q = document.getElementById("qty_"+i);    if (q) q.value = "";
+          const m = document.getElementById("metal_"+i);  if (m) m.value = "";
+        }
+
+        // 6) Misc order UI
+        const pr = document.getElementById("shippingPriority"); if (pr) { pr.value=""; pr.style.color=""; pr.style.fontWeight=""; }
+        const tbtn = document.getElementById("trackingLinkBtn"); if (tbtn) tbtn.style.display = "none";
+        const hist = document.getElementById("customerMessageHistory"); if (hist) hist.innerHTML = "";
+        const lbl  = document.getElementById("labelCreationDate"); if (lbl) lbl.value = "";
+        const done = document.getElementById("completedByEmployee"); if (done) done.value = "";
+        const sig  = document.getElementById("signatureBox"); if (sig) sig.innerHTML = "Sig Box";
+
+        // 7) Per-order globals
+        window.cachedOrderItems = [];
+        window.orderName = window.orderStatus = "";
+        window.orderIsShipped = "";
+        window.orderShipments = [];
+
+        // Don’t touch OAuth/session/global config here.
+      }
+      window.resetAllOrderState = resetAllOrderState;
 
       // 🆕 Credit modal helpers
       function openCreditModal(msg){
@@ -6510,19 +6582,8 @@ function parseIntlAddressBlock(blockText = "", fallbackCountryCode = "") {
     // const block   = (document.getElementById("shipAddressBox")?.value || "").trim();
     // const country = (document.getElementById("cc_to_country_code")?.value || "").trim();
     // Decide pipeline up front
-    const detected   = (window.detectDestCountryCode?.() || country || "").toUpperCase();
-    const routeIntl  = isEUorGB(detected);
-    // NEW: only trust a SHIP TO block that belongs to the currently typed order
-    const shipEl       = document.getElementById("shipAddressBox");
-    const currentOrder = (document.getElementById("etsyOrderNumber")?.value || "").trim();
-    const blockOrder   = (shipEl?.dataset?.order || "");
-    const belongs      = !!currentOrder && blockOrder === currentOrder;
-    // NEW: ignore placeholders / error states from ShipStation loader
-    const isPlaceholder = /^SHIP TO:\s*\n\((loading|error)/i.test(block);
-    if (!belongs || isPlaceholder) {
-      // Don't parse/hydrate from a stale/foreign block; use current inputs only
-      return gatherRecipientFromInputs();
-    }
+    const detected = (window.detectDestCountryCode?.() || country || "").toUpperCase();
+    const routeIntl = isEUorGB(detected);
 
     // Prefer a real multi-line block; otherwise just use the inputs
     // 🔁 CHANGE: for EU/GB, always run the intl parser (even if the block is short)
@@ -6568,8 +6629,7 @@ function parseIntlAddressBlock(blockText = "", fallbackCountryCode = "") {
         if (phoneEl && !phoneEl.value.trim()) { phoneEl.value = fallbackPhone; }
       }
 
-      // Hydrate Step-0 inputs only if user hasn't edited yet (dirty flag),
-      // and only from a SHIP TO block that belongs to this order (guarded above).
+      // Hydrate Step-0 inputs so the compare modal never shows blanks — but don't clobber manual edits
       if (!window.__ccRecipientDirty) {
         const set = (id, v) => {
           const el = document.getElementById(id);
