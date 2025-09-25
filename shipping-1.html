@@ -5485,6 +5485,9 @@ async function refreshRates(){
       }
 
       if (editBtn) editBtn.addEventListener("click", async () => {
+        // ✅ FIX: reset dirty BEFORE hydrating so we always re-prime for the current order
+        window.__ccRecipientDirty = false;
+
         // Ensure Step-0 inputs are hydrated so the verify modal isn't blank
         try { window.collectRecipientAddress?.(); } catch {}
 
@@ -5492,11 +5495,7 @@ async function refreshRates(){
         if (modal) modal.style.display = "none";
 
         const verifyEl = document.getElementById("ccVerifyModal");
-
-        // Run Smarty + render RedOrange diffs in the Verify modal
         await verifyAddressAndShowModal();
-
-        // Fallback: if verify didn't open (e.g., no country or API error), open editor wizard
         if (verifyEl && verifyEl.style.display !== "block") {
           modalOpen();
         }
@@ -5539,6 +5538,12 @@ async function refreshRates(){
         // Also clear any cached verify suggestion so it can't leak across orders
         try { window.__lastVerifySuggested = null; } catch(_) {}
       }
+
+      // Also reset when the order input changes (e.g., paste/focusout flows)
+      document.getElementById("etsyOrderNumber")?.addEventListener("change", () => {
+        try { resetRecipientFields(); } catch (_){}
+        try { window.markOrderChange?.(); } catch (_){}
+      });
 
       // Mark the moment/order so consumers can ignore stale ccShipmentId values
       function markOrderChange(){
@@ -6508,14 +6513,20 @@ function parseIntlAddressBlock(blockText = "", fallbackCountryCode = "") {
   }
 
   // ▼ Define the missing helper (global scope)
-  function collectRecipientAddress(){
-    const block   = (document.getElementById("shipAddressBox")?.value || "").trim();
-    const country = (document.getElementById("cc_to_country_code")?.value || "").trim();
-    // const block   = (document.getElementById("shipAddressBox")?.value || "").trim();
-    // const country = (document.getElementById("cc_to_country_code")?.value || "").trim();
-    // Decide pipeline up front
-    const detected = (window.detectDestCountryCode?.() || country || "").toUpperCase();
-    const routeIntl = isEUorGB(detected);
+      function collectRecipientAddress(){
+        // 🔒 If Step-0 was ever bound to a DIFFERENT order, force re-hydration.
+        const currentOrderNo = (document.getElementById("etsyOrderNumber")?.value || "").trim();
+        const idEl = document.getElementById("ccShipmentId");
+        if (idEl && idEl.dataset?.forOrder && idEl.dataset.forOrder !== currentOrderNo) {
+          window.__ccRecipientDirty = false; // ensure fresh fields for the active order
+        }
+
+        const block   = (document.getElementById("shipAddressBox")?.value || "").trim();
+        const country = (document.getElementById("cc_to_country_code")?.value || "").trim();
+        // Decide pipeline up front
+        const detected = (window.detectDestCountryCode?.() || country || "").toUpperCase();
+        const routeIntl = isEUorGB(detected);
+      }
 
     // Prefer a real multi-line block; otherwise just use the inputs
     // 🔁 CHANGE: for EU/GB, always run the intl parser (even if the block is short)
