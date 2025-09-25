@@ -2399,7 +2399,6 @@ function metalToBadge(label){
             const idEl = document.getElementById("ccShipmentId");
             if (idEl) { idEl.value = ""; idEl.dataset.setAt = String(Date.now()); }
             window.ccShipmentId = "";
-            try { resetRecipientFields(); } catch{}
             try { await fetchBatches(); } catch (e) {}
 
             // 🔄 New order: fully reset Recipient & visible address UI
@@ -2500,7 +2499,6 @@ function metalToBadge(label){
         const idEl = document.getElementById("ccShipmentId");
         if (idEl) { idEl.value = ""; idEl.dataset.setAt = String(Date.now()); }
         window.ccShipmentId = "";
-        try { resetRecipientFields(); } catch{}
         try { await fetchBatches(); } catch (e) {}
 
         // 🔄 New order: fully reset Recipient & visible address UI
@@ -3233,7 +3231,6 @@ function metalToBadge(label){
       try {
         const box = document.getElementById("shipAddressBox");
         if (!box) return;
-        try { box.dataset.boundOrder = String(orderNumber || ""); } catch(_) {}
         box.value = "SHIP TO:\n(Loading...)";
 
         const resp = await fetch(
@@ -3329,7 +3326,6 @@ function metalToBadge(label){
         if (mySeq === window.__addrLoadSeq) {
           const box = document.getElementById("shipAddressBox");
           if (box) {
-            try { box.dataset.boundOrder = String(orderNumber || ""); } catch(_) {}
             box.value = "SHIP TO:\n(Error loading)";
             box.style.color = "";
           }
@@ -3395,7 +3391,6 @@ function metalToBadge(label){
               const idEl = document.getElementById("ccShipmentId");
               if (idEl) { idEl.value = ""; idEl.dataset.setAt = String(Date.now()); }
               window.ccShipmentId = "";
-              try { resetRecipientFields(); } catch{}
               try { await fetchBatches(); } catch (e) {}
 
               // fresh order → wipe any prior recipient values
@@ -5528,11 +5523,7 @@ async function refreshRates(){
         });
 
         const ship = document.getElementById("shipAddressBox");
-        if (ship) {
-        ship.value = "SHIP TO:\n(loading…)";
-        ship.style.color = "";
-        try { ship.dataset.boundOrder = ""; } catch(_) {}
-      }
+        if (ship) { ship.value = "SHIP TO:\n(loading…)"; ship.style.color = ""; }
 
         // Mark recipient UI as clean on order change
         window.__ccRecipientDirty = false;
@@ -5542,11 +5533,6 @@ async function refreshRates(){
         const sugg = document.getElementById("ccVerifySuggested");
         if (orig) orig.textContent = "";
         if (sugg) sugg.textContent = "";
-        // 🔒 also clear any stale verify caches / bindings
-        window.__lastVerifyOriginal  = null;
-        window.__lastVerifySuggested = null;
-        const vmod = document.getElementById("ccVerifyModal");
-        if (vmod) vmod.dataset.order = "";
       }
 
       // 🆕 Credit modal helpers
@@ -5853,9 +5839,6 @@ async function refreshRates(){
       const modal = document.getElementById("ccVerifyModal");
       if (!modal) { M.toast?.({ html:"Address suggestion available — verify modal not found." }); return false; }
 
-      // Bind verify modal to the order that spawned it
-      modal.dataset.order = (document.getElementById("etsyOrderNumber")?.value || "").trim();
-
       modal.style.display = "block";
 
       // kick off autofill immediately upon opening the verify modal
@@ -5867,13 +5850,6 @@ async function refreshRates(){
 
       // Keep Original → still ensure Step 1 is ready-populated
       document.getElementById("ccKeepOriginal").onclick = () => {
-      const cur = (document.getElementById("etsyOrderNumber")?.value || "").trim();
-      const mod = (document.getElementById("ccVerifyModal")?.dataset.order || "").trim();
-      if (mod && mod !== cur) {
-        try { M.toast?.({ html: "Order changed. Ignoring previous verification." }); } catch(_) {}
-        document.getElementById("ccVerifyModal").style.display = "none";
-        return;
-      }
         try { autofillFromVerifyModal(); } catch (_) {}
         modal.style.display = "none";
         showStep(1);
@@ -5881,13 +5857,6 @@ async function refreshRates(){
 
       // Use Suggested → populate recipient fields + ensure Step 1 prefilled
       document.getElementById("ccUseSuggested").onclick = () => {
-      const cur = (document.getElementById("etsyOrderNumber")?.value || "").trim();
-      const mod = (document.getElementById("ccVerifyModal")?.dataset.order || "").trim();
-      if (mod && mod !== cur) {
-        try { M.toast?.({ html: "Order changed. Ignoring previous verification." }); } catch(_) {}
-        document.getElementById("ccVerifyModal").style.display = "none";
-        return;
-      }
         try { autofillFromVerifyModal(); } catch (_) {}
 
         const map = {
@@ -5895,14 +5864,10 @@ async function refreshRates(){
           to_city:"cc_to_city", to_province_code:"cc_to_province_code",
           to_postal_code:"cc_to_postal_code", to_country_code:"cc_to_country_code"
         };
-        // Only write if the order hasn't changed mid-flight
-        const nowOrder = (document.getElementById("etsyOrderNumber")?.value || "").trim();
-        if (nowOrder === expectedOrder) {
-          Object.keys(map).forEach(k => {
-            const v = fromCc[k];
-            if (v != null) document.getElementById(map[k]).value = v;
-          });
-        }
+        Object.keys(map).forEach(k => {
+          const v = sugg && sugg[k];
+          if (v != null) document.getElementById(map[k]).value = v;
+        });
         modal.style.display = "none";
         showStep(1);
       };
@@ -6014,7 +5979,37 @@ async function refreshRates(){
         }
       }
 
+     // Choose the correct "orig" address source: prefer Chit Chats shipment → fallback to inputs
+      async function pickOrigAddress(){
+        const id = (document.getElementById("ccShipmentId")?.value || "").trim();
+        // Start from whatever is currently in the inputs (seeded from Ship To)
+        let orig = (window.collectRecipientAddress || collectRecipientAddress || gatherRecipientFromInputs)();
+        if (id) {
+          try {
+            const det = await callCc("GET", null, `?resource=shipment&id=${encodeURIComponent(id)}`);
+            const fromCc = normalizeToAddressShape(det?.to || det?.recipient || det?.ship_to || det?.address || det);
+            if (fromCc && (fromCc.to_address_1 || fromCc.to_city || fromCc.to_postal_code)) {
+              // Reflect CC address into the form so everything stays in sync
+              // Reflect CC address into the form so everything stays in sync
+              const map = {
+                to_name:"cc_to_name", to_address_1:"cc_to_address_1", to_address_2:"cc_to_address_2",
+                to_city:"cc_to_city", to_province_code:"cc_to_province_code",
+                to_postal_code:"cc_to_postal_code", to_country_code:"cc_to_country_code",
+                
+                // 🆕 try to fill phone when normalizeToAddressShape provided it
+                to_phone:"cc_to_phone"
+              };
+              Object.keys(map).forEach(k => {
+                const v = fromCc[k];
+                if (v != null) document.getElementById(map[k]).value = v;
+              });
 
+              orig = fromCc;
+            }
+          } catch(e){ try{ console.debug("[Verify] CC shipment fetch failed", e);}catch{} }
+        }
+        return orig;
+      }
 
      async function maybeVerifyAddressBeforeStep1(force = false){
        const log  = (...a)=>{ try{ console.debug("[Verify]", ...a);}catch{} };
@@ -6451,6 +6446,21 @@ function parseIntlAddressBlock(blockText = "", fallbackCountryCode = "") {
       to_postal_code  : v("cc_to_postal_code"),
       to_country_code : v("cc_to_country_code").toUpperCase()
     };
+  }
+
+   // NEW: clear all recipient + address inputs on the wizard (Step 0)
+  function clearCcRecipientFields(){
+    const ids = [
+      "cc_to_name", "cc_to_email",
+      "cc_to_address_1", "cc_to_address_2",
+      "cc_to_city", "cc_to_province_code",
+      "cc_to_postal_code", "cc_to_country_code",
+      "cc_to_phone"
+    ];
+    for (const id of ids){
+      const el = document.getElementById(id);
+      if (el) el.value = "";
+    }
   }
 
   function sanitizeAddress2(raw){
@@ -6911,6 +6921,8 @@ function parseIntlAddressBlock(blockText = "", fallbackCountryCode = "") {
         try {
           setBtnLoading(btn, true);
           await buyCcThenPrint();
+          // NEW: scrub recipient/address fields after a successful purchase
+          clearCcRecipientFields();
         } catch (err) {
           handleCcApiError(err);
         } finally {
@@ -7059,6 +7071,12 @@ function parseIntlAddressBlock(blockText = "", fallbackCountryCode = "") {
   body.configOpen #carrierSelect{ pointer-events:auto !important; }
 
 </style>
+<!-- QZ Tray client for direct printing -->
+<script src="https://cdn.jsdelivr.net/npm/qz-tray@2.2.5/qz-tray.js"></script>
+
+
+</body>
+</html>
 <!-- QZ Tray client for direct printing -->
 <script src="https://cdn.jsdelivr.net/npm/qz-tray@2.2.5/qz-tray.js"></script>
 
