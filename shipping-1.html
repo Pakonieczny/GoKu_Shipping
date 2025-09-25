@@ -2399,7 +2399,6 @@ function metalToBadge(label){
             const idEl = document.getElementById("ccShipmentId");
             if (idEl) { idEl.value = ""; idEl.dataset.setAt = String(Date.now()); }
             window.ccShipmentId = "";
-            try { resetRecipientFields(); } catch{}
             try { await fetchBatches(); } catch (e) {}
 
             // 🔄 New order: fully reset Recipient & visible address UI
@@ -2500,7 +2499,6 @@ function metalToBadge(label){
         const idEl = document.getElementById("ccShipmentId");
         if (idEl) { idEl.value = ""; idEl.dataset.setAt = String(Date.now()); }
         window.ccShipmentId = "";
-        try { resetRecipientFields(); } catch{}
         try { await fetchBatches(); } catch (e) {}
 
         // 🔄 New order: fully reset Recipient & visible address UI
@@ -3233,7 +3231,6 @@ function metalToBadge(label){
       try {
         const box = document.getElementById("shipAddressBox");
         if (!box) return;
-        try { box.dataset.boundOrder = String(orderNumber || ""); } catch(_) {}
         box.value = "SHIP TO:\n(Loading...)";
 
         const resp = await fetch(
@@ -3329,7 +3326,6 @@ function metalToBadge(label){
         if (mySeq === window.__addrLoadSeq) {
           const box = document.getElementById("shipAddressBox");
           if (box) {
-            try { box.dataset.boundOrder = String(orderNumber || ""); } catch(_) {}
             box.value = "SHIP TO:\n(Error loading)";
             box.style.color = "";
           }
@@ -3395,7 +3391,6 @@ function metalToBadge(label){
               const idEl = document.getElementById("ccShipmentId");
               if (idEl) { idEl.value = ""; idEl.dataset.setAt = String(Date.now()); }
               window.ccShipmentId = "";
-              try { resetRecipientFields(); } catch{}
               try { await fetchBatches(); } catch (e) {}
 
               // fresh order → wipe any prior recipient values
@@ -5528,11 +5523,7 @@ async function refreshRates(){
         });
 
         const ship = document.getElementById("shipAddressBox");
-        if (ship) {
-        ship.value = "SHIP TO:\n(loading…)";
-        ship.style.color = "";
-        try { ship.dataset.boundOrder = ""; } catch(_) {}
-      }
+        if (ship) { ship.value = "SHIP TO:\n(loading…)"; ship.style.color = ""; }
 
         // Mark recipient UI as clean on order change
         window.__ccRecipientDirty = false;
@@ -5542,11 +5533,8 @@ async function refreshRates(){
         const sugg = document.getElementById("ccVerifySuggested");
         if (orig) orig.textContent = "";
         if (sugg) sugg.textContent = "";
-        // 🔒 also clear any stale verify caches / bindings
-        window.__lastVerifyOriginal  = null;
-        window.__lastVerifySuggested = null;
-        const vmod = document.getElementById("ccVerifyModal");
-        if (vmod) vmod.dataset.order = "";
+        // Also clear any cached verify suggestion so it can't leak across orders
+        try { window.__lastVerifySuggested = null; } catch(_) {}
       }
 
       // 🆕 Credit modal helpers
@@ -5845,77 +5833,52 @@ async function refreshRates(){
       }
 
      // helper to show the verify modal (normalize first)
-    function openVerifyModal(orig, rawSugg){
-    // normalize + render diffs (existing helpers in your file)
-    const sugg  = (typeof normalizeToAddressShape === "function")
-      ? normalizeToAddressShape(rawSugg) : (rawSugg || {});
-    if (typeof renderAddressDiff === "function") {
-      try { renderAddressDiff(orig, sugg); } catch(_){}
+     function openVerifyModal(orig, rawSugg){
+      // make available across script blocks
+      window.openVerifyModal = openVerifyModal;
+       const sugg = normalizeToAddressShape(rawSugg);
+       renderAddressDiff(orig, sugg);
+      const modal = document.getElementById("ccVerifyModal");
+      if (!modal) { M.toast?.({ html:"Address suggestion available — verify modal not found." }); return false; }
+
+      modal.style.display = "block";
+
+      // kick off autofill immediately upon opening the verify modal
+      try { autofillFromVerifyModal(); } catch (_) {}
+
+      // buttons
+      document.getElementById("ccVerifyClose").onclick = () => { modal.style.display = "none"; };
+      document.getElementById("ccAddrEdit").onclick    = () => { modal.style.display = "none"; showStep(0); };
+
+      // Keep Original → still ensure Step 1 is ready-populated
+      document.getElementById("ccKeepOriginal").onclick = () => {
+        try { autofillFromVerifyModal(); } catch (_) {}
+        modal.style.display = "none";
+        showStep(1);
+      };
+
+      // Use Suggested → populate recipient fields + ensure Step 1 prefilled
+      document.getElementById("ccUseSuggested").onclick = () => {
+        try { autofillFromVerifyModal(); } catch (_) {}
+
+        const map = {
+          to_name:"cc_to_name", to_address_1:"cc_to_address_1", to_address_2:"cc_to_address_2",
+          to_city:"cc_to_city", to_province_code:"cc_to_province_code",
+          to_postal_code:"cc_to_postal_code", to_country_code:"cc_to_country_code"
+        };
+        Object.keys(map).forEach(k => {
+          const v = sugg && sugg[k];
+          if (v != null) document.getElementById(map[k]).value = v;
+        });
+        modal.style.display = "none";
+        showStep(1);
+      };
+
+      return true;
     }
 
-    const modal = document.getElementById("ccVerifyModal");
-    if (!modal) { try { M.toast?.({ html:"Address suggestion available — verify modal not found." }); } catch(_) {} return false; }
-
-    // 🔐 Bind modal to the order that spawned it
-    const expectedOrder = (document.getElementById("etsyOrderNumber")?.value || "").trim();
-    modal.dataset.order = expectedOrder;
-    // Persist this modal's suggestion with the modal itself
-    modal.dataset.sugg = JSON.stringify(sugg || {});
-
-    modal.style.display = "block";
-    try { typeof autofillFromVerifyModal === "function" && autofillFromVerifyModal(); } catch(_){}
-
-    // --- Buttons (clear any anonymous listeners by cloning, then bind fresh) ---
-    const closeBtn = document.getElementById("ccVerifyClose");
-    const editBtn  = document.getElementById("ccAddrEdit");
-    let keepBtn    = document.getElementById("ccKeepOriginal");
-    let useBtn     = document.getElementById("ccUseSuggested");
-
-    // replace nodes to drop any previously attached listeners
-    if (keepBtn) { const k2 = keepBtn.cloneNode(true); keepBtn.parentNode.replaceChild(k2, keepBtn); keepBtn = k2; }
-    if (useBtn)  { const u2 = useBtn.cloneNode(true);  useBtn.parentNode.replaceChild(u2,  useBtn);  useBtn  = u2;  }
-
-    // Re-bind handlers scoped to THIS order + THIS suggestion
-    closeBtn && closeBtn.addEventListener("click", () => { modal.style.display = "none"; });
-    editBtn  && editBtn .addEventListener("click", () => { modal.style.display = "none"; showStep?.(0); });
-
-    keepBtn && keepBtn.addEventListener("click", () => {
-      const cur = (document.getElementById("etsyOrderNumber")?.value || "").trim();
-      if (modal.dataset.order && modal.dataset.order !== cur) {
-        try { M.toast?.({ html: "Order changed. Ignoring previous verification." }); } catch(_){}
-        modal.style.display = "none"; return;
-      }
-      try { typeof autofillFromVerifyModal === "function" && autofillFromVerifyModal(); } catch(_){}
-      window.__ccRecipientDirty = false;
-      modal.style.display = "none";
-      showStep?.(1);
-    });
-
-    useBtn && useBtn.addEventListener("click", () => {
-      const cur = (document.getElementById("etsyOrderNumber")?.value || "").trim();
-      if (modal.dataset.order && modal.dataset.order !== cur) {
-        try { M.toast?.({ html: "Order changed. Ignoring previous verification." }); } catch(_){}
-        modal.style.display = "none"; return;
-      }
-      let s = {};
-      try { s = JSON.parse(modal.dataset.sugg || "{}"); } catch {}
-      const map = {
-        to_name:"cc_to_name", to_address_1:"cc_to_address_1", to_address_2:"cc_to_address_2",
-        to_city:"cc_to_city", to_province_code:"cc_to_province_code",
-        to_postal_code:"cc_to_postal_code", to_country_code:"cc_to_country_code"
-      };
-      Object.keys(map).forEach(k => {
-        const v = s && s[k];
-        if (v != null) document.getElementById(map[k]).value = v;
-      });
-      window.__ccRecipientDirty = false;
-      modal.style.display = "none";
-      showStep?.(1);
-    });
-    return true;
-  }
-  // expose globally (some blocks call window.openVerifyModal)
-  window.openVerifyModal = openVerifyModal;
+    // expose globally for other script blocks
+    window.openVerifyModal = openVerifyModal;
 
     /* === Helper: pull "Title:" line from the Order Details box === */
     function extractOrderTitle() {
@@ -6021,35 +5984,19 @@ async function refreshRates(){
      // Choose the correct "orig" address source: prefer Chit Chats shipment → fallback to inputs
       async function pickOrigAddress(){
         const id = (document.getElementById("ccShipmentId")?.value || "").trim();
-        const expectedOrder = (document.getElementById("etsyOrderNumber")?.value || "").trim();
         // Start from whatever is currently in the inputs (seeded from Ship To)
         let orig = (window.collectRecipientAddress || collectRecipientAddress || gatherRecipientFromInputs)();
         if (id) {
           try {
             const det = await callCc("GET", null, `?resource=shipment&id=${encodeURIComponent(id)}`);
             const fromCc = normalizeToAddressShape(det?.to || det?.recipient || det?.ship_to || det?.address || det);
-            if (fromCc && (fromCc.to_address_1 || fromCc.to_city || fromCc.to_postal_code)) {
-              // Reflect CC address into the form so everything stays in sync
-              // Reflect CC address into the form so everything stays in sync
-              const map = {
-                to_name:"cc_to_name", to_address_1:"cc_to_address_1", to_address_2:"cc_to_address_2",
-                to_city:"cc_to_city", to_province_code:"cc_to_province_code",
-                to_postal_code:"cc_to_postal_code", to_country_code:"cc_to_country_code",
-                
-                // 🆕 try to fill phone when normalizeToAddressShape provided it
-                to_phone:"cc_to_phone"
-              };
-        // Only write if the order hasn't changed mid-flight
-        const nowOrder = (document.getElementById("etsyOrderNumber")?.value || "").trim();
-        if (nowOrder === expectedOrder) {
-          Object.keys(map).forEach(k => {
-            const v = fromCc[k];
-            if (v != null) document.getElementById(map[k]).value = v;
-          });
-        }
-
-              orig = fromCc;
-            }
+      if (fromCc && (fromCc.to_address_1 || fromCc.to_city || fromCc.to_postal_code)) {
+        // ⛔ Do NOT reflect CC address into Step-0 inputs here.
+        // Using a stale ccShipmentId from a previous order can overwrite the
+        // *current* order’s recipient in ccEditCard. Keep the inputs as seeded
+        // from shipAddressBox; only use CC data as the "orig" object for compare.
+        orig = fromCc;
+      }
           } catch(e){ try{ console.debug("[Verify] CC shipment fetch failed", e);}catch{} }
         }
         return orig;
@@ -6661,6 +6608,25 @@ function parseIntlAddressBlock(blockText = "", fallbackCountryCode = "") {
 
       // Modal action buttons keep your original vs suggested choice
       document.getElementById("ccKeepOriginal")?.addEventListener("click", ()=>{
+        document.getElementById("ccVerifyModal").style.display = "none";
+      });
+
+      document.getElementById("ccUseSuggested")?.addEventListener("click", ()=>{
+        const s = window.__lastVerifySuggested;
+        if (s) {
+          // Push suggestion back into Step-0 inputs
+          const set = (id, v) => {
+          const el = document.getElementById(id);
+          if (el) el.value = (v ?? "").toString().trim();
+          };
+          set("cc_to_name",           s.to_name);
+          set("cc_to_address_1",      s.to_address_1);
+          set("cc_to_address_2",      s.to_address_2);
+          set("cc_to_city",           s.to_city);
+          set("cc_to_province_code",  s.to_province_code);
+          set("cc_to_postal_code",    s.to_postal_code);
+          set("cc_to_country_code",   s.to_country_code);
+        }
         document.getElementById("ccVerifyModal").style.display = "none";
       });
 
