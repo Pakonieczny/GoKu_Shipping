@@ -1003,6 +1003,83 @@
     window.currentCarrier = null;
     window.CC_DEFAULT_BATCH_ID = "3903775";
 
+      /* 🔥 Master cold-boot reset before loading a new order */
+  function resetAllOrderUI(){
+    // — Stop any CC lookups / latches from a previous order
+    try { window.ccSearchAbort?.abort?.(); } catch {}
+    try { clearTimeout(window.ccSlowTimer); } catch {}
+    window.ccSlowTimer = null;
+    window.ccManualIdUpdateDone = false;
+    window.ccManualIdUpdateInFlight = false;
+    window.ccManualIdUpdatePromise = null;
+
+    // — Recipient & verify UI (uses your existing helper)
+    try { resetRecipientFields?.(); } catch {}
+    const vModal = document.getElementById('ccVerifyModal');
+    if (vModal) vModal.style.display = 'none';
+    const vOrig = document.getElementById('ccVerifyOriginal');
+    const vSugg = document.getElementById('ccVerifySuggested');
+    if (vOrig) vOrig.innerHTML = '';
+    if (vSugg) vSugg.innerHTML = '';
+
+    // — Clear CC edit fields (Steps 1–3)
+    [
+      'cc_to_name','cc_to_phone','cc_to_email','cc_to_address1','cc_to_address2',
+      'cc_to_city','cc_to_province','cc_to_postal',
+      'cc_package_type','cc_size_unit','cc_weight_unit',
+      'cc_size_x','cc_size_y','cc_size_z','cc_weight',
+      'cc_value_currency','cc_grand_total','cc_ship_date'
+    ].forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
+
+    // — Toggleables
+    ['cc_insurance_requested','cc_signature_requested','cc_media_mail_requested']
+      .forEach(id => { const el = document.getElementById(id); if (el) el.checked = false; });
+
+    // — Rates list & step state
+    const rates = document.getElementById('ccRates'); if (rates) rates.innerHTML = '';
+    window.ccSelectedRateId = '';
+    document.getElementById('ccBuy')?.setAttribute('disabled','true');
+    document.getElementById('ccRefreshRates')?.setAttribute('disabled','true');
+    document.getElementById('ccNext')?.removeAttribute('disabled');
+    document.querySelectorAll('.cc-step-pill')?.forEach((el,i)=>el.classList.toggle('active', i===0));
+
+    // — Right-hand panes & metadata
+    ['orderDetails','shipAddressBox','shippingPriority','dateOrdered','shipDate','labelCreationDate','completedByEmployee']
+      .forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
+
+    // — Tracking UI
+    const t = document.getElementById('trackingNumberInput'); if (t) t.value='';
+    const c = document.getElementById('carrierSelect'); if (c) c.selectedIndex = 0;
+    window.currentTracking = null;
+    window.currentCarrier = null;
+
+    // — Chat/messages
+    const hist = document.getElementById('customerMessageHistory'); if (hist) hist.innerHTML='';
+    const msg  = document.getElementById('britesMsgInput'); if (msg) msg.value='';
+    window.buyerMessageText = '';
+
+    // — Photo grid back to “Empty”
+    document.querySelectorAll('.preview-box').forEach(box => {
+      box.classList.remove('selected');
+      box.querySelector('img')?.remove();
+      box.textContent = 'Empty';
+    });
+    document.querySelectorAll('[id^="quantityCell"]').forEach(el => el.value = '');
+    document.querySelectorAll('[id^="metalCell"]').forEach(el => el.value = '');
+
+    // — Global order caches
+    window.cachedOrderItems = [];
+    window.orderName = '';
+    window.orderStatus = '';
+    window.orderIsShipped = false;
+    window.orderShipments = [];
+    window.orderShippedTimestamp = null;
+
+    // — ChitChats shipment id box
+    const ccId = document.getElementById('ccShipmentId');
+    if (ccId){ ccId.value=''; ccId.dataset.setAt = String(Date.now()); }
+  }
+
    // On load, pre-select the batch if it exists in #ccBatchSelect
     document.addEventListener("DOMContentLoaded", () => {
       try {
@@ -2424,6 +2501,7 @@ function metalToBadge(label){
             // focus, then simulate pressing Enter after 100ms
             inp.focus();
             setTimeout(() => {
+            resetAllOrderUI(); // ← full cold boot
               const ev = new KeyboardEvent("keydown", { key: "Enter", bubbles: true });
               inp.dispatchEvent(ev);
             }, 100);
@@ -2484,6 +2562,7 @@ function metalToBadge(label){
 
       etsyOrderInput.addEventListener("keydown", async function (e) {
         if (e.key !== "Enter") return;
+        resetAllOrderUI(); // ← full cold boot at the start
 
           /* ⛔ Cancel any in-flight ccShipmentId search and pending slow-pass */
         window.ccManualIdUpdateDone    = false;
