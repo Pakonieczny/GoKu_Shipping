@@ -2398,7 +2398,7 @@ function metalToBadge(label){
             window.ccMuteIdInput   = false;
             const idEl = document.getElementById("ccShipmentId");
             if (idEl) { idEl.value = ""; }
-            markOrderChange();
+            window.markOrderChange?.();
             window.ccShipmentId = "";
             try { await fetchBatches(); } catch (e) {}
 
@@ -2499,7 +2499,7 @@ function metalToBadge(label){
         window.ccMuteIdInput   = false;
         const idEl = document.getElementById("ccShipmentId");
         if (idEl) { idEl.value = ""; }
-        markOrderChange();
+        window.markOrderChange?.();
         window.ccShipmentId = "";
         try { await fetchBatches(); } catch (e) {}
 
@@ -3392,7 +3392,7 @@ function metalToBadge(label){
               window.ccMuteIdInput   = false;
               const idEl = document.getElementById("ccShipmentId");
               if (idEl) { idEl.value = ""; }
-              markOrderChange();
+              window.markOrderChange?.();
               window.ccShipmentId = "";
               try { await fetchBatches(); } catch (e) {}
 
@@ -5546,10 +5546,12 @@ async function refreshRates(){
         try { window.__lastVerifySuggested = null; } catch (_){}
         const idEl = document.getElementById("ccShipmentId");
         if (idEl) {
-          idEl.dataset.setAt   = String(window.__lastOrderChangeAt);
+          idEl.dataset.setAt    = String(window.__lastOrderChangeAt);
           idEl.dataset.forOrder = (document.getElementById("etsyOrderNumber")?.value || "").trim();
         }
       }
+      // Ensure listeners in other scopes/IIFEs can see it
+      window.markOrderChange = markOrderChange;
 
       // 🆕 Credit modal helpers
       function openCreditModal(msg){
