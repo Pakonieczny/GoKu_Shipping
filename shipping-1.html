@@ -2399,6 +2399,7 @@ function metalToBadge(label){
             const idEl = document.getElementById("ccShipmentId");
             if (idEl) { idEl.value = ""; idEl.dataset.setAt = String(Date.now()); }
             window.ccShipmentId = "";
+            try { resetRecipientFields(); } catch{}
             try { await fetchBatches(); } catch (e) {}
 
             // 🔄 New order: fully reset Recipient & visible address UI
@@ -2485,10 +2486,6 @@ function metalToBadge(label){
       etsyOrderInput.addEventListener("keydown", async function (e) {
         if (e.key !== "Enter") return;
 
-      // 🔁 New: hard wipe state before loading a different order
-      resetAllOrderState("enter-key");
-      window.activeReceiptId = orderId;
-
           /* ⛔ Cancel any in-flight ccShipmentId search and pending slow-pass */
         window.ccManualIdUpdateDone    = false;
         /* ⛔ If an Update-ID latch is running from a previous order, resolve it cleanly */
@@ -2503,6 +2500,7 @@ function metalToBadge(label){
         const idEl = document.getElementById("ccShipmentId");
         if (idEl) { idEl.value = ""; idEl.dataset.setAt = String(Date.now()); }
         window.ccShipmentId = "";
+        try { resetRecipientFields(); } catch{}
         try { await fetchBatches(); } catch (e) {}
 
         // 🔄 New order: fully reset Recipient & visible address UI
@@ -3235,6 +3233,7 @@ function metalToBadge(label){
       try {
         const box = document.getElementById("shipAddressBox");
         if (!box) return;
+        try { box.dataset.boundOrder = String(orderNumber || ""); } catch(_) {}
         box.value = "SHIP TO:\n(Loading...)";
 
         const resp = await fetch(
@@ -3330,6 +3329,7 @@ function metalToBadge(label){
         if (mySeq === window.__addrLoadSeq) {
           const box = document.getElementById("shipAddressBox");
           if (box) {
+            try { box.dataset.boundOrder = String(orderNumber || ""); } catch(_) {}
             box.value = "SHIP TO:\n(Error loading)";
             box.style.color = "";
           }
@@ -3395,6 +3395,7 @@ function metalToBadge(label){
               const idEl = document.getElementById("ccShipmentId");
               if (idEl) { idEl.value = ""; idEl.dataset.setAt = String(Date.now()); }
               window.ccShipmentId = "";
+              try { resetRecipientFields(); } catch{}
               try { await fetchBatches(); } catch (e) {}
 
               // fresh order → wipe any prior recipient values
@@ -5527,7 +5528,11 @@ async function refreshRates(){
         });
 
         const ship = document.getElementById("shipAddressBox");
-        if (ship) { ship.value = "SHIP TO:\n(loading…)"; ship.style.color = ""; }
+        if (ship) {
+        ship.value = "SHIP TO:\n(loading…)";
+        ship.style.color = "";
+        try { ship.dataset.boundOrder = ""; } catch(_) {}
+      }
 
         // Mark recipient UI as clean on order change
         window.__ccRecipientDirty = false;
@@ -5537,82 +5542,12 @@ async function refreshRates(){
         const sugg = document.getElementById("ccVerifySuggested");
         if (orig) orig.textContent = "";
         if (sugg) sugg.textContent = "";
+        // 🔒 also clear any stale verify caches / bindings
+        window.__lastVerifyOriginal  = null;
+        window.__lastVerifySuggested = null;
+        const vmod = document.getElementById("ccVerifyModal");
+        if (vmod) vmod.dataset.order = "";
       }
-
-      +// 🧨 Master wipe for any time a NEW order is loaded
-      function resetAllOrderState(reason = "new-order") {
-        try { console.info("resetAllOrderState:", reason); } catch {}
-
-        // Advance the global ship sequence to invalidate late responses
-        window.__shipSeq = (window.__shipSeq | 0) + 1;
-        window.activeReceiptId = "";
-        window.activeOrderToken = String(Date.now());
-
-        // 0) Recipient/UI text block
-        resetRecipientFields(); // clears cc_to_* and shipAddressBox
-        const orderDetails = document.getElementById("orderDetails");
-        if (orderDetails) orderDetails.value = " ORDER DETAILS:\n";
-
-        // 1) Step 1 — description/customs
-        const wipe = (id) => { const el = document.getElementById(id); if (el) el.value = ""; };
-        ["cc_item_description","cc_item_qty","cc_item_unit_value","cc_item_hs_tariff_code",
-         "cc_item_origin_country","cc_item_manufacture_country","cc_grand_total"].forEach(wipe);
-        const liBox = document.getElementById("cc_line_items_container");
-        if (liBox) { liBox.innerHTML = ""; try { liBox.dataset.boundOrder = ""; } catch {} }
-        const pkgContents = document.getElementById("cc_package_contents"); if (pkgContents) pkgContents.value = "merchandise";
-        const valCurr = document.getElementById("cc_value_currency"); if (valCurr) valCurr.value = "CAD";
-        const vat = document.getElementById("cc_customs_tax_reference_number"); if (vat) vat.value = "";
-
-        // 2) Step 2 — package
-        const set = (id, v="") => { const el = document.getElementById(id); if (el) el.value = v; };
-        set("cc_package_type", "");
-        set("cc_size_unit", "cm");
-        set("cc_weight_unit", "g");
-        ["cc_size_x","cc_size_y","cc_size_z","cc_weight","cc_ship_date"].forEach(id => set(id, ""));
-        set("cc_insurance_requested","false");
-        set("cc_signature_requested","false");
-        set("cc_media_mail_requested","false");
-
-        // 3) Step 3 — rates/postage
-        const ratesUl = document.getElementById("ccRates"); // <ul id="ccRates"> lives in Step 3
-        if (ratesUl) ratesUl.innerHTML = "";
-        const buyBtn = document.getElementById("ccBuy"); if (buyBtn) buyBtn.disabled = true;
-        window.ccBlockRatesUntilStep2 = true;
-        window.ccManualIdUpdateInFlight = false;
-        window.ccManualIdUpdateDone = false;
-        window.ccManualIdUpdatePromise = null;
-
-        // 4) Shipment id & tracking
-        set("ccShipmentId", "");           // ID box on screen
-        window.ccShipmentId   = "";        // mirror in memory
-        window.currentTracking = null;     // used by trackingLinkBtn
-        window.currentCarrier  = null;
-
-        // 5) Preview grid (10 boxes) + per-cell fields (qty/metal)
-        for (let i=0; i<10; i++) {
-          const cell = document.getElementById("previewCell"+i);
-          if (cell) { cell.innerHTML = "Empty"; cell.style.cursor = "default"; cell.onclick = null; }
-          const q = document.getElementById("qty_"+i);    if (q) q.value = "";
-          const m = document.getElementById("metal_"+i);  if (m) m.value = "";
-        }
-
-        // 6) Misc order UI
-        const pr = document.getElementById("shippingPriority"); if (pr) { pr.value=""; pr.style.color=""; pr.style.fontWeight=""; }
-        const tbtn = document.getElementById("trackingLinkBtn"); if (tbtn) tbtn.style.display = "none";
-        const hist = document.getElementById("customerMessageHistory"); if (hist) hist.innerHTML = "";
-        const lbl  = document.getElementById("labelCreationDate"); if (lbl) lbl.value = "";
-        const done = document.getElementById("completedByEmployee"); if (done) done.value = "";
-        const sig  = document.getElementById("signatureBox"); if (sig) sig.innerHTML = "Sig Box";
-
-        // 7) Per-order globals
-        window.cachedOrderItems = [];
-        window.orderName = window.orderStatus = "";
-        window.orderIsShipped = "";
-        window.orderShipments = [];
-
-        // Don’t touch OAuth/session/global config here.
-      }
-      window.resetAllOrderState = resetAllOrderState;
 
       // 🆕 Credit modal helpers
       function openCreditModal(msg){
@@ -5918,6 +5853,9 @@ async function refreshRates(){
       const modal = document.getElementById("ccVerifyModal");
       if (!modal) { M.toast?.({ html:"Address suggestion available — verify modal not found." }); return false; }
 
+      // Bind verify modal to the order that spawned it
+      modal.dataset.order = (document.getElementById("etsyOrderNumber")?.value || "").trim();
+
       modal.style.display = "block";
 
       // kick off autofill immediately upon opening the verify modal
@@ -5929,6 +5867,13 @@ async function refreshRates(){
 
       // Keep Original → still ensure Step 1 is ready-populated
       document.getElementById("ccKeepOriginal").onclick = () => {
+      const cur = (document.getElementById("etsyOrderNumber")?.value || "").trim();
+      const mod = (document.getElementById("ccVerifyModal")?.dataset.order || "").trim();
+      if (mod && mod !== cur) {
+        try { M.toast?.({ html: "Order changed. Ignoring previous verification." }); } catch(_) {}
+        document.getElementById("ccVerifyModal").style.display = "none";
+        return;
+      }
         try { autofillFromVerifyModal(); } catch (_) {}
         modal.style.display = "none";
         showStep(1);
@@ -5936,6 +5881,13 @@ async function refreshRates(){
 
       // Use Suggested → populate recipient fields + ensure Step 1 prefilled
       document.getElementById("ccUseSuggested").onclick = () => {
+      const cur = (document.getElementById("etsyOrderNumber")?.value || "").trim();
+      const mod = (document.getElementById("ccVerifyModal")?.dataset.order || "").trim();
+      if (mod && mod !== cur) {
+        try { M.toast?.({ html: "Order changed. Ignoring previous verification." }); } catch(_) {}
+        document.getElementById("ccVerifyModal").style.display = "none";
+        return;
+      }
         try { autofillFromVerifyModal(); } catch (_) {}
 
         const map = {
@@ -5943,10 +5895,14 @@ async function refreshRates(){
           to_city:"cc_to_city", to_province_code:"cc_to_province_code",
           to_postal_code:"cc_to_postal_code", to_country_code:"cc_to_country_code"
         };
-        Object.keys(map).forEach(k => {
-          const v = sugg && sugg[k];
-          if (v != null) document.getElementById(map[k]).value = v;
-        });
+        // Only write if the order hasn't changed mid-flight
+        const nowOrder = (document.getElementById("etsyOrderNumber")?.value || "").trim();
+        if (nowOrder === expectedOrder) {
+          Object.keys(map).forEach(k => {
+            const v = fromCc[k];
+            if (v != null) document.getElementById(map[k]).value = v;
+          });
+        }
         modal.style.display = "none";
         showStep(1);
       };
@@ -6061,6 +6017,7 @@ async function refreshRates(){
      // Choose the correct "orig" address source: prefer Chit Chats shipment → fallback to inputs
       async function pickOrigAddress(){
         const id = (document.getElementById("ccShipmentId")?.value || "").trim();
+        const expectedOrder = (document.getElementById("etsyOrderNumber")?.value || "").trim();
         // Start from whatever is currently in the inputs (seeded from Ship To)
         let orig = (window.collectRecipientAddress || collectRecipientAddress || gatherRecipientFromInputs)();
         if (id) {
@@ -6078,10 +6035,14 @@ async function refreshRates(){
                 // 🆕 try to fill phone when normalizeToAddressShape provided it
                 to_phone:"cc_to_phone"
               };
-              Object.keys(map).forEach(k => {
-                const v = fromCc[k];
-                if (v != null) document.getElementById(map[k]).value = v;
-              });
+        // Only write if the order hasn't changed mid-flight
+        const nowOrder = (document.getElementById("etsyOrderNumber")?.value || "").trim();
+        if (nowOrder === expectedOrder) {
+          Object.keys(map).forEach(k => {
+            const v = fromCc[k];
+            if (v != null) document.getElementById(map[k]).value = v;
+          });
+        }
 
               orig = fromCc;
             }
