@@ -5859,44 +5859,59 @@ async function refreshRates(){
     // 🔐 Bind modal to the order that spawned it
     const expectedOrder = (document.getElementById("etsyOrderNumber")?.value || "").trim();
     modal.dataset.order = expectedOrder;
+    // Persist this modal's suggestion with the modal itself
+    modal.dataset.sugg = JSON.stringify(sugg || {});
 
     modal.style.display = "block";
     try { typeof autofillFromVerifyModal === "function" && autofillFromVerifyModal(); } catch(_){}
 
-    // Buttons (each checks that the active order hasn't changed)
-    document.getElementById("ccVerifyClose").onclick = () => { modal.style.display = "none"; };
-    document.getElementById("ccAddrEdit").onclick    = () => { modal.style.display = "none"; showStep?.(0); };
+    // --- Buttons (clear any anonymous listeners by cloning, then bind fresh) ---
+    const closeBtn = document.getElementById("ccVerifyClose");
+    const editBtn  = document.getElementById("ccAddrEdit");
+    let keepBtn    = document.getElementById("ccKeepOriginal");
+    let useBtn     = document.getElementById("ccUseSuggested");
 
-    document.getElementById("ccKeepOriginal").onclick = () => {
+    // replace nodes to drop any previously attached listeners
+    if (keepBtn) { const k2 = keepBtn.cloneNode(true); keepBtn.parentNode.replaceChild(k2, keepBtn); keepBtn = k2; }
+    if (useBtn)  { const u2 = useBtn.cloneNode(true);  useBtn.parentNode.replaceChild(u2,  useBtn);  useBtn  = u2;  }
+
+    // Re-bind handlers scoped to THIS order + THIS suggestion
+    closeBtn && closeBtn.addEventListener("click", () => { modal.style.display = "none"; });
+    editBtn  && editBtn .addEventListener("click", () => { modal.style.display = "none"; showStep?.(0); });
+
+    keepBtn && keepBtn.addEventListener("click", () => {
       const cur = (document.getElementById("etsyOrderNumber")?.value || "").trim();
       if (modal.dataset.order && modal.dataset.order !== cur) {
         try { M.toast?.({ html: "Order changed. Ignoring previous verification." }); } catch(_){}
         modal.style.display = "none"; return;
       }
       try { typeof autofillFromVerifyModal === "function" && autofillFromVerifyModal(); } catch(_){}
+      window.__ccRecipientDirty = false;
       modal.style.display = "none";
       showStep?.(1);
-    };
+    });
 
-    document.getElementById("ccUseSuggested").onclick = () => {
+    useBtn && useBtn.addEventListener("click", () => {
       const cur = (document.getElementById("etsyOrderNumber")?.value || "").trim();
       if (modal.dataset.order && modal.dataset.order !== cur) {
         try { M.toast?.({ html: "Order changed. Ignoring previous verification." }); } catch(_){}
         modal.style.display = "none"; return;
       }
-      // Write suggestion into Step-0 fields
+      let s = {};
+      try { s = JSON.parse(modal.dataset.sugg || "{}"); } catch {}
       const map = {
         to_name:"cc_to_name", to_address_1:"cc_to_address_1", to_address_2:"cc_to_address_2",
         to_city:"cc_to_city", to_province_code:"cc_to_province_code",
         to_postal_code:"cc_to_postal_code", to_country_code:"cc_to_country_code"
       };
       Object.keys(map).forEach(k => {
-        const v = sugg && sugg[k];
+        const v = s && s[k];
         if (v != null) document.getElementById(map[k]).value = v;
       });
+      window.__ccRecipientDirty = false;
       modal.style.display = "none";
       showStep?.(1);
-    };
+    });
     return true;
   }
   // expose globally (some blocks call window.openVerifyModal)
