@@ -6014,42 +6014,7 @@ async function refreshRates(){
         }
       }
 
-     // Choose the correct "orig" address source: prefer Chit Chats shipment → fallback to inputs
-      async function pickOrigAddress(){
-        const id = (document.getElementById("ccShipmentId")?.value || "").trim();
-        const expectedOrder = (document.getElementById("etsyOrderNumber")?.value || "").trim();
-        // Start from whatever is currently in the inputs (seeded from Ship To)
-        let orig = (window.collectRecipientAddress || collectRecipientAddress || gatherRecipientFromInputs)();
-        if (id) {
-          try {
-            const det = await callCc("GET", null, `?resource=shipment&id=${encodeURIComponent(id)}`);
-            const fromCc = normalizeToAddressShape(det?.to || det?.recipient || det?.ship_to || det?.address || det);
-            if (fromCc && (fromCc.to_address_1 || fromCc.to_city || fromCc.to_postal_code)) {
-              // Reflect CC address into the form so everything stays in sync
-              // Reflect CC address into the form so everything stays in sync
-              const map = {
-                to_name:"cc_to_name", to_address_1:"cc_to_address_1", to_address_2:"cc_to_address_2",
-                to_city:"cc_to_city", to_province_code:"cc_to_province_code",
-                to_postal_code:"cc_to_postal_code", to_country_code:"cc_to_country_code",
-                
-                // 🆕 try to fill phone when normalizeToAddressShape provided it
-                to_phone:"cc_to_phone"
-              };
-        // Only write if the order hasn't changed mid-flight
-        const nowOrder = (document.getElementById("etsyOrderNumber")?.value || "").trim();
-        if (nowOrder === expectedOrder) {
-          Object.keys(map).forEach(k => {
-            const v = fromCc[k];
-            if (v != null) document.getElementById(map[k]).value = v;
-          });
-        }
 
-              orig = fromCc;
-            }
-          } catch(e){ try{ console.debug("[Verify] CC shipment fetch failed", e);}catch{} }
-        }
-        return orig;
-      }
 
      async function maybeVerifyAddressBeforeStep1(force = false){
        const log  = (...a)=>{ try{ console.debug("[Verify]", ...a);}catch{} };
