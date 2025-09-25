@@ -5845,70 +5845,62 @@ async function refreshRates(){
       }
 
      // helper to show the verify modal (normalize first)
-     function openVerifyModal(orig, rawSugg){
-      // make available across script blocks
-      window.openVerifyModal = openVerifyModal;
-       const sugg = normalizeToAddressShape(rawSugg);
-       renderAddressDiff(orig, sugg);
-      const modal = document.getElementById("ccVerifyModal");
-      if (!modal) { M.toast?.({ html:"Address suggestion available — verify modal not found." }); return false; }
-
-      // Bind verify modal to the order that spawned it
-      modal.dataset.order = (document.getElementById("etsyOrderNumber")?.value || "").trim();
-
-      modal.style.display = "block";
-
-      // kick off autofill immediately upon opening the verify modal
-      try { autofillFromVerifyModal(); } catch (_) {}
-
-      // buttons
-      document.getElementById("ccVerifyClose").onclick = () => { modal.style.display = "none"; };
-      document.getElementById("ccAddrEdit").onclick    = () => { modal.style.display = "none"; showStep(0); };
-
-      // Keep Original → still ensure Step 1 is ready-populated
-      document.getElementById("ccKeepOriginal").onclick = () => {
-      const cur = (document.getElementById("etsyOrderNumber")?.value || "").trim();
-      const mod = (document.getElementById("ccVerifyModal")?.dataset.order || "").trim();
-      if (mod && mod !== cur) {
-        try { M.toast?.({ html: "Order changed. Ignoring previous verification." }); } catch(_) {}
-        document.getElementById("ccVerifyModal").style.display = "none";
-        return;
-      }
-        try { autofillFromVerifyModal(); } catch (_) {}
-        modal.style.display = "none";
-        showStep(1);
-      };
-
-      // Use Suggested → populate recipient fields + ensure Step 1 prefilled
-      document.getElementById("ccUseSuggested").onclick = () => {
-        const cur = (document.getElementById("etsyOrderNumber")?.value || "").trim();
-        const mod = (document.getElementById("ccVerifyModal")?.dataset.order || "").trim();
-        if (mod && mod !== cur) {
-          try { M.toast?.({ html: "Order changed. Ignoring previous verification." }); } catch(_) {}
-          document.getElementById("ccVerifyModal").style.display = "none";
-          return;
-        }
-        try { autofillFromVerifyModal(); } catch (_) {}
-
-        const map = {
-          to_name:"cc_to_name", to_address_1:"cc_to_address_1", to_address_2:"cc_to_address_2",
-          to_city:"cc_to_city", to_province_code:"cc_to_province_code",
-          to_postal_code:"cc_to_postal_code", to_country_code:"cc_to_country_code"
-        };
-        // Fill from the suggestion captured when the modal opened
-        Object.keys(map).forEach(k => {
-          const v = sugg && sugg[k];
-          if (v != null) document.getElementById(map[k]).value = v;
-        });
-        modal.style.display = "none";
-        showStep(1);
-      };
-
-      return true;
+    function openVerifyModal(orig, rawSugg){
+    // normalize + render diffs (existing helpers in your file)
+    const sugg  = (typeof normalizeToAddressShape === "function")
+      ? normalizeToAddressShape(rawSugg) : (rawSugg || {});
+    if (typeof renderAddressDiff === "function") {
+      try { renderAddressDiff(orig, sugg); } catch(_){}
     }
 
-    // expose globally for other script blocks
-    window.openVerifyModal = openVerifyModal;
+    const modal = document.getElementById("ccVerifyModal");
+    if (!modal) { try { M.toast?.({ html:"Address suggestion available — verify modal not found." }); } catch(_) {} return false; }
+
+    // 🔐 Bind modal to the order that spawned it
+    const expectedOrder = (document.getElementById("etsyOrderNumber")?.value || "").trim();
+    modal.dataset.order = expectedOrder;
+
+    modal.style.display = "block";
+    try { typeof autofillFromVerifyModal === "function" && autofillFromVerifyModal(); } catch(_){}
+
+    // Buttons (each checks that the active order hasn't changed)
+    document.getElementById("ccVerifyClose").onclick = () => { modal.style.display = "none"; };
+    document.getElementById("ccAddrEdit").onclick    = () => { modal.style.display = "none"; showStep?.(0); };
+
+    document.getElementById("ccKeepOriginal").onclick = () => {
+      const cur = (document.getElementById("etsyOrderNumber")?.value || "").trim();
+      if (modal.dataset.order && modal.dataset.order !== cur) {
+        try { M.toast?.({ html: "Order changed. Ignoring previous verification." }); } catch(_){}
+        modal.style.display = "none"; return;
+      }
+      try { typeof autofillFromVerifyModal === "function" && autofillFromVerifyModal(); } catch(_){}
+      modal.style.display = "none";
+      showStep?.(1);
+    };
+
+    document.getElementById("ccUseSuggested").onclick = () => {
+      const cur = (document.getElementById("etsyOrderNumber")?.value || "").trim();
+      if (modal.dataset.order && modal.dataset.order !== cur) {
+        try { M.toast?.({ html: "Order changed. Ignoring previous verification." }); } catch(_){}
+        modal.style.display = "none"; return;
+      }
+      // Write suggestion into Step-0 fields
+      const map = {
+        to_name:"cc_to_name", to_address_1:"cc_to_address_1", to_address_2:"cc_to_address_2",
+        to_city:"cc_to_city", to_province_code:"cc_to_province_code",
+        to_postal_code:"cc_to_postal_code", to_country_code:"cc_to_country_code"
+      };
+      Object.keys(map).forEach(k => {
+        const v = sugg && sugg[k];
+        if (v != null) document.getElementById(map[k]).value = v;
+      });
+      modal.style.display = "none";
+      showStep?.(1);
+    };
+    return true;
+  }
+  // expose globally (some blocks call window.openVerifyModal)
+  window.openVerifyModal = openVerifyModal;
 
     /* === Helper: pull "Title:" line from the Order Details box === */
     function extractOrderTitle() {
@@ -6654,25 +6646,6 @@ function parseIntlAddressBlock(blockText = "", fallbackCountryCode = "") {
 
       // Modal action buttons keep your original vs suggested choice
       document.getElementById("ccKeepOriginal")?.addEventListener("click", ()=>{
-        document.getElementById("ccVerifyModal").style.display = "none";
-      });
-
-      document.getElementById("ccUseSuggested")?.addEventListener("click", ()=>{
-        const s = window.__lastVerifySuggested;
-        if (s) {
-          // Push suggestion back into Step-0 inputs
-          const set = (id, v) => {
-          const el = document.getElementById(id);
-          if (el) el.value = (v ?? "").toString().trim();
-          };
-          set("cc_to_name",           s.to_name);
-          set("cc_to_address_1",      s.to_address_1);
-          set("cc_to_address_2",      s.to_address_2);
-          set("cc_to_city",           s.to_city);
-          set("cc_to_province_code",  s.to_province_code);
-          set("cc_to_postal_code",    s.to_postal_code);
-          set("cc_to_country_code",   s.to_country_code);
-        }
         document.getElementById("ccVerifyModal").style.display = "none";
       });
 
