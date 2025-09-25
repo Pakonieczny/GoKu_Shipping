@@ -3803,6 +3803,31 @@ function metalToBadge(label){
         if (e.key === "Enter") {
           e.preventDefault();
 
+          // Enter-to-search for reliability (manual entry/paste)
+          orderInp?.addEventListener("keydown", (e) => {
+            if (e.key === "Enter") {
+              e.preventDefault();
+
+              // 🔄 New order: fully reset Recipient & visible address UI
+              try { resetRecipientFields(); } catch (_) {}
+
+              // 🔓 New order → thaw post-buy freeze, clear CC id, refresh batches
+              window.ccPostBuyFrozen = false;
+              window.ccMuteIdInput   = false;
+              const idEl = document.getElementById("ccShipmentId");
+              if (idEl) { idEl.value = ""; idEl.dataset.setAt = String(Date.now()); }
+              window.ccShipmentId = "";
+              try { fetchBatches(); } catch {}
+
+              // 🔪 kill any live CC search and pending slow-pass; we’re switching orders
+              window.ccManualIdUpdateDone    = false;
+              window.ccManualIdUpdateInFlight= false;
+              window.ccManualIdUpdatePromise = null;
+
+              if (e.isTrusted) setTimeout(() => window.refreshFromOrderIfChitChats?.(), 500);
+            }
+          });
+
           // 🔓 New order → thaw post-buy freeze, clear CC id, refresh batches
           window.ccPostBuyFrozen = false;
           window.ccMuteIdInput   = false;
