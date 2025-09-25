@@ -1458,11 +1458,35 @@ function metalToBadge(label){
       return { hs: "7113115000", sku: "SS_187" };
     }
     // Gold family (Gold, Rose Gold, 14K, Gold Filled)
-    if (c === "gold" || c === "rose gold" || c === "14k" || c === "gold filled") {
+    if (c === "gold" || c === "rose gold" || c === "14k" || c === "gold filled" || c === "rose") {
       return { hs: "7113205000", sku: "GF_187" };
     }
     return null;
   }
+
+  // NEW: force Step-1 line items to reflect the CURRENT order
+  function syncLineItemsWithCurrentOrder(){
+   try{
+     const orderNumber = (document.getElementById("etsyOrderNumber")?.value || "").trim();
+     const container = document.getElementById("cc_line_items_container");
+     if (!container) return;
+ 
+     // If the container was populated for a different order, wipe it first
+     const bound = container.dataset.boundOrder || "";
+     if (orderNumber && bound !== orderNumber) {
+       container.innerHTML = "";
+     }
+ 
+     // Rebuild from the authoritative cache set by updateImageGrid(...)
+     // (This uses groupUniqueItems(...) + maps HS/SKU from metal, etc.)
+     renderCcLineItemsFromCached();
+ 
+     // Tag the DOM with the order we just bound to
+     if (orderNumber) container.dataset.boundOrder = orderNumber;
+   } catch (e) {
+     console.warn("syncLineItemsWithCurrentOrder:", e);
+   }
+ }
 
   function renderCcLineItemsFromCached(){
     const container = document.getElementById("cc_line_items_container");
@@ -3196,110 +3220,110 @@ function metalToBadge(label){
       });
     }
 
-      /* ===== ShipStation — load “Ship To” by orderNumber ======================= */
-      async function loadShipToAddress(orderNumber){
-        try {
-          const box = document.getElementById("shipAddressBox");
-          if (!box) return;
-          box.value = "SHIP TO:\n(Loading...)";
+    async function loadShipToAddress(orderNumber){
+      // ⛔ Old responses can’t overwrite newer orders
+      const mySeq = (window.__addrLoadSeq = (window.__addrLoadSeq || 0) + 1);
+      const stillCurrent = () => (
+        mySeq === window.__addrLoadSeq &&
+        orderNumber === (document.getElementById("etsyOrderNumber")?.value || "").trim()
+      );
 
-          const resp = await fetch(
-            "/.netlify/functions/ssGetOrderAddress?orderNumber=" + encodeURIComponent(orderNumber)
-          );
-          if (!resp.ok) {
-            box.value = "SHIP TO:\n(Not found)";
-            box.style.color = "";
-            return;
-          }
+      try {
+        const box = document.getElementById("shipAddressBox");
+        if (!box) return;
+        box.value = "SHIP TO:\n(Loading...)";
 
-          const data = await resp.json();
-          const ship = data.shipTo || null;
-          if (!ship) {
-            box.value = "SHIP TO:\n(Not found)";
-            box.style.color = "";
-            return;
-          }
+        const resp = await fetch(
+          "/.netlify/functions/ssGetOrderAddress?orderNumber=" + encodeURIComponent(orderNumber)
+        );
+        if (!stillCurrent()) return;
+        if (!resp.ok) {
+          if (!stillCurrent()) return;
+          box.value = "SHIP TO:\n(Not found)";
+          box.style.color = "";
+          return;
+        }
 
-          // NEW: set Shipping Priority box from SS
-          const prEl = document.getElementById("shippingPriority");
-          if (prEl) {
-            const svc = (data.serviceCode || "").toString();
-            const carrier = (data.carrierCode || "").toString();
+        const data = await resp.json();
+        if (!stillCurrent()) return;
+        const ship = data.shipTo || null;
+        if (!ship) {
+          box.value = "SHIP TO:\n(Not found)";
+          box.style.color = "";
+          return;
+        }
 
-            const amount = (typeof data.shippingAmount === "number")
-              ? data.shippingAmount
-              : (data.shippingAmount && typeof data.shippingAmount.amount === "number")
-                ? data.shippingAmount.amount
-                : null;
+        // ── Update “Shipping Priority” readout ───────────────────────────
+        const prEl = document.getElementById("shippingPriority");
+        if (prEl) {
+          const svc = (data.serviceCode || "").toString();
+          const carrier = (data.carrierCode || "").toString();
+          const amount = (typeof data.shippingAmount === "number")
+            ? data.shippingAmount
+            : (data.shippingAmount && typeof data.shippingAmount.amount === "number")
+              ? data.shippingAmount.amount
+              : null;
+          const cost = (amount != null)
+            ? amount.toLocaleString(undefined, { style: "currency", currency: "USD" })
+            : "—";
+          const label = [carrier, svc].filter(Boolean).join(" / ");
+          prEl.value = label ? `${label} • ${cost}` : `${cost}`;
+          prEl.style.fontWeight = "bold";
+          const amt = Number(amount);
+          prEl.style.color = (amt === 18 || amt === 55) ? "orange" : "";
+        }
 
-            const cost = (amount != null)
-              ? amount.toLocaleString(undefined, { style: "currency", currency: "USD" })
-              : "—";
+        // ── Keep item details refreshed if a tile is selected ────────────
+        const sel = document.querySelector(".preview-box.selected");
+        if (sel) {
+          const idx = parseInt(sel.id.replace("previewCell",""), 10);
+          if (!Number.isNaN(idx)) showItemDetails(idx);
+        }
 
-            const label = [carrier, svc].filter(Boolean).join(" / ");
-            prEl.value = label ? `${label} • ${cost}` : `${cost}`;
-
-            // Make it bold (CSS also enforces this, but we set it here too for safety)
-            prEl.style.fontWeight = "bold";
-
-            // If price is exactly $18 or $55 → orange
-            const amt = Number(amount);
-            prEl.style.color = (amt === 18 || amt === 55) ? "orange" : "";
-          }
-
-
-          // If a tile is selected, refresh details to show gift fields
-          const sel = document.querySelector(".preview-box.selected");
-          if (sel) {
-            const idx = parseInt(sel.id.replace("previewCell",""), 10);
-            if (!Number.isNaN(idx)) showItemDetails(idx);
-          }
-
-          const lines = [];
-          const add = v => { if (v) lines.push(String(v)); };
-
-          add(ship.name || "");
-          const street = [ship.street1, ship.street2, ship.street3].filter(Boolean).join(" ");
-          add(street);
-          const cityLine = (ship.city && ship.state)
+        // ── Visible “Ship To” block ──────────────────────────────────────
+        const lines = [];
+        const add = v => { if (v) lines.push(String(v)); };
+        add(ship.name || "");
+        const street = [ship.street1, ship.street2, ship.street3].filter(Boolean).join(" ");
+        add(street);
+        const cityLine = (ship.city && ship.state)
           ? `${ship.city}, ${ship.state}${ship.postalCode ? " " + ship.postalCode : ""}`
           : [ship.city, ship.state, ship.postalCode].filter(Boolean).join(" ");
-          add(cityLine);
-          add(ship.country);
-          if (ship.phone) add("Phone: " + ship.phone);
+        add(cityLine);
+        add(ship.country);
+        if (ship.phone) add("Phone: " + ship.phone);
 
-          box.value = "SHIP TO:\n" + lines.filter(Boolean).join("\n");
+        if (!stillCurrent()) return;
+        box.value = "SHIP TO:\n" + lines.filter(Boolean).join("\n");
 
-          // ── Auto-select Carrier based on destination country (match shipping-2.html) ──
-          const carrierSelectEl = document.getElementById("carrierSelect");
-          if (carrierSelectEl) {
-            const countryRaw = (ship.countryCode || ship.country || "").toString().trim().toUpperCase();
-            const isUS = (countryRaw === "US" || countryRaw === "USA" || countryRaw === "UNITED STATES");
-            const target = isUS ? "usps" : "chitchats";
+        // ── Auto-select Carrier by destination ───────────────────────────
+        const carrierSelectEl = document.getElementById("carrierSelect");
+        if (carrierSelectEl) {
+          const countryRaw = (ship.countryCode || ship.country || "").toString().trim().toUpperCase();
+          const isUS = (countryRaw === "US" || countryRaw === "USA" || countryRaw === "UNITED STATES");
+          const target = isUS ? "usps" : "chitchats";
+          carrierSelectEl.value = target;
+          carrierSelectEl.dispatchEvent(new Event("change", { bubbles: true }));
+          try {
+            let inst = M.FormSelect.getInstance(carrierSelectEl);
+            if (inst) inst.destroy();
+            inst = M.FormSelect.init(carrierSelectEl);
+            if (inst && inst.input) {
+              inst.input.value = (target === "usps" ? "USPS" : "ChitChats");
+            }
+          } catch(_) {}
+        }
 
-            // set native <select> value
-            carrierSelectEl.value = target;
-            carrierSelectEl.dispatchEvent(new Event("change", { bubbles: true }));
-
-            // refresh Materialize wrapper so the visible label updates
-            try {
-              let inst = M.FormSelect.getInstance(carrierSelectEl);
-              if (inst) inst.destroy();
-              inst = M.FormSelect.init(carrierSelectEl);
-              if (inst && inst.input) {
-                inst.input.value = (target === "usps" ? "USPS" : "ChitChats");
-              }
-            } catch (_) { /* Materialize not ready? safe to ignore */ }
-          }
-
-          // Text color only for international (non-US/CA) addresses
-          const countryRaw = (ship.country || ship.countryCode || "").toString().trim();
-          const c = countryRaw.toLowerCase();
-          const isUS = c.startsWith("united states") || c === "usa" || c === "us" || c === "u.s." || c === "u.s.a.";
-          const isCA = c === "canada" || c === "ca";
-          box.style.color = (isUS || isCA) ? "" : "orangered";
-        } catch (e) {
-          console.error("loadShipToAddress:", e);
+        // ── Color hint only for Intl (not US/CA) ─────────────────────────
+        const raw = (ship.country || ship.countryCode || "").toString().trim();
+        const lc = raw.toLowerCase();
+        const isUS2 = lc.startsWith("united states") || lc === "usa" || lc === "us" || lc === "u.s." || lc === "u.s.a.";
+        const isCA = lc === "canada" || lc === "ca";
+        if (!stillCurrent()) return;
+        box.style.color = (isUS2 || isCA) ? "" : "orangered";
+      } catch (e) {
+        console.error("loadShipToAddress:", e);
+        if (mySeq === window.__addrLoadSeq) {
           const box = document.getElementById("shipAddressBox");
           if (box) {
             box.value = "SHIP TO:\n(Error loading)";
@@ -3307,6 +3331,7 @@ function metalToBadge(label){
           }
         }
       }
+    }
 
       /* ===== ShipStation — Gift Message (orderNumber) ===================== */
       async function loadGiftMessage(orderNumber) {
@@ -5491,7 +5516,6 @@ async function refreshRates(){
         ids.forEach(id => {
           const el = document.getElementById(id);
           if (el) {
-            // force-clear any recent “set” guards, then blank the field
             try { el.dataset.setAt = "0"; } catch(_) {}
             el.value = "";
             el.dataset.userEdited = "0";
@@ -5499,7 +5523,10 @@ async function refreshRates(){
         });
 
         const ship = document.getElementById("shipAddressBox");
-        if (ship) ship.value = "SHIP TO:\n(loading…)";
+        if (ship) { ship.value = "SHIP TO:\n(loading…)"; ship.style.color = ""; }
+
+        // Mark recipient UI as clean on order change
+        window.__ccRecipientDirty = false;
 
         // wipe any prior address-compare UI
         const orig = document.getElementById("ccVerifyOriginal");
@@ -6487,22 +6514,18 @@ function parseIntlAddressBlock(blockText = "", fallbackCountryCode = "") {
 
       // Merge parsed with field fallbacks + normalize country
       let to = {
-        to_name         : parsed.to_name          || fields.to_name,
-        to_address_1    : parsed.to_address_1     || fields.to_address_1,
-        // 🚫 no fallback: never carry over Address 2
-        to_address_2    : sanitizeAddress2(parsed.to_address_2),
-        to_city         : parsed.to_city          || fields.to_city,
-        // 🚫 no fallback: sanitize strictly for the detected country
-        to_country_code : (parsed.to_country_code || fields.to_country_code || "").toUpperCase(),
-        to_province_code: sanitizeProvinceForCountry(parsed.to_province_code, (parsed.to_country_code || fields.to_country_code))
-        // keep postal code behavior as you prefer:
-        ,to_postal_code : (
-          isEUorGB(parsed.to_country_code || fields.to_country_code)
-             ? (parsed.to_postal_code || "")
-            : (parsed.to_postal_code || fields.to_postal_code)
-         )
+        // Fields ALWAYS win; only fall back to parsed block if a field is blank.
+        to_name         : (fields.to_name || parsed.to_name || "").trim(),
+        to_address_1    : (fields.to_address_1 || parsed.to_address_1 || "").trim(),
+        to_address_2    : sanitizeAddress2(fields.to_address_2 || parsed.to_address_2),
+        to_city         : (fields.to_city || parsed.to_city || "").trim(),
+        to_country_code : (fields.to_country_code || parsed.to_country_code || "").toUpperCase(),
+        to_province_code: sanitizeProvinceForCountry(
+                            (fields.to_province_code || parsed.to_province_code),
+                            (fields.to_country_code  || parsed.to_country_code)
+                          ),
+        to_postal_code  : (fields.to_postal_code || parsed.to_postal_code || "").trim()
       };
-
      // Belt & suspenders: EU/GB never keeps province/state
      if (isEUorGB(to.to_country_code)) to.to_province_code = "";
 
@@ -6527,18 +6550,20 @@ function parseIntlAddressBlock(blockText = "", fallbackCountryCode = "") {
         if (phoneEl && !phoneEl.value.trim()) { phoneEl.value = fallbackPhone; }
       }
 
-      // Hydrate Step-0 inputs so the compare modal never shows blanks
-      const set = (id, v) => {
-      const el = document.getElementById(id);
-      if (el) el.value = (v ?? "").toString().trim();
-      };
-      set("cc_to_name", to.to_name);
-      set("cc_to_address_1", to.to_address_1);
-      set("cc_to_address_2", to.to_address_2);
-      set("cc_to_city", to.to_city);
-      set("cc_to_province_code", to.to_province_code);
-      set("cc_to_postal_code", to.to_postal_code);
-      set("cc_to_country_code", to.to_country_code);
+      // Hydrate Step-0 inputs so the compare modal never shows blanks — but don't clobber manual edits
+      if (!window.__ccRecipientDirty) {
+        const set = (id, v) => {
+          const el = document.getElementById(id);
+          if (el) el.value = (v ?? "").toString().trim();
+        };
+        set("cc_to_name", to.to_name);
+        set("cc_to_address_1", to.to_address_1);
+        set("cc_to_address_2", to.to_address_2);
+        set("cc_to_city", to.to_city);
+        set("cc_to_province_code", to.to_province_code);
+        set("cc_to_postal_code", to.to_postal_code);
+        set("cc_to_country_code", to.to_country_code);
+      }
 
       return to;
     }
@@ -6646,6 +6671,26 @@ function parseIntlAddressBlock(blockText = "", fallbackCountryCode = "") {
       }
 
       document.addEventListener('DOMContentLoaded', wireCustomsAutoFill);
+      function wireRecipientEditsDirtyFlag(){
+        window.__ccRecipientDirty = false;
+        const ids = [
+          "cc_to_name","cc_to_address_1","cc_to_address_2",
+          "cc_to_city","cc_to_province_code","cc_to_postal_code",
+          "cc_to_country_code","cc_to_phone","cc_to_email"
+        ];
+        ids.forEach(id => {
+          const el = document.getElementById(id);
+          if (!el) return;
+          el.addEventListener("input",  () => window.__ccRecipientDirty = true);
+          el.addEventListener("change", () => window.__ccRecipientDirty = true);
+        });
+
+        // Reset the flag for programmatic flows (optional, but nice UX)
+        document.getElementById("ccEditBtn")?.addEventListener("click",  () => { window.__ccRecipientDirty = false; });
+        document.getElementById("ccUseSuggested")?.addEventListener("click", () => { window.__ccRecipientDirty = false; });
+        document.getElementById("ccKeepOriginal")?.addEventListener("click", () => { window.__ccRecipientDirty = false; });
+      }
+      document.addEventListener('DOMContentLoaded', wireRecipientEditsDirtyFlag);
       // Expose helpers used by Step 2 refresh/build payload
       window.detectDestCountryCode = detectDestCountryCode;
       window.isEU = isEU; // (optional, keeps parity)
@@ -6702,8 +6747,11 @@ function parseIntlAddressBlock(blockText = "", fallbackCountryCode = "") {
 
         const idEl   = document.getElementById("ccShipmentId");
         const oldId  = (idEl?.value || "").trim();
-        // 🔶 STRICT: prime Step-0 using your existing parser, then snapshot ALL ccStep0/1/2 fields
+        // 🔶 STRICT: prime Step-0, then FORCE Step-1 to reflect the CURRENT order
         try { primeCcStep0Background(); } catch(_) {}
+        // If line items belong to a different order (or are stale), rebuild them now
+        try { syncLineItemsWithCurrentOrder(); } catch(_) {}
+        // Now that Step-0/1 are up to date, snapshot all ccStep0/1/2 fields
         const payload = buildShipmentPayload();
 
         // If International (EU/GB), guarantee ROOT-level email in the payload
