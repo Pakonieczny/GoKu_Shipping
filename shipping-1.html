@@ -3295,6 +3295,8 @@ function metalToBadge(label){
 
         if (!stillCurrent()) return;
         box.value = "SHIP TO:\n" + lines.filter(Boolean).join("\n");
+        // NEW: mark which order populated this block (prevents cross-order hydration)
+        box.dataset.order = orderNumber;
 
         // ── Auto-select Carrier by destination ───────────────────────────
         const carrierSelectEl = document.getElementById("carrierSelect");
@@ -4175,13 +4177,11 @@ function metalToBadge(label){
       function fillOnce(id, val) {
         const el = document.getElementById(id);
         if (!el) return;
-        const v = (val == null ? "" : String(val));
-        const curr = String(el.value ?? "").trim();
-        // Respect user edits and existing content
         if (el.dataset.userEdited === "1") return;
-        if (curr) return;
-        el.value = v;
-        try { el.dataset.setAt = String(Date.now()); } catch {}
+        const hasVal = String(el.value ?? "").trim().length > 0;
+        if (hasVal) return;
+        if (val == null || (typeof val === "number" && !Number.isFinite(val))) return;
+        el.value = String(val);
         try { el.dispatchEvent(new Event("input", { bubbles: true })); } catch {}
       }
     
@@ -4284,22 +4284,6 @@ function metalToBadge(label){
         return out;
       }
 
-      // One-time: mark recipient inputs as user-edited when they change
-      function wireRecipientInputWatchers(){
-        if (window.__ccRecipientWatchers) return;
-        window.__ccRecipientWatchers = true;
-        ["cc_to_name","cc_to_email","cc_to_address_1","cc_to_address_2",
-         "cc_to_city","cc_to_province_code","cc_to_postal_code",
-         "cc_to_country_code","cc_to_phone"].forEach(id=>{
-          const el = document.getElementById(id);
-          if (!el) return;
-          el.addEventListener("input", () => {
-            el.dataset.userEdited = "1";
-            try { el.dataset.setAt = String(Date.now()); } catch {}
-          }, { passive: true });
-        });
-      }
-
       async function modalOpen(){
       // Keep ccShipmentId locked post-purchase (no re-checks). Do not thaw here.
         /* INSERT inside modalOpen(), near the top after local refs */
@@ -4312,21 +4296,14 @@ function metalToBadge(label){
             prefillCustomsFromEtsy();
           }
         }
-        wireRecipientInputWatchers();
-        // Avoid seeding while the Ship To box is still loading
-        const shipTxt = (document.getElementById("shipAddressBox")?.value || "");
-        const isLoadingShipTo = /^\s*SHIP TO:\s*\(loading…\)/i.test(shipTxt);
-        if (!isLoadingShipTo) {
-          const seed = parseShipToBox();
-          // Fill only if blank and not user-edited
-          fillOnce("cc_to_name",          seed.to_name);
-          fillOnce("cc_to_address_1",     seed.to_address_1);
-          fillOnce("cc_to_address_2",     seed.to_address_2);
-          fillOnce("cc_to_city",          seed.to_city);
-          fillOnce("cc_to_province_code", seed.to_province_code);
-          fillOnce("cc_to_postal_code",   seed.to_postal_code);
-          fillOnce("cc_to_country_code",  seed.to_country_code);
-        }
+        const seed = parseShipToBox();
+        document.getElementById("cc_to_name").value           = seed.to_name || "";
+        document.getElementById("cc_to_address_1").value      = seed.to_address_1 || "";
+        document.getElementById("cc_to_address_2").value      = seed.to_address_2 || "";
+        document.getElementById("cc_to_city").value           = seed.to_city || "";
+        document.getElementById("cc_to_province_code").value  = seed.to_province_code || "";
+        document.getElementById("cc_to_postal_code").value    = seed.to_postal_code || "";
+        document.getElementById("cc_to_country_code").value   = seed.to_country_code || "";
 
         selectedPostageType = null;
         btnBuy.disabled = true;
@@ -5548,7 +5525,12 @@ async function refreshRates(){
         });
 
         const ship = document.getElementById("shipAddressBox");
-        if (ship) { ship.value = "SHIP TO:\n(loading…)"; ship.style.color = ""; }
+        if (ship) {
+          ship.value = "SHIP TO:\n(loading…)";
+          ship.style.color = "";
+          // NEW: make it impossible for a previous order to "own" this block
+          ship.dataset.order = "";
+        }
 
         // Mark recipient UI as clean on order change
         window.__ccRecipientDirty = false;
@@ -6528,8 +6510,19 @@ function parseIntlAddressBlock(blockText = "", fallbackCountryCode = "") {
     // const block   = (document.getElementById("shipAddressBox")?.value || "").trim();
     // const country = (document.getElementById("cc_to_country_code")?.value || "").trim();
     // Decide pipeline up front
-    const detected = (window.detectDestCountryCode?.() || country || "").toUpperCase();
-    const routeIntl = isEUorGB(detected);
+    const detected   = (window.detectDestCountryCode?.() || country || "").toUpperCase();
+    const routeIntl  = isEUorGB(detected);
+    // NEW: only trust a SHIP TO block that belongs to the currently typed order
+    const shipEl       = document.getElementById("shipAddressBox");
+    const currentOrder = (document.getElementById("etsyOrderNumber")?.value || "").trim();
+    const blockOrder   = (shipEl?.dataset?.order || "");
+    const belongs      = !!currentOrder && blockOrder === currentOrder;
+    // NEW: ignore placeholders / error states from ShipStation loader
+    const isPlaceholder = /^SHIP TO:\s*\n\((loading|error)/i.test(block);
+    if (!belongs || isPlaceholder) {
+      // Don't parse/hydrate from a stale/foreign block; use current inputs only
+      return gatherRecipientFromInputs();
+    }
 
     // Prefer a real multi-line block; otherwise just use the inputs
     // 🔁 CHANGE: for EU/GB, always run the intl parser (even if the block is short)
@@ -6575,7 +6568,8 @@ function parseIntlAddressBlock(blockText = "", fallbackCountryCode = "") {
         if (phoneEl && !phoneEl.value.trim()) { phoneEl.value = fallbackPhone; }
       }
 
-      // Hydrate Step-0 inputs so the compare modal never shows blanks — but don't clobber manual edits
+      // Hydrate Step-0 inputs only if user hasn't edited yet (dirty flag),
+      // and only from a SHIP TO block that belongs to this order (guarded above).
       if (!window.__ccRecipientDirty) {
         const set = (id, v) => {
           const el = document.getElementById(id);
