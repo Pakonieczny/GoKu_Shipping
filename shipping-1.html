@@ -1009,9 +1009,9 @@
       try { window.ccSearchAbort?.abort?.(); } catch {}
       try { clearTimeout(window.ccSlowTimer); } catch {}
       window.ccSlowTimer = null;
-      window.ccManualIdUpdateDone = false;
-      window.ccManualIdUpdateInFlight = false;
-      window.ccManualIdUpdatePromise = null;
+      //window.ccManualIdUpdateDone = false;
+      //window.ccManualIdUpdateInFlight = false;
+      //window.ccManualIdUpdatePromise = null;
 
       // — Recipient & verify UI (uses your existing helper)
       try { resetRecipientFields?.(); } catch {}
