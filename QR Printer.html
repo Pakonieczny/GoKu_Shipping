@@ -90,8 +90,15 @@ window.addEventListener("load", async () => {
     const title4  = nb.title4 || String(items[0]?.title||"").trim().split(/\s+/).slice(0,4).join(" ");
     const mxNums  = nb.matrixNums || "";
 
-    // 5) Build & print the PDF label (pass notes)
-    await buildAndPrintLabel(orderNum, dotCount, dispatchDate, { metal, title4, matrixNums: mxNums });
+    // 4) Build notes (prefer what's provided from sorting.html)
+    const notes = dataObj.notesBlock || {
+      metal: "",
+      title4: String(items[0]?.title || "").trim().split(/\s+/).slice(0,4).join(" "),
+      matrixNums: ""
+    };
+
+    // 5) Build & print the PDF label (with notes)
+    await buildAndPrintLabel(orderNum, dotCount, dispatchDate, notes);
 
   } catch (err) {
     console.error("Error in QR Printer auto-run:", err);

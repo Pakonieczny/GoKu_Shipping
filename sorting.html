@@ -1671,7 +1671,39 @@ function openIframePrinterForListing(cellIndex) {
   }
   const matrixNums = matrixNumsArr.join(", ");
 
-  // 5) Build an object for QR Printer (now includes notes)
+  // 4) Build notes (no variations) for this cell
+  const baseTitle = (t) => {
+    let s = String(t || "").trim();
+    // drop anything after separators often used before variations
+    s = s.split(/\s+[|•\-–—]\s+/)[0];
+    // remove inline "Name: value" segments (variation-style)
+    s = s.replace(/\b[A-Za-z][A-Za-z ]{0,20}:\s*[^|•–—]+/g, " ").replace(/\s+/g, " ").trim();
+    return s;
+  };
+  const firstNWords = (str, n = 4) => baseTitle(str).split(/\s+/).slice(0, n).join(" ");
+  const title4 = firstNWords(item.title, 4);
+
+  // Prefer UI metal; fallback to sniff from title
+  const uiMetal = (document.getElementById("metalCell"+cellIndex)?.value || "").trim();
+  const sniffMetal = (txt) => {
+    const t = String(txt||"").toLowerCase();
+    if (/(rose[\s-]?gold|rosegold)/i.test(t)) return "RoseGold";
+    if (/\bsilver\b/i.test(t))               return "Silver";
+    if (/\bgold\b/i.test(t))                 return "Gold";
+    return "";
+  };
+  const metalColour = uiMetal || sniffMetal(item.title || "");
+
+  // Collect numbers from associated Matrix image title(s) for this cell
+  const names = (window.cellMatches?.[cellIndex] || []).filter(m => m && m.userName).map(m => String(m.userName));
+  const seen = new Set(); const matrixNumsArr = [];
+  for (const nm of names) {
+    const m = nm.match(/\d+/g);
+    if (m && m.length) { const num = m[0]; if (!seen.has(num)) { seen.add(num); matrixNumsArr.push(num); } }
+  }
+  const matrixNums = matrixNumsArr.join(", ");
+
+  // 5) Build object for QR Printer (includes notes)
   const dataToPrint = {
     dispatchDate,
     items: itemsForOrder,
@@ -1680,7 +1712,7 @@ function openIframePrinterForListing(cellIndex) {
     notesBlock: { metal: metalColour, title4, matrixNums }
   };
 
-  // 6) Save that object in localStorage
+  // 6) Save for QR Printer (single write)
   localStorage.setItem("qrPrintAll", JSON.stringify(dataToPrint));
 
   // 7) CREATE A HIDDEN 1×1 IFRAME (NO OVERLAY)
