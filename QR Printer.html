@@ -213,10 +213,6 @@ function buildPDFDocWithDots(dataUrl, dotCount, dispatchDate, orderNum, notes) {
   // Dot = 6px diameter => radius=3, spaced 12px
   const dotEllipses = [];
   if (dotCount > 0) {
-  // Normalize notes once to avoid any accidental double labels
-  const normMetal  = String(notes.metal  || "").replace(/^\s*Metal:\s*/i, "").trim();
-  const normTitle4 = String(notes.title4 || "").trim();
-  const normMatch  = String(notes.matrixNums || "").trim();
     const spacing = 2;
     for (let i = 0; i < dotCount; i++) {
       dotEllipses.push({
@@ -230,6 +226,11 @@ function buildPDFDocWithDots(dataUrl, dotCount, dispatchDate, orderNum, notes) {
       });
     }
   }
+
+  /* ✅ Normalize note fields so we never duplicate labels and we always print clean values */
+  const normMetal  = String(notes?.metal ?? "").replace(/^\s*Metal:\s*/i, "").trim();
+  const normTitle4 = String(notes?.title4 ?? "").trim();
+  const normMatch  = String(notes?.matrixNums ?? "").trim();
 
   return {
     pageSize: { width: 72, height: 72 }, // 1×1 label in points
@@ -246,7 +247,7 @@ function buildPDFDocWithDots(dataUrl, dotCount, dispatchDate, orderNum, notes) {
         width: 34,
         absolutePosition:{ x:2, y:6 }
       },
-      // Bold date text at (x=80, y=104)
+      // Bold date text
       {
         text: dispatchDate || "N/A",
         fontSize: 5.5,
