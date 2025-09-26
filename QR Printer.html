@@ -256,14 +256,14 @@ function buildPDFDocWithDots(dataUrl, dotCount, dispatchDate, orderNum, notes) {
         bold: true,
         absolutePosition: { x:2, y:48 }
       },
-       // 3-line note block: Metal / first 4 title words / matrix numbers
+      // 3-line note block: show each on its own line with labels
       {
         text: [
-          String(notes.metal).trim(),
-          String(notes.title4).trim(),
-          String(notes.matrixNums).trim()
-        ].filter(Boolean).join("\\n"),
-        fontSize: 2.75,   // 50% of 5.5
+          "Metal: " + String(notes.metal).trim(),
+          "Title: " + String(notes.title4).trim(),
+          "Match: " + String(notes.matrixNums).trim()
+        ].join("\n"),                 // ← real newline
+       fontSize: 2.75,
         bold: false,
         lineHeight: 1.0,
         absolutePosition: { x:43, y:0.5 }
