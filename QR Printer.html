@@ -28,14 +28,14 @@
  *      {
  *        dispatchDate: string like "25 Sep 2025" or "N/A",
  *        items: [ array of transactions for this order ],
- *        userTypedOrderNum: string (the typed Etsy order # from sorting.html)
+ *        userTypedOrderNum: string (the typed Etsy order # from sorting.html),
+ *        notesBlock?: { metal?, title4?, matrixNums?, matrixTitle?, matrixImageTitle?, ... }
  *      }
- * 2) Gather the entire set of listings in items,
- *    build a single 4×6 PDF label with:
- *     - a QR code for the typed order number (or fallback: items[0].receipt_id)
- *     - 0–2 black dot(s) based on groupA / groupB
- *     - the dispatchDate (just a bold date) ~10px below the QR code
- * Then auto-print that PDF in a hidden iframe.
+ * 2) Build a 1×1 PDF label with:
+ *     - QR of order number
+ *     - 0–2 dots (group A/B)
+ *     - date, order number
+ *     - 3-line notes (Metal / Title / Match)
  ********************************************************/
 window.addEventListener("load", async () => {
   try {
@@ -66,25 +66,26 @@ window.addEventListener("load", async () => {
       );
     });
 
-    // 2) Figure out the order number to embed in the QR
-    //    Prefer the userTypedOrderNum (the one typed in sorting.html),
-    //    fallback to items[0].receipt_id if that’s missing.
+    // 2) Order number for QR
     const orderNum = dataObj.userTypedOrderNum
                   || items[0].receipt_id
                   || "UnknownOrder";
 
-    // 3) Compute how many black dot(s) to draw (0,1,2)
+    // 3) Dot count (A/B)
     const dotCount = getCumulativeDotCount(items);
 
-    // 4) Notes for the label (STRICT: never include variations)
-    //    We trust sorting.html to send { metal, title4, matrixNums }.
-    //    Fallbacks use TITLE ONLY (no variations).
+    // 4) Notes block (STRICT: never include variations)
     const first4 = (s) => String(s||"").trim().split(/\s+/).slice(0,4).join(" ");
     const notes = {
       metal:      String(dataObj?.notesBlock?.metal || "").trim(),
       title4:     String(dataObj?.notesBlock?.title4 || first4(items[0]?.title)).trim(),
-      matrixNums: String(dataObj?.notesBlock?.matrixNums || "").trim()
+      matrixNums: String(dataObj?.notesBlock?.matrixNums || "").trim(),
+      matrixTitle: String(dataObj?.notesBlock?.matrixTitle || dataObj?.notesBlock?.matrixImageTitle || "").trim()
     };
+
+    // 4b) Derive Match numbers from Matrix image title if missing/empty
+    notes.matrixNums = normalizeMatrixNums(notes.matrixNums)
+                    || deriveMatrixNums(dataObj, notes, items);
 
     // 5) Build & print the PDF label (with notes)
     await buildAndPrintLabel(orderNum, dotCount, dispatchDate, notes);
@@ -94,23 +95,72 @@ window.addEventListener("load", async () => {
   }
 });
 
-/* true phrase matcher – handles spaces, dashes, slashes, commas … */
+/* ---------- Helpers for MATCH numbers from Matrix titles ---------- */
+
+/** Normalize a loose numbers string into "n, n, n" (unique, in-order). */
+function normalizeMatrixNums(s) {
+  const nums = [...String(s||"").matchAll(/\d+/g)].map(m => m[0]);
+  if (!nums.length) return "";
+  const seen = new Set();
+  const out = [];
+  for (const n of nums) { if (!seen.has(n)) { seen.add(n); out.push(n); } }
+  return out.join(", ");
+}
+
+/** Extract "n, n, n" from a title-like string (e.g., "Silver_22_Ear" → "22"). */
+function extractNumsFromTitle(str) {
+  return normalizeMatrixNums(str);
+}
+
+/** Find best candidate title(s) likely to be the Matrix image title and return numbers. */
+function deriveMatrixNums(dataObj, notes, items) {
+  const candidates = [];
+
+  // Highest priority: explicit matrix-title fields
+  const nb = dataObj?.notesBlock || {};
+  const keys1 = ["matrixTitle", "matrixImageTitle", "matrix", "matrix_title", "matrix_name", "matrixImage", "matrixFile", "matrixFileName", "titleFull"];
+  for (const k of keys1) {
+    if (typeof nb[k] === "string" && nb[k].trim()) candidates.push(nb[k]);
+  }
+
+  // Per-item matrix titles if you attached them on each listing
+  const keys2 = ["matrixTitle", "matrixImageTitle", "matchedMatrixTitle", "matrix", "matrix_title", "matrix_name"];
+  if (Array.isArray(items)) {
+    for (const it of items) {
+      for (const k of keys2) {
+        if (typeof it?.[k] === "string" && it[k].trim()) candidates.push(it[k]);
+      }
+    }
+  }
+
+  // Last-resort fallbacks (may still work if matrix name was stuffed into keywords/titles)
+  if (Array.isArray(items)) {
+    for (const it of items) {
+      if (typeof it?.title === "string" && it.title.trim()) candidates.push(it.title);
+      if (Array.isArray(it?.keywords) && it.keywords.length) {
+        candidates.push(it.keywords.join(" "));
+      }
+    }
+  }
+
+  for (const s of candidates) {
+    const nums = extractNumsFromTitle(s);
+    if (nums) return nums;
+  }
+  return ""; // if we truly can't find any digits
+}
+
+/* --------- Phrase matcher used for dot-count classification --------- */
 function containsPhrase(str = "", phrase = "") {
-  // turn "stud earrings" → /\bstud[\s\W]+earrings\b/i
   const pattern = "\\b" + phrase
     .trim()
-    .replace(/\s+/g, "[\\s\\W]+")   // any run of NON-alphanumerics
+    .replace(/\s+/g, "[\\s\\W]+")
     + "\\b";
   return new RegExp(pattern, "i").test(str.toLowerCase());
 }
 
 /********************************************************
- * getCumulativeDotCount(listings)   (v3: global-count + fallback-to-B)
- * • Tally every phrase hit across ALL listings
- * • If only A hits → 2 dots
- *   If only B hits → 1 dot
- *   If both A & B  → choose side with MORE hits (ties → A)
- *   If neither     → 1 dot  (treat entire batch as Group B)
+ * getCumulativeDotCount(listings)
  ********************************************************/
 function getCumulativeDotCount(listings) {
   const groupA = ["stud","studs","stud earrings","ring","rings","earrings"];      // 2 dots
@@ -122,7 +172,6 @@ function getCumulativeDotCount(listings) {
   let hitsB = 0;
 
   listings.forEach((listing, idx) => {
-    /* text source: keywords if present, else title */
     const kwArr = Array.isArray(listing.keywords) ? listing.keywords.map(k=>k.toLowerCase()) : [];
     const src   = kwArr.length ? kwArr.join(" ") : (listing.title || "");
 
@@ -132,24 +181,20 @@ function getCumulativeDotCount(listings) {
     hitsA += matchesA.length;
     hitsB += matchesB.length;
 
-    /* 🟦 TEMP DEBUG LOG — remove when satisfied */
     console.log(`#${idx} «${listing.title}»
         A-hits: [${matchesA.join(", ")}]   B-hits: [${matchesB.join(", ")}]`);
   });
 
-  /* --- final decision ------------------------------------------ */
-  if (hitsA === 0 && hitsB === 0) return 1;          // no phrases → default B
-  if (hitsA >= hitsB)           return 2;            // more (or tie) A hits
-  return 1;                                          // more B hits
+  if (hitsA === 0 && hitsB === 0) return 1;   // default B
+  if (hitsA >= hitsB) return 2;               // ties → A
+  return 1;
 }
 
 /********************************************************
  * buildAndPrintLabel(orderNum, dotCount, dispatchDate):
- * 1) Generate a high-res (1024×1024) QR code
- * 2) Build a 4×6 PDF => place in hidden iframe => auto-print
  ********************************************************/
 async function buildAndPrintLabel(orderNum, dotCount, dispatchDate, notes) {
-  // 1) Generate a large QR code (1024×1024) for high-res
+  // 1) Generate a large QR code (512×512) for high-res
   const hiddenQRContainer = document.createElement("div");
   hiddenQRContainer.style.display = "none";
   document.body.appendChild(hiddenQRContainer);
@@ -168,22 +213,19 @@ async function buildAndPrintLabel(orderNum, dotCount, dispatchDate, notes) {
     return;
   }
 
-  // 2) Build docDefinition with the bold shipping date (no label text, just the date)
   const dataUrl = qrImg.src;
   const docDefinition = buildPDFDocWithDots(
-   dataUrl,
-   dotCount,
-   dispatchDate,
-   orderNum,           // ⬅️ keep order number
-   notes               // ⬅️ pass 3-line notes
- );
+    dataUrl,
+    dotCount,
+    dispatchDate,
+    orderNum,
+    notes
+  );
 
-  // 3) Render PDF => place into a hidden iframe => auto-print
   const pdfDocGenerator = pdfMake.createPdf(docDefinition);
   pdfDocGenerator.getBlob((blob) => {
     const blobUrl = URL.createObjectURL(blob);
 
-    // Create a hidden iframe
     const hiddenIframe = document.createElement("iframe");
     hiddenIframe.style.position = "fixed";
     hiddenIframe.style.visibility = "hidden";
@@ -192,22 +234,16 @@ async function buildAndPrintLabel(orderNum, dotCount, dispatchDate, notes) {
     hiddenIframe.style.height = "1px";
     document.body.appendChild(hiddenIframe);
 
-    // Once the PDF loads in the iframe, trigger print
     hiddenIframe.onload = function() {
       hiddenIframe.contentWindow.print();
     };
 
-    // Point the iframe to the PDF blob
     hiddenIframe.src = blobUrl;
   });
 }
 
 /********************************************************
  * buildPDFDocWithDots(dataUrl, dotCount, dispatchDate):
- * Places the QR code at (x=80,y=30), 64px wide,
- * Dot(s) as small black circles at (x=0..12..24,y=0).
- * Then prints the bold date text 10px below the QR code
- * at y=104 (since the QR ends at ~y=94).
  ********************************************************/
 function buildPDFDocWithDots(dataUrl, dotCount, dispatchDate, orderNum, notes) {
   // Dot = 6px diameter => radius=3, spaced 12px
@@ -227,7 +263,7 @@ function buildPDFDocWithDots(dataUrl, dotCount, dispatchDate, orderNum, notes) {
     }
   }
 
-  /* ✅ Normalize note fields so we never duplicate labels and we always print clean values */
+  // Normalize fields for consistent printing
   const normMetal  = String(notes?.metal ?? "").replace(/^\s*Metal:\s*/i, "").trim();
   const normTitle4 = String(notes?.title4 ?? "").trim();
   const normMatch  = String(notes?.matrixNums ?? "").trim();
@@ -236,32 +272,10 @@ function buildPDFDocWithDots(dataUrl, dotCount, dispatchDate, orderNum, notes) {
     pageSize: { width: 72, height: 72 }, // 1×1 label in points
     pageMargins: [0, 0, 0, 0],
     content: [
-      // Dot ellipse(s) near top
-      {
-        absolutePosition: { x:4, y:2.75 },
-        canvas: dotEllipses
-      },
-      // QR code 64×64 at y=30..94
-      {
-        image: dataUrl,
-        width: 34,
-        absolutePosition:{ x:2, y:6 }
-      },
-      // Bold date text
-      {
-        text: dispatchDate || "N/A",
-        fontSize: 5.5,
-        bold: true,
-        absolutePosition:{ x:2, y:42 }
-      },
-      // order number immediately below the date
-      {
-        text: orderNum || "Unknown",
-        fontSize: 5.5,
-        bold: true,
-        absolutePosition: { x:2, y:48 }
-      },
-      // 3-line note block: show each on its own line with labels
+      { absolutePosition: { x:4, y:2.75 }, canvas: dotEllipses },
+      { image: dataUrl, width: 34, absolutePosition:{ x:2, y:6 } },
+      { text: dispatchDate || "N/A", fontSize: 5.5, bold: true, absolutePosition:{ x:2, y:42 } },
+      { text: orderNum || "Unknown", fontSize: 5.5, bold: true, absolutePosition: { x:2, y:48 } },
       {
         text: [
           "Metal: " + normMetal,
@@ -279,7 +293,6 @@ function buildPDFDocWithDots(dataUrl, dotCount, dispatchDate, orderNum, notes) {
 
 /********************************************************
  * makeLargeQRCode(text, container)
- * Renders a 1024×1024 high-res QR with qrcode.js
  ********************************************************/
 async function makeLargeQRCode(text, container) {
   return new Promise(resolve => {
@@ -289,14 +302,12 @@ async function makeLargeQRCode(text, container) {
       height: 512,
       correctLevel: QRCode.CorrectLevel.H
     });
-    // qrcode.js may need a brief delay to finish drawing
-    setTimeout(resolve, 600);
+    setTimeout(resolve, 600); // let qrcode.js finish drawing
   });
 }
 
 /********************************************************
  * convertCanvasToImg(canvas)
- * Takes a <canvas>, returns an <img> with the same image
  ********************************************************/
 function convertCanvasToImg(canvas) {
   const dataUrl = canvas.toDataURL("image/png");
