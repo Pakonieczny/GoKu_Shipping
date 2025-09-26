@@ -213,6 +213,10 @@ function buildPDFDocWithDots(dataUrl, dotCount, dispatchDate, orderNum, notes) {
   // Dot = 6px diameter => radius=3, spaced 12px
   const dotEllipses = [];
   if (dotCount > 0) {
+  // Normalize notes once to avoid any accidental double labels
+  const normMetal  = String(notes.metal  || "").replace(/^\s*Metal:\s*/i, "").trim();
+  const normTitle4 = String(notes.title4 || "").trim();
+  const normMatch  = String(notes.matrixNums || "").trim();
     const spacing = 2;
     for (let i = 0; i < dotCount; i++) {
       dotEllipses.push({
@@ -259,11 +263,11 @@ function buildPDFDocWithDots(dataUrl, dotCount, dispatchDate, orderNum, notes) {
       // 3-line note block: show each on its own line with labels
       {
         text: [
-          "Metal: " + String(notes.metal).trim(),
-          "Title: " + String(notes.title4).trim(),
-          "Match: " + String(notes.matrixNums).trim()
-        ].join("\n"),                 // ← real newline
-       fontSize: 2.75,
+          "Metal: " + normMetal,
+          "Title: " + normTitle4,
+          "Match: " + normMatch
+        ].join("\n"),
+        fontSize: 2.75,
         bold: false,
         lineHeight: 1.0,
         absolutePosition: { x:43, y:0.5 }

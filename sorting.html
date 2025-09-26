@@ -1648,8 +1648,10 @@ function openIframePrinterForListing(cellIndex) {
   const title4 = firstNWords(item.title, 4);
 
   // Metal: prefer UI dropdown; fallback: sniff from TITLE ONLY (never from variations)
-  const uiMetal = (document.getElementById("metalCell"+cellIndex)?.value || "").trim();
-  const sniffMetal = (txt) => {
+  // Normalize: strip any leading "Metal:" from the UI line (e.g., " Metal: Gold Filled")
+  const uiMetal = (document.getElementById("metalCell"+cellIndex)?.value || "")
+  .replace(/^\s*Metal:\s*/i, "")
+  .trim();  const sniffMetal = (txt) => {
     const t = String(txt||"").toLowerCase();
     if (/(rose[\s-]?gold|rosegold)/i.test(t)) return "RoseGold";
     if (/\bsilver\b/i.test(t))               return "Silver";
