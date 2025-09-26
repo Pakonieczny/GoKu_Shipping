@@ -1641,10 +1641,6 @@ function openIframePrinterForListing(cellIndex) {
   console.log("Filtering items for order:", orderID);
   const itemsForOrder = window.cachedOrderItems.filter(one => one.receipt_id === orderID);
 
-  // 4) Build notes for the specific clicked cell
-  const firstNWords = (str, n=4) => String(str||"").trim().split(/\s+/).slice(0,n).join(" ");
-  const title4 = firstNWords(item.title, 4);
-
   // Prefer the UI’s metal selector for the clicked cell; fallback to title sniffing
   const uiMetal = (document.getElementById("metalCell"+cellIndex)?.value || "").trim();
   const sniffMetal = (txt) => {
