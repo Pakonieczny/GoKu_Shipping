@@ -1009,7 +1009,7 @@
       try { window.ccSearchAbort?.abort?.(); } catch {}
       try { clearTimeout(window.ccSlowTimer); } catch {}
       window.ccSlowTimer = null;
-      //window.ccManualIdUpdateDone = false;
+      window.ccManualIdUpdateDone = false;
       window.ccManualIdUpdateInFlight = false;
       window.ccManualIdUpdatePromise = null;
 
