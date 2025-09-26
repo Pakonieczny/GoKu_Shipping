@@ -1642,10 +1642,10 @@ function openIframePrinterForListing(cellIndex) {
   const itemsForOrder = window.cachedOrderItems.filter(one => one.receipt_id === orderID);
 
   // 4) Build notes for the specific clicked cell (STRICT: no variations)
-  const firstNWords = (str, n=3) =>
+  const firstNWords = (str, n=2) =>
     String(str||"").replace(/\s+/g, " ").trim().split(" ").slice(0, n).join(" ");
   // Line 2: first 4 words from the **title only**
-  const title4 = firstNWords(item.title, 3);
+  const title4 = firstNWords(item.title, 2);
 
   // Metal: prefer UI dropdown; fallback: sniff from TITLE ONLY (never from variations)
   // Normalize: strip any leading "Metal:" from the UI line (e.g., " Metal: Gold Filled")
