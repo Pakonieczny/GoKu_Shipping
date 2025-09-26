@@ -1024,9 +1024,8 @@
 
     // — Clear CC edit fields (Steps 1–3)
     [
-      'cc_to_name','cc_to_phone','cc_to_email','cc_to_address1','cc_to_address2',
-      'cc_to_city','cc_to_province','cc_to_postal'
-
+    'cc_to_name','cc_to_phone','cc_to_email','cc_to_address_1', 'cc_to_address_2', 'cc_to_province_code', 
+    'cc_to_postal_code', 'cc_to_country_code'
 
       
     ].forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
