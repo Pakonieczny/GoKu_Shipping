@@ -76,25 +76,14 @@ window.addEventListener("load", async () => {
     // 3) Compute how many black dot(s) to draw (0,1,2)
     const dotCount = getCumulativeDotCount(items);
 
-    // 4) Derive notes (metal, first 4 words of title, matrix numbers)
-    const nb   = dataObj.notesBlock || {};
-    const kwSrc = Array.isArray(items[0]?.keywords) ? items[0].keywords.join(" ") : "";
-    const sniffMetal = (txt) => {
-      const t = String(txt||"").toLowerCase();
-      if (/(rose[\s-]?gold|rosegold)/i.test(t)) return "RoseGold";
-      if (/\bsilver\b/i.test(t))               return "Silver";
-      if (/\bgold\b/i.test(t))                 return "Gold";
-      return "";
-    };
-    const metal   = nb.metal || sniffMetal(`${kwSrc} ${items[0]?.title||""}`);
-    const title4  = nb.title4 || String(items[0]?.title||"").trim().split(/\s+/).slice(0,4).join(" ");
-    const mxNums  = nb.matrixNums || "";
-
-    // 4) Build notes (prefer what's provided from sorting.html)
-    const notes = dataObj.notesBlock || {
-      metal: "",
-      title4: String(items[0]?.title || "").trim().split(/\s+/).slice(0,4).join(" "),
-      matrixNums: ""
+    // 4) Notes for the label (STRICT: never include variations)
+    //    We trust sorting.html to send { metal, title4, matrixNums }.
+    //    Fallbacks use TITLE ONLY (no variations).
+    const first4 = (s) => String(s||"").trim().split(/\s+/).slice(0,4).join(" ");
+    const notes = {
+      metal:      String(dataObj?.notesBlock?.metal || "").trim(),
+      title4:     String(dataObj?.notesBlock?.title4 || first4(items[0]?.title)).trim(),
+      matrixNums: String(dataObj?.notesBlock?.matrixNums || "").trim()
     };
 
     // 5) Build & print the PDF label (with notes)
@@ -267,12 +256,12 @@ function buildPDFDocWithDots(dataUrl, dotCount, dispatchDate, orderNum, notes) {
         bold: true,
         absolutePosition: { x:2, y:48 }
       },
-      // 3-line note block (50% smaller than old 5.5pt "Notes:")
+       // 3-line note block: Metal / first 4 title words / matrix numbers
       {
         text: [
-          String(notes?.metal || "").trim(),
-          String(notes?.title4 || "").trim(),
-          String(notes?.matrixNums || "").trim()
+          String(notes.metal).trim(),
+          String(notes.title4).trim(),
+          String(notes.matrixNums).trim()
         ].filter(Boolean).join("\\n"),
         fontSize: 2.75,   // 50% of 5.5
         bold: false,
