@@ -76,8 +76,22 @@ window.addEventListener("load", async () => {
     // 3) Compute how many black dot(s) to draw (0,1,2)
     const dotCount = getCumulativeDotCount(items);
 
-    // 4) Build & print the PDF label
-    await buildAndPrintLabel(orderNum, dotCount, dispatchDate);
+    // 4) Derive notes (metal, first 4 words of title, matrix numbers)
+    const nb   = dataObj.notesBlock || {};
+    const kwSrc = Array.isArray(items[0]?.keywords) ? items[0].keywords.join(" ") : "";
+    const sniffMetal = (txt) => {
+      const t = String(txt||"").toLowerCase();
+      if (/(rose[\s-]?gold|rosegold)/i.test(t)) return "RoseGold";
+      if (/\bsilver\b/i.test(t))               return "Silver";
+      if (/\bgold\b/i.test(t))                 return "Gold";
+      return "";
+    };
+    const metal   = nb.metal || sniffMetal(`${kwSrc} ${items[0]?.title||""}`);
+    const title4  = nb.title4 || String(items[0]?.title||"").trim().split(/\s+/).slice(0,4).join(" ");
+    const mxNums  = nb.matrixNums || "";
+
+    // 5) Build & print the PDF label (pass notes)
+    await buildAndPrintLabel(orderNum, dotCount, dispatchDate, { metal, title4, matrixNums: mxNums });
 
   } catch (err) {
     console.error("Error in QR Printer auto-run:", err);
@@ -138,7 +152,7 @@ function getCumulativeDotCount(listings) {
  * 1) Generate a high-res (1024×1024) QR code
  * 2) Build a 4×6 PDF => place in hidden iframe => auto-print
  ********************************************************/
-async function buildAndPrintLabel(orderNum, dotCount, dispatchDate) {
+async function buildAndPrintLabel(orderNum, dotCount, dispatchDate, notes) {
   // 1) Generate a large QR code (1024×1024) for high-res
   const hiddenQRContainer = document.createElement("div");
   hiddenQRContainer.style.display = "none";
@@ -164,7 +178,8 @@ async function buildAndPrintLabel(orderNum, dotCount, dispatchDate) {
    dataUrl,
    dotCount,
    dispatchDate,
-   orderNum            // ⬅️ new arg
+   orderNum,           // ⬅️ keep order number
+   notes               // ⬅️ pass 3-line notes
  );
 
   // 3) Render PDF => place into a hidden iframe => auto-print
@@ -198,7 +213,7 @@ async function buildAndPrintLabel(orderNum, dotCount, dispatchDate) {
  * Then prints the bold date text 10px below the QR code
  * at y=104 (since the QR ends at ~y=94).
  ********************************************************/
-function buildPDFDocWithDots(dataUrl, dotCount, dispatchDate, orderNum) {
+function buildPDFDocWithDots(dataUrl, dotCount, dispatchDate, orderNum, notes) {
   // Dot = 6px diameter => radius=3, spaced 12px
   const dotEllipses = [];
   if (dotCount > 0) {
@@ -245,11 +260,16 @@ function buildPDFDocWithDots(dataUrl, dotCount, dispatchDate, orderNum) {
         bold: true,
         absolutePosition: { x:2, y:48 }
       },
-      // order number immediately below the date
+      // 3-line note block (50% smaller than old 5.5pt "Notes:")
       {
-        text: "Notes:",
-        fontSize: 5.5,
-        bold: true,
+        text: [
+          String(notes?.metal || "").trim(),
+          String(notes?.title4 || "").trim(),
+          String(notes?.matrixNums || "").trim()
+        ].filter(Boolean).join("\\n"),
+        fontSize: 2.75,   // 50% of 5.5
+        bold: false,
+        lineHeight: 1.0,
         absolutePosition: { x:43, y:0.5 }
       }
     ]
