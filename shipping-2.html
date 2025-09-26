@@ -1003,15 +1003,30 @@
     window.currentCarrier = null;
     window.CC_DEFAULT_BATCH_ID = "3903775";
 
+    /* sticky per-order latch: remember which order our Update ID belongs to */
+    if (typeof window.ccOrderKey === 'undefined') window.ccOrderKey = null;
+
     /* 🔥 Master cold-boot reset before loading a new order */
     function resetAllOrderUI(){
       // — Stop any CC lookups / latches from a previous order
       try { window.ccSearchAbort?.abort?.(); } catch {}
       try { clearTimeout(window.ccSlowTimer); } catch {}
       window.ccSlowTimer = null;
-      window.ccManualIdUpdateDone = false;
-      window.ccManualIdUpdateInFlight = false;
-      window.ccManualIdUpdatePromise = null;
+
+      // Determine if we are actually switching to a different order
+      const newKey = (document.getElementById('etsyOrderNumber')?.value || '').trim();
+      const isNewOrder = !!newKey && newKey !== window.ccOrderKey;
+
+      // Only clear Update ID latches when a NEW order is detected
+      if (isNewOrder) {
+        window.ccManualIdUpdateDone = false;
+        window.ccManualIdUpdateInFlight = false;
+        window.ccManualIdUpdatePromise = null;
+        window.ccOrderKey = newKey;
+      } else if (!window.ccOrderKey && newKey) {
+        // First initialization: bind the key without clearing latches
+        window.ccOrderKey = newKey;
+      }
 
       // — Recipient & verify UI (uses your existing helper)
       try { resetRecipientFields?.(); } catch {}
@@ -1025,7 +1040,7 @@
       // — Clear CC edit fields (Steps 1–3)
       [
       'cc_to_name','cc_to_phone','cc_to_email','cc_to_address_1', 'cc_to_address_2', 'cc_to_province_code', 
-      'cc_to_postal_code', 'cc_to_country_code'
+      'cc_to_postal_code', 'cc_to_country_code', 'cc_to_city'
 
         
       ].forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
@@ -1072,7 +1087,7 @@
 
       // — ChitChats shipment id box
       const ccId = document.getElementById('ccShipmentId');
-      if (ccId){ ccId.value=''; ccId.dataset.setAt = String(Date.now()); }
+      if (ccId){ ccId.value=''; delete ccId.dataset.setAt; }
     }
 
      // On load, pre-select the batch if it exists in #ccBatchSelect
@@ -1407,6 +1422,8 @@ function metalToBadge(label){
      * Base URL & Global Variables
      ********************************************************/
     const functionsBaseUrl = window.location.origin + "/.netlify/functions";
+
+    window.ccOrderKey = null; // remembers which order the latches belong to
 
     /* ===== Etsy OAuth boot + auto-refresh wiring (match design/sorting) ===== */
     const TOKEN_KEYS = {
@@ -2236,7 +2253,7 @@ function metalToBadge(label){
       trackingNumberInput:{ left:677, top:674, width:308, height:23 },
       carrierSelectWrap:  { left:539, top:664, width:107, height:23 },
       completeOrderBtn:    { left:678, top:730, width:300, height:65 },
-      titleShipping:        { left: 700, top: 10, width: 200, height: 30 },
+      titleShipping:        { left: 700, top: 10, width: 200, height: 35 },
       copyOrderDetailsBtn: { left: 242, top: 165, width: 65, height: 35 },
       shippingPriority: { left: 324, top: 106, width: 200, height: 24 },
       titleShippingPriority: { left: 324, top: 82, width: 200, height: 15 },
