@@ -346,19 +346,19 @@ function buildPDFDocWithDots(dataUrl, dotCount, dispatchDate, orderNum, notes) {
     pageMargins: [0, 0, 0, 0],
     content: [
       { absolutePosition: { x:4, y:2.75 }, canvas: dotEllipses },
-      { image: dataUrl, width: 34, absolutePosition:{ x:2, y:6 } },
-      { text: dispatchDate || "N/A", fontSize: 5.5, bold: true, absolutePosition:{ x:2, y:42 } },
-      { text: orderNum || "Unknown", fontSize: 5.5, bold: true, absolutePosition: { x:2, y:48 } },
+      { image: dataUrl, width: 28.9, absolutePosition:{ x:2, y:6 } },              // QR −15%
+      { text: dispatchDate || "N/A", fontSize: 4.7, bold: true, absolutePosition:{ x:2, y:42 } }, // Ship Date −15%
+      { text: orderNum || "Unknown", fontSize: 4.7, bold: true, absolutePosition: { x:2, y:48 } }, // Order # −15%
       {
         text: [
           "Metal: " + normMetal,
           "Title: " + normTitle4,
           "Match: " + normMatch
         ].join("\n"),
-        fontSize: 2.75,
+        fontSize: 3.33,
         bold: false,
         lineHeight: 1.0,
-        absolutePosition: { x:43, y:0.5 }
+        absolutePosition: { x:28, y:0.5 }
       }
     ]
   };
