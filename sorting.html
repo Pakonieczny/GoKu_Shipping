@@ -1960,14 +1960,22 @@ async function handlePrintRowClick() {
       return;
     }
 
-    // Fire prints for each order represented in this row.
-    // Reuse your existing single-order printer (spawns hidden iframe pointing at "QR Printer.html")
-    // which aggregates label lines correctly. (openIframePrinterForListing uses itemsForOrder, notesBlock, etc.)
+    // Build a single batch and print ONCE via QR Printer.html
+    const batch = [];
     for (const cellIndex of toPrintIndices) {
-      // NOTE: this function already prepares localStorage 'qrPrintAll' and injects the hidden iframe.
-      openIframePrinterForListing(cellIndex);
-      // A tiny delay helps some browsers’ print queues avoid collisions.
-      await new Promise(r => setTimeout(r, 150));
+      const obj = buildQrDataForCell(cellIndex);
+      if (obj) batch.push(obj);
+    }
+    if (batch.length) {
+      localStorage.setItem("qrPrintBatch", JSON.stringify(batch));
+      const ifr = document.createElement("iframe");
+      ifr.style.position = "absolute";
+      ifr.style.width = "1px";
+      ifr.style.height = "1px";
+      ifr.style.opacity = "0";
+      ifr.style.border = "0";
+      ifr.src = "QR Printer.html#batch";
+      document.body.appendChild(ifr);
     }
 
     // Advance to the next row (wraps to 0 after the last)
