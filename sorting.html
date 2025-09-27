@@ -1644,7 +1644,7 @@ function openIframePrinterForListing(cellIndex) {
   // 4) Build notes for the specific clicked cell (STRICT: no variations)
   const firstNWords = (str, n=2) =>
     String(str||"").replace(/\s+/g, " ").trim().split(" ").slice(0, n).join(" ");
-  // Line 2: first 4 words from the **title only**
+  // Line 2: first 2 words from the **title only**
   const title4 = firstNWords(item.title, 2);
 
   // Metal: prefer UI dropdown; fallback: sniff from TITLE ONLY (never from variations)
@@ -1663,12 +1663,14 @@ function openIframePrinterForListing(cellIndex) {
   // Line 3: numbers parsed from associated Matrix image title(s)
   // Works for BOTH auto "Send & Match" and manual drag+drop ("Save") paths,
   // since both populate window.cellMatches[cellIndex][slot].userName.
-  const names = (window.cellMatches?.[cellIndex] || [])
+  const names = ((typeof cellMatches !== "undefined" && cellMatches?.[cellIndex]) 
+                  || (window.cellMatches?.[cellIndex]) 
+                  || [])
     .filter(m => m && m.userName)
     .map(m => String(m.userName));
-  const seen = new Set();
-  const matrixNumsArr = [];
-  for (const nm of names) {
+    const seen = new Set();
+    const matrixNumsArr = [];
+    for (const nm of names) {
     const match = nm.match(/\d+/g);
     if (match && match.length) {
       const num = match[0]; // first number from each matrix title
