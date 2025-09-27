@@ -274,6 +274,9 @@
   <!-- Live Search: Etsy Order Item Titles -->
   <input id="orderSearchBox" class="browser-default" type="text" autocomplete="off"
          placeholder="Search orders…">
+  <!-- New: R.G. Marker input -->
+  <input id="rgMarkerInput" class="browser-default" type="text" autocomplete="off"
+         placeholder="R.G. Marker (e.g., 38)">
   <button id="filterIncompleteBtn" class="btn waves-effect waves-light">Filter</button>
   <button id="openConfigBtn" class="btn waves-effect waves-light">Open Config</button>
   <!-- Live counter for ALL Etsy Order Items -->
@@ -1024,6 +1027,7 @@ const configIDs = [
   "startMatrixAnalysisBtn",
   "matrixQueueList",
   "orderItemsCounter",
+  "rgMarkerInput",
   "titleUnmatchedImages"
 ];
 
@@ -1636,7 +1640,7 @@ function openIframePrinterForListing(cellIndex) {
   // 2) Extract the ship date (or default to "N/A")
   const dispatchDate = item.dispatch_date || "N/A";
 
-  // 3) Filter out all items for this same order
+  // 3) Collect all items in this order
   const orderID = item.receipt_id;
   console.log("Filtering items for order:", orderID);
   const itemsForOrder = window.cachedOrderItems.filter(one => one.receipt_id === orderID);
@@ -1701,12 +1705,12 @@ function openIframePrinterForListing(cellIndex) {
 
   // 5) Build object for QR Printer — notesBlock is the ONLY source for label text
   const dataToPrint = {
-   dispatchDate,
-   items: itemsForOrder,
-   userTypedOrderNum: item.typedOrderNumber || "UnknownOrder",
+    dispatchDate,
+    items: itemsForOrder,
+    userTypedOrderNum: item.typedOrderNumber || "UnknownOrder",
     primaryItemIndex: cellIndex,
-   // Hand off aggregated lines for the label
-   notesBlock: { metal: metalColour, title4, matrixNums, matrixTitle }
+    // Hand off aggregated lines for the label
+    notesBlock: { metal: metalColour, title4, matrixNums, matrixTitle }
   };
 
   // 6) Save that object in localStorage
@@ -1752,6 +1756,7 @@ function openIframePrinterForListing(cellIndex) {
       startMatrixAnalysisBtn:   { left:0,  top:-86, width:210, height:35 },
       matrixQueueList:          { left:0,  top:-46, width:290, height:20 },
       orderItemsCounter:        { left:550, top:15,  width:142, height:35 },
+      rgMarkerInput:            { left:20,  top:115, width:210, height:30 },
       testOpenAIBtn:            { left:20,  top:65,  width:140, height:35 }
     };
 
@@ -1894,6 +1899,15 @@ function openIframePrinterForListing(cellIndex) {
 
 async function startMatrixAnalysis() {
   window.__matrixAnalysisRunning = true;
+  // R.G. Marker: parse numbers and reset switch for this run
+  {
+    const raw = (document.getElementById("rgMarkerInput")?.value || "").trim();
+    const nums = (raw.match(/\d+/g) || [])
+      .map(s => s.replace(/^0+/, "") || "0"); // normalize, keep "0" if all zeros
+    window.__rgMarkers = new Set(nums);
+    window.__rgPromptActive = false;
+    console.log("[R.G. Marker] Loaded markers:", [...window.__rgMarkers]);
+  }
   updateSendMatchAvailability();
   const startBtn = document.getElementById("startMatrixAnalysisBtn");
   if (startBtn) startBtn.disabled = true;
@@ -1936,6 +1950,7 @@ async function startMatrixAnalysis() {
   updateMatrixQueueBadge();
   M.toast({ html: "All queued masters analyzed." });
   window.__matrixAnalysisRunning = false;
+  window.__rgPromptActive = false; // reset for next run
   updateSendMatchAvailability();
 }
 
@@ -2392,13 +2407,24 @@ async function openAIAnalyzePhoto(base64Image) {
 /* ───────────────────── PASS 2 : hue ⇒ fixed label ───────────────────── */
   const ctrlLabel = new AbortController();
   pendingFetchControllers.push(ctrlLabel);
-  const labelPrompt =
+  // R.G. latch: if this tile’s number hits, flip the switch for remainder of run
+  try {
+    const tnum = String(topNumber ?? "").replace(/^0+/, "") || "";
+    if (!window.__rgPromptActive &&
+        tnum &&
+        window.__rgMarkers instanceof Set &&
+        window.__rgMarkers.has(tnum)) {
+      window.__rgPromptActive = true;
+      console.log(`[R.G. Marker] Matched ${tnum} → switching to RG prompt for remainder of run`);
+    }
+  } catch {}
+
+  // Rose-Gold prompt (activated after first marker match)
+  const rgLabelPrompt =
     `You are classifying metal color from numeric stats. APPLY THESE CUT LINES STRICTLY:\n` +
-    `• HSV rule (primary): RoseGold if average H ≤ 39°.\n` +
-    `• Gold rule (fallback): Gold if average H ≥ 40°.\n` +
+    `• HSV rule (primary): RoseGold if average H ≥ 30°.\n` +
     `• Silver: If H ≤ 25% .\n` +
     `• Voting: each satisfied rule is one vote. If both rules agree, use that label.\n` +
-    //`• Tie-breaking: if Gold vs Silver tie, choose Silver. If RoseGold vs Gold tie, choose Gold unless hue contains "rose".\n` +
     `• Only return exactly one word: Gold, RoseGold, or Silver.\n\n` +
     `NOTE ON INPUT STATS:\n` +
     `• H is the AVERAGE of kept hue samples (circular mean in degrees).\n` +
@@ -2407,6 +2433,23 @@ async function openAIAnalyzePhoto(base64Image) {
     `hue="${hueText}"\n` +
     `medianHSV: H=${hsvH} S=${hsvS} V=${hsvV}\n` +
     `medianLab: L=${labL} a=${labA} b=${labB}`;
+
+  // Default prompt (pre-latch behavior)
+  const defaultLabelPrompt =
+    `You are classifying metal color from numeric stats. APPLY THESE CUT LINES STRICTLY:\n` +
+    `• Gold rule (fallback): Gold if average H ≥ 30°.\n` +
+    `• Silver: If H ≤ 25% .\n` +
+    `• Voting: each satisfied rule is one vote. If both rules agree, use that label.\n` +
+    `• Only return exactly one word: Gold, RoseGold, or Silver.\n\n` +
+    `NOTE ON INPUT STATS:\n` +
+    `• H is the AVERAGE of kept hue samples (circular mean in degrees).\n` +
+    `• S and V are MEDIANS of kept samples.\n\n` +
+    `INPUT\n` +
+    `hue="${hueText}"\n` +
+    `medianHSV: H=${hsvH} S=${hsvS} V=${hsvV}\n` +
+    `medianLab: L=${labL} a=${labA} b=${labB}`;
+
+  const labelPrompt = (window.__rgPromptActive ? rgLabelPrompt : defaultLabelPrompt);
   const labelPayload = {
     model: "gpt-5",
     messages: [{ role: "user", content: labelPrompt }],
