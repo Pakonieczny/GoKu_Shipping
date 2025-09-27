@@ -322,7 +322,7 @@ function buildPDFDocWithDots(dataUrl, dotCount, dispatchDate, orderNum, notes) {
   // Dot = 6px diameter => radius=3, spaced 12px
   const dotEllipses = [];
   if (dotCount > 0) {
-    const spacing = 2;
+    const spacing = 3;
     for (let i = 0; i < dotCount; i++) {
       dotEllipses.push({
         type: 'ellipse',
@@ -347,8 +347,8 @@ function buildPDFDocWithDots(dataUrl, dotCount, dispatchDate, orderNum, notes) {
     content: [
       { absolutePosition: { x:4, y:2.75 }, canvas: dotEllipses },
       { image: dataUrl, width: 28.9, absolutePosition:{ x:2, y:6 } },              // QR −15%
-      { text: dispatchDate || "N/A", fontSize: 4.7, bold: true, absolutePosition:{ x:2, y:42 } }, // Ship Date −15%
-      { text: orderNum || "Unknown", fontSize: 4.7, bold: true, absolutePosition: { x:2, y:48 } }, // Order # −15%
+      { text: dispatchDate || "N/A", fontSize: 4.7, bold: true, absolutePosition:{ x:2, y:39 } }, // Ship Date −15%
+      { text: orderNum || "Unknown", fontSize: 4.7, bold: true, absolutePosition: { x:2, y:46 } }, // Order # −15%
       {
         text: [
           "Metal: " + normMetal,
@@ -358,7 +358,7 @@ function buildPDFDocWithDots(dataUrl, dotCount, dispatchDate, orderNum, notes) {
         fontSize: 3.33,
         bold: false,
         lineHeight: 1.0,
-        absolutePosition: { x:28, y:0.5 }
+        absolutePosition: { x:33, y:0.5 }
       }
     ]
   };
