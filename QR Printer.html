@@ -40,6 +40,20 @@
 window.addEventListener("load", async () => {
   try {
     // 1) Load from localStorage
+
+    // ==== BATCH MODE: if qrPrintBatch exists, print a multi-page PDF then exit ====
+    const batchStr = localStorage.getItem("qrPrintBatch");
+    if (batchStr) {
+      try {
+        const batchArr = JSON.parse(batchStr);
+        if (Array.isArray(batchArr) && batchArr.length) {
+          await printBatch(batchArr);
+          localStorage.removeItem("qrPrintBatch");
+          return; // don't run single-item path
+        }
+      } catch (e) { console.warn("Bad qrPrintBatch:", e); }
+    }
+
     const dataStr = localStorage.getItem("qrPrintAll");
     if (!dataStr) {
       console.error("No 'qrPrintAll' found in localStorage. Nothing to print.");
@@ -362,6 +376,92 @@ function buildPDFDocWithDots(dataUrl, dotCount, dispatchDate, orderNum, notes) {
       }
     ]
   };
+}
+
+/********************************************************
+ * printBatch(batchArr): multi-page 1×1 labels in one job
+ ********************************************************/
+async function printBatch(batchArr) {
+  // Reuse 1×1 page size and element positions per page.
+  const hiddenQRContainer = document.createElement("div");
+  hiddenQRContainer.style.display = "none";
+  document.body.appendChild(hiddenQRContainer);
+
+  const allContent = [];
+
+  for (let i = 0; i < batchArr.length; i++) {
+    const dataObj = batchArr[i] || {};
+    const items   = Array.isArray(dataObj.items) ? dataObj.items : [];
+    if (!items.length) continue;
+
+    const orderNum     = dataObj.userTypedOrderNum || items[0]?.receipt_id || items[0]?.receiptId || "UnknownOrder";
+    const dispatchDate = dataObj.dispatchDate || "N/A";
+    const dotCount     = getCumulativeDotCount(items);
+    const notes        = buildAggregatedNotes(dataObj, items);
+
+    // ---- QR generation (same as single) ----
+    hiddenQRContainer.innerHTML = "";
+    await makeLargeQRCode(orderNum, hiddenQRContainer);
+    let qrImg = hiddenQRContainer.querySelector("img");
+    if (!qrImg) {
+      const qrCanvas = hiddenQRContainer.querySelector("canvas");
+      if (qrCanvas) qrImg = convertCanvasToImg(qrCanvas);
+    }
+    if (!qrImg) continue;
+    const dataUrl = qrImg.src;
+
+    // ---- per-page content (mirrors single) ----
+    const dotEllipses = [];
+    if (dotCount > 0) {
+      const spacing = 4.44;
+      for (let d = 0; d < dotCount; d++) {
+        dotEllipses.push({ type:'ellipse', x: d*spacing, y: 0, r1:1.65, r2:1.65, color:'black', fillOpacity:1 });
+      }
+    }
+
+    const normMetal  = String(notes?.metal ?? "").replace(/^\s*Metal:\s*/i, "").trim();
+    const normTitle4 = String(notes?.title4 ?? "").trim();
+    const normMatch  = String(notes?.matrixNums ?? "").trim();
+
+    allContent.push(
+      { absolutePosition: { x:4, y:2.75 }, canvas: dotEllipses },
+      { image: dataUrl, width: 28.9, absolutePosition:{ x:2, y:6 } },
+      { text: dispatchDate || "N/A", fontSize: 4.7, bold: true, absolutePosition:{ x:2, y:39 } },
+      { text: orderNum || "Unknown", fontSize: 4.7, bold: true, absolutePosition: { x:2, y:46 } },
+      {
+        text: [
+          "Metal: " + normMetal,
+          "Title: " + normTitle4,
+          "Match: " + normMatch
+        ].join("\n"),
+        fontSize: 3.33,
+        bold: false,
+        lineHeight: 1.0,
+        absolutePosition: { x:33, y:0.5 }
+      },
+      ...(i < batchArr.length - 1 ? [{ text: "", pageBreak: "after" }] : [])
+    );
+  }
+
+  const docDefinition = {
+    pageSize: { width: 72, height: 72 },
+    pageMargins: [0, 0, 0, 0],
+    content: allContent
+  };
+
+  const pdfDoc = pdfMake.createPdf(docDefinition);
+  pdfDoc.getBlob((blob) => {
+    const blobUrl = URL.createObjectURL(blob);
+    const ifr = document.createElement("iframe");
+    ifr.style.position = "fixed";
+    ifr.style.visibility = "hidden";
+    ifr.style.right = "10000px";
+    ifr.style.width = "1px";
+    ifr.style.height = "1px";
+    document.body.appendChild(ifr);
+    ifr.onload = function(){ ifr.contentWindow.print(); };
+    ifr.src = blobUrl;
+  });
 }
 
 /********************************************************

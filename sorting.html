@@ -1625,6 +1625,79 @@ function initMatchAndPrintFlow() {
 /********************************************************
  * openIframePrinterForListing(cellIndex)
  ********************************************************/
+
+function buildQrDataForCell(cellIndex) {
+  if (!window.cachedOrderItems) return null;
+
+  const item = window.cachedOrderItems[cellIndex];
+  if (!item) return null;
+
+  const dispatchDate = item.dispatch_date || "N/A";
+  const orderID = item.receipt_id || item.receiptId;
+  const itemsForOrder = window.cachedOrderItems.filter(one => (one.receipt_id || one.receiptId) === orderID);
+
+  const firstNWords = (str, n = 2) =>
+    String(str || "").replace(/\s+/g, " ").trim().split(" ").slice(0, n).join(" ");
+  const sniffMetal = (txt) => {
+    const t = String(txt || "").toLowerCase();
+    if (/(rose[\s-]?gold|rosegold)/.test(t)) return "RoseGold";
+    if (/\bsilver\b/.test(t))               return "Silver";
+    if (/\bgold\b/.test(t))                 return "Gold";
+    return "";
+  };
+  const uniq = (arr) => {
+    const out = []; const seen = new Set();
+    for (const v of arr) { const k = String(v||"").trim(); if (k && !seen.has(k)) { seen.add(k); out.push(k); } }
+    return out;
+  };
+  const collectMatchesForCellIndex = (idx) => {
+    const arr = ((typeof cellMatches !== "undefined" && cellMatches?.[idx]) || (window.cellMatches?.[idx]) || []);
+    return arr.filter(m => m && m.userName).map(m => String(m.userName));
+  };
+
+  const metalsArr = [];
+  const titlesArr = [];
+  const allNames  = [];
+  const allNums   = [];
+
+  for (const itm of itemsForOrder) {
+    const idx = window.cachedOrderItems.indexOf(itm);
+
+    const uiMetal = (document.getElementById("metalCell" + idx)?.value || "")
+      .replace(/^\s*Metal:\s*/i, "")
+      .trim();
+    let metal = uiMetal || sniffMetal(itm.title || "");
+    if (!metal && Array.isArray(itm.keywords)) {
+      const joined = (itm.keywords || []).join(" ");
+      metal = sniffMetal(joined);
+    }
+    metalsArr.push(metal || "?");
+
+    titlesArr.push(firstNWords(itm.title, 2));
+
+    const names = collectMatchesForCellIndex(idx);
+    allNames.push(...names);
+    for (const nm of names) {
+      const m = nm.match(/\d+/g);
+      if (m && m.length) allNums.push(m[0]);
+    }
+  }
+
+  const matrixTitle = uniq(allNames).join(" | ");
+  const matrixNums  = uniq(allNums).join(", ");
+  const title4      = titlesArr.join(", ");
+  const metalColour = metalsArr.join(", ");
+
+  return {
+    dispatchDate,
+    items: itemsForOrder,
+    userTypedOrderNum: item.typedOrderNumber || "UnknownOrder",
+    primaryItemIndex: cellIndex,
+    notesBlock: { metal: metalColour, title4, matrixNums, matrixTitle }
+  };
+}
+
+
 function openIframePrinterForListing(cellIndex) {
   console.log("Opening QR Printer for cell:", cellIndex);
 
@@ -1707,14 +1780,8 @@ function openIframePrinterForListing(cellIndex) {
   const metalColour = metalsArr.join(", ");
 
   // 5) Build object for QR Printer — notesBlock is the ONLY source for label text
-  const dataToPrint = {
-    dispatchDate,
-    items: itemsForOrder,
-    userTypedOrderNum: item.typedOrderNumber || "UnknownOrder",
-    primaryItemIndex: cellIndex,
-    // Hand off aggregated lines for the label
-    notesBlock: { metal: metalColour, title4, matrixNums, matrixTitle }
-  };
+  const dataToPrint = buildQrDataForCell(cellIndex);
+  if (!dataToPrint) return;
 
   // 6) Save that object in localStorage
   localStorage.setItem("qrPrintAll", JSON.stringify(dataToPrint));
@@ -1728,6 +1795,89 @@ function openIframePrinterForListing(cellIndex) {
   hiddenIframe.style.border = "0";
   hiddenIframe.src = "QR Printer.html";
   document.body.appendChild(hiddenIframe);
+}
+
+async function printBatch(batchArr) {
+  // Reuse 1×1 page size and element positions per page.
+  const hiddenQRContainer = document.createElement("div");
+  hiddenQRContainer.style.display = "none";
+  document.body.appendChild(hiddenQRContainer);
+
+  const allContent = [];
+
+  for (let i = 0; i < batchArr.length; i++) {
+    const dataObj = batchArr[i] || {};
+    const items   = Array.isArray(dataObj.items) ? dataObj.items : [];
+    if (!items.length) continue;
+
+    const orderNum     = dataObj.userTypedOrderNum || items[0]?.receipt_id || items[0]?.receiptId || "UnknownOrder";
+    const dispatchDate = dataObj.dispatchDate || "N/A";
+    const dotCount     = getCumulativeDotCount(items);
+    const notes        = buildAggregatedNotes(dataObj, items);
+
+    // ---- QR generation (same as single) ----
+    hiddenQRContainer.innerHTML = "";
+    await makeLargeQRCode(orderNum, hiddenQRContainer);
+    let qrImg = hiddenQRContainer.querySelector("img");
+    if (!qrImg) {
+      const qrCanvas = hiddenQRContainer.querySelector("canvas");
+      if (qrCanvas) qrImg = convertCanvasToImg(qrCanvas);
+    }
+    if (!qrImg) continue;
+    const dataUrl = qrImg.src;
+
+    // ---- per-page content (mirrors single) ----
+    const dotEllipses = [];
+    if (dotCount > 0) {
+      const spacing = 4.44;
+      for (let d = 0; d < dotCount; d++) {
+        dotEllipses.push({ type:'ellipse', x: d*spacing, y: 0, r1:1.65, r2:1.65, color:'black', fillOpacity:1 });
+      }
+    }
+
+    const normMetal  = String(notes?.metal ?? "").replace(/^\s*Metal:\s*/i, "").trim();
+    const normTitle4 = String(notes?.title4 ?? "").trim();
+    const normMatch  = String(notes?.matrixNums ?? "").trim();
+
+    allContent.push(
+      { absolutePosition: { x:4, y:2.75 }, canvas: dotEllipses },
+      { image: dataUrl, width: 28.9, absolutePosition:{ x:2, y:6 } },
+      { text: dispatchDate || "N/A", fontSize: 4.7, bold: true, absolutePosition:{ x:2, y:39 } },
+      { text: orderNum || "Unknown", fontSize: 4.7, bold: true, absolutePosition: { x:2, y:46 } },
+      {
+        text: [
+          "Metal: " + normMetal,
+          "Title: " + normTitle4,
+          "Match: " + normMatch
+        ].join("\\n"),
+        fontSize: 3.33,
+        bold: false,
+        lineHeight: 1.0,
+        absolutePosition: { x:33, y:0.5 }
+      },
+      ...(i < batchArr.length - 1 ? [{ text: "", pageBreak: "after" }] : [])
+    );
+  }
+
+  const docDefinition = {
+    pageSize: { width: 72, height: 72 },
+    pageMargins: [0, 0, 0, 0],
+    content: allContent
+  };
+
+  const pdfDoc = pdfMake.createPdf(docDefinition);
+  pdfDoc.getBlob((blob) => {
+    const blobUrl = URL.createObjectURL(blob);
+    const ifr = document.createElement("iframe");
+    ifr.style.position = "fixed";
+    ifr.style.visibility = "hidden";
+    ifr.style.right = "10000px";
+    ifr.style.width = "1px";
+   ifr.style.height = "1px";
+    document.body.appendChild(ifr);
+    ifr.onload = function(){ ifr.contentWindow.print(); };
+    ifr.src = blobUrl;
+  });
 }
 
 // === Print Row: state & helpers =====================================
