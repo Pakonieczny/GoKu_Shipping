@@ -1641,44 +1641,59 @@ function openIframePrinterForListing(cellIndex) {
   console.log("Filtering items for order:", orderID);
   const itemsForOrder = window.cachedOrderItems.filter(one => one.receipt_id === orderID);
 
-  // 4) Build notes for the specific clicked cell (STRICT: no variations)
-  const firstNWords = (str, n=2) =>
-    String(str||"").replace(/\s+/g, " ").trim().split(" ").slice(0, n).join(" ");
-  // Line 2: first 2 words from the **title only**
-  const title4 = firstNWords(item.title, 2);
-
-  // Metal: prefer UI dropdown; fallback: sniff from TITLE ONLY (never from variations)
-  // Normalize: strip any leading "Metal:" from the UI line (e.g., " Metal: Gold Filled")
-  const uiMetal = (document.getElementById("metalCell"+cellIndex)?.value || "")
-  .replace(/^\s*Metal:\s*/i, "")
-  .trim();  const sniffMetal = (txt) => {
-    const t = String(txt||"").toLowerCase();
-    if (/(rose[\s-]?gold|rosegold)/i.test(t)) return "RoseGold";
-    if (/\bsilver\b/i.test(t))               return "Silver";
-    if (/\bgold\b/i.test(t))                 return "Gold";
+  // 4) Build aggregated notes across ALL items in this order
+  const firstNWords = (str, n = 2) =>
+    String(str || "").replace(/\s+/g, " ").trim().split(" ").slice(0, n).join(" ");
+  const sniffMetal = (txt) => {
+    const t = String(txt || "").toLowerCase();
+    if (/(rose[\s-]?gold|rosegold)/.test(t)) return "RoseGold";
+    if (/\bsilver\b/.test(t))               return "Silver";
+    if (/\bgold\b/.test(t))                 return "Gold";
     return "";
   };
-  const metalColour = uiMetal || sniffMetal(item.title || "");
-
-  // Line 3: numbers parsed from associated Matrix image title(s)
-  // Works for BOTH auto "Send & Match" and manual drag+drop ("Save") paths,
-  // since both populate window.cellMatches[cellIndex][slot].userName.
-  const names = ((typeof cellMatches !== "undefined" && cellMatches?.[cellIndex]) 
-                  || (window.cellMatches?.[cellIndex]) 
-                  || [])
-    .filter(m => m && m.userName)
-    .map(m => String(m.userName));
+  const uniq = (arr) => {
+    const out = [];
     const seen = new Set();
-    const matrixNumsArr = [];
+    for (const v of arr) { const k = String(v||"").trim(); if (k && !seen.has(k)) { seen.add(k); out.push(k); } }
+    return out;
+  };
+  const collectMatchesForCellIndex = (idx) => {
+    const arr = ((typeof cellMatches !== "undefined" && cellMatches?.[idx]) || (window.cellMatches?.[idx]) || []);
+    return arr.filter(m => m && m.userName).map(m => String(m.userName));
+  };
+
+  const metalsArr = [];
+  const titlesArr = [];
+  const allNames  = [];
+  const allNums   = [];
+
+  for (const itm of itemsForOrder) {
+    // Find this item's global cell index to read its matches + UI metal selector
+    const idx = window.cachedOrderItems.indexOf(itm);
+
+    // Metal: prefer UI dropdown if present; otherwise sniff from TITLE ONLY
+    const uiMetal = (document.getElementById("metalCell" + idx)?.value || "")
+      .replace(/^\s*Metal:\s*/i, "")
+      .trim();
+    const metal = uiMetal || sniffMetal(itm.title || "");
+    if (metal) metalsArr.push(metal);
+
+    // Title: first 2 words from the item's listing title
+    titlesArr.push(firstNWords(itm.title, 2));
+
+    // Matrix numbers from the matched Matrix image title(s) for THIS item
+    const names = collectMatchesForCellIndex(idx);
+    allNames.push(...names);
     for (const nm of names) {
-    const match = nm.match(/\d+/g);
-    if (match && match.length) {
-      const num = match[0]; // first number from each matrix title
-      if (!seen.has(num)) { seen.add(num); matrixNumsArr.push(num); }
+      const m = nm.match(/\d+/g);
+      if (m && m.length) allNums.push(m[0]); // first number in each matched matrix title
     }
   }
-  const matrixNums  = matrixNumsArr.join(", ");
-  const matrixTitle = names.join(" | "); // hand-off full titles as a fallback source
+
+  const matrixTitle = uniq(allNames).join(" | ");
+  const matrixNums  = uniq(allNums).join(", ");
+  const title4      = titlesArr.join(", ");
+  const metalColour = uniq(metalsArr).join(", ");
 
   // 5) Build object for QR Printer — notesBlock is the ONLY source for label text
   const dataToPrint = {
@@ -1686,7 +1701,8 @@ function openIframePrinterForListing(cellIndex) {
    items: itemsForOrder,
    userTypedOrderNum: item.typedOrderNumber || "UnknownOrder",
     primaryItemIndex: cellIndex,
-    notesBlock: { metal: metalColour, title4, matrixNums, matrixTitle }
+   // Hand off aggregated lines for the label
+   notesBlock: { metal: metalColour, title4, matrixNums, matrixTitle }
   };
 
   // 6) Save that object in localStorage

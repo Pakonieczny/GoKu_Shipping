@@ -35,7 +35,7 @@
  *     - QR of order number
  *     - 0–2 dots (group A/B)
  *     - date, order number
- *     - 3-line notes (Metal / Title / Match)
+ *     - 3-line notes (Metal / Title / Match) **aggregated across ALL items**
  ********************************************************/
 window.addEventListener("load", async () => {
   try {
@@ -75,17 +75,7 @@ window.addEventListener("load", async () => {
     const dotCount = getCumulativeDotCount(items);
 
     // 4) Notes block (STRICT: never include variations)
-    const first4 = (s) => String(s||"").trim().split(/\s+/).slice(0,4).join(" ");
-    const notes = {
-      metal:      String(dataObj?.notesBlock?.metal || "").trim(),
-      title4:     String(dataObj?.notesBlock?.title4 || first4(items[0]?.title)).trim(),
-      matrixNums: String(dataObj?.notesBlock?.matrixNums || "").trim(),
-      matrixTitle: String(dataObj?.notesBlock?.matrixTitle || dataObj?.notesBlock?.matrixImageTitle || "").trim()
-    };
-
-    // 4b) Derive Match numbers from Matrix image title if missing/empty
-    notes.matrixNums = normalizeMatrixNums(notes.matrixNums)
-                    || deriveMatrixNums(dataObj, notes, items);
+    const notes = buildAggregatedNotes(dataObj, items);
 
     // 5) Build & print the PDF label (with notes)
     await buildAndPrintLabel(orderNum, dotCount, dispatchDate, notes);
@@ -95,7 +85,29 @@ window.addEventListener("load", async () => {
   }
 });
 
-/* ---------- Helpers for MATCH numbers from Matrix titles ---------- */
+/* =================== Aggregation Helpers =================== */
+
+/** First N words from a string (normalized whitespace). */
+function firstNWords(str, n = 2) {
+  return String(str || "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .split(" ")
+    .slice(0, n)
+    .join(" ");
+}
+
+/** Unique-preserving join. */
+function uniqJoin(arr, sep = ", ") {
+  const out = [];
+  const seen = new Set();
+  for (const v of arr) {
+    const k = String(v || "").trim();
+    if (!k) continue;
+    if (!seen.has(k)) { seen.add(k); out.push(k); }
+  }
+  return out.join(sep);
+}
 
 /** Normalize a loose numbers string into "n, n, n" (unique, in-order). */
 function normalizeMatrixNums(s) {
@@ -112,42 +124,103 @@ function extractNumsFromTitle(str) {
   return normalizeMatrixNums(str);
 }
 
-/** Find best candidate title(s) likely to be the Matrix image title and return numbers. */
-function deriveMatrixNums(dataObj, notes, items) {
-  const candidates = [];
+/** Try to sniff metal from plain text (order: RoseGold → Silver → Gold). */
+function sniffMetalFromText(txt) {
+  const t = String(txt || "").toLowerCase();
+  if (/(rose[\s-]?gold|rosegold)/.test(t)) return "RoseGold";
+  if (/\bsilver\b/.test(t)) return "Silver";
+  if (/\bgold\b/.test(t)) return "Gold";
+  return "";
+}
 
-  // Highest priority: explicit matrix-title fields
+/**
+ * Build aggregated lines across ALL items in the order.
+ * Uses values passed via notesBlock if available; otherwise derives them.
+ */
+function buildAggregatedNotes(dataObj, items) {
   const nb = dataObj?.notesBlock || {};
-  const keys1 = ["matrixTitle", "matrixImageTitle", "matrix", "matrix_title", "matrix_name", "matrixImage", "matrixFile", "matrixFileName", "titleFull"];
-  for (const k of keys1) {
-    if (typeof nb[k] === "string" && nb[k].trim()) candidates.push(nb[k]);
+
+  // --- METAL (prefer passed-in aggregated, else derive from all items)
+  let metalAgg = String(nb.metal || "").trim();
+  if (!metalAgg) {
+    const metals = [];
+    for (const it of items) {
+      const sniffed = sniffMetalFromText(it.title || "");
+      if (sniffed) metals.push(sniffed);
+      // Also look into keywords as a weak signal
+      if (Array.isArray(it.keywords)) {
+        const joined = (it.keywords || []).join(" ");
+        const sniffK = sniffMetalFromText(joined);
+        if (sniffK) metals.push(sniffK);
+      }
+    }
+    metalAgg = uniqJoin(metals);
   }
 
-  // Per-item matrix titles if you attached them on each listing
-  const keys2 = ["matrixTitle", "matrixImageTitle", "matchedMatrixTitle", "matrix", "matrix_title", "matrix_name"];
+  // --- TITLE (prefer passed-in aggregated title4, else 2 words per item)
+  let titleAgg = String(nb.title4 || "").trim();
+  if (!titleAgg) {
+    const titles = items.map(it => firstNWords(it.title, 2)).filter(Boolean);
+    titleAgg = titles.join(", ");
+  }
+
+  // --- MATCH NUMBERS (prefer passed-in; else aggregate across candidates)
+  let matchAgg = normalizeMatrixNums(String(nb.matrixNums || "").trim());
+  if (!matchAgg) {
+    matchAgg = deriveAllMatrixNums(dataObj, items, nb);
+  }
+
+  // Also hand through any matrixTitle passed (not required for print)
+  const matrixTitle = String(nb.matrixTitle || nb.matrixImageTitle || "").trim();
+
+  return {
+    metal: metalAgg,
+    title4: titleAgg,
+    matrixNums: matchAgg,
+    matrixTitle
+  };
+}
+
+/**
+ * Aggregate ALL matrix numbers from any reasonable candidate:
+ * - notesBlock.matrixTitle, matrixImageTitle, etc.
+ * - per-item matrix* fields (if present)
+ * - items' titles and keywords as last-resort
+ */
+function deriveAllMatrixNums(dataObj, items, nb) {
+  const candidates = [];
+  const pushIf = (v) => { if (typeof v === "string" && v.trim()) candidates.push(v); };
+
+  // Highest priority: explicit matrix-title fields on the notes block
+  const keys1 = ["matrixTitle","matrixImageTitle","matrix","matrix_title","matrix_name","matrixImage","matrixFile","matrixFileName","titleFull"];
+  for (const k of keys1) pushIf(nb?.[k]);
+
+  // Per-item matrix titles / names if attached to items
+  const keys2 = ["matrixTitle","matrixImageTitle","matchedMatrixTitle","matrix","matrix_title","matrix_name"];
   if (Array.isArray(items)) {
     for (const it of items) {
-      for (const k of keys2) {
-        if (typeof it?.[k] === "string" && it[k].trim()) candidates.push(it[k]);
-      }
+      for (const k of keys2) pushIf(it?.[k]);
     }
   }
 
-  // Last-resort fallbacks (may still work if matrix name was stuffed into keywords/titles)
+  // Last-resort fallbacks (titles / keywords may embed numbers)
   if (Array.isArray(items)) {
     for (const it of items) {
-      if (typeof it?.title === "string" && it.title.trim()) candidates.push(it.title);
-      if (Array.isArray(it?.keywords) && it.keywords.length) {
-        candidates.push(it.keywords.join(" "));
-      }
+      pushIf(it?.title);
+      if (Array.isArray(it?.keywords) && it.keywords.length) pushIf(it.keywords.join(" "));
     }
   }
 
+  // Accumulate unique numbers in encounter order
+  const seen = new Set();
+  const out = [];
   for (const s of candidates) {
-    const nums = extractNumsFromTitle(s);
-    if (nums) return nums;
+    const nums = [...String(s).matchAll(/\d+/g)].map(m => m[0]);
+    for (const n of nums) {
+      if (!seen.has(n)) { seen.add(n); out.push(n); }
+    }
   }
-  return ""; // if we truly can't find any digits
+  return out.join(", ");
 }
 
 /* --------- Phrase matcher used for dot-count classification --------- */
@@ -263,7 +336,7 @@ function buildPDFDocWithDots(dataUrl, dotCount, dispatchDate, orderNum, notes) {
     }
   }
 
-  // Normalize fields for consistent printing
+  // Normalize fields for consistent printing (already aggregated)
   const normMetal  = String(notes?.metal ?? "").replace(/^\s*Metal:\s*/i, "").trim();
   const normTitle4 = String(notes?.title4 ?? "").trim();
   const normMatch  = String(notes?.matrixNums ?? "").trim();
