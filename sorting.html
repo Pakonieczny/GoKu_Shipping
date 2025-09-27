@@ -1671,12 +1671,16 @@ function openIframePrinterForListing(cellIndex) {
     // Find this item's global cell index to read its matches + UI metal selector
     const idx = window.cachedOrderItems.indexOf(itm);
 
-    // Metal: prefer UI dropdown if present; otherwise sniff from TITLE ONLY
+    // Metal: prefer UI dropdown; else sniff title; else sniff keywords; never drop an item
     const uiMetal = (document.getElementById("metalCell" + idx)?.value || "")
       .replace(/^\s*Metal:\s*/i, "")
       .trim();
-    const metal = uiMetal || sniffMetal(itm.title || "");
-    if (metal) metalsArr.push(metal);
+    let metal = uiMetal || sniffMetal(itm.title || "");
+    if (!metal && Array.isArray(itm.keywords)) {
+      const joined = (itm.keywords || []).join(" ");
+      metal = sniffMetal(joined);
+    }
+    metalsArr.push(metal || "?");
 
     // Title: first 2 words from the item's listing title
     titlesArr.push(firstNWords(itm.title, 2));
@@ -1693,7 +1697,7 @@ function openIframePrinterForListing(cellIndex) {
   const matrixTitle = uniq(allNames).join(" | ");
   const matrixNums  = uniq(allNums).join(", ");
   const title4      = titlesArr.join(", ");
-  const metalColour = uniq(metalsArr).join(", ");
+  const metalColour = metalsArr.join(", ");
 
   // 5) Build object for QR Printer — notesBlock is the ONLY source for label text
   const dataToPrint = {
