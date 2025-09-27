@@ -1661,6 +1661,8 @@ function openIframePrinterForListing(cellIndex) {
   const metalColour = uiMetal || sniffMetal(item.title || "");
 
   // Line 3: numbers parsed from associated Matrix image title(s)
+  // Works for BOTH auto "Send & Match" and manual drag+drop ("Save") paths,
+  // since both populate window.cellMatches[cellIndex][slot].userName.
   const names = (window.cellMatches?.[cellIndex] || [])
     .filter(m => m && m.userName)
     .map(m => String(m.userName));
@@ -1669,11 +1671,12 @@ function openIframePrinterForListing(cellIndex) {
   for (const nm of names) {
     const match = nm.match(/\d+/g);
     if (match && match.length) {
-      const num = match[0];
+      const num = match[0]; // first number from each matrix title
       if (!seen.has(num)) { seen.add(num); matrixNumsArr.push(num); }
     }
   }
-  const matrixNums = matrixNumsArr.join(", ");
+  const matrixNums  = matrixNumsArr.join(", ");
+  const matrixTitle = names.join(" | "); // hand-off full titles as a fallback source
 
   // 5) Build object for QR Printer — notesBlock is the ONLY source for label text
   const dataToPrint = {
@@ -1681,7 +1684,7 @@ function openIframePrinterForListing(cellIndex) {
    items: itemsForOrder,
    userTypedOrderNum: item.typedOrderNumber || "UnknownOrder",
     primaryItemIndex: cellIndex,
-    notesBlock: { metal: metalColour, title4, matrixNums }
+    notesBlock: { metal: metalColour, title4, matrixNums, matrixTitle }
   };
 
   // 6) Save that object in localStorage
