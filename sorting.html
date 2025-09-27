@@ -279,7 +279,9 @@
   <input id="rgMarkerInput" class="browser-default" type="text" autocomplete="off"
          placeholder="R.G. Marker (e.g., 38)">
   <button id="filterIncompleteBtn" class="btn waves-effect waves-light">Filter</button>
-  <button id="printRowBtn" class="btn waves-effect waves-light">Print Row</button>
+  <button id="printRowBtn" class="btn waves-effect waves-light">
+   Print Row <span id="printRowBadge" style="margin-left:6px; padding:2px 6px; border-radius:8px; border:1px solid rgba(255,255,255,.85); font-size:.85em;">Row 1</span>
+  </button>
   <button id="openConfigBtn" class="btn waves-effect waves-light">Open Config</button>
   <!-- Live counter for ALL Etsy Order Items -->
   <div id="orderItemsCounter"
@@ -1048,6 +1050,7 @@ document.addEventListener("DOMContentLoaded", function () {
     loadPositions();
     document.body.style.opacity = 1;
     window.updateOrderItemCounter?.();
+    updatePrintRowButtonLabel();
   }, 200);
 
   // Initial gate check for Send & Match
@@ -1096,6 +1099,7 @@ etsyOrderInput.addEventListener("keydown", async function (e) {
 
     await loadBatchEtsyOrders(orderNumbers);
     updateOrderItemCounter(); // total after load completes
+    updatePrintRowButtonLabel();
   }
 
   // Start Matrix Analysis (process queued masters sequentially)
@@ -1137,6 +1141,7 @@ etsyOrderInput.addEventListener("keydown", async function (e) {
       if (typeof window.applyOrderSearchFilter === "function") {
         window.applyOrderSearchFilter(q);
       }
+      updatePrintRowButtonLabel();
     });
   }
 
@@ -1892,6 +1897,19 @@ function getVisibleCellIndices() {
   return out;
 }
 
+/** Update the "Print Row" button label with the NEXT row number to be printed. */
+function updatePrintRowButtonLabel() {
+  const btn   = document.getElementById("printRowBtn");
+  if (!btn) return;
+  const badge = btn.querySelector("#printRowBadge");
+  const visible = (typeof getVisibleCellIndices === "function") ? getVisibleCellIndices() : [];
+  const cols = (typeof ROW_COLS === "number" && ROW_COLS > 0) ? ROW_COLS : 9;
+  const totalRows = Math.ceil(visible.length / cols);
+  const cursor    = Number(window._rowPrintCursor || 0);
+  const nextRow   = totalRows ? ((cursor % totalRows) + 1) : 0; // 1-based
+  if (badge) badge.textContent = totalRows ? `Row ${nextRow}` : "Row –";
+}
+
 /** Ensure the tiny completion modal exists, then show it briefly. */
 function showRowPrintCompletedModal() {
   let modal = document.getElementById("rowPrintDoneModal");
@@ -1977,6 +1995,7 @@ async function handlePrintRowClick() {
     window._rowPrintCursor = (window._rowPrintCursor + 1) % totalRows;
 
     // Tiny confirmation popup
+    updatePrintRowButtonLabel();     // <- show NEXT row we will print
     showRowPrintCompletedModal();
 
   } catch (err) {
