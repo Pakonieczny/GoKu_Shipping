@@ -1310,33 +1310,28 @@ function enableBackNext() {
  ********************************************************/
 function disableMatchPrintFlow() {
   const matchPrintBtn = document.getElementById("matchPrintBtn");
-  matchPrintBtn.disabled = true;
-  matchPrintBtn.style.opacity = "0.5";
+  const printRowBtn   = document.getElementById("printRowBtn"); // NEW
+  const backBtn       = document.getElementById("mpBackBtn");
+  const nextBtn       = document.getElementById("mpNextBtn");
 
-  const backBtn = document.getElementById("mpBackBtn");
-  backBtn.disabled = true;
-  backBtn.style.opacity = "0.5";
-
-  const nextBtn = document.getElementById("mpNextBtn");
-  nextBtn.disabled = true;
-  nextBtn.style.opacity = "0.5";
+  if (matchPrintBtn) { matchPrintBtn.disabled = true; matchPrintBtn.style.opacity = "0.5"; }
+  if (printRowBtn)   { printRowBtn.disabled   = true; printRowBtn.style.opacity   = "0.5"; } // NEW
+  if (backBtn)       { backBtn.disabled       = true; backBtn.style.opacity       = "0.5"; }
+  if (nextBtn)       { nextBtn.disabled       = true; nextBtn.style.opacity       = "0.5"; }
 
   //removeAllBlueHighlights();
 }
 
 function enableMatchPrintFlow() {
   const matchPrintBtn = document.getElementById("matchPrintBtn");
-  const backBtn = document.getElementById("mpBackBtn");
-  const nextBtn = document.getElementById("mpNextBtn");
+  const printRowBtn   = document.getElementById("printRowBtn"); // NEW
+  const backBtn       = document.getElementById("mpBackBtn");
+  const nextBtn       = document.getElementById("mpNextBtn");
 
-  matchPrintBtn.disabled = false;
-  matchPrintBtn.style.opacity = "1";
-
-  backBtn.disabled = false;
-  backBtn.style.opacity = "1";
-
-  nextBtn.disabled = false;
-  nextBtn.style.opacity = "1";
+  if (matchPrintBtn) { matchPrintBtn.disabled = false; matchPrintBtn.style.opacity = "1"; }
+  if (printRowBtn)   { printRowBtn.disabled   = false; printRowBtn.style.opacity   = "1"; } // NEW
+  if (backBtn)       { backBtn.disabled       = false; backBtn.style.opacity       = "1"; }
+  if (nextBtn)       { nextBtn.disabled       = false; nextBtn.style.opacity       = "1"; }
 }
 
 
@@ -2001,7 +1996,7 @@ document.getElementById("printRowBtn")?.addEventListener("click", handlePrintRow
       cropImagesBtn:            { left:20,  top:215, width:140, height:35 },
       etsyOrderNumber:          { left:20,  top:25,  width:200, height:30 },
       imageComparisonContainer: { left:0,   top:0,   width:0,   height:0 },
-      matchPrintBtn:            { left:20,  top:352, width:210, height:35 },
+      matchPrintBtn:            { left:20,  top:396, width:210, height:35 },
       matchesModal:             { left:0,   top:0,   width:55,  height:0 },
       mpBackBtn:                { left:720, top:15,  width:100, height:35 },
       mpNextBtn:                { left:850, top:15,  width:100, height:35 },
@@ -2010,8 +2005,8 @@ document.getElementById("printRowBtn")?.addEventListener("click", handlePrintRow
       photoGridContainer:       { left:270, top:68,  width:1140,height:650 },
       titleEtsyOrderNumber:     { left:20,  top:2,   width:145, height:20 },
       titleImageMatrixDrop:     { left:20,  top:91,  width:145, height:20 },
-      titleUnmatchedImages:     { left:21,  top:437, width:145, height:20 },
-      unmatchedContainer:       { left:0,  top:152, width:230, height:310 },
+      titleUnmatchedImages:     { left:21,  top:494, width:145, height:20 },
+      unmatchedContainer:       { left:0,  top:207, width:230, height:260 },
       userImage:                { left:0,   top:0,   width:100, height:100 },
       saveConfigBtn:            { left:10,  top:3,   width:85,  height:35 },
       sendMatchBtn:             { left:20,  top:301, width:210, height:35 },
@@ -2022,8 +2017,8 @@ document.getElementById("printRowBtn")?.addEventListener("click", handlePrintRow
       startMatrixAnalysisBtn:   { left:0,  top:-86, width:210, height:35 },
       matrixQueueList:          { left:0,  top:-46, width:290, height:20 },
       orderItemsCounter:        { left:550, top:15,  width:142, height:35 },
-      rgMarkerInput:            { left:20,  top:115, width:210, height:30 },
-      printRowBtn:              { left:240, top:352, width:150, height:35 },
+      rgMarkerInput:            { left:20,  top:347, width:210, height:30 },
+      printRowBtn:              { left:20, top:442, width:210, height:35 },
       testOpenAIBtn:            { left:20,  top:65,  width:140, height:35 }
     };
 
