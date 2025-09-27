@@ -239,6 +239,7 @@
 
     #matchPrintBtn,
     #mpBackBtn,
+    #printRowBtn,
     #mpNextBtn {
       background-color:var(--outlineBlue) !important;
       color:#fff !important;
@@ -278,6 +279,7 @@
   <input id="rgMarkerInput" class="browser-default" type="text" autocomplete="off"
          placeholder="R.G. Marker (e.g., 38)">
   <button id="filterIncompleteBtn" class="btn waves-effect waves-light">Filter</button>
+  <button id="printRowBtn" class="btn waves-effect waves-light">Print Row</button>
   <button id="openConfigBtn" class="btn waves-effect waves-light">Open Config</button>
   <!-- Live counter for ALL Etsy Order Items -->
   <div id="orderItemsCounter"
@@ -1027,6 +1029,7 @@ const configIDs = [
   "startMatrixAnalysisBtn",
   "matrixQueueList",
   "orderItemsCounter",
+  "printRowBtn",
   "rgMarkerInput",
   "titleUnmatchedImages"
 ];
@@ -1727,6 +1730,111 @@ function openIframePrinterForListing(cellIndex) {
   document.body.appendChild(hiddenIframe);
 }
 
+// === Print Row: state & helpers =====================================
+window._rowPrintCursor = 0;            // which visible row to print next (0-based)
+const ROW_COLS = 9;                    // layout uses 9 columns for Etsy items (see layout code)
+
+/** Collect visible cell indices in current grid order. */
+function getVisibleCellIndices() {
+  const out = [];
+  const total = (window.cachedOrderItems?.length || 0);
+  for (let i = 0; i < total; i++) {
+    const el = document.getElementById("previewCell" + i);
+    if (!el) continue;
+    const isHidden = (el.style.display === "none" || el.classList.contains("hide"));
+    if (!isHidden) out.push(i);
+  }
+  return out;
+}
+
+/** Ensure the tiny completion modal exists, then show it briefly. */
+function showRowPrintCompletedModal() {
+  let modal = document.getElementById("rowPrintDoneModal");
+  if (!modal) {
+    modal = document.createElement("div");
+    modal.id = "rowPrintDoneModal";
+    modal.className = "modal";
+    modal.innerHTML = `
+      <div class="modal-content" style="padding:16px">
+        <h6 style="margin:0">Printing Completed :)</h6>
+      </div>`;
+    document.body.appendChild(modal);
+    // Materialize modal init if available
+    if (window.M && M.Modal) M.Modal.init(modal, { dismissible: true, opacity: 0.25 });
+  }
+  if (window.M && M.Modal) {
+    const inst = M.Modal.getInstance(modal) || M.Modal.init(modal, { dismissible: true, opacity: 0.25 });
+    inst.open();
+    setTimeout(()=>inst.close(), 1200);
+  } else {
+    // Fallback if Materialize isn't loaded for some reason
+    modal.style.display = "block";
+    setTimeout(()=>{ modal.style.display = "none"; }, 1200);
+  }
+}
+
+/** Kick off printing for the next visible row of up to 9 Etsy Order Items. */
+async function handlePrintRowClick() {
+  try {
+    const visible = getVisibleCellIndices();
+    if (!visible.length) {
+      if (window.M?.toast) M.toast({ html: "No visible Etsy items to print." });
+      return;
+    }
+
+    const totalRows = Math.ceil(visible.length / ROW_COLS) || 1;
+
+    // Wrap cursor if we've gone past the end
+    if (window._rowPrintCursor >= totalRows) window._rowPrintCursor = 0;
+
+    const rowStart = window._rowPrintCursor * ROW_COLS;
+    const rowSlice = visible.slice(rowStart, rowStart + ROW_COLS);
+
+    // Build unique-by-order list from this row (avoid duplicate labels for same order)
+    const seenOrders = new Set();
+    const toPrintIndices = [];
+    for (const idx of rowSlice) {
+      const item = window.cachedOrderItems?.[idx];
+      const orderId = item?.receipt_id ?? item?.receiptId ?? "";
+      if (!orderId) continue;
+      if (!seenOrders.has(orderId)) {
+        seenOrders.add(orderId);
+        toPrintIndices.push(idx);
+      }
+    }
+
+    if (!toPrintIndices.length) {
+      if (window.M?.toast) M.toast({ html: "No printable items in this row." });
+      // advance cursor anyway so next click moves on
+      window._rowPrintCursor = (window._rowPrintCursor + 1) % totalRows;
+      return;
+    }
+
+    // Fire prints for each order represented in this row.
+    // Reuse your existing single-order printer (spawns hidden iframe pointing at "QR Printer.html")
+    // which aggregates label lines correctly. (openIframePrinterForListing uses itemsForOrder, notesBlock, etc.)
+    for (const cellIndex of toPrintIndices) {
+      // NOTE: this function already prepares localStorage 'qrPrintAll' and injects the hidden iframe.
+      openIframePrinterForListing(cellIndex);
+      // A tiny delay helps some browsers’ print queues avoid collisions.
+      await new Promise(r => setTimeout(r, 150));
+    }
+
+    // Advance to the next row (wraps to 0 after the last)
+    window._rowPrintCursor = (window._rowPrintCursor + 1) % totalRows;
+
+    // Tiny confirmation popup
+    showRowPrintCompletedModal();
+
+  } catch (err) {
+    console.error("Print Row failed:", err);
+    if (window.M?.toast) M.toast({ html: "Print Row error (see console)." });
+  }
+}
+
+// Hook up the button
+document.getElementById("printRowBtn")?.addEventListener("click", handlePrintRowClick);
+
     /* ===== Hard-coded fallback positions & sizes (no calculations) ===== */
     const defaultPos = {
       configModal:              { left:711, top:387, width:250, height:450 },
@@ -1757,6 +1865,7 @@ function openIframePrinterForListing(cellIndex) {
       matrixQueueList:          { left:0,  top:-46, width:290, height:20 },
       orderItemsCounter:        { left:550, top:15,  width:142, height:35 },
       rgMarkerInput:            { left:20,  top:115, width:210, height:30 },
+      printRowBtn:              { left:240, top:352, width:150, height:35 },
       testOpenAIBtn:            { left:20,  top:65,  width:140, height:35 }
     };
 
