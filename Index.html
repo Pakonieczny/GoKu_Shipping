@@ -704,6 +704,11 @@ Key Phrase Generation Using the .csv Sales Reports and .csv Product List Files:
       }
     }
 
+     // Back-compat shim for older callers
+     window.loadButtonPositions = window.loadButtonPositions || function () {
+       return loadPositions();
+     };
+
     function populateConfigTable(){
       var tbody = document.getElementById("configTable").querySelector("tbody");
       tbody.innerHTML = "";
@@ -1765,7 +1770,7 @@ Return only one phrase in plain text.
     });
 
     document.addEventListener("DOMContentLoaded", async () => {
-      loadButtonPositions();
+      loadPositions();
       loadReservedPhotos();
       restoreDataAfterRedirect();
       let urlParams = new URLSearchParams(window.location.search);
