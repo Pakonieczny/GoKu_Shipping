@@ -589,7 +589,41 @@ Key Phrase Generation Using the .csv Sales Reports and .csv Product List Files:
   
   <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/materialize/1.0.0/js/materialize.min.js"></script>
-  <script src="metadataHandler.js"></script>
+  <!-- Fallback: inline metadataHandler to avoid 404 while keeping the same API -->
+  <script>
+    window.metadataHandler = window.metadataHandler || (function(){
+      /**
+       * analyzeAndEmbedMetadata(i)
+       * Minimal implementation:
+       * - Generates a short alt/metadata string from the Listing Description or filename
+       * - Stores it in window.photoMeta[i] so your upload calls use it as alt_text
+       * - Updates the little status text under each preview cell
+       */
+      async function analyzeAndEmbedMetadata(i){
+        try {
+          const imgData = (window.previewImages && window.previewImages[i]) || null;
+          if (!imgData) {
+            if (window.M && M.toast) M.toast({ html: "No image in slot " + (i+1) });
+            return;
+          }
+          const desc = (document.getElementById("listingDescInput")?.value || "").trim();
+          const name = (window.photoNames?.[i] || "").replace(/\.[a-z0-9]+$/i, "");
+          // Build a concise, SEO-ish line (max ~200 chars)
+          const base = (desc || name || "Jewelry photo").replace(/\s+/g, " ").trim();
+          const tag  = base.slice(0, 200);
+          // Persist for your upload paths (used as alt_text later)
+          window.photoMeta[i] = tag;
+          // UI status tick
+          const s = document.getElementById("metadataStatus" + i);
+          if (s) s.textContent = "✓ tagged";
+        } catch (e) {
+          console.error("metadataHandler.analyzeAndEmbedMetadata error:", e);
+          if (window.M && M.toast) M.toast({ html: "Metadata error: " + e.message });
+        }
+      }
+      return { analyzeAndEmbedMetadata };
+    })();
+  </script>
   <script>
     // The temporary debug toast notifications have been removed.
 
