@@ -245,7 +245,7 @@
       margin-left: 0;
     }
     .title-container {
-      margin-top: -50px;
+      margin-top: 0;
     }
     #etsyListingTitleContainer {
       position: static;
@@ -304,6 +304,10 @@
     #etsyShopListingsContainer {
       position: relative;
     }
+
+    /* Force the new absolute layout system to win over legacy/author CSS */
+    .layout-abs { position: absolute !important; }
+
   </style>
 </head>
 <body>
@@ -671,11 +675,13 @@ Key Phrase Generation Using the .csv Sales Reports and .csv Product List Files:
         w    = _num(w,    def.width);
         h    = _num(h,    def.height);
 
-        el.style.position = "absolute";
-        el.style.left   = left + "px";
-        el.style.top    = top  + "px";
-        el.style.width  = (w>0 ? w : def.width) + "px";
-        el.style.height = (h>0 ? h : def.height) + "px";
+        el.classList.add("layout-abs");
+        // Use !important to beat author styles and grid/flex side-effects
+        el.style.setProperty("position", "absolute", "important");
+        el.style.setProperty("left",    left + "px", "important");
+        el.style.setProperty("top",     top  + "px", "important");
+        el.style.setProperty("width",   ((w>0 ? w : def.width)) + "px", "important");
+        el.style.setProperty("height",  ((h>0 ? h : def.height)) + "px", "important");
       }
     }
 
@@ -744,12 +750,15 @@ Key Phrase Generation Using the .csv Sales Reports and .csv Product List Files:
             if (w!=null)    localStorage.setItem("pos-"+id+"-width", w);
             if (h!=null)    localStorage.setItem("pos-"+id+"-height",h);
 
-            el.style.position = "absolute";
-            el.style.left   = left + "px";
-            el.style.top    = top  + "px";
-            el.style.width  = w + "px";
-            el.style.height = h + "px";
+            el.classList.add("layout-abs");
+            el.style.setProperty("position", "absolute", "important");
+            el.style.setProperty("left",     left + "px", "important");
+            el.style.setProperty("top",      top  + "px", "important");
+            el.style.setProperty("width",    w    + "px", "important");
+            el.style.setProperty("height",   h    + "px", "important");
           }
+          // Re-assert everything once more after modal animates closed
+          requestAnimationFrame(loadPositions);
         });
       }
     });
