@@ -310,6 +310,7 @@
   <script src="uiPositions.js"></script>
 
   <button id="configureButtonsBtn" class="btn waves-effect waves-light configurable">Configure Buttons</button>
+  <button id="openConfigBtn" class="btn waves-effect waves-light configurable" style="margin-left:10px;">Open Config</button>
   
   <div id="descriptionAndFileUploadContainer">
     <div class="listing-desc-container" id="listingDescContainer">
@@ -575,6 +576,24 @@ Key Phrase Generation Using the .csv Sales Reports and .csv Product List Files:
       <a href="#!" class="modal-close waves-effect waves-green btn">Close</a>
     </div>
   </div>
+
+  <!-- Layout Config Modal (mirrors shipping-1 flow) -->
+  <div id="configModal" class="modal">
+    <div class="modal-content">
+      <h5>Configure Component Positions</h5>
+      <table class="striped" id="configTable">
+        <thead>
+          <tr>
+            <th>Component</th><th>Left</th><th>Top</th><th>Width</th><th>Height</th>
+          </tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </div>
+    <div class="modal-footer">
+      <a id="saveConfigBtn" class="modal-close waves-effect waves-green btn">Save</a>
+    </div>
+  </div>
   
   <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/materialize/1.0.0/js/materialize.min.js"></script>
@@ -601,6 +620,152 @@ Key Phrase Generation Using the .csv Sales Reports and .csv Product List Files:
     window.listingQueue = [];
     window.photoUpdateComplete = false;
     window.infoUpdateComplete = false;
+
+    // ====== POSITION CONFIG (parity with shipping-1) ======
+
+    // 3.1 Which components are movable/resizable on this page
+    // (Start with the core on-screen IDs; add more anytime.)
+    var configComponentIDs = [
+      "openConfigBtn","configureButtonsBtn",
+      "connectEtsyBtn","photoUploadNewBtn","uploadToEtsyBtn",
+      "listingDescContainer","uploadedFilesList",
+      "etsyShopListingsContainer","shopListings",
+      "userProvidedKeyPhrasesContainer","clearKeyPhrasesBtn","dropZone","analyzeMetadataBtn",
+      "container13","searchKeyPhrases",
+      "generateBtn",
+      "etsyListingTitleContainer","listingTitle","regenTitleBtn","copyTitleBtn",
+      "etsyListingDescriptionContainer","listingDescription","regenDescriptionBtn","copyDescriptionBtn"
+    ];
+
+    // 3.2 Hard defaults (seed a few; the rest fall back to live DOM on first run)
+    const defaultPositions = {
+      openConfigBtn:                    { left: 190,  top: 10,  width: 140, height: 36 },
+      configureButtonsBtn:              { left: 20,   top: 10,  width: 160, height: 36 },
+      connectEtsyBtn:                   { left: 20,   top: 60,  width: 160, height: 36 },
+      photoUploadNewBtn:                { left: 190,  top: 60,  width: 160, height: 36 },
+      uploadToEtsyBtn:                  { left: 360,  top: 60,  width: 160, height: 36 },
+      listingDescContainer:             { left: 20,   top: 120, width: 360, height: 72 },
+      uploadedFilesList:                { left: 400,  top: 120, width: 360, height: 72 },
+      etsyShopListingsContainer:        { left: 20,   top: 210, width: 360, height: 120 },
+      userProvidedKeyPhrasesContainer:  { left: 20, top: 360, width: 360, height: 220 },
+      container13:                      { left: 400,  top: 360, width: 260, height: 280 },
+      generateBtn:                      { left: 20,   top: 600, width: 140, height: 36 },
+      etsyListingTitleContainer:        { left: 20,   top: 660, width: 1000, height: 120 },
+      etsyListingDescriptionContainer:  { left: 20, top: 820, width: 1000, height: 300 }
+    };
+    // (Shipping-1 stores to LS as pos-<id>-left|top|width|height and applies absolute layout.  [oai_citation:6‡shipping-1.html](file-service://file-UyzPx2tdaLoZi5ZZoE5Zq8))
+
+    // Utility to get a safe numeric value
+    function _num(v, fallback){ v = (v==null? "" : String(v)); var n = parseInt(v,10); return isFinite(n) ? n : fallback; }
+
+    // 3.3 Apply saved (or default) positions — same storage keys as shipping-1
+    function loadPositions(){
+      for (var i=0; i<configComponentIDs.length; i++){
+        var id = configComponentIDs[i];
+        var el = document.getElementById(id);
+        if(!el) continue;
+
+        // If no hard default provided, seed from the live DOM so first-run layout is preserved.
+        var rect = el.getBoundingClientRect();
+        var seed = {
+          left:  Math.round(rect.left + window.scrollX),
+          top:   Math.round(rect.top  + window.scrollY),
+          width: Math.round(rect.width  || el.offsetWidth  || 0),
+          height:Math.round(rect.height || el.offsetHeight || 0)
+        };
+        var def = Object.assign(seed, defaultPositions[id] || {});
+
+        var left = localStorage.getItem("pos-"+id+"-left");
+        var top  = localStorage.getItem("pos-"+id+"-top");
+        var w    = localStorage.getItem("pos-"+id+"-width");
+        var h    = localStorage.getItem("pos-"+id+"-height");
+
+        left = _num(left, def.left);
+        top  = _num(top,  def.top);
+        w    = _num(w,    def.width);
+        h    = _num(h,    def.height);
+
+        el.style.position = "absolute";
+        el.style.left   = left + "px";
+        el.style.top    = top  + "px";
+        el.style.width  = (w>0 ? w : def.width) + "px";
+        el.style.height = (h>0 ? h : def.height) + "px";
+      }
+    }
+
+    // 3.4 Build the editable table (matches shipping-1 approach)
+    function populateConfigTable(){
+      var tbody = document.getElementById("configTable").querySelector("tbody");
+      tbody.innerHTML = "";
+      for (var i=0; i<configComponentIDs.length; i++){
+        var id = configComponentIDs[i];
+        var el = document.getElementById(id);
+        if(!el) continue;
+
+        var cs = window.getComputedStyle(el);
+        var left = parseInt(cs.left)||0, top = parseInt(cs.top)||0,
+            w = parseInt(cs.width)||el.offsetWidth||0,
+            h = parseInt(cs.height)||el.offsetHeight||0;
+
+        // prefer saved values if present
+        left = _num(localStorage.getItem("pos-"+id+"-left"),   left);
+        top  = _num(localStorage.getItem("pos-"+id+"-top"),    top);
+        w    = _num(localStorage.getItem("pos-"+id+"-width"),  w);
+        h    = _num(localStorage.getItem("pos-"+id+"-height"), h);
+
+        var tr = document.createElement("tr");
+        tr.innerHTML = `
+          <td>${id}</td>
+          <td><input id="left_${id}"   type="number" value="${left}"  style="width:90px"></td>
+          <td><input id="top_${id}"    type="number" value="${top}"   style="width:90px"></td>
+          <td><input id="width_${id}"  type="number" value="${w}"     style="width:90px"></td>
+          <td><input id="height_${id}" type="number" value="${h}"     style="width:90px"></td>
+        `;
+        tbody.appendChild(tr);
+      }
+    }
+
+    // 3.5 Wire up modal + save handler (same ids as shipping-1)
+    document.addEventListener("DOMContentLoaded", function(){
+      // Apply current (or default) layout on load
+      loadPositions(); // shipping-1 does this before showing config.  [oai_citation:7‡shipping-1.html](file-service://file-UyzPx2tdaLoZi5ZZoE5Zq8)
+
+      var configModal = M.Modal.init(document.getElementById("configModal"));
+      var openBtn = document.getElementById("openConfigBtn");
+      if (openBtn){
+        openBtn.addEventListener("click", function(){
+          populateConfigTable(); // shipping-1 builds table on open.  [oai_citation:8‡shipping-1.html](file-service://file-UyzPx2tdaLoZi5ZZoE5Zq8)
+          configModal.open();
+        });
+      }
+
+      var saveBtn = document.getElementById("saveConfigBtn");
+      if (saveBtn){
+        saveBtn.addEventListener("click", function(){
+          for (var i=0; i<configComponentIDs.length; i++){
+            var id = configComponentIDs[i];
+            var el = document.getElementById(id);
+            if(!el) continue;
+
+            var left = _num(document.getElementById("left_"+id)?.value, null);
+            var top  = _num(document.getElementById("top_"+id)?.value, null);
+            var w    = _num(document.getElementById("width_"+id)?.value, null);
+            var h    = _num(document.getElementById("height_"+id)?.value, null);
+
+            if (left!=null) localStorage.setItem("pos-"+id+"-left",  left);
+            if (top!=null)  localStorage.setItem("pos-"+id+"-top",   top);
+            if (w!=null)    localStorage.setItem("pos-"+id+"-width", w);
+            if (h!=null)    localStorage.setItem("pos-"+id+"-height",h);
+
+            el.style.position = "absolute";
+            el.style.left   = left + "px";
+            el.style.top    = top  + "px";
+            el.style.width  = w + "px";
+            el.style.height = h + "px";
+          }
+        });
+      }
+    });
 
     window.appendedDescriptionText = `
 
