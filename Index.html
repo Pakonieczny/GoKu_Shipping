@@ -23,6 +23,7 @@
       padding: 0;
       width: 100vw;
       font-family: Arial, sans-serif;
+      position: relative; /* anchor absolute children to the page */
     }
     .container {
       width: 100vw;
@@ -776,7 +777,54 @@ Key Phrase Generation Using the .csv Sales Reports and .csv Product List Files:
           <td><input id="height_${id}" type="number" value="${h}"     style="width:90px"></td>
         `;
         tbody.appendChild(tr);
+        // Live preview while editing numbers
+        ["left","top","width","height"].forEach(function(k){
+          var inp = document.getElementById(k + "_" + id);
+          if (inp) inp.addEventListener("input", function(){ previewFromInputs(id); });
+        });
       }
+    }
+
+    /* --- absolute layout helpers --- */
+    function applySinglePosition(id, left, top, width, height) {
+      const el = document.getElementById(id);
+      if (!el) return;
+
+      // Normalize numbers
+      const L = Number.isFinite(+left)  ? +left  : 0;
+      const T = Number.isFinite(+top)   ? +top   : 0;
+      const W = Number.isFinite(+width) ? +width : el.offsetWidth || 0;
+      const H = Number.isFinite(+height)? +height: el.offsetHeight|| 0;
+
+      el.classList.add("layout-abs");
+      el.style.setProperty("position", "absolute", "important");
+      el.style.setProperty("left",  L + "px", "important");
+      el.style.setProperty("top",   T + "px", "important");
+      el.style.setProperty("width", W + "px", "important");
+      el.style.setProperty("height",H + "px", "important");
+
+      // Strip margins that can visually “fight” absolute placement
+      el.style.removeProperty("margin");
+      el.style.removeProperty("margin-left");
+      el.style.removeProperty("margin-top");
+      el.style.removeProperty("right");
+      el.style.removeProperty("bottom");
+    }
+
+    function previewFromInputs(id) {
+      const l = document.getElementById("left_"   + id)?.value;
+      const t = document.getElementById("top_"    + id)?.value;
+      const w = document.getElementById("width_"  + id)?.value;
+      const h = document.getElementById("height_" + id)?.value;
+      applySinglePosition(id, parseInt(l,10), parseInt(t,10), parseInt(w,10), parseInt(h,10));
+    }
+
+    function forceApplyPositions() {
+      // Apply now, after modal close animation, and once more after paint
+      requestAnimationFrame(() => {
+        if (typeof loadPositions === "function") loadPositions();
+        setTimeout(() => { if (typeof loadPositions === "function") loadPositions(); }, 180);
+      });
     }
 
     // 3.5 Wire up modal + save handler (same ids as shipping-1)
@@ -817,6 +865,10 @@ Key Phrase Generation Using the .csv Sales Reports and .csv Product List Files:
             if (top!=null)  localStorage.setItem("pos-"+id+"-top",   top);
             if (w!=null)    localStorage.setItem("pos-"+id+"-width", w);
             if (h!=null)    localStorage.setItem("pos-"+id+"-height",h);
+
+            // Persist & repaint aggressively
+            forceApplyPositions();
+            if (window.M && M.toast) M.toast({ html: "Layout saved and applied." });
 
             el.classList.add("layout-abs");
             el.style.setProperty("position", "absolute", "important");
