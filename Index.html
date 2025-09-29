@@ -234,20 +234,21 @@
     .metadata-progress {
       width: 90%;
     }
+    /* Let JS absolute positioning take over; remove relative/negative offsets */
     #container13 {
-      position: relative;
+      position: static;
       width: 250px;
-      top: -150px;
+      top: auto;
     }
     #belowSearch {
-      margin-top: -180px;
-      margin-left: 10px;
+      margin-top: 0;
+      margin-left: 0;
     }
     .title-container {
       margin-top: -50px;
     }
     #etsyListingTitleContainer {
-      position: relative;
+      position: static;
       width: 1000px;
     }
     #etsyListingTitleContainer textarea {
@@ -257,16 +258,16 @@
       margin-top: 0px;
     }
     #etsyListingDescriptionContainer {
-      position: relative;
+      position: static;
       width: 1000px;
     }
     #etsyListingDescriptionContainer textarea {
       width: 1000px;
     }
     #userProvidedKeyPhrasesContainer {
-      position: relative;
-      top: 125px;
-      left: 10px;
+      position: static;
+      top: auto;
+      left: auto;
     }
     #topButtons {
       margin: 10px 0;
@@ -306,8 +307,7 @@
   </style>
 </head>
 <body>
-  <!-- Include default UI positions (uiPositions.js) -->
-  <script src="uiPositions.js"></script>
+<!-- Legacy uiPositions removed: new layout system is source of truth -->
 
   <button id="openConfigBtn" class="btn waves-effect waves-light configurable" style="margin-left:10px;">Open Config</button>
   
@@ -350,13 +350,13 @@
   
   <div id="belowSearch">
     <button id="generateBtn" class="btn waves-effect waves-light configurable">Generate</button>
-    <div class="title-container" id="etsyListingTitleContainer" style="margin-top: -50px;">
+    <div class="title-container" id="etsyListingTitleContainer" style="margin-top: 0;">
       <div class="section-heading configurable">Etsy Listing TITLE</div>
       <div class="flex-container configurable">
         <div class="textbox-container configurable">
           <textarea id="listingTitle" class="materialize-textarea" rows="2"></textarea>
         </div>
-        <div class="button-container configurable" style="margin-top: -60px;">
+        <div class="button-container configurable">
           <button id="regenTitleBtn" class="btn-small waves-effect waves-light configurable regen-btn">Re-Gen</button>
           <button id="copyTitleBtn" class="btn-small waves-effect waves-light configurable copy-btn">
             <i class="material-icons">content_copy</i>
@@ -610,17 +610,18 @@ Key Phrase Generation Using the .csv Sales Reports and .csv Product List Files:
 
     // ====== POSITION CONFIG (parity with shipping-1) ======
 
-    // 3.1 Which components are movable/resizable on this page
-    // (Start with the core on-screen IDs; add more anytime.)
+    // 3.1 Which components are movable/resizable (move wrappers & top-level buttons only)
     var configComponentIDs = [
-      "openConfigBtn","connectEtsyBtn","photoUploadNewBtn","uploadToEtsyBtn",
-      "listingDescContainer","uploadedFilesList",
-      "etsyShopListingsContainer","shopListings",
-      "userProvidedKeyPhrasesContainer","clearKeyPhrasesBtn","dropZone","analyzeMetadataBtn",
-      "container13","searchKeyPhrases",
-      "generateBtn",
-      "etsyListingTitleContainer","listingTitle","regenTitleBtn","copyTitleBtn",
-      "etsyListingDescriptionContainer","listingDescription","regenDescriptionBtn","copyDescriptionBtn"
+      "openConfigBtn",
+      "connectEtsyBtn","photoUploadNewBtn","uploadToEtsyBtn","generateBtn",
+      "descriptionAndFileUploadContainer",
+      "etsyShopListingsContainer",
+      "userProvidedKeyPhrasesContainer",
+      "container13",
+      "previewGridContainer",
+      "topButtons","belowSearch",
+      "etsyListingTitleContainer",
+      "etsyListingDescriptionContainer"
     ];
 
     // 3.2 Hard defaults (seed a few; the rest fall back to live DOM on first run)
@@ -712,7 +713,7 @@ Key Phrase Generation Using the .csv Sales Reports and .csv Product List Files:
 
     // 3.5 Wire up modal + save handler (same ids as shipping-1)
     document.addEventListener("DOMContentLoaded", function(){
-      localStorage.removeItem("buttonPositions");
+      localStorage.removeItem("buttonPositions"); // purge legacy store once
       // Apply current (or default) layout on load
       loadPositions(); // shipping-1 does this before showing config.  [oai_citation:7‡shipping-1.html](file-service://file-UyzPx2tdaLoZi5ZZoE5Zq8)
 
