@@ -5092,6 +5092,13 @@ function reflowGrid(){
 
     });  /* ─── END METAL FILTER INITIALISER ─── */
 
+      // Mirror shipping-1 helper used when reading variations
+      if (typeof window.deQuote !== "function") {
+        window.deQuote = function(s){
+          return (s == null ? "" : String(s)).replace(/&quot;/g, '"');
+        };
+      }
+
     async function openListingModal(cellIdx){
       const item = window.cachedOrderItems[cellIdx];
       if(!item){ return; }
@@ -5134,16 +5141,40 @@ function reflowGrid(){
         if (skuTextEl) skuTextEl.textContent = "SKU: N/A";
       }
 
-      /* 2. notes  */
+      /* 2. notes — mirror shipping-1 Personalization logic */
       const lines = [];
-      if(item.personalization && item.personalization.length){
-        lines.push("Personalization:\n" + item.personalization.join("\n"));
+
+      // 2.1 Extract Personalization from item.variations (same approach as shipping-1)
+      let persText = "";
+      if (Array.isArray(item.variations)) {
+        const pv = item.variations.find(v => /personalization/i.test(v?.formatted_name || ""));
+        if (pv && pv.formatted_value) {
+          let val = (typeof window.deQuote === "function"
+                      ? window.deQuote(pv.formatted_value)
+                      : String(pv.formatted_value));
+          val = val.trim();
+          // Map Etsy default → our wording, just like shipping-1
+          if (/^Not requested on this item\.$/i.test(val)) val = "Not Requested";
+          if (val) persText = val;
+        }
       }
-      if(item.message_from_buyer){
+
+      // 2.2 Fallback to any existing normalized array (keeps prior behavior if present)
+      if (!persText && Array.isArray(item.personalization) && item.personalization.length) {
+        persText = item.personalization.join("\n");
+      }
+
+      if (persText) {
+        lines.push("Personalization:\n" + persText);
+      }
+
+      // 2.3 Buyer message stays as-is
+      if (item.message_from_buyer) {
         lines.push("Buyer Message:\n" + item.message_from_buyer.trim());
       }
+
       document.getElementById("modalListingNotes").value =
-          lines.length ? lines.join("\n\n") : "— No notes —";
+        (lines.length ? lines.join("\n\n") : "— No notes —");
 
       /* ----- build the 4 read-only fields ----- */
       const detRow = document.getElementById("modalListingDetails");
