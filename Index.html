@@ -309,7 +309,6 @@
   <!-- Include default UI positions (uiPositions.js) -->
   <script src="uiPositions.js"></script>
 
-  <button id="configureButtonsBtn" class="btn waves-effect waves-light configurable">Configure Buttons</button>
   <button id="openConfigBtn" class="btn waves-effect waves-light configurable" style="margin-left:10px;">Open Config</button>
   
   <div id="descriptionAndFileUploadContainer">
@@ -540,18 +539,6 @@ Key Phrase Generation Using the .csv Sales Reports and .csv Product List Files:
     </div>
   </div>
   
-  <!-- Button Config Modal -->
-  <div id="buttonConfigModal" class="modal">
-    <div class="modal-content">
-      <h4>Configure Button Positions</h4>
-      <div id="buttonConfigContainer"></div>
-      <textarea id="uploadedFilesListModal" class="materialize-textarea" rows="2" placeholder="Uploaded files will appear here"></textarea>
-    </div>
-    <div class="modal-footer">
-      <a href="#!" id="saveButtonPositionsBtn" class="modal-close waves-effect waves-green btn">Save Positions</a>
-    </div>
-  </div>
-  
   <!-- Crop Modal -->
   <div id="photoCropModal" class="modal" style="width:650px; height:650px;">
     <div class="crop-container" style="position: relative; width:100%; height:100%;">
@@ -626,8 +613,7 @@ Key Phrase Generation Using the .csv Sales Reports and .csv Product List Files:
     // 3.1 Which components are movable/resizable on this page
     // (Start with the core on-screen IDs; add more anytime.)
     var configComponentIDs = [
-      "openConfigBtn","configureButtonsBtn",
-      "connectEtsyBtn","photoUploadNewBtn","uploadToEtsyBtn",
+      "openConfigBtn","connectEtsyBtn","photoUploadNewBtn","uploadToEtsyBtn",
       "listingDescContainer","uploadedFilesList",
       "etsyShopListingsContainer","shopListings",
       "userProvidedKeyPhrasesContainer","clearKeyPhrasesBtn","dropZone","analyzeMetadataBtn",
@@ -640,7 +626,6 @@ Key Phrase Generation Using the .csv Sales Reports and .csv Product List Files:
     // 3.2 Hard defaults (seed a few; the rest fall back to live DOM on first run)
     const defaultPositions = {
       openConfigBtn:                    { left: 190,  top: 10,  width: 140, height: 36 },
-      configureButtonsBtn:              { left: 20,   top: 10,  width: 160, height: 36 },
       connectEtsyBtn:                   { left: 20,   top: 60,  width: 160, height: 36 },
       photoUploadNewBtn:                { left: 190,  top: 60,  width: 160, height: 36 },
       uploadToEtsyBtn:                  { left: 360,  top: 60,  width: 160, height: 36 },
@@ -727,6 +712,7 @@ Key Phrase Generation Using the .csv Sales Reports and .csv Product List Files:
 
     // 3.5 Wire up modal + save handler (same ids as shipping-1)
     document.addEventListener("DOMContentLoaded", function(){
+      localStorage.removeItem("buttonPositions");
       // Apply current (or default) layout on load
       loadPositions(); // shipping-1 does this before showing config.  [oai_citation:7‡shipping-1.html](file-service://file-UyzPx2tdaLoZi5ZZoE5Zq8)
 
@@ -950,31 +936,6 @@ document.getElementById("shopListings").addEventListener("keydown", (e) => {
         }
       } catch (err) {
         console.error("Error restoring data after redirect:", err);
-      }
-    }
-
-    // Load button positions (from local storage or default from uiPositions.js)
-    function loadButtonPositions() {
-      let stored = localStorage.getItem("buttonPositions");
-      if (stored) {
-        let positions = JSON.parse(stored);
-        for (let id in positions) {
-          let el = document.getElementById(id);
-          if (el) { 
-            el.style.top = positions[id].top; 
-            el.style.left = positions[id].left; 
-          }
-        }
-      } else if (window.defaultUIPositions) {
-        let positions = window.defaultUIPositions;
-        for (let id in positions) {
-          let el = document.getElementById(id);
-          if (el) { 
-            el.style.top = positions[id].top; 
-            el.style.left = positions[id].left; 
-          }
-        }
-        localStorage.setItem("buttonPositions", JSON.stringify(positions));
       }
     }
 
@@ -1378,96 +1339,6 @@ Return only one phrase in plain text.
         M.toast({ html: "Error listing store files: " + err.message });
       }
     }
-
-    document.getElementById("configureButtonsBtn").addEventListener("click", () => {
-      let configContainer = document.getElementById("buttonConfigContainer");
-      configContainer.innerHTML = "";
-      // First, read saved positions from localStorage.
-      let savedPositions = JSON.parse(localStorage.getItem("buttonPositions") || "{}");
-      // Define the selectors we want to display.
-      const selectors = [
-        "#configureButtonsBtn",
-        "#listingDescContainer",
-        "#uploadedFilesList",
-        "#dropZone",
-        "#previewGridContainer",
-        "#container13",
-        "#uploadToEtsyBtn",
-        "#etsyShopListingsContainer",
-        "#userProvidedKeyPhrasesContainer",
-        "#etsyListingTitleContainer",
-        "#etsyListingDescriptionContainer",
-        "#regenTitleBtn",
-        "#copyTitleBtn",
-        "#regenDescriptionBtn",
-        "#copyDescriptionBtn",
-        "#photoUploadNewBtn",
-        "#generateBtn",
-        "#connectEtsyBtn",
-        "#analyzeMetadataBtn",
-        "#showAnalyzeRulesBtn"
-      ].join(", ");
-      let elements = document.querySelectorAll(selectors);
-      let table = document.createElement("table");
-      table.className = "striped";
-      let thead = document.createElement("thead");
-      thead.innerHTML = "<tr><th>Element ID</th><th>Top (px)</th><th>Left (px)</th></tr>";
-      table.appendChild(thead);
-      let tbody = document.createElement("tbody");
-      elements.forEach(el => {
-        let id = el.id;
-        // Use the saved position if available; otherwise use computed style.
-        let pos = savedPositions[id] || {};
-        let currentTop = pos.top || (el.style.top || window.getComputedStyle(el).top || "0");
-        let currentLeft = pos.left || (el.style.left || window.getComputedStyle(el).left || "0");
-        let tr = document.createElement("tr");
-        tr.innerHTML = `<td>${id}</td>
-          <td><input type="number" id="${id}_top" value="${parseInt(currentTop)||0}"></td>
-          <td><input type="number" id="${id}_left" value="${parseInt(currentLeft)||0}"></td>`;
-        let topInput = tr.querySelector(`#${id}_top`);
-        let leftInput = tr.querySelector(`#${id}_left`);
-        topInput.addEventListener("input", () => { el.style.top = topInput.value + "px"; });
-        leftInput.addEventListener("input", () => { el.style.left = leftInput.value + "px"; });
-        tbody.appendChild(tr);
-      });
-      table.appendChild(tbody);
-      configContainer.appendChild(table);
-      let modalElem = document.getElementById("buttonConfigModal");
-      let modalInstance = M.Modal.getInstance(modalElem) || M.Modal.init(modalElem, { preventScrolling: false });
-      modalInstance.open();
-    });
-
-    document.getElementById("saveButtonPositionsBtn").addEventListener("click", () => {
-      const selectors = [
-        "#configureButtonsBtn",
-        "#listingDescContainer",
-        "#uploadedFilesList",
-        "#dropZone",
-        "#previewGridContainer",
-        "#container13",
-        "#uploadToEtsyBtn",
-        "#etsyShopListingsContainer",
-        "#userProvidedKeyPhrasesContainer",
-        "#etsyListingTitleContainer",
-        "#etsyListingDescriptionContainer",
-        "#regenTitleBtn",
-        "#copyTitleBtn",
-        "#regenDescriptionBtn",
-        "#copyDescriptionBtn",
-        "#photoUploadNewBtn",
-        "#generateBtn",
-        "#connectEtsyBtn",
-        "#analyzeMetadataBtn",
-        "#showAnalyzeRulesBtn"
-      ].join(", ");
-      let elements = document.querySelectorAll(selectors);
-      let positions = {};
-      elements.forEach(el => {
-        positions[el.id] = { top: el.style.top || "0px", left: el.style.left || "0px" };
-      });
-      localStorage.setItem("buttonPositions", JSON.stringify(positions));
-      M.toast({ html: "Button positions saved." });
-    });
 
     function loadReservedPhotos() {
       const stored = localStorage.getItem("reservedPhotos");
