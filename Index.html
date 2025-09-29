@@ -324,7 +324,7 @@
     /* Let the modal stay fully interactive even if previews are above it */
     body.config-mode .layout-abs,
     body.config-mode .configurable { pointer-events: none !important; }
-    
+
     /* Added to enable repositioning via the Configure Buttons modal */
     #etsyShopListingsContainer {
       position: relative;
@@ -723,10 +723,11 @@ Key Phrase Generation Using the .csv Sales Reports and .csv Product List Files:
         ["left","top","width","height"].forEach(function(k){
           localStorage.removeItem("pos-"+id+"-"+k);
         });
-      });
 
          // Snap element to current inputs immediately (no Save required)
          previewFromInputs(id);
+
+      });
     }
 
     // 3.3 Apply saved (or default) positions — same storage keys as shipping-1
