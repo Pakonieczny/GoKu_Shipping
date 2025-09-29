@@ -91,6 +91,15 @@
       overflow: visible;
       box-sizing: border-box;
     }
+
+    /* Config mode: show outlines and smooth movement */
+    body.config-mode .configurable {
+      outline: 2px dashed rgba(0,0,0,.45);
+      transition: left .08s linear, top .08s linear, width .08s linear, height .08s linear;
+    }
+    .modal-overlay { transition: opacity .2s ease; 
+    }
+
     .button-container {
       width: 200px;
       display: flex;
@@ -779,10 +788,13 @@ Key Phrase Generation Using the .csv Sales Reports and .csv Product List Files:
           <td><input id="height_${id}" type="number" value="${h}"     style="width:90px"></td>
         `;
         tbody.appendChild(tr);
-        // Live preview while editing numbers
+        // Live preview while editing numbers (input/change/keyup/mousewheel)
         ["left","top","width","height"].forEach(function(k){
           var inp = document.getElementById(k + "_" + id);
-          if (inp) inp.addEventListener("input", function(){ previewFromInputs(id); });
+          if (inp) {
+            const handler = function(){ previewFromInputs(id); };
+            ["input","change","keyup","mousewheel"].forEach(evt => inp.addEventListener(evt, handler));
+          }
         });
       }
     }
@@ -792,10 +804,16 @@ Key Phrase Generation Using the .csv Sales Reports and .csv Product List Files:
       const el = document.getElementById(id);
       if (!el) return;
 
-      const L = Number.isFinite(+left)  ? +left  : 0;
-      const T = Number.isFinite(+top)   ? +top   : 0;
-      const W = Number.isFinite(+width) ? +width : el.offsetWidth || 0;
-      const H = Number.isFinite(+height)? +height: el.offsetHeight|| 0;
+      const cs = window.getComputedStyle(el);
+      const curL = parseInt(cs.left, 10)    || el.offsetLeft  || 0;
+      const curT = parseInt(cs.top, 10)     || el.offsetTop   || 0;
+      const curW = parseInt(cs.width, 10)   || el.offsetWidth || 0;
+      const curH = parseInt(cs.height, 10)  || el.offsetHeight|| 0;
+
+      const L = Number.isFinite(+left)  ? +left  : curL;
+      const T = Number.isFinite(+top)   ? +top   : curT;
+      const W = Number.isFinite(+width) ? +width : curW;
+      const H = Number.isFinite(+height)? +height: curH;
 
       el.classList.add("layout-abs");
       el.style.setProperty("position", "absolute", "important");
@@ -805,7 +823,7 @@ Key Phrase Generation Using the .csv Sales Reports and .csv Product List Files:
       el.style.setProperty("height",H + "px", "important");
       el.style.setProperty("z-index","3000","important");
 
-      // Strip margins that can visually “fight” absolute placement
+      // Ensure nothing "fights" absolute placement
       el.style.removeProperty("margin");
       el.style.removeProperty("margin-left");
       el.style.removeProperty("margin-top");
@@ -836,7 +854,21 @@ Key Phrase Generation Using the .csv Sales Reports and .csv Product List Files:
       cleanupNestedConflicts();
       loadPositions(); // shipping-1 parity
 
-      var configModal = M.Modal.init(document.getElementById("configModal"));
+        var configModal = M.Modal.init(document.getElementById("configModal"), {
+        onOpenStart() {
+          document.body.classList.add("config-mode");
+          // So you can see layout changes behind the modal
+          setTimeout(() => {
+            const ov = document.querySelector(".modal-overlay");
+            if (ov) ov.style.opacity = "0.15";
+          }, 0);
+        },
+        onCloseEnd() {
+          document.body.classList.remove("config-mode");
+          const ov = document.querySelector(".modal-overlay");
+          if (ov) ov.style.opacity = "";
+        }
+      });
       var openBtn = document.getElementById("openConfigBtn");
       if (openBtn){
         openBtn.addEventListener("click", function(){
