@@ -736,13 +736,15 @@ Key Phrase Generation Using the .csv Sales Reports and .csv Product List Files:
         el.style.setProperty("top",     top  + "px", "important");
         el.style.setProperty("width",   ((w>0 ? w : def.width)) + "px", "important");
         el.style.setProperty("height",  ((h>0 ? h : def.height)) + "px", "important");
+        // NEW: ensure absolute layout isn't visually offset/hidden
+        el.style.removeProperty("margin");
+        el.style.removeProperty("margin-left");
+        el.style.removeProperty("margin-top");
+        el.style.removeProperty("right");
+        el.style.removeProperty("bottom");
+        el.style.setProperty("z-index", "3000", "important");
       }
     }
-
-     // Back-compat shim for older callers
-     window.loadButtonPositions = window.loadButtonPositions || function () {
-       return loadPositions();
-     };
 
     function populateConfigTable(){
       var tbody = document.getElementById("configTable").querySelector("tbody");
@@ -790,7 +792,6 @@ Key Phrase Generation Using the .csv Sales Reports and .csv Product List Files:
       const el = document.getElementById(id);
       if (!el) return;
 
-      // Normalize numbers
       const L = Number.isFinite(+left)  ? +left  : 0;
       const T = Number.isFinite(+top)   ? +top   : 0;
       const W = Number.isFinite(+width) ? +width : el.offsetWidth || 0;
@@ -802,6 +803,7 @@ Key Phrase Generation Using the .csv Sales Reports and .csv Product List Files:
       el.style.setProperty("top",   T + "px", "important");
       el.style.setProperty("width", W + "px", "important");
       el.style.setProperty("height",H + "px", "important");
+      el.style.setProperty("z-index","3000","important");
 
       // Strip margins that can visually “fight” absolute placement
       el.style.removeProperty("margin");
@@ -866,18 +868,32 @@ Key Phrase Generation Using the .csv Sales Reports and .csv Product List Files:
             if (w!=null)    localStorage.setItem("pos-"+id+"-width", w);
             if (h!=null)    localStorage.setItem("pos-"+id+"-height",h);
 
-            // Persist & repaint aggressively
-            forceApplyPositions();
-            if (window.M && M.toast) M.toast({ html: "Layout saved and applied." });
-
-            el.classList.add("layout-abs");
-            el.style.setProperty("position", "absolute", "important");
-            el.style.setProperty("left",     left + "px", "important");
-            el.style.setProperty("top",      top  + "px", "important");
-            el.style.setProperty("width",    w    + "px", "important");
-            el.style.setProperty("height",   h    + "px", "important");
+            // Live preview (with margin strip + high z-index)
+            if (typeof applySinglePosition === "function") {
+              applySinglePosition(id, left, top, w, h);
+            } else {
+              // Fallback if applySinglePosition() isn't present
+              el.classList.add("layout-abs");
+              el.style.setProperty("position", "absolute", "important");
+              el.style.setProperty("left",     left + "px", "important");
+              el.style.setProperty("top",      top  + "px", "important");
+              el.style.setProperty("width",    w    + "px", "important");
+              el.style.setProperty("height",   h    + "px", "important");
+              el.style.setProperty("z-index", "3000", "important");
+              el.style.removeProperty("margin");
+              el.style.removeProperty("margin-left");
+              el.style.removeProperty("margin-top");
+              el.style.removeProperty("right");
+              el.style.removeProperty("bottom");
+            }
           }
-          // Re-assert everything once more after modal animates closed
+
+          // Apply everything once after persisting
+          if (typeof forceApplyPositions === "function") forceApplyPositions();
+
+          if (window.M && M.toast) M.toast({ html: "Layout saved and applied." });
+
+          // Re-assert once more after modal animates closed
           requestAnimationFrame(loadPositions);
         });
       }
