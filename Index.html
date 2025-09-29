@@ -614,16 +614,16 @@ Key Phrase Generation Using the .csv Sales Reports and .csv Product List Files:
 
     // ====== POSITION CONFIG (parity with shipping-1) ======
 
-    // 3.1 Which components are movable/resizable (move wrappers & top-level buttons only)
+    // 3.1 Which components are movable/resizable
+    // Avoid nesting: do NOT include wrapper parents of items we also move.
     var configComponentIDs = [
       "openConfigBtn",
       "connectEtsyBtn","photoUploadNewBtn","uploadToEtsyBtn","generateBtn",
-      "descriptionAndFileUploadContainer",
+      "listingDescContainer","uploadedFilesList",
       "etsyShopListingsContainer",
       "userProvidedKeyPhrasesContainer",
       "container13",
       "previewGridContainer",
-      "topButtons","belowSearch",
       "etsyListingTitleContainer",
       "etsyListingDescriptionContainer"
     ];
@@ -647,6 +647,24 @@ Key Phrase Generation Using the .csv Sales Reports and .csv Product List Files:
 
     // Utility to get a safe numeric value
     function _num(v, fallback){ v = (v==null? "" : String(v)); var n = parseInt(v,10); return isFinite(n) ? n : fallback; }
+
+    // Remove old wrapper positions/styles we no longer control
+    function cleanupNestedConflicts(){
+      ["descriptionAndFileUploadContainer","topButtons","belowSearch"].forEach(function(id){
+        var el = document.getElementById(id);
+        if (el){
+          el.classList.remove("layout-abs");
+          el.style.removeProperty("position");
+          el.style.removeProperty("left");
+          el.style.removeProperty("top");
+          el.style.removeProperty("width");
+          el.style.removeProperty("height");
+        }
+        ["left","top","width","height"].forEach(function(k){
+          localStorage.removeItem("pos-"+id+"-"+k);
+        });
+      });
+    }
 
     // 3.3 Apply saved (or default) positions — same storage keys as shipping-1
     function loadPositions(){
@@ -720,8 +738,9 @@ Key Phrase Generation Using the .csv Sales Reports and .csv Product List Files:
     // 3.5 Wire up modal + save handler (same ids as shipping-1)
     document.addEventListener("DOMContentLoaded", function(){
       localStorage.removeItem("buttonPositions"); // purge legacy store once
-      // Apply current (or default) layout on load
-      loadPositions(); // shipping-1 does this before showing config.  [oai_citation:7‡shipping-1.html](file-service://file-UyzPx2tdaLoZi5ZZoE5Zq8)
+      // Cleanup old wrapper keys then apply current (or default) layout
+      cleanupNestedConflicts();
+      loadPositions(); // shipping-1 parity
 
       var configModal = M.Modal.init(document.getElementById("configModal"));
       var openBtn = document.getElementById("openConfigBtn");
@@ -740,10 +759,15 @@ Key Phrase Generation Using the .csv Sales Reports and .csv Product List Files:
             var el = document.getElementById(id);
             if(!el) continue;
 
-            var left = _num(document.getElementById("left_"+id)?.value, null);
-            var top  = _num(document.getElementById("top_"+id)?.value, null);
-            var w    = _num(document.getElementById("width_"+id)?.value, null);
-            var h    = _num(document.getElementById("height_"+id)?.value, null);
+            var cs = window.getComputedStyle(el);
+            var left = _num(document.getElementById("left_"+id)?.value,
+                            _num(localStorage.getItem("pos-"+id+"-left"),  parseInt(cs.left)||el.offsetLeft||0));
+            var top  = _num(document.getElementById("top_"+id)?.value,
+                            _num(localStorage.getItem("pos-"+id+"-top"),   parseInt(cs.top)||el.offsetTop||0));
+            var w    = _num(document.getElementById("width_"+id)?.value,
+                            _num(localStorage.getItem("pos-"+id+"-width"), parseInt(cs.width)||el.offsetWidth||0));
+            var h    = _num(document.getElementById("height_"+id)?.value,
+                            _num(localStorage.getItem("pos-"+id+"-height"),parseInt(cs.height)||el.offsetHeight||0));
 
             if (left!=null) localStorage.setItem("pos-"+id+"-left",  left);
             if (top!=null)  localStorage.setItem("pos-"+id+"-top",   top);
