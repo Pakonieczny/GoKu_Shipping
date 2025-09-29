@@ -97,9 +97,19 @@
       outline: 2px dashed rgba(0,0,0,.45);
       transition: left .08s linear, top .08s linear, width .08s linear, height .08s linear;
     }
-    .modal-overlay { transition: opacity .2s ease; 
+    .modal-overlay { transition: opacity .2s ease; }
+
+    /* Config mode: lighten the sheet and let clicks pass through so previews are visible */
+    body.config-mode .modal-overlay {
+      opacity: 0.08 !important;
+      pointer-events: none !important;
     }
 
+    /* Ensure buttery movement while editing */
+    body.config-mode .layout-abs,
+    body.config-mode .configurable {
+      will-change: left, top, width, height;
+    }
     .button-container {
       width: 200px;
       display: flex;
@@ -739,6 +749,7 @@ Key Phrase Generation Using the .csv Sales Reports and .csv Product List Files:
         h    = _num(h,    def.height);
 
         el.classList.add("layout-abs");
+        el.classList.add("configurable"); // show dashed outline + transition in config-mode
         // Use !important to beat author styles and grid/flex side-effects
         el.style.setProperty("position", "absolute", "important");
         el.style.setProperty("left",    left + "px", "important");
@@ -906,12 +917,16 @@ Key Phrase Generation Using the .csv Sales Reports and .csv Product List Files:
             } else {
               // Fallback if applySinglePosition() isn't present
               el.classList.add("layout-abs");
+              el.classList.add("configurable"); // ensure outline/transition are active
               el.style.setProperty("position", "absolute", "important");
-              el.style.setProperty("left",     left + "px", "important");
-              el.style.setProperty("top",      top  + "px", "important");
-              el.style.setProperty("width",    w    + "px", "important");
-              el.style.setProperty("height",   h    + "px", "important");
-              el.style.setProperty("z-index", "3000", "important");
+              el.style.setProperty("left",  L + "px", "important");
+              el.style.setProperty("top",   T + "px", "important");
+              el.style.setProperty("width", W + "px", "important");
+              el.style.setProperty("height",H + "px", "important");
+
+              // show above page content while configuring, but still under the modal content
+              const z = document.body.classList.contains("config-mode") ? 10050 : 3000;
+              el.style.setProperty("z-index", String(z), "important");
               el.style.removeProperty("margin");
               el.style.removeProperty("margin-left");
               el.style.removeProperty("margin-top");
