@@ -110,6 +110,31 @@
     body.config-mode .configurable {
       will-change: left, top, width, height;
     }
+
+   /* ── Config live-edit handles ─────────────────────────────────────────── */
+   body.config-mode .configurable { cursor: default; }
+   body.config-mode .layout-abs,
+   body.config-mode .configurable { will-change: left, top, width, height; }
+
+   /* small draggable dot in top-left */
+   .cfg-handle {
+     position: absolute; left: -8px; top: -8px;
+     width: 16px; height: 16px; border-radius: 50%;
+     background: rgba(0,0,0,.65);
+     box-shadow: 0 0 0 2px #fff inset;
+     cursor: grab; z-index: 10060;
+   }
+   .cfg-handle:active { cursor: grabbing; }
+
+   /* small resize nub in bottom-right */
+   .cfg-resize {
+     position: absolute; right: -6px; bottom: -6px;
+     width: 12px; height: 12px;
+     background: rgba(0,0,0,.65);
+     transform: rotate(45deg);
+     cursor: nwse-resize; z-index: 10060;
+   }
+
     .button-container {
       width: 200px;
       display: flex;
@@ -320,11 +345,6 @@
       transform: translateX(-50%);
       z-index: 10000;
     }
-
-    /* Let the modal stay fully interactive even if previews are above it */
-    body.config-mode .layout-abs,
-    body.config-mode .configurable { pointer-events: none !important; }
-
     /* Added to enable repositioning via the Configure Buttons modal */
     #etsyShopListingsContainer {
       position: relative;
@@ -723,10 +743,6 @@ Key Phrase Generation Using the .csv Sales Reports and .csv Product List Files:
         ["left","top","width","height"].forEach(function(k){
           localStorage.removeItem("pos-"+id+"-"+k);
         });
-
-         // Snap element to current inputs immediately (no Save required)
-         previewFromInputs(id);
-
       });
     }
 
@@ -813,10 +829,14 @@ Key Phrase Generation Using the .csv Sales Reports and .csv Product List Files:
           var inp = document.getElementById(k + "_" + id);
           if (inp) {
             const handler = function(){ previewFromInputs(id); };
-            ["input","change","keyup","keydown","wheel"].forEach(evt => inp.addEventListener(evt, handler));
+            ["input","change","keyup","mousewheel"].forEach(evt => inp.addEventListener(evt, handler));
           }
         });
       }
+
+      // Kick an initial preview pass so fields & elements are in lockstep
+      configComponentIDs.forEach(function(id){ previewFromInputs(id); });
+
     }
 
     /* --- absolute layout helpers --- */
@@ -836,14 +856,12 @@ Key Phrase Generation Using the .csv Sales Reports and .csv Product List Files:
       const H = Number.isFinite(+height)? +height: curH;
 
       el.classList.add("layout-abs");
-      el.classList.add("configurable"); // dashed outline + smooth transitions
       el.style.setProperty("position", "absolute", "important");
       el.style.setProperty("left",  L + "px", "important");
       el.style.setProperty("top",   T + "px", "important");
       el.style.setProperty("width", W + "px", "important");
       el.style.setProperty("height",H + "px", "important");
-      const z = document.body.classList.contains("config-mode") ? 10050 : 3000;
-      el.style.setProperty("z-index", String(z), "important");
+      el.style.setProperty("z-index","3000","important");
 
       // Ensure nothing "fights" absolute placement
       el.style.removeProperty("margin");
@@ -869,6 +887,121 @@ Key Phrase Generation Using the .csv Sales Reports and .csv Product List Files:
       });
     }
 
+    /* ───────────────────── Live drag/resize in Config Mode ───────────────────── */
+     let _cfgDrag = { active:false, mode:'move', target:null, startX:0, startY:0, startL:0, startT:0, startW:0, startH:0 };
+
+     function installLiveEditors(){
+       for (const id of configComponentIDs){
+         const el = document.getElementById(id);
+         if (!el) continue;
+         // Ensure absolute positioning while editing
+         el.classList.add("layout-abs");
+         el.style.setProperty("position","absolute","important");
+         el.classList.add("configurable");
+         // Drag handle (top-left)
+         if (!el.querySelector(".cfg-handle")){
+           const h = document.createElement("div");
+           h.className = "cfg-handle";
+           h.title = "Drag to move";
+           el.appendChild(h);
+           h.addEventListener("mousedown", cfgStartMove);
+           h.addEventListener("touchstart", cfgStartMove, { passive:false });
+         }
+         // Resize nub (bottom-right)
+         if (!el.querySelector(".cfg-resize")){
+           const r = document.createElement("div");
+           r.className = "cfg-resize";
+           r.title = "Drag to resize";
+           el.appendChild(r);
+           r.addEventListener("mousedown", cfgStartResize);
+           r.addEventListener("touchstart", cfgStartResize, { passive:false });
+         }
+       }
+       document.addEventListener("mousemove", cfgOnMove);
+       document.addEventListener("touchmove", cfgOnMove, { passive:false });
+       document.addEventListener("mouseup", cfgEnd);
+       document.addEventListener("touchend", cfgEnd);
+     }
+
+     function removeLiveEditors(){
+       for (const id of configComponentIDs){
+         const el = document.getElementById(id);
+         if (!el) continue;
+         el.querySelectorAll(".cfg-handle,.cfg-resize").forEach(n => n.remove());
+       }
+       document.removeEventListener("mousemove", cfgOnMove);
+       document.removeEventListener("touchmove", cfgOnMove);
+       document.removeEventListener("mouseup", cfgEnd);
+       document.removeEventListener("touchend", cfgEnd);
+     }
+
+     function cfgStartMove(e){ e.preventDefault(); startDrag(e.currentTarget.parentElement, 'move', e); }
+     function cfgStartResize(e){ e.preventDefault(); startDrag(e.currentTarget.parentElement, 'resize', e); }
+
+     function startDrag(el, mode, e){
+       const pt = (e.touches && e.touches[0]) || e;
+       const cs = window.getComputedStyle(el);
+       _cfgDrag = {
+         active: true, mode, target: el,
+         startX: (pt.clientX + window.scrollX),
+         startY: (pt.clientY + window.scrollY),
+         startL: parseInt(cs.left,10)   || el.offsetLeft  || 0,
+         startT: parseInt(cs.top,10)    || el.offsetTop   || 0,
+         startW: parseInt(cs.width,10)  || el.offsetWidth || 0,
+         startH: parseInt(cs.height,10) || el.offsetHeight|| 0
+       };
+     }
+
+     function cfgOnMove(e){
+       if (!_cfgDrag.active) return;
+       const pt = (e.touches && e.touches[0]) || e;
+       const curX = (pt.clientX + window.scrollX);
+       const curY = (pt.clientY + window.scrollY);
+       const dx = curX - _cfgDrag.startX;
+       const dy = curY - _cfgDrag.startY;
+
+       let L = _cfgDrag.startL, T = _cfgDrag.startT, W = _cfgDrag.startW, H = _cfgDrag.startH;
+       if (_cfgDrag.mode === 'move'){ L += dx; T += dy; }
+       else { W = Math.max(40, W + dx); H = Math.max(24, H + dy); }
+
+       applySinglePosition(_cfgDrag.target.id, L, T, W, H);
+       // Reflect into table inputs live
+       const id = _cfgDrag.target.id;
+       const map = {left:L, top:T, width:W, height:H};
+       for (const k in map){
+         const inp = document.getElementById(k + "_" + id);
+         if (inp) inp.value = Math.round(map[k]);
+       }
+     }
+
+     function cfgEnd(){ _cfgDrag.active = false; }
+
+     // Optional keyboard nudging while Config modal is open (Arrows; Shift=10px)
+     document.addEventListener("keydown", function(e){
+       if (!document.body.classList.contains("config-mode")) return;
+       const target = _cfgDrag.target || (document.activeElement?.closest("tr")?.querySelector("td") &&
+                         document.getElementById(document.activeElement.closest("tr").querySelector("td").textContent.trim()));
+       if (!target || !target.id) return;
+       let step = e.shiftKey ? 10 : 1;
+       if (!["ArrowLeft","ArrowRight","ArrowUp","ArrowDown"].includes(e.key)) return;
+       e.preventDefault();
+       const cs = window.getComputedStyle(target);
+       let L = parseInt(cs.left,10)  || target.offsetLeft || 0;
+       let T = parseInt(cs.top,10)   || target.offsetTop  || 0;
+       let W = parseInt(cs.width,10) || target.offsetWidth|| 0;
+       let H = parseInt(cs.height,10)|| target.offsetHeight||0;
+       if (e.key==="ArrowLeft")  L -= step;
+       if (e.key==="ArrowRight") L += step;
+       if (e.key==="ArrowUp")    T -= step;
+       if (e.key==="ArrowDown")  T += step;
+       applySinglePosition(target.id, L, T, W, H);
+       const map = {left:L, top:T};
+       for (const k in map){
+         const inp = document.getElementById(k + "_" + target.id);
+         if (inp) inp.value = Math.round(map[k]);
+       }
+     });
+
     // 3.5 Wire up modal + save handler (same ids as shipping-1)
     document.addEventListener("DOMContentLoaded", function(){
       localStorage.removeItem("buttonPositions"); // purge legacy store once
@@ -876,21 +1009,25 @@ Key Phrase Generation Using the .csv Sales Reports and .csv Product List Files:
       cleanupNestedConflicts();
       loadPositions(); // shipping-1 parity
 
-        var configModal = M.Modal.init(document.getElementById("configModal"), {
-        onOpenStart() {
-          document.body.classList.add("config-mode");
-          // So you can see layout changes behind the modal
-          setTimeout(() => {
-            const ov = document.querySelector(".modal-overlay");
-            if (ov) ov.style.opacity = "0.15";
-          }, 0);
-        },
-        onCloseEnd() {
-          document.body.classList.remove("config-mode");
-          const ov = document.querySelector(".modal-overlay");
-          if (ov) ov.style.opacity = "";
-        }
-      });
+         var configModal = M.Modal.init(document.getElementById("configModal"), {
+           onOpenStart() {
+             document.body.classList.add("config-mode");
+             // Light overlay & allow pointer events to pass through for live editing
+             setTimeout(() => {
+               const ov = document.querySelector(".modal-overlay");
+               if (ov) { ov.style.opacity = "0.15"; ov.style.pointerEvents = "none"; }
+             }, 0);
+             // make sure current positions are applied before attaching handles
+             if (typeof loadPositions === "function") loadPositions();
+             installLiveEditors();
+           },
+           onCloseEnd() {
+             removeLiveEditors();
+             document.body.classList.remove("config-mode");
+             const ov = document.querySelector(".modal-overlay");
+             if (ov) { ov.style.opacity = ""; ov.style.pointerEvents = ""; }
+           }
+         });
       var openBtn = document.getElementById("openConfigBtn");
       if (openBtn){
         openBtn.addEventListener("click", function(){
@@ -930,10 +1067,10 @@ Key Phrase Generation Using the .csv Sales Reports and .csv Product List Files:
               el.classList.add("layout-abs");
               el.classList.add("configurable"); // ensure outline/transition are active
               el.style.setProperty("position", "absolute", "important");
-              el.style.setProperty("left",  L + "px", "important");
-              el.style.setProperty("top",   T + "px", "important");
-              el.style.setProperty("width", W + "px", "important");
-              el.style.setProperty("height",H + "px", "important");
+               el.style.setProperty("left",  left + "px", "important");
+               el.style.setProperty("top",   top  + "px", "important");
+               el.style.setProperty("width", w    + "px", "important");
+               el.style.setProperty("height",h    + "px", "important");
 
               // show above page content while configuring, but still under the modal content
               const z = document.body.classList.contains("config-mode") ? 10050 : 3000;
