@@ -320,6 +320,11 @@
       transform: translateX(-50%);
       z-index: 10000;
     }
+
+    /* Let the modal stay fully interactive even if previews are above it */
+    body.config-mode .layout-abs,
+    body.config-mode .configurable { pointer-events: none !important; }
+    
     /* Added to enable repositioning via the Configure Buttons modal */
     #etsyShopListingsContainer {
       position: relative;
@@ -719,6 +724,9 @@ Key Phrase Generation Using the .csv Sales Reports and .csv Product List Files:
           localStorage.removeItem("pos-"+id+"-"+k);
         });
       });
+
+         // Snap element to current inputs immediately (no Save required)
+         previewFromInputs(id);
     }
 
     // 3.3 Apply saved (or default) positions — same storage keys as shipping-1
@@ -804,7 +812,7 @@ Key Phrase Generation Using the .csv Sales Reports and .csv Product List Files:
           var inp = document.getElementById(k + "_" + id);
           if (inp) {
             const handler = function(){ previewFromInputs(id); };
-            ["input","change","keyup","mousewheel"].forEach(evt => inp.addEventListener(evt, handler));
+            ["input","change","keyup","keydown","wheel"].forEach(evt => inp.addEventListener(evt, handler));
           }
         });
       }
@@ -827,12 +835,14 @@ Key Phrase Generation Using the .csv Sales Reports and .csv Product List Files:
       const H = Number.isFinite(+height)? +height: curH;
 
       el.classList.add("layout-abs");
+      el.classList.add("configurable"); // dashed outline + smooth transitions
       el.style.setProperty("position", "absolute", "important");
       el.style.setProperty("left",  L + "px", "important");
       el.style.setProperty("top",   T + "px", "important");
       el.style.setProperty("width", W + "px", "important");
       el.style.setProperty("height",H + "px", "important");
-      el.style.setProperty("z-index","3000","important");
+      const z = document.body.classList.contains("config-mode") ? 10050 : 3000;
+      el.style.setProperty("z-index", String(z), "important");
 
       // Ensure nothing "fights" absolute placement
       el.style.removeProperty("margin");
