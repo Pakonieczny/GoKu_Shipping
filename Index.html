@@ -582,6 +582,7 @@ Key Phrase Generation Using the .csv Sales Reports and .csv Product List Files:
       </table>
     </div>
     <div class="modal-footer">
+      <a id="resetLayoutBtn" class="waves-effect waves-red btn-flat">Reset</a>
       <a id="saveConfigBtn" class="modal-close waves-effect waves-green btn">Save</a>
     </div>
   </div>
@@ -703,7 +704,6 @@ Key Phrase Generation Using the .csv Sales Reports and .csv Product List Files:
       }
     }
 
-    // 3.4 Build the editable table (matches shipping-1 approach)
     function populateConfigTable(){
       var tbody = document.getElementById("configTable").querySelector("tbody");
       tbody.innerHTML = "";
@@ -712,16 +712,21 @@ Key Phrase Generation Using the .csv Sales Reports and .csv Product List Files:
         var el = document.getElementById(id);
         if(!el) continue;
 
-        var cs = window.getComputedStyle(el);
-        var left = parseInt(cs.left)||0, top = parseInt(cs.top)||0,
-            w = parseInt(cs.width)||el.offsetWidth||0,
-            h = parseInt(cs.height)||el.offsetHeight||0;
+        // Seed exactly like loadPositions(): DOM rect → merged with hard defaults
+        var rect = el.getBoundingClientRect();
+        var seed = {
+          left:  Math.round(rect.left + window.scrollX),
+          top:   Math.round(rect.top  + window.scrollY),
+          width: Math.round(rect.width  || el.offsetWidth  || 0),
+          height:Math.round(rect.height || el.offsetHeight || 0)
+        };
+        var def = Object.assign(seed, defaultPositions[id] || {});
 
-        // prefer saved values if present
-        left = _num(localStorage.getItem("pos-"+id+"-left"),   left);
-        top  = _num(localStorage.getItem("pos-"+id+"-top"),    top);
-        w    = _num(localStorage.getItem("pos-"+id+"-width"),  w);
-        h    = _num(localStorage.getItem("pos-"+id+"-height"), h);
+        // Prefer saved values if present
+        var left = _num(localStorage.getItem("pos-"+id+"-left"),   def.left);
+        var top  = _num(localStorage.getItem("pos-"+id+"-top"),    def.top);
+        var w    = _num(localStorage.getItem("pos-"+id+"-width"),  def.width);
+        var h    = _num(localStorage.getItem("pos-"+id+"-height"), def.height);
 
         var tr = document.createElement("tr");
         tr.innerHTML = `
