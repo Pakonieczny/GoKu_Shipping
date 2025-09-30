@@ -374,11 +374,11 @@
     <button id="connectEtsyBtn" class="btn waves-effect waves-light configurable">Connect to Etsy</button>
     <button id="photoUploadNewBtn" class="btn waves-effect waves-light configurable update-btn" style="margin-left: 10px;">Update Photos</button>
     <button id="uploadToEtsyBtn" class="btn waves-effect waves-light configurable update-btn" style="margin-left: 10px;">Update Info</button>
-    <div id="etsyShopListingsContainer">
-      <div class="section-heading configurable">
-        Etsy Shop Listings
-        <span id="listingQueueCount">0</span>
-      </div>
+      <div id="etsyShopListingsContainer">
+        <div id="etsyShopListingsHeading" class="section-heading configurable">
+          Etsy Shop Listings
+          <span id="listingQueueCount">0</span>
+        </div>
       <div class="textbox-container configurable">
         <textarea id="shopListings" class="materialize-textarea" rows="2" placeholder="Enter up to 250 comma-separated 10-digit listing IDs" style="width:500px;"></textarea>
       </div>
@@ -386,7 +386,7 @@
   </div>
   
   <div class="phrases-header configurable" id="userProvidedKeyPhrasesContainer">
-    <span class="section-heading configurable">Search Key Phrases</span>
+    <span id="searchKeyPhrasesHeading" class="section-heading configurable">Search Key Phrases</span>
     <!-- Clear button deletes files from the vector store -->
     <button id="clearKeyPhrasesBtn" class="btn-small waves-effect waves-light configurable">Clear CSV Files</button>
     <div id="dropZone" class="configurable">Image Drop</div>
@@ -402,7 +402,7 @@
   <div id="belowSearch">
     <button id="generateBtn" class="btn waves-effect waves-light configurable">Generate</button>
     <div class="title-container" id="etsyListingTitleContainer" style="margin-top: 0;">
-      <div class="section-heading configurable">Etsy Listing TITLE</div>
+      <div id="etsyListingTitleHeading" class="section-heading configurable">Etsy Listing TITLE</div>
       <div class="flex-container configurable">
         <div class="textbox-container configurable">
           <textarea id="listingTitle" class="materialize-textarea" rows="2"></textarea>
@@ -419,7 +419,7 @@
     </div>
     
     <div class="description-container" id="etsyListingDescriptionContainer" style="margin-top: 0px;">
-      <div class="section-heading configurable">Etsy Listing DESCRIPTION</div>
+      <div id="etsyListingDescriptionHeading" class="section-heading configurable">Etsy Listing DESCRIPTION</div>
       <div class="flex-container configurable">
         <div class="textbox-container configurable">
           <textarea id="listingDescription" class="materialize-textarea"></textarea>
@@ -771,15 +771,15 @@ Key Phrase Generation Using the .csv Sales Reports and .csv Product List Files:
       previewCell9:            { left: 1200, top: 340, width: 120, height: 158 },
 
       // Auto-assigned heading IDs (current session)
-      "div-0g0nl":             { left: 10,   top: 75,  width: 180, height: 27 },
-      "span-yr8zb":            { left: 10,   top: 290, width: 180, height: 27 },
-      "div-89qwd":             { left: 10,   top: 505, width: 180, height: 27 },
-      "div-0cwxn":             { left: 10,   top: 610, width: 250, height: 27 },
+      etsyShopListingsHeading:       { left: 10,  top: 75,  width: 180, height: 27 },
+      searchKeyPhrasesHeading:       { left: 10,  top: 290, width: 180, height: 27 },
+      etsyListingTitleHeading:       { left: 10,  top: 505, width: 180, height: 27 },
+      etsyListingDescriptionHeading: { left: 10,  top: 610, width: 250, height: 27 }
 
       // Counter chip
       listingQueueCount:       { left: 190,  top: 75,  width: 25,  height: 27 }
     };
-    
+
     // (Shipping-1 stores to LS as pos-<id>-left|top|width|height and applies absolute layout.  [oai_citation:6‡shipping-1.html](file-service://file-UyzPx2tdaLoZi5ZZoE5Zq8))
 
     function adoptIntoLayoutRoot(el){
@@ -986,8 +986,37 @@ Key Phrase Generation Using the .csv Sales Reports and .csv Product List Files:
       });
     }
 
+   // --- ID migration: random IDs -> stable descriptive IDs for headings ---
+    const ID_RENAMES = {
+      "div-0g0nl":  "etsyShopListingsHeading",
+      "span-yr8zb": "searchKeyPhrasesHeading",
+      "div-89qwd":  "etsyListingTitleHeading",
+      "div-0cwxn":  "etsyListingDescriptionHeading"
+    };
+    function migrateOldIds(){
+      Object.entries(ID_RENAMES).forEach(([oldId, newId]) => {
+        // If an element still has the old ID, rename it in DOM
+        const oldEl = document.getElementById(oldId);
+        const newEl = document.getElementById(newId);
+        if (oldEl && !newEl) oldEl.id = newId;
+
+        // Migrate any saved positions in localStorage
+        ["left","top","width","height"].forEach(k => {
+          const oldKey = "pos-"+oldId+"-"+k;
+          const newKey = "pos-"+newId+"-"+k;
+          const v = localStorage.getItem(oldKey);
+          if (v !== null && localStorage.getItem(newKey) === null) {
+            localStorage.setItem(newKey, v);
+          }
+          localStorage.removeItem(oldKey);
+        });
+      });
+    }
+
     // 3.5 Wire up modal + save handler (same ids as shipping-1)
-    document.addEventListener("DOMContentLoaded", function(){
+     document.addEventListener("DOMContentLoaded", function(){
+      // Ensure old random heading IDs (div-*, span-*) are migrated once
+      migrateOldIds();
       localStorage.removeItem("buttonPositions"); // purge legacy store once
       // Cleanup old wrapper keys, adopt EVERY control into the absolute stage, then apply layout
       cleanupNestedConflicts();
