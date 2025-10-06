@@ -24,12 +24,26 @@
 /********************************************************
  *  COMPAT MODE SWITCH
  *  ─────────────────────────────────────────────────────
- *  • NEW FLOW  : design.html stashes `metalOrderLists`
+ *  • PREFERRED : design-1.html stashes `metalOrderJobs`
+ *                [{ metal, ids, partIndex, partTotal, total }]
+ *  • NEW FLOW  : design-1.html stashes `metalOrderLists`
  *                { gold:[], silver:[], rose:[], "14k":[] }
  *  • LEGACY    : Sorting page stashes `qrPrintAll`
  *                { dispatchDate, items[], userTypedOrderNum }
  ********************************************************/
-window.addEventListener("load", async () => {
+window.addEventListener("load", async () => { 
+  // Preferred: jobs (support both sessionStorage and localStorage)
+  const jobJSON =
+    sessionStorage.getItem("metalOrderJobs") ||
+    localStorage.getItem("metalOrderJobs");
+  if (jobJSON) {
+    await handleMetalJobs(JSON.parse(jobJSON));     // one page per split slice
+    sessionStorage.removeItem("metalOrderJobs");
+    localStorage.removeItem("metalOrderJobs");
+    return;
+  }
+
+  // Fallback: metal bundles (auto-split into pages of 50)
   const metalJSON = localStorage.getItem("metalOrderLists");
   if (metalJSON) {
     await handleMetalBundles(JSON.parse(metalJSON));
@@ -37,17 +51,46 @@ window.addEventListener("load", async () => {
     return;
   }
 
+  // Legacy single-order QR
   const legacyJSON = localStorage.getItem("qrPrintAll");
   if (legacyJSON) {
     await handleLegacy(JSON.parse(legacyJSON));
     return;
   }
 
-  console.error("Nothing to print: no metalOrderLists or qrPrintAll found.");
+  console.error("Nothing to print: no metalOrderJobs, metalOrderLists or qrPrintAll found.");
 });
 
 /* ──────────────────────────────────────────────────────────
- *  NEW FLOW – one print job with one page per metal bundle
+ *  JOB FLOW – one PDF page per split slice (preferred)
+ *  Expects: [{ metal, ids, partIndex, partTotal, total }]
+ * ────────────────────────────────────────────────────────── */
+async function handleMetalJobs(jobs){
+  if (!Array.isArray(jobs) || !jobs.length) return;
+  const pages = [];
+  for (const job of jobs){
+    if (!Array.isArray(job.ids) || !job.ids.length) continue;
+    const payload = encodeOrderList(job.ids, job.metal);
+    const imgData = await makeQRDataURL(payload, "M"); // ECC=M (fallback→L inside)
+    const label = `${String(job.metal||"").toUpperCase()} (${job.ids.length} of ${job.total})` +
+                  (job.partTotal > 1 ? ` [${job.partIndex}/${job.partTotal}]` : "");
+    pages.push({
+      stack: [
+        { image: imgData, width:85, absolutePosition:{ x:3, y:3 } },
+        { text : label, fontSize:9, bold:true, absolutePosition:{ x:1, y:93 } },
+        { text : "Notes:", fontSize:9, bold:true, absolutePosition:{ x:92, y:0.5 } }
+      ],
+      pageBreak: 'after'
+    });
+  }
+  if (!pages.length) return;
+  pages[pages.length - 1].pageBreak = undefined;
+  const docDef = { pageSize:{ width:145, height:145 }, pageMargins:[0,0,0,0], content: pages };
+  await autoPrint(docDef);
+}
+
+/* ──────────────────────────────────────────────────────────
+ *  NEW FLOW – metal bundles (auto-split into pages of 50)
  * ────────────────────────────────────────────────────────── */
 async function handleMetalBundles(lists) {
   // 1) De-dupe across bundles
@@ -61,31 +104,34 @@ async function handleMetalBundles(lists) {
     });
   }
 
-  // 2) Build pages (one per metal)
+  // 2) Build pages (SPLIT into chunks of 50 per metal)
   const pages = [];
   for (const [metal, arr] of Object.entries(lists)) {
     if (!arr || !arr.length) continue;
+    const parts = [];
+    for (let i = 0; i < arr.length; i += 50) parts.push(arr.slice(i, i + 50));
+    const total = arr.length;
 
-    // Base-36 compact payload: B36|<metal>|<id.id.id>
-    const payload = encodeOrderList(arr, metal);
-    const imgData = await makeQRDataURL(payload);
-
-    pages.push({
-      stack: [
-        { image: imgData, width:85, absolutePosition:{ x:3, y:3 } },
-        { text : `${metal.toUpperCase()} (${arr.length})`,
-          fontSize:9, bold:true, absolutePosition:{ x:1, y:93 } },
-        { text : "Notes:", fontSize:9, bold:true, absolutePosition:{ x:92, y:0.5 } }
-      ],
-      pageBreak: 'after'
-    });
+    for (let idx = 0; idx < parts.length; idx++){
+      const slice   = parts[idx];
+      const payload = encodeOrderList(slice, metal);
+      const imgData = await makeQRDataURL(payload, "M"); // ECC=M (fallback→L inside)
+      const label   = `${metal.toUpperCase()} (${slice.length} of ${total})`
+                    + (parts.length > 1 ? ` [${idx+1}/${parts.length}]` : "");
+      pages.push({
+        stack: [
+          { image: imgData, width:85, absolutePosition:{ x:3, y:3 } },
+          { text : label, fontSize:9, bold:true, absolutePosition:{ x:1, y:93 } },
+          { text : "Notes:", fontSize:9, bold:true, absolutePosition:{ x:92, y:0.5 } }
+        ],
+        pageBreak: 'after'
+      });
+    }
   }
   if (!pages.length) return;
 
-  // Drop the last pageBreak
-  pages[pages.length - 1].pageBreak = undefined;
-
   // 3) Single print with all pages
+  pages[pages.length - 1].pageBreak = undefined;  // Drop the last pageBreak
   const docDef = {
     pageSize   : { width:145, height:145 },  // 1″ × 1″ for every page
     pageMargins: [0,0,0,0],
@@ -106,7 +152,7 @@ async function handleLegacy(dataObj){
                     || dataObj.items[0].receipt_id
                     || "UnknownOrder";
 
-  const imgData = await makeQRDataURL(orderNum);
+  const imgData = await makeQRDataURL(orderNum, "M");
   const docDef  = {
     pageSize   : { width:72, height:72 },          // 1″ × 1″
     pageMargins: [0,0,0,0],
@@ -154,19 +200,24 @@ function encodeOrderList(ids, metal) {
 /* ──────────────────────────────────────────────────────────
  *  HELPERS
  * ────────────────────────────────────────────────────────── */
-async function makeQRDataURL(text){
+async function makeQRDataURL(text, ecc = "M"){
   const holder = document.createElement("div");
   holder.style.display = "none";
   document.body.appendChild(holder);
 
-  new QRCode(holder, {
-    text, width:1024, height:1024, correctLevel:QRCode.CorrectLevel.H
-  });
+  const lvl = (QRCode && QRCode.CorrectLevel) || {};
+  const pick = lvl[ecc] ?? lvl.M ?? 1;
+  try{
+    new QRCode(holder, { text, width:1024, height:1024, correctLevel: pick });
+  }catch(e){
+    // last-resort if library throws for very long text
+    new QRCode(holder, { text, width:1024, height:1024, correctLevel: lvl.L ?? 0 });
+  }
   await new Promise(r => setTimeout(r, 300));      // allow render
 
   const img = holder.querySelector("img")
          || holder.querySelector("canvas")?.toDataURL("image/png");
-  return img.tagName ? img.src : img;              // normalize
+  return img && img.tagName ? img.src : img;       // normalize
 }
 
 async function autoPrint(docDefinition){
