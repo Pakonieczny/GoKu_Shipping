@@ -2558,12 +2558,23 @@ const selectRow = async (row) => {
      return `B36|${metal}|`+b36.join(".");
    }
 
-    // helper: split an array into chunks (default 50)
-    function chunk(arr, size = 50){
-      const out = [];
-      for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size));
-      return out;
-    }
+   // NEW: split into variable-sized slices so QR payload stays under a safe limit
+   // Uses encodeOrderList(slice, metal) length as a proxy for capacity.
+   function safeChunks(arr, metal, maxChars = 1000, startSize = 50, minSize = 8){
+     const out = [];
+     let i = 0, size = startSize;
+     while (i < arr.length){
+       let slice = arr.slice(i, i + size);
+       let payload = encodeOrderList(slice, metal);
+       if (payload.length > maxChars && size > minSize){
+         size = Math.max(minSize, Math.floor(size * 0.75)); // shrink & retry
+         continue;
+       }
+       out.push(slice);
+       i += slice.length;
+     }
+     return out;
+   }
 
     function showQrPreviewModal(lists){
       const skipped = window._qrSkippedOrders || [];
@@ -2573,7 +2584,7 @@ const selectRow = async (row) => {
       Object.entries(lists).forEach(([m, arr]) => {
         if (!arr.length) return;
 
-        const pieces = chunk(arr, 50);                 // ← SPLIT into ≤50 each
+        const pieces = safeChunks(arr, m, 1000, 50, 8); // ← adaptive ≤1000 chars
         pieces.forEach((slice, idx) => {
           const holder = document.createElement("div");
           holder.style.cssText = "width:120px;text-align:center";
@@ -2588,12 +2599,22 @@ const selectRow = async (row) => {
             <div style="font-size:.8em;margin-top:4px;">${label}</div>`;
           grid.appendChild(holder);
 
-          new QRCode(holder.firstElementChild, {
-            text: encodeOrderList(slice, m),           // ← PER-SLICE payload
-            width: 110,
-            height: 110,
-            correctLevel: QRCode.CorrectLevel.H
-          });
+          try{
+            new QRCode(holder.firstElementChild, {
+              text: encodeOrderList(slice, m),         // ← PER-SLICE payload
+              width: 110,
+              height: 110,
+              correctLevel: QRCode.CorrectLevel.M      // more capacity than H
+            });
+          }catch(e){
+            console.warn("QR overflow at preview, retry with ECC=L:", e.message);
+            new QRCode(holder.firstElementChild, {
+              text: encodeOrderList(slice, m),
+              width: 110,
+              height: 110,
+              correctLevel: QRCode.CorrectLevel.L      // last-resort
+            });
+          }
         });
       });
 
@@ -2724,16 +2745,11 @@ const selectRow = async (row) => {
       }
  
      printDialogOpened = true;                // mark pending-print
-     // Build chunked jobs so the print page renders split QRs (≤50 per)
-     const __chunk = (arr, size = 50) => {
-       const out = [];
-       for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size));
-       return out;
-     };
      const metalOrderJobs = [];
      Object.entries(lists).forEach(([metal, ids]) => {
        if (!Array.isArray(ids) || !ids.length) return;
-       const parts = __chunk(ids, 50);
+      // Keep each QR payload comfortably under capacity for grcode.min.js too
+      const parts = safeChunks(ids, metal, 1000, 50, 8);
        parts.forEach((slice, idx) => {
          metalOrderJobs.push({
            metal,
