@@ -95,59 +95,82 @@
 
       // Deep, cautious search for a video URL
       function deepScanForVideoUrl(obj) {
-        const seen = new Set();
-        function recur(o) {
-          if (!o || typeof o !== 'object' || seen.has(o)) return null;
-          seen.add(o);
-          // direct fields
-          if (typeof o.video_url === 'string' && /^https?:\/\//.test(o.video_url)) return o.video_url;
-          if (typeof o.url === 'string' && /^https?:\/\//.test(o.url) && /mp4|video/.test((o.mime||'') + ' ' + (o.type||'') + ' ' + (o.kind||'') + ' ' + (o.role||''))) return o.url;
-          if (typeof o.download_url === 'string' && /^https?:\/\//.test(o.download_url)) return o.download_url;
-          if (o.video && typeof o.video.url === 'string') return o.video.url;
-          // arrays / objects
-          for (const k in o) {
-            const v = o[k];
-            if (Array.isArray(v)) {
-              for (const it of v) {
-                const r = recur(it);
-                if (r) return r;
-              }
-            } else if (typeof v === 'object') {
-              const r = recur(v);
-              if (r) return r;
-            }
+        function isHttpish(s) {
+          return typeof s === 'string' && /^https?:\/\//.test(s);
+        }
+        function looksLikeVideoUrl(s) {
+          return isHttpish(s) && /\.(mp4|webm|mov)(\?|#|$)/i.test(s);
+        }
+        function isVideoishMeta(o) {
+          const meta = `${o?.mime||''} ${o?.type||''} ${o?.kind||''} ${o?.role||''} ${o?.content_type||''}`;
+          return /(video|mp4|webm|quicktime)/i.test(meta);
+        }
+        function pickFromRecord(o) {
+          const cand = [
+            o?.video_url, o?.download_url, o?.cdn_url, o?.signed_url,
+            o?.url, o?.uri, o?.href, o?.file_url, o?.source, o?.src
+          ];
+          for (const c of cand) {
+            if (isHttpish(c) && (looksLikeVideoUrl(c) || isVideoishMeta(o))) return c;
           }
+          if (typeof o?.video === 'string' && isHttpish(o.video)) return o.video;
+          if (o?.video && isHttpish(o.video.url)) return o.video.url;
+          if (o?.media && isHttpish(o.media.url)) return o.media.url;
           return null;
         }
-        return recur(obj);
+        const seen = new Set();
+        const stack = [obj];
+        while (stack.length) {
+          const cur = stack.pop();
+          if (!cur || typeof cur !== 'object' || seen.has(cur)) continue;
+          seen.add(cur);
+          const direct = pickFromRecord(cur);
+          if (direct) return direct;
+          for (const k in cur) {
+            const v = cur[k];
+            if (!v) continue;
+            if (Array.isArray(v)) {
+              for (const it of v) {
+                const got = pickFromRecord(it);
+                if (got) return got;
+                if (it && typeof it === 'object') stack.push(it);
+                else if (typeof it === 'string' && looksLikeVideoUrl(it)) return it;
+              }
+            } else if (typeof v === 'object') {
+              stack.push(v);
+            } else if (typeof v === 'string' && looksLikeVideoUrl(v)) {
+              return v;
+            }
+          }
+        }
+        return null;
       }
 
       function pickVideoUrl(job) {
         try {
-          // 1) prefer normalized field from our function
           if (job.video_url) return job.video_url;
 
-          // 2) common shapes
-          if (job.assets && Array.isArray(job.assets)) {
-            const vid = job.assets.find(a =>
-              (a.type || a.kind) === 'video' || /mp4|video/.test(a.mime || '') || /video/.test(a.role || '')
-            );
-            if (vid?.url) return vid.url;
-            if (vid?.download_url) return vid.download_url;
+          const arrays = [
+            job.assets, job.files, job.results, job.output, job.result?.files,
+            job.result?.assets, job.output?.files, job.output?.assets,
+            job.render?.outputs, job.media?.sources
+          ].filter(Array.isArray);
+          for (const arr of arrays) {
+            const hit = arr.find(a => {
+              const meta = `${a?.mime||''} ${a?.type||''} ${a?.kind||''} ${a?.role||''} ${a?.content_type||''}`;
+              return /(video|mp4|webm|quicktime)/i.test(meta);
+            }) || arr.find(a => {
+              const s = a?.url || a?.uri || a?.href || a?.download_url || a?.signed_url || a?.cdn_url || a?.file_url;
+              return typeof s === 'string' && /\.(mp4|webm|mov)(\?|#|$)/i.test(s);
+            });
+            if (hit) {
+              return hit.url || hit.uri || hit.href || hit.download_url || hit.signed_url || hit.cdn_url || hit.file_url || null;
+            }
           }
-          if (job.video_url) return job.video_url;
+
           if (job.output?.video?.url) return job.output.video.url;
           if (job.result?.video?.url) return job.result.video.url;
-          if (Array.isArray(job.output)) {
-            const firstUrl = job.output.map(o => o?.url || o?.download_url).find(Boolean);
-            if (firstUrl) return firstUrl;
-          }
-          if (Array.isArray(job.results)) {
-            const firstUrl = job.results.map(o => o?.url || o?.download_url).find(Boolean);
-            if (firstUrl) return firstUrl;
-          }
 
-          // 3) deep fallback
           const deep = deepScanForVideoUrl(job);
           if (deep) return deep;
         } catch {}
@@ -231,6 +254,8 @@
                   // dump a short preview to help debugging
                   log('No URL found. Keys: ' + Object.keys(s).join(', '));
                   log('Sample: ' + JSON.stringify(s.assets || s.output || s.result || s.results || {}, null, 2).slice(0, 800));
+                  log('No URL found — dumping full payload preview…');
+                  log((JSON.stringify(s, null, 2) || '').slice(0, 12000));
                   throw new Error('Completed but no video URL found in response.');
                 }
                 $('outVid').src = url;

@@ -39,42 +39,127 @@ exports.handler = async (event) => {
       return { statusCode: resp.status, headers: JSON_HEADERS, body: JSON.stringify({ error: data }) };
     }
 
-    // -------- Normalize: attempt to locate a usable video URL ----------
+    // ---------------- URL pickers & scanners ----------------
+    function isHttpish(s) {
+      return typeof s === 'string' && /^https?:\/\//.test(s);
+    }
+    function looksLikeVideoUrl(s) {
+      return isHttpish(s) && /\.(mp4|webm|mov)(\?|#|$)/i.test(s);
+    }
+    function isVideoishMeta(o) {
+      const meta = `${o?.mime || ''} ${o?.type || ''} ${o?.kind || ''} ${o?.role || ''} ${o?.content_type || ''}`;
+      return /(video|mp4|webm|quicktime|mov)/i.test(meta);
+    }
+    function pickFromRecord(o) {
+      if (!o || typeof o !== 'object') return null;
+
+      // common explicit fields
+      const candidates = [
+        o.video_url, o.download_url, o.cdn_url, o.signed_url,
+        o.file_url, o.preview_url, o.stream_url,
+        o.url, o.uri, o.href, o.source, o.src
+      ];
+      for (const c of candidates) {
+        if (isHttpish(c) && (looksLikeVideoUrl(c) || isVideoishMeta(o))) return c;
+      }
+
+      // nested common shapes
+      if (typeof o?.video === 'string' && isHttpish(o.video)) return o.video;
+      if (o?.video && isHttpish(o.video.url)) return o.video.url;
+      if (o?.media && isHttpish(o.media.url)) return o.media.url;
+
+      return null;
+    }
     function deepScanForVideoUrl(obj) {
       const seen = new Set();
-      function recur(o) {
-        if (!o || typeof o !== 'object' || seen.has(o)) return null;
-        seen.add(o);
-        if (typeof o.video_url === 'string' && /^https?:\/\//.test(o.video_url)) return o.video_url;
-        if (typeof o.url === 'string' && /^https?:\/\//.test(o.url) && /mp4|video/.test((o.mime||'') + ' ' + (o.type||'') + ' ' + (o.kind||'') + ' ' + (o.role||''))) return o.url;
-        if (typeof o.download_url === 'string' && /^https?:\/\//.test(o.download_url)) return o.download_url;
-        if (o.video && typeof o.video.url === 'string') return o.video.url;
-        for (const k in o) {
-          const v = o[k];
+      const stack = [obj];
+      while (stack.length) {
+        const cur = stack.pop();
+        if (!cur || typeof cur !== 'object' || seen.has(cur)) continue;
+        seen.add(cur);
+
+        // try picking directly from this record
+        const direct = pickFromRecord(cur);
+        if (direct) return direct;
+
+        // walk properties
+        for (const k in cur) {
+          const v = cur[k];
+          if (!v) continue;
+
           if (Array.isArray(v)) {
             for (const it of v) {
-              const r = recur(it);
-              if (r) return r;
+              const hit = pickFromRecord(it);
+              if (hit) return hit;
+              if (it && typeof it === 'object') stack.push(it);
+              else if (typeof it === 'string' && looksLikeVideoUrl(it)) return it;
             }
           } else if (typeof v === 'object') {
-            const r = recur(v);
-            if (r) return r;
+            stack.push(v);
+          } else if (typeof v === 'string' && looksLikeVideoUrl(v)) {
+            return v;
           }
         }
-        return null;
       }
-      return recur(obj);
+      return null;
     }
+    function pickVideoUrl(job) {
+      try {
+        // direct field
+        if (job.video_url && isHttpish(job.video_url)) return job.video_url;
 
-    const status = String(data.status || '').toLowerCase();
+        // common array containers
+        const arrays = [
+          job.assets, job.files, job.results, job.output, job.outputs,
+          job.result?.files, job.result?.assets, job.result?.outputs,
+          job.output?.files, job.output?.assets, job.output?.outputs,
+          job.render?.outputs, job.media?.sources
+        ].filter(Array.isArray);
+
+        for (const arr of arrays) {
+          // prefer items with video-ish metadata
+          let hit = arr.find(a => isVideoishMeta(a) && pickFromRecord(a));
+          if (!hit) {
+            hit = arr.find(a => {
+              const s = pickFromRecord(a) || a;
+              return typeof s === 'string' && looksLikeVideoUrl(s);
+            });
+          }
+          if (hit) {
+            const chosen =
+              pickFromRecord(hit) ||
+              hit.url || hit.uri || hit.href || hit.download_url || hit.signed_url || hit.cdn_url || hit.file_url || null;
+            if (chosen) return chosen;
+          }
+        }
+
+        // other common nests
+        if (job.output?.video?.url && isHttpish(job.output.video.url)) return job.output.video.url;
+        if (job.result?.video?.url && isHttpish(job.result.video.url)) return job.result.video.url;
+
+        // full deep scan fallback
+        const deep = deepScanForVideoUrl(job);
+        if (deep) return deep;
+      } catch (_) {}
+      return null;
+    }
+    // --------------------------------------------------------
+
+    const statusRaw = (data.status || data.state || '').toString().toLowerCase();
+    const terminalStatuses = new Set(['completed', 'succeeded', 'ready', 'finished', 'done', 'complete']);
     let video_url = null;
-    if (status === 'completed' || status === 'succeeded') {
-      video_url = deepScanForVideoUrl(data);
+
+    if (terminalStatuses.has(statusRaw)) {
+      video_url = pickVideoUrl(data);
     }
 
     const out = { ...data, ...(video_url ? { video_url } : {}) };
     return { statusCode: 200, headers: JSON_HEADERS, body: JSON.stringify(out) };
   } catch (err) {
-    return { statusCode: 500, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ error: String(err.message || err) }) };
+    return {
+      statusCode: 500,
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ error: String(err?.message || err) })
+    };
   }
 };
