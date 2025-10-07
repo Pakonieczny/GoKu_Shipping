@@ -151,8 +151,9 @@
           if (job.video_url) return job.video_url;
 
           const arrays = [
-            job.assets, job.files, job.results, job.output, job.result?.files,
-            job.result?.assets, job.output?.files, job.output?.assets,
+            job.assets, job.files, job.results, job.output, job.outputs,
+            job.result?.files, job.result?.assets, job.result?.outputs,
+            job.output?.files, job.output?.assets, job.output?.outputs,
             job.render?.outputs, job.media?.sources
           ].filter(Array.isArray);
           for (const arr of arrays) {
@@ -251,14 +252,13 @@
                 $('prog').value = 100;
                 const url = pickVideoUrl(s);
                 if (!url) {
-                  // dump a short preview to help debugging
-                if (!url) {
+                  // Fallback: stream binary via our proxy content endpoint
                   log('No direct URL in JSON — falling back to /content proxy…');
                   const proxy = '/.netlify/functions/soraStatus?id=' + encodeURIComponent(s.id) + '&content=video';
                   $('outVid').src = proxy;
                   $('outVid').hidden = false;
                   $('status').textContent = 'done';
-                  break; // we’re good ✅
+                  break; // ✅
                 }
                 $('outVid').src = url;
                 $('outVid').hidden = false;
