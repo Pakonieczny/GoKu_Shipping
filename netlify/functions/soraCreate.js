@@ -2,7 +2,7 @@
 const fetch = require('node-fetch');
 
 // Proxy -> OpenAI Videos API: POST /v1/videos
-// Body: { prompt, model="sora-2", size="720x1280", seconds=4 }
+// Body: { prompt, model="sora-2", size="720x1280", seconds:"4"|"8"|"12" }
 // Returns: job object { id, status, ... }
 exports.handler = async (event) => {
   try {
@@ -20,12 +20,14 @@ exports.handler = async (event) => {
     let body = {};
     try { body = JSON.parse(event.body || '{}'); } catch { body = {}; }
 
-    const prompt  = (body.prompt || '').trim();
+    const prompt  = (body.prompt ?? '').trim();
     const model   = body.model   || 'sora-2';
-    const size    = body.size    || '720x1280'; // sora-2: 720x1280 or 1280x720 (sora-2-pro may support more)
-    const seconds = Number(body.seconds ?? 4);  // 4, 8, or 12
+    const size    = body.size    || '720x1280';
 
-    // Health-check path: allow a ping without calling OpenAI
+    // IMPORTANT: Seconds must be a STRING: "4" | "8" | "12"
+    const seconds = String(body.seconds ?? '4').trim();
+
+    // Health-check path
     if (prompt === '__ping__') {
       return { statusCode: 200, headers: JSON_HEADERS, body: JSON.stringify({ ok: true, ping: true }) };
     }
@@ -33,8 +35,8 @@ exports.handler = async (event) => {
     if (!prompt) {
       return { statusCode: 400, headers: JSON_HEADERS, body: JSON.stringify({ error: 'Missing "prompt"' }) };
     }
-    if (![4, 8, 12].includes(seconds)) {
-      return { statusCode: 400, headers: JSON_HEADERS, body: JSON.stringify({ error: 'seconds must be 4, 8, or 12' }) };
+    if (!['4', '8', '12'].includes(seconds)) {
+      return { statusCode: 400, headers: JSON_HEADERS, body: JSON.stringify({ error: 'seconds must be "4", "8", or "12"' }) };
     }
 
     const payload = { model, prompt, size, seconds };

@@ -18,7 +18,6 @@ exports.handler = async (event) => {
 
     const id = event.queryStringParameters?.id;
 
-    // Health-check path: friendly 200 OK for ?id=ping
     if (id === 'ping') {
       return { statusCode: 200, headers: JSON_HEADERS, body: JSON.stringify({ ok: true, ping: true }) };
     }
