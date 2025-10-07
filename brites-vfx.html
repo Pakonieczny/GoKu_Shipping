@@ -93,8 +93,41 @@
       function safeJSON(text) { try { return JSON.parse(text); } catch { return { raw: text }; } }
       async function readJSON(resp) { const txt = await resp.text(); return safeJSON(txt); }
 
+      // Deep, cautious search for a video URL
+      function deepScanForVideoUrl(obj) {
+        const seen = new Set();
+        function recur(o) {
+          if (!o || typeof o !== 'object' || seen.has(o)) return null;
+          seen.add(o);
+          // direct fields
+          if (typeof o.video_url === 'string' && /^https?:\/\//.test(o.video_url)) return o.video_url;
+          if (typeof o.url === 'string' && /^https?:\/\//.test(o.url) && /mp4|video/.test((o.mime||'') + ' ' + (o.type||'') + ' ' + (o.kind||'') + ' ' + (o.role||''))) return o.url;
+          if (typeof o.download_url === 'string' && /^https?:\/\//.test(o.download_url)) return o.download_url;
+          if (o.video && typeof o.video.url === 'string') return o.video.url;
+          // arrays / objects
+          for (const k in o) {
+            const v = o[k];
+            if (Array.isArray(v)) {
+              for (const it of v) {
+                const r = recur(it);
+                if (r) return r;
+              }
+            } else if (typeof v === 'object') {
+              const r = recur(v);
+              if (r) return r;
+            }
+          }
+          return null;
+        }
+        return recur(obj);
+      }
+
       function pickVideoUrl(job) {
         try {
+          // 1) prefer normalized field from our function
+          if (job.video_url) return job.video_url;
+
+          // 2) common shapes
           if (job.assets && Array.isArray(job.assets)) {
             const vid = job.assets.find(a =>
               (a.type || a.kind) === 'video' || /mp4|video/.test(a.mime || '') || /video/.test(a.role || '')
@@ -113,6 +146,10 @@
             const firstUrl = job.results.map(o => o?.url || o?.download_url).find(Boolean);
             if (firstUrl) return firstUrl;
           }
+
+          // 3) deep fallback
+          const deep = deepScanForVideoUrl(job);
+          if (deep) return deep;
         } catch {}
         return null;
       }
@@ -134,12 +171,12 @@
         } catch (e) { log('soraCreate ping failed: ' + (e?.message || e)); }
       }
 
-      // NOTE: seconds is passed as a STRING per Sora API requirements.
+      // NOTE: seconds is a STRING per API requirements
       async function createJob() {
         const prompt = $('prompt').value.trim();
         const model = $('model').value;
         const size = $('size').value;
-        const seconds = $('seconds').value; // <-- STRING (e.g., "4")
+        const seconds = $('seconds').value;
 
         const resp = await fetch('/.netlify/functions/soraCreate', {
           method:'POST',
@@ -190,7 +227,12 @@
               if (st === 'completed' || st === 'succeeded') {
                 $('prog').value = 100;
                 const url = pickVideoUrl(s);
-                if (!url) throw new Error('Completed but no video URL found in response.');
+                if (!url) {
+                  // dump a short preview to help debugging
+                  log('No URL found. Keys: ' + Object.keys(s).join(', '));
+                  log('Sample: ' + JSON.stringify(s.assets || s.output || s.result || s.results || {}, null, 2).slice(0, 800));
+                  throw new Error('Completed but no video URL found in response.');
+                }
                 $('outVid').src = url;
                 $('outVid').hidden = false;
                 $('status').textContent = 'done';

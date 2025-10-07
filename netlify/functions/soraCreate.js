@@ -1,4 +1,4 @@
- 'use strict';
+'use strict';
 const fetch = require('node-fetch');
 
 // Proxy -> OpenAI Videos API: POST /v1/videos
