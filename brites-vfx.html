@@ -1,0 +1,238 @@
+<!-- brites-vfx.html — Single-file Sora-2 demo (with on-page error overlay + function pings) -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Sora-2 Demo</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <!-- If there is NO CSP header set by the server, this meta enables inline CSS/JS for this page. -->
+  <meta http-equiv="Content-Security-Policy"
+        content="default-src 'self' data: blob:;
+                 img-src 'self' data: blob: https:;
+                 media-src 'self' blob: https:;
+                 connect-src 'self' https:;
+                 style-src 'self' 'unsafe-inline';
+                 script-src 'self' 'unsafe-inline'">
+  <style>
+    /* Visible, friendly defaults so "white screen" isn't a thing */
+    html, body { margin:0; padding:24px; font-family: system-ui, sans-serif; background:#f7f7f7; color:#111; }
+    h1 { margin:0 0 12px; }
+    label { display:block; margin: 12px 0 4px; }
+    button { padding: 10px 16px; border-radius: 8px; border: 1px solid #ccc; cursor: pointer; background:#fff; }
+    .row { display:flex; gap:12px; align-items:center; flex-wrap:wrap; }
+    .log { margin-top: 12px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; white-space: pre-wrap; background:#fff; border:1px solid #ddd; padding:10px; border-radius:8px; }
+    video { width: 360px; max-width: 100%; margin-top: 16px; border-radius: 8px; background:#000; }
+    progress { width: 320px; height: 10px; }
+    /* Runtime error overlay */
+    #error-overlay{position:fixed;inset:0;background:rgba(255,255,255,.96);color:#b00;z-index:99999;padding:20px;overflow:auto;display:none}
+    #error-overlay h2{margin:0 0 8px}
+    #error-overlay pre{white-space:pre-wrap}
+  </style>
+</head>
+<body>
+  <h1>Sora-2 Quick Test</h1>
+
+  <label for="prompt">Prompt</label>
+  <textarea id="prompt" rows="5" style="width:100%;">A wide shot of gentle ocean waves at sunset, slow dolly forward, soft golden light, subtle ambient surf.</textarea>
+
+  <div class="row">
+    <label for="model">Model
+      <select id="model">
+        <option value="sora-2" selected>sora-2</option>
+        <option value="sora-2-pro">sora-2-pro</option>
+      </select>
+    </label>
+
+    <label for="size">Size
+      <select id="size">
+        <option value="720x1280">720x1280 (vertical)</option>
+        <option value="1280x720">1280x720 (landscape)</option>
+      </select>
+    </label>
+
+    <label for="seconds">Seconds
+      <select id="seconds">
+        <option value="4" selected>4</option>
+        <option value="8">8</option>
+        <option value="12">12</option>
+      </select>
+    </label>
+  </div>
+
+  <div class="row" style="margin-top:12px;">
+    <button id="goBtn" type="button">Generate</button>
+    <progress id="prog" max="100" value="2" hidden></progress>
+    <span id="status" aria-live="polite"></span>
+  </div>
+
+  <pre class="log" id="log" aria-live="polite"></pre>
+  <video id="outVid" controls hidden></video>
+
+  <!-- Error overlay (appears if any runtime error occurs) -->
+  <div id="error-overlay">
+    <h2>Runtime Error</h2>
+    <pre id="err-pre"></pre>
+  </div>
+
+  <script>
+    (function () {
+      // ===== Helpers =====
+      const $ = (id) => document.getElementById(id);
+      const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+
+      function log(x){
+        const el = $('log');
+        el.textContent = (el.textContent ? el.textContent + '\n' : '') + x;
+      }
+
+      function showError(e) {
+        try {
+          const p = $('err-pre');
+          $('error-overlay').style.display = 'block';
+          p.textContent = (typeof e === 'string') ? e : (e?.stack || e?.message || JSON.stringify(e, null, 2));
+        } catch {}
+      }
+      window.addEventListener('error', (ev) => showError(ev.error || ev.message || ev));
+      window.addEventListener('unhandledrejection', (ev) => showError(ev.reason || ev));
+
+      function safeJSON(text) {
+        try { return JSON.parse(text); } catch { return { raw: text }; }
+      }
+
+      async function readJSON(resp) {
+        const txt = await resp.text();
+        return safeJSON(txt);
+      }
+
+      // Broadened URL resolver for different Videos API shapes
+      function pickVideoUrl(job) {
+        try {
+          // Common "assets" array
+          if (job.assets && Array.isArray(job.assets)) {
+            const vid = job.assets.find(a =>
+              (a.type || a.kind) === 'video' ||
+              /mp4|video/.test(a.mime || '') ||
+              /video/.test(a.role || '')
+            );
+            if (vid?.url) return vid.url;
+            if (vid?.download_url) return vid.download_url;
+          }
+          // Direct fields some backends return
+          if (job.video_url) return job.video_url;
+          if (job.output?.video?.url) return job.output.video.url;
+          if (job.result?.video?.url) return job.result.video.url;
+
+          // Flat array outputs
+          if (Array.isArray(job.output)) {
+            const firstUrl = job.output.map(o => o?.url || o?.download_url).find(Boolean);
+            if (firstUrl) return firstUrl;
+          }
+          if (Array.isArray(job.results)) {
+            const firstUrl = job.results.map(o => o?.url || o?.download_url).find(Boolean);
+            if (firstUrl) return firstUrl;
+          }
+        } catch {}
+        return null;
+      }
+
+      // ===== Netlify function pings (surface routing/env issues early) =====
+      async function pingFunctions() {
+        try {
+          const s = await fetch('/.netlify/functions/soraStatus?id=ping', { method: 'GET' });
+          log(`soraStatus ping → ${s.status}`); // 400 is OK (invalid id); 200 also OK. 404/500 → routing/env issue.
+        } catch (e) { log('soraStatus ping failed: ' + (e?.message || e)); }
+
+        try {
+          const c = await fetch('/.netlify/functions/soraCreate', {
+            method: 'POST',
+            headers: {'Content-Type':'application/json'},
+            body: JSON.stringify({ prompt:'' })
+          });
+          const preview = (await c.text()).slice(0, 200);
+          log(`soraCreate ping → ${c.status} ${preview}...`); // Expect 400 Missing "prompt" if reachable.
+        } catch (e) { log('soraCreate ping failed: ' + (e?.message || e)); }
+      }
+
+      // ===== API wrappers =====
+      async function createJob() {
+        const prompt = $('prompt').value.trim();
+        const model = $('model').value;
+        const size = $('size').value;
+        const seconds = Number($('seconds').value);
+
+        const resp = await fetch('/.netlify/functions/soraCreate', {
+          method:'POST',
+          headers:{'Content-Type':'application/json'},
+          body: JSON.stringify({ prompt, model, size, seconds })
+        });
+        const data = await readJSON(resp);
+        if (!resp.ok) throw new Error(JSON.stringify(data));
+        return data; // { id, status, ... }
+      }
+
+      async function getStatus(id) {
+        const resp = await fetch('/.netlify/functions/soraStatus?id=' + encodeURIComponent(id));
+        const data = await readJSON(resp);
+        if (!resp.ok) throw new Error(JSON.stringify(data));
+        return data;
+      }
+
+      // ===== Boot =====
+      document.addEventListener('DOMContentLoaded', async () => {
+        // If some global CSS tries to hide body until JS, make sure we unhide.
+        document.documentElement.style.visibility = 'visible';
+        document.body.style.visibility = 'visible';
+
+        log('Booting… If this stalls here, check the red error overlay or the function pings below.');
+        await pingFunctions();
+
+        $('goBtn').onclick = async () => {
+          $('goBtn').disabled = true;
+          $('outVid').hidden = true;
+          $('prog').hidden = false;
+          $('prog').value = 3;
+          $('status').textContent = 'starting…';
+          $('log').textContent = '';
+
+          try {
+            const job = await createJob();
+            log('created: ' + job.id);
+            $('status').textContent = 'queued';
+            let pct = 5;
+
+            // poll every ~3s until completed/failed
+            while (true) {
+              await sleep(3000);
+              const s = await getStatus(job.id);
+              log(JSON.stringify({ id: s.id, status: s.status }, null, 2));
+              $('status').textContent = s.status || 'processing';
+              $('prog').value = Math.min(95, pct += 7);
+
+              const st = (s.status || '').toLowerCase();
+              if (st === 'completed' || st === 'succeeded') {
+                $('prog').value = 100;
+                const url = pickVideoUrl(s);
+                if (!url) throw new Error('Completed but no video URL found in response.');
+                $('outVid').src = url;
+                $('outVid').hidden = false;
+                $('status').textContent = 'done';
+                break;
+              }
+              if (st === 'failed' || st === 'error') {
+                throw new Error('Generation failed: ' + (s.error?.message || s.status || 'unknown error'));
+              }
+            }
+          } catch (e) {
+            log('ERROR: ' + (e?.message || e));
+            $('status').textContent = 'error';
+            showError(e);
+          } finally {
+            $('prog').hidden = true;
+            $('goBtn').disabled = false;
+          }
+        };
+      });
+    })();
+  </script>
+</body>
+</html>
