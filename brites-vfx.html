@@ -252,11 +252,13 @@
                 const url = pickVideoUrl(s);
                 if (!url) {
                   // dump a short preview to help debugging
-                  log('No URL found. Keys: ' + Object.keys(s).join(', '));
-                  log('Sample: ' + JSON.stringify(s.assets || s.output || s.result || s.results || {}, null, 2).slice(0, 800));
-                  log('No URL found — dumping full payload preview…');
-                  log((JSON.stringify(s, null, 2) || '').slice(0, 12000));
-                  throw new Error('Completed but no video URL found in response.');
+                if (!url) {
+                  log('No direct URL in JSON — falling back to /content proxy…');
+                  const proxy = '/.netlify/functions/soraStatus?id=' + encodeURIComponent(s.id) + '&content=video';
+                  $('outVid').src = proxy;
+                  $('outVid').hidden = false;
+                  $('status').textContent = 'done';
+                  break; // we’re good ✅
                 }
                 $('outVid').src = url;
                 $('outVid').hidden = false;
