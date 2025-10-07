@@ -158,6 +158,12 @@
   status = 200
   force = true
 
+  [[redirects]]
+  from = "https://brites-vfx.goldenspike.app"
+  to = "/brites-vfx.html"
+  status = 200
+  force = true
+
 
 
 
