@@ -122,6 +122,7 @@
       const MAX_INPUT_IMAGES = 1;
       const ACCEPTED_MIME = new Set(['image/jpeg','image/png']);
       const ACCEPTED_EXT = /\.(jpg|jpeg|png)$/i;
+      const REF_FIT_MODE = 'contain';
 
       // PATCH A1 — keep request bodies small by downscaling the reference image client-side
       async function downscaleDataUrl(srcDataUrl, maxW = 1280, maxH = 1280, mime = 'image/jpeg', quality = 0.85) {
@@ -140,6 +141,49 @@
           img.onerror = () => resolve(srcDataUrl);
           img.src = srcDataUrl;
         });
+      }
+
+      // --- parse "WxH" like "720x1280" ---
+      function parseSizeWH(s) {
+        const m = /^(\d+)x(\d+)$/.exec(String(s||'').trim());
+        return m ? { W: parseInt(m[1],10), H: parseInt(m[2],10) } : { W: 0, H: 0 };
+      }
+
+      // --- ensure reference EXACTLY matches requested size (letterbox by default) ---
+      async function ensureRefExactSize(dataUrl, sizeStr, mode = REF_FIT_MODE, bg = '#000') {
+        const { W, H } = parseSizeWH(sizeStr);
+        if (!W || !H || !dataUrl) return dataUrl;
+
+        const img = await new Promise((resolve, reject) => {
+          const im = new Image();
+          im.onload = () => resolve(im);
+          im.onerror = reject;
+          im.src = dataUrl;
+        });
+
+        if (img.naturalWidth === W && img.naturalHeight === H) return dataUrl;
+
+        const c = document.createElement('canvas');
+        c.width = W; c.height = H;
+        const g = c.getContext('2d');
+
+        // Fill background; solid black avoids odd edges in the first video frame.
+        g.fillStyle = bg; g.fillRect(0, 0, W, H);
+
+        const sx = W / img.naturalWidth;
+        const sy = H / img.naturalHeight;
+        const s = (mode === 'cover') ? Math.max(sx, sy) : Math.min(sx, sy); // cover=crop, contain=letterbox
+
+        const drawW = Math.round(img.naturalWidth * s);
+        const drawH = Math.round(img.naturalHeight * s);
+        const dx = Math.round((W - drawW) / 2);
+        const dy = Math.round((H - drawH) / 2);
+
+        g.imageSmoothingQuality = 'high';
+        g.drawImage(img, dx, dy, drawW, drawH);
+
+        // Force PNG; backend will send as multipart with image/png content-type
+        return c.toDataURL('image/png');
       }
 
       // in-memory reference image (at most one)
@@ -376,12 +420,17 @@
         const seconds = $('seconds').value; // string "4" | "8" | "12"
         const mode = $('mode').value;       // "video" | "image"
 
-        // Prepare optional reference payload
-        const input_reference = refImage ? {
-          filename: refImage.name,
-          content_type: refImage.type,
-          data_url: refImage.dataUrl
-        } : null;
+        // Prepare optional reference payload — MUST match selected size to avoid:
+        // "Inpaint image must match the requested width and height"
+        let input_reference = null;
+        if (refImage) {
+          const exactDataUrl = await ensureRefExactSize(refImage.dataUrl, size, REF_FIT_MODE);
+          input_reference = {
+            filename: 'reference.png',
+            content_type: 'image/png',
+            data_url: exactDataUrl
+          };
+        }
 
         const body = { prompt, model, size, seconds, mode, input_reference };
 
