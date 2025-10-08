@@ -1,4 +1,4 @@
-<!-- brites-vfx.html — Single-file Sora-2 demo (with on-page error overlay + function pings) -->
+<!-- brites-vfx.html — Sora-2 demo with reference-image drag/drop + image/video toggle -->
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -20,10 +20,32 @@
     .row { display:flex; gap:12px; align-items:center; flex-wrap:wrap; }
     .log { margin-top: 12px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; white-space: pre-wrap; background:#fff; border:1px solid #ddd; padding:10px; border-radius:8px; }
     video { width: 360px; max-width: 100%; margin-top: 16px; border-radius: 8px; background:#000; }
+    img.thumb { width: 96px; height: 96px; object-fit: cover; border-radius: 8px; border:1px solid #ddd; background:#fff; }
     progress { width: 320px; height: 10px; }
     #error-overlay{position:fixed;inset:0;background:rgba(255,255,255,.96);color:#b00;z-index:99999;padding:20px;overflow:auto;display:none}
     #error-overlay h2{margin:0 0 8px}
     #error-overlay pre{white-space:pre-wrap}
+
+    /* Drag & drop panel */
+    .dropzone {
+      border: 2px dashed #9aa7b2;
+      border-radius: 10px;
+      background: #fefefe;
+      padding: 16px;
+      min-height: 120px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      text-align: center;
+      color: #5a6772;
+      transition: background .15s, border-color .15s;
+      cursor: pointer;
+    }
+    .dropzone.dragover { background:#eef6ff; border-color:#4b9cff; color:#234; }
+    .muted { color:#666; font-size: 12px; }
+    #refThumbs { display:flex; gap:10px; margin-top:10px; align-items:center; flex-wrap:wrap; }
+    #outImgs { display:flex; gap:12px; flex-wrap:wrap; margin-top: 12px; }
+    .chip { padding:4px 8px; border:1px solid #ddd; border-radius: 999px; background:#fff; font-size:12px; }
   </style>
 </head>
 <body>
@@ -33,28 +55,47 @@
   <textarea id="prompt" rows="5" style="width:100%;">A wide shot of gentle ocean waves at sunset, slow dolly forward, soft golden light, subtle ambient surf.</textarea>
 
   <div class="row">
-    <label for="model">Model
+    <label for="mode">Mode
+      <select id="mode">
+        <option value="video" selected>Video (Sora)</option>
+        <option value="image">Image (gpt-image-1)</option>
+      </select>
+    </label>
+
+    <label for="model">Model / Quality
       <select id="model">
-        <option value="sora-2" selected>sora-2</option>
-        <option value="sora-2-pro">sora-2-pro</option>
+        <option value="sora-2" selected>sora-2 (Standard)</option>
+        <option value="sora-2-pro">sora-2-pro (Pro)</option>
       </select>
     </label>
 
     <label for="size">Size
       <select id="size">
+        <!-- options are dynamically managed based on model -->
         <option value="720x1280">720x1280 (vertical)</option>
         <option value="1280x720">1280x720 (landscape)</option>
       </select>
     </label>
 
-    <label for="seconds">Seconds
+    <label for="seconds" id="secondsLabel">Seconds
       <select id="seconds">
         <option value="4" selected>4</option>
         <option value="8">8</option>
         <option value="12">12</option>
       </select>
     </label>
+
+    <span class="chip" id="capsNote" aria-live="polite" title="Constraints from Sora docs">Sora: 1 ref image • seconds must be “4/8/12”</span>
   </div>
+
+  <!-- Reference image uploader (drag & drop, jpg/png only) -->
+  <label>Reference image (optional)</label>
+  <div id="dropZone" class="dropzone" role="button" tabindex="0" aria-label="Drop a JPG/PNG here or click to choose">
+    Drop one JPG/PNG here (or click)
+  </div>
+  <input id="refInput" type="file" accept=".jpg,.jpeg,.png,image/jpeg,image/png" hidden />
+  <div id="refThumbs" aria-live="polite"></div>
+  <div class="muted">Tip: Sora uses the reference as the first frame; match your chosen size/aspect. (We restrict to JPG/PNG here.)</div>
 
   <div class="row" style="margin-top:12px;">
     <button id="goBtn" type="button">Generate</button>
@@ -64,6 +105,7 @@
 
   <pre class="log" id="log" aria-live="polite"></pre>
   <video id="outVid" controls hidden></video>
+  <div id="outImgs" hidden></div>
 
   <div id="error-overlay">
     <h2>Runtime Error</h2>
@@ -74,6 +116,15 @@
     (function () {
       const $ = (id) => document.getElementById(id);
       const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+
+      // ---- New constants for reference images ----
+      // Sora 2 docs describe a single input_reference image; enforce 1 on the UI.
+      const MAX_INPUT_IMAGES = 1;
+      const ACCEPTED_MIME = new Set(['image/jpeg','image/png']);
+      const ACCEPTED_EXT = /\.(jpg|jpeg|png)$/i;
+
+      // in-memory reference image (at most one)
+      let refImage = null; // { name, type, dataUrl, width, height }
 
       function log(x){
         const el = $('log');
@@ -111,7 +162,7 @@
             o?.url, o?.uri, o?.href, o?.file_url, o?.source, o?.src
           ];
           for (const c of cand) {
-            if (isHttpish(c) && (looksLikeVideoUrl(c) || isVideoishMeta(o))) return c;
+            if (typeof c === 'string' && (looksLikeVideoUrl(c) || isVideoishMeta(o))) return c;
           }
           if (typeof o?.video === 'string' && isHttpish(o.video)) return o.video;
           if (o?.video && isHttpish(o.video.url)) return o.video.url;
@@ -195,17 +246,128 @@
         } catch (e) { log('soraCreate ping failed: ' + (e?.message || e)); }
       }
 
+      // Dynamically adjust supported sizes by model (per Sora docs)
+      function refreshSizeOptions() {
+        const model = $('model').value;
+        const sizeSel = $('size');
+        const prev = sizeSel.value;
+        sizeSel.innerHTML = '';
+
+        // sora-2 supports 1280x720 and 720x1280; sora-2-pro also supports 1024x1792 and 1792x1024
+        const sizes = (model === 'sora-2-pro')
+          ? ['720x1280','1280x720','1024x1792','1792x1024']
+          : ['720x1280','1280x720'];
+
+        for (const s of sizes) {
+          const opt = document.createElement('option');
+          opt.value = s;
+          opt.textContent = s + (s === '720x1280' ? ' (vertical)'
+                               : s === '1280x720' ? ' (landscape)'
+                               : (s === '1024x1792' || s === '1792x1024') ? ' (tall/pro)' : '');
+          sizeSel.appendChild(opt);
+        }
+        if (sizes.includes(prev)) sizeSel.value = prev;
+      }
+
+      // ---- Reference image handling ----
+      function clearRef() {
+        refImage = null;
+        $('refThumbs').innerHTML = '';
+      }
+
+      async function fileToDataUrl(file) {
+        return new Promise((resolve, reject) => {
+          const fr = new FileReader();
+          fr.onerror = () => reject(fr.error);
+          fr.onload = () => resolve(fr.result);
+          fr.readAsDataURL(file);
+        });
+      }
+
+      async function acceptFiles(list) {
+        const arr = Array.from(list || []);
+        // filter by extension & mime
+        const valid = arr.filter(f => ACCEPTED_MIME.has(f.type) || ACCEPTED_EXT.test(f.name || ''));
+        if (!valid.length) {
+          log('No valid JPG/PNG files detected.');
+          return;
+        }
+        if (valid.length > MAX_INPUT_IMAGES) {
+          log(`Only ${MAX_INPUT_IMAGES} reference image supported by Sora; extra files ignored.`);
+        }
+        const file = valid[0]; // enforce 1
+        const dataUrl = await fileToDataUrl(file);
+
+        // Probe intrinsic size
+        const img = new Image();
+        const dims = await new Promise((res) => {
+          img.onload = () => res({ w: img.naturalWidth, h: img.naturalHeight });
+          img.onerror = () => res({ w: 0, h: 0 });
+          img.src = dataUrl;
+        });
+
+        refImage = { name: file.name, type: file.type, dataUrl, width: dims.w, height: dims.h };
+        renderThumbs();
+      }
+
+      function renderThumbs() {
+        const box = $('refThumbs');
+        box.innerHTML = '';
+        if (!refImage) return;
+        const img = document.createElement('img');
+        img.src = refImage.dataUrl;
+        img.className = 'thumb';
+        img.alt = 'reference';
+        const rm = document.createElement('button');
+        rm.textContent = 'Remove';
+        rm.type = 'button';
+        rm.onclick = clearRef;
+        box.appendChild(img);
+        box.appendChild(rm);
+      }
+
+      function wireDropzone() {
+        const dz = $('dropZone');
+        const fi = $('refInput');
+
+        dz.addEventListener('click', () => fi.click());
+        dz.addEventListener('keydown', (e) => {
+          if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); fi.click(); }
+        });
+        fi.addEventListener('change', (e) => acceptFiles(e.target.files));
+
+        const prevent = (e) => { e.preventDefault(); e.stopPropagation(); };
+        ['dragenter','dragover','dragleave','drop'].forEach(ev => dz.addEventListener(ev, prevent));
+        dz.addEventListener('dragover', () => dz.classList.add('dragover'));
+        dz.addEventListener('dragleave', () => dz.classList.remove('dragover'));
+        dz.addEventListener('drop', async (e) => {
+          dz.classList.remove('dragover');
+          await acceptFiles(e.dataTransfer.files);
+        });
+      }
+
+      // ---- API calls ----
       // NOTE: seconds is a STRING per API requirements
       async function createJob() {
         const prompt = $('prompt').value.trim();
         const model = $('model').value;
         const size = $('size').value;
-        const seconds = $('seconds').value;
+        const seconds = $('seconds').value; // string "4" | "8" | "12"
+        const mode = $('mode').value;       // "video" | "image"
+
+        // Prepare optional reference payload
+        const input_reference = refImage ? {
+          filename: refImage.name,
+          content_type: refImage.type,
+          data_url: refImage.dataUrl
+        } : null;
+
+        const body = { prompt, model, size, seconds, mode, input_reference };
 
         const resp = await fetch('/.netlify/functions/soraCreate', {
           method:'POST',
           headers:{'Content-Type':'application/json'},
-          body: JSON.stringify({ prompt, model, size, seconds })
+          body: JSON.stringify(body)
         });
         const data = await readJSON(resp);
         if (!resp.ok) throw new Error(JSON.stringify(data));
@@ -219,6 +381,14 @@
         return data;
       }
 
+      function setModeUI() {
+        const mode = $('mode').value;
+        const isVideo = (mode === 'video');
+        $('secondsLabel').style.display = isVideo ? '' : 'none';
+        $('outVid').hidden = true;
+        $('outImgs').hidden = true;
+      }
+
       document.addEventListener('DOMContentLoaded', async () => {
         document.documentElement.style.visibility = 'visible';
         document.body.style.visibility = 'visible';
@@ -226,20 +396,48 @@
         log('Booting… If this stalls here, check the red error overlay or the function pings below.');
         await pingFunctions();
 
+        // wire UI
+        wireDropzone();
+        refreshSizeOptions();
+        $('model').addEventListener('change', refreshSizeOptions);
+        $('mode').addEventListener('change', setModeUI);
+        setModeUI();
+
         $('goBtn').onclick = async () => {
           $('goBtn').disabled = true;
           $('outVid').hidden = true;
+          $('outImgs').hidden = true;
           $('prog').hidden = false;
           $('prog').value = 3;
           $('status').textContent = 'starting…';
           $('log').textContent = '';
 
           try {
+            const isVideo = ($('mode').value === 'video');
             const job = await createJob();
-            log('created: ' + job.id);
+            log('created: ' + (job.id || '(no id)'));
             $('status').textContent = 'queued';
             let pct = 5;
 
+            // If the backend returns immediate image URLs for mode=image, render and return.
+            if (!isVideo && (Array.isArray(job.images) || job.image_url)) {
+              const urls = job.images || [job.image_url];
+              const wrap = $('outImgs');
+              wrap.innerHTML = '';
+              for (const u of urls) {
+                const im = document.createElement('img');
+                im.src = u;
+                im.className = 'thumb';
+                im.alt = 'generated';
+                wrap.appendChild(im);
+              }
+              $('outImgs').hidden = false;
+              $('status').textContent = 'done';
+              $('prog').hidden = true;
+              return;
+            }
+
+            // Otherwise, poll (video jobs and image jobs that return a job id)
             while (true) {
               await sleep(3000);
               const s = await getStatus(job.id);
@@ -250,15 +448,43 @@
               const st = (s.status || '').toLowerCase();
               if (st === 'completed' || st === 'succeeded') {
                 $('prog').value = 100;
+
+                if ($('mode').value === 'image') {
+                  // Expect images array or a proxied content stream
+                  const wrap = $('outImgs');
+                  wrap.innerHTML = '';
+                  if (Array.isArray(s.images)) {
+                    for (const u of s.images) {
+                      const im = document.createElement('img');
+                      im.src = u;
+                      im.className = 'thumb';
+                      im.alt = 'generated';
+                      wrap.appendChild(im);
+                    }
+                    $('outImgs').hidden = false;
+                  } else {
+                    // Fallback to content proxy if backend supports it
+                    const proxy = '/.netlify/functions/soraStatus?id=' + encodeURIComponent(s.id) + '&content=image';
+                    const im = document.createElement('img');
+                    im.src = proxy;
+                    im.className = 'thumb';
+                    im.alt = 'generated';
+                    wrap.appendChild(im);
+                    $('outImgs').hidden = false;
+                  }
+                  $('status').textContent = 'done';
+                  break;
+                }
+
+                // video mode
                 const url = pickVideoUrl(s);
                 if (!url) {
-                  // Fallback: stream binary via our proxy content endpoint
                   log('No direct URL in JSON — falling back to /content proxy…');
                   const proxy = '/.netlify/functions/soraStatus?id=' + encodeURIComponent(s.id) + '&content=video';
                   $('outVid').src = proxy;
                   $('outVid').hidden = false;
                   $('status').textContent = 'done';
-                  break; // ✅
+                  break;
                 }
                 $('outVid').src = url;
                 $('outVid').hidden = false;
