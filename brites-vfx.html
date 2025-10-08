@@ -123,6 +123,25 @@
       const ACCEPTED_MIME = new Set(['image/jpeg','image/png']);
       const ACCEPTED_EXT = /\.(jpg|jpeg|png)$/i;
 
+      // PATCH A1 — keep request bodies small by downscaling the reference image client-side
+      async function downscaleDataUrl(srcDataUrl, maxW = 1280, maxH = 1280, mime = 'image/jpeg', quality = 0.85) {
+        return new Promise((resolve) => {
+          const img = new Image();
+          img.onload = () => {
+            let w = img.naturalWidth, h = img.naturalHeight;
+            const scale = Math.min(1, maxW / w, maxH / h);
+            if (scale < 1) { w = Math.round(w * scale); h = Math.round(h * scale); }
+            const c = document.createElement('canvas');
+            c.width = w; c.height = h;
+            const g = c.getContext('2d');
+            g.drawImage(img, 0, 0, w, h);
+            try { resolve(c.toDataURL(mime, quality)); } catch { resolve(srcDataUrl); }
+          };
+          img.onerror = () => resolve(srcDataUrl);
+          img.src = srcDataUrl;
+        });
+      }
+
       // in-memory reference image (at most one)
       let refImage = null; // { name, type, dataUrl, width, height }
 
@@ -296,7 +315,9 @@
           log(`Only ${MAX_INPUT_IMAGES} reference image supported by Sora; extra files ignored.`);
         }
         const file = valid[0]; // enforce 1
-        const dataUrl = await fileToDataUrl(file);
+        // Read original, then downscale to keep payload well under common function limits
+        const dataUrlOrig = await fileToDataUrl(file);
+        const dataUrl = await downscaleDataUrl(dataUrlOrig, 1280, 1280, 'image/jpeg', 0.85);
 
         // Probe intrinsic size
         const img = new Image();
@@ -369,9 +390,18 @@
           headers:{'Content-Type':'application/json'},
           body: JSON.stringify(body)
         });
-        const data = await readJSON(resp);
-        if (!resp.ok) throw new Error(JSON.stringify(data));
-        return data;
+        const nfId =
+          resp.headers.get('x-nf-request-id') ||
+          resp.headers.get('x-request-id') ||
+          resp.headers.get('x-amzn-requestid') ||
+          null;
+        const txt = await resp.text();
+        const parsed = safeJSON(txt);
+        if (!resp.ok) {
+          parsed.http = { status: resp.status, statusText: resp.statusText, requestId: nfId };
+          throw new Error(JSON.stringify(parsed));
+        }
+        return parsed;
       }
 
       async function getStatus(id) {
