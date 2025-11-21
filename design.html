@@ -1,4 +1,18 @@
-;
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8" />
+  <title>Sorting - Single-Click Zoom</title>
+  <!-- Materialize CSS -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/materialize/1.0.0/css/materialize.min.css" />
+  <style>
+    body {
+      background-color: #fff;
+      margin: 0;
+      height: 100vh;
+      position: relative;
+      opacity: 0;
+      transition: opacity 0s;
     }
     /* Main Buttons */
     #connectEtsyBtn, 
@@ -1692,7 +1706,7 @@ async function ensureFreshToken(){
       const qs = new URLSearchParams({
         code,
         code_verifier: v,
-        redirect_domain: "design-1"   // ⬅️ match shipping-1 behavior
+        redirect_domain: "design"   // ⬅️ match shipping-1 behavior
       });
       window.location.href = "/.netlify/functions/exchangeToken?" + qs.toString();
       return;
@@ -1739,7 +1753,7 @@ async function generateCodeChallenge(codeVerifier) {
      const codeChallenge = await generateCodeChallenge(codeVerifier);
  
      const CLIENT_ID   = "k75zdspz4r99txpqdji7i2em";
-     const redirectUri = "https://design-1.goldenspike.app";
+     const redirectUri = "https://design.goldenspike.app";
      const scope       = "listings_w listings_r transactions_r transactions_w";
      const state       = `reconnect_${Date.now()}_${reason}`;
  
@@ -1946,7 +1960,7 @@ const selectRow = async (row) => {
     if(!rid) return;                      // safety
 
     /* — mark as completed — */
-    completedOrders.add(rid);             // global Set   [oai_citation:2‡design-1.html](file-service://file-UD87qPNcvFGdsBetdyBDoA)
+    completedOrders.add(rid);             // global Set   [oai_citation:2‡design.html](file-service://file-UD87qPNcvFGdsBetdyBDoA)
     selectedOrders.delete(rid);
 
     /* remove/hide UI elements */
@@ -1969,7 +1983,7 @@ const selectRow = async (row) => {
       localStorage.setItem("etsy_code_verifier", codeVerifier);
       const codeChallenge = await generateCodeChallenge(codeVerifier);
       const CLIENT_ID = "k75zdspz4r99txpqdji7i2em";
-      const redirectUri = "https://design-1.goldenspike.app";
+      const redirectUri = "https://design.goldenspike.app";
       const state = "randomState123";
       const scope = "listings_w listings_r transactions_r transactions_w";
       const etsyAuthUrl =
@@ -2544,12 +2558,23 @@ const selectRow = async (row) => {
      return `B36|${metal}|`+b36.join(".");
    }
 
-    // helper: split an array into chunks (default 50)
-    function chunk(arr, size = 50){
-      const out = [];
-      for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size));
-      return out;
-    }
+   // NEW: split into variable-sized slices so QR payload stays under a safe limit
+   // Uses encodeOrderList(slice, metal) length as a proxy for capacity.
+   function safeChunks(arr, metal, maxChars = 1000, startSize = 50, minSize = 8){
+     const out = [];
+     let i = 0, size = startSize;
+     while (i < arr.length){
+       let slice = arr.slice(i, i + size);
+       let payload = encodeOrderList(slice, metal);
+       if (payload.length > maxChars && size > minSize){
+         size = Math.max(minSize, Math.floor(size * 0.75)); // shrink & retry
+         continue;
+       }
+       out.push(slice);
+       i += slice.length;
+     }
+     return out;
+   }
 
     function showQrPreviewModal(lists){
       const skipped = window._qrSkippedOrders || [];
@@ -2559,7 +2584,7 @@ const selectRow = async (row) => {
       Object.entries(lists).forEach(([m, arr]) => {
         if (!arr.length) return;
 
-        const pieces = chunk(arr, 50);                 // ← SPLIT into ≤50 each
+        const pieces = safeChunks(arr, m, 1000, 50, 8); // ← adaptive ≤1000 chars
         pieces.forEach((slice, idx) => {
           const holder = document.createElement("div");
           holder.style.cssText = "width:120px;text-align:center";
@@ -2574,12 +2599,22 @@ const selectRow = async (row) => {
             <div style="font-size:.8em;margin-top:4px;">${label}</div>`;
           grid.appendChild(holder);
 
-          new QRCode(holder.firstElementChild, {
-            text: encodeOrderList(slice, m),           // ← PER-SLICE payload
-            width: 110,
-            height: 110,
-            correctLevel: QRCode.CorrectLevel.H
-          });
+          try{
+            new QRCode(holder.firstElementChild, {
+              text: encodeOrderList(slice, m),         // ← PER-SLICE payload
+              width: 110,
+              height: 110,
+              correctLevel: QRCode.CorrectLevel.M      // more capacity than H
+            });
+          }catch(e){
+            console.warn("QR overflow at preview, retry with ECC=L:", e.message);
+            new QRCode(holder.firstElementChild, {
+              text: encodeOrderList(slice, m),
+              width: 110,
+              height: 110,
+              correctLevel: QRCode.CorrectLevel.L      // last-resort
+            });
+          }
         });
       });
 
@@ -2710,16 +2745,11 @@ const selectRow = async (row) => {
       }
  
      printDialogOpened = true;                // mark pending-print
-     // Build chunked jobs so the print page renders split QRs (≤50 per)
-     const __chunk = (arr, size = 50) => {
-       const out = [];
-       for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size));
-       return out;
-     };
      const metalOrderJobs = [];
      Object.entries(lists).forEach(([metal, ids]) => {
        if (!Array.isArray(ids) || !ids.length) return;
-       const parts = __chunk(ids, 50);
+      // Keep each QR payload comfortably under capacity for grcode.min.js too
+      const parts = safeChunks(ids, metal, 1000, 50, 8);
        parts.forEach((slice, idx) => {
          metalOrderJobs.push({
            metal,
@@ -2736,9 +2766,9 @@ const selectRow = async (row) => {
      /* ── 2. spawn hidden iframe *then* open system print dialog ── */
      const f = document.createElement("iframe");
      f.style.cssText="position:fixed;visibility:hidden;right:9999px;width:1px;height:1px;";
-     f.src = "design-print-1.html";
+     f.src = "design-print.html";
 
-     // print is now triggered inside design-print-1.html
+     // print is now triggered inside design-print.html
      document.body.appendChild(f);
    }
    document.addEventListener("DOMContentLoaded",()=>{
