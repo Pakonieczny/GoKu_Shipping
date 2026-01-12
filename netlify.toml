@@ -164,8 +164,11 @@
   status = 200
   force = true
 
-
-
+  [[redirects]]
+  from = "https://listing-generator-1.goldenspike.app"
+  to = "/listing_generator_1.html"
+  status = 200
+  force = true
 
 
 
