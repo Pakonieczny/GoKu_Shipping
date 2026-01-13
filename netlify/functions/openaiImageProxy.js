@@ -98,7 +98,7 @@ exports.handler = async (event) => {
     const mode = pickMode(body);
     const model = String(body.model || process.env.OPENAI_IMAGE_MODEL || "gpt-image-1.5");
     const prompt = String(body.prompt || "");
-    const size = String(body.size || "1024x1024");
+    const size = String(body.size || "2048x2048");
     const n = clampInt(body.n, 1, 8, 1);
 
     // If you keep seeing timeouts, reduce size to 512x512 from the client
