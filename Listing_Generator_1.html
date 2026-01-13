@@ -396,33 +396,21 @@ No warped metal, no melted links, no extra jewelry.`;
       return new Blob([bytes], { type: mime });
     }
 
-    async function callOpenAIImageEdits({ model, prompt, input_image }){
-      const resp = await fetch("/.netlify/functions/openaiImageProxy", {
+    const JOBS_COLL = "ListingGenerator1Jobs";
+
+    async function enqueueOpenAIImageJob(payload){
+      // Background function: returns fast; work continues server-side.
+      const resp = await fetch("/.netlify/functions/openaiImageProxy-background", {
         method: "POST",
         headers: { "Content-Type":"application/json" },
-        body: JSON.stringify({
-          kind: "edits",
-          model,
-          prompt,
-          input_image
-        })
+        body: JSON.stringify(payload)
       });
 
-      const raw = await resp.text();              // <-- never assume JSON
-      let data = null;
-      try { data = raw ? JSON.parse(raw) : null; } catch (_) {}
-
+      // Background functions respond immediately; we only need a 2xx here.
       if (!resp.ok) {
-        const msg =
-          data?.error?.message ||
-          data?.message ||
-          raw ||
-          `openaiImageProxy failed with HTTP ${resp.status} (empty body)`;
-        throw new Error(msg);
+        const raw = await resp.text().catch(()=> "");
+        throw new Error(raw || `openaiImageProxy-background HTTP ${resp.status}`);
       }
-
-      if (!data) throw new Error("openaiImageProxy returned 200 but empty body");
-      return data;
     }
 
     function buildPrompt(base, traits){
@@ -446,61 +434,67 @@ No warped metal, no melted links, no extra jewelry.`;
       slot.prompt = fullPrompt;
       renderTraits(slot.traits);
 
-      // progress “feel” while waiting for API
-      setBar(i, 2);
-      setMeta(i, "Generating…");
-      let fake = 2;
-      const timer = setInterval(()=>{ fake = Math.min(90, fake + (Math.random()*6)); setBar(i, fake); }, 220);
-
       const model = modelEl.value;
       const runId = `lg1_${Date.now()}_${Math.random().toString(16).slice(2)}`;
+      const jobId = `${runId}_slot_${i+1}`;
+
+      // realtime progress via Firestore job doc
+      setBar(i, 5);
+      setMeta(i, "Queued…");
+
+      const jobRef = window.db.collection(JOBS_COLL).doc(jobId);
+      let unsub = null;
 
       try {
-        const out = await callOpenAIImageEdits({ model, prompt: fullPrompt, input_image: referenceDataUrl });
-
-        // OpenAI Images API returns base64 in data[].b64_json (per docs)  [oai_citation:17‡OpenAI Platform](https://platform.openai.com/docs/api-reference/images?utm_source=chatgpt.com)
-        const b64 = out?.data?.[0]?.b64_json;
-        if (!b64) throw new Error("No b64_json returned");
-
-        const imgUrl = `data:image/png;base64,${b64}`;
-        slot.imageDataUrl = imgUrl;
-        setSlotPreview(i, imgUrl);
-
-        clearInterval(timer);
-        setBar(i, 94);
-        setMeta(i, "Uploading to Firebase…");
-
-        // Upload
-        const blob = b64ToBlob(b64, "image/png");
-        const file = new File([blob], `slot_${i+1}.png`, { type:"image/png" });
-        const storagePath = `listing-generator-1/generated/${runId}/slot_${i+1}.png`;
-
-        const dl = await uploadWithProgress(storagePath, file, (p)=>{
-          // map upload progress into 94–100
-          setBar(i, 94 + Math.floor(p*6));
+      // Start listening BEFORE enqueue so we never miss the first write.
+        unsub = jobRef.onSnapshot((snap)=>{
+          if (!snap.exists) return;
+          const j = snap.data() || {};
+          if (j.status === "running") {
+            const pct =
+              j.stage === "calling_openai" ? 35 :
+              j.stage === "uploading" ? 80 :
+              25;
+            setBar(i, pct);
+            setMeta(i, j.stage === "uploading" ? "Uploading…" : "Generating…");
+          }
+          if (j.status === "done") {
+            if (j.downloadURL) {
+              slot.uploadUrl = j.downloadURL;
+              slot.imageDataUrl = j.downloadURL; // show final
+              setSlotPreview(i, j.downloadURL);
+            }
+            setBar(i, 100);
+            setMeta(i, `Done: ${j.storagePath || ""}`);
+            if (unsub) unsub();
+          }
+          if (j.status === "error") {
+            setBar(i, 0);
+            setMeta(i, `Error: ${j?.error?.message || "Unknown error"}`);
+            if (unsub) unsub();
+          }
         });
 
-        slot.uploadUrl = dl;
-        setMeta(i, `Uploaded: ${storagePath}`);
-
-        // Firestore record for your “other app” to fetch in realtime
-        await window.db.collection("ListingGenerator1Images").add({
+        // Enqueue the job (fast response; avoids 504 inactivity timeouts)
+        await enqueueOpenAIImageJob({
+          jobId,
           runId,
           slotIndex: i,
-          createdAt: new Date(),
-          storagePath,
-          downloadURL: dl,
+          kind: "edits",
           model,
           prompt: fullPrompt,
+          input_image: referenceDataUrl,
+          // speed defaults: smaller + low quality = much faster. (Docs support size/quality) 
+          size: "1024x1024",
+          quality: "High",
+          output_format: "png",
           traits: slot.traits
         });
-
-        setBar(i, 100);
       } catch (e){
-        clearInterval(timer);
         setBar(i, 0);
         setMeta(i, `Error: ${e.message}`);
         console.error(e);
+        if (unsub) unsub();
       }
     }
 
