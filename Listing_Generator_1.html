@@ -222,14 +222,66 @@ No warped metal, no melted links, no extra jewelry.`;
       attachZoomPan(box);
     }
 
-    async function fileToDataUrl(file){
-      return await new Promise((res, rej) => {
-        const r = new FileReader();
-        r.onload = () => res(r.result);
-        r.onerror = rej;
-        r.readAsDataURL(file);
+  async function fileToDataUrl(file, opts = {}){
+    const {
+      maxDim = 1536,         // keep detail, shrink payload
+      mime = "image/jpeg",   // much smaller than png
+      quality = 0.92
+    } = opts;
+
+    // Modern path
+    try {
+      const bmp = await createImageBitmap(file);
+      const w = bmp.width, h = bmp.height;
+      const scale = Math.min(1, maxDim / Math.max(w, h));
+      const tw = Math.max(1, Math.round(w * scale));
+      const th = Math.max(1, Math.round(h * scale));
+
+      const canvas = document.createElement("canvas");
+      canvas.width = tw;
+      canvas.height = th;
+
+      const ctx = canvas.getContext("2d", { alpha: false });
+      ctx.imageSmoothingEnabled = true;
+      ctx.imageSmoothingQuality = "high";
+      ctx.drawImage(bmp, 0, 0, tw, th);
+
+      // Important: toDataURL on jpeg dramatically reduces size
+      return canvas.toDataURL(mime, quality);
+    } catch (_) {
+      // Fallback: FileReader -> Image -> canvas
+      const dataUrl = await new Promise((resolve, reject)=>{
+        const reader = new FileReader();
+        reader.onload = ()=> resolve(reader.result);
+        reader.onerror = reject;
+        reader.readAsDataURL(file);
       });
+
+      const img = await new Promise((resolve, reject)=>{
+        const i = new Image();
+        i.onload = ()=> resolve(i);
+        i.onerror = reject;
+        i.src = dataUrl;
+      });
+
+      const w = img.naturalWidth || img.width;
+      const h = img.naturalHeight || img.height;
+      const scale = Math.min(1, maxDim / Math.max(w, h));
+      const tw = Math.max(1, Math.round(w * scale));
+      const th = Math.max(1, Math.round(h * scale));
+
+      const canvas = document.createElement("canvas");
+      canvas.width = tw;
+      canvas.height = th;
+
+      const ctx = canvas.getContext("2d", { alpha: false });
+      ctx.imageSmoothingEnabled = true;
+      ctx.imageSmoothingQuality = "high";
+      ctx.drawImage(img, 0, 0, tw, th);
+
+      return canvas.toDataURL(mime, quality);
     }
+  }
 
     // Drag/drop
     dropEl.addEventListener("dragover", (e)=>{ e.preventDefault(); dropEl.style.borderColor="#2b6cff"; });
@@ -345,20 +397,31 @@ No warped metal, no melted links, no extra jewelry.`;
     }
 
     async function callOpenAIImageEdits({ model, prompt, input_image }){
-      const resp = await fetch(`${functionsBaseUrl}/openaiImageProxy`, {
+      const resp = await fetch("/.netlify/functions/openaiImageProxy", {
         method: "POST",
         headers: { "Content-Type":"application/json" },
         body: JSON.stringify({
-          mode: "edits",
+          kind: "edits",
           model,
           prompt,
-          size: "1024x1024",
-          n: 1,
           input_image
         })
       });
-      const data = await resp.json();
-      if (!resp.ok) throw new Error(JSON.stringify(data?.error || data));
+
+      const raw = await resp.text();              // <-- never assume JSON
+      let data = null;
+      try { data = raw ? JSON.parse(raw) : null; } catch (_) {}
+
+      if (!resp.ok) {
+        const msg =
+          data?.error?.message ||
+          data?.message ||
+          raw ||
+          `openaiImageProxy failed with HTTP ${resp.status} (empty body)`;
+        throw new Error(msg);
+      }
+
+      if (!data) throw new Error("openaiImageProxy returned 200 but empty body");
       return data;
     }
 
