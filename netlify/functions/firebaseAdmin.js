@@ -14,9 +14,24 @@ const serviceAccount = {
   universe_domain: process.env.FIREBASE_UNIVERSE_DOMAIN
 };
 
+function normalizeBucketName(value) {
+  const s = String(value || "").trim();
+  if (!s) return "";
+  // Accept common formats: "bucket-name", "gs://bucket-name", "https://storage.googleapis.com/bucket-name/..."
+  return s
+    .replace(/^gs:\/\//i, "")
+    .replace(/^https?:\/\/storage\.googleapis\.com\//i, "")
+    .replace(/\/.+$/, ""); // strip any path after the bucket
+}
+
+const DEFAULT_BUCKET =
+  normalizeBucketName(process.env.FIREBASE_STORAGE_BUCKET) ||
+  "gokudatabase.firebasestorage.app"; 
+
 if (!admin.apps.length) {
   admin.initializeApp({
-    credential: admin.credential.cert(serviceAccount)
+    credential: admin.credential.cert(serviceAccount),
+    storageBucket: DEFAULT_BUCKET
   });
 }
 
@@ -24,7 +39,7 @@ if (!admin.apps.length) {
 if (!process.env.CORS_SET) {
   const { Storage } = require("@google-cloud/storage");
   new Storage({ credentials: serviceAccount })
-    .bucket("gokudatabase.firebasestorage.app")
+    .bucket(DEFAULT_BUCKET)
     .setCorsConfiguration([{
       origin        : [
         "https://shipping-1.goldenspike.app",
