@@ -1,24 +1,22 @@
-// netlify/functions/openaiImageProxy.js (NEW + RESILIENT)
+// netlify/functions/openaiImageProxy.js (Listing-Generator-1)
 //
-// Purpose:
-// - Proxy OpenAI Images API safely from the browser (keeps OPENAI_API_KEY server-side)
-// - Robust error handling (never crashes on empty/non-JSON bodies)
+// Goals:
+// - Proxy OpenAI Images API from Netlify (keep API key server-side)
+// - Never assume JSON (handle empty bodies + HTML error pages)
+// - Add upstream timeout (so YOU get a clean error instead of a long hang/504)
 // - Supports:
-//    1) kind/mode: "generations"  -> POST https://api.openai.com/v1/images/generations (JSON)
-//    2) kind/mode: "edits"        -> POST https://api.openai.com/v1/images/edits (multipart)
+//    kind/mode: "generations" -> POST https://api.openai.com/v1/images/generations (JSON)
+//    kind/mode: "edits"       -> POST https://api.openai.com/v1/images/edits (multipart)
 //
-// Expected browser payload (your UI can send either "kind" or "mode"):
+// Browser payload example:
 // {
-//   kind: "edits" | "generations",
-//   model: "gpt-image-1.5" | "gpt-image-1" | ...,
+//   kind: "edits",
+//   model: "gpt-image-1.5",
 //   prompt: "...",
-//   n: 1..8,
-//   size: "1024x1024" | ...,
-//   input_image: "data:image/jpeg;base64,...",   // required for edits
-//   mask_image:  "data:image/png;base64,...",    // optional for edits
-//   output_format: "png" | "jpeg" | "webp",      // optional (if supported by model)
-//   quality: "high" | "medium" | "low",          // optional (if supported by model)
-//   background: "transparent" | "white" | ...    // optional (if supported by model)
+//   n: 1,
+//   size: "1024x1024",
+//   input_image: "data:image/jpeg;base64,...",
+//   mask_image:  "data:image/png;base64,..." // optional
 // }
 
 function respond(statusCode, obj) {
@@ -29,7 +27,6 @@ function respond(statusCode, obj) {
       "Access-Control-Allow-Origin": "*",
       "Access-Control-Allow-Headers": "Content-Type, Authorization",
       "Access-Control-Allow-Methods": "POST, OPTIONS",
-      // prevent stale caching while iterating
       "Cache-Control": "no-store",
     },
     body: JSON.stringify(obj),
@@ -50,6 +47,13 @@ function readJsonBody(event) {
   }
 }
 
+function pickMode(body) {
+  const v = String(body?.kind || body?.mode || "").toLowerCase().trim();
+  if (v === "generations" || v === "generation") return "generations";
+  if (v === "edits" || v === "edit") return "edits";
+  return "edits"; // your default use-case
+}
+
 function dataUrlToBuffer(dataUrl) {
   // data:image/png;base64,AAAA...
   const m = /^data:(.+?);base64,(.+)$/.exec(String(dataUrl || ""));
@@ -59,42 +63,37 @@ function dataUrlToBuffer(dataUrl) {
   return { mime, buffer: Buffer.from(b64, "base64") };
 }
 
-// IMPORTANT: Never call resp.json() directly; Netlify/OpenAI may return empty or non-JSON.
-async function readJsonSafe(resp) {
-  const text = await resp.text();
-  if (!text) return { text: "", json: null };
+async function readBodySafe(resp) {
+  const text = await resp.text().catch(() => "");
+  if (!text) return { text: "", json: null, isHtml: false };
+  const isHtml = /^\s*</.test(text) && /<html|<!doctype/i.test(text);
   try {
-    return { text, json: JSON.parse(text) };
+    return { text, json: JSON.parse(text), isHtml };
   } catch {
-    return { text, json: null };
+    return { text, json: null, isHtml };
   }
 }
 
-function pickMode(body) {
-  const v = (body?.kind || body?.mode || "").toLowerCase().trim();
-  if (v === "generations" || v === "generation") return "generations";
-  if (v === "edits" || v === "edit") return "edits";
-  // default (your app primarily duplicates/variants from an uploaded reference)
-  return "edits";
+async function fetchWithTimeout(url, options, timeoutMs) {
+  const controller = new AbortController();
+  const t = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...options, signal: controller.signal });
+  } finally {
+    clearTimeout(t);
+  }
 }
 
 exports.handler = async (event) => {
   try {
     if (event.httpMethod === "OPTIONS") return respond(200, { ok: true });
-
-    if (event.httpMethod !== "POST") {
-      return respond(405, { error: { message: "Method not allowed" } });
-    }
+    if (event.httpMethod !== "POST") return respond(405, { error: { message: "Method not allowed" } });
 
     const apiKey = process.env.OPENAI_API_KEY;
-    if (!apiKey) {
-      return respond(500, { error: { message: "Missing OPENAI_API_KEY environment variable" } });
-    }
+    if (!apiKey) return respond(500, { error: { message: "Missing OPENAI_API_KEY environment variable" } });
 
     const body = readJsonBody(event);
-    if (!body) {
-      return respond(400, { error: { message: "Invalid JSON body" } });
-    }
+    if (!body) return respond(400, { error: { message: "Invalid JSON body" } });
 
     const mode = pickMode(body);
     const model = String(body.model || process.env.OPENAI_IMAGE_MODEL || "gpt-image-1.5");
@@ -102,37 +101,39 @@ exports.handler = async (event) => {
     const size = String(body.size || "1024x1024");
     const n = clampInt(body.n, 1, 8, 1);
 
-    const output_format = body.output_format != null ? String(body.output_format) : undefined;
-    const quality = body.quality != null ? String(body.quality) : undefined;
-    const background = body.background != null ? String(body.background) : undefined;
+    // If you keep seeing timeouts, reduce size to 512x512 from the client
+    const UPSTREAM_TIMEOUT_MS = clampInt(body.timeout_ms, 10_000, 120_000, 95_000);
 
     const baseUrl = "https://api.openai.com/v1/images";
 
-    // -------------------------
-    // MODE: generations (JSON)
-    // -------------------------
     if (mode === "generations") {
       const payload = { model, prompt, size, n };
-      if (output_format) payload.output_format = output_format;
-      if (quality) payload.quality = quality;
-      if (background) payload.background = background;
 
-      const upstream = await fetch(`${baseUrl}/generations`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${apiKey}`,
+      const upstream = await fetchWithTimeout(
+        `${baseUrl}/generations`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${apiKey}`,
+          },
+          body: JSON.stringify(payload),
         },
-        body: JSON.stringify(payload),
+        UPSTREAM_TIMEOUT_MS
+      ).catch((err) => {
+        const isAbort = err?.name === "AbortError";
+        throw new Error(isAbort ? `Upstream timeout after ${UPSTREAM_TIMEOUT_MS}ms` : (err?.message || String(err)));
       });
 
-      const { text, json } = await readJsonSafe(upstream);
+      const { text, json, isHtml } = await readBodySafe(upstream);
+
       if (!upstream.ok) {
         return respond(upstream.status, {
           error: {
             message:
               json?.error?.message ||
               json?.message ||
+              (isHtml ? "Upstream returned HTML error page (likely proxy timeout)." : "") ||
               text ||
               `OpenAI images/generations failed with HTTP ${upstream.status} (empty body)`,
             upstream_status: upstream.status,
@@ -149,53 +150,59 @@ exports.handler = async (event) => {
       return respond(200, json);
     }
 
-    // -------------------------
-    // MODE: edits (multipart)
-    // -------------------------
     if (mode === "edits") {
       const input_image = body.input_image;
       if (!input_image) {
         return respond(400, { error: { message: 'kind/mode "edits" requires input_image (data URL)' } });
       }
 
+      // Guard: huge payloads increase latency + timeouts
+      const approxBytes = Math.floor((String(input_image).length * 3) / 4);
+      if (approxBytes > 9_000_000) {
+        return respond(413, {
+          error: {
+            message:
+              "Input image payload is too large. Please downscale/compress (target < ~3MB file; your UI already converts to JPEG).",
+          },
+        });
+      }
+
       const { mime, buffer } = dataUrlToBuffer(input_image);
 
-      // Node 18+ (Netlify) provides FormData + Blob globals
       const form = new FormData();
       form.append("model", model);
       form.append("prompt", prompt);
       form.append("size", size);
       form.append("n", String(n));
-
-      // image file
       form.append("image", new Blob([buffer], { type: mime }), "input.png");
 
-      // optional mask
       if (body.mask_image) {
         const m2 = dataUrlToBuffer(body.mask_image);
         form.append("mask", new Blob([m2.buffer], { type: m2.mime }), "mask.png");
       }
 
-      // optional passthroughs (only if supported by model)
-      if (output_format) form.append("output_format", output_format);
-      if (quality) form.append("quality", quality);
-      if (background) form.append("background", background);
-
-      const upstream = await fetch(`${baseUrl}/edits`, {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${apiKey}`,
+      const upstream = await fetchWithTimeout(
+        `${baseUrl}/edits`,
+        {
+          method: "POST",
+          headers: { Authorization: `Bearer ${apiKey}` },
+          body: form,
         },
-        body: form,
+        UPSTREAM_TIMEOUT_MS
+      ).catch((err) => {
+        const isAbort = err?.name === "AbortError";
+        throw new Error(isAbort ? `Upstream timeout after ${UPSTREAM_TIMEOUT_MS}ms` : (err?.message || String(err)));
       });
 
-      const { text, json } = await readJsonSafe(upstream);
+      const { text, json, isHtml } = await readBodySafe(upstream);
+
       if (!upstream.ok) {
         return respond(upstream.status, {
           error: {
             message:
               json?.error?.message ||
               json?.message ||
+              (isHtml ? "Upstream returned HTML error page (likely proxy timeout)." : "") ||
               text ||
               `OpenAI images/edits failed with HTTP ${upstream.status} (empty body)`,
             upstream_status: upstream.status,
@@ -212,7 +219,6 @@ exports.handler = async (event) => {
       return respond(200, json);
     }
 
-    // Should never hit
     return respond(400, { error: { message: `Unknown kind/mode: ${mode}` } });
   } catch (err) {
     return respond(500, {

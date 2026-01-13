@@ -504,17 +504,28 @@ No warped metal, no melted links, no extra jewelry.`;
       }
     }
 
+    async function runPool(items, worker, concurrency = 2) {
+      const queue = items.slice();
+      const runners = Array.from({ length: concurrency }, async () => {
+        while (queue.length) {
+          const item = queue.shift();
+          await worker(item);
+        }
+      });
+      await Promise.all(runners);
+    }
+
     async function generateEight(){
       statusEl.textContent = "Generating 8…";
       gen8Btn.disabled = true;
 
-      // fire all 8 concurrently (your throughput requirement)
-      await Promise.all(slots.map(s => generateOne(s.i)));
+      // IMPORTANT: prevents Netlify/OpenAI proxy inactivity timeouts
+      // Keep at 2–3 for stability; you still generate 8 total.
+      await runPool(slots.map(s => s.i), generateOne, 2);
 
       gen8Btn.disabled = false;
       statusEl.textContent = "Done";
     }
-
     // Init
     renderGrid();
 
