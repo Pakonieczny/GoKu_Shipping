@@ -98,9 +98,9 @@
   <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
 
   <script type="module">
-    import { initializeApp, getApp } from "https://www.gstatic.com/firebasejs/9.23.0/firebase-app.js";
-    import { getAuth, signInAnonymously } from "https://www.gstatic.com/firebasejs/9.23.0/firebase-auth.js";
-    import { getStorage, ref, uploadBytesResumable, getDownloadURL } from "https://www.gstatic.com/firebasejs/9.23.0/firebase-storage.js";
+   import { initializeApp, getApp } from "https://www.gstatic.com/firebasejs/9.23.0/firebase-app.js";
+   import { getStorage, ref, uploadBytesResumable, getDownloadURL } from "https://www.gstatic.com/firebasejs/9.23.0/firebase-storage.js";
+
 
     // --- Netlify functions base ---
     const functionsBaseUrl = `${window.location.origin}/.netlify/functions`;
@@ -116,14 +116,20 @@
       appId: "1:1078662308113:web:41df0e5d229ff2af7a6cb0"
     };
     firebase.initializeApp(firebaseConfig);
+    // ✅ IMPORTANT: use COMPAT auth so COMPAT firestore (window.db) has permissions
+    try {
+      const cred = await firebase.auth().signInAnonymously();
+      console.log("Anon auth ✔", cred?.user?.uid);
+    } catch (e) {
+      console.error("Anon auth ❌", e);
+    }
+
     window.db = firebase.firestore();
 
     // modular twin (same approach as shipping-1 resumable uploader  [oai_citation:15‡shipping-1.html](sediment://file_00000000873871fd94817134ae30ec49))
     let modApp;
     try { modApp = getApp(); } catch { modApp = initializeApp(firebase.app().options); }
-    const auth = getAuth(modApp);
     const storage = getStorage(modApp);
-    await signInAnonymously(auth).catch(console.error);
 
     // --- UI State ---
     const fileEl = document.getElementById("file");
