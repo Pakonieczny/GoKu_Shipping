@@ -30,7 +30,6 @@ if (!process.env.CORS_SET) {
         "https://shipping-1.goldenspike.app",
         "https://design-message.goldenspike.app",
         "https://design-message-1.goldenspike.app"
-        "https://listing-generator-1.goldenspike.app"
       ],
       method        : ["GET","POST","PUT","DELETE","HEAD","OPTIONS"],
       responseHeader: ["Content-Type","Authorization"],
