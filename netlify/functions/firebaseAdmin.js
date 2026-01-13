@@ -1,5 +1,11 @@
-// firebaseAdmin.js (UPDATED)
-// Fixes: "Bucket name not specified or invalid" by setting storageBucket at init.
+// firebaseAdmin.js (UPDATED - minimal required env vars)
+// Fixes: missing FIREBASE_CLIENT_X509_CERT_URL crashes
+// Requires ONLY:
+//   - FIREBASE_PROJECT_ID
+//   - FIREBASE_CLIENT_EMAIL
+//   - FIREBASE_PRIVATE_KEY  (with \n newlines escaped in Netlify)
+// Recommended:
+//   - FIREBASE_STORAGE_BUCKET (bucket NAME, e.g. gokudatabase.appspot.com)
 
 const admin = require("firebase-admin");
 
@@ -9,30 +15,44 @@ function requireEnv(name) {
   return v;
 }
 
-// IMPORTANT: This must be the bucket NAME (e.g. "gokudatabase.appspot.com"),
-// not a host like "gokudatabase.firebasestorage.app".
-const STORAGE_BUCKET =
-  process.env.FIREBASE_STORAGE_BUCKET || "gokudatabase.firebasestorage.app";
+function normalizePrivateKey(k) {
+  return String(k).replace(/\\n/g, "\n");
+}
 
+function getBucketName() {
+  const v = process.env.FIREBASE_STORAGE_BUCKET;
 
+  // If user didn't set it, default to the common Firebase bucket format
+  const fallback = "gokudatabase.appspot.com";
+
+  const bucket = (v || fallback).trim();
+
+  // Guard: firebasestorage.app is NOT a bucket name for admin/storage().bucket()
+  if (bucket.endsWith(".firebasestorage.app")) {
+    throw new Error(
+      `Invalid FIREBASE_STORAGE_BUCKET "${bucket}". ` +
+      `Use the bucket NAME shown in Firebase Storage as gs://<bucket> (typically "<project>.appspot.com").`
+    );
+  }
+
+  return bucket;
+}
+
+// Build a minimal service account object.
+// (Admin SDK + google-cloud/storage only need project_id, client_email, private_key)
 const serviceAccount = {
-  type: "service_account",
   project_id: requireEnv("FIREBASE_PROJECT_ID"),
-  private_key_id: requireEnv("FIREBASE_PRIVATE_KEY_ID"),
-  private_key: requireEnv("FIREBASE_PRIVATE_KEY").replace(/\\n/g, "\n"),
   client_email: requireEnv("FIREBASE_CLIENT_EMAIL"),
-  client_id: requireEnv("FIREBASE_CLIENT_ID"),
-  auth_uri: requireEnv("FIREBASE_AUTH_URI"),
-  token_uri: requireEnv("FIREBASE_TOKEN_URI"),
-  auth_provider_x509_cert_url: requireEnv("FIREBASE_AUTH_PROVIDER_X509_CERT_URL"),
-  client_x509_cert_url: requireEnv("FIREBASE_CLIENT_X509_CERT_URL"),
-  universe_domain: process.env.FIREBASE_UNIVERSE_DOMAIN,
+  private_key: normalizePrivateKey(requireEnv("FIREBASE_PRIVATE_KEY")),
 };
 
+const STORAGE_BUCKET = getBucketName();
+
+// Initialize Admin SDK once
 if (!admin.apps.length) {
   admin.initializeApp({
     credential: admin.credential.cert(serviceAccount),
-    storageBucket: STORAGE_BUCKET, // ✅ critical
+    storageBucket: STORAGE_BUCKET, // ✅ critical for admin.storage().bucket()
   });
 }
 
