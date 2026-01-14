@@ -251,8 +251,8 @@ No warped metal, no melted links, no extra jewelry.`;
     async function fileToDataUrl(file, opts = {}){
       const {
         maxDim = 5000,         // keep detail, shrink payload
-        mime = "image/jpeg",   // much smaller than png
-        quality = 0.92
+        mime = "image/png",   // much smaller than png
+        quality = 1.0
       } = opts;
 
       // Modern path
