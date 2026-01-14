@@ -43,6 +43,7 @@ if (!process.env.CORS_SET) {
     .setCorsConfiguration([{
       origin        : [
         "https://shipping-1.goldenspike.app",
+        "https://listing-generator-1.goldenspike.app",
         "https://design-message.goldenspike.app",
         "https://design-message-1.goldenspike.app"
       ],

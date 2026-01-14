@@ -43,6 +43,38 @@ function dataUrlToBuffer(dataUrl) {
   return { mime, buffer: Buffer.from(b64, "base64") };
 }
 
+/**
+ * NEW: read an already-uploaded reference image from Firebase Storage.
+ * This avoids sending large base64 payloads to Netlify background functions.
+ */
+async function storagePathToBuffer(storagePath) {
+  const p = String(storagePath || "").trim();
+  if (!p) throw new Error("input_storage_path must be a non-empty string");
+
+  // Allowlist to prevent arbitrary bucket reads.
+  // Must match the client upload prefix.
+  if (!p.startsWith("listing-generator-1/reference/")) {
+    throw new Error("input_storage_path not allowed");
+  }
+
+  const bucket = admin.storage().bucket();
+  const file = bucket.file(p);
+
+  const [exists] = await file.exists();
+  if (!exists) throw new Error(`input_storage_path not found: ${p}`);
+
+  let mime = "application/octet-stream";
+  try {
+    const [meta] = await file.getMetadata();
+    if (meta?.contentType) mime = meta.contentType;
+  } catch {
+    // ignore metadata failure; still download bytes
+  }
+
+  const [buffer] = await file.download();
+  return { mime, buffer };
+}
+
 function safeErr(err) {
   return {
     message: err?.message || String(err),
@@ -67,6 +99,8 @@ exports.handler = async (event) => {
     model,
     prompt,
     input_image,
+    // NEW: tiny pointer to a Storage object (preferred over base64)
+    input_storage_path,
     size = "512x512",
     quality = "low",
     output_format = "png",
@@ -76,7 +110,9 @@ exports.handler = async (event) => {
   if (!jobId) return json(400, { error: { message: "Missing jobId" } });
   if (!model) return json(400, { error: { message: "Missing model" } });
   if (!prompt) return json(400, { error: { message: "Missing prompt" } });
-  if (!input_image) return json(400, { error: { message: "Missing input_image" } });
+  if (!input_image && !input_storage_path) {
+    return json(400, { error: { message: "Missing input_image or input_storage_path" } });
+  }
 
   const db = admin.firestore();
 
@@ -105,20 +141,25 @@ exports.handler = async (event) => {
     const apiKey = process.env.OPENAI_API_KEY;
     if (!apiKey) throw new Error("Missing OPENAI_API_KEY in Netlify environment variables");
 
-    // Convert input dataURL -> Blob for multipart form
-    const { mime, buffer } = dataUrlToBuffer(input_image);
+    // Convert input -> Blob for multipart form
+    // Prefer storage path (keeps request payload tiny), fall back to data URL for compatibility.
+    const { mime, buffer } = input_storage_path
+      ? await storagePathToBuffer(input_storage_path)
+      : dataUrlToBuffer(input_image);
+
     const imgBlob = new Blob([buffer], { type: mime });
 
     const form = new FormData();
     form.append("model", model);
     form.append("prompt", prompt);
 
-    // These params are documented for Images API. 
+    // These params are documented for Images API.
     form.append("size", size);
     form.append("quality", quality);
     form.append("output_format", output_format);
 
     // images/edits uses "image" (some SDKs call it input_image; API wants multipart field)
+    // Keep filename stable to avoid disturbing existing behavior.
     form.append("image", imgBlob, "input.png");
 
     const url =
@@ -188,7 +229,7 @@ exports.handler = async (event) => {
     const encoded = encodeURIComponent(storagePath).replace(/%2F/g, "%2F");
     const downloadURL = `https://firebasestorage.googleapis.com/v0/b/${bucketName}/o/${encoded}?alt=media&token=${token}`;
 
-    // Mirror your previous “other app” feed record (you were adding these in the browser).  [oai_citation:1‡Listing_Generator_1.html](sediment://file_00000000d92471f5bb0775c77206a36c)
+    // Mirror your previous “other app” feed record (you were adding these in the browser).
     await db.collection(IMAGES_COLL).add({
       runId: effectiveRunId,
       slotIndex: effectiveSlot,

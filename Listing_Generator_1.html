@@ -101,12 +101,10 @@
    import { initializeApp, getApp } from "https://www.gstatic.com/firebasejs/9.23.0/firebase-app.js";
    import { getStorage, ref, uploadBytesResumable, getDownloadURL } from "https://www.gstatic.com/firebasejs/9.23.0/firebase-storage.js";
 
-
     // --- Netlify functions base ---
     const functionsBaseUrl = `${window.location.origin}/.netlify/functions`;
 
     // --- Firebase config (matches shipping-1 patterns) ---
-    // NOTE: keep using your project/bucket shown in shipping-1  [oai_citation:14‡shipping-1.html](sediment://file_00000000873871fd94817134ae30ec49)
     const firebaseConfig = {
       apiKey: "AIzaSyBXhQLsYRa4i0bX1TPTRiElF9Zjy5vSHlA",
       authDomain: "gokudatabase.firebaseapp.com",
@@ -126,7 +124,7 @@
 
     window.db = firebase.firestore();
 
-    // modular twin (same approach as shipping-1 resumable uploader  [oai_citation:15‡shipping-1.html](sediment://file_00000000873871fd94817134ae30ec49))
+    // modular twin (same approach as shipping-1 resumable uploader)
     let modApp;
     try { modApp = getApp(); } catch { modApp = initializeApp(firebase.app().options); }
     const storage = getStorage(modApp);
@@ -145,6 +143,8 @@
     const traitsBox = document.getElementById("traitsBox");
 
     let referenceDataUrl = null;
+    let referenceStoragePath = null;     // NEW: small identifier sent to background function
+    let referenceDownloadUrl = null;     // NEW: optional, kept for debugging/inspection
     let slots = [];
 
     // Trait defs (placeholder — we’ll wire this to your dropdown menus next)
@@ -174,7 +174,7 @@ Keep the jewelry accurate: chain geometry, station spacing, metal tone, scale, d
 Change only the model/photo context based on traits.
 No warped metal, no melted links, no extra jewelry.`;
 
-    // --- Zoom + pan listeners (same behavior as sorting/shipping preview boxes)  [oai_citation:16‡sorting.html](sediment://file_000000009ce4722f924e48e4c99f157e)
+    // --- Zoom + pan listeners ---
     function attachZoomPan(box){
       let isMouseDown = false;
       let dragStartX = 0, dragStartY = 0;
@@ -228,66 +228,66 @@ No warped metal, no melted links, no extra jewelry.`;
       attachZoomPan(box);
     }
 
-  async function fileToDataUrl(file, opts = {}){
-    const {
-      maxDim = 1536,         // keep detail, shrink payload
-      mime = "image/jpeg",   // much smaller than png
-      quality = 0.92
-    } = opts;
+    async function fileToDataUrl(file, opts = {}){
+      const {
+        maxDim = 1536,         // keep detail, shrink payload
+        mime = "image/jpeg",   // much smaller than png
+        quality = 0.92
+      } = opts;
 
-    // Modern path
-    try {
-      const bmp = await createImageBitmap(file);
-      const w = bmp.width, h = bmp.height;
-      const scale = Math.min(1, maxDim / Math.max(w, h));
-      const tw = Math.max(1, Math.round(w * scale));
-      const th = Math.max(1, Math.round(h * scale));
+      // Modern path
+      try {
+        const bmp = await createImageBitmap(file);
+        const w = bmp.width, h = bmp.height;
+        const scale = Math.min(1, maxDim / Math.max(w, h));
+        const tw = Math.max(1, Math.round(w * scale));
+        const th = Math.max(1, Math.round(h * scale));
 
-      const canvas = document.createElement("canvas");
-      canvas.width = tw;
-      canvas.height = th;
+        const canvas = document.createElement("canvas");
+        canvas.width = tw;
+        canvas.height = th;
 
-      const ctx = canvas.getContext("2d", { alpha: false });
-      ctx.imageSmoothingEnabled = true;
-      ctx.imageSmoothingQuality = "high";
-      ctx.drawImage(bmp, 0, 0, tw, th);
+        const ctx = canvas.getContext("2d", { alpha: false });
+        ctx.imageSmoothingEnabled = true;
+        ctx.imageSmoothingQuality = "high";
+        ctx.drawImage(bmp, 0, 0, tw, th);
 
-      // Important: toDataURL on jpeg dramatically reduces size
-      return canvas.toDataURL(mime, quality);
-    } catch (_) {
-      // Fallback: FileReader -> Image -> canvas
-      const dataUrl = await new Promise((resolve, reject)=>{
-        const reader = new FileReader();
-        reader.onload = ()=> resolve(reader.result);
-        reader.onerror = reject;
-        reader.readAsDataURL(file);
-      });
+        // Important: toDataURL on jpeg dramatically reduces size
+        return canvas.toDataURL(mime, quality);
+      } catch (_) {
+        // Fallback: FileReader -> Image -> canvas
+        const dataUrl = await new Promise((resolve, reject)=>{
+          const reader = new FileReader();
+          reader.onload = ()=> resolve(reader.result);
+          reader.onerror = reject;
+          reader.readAsDataURL(file);
+        });
 
-      const img = await new Promise((resolve, reject)=>{
-        const i = new Image();
-        i.onload = ()=> resolve(i);
-        i.onerror = reject;
-        i.src = dataUrl;
-      });
+        const img = await new Promise((resolve, reject)=>{
+          const i = new Image();
+          i.onload = ()=> resolve(i);
+          i.onerror = reject;
+          i.src = dataUrl;
+        });
 
-      const w = img.naturalWidth || img.width;
-      const h = img.naturalHeight || img.height;
-      const scale = Math.min(1, maxDim / Math.max(w, h));
-      const tw = Math.max(1, Math.round(w * scale));
-      const th = Math.max(1, Math.round(h * scale));
+        const w = img.naturalWidth || img.width;
+        const h = img.naturalHeight || img.height;
+        const scale = Math.min(1, maxDim / Math.max(w, h));
+        const tw = Math.max(1, Math.round(w * scale));
+        const th = Math.max(1, Math.round(h * scale));
 
-      const canvas = document.createElement("canvas");
-      canvas.width = tw;
-      canvas.height = th;
+        const canvas = document.createElement("canvas");
+        canvas.width = tw;
+        canvas.height = th;
 
-      const ctx = canvas.getContext("2d", { alpha: false });
-      ctx.imageSmoothingEnabled = true;
-      ctx.imageSmoothingQuality = "high";
-      ctx.drawImage(img, 0, 0, tw, th);
+        const ctx = canvas.getContext("2d", { alpha: false });
+        ctx.imageSmoothingEnabled = true;
+        ctx.imageSmoothingQuality = "high";
+        ctx.drawImage(img, 0, 0, tw, th);
 
-      return canvas.toDataURL(mime, quality);
+        return canvas.toDataURL(mime, quality);
+      }
     }
-  }
 
     // Drag/drop
     dropEl.addEventListener("dragover", (e)=>{ e.preventDefault(); dropEl.style.borderColor="#2b6cff"; });
@@ -304,10 +304,87 @@ No warped metal, no melted links, no extra jewelry.`;
       await loadReference(f);
     });
 
+    // Helpers
+    function b64ToBlob(b64, mime="image/png"){
+      const bin = atob(b64);
+      const len = bin.length;
+      const bytes = new Uint8Array(len);
+      for (let i=0;i<len;i++) bytes[i] = bin.charCodeAt(i);
+      return new Blob([bytes], { type: mime });
+    }
+
+    function dataUrlToFile(dataUrl, filenameBase = "reference"){
+      const m = /^data:([^;]+);base64,(.+)$/.exec(dataUrl || "");
+      if (!m) throw new Error("Bad data URL");
+      const mime = m[1];
+      const b64 = m[2];
+      const blob = b64ToBlob(b64, mime);
+      const ext =
+        mime.includes("jpeg") ? "jpg" :
+        mime.includes("png") ? "png" :
+        (mime.split("/")[1] || "bin");
+      return new File([blob], `${filenameBase}.${ext}`, { type: mime });
+    }
+
+    // Upload with realtime progress
+    async function uploadWithProgress(path, file, onProgress){
+      const storageRef = ref(storage, path);
+      const task = uploadBytesResumable(storageRef, file, { contentType: file.type });
+      await new Promise((resolve, reject) => {
+        task.on("state_changed",
+          (snap) => {
+            if (!snap.totalBytes) return;
+            onProgress?.(snap.bytesTransferred / snap.totalBytes);
+          },
+          reject,
+          resolve
+        );
+      });
+      return await getDownloadURL(storageRef);
+    }
+
     async function loadReference(file){
+      // NEW: upload reference to Firebase Storage so we never send base64 to Netlify background functions.
       refNameEl.textContent = file.name;
-      referenceDataUrl = await fileToDataUrl(file);
-      setPreview(refPreviewEl, referenceDataUrl);
+
+      // prevent clicking Generate while reference is uploading
+      gen8Btn.disabled = true;
+
+      // reset any prior reference cache
+      referenceDataUrl = null;
+      referenceStoragePath = null;
+      referenceDownloadUrl = null;
+
+      try {
+        statusEl.textContent = "Preparing reference…";
+        referenceDataUrl = await fileToDataUrl(file);
+        setPreview(refPreviewEl, referenceDataUrl);
+
+        // Convert the resized dataURL into a File for Storage upload
+        const refFile = dataUrlToFile(referenceDataUrl, "reference");
+
+        // must match server allowlist prefix: listing-generator-1/reference/...
+        const refId = `ref_${Date.now()}_${Math.random().toString(16).slice(2)}`;
+        const ext = refFile.name.split(".").pop() || "jpg";
+        referenceStoragePath = `listing-generator-1/reference/${refId}.${ext}`;
+
+        statusEl.textContent = "Uploading reference… 0%";
+        referenceDownloadUrl = await uploadWithProgress(referenceStoragePath, refFile, (p)=>{
+          const pct = Math.max(0, Math.min(100, Math.round((p || 0) * 100)));
+          statusEl.textContent = `Uploading reference… ${pct}%`;
+        });
+
+        statusEl.textContent = "Reference ready";
+      } catch (e) {
+        console.error(e);
+        statusEl.textContent = `Reference error: ${e.message || e}`;
+        // keep button disabled if reference failed
+        gen8Btn.disabled = false; // allow user to try again
+        throw e;
+      } finally {
+        // re-enable if we have a valid storage path
+        if (referenceStoragePath) gen8Btn.disabled = false;
+      }
     }
 
     // Grid
@@ -377,31 +454,6 @@ No warped metal, no melted links, no extra jewelry.`;
       attachZoomPan(box);
     }
 
-    // Upload with realtime progress
-    async function uploadWithProgress(path, file, onProgress){
-      const storageRef = ref(storage, path);
-      const task = uploadBytesResumable(storageRef, file, { contentType: file.type });
-      await new Promise((resolve, reject) => {
-        task.on("state_changed",
-          (snap) => {
-            if (!snap.totalBytes) return;
-            onProgress?.(snap.bytesTransferred / snap.totalBytes);
-          },
-          reject,
-          resolve
-        );
-      });
-      return await getDownloadURL(storageRef);
-    }
-
-    function b64ToBlob(b64, mime="image/png"){
-      const bin = atob(b64);
-      const len = bin.length;
-      const bytes = new Uint8Array(len);
-      for (let i=0;i<len;i++) bytes[i] = bin.charCodeAt(i);
-      return new Blob([bytes], { type: mime });
-    }
-
     const JOBS_COLL = "ListingGenerator1Jobs";
 
     async function enqueueOpenAIImageJob(payload){
@@ -433,7 +485,9 @@ No warped metal, no melted links, no extra jewelry.`;
     }
 
     async function generateOne(i){
-      if (!referenceDataUrl) throw new Error("No reference image selected");
+      // NEW: require uploaded reference path (no base64 sent to Netlify)
+      if (!referenceStoragePath) throw new Error("No reference image selected (or reference upload not finished)");
+
       const slot = slots[i];
       slot.traits = makeTraits(); // new random traits per regeneration
       const fullPrompt = buildPrompt(promptEl.value.trim(), slot.traits);
@@ -452,7 +506,7 @@ No warped metal, no melted links, no extra jewelry.`;
       let unsub = null;
 
       try {
-      // Start listening BEFORE enqueue so we never miss the first write.
+        // Start listening BEFORE enqueue so we never miss the first write.
         unsub = jobRef.onSnapshot((snap)=>{
           if (!snap.exists) return;
           const j = snap.data() || {};
@@ -482,6 +536,7 @@ No warped metal, no melted links, no extra jewelry.`;
         });
 
         // Enqueue the job (fast response; avoids 504 inactivity timeouts)
+        // IMPORTANT: do NOT send input_image base64 here.
         await enqueueOpenAIImageJob({
           jobId,
           runId,
@@ -489,8 +544,8 @@ No warped metal, no melted links, no extra jewelry.`;
           kind: "edits",
           model,
           prompt: fullPrompt,
-          input_image: referenceDataUrl,
-          // speed defaults: smaller + low quality = much faster. (Docs support size/quality) 
+          input_storage_path: referenceStoragePath,
+          // speed defaults: smaller + low quality = much faster. (Docs support size/quality)
           size: "1024x1536",
           quality: "high",
           output_format: "png",
@@ -526,16 +581,20 @@ No warped metal, no melted links, no extra jewelry.`;
       gen8Btn.disabled = false;
       statusEl.textContent = "Done";
     }
+
     // Init
     renderGrid();
 
     gen8Btn.addEventListener("click", generateEight);
     clearBtn.addEventListener("click", ()=>{
       referenceDataUrl = null;
+      referenceStoragePath = null;   // NEW
+      referenceDownloadUrl = null;   // NEW
       refNameEl.textContent = "No image selected";
       refPreviewEl.innerHTML = "";
       renderGrid();
       statusEl.textContent = "Idle";
+      gen8Btn.disabled = false;
     });
   </script>
 </body>
