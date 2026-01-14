@@ -100,6 +100,8 @@
   <script type="module">
    import { initializeApp, getApp } from "https://www.gstatic.com/firebasejs/9.23.0/firebase-app.js";
    import { getStorage, ref, uploadBytesResumable, getDownloadURL } from "https://www.gstatic.com/firebasejs/9.23.0/firebase-storage.js";
+   import { getAuth, signInAnonymously as modSignInAnonymously, onAuthStateChanged as modOnAuthStateChanged } from "https://www.gstatic.com/firebasejs/9.23.0/firebase-auth.js";
+
 
     // --- Netlify functions base ---
     const functionsBaseUrl = `${window.location.origin}/.netlify/functions`;
@@ -128,26 +130,20 @@
     let modApp;
     try { modApp = getApp(); } catch { modApp = initializeApp(firebase.app().options); }
     const storage = getStorage(modApp);
+    const modAuth = getAuth(modApp);
 
-    // NEW: hard gate to ensure Storage uploads always have request.auth != null
-    async function ensureSignedIn() {
-      const auth = firebase.auth();
-      if (auth.currentUser) return auth.currentUser;
+    // Gate specifically for Storage (modular) so request.auth is never null in Storage rules
+    async function ensureStorageSignedIn() {
+      if (modAuth.currentUser) return modAuth.currentUser;
+      try { await modSignInAnonymously(modAuth); } catch (_) {}
 
-      // Try signing in again (covers cases where anon auth is not ready yet)
-      try { await auth.signInAnonymously(); } catch (_) {}
-
-      // Wait for auth state to become available
       return await new Promise((resolve, reject) => {
-        const t = setTimeout(() => {
-          try { unsub && unsub(); } catch (_) {}
-          reject(new Error("Auth not ready. Enable Anonymous sign-in in Firebase Auth."));
-        }, 8000);
-
-        const unsub = auth.onAuthStateChanged((u) => {
-         if (!u) return;
+        const t = setTimeout(() => reject(new Error("Modular auth not ready. Enable Anonymous sign-in in Firebase Auth.")), 8000);
+        const unsub = modOnAuthStateChanged(modAuth, async (u) => {
+          if (!u) return;
           clearTimeout(t);
           unsub();
+          try { await u.getIdToken(); } catch (_) {}
           resolve(u);
         });
       });
@@ -352,8 +348,8 @@ No warped metal, no melted links, no extra jewelry.`;
 
     // Upload with realtime progress
     async function uploadWithProgress(path, file, onProgress){
-      // NEW: ensure request.auth is present before Storage calls
-      await ensureSignedIn();
+      // Ensure request.auth is present before Storage calls (Storage uses modular auth)
+      await ensureStorageSignedIn();
       const storageRef = ref(storage, path);
       const task = uploadBytesResumable(storageRef, file, { contentType: file.type });
       await new Promise((resolve, reject) => {
@@ -372,6 +368,8 @@ No warped metal, no melted links, no extra jewelry.`;
     async function loadReference(file){
       // NEW: upload reference to Firebase Storage so we never send base64 to Netlify background functions.
       refNameEl.textContent = file.name;
+      // Ensure Storage auth is ready before any upload attempt
+      await ensureStorageSignedIn();
 
       // prevent clicking Generate while reference is uploading
       gen8Btn.disabled = true;
@@ -383,7 +381,6 @@ No warped metal, no melted links, no extra jewelry.`;
 
       try {
         // NEW: ensure auth is established before we attempt Storage upload
-        await ensureSignedIn();
         statusEl.textContent = "Preparing reference…";
         referenceDataUrl = await fileToDataUrl(file);
         setPreview(refPreviewEl, referenceDataUrl);
