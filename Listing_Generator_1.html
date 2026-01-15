@@ -398,7 +398,19 @@ No warped metal, no melted links, no extra jewelry.`;
           resolve
         );
       });
-      return await getDownloadURL(storageRef);
+      // NOTE:
+      // getDownloadURL() is a READ and will 403 if Storage rules don't allow reads on this path.
+      // Your pipeline uses storage paths (server reads via Admin SDK), so treat a blocked URL as non-fatal.
+      try {
+        return await getDownloadURL(storageRef);
+      } catch (err) {
+        const code = err?.code || "";
+        if (code === "storage/unauthorized") {
+          console.warn("[Storage] getDownloadURL blocked by rules for:", path, err);
+          return null;
+        }
+        throw err;
+      }
     }
 
     async function loadReference(file){
