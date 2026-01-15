@@ -398,19 +398,12 @@ No warped metal, no melted links, no extra jewelry.`;
           resolve
         );
       });
-      // NOTE:
-      // getDownloadURL() is a READ and will 403 if Storage rules don't allow reads on this path.
-      // Your pipeline uses storage paths (server reads via Admin SDK), so treat a blocked URL as non-fatal.
-      try {
-        return await getDownloadURL(storageRef);
-      } catch (err) {
-        const code = err?.code || "";
-        if (code === "storage/unauthorized") {
-          console.warn("[Storage] getDownloadURL blocked by rules for:", path, err);
-          return null;
-        }
-        throw err;
-      }
+      const wantUrl = opts?.returnDownloadUrl === true;
+      if (!wantUrl) return null;
+
+      // If you explicitly ask for a URL, try it — but READ rules may still deny it.
+      try { return await getDownloadURL(storageRef); }
+      catch (err) { throw err; }
     }
 
     async function loadReference(file){
@@ -442,7 +435,10 @@ No warped metal, no melted links, no extra jewelry.`;
         referenceStoragePath = `listing-generator-1/reference/${refId}.${ext}`;
 
         statusEl.textContent = "Uploading reference… 0%";
-        referenceDownloadUrl = await uploadWithProgress(referenceStoragePath, refFile, (p)=>{
+        charmMacroDownloadUrl = await uploadWithProgress(
+          charmMacroStoragePath,
+          macroFile,
+          (p)=>{
           const pct = Math.max(0, Math.min(100, Math.round((p || 0) * 100)));
           statusEl.textContent = `Uploading reference… ${pct}%`;
         });
@@ -489,7 +485,9 @@ No warped metal, no melted links, no extra jewelry.`;
         charmMacroDownloadUrl = await uploadWithProgress(charmMacroStoragePath, macroFile, (p)=>{
           const pct = Math.max(0, Math.min(100, Math.round((p || 0) * 100)));
           statusEl.textContent = `Uploading charm macro… ${pct}%`;
-        });
+           },
+          { returnDownloadUrl: false }
+        );
 
         statusEl.textContent = "Charm macro ready";
       } catch (e) {
