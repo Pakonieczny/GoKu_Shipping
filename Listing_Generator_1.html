@@ -383,7 +383,7 @@ No warped metal, no melted links, no extra jewelry.`;
     }
 
     // Upload with realtime progress
-    async function uploadWithProgress(path, file, onProgress){
+    async function uploadWithProgress(path, file, onProgress, opts = {}){
       // Ensure request.auth is present before Storage calls (Storage uses modular auth)
       await ensureStorageSignedIn();
       const storageRef = ref(storage, path);
@@ -398,7 +398,7 @@ No warped metal, no melted links, no extra jewelry.`;
           resolve
         );
       });
-      const wantUrl = opts?.returnDownloadUrl === true;
+      const wantUrl = opts.returnDownloadUrl === true;
       if (!wantUrl) return null;
 
       // If you explicitly ask for a URL, try it — but READ rules may still deny it.
@@ -409,6 +409,7 @@ No warped metal, no melted links, no extra jewelry.`;
     async function loadReference(file){
       // NEW: upload reference to Firebase Storage so we never send base64 to Netlify background functions.
       refNameEl.textContent = file.name;
+
       // Ensure Storage auth is ready before any upload attempt
       await ensureStorageSignedIn();
 
@@ -435,20 +436,25 @@ No warped metal, no melted links, no extra jewelry.`;
         referenceStoragePath = `listing-generator-1/reference/${refId}.${ext}`;
 
         statusEl.textContent = "Uploading reference… 0%";
-        charmMacroDownloadUrl = await uploadWithProgress(
-          charmMacroStoragePath,
-          macroFile,
-          (p)=>{
-          const pct = Math.max(0, Math.min(100, Math.round((p || 0) * 100)));
-          statusEl.textContent = `Uploading reference… ${pct}%`;
-        });
+
+        // IMPORTANT: upload the *reference* file to the *reference* path
+        // Also: do NOT request a download URL here (avoid any read/metadata rule mismatch)
+        referenceDownloadUrl = await uploadWithProgress(
+          referenceStoragePath,
+          refFile,
+          (p) => {
+            const pct = Math.max(0, Math.min(100, Math.round((p || 0) * 100)));
+            statusEl.textContent = `Uploading reference… ${pct}%`;
+          },
+          { returnDownloadUrl: false }
+        );
 
         statusEl.textContent = "Reference ready";
       } catch (e) {
         console.error(e);
         statusEl.textContent = `Reference error: ${e.message || e}`;
-        // keep button disabled if reference failed
-        gen8Btn.disabled = false; // allow user to try again
+        // allow user to try again
+        gen8Btn.disabled = false;
         throw e;
       } finally {
         // re-enable if we have a valid storage path
@@ -457,49 +463,54 @@ No warped metal, no melted links, no extra jewelry.`;
     }
 
     async function loadCharmMacro(file){
-      charmNameEl.textContent = file.name;
-      await ensureStorageSignedIn();
+    charmNameEl.textContent = file.name;
+    await ensureStorageSignedIn();
 
-      // prevent clicking Generate while charm macro is uploading
-      gen8Btn.disabled = true;
+    // prevent clicking Generate while charm macro is uploading
+    gen8Btn.disabled = true;
 
-      // reset any prior charm macro cache
-      charmMacroDataUrl = null;
-      charmMacroStoragePath = null;
-      charmMacroDownloadUrl = null;
+    // reset any prior charm macro cache
+    charmMacroDataUrl = null;
+    charmMacroStoragePath = null;
+    charmMacroDownloadUrl = null;
 
-      try {
-        statusEl.textContent = "Preparing charm macro…";
-        // Keep more detail for macro (slightly higher quality)
-        charmMacroDataUrl = await fileToDataUrl(file, { maxDim: 5000, mime: "image/jpeg", quality: 0.96 });
-        setPreview(charmPreviewEl, charmMacroDataUrl);
+    try {
+      statusEl.textContent = "Preparing charm macro…";
+      // Keep more detail for macro (slightly higher quality)
+      charmMacroDataUrl = await fileToDataUrl(file, { maxDim: 5000, mime: "image/png", quality: 1.00 });
+      setPreview(charmPreviewEl, charmMacroDataUrl);
 
-        const macroFile = dataUrlToFile(charmMacroDataUrl, "charm_macro");
+      const macroFile = dataUrlToFile(charmMacroDataUrl, "charm_macro");
 
-        const macroId = `charm_${Date.now()}_${Math.random().toString(16).slice(2)}`;
-        const ext = macroFile.name.split(".").pop() || "jpg";
-        // must match server allowlist prefix in openaiImageProxy-background.js
-        charmMacroStoragePath = `listing-generator-1/charm-macro/${macroId}.${ext}`;
+      const macroId = `charm_${Date.now()}_${Math.random().toString(16).slice(2)}`;
+      const ext = macroFile.name.split(".").pop() || "jpg";
+      // must match server allowlist prefix in openaiImageProxy-background.js
+      charmMacroStoragePath = `listing-generator-1/charm-macro/${macroId}.${ext}`;
 
-        statusEl.textContent = "Uploading charm macro… 0%";
-        charmMacroDownloadUrl = await uploadWithProgress(charmMacroStoragePath, macroFile, (p)=>{
+      statusEl.textContent = "Uploading charm macro… 0%";
+
+      // IMPORTANT: do NOT request a download URL here (avoids read/metadata rule mismatch -> 403)
+      charmMacroDownloadUrl = await uploadWithProgress(
+        charmMacroStoragePath,
+        macroFile,
+        (p) => {
           const pct = Math.max(0, Math.min(100, Math.round((p || 0) * 100)));
           statusEl.textContent = `Uploading charm macro… ${pct}%`;
-           },
-          { returnDownloadUrl: false }
-        );
+        },
+        { returnDownloadUrl: false }
+      );
 
-        statusEl.textContent = "Charm macro ready";
-      } catch (e) {
-        console.error(e);
-        statusEl.textContent = `Charm macro error: ${e.message || e}`;
-        gen8Btn.disabled = false;
-        throw e;
-      } finally {
-        // re-enable if reference is ready (charm macro is optional)
-        if (referenceStoragePath) gen8Btn.disabled = false;
-      }
+      statusEl.textContent = "Charm macro ready";
+    } catch (e) {
+      console.error(e);
+      statusEl.textContent = `Charm macro error: ${e.message || e}`;
+      gen8Btn.disabled = false;
+      throw e;
+    } finally {
+      // re-enable if reference is ready (charm macro is optional)
+      if (referenceStoragePath) gen8Btn.disabled = false;
     }
+  }
 
     // Grid
     function makeSlot(i){
