@@ -383,7 +383,7 @@ No warped metal, no melted links, no extra jewelry.`;
     }
 
     // Upload with realtime progress
-    async function uploadWithProgress(path, file, onProgress, opts = {}){
+    async function uploadWithProgress(path, file, onProgress){
       // Ensure request.auth is present before Storage calls (Storage uses modular auth)
       await ensureStorageSignedIn();
       const storageRef = ref(storage, path);
@@ -401,16 +401,9 @@ No warped metal, no melted links, no extra jewelry.`;
       const wantUrl = opts?.returnDownloadUrl === true;
       if (!wantUrl) return null;
 
-      // IMPORTANT: getDownloadURL() is a READ and will 403 if your Storage rules don't allow reads.
-      // Your pipeline uses storage paths (server reads via Admin SDK), so skip URL unless explicitly requested.
-      const wantUrl = opts?.returnDownloadUrl === true;
-      if (!wantUrl) return null;
-      try {
-        return await getDownloadURL(storageRef);
-      } catch (err) {
-        if (err?.code === "storage/unauthorized") return null;
-        throw err;
-      }
+      // If you explicitly ask for a URL, try it — but READ rules may still deny it.
+      try { return await getDownloadURL(storageRef); }
+      catch (err) { throw err; }
     }
 
     async function loadReference(file){
@@ -441,15 +434,14 @@ No warped metal, no melted links, no extra jewelry.`;
         const ext = refFile.name.split(".").pop() || "jpg";
         referenceStoragePath = `listing-generator-1/reference/${refId}.${ext}`;
 
-        referenceDownloadUrl = await uploadWithProgress(
-          referenceStoragePath,
-          refFile,
+        statusEl.textContent = "Uploading reference… 0%";
+        charmMacroDownloadUrl = await uploadWithProgress(
+          charmMacroStoragePath,
+          macroFile,
           (p)=>{
-            const pct = Math.max(0, Math.min(100, Math.round((p || 0) * 100)));
-            statusEl.textContent = `Uploading reference… ${pct}%`;
-          },
-          { returnDownloadUrl: false }
-        );
+          const pct = Math.max(0, Math.min(100, Math.round((p || 0) * 100)));
+          statusEl.textContent = `Uploading reference… ${pct}%`;
+        });
 
         statusEl.textContent = "Reference ready";
       } catch (e) {
