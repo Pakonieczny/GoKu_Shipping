@@ -176,10 +176,13 @@ exports.handler = async (event) => {
     form.append("quality", quality);
     form.append("output_format", output_format);
 
-    // images/edits uses repeated "image" fields — order matters.
+    // images/edits supports multiple input images, but they must be sent as an array:
+    // use "image[]" for each file. Order matters:
     // Image[0] = reference; Image[1] = charm macro (truth source)
-    form.append("image", refBlob, "reference.png");
-    if (charmBlob) form.append("image", charmBlob, "charm_macro.png");
+    if (kind === "edits") {
+      form.append("image[]", refBlob, "reference.png");
+      if (charmBlob) form.append("image[]", charmBlob, "charm_macro.png");
+    }
 
     const url =
       kind === "edits"
