@@ -53,7 +53,10 @@ async function storagePathToBuffer(storagePath) {
 
   // Allowlist to prevent arbitrary bucket reads.
   // Must match the client upload prefix.
-  if (!p.startsWith("listing-generator-1/reference/")) {
+  if (!(
+    p.startsWith("listing-generator-1/reference/") ||
+    p.startsWith("listing-generator-1/charm-macro/")
+  )) {
     throw new Error("input_storage_path not allowed");
   }
 
@@ -101,8 +104,11 @@ exports.handler = async (event) => {
     input_image,
     // NEW: tiny pointer to a Storage object (preferred over base64)
     input_storage_path,
-    size = "512x512",
-    quality = "low",
+     // NEW: charm macro (either storage path or base64 data URL)
+    input_charm_image,
+    input_charm_storage_path,
+    size = "2048x2048",
+    quality = "high",
     output_format = "png",
     // optional: pass-through extra fields later if needed
   } = body;
@@ -133,6 +139,8 @@ exports.handler = async (event) => {
         size,
         quality,
         output_format,
+        referenceStoragePath: input_storage_path || null,
+        charmMacroStoragePath: input_charm_storage_path || null,
       },
       { merge: true }
     );
@@ -141,13 +149,23 @@ exports.handler = async (event) => {
     const apiKey = process.env.OPENAI_API_KEY;
     if (!apiKey) throw new Error("Missing OPENAI_API_KEY in Netlify environment variables");
 
-    // Convert input -> Blob for multipart form
-    // Prefer storage path (keeps request payload tiny), fall back to data URL for compatibility.
-    const { mime, buffer } = input_storage_path
+    // Convert inputs -> Blobs for multipart form
+    // Image[0] = reference (necklace + charm context)
+    // Image[1] = charm macro (single truth source for silhouette + engraving)
+    const { mime: refMime, buffer: refBuffer } = input_storage_path
       ? await storagePathToBuffer(input_storage_path)
       : dataUrlToBuffer(input_image);
 
-    const imgBlob = new Blob([buffer], { type: mime });
+    const refBlob = new Blob([refBuffer], { type: refMime });
+
+    // Charm macro (Image[1]) — optional second image
+    let charmBlob = null;
+    if (input_charm_storage_path || input_charm_image) {
+      const charm = input_charm_storage_path
+        ? await storagePathToBuffer(input_charm_storage_path)
+        : dataUrlToBuffer(input_charm_image);
+      charmBlob = new Blob([charm.buffer], { type: charm.mime });
+    }
 
     const form = new FormData();
     form.append("model", model);
@@ -158,9 +176,10 @@ exports.handler = async (event) => {
     form.append("quality", quality);
     form.append("output_format", output_format);
 
-    // images/edits uses "image" (some SDKs call it input_image; API wants multipart field)
-    // Keep filename stable to avoid disturbing existing behavior.
-    form.append("image", imgBlob, "input.png");
+    // images/edits uses repeated "image" fields — order matters.
+    // Image[0] = reference; Image[1] = charm macro (truth source)
+    form.append("image", refBlob, "reference.png");
+    if (charmBlob) form.append("image", charmBlob, "charm_macro.png");
 
     const url =
       kind === "edits"

@@ -61,6 +61,20 @@
         </div>
       </div>
 
+     <label>Charm macro (Image[1] truth source)</label>
+      <div class="drop" id="charmDrop">
+        <div>
+          <strong id="charmName">No charm macro selected</strong>
+          <div class="muted">Upload a sharp macro of the charm only (flat, legible engraving). Sent to OpenAI as Image[1].</div>
+        </div>
+        <div class="row">
+          <input id="charmFile" type="file" accept="image/*" />
+        </div>
+      </div>
+
+      <label>Charm macro preview (zoom + pan)</label>
+      <div class="preview-box" id="charmPreview" style="height:200px;"></div>
+
       <label>Reference preview (zoom + pan)</label>
       <div class="preview-box" id="refPreview"></div>
 
@@ -160,11 +174,18 @@
     const clearBtn = document.getElementById("clear");
     const gridEl = document.getElementById("grid");
     const statusEl = document.getElementById("status");
+    const charmFileEl = document.getElementById("charmFile");
+    const charmDropEl = document.getElementById("charmDrop");
+    const charmNameEl = document.getElementById("charmName");
+    const charmPreviewEl = document.getElementById("charmPreview");
     const traitsBox = document.getElementById("traitsBox");
 
     let referenceDataUrl = null;
     let referenceStoragePath = null;     // NEW: small identifier sent to background function
     let referenceDownloadUrl = null;     // NEW: optional, kept for debugging/inspection
+    let charmMacroDataUrl = null;
+    let charmMacroStoragePath = null;
+    let charmMacroDownloadUrl = null;
     let slots = [];
 
     // Trait defs (placeholder — we’ll wire this to your dropdown menus next)
@@ -324,6 +345,21 @@ No warped metal, no melted links, no extra jewelry.`;
       await loadReference(f);
     });
 
+  // Charm macro drag/drop
+    charmDropEl.addEventListener("dragover", (e)=>{ e.preventDefault(); charmDropEl.style.borderColor="#2b6cff"; });
+    charmDropEl.addEventListener("dragleave", ()=>{ charmDropEl.style.borderColor="#3a4262"; });
+    charmDropEl.addEventListener("drop", async (e)=>{
+      e.preventDefault(); charmDropEl.style.borderColor="#3a4262";
+      const f = e.dataTransfer.files?.[0];
+      if (!f) return;
+      await loadCharmMacro(f);
+    });
+    charmFileEl.addEventListener("change", async ()=>{
+      const f = charmFileEl.files?.[0];
+      if (!f) return;
+      await loadCharmMacro(f);
+    });
+
     // Helpers
     function b64ToBlob(b64, mime="image/png"){
       const bin = atob(b64);
@@ -412,6 +448,49 @@ No warped metal, no melted links, no extra jewelry.`;
       }
     }
 
+    async function loadCharmMacro(file){
+      charmNameEl.textContent = file.name;
+      await ensureStorageSignedIn();
+
+      // prevent clicking Generate while charm macro is uploading
+      gen8Btn.disabled = true;
+
+      // reset any prior charm macro cache
+      charmMacroDataUrl = null;
+      charmMacroStoragePath = null;
+      charmMacroDownloadUrl = null;
+
+      try {
+        statusEl.textContent = "Preparing charm macro…";
+        // Keep more detail for macro (slightly higher quality)
+        charmMacroDataUrl = await fileToDataUrl(file, { maxDim: 5000, mime: "image/jpeg", quality: 0.96 });
+        setPreview(charmPreviewEl, charmMacroDataUrl);
+
+        const macroFile = dataUrlToFile(charmMacroDataUrl, "charm_macro");
+
+        const macroId = `charm_${Date.now()}_${Math.random().toString(16).slice(2)}`;
+        const ext = macroFile.name.split(".").pop() || "jpg";
+        // must match server allowlist prefix in openaiImageProxy-background.js
+        charmMacroStoragePath = `listing-generator-1/charm-macro/${macroId}.${ext}`;
+
+        statusEl.textContent = "Uploading charm macro… 0%";
+        charmMacroDownloadUrl = await uploadWithProgress(charmMacroStoragePath, macroFile, (p)=>{
+          const pct = Math.max(0, Math.min(100, Math.round((p || 0) * 100)));
+          statusEl.textContent = `Uploading charm macro… ${pct}%`;
+        });
+
+        statusEl.textContent = "Charm macro ready";
+      } catch (e) {
+        console.error(e);
+        statusEl.textContent = `Charm macro error: ${e.message || e}`;
+        gen8Btn.disabled = false;
+        throw e;
+      } finally {
+        // re-enable if reference is ready (charm macro is optional)
+        if (referenceStoragePath) gen8Btn.disabled = false;
+      }
+    }
+
     // Grid
     function makeSlot(i){
       const el = document.createElement("div");
@@ -496,8 +575,16 @@ No warped metal, no melted links, no extra jewelry.`;
       }
     }
 
-    function buildPrompt(base, traits){
+    function buildPrompt(base, traits, hasCharmMacro){
+      const imageRoleBlock = hasCharmMacro ? [
+        "INPUT IMAGES (ORDER MATTERS)",
+        "- Image[0]: reference photo (single truth source for necklace, chain geometry, station spacing, metal tone, scale, drape).",
+        "- Image[1]: charm macro (single truth source for charm silhouette + engraving; if any conflict, Image[1] wins for charm details).",
+        "",
+      ].join("\n") : "";
+
       return [
+        imageRoleBlock,
         base,
         "",
         `Traits:`,
@@ -506,7 +593,7 @@ No warped metal, no melted links, no extra jewelry.`;
         `- wardrobe: ${traits.wardrobe}`,
         `- backdrop: ${traits.backdrop}`,
         `- lighting: ${traits.lighting}`,
-      ].join("\n");
+      ].filter(Boolean).join("\n");
     }
 
     async function generateOne(i){
@@ -515,7 +602,7 @@ No warped metal, no melted links, no extra jewelry.`;
 
       const slot = slots[i];
       slot.traits = makeTraits(); // new random traits per regeneration
-      const fullPrompt = buildPrompt(promptEl.value.trim(), slot.traits);
+      const fullPrompt = buildPrompt(promptEl.value.trim(), slot.traits, !!charmMacroStoragePath);
       slot.prompt = fullPrompt;
       renderTraits(slot.traits);
 
@@ -570,6 +657,7 @@ No warped metal, no melted links, no extra jewelry.`;
           model,
           prompt: fullPrompt,
           input_storage_path: referenceStoragePath,
+          ...(charmMacroStoragePath ? { input_charm_storage_path: charmMacroStoragePath } : {}),
           // speed defaults: smaller + low quality = much faster. (Docs support size/quality)
           size: "1024x1536",
           quality: "high",
@@ -617,6 +705,12 @@ No warped metal, no melted links, no extra jewelry.`;
       referenceDownloadUrl = null;   // NEW
       refNameEl.textContent = "No image selected";
       refPreviewEl.innerHTML = "";
+      charmMacroDataUrl = null;
+      charmMacroStoragePath = null;
+      charmMacroDownloadUrl = null;
+      charmNameEl.textContent = "No charm macro selected";
+      charmPreviewEl.innerHTML = "";
+      charmFileEl.value = "";
       renderGrid();
       statusEl.textContent = "Idle";
       gen8Btn.disabled = false;

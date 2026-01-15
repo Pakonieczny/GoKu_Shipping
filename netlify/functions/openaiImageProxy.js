@@ -156,6 +156,9 @@ exports.handler = async (event) => {
         return respond(400, { error: { message: 'kind/mode "edits" requires input_image (data URL)' } });
       }
 
+     // Optional: Charm macro data URL to be appended as Image[1]
+     const input_charm_image = body.input_charm_image;
+
       // Guard: huge payloads increase latency + timeouts
       const approxBytes = Math.floor((String(input_image).length * 3) / 4);
       if (approxBytes > 9_000_000) {
@@ -175,6 +178,12 @@ exports.handler = async (event) => {
       form.append("size", size);
       form.append("n", String(n));
       form.append("image", new Blob([buffer], { type: mime }), "input.png");
+
+      // IMPORTANT: order matters — this becomes Image[1] in the model
+      if (input_charm_image) {
+        const c2 = dataUrlToBuffer(input_charm_image);
+        form.append("image", new Blob([c2.buffer], { type: c2.mime }), "charm.png");
+      }
 
       if (body.mask_image) {
         const m2 = dataUrlToBuffer(body.mask_image);
