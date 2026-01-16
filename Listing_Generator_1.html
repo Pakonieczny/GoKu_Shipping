@@ -210,10 +210,46 @@
 
     // Default prompt (edit freely)
     promptEl.value =
-`Create a hyper-realistic product photo variation based on the reference image.
-Keep the jewelry accurate: chain geometry, station spacing, metal tone, scale, drape.
-Change only the model/photo context based on traits.
-No warped metal, no melted links, no extra jewelry.`;
+    `SCALE CLAMP (NON-NEGOTIABLE)
+    • Output is 1024×1536.
+    • The charm bounding-box height must be 1.7%–2.5% of the full image height (≈ 32–40 px tall).
+    • If the first placement is larger than 42px, keep scaling down until it falls inside this range.
+    • Do not “solve” scale by thickening lines or simplifying engraving — only scale.
+
+    INPUT IMAGES (ORDER MATTERS)
+    • Image[0] = base model photo (necklace position + scene + camera)
+    • Image[1] = charm macro (pixel-truth source for charm silhouette + engraving)
+
+    TASK (CRITICAL)
+      1.  Place Image[1] as the pendant on the necklace in Image[0]. Treat Image[1] like a literal decal/insert.
+      2.  Do not redraw, regenerate, re-engrave, “improve,” clean up, simplify, stylize, or reinterpret the charm.
+      3.  The Charm must have a very flat look without any noticeable potrusions and the engraving is to be superficial.
+      4.  Engraving rule: preserve every engraving stroke exactly as in Image[1]. No stroke loss, no stroke merging, no thickening, no line cleanup, no mirrored text, no invented marks.
+      5.  Allowed charm edits (only): tiny exposure/white-balance shift to match scene lighting + a subtle contact shadow under the charm + mild specular highlight alignment. No geometry changes.
+      6.  BACKGROUND_DIAL: pastel studio backdrop in soft peach 
+      7.  LIGHTING_DIAL: window light, airy highlights Editorial Etsy portrait (chest-up). One adult female model with light skin tone, natural skin texture, realistic pores, no heavy retouching. Framing keeps neck/collarbone clear so the necklace stations are fully visible. Recreate the exact single-strand satellite chain necklace from the reference—identical bead station shape/size/spacing, identical chain link size/shape, identical drape/tension, identical placement on the neck; warm yellow gold tone with crisp specular highlights. Clean modern pastel grading, soft peach backdrop, powder blue white-tee look.    
+
+    ENGRAVING COLOR (NON-NEGOTIABLE)
+    • Engraving must remain a bright metal tone consistent with the charm’s metal (warm yellow).
+    • Engraving visibility must come from micro-shadow + highlight only, not pigment.
+    • Engraving lines may be only slightly darker than the surrounding metal due to shading, but must never appear grey, dark grey, dark brown, black, charcoal, ink-like, oxidized, soot-filled, “painted,” or enamel-filled.
+    • Do not fill engraving channels. Do not add patina. Do not add contrast paint.
+    • If contrast is needed, increase edge highlight / specular response instead of darkening the engraving.
+
+    SCALE + CAMERA (REALISM PRIORITY)
+    • High-res, sharp focus on beads + links, moderate depth of field, 50–85mm portrait perspective.
+    • If the charm is too small for engraving to remain legible at 1536×1024, slightly zoom closer rather than changing the engraving.
+    • Jump ring must be closed + correctly connected to charm and chain; no floating, no broken links.
+
+    NECKLACE LOCK
+    Single strand only. Station count/spacing + link geometry + drape must remain consistent with Image[0]. No added jewelry.
+
+    LOOK
+    Soft peach backdrop, pale taupe styling, punchy-neutral pastel grade. Natural pores, no plastic skin. Jewelry tack sharp.
+
+    HARD FAIL CONDITIONS (if any occur, keep charm from Image[1] unchanged even if lighting match is imperfect)
+    Warped links, doubled chain, altered charm outline, missing strokes, simplified engraving, blur/smear on charm, any engraving rendered as grey/dark grey/dark brown/black or “filled, second strand, altered spacing, thicker chain, neon colors, plastic skin, warped links.”`;
+
 
     // --- Zoom + pan listeners ---
     function attachZoomPan(box){
