@@ -190,11 +190,155 @@
 
     // Trait defs (placeholder — we’ll wire this to your dropdown menus next)
     const TRAITS = {
-      skin: ["very light","light","medium","tan","deep","very deep"],
-      camera: ["straight-on chest-up","3/4 chest-up","profile neck focus","close crop collarbone"],
-      wardrobe: ["blazer neutral top","knit sweater","linen shirt","black tee"],
-      backdrop: ["muted sand","misty blue","soft gray","pastel studio"],
-      lighting: ["soft daylight","window light airy","diffused studio","editorial softbox"],
+            wardrobe: [
+              // Tops
+              "linen button-down shirt",
+              "cotton poplin shirt",
+              "ribbed knit tank",
+              "silky camisole",
+              "classic crewneck tee",
+              "soft scoop-neck tee",
+              "fitted long-sleeve top",
+              "mock-neck top",
+              "lightweight turtleneck",
+              "wrap blouse",
+              "peasant blouse subtle texture",
+              "satin blouse matte sheen",
+
+              // Knitwear
+              "chunky knit sweater",
+              "fine-gauge knit sweater",
+              "cardigan open front",
+              "cropped cardigan",
+              "cashmere pullover",
+              "cable knit sweater subtle",
+
+              // Outer layers
+              "blazer over neutral top",
+              "cropped blazer",
+              "soft trench coat open",
+              "lightweight wool coat open",
+              "denim jacket light wash",
+              "tailored vest over top",
+
+              // Dresses (still good for neck/collarbone crops)
+              "slip dress",
+              "square-neck dress",
+              "ribbed knit dress",
+              "wrap dress solid",
+              "minimal sundress"
+              ],
+
+            wardrobeColor: [
+              // Neutrals that make gold pop
+              "pale taupe",
+              "warm beige",
+              "oatmeal",
+              "ivory",
+              "soft cream",
+              "stone",
+              "mushroom",
+              "warm greige",
+              "light caramel",
+
+              // Pastels that stay punchy-neutral
+              "sage",
+              "dusty olive",
+              "misty blue",
+              "powder blue",
+              "soft periwinkle",
+              "muted lavender",
+              "dusty lilac",
+              "blush pink",
+              "muted rose",
+              "soft peach",
+              "buttercream",
+              "pistachio",
+              "seafoam"
+              ],
+
+            background: [
+              "soft peach studio backdrop",
+              "warm sand studio backdrop",
+              "misty blue studio backdrop",
+              "pale lilac studio backdrop",
+              "cream paper seamless backdrop",
+              "warm beige gradient backdrop",
+              "muted pastel colorwash backdrop",
+              "airy off-white lifestyle wall backdrop"
+            ],
+
+            backgroundAccent: [
+              "no accent",
+              "subtle tonal gradient",
+              "very soft vignette",
+              "faint paper texture",
+              "gentle studio falloff"
+            ],
+
+            lighting: [
+              "soft diffused daylight window light",
+              "large softbox studio light gentle shadows",
+              "north-facing window light airy highlights",
+              "two-softbox wrap light minimal contrast",
+              "beauty-dish softened with diffusion",
+              "overcast daylight look clean neutral"
+            ],
+
+            colorGrade: [
+              "punchy-neutral pastel grade",
+              "warm editorial pastel grade",
+              "clean creamy highlights low saturation",
+              "soft contrast with preserved skin texture",
+              "neutral whites with warm metal emphasis"
+            ],
+
+            stylingMood: [
+              "minimal editorial",
+              "clean lifestyle",
+              "soft romantic pastel",
+              "modern neutral",
+              "quiet luxury"
+            ],
+
+            makeup: [
+              "no-makeup makeup natural",
+              "soft matte neutral makeup",
+              "dewy skin minimal makeup",
+              "barely-there blush natural lip",
+              "clean editorial minimal makeup"
+            ],
+
+            hair: [
+              "loose waves behind shoulders",
+              "sleek straight hair tucked behind ear",
+              "low bun clean neckline",
+              "low ponytail clean neckline",
+              "half-up style clear collarbone"
+            ],
+
+            pose: [
+              "chin slightly down necklace centered",
+              "shoulders relaxed straight-on",
+              "3/4 turn subtle",
+              "profile neck/jawline emphasis",
+              "slight lean forward to show necklace detail"
+            ],
+
+            lensLook: [
+              "50mm natural perspective",
+              "65mm flattering compression",
+              "85mm portrait compression",
+              "macro-leaning close crop realistic"
+            ],
+
+            textureRules: [
+              "no logos",
+              "no busy patterns",
+              "no jewelry besides the necklace",
+              "fabric texture subtle only",
+              "keep neckline unobstructed"
+            ],
     };
 
     function pick(arr){ return arr[Math.floor(Math.random()*arr.length)]; }
