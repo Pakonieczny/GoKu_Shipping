@@ -188,7 +188,7 @@
     let charmMacroDownloadUrl = null;
     let slots = [];
 
-    // Trait defs (placeholder — we’ll wire this to your dropdown menus next)
+    // Trait defs (Etsy-friendly: clean necklines, pastel/neutral palette, jewelry-forward)
     const TRAITS = {
             wardrobe: [
               // Tops
@@ -341,14 +341,29 @@
             ]
     };
 
-    function pick(arr){ return arr[Math.floor(Math.random()*arr.length)]; }
+       function pick(arr, label="trait"){
+       if (!Array.isArray(arr) || arr.length === 0) {
+         console.warn(`pick(): TRAITS.${label} missing or empty`, arr);
+         return "";
+       }
+       return arr[Math.floor(Math.random() * arr.length)];
+       }
     function makeTraits(){
       return {
-        skin: pick(TRAITS.skin),
-        camera: pick(TRAITS.camera),
-        wardrobe: pick(TRAITS.wardrobe),
-        backdrop: pick(TRAITS.backdrop),
-        lighting: pick(TRAITS.lighting),
+        skin: pick(TRAITS.skin, "skin"),
+        camera: pick(TRAITS.camera, "camera"),
+        wardrobe: pick(TRAITS.wardrobe, "wardrobe"),
+        wardrobeColor: pick(TRAITS.wardrobeColor, "wardrobeColor"),
+        backdrop: pick(TRAITS.backdrop, "backdrop"),
+        backgroundAccent: pick(TRAITS.backgroundAccent, "backgroundAccent"),
+        lighting: pick(TRAITS.lighting, "lighting"),
+        colorGrade: pick(TRAITS.colorGrade, "colorGrade"),
+        stylingMood: pick(TRAITS.stylingMood, "stylingMood"),
+        makeup: pick(TRAITS.makeup, "makeup"),
+        hair: pick(TRAITS.hair, "hair"),
+        pose: pick(TRAITS.pose, "pose"),
+        lensLook: pick(TRAITS.lensLook, "lensLook"),
+        textureRules: pick(TRAITS.textureRules, "textureRules"),
       };
     }
 
@@ -795,14 +810,23 @@
 
       return [
         imageRoleBlock,
-        base,
-        "",
-        `Traits:`,
-        `- skin: ${traits.skin}`,
-        `- camera: ${traits.camera}`,
+       "TRAITS LOCK (HIGH PRIORITY — obey exactly, do not average out or ignore)",
+        `- skin tone: ${traits.skin}`,
+        `- camera framing: ${traits.camera}`,
         `- wardrobe: ${traits.wardrobe}`,
+        `- wardrobe color: ${traits.wardrobeColor}`,
         `- backdrop: ${traits.backdrop}`,
+        `- backdrop accent: ${traits.backgroundAccent}`,
         `- lighting: ${traits.lighting}`,
+        `- color grade: ${traits.colorGrade}`,
+        `- styling mood: ${traits.stylingMood}`,
+        `- hair: ${traits.hair}`,
+        `- makeup: ${traits.makeup}`,
+        `- pose: ${traits.pose}`,
+        `- lens look: ${traits.lensLook}`,
+        `- rules: ${traits.textureRules}`,
+        "",
+        base,
       ].filter(Boolean).join("\n");
     }
 
