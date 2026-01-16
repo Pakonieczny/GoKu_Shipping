@@ -480,7 +480,9 @@ No warped metal, no melted links, no extra jewelry.`;
       charmMacroDataUrl = await fileToDataUrl(file, { maxDim: 5000, mime: "image/png", quality: 1.00 });
       setPreview(charmPreviewEl, charmMacroDataUrl);
 
-      const macroFile = dataUrlToFile(charmMacroDataUrl, "charm_macro");
+      // IMPORTANT: upload the ORIGINAL file bytes to avoid any canvas smoothing / re-encoding drift
+      // (Preview can still use charmMacroDataUrl above.)
+      const macroFile = file;
 
       const macroId = `charm_${Date.now()}_${Math.random().toString(16).slice(2)}`;
       const ext = macroFile.name.split(".").pop() || "jpg";
