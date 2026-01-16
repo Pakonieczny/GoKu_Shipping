@@ -212,18 +212,25 @@
     promptEl.value =
     `SCALE CLAMP (NON-NEGOTIABLE)
     • Output is 1024×1536.
-    • The charm bounding-box height must be 1.7%–2.5% of the full image height (≈ 32–40 px tall).
-    • If the first placement is larger than 42px, keep scaling down until it falls inside this range.
+    • The charm bounding-box height must be 1.1%–2.0% of the full image height (≈ 20–33 px tall).
+    • If the first placement is larger than 35px, keep scaling down until it falls inside this range.
     • Do not “solve” scale by thickening lines or simplifying engraving — only scale.
 
     INPUT IMAGES (ORDER MATTERS)
     • Image[0] = base model photo (necklace position + scene + camera)
     • Image[1] = charm macro (pixel-truth source for charm silhouette + engraving)
 
+    TRAITS OVERRIDE (NON-NEGOTIABLE)
+    • A "Traits:" block will be appended at the end of this prompt.
+    • Treat every trait line as a hard requirement to apply literally (not suggestions, not metadata).
+    • If any style text above conflicts with Traits, Traits win for: skin, camera framing, wardrobe, backdrop, lighting.
+    • Exception: jewelry locks always win (necklace + charm fidelity rules never change).
+    • Do not average traits. Do not ignore traits. Do not partially apply traits. Apply all traits.
+
     TASK (CRITICAL)
       1.  Place Image[1] as the pendant on the necklace in Image[0]. Treat Image[1] like a literal decal/insert.
       2.  Do not redraw, regenerate, re-engrave, “improve,” clean up, simplify, stylize, or reinterpret the charm.
-      3.  The Charm must have a very flat look without any noticeable potrusions and the engraving is to be superficial.
+      3.  The Charm must be very flat and thin, without any noticeable potrusions and the engraving is to be superficial.
       4.  Engraving rule: preserve every engraving stroke exactly as in Image[1]. No stroke loss, no stroke merging, no thickening, no line cleanup, no mirrored text, no invented marks.
       5.  Allowed charm edits (only): tiny exposure/white-balance shift to match scene lighting + a subtle contact shadow under the charm + mild specular highlight alignment. No geometry changes.
       6.  BACKGROUND_DIAL: pastel studio backdrop in soft peach 
