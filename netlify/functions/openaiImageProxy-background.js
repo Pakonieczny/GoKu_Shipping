@@ -301,16 +301,23 @@ async function postScaleCharmComposite({
 
     const found = maxX >= 0;
     const bboxArea = found ? (maxX - minX + 1) * (maxY - minY + 1) : 0;
+    const density = found && bboxArea > 0 ? count / bboxArea : 0; // sparse speckle guard
     return { found, maskRaw, minX, minY, maxX, maxY, count, bboxArea };
   }
 
   // Adaptive thresholding: raise threshold until bbox is plausibly “just the charm”
-  const baseThr = clampNumber(diffThreshold, 8, 120, 26);
+  const baseThr = clampNumber(diffThreshold, 8, 120, 40);
   const feather = 1; // keep tight; we're only trying to reduce speckle, not grow the region
 
   const totalPx = width * height;
-  const MAX_MASK_PX_RATIO = 0.06; // 6% of pixels lit is already big
-  const MAX_BBOX_AREA_RATIO = 0.12; // 12% bbox area is already big
+  // Tighten these so we never "accidentally select half the shirt/skin"
+  const MAX_MASK_PX_RATIO = 0.035;     // 3.5%
+  const MAX_BBOX_AREA_RATIO = 0.075;   // 7.5%
+  const MAX_BBOX_W_RATIO = 0.35;       // 35% of width
+  const MAX_BBOX_H_RATIO = 0.35;       // 35% of height
+  const MIN_DENSITY = 0.035;           // reject sparse speckle bboxes
+  const CENTER_X_MIN = 0.12, CENTER_X_MAX = 0.88; // charm should be roughly central
+  const CENTER_Y_MIN = 0.12, CENTER_Y_MAX = 0.88;
 
   let chosen = null;
   let best = null; // smallest bbox fallback
@@ -321,10 +328,23 @@ async function postScaleCharmComposite({
 
     if (!best || m.bboxArea < best.bboxArea) best = { ...m, thr };
 
+    const bboxW = (m.maxX - m.minX + 1);
+    const bboxH = (m.maxY - m.minY + 1);
+    const bboxWR = bboxW / width;
+    const bboxHR = bboxH / height;
+    const cx = (m.minX + m.maxX) / 2;
+    const cy = (m.minY + m.maxY) / 2;
+    const okCenter =
+      (cx >= width * CENTER_X_MIN && cx <= width * CENTER_X_MAX) &&
+      (cy >= height * CENTER_Y_MIN && cy <= height * CENTER_Y_MAX);
+
     const okMask = m.count <= totalPx * MAX_MASK_PX_RATIO;
     const okBox = m.bboxArea <= totalPx * MAX_BBOX_AREA_RATIO;
+    const okW = bboxWR <= MAX_BBOX_W_RATIO;
+    const okH = bboxHR <= MAX_BBOX_H_RATIO;
+    const okDense = (m.density || 0) >= MIN_DENSITY;
 
-    if (okMask && okBox) {
+    if (okMask && okBox && okW && okH && okDense && okCenter) {
       chosen = { ...m, thr };
       break;
     }
@@ -377,26 +397,36 @@ async function postScaleCharmComposite({
     .png()
     .toBuffer();
 
+  // If alpha somehow collapses, never try to composite (prevents black blocks)
+  try {
+    const aStats = await sharp(scaledCharm).extractChannel(3).stats();
+    if (!aStats?.channels?.[0] || aStats.channels[0].max === 0) return passABuf;
+  } catch (_) {
+    // if stats fails, fall back safely
+    return passABuf;
+  }
+
   // Contact shadow from the scaled alpha channel
   const shBlur = clampNumber(shadowBlur, 0, 12, 2);
   const shOp = clampNumber(shadowOpacity, 0, 0.6, 0.28);
 
-  const shadowAlpha = await sharp(scaledCharm)
+  // Build shadow as RGBA with a real alpha channel (prevents occasional "solid black rectangle" artifacts)
+  const shadowAlphaRaw = await sharp(scaledCharm)
     .extractChannel(3)
     .blur(shBlur)
     .linear(shOp, 0)
-    .png()
+    .raw()
     .toBuffer();
 
   const shadowLayer = await sharp({
     create: {
       width: outW,
       height: outH,
-      channels: 4,
-      background: { r: 0, g: 0, b: 0, alpha: 1 },
+      channels: 3,
+      background: { r: 0, g: 0, b: 0 },
     },
   })
-    .composite([{ input: shadowAlpha, blend: "dest-in" }])
+    .joinChannel(shadowAlphaRaw, { raw: { width: outW, height: outH, channels: 1 } })
     .png()
     .toBuffer();
 
