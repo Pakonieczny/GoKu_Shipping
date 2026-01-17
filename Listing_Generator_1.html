@@ -1164,7 +1164,12 @@
           if (jb.status === "done") {
             if (unsubB) { unsubB(); unsubB = null; }
             const url = jb.resultUrl || jb.downloadURL || "";
-            if (url) slot.img.src = url;
+            if (url) {
+              // Persist + show final image for this slot (matches Pass A behavior)
+              slot.uploadUrl = url;
+              slot.imageDataUrl = url;
+              setSlotPreview(i, url);
+            }            
             setBar(i, 100);
             setMeta(i, "Done");
           }
