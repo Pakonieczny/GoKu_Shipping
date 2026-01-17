@@ -383,13 +383,13 @@
     // Default prompt (edit freely)
     promptEl.value =
   `SCALE CLAMP (NON-NEGOTIABLE)
-    • Output is 1024×1536.
+    • Output is 1024×1024.
     • The charm bounding-box height must be 0.8% to 1.2% of the full image height (≈12–16 px tall).
     • If the first placement is larger than 18px, keep scaling down until it falls inside this range.
     • Do not “solve” scale by thickening lines or simplifying engraving — only scale.
 
     SCALE CLAMP (NON-NEGOTIABLE)
-    • Output is 1024×1536.
+    • Output is 1024×1024.
     • Do not “solve” scale by thickening lines or simplifying engraving — only scale.
 
     ZOOM RANGE CLAMP (NON-NEGOTIABLE)
@@ -919,7 +919,7 @@
           input_storage_path: referenceStoragePath,
           ...(charmMacroStoragePath ? { input_charm_storage_path: charmMacroStoragePath } : {}),
           // speed defaults: smaller + low quality = much faster. (Docs support size/quality)
-          size: "1024x1536",
+          size: "1024x1024",
           quality: "high",
           output_format: "png",
           traits: slot.traits
