@@ -1066,9 +1066,6 @@
       setBar(i, 5);
       setMeta(i, hasCharm ? "Queued (Pass A)…" : "Queued…");
 
-      const jobRefFinal = window.db.collection(JOBS_COLL).doc(jobIdFinal);
-      let unsubFinal = null;
-
       try {
         // ---------- Single-pass fallback (no charm macro) ----------
         if (!hasCharm) {
@@ -1264,7 +1261,9 @@
         if (unsubA) { unsubA(); unsubA = null; }
         if (unsubB) { unsubB(); unsubB = null; }
       }
-      
+
+     }
+
     async function runPool(items, worker, concurrency = 2) {
       const queue = items.slice();
       const runners = Array.from({ length: concurrency }, async () => {
