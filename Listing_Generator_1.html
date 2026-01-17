@@ -87,6 +87,13 @@
         <option value="gpt-image-1">gpt-image-1</option>
       </select>
 
+      <label>Final charm scale (postprocess)</label>
+      <div class="row">
+        <input id="finalCharmScale" type="range" min="0.50" max="0.70" step="0.01" value="0.65" />
+        <input id="finalCharmScaleVal" type="text" value="0.65" style="width:86px;" />
+      </div>
+      <div class="muted">This scales the charm down deterministically after AI placement (preserves engraving fidelity).</div>
+
       <div class="row" style="margin-top:10px;">
         <button class="btn" id="gen8">Generate 8</button>
         <button class="btn" id="clear">Clear</button>
@@ -170,6 +177,8 @@
     const refPreviewEl = document.getElementById("refPreview");
     const promptEl = document.getElementById("prompt");
     const modelEl = document.getElementById("model");
+    const finalCharmScaleEl = document.getElementById("finalCharmScale");
+    const finalCharmScaleValEl = document.getElementById("finalCharmScaleVal");
     const gen8Btn = document.getElementById("gen8");
     const clearBtn = document.getElementById("clear");
     const gridEl = document.getElementById("grid");
@@ -187,6 +196,26 @@
     let charmMacroStoragePath = null;
     let charmMacroDownloadUrl = null;
     let slots = [];
+
+    // Keep UI slider + text in sync
+    function clampNum(n, lo, hi){ return Math.max(lo, Math.min(hi, n)); }
+    function readFinalCharmScale(){
+      const raw = parseFloat(finalCharmScaleEl?.value || "0.65");
+      return clampNum(isFinite(raw) ? raw : 0.65, 0.50, 0.70);
+    }
+    function syncFinalCharmScaleUI(v){
+      const x = String(v.toFixed(2));
+      if (finalCharmScaleEl) finalCharmScaleEl.value = x;
+      if (finalCharmScaleValEl) finalCharmScaleValEl.value = x;
+    }
+    if (finalCharmScaleEl && finalCharmScaleValEl){
+      finalCharmScaleEl.addEventListener("input", ()=> syncFinalCharmScaleUI(readFinalCharmScale()));
+      finalCharmScaleValEl.addEventListener("change", ()=>{
+        const v = clampNum(parseFloat(finalCharmScaleValEl.value || "0.65"), 0.50, 0.70);
+        syncFinalCharmScaleUI(v);
+      });
+      syncFinalCharmScaleUI(readFinalCharmScale());
+    }
 
     // Trait defs (Etsy-friendly: clean necklines, pastel/neutral palette, jewelry-forward)
     const TRAITS = {
@@ -486,23 +515,22 @@
     // Default prompt (edit freely)
     promptEl.value =
     `PROCESS ORDER (NON-NEGOTIABLE)
-    • First: place Image[1] on Image[0] + perfect the charm (silhouette + engraving + jump ring connection + contact shadow).
-    • Second: confirm charm scale clamp is met (pixel size + screen percentage).
-    • Last: apply any camera/lens/zoom instructions. Do NOT re-decide or redraw engraving during camera changes.
+    • First: generate the model variation + necklace (no charm).
+    • Second: add the charm from Image[1] onto the necklace (placement + hardware correctness).
+    • Third: final charm downscale is applied AFTER generation as a deterministic postprocess (no redraw). Do not “fix” size by changing engraving.
 
-    SCALE CLAMP (NON-NEGOTIABLE)
-    • Output is 1024x1536.
-    • The charm bounding-box height must be 0.8% to 1.2% of the full image height (≈12–16 px tall).
-    • If the first placement is larger than 18px, keep scaling down until it falls inside this range.
-    • Do not “solve” scale by thickening lines or simplifying engraving — only scale.
+    SIZE RULE (NON-NEGOTIABLE)
+    • Place the charm slightly LARGE during the “add charm” step to preserve micro-engraving fidelity.
+    • Final size is applied as a postprocess downscale of the charm pixels only (no regeneration, no re-engraving).
+    • Do NOT thicken, simplify, or redraw engraving to solve size.
 
-+    ZOOM RANGE CLAMP (NON-NEGOTIABLE)
-+    • The visible necklace span (left-to-right chain) should fill roughly 88%–95% of the image width.
-+    • Final framing MUST be necklace-forward: upper bust + collarbones only.
-+    • TOP CROP RULE: the top edge must cut at mid-neck (no jawline, no chin, no face ever).
-+    • BOTTOM CROP RULE: bottom edge must be upper bust only (collarbones fully visible; no torso focus).
-+    • Keep the pendant centered in the frame. Do not make the head the subject.
-+    • Keep the neck short and proportional.
+    ZOOM RANGE CLAMP (NON-NEGOTIABLE)
+    • The visible necklace span (left-to-right chain) should fill roughly 88%–95% of the image width.
+    • Final framing MUST be necklace-forward: upper bust + collarbones only.
+    • TOP CROP RULE: the top edge must cut at mid-neck (no jawline, no chin, no face ever).
+    • BOTTOM CROP RULE: bottom edge must be upper bust only (collarbones fully visible; no torso focus).
+    • Keep the pendant centered in the frame. Do not make the head the subject.
+    • Keep the neck short and proportional.
 
     INPUT IMAGES (ORDER MATTERS)
     • Image[0] = base model photo (necklace position + scene + camera)
@@ -1030,15 +1058,16 @@
       const runId = `lg1_${Date.now()}_${Math.random().toString(16).slice(2)}`;
       const jobIdA = `${runId}_slot_${i+1}_A`;
       const jobIdB = `${runId}_slot_${i+1}_B`;
-
-      // realtime progress via Firestore job doc
-      setBar(i, 5);
-      setMeta(i, hasCharm ? "Queued (Pass A)…" : "Queued…");
-
       const jobRefA = window.db.collection(JOBS_COLL).doc(jobIdA);
       const jobRefB = window.db.collection(JOBS_COLL).doc(jobIdB);
       let unsubA = null;
       let unsubB = null;
+
+      setBar(i, 5);
+      setMeta(i, hasCharm ? "Queued (Pass A)…" : "Queued…");
+
+      const jobRefFinal = window.db.collection(JOBS_COLL).doc(jobIdFinal);
+      let unsubFinal = null;
 
       try {
         // ---------- Single-pass fallback (no charm macro) ----------
@@ -1091,84 +1120,125 @@
         }
 
         // ---------- Two-pass (has charm macro) ----------
+        // Pass A: generate variant WITH pendant (allow larger for detail)
+        // Pass B: remove pendant via OpenAI, then post-scale composite (no regen scaling of engraving)
+
         const planA = charmPlanFromTraits(slot.traits, "placement");
-        const planB = charmPlanFromTraits(slot.traits, "final");
         const promptA = buildPrompt(baseText, slot.traits, true, "placement", planA);
-        const promptB = buildPrompt(baseText, slot.traits, true, "final", planB);
-        slot.prompt = `${promptA}\n\n-----\n\n${promptB}`;
 
-        // Listen for Pass A completion -> then enqueue Pass B using Pass A output as Image[0]
-        unsubA = jobRefA.onSnapshot(async (snap)=>{
+        // 30–50% smaller (Pass A is larger by CHARM_A_MULT, Pass B shrinks deterministically)
+        const postScale = clamp(1 / CHARM_A_MULT, 0.5, 0.7);
+
+        const removePrompt = [
+          "Remove the pendant charm entirely.",
+          "Keep the necklace chain, bead stations, clasp, metal tone, model, wardrobe, lighting, and camera exactly the same.",
+          "Do not add any new jewelry. Do not change the chain geometry.",
+          "Fill the removed area realistically (skin/clothing/background) with matching lighting and texture."
+        ].join("\n");
+
+        slot.prompt = `${promptA}\n\n-----\n\n[Pass B: charm_postscale @ ${postScale.toFixed(3)}]`;
+
+        let passAStoragePath = null;
+
+        // Listen Pass B (final)
+        unsubB = jobRefB.onSnapshot((snap) => {
           if (!snap.exists) return;
-          const j = snap.data() || {};
+          const jb = snap.data() || {};
 
-          if (j.status === "running") {
-            const pct = j.stage === "calling_openai" ? 25 : j.stage === "uploading" ? 55 : 15;
+          if (jb.status === "running") {
+            const pct =
+              jb.stage === "downloading_inputs" ? 62 :
+              jb.stage === "removing_charm" ? 70 :
+              jb.stage === "postprocessing" ? 82 :
+              jb.stage === "uploading" ? 92 :
+              jb.stage === "calling_openai" ? 70 :
+              65;
             setBar(i, pct);
-            setMeta(i, j.stage === "uploading" ? "Uploading (Pass A)…" : "Generating (Pass A)…");
+
+            const stageLabel =
+              jb.stage === "downloading_inputs" ? "Preparing (Pass B)…" :
+              jb.stage === "removing_charm" ? "Removing Charm (Pass B)…" :
+              jb.stage === "postprocessing" ? "Postprocessing (Pass B)…" :
+              jb.stage === "uploading" ? "Uploading (Pass B)…" :
+              "Working (Pass B)…";
+            setMeta(i, stageLabel);
           }
 
-          if (j.status === "error") {
+          if (jb.status === "done") {
+            if (unsubB) { unsubB(); unsubB = null; }
+            const url = jb.resultUrl || jb.downloadURL || "";
+            if (url) slot.img.src = url;
+            setBar(i, 100);
+            setMeta(i, "Done");
+          }
+
+          if (jb.status === "error") {
+            if (unsubB) { unsubB(); unsubB = null; }
             setBar(i, 0);
-            setMeta(i, `Error (Pass A): ${j?.error?.message || "Unknown error"}`);
-            if (unsubA) unsubA();
-            return;
+            setMeta(i, "Error");
+            console.error("Pass B error", jb.error);
+          }
+        });
+
+        // Listen Pass A → when done, enqueue Pass B (non-regenerative post-scale)
+        unsubA = jobRefA.onSnapshot((snap) => {
+          if (!snap.exists) return;
+          const jb = snap.data() || {};
+
+          if (jb.status === "running") {
+            const pct =
+              jb.stage === "calling_openai" ? 55 :
+              jb.stage === "uploading" ? 68 :
+              50;
+            setBar(i, pct);
+            setMeta(i, jb.stage === "uploading" ? "Uploading (Pass A)…" : "Generating (Pass A)…");
           }
 
-          if (j.status === "done") {
-            if (unsubA) unsubA();
+          if (jb.status === "done") {
+            if (unsubA) { unsubA(); unsubA = null; }
 
-            const passAStoragePath = j.storagePath;
+            // Your background function writes these on success:
+            // - storagePath (preferred)
+            // - downloadURL (but we need storagePath for Pass B input)
+            passAStoragePath = jb.storagePath || jb.output_storage_path || null;
+
             if (!passAStoragePath) {
               setBar(i, 0);
-              setMeta(i, "Error: Pass A finished but storagePath missing");
+              setMeta(i, "Error");
+              console.error("Pass A done but missing storagePath", jb);
               return;
             }
 
-            setBar(i, 60);
+            setBar(i, 70);
             setMeta(i, "Queued (Pass B)…");
 
-            // Start listener for Pass B
-            unsubB = jobRefB.onSnapshot((snapB)=>{
-              if (!snapB.exists) return;
-              const jb = snapB.data() || {};
-              if (jb.status === "running") {
-                const pct = jb.stage === "calling_openai" ? 70 : jb.stage === "uploading" ? 90 : 65;
-                setBar(i, pct);
-                setMeta(i, jb.stage === "uploading" ? "Uploading (Pass B)…" : "Generating (Pass B)…");
-              }
-              if (jb.status === "done") {
-                if (jb.downloadURL) {
-                  slot.uploadUrl = jb.downloadURL;
-                  slot.imageDataUrl = jb.downloadURL;
-                  setSlotPreview(i, jb.downloadURL);
-                }
-                setBar(i, 100);
-                setMeta(i, `Done: ${jb.storagePath || ""}`);
-                if (unsubB) unsubB();
-              }
-              if (jb.status === "error") {
-                setBar(i, 0);
-                setMeta(i, `Error (Pass B): ${jb?.error?.message || "Unknown error"}`);
-                if (unsubB) unsubB();
-              }
-            });
-
-            // Enqueue Pass B (use Pass A output as the new base image)
-            await enqueueOpenAIImageJob({
+            // Enqueue Pass B (non-regenerative post-scale composite)
+            enqueueOpenAIImageJob({
               jobId: jobIdB,
               runId,
               slotIndex: i,
-              kind: "edits",
+              kind: "charm_postscale",
               model,
-              prompt: promptB,
               input_storage_path: passAStoragePath,
-              input_charm_storage_path: charmMacroStoragePath,
+              remove_prompt: removePrompt,
+              postprocess: {
+                scale: postScale,
+                shadowOpacity: 0.22,
+                shadowBlur: 2,
+                diffThreshold: 18
+              },
               size: "1024x1536",
               quality: "high",
               output_format: "png",
               traits: slot.traits
-           });
+            });
+          }
+
+          if (jb.status === "error") {
+            if (unsubA) { unsubA(); unsubA = null; }
+            setBar(i, 0);
+            setMeta(i, "Error");
+            console.error("Pass A error", jb.error);
           }
         });
 
@@ -1187,15 +1257,14 @@
           output_format: "png",
           traits: slot.traits
         });
-      } catch (e){
+      } catch (e) {
         setBar(i, 0);
         setMeta(i, `Error: ${e.message}`);
         console.error(e);
-        if (unsubA) unsubA();
-        if (unsubB) unsubB();
+        if (unsubA) { unsubA(); unsubA = null; }
+        if (unsubB) { unsubB(); unsubB = null; }
       }
-    }
-
+      
     async function runPool(items, worker, concurrency = 2) {
       const queue = items.slice();
       const runners = Array.from({ length: concurrency }, async () => {
