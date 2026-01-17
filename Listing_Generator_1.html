@@ -335,21 +335,21 @@
 
             // Pass A should keep the charm large enough to preserve macro engraving detail.
             cameraPlacement: [
-              "neck + collarbone close crop, necklace centered, keep pendant large in frame, 65–85mm",
-              "neck + collarbone close crop, slight 3/4 turn, keep pendant large in frame, 65–85mm"
+              "neck + collarbone close crop, necklace centered, keep pendant large in frame, 85-120mm",
+              "neck + collarbone close crop, slight 3/4 turn, keep pendant large in frame, 85-120mm"
             ],
 
             // Pass B is your final framing variation (APPLY LAST).
             cameraFinal: [
-              "neck + collarbone close crop, 65–85mm, straight-on",
-              "neck + collarbone close crop, 65–85mm, 3/4 turn left",
-              "neck + collarbone close crop, 65–85mm, 3/4 turn Right"
+              "neck + collarbone close crop, 85-120mm, straight-on",
+              "neck + collarbone close crop, 85-120mm, 3/4 turn left",
+              "neck + collarbone close crop, 85-120mm, 3/4 turn Right"
             ],
 
               // lens look (perspective/compression)
             lensLook: [
-              "65mm flattering compression",
-              "85mm portrait compression",
+              "85mm flattering compression",
+              "120mm portrait compression",
               "macro-leaning close crop realistic"
             ],
 
@@ -373,8 +373,8 @@
     // So we instruct a *smaller* px window (bias-compensated) to land at TRUE 12–16px.
     // These are inverse multipliers (smaller = stronger shrink).
     const CHARM_INV_OVERSCALE_BASE = {
-      mm65: 0.30,
-      mm85: 0.25,
+      mm85: 0.30,
+      mm120: 0.40,
       macro: 0.48
     };
     const CHARM_INV_OVERSCALE_ZOOM = {
@@ -390,9 +390,9 @@
     function parseLensMm(lensLook = "") {
       const s = String(lensLook).toLowerCase();
       if (s.includes("85mm")) return 85;
-      if (s.includes("65mm")) return 65;
+      if (s.includes("120mm")) return 120;
       if (s.includes("macro")) return 90;
-      return 65;
+      return 80;
     }
 
     function parseFinalZoomGroup(cameraFinal = "") {
@@ -414,7 +414,7 @@
       const lensKey =
         (String(traits?.lensLook || "").toLowerCase().includes("macro")) ? "macro" :
         (lensMm >= 85) ? "mm85" :
-        (lensMm >= 65) ? "mm65" : "mm65";
+        (lensMm >= 120) ? "mm120" : "mm120";
 
       const invBase = CHARM_INV_OVERSCALE_BASE[lensKey] ?? 0.50;
       const invZoom = CHARM_INV_OVERSCALE_ZOOM[zoomGroup] ?? 1.00;
