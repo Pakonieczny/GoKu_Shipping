@@ -341,8 +341,9 @@
 
             // Pass B is your final framing variation (APPLY LAST).
             cameraFinal: [
-              "neck + collarbone close crop, 50–85mm, straight-on",
-              "neck + collarbone close crop, 50–85mm, 3/4 turn"
+              "neck + collarbone close crop, 65–85mm, straight-on",
+              "neck + collarbone close crop, 65–85mm, 3/4 turn left",
+              "neck + collarbone close crop, 65–85mm, 3/4 turn Right"
             ],
 
               // lens look (perspective/compression)
@@ -390,7 +391,6 @@
       const s = String(lensLook).toLowerCase();
       if (s.includes("85mm")) return 85;
       if (s.includes("65mm")) return 65;
-      if (s.includes("50mm")) return 50;
       if (s.includes("macro")) return 90;
       return 65;
     }
@@ -414,7 +414,7 @@
       const lensKey =
         (String(traits?.lensLook || "").toLowerCase().includes("macro")) ? "macro" :
         (lensMm >= 85) ? "mm85" :
-        (lensMm >= 65) ? "mm65" : "mm50";
+        (lensMm >= 65) ? "mm65"
 
       const invBase = CHARM_INV_OVERSCALE_BASE[lensKey] ?? 0.50;
       const invZoom = CHARM_INV_OVERSCALE_ZOOM[zoomGroup] ?? 1.00;
@@ -494,7 +494,7 @@
     • Do not “solve” scale by thickening lines or simplifying engraving — only scale.
 
     ZOOM RANGE CLAMP (NON-NEGOTIABLE)
-    • The visible necklace span (left-to-right chain) should fill roughly 75%–85% of the image width.
+    • The visible necklace span (left-to-right chain) should fill roughly 80%–90% of the image width.
     • Final framing MUST be necklace-forward: neck + collarbone only. No chest-up framing.
     • Crop guidance: Between top of the neck and bottom of chin; bottom edge no lower than upper chest.
     • Keep the pendant centered in the frame. Do not make the head/torso the subject.
