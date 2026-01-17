@@ -333,17 +333,18 @@
               "slight lean forward to show necklace detail"
             ],
 
-            // Pass A should keep the charm large enough to preserve macro engraving detail.
+            // Pass A: still place the charm clearly, but KEEP the crop ultra-tight.
             cameraPlacement: [
-              "neck + collarbone close crop, necklace centered, keep pendant large in frame, 85-120mm",
-              "neck + collarbone close crop, slight 3/4 turn, keep pendant large in frame, 85-120mm"
+              "upper bust + collarbone close crop, TOP EDGE cuts at mid-neck (no jawline, no chin, no face), necklace centered, keep pendant large in frame, 85-120mm",
+              "upper bust + collarbone close crop, TOP EDGE cuts at mid-neck (no jawline, no chin, no face), slight 3/4 turn left, necklace centered, keep pendant large in frame, 85-120mm",
+              "upper bust + collarbone close crop, TOP EDGE cuts at mid-neck (no jawline, no chin, no face), slight 3/4 turn right, necklace centered, keep pendant large in frame, 85-120mm"
             ],
 
-            // Pass B is your final framing variation (APPLY LAST).
+            // Pass B: final framing MUST be bust/collarbone only.
             cameraFinal: [
-              "neck + collarbone close crop, 85-120mm, straight-on",
-              "neck + collarbone close crop, 85-120mm, 3/4 turn left",
-              "neck + collarbone close crop, 85-120mm, 3/4 turn Right"
+              "upper bust + collarbone close crop, TOP EDGE cuts at mid-neck (no jawline, no chin, no face), 85-120mm, straight-on",
+              "upper bust + collarbone close crop, TOP EDGE cuts at mid-neck (no jawline, no chin, no face), 85-120mm, 3/4 turn left",
+              "upper bust + collarbone close crop, TOP EDGE cuts at mid-neck (no jawline, no chin, no face), 85-120mm, 3/4 turn right"
             ],
 
               // lens look (perspective/compression)
@@ -495,16 +496,13 @@
     • If the first placement is larger than 18px, keep scaling down until it falls inside this range.
     • Do not “solve” scale by thickening lines or simplifying engraving — only scale.
 
-    SCALE CLAMP (NON-NEGOTIABLE)
-    • Output is 1024x1536.
-    • Do not “solve” scale by thickening lines or simplifying engraving — only scale.
-
-    ZOOM RANGE CLAMP (NON-NEGOTIABLE)
-    • The visible necklace span (left-to-right chain) should fill roughly 80%–90% of the image width.
-    • Final framing MUST be necklace-forward: neck + collarbone only. No chest-up framing.
-    • Crop guidance: Between top of the neck and bottom of chin; bottom edge no lower than upper chest.
-    • Keep the pendant centered in the frame. Do not make the head/torso the subject.
-    • Keep the neck short and proportional.
++    ZOOM RANGE CLAMP (NON-NEGOTIABLE)
++    • The visible necklace span (left-to-right chain) should fill roughly 88%–95% of the image width.
++    • Final framing MUST be necklace-forward: upper bust + collarbones only.
++    • TOP CROP RULE: the top edge must cut at mid-neck (no jawline, no chin, no face ever).
++    • BOTTOM CROP RULE: bottom edge must be upper bust only (collarbones fully visible; no torso focus).
++    • Keep the pendant centered in the frame. Do not make the head the subject.
++    • Keep the neck short and proportional.
 
     INPUT IMAGES (ORDER MATTERS)
     • Image[0] = base model photo (necklace position + scene + camera)
@@ -974,6 +972,7 @@
         `- lens look: ${traits.lensLook}`,
         "- focus: charm pendant + chain stations tack sharp; background softly blurred",
         "- zoom rule: do not zoom until charm is correct; never redraw engraving to compensate for zoom",
+        "- HARD CROP GUARD: show only upper bust + collarbones; TOP EDGE cuts at mid-neck; absolutely no jawline/chin/face",
         "",
       ].join("\n");
 
