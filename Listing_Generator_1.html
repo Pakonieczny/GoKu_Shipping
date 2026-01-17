@@ -333,20 +333,16 @@
               "slight lean forward to show necklace detail"
             ],
 
-            // Pass A should keep the charm large enough to preserve macro engraving detail.
-            cameraPlacement: [
-              "neck + collarbone close crop, necklace centered, keep pendant large in frame, 65–85mm",
-              "neck + collarbone close crop, slight 3/4 turn, keep pendant large in frame, 65–85mm"
-            ],
-
-            // Pass B is your final framing variation (APPLY LAST).
-            cameraFinal: [
+            camera: [
               "neck + collarbone close crop, 50–85mm, straight-on",
-              "neck + collarbone close crop, 50–85mm, 3/4 turn"
+              "neck + collarbone close crop, 50–85mm, 3/4 turn",
+              "neck/jawline emphasis, profile-forward, 65–85mm",
+              "chest-up editorial crop, necklace centered, 50–65mm"
             ],
 
               // lens look (perspective/compression)
             lensLook: [
+              "50mm natural perspective",
               "65mm flattering compression",
               "85mm portrait compression",
               "macro-leaning close crop realistic"
@@ -361,100 +357,6 @@
             ]
     };
 
-    // -------------------------
-    // Charm sizing control (hard numeric plan)
-    // -------------------------
-    // TRUE DESIRED final size (what you actually want to see in the final image)
-    const CHARM_FINAL_PX_TRUE = { min: 12, max: 16, target: 14 };
-
-    // MODEL OVERSCALE COMPENSATION:
-    // The model tends to render the charm ~1.5–2.0x too large even when given px targets.
-    // So we instruct a *smaller* px window (bias-compensated) to land at TRUE 12–16px.
-    // These are inverse multipliers (smaller = stronger shrink).
-    const CHARM_INV_OVERSCALE_BASE = {
-      mm65: 0.30,
-      mm85: 0.25,
-      macro: 0.48
-    };
-    const CHARM_INV_OVERSCALE_ZOOM = {
-      wide: 0.75,    // chest-up tends to overscale more → instruct smaller
-      medium: 0.9,
-      tight: 1.00
-    };
-
-    // Pass A should keep the charm larger to preserve engraving detail while placing.
-    const CHARM_A_MULT = 1.5;
-
-
-    function parseLensMm(lensLook = "") {
-      const s = String(lensLook).toLowerCase();
-      if (s.includes("85mm")) return 85;
-      if (s.includes("65mm")) return 65;
-      if (s.includes("50mm")) return 50;
-      if (s.includes("macro")) return 90;
-      return 65;
-    }
-
-    function parseFinalZoomGroup(cameraFinal = "") {
-      const s = String(cameraFinal).toLowerCase();
-      // more zoomed out framing groups
-      if (s.includes("chest-up")) return "wide";
-      if (s.includes("neck/jawline")) return "medium";
-      if (s.includes("neck + collarbone")) return "tight";
-      return "medium";
-    }
-
-    function clamp(n, lo, hi){ return Math.max(lo, Math.min(hi, n)); }
-
-    function charmPlanFromTraits(traits, stage /* "placement" | "final" */) {
-      const lensMm = parseLensMm(traits?.lensLook);
-      const zoomGroup = parseFinalZoomGroup(traits?.cameraFinal);
-
-      // --- bias-compensated instruction window ---
-      const lensKey =
-        (String(traits?.lensLook || "").toLowerCase().includes("macro")) ? "macro" :
-        (lensMm >= 85) ? "mm85" :
-        (lensMm >= 65) ? "mm65" : "mm50";
-
-      const invBase = CHARM_INV_OVERSCALE_BASE[lensKey] ?? 0.50;
-      const invZoom = CHARM_INV_OVERSCALE_ZOOM[zoomGroup] ?? 1.00;
-      // Final inverse multiplier applied to TRUE targets to produce MODEL-INSTRUCTION targets
-      const invOverscale = clamp(invBase * invZoom, 0.32, 0.70);
-
-      // TRUE target (what you want)
-      const finalTrue = {
-        minPx: CHARM_FINAL_PX_TRUE.min,
-        maxPx: CHARM_FINAL_PX_TRUE.max,
-        targetPx: CHARM_FINAL_PX_TRUE.target,
-      };
-
-      // MODEL-INSTRUCTION target (what we tell the model)
-      const finalInstr = {
-        minPx: Math.round(finalTrue.minPx * invOverscale),
-        maxPx: Math.round(finalTrue.maxPx * invOverscale),
-        targetPx: Math.round(finalTrue.targetPx * invOverscale),
-      };
-
-      // Pass A instruction target (larger for engraving placement fidelity)
-      const placementInstr = {
-        minPx: Math.round(finalInstr.minPx * CHARM_A_MULT),
-        maxPx: Math.round(finalInstr.maxPx * CHARM_A_MULT),
-        targetPx: Math.round(finalInstr.targetPx * CHARM_A_MULT),
-      };
-
-      return {
-        stage,
-        lensMm,
-        zoomGroup,
-        lensKey,
-        invOverscale,          // how much smaller we instruct vs TRUE targets
-        finalTrue,             // your real desired window (12–16px)
-        finalInstr,            // bias-compensated instruction window
-        ...(stage === "placement" ? { instr: placementInstr } : { instr: finalInstr }),
-      };
-    }
-
-
        function pick(arr, label="trait"){
        if (!Array.isArray(arr) || arr.length === 0) {
          console.warn(`pick(): TRAITS.${label} missing or empty`, arr);
@@ -465,8 +367,7 @@
     function makeTraits(){
       return {
         skin: pick(TRAITS.skin, "skin"),
-        cameraPlacement: pick(TRAITS.cameraPlacement, "cameraPlacement"),
-        cameraFinal: pick(TRAITS.cameraFinal, "cameraFinal"),
+        camera: pick(TRAITS.camera, "camera"),
         wardrobe: pick(TRAITS.wardrobe, "wardrobe"),
         wardrobeColor: pick(TRAITS.wardrobeColor, "wardrobeColor"),
         backdrop: pick(TRAITS.backdrop, "backdrop"),
@@ -925,29 +826,19 @@
       }
     }
 
-    function buildPrompt(base, traits, hasCharmMacro, stage /* "placement" | "final" */, charmPlan){
+    function buildPrompt(base, traits, hasCharmMacro){
       const imageRoleBlock = hasCharmMacro ? [
         "INPUT IMAGES (ORDER MATTERS)",
-        stage === "placement"
-          ? "- Image[0]: reference photo (truth source for necklace placement + chain geometry + station spacing + metal tone + drape)."
-          : "- Image[0]: pass-A composite (truth source: charm already placed/locked + necklace already correct).",
+        "- Image[0]: reference photo (single truth source for necklace, chain geometry, station spacing, metal tone, scale, drape).",
         "- Image[1]: charm macro (single truth source for charm silhouette + engraving; if any conflict, Image[1] wins for charm details).",
         "",
       ].join("\n") : "";
 
-      const processOrder = [
-        "PROCESS ORDER (DO NOT REORDER)",
-        "1) Place charm + hardware first. Preserve macro engraving exactly.",
-        "2) Confirm scale clamp (pixel height + on-screen %).",
-        "3) ONLY AT THE END apply camera/lens/zoom instructions (no engraving redraw).",
-        "",
-      ].join("\n");
-
-      // Apply all non-camera traits immediately (so wardrobe/backdrop/lighting happen),
-      // but force camera instructions to appear LAST to reduce “camera-first” re-generation.
-      const immediateTraits = [
-        "TRAITS LOCK (APPLY NOW — obey exactly, do not average out or ignore)",
+      return [
+        imageRoleBlock,
+       "TRAITS LOCK (HIGH PRIORITY — obey exactly, do not average out or ignore)",
         `- skin tone: ${traits.skin}`,
+        `- camera framing: ${traits.camera}`,
         `- wardrobe: ${traits.wardrobe}`,
         `- wardrobe color: ${traits.wardrobeColor}`,
         `- backdrop: ${traits.backdrop}`,
@@ -958,56 +849,10 @@
         `- hair: ${traits.hair}`,
         `- makeup: ${traits.makeup}`,
         `- pose: ${traits.pose}`,
+        `- lens look: ${traits.lensLook}`,
         `- rules: ${traits.textureRules}`,
         "",
-      ].join("\n");
-
-      const cameraLast = [
-        "CAMERA + LENS (APPLY LAST — after charm is locked)",
-        `- camera framing: ${stage === "placement" ? traits.cameraPlacement : traits.cameraFinal}`,
-        `- lens look: ${traits.lensLook}`,
-        "- focus: charm pendant + chain stations tack sharp; background softly blurred",
-        "- zoom rule: do not zoom until charm is correct; never redraw engraving to compensate for zoom",
-        "",
-      ].join("\n");
-
-      const stageBlock = stage === "placement"
-        ? [
-            "STAGE A (PLACEMENT LOCK)",
-            "- Keep framing close enough that the charm is large/clear while placing it.",
-            "- Do NOT zoom out in this stage.",
-            "",
-            "CHARM SIZE CONTROL (STAGE A — HARD NUMBERS, BIAS-COMPENSATED)",
-            `- Lens: ${charmPlan?.lensMm}mm (${charmPlan?.lensKey}) | Framing: ${charmPlan?.zoomGroup}`,
-            `- TRUE final goal later (Stage B): ${charmPlan?.finalTrue?.minPx}–${charmPlan?.finalTrue?.maxPx}px (target ${charmPlan?.finalTrue?.targetPx}px)`,
-            `- Model overscale correction factor: ${charmPlan?.invOverscale}× (we instruct smaller to land at the TRUE goal)`,
-            `- PLACE NOW (instruction target): charm bbox height ${charmPlan?.instr?.minPx}–${charmPlan?.instr?.maxPx}px (target ${charmPlan?.instr?.targetPx}px)`,
-            "- If the charm still looks large, keep shrinking until it hits the instruction px window. Do not stop early.",
-            "",
-
-          ].join("\n")
-        : [
-            "STAGE B (FINAL CAMERA)",
-            "- Start from Image[0] (pass-A composite). Treat charm + necklace as pixel-locked truth.",
-            "- Do NOT alter charm silhouette, engraving strokes, jump ring connection, or necklace geometry.",
-            "- Only adjust camera framing/zoom at the end per CAMERA + LENS block.",
-            "",
-            "CHARM SIZE CONTROL (STAGE B — FINAL HARD NUMBERS, BIAS-COMPENSATED)",
-            `- TRUE required final size: charm bbox height ${charmPlan?.finalTrue?.minPx}–${charmPlan?.finalTrue?.maxPx}px (target ${charmPlan?.finalTrue?.targetPx}px)`,
-            `- Instruction window (compensated): ${charmPlan?.instr?.minPx}–${charmPlan?.instr?.maxPx}px (target ${charmPlan?.instr?.targetPx}px)`,
-            "- IMPORTANT: do NOT redraw engraving to satisfy size. Only adjust framing/zoom until charm reaches TRUE size.",
-            "- If output charm is still ~1.5–2× too large, shrink it again (repeat the reduction) until it lands inside TRUE window.",
-            "",
-          ].join("\n");
-
-      return [
-        imageRoleBlock,
-        processOrder,
-        stageBlock,
-        immediateTraits,
         base,
-        "",
-        cameraLast,
       ].filter(Boolean).join("\n");
     }
 
@@ -1017,166 +862,63 @@
 
       const slot = slots[i];
       slot.traits = makeTraits(); // new random traits per regeneration
-      const hasCharm = !!charmMacroStoragePath;
-      const baseText = promptEl.value.trim();
+      const fullPrompt = buildPrompt(promptEl.value.trim(), slot.traits, !!charmMacroStoragePath);
+      slot.prompt = fullPrompt;
       renderTraits(slot.traits);
 
       const model = modelEl.value;
       const runId = `lg1_${Date.now()}_${Math.random().toString(16).slice(2)}`;
-      const jobIdA = `${runId}_slot_${i+1}_A`;
-      const jobIdB = `${runId}_slot_${i+1}_B`;
+      const jobId = `${runId}_slot_${i+1}`;
 
       // realtime progress via Firestore job doc
       setBar(i, 5);
-      setMeta(i, hasCharm ? "Queued (Pass A)…" : "Queued…");
+      setMeta(i, "Queued…");
 
-      const jobRefA = window.db.collection(JOBS_COLL).doc(jobIdA);
-      const jobRefB = window.db.collection(JOBS_COLL).doc(jobIdB);
-      let unsubA = null;
-      let unsubB = null;
+      const jobRef = window.db.collection(JOBS_COLL).doc(jobId);
+      let unsub = null;
 
       try {
-        // ---------- Single-pass fallback (no charm macro) ----------
-        if (!hasCharm) {
-          const fullPrompt = buildPrompt(baseText, slot.traits, false, "final");
-          slot.prompt = fullPrompt;
-
-          let unsub = null;
-          const jobRef = window.db.collection(JOBS_COLL).doc(jobIdB);
-          unsub = jobRef.onSnapshot((snap)=>{
-            if (!snap.exists) return;
-            const j = snap.data() || {};
-            if (j.status === "running") {
-              const pct = j.stage === "calling_openai" ? 35 : j.stage === "uploading" ? 80 : 25;
-              setBar(i, pct);
-              setMeta(i, j.stage === "uploading" ? "Uploading…" : "Generating…");
-            }
-            if (j.status === "done") {
-              if (j.downloadURL) {
-                slot.uploadUrl = j.downloadURL;
-                slot.imageDataUrl = j.downloadURL;
-                setSlotPreview(i, j.downloadURL);
-              }
-              setBar(i, 100);
-              setMeta(i, `Done: ${j.storagePath || ""}`);
-              if (unsub) unsub();
-            }
-            if (j.status === "error") {
-              setBar(i, 0);
-              setMeta(i, `Error: ${j?.error?.message || "Unknown error"}`);
-              if (unsub) unsub();
-            }
-          });
-
-          await enqueueOpenAIImageJob({
-            jobId: jobIdB,
-            runId,
-            slotIndex: i,
-            kind: "edits",
-            model,
-            prompt: fullPrompt,
-            input_storage_path: referenceStoragePath,
-            size: "1024x1536",
-            quality: "high",
-            output_format: "png",
-            traits: slot.traits
-          });
-
-          return;
-        }
-
-        // ---------- Two-pass (has charm macro) ----------
-        const planA = charmPlanFromTraits(slot.traits, "placement");
-        const planB = charmPlanFromTraits(slot.traits, "final");
-        const promptA = buildPrompt(baseText, slot.traits, true, "placement", planA);
-        const promptB = buildPrompt(baseText, slot.traits, true, "final", planB);
-        slot.prompt = `${promptA}\n\n-----\n\n${promptB}`;
-
-        // Listen for Pass A completion -> then enqueue Pass B using Pass A output as Image[0]
-        unsubA = jobRefA.onSnapshot(async (snap)=>{
+        // Start listening BEFORE enqueue so we never miss the first write.
+        unsub = jobRef.onSnapshot((snap)=>{
           if (!snap.exists) return;
           const j = snap.data() || {};
-
           if (j.status === "running") {
-            const pct = j.stage === "calling_openai" ? 25 : j.stage === "uploading" ? 55 : 15;
+            const pct =
+              j.stage === "calling_openai" ? 35 :
+              j.stage === "uploading" ? 80 :
+              25;
             setBar(i, pct);
-            setMeta(i, j.stage === "uploading" ? "Uploading (Pass A)…" : "Generating (Pass A)…");
+            setMeta(i, j.stage === "uploading" ? "Uploading…" : "Generating…");
           }
-
+          if (j.status === "done") {
+            if (j.downloadURL) {
+              slot.uploadUrl = j.downloadURL;
+              slot.imageDataUrl = j.downloadURL; // show final
+              setSlotPreview(i, j.downloadURL);
+            }
+            setBar(i, 100);
+            setMeta(i, `Done: ${j.storagePath || ""}`);
+            if (unsub) unsub();
+          }
           if (j.status === "error") {
             setBar(i, 0);
-            setMeta(i, `Error (Pass A): ${j?.error?.message || "Unknown error"}`);
-            if (unsubA) unsubA();
-            return;
-          }
-
-          if (j.status === "done") {
-            if (unsubA) unsubA();
-
-            const passAStoragePath = j.storagePath;
-            if (!passAStoragePath) {
-              setBar(i, 0);
-              setMeta(i, "Error: Pass A finished but storagePath missing");
-              return;
-            }
-
-            setBar(i, 60);
-            setMeta(i, "Queued (Pass B)…");
-
-            // Start listener for Pass B
-            unsubB = jobRefB.onSnapshot((snapB)=>{
-              if (!snapB.exists) return;
-              const jb = snapB.data() || {};
-              if (jb.status === "running") {
-                const pct = jb.stage === "calling_openai" ? 70 : jb.stage === "uploading" ? 90 : 65;
-                setBar(i, pct);
-                setMeta(i, jb.stage === "uploading" ? "Uploading (Pass B)…" : "Generating (Pass B)…");
-              }
-              if (jb.status === "done") {
-                if (jb.downloadURL) {
-                  slot.uploadUrl = jb.downloadURL;
-                  slot.imageDataUrl = jb.downloadURL;
-                  setSlotPreview(i, jb.downloadURL);
-                }
-                setBar(i, 100);
-                setMeta(i, `Done: ${jb.storagePath || ""}`);
-                if (unsubB) unsubB();
-              }
-              if (jb.status === "error") {
-                setBar(i, 0);
-                setMeta(i, `Error (Pass B): ${jb?.error?.message || "Unknown error"}`);
-                if (unsubB) unsubB();
-              }
-            });
-
-            // Enqueue Pass B (use Pass A output as the new base image)
-            await enqueueOpenAIImageJob({
-              jobId: jobIdB,
-              runId,
-              slotIndex: i,
-              kind: "edits",
-              model,
-              prompt: promptB,
-              input_storage_path: passAStoragePath,
-              input_charm_storage_path: charmMacroStoragePath,
-              size: "1024x1536",
-              quality: "high",
-              output_format: "png",
-              traits: slot.traits
-           });
+            setMeta(i, `Error: ${j?.error?.message || "Unknown error"}`);
+            if (unsub) unsub();
           }
         });
 
-        // Enqueue Pass A
+        // Enqueue the job (fast response; avoids 504 inactivity timeouts)
+        // IMPORTANT: do NOT send input_image base64 here.
         await enqueueOpenAIImageJob({
-          jobId: jobIdA,
+          jobId,
           runId,
           slotIndex: i,
           kind: "edits",
           model,
-          prompt: promptA,
+          prompt: fullPrompt,
           input_storage_path: referenceStoragePath,
-          input_charm_storage_path: charmMacroStoragePath,
+          ...(charmMacroStoragePath ? { input_charm_storage_path: charmMacroStoragePath } : {}),
+          // speed defaults: smaller + low quality = much faster. (Docs support size/quality)
           size: "1024x1536",
           quality: "high",
           output_format: "png",
@@ -1186,8 +928,7 @@
         setBar(i, 0);
         setMeta(i, `Error: ${e.message}`);
         console.error(e);
-        if (unsubA) unsubA();
-        if (unsubB) unsubB();
+        if (unsub) unsub();
       }
     }
 
