@@ -342,14 +342,11 @@
             // Pass B is your final framing variation (APPLY LAST).
             cameraFinal: [
               "neck + collarbone close crop, 50–85mm, straight-on",
-              "neck + collarbone close crop, 50–85mm, 3/4 turn",
-              "neck/jawline emphasis, profile-forward, 65–85mm",
-              "chest-up editorial crop, necklace centered, 50–65mm"
+              "neck + collarbone close crop, 50–85mm, 3/4 turn"
             ],
 
               // lens look (perspective/compression)
             lensLook: [
-              "50mm natural perspective",
               "65mm flattering compression",
               "85mm portrait compression",
               "macro-leaning close crop realistic"
@@ -375,9 +372,8 @@
     // So we instruct a *smaller* px window (bias-compensated) to land at TRUE 12–16px.
     // These are inverse multipliers (smaller = stronger shrink).
     const CHARM_INV_OVERSCALE_BASE = {
-      mm50: 0.25,
-      mm65: 0.20,
-      mm85: 0.15,
+      mm65: 0.30,
+      mm85: 0.25,
       macro: 0.48
     };
     const CHARM_INV_OVERSCALE_ZOOM = {
@@ -499,6 +495,12 @@
     • If the first placement is larger than 18px, keep scaling down until it falls inside this range.
     • Do not “solve” scale by thickening lines or simplifying engraving — only scale.
 
+    ZOOM RANGE CLAMP (NON-NEGOTIABLE)
+    • Final framing MUST be necklace-forward: neck + collarbone only. No chest-up framing.
+    • Crop guidance: top edge between lower lip and chin; bottom edge no lower than upper chest.
+    • The visible necklace span (left-to-right chain) should fill roughly 60%–80% of the image width.
+    • Keep the pendant centered in the frame. Do not make the head/torso the subject.
+
     INPUT IMAGES (ORDER MATTERS)
     • Image[0] = base model photo (necklace position + scene + camera)
     • Image[1] = charm macro (pixel-truth source for charm silhouette + engraving)
@@ -517,7 +519,7 @@
       4.  Engraving rule: preserve every engraving stroke exactly as in Image[1]. No stroke loss, no stroke merging, no thickening, no line cleanup, no mirrored text, no invented marks.
       5.  Allowed charm edits (only): tiny exposure/white-balance shift to match scene lighting + a subtle contact shadow under the charm + mild specular highlight alignment. No geometry changes.
       6.  BACKGROUND_DIAL: pastel studio backdrop in soft peach 
-      7.  LIGHTING_DIAL: window light, airy highlights Editorial Etsy portrait (chest-up). One adult female model with natural skin texture, realistic pores, no heavy retouching. Framing keeps neck/collarbone clear so the necklace stations are fully visible. Recreate the exact single-strand satellite chain necklace from the reference—identical bead station shape/size/spacing, identical chain link size/shape, identical drape/tension, identical placement on the neck; warm yellow gold tone with crisp specular highlights. Clean modern pastel grading, soft peach backdrop, powder blue white-tee look.    
+      7.  LIGHTING_DIAL: window light, airy highlights Editorial Etsy portrait (neck + collarbone close crop). One adult female model with natural skin texture, realistic pores, no heavy retouching. Tight framing keeps neck/collarbone clear so the necklace stations are fully visible. Recreate the exact single-strand satellite chain necklace from the reference—identical bead station shape/size/spacing, identical chain link size/shape, identical drape/tension, identical placement on the neck; warm yellow gold tone with crisp specular highlights. Clean modern pastel grading, soft peach backdrop, powder blue white-tee look.  
 
     ENGRAVING COLOR (NON-NEGOTIABLE)
     • Engraving must remain a bright metal tone consistent with the charm’s metal (warm yellow).
