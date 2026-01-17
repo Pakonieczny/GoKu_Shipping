@@ -336,13 +336,11 @@
             camera: [
               "neck + collarbone close crop, 65–85mm, straight-on",
               "neck + collarbone close crop, 65–85mm, 3/4 turn left",
-              "neck + collarbone close crop, 65–85mm, 3/4 turn right",
-              "chest-up editorial crop, necklace centered, 65–85mm"
+              "neck + collarbone close crop, 65–85mm, 3/4 turn right"
             ],
 
               // lens look (perspective/compression)
             lensLook: [
-              "50mm natural perspective",
               "65mm flattering compression",
               "85mm portrait compression",
               "macro-leaning close crop realistic"
@@ -385,20 +383,23 @@
 
     // Default prompt (edit freely)
     promptEl.value =
-    `PROCESS ORDER (NON-NEGOTIABLE)
-    • First: place Image[1] on Image[0] + perfect the charm (silhouette + engraving + jump ring connection + contact shadow).
-    • Second: confirm charm scale clamp is met (pixel size + screen percentage).
-    • Last: apply any camera/lens/zoom instructions. Do NOT re-decide or redraw engraving during camera changes.
+  `SCALE CLAMP (NON-NEGOTIABLE)
+    • Output is 1024×1536.
+    • The charm bounding-box height must be 0.8% to 1.2% of the full image height (≈12–16 px tall).
+    • If the first placement is larger than 18px, keep scaling down until it falls inside this range.
+    • Do not “solve” scale by thickening lines or simplifying engraving — only scale.
 
     SCALE CLAMP (NON-NEGOTIABLE)
     • Output is 1024×1536.
     • Do not “solve” scale by thickening lines or simplifying engraving — only scale.
 
     ZOOM RANGE CLAMP (NON-NEGOTIABLE)
-    • The visible necklace span (left-to-right chain) should fill roughly 75%–85% of the image width.
-    • Final framing MUST be necklace-forward: neck + collarbone only. No chest-up framing.
-    • Crop guidance: Between top of the neck and bottom of chin; bottom edge no lower than upper chest.
-    • Keep the pendant centered in the frame. Do not make the head/torso the subject.
+    • The visible necklace span (left-to-right chain) should fill roughly 86%–92% of the image width.
+    • Final framing MUST be necklace-forward: bust + collarbone only.
+    • TOP CROP HARD LIMIT: show NO higher than halfway up the neck (no jawline, no chin, no lips).
+    • BOTTOM CROP: include collarbones + upper bust only (do not include full chest/torso).
+    • If any chin/jaw appears, zoom in and crop tighter until it is gone.
+    • Keep the pendant centered in the frame. Do not make the person the subject.
     • Keep the neck short and proportional.
 
     INPUT IMAGES (ORDER MATTERS)
