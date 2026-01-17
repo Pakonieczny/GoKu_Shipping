@@ -334,9 +334,9 @@
             ],
 
             camera: [
-              "neck + collarbone close crop, 65–85mm, straight-on",
-              "neck + collarbone close crop, 65–85mm, 3/4 turn left",
-              "neck + collarbone close crop, 65–85mm, 3/4 turn right"
+              "bust + collarbone only crop, top edge at mid-neck, 65–85mm, straight-on",
+              "bust + collarbone only crop, top edge at mid-neck, 65–85mm, 3/4 turn left",
+              "bust + collarbone only crop, top edge at mid-neck, 65–85mm, 3/4 turn right"
             ],
 
               // lens look (perspective/compression)
@@ -559,6 +559,91 @@
       }
     }
 
+    // --- HARD COMPENSATION: force tight bust/collarbone framing for the REFERENCE upload ---
+    // This makes zoom non-negotiable because OpenAI never receives the wider shot.
+    const REF_TIGHT_OUT_W = 1024;
+    const REF_TIGHT_OUT_H = 1536;
+    const REF_TIGHT_ZOOM  = 2.4;   // ~2.4x tighter than the original framing
+    const REF_TIGHT_V_ANCHOR = 0.72; // anchors crop lower (keeps collarbones, avoids jaw/chin)
+    const REF_TIGHT_H_ANCHOR = 0.50;
+
+    function clamp(v, a, b){ return Math.max(a, Math.min(b, v)); }
+
+    async function fileToTightPortraitDataUrl(file, opts = {}){
+      const {
+        outW = REF_TIGHT_OUT_W,
+        outH = REF_TIGHT_OUT_H,
+        zoom = REF_TIGHT_ZOOM,
+        vAnchor = REF_TIGHT_V_ANCHOR,
+        hAnchor = REF_TIGHT_H_ANCHOR,
+        mime = "image/jpeg",
+        quality = 0.95
+      } = opts;
+
+      const aspect = outW / outH; // 1024/1536 = 2:3
+
+      // Modern path (fast + consistent)
+      try {
+        const bmp = await createImageBitmap(file);
+        const sw = bmp.width, sh = bmp.height;
+
+        // Compute a tight crop window with correct aspect ratio
+        let cropH = sh / Math.max(1.0, zoom);
+        let cropW = cropH * aspect;
+        if (cropW > sw) { cropW = sw; cropH = cropW / aspect; }
+
+        const cx = sw * hAnchor;
+        const cy = sh * vAnchor;
+        const sx = clamp(cx - cropW/2, 0, sw - cropW);
+        const sy = clamp(cy - cropH/2, 0, sh - cropH);
+
+        const canvas = document.createElement("canvas");
+        canvas.width = outW;
+        canvas.height = outH;
+        const ctx = canvas.getContext("2d", { alpha:false });
+        ctx.imageSmoothingEnabled = true;
+        ctx.imageSmoothingQuality = "high";
+        ctx.drawImage(bmp, sx, sy, cropW, cropH, 0, 0, outW, outH);
+        return canvas.toDataURL(mime, quality);
+      } catch (_) {
+        // Fallback: FileReader -> Image -> canvas
+        const dataUrl = await new Promise((resolve, reject)=>{
+          const reader = new FileReader();
+          reader.onload = ()=> resolve(reader.result);
+          reader.onerror = reject;
+          reader.readAsDataURL(file);
+        });
+
+        const img = await new Promise((resolve, reject)=>{
+          const i = new Image();
+          i.onload = ()=> resolve(i);
+          i.onerror = reject;
+          i.src = dataUrl;
+        });
+
+        const sw = img.naturalWidth || img.width;
+        const sh = img.naturalHeight || img.height;
+
+        let cropH = sh / Math.max(1.0, zoom);
+        let cropW = cropH * aspect;
+        if (cropW > sw) { cropW = sw; cropH = cropW / aspect; }
+
+        const cx = sw * hAnchor;
+        const cy = sh * vAnchor;
+        const sx = clamp(cx - cropW/2, 0, sw - cropW);
+        const sy = clamp(cy - cropH/2, 0, sh - cropH);
+
+        const canvas = document.createElement("canvas");
+        canvas.width = outW;
+        canvas.height = outH;
+        const ctx = canvas.getContext("2d", { alpha:false });
+        ctx.imageSmoothingEnabled = true;
+        ctx.imageSmoothingQuality = "high";
+        ctx.drawImage(img, sx, sy, cropW, cropH, 0, 0, outW, outH);
+        return canvas.toDataURL(mime, quality);
+      }
+    }
+
     // Drag/drop
     dropEl.addEventListener("dragover", (e)=>{ e.preventDefault(); dropEl.style.borderColor="#2b6cff"; });
     dropEl.addEventListener("dragleave", ()=>{ dropEl.style.borderColor="#3a4262"; });
@@ -653,7 +738,8 @@
       try {
         // NEW: ensure auth is established before we attempt Storage upload
         statusEl.textContent = "Preparing reference…";
-        referenceDataUrl = await fileToDataUrl(file);
+        // HARD zoom compensation: crop the input BEFORE upload so OpenAI cannot "zoom out"
+        referenceDataUrl = await fileToTightPortraitDataUrl(file);
         setPreview(refPreviewEl, referenceDataUrl);
 
         // Convert the resized dataURL into a File for Storage upload
