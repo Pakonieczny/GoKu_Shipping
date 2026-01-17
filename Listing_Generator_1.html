@@ -414,7 +414,7 @@
       const lensKey =
         (String(traits?.lensLook || "").toLowerCase().includes("macro")) ? "macro" :
         (lensMm >= 85) ? "mm85" :
-        (lensMm >= 65) ? "mm65"
+        (lensMm >= 65) ? "mm65" : "mm65";
 
       const invBase = CHARM_INV_OVERSCALE_BASE[lensKey] ?? 0.50;
       const invZoom = CHARM_INV_OVERSCALE_ZOOM[zoomGroup] ?? 1.00;
