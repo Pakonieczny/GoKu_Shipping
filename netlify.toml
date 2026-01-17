@@ -2,6 +2,10 @@
   publish = "."
   functions = "netlify/functions"
 
+[functions]
+  node_bundler = "esbuild"
+  external_node_modules = ["sharp"]
+
 [[redirects]]
   from = "https://scanner.goldenspike.app"
   to = "/scanner.html"
@@ -166,7 +170,7 @@
 
   [[redirects]]
   from = "https://listing-generator-1.goldenspike.app"
-  to = "/listing_generator_1.html"
+  to = "/Listing_Generator_1.html"
   status = 200
   force = true
 
