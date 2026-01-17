@@ -364,6 +364,71 @@
             ]
     };
 
+     // -------------------------
+    // Charm sizing control (hard numeric plan)
+    // -------------------------
+    const CHARM_FINAL_PX = { min: 12, max: 16, target: 14 };    // your hardcoded final size window
+    const CHARM_A_MULT = 2.0;                                   // Pass A places larger to preserve engraving detail
+
+    function parseLensMm(lensLook = "") {
+      const s = String(lensLook).toLowerCase();
+      if (s.includes("85mm")) return 85;
+      if (s.includes("65mm")) return 65;
+      if (s.includes("50mm")) return 50;
+      if (s.includes("macro")) return 90;
+      return 65;
+    }
+
+    function parseFinalZoomGroup(cameraFinal = "") {
+      const s = String(cameraFinal).toLowerCase();
+      // more zoomed out framing groups
+      if (s.includes("chest-up")) return "wide";
+      if (s.includes("neck/jawline")) return "medium";
+      if (s.includes("neck + collarbone")) return "tight";
+      return "medium";
+    }
+
+    function charmPlanFromTraits(traits, stage /* "placement" | "final" */) {
+      const lensMm = parseLensMm(traits?.lensLook);
+      const zoomGroup = parseFinalZoomGroup(traits?.cameraFinal);
+
+      // Empirical overscale compensation (your observation: 1.5–2x too large)
+      // Slightly stronger compensation for longer lenses + tighter crops.
+      const baseComp =
+        lensMm >= 85 ? 0.55 :
+        lensMm >= 65 ? 0.58 :
+        lensMm >= 50 ? 0.60 : 0.58;
+
+      const zoomBias =
+        zoomGroup === "wide" ? 1.25 :
+        zoomGroup === "tight" ? 1.10 :
+        1.15; // medium default
+
+      const final = {
+        minPx: CHARM_FINAL_PX.min,
+        maxPx: CHARM_FINAL_PX.max,
+        targetPx: CHARM_FINAL_PX.target,
+      };
+
+      const placement = {
+        minPx: Math.round(CHARM_FINAL_PX.min * CHARM_A_MULT),
+        maxPx: Math.round(CHARM_FINAL_PX.max * CHARM_A_MULT),
+        targetPx: Math.round(CHARM_FINAL_PX.target * CHARM_A_MULT),
+      };
+
+      return {
+        stage,
+        lensMm,
+        zoomGroup,
+        // “If it looks right, still shrink by this factor” guardrail:
+        overscaleComp: baseComp,
+        // Pass B should zoom out by at least this bias if charm is still too large:
+        zoomOutBias: zoomBias,
+        ...(stage === "placement" ? placement : final),
+      };
+    }
+
+
        function pick(arr, label="trait"){
        if (!Array.isArray(arr) || arr.length === 0) {
          console.warn(`pick(): TRAITS.${label} missing or empty`, arr);
@@ -829,7 +894,7 @@
       }
     }
 
-    function buildPrompt(base, traits, hasCharmMacro, stage /* "placement" | "final" */){
+    function buildPrompt(base, traits, hasCharmMacro, stage /* "placement" | "final" */, charmPlan){
       const imageRoleBlock = hasCharmMacro ? [
         "INPUT IMAGES (ORDER MATTERS)",
         stage === "placement"
@@ -881,12 +946,24 @@
             "- Keep framing close enough that the charm is large/clear while placing it.",
             "- Do NOT zoom out in this stage.",
             "",
+            "CHARM SIZE CONTROL (STAGE A — HARD NUMBERS)",
+            `- Lens mm: ${charmPlan?.lensMm} | Zoom group: ${charmPlan?.zoomGroup}`,
+            `- Target charm bbox height now: ${charmPlan?.targetPx}px (allowed ${charmPlan?.minPx}–${charmPlan?.maxPx}px)`,
+            `- Mandatory overscale compensation: after first placement, multiply charm size by ${charmPlan?.overscaleComp} (this corrects the typical 1.5–2x overscale).`,
+            "- Re-check size after compensation. If still above maxPx, keep reducing until inside range.",
+            "",
+
           ].join("\n")
         : [
             "STAGE B (FINAL CAMERA)",
             "- Start from Image[0] (pass-A composite). Treat charm + necklace as pixel-locked truth.",
             "- Do NOT alter charm silhouette, engraving strokes, jump ring connection, or necklace geometry.",
             "- Only adjust camera framing/zoom at the end per CAMERA + LENS block.",
+            "",
+            "CHARM SIZE CONTROL (STAGE B — FINAL HARD NUMBERS)",
+            `- Final target charm bbox height: ${charmPlan?.targetPx}px (allowed ${charmPlan?.minPx}–${charmPlan?.maxPx}px)`,
+            `- If charm is above ${charmPlan?.maxPx}px, zoom OUT / widen framing until it lands inside the window.`,
+            `- Apply zoom-out bias ≥ ${charmPlan?.zoomOutBias}× if you need a starting point (then fine-tune to hit the px target).`,
             "",
           ].join("\n");
 
@@ -976,8 +1053,10 @@
         }
 
         // ---------- Two-pass (has charm macro) ----------
-        const promptA = buildPrompt(baseText, slot.traits, true, "placement");
-        const promptB = buildPrompt(baseText, slot.traits, true, "final");
+        const planA = charmPlanFromTraits(slot.traits, "placement");
+        const planB = charmPlanFromTraits(slot.traits, "final");
+        const promptA = buildPrompt(baseText, slot.traits, true, "placement", planA);
+        const promptB = buildPrompt(baseText, slot.traits, true, "final", planB);
         slot.prompt = `${promptA}\n\n-----\n\n${promptB}`;
 
         // Listen for Pass A completion -> then enqueue Pass B using Pass A output as Image[0]
