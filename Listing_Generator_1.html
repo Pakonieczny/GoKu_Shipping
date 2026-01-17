@@ -364,11 +364,31 @@
             ]
     };
 
-     // -------------------------
+    // -------------------------
     // Charm sizing control (hard numeric plan)
     // -------------------------
-    const CHARM_FINAL_PX = { min: 12, max: 16, target: 14 };    // your hardcoded final size window
-    const CHARM_A_MULT = 2.0;                                   // Pass A places larger to preserve engraving detail
+    // TRUE DESIRED final size (what you actually want to see in the final image)
+    const CHARM_FINAL_PX_TRUE = { min: 12, max: 16, target: 14 };
+
+    // MODEL OVERSCALE COMPENSATION:
+    // The model tends to render the charm ~1.5–2.0x too large even when given px targets.
+    // So we instruct a *smaller* px window (bias-compensated) to land at TRUE 12–16px.
+    // These are inverse multipliers (smaller = stronger shrink).
+    const CHARM_INV_OVERSCALE_BASE = {
+      mm50: 0.55,
+      mm65: 0.50,
+      mm85: 0.45,
+      macro: 0.48
+    };
+    const CHARM_INV_OVERSCALE_ZOOM = {
+      wide: 0.85,    // chest-up tends to overscale more → instruct smaller
+      medium: 1.00,
+      tight: 1.10
+    };
+
+    // Pass A should keep the charm larger to preserve engraving detail while placing.
+    const CHARM_A_MULT = 2.0;
+
 
     function parseLensMm(lensLook = "") {
       const s = String(lensLook).toLowerCase();
@@ -388,43 +408,53 @@
       return "medium";
     }
 
+    function clamp(n, lo, hi){ return Math.max(lo, Math.min(hi, n)); }
+
     function charmPlanFromTraits(traits, stage /* "placement" | "final" */) {
       const lensMm = parseLensMm(traits?.lensLook);
       const zoomGroup = parseFinalZoomGroup(traits?.cameraFinal);
 
-      // Empirical overscale compensation (your observation: 1.5–2x too large)
-      // Slightly stronger compensation for longer lenses + tighter crops.
-      const baseComp =
-        lensMm >= 85 ? 0.55 :
-        lensMm >= 65 ? 0.58 :
-        lensMm >= 50 ? 0.60 : 0.58;
+      // --- bias-compensated instruction window ---
+      const lensKey =
+        (String(traits?.lensLook || "").toLowerCase().includes("macro")) ? "macro" :
+        (lensMm >= 85) ? "mm85" :
+        (lensMm >= 65) ? "mm65" : "mm50";
 
-      const zoomBias =
-        zoomGroup === "wide" ? 1.25 :
-        zoomGroup === "tight" ? 1.10 :
-        1.15; // medium default
+      const invBase = CHARM_INV_OVERSCALE_BASE[lensKey] ?? 0.50;
+      const invZoom = CHARM_INV_OVERSCALE_ZOOM[zoomGroup] ?? 1.00;
+      // Final inverse multiplier applied to TRUE targets to produce MODEL-INSTRUCTION targets
+      const invOverscale = clamp(invBase * invZoom, 0.32, 0.70);
 
-      const final = {
-        minPx: CHARM_FINAL_PX.min,
-        maxPx: CHARM_FINAL_PX.max,
-        targetPx: CHARM_FINAL_PX.target,
+      // TRUE target (what you want)
+      const finalTrue = {
+        minPx: CHARM_FINAL_PX_TRUE.min,
+        maxPx: CHARM_FINAL_PX_TRUE.max,
+        targetPx: CHARM_FINAL_PX_TRUE.target,
       };
 
-      const placement = {
-        minPx: Math.round(CHARM_FINAL_PX.min * CHARM_A_MULT),
-        maxPx: Math.round(CHARM_FINAL_PX.max * CHARM_A_MULT),
-        targetPx: Math.round(CHARM_FINAL_PX.target * CHARM_A_MULT),
+      // MODEL-INSTRUCTION target (what we tell the model)
+      const finalInstr = {
+        minPx: Math.round(finalTrue.minPx * invOverscale),
+        maxPx: Math.round(finalTrue.maxPx * invOverscale),
+        targetPx: Math.round(finalTrue.targetPx * invOverscale),
+      };
+
+      // Pass A instruction target (larger for engraving placement fidelity)
+      const placementInstr = {
+        minPx: Math.round(finalInstr.minPx * CHARM_A_MULT),
+        maxPx: Math.round(finalInstr.maxPx * CHARM_A_MULT),
+        targetPx: Math.round(finalInstr.targetPx * CHARM_A_MULT),
       };
 
       return {
         stage,
         lensMm,
         zoomGroup,
-        // “If it looks right, still shrink by this factor” guardrail:
-        overscaleComp: baseComp,
-        // Pass B should zoom out by at least this bias if charm is still too large:
-        zoomOutBias: zoomBias,
-        ...(stage === "placement" ? placement : final),
+        lensKey,
+        invOverscale,          // how much smaller we instruct vs TRUE targets
+        finalTrue,             // your real desired window (12–16px)
+        finalInstr,            // bias-compensated instruction window
+        ...(stage === "placement" ? { instr: placementInstr } : { instr: finalInstr }),
       };
     }
 
@@ -946,11 +976,12 @@
             "- Keep framing close enough that the charm is large/clear while placing it.",
             "- Do NOT zoom out in this stage.",
             "",
-            "CHARM SIZE CONTROL (STAGE A — HARD NUMBERS)",
-            `- Lens mm: ${charmPlan?.lensMm} | Zoom group: ${charmPlan?.zoomGroup}`,
-            `- Target charm bbox height now: ${charmPlan?.targetPx}px (allowed ${charmPlan?.minPx}–${charmPlan?.maxPx}px)`,
-            `- Mandatory overscale compensation: after first placement, multiply charm size by ${charmPlan?.overscaleComp} (this corrects the typical 1.5–2x overscale).`,
-            "- Re-check size after compensation. If still above maxPx, keep reducing until inside range.",
+            "CHARM SIZE CONTROL (STAGE A — HARD NUMBERS, BIAS-COMPENSATED)",
+            `- Lens: ${charmPlan?.lensMm}mm (${charmPlan?.lensKey}) | Framing: ${charmPlan?.zoomGroup}`,
+            `- TRUE final goal later (Stage B): ${charmPlan?.finalTrue?.minPx}–${charmPlan?.finalTrue?.maxPx}px (target ${charmPlan?.finalTrue?.targetPx}px)`,
+            `- Model overscale correction factor: ${charmPlan?.invOverscale}× (we instruct smaller to land at the TRUE goal)`,
+            `- PLACE NOW (instruction target): charm bbox height ${charmPlan?.instr?.minPx}–${charmPlan?.instr?.maxPx}px (target ${charmPlan?.instr?.targetPx}px)`,
+            "- If the charm still looks large, keep shrinking until it hits the instruction px window. Do not stop early.",
             "",
 
           ].join("\n")
@@ -960,10 +991,11 @@
             "- Do NOT alter charm silhouette, engraving strokes, jump ring connection, or necklace geometry.",
             "- Only adjust camera framing/zoom at the end per CAMERA + LENS block.",
             "",
-            "CHARM SIZE CONTROL (STAGE B — FINAL HARD NUMBERS)",
-            `- Final target charm bbox height: ${charmPlan?.targetPx}px (allowed ${charmPlan?.minPx}–${charmPlan?.maxPx}px)`,
-            `- If charm is above ${charmPlan?.maxPx}px, zoom OUT / widen framing until it lands inside the window.`,
-            `- Apply zoom-out bias ≥ ${charmPlan?.zoomOutBias}× if you need a starting point (then fine-tune to hit the px target).`,
+            "CHARM SIZE CONTROL (STAGE B — FINAL HARD NUMBERS, BIAS-COMPENSATED)",
+            `- TRUE required final size: charm bbox height ${charmPlan?.finalTrue?.minPx}–${charmPlan?.finalTrue?.maxPx}px (target ${charmPlan?.finalTrue?.targetPx}px)`,
+            `- Instruction window (compensated): ${charmPlan?.instr?.minPx}–${charmPlan?.instr?.maxPx}px (target ${charmPlan?.instr?.targetPx}px)`,
+            "- IMPORTANT: do NOT redraw engraving to satisfy size. Only adjust framing/zoom until charm reaches TRUE size.",
+            "- If output charm is still ~1.5–2× too large, shrink it again (repeat the reduction) until it lands inside TRUE window.",
             "",
           ].join("\n");
 
