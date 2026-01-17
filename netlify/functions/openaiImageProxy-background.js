@@ -259,43 +259,91 @@ async function postScaleCharmComposite({
   const aRaw = await sharp(passABuf).ensureAlpha().raw().toBuffer();
   const bRaw = await sharp(baseNoCharmBuf).ensureAlpha().raw().toBuffer();
 
-  // Build a 1-channel alpha mask where pixels differ (likely charm region)
-  const thr = clampNumber(diffThreshold, 8, 120, 26);
-  const mask = Buffer.alloc(width * height);
-  for (let i = 0, p = 0; i < mask.length; i++, p += 4) {
-    const dr = Math.abs(aRaw[p] - bRaw[p]);
-    const dg = Math.abs(aRaw[p + 1] - bRaw[p + 1]);
-    const db = Math.abs(aRaw[p + 2] - bRaw[p + 2]);
-    const d = dr + dg + db;
-    mask[i] = d > thr ? 255 : 0;
+  // Build per-pixel diff map (max RGB channel delta)
+  const diffVals = new Uint8Array(width * height);
+  for (let i = 0, p = 0; i < aRaw.length; i += 4, p++) {
+    const dr = Math.abs(aRaw[i] - bRaw[i]);
+    const dg = Math.abs(aRaw[i + 1] - bRaw[i + 1]);
+    const db = Math.abs(aRaw[i + 2] - bRaw[i + 2]);
+    diffVals[p] = Math.max(dr, dg, db);
   }
 
-  // Soften edges + reduce speckle
-  const maskImg = require("sharp")(mask, { raw: { width, height, channels: 1 } })
-    .blur(1)
-    .threshold(18);
+  async function buildMaskAndBBox(thr, feather) {
+    const mask = Buffer.alloc(width * height);
+    for (let p = 0; p < diffVals.length; p++) mask[p] = diffVals[p] > thr ? 255 : 0;
 
-  const maskRaw = await maskImg.raw().toBuffer();
+    // Feather + tighten after blur to reduce speckle
+    const maskRaw = await sharp(mask, { raw: { width, height, channels: 1 } })
+      .blur(feather)
+      .threshold(18)
+      .raw()
+      .toBuffer();
 
-  // Compute bounding box of mask
-  let minX = width,
-    minY = height,
-    maxX = -1,
-    maxY = -1;
-  for (let y = 0; y < height; y++) {
-    const row = y * width;
-    for (let x = 0; x < width; x++) {
-      if (maskRaw[row + x] > 0) {
-        if (x < minX) minX = x;
-        if (y < minY) minY = y;
-        if (x > maxX) maxX = x;
-        if (y > maxY) maxY = y;
+    let minX = width,
+      minY = height,
+      maxX = -1,
+      maxY = -1;
+    let count = 0;
+
+    for (let y = 0; y < height; y++) {
+      const row = y * width;
+      for (let x = 0; x < width; x++) {
+        const v = maskRaw[row + x];
+        if (v > 0) {
+          count++;
+          if (x < minX) minX = x;
+          if (y < minY) minY = y;
+          if (x > maxX) maxX = x;
+          if (y > maxY) maxY = y;
+        }
       }
+    }
+
+    const found = maxX >= 0;
+    const bboxArea = found ? (maxX - minX + 1) * (maxY - minY + 1) : 0;
+    return { found, maskRaw, minX, minY, maxX, maxY, count, bboxArea };
+  }
+
+  // Adaptive thresholding: raise threshold until bbox is plausibly “just the charm”
+  const baseThr = clampNumber(diffThreshold, 8, 120, 26);
+  const feather = 1; // keep tight; we're only trying to reduce speckle, not grow the region
+
+  const totalPx = width * height;
+  const MAX_MASK_PX_RATIO = 0.06; // 6% of pixels lit is already big
+  const MAX_BBOX_AREA_RATIO = 0.12; // 12% bbox area is already big
+
+  let chosen = null;
+  let best = null; // smallest bbox fallback
+
+  for (let thr = baseThr; thr <= 90; thr += 8) {
+    const m = await buildMaskAndBBox(thr, feather);
+    if (!m.found) continue;
+
+    if (!best || m.bboxArea < best.bboxArea) best = { ...m, thr };
+
+    const okMask = m.count <= totalPx * MAX_MASK_PX_RATIO;
+    const okBox = m.bboxArea <= totalPx * MAX_BBOX_AREA_RATIO;
+
+    if (okMask && okBox) {
+      chosen = { ...m, thr };
+      break;
     }
   }
 
-  // If we failed to isolate anything, return passA (safe fallback)
-  if (maxX < 0 || maxY < 0) return passABuf;
+  if (!chosen) chosen = best;
+  if (!chosen || !chosen.found) return passABuf;
+
+  // Hard safety: if bbox is still huge, skip postscale to avoid picture-in-picture.
+  if (chosen.bboxArea > totalPx * 0.25) {
+    console.log("[postscale] bbox too large; skipping charm_postscale", {
+      bboxArea: chosen.bboxArea,
+      totalPx,
+      thr: chosen.thr,
+    });
+    return passABuf;
+  }
+
+  let { maskRaw, minX, minY, maxX, maxY } = chosen;
 
   // Expand bbox slightly (jump ring + edge pixels)
   const pad = 6;
@@ -563,9 +611,7 @@ exports.handler = async (event) => {
           : dataUrlToBuffer(input_charm_image);
       }
 
-      const images = [
-        { buffer: ref.buffer, mime: ref.mime, filename: "reference.png" },
-      ];
+      const images = [{ buffer: ref.buffer, mime: ref.mime, filename: "reference.png" }];
       if (charm) {
         images.push({ buffer: charm.buffer, mime: charm.mime, filename: "charm_macro.png" });
       }
