@@ -52,11 +52,15 @@ async function storagePathToBuffer(storagePath) {
   if (!p) throw new Error("input_storage_path must be a non-empty string");
 
   // Allowlist to prevent arbitrary bucket reads.
-  // Must match the client upload prefix.
-  if (!(
-    p.startsWith("listing-generator-1/reference/") ||
-    p.startsWith("listing-generator-1/charm-macro/")
-  )) {
+  // Must match the prefixes your pipeline uses (reference, charm macro, pass-A outputs).
+  const ALLOWED_INPUT_PREFIXES = [
+    "listing-generator-1/reference/",
+    "listing-generator-1/charm-macro/",
+    // NEW: Pass A output becomes Pass B input
+    "listing-generator-1/generated/"
+  ];
+
+  if (!ALLOWED_INPUT_PREFIXES.some((prefix) => p.startsWith(prefix))) {
     throw new Error("input_storage_path not allowed");
   }
 
