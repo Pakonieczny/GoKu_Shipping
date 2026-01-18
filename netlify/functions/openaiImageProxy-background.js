@@ -228,7 +228,6 @@ async function postScaleCharmComposite({
   passABuf,
   baseNoCharmBuf,
   scale,
-  shadowOpacity,
   targetPx,          // NEW: preferred final charm height in pixels (stable slider behavior)
   shadowOpacity,
   shadowBlur,
