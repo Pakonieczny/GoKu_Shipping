@@ -87,12 +87,12 @@
         <option value="gpt-image-1">gpt-image-1</option>
       </select>
 
-      <label>Final charm scale (postprocess)</label>
+      <label>Final charm size (px) (postprocess)</label>
       <div class="row">
-        <input id="finalCharmScale" type="range" min="0.50" max="0.70" step="0.01" value="0.65" />
-        <input id="finalCharmScaleVal" type="text" value="0.65" style="width:86px;" />
+        <input id="finalCharmTargetPx" type="range" min="8" max="24" step="1" value="14" />
+        <input id="finalCharmTargetPxVal" type="text" value="14" style="width:86px;" />
       </div>
-      <div class="muted">This scales the charm down deterministically after AI placement (preserves engraving fidelity).</div>
+      <div class="muted">Sets the FINAL charm height in pixels after AI placement (stable, proportional control).</div>
 
       <div class="row" style="margin-top:10px;">
         <button class="btn" id="gen8">Generate 8</button>
@@ -177,8 +177,8 @@
     const refPreviewEl = document.getElementById("refPreview");
     const promptEl = document.getElementById("prompt");
     const modelEl = document.getElementById("model");
-    const finalCharmScaleEl = document.getElementById("finalCharmScale");
-    const finalCharmScaleValEl = document.getElementById("finalCharmScaleVal");
+    const finalCharmTargetPxEl = document.getElementById("finalCharmTargetPx");
+    const finalCharmTargetPxValEl = document.getElementById("finalCharmTargetPxVal");
     const gen8Btn = document.getElementById("gen8");
     const clearBtn = document.getElementById("clear");
     const gridEl = document.getElementById("grid");
@@ -197,24 +197,26 @@
     let charmMacroDownloadUrl = null;
     let slots = [];
 
-    // Keep UI slider + text in sync
+    // Keep UI slider + text in sync (NEW: integer px target)
     function clampNum(n, lo, hi){ return Math.max(lo, Math.min(hi, n)); }
-    function readFinalCharmScale(){
-      const raw = parseFloat(finalCharmScaleEl?.value || "0.65");
-      return clampNum(isFinite(raw) ? raw : 0.65, 0.50, 0.70);
+    function readFinalCharmTargetPx(){
+      const raw = parseInt(finalCharmTargetPxEl?.value || "14", 10);
+      const v = Number.isFinite(raw) ? raw : 14;
+      return Math.round(clampNum(v, 8, 24));
     }
-    function syncFinalCharmScaleUI(v){
-      const x = String(v.toFixed(2));
-      if (finalCharmScaleEl) finalCharmScaleEl.value = x;
-      if (finalCharmScaleValEl) finalCharmScaleValEl.value = x;
+    function syncFinalCharmTargetPxUI(v){
+      const x = String(Math.round(v));
+      if (finalCharmTargetPxEl) finalCharmTargetPxEl.value = x;
+      if (finalCharmTargetPxValEl) finalCharmTargetPxValEl.value = x;
     }
-    if (finalCharmScaleEl && finalCharmScaleValEl){
-      finalCharmScaleEl.addEventListener("input", ()=> syncFinalCharmScaleUI(readFinalCharmScale()));
-      finalCharmScaleValEl.addEventListener("change", ()=>{
-        const v = clampNum(parseFloat(finalCharmScaleValEl.value || "0.65"), 0.50, 0.70);
-        syncFinalCharmScaleUI(v);
+    if (finalCharmTargetPxEl && finalCharmTargetPxValEl){
+      finalCharmTargetPxEl.addEventListener("input", ()=> syncFinalCharmTargetPxUI(readFinalCharmTargetPx()));
+      finalCharmTargetPxValEl.addEventListener("change", ()=>{
+        const raw = parseInt(finalCharmTargetPxValEl.value || "14", 10);
+        const v = Number.isFinite(raw) ? raw : 14;
+        syncFinalCharmTargetPxUI(clampNum(v, 8, 24));
       });
-      syncFinalCharmScaleUI(readFinalCharmScale());
+      syncFinalCharmTargetPxUI(readFinalCharmTargetPx());
     }
 
     // Trait defs (Etsy-friendly: clean necklines, pastel/neutral palette, jewelry-forward)
@@ -1123,7 +1125,7 @@
         const planA = charmPlanFromTraits(slot.traits, "placement");
         const promptA = buildPrompt(baseText, slot.traits, true, "placement", planA);
 
-        // 30–50% smaller (Pass A is larger by CHARM_A_MULT, Pass B shrinks deterministically)
+        // OLD multiplier retained ONLY as fallback compatibility for older server code
         const postScale = clamp(1 / CHARM_A_MULT, 0.5, 0.7);
 
         const removePrompt = [
@@ -1133,7 +1135,7 @@
           "Fill the removed area realistically (skin/clothing/background) with matching lighting and texture."
         ].join("\n");
 
-        slot.prompt = `${promptA}\n\n-----\n\n[Pass B: charm_postscale @ ${postScale.toFixed(3)}]`;
+        slot.prompt = `${promptA}\n\n-----\n\n[Pass B: charm_postscale targetPx=${finalCharmTargetPx} (fallbackScale=${postScale.toFixed(3)})]`;
 
         let passAStoragePath = null;
 
@@ -1224,7 +1226,10 @@
               input_storage_path: passAStoragePath,
               remove_prompt: removePrompt,
               postprocess: {
-                scale: postScale,
+                // NEW: stable proportional sizing
+                targetPx: finalCharmTargetPx,
+                // OLD: kept for backwards compatibility (server ignores if targetPx exists)
+                scale: postScale,                
                 shadowOpacity: 0.22,
                 shadowBlur: 2,
                 diffThreshold: 18

@@ -229,6 +229,8 @@ async function postScaleCharmComposite({
   baseNoCharmBuf,
   scale,
   shadowOpacity,
+  targetPx,          // NEW: preferred final charm height in pixels (stable slider behavior)
+  shadowOpacity,
   shadowBlur,
   diffThreshold,
 }) {
@@ -387,9 +389,37 @@ async function postScaleCharmComposite({
     .png()
     .toBuffer();
 
-  const s = clampNumber(scale, 0.50, 0.70, 0.65);
-  const outW = Math.max(1, Math.round(bboxW * s));
-  const outH = Math.max(1, Math.round(bboxH * s));
+  // -------------------------
+  // OUTPUT SIZE (NEW)
+  // Prefer an absolute pixel target for height (stable + proportional slider behavior).
+  // Falls back to old scale-multiplier behavior if targetPx isn't provided.
+  // -------------------------
+  const tp = Number(targetPx);
+  let outW, outH;
+  if (Number.isFinite(tp)) {
+    // Clamp to sane “micro charm” range. Adjust if you ever want larger.
+    const targetH = Math.round(clampNumber(tp, 6, 80, 14));
+    const aspect = bboxH > 0 ? (bboxW / bboxH) : 1;
+    outH = Math.max(1, targetH);
+    outW = Math.max(1, Math.round(outH * aspect));
+
+    // Safety: never exceed canvas
+    if (outW > width) {
+      const k = width / outW;
+      outW = Math.max(1, Math.floor(outW * k));
+      outH = Math.max(1, Math.floor(outH * k));
+    }
+    if (outH > height) {
+      const k = height / outH;
+      outW = Math.max(1, Math.floor(outW * k));
+      outH = Math.max(1, Math.floor(outH * k));
+    }
+  } else {
+    // Old behavior (kept for compatibility)
+    const s = clampNumber(scale, 0.50, 0.70, 0.65);
+    outW = Math.max(1, Math.round(bboxW * s));
+    outH = Math.max(1, Math.round(bboxH * s));
+  }
 
   // Downscale charm crop (high-quality resampling)
   const scaledCharm = await sharp(charmCrop)
@@ -550,6 +580,9 @@ exports.handler = async (event) => {
       const finalBuf = await postScaleCharmComposite({
         passABuf: passA.buffer,
         baseNoCharmBuf,
+        // NEW: stable sizing control (preferred)
+        targetPx: postprocess?.targetPx,
+        // OLD: multiplier control (fallback)
         scale: postprocess?.scale,
         shadowOpacity: postprocess?.shadowOpacity,
         shadowBlur: postprocess?.shadowBlur,
