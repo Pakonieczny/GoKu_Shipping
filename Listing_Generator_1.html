@@ -366,21 +366,21 @@
 
             // Pass A: still place the charm clearly, but KEEP the crop ultra-tight.
             cameraPlacement: [
-              "upper bust + collarbone close crop, TOP EDGE cuts at mid-neck (no jawline, no chin, no face), necklace centered, keep pendant large in frame, 85-120mm",
-              "upper bust + collarbone close crop, TOP EDGE cuts at mid-neck (no jawline, no chin, no face), slight 3/4 turn left, necklace centered, keep pendant large in frame, 85-120mm",
-              "upper bust + collarbone close crop, TOP EDGE cuts at mid-neck (no jawline, no chin, no face), slight 3/4 turn right, necklace centered, keep pendant large in frame, 85-120mm"
+              "upper bust + collarbone close crop, TOP EDGE cuts at mid-neck (no jawline, no chin, no face), necklace centered, keep pendant large in frame, 120mm",
+              "upper bust + collarbone close crop, TOP EDGE cuts at mid-neck (no jawline, no chin, no face), slight 3/4 turn left, necklace centered, keep pendant large in frame, 120mm",
+              "upper bust + collarbone close crop, TOP EDGE cuts at mid-neck (no jawline, no chin, no face), slight 3/4 turn right, necklace centered, keep pendant large in frame, 120mm"
             ],
 
             // Pass B: final framing MUST be bust/collarbone only.
             cameraFinal: [
-              "upper bust + collarbone close crop, TOP EDGE cuts at mid-neck (no jawline, no chin, no face), 85-120mm, straight-on",
-              "upper bust + collarbone close crop, TOP EDGE cuts at mid-neck (no jawline, no chin, no face), 85-120mm, 3/4 turn left",
-              "upper bust + collarbone close crop, TOP EDGE cuts at mid-neck (no jawline, no chin, no face), 85-120mm, 3/4 turn right"
+              "upper bust + collarbone close crop, TOP EDGE cuts at mid-neck (no jawline, no chin, no face), 120mm, straight-on",
+              "upper bust + collarbone close crop, TOP EDGE cuts at mid-neck (no jawline, no chin, no face), 120mm, 2/3 turn left",
+              "upper bust + collarbone close crop, TOP EDGE cuts at mid-neck (no jawline, no chin, no face), 120mm, 2/3 turn right"
             ],
 
               // lens look (perspective/compression)
             lensLook: [
-              "85mm flattering compression",
+              "120mm flattering compression",
               "120mm portrait compression",
               "macro-leaning close crop realistic"
             ],
@@ -405,8 +405,7 @@
     // So we instruct a *smaller* px window (bias-compensated) to land at TRUE 12–16px.
     // These are inverse multipliers (smaller = stronger shrink).
     const CHARM_INV_OVERSCALE_BASE = {
-      mm85: 0.30,
-      mm120: 0.40,
+      mm120: 0.35,
       macro: 0.48
     };
     const CHARM_INV_OVERSCALE_ZOOM = {
@@ -421,7 +420,6 @@
 
     function parseLensMm(lensLook = "") {
       const s = String(lensLook).toLowerCase();
-      if (s.includes("85mm")) return 85;
       if (s.includes("120mm")) return 120;
       if (s.includes("macro")) return 90;
       return 80;
@@ -445,7 +443,6 @@
       // --- bias-compensated instruction window ---
       const lensKey =
         (String(traits?.lensLook || "").toLowerCase().includes("macro")) ? "macro" :
-        (lensMm >= 85) ? "mm85" :
         (lensMm >= 120) ? "mm120" : "mm120";
 
       const invBase = CHARM_INV_OVERSCALE_BASE[lensKey] ?? 0.50;
@@ -529,7 +526,7 @@
     • Do NOT thicken, simplify, or redraw engraving to solve size.
 
     ZOOM RANGE CLAMP (NON-NEGOTIABLE)
-    • The visible necklace span (left-to-right chain) should fill roughly 88%–95% of the image width.
+    • The visible necklace span (left-to-right chain) should fill roughly 93%–98% of the image width.
     • Final framing MUST be necklace-forward: upper bust + collarbones only.
     • TOP CROP RULE: the top edge must cut at mid-neck (no jawline, no chin, no face ever).
     • BOTTOM CROP RULE: bottom edge must be upper bust only (collarbones fully visible; no torso focus).
