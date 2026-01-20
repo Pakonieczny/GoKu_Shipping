@@ -412,9 +412,10 @@
 
 
     function parseLensMm(lensLook = "") {
-    // Hard lock: your pipeline is now “120mm only”.
-    if (s.includes("120mm")) return 120;
-    return 120;
+      // Hard lock: your pipeline is now “120mm only”.
+      const s = String(lensLook || "").toLowerCase();
+      if (s.includes("120mm")) return 120;
+      return 120;
     }
 
     function parseFinalZoomGroup(cameraFinal = "") {
@@ -497,7 +498,6 @@
         makeup: pick(TRAITS.makeup, "makeup"),
         hair: pick(TRAITS.hair, "hair"),
         pose: pick(TRAITS.pose, "pose"),
-        lensLook: pick(TRAITS.lensLook, "lensLook"),
         textureRules: pick(TRAITS.textureRules, "textureRules"),
       };
     }
