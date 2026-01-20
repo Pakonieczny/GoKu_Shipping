@@ -364,24 +364,18 @@
               "slight lean forward to show necklace detail"
             ],
 
-            // Pass A: still place the charm clearly, but KEEP the crop ultra-tight.
-            //cameraPlacement: [
-              //"upper bust + collarbone close crop, TOP EDGE cuts at mid-neck (no jawline, no chin, no face), necklace centered, keep pendant large in frame, 120mm",
-              //"upper bust + collarbone close crop, TOP EDGE cuts at mid-neck (no jawline, no chin, no face), slight 3/4 turn left, necklace centered, keep pendant large in frame, 120mm",
-             // "upper bust + collarbone close crop, TOP EDGE cuts at mid-neck (no jawline, no chin, no face), slight 3/4 turn right, necklace centered, keep pendant large in frame, 120mm"
-           // ],
-
-            // Pass B: final framing MUST be bust/collarbone only.
-            cameraFinal: [
-              "upper bust + collarbone close crop, TOP EDGE cuts at mid-neck (no jawline, no chin, no face), 120mm, straight-on",
-              "upper bust + collarbone close crop, TOP EDGE cuts at mid-neck (no jawline, no chin, no face), 120mm, 2/3 turn left",
-              "upper bust + collarbone close crop, TOP EDGE cuts at mid-neck (no jawline, no chin, no face), 120mm, 2/3 turn right"
+            // PASS A + PASS B MUST share the exact same framing lock (prevents “zoom drift”).
+            cameraPlacement: [
+              "upper bust + collarbone close crop, necklace centered, TOP EDGE cuts at mid-neck (no jawline, no chin, no face), 120mm, straight-on, fixed camera distance"
             ],
 
-              // lens look (perspective/compression)
+            cameraFinal: [
+              "upper bust + collarbone close crop, necklace centered, TOP EDGE cuts at mid-neck (no jawline, no chin, no face), 120mm, straight-on, fixed camera distance"
+            ],
+
+            // Remove “macro” language entirely — it causes the model to reinterpret framing.
             lensLook: [
-              "120mm flattering compression",
-              "macro-leaning close crop realistic"
+              "120mm flattering compression (LOCKED; do not zoom; do not change crop)"
             ],
 
             textureRules: [
@@ -418,10 +412,9 @@
 
 
     function parseLensMm(lensLook = "") {
-      const s = String(lensLook).toLowerCase();
-      if (s.includes("120mm")) return 120;
-      if (s.includes("macro")) return 90;
-      return 80;
+    // Hard lock: your pipeline is now “120mm only”.
+    if (s.includes("120mm")) return 120;
+    return 120;
     }
 
     function parseFinalZoomGroup(cameraFinal = "") {
@@ -490,8 +483,10 @@
     function makeTraits(){
       return {
         skin: pick(TRAITS.skin, "skin"),
-        cameraPlacement: pick(TRAITS.cameraPlacement, "cameraPlacement"),
-        cameraFinal: pick(TRAITS.cameraFinal, "cameraFinal"),
+        // Deterministic framing (even if someone later adds more options)
+        cameraPlacement: (Array.isArray(TRAITS.cameraPlacement) && TRAITS.cameraPlacement.length) ? TRAITS.cameraPlacement[0] : "",
+        cameraFinal:      (Array.isArray(TRAITS.cameraFinal)      && TRAITS.cameraFinal.length)      ? TRAITS.cameraFinal[0]      : "",
+        lensLook:         (Array.isArray(TRAITS.lensLook)         && TRAITS.lensLook.length)         ? TRAITS.lensLook[0]         : "",
         wardrobe: pick(TRAITS.wardrobe, "wardrobe"),
         wardrobeColor: pick(TRAITS.wardrobeColor, "wardrobeColor"),
         backdrop: pick(TRAITS.backdrop, "backdrop"),
@@ -994,6 +989,8 @@
 
       const cameraLast = [
         "CAMERA + LENS (APPLY LAST — after charm is locked)",
+        "- FRAMING LOCK: Top crop must cut at mid-neck; include collarbones; exclude jaw/chin/face"
+        "- FRAMING LOCK: Keep camera distance fixed; only minor shoulder rotation is allowed (do not reframe)"
         `- camera framing: ${stage === "placement" ? traits.cameraPlacement : traits.cameraFinal}`,
         `- lens look: ${traits.lensLook}`,
         "- focus: charm pendant + chain stations tack sharp; background softly blurred",
@@ -1053,6 +1050,7 @@
 
       const model = modelEl.value;
       const runId = `lg1_${Date.now()}_${Math.random().toString(16).slice(2)}`;
+      const finalCharmTargetPx = readFinalCharmTargetPx();
       const jobIdA = `${runId}_slot_${i+1}_A`;
       const jobIdB = `${runId}_slot_${i+1}_B`;
       const jobRefA = window.db.collection(JOBS_COLL).doc(jobIdA);
