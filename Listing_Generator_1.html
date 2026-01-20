@@ -357,20 +357,18 @@
             ],
 
             pose: [
-              "necklace centered",
-              "shoulders relaxed straight-on",
-              "3/4 turn subtle left or right",
-              "profile mid neck and collarbone emphasis",
-              "slight lean forward to show necklace detail"
+              "2/3 turn subtle left, shoulders relaxed straight-on, NO lean; fixed camera distance; consistent subject scale",
+              "2/3 turn subtle right, shoulders relaxed straight-on, NO lean; fixed camera distance; consistent subject scale",
+              "No Turn straign on, shoulders relaxed straight-on, NO lean; fixed camera distance; consistent subject scale"
             ],
 
             // PASS A + PASS B MUST share the exact same framing lock (prevents “zoom drift”).
             cameraPlacement: [
-              "upper bust + collarbone close crop, necklace centered, TOP EDGE cuts at mid-neck (no jawline, no chin, no face), 120mm, straight-on, fixed camera distance"
+              "upper bust + collarbone close crop, necklace centered, necklace span fills 97–100% image width, TOP EDGE cuts at mid-neck (no jawline, no chin, no face), BOTTOM EDGE shows collarbones + very top of bust only, 120mm, straight-on, fixed camera distance, no zoom-out"
             ],
 
             cameraFinal: [
-              "upper bust + collarbone close crop, necklace centered, TOP EDGE cuts at mid-neck (no jawline, no chin, no face), 120mm, straight-on, fixed camera distance"
+              "upper bust + collarbone close crop, necklace centered, necklace span fills 97–100% image width, TOP EDGE cuts at mid-neck (no jawline, no chin, no face), BOTTOM EDGE shows collarbones + very top of bust only, 120mm, straight-on, fixed camera distance, no zoom-out"
             ],
 
             // Remove “macro” language entirely — it causes the model to reinterpret framing.
@@ -414,6 +412,7 @@
     function parseLensMm(lensLook = "") {
       // Hard lock: your pipeline is now “120mm only”.
       const s = String(lensLook || "").toLowerCase();
+      // Keep the include check for readability, but always return 120 to prevent drift.
       if (s.includes("120mm")) return 120;
       return 120;
     }
@@ -486,8 +485,8 @@
         skin: pick(TRAITS.skin, "skin"),
         // Deterministic framing (even if someone later adds more options)
         cameraPlacement: (Array.isArray(TRAITS.cameraPlacement) && TRAITS.cameraPlacement.length) ? TRAITS.cameraPlacement[0] : "",
-        cameraFinal:      (Array.isArray(TRAITS.cameraFinal)      && TRAITS.cameraFinal.length)      ? TRAITS.cameraFinal[0]      : "",
-        lensLook:         (Array.isArray(TRAITS.lensLook)         && TRAITS.lensLook.length)         ? TRAITS.lensLook[0]         : "",
+        cameraFinal: (Array.isArray(TRAITS.cameraFinal) && TRAITS.cameraFinal.length) ? TRAITS.cameraFinal[0] : "",
+        lensLook: (Array.isArray(TRAITS.lensLook) && TRAITS.lensLook.length) ? TRAITS.lensLook[0] : "",
         wardrobe: pick(TRAITS.wardrobe, "wardrobe"),
         wardrobeColor: pick(TRAITS.wardrobeColor, "wardrobeColor"),
         backdrop: pick(TRAITS.backdrop, "backdrop"),
@@ -497,7 +496,7 @@
         stylingMood: pick(TRAITS.stylingMood, "stylingMood"),
         makeup: pick(TRAITS.makeup, "makeup"),
         hair: pick(TRAITS.hair, "hair"),
-        pose: pick(TRAITS.pose, "pose"),
+        pose: (Array.isArray(TRAITS.pose) && TRAITS.pose.length) ? TRAITS.pose[0] : "",
         textureRules: pick(TRAITS.textureRules, "textureRules"),
       };
     }
@@ -553,12 +552,11 @@
       7.  LIGHTING_DIAL: window light, airy highlights Etsy style photo (neck + collarbone close crop). One adult female model with ultra-real hydrated skin: crisp pores with micro-shine, subtle peach-fuzz, slight natural imperfections that vary per model, zero heavy retouching/smoothing. Tight framing keeps neck/collarbone clear so the necklace stations are fully visible. Recreate the exact single-strand satellite chain necklace from the reference—identical bead station shape/size/spacing, identical chain link size/shape, identical drape/tension, identical placement on the neck; warm yellow gold tone with crisp specular highlights. Clean modern pastel grading, soft peach backdrop, powder blue white-tee look.  
 
     ENGRAVING COLOR + FILL (NON-NEGOTIABLE)
-    • Image[1] is the single truth source for engraving color + fill density. Match its engraving darkness exactly.
-    • Engraving recesses must be filled with a darkened tone (deep charcoal/near-black) consistent with Image[1] — NOT just shadowing.
-    • Fill rule: every engraved groove must be fully filled wall-to-wall with the same dark tone (no gaps, no patchy fill, no gradient puddling, no washed-out strokes).
-    • Preserve every stroke path exactly as in Image[1] while filling: no stroke loss, no merging, no thickening, no “cleanup,” no invented marks.
-    • Do not lighten engraving to match scene; instead match scene by adjusting the charm’s metal highlights only (leave engraving fill density intact).
-    • If engraving becomes less visible, increase local edge highlights/specular response on the metal surface, NOT the engraving fill brightness.
+    • Engraving must remain a bright metal tone consistent with the charm’s metal (warm yellow).
+    • Engraving visibility must come from micro-shadow + highlight only, not pigment.
+    • Engraving lines must be only slightly darker than the surrounding metal due to shading, but must never appear grey, dark grey, dark brown, black, charcoal, ink-like, oxidized, soot-filled, “painted,” or enamel-filled.
+    • Do not add patina. Do not add contrast paint.
+    • If contrast is needed, increase edge highlight / specular response instead of darkening the engraving.
 
     FOCUS (REALISM PRIORITY)
     • High-res, sharp focus on beads + links + charm surface. Moderate depth of field.
@@ -573,6 +571,58 @@
 
     HARD FAIL CONDITIONS (if any occur, keep charm from Image[1] unchanged even if lighting match is imperfect)
     • Warped links, doubled chain, altered charm outline, missing strokes, simplified engraving, blur/smear on charm, engraving fill NOT dark like Image[1], patchy/incomplete fill, color drift between strokes, inconsistent fill density, second strand, altered spacing, thicker chain, neon colors, plastic skin, warped links.”`;
+
+
+
+
+`CRITICAL: This is a standard fashion product photo. Do not add nudity. Always keep the subject modest.
+
+INPUTS (ORDER MATTERS)
+- Image[0] = base model photo (necklace position + scene + camera)
+- Image[1] = charm macro (pixel-truth source for charm silhouette + engraving)
+
+NON-NEGOTIABLE WORKFLOW
+1) Stage 0: generate the model variation + necklace (no charm).
+2) Stage 1: add the charm from Image[1] onto the necklace (placement + hardware correctness). Place it slightly LARGE during placement to preserve micro-engraving fidelity.
+3) Stage 2: final charm size is applied ONLY as a deterministic postprocess downscale of the charm pixels (no redraw, no re-engraving). Do not “fix” size by changing engraving.
+
+FRAMING / CROP LOCK (NON-NEGOTIABLE)
+- Subject scale locked: do not zoom out or in; only tiny nudges allowed to keep the pendant centered.
+- Necklace span (left-to-right chain) fills >97% of image width.
+- Final framing is necklace-forward: upper bust + collarbones only.
+- TOP CROP: top edge cuts at mid-neck (no jawline, no chin, no face ever).
+- BOTTOM CROP: bottom edge is upper bust only (collarbones fully visible; no torso focus).
+
+TRAITS LOCK (NON-NEGOTIABLE)
+- A "Traits:" block will be appended at the end of this prompt.
+- Treat every trait line as a hard requirement applied literally (not suggestions).
+- If any style text conflicts with Traits, Traits win for: skin, camera framing, wardrobe, backdrop, lighting.
+- Exception: jewelry + charm fidelity locks ALWAYS win.
+
+SKIN REALISM LOCK (NON-NEGOTIABLE)
+- Ultra-real hydrated skin (NOT dry/leathery): crisp pores, subtle peach-fuzz, micro-specular highlights, natural sheen.
+- Preserve model-to-model micro-variation: uneven pore density, tiny blemishes, faint redness, subtle freckles/sun specks (keep subtle).
+- Avoid “old leather”: no exaggerated dryness texture, no wrinkle-pattern overlays, no muddy micro-contrast, no crunchy sharpening.
+- Avoid plastic smoothing: do not blur pores; do not beauty-retouch. Keep realistic texture visible at 100% zoom.
+
+CHARM + ENGRAVING LOCK (NON-NEGOTIABLE)
+- Place Image[1] as the pendant on the necklace in Image[0] as a literal decal/insert.
+- Do not redraw, regenerate, re-engrave, “improve,” clean up, simplify, stylize, or reinterpret the charm.
+- Charm must be flat + thin; engraving is superficial (no protrusions).
+- Preserve every engraving stroke path exactly as in Image[1]: no stroke loss, no merging, no thickening, no line cleanup, no mirrored text, no invented marks.
+- Engraving must remain a bright metal tone consistent with the charm’s metal (warm yellow).
+- Engraving visibility must come from micro-shadow + highlight only, not pigment.
+- Engraving lines must be only slightly darker than the surrounding metal due to shading, but must never appear grey, dark grey, dark brown, black, charcoal, ink-like, oxidized, soot-filled, “painted,” or enamel-filled.
+- Do not add patina. Do not add contrast paint.
+- Allowed charm edits ONLY: tiny exposure/white-balance shift to match scene lighting + subtle contact shadow under the charm + mild specular highlight alignment. No geometry changes.
+
+HARDWARE + NECKLACE LOCK (NON-NEGOTIABLE)
+- Jump ring must be closed + correctly connected to charm and chain; no floating, no broken links, no misconnected hardware.
+- Necklace lock: single strand only. Station count/spacing + link geometry + drape/placement must remain consistent with Image[0]. No added jewelry.
+
+HARD FAIL CONDITIONS (if any occur, keep Image[1] charm unchanged even if lighting match is imperfect)
+- Warped/doubled chain, altered charm outline, any engraving redraw, missing strokes, inconsistent/patchy engraving fill, blur/smear on charm, extra jewelry/strands, neon colors, plastic skin, leathery skin, any face visible.`
+
 
 
     // --- Zoom + pan listeners ---
