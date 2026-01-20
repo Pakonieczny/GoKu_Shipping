@@ -357,19 +357,19 @@
             ],
 
             pose: [
-              "chin slightly down necklace centered",
+              "necklace centered",
               "shoulders relaxed straight-on",
-              "3/4 turn subtle",
-              "profile neck/jawline emphasis",
+              "3/4 turn subtle left or right",
+              "profile mid neck and collarbone emphasis",
               "slight lean forward to show necklace detail"
             ],
 
             // Pass A: still place the charm clearly, but KEEP the crop ultra-tight.
-            cameraPlacement: [
-              "upper bust + collarbone close crop, TOP EDGE cuts at mid-neck (no jawline, no chin, no face), necklace centered, keep pendant large in frame, 120mm",
-              "upper bust + collarbone close crop, TOP EDGE cuts at mid-neck (no jawline, no chin, no face), slight 3/4 turn left, necklace centered, keep pendant large in frame, 120mm",
-              "upper bust + collarbone close crop, TOP EDGE cuts at mid-neck (no jawline, no chin, no face), slight 3/4 turn right, necklace centered, keep pendant large in frame, 120mm"
-            ],
+            //cameraPlacement: [
+              //"upper bust + collarbone close crop, TOP EDGE cuts at mid-neck (no jawline, no chin, no face), necklace centered, keep pendant large in frame, 120mm",
+              //"upper bust + collarbone close crop, TOP EDGE cuts at mid-neck (no jawline, no chin, no face), slight 3/4 turn left, necklace centered, keep pendant large in frame, 120mm",
+             // "upper bust + collarbone close crop, TOP EDGE cuts at mid-neck (no jawline, no chin, no face), slight 3/4 turn right, necklace centered, keep pendant large in frame, 120mm"
+           // ],
 
             // Pass B: final framing MUST be bust/collarbone only.
             cameraFinal: [
@@ -381,7 +381,6 @@
               // lens look (perspective/compression)
             lensLook: [
               "120mm flattering compression",
-              "120mm portrait compression",
               "macro-leaning close crop realistic"
             ],
 
@@ -405,7 +404,7 @@
     // So we instruct a *smaller* px window (bias-compensated) to land at TRUE 12–16px.
     // These are inverse multipliers (smaller = stronger shrink).
     const CHARM_INV_OVERSCALE_BASE = {
-      mm120: 0.35,
+      mm120: 0.32,
       macro: 0.48
     };
     const CHARM_INV_OVERSCALE_ZOOM = {
@@ -427,11 +426,8 @@
 
     function parseFinalZoomGroup(cameraFinal = "") {
       const s = String(cameraFinal).toLowerCase();
-      // more zoomed out framing groups
-      if (s.includes("chest-up")) return "wide";
-      if (s.includes("neck/jawline")) return "medium";
       if (s.includes("neck + collarbone")) return "tight";
-      return "medium";
+      return "tight";
     }
 
     function clamp(n, lo, hi){ return Math.max(lo, Math.min(hi, n)); }
@@ -526,7 +522,8 @@
     • Do NOT thicken, simplify, or redraw engraving to solve size.
 
     ZOOM RANGE CLAMP (NON-NEGOTIABLE)
-    • The visible necklace span (left-to-right chain) should fill roughly 93%–98% of the image width.
+    •Subject framing is locked:  Do not zoom out or in. Do not change subject scale.
+    • The visible necklace span (left-to-right chain) should fill >97% of the image width.
     • Final framing MUST be necklace-forward: upper bust + collarbones only.
     • TOP CROP RULE: the top edge must cut at mid-neck (no jawline, no chin, no face ever).
     • BOTTOM CROP RULE: bottom edge must be upper bust only (collarbones fully visible; no torso focus).
@@ -551,7 +548,7 @@
       4.  Engraving rule: preserve every engraving stroke exactly as in Image[1]. No stroke loss, no stroke merging, no thickening, no line cleanup, no mirrored text, no invented marks.
       5.  Allowed charm edits (only): tiny exposure/white-balance shift to match scene lighting + a subtle contact shadow under the charm + mild specular highlight alignment. No geometry changes.
       6.  BACKGROUND_DIAL: pastel studio backdrop in soft peach 
-      7.  LIGHTING_DIAL: window light, airy highlights Editorial Etsy portrait (neck + collarbone close crop). One adult female model with natural skin texture, realistic pores, no heavy retouching. Tight framing keeps neck/collarbone clear so the necklace stations are fully visible. Recreate the exact single-strand satellite chain necklace from the reference—identical bead station shape/size/spacing, identical chain link size/shape, identical drape/tension, identical placement on the neck; warm yellow gold tone with crisp specular highlights. Clean modern pastel grading, soft peach backdrop, powder blue white-tee look.  
+      7.  LIGHTING_DIAL: window light, airy highlights Etsy style photo (neck + collarbone close crop). One adult female model with natural skin texture, realistic pores, no heavy retouching. Tight framing keeps neck/collarbone clear so the necklace stations are fully visible. Recreate the exact single-strand satellite chain necklace from the reference—identical bead station shape/size/spacing, identical chain link size/shape, identical drape/tension, identical placement on the neck; warm yellow gold tone with crisp specular highlights. Clean modern pastel grading, soft peach backdrop, powder blue white-tee look.  
 
     ENGRAVING COLOR (NON-NEGOTIABLE)
     • Engraving must remain a bright metal tone consistent with the charm’s metal (warm yellow).
@@ -1030,7 +1027,6 @@
             `- TRUE required final size: charm bbox height ${charmPlan?.finalTrue?.minPx}–${charmPlan?.finalTrue?.maxPx}px (target ${charmPlan?.finalTrue?.targetPx}px)`,
             `- Instruction window (compensated): ${charmPlan?.instr?.minPx}–${charmPlan?.instr?.maxPx}px (target ${charmPlan?.instr?.targetPx}px)`,
             "- IMPORTANT: do NOT redraw engraving to satisfy size. Only adjust framing/zoom until charm reaches TRUE size.",
-            "- If output charm is still ~1.5–2× too large, shrink it again (repeat the reduction) until it lands inside TRUE window.",
             "",
           ].join("\n");
 
