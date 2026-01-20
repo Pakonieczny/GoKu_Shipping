@@ -357,23 +357,32 @@
             ],
 
             pose: [
-              "2/3 turn subtle left, shoulders relaxed straight-on, NO lean; fixed camera distance; consistent subject scale",
-              "2/3 turn subtle right, shoulders relaxed straight-on, NO lean; fixed camera distance; consistent subject scale",
-              "No Turn straign on, shoulders relaxed straight-on, NO lean; fixed camera distance; consistent subject scale"
+              "chin slightly down necklace centered",
+              "shoulders relaxed straight-on",
+              "3/4 turn subtle",
+              "profile neck/jawline emphasis",
+              "slight lean forward to show necklace detail"
             ],
 
-            // PASS A + PASS B MUST share the exact same framing lock (prevents “zoom drift”).
+            // Pass A: still place the charm clearly, but KEEP the crop ultra-tight.
             cameraPlacement: [
-              "upper bust + collarbone close crop, necklace centered, necklace span fills 97–100% image width, TOP EDGE cuts at mid-neck (no jawline, no chin, no face), BOTTOM EDGE shows collarbones + very top of bust only, 120mm, straight-on, fixed camera distance, no zoom-out"
+              "upper bust + collarbone close crop, TOP EDGE cuts at mid-neck (no jawline, no chin, no face), necklace centered, keep pendant large in frame, 120mm",
+              "upper bust + collarbone close crop, TOP EDGE cuts at mid-neck (no jawline, no chin, no face), slight 3/4 turn left, necklace centered, keep pendant large in frame, 120mm",
+              "upper bust + collarbone close crop, TOP EDGE cuts at mid-neck (no jawline, no chin, no face), slight 3/4 turn right, necklace centered, keep pendant large in frame, 120mm"
             ],
 
+            // Pass B: final framing MUST be bust/collarbone only.
             cameraFinal: [
-              "upper bust + collarbone close crop, necklace centered, necklace span fills 97–100% image width, TOP EDGE cuts at mid-neck (no jawline, no chin, no face), BOTTOM EDGE shows collarbones + very top of bust only, 120mm, straight-on, fixed camera distance, no zoom-out"
+              "upper bust + collarbone close crop, TOP EDGE cuts at mid-neck (no jawline, no chin, no face), 120mm, straight-on",
+              "upper bust + collarbone close crop, TOP EDGE cuts at mid-neck (no jawline, no chin, no face), 120mm, 2/3 turn left",
+              "upper bust + collarbone close crop, TOP EDGE cuts at mid-neck (no jawline, no chin, no face), 120mm, 2/3 turn right"
             ],
 
-            // Remove “macro” language entirely — it causes the model to reinterpret framing.
+              // lens look (perspective/compression)
             lensLook: [
-              "120mm flattering compression (LOCKED; do not zoom; do not change crop)"
+              "120mm flattering compression",
+              "120mm portrait compression",
+              "macro-leaning close crop realistic"
             ],
 
             textureRules: [
@@ -396,7 +405,7 @@
     // So we instruct a *smaller* px window (bias-compensated) to land at TRUE 12–16px.
     // These are inverse multipliers (smaller = stronger shrink).
     const CHARM_INV_OVERSCALE_BASE = {
-      mm120: 0.32,
+      mm120: 0.35,
       macro: 0.48
     };
     const CHARM_INV_OVERSCALE_ZOOM = {
@@ -410,17 +419,19 @@
 
 
     function parseLensMm(lensLook = "") {
-      // Hard lock: your pipeline is now “120mm only”.
-      const s = String(lensLook || "").toLowerCase();
-      // Keep the include check for readability, but always return 120 to prevent drift.
+      const s = String(lensLook).toLowerCase();
       if (s.includes("120mm")) return 120;
-      return 120;
+      if (s.includes("macro")) return 90;
+      return 80;
     }
 
     function parseFinalZoomGroup(cameraFinal = "") {
       const s = String(cameraFinal).toLowerCase();
+      // more zoomed out framing groups
+      if (s.includes("chest-up")) return "wide";
+      if (s.includes("neck/jawline")) return "medium";
       if (s.includes("neck + collarbone")) return "tight";
-      return "tight";
+      return "medium";
     }
 
     function clamp(n, lo, hi){ return Math.max(lo, Math.min(hi, n)); }
@@ -483,10 +494,8 @@
     function makeTraits(){
       return {
         skin: pick(TRAITS.skin, "skin"),
-        // Deterministic framing (even if someone later adds more options)
-        cameraPlacement: (Array.isArray(TRAITS.cameraPlacement) && TRAITS.cameraPlacement.length) ? TRAITS.cameraPlacement[0] : "",
-        cameraFinal: (Array.isArray(TRAITS.cameraFinal) && TRAITS.cameraFinal.length) ? TRAITS.cameraFinal[0] : "",
-        lensLook: (Array.isArray(TRAITS.lensLook) && TRAITS.lensLook.length) ? TRAITS.lensLook[0] : "",
+        cameraPlacement: pick(TRAITS.cameraPlacement, "cameraPlacement"),
+        cameraFinal: pick(TRAITS.cameraFinal, "cameraFinal"),
         wardrobe: pick(TRAITS.wardrobe, "wardrobe"),
         wardrobeColor: pick(TRAITS.wardrobeColor, "wardrobeColor"),
         backdrop: pick(TRAITS.backdrop, "backdrop"),
@@ -496,7 +505,8 @@
         stylingMood: pick(TRAITS.stylingMood, "stylingMood"),
         makeup: pick(TRAITS.makeup, "makeup"),
         hair: pick(TRAITS.hair, "hair"),
-        pose: (Array.isArray(TRAITS.pose) && TRAITS.pose.length) ? TRAITS.pose[0] : "",
+        pose: pick(TRAITS.pose, "pose"),
+        lensLook: pick(TRAITS.lensLook, "lensLook"),
         textureRules: pick(TRAITS.textureRules, "textureRules"),
       };
     }
@@ -516,8 +526,7 @@
     • Do NOT thicken, simplify, or redraw engraving to solve size.
 
     ZOOM RANGE CLAMP (NON-NEGOTIABLE)
-    •Subject framing is locked:  Do not zoom out or in. Do not change subject scale.
-    • The visible necklace span (left-to-right chain) should fill >97% of the image width.
+    • The visible necklace span (left-to-right chain) should fill roughly 93%–98% of the image width.
     • Final framing MUST be necklace-forward: upper bust + collarbones only.
     • TOP CROP RULE: the top edge must cut at mid-neck (no jawline, no chin, no face ever).
     • BOTTOM CROP RULE: bottom edge must be upper bust only (collarbones fully visible; no torso focus).
@@ -535,13 +544,6 @@
     • Exception: jewelry locks always win (necklace + charm fidelity rules never change).
     • Do not average traits. Do not ignore traits. Do not partially apply traits. Apply all traits.
 
-   SKIN REALISM (NON-NEGOTIABLE)
-    • Skin must look ultra-real + hydrated (NOT dry/leathery): crisp pores, fine peach-fuzz, micro-specular highlights, subtle natural sheen in highlights.
-    • Preserve true micro-variation: uneven pore density, tiny blemishes, faint redness, subtle freckles/sun specks may vary from model to model (keep subtle).
-    • Absolutely avoid the “old leather” look: no exaggerated dryness texture, no wrinkle-pattern overlays, no muddy micro-contrast, no crunchy sharpening.
-    • No plastic smoothing: do not blur pores; do not beauty-retouch skin. Keep realistic texture visible at 100% zoom.
-    • If you must adjust skin, only tiny exposure/white-balance shifts; never repaint/airbrush.
-
     TASK (CRITICAL)
       1.  Place Image[1] as the pendant on the necklace in Image[0]. Treat Image[1] like a literal decal/insert.
       2.  Do not redraw, regenerate, re-engrave, “improve,” clean up, simplify, stylize, or reinterpret the charm.
@@ -549,13 +551,13 @@
       4.  Engraving rule: preserve every engraving stroke exactly as in Image[1]. No stroke loss, no stroke merging, no thickening, no line cleanup, no mirrored text, no invented marks.
       5.  Allowed charm edits (only): tiny exposure/white-balance shift to match scene lighting + a subtle contact shadow under the charm + mild specular highlight alignment. No geometry changes.
       6.  BACKGROUND_DIAL: pastel studio backdrop in soft peach 
-      7.  LIGHTING_DIAL: window light, airy highlights Etsy style photo (neck + collarbone close crop). One adult female model with ultra-real hydrated skin: crisp pores with micro-shine, subtle peach-fuzz, slight natural imperfections that vary per model, zero heavy retouching/smoothing. Tight framing keeps neck/collarbone clear so the necklace stations are fully visible. Recreate the exact single-strand satellite chain necklace from the reference—identical bead station shape/size/spacing, identical chain link size/shape, identical drape/tension, identical placement on the neck; warm yellow gold tone with crisp specular highlights. Clean modern pastel grading, soft peach backdrop, powder blue white-tee look.  
+      7.  LIGHTING_DIAL: window light, airy highlights Editorial Etsy portrait (neck + collarbone close crop). One adult female model with natural skin texture, realistic pores, no heavy retouching. Tight framing keeps neck/collarbone clear so the necklace stations are fully visible. Recreate the exact single-strand satellite chain necklace from the reference—identical bead station shape/size/spacing, identical chain link size/shape, identical drape/tension, identical placement on the neck; warm yellow gold tone with crisp specular highlights. Clean modern pastel grading, soft peach backdrop, powder blue white-tee look.  
 
-    ENGRAVING COLOR + FILL (NON-NEGOTIABLE)
+    ENGRAVING COLOR (NON-NEGOTIABLE)
     • Engraving must remain a bright metal tone consistent with the charm’s metal (warm yellow).
     • Engraving visibility must come from micro-shadow + highlight only, not pigment.
-    • Engraving lines must be only slightly darker than the surrounding metal due to shading, but must never appear grey, dark grey, dark brown, black, charcoal, ink-like, oxidized, soot-filled, “painted,” or enamel-filled.
-    • Do not add patina. Do not add contrast paint.
+    • Engraving lines may be only slightly darker than the surrounding metal due to shading, but must never appear grey, dark grey, dark brown, black, charcoal, ink-like, oxidized, soot-filled, “painted,” or enamel-filled.
+    • Do not fill engraving channels. Do not add patina. Do not add contrast paint.
     • If contrast is needed, increase edge highlight / specular response instead of darkening the engraving.
 
     FOCUS (REALISM PRIORITY)
@@ -564,13 +566,14 @@
     • Jump ring must be closed + correctly connected to charm and chain; no floating, no broken links.
 
     NECKLACE LOCK
-    • Single strand only. Station count/spacing + link geometry + drape must remain consistent with Image[0]. No added jewelry.
+    Single strand only. Station count/spacing + link geometry + drape must remain consistent with Image[0]. No added jewelry.
 
     LOOK
-    • Soft peach backdrop, pale taupe styling, punchy-neutral pastel grade. Ultra-real hydrated skin with crisp pores + micro-shine (never leathery, never plastic). Jewelry tack sharp.
+    Soft peach backdrop, pale taupe styling, punchy-neutral pastel grade. Natural pores, no plastic skin. Jewelry tack sharp.
 
     HARD FAIL CONDITIONS (if any occur, keep charm from Image[1] unchanged even if lighting match is imperfect)
-    • Warped links, doubled chain, altered charm outline, missing strokes, simplified engraving, blur/smear on charm, engraving fill NOT dark like Image[1], patchy/incomplete fill, color drift between strokes, inconsistent fill density, second strand, altered spacing, thicker chain, neon colors, plastic skin, warped links.”`;
+    Warped links, doubled chain, altered charm outline, missing strokes, simplified engraving, blur/smear on charm, any engraving rendered as grey/dark grey/dark brown/black or “filled, second strand, altered spacing, thicker chain, neon colors, plastic skin, warped links.”`;
+
 
     // --- Zoom + pan listeners ---
     function attachZoomPan(box){
@@ -973,19 +976,6 @@
         "",
       ].join("\n");
 
-     // Global realism locks (always apply, even if base prompt is edited)
-      const skinEngravingLock = [
-        "SKIN REALISM LOCK (NON-NEGOTIABLE)",
-        "- Ultra-real hydrated skin: crisp pores, subtle peach-fuzz, micro-specular highlights; no leathery dryness, no plastic smoothing, no heavy retouching.",
-        "- Allow subtle model-to-model imperfections (tiny blemishes/faint redness/light freckles) while keeping it tasteful.",
-        "",
-        "ENGRAVING FILL LOCK (NON-NEGOTIABLE)",
-        "- Match Image[1] engraving darkness exactly (deep charcoal/near-black).",
-        "- Fill every engraved groove fully and uniformly (no gaps, no patchiness, no gradients), while preserving stroke paths exactly.",
-        "- Never lighten engraving fill to match lighting; match lighting via metal highlights only.",
-        "",
-      ].join("\n");
-
       // Apply all non-camera traits immediately (so wardrobe/backdrop/lighting happen),
       // but force camera instructions to appear LAST to reduce “camera-first” re-generation.
       const immediateTraits = [
@@ -1007,8 +997,6 @@
 
       const cameraLast = [
         "CAMERA + LENS (APPLY LAST — after charm is locked)",
-        "- FRAMING LOCK: Top crop must cut at mid-neck; include collarbones; exclude jaw/chin/face",
-        "- FRAMING LOCK: Keep camera distance fixed; only minor shoulder rotation is allowed (do not reframe)",
         `- camera framing: ${stage === "placement" ? traits.cameraPlacement : traits.cameraFinal}`,
         `- lens look: ${traits.lensLook}`,
         "- focus: charm pendant + chain stations tack sharp; background softly blurred",
@@ -1042,6 +1030,7 @@
             `- TRUE required final size: charm bbox height ${charmPlan?.finalTrue?.minPx}–${charmPlan?.finalTrue?.maxPx}px (target ${charmPlan?.finalTrue?.targetPx}px)`,
             `- Instruction window (compensated): ${charmPlan?.instr?.minPx}–${charmPlan?.instr?.maxPx}px (target ${charmPlan?.instr?.targetPx}px)`,
             "- IMPORTANT: do NOT redraw engraving to satisfy size. Only adjust framing/zoom until charm reaches TRUE size.",
+            "- If output charm is still ~1.5–2× too large, shrink it again (repeat the reduction) until it lands inside TRUE window.",
             "",
           ].join("\n");
 
@@ -1049,7 +1038,6 @@
         imageRoleBlock,
         processOrder,
         stageBlock,
-        skinEngravingLock,
         immediateTraits,
         base,
         "",
@@ -1069,7 +1057,6 @@
 
       const model = modelEl.value;
       const runId = `lg1_${Date.now()}_${Math.random().toString(16).slice(2)}`;
-      const finalCharmTargetPx = readFinalCharmTargetPx();
       const jobIdA = `${runId}_slot_${i+1}_A`;
       const jobIdB = `${runId}_slot_${i+1}_B`;
       const jobRefA = window.db.collection(JOBS_COLL).doc(jobIdA);
