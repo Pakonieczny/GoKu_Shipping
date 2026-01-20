@@ -357,32 +357,28 @@
             ],
 
             pose: [
-              "chin slightly down necklace centered",
               "shoulders relaxed straight-on",
-              "3/4 turn subtle",
-              "profile neck/jawline emphasis",
-              "slight lean forward to show necklace detail"
+              "shoulders relaxed, 2/3 left turn subtle",
+              "shoulders relaxed, 2/3 right turn subtle",
             ],
 
-            // Pass A: still place the charm clearly, but KEEP the crop ultra-tight.
+            // Pass A: still place the charm clearly, but KEEP the crop ultra-tight and zoomed.
             cameraPlacement: [
-              "upper bust + collarbone close crop, TOP EDGE cuts at mid-neck (no jawline, no chin, no face), necklace centered, keep pendant large in frame, 120mm",
-              "upper bust + collarbone close crop, TOP EDGE cuts at mid-neck (no jawline, no chin, no face), slight 3/4 turn left, necklace centered, keep pendant large in frame, 120mm",
-              "upper bust + collarbone close crop, TOP EDGE cuts at mid-neck (no jawline, no chin, no face), slight 3/4 turn right, necklace centered, keep pendant large in frame, 120mm"
+              "upper bust + collarbone close crop, TOP EDGE cuts at mid-neck (no jawline, no chin, no face), necklace centered, 120mm, Crop zoom factor 1.25x",
+              "upper bust + collarbone close crop, TOP EDGE cuts at mid-neck (no jawline, no chin, no face), necklace centered, 120mm, Crop zoom factor 1.25x",
+              "upper bust + collarbone close crop, TOP EDGE cuts at mid-neck (no jawline, no chin, no face), necklace centered, 120mm, Crop zoom factor 1.25x"
             ],
 
             // Pass B: final framing MUST be bust/collarbone only.
             cameraFinal: [
-              "upper bust + collarbone close crop, TOP EDGE cuts at mid-neck (no jawline, no chin, no face), 120mm, straight-on",
-              "upper bust + collarbone close crop, TOP EDGE cuts at mid-neck (no jawline, no chin, no face), 120mm, 2/3 turn left",
-              "upper bust + collarbone close crop, TOP EDGE cuts at mid-neck (no jawline, no chin, no face), 120mm, 2/3 turn right"
-            ],
+              "upper bust + collarbone close crop, TOP EDGE cuts at mid-neck (no jawline, no chin, no face), necklace centered, 120mm",
+              "upper bust + collarbone close crop, TOP EDGE cuts at mid-neck (no jawline, no chin, no face), necklace centered, 120mm",
+              "upper bust + collarbone close crop, TOP EDGE cuts at mid-neck (no jawline, no chin, no face), necklace centered, 120mm"
 
               // lens look (perspective/compression)
             lensLook: [
-              "120mm flattering compression",
-              "120mm portrait compression",
-              "macro-leaning close crop realistic"
+              "120mm portrait close crop realistic",
+
             ],
 
             textureRules: [
@@ -421,8 +417,7 @@
     function parseLensMm(lensLook = "") {
       const s = String(lensLook).toLowerCase();
       if (s.includes("120mm")) return 120;
-      if (s.includes("macro")) return 90;
-      return 80;
+      return 120;
     }
 
     function parseFinalZoomGroup(cameraFinal = "") {
@@ -555,10 +550,8 @@
 
     ENGRAVING COLOR (NON-NEGOTIABLE)
     • Engraving must remain a bright metal tone consistent with the charm’s metal (warm yellow).
-    • Engraving visibility must come from micro-shadow + highlight only, not pigment.
-    • Engraving lines may be only slightly darker than the surrounding metal due to shading, but must never appear grey, dark grey, dark brown, black, charcoal, ink-like, oxidized, soot-filled, “painted,” or enamel-filled.
-    • Do not fill engraving channels. Do not add patina. Do not add contrast paint.
-    • If contrast is needed, increase edge highlight / specular response instead of darkening the engraving.
+    • Engraving lines may be only slightly darker than the surrounding metal due to shading.
+    • Engraving must be filled-in exactly like in Image[0]
 
     FOCUS (REALISM PRIORITY)
     • High-res, sharp focus on beads + links + charm surface. Moderate depth of field.
@@ -571,8 +564,9 @@
     LOOK
     Soft peach backdrop, pale taupe styling, punchy-neutral pastel grade. Natural pores, no plastic skin. Jewelry tack sharp.
 
-    HARD FAIL CONDITIONS (if any occur, keep charm from Image[1] unchanged even if lighting match is imperfect)
-    Warped links, doubled chain, altered charm outline, missing strokes, simplified engraving, blur/smear on charm, any engraving rendered as grey/dark grey/dark brown/black or “filled, second strand, altered spacing, thicker chain, neon colors, plastic skin, warped links.”`;
+    HARD FAIL CONDITIONS
+    - Warped links, doubled chain, altered charm outline, missing strokes, simplified engraving, blur/smear on charm, any engraving rendered as grey/dark grey/dark brown/black or “filled, second strand, altered spacing, thicker chain, neon colors, plastic skin, warped links.
+    - Charm Engraving must never appear grey, dark grey, dark brown, black, charcoal, ink-like, oxidized, soot-filled, painted, or enamel-filled.`;
 
 
     // --- Zoom + pan listeners ---
