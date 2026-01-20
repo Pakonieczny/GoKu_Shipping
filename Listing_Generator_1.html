@@ -627,18 +627,66 @@
 
     async function fileToDataUrl(file, opts = {}){
       const {
-        maxDim = 5000,         // keep detail, shrink payload
-        mime = "image/png",   // much smaller than png
-        quality = 1.0
+        maxDim = 5000,          // keep detail, shrink payload
+        mime = "image/png",
+        quality = 1.0,
+
+        // --- NEW: deterministic framing lock (crop -> resize) ---
+        outW = null,            // e.g. 1024
+        outH = null,            // e.g. 1536
+        frameZoom = 1.0,        // e.g. 1.5 means "zoom in" by cropping to 1/1.5 area
+        anchorX = 0.5,          // 0..1 crop center X
+        anchorY = 0.6,          // 0..1 crop center Y (biased lower to favor necklace)
       } = opts;
+
+      const clamp01 = (v) => Math.max(0, Math.min(1, Number(v)));
+      const wantFrameLock =
+        Number.isFinite(Number(outW)) &&
+        Number.isFinite(Number(outH)) &&
+        Number(outW) > 0 &&
+        Number(outH) > 0;
 
       // Modern path
       try {
         const bmp = await createImageBitmap(file);
         const w = bmp.width, h = bmp.height;
-        const scale = Math.min(1, maxDim / Math.max(w, h));
-        const tw = Math.max(1, Math.round(w * scale));
-        const th = Math.max(1, Math.round(h * scale));
+        let tw, th;
+        let sx = 0, sy = 0, sw = w, sh = h;
+
+        if (wantFrameLock) {
+          // 1) crop to target aspect
+          const targetAR = Number(outW) / Number(outH);
+          const srcAR = w / h;
+          if (srcAR > targetAR) {
+            sh = h;
+            sw = Math.max(1, Math.round(h * targetAR));
+          } else {
+            sw = w;
+            sh = Math.max(1, Math.round(w / targetAR));
+          }
+
+          // 2) apply zoom (smaller crop => more zoom)
+          const z = Math.max(1, Number(frameZoom) || 1);
+          sw = Math.max(1, Math.round(sw / z));
+          sh = Math.max(1, Math.round(sh / z));
+
+          // 3) anchor (biased slightly lower by default)
+          const ax = clamp01(anchorX);
+          const ay = clamp01(anchorY);
+          const cx = w * ax;
+          const cy = h * ay;
+          sx = Math.round(cx - sw / 2);
+          sy = Math.round(cy - sh / 2);
+          sx = Math.max(0, Math.min(w - sw, sx));
+          sy = Math.max(0, Math.min(h - sh, sy));
+
+          tw = Math.max(1, Math.round(Number(outW)));
+          th = Math.max(1, Math.round(Number(outH)));
+        } else {
+          const scale = Math.min(1, maxDim / Math.max(w, h));
+          tw = Math.max(1, Math.round(w * scale));
+          th = Math.max(1, Math.round(h * scale));
+        }
 
         const canvas = document.createElement("canvas");
         canvas.width = tw;
@@ -647,8 +695,11 @@
         const ctx = canvas.getContext("2d", { alpha: false });
         ctx.imageSmoothingEnabled = true;
         ctx.imageSmoothingQuality = "high";
-        ctx.drawImage(bmp, 0, 0, tw, th);
-
+       if (wantFrameLock) {
+          ctx.drawImage(bmp, sx, sy, sw, sh, 0, 0, tw, th);
+        } else {
+          ctx.drawImage(bmp, 0, 0, tw, th);
+        }
         // Important: toDataURL on jpeg dramatically reduces size
         return canvas.toDataURL(mime, quality);
       } catch (_) {
@@ -669,9 +720,47 @@
 
         const w = img.naturalWidth || img.width;
         const h = img.naturalHeight || img.height;
-        const scale = Math.min(1, maxDim / Math.max(w, h));
-        const tw = Math.max(1, Math.round(w * scale));
-        const th = Math.max(1, Math.round(h * scale));
+        let tw, th;
+        let sx = 0, sy = 0, sw = w, sh = h;
+
+        const clamp01 = (v) => Math.max(0, Math.min(1, Number(v)));
+        const wantFrameLock =
+          Number.isFinite(Number(outW)) &&
+          Number.isFinite(Number(outH)) &&
+          Number(outW) > 0 &&
+          Number(outH) > 0;
+
+        if (wantFrameLock) {
+          const targetAR = Number(outW) / Number(outH);
+          const srcAR = w / h;
+          if (srcAR > targetAR) {
+            sh = h;
+            sw = Math.max(1, Math.round(h * targetAR));
+          } else {
+            sw = w;
+            sh = Math.max(1, Math.round(w / targetAR));
+          }
+
+          const z = Math.max(1, Number(frameZoom) || 1);
+          sw = Math.max(1, Math.round(sw / z));
+          sh = Math.max(1, Math.round(sh / z));
+
+          const ax = clamp01(anchorX);
+          const ay = clamp01(anchorY);
+          const cx = w * ax;
+          const cy = h * ay;
+          sx = Math.round(cx - sw / 2);
+          sy = Math.round(cy - sh / 2);
+          sx = Math.max(0, Math.min(w - sw, sx));
+          sy = Math.max(0, Math.min(h - sh, sy));
+
+          tw = Math.max(1, Math.round(Number(outW)));
+          th = Math.max(1, Math.round(Number(outH)));
+        } else {
+          const scale = Math.min(1, maxDim / Math.max(w, h));
+          tw = Math.max(1, Math.round(w * scale));
+          th = Math.max(1, Math.round(h * scale));
+        }
 
         const canvas = document.createElement("canvas");
         canvas.width = tw;
@@ -680,8 +769,11 @@
         const ctx = canvas.getContext("2d", { alpha: false });
         ctx.imageSmoothingEnabled = true;
         ctx.imageSmoothingQuality = "high";
-        ctx.drawImage(img, 0, 0, tw, th);
-
+        if (wantFrameLock) {
+          ctx.drawImage(img, sx, sy, sw, sh, 0, 0, tw, th);
+        } else {
+          ctx.drawImage(img, 0, 0, tw, th);
+        }
         return canvas.toDataURL(mime, quality);
       }
     }
@@ -780,7 +872,19 @@
       try {
         // NEW: ensure auth is established before we attempt Storage upload
         statusEl.textContent = "Preparing reference…";
-        referenceDataUrl = await fileToDataUrl(file);
+        // HARD FRAME LOCK:
+        // - crop to 1024x1536 aspect
+        // - zoom in by 1.5x (deterministic)
+        // - bias crop slightly lower to keep necklace centered
+        referenceDataUrl = await fileToDataUrl(file, {
+          outW: 1024,
+          outH: 1536,
+          frameZoom: 1.5,
+          anchorX: 0.5,
+          anchorY: 0.6,
+          mime: "image/png",
+          quality: 1.00,
+        });
         setPreview(refPreviewEl, referenceDataUrl);
 
         // Convert the resized dataURL into a File for Storage upload

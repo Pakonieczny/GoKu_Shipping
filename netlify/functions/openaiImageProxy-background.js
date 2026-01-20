@@ -95,6 +95,15 @@ function clampNumber(n, min, max, fallback) {
   return Math.max(min, Math.min(max, x));
 }
 
+function filenameForMime(base, mime) {
+  const m = String(mime || "").toLowerCase();
+  const ext =
+    m.includes("jpeg") || m.includes("jpg") ? "jpg" :
+    m.includes("png") ? "png" :
+    (m.split("/")[1] || "bin");
+  return `${base}.${ext}`;
+}
+
 async function callOpenAIImagesEdits({
   apiKey,
   model,
@@ -673,9 +682,11 @@ exports.handler = async (event) => {
           : dataUrlToBuffer(input_charm_image);
       }
 
-      const images = [{ buffer: ref.buffer, mime: ref.mime, filename: "reference.png" }];
+      const images = [{ buffer: ref.buffer, mime: ref.mime, filename: filenameForMime("reference", ref.mime) }];
+
       if (charm) {
-        images.push({ buffer: charm.buffer, mime: charm.mime, filename: "charm_macro.png" });
+        images.push({ buffer: charm.buffer, mime: charm.mime, filename: filenameForMime("charm_macro", charm.mime) });
+
       }
 
       outBuf = await callOpenAIImagesEdits({
