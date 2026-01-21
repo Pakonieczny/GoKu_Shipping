@@ -582,21 +582,35 @@
       return makeTraits(TRAITS_BY_SLOT[i]);
     }
 
-   // Slot 2 prompt: ONE-PASS exact duplicate (edit here if needed)
+   // Slot 2 prompt: ONE-PASS charm replacement + engraving fidelity + OUTPUT zoom-out 1.5×
     const SLOT2_DUPLICATE_PROMPT =
-    `CRITICAL: Slot 2 is a duplication task.
+    `CRITICAL: Slot 2 is a charm replacement task. This must be a single-pass edit.
 
-    SLOT 2 SINGLE-PASS (NON-NEGOTIABLE)
-    • Use Image[0] only (the uploaded reference image).
-    • Output must be the closest possible duplicate of Image[0] while being 2x Zoomed-Out, focus on the details of the charm shape, engraving and chain.
-    • Keep framing, scale, colors, lighting, background, texture intact.
-    • Do NOT rotate, re-compose, stylize, retouch, “improve,” clean up, or re-draw anything.
-    • If any instruction conflicts with this block, this block wins.
+PROCESS ORDER (NON-NEGOTIABLE)
+• Single pass only.
+• Use Image[0] as the base photo.
+• Replace the charm/pendant in Image[0] with the charm from Image[1].
 
-    OUTPUT
-    • Zoom out of the reference Image[0] by 2x when generating the duplicate image 
-    • Focus on the charm detail and accuracy, especially the engraving cut out details. 
-    • Generate in 1024×1024 PNG.`;
+INPUT IMAGES (ORDER MATTERS)
+• Image[0] = base photo (scene + camera + chain placement + hardware position)
+• Image[1] = charm macro (pixel-truth source for silhouette + cutouts + engraving)
+
+ENGRAVING + CUTOUT FIDELITY (TOP PRIORITY)
+• Treat Image[1] as pixel-truth. Do not redraw, simplify, smooth, stylize, thicken, or “clean up” engraving.
+• Preserve every engraving stroke: no loss, no merging, no mirrored text, no invented marks.
+• Preserve charm outline + all inner cutouts/holes/notches exactly as in Image[1].
+• Allowed edits ONLY: tiny exposure/white balance match to Image[0] + subtle contact shadow + mild specular alignment. No geometry changes.
+
+LOCKS (NON-NEGOTIABLE)
+• Preserve EVERYTHING ELSE from Image[0]: chain links, bead stations, jump ring placement, clasp, metal tone, lighting, background.
+• Do not add objects. Do not remove objects (other than replacing the charm itself). Do not change the chain geometry.
+
+OUTPUT ZOOM (NON-NEGOTIABLE)
+• The FINAL GENERATED image must be zoomed OUT by 1.5× compared to Image[0] (wider view), keeping the same center framing.
+• Do NOT crop tighter than Image[0]. Never zoom in.
+
+HARD FAIL CONDITIONS
+- Any engraving changes, any altered cutout geometry, any changed chain geometry/station spacing, blur/smear on charm details, or any added objects.`;
 
     // Default prompt (edit freely)
     const DEFAULT_PROMPT =
@@ -987,7 +1001,7 @@
       try {
         // NEW: ensure auth is established before we attempt Storage upload
         statusEl.textContent = "Preparing reference…";
-        // Preview + upload helper (NO crop/zoom). Just downscale to a sane maxDim.
+        // Preview only (safe to downscale for UI). Upload will use ORIGINAL bytes (no re-encode).
         referenceDataUrl = await fileToDataUrl(file, {
           maxDim: 1024,
           mime: "image/png",
@@ -995,14 +1009,14 @@
         });
         setPreview(refPreviewEl, referenceDataUrl);
 
-        // Convert the resized dataURL into a File for Storage upload
-        const refFile = dataUrlToFile(referenceDataUrl, "reference");
+        // Upload ORIGINAL file bytes to preserve original dimensions + maximum quality
+        const refFile = file;
 
         // must match server allowlist prefix: listing-generator-1/Beady Necklace/Slot_X/...
         const slotIndex = activeSlotIndex;
         const folder = slotFolder(slotIndex);
         const refId = `image0_${Date.now()}_${Math.random().toString(16).slice(2)}`;
-        const ext = refFile.name.split(".").pop() || "jpg";
+        const ext = refFile.name.split(".").pop() || "png";
         const storagePath = `${folder}/${refId}.${ext}`;
         slots[slotIndex].image0StoragePath = storagePath;
 
