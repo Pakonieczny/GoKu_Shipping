@@ -588,13 +588,15 @@
 
     SLOT 2 SINGLE-PASS (NON-NEGOTIABLE)
     • Use Image[0] only (the uploaded reference image).
-    • Output must be the closest possible duplicate of Image[0]. Keep framing, crop, scale, colors, lighting, background, texture intact.
-    • Do NOT add a model, necklace, charm, text, watermark, props, extra objects, shadows, or reflections that are not already in Image[0].
-    • Do NOT crop, zoom, rotate, re-compose, stylize, retouch, “improve,” clean up, or re-draw anything.
+    • Output must be the closest possible duplicate of Image[0] while being 2x Zoomed-Out, focus on the details of the charm shape, engraving and chain.
+    • Keep framing, scale, colors, lighting, background, texture intact.
+    • Do NOT rotate, re-compose, stylize, retouch, “improve,” clean up, or re-draw anything.
     • If any instruction conflicts with this block, this block wins.
 
     OUTPUT
-    • Generate a best-match duplicate in 1024×1024 PNG.`;
+    • Zoom out of the reference Image[0] by 2x when generating the duplicate image 
+    • Focus on the charm detail and accuracy, especially the engraving cut out details. 
+    • Generate in 1024×1024 PNG.`;
 
     // Default prompt (edit freely)
     const DEFAULT_PROMPT =
