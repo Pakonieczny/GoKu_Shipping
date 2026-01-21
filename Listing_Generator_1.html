@@ -1196,7 +1196,7 @@ HARD FAIL CONDITIONS
       if (/(?:^|[^a-z0-9])img[\s_-]*0(?:[^a-z0-9]|$)/.test(raw)) return "image0";
       if (compact.includes("image0") || compact.includes("img0")) return "image0";
 
-      // Secondary hints (keep existing behavior)
+      // Secondary hints
       if (/(macro|charm|pendant)/.test(raw)) return "image1";
       if (/(base|reference)/.test(raw)) return "image0";
 
@@ -1215,10 +1215,28 @@ HARD FAIL CONDITIONS
       // Primary: list the folder and pick images by filename hints
       try {
         const items = await listSlotImages(slotIndex);
-        const base = items.find(x => guessRoleFromName(x.name) === "image0") || items[0];
-        const charm = items.find(x => guessRoleFromName(x.name) === "image1") || items.find(x => x !== base) || null;
-        if (!base) throw new Error(`Slot ${slotIndex+1}: no reference images found in "${slotFolder(slotIndex)}/"`);
-        return { image0Path: base.fullPath, image1Path: charm?.fullPath || null, all: items };
+        if (!items || items.length === 0) {
+          throw new Error(`Slot ${slotIndex+1}: no reference images found in "${slotFolder(slotIndex)}/"`);
+        }
+
+        // Annotate roles once
+        const tagged = items.map(it => ({
+          ...it,
+          role: guessRoleFromName(it.name),
+        }));
+
+        const base = tagged.find(x => x.role === "image0") || tagged[0];
+
+        // Prefer explicit image1, but NEVER allow same fullPath as image0
+        let charm =
+          tagged.find(x => x.role === "image1" && x.fullPath !== base.fullPath) ||
+          tagged.find(x => x.fullPath !== base.fullPath) ||
+          null;
+
+        const image0Path = base.fullPath;
+        const image1Path = charm ? charm.fullPath : null;
+
+        return { image0Path, image1Path, all: tagged };
       } catch (e) {
         // Fallback: if listAll is blocked by Storage rules, rely on last-known uploaded paths
         const s = slots[slotIndex];
@@ -1379,8 +1397,14 @@ HARD FAIL CONDITIONS
         slots[slotIndex].ref1Url = url1;
       }
 
-      setSlotRefBox(box0, url0, url0 ? "Image[0]" : "Image[0] (no read)", image0Path || "");
-      setSlotRefBox(box1, url1, url1 ? "Image[1]" : (image1Path ? "Image[1] (no read)" : "Image[1]"), image1Path || "");
+      const name0 = (image0Path || "").split("/").pop() || "";
+      const name1 = (image1Path || "").split("/").pop() || "";
+
+      const label0 = name0 ? `Image[0] ${name0}` : (url0 ? "Image[0]" : "Image[0]");
+      const label1 = name1 ? `Image[1] ${name1}` : (image1Path ? "Image[1]" : "Image[1]");
+
+      setSlotRefBox(box0, url0, url0 ? label0 : `${label0} (no read)`, image0Path || "");
+      setSlotRefBox(box1, url1, url1 ? label1 : (image1Path ? `${label1} (no read)` : label1), image1Path || "");
     }
 
     const JOBS_COLL = "ListingGenerator1Jobs";
