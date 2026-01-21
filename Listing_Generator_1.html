@@ -582,6 +582,20 @@
       return makeTraits(TRAITS_BY_SLOT[i]);
     }
 
+   // Slot 2 prompt: ONE-PASS exact duplicate (edit here if needed)
+    const SLOT2_DUPLICATE_PROMPT =
+    `CRITICAL: Slot 2 is a duplication task.
+
+    SLOT 2 SINGLE-PASS (NON-NEGOTIABLE)
+    • Use Image[0] only (the uploaded reference image).
+    • Output must be the closest possible duplicate of Image[0]. Keep framing, crop, scale, colors, lighting, background, texture intact.
+    • Do NOT add a model, necklace, charm, text, watermark, props, extra objects, shadows, or reflections that are not already in Image[0].
+    • Do NOT crop, zoom, rotate, re-compose, stylize, retouch, “improve,” clean up, or re-draw anything.
+    • If any instruction conflicts with this block, this block wins.
+
+    OUTPUT
+    • Generate a best-match duplicate in 1024×1024 PNG.`;
+
     // Default prompt (edit freely)
     const DEFAULT_PROMPT =
     `CRITICAL: This is a standard fashion product photo. Do not add nudity. Always keep the subject modest.
@@ -1450,8 +1464,14 @@
 
       // Resolve per-slot reference images from: listing-generator-1/Beady Necklace/Slot_X/
       const { image0Path, image1Path } = await resolveSlotRequiredImages(i);
-      const hasCharm = !!image1Path;
-      const baseText = (PROMPT_BY_SLOT[i] || "").trim();
+
+      // Slot 2 is a strict single-pass "best duplicate" pipeline
+      const isSlot2 = (i === 1);
+      const hasCharm = isSlot2 ? false : !!image1Path;
+
+      const baseText = isSlot2
+        ? SLOT2_DUPLICATE_PROMPT.trim()
+        : (PROMPT_BY_SLOT[i] || "").trim();
       const finalCharmTargetPx = readFinalCharmTargetPx();
 
       const model = modelEl.value;
@@ -1464,12 +1484,12 @@
       let unsubB = null;
 
       setBar(i, 5);
-      setMeta(i, hasCharm ? "Queued (Pass A)…" : "Queued…");
+      setMeta(i, isSlot2 ? "Queued (Slot 2 Duplicate)…" : (hasCharm ? "Queued (Pass A)…" : "Queued…"));
 
       try {
         // ---------- Single-pass fallback (no charm macro) ----------
         if (!hasCharm) {
-          const fullPrompt = buildPrompt(baseText, slot.traits, false, "final");
+          const fullPrompt = isSlot2 ? SLOT2_DUPLICATE_PROMPT.trim() : buildPrompt(baseText, slot.traits, false, "final");
           slot.prompt = fullPrompt;
 
           let unsub = null;
@@ -1508,7 +1528,7 @@
             prompt: fullPrompt,
             input_storage_path: image0Path,
             input_charm_storage_path: image1Path,
-            postprocess: {
+            postprocess: isSlot2 ? null : {
             finalFrameZoom: FINAL_FRAME_ZOOM,
             anchorX: FINAL_ANCHOR_X,
             anchorY: FINAL_ANCHOR_Y,
