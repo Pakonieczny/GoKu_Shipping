@@ -108,7 +108,7 @@ async function applyFinalFrameZoomIfNeeded(buf, postprocess = {}) {
   }
 
   const ax = clampNumber(postprocess?.anchorX, 0, 1, 0.5);
-  const ay = clampNumber(postprocess?.anchorY, 0, 1, 0.6);
+  const ay = clampNumber(postprocess?.anchorY, 0, 1, 0.45);
 
   const meta = await sharp(buf).metadata();
   const w = meta?.width || 0;
