@@ -364,21 +364,17 @@
 
             // Pass A: still place the charm clearly, but KEEP the crop ultra-tight and zoomed.
             cameraPlacement: [
-              "Zoom-in to model by 1.5x, only show upper bust + collarbone close crop, TOP EDGE cuts at mid-neck (no jawline, no chin, no face), necklace centered, 120mm",
-              "Zoom-in to model by 1.5x only show upper bust + collarbone close crop, TOP EDGE cuts at mid-neck (no jawline, no chin, no face), necklace centered, 120mm",
-              "Zoom-in to model by 1.5x only show upper bust + collarbone close crop, TOP EDGE cuts at mid-neck (no jawline, no chin, no face), necklace centered, 120mm"
+              "Only show upper bust + collarbone close crop, TOP EDGE cuts at mid-neck (no jawline, no chin, no face), necklace centered, 120mm"
             ],
 
             // Pass B: final framing MUST be bust/collarbone only.
             cameraFinal: [
-              "Zoom-in to model by 1.5x, only show upper bust + collarbone close crop, TOP EDGE cuts at mid-neck (no jawline, no chin, no face), necklace centered, 120mm",
-              "Zoom-in to model by 1.5x only show upper bust + collarbone close crop, TOP EDGE cuts at mid-neck (no jawline, no chin, no face), necklace centered, 120mm",
-              "Zoom-in to model by 1.5x only show upper bust + collarbone close crop, TOP EDGE cuts at mid-neck (no jawline, no chin, no face), necklace centered, 120mm"
+              "Only show upper bust + collarbone close crop, TOP EDGE cuts at mid-neck (no jawline, no chin, no face), necklace centered, 120mm"
             ],
 
               // lens look (perspective/compression)
             lensLook: [
-              "120mm portrait close crop realistic, zoom-in to model by 1.5x"
+              "120mm portrait close crop realistic"
 
             ],
 
@@ -417,7 +413,7 @@
     // -------------------------
     // Deterministic final framing (server-side, applied to OUTPUT only)
     // -------------------------
-    const FINAL_FRAME_ZOOM = 1.50;  // increase to zoom in more (e.g. 1.65)
+    const FINAL_FRAME_ZOOM = 1.00;  // increase to zoom in more (e.g. 1.65)
     const FINAL_ANCHOR_X = 0.50;
     const FINAL_ANCHOR_Y = 0.60;   // slightly low to keep necklace centered
 
@@ -1129,7 +1125,7 @@
             `- TRUE required final size: charm bbox height ${charmPlan?.finalTrue?.minPx}–${charmPlan?.finalTrue?.maxPx}px (target ${charmPlan?.finalTrue?.targetPx}px)`,
             `- Instruction window (compensated): ${charmPlan?.instr?.minPx}–${charmPlan?.instr?.maxPx}px (target ${charmPlan?.instr?.targetPx}px)`,
             "- IMPORTANT: do NOT redraw engraving to satisfy size. Only adjust framing/zoom until charm reaches TRUE size.",
-            "- If output charm is still ~1.5–2× too large, shrink it again (repeat the reduction) until it lands inside TRUE window.",
+            //"- If output charm is still ~2× too large, shrink it again (repeat the reduction) until it lands inside TRUE window.",
             "",
           ].join("\n");
 
