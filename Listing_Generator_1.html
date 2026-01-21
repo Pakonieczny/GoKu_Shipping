@@ -1183,9 +1183,23 @@ HARD FAIL CONDITIONS
     // Slot image management (Firebase Storage)
     // -------------------------
     function guessRoleFromName(name){
-      const s = String(name || "").toLowerCase();
-      if (/(macro|charm|pendant|image1|img1)/.test(s)) return "image1";
-      if (/(base|reference|image0|img0)/.test(s)) return "image0";
+      // Normalize to catch: "Image 0", "Image_0", "IMAGE-0", "img 1", etc.
+      const raw = String(name || "").toLowerCase();
+      const compact = raw.replace(/[^a-z0-9]+/g, ""); // strips spaces/_/-/etc
+
+      // Priority: explicit Image0/Image1 tags in the filename
+      if (/(?:^|[^a-z0-9])image[\s_-]*1(?:[^a-z0-9]|$)/.test(raw)) return "image1";
+      if (/(?:^|[^a-z0-9])img[\s_-]*1(?:[^a-z0-9]|$)/.test(raw)) return "image1";
+      if (compact.includes("image1") || compact.includes("img1")) return "image1";
+
+      if (/(?:^|[^a-z0-9])image[\s_-]*0(?:[^a-z0-9]|$)/.test(raw)) return "image0";
+      if (/(?:^|[^a-z0-9])img[\s_-]*0(?:[^a-z0-9]|$)/.test(raw)) return "image0";
+      if (compact.includes("image0") || compact.includes("img0")) return "image0";
+
+      // Secondary hints (keep existing behavior)
+      if (/(macro|charm|pendant)/.test(raw)) return "image1";
+      if (/(base|reference)/.test(raw)) return "image0";
+
       return "unknown";
     }
 
