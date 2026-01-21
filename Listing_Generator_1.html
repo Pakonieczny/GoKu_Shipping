@@ -413,7 +413,7 @@
     // -------------------------
     // Deterministic final framing (server-side, applied to OUTPUT only)
     // -------------------------
-    const FINAL_FRAME_ZOOM = 1.00;  // increase to zoom in more (e.g. 1.65)
+    const FINAL_FRAME_ZOOM = 1.2;  // increase to zoom in more (e.g. 1.65)
     const FINAL_ANCHOR_X = 0.50;
     const FINAL_ANCHOR_Y = 0.60;   // slightly low to keep necklace centered
 
@@ -444,7 +444,7 @@
         (lensMm >= 120) ? "mm120" : "mm120";
 
       const invBase = CHARM_INV_OVERSCALE_BASE[lensKey] ?? 0.50;
-      const invZoom = CHARM_INV_OVERSCALE_ZOOM[zoomGroup] ?? 1.00;
+      const invZoom = CHARM_INV_OVERSCALE_ZOOM[zoomGroup] ?? 1.20;
       // Final inverse multiplier applied to TRUE targets to produce MODEL-INSTRUCTION targets
       const invOverscale = clamp(invBase * invZoom, 0.32, 0.70);
 
@@ -636,7 +636,7 @@
         // --- NEW: deterministic framing lock (crop -> resize) ---
         outW = null,            // e.g. 1024
         outH = null,            // e.g. 1536
-        frameZoom = 1.0,        // e.g. 1.5 means "zoom in" by cropping to 1/1.5 area
+        frameZoom = 1.2,        // e.g. 1.5 means "zoom in" by cropping to 1/1.5 area
         anchorX = 0.5,          // 0..1 crop center X
         anchorY = 0.6,          // 0..1 crop center Y (biased lower to favor necklace)
       } = opts;
