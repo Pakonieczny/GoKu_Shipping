@@ -35,6 +35,41 @@
     .slot{ background:#0e1220; border:1px solid var(--line); border-radius:14px; padding:10px; }
     .slotTop{ display:flex; justify-content:space-between; align-items:center; gap:8px; margin-bottom:8px; }
     .slotTop b{ font-size:12px; color:var(--muted); }
+    .slotRefs{ display:flex; gap:8px; margin:8px 0; }
+    .slotRefBox{
+      flex:1;
+      height:72px;
+      border-radius:12px;
+      border:1px solid var(--line);
+      background:#0b0d12;
+      overflow:hidden;
+      position:relative;
+    }
+    .slotRefBox img{ width:100%; height:100%; object-fit:contain; }
+    .slotRefEmpty{
+      width:100%;
+      height:100%;
+      display:flex;
+      align-items:center;
+      justify-content:center;
+      font-size:11px;
+      color:var(--muted);
+    }
+    .slotRefLabel{
+      position:absolute;
+      left:6px;
+      bottom:6px;
+      font-size:10px;
+      color:var(--muted);
+      background:rgba(0,0,0,0.35);
+      padding:2px 7px;
+      border-radius:999px;
+      max-width:calc(100% - 12px);
+      white-space:nowrap;
+      overflow:hidden;
+      text-overflow:ellipsis;
+      pointer-events:none;
+    }
     .slotPrev{ width:100%; height:190px; border-radius:12px; border:1px solid var(--line); background:#0b0d12; overflow:hidden; }
     .slotPrev img{ width:100%; height:100%; object-fit:contain; transform-origin:center; }
     .bar{ height:8px; border-radius:999px; background:#0b0d12; border:1px solid var(--line); overflow:hidden; margin-top:10px; }
@@ -48,9 +83,24 @@
     <!-- LEFT -->
     <div class="card">
       <h1>Listing-Generator-1</h1>
-      <div class="muted">Upload a reference image → tune prompt/traits → generate 8 variations → auto-upload to Firebase.</div>
+      <div class="muted">Each slot has its own pipeline: images + prompt + traits. Upload references per slot, then generate.</div>
 
-      <label>Reference image (drag/drop or pick)</label>
+      <label>Active slot (edits apply to this slot only)</label>
+      <div class="row">
+        <select id="activeSlot" style="width:100%;">
+          <option value="0">Slot 1</option>
+          <option value="1">Slot 2</option>
+          <option value="2">Slot 3</option>
+          <option value="3">Slot 4</option>
+          <option value="4">Slot 5</option>
+          <option value="5">Slot 6</option>
+          <option value="6">Slot 7</option>
+          <option value="7">Slot 8</option>
+        </select>
+      </div>
+      <div class="muted">Uploads save into Firebase Storage: <b>listing-generator-1/Beady Necklace/Slot_X/</b>. Each slot uses only its own folder.</div>
+
+      <label>Slot Image[0] base photo (drag/drop or pick)</label>
       <div class="drop" id="drop">
         <div>
           <strong id="refName">No image selected</strong>
@@ -61,7 +111,7 @@
         </div>
       </div>
 
-     <label>Charm macro (Image[1] truth source)</label>
+     <label>Slot Image[1] charm macro (truth source)</label>
       <div class="drop" id="charmDrop">
         <div>
           <strong id="charmName">No charm macro selected</strong>
@@ -77,6 +127,8 @@
 
       <label>Reference preview (zoom + pan)</label>
       <div class="preview-box" id="refPreview"></div>
+
+      <input id="slotImgFiles" type="file" accept="image/*" multiple style="display:none" />
 
       <label>Generative description (live editable)</label>
       <textarea id="prompt"></textarea>
@@ -120,12 +172,19 @@
 
   <script type="module">
    import { initializeApp, getApp } from "https://www.gstatic.com/firebasejs/9.23.0/firebase-app.js";
-   import { getStorage, ref, uploadBytesResumable, getDownloadURL } from "https://www.gstatic.com/firebasejs/9.23.0/firebase-storage.js";
+   import { getStorage, ref, uploadBytesResumable, getDownloadURL, listAll } from "https://www.gstatic.com/firebasejs/9.23.0/firebase-storage.js";
    import { getAuth, signInAnonymously as modSignInAnonymously, onAuthStateChanged as modOnAuthStateChanged } from "https://www.gstatic.com/firebasejs/9.23.0/firebase-auth.js";
 
 
     // --- Netlify functions base ---
     const functionsBaseUrl = `${window.location.origin}/.netlify/functions`;
+
+    // -------------------------
+    // Per-slot folder layout (Firebase Storage)
+    // -------------------------
+    const SLOT_PARENT_FOLDER = "listing-generator-1/Beady Necklace";
+    const SLOT_COUNT = 8;
+    function slotFolder(i){ return `${SLOT_PARENT_FOLDER}/Slot_${i+1}`; }
 
     // --- Firebase config (matches shipping-1 patterns) ---
     const firebaseConfig = {
@@ -175,6 +234,8 @@
     const dropEl = document.getElementById("drop");
     const refNameEl = document.getElementById("refName");
     const refPreviewEl = document.getElementById("refPreview");
+    const activeSlotEl = document.getElementById("activeSlot");
+    const slotImgFilesEl = document.getElementById("slotImgFiles");
     const promptEl = document.getElementById("prompt");
     const modelEl = document.getElementById("model");
     const finalCharmTargetPxEl = document.getElementById("finalCharmTargetPx");
@@ -189,13 +250,16 @@
     const charmPreviewEl = document.getElementById("charmPreview");
     const traitsBox = document.getElementById("traitsBox");
 
-    let referenceDataUrl = null;
-    let referenceStoragePath = null;     // NEW: small identifier sent to background function
-    let referenceDownloadUrl = null;     // NEW: optional, kept for debugging/inspection
-    let charmMacroDataUrl = null;
-    let charmMacroStoragePath = null;
-    let charmMacroDownloadUrl = null;
+    // Per-slot editing context (Slot 1..8)
+    let activeSlotIndex = 0;
+
+    // UI previews show only the currently selected slot
+    let referenceDataUrl = null;    // active slot Image[0] preview
+    let charmMacroDataUrl = null;   // active slot Image[1] preview
+
+    // Slots hold their own pipelines: prompt + traits + reference image paths (Firebase Storage)
     let slots = [];
+    let pendingImgUploadSlotIndex = null;
 
     // Keep UI slider + text in sync (NEW: integer px target)
     function clampNum(n, lo, hi){ return Math.max(lo, Math.min(hi, n)); }
@@ -220,7 +284,7 @@
     }
 
     // Trait defs (Etsy-friendly: clean necklines, pastel/neutral palette, jewelry-forward)
-    const TRAITS = {
+    const DEFAULT_TRAITS = {
             skin: [
               "medium",
               "tan",
@@ -387,6 +451,10 @@
             ]
     };
 
+    // One traits set per slot (independent copies)
+    function deepClone(o){ return JSON.parse(JSON.stringify(o)); }
+    const TRAITS_BY_SLOT = Array.from({ length: SLOT_COUNT }, () => deepClone(DEFAULT_TRAITS));
+
     // -------------------------
     // Charm sizing control (hard numeric plan)
     // -------------------------
@@ -489,28 +557,33 @@
        }
        return arr[Math.floor(Math.random() * arr.length)];
        }
-    function makeTraits(){
+    function makeTraits(traitsSet){
+      const T = traitsSet || TRAITS_BY_SLOT[0];
       return {
-        skin: pick(TRAITS.skin, "skin"),
-        cameraPlacement: pick(TRAITS.cameraPlacement, "cameraPlacement"),
-        cameraFinal: pick(TRAITS.cameraFinal, "cameraFinal"),
-        wardrobe: pick(TRAITS.wardrobe, "wardrobe"),
-        wardrobeColor: pick(TRAITS.wardrobeColor, "wardrobeColor"),
-        backdrop: pick(TRAITS.backdrop, "backdrop"),
-        backgroundAccent: pick(TRAITS.backgroundAccent, "backgroundAccent"),
-        lighting: pick(TRAITS.lighting, "lighting"),
-        colorGrade: pick(TRAITS.colorGrade, "colorGrade"),
-        stylingMood: pick(TRAITS.stylingMood, "stylingMood"),
-        makeup: pick(TRAITS.makeup, "makeup"),
-        hair: pick(TRAITS.hair, "hair"),
-        pose: pick(TRAITS.pose, "pose"),
-        lensLook: pick(TRAITS.lensLook, "lensLook"),
-        textureRules: pick(TRAITS.textureRules, "textureRules"),
+        skin: pick(T.skin, "skin"),
+        cameraPlacement: pick(T.cameraPlacement, "cameraPlacement"),
+        cameraFinal: pick(T.cameraFinal, "cameraFinal"),
+        wardrobe: pick(T.wardrobe, "wardrobe"),
+        wardrobeColor: pick(T.wardrobeColor, "wardrobeColor"),
+        backdrop: pick(T.backdrop, "backdrop"),
+        backgroundAccent: pick(T.backgroundAccent, "backgroundAccent"),
+        lighting: pick(T.lighting, "lighting"),
+        colorGrade: pick(T.colorGrade, "colorGrade"),
+        stylingMood: pick(T.stylingMood, "stylingMood"),
+        makeup: pick(T.makeup, "makeup"),
+        hair: pick(T.hair, "hair"),
+        pose: pick(T.pose, "pose"),
+        lensLook: pick(T.lensLook, "lensLook"),
+        textureRules: pick(T.textureRules, "textureRules"),
       };
     }
 
+    function makeTraitsForSlot(i){
+      return makeTraits(TRAITS_BY_SLOT[i]);
+    }
+
     // Default prompt (edit freely)
-    promptEl.value =
+    const DEFAULT_PROMPT =
     `CRITICAL: This is a standard fashion product photo. Do not add nudity. Always keep the subject modest.
 
     PROCESS ORDER (NON-NEGOTIABLE)
@@ -572,6 +645,31 @@
     - Charm Engraving must never appear grey, dark grey, dark brown, black, charcoal, ink-like, oxidized, soot-filled, painted, or enamel-filled.
     - Never show model jawline, chin, face.`;
 
+    const PROMPT_BY_SLOT = Array.from({ length: SLOT_COUNT }, () => DEFAULT_PROMPT);
+    // Initialize editor (Slot 1 by default)
+    promptEl.value = PROMPT_BY_SLOT[0];
+
+    // -------------------------
+    // Slot editor plumbing
+    // -------------------------
+    function setActiveSlot(i){
+      const idx = Math.max(0, Math.min(SLOT_COUNT-1, Number(i) || 0));
+      activeSlotIndex = idx;
+      if (activeSlotEl) activeSlotEl.value = String(idx);
+
+      // Load slot-specific prompt into the editor
+      promptEl.value = PROMPT_BY_SLOT[idx] || "";
+
+      // Show slot-specific traits
+      if (slots[idx]?.traits) renderTraits(slots[idx].traits);
+    }
+
+    activeSlotEl?.addEventListener("change", ()=> setActiveSlot(activeSlotEl.value));
+
+    // Persist prompt edits into the active slot only
+    promptEl?.addEventListener("input", ()=>{
+      PROMPT_BY_SLOT[activeSlotIndex] = promptEl.value;
+    });
 
     // --- Zoom + pan listeners ---
     function attachZoomPan(box){
@@ -866,10 +964,9 @@
       // prevent clicking Generate while reference is uploading
       gen8Btn.disabled = true;
 
-      // reset any prior reference cache
+      // reset any prior reference cache (active slot only)
       referenceDataUrl = null;
-      referenceStoragePath = null;
-      referenceDownloadUrl = null;
+      if (slots[activeSlotIndex]) slots[activeSlotIndex].image0StoragePath = null;
 
       try {
         // NEW: ensure auth is established before we attempt Storage upload
@@ -885,21 +982,23 @@
         // Convert the resized dataURL into a File for Storage upload
         const refFile = dataUrlToFile(referenceDataUrl, "reference");
 
-        // must match server allowlist prefix: listing-generator-1/reference/...
-        const refId = `ref_${Date.now()}_${Math.random().toString(16).slice(2)}`;
+        // must match server allowlist prefix: listing-generator-1/Beady Necklace/Slot_X/...
+        const slotIndex = activeSlotIndex;
+        const folder = slotFolder(slotIndex);
+        const refId = `image0_${Date.now()}_${Math.random().toString(16).slice(2)}`;
         const ext = refFile.name.split(".").pop() || "jpg";
-        referenceStoragePath = `listing-generator-1/reference/${refId}.${ext}`;
+        const storagePath = `${folder}/${refId}.${ext}`;
+        slots[slotIndex].image0StoragePath = storagePath;
 
-        statusEl.textContent = "Uploading reference… 0%";
+        statusEl.textContent = "Uploading slot Image[0]… 0%";
 
-        // IMPORTANT: upload the *reference* file to the *reference* path
-        // Also: do NOT request a download URL here (avoid any read/metadata rule mismatch)
-        referenceDownloadUrl = await uploadWithProgress(
-          referenceStoragePath,
+        // Upload the *slot* base photo (Image[0])
+        await uploadWithProgress(
+          storagePath,
           refFile,
           (p) => {
             const pct = Math.max(0, Math.min(100, Math.round((p || 0) * 100)));
-            statusEl.textContent = `Uploading reference… ${pct}%`;
+            statusEl.textContent = `Uploading slot Image[0]… ${pct}%`;
           },
           { returnDownloadUrl: false }
         );
@@ -913,7 +1012,7 @@
         throw e;
       } finally {
         // re-enable if we have a valid storage path
-        if (referenceStoragePath) gen8Btn.disabled = false;
+        if (slots[activeSlotIndex]?.image0StoragePath) gen8Btn.disabled = false;
       }
     }
 
@@ -924,10 +1023,9 @@
     // prevent clicking Generate while charm macro is uploading
     gen8Btn.disabled = true;
 
-    // reset any prior charm macro cache
+    // reset any prior charm macro cache (active slot only)
     charmMacroDataUrl = null;
-    charmMacroStoragePath = null;
-    charmMacroDownloadUrl = null;
+    if (slots[activeSlotIndex]) slots[activeSlotIndex].image1StoragePath = null;
 
     try {
       statusEl.textContent = "Preparing charm macro…";
@@ -939,33 +1037,35 @@
       // (Preview can still use charmMacroDataUrl above.)
       const macroFile = file;
 
-      const macroId = `charm_${Date.now()}_${Math.random().toString(16).slice(2)}`;
+      const slotIndex = activeSlotIndex;
+      const folder = slotFolder(slotIndex);
+      const macroId = `image1_${Date.now()}_${Math.random().toString(16).slice(2)}`;
       const ext = macroFile.name.split(".").pop() || "jpg";
-      // must match server allowlist prefix in openaiImageProxy-background.js
-      charmMacroStoragePath = `listing-generator-1/charm-macro/${macroId}.${ext}`;
+      const storagePath = `${folder}/${macroId}.${ext}`;
+      if (slots[slotIndex]) slots[slotIndex].image1StoragePath = storagePath;
 
-      statusEl.textContent = "Uploading charm macro… 0%";
+      statusEl.textContent = "Uploading slot Image[1]… 0%";
 
       // IMPORTANT: do NOT request a download URL here (avoids read/metadata rule mismatch -> 403)
-      charmMacroDownloadUrl = await uploadWithProgress(
-        charmMacroStoragePath,
+      await uploadWithProgress(
+        storagePath,
         macroFile,
         (p) => {
           const pct = Math.max(0, Math.min(100, Math.round((p || 0) * 100)));
-          statusEl.textContent = `Uploading charm macro… ${pct}%`;
+          statusEl.textContent = `Uploading slot Image[1]… ${pct}%`;
         },
         { returnDownloadUrl: false }
       );
 
-      statusEl.textContent = "Charm macro ready";
+      statusEl.textContent = "Slot Image[1] ready";
     } catch (e) {
       console.error(e);
-      statusEl.textContent = `Charm macro error: ${e.message || e}`;
+      statusEl.textContent = `Slot Image[1] error: ${e.message || e}`;
       gen8Btn.disabled = false;
       throw e;
     } finally {
       // re-enable if reference is ready (charm macro is optional)
-      if (referenceStoragePath) gen8Btn.disabled = false;
+      if (slots[activeSlotIndex]?.image0StoragePath) gen8Btn.disabled = false;
     }
   }
 
@@ -976,7 +1076,22 @@
       el.innerHTML = `
         <div class="slotTop">
           <b>Slot ${i+1}</b>
-          <button class="btn" data-reg="${i}">Regenerate</button>
+            <div class="row" style="gap:6px;">
+            <button class="btn" data-edit="${i}" title="Edit this slot (prompt + traits)">Edit</button>
+            <button class="btn" data-imgup="${i}" title="Upload reference images to this slot">Img Upload</button>
+            <button class="btn" data-reg="${i}" title="Re-run this slot generation">Regenerate</button>
+          </div>
+        </div>
+        <div class="muted small">Storage: ${SLOT_PARENT_FOLDER}/Slot_${i+1}/</div>
+        <div class="slotRefs">
+          <div class="slotRefBox" id="ref0_${i}" title="Image[0] reference">
+            <div class="slotRefEmpty">Image[0]</div>
+            <div class="slotRefLabel">Image[0]</div>
+          </div>
+          <div class="slotRefBox" id="ref1_${i}" title="Image[1] macro (optional)">
+            <div class="slotRefEmpty">Image[1]</div>
+            <div class="slotRefLabel">Image[1]</div>
+          </div>
         </div>
         <div class="slotPrev" id="prev_${i}"></div>
         <div class="bar"><div id="bar_${i}"></div></div>
@@ -987,18 +1102,43 @@
 
     function renderGrid(){
       gridEl.innerHTML = "";
-      slots = Array.from({length:8}).map((_,i)=>({
+      slots = Array.from({ length: SLOT_COUNT }).map((_,i)=>({
         i,
-        traits: makeTraits(),
+        traits: makeTraitsForSlot(i),
         prompt: "",
         imageDataUrl: null,
         uploadUrl: null,
         uploading: false,
+        image0StoragePath: null,
+        image1StoragePath: null,
+        ref0Url: null,
+        ref1Url: null,
       }));
       slots.forEach((s)=> gridEl.appendChild(makeSlot(s.i)));
 
-      // show trait template (first slot)
-      renderTraits(slots[0].traits);
+      // Default editor context = Slot 1
+      setActiveSlot(0);
+
+     // populate reference previews for all slots (best-effort)
+      slots.forEach((s)=>{
+        refreshSlotRefPreviews(s.i).catch(()=>{});
+      });
+
+      // edit handler
+      gridEl.querySelectorAll("button[data-edit]").forEach(btn=>{
+        btn.addEventListener("click", ()=>{
+          const idx = Number(btn.getAttribute("data-edit"));
+          setActiveSlot(idx);
+        });
+      });
+
+      // per-slot image upload picker
+      gridEl.querySelectorAll("button[data-imgup]").forEach(btn=>{
+        btn.addEventListener("click", ()=>{
+          const idx = Number(btn.getAttribute("data-imgup"));
+          openSlotImgPicker(idx);
+        });
+      });
 
       // regen handler
       gridEl.querySelectorAll("button[data-reg]").forEach(btn=>{
@@ -1008,6 +1148,106 @@
         });
       });
     }
+
+    // -------------------------
+    // Slot image management (Firebase Storage)
+    // -------------------------
+    function guessRoleFromName(name){
+      const s = String(name || "").toLowerCase();
+      if (/(macro|charm|pendant|image1|img1)/.test(s)) return "image1";
+      if (/(base|reference|image0|img0)/.test(s)) return "image0";
+      return "unknown";
+    }
+
+    async function listSlotImages(slotIndex){
+      await ensureStorageSignedIn();
+      const folder = slotFolder(slotIndex);
+      const folderRef = ref(storage, folder);
+      const res = await listAll(folderRef);
+      return (res?.items || []).map(it => ({ name: it.name, fullPath: it.fullPath }));
+    }
+
+    async function resolveSlotRequiredImages(slotIndex){
+      // Primary: list the folder and pick images by filename hints
+      try {
+        const items = await listSlotImages(slotIndex);
+        const base = items.find(x => guessRoleFromName(x.name) === "image0") || items[0];
+        const charm = items.find(x => guessRoleFromName(x.name) === "image1") || items.find(x => x !== base) || null;
+        if (!base) throw new Error(`Slot ${slotIndex+1}: no reference images found in "${slotFolder(slotIndex)}/"`);
+        return { image0Path: base.fullPath, image1Path: charm?.fullPath || null, all: items };
+      } catch (e) {
+        // Fallback: if listAll is blocked by Storage rules, rely on last-known uploaded paths
+        const s = slots[slotIndex];
+        if (s?.image0StoragePath) {
+          return { image0Path: s.image0StoragePath, image1Path: s.image1StoragePath || null, all: [] };
+        }
+        throw e;
+      }
+    }
+
+    async function uploadImagesToSlot(slotIndex, files){
+      if (!files || !files.length) return;
+      await ensureStorageSignedIn();
+
+      const folder = slotFolder(slotIndex);
+      const uploaded = [];
+
+      for (let k=0; k<files.length; k++){
+        const f = files[k];
+        const role = guessRoleFromName(f.name);
+        const baseName = String(f.name || "upload").replace(/[^a-zA-Z0-9._-]+/g, "_").slice(0, 60);
+        const id = `${Date.now()}_${Math.random().toString(16).slice(2)}`;
+        const objectName = `${role !== "unknown" ? role : "ref"}_${id}_${baseName}`;
+        const storagePath = `${folder}/${objectName}`;
+
+        await uploadWithProgress(
+          storagePath,
+          f,
+          (p)=>{},
+          { returnDownloadUrl: false }
+        );
+
+        uploaded.push(storagePath);
+
+        // heuristics: set slot image0/image1 pointers
+        if (role === "image0" && slots[slotIndex]) slots[slotIndex].image0StoragePath = storagePath;
+        if (role === "image1" && slots[slotIndex]) slots[slotIndex].image1StoragePath = storagePath;
+      }
+
+      // If user uploaded 1-2 files without role hints, assign order
+      if (slots[slotIndex]) {
+        if (!slots[slotIndex].image0StoragePath && uploaded[0]) slots[slotIndex].image0StoragePath = uploaded[0];
+        if (!slots[slotIndex].image1StoragePath && uploaded[1]) slots[slotIndex].image1StoragePath = uploaded[1];
+      }
+
+      return uploaded;
+    }
+
+    function openSlotImgPicker(slotIndex){
+      pendingImgUploadSlotIndex = slotIndex;
+      slotImgFilesEl.value = "";
+      slotImgFilesEl.click();
+    }
+
+    slotImgFilesEl?.addEventListener("change", async ()=>{
+      const idx = pendingImgUploadSlotIndex;
+      const files = Array.from(slotImgFilesEl.files || []);
+      if (idx == null || !files.length) return;
+
+      try {
+        statusEl.textContent = `Uploading ${files.length} image(s) to Slot ${idx+1}…`;
+        await uploadImagesToSlot(idx, files);
+        statusEl.textContent = `Slot ${idx+1} images uploaded`;
+        // refresh the per-slot Firebase reference previews
+        await refreshSlotRefPreviews(idx);
+      } catch(e){
+        console.error(e);
+        statusEl.textContent = `Slot upload error: ${e.message || e}`;
+      } finally {
+        pendingImgUploadSlotIndex = null;
+        slotImgFilesEl.value = "";
+      }
+    });
 
     function renderTraits(t){
       traitsBox.innerHTML = "";
@@ -1034,6 +1274,69 @@
       if (!box) return;
       box.innerHTML = `<img src="${dataUrl}" data-scale="1" data-offsetX="0" data-offsetY="0" />`;
       attachZoomPan(box);
+    }
+
+   function setSlotRefBox(el, url, label, titleText){
+      if (!el) return;
+      const safeTitle = titleText || "";
+      el.title = safeTitle;
+      if (url) {
+        el.innerHTML = `
+          <img src="${url}" alt="${label}" />
+          <div class="slotRefLabel">${label}</div>
+        `;
+      } else {
+        el.innerHTML = `
+          <div class="slotRefEmpty">${label}</div>
+          <div class="slotRefLabel">${label}</div>
+        `;
+      }
+    }
+
+    async function refreshSlotRefPreviews(slotIndex){
+      // best-effort: show whatever we can without breaking generation if Storage rules block reads
+      const box0 = document.getElementById(`ref0_${slotIndex}`);
+      const box1 = document.getElementById(`ref1_${slotIndex}`);
+      if (!box0 || !box1) return;
+
+      let image0Path = null;
+      let image1Path = null;
+      try {
+        const resolved = await resolveSlotRequiredImages(slotIndex);
+        image0Path = resolved?.image0Path || null;
+        image1Path = resolved?.image1Path || null;
+      } catch (e) {
+        setSlotRefBox(box0, null, "Image[0] (missing)", "");
+        setSlotRefBox(box1, null, "Image[1]", "");
+        return;
+      }
+
+      let url0 = null;
+      let url1 = null;
+
+      // Image[0] is required; attempt to read a download URL for preview
+      try {
+        url0 = await getDownloadURL(ref(storage, image0Path));
+      } catch (e) {
+        url0 = null;
+      }
+
+      // Image[1] is optional; attempt preview if present
+      if (image1Path) {
+        try {
+          url1 = await getDownloadURL(ref(storage, image1Path));
+        } catch (e) {
+          url1 = null;
+        }
+      }
+
+      if (slots?.[slotIndex]) {
+        slots[slotIndex].ref0Url = url0;
+        slots[slotIndex].ref1Url = url1;
+      }
+
+      setSlotRefBox(box0, url0, url0 ? "Image[0]" : "Image[0] (no read)", image0Path || "");
+      setSlotRefBox(box1, url1, url1 ? "Image[1]" : (image1Path ? "Image[1] (no read)" : "Image[1]"), image1Path || "");
     }
 
     const JOBS_COLL = "ListingGenerator1Jobs";
@@ -1140,15 +1443,16 @@
       ].filter(Boolean).join("\n");
     }
 
-    async function generateOne(i){
-      // NEW: require uploaded reference path (no base64 sent to Netlify)
-      if (!referenceStoragePath) throw new Error("No reference image selected (or reference upload not finished)");
-
+     async function generateOne(i){
       const slot = slots[i];
-      slot.traits = makeTraits(); // new random traits per regeneration
-      const hasCharm = !!charmMacroStoragePath;
-      const baseText = promptEl.value.trim();
+      slot.traits = makeTraitsForSlot(i); // new random traits per regeneration (slot-specific)
       renderTraits(slot.traits);
+
+      // Resolve per-slot reference images from: listing-generator-1/Beady Necklace/Slot_X/
+      const { image0Path, image1Path } = await resolveSlotRequiredImages(i);
+      const hasCharm = !!image1Path;
+      const baseText = (PROMPT_BY_SLOT[i] || "").trim();
+      const finalCharmTargetPx = readFinalCharmTargetPx();
 
       const model = modelEl.value;
       const runId = `lg1_${Date.now()}_${Math.random().toString(16).slice(2)}`;
@@ -1202,7 +1506,8 @@
             kind: "edits",
             model,
             prompt: fullPrompt,
-            input_storage_path: referenceStoragePath,
+            input_storage_path: image0Path,
+            input_charm_storage_path: image1Path,
             postprocess: {
             finalFrameZoom: FINAL_FRAME_ZOOM,
             anchorX: FINAL_ANCHOR_X,
@@ -1359,8 +1664,8 @@
           kind: "edits",
           model,
           prompt: promptA,
-          input_storage_path: referenceStoragePath,
-          input_charm_storage_path: charmMacroStoragePath,
+          input_storage_path: image0Path,
+          input_charm_storage_path: image1Path,
           size: "1024x1024",
           quality: "high",
           output_format: "png",
@@ -1409,17 +1714,17 @@
 
     gen8Btn.addEventListener("click", generateEight);
     clearBtn.addEventListener("click", ()=>{
+    // UI reset only (does NOT delete from Firebase Storage)
       referenceDataUrl = null;
-      referenceStoragePath = null;   // NEW
-      referenceDownloadUrl = null;   // NEW
       refNameEl.textContent = "No image selected";
       refPreviewEl.innerHTML = "";
       charmMacroDataUrl = null;
-      charmMacroStoragePath = null;
-      charmMacroDownloadUrl = null;
       charmNameEl.textContent = "No charm macro selected";
       charmPreviewEl.innerHTML = "";
       charmFileEl.value = "";
+
+      // Reset per-slot pointers (does not delete stored files)
+      slots.forEach(s=>{ s.image0StoragePath = null; s.image1StoragePath = null; });
       renderGrid();
       statusEl.textContent = "Idle";
       gen8Btn.disabled = false;

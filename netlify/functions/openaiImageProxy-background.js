@@ -56,6 +56,7 @@ async function storagePathToBuffer(storagePath) {
   const ALLOWED_INPUT_PREFIXES = [
     "listing-generator-1/reference/",
     "listing-generator-1/charm-macro/",
+    "listing-generator-1/Beady Necklace/Slot_",
     "listing-generator-1/generated/",
   ];
 
