@@ -408,12 +408,12 @@
     };
 
     // Pass A should keep the charm larger to preserve engraving detail while placing.
-    const CHARM_A_MULT = 1.5;
+    const CHARM_A_MULT = 1.25;
 
     // -------------------------
     // Deterministic final framing (server-side, applied to OUTPUT only)
     // -------------------------
-    const FINAL_FRAME_ZOOM = 1.2;  // increase to zoom in more (e.g. 1.65)
+    const FINAL_FRAME_ZOOM = 1.12;  // increase to zoom in more (e.g. 1.65)
     const FINAL_ANCHOR_X = 0.50;
     const FINAL_ANCHOR_Y = 0.45;   // shift crop UP so necklace lands lower in the final frame
 
@@ -444,7 +444,7 @@
         (lensMm >= 120) ? "mm120" : "mm120";
 
       const invBase = CHARM_INV_OVERSCALE_BASE[lensKey] ?? 0.50;
-      const invZoom = CHARM_INV_OVERSCALE_ZOOM[zoomGroup] ?? 1.20;
+      const invZoom = CHARM_INV_OVERSCALE_ZOOM[zoomGroup] ?? 1.12;
       // Final inverse multiplier applied to TRUE targets to produce MODEL-INSTRUCTION targets
       const invOverscale = clamp(invBase * invZoom, 0.32, 0.70);
 
@@ -635,8 +635,8 @@
 
         // --- NEW: deterministic framing lock (crop -> resize) ---
         outW = null,            // e.g. 1024
-        outH = null,            // e.g. 1536
-        frameZoom = 1.2,        // e.g. 1.5 means "zoom in" by cropping to 1/1.5 area
+        outH = null,            // e.g. 1024
+        frameZoom = 1.12,        // e.g. 1.12 means "zoom in" by cropping to 1/1.12 area
         anchorX = 0.5,          // 0..1 crop center X
         anchorY = 0.6,          // 0..1 crop center Y (biased lower to favor necklace)
       } = opts;
@@ -876,7 +876,7 @@
         statusEl.textContent = "Preparing reference…";
         // Preview + upload helper (NO crop/zoom). Just downscale to a sane maxDim.
         referenceDataUrl = await fileToDataUrl(file, {
-          maxDim: 1536,
+          maxDim: 1024,
           mime: "image/png",
           quality: 1.0,
         });
@@ -1208,7 +1208,7 @@
             anchorX: FINAL_ANCHOR_X,
             anchorY: FINAL_ANCHOR_Y,
           },
-            size: "1024x1536",
+            size: "1024x1024",
             quality: "high",
             output_format: "png",
             traits: slot.traits
@@ -1336,7 +1336,7 @@
                 anchorX: FINAL_ANCHOR_X,
                 anchorY: FINAL_ANCHOR_Y
               },
-              size: "1024x1536",
+              size: "1024x1024",
               quality: "high",
               output_format: "png",
               traits: slot.traits
@@ -1361,7 +1361,7 @@
           prompt: promptA,
           input_storage_path: referenceStoragePath,
           input_charm_storage_path: charmMacroStoragePath,
-          size: "1024x1536",
+          size: "1024x1024",
           quality: "high",
           output_format: "png",
           postprocess: {

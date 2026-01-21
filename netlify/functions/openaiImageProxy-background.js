@@ -535,7 +535,7 @@ exports.handler = async (event) => {
     kind = "edits", // "edits" | "generations" | "charm_postscale"
     model = "gpt-image-1",
     prompt,
-    size = "1024x1536",
+    size = "1024x1024",
     quality = "high",
     output_format = "png",
 
