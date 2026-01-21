@@ -414,6 +414,12 @@
     // Pass A should keep the charm larger to preserve engraving detail while placing.
     const CHARM_A_MULT = 1.5;
 
+    // -------------------------
+    // Deterministic final framing (server-side, applied to OUTPUT only)
+    // -------------------------
+    const FINAL_FRAME_ZOOM = 1.50;  // increase to zoom in more (e.g. 1.65)
+    const FINAL_ANCHOR_X = 0.50;
+    const FINAL_ANCHOR_Y = 0.60;   // slightly low to keep necklace centered
 
     function parseLensMm(lensLook = "") {
       const s = String(lensLook).toLowerCase();
@@ -872,18 +878,11 @@
       try {
         // NEW: ensure auth is established before we attempt Storage upload
         statusEl.textContent = "Preparing reference…";
-        // HARD FRAME LOCK:
-        // - crop to 1024x1536 aspect
-        // - zoom in by 1.5x (deterministic)
-        // - bias crop slightly lower to keep necklace centered
+        // Preview + upload helper (NO crop/zoom). Just downscale to a sane maxDim.
         referenceDataUrl = await fileToDataUrl(file, {
-          outW: 1024,
-          outH: 1536,
-          frameZoom: 1.5,
-          anchorX: 0.5,
-          anchorY: 0.6,
+          maxDim: 1536,
           mime: "image/png",
-          quality: 1.00,
+          quality: 1.0,
         });
         setPreview(refPreviewEl, referenceDataUrl);
 
@@ -1208,6 +1207,11 @@
             model,
             prompt: fullPrompt,
             input_storage_path: referenceStoragePath,
+            postprocess: {
+            finalFrameZoom: FINAL_FRAME_ZOOM,
+            anchorX: FINAL_ANCHOR_X,
+            anchorY: FINAL_ANCHOR_Y,
+          },
             size: "1024x1536",
             quality: "high",
             output_format: "png",
@@ -1331,7 +1335,10 @@
                 scale: postScale,                
                 shadowOpacity: 0.22,
                 shadowBlur: 2,
-                diffThreshold: 18
+                diffThreshold: 18,
+                finalFrameZoom: FINAL_FRAME_ZOOM,
+                anchorX: FINAL_ANCHOR_X,
+                anchorY: FINAL_ANCHOR_Y
               },
               size: "1024x1536",
               quality: "high",
@@ -1361,6 +1368,11 @@
           size: "1024x1536",
           quality: "high",
           output_format: "png",
+          postprocess: {
+              finalFrameZoom: FINAL_FRAME_ZOOM,
+              anchorX: FINAL_ANCHOR_X,
+              anchorY: FINAL_ANCHOR_Y
+            },
           traits: slot.traits
         });
       } catch (e) {

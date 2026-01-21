@@ -95,6 +95,40 @@ function clampNumber(n, min, max, fallback) {
   return Math.max(min, Math.min(max, x));
 }
 
+// Deterministic final framing: crop -> resize back to original size.
+// This is applied ONLY to the OUTPUT buffer, never to the reference input.
+async function applyFinalFrameZoomIfNeeded(buf, postprocess = {}) {
+  const z = Number(postprocess?.finalFrameZoom);
+  if (!Number.isFinite(z) || z <= 1.0001) return buf;
+
+  let sharp;
+  try { sharp = require("sharp"); }
+  catch (_) {
+    throw new Error("finalFrameZoom requires the 'sharp' dependency in your top-level package.json.");
+  }
+
+  const ax = clampNumber(postprocess?.anchorX, 0, 1, 0.5);
+  const ay = clampNumber(postprocess?.anchorY, 0, 1, 0.6);
+
+  const meta = await sharp(buf).metadata();
+  const w = meta?.width || 0;
+  const h = meta?.height || 0;
+  if (!w || !h) return buf;
+
+  const cropW = Math.max(1, Math.round(w / z));
+  const cropH = Math.max(1, Math.round(h / z));
+  let left = Math.round(w * ax - cropW / 2);
+  let top  = Math.round(h * ay - cropH / 2);
+  left = Math.max(0, Math.min(w - cropW, left));
+  top  = Math.max(0, Math.min(h - cropH, top));
+
+  return await sharp(buf)
+    .extract({ left, top, width: cropW, height: cropH })
+    .resize(w, h, { kernel: "lanczos3" })
+    .png()
+    .toBuffer();
+}
+
 function filenameForMime(base, mime) {
   const m = String(mime || "").toLowerCase();
   const ext =
@@ -585,7 +619,7 @@ exports.handler = async (event) => {
         { merge: true }
       );
 
-      const finalBuf = await postScaleCharmComposite({
+      let finalBuf = await postScaleCharmComposite({
         passABuf: passA.buffer,
         baseNoCharmBuf,
         // NEW: stable sizing control (preferred)
@@ -596,6 +630,9 @@ exports.handler = async (event) => {
         shadowBlur: postprocess?.shadowBlur,
         diffThreshold: postprocess?.diffThreshold,
       });
+
+      // Final deterministic framing (OUTPUT only)
+      finalBuf = await applyFinalFrameZoomIfNeeded(finalBuf, postprocess);
 
       await jobRef.set(
         { stage: "uploading", updatedAt: admin.firestore.FieldValue.serverTimestamp() },
@@ -708,7 +745,10 @@ exports.handler = async (event) => {
       { merge: true }
     );
 
-    const { storagePath, downloadURL, effectiveRunId, effectiveSlot } =
+       // Final deterministic framing (OUTPUT only)
+      outBuf = await applyFinalFrameZoomIfNeeded(outBuf, postprocess);
+
+      const { storagePath, downloadURL, effectiveRunId, effectiveSlot } =
       await uploadPngBufferToStorage({ outBuf, jobId, runId, slotIndex });
 
     await db.collection(IMAGES_COLL).add({
