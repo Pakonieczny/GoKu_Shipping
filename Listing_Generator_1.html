@@ -141,8 +141,8 @@
 
       <label>Final charm size (px) (postprocess)</label>
       <div class="row">
-        <input id="finalCharmTargetPx" type="range" min="3" max="12" step="1" value="8" />
-        <input id="finalCharmTargetPxVal" type="text" value="8" style="width:86px;" />
+        <input id="finalCharmTargetPx" type="range" min="4" max="32" step="1" value="14" />
+        <input id="finalCharmTargetPxVal" type="text" value="14" style="width:86px;" />
       </div>
       <div class="muted">Sets the FINAL charm height in pixels after AI placement (stable, proportional control).</div>
 
@@ -264,9 +264,9 @@
     // Keep UI slider + text in sync (NEW: integer px target)
     function clampNum(n, lo, hi){ return Math.max(lo, Math.min(hi, n)); }
     function readFinalCharmTargetPx(){
-      const raw = parseInt(finalCharmTargetPxEl?.value || "8", 10);
-      const v = Number.isFinite(raw) ? raw : 8;
-      return Math.round(clampNum(v, 3, 12));
+      const raw = parseInt(finalCharmTargetPxEl?.value || "14", 10);
+      const v = Number.isFinite(raw) ? raw : 14;
+      return Math.round(clampNum(v, 4, 32));
     }
     function syncFinalCharmTargetPxUI(v){
       const x = String(Math.round(v));
@@ -276,9 +276,9 @@
     if (finalCharmTargetPxEl && finalCharmTargetPxValEl){
       finalCharmTargetPxEl.addEventListener("input", ()=> syncFinalCharmTargetPxUI(readFinalCharmTargetPx()));
       finalCharmTargetPxValEl.addEventListener("change", ()=>{
-        const raw = parseInt(finalCharmTargetPxValEl.value || "8", 10);
-        const v = Number.isFinite(raw) ? raw : 8;
-        syncFinalCharmTargetPxUI(clampNum(v, 3, 12));
+        const raw = parseInt(finalCharmTargetPxValEl.value || "14", 10);
+        const v = Number.isFinite(raw) ? raw : 14;
+        syncFinalCharmTargetPxUI(clampNum(v, 4, 32));
       });
       syncFinalCharmTargetPxUI(readFinalCharmTargetPx());
     }

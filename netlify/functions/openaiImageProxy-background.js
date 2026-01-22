@@ -3,7 +3,7 @@
    Writes realtime status to Firestore + uploads final PNG to Firebase Storage.
 */
 
-const admin = require("./firebaseAdmin");
+const sharp = require("sharp");
 
 // Node 18 on Netlify provides fetch/FormData/Blob globally.
 // If your build ever lacks fetch, uncomment:
@@ -410,6 +410,90 @@ async function postScaleCharmComposite({
 
   let { maskRaw, minX, minY, maxX, maxY } = chosen;
 
+  // Refine bbox to the dominant connected component (stabilizes size when the diff-mask catches
+  // tiny speckles on skin/necklace that would otherwise inflate the bbox).
+  // Runs on a 4× downsampled binary mask to stay fast.
+  try {
+    const DS = 4;
+    const smallW = Math.max(1, Math.round(width / DS));
+    const smallH = Math.max(1, Math.round(height / DS));
+
+    const small = await sharp(maskRaw, { raw: { width, height, channels: 1 } })
+      .resize(smallW, smallH, { kernel: "nearest" })
+      .threshold(1)
+      .raw()
+      .toBuffer();
+
+    const visited = new Uint8Array(smallW * smallH);
+    let bestArea = 0;
+    let best = null;
+
+    const qx = new Int32Array(smallW * smallH);
+    const qy = new Int32Array(smallW * smallH);
+
+    for (let y = 0; y < smallH; y++) {
+      for (let x = 0; x < smallW; x++) {
+        const idx = y * smallW + x;
+        if (visited[idx]) continue;
+        if (small[idx] === 0) { visited[idx] = 1; continue; }
+
+        // BFS
+        visited[idx] = 1;
+        let head = 0, tail = 0;
+        qx[tail] = x; qy[tail] = y; tail++;
+
+        let area = 0;
+        let mnx = x, mny = y, mxx = x, mxy = y;
+
+        while (head < tail) {
+          const cx = qx[head];
+          const cy = qy[head];
+          head++;
+          area++;
+          if (cx < mnx) mnx = cx;
+          if (cy < mny) mny = cy;
+          if (cx > mxx) mxx = cx;
+          if (cy > mxy) mxy = cy;
+
+          // 4-neighborhood
+          const n1 = cx > 0 ? (cy * smallW + (cx - 1)) : -1;
+          const n2 = cx + 1 < smallW ? (cy * smallW + (cx + 1)) : -1;
+          const n3 = cy > 0 ? ((cy - 1) * smallW + cx) : -1;
+          const n4 = cy + 1 < smallH ? ((cy + 1) * smallW + cx) : -1;
+
+          if (n1 >= 0 && !visited[n1] && small[n1]) { visited[n1] = 1; qx[tail] = cx - 1; qy[tail] = cy; tail++; }
+          if (n2 >= 0 && !visited[n2] && small[n2]) { visited[n2] = 1; qx[tail] = cx + 1; qy[tail] = cy; tail++; }
+          if (n3 >= 0 && !visited[n3] && small[n3]) { visited[n3] = 1; qx[tail] = cx; qy[tail] = cy - 1; tail++; }
+          if (n4 >= 0 && !visited[n4] && small[n4]) { visited[n4] = 1; qx[tail] = cx; qy[tail] = cy + 1; tail++; }
+        }
+
+        // Ignore tiny speckle components (noise)
+        if (area < 12) continue;
+
+        if (area > bestArea) {
+          bestArea = area;
+          best = { mnx, mny, mxx, mxy };
+        }
+      }
+    }
+
+    if (best) {
+      // Scale bbox back up to full-res coordinates
+      const padSmall = 2;
+      const sx1 = Math.max(0, best.mnx - padSmall);
+      const sy1 = Math.max(0, best.mny - padSmall);
+      const sx2 = Math.min(smallW - 1, best.mxx + padSmall);
+      const sy2 = Math.min(smallH - 1, best.mxy + padSmall);
+
+      minX = Math.max(0, Math.floor(sx1 * DS));
+      minY = Math.max(0, Math.floor(sy1 * DS));
+      maxX = Math.min(width - 1, Math.ceil((sx2 + 1) * DS) - 1);
+      maxY = Math.min(height - 1, Math.ceil((sy2 + 1) * DS) - 1);
+    }
+  } catch (_) {
+    // If refinement fails for any reason, keep the original bbox.
+  }
+
   // Expand bbox slightly (jump ring + edge pixels)
   const pad = 6;
   const left = Math.max(0, minX - pad);
@@ -440,8 +524,9 @@ async function postScaleCharmComposite({
   const tp = Number(targetPx);
   let outW, outH;
   if (Number.isFinite(tp)) {
-    // Clamp to sane range, but do NOT neuter the UI slider (your UI goes down to ~3px).
-    const targetH = Math.round(clampNumber(tp, 1, 160, 14));
+    // Clamp to a sane range. (UI may go very small; server allows it, but extremely small
+    // values will naturally lose engraving readability.)
+    const targetH = Math.round(clampNumber(tp, 4, 96, 14));
     const aspect = bboxH > 0 ? (bboxW / bboxH) : 1;
     outH = Math.max(1, targetH);
     outW = Math.max(1, Math.round(outH * aspect));
@@ -467,6 +552,8 @@ async function postScaleCharmComposite({
   // Downscale charm crop (high-quality resampling)
   const scaledCharm = await sharp(charmCrop)
     .resize(outW, outH, { kernel: "lanczos3" })
+    // Mild sharpen helps micro-engraving survive aggressive downscales.
+    .sharpen(0.6)
     .png()
     .toBuffer();
 
@@ -552,10 +639,10 @@ exports.handler = async (event) => {
     remove_prompt,
     postprocess,
 
-    // Optional: explicit "no-charm base" input for charm_postscale
-    // (preferred over inpainting removal because it's deterministic)
-    base_storage_path,
-    base_image,
+   // Optional: explicit "no-charm base" input for charm_postscale
+   // (preferred over inpainting removal because it's deterministic)
+   base_storage_path,
+   base_image,
 
   } = body || {};
 
