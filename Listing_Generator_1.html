@@ -842,7 +842,7 @@ HARD FAIL CONDITIONS
 
     async function fileToDataUrl(file, opts = {}){
       const {
-        maxDim = 5000,          // keep detail, shrink payload
+        maxDim = 10000,          // keep detail, shrink payload
         mime = "image/png",
         quality = 1.0,
 
@@ -1145,7 +1145,7 @@ HARD FAIL CONDITIONS
     try {
       statusEl.textContent = "Preparing charm macro…";
       // Keep more detail for macro (slightly higher quality)
-      charmMacroDataUrl = await fileToDataUrl(file, { maxDim: 5000, mime: "image/png", quality: 1.00 });
+      charmMacroDataUrl = await fileToDataUrl(file, { maxDim: 10000, mime: "image/png", quality: 1.00 });
       setPreview(charmPreviewEl, charmMacroDataUrl);
 
       // IMPORTANT: upload the ORIGINAL file bytes to avoid any canvas smoothing / re-encoding drift
