@@ -682,55 +682,33 @@ HARD FAIL CONDITIONS
 
     // Default prompt (edit freely)
     const DEFAULT_PROMPT =
-`CRITICAL: 
-    - This is a standard fashion product photo. Do not add nudity. Always keep the subject modest.
-    - Slot 1 is a charm replacement task. This must be a single-pass edit.
+`CRITICAL: This is a standard fashion product photo. Do not add nudity. Always keep the subject modest.
 
-    PROCESS ORDER (NON-NEGOTIABLE)
-    • Single pass only.
-    • Use Image[0] as the base photo.
-    • Replace the charm/pendant in Image[0] with the charm from Image[1].
+SLOT 1 GOAL (NON-NEGOTIABLE)
+• Use Image[0] as the base photo.
+• Add the charm from Image[1] onto the existing necklace chain in Image[0] as a hanging micro pendant.
+• Do NOT add any new necklace chain. Preserve the chain, bead stations, clasp, metal tone, lighting, background, and camera framing from Image[0].
 
-    INPUT IMAGES (ORDER MATTERS)
-    • Image[0] = base photo (scene + camera + chain placement + hardware position)
-    • Image[1] = charm macro (pixel-truth source for silhouette + cutouts + engraving)
+INPUT IMAGES (ORDER MATTERS)
+• Image[0] = base photo (scene + camera + chain placement + hardware position)
+• Image[1] = charm macro (pixel-truth source for silhouette + cutouts + engraving)
 
-    CHARM SCALE OVERRIDE (NON-NEGOTIABLE)
-    • The placed/replaced charm MUST be smaller than the charm being replaced in Image[0].
-    • Do NOT compensate by thickening lines, enlarging cutouts, or changing engraving. Size change must be a pure scale change only.
+DETAIL PRESERVATION (NON-NEGOTIABLE)
+• Image[1] is pixel-truth. Do NOT redraw, simplify, thicken, smooth, “clean up,” stylize, or reinterpret any cutouts or engraving.
+• During placement, intentionally place the charm noticeably LARGER than the correct final micro size to preserve engraving + cutouts (oversize is REQUIRED).
+• Do NOT “fix size” by changing engraving/cutouts. Size changes must be pure scaling only.
+• Allowed edits to charm: tiny exposure/white-balance match to Image[0], subtle contact shadow, mild specular alignment. No geometry changes.
 
-    ENGRAVING + CUTOUT FIDELITY (TOP PRIORITY — IMAGE[1] IS SINGLE TRUTH SOURCE)
-    • Treat Image[1] as pixel-truth. Do NOT redraw, “enhance,” simplify, smooth, stylize, thicken, sharpen, clean up, or reinterpret.
-    • Add a subtle contact shadow under charm + mild specular alignment as needed to the Final generated image.
-    • Outline lock: the outer perimeter must match Image[1] exactly (no rounding, no warping, no missing corners, no bulges).
-    • Cutout lock: every internal cutout/negative-space hole must match Image[1] exactly (shape + position + proportions). Do not fill-in holes. Do not merge holes.
-    • Engraving lock: preserve every stroke exactly as in Image[1] (no stroke loss, no merging, no thickening, no cleanup, no mirrored text, no invented marks).
-    • Edge integrity: keep cutout edges crisp. Do not blur/smear/over-anti-alias away fine cutout detail.
-    • Allowed Charm Edits: tiny exposure/white-balance match to Image[0] + subtle contact shadow under charm + mild specular alignment. No geometry changes.
+HARDWARE + CONNECTION (NON-NEGOTIABLE)
+• The charm’s hoop/bail/loop is part of the charm silhouette exactly like Image[1] (one-piece laser-cut look).
+• The jump ring must pass through that hoop and connect naturally to the chain.
+• HARD FAIL if the hoop/jump ring is floating, disconnected, mis-threaded, or looks “attached later.”
 
-    HARDWARE + HOOP CONNECTION (NON-NEGOTIABLE)
-    • The charm’s top hoop/bail/loop MUST be an INTEGRATED part of the charm silhouette exactly like Image[1] — as if the entire charm (including the hoop) was laser-cut from one single sheet of metal.
-    • The hoop-to-charm attachment MUST have a robust, wide contact area like Image[1]. This is NOT a tiny touch-point. It must NOT look “barely touching.”
-    • The attachment must read like one continuous metal piece: no seam line, no solder/weld look, no separate part glued on, no “ring sitting on top.”
-    • Geometry lock: preserve the exact bridge/tab shape that connects the hoop to the charm body in Image[1] (width, curvature, thickness, edge bevel).
-    • The hoop must be fully connected with a broad “tab” of metal. HARD FAIL if the hoop connects via a hairline neck, thin spike, or point-contact.
-    • The jump ring must pass through the hoop and sit naturally inside it, but the hoop itself must remain part of the charm’s perimeter geometry (not re-invented hardware).
-    • ONE-PIECE LASER-CUT RULE: the hoop/bail is part of the SAME continuous metal piece as the charm body (like Image[1]) — NOT a separate ring “added,” “welded,” “soldered,” or “barely touching.”
-    • ROBUST ATTACHMENT RULE: the hoop-to-charm connection must have a thick/wide bridge of metal (large surface-area contact), not a tangential touchpoint.
-      - Minimum bridge width: ≥ 35% of the hoop’s OUTER diameter.
-      - Minimum contact length: ≥ 25% of the hoop’s outer arc must visibly blend into the charm’s body at the attachment region.
-      - If uncertain, OVER-CONNECT (thicker/wider bridge) rather than under-connect. Never reduce the bridge to a thin neck.
-    • HARD FAIL if the hoop looks “just barely touching,” hairline-connected, separated by any visible slit/gap, or reads as a separate component sitting on top of the charm.
-    • Scale rule: when you shrink the charm, the hoop + its bridge/tab must shrink proportionally as part of the same silhouette (do NOT shrink only the body and leave a weak connection).
+REALISM
+• Add a subtle contact shadow under the charm so it reads as photographed, not pasted.
 
-    LOCKS (NON-NEGOTIABLE)
-    • Preserve EVERYTHING ELSE from Image[0]: chain links, bead stations, jump ring placement, clasp, metal tone, lighting, background, hardware alignment.
-    • Do not add objects. Do not remove objects (other than replacing the charm itself). Do not change the chain geometry.
-
-    HARD FAIL CONDITIONS
-    - Any charm larger than Image[0]'s charm, any engraving changes, any altered cutout geometry, any changed chain geometry/station spacing, blur/smear on charm details, or any added objects.
-    - Any hoop/bail connection that is point-touching, hairline, barely touching, offset, floating, or looks like a separate welded/soldered ring.
-    - Any hoop/bail that appears barely touching, point-connected, hairline-connected, floating, hovering, separated, or “attached later” (weld/solder/glue look). The hoop must look like part of the same laser-cut charm silhouette from Image[1].`;
+HARD FAIL
+• Any engraving/cutout loss, any perimeter warping, any added necklace chain, any disconnected hoop/jump ring, or any change to chain geometry from Image[0].`;
 
 
     const PROMPT_BY_SLOT = Array.from({ length: SLOT_COUNT }, () => DEFAULT_PROMPT);
