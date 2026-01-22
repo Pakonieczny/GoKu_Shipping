@@ -586,38 +586,43 @@
     const SLOT2_DUPLICATE_PROMPT =
     `CRITICAL: Slot 2 is a charm replacement task. This must be a single-pass edit.
 
-PROCESS ORDER (NON-NEGOTIABLE)
-• Single pass only.
-• Use Image[0] as the base photo.
-• Replace the charm/pendant in Image[0] with the charm from Image[1].
+    PROCESS ORDER (NON-NEGOTIABLE)
+    • Single pass only.
+    • Use Image[0] as the base photo.
+    • Replace the charm/pendant in Image[0] with the charm from Image[1].
 
-INPUT IMAGES (ORDER MATTERS)
-• Image[0] = base photo (scene + camera + chain placement + hardware position)
-• Image[1] = charm macro (pixel-truth source for silhouette + cutouts + engraving)
+    INPUT IMAGES (ORDER MATTERS)
+    • Image[0] = base photo (scene + camera + chain placement + hardware position)
+    • Image[1] = charm macro (pixel-truth source for silhouette + cutouts + engraving)
 
-CHARM SCALE OVERRIDE (NON-NEGOTIABLE)
-• The placed/replaced charm MUST be smaller than the charm being replaced in Image[0].
-• Apply an extra downscale of 1.50× (i.e. final charm must be ~75% of the size you would normally choose).
-• Do NOT compensate by thickening lines, enlarging cutouts, or changing engraving. Size change must be a pure scale change only.
+    CHARM SCALE OVERRIDE (NON-NEGOTIABLE)
+    • The placed/replaced charm MUST be smaller than the charm being replaced in Image[0].
+    • Apply an extra downscale of 1.50× (i.e. final charm must be ~75% of the size you would normally choose).
+    • Do NOT compensate by thickening lines, enlarging cutouts, or changing engraving. Size change must be a pure scale change only.
 
-ENGRAVING + CUTOUT FIDELITY (TOP PRIORITY — IMAGE[1] IS SINGLE TRUTH SOURCE)
-• Treat Image[1] as pixel-truth. Do NOT redraw, “enhance,” simplify, smooth, stylize, thicken, sharpen, clean up, or reinterpret.
-• Outline lock: the outer perimeter must match Image[1] exactly (no rounding, no warping, no missing corners, no bulges).
-• Cutout lock: every internal cutout/negative-space hole must match Image[1] exactly (shape + position + proportions). Do not fill-in holes. Do not merge holes.
-• Engraving lock: preserve every stroke exactly as in Image[1] (no stroke loss, no merging, no thickening, no cleanup, no mirrored text, no invented marks).
-• Edge integrity: keep cutout edges crisp. Do not blur/smear/over-anti-alias away fine cutout detail.
-• Allowed edits ONLY: tiny exposure/white-balance match to Image[0] + subtle contact shadow under charm + mild specular alignment. No geometry changes.
+    ENGRAVING + CUTOUT FIDELITY (TOP PRIORITY — IMAGE[1] IS SINGLE TRUTH SOURCE)
+    • Treat Image[1] as pixel-truth. Do NOT redraw, “enhance,” simplify, smooth, stylize, thicken, sharpen, clean up, or reinterpret.
+    • Outline lock: the outer perimeter must match Image[1] exactly (no rounding, no warping, no missing corners, no bulges).
+    • Cutout lock: every internal cutout/negative-space hole must match Image[1] exactly (shape + position + proportions). Do not fill-in holes. Do not merge holes.
+    • Engraving lock: preserve every stroke exactly as in Image[1] (no stroke loss, no merging, no thickening, no cleanup, no mirrored text, no invented marks).
+    • Edge integrity: keep cutout edges crisp. Do not blur/smear/over-anti-alias away fine cutout detail.
+    • Allowed edits ONLY: tiny exposure/white-balance match to Image[0] + subtle contact shadow under charm + mild specular alignment. No geometry changes.
 
-LOCKS (NON-NEGOTIABLE)
-• Preserve EVERYTHING ELSE from Image[0]: chain links, bead stations, jump ring placement, clasp, metal tone, lighting, background.
-• Do not add objects. Do not remove objects (other than replacing the charm itself). Do not change the chain geometry.
+    HARDWARE + HOOP CONNECTION (NON-NEGOTIABLE)
+    • The charm’s own top hoop/bail/loop (the part the jump ring passes through) MUST be physically fused to the charm body exactly like Image[1].
+    • No gap between hoop and charm body. No floating hoop. No “hovering” ring sitting above an unconnected charm.
+    • The jump ring must pass through the charm’s hoop and sit flush; the hoop cannot appear separated from the charm outline.
 
-OUTPUT ZOOM (NON-NEGOTIABLE)
-• The FINAL GENERATED image must be zoomed OUT by 1.5× compared to Image[0] (wider view), keeping the same center framing.
-• Do NOT crop tighter than Image[0]. Never zoom in.
+    LOCKS (NON-NEGOTIABLE)
+    • Preserve EVERYTHING ELSE from Image[0]: chain links, bead stations, jump ring placement, clasp, metal tone, lighting, background, hardware alignment.
+    • Do not add objects. Do not remove objects (other than replacing the charm itself). Do not change the chain geometry.
 
-HARD FAIL CONDITIONS
-- Any charm larger than Image[0]'s charm, any engraving changes, any altered cutout geometry, any changed chain geometry/station spacing, blur/smear on charm details, or any added objects.`;
+    OUTPUT ZOOM (NON-NEGOTIABLE)
+    • The FINAL GENERATED image must be zoomed OUT by 1.5× compared to Image[0] (wider view), keeping the same center framing.
+    • Do NOT crop tighter than Image[0]. Never zoom in.
+
+    HARD FAIL CONDITIONS
+    - Any charm larger than Image[0]'s charm, any engraving changes, any altered cutout geometry, any changed chain geometry/station spacing, blur/smear on charm details, or any added objects.`;
 
 
 
@@ -664,6 +669,11 @@ HARD FAIL CONDITIONS
       6.  BACKGROUND_DIAL: pastel studio backdrop in soft peach 
       7.  LIGHTING_DIAL: window light, airy highlights Editorial Etsy portrait (neck + collarbone close crop). One adult female model with natural skin texture, realistic pores, no heavy retouching. Tight framing keeps neck/collarbone clear so the necklace stations are fully visible. Recreate the exact single-strand satellite chain necklace from the reference—identical bead station shape/size/spacing, identical chain link size/shape, identical drape/tension, identical placement on the neck; warm yellow gold tone with crisp specular highlights. Clean modern pastel grading, soft peach backdrop, powder blue white-tee look.  
 
+    HARDWARE + HOOP CONNECTION (NON-NEGOTIABLE)
+    • The charm’s own top hoop/bail/loop (the part the jump ring passes through) MUST be physically fused to the charm body exactly like Image[1].
+    • No gap between hoop and charm body. No floating hoop. No “hovering” ring sitting above an unconnected charm.
+    • The jump ring must pass through the charm’s hoop and sit flush; the hoop cannot appear separated from the charm outline.
+
     ENGRAVING COLOR (NON-NEGOTIABLE)
     • Engraving must remain a bright metal tone consistent with the charm’s metal (warm yellow).
     • Engraving lines may be only slightly darker than the surrounding metal due to shading.
@@ -673,6 +683,7 @@ HARD FAIL CONDITIONS
     • High-res, sharp focus on beads + links + charm surface. Moderate depth of field.
     • If the charm becomes illegible, DO NOT alter engraving. Use camera/zoom changes ONLY at the end, after charm is locked.
     • Jump ring must be closed + correctly connected to charm and chain; no floating, no broken links.
+    • The charm’s hoop/bail/loop must be visibly attached to the charm itself (no gap). The jump ring must pass through that attached hoop (no “hovering” ring above the charm).
 
     NECKLACE LOCK
     Single strand only. Station count/spacing + link geometry + drape must remain consistent with Image[0]. No added jewelry.
