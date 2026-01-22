@@ -3,6 +3,7 @@
    Writes realtime status to Firestore + uploads final PNG to Firebase Storage.
 */
 
+const admin = require("./firebaseAdmin");
 const sharp = require("sharp");
 
 // Node 18 on Netlify provides fetch/FormData/Blob globally.
