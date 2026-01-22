@@ -476,7 +476,8 @@
     };
 
     // Pass A should keep the charm larger to preserve engraving detail while placing.
-    const CHARM_A_MULT = 1.0;
+    // This is the whole point of the 2-pass pipeline: generate bigger → deterministic downscale.
+    const CHARM_A_MULT = 2.0;
 
     // -------------------------
     // Deterministic final framing (server-side, applied to OUTPUT only)
@@ -1797,6 +1798,9 @@ HARD FAIL CONDITIONS
               kind: "charm_postscale",
               model,
               input_storage_path: passAStoragePath,
+              // NEW: use the original Image[0] as the true "no-charm" base.
+              // This avoids inpaint drift → stable diff mask → slider reliably controls final charm size.
+              base_storage_path: image0Path,
               remove_prompt: removePrompt,
               postprocess: {
                 // NEW: stable proportional sizing

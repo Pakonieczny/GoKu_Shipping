@@ -440,8 +440,8 @@ async function postScaleCharmComposite({
   const tp = Number(targetPx);
   let outW, outH;
   if (Number.isFinite(tp)) {
-    // Clamp to sane “micro charm” range. Adjust if you ever want larger.
-    const targetH = Math.round(clampNumber(tp, 6, 80, 14));
+    // Clamp to sane range, but do NOT neuter the UI slider (your UI goes down to ~3px).
+    const targetH = Math.round(clampNumber(tp, 1, 160, 14));
     const aspect = bboxH > 0 ? (bboxW / bboxH) : 1;
     outH = Math.max(1, targetH);
     outW = Math.max(1, Math.round(outH * aspect));
@@ -551,6 +551,12 @@ exports.handler = async (event) => {
     // For charm_postscale:
     remove_prompt,
     postprocess,
+
+    // Optional: explicit "no-charm base" input for charm_postscale
+    // (preferred over inpainting removal because it's deterministic)
+    base_storage_path,
+    base_image,
+
   } = body || {};
 
   if (!jobId) return json(400, { error: { message: "jobId is required" } });
@@ -594,25 +600,51 @@ exports.handler = async (event) => {
         ? await storagePathToBuffer(input_storage_path)
         : dataUrlToBuffer(input_image);
 
-      // Step 1: inpaint-remove charm to recover base pixels behind it (same framing)
-      const rp =
-        String(remove_prompt || "").trim() ||
-        "Remove the pendant charm + jump ring completely and reconstruct the satellite chain and skin behind it. Keep EVERYTHING else identical. Do not change framing, color grade, wardrobe, lighting, face, pose. Only remove the pendant and restore the pixels behind it.";
-
+      // Step 1: obtain a "no-charm base" with identical framing.
+      // Prefer an explicit base (original Image[0]) to avoid inpaint drift that breaks diff-masking.
       await jobRef.set(
         { stage: "removing_charm", updatedAt: admin.firestore.FieldValue.serverTimestamp() },
         { merge: true }
       );
 
-      const baseNoCharmBuf = await callOpenAIImagesEdits({
-        apiKey,
-        model,
-        prompt: rp,
-        size,
-        quality,
-        output_format,
-        images: [{ buffer: passA.buffer, mime: passA.mime, filename: "passA.png" }],
-      });
+      let rp = String(remove_prompt || "").trim();
+      let baseNoCharmBuf;
+
+      if (base_storage_path || base_image) {
+        const base = base_storage_path
+          ? await storagePathToBuffer(base_storage_path)
+          : dataUrlToBuffer(base_image);
+
+        // Ensure dimensions match Pass A (defensive, but should already match in your pipeline)
+        const [mA, mB] = await Promise.all([
+          sharp(passA.buffer).metadata(),
+          sharp(base.buffer).metadata(),
+        ]);
+
+        if (mA?.width && mA?.height && (mA.width !== mB.width || mA.height !== mB.height)) {
+          baseNoCharmBuf = await sharp(base.buffer)
+            .resize(mA.width, mA.height, { kernel: "lanczos3" })
+            .png()
+            .toBuffer();
+        } else {
+          baseNoCharmBuf = base.buffer;
+        }
+      } else {
+        // Fallback (older behavior): inpaint-remove charm
+        rp =
+          rp ||
+          "Remove the pendant charm + jump ring completely and reconstruct the satellite chain and skin behind it. Keep EVERYTHING else identical. Do not change framing, color grade, wardrobe, lighting, face, pose. Only remove the pendant and restore the pixels behind it.";
+
+        baseNoCharmBuf = await callOpenAIImagesEdits({
+          apiKey,
+          model,
+          prompt: rp,
+          size,
+          quality,
+          output_format,
+          images: [{ buffer: passA.buffer, mime: passA.mime, filename: "passA.png" }],
+        });
+      }
 
       // Step 2: postprocess scale (no re-generation of engraving)
       await jobRef.set(
