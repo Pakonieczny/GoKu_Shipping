@@ -639,6 +639,49 @@
 
 
 
+// Slot 3 prompt: ONE-PASS sizing-guide charm replacement (NO necklace)
+const SLOT3_SIZING_GUIDE_PROMPT =
+`CRITICAL: Slot 3 is a sizing-guide charm replacement task. This must be a single-pass edit.
+
+PROCESS ORDER (NON-NEGOTIABLE)
+• Single pass only.
+• Use Image[0] as the base sizing-guide graphic.
+• Replace ONLY the charm in Image[0] with the charm from Image[1].
+
+INPUT IMAGES (ORDER MATTERS)
+• Image[0] = sizing guide base image (ALL text, layout, pencil, line, background)
+• Image[1] = charm macro (pixel-truth source for silhouette, cutouts, engraving, integrated hoop)
+
+ABSOLUTE LOCKS (DO NOT CHANGE)
+• Do NOT add any necklace chain, jump ring, or jewelry.
+• Do NOT move, resize, restyle, blur, or alter any text.
+• The text “~12mm x 12mm” MUST remain visible, crisp, and identical.
+• The short black pointer line MUST remain visible and MUST point to the charm exactly.
+• Do NOT crop, zoom, or reframe the image.
+
+CHARM POSITION + SIZE MATCH (NON-NEGOTIABLE)
+• The new charm must sit in the EXACT same position as the original charm in Image[0].
+• The new charm must match the original charm’s on-image size EXACTLY.
+• This is a strict size match — no scaling up or down.
+
+CHARM FIDELITY (IMAGE[1] IS SINGLE TRUTH SOURCE)
+• Preserve the exact outer perimeter, cutouts, engraving, and integrated hoop from Image[1.
+• Do NOT redraw, smooth, stylize, thicken, clean up, or reinterpret.
+• Keep edges crisp. No blur or smear.
+
+INTEGRATED HOOP RULE
+• The hoop/bail MUST be part of the same laser-cut silhouette as the charm body.
+• The hoop MUST connect with a wide, solid bridge of metal (large surface area).
+• HARD FAIL if the hoop looks barely touching, point-connected, floating, or welded-on.
+
+HARD FAIL CONDITIONS
+- Any text change.
+- Any necklace or jewelry added.
+- Any charm size mismatch vs Image[0].
+- Any weak or disconnected hoop connection.`;
+
+
+
 
     // Default prompt (edit freely)
     const DEFAULT_PROMPT =
@@ -714,6 +757,9 @@
     - Never show model jawline, chin, face.`;
 
     const PROMPT_BY_SLOT = Array.from({ length: SLOT_COUNT }, () => DEFAULT_PROMPT);
+    // Seed per-slot prompts (Slot 2 + Slot 3)
+    PROMPT_BY_SLOT[1] = SLOT2_DUPLICATE_PROMPT;
+    PROMPT_BY_SLOT[2] = SLOT3_SIZING_GUIDE_PROMPT;
     // Initialize editor (Slot 1 by default)
     promptEl.value = PROMPT_BY_SLOT[0];
 
@@ -1559,11 +1605,13 @@
 
       // Slot 2 is a strict single-pass "best duplicate" pipeline
       const isSlot2 = (i === 1);
-      const hasCharm = isSlot2 ? false : !!image1Path;
+      const hasCharm = (isSlot2 || isSlot3) ? false : !!image1Path;
 
-      const baseText = isSlot2
-        ? SLOT2_DUPLICATE_PROMPT.trim()
-        : (PROMPT_BY_SLOT[i] || "").trim();
+      const baseText =
+        isSlot2 ? SLOT2_DUPLICATE_PROMPT.trim() :
+        isSlot3 ? SLOT3_SIZING_GUIDE_PROMPT.trim() :
+        (PROMPT_BY_SLOT[i] || "").trim();
+
       const finalCharmTargetPx = readFinalCharmTargetPx();
 
       const model = modelEl.value;
@@ -1620,7 +1668,7 @@
             prompt: fullPrompt,
             input_storage_path: image0Path,
             input_charm_storage_path: image1Path,
-            postprocess: isSlot2 ? null : {
+            postprocess: (isSlot2 || isSlot3) ? null : {
             finalFrameZoom: FINAL_FRAME_ZOOM,
             anchorX: FINAL_ANCHOR_X,
             anchorY: FINAL_ANCHOR_Y,
