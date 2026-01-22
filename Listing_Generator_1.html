@@ -585,45 +585,30 @@
 
    // Slot 2 prompt: ONE-PASS charm replacement + engraving fidelity + OUTPUT zoom-out 1.5×
     const SLOT2_DUPLICATE_PROMPT =
-    `CRITICAL: This is a standard fashion product photo. Do not add nudity. Always keep the subject modest.
+    `CRITICAL: Slot 2 is a charm replacement task. This must be a single-pass edit.
 
     PROCESS ORDER (NON-NEGOTIABLE)
-    • First: generate the model variation + necklace (no charm).
-    • Second: add the charm from Image[1] onto the necklace (placement + hardware correctness).
-    • Third: final charm downscale is applied AFTER generation as a deterministic postprocess (no redraw). Do not “fix” size by changing engraving.
-
-    SIZE RULE (NON-NEGOTIABLE)
-    • Place the charm slightly LARGE during the “add charm” step to preserve micro-engraving fidelity.
-    • Final size is applied as a postprocess downscale of the charm pixels only (no regeneration, no re-engraving).
-    • Do NOT thicken, simplify, or redraw engraving to solve size.
-
-    ZOOM RANGE CLAMP (NON-NEGOTIABLE)
-    • The visible necklace span (left-to-right chain) should fill roughly 97%–100% of the image width.
-    • Final framing MUST be upper bust + collarbones only.
-    • TOP CROP RULE: the top edge must cut at the base of the neck.
-    • BOTTOM CROP RULE: bottom edge must be upper bust only.
-    • Keep the pendant centered in the frame. Never show any part of the head and face.
-    • Keep the neck short and proportional.
+    • Single pass only.
+    • Use Image[0] as the base photo.
+    • Replace the charm/pendant in Image[0] with the charm from Image[1].
 
     INPUT IMAGES (ORDER MATTERS)
-    • Image[0] = base model photo (necklace position + scene + camera)
-    • Image[1] = charm macro (pixel-truth source for charm silhouette + engraving)
+    • Image[0] = base photo (scene + camera + chain placement + hardware position)
+    • Image[1] = charm macro (pixel-truth source for silhouette + cutouts + engraving)
 
-    TRAITS OVERRIDE (NON-NEGOTIABLE)
-    • A "Traits:" block will be appended at the end of this prompt.
-    • Treat every trait line as a hard requirement to apply literally (not suggestions, not metadata).
-    • If any style text above conflicts with Traits, Traits win for: skin, camera framing, wardrobe, backdrop, lighting.
-    • Exception: jewelry locks always win (necklace + charm fidelity rules never change).
-    • Do not average traits. Do not ignore traits. Do not partially apply traits. Apply all traits.
+    CHARM SCALE OVERRIDE (NON-NEGOTIABLE)
+    • The placed/replaced charm MUST be smaller than the charm being replaced in Image[0].
+    • Apply an extra downscale of 1.6× (i.e. final charm must be ~40% of the size you would normally choose).
+    • Do NOT compensate by thickening lines, enlarging cutouts, or changing engraving. Size change must be a pure scale change only.
 
-    TASK (CRITICAL)
-      1.  Place Image[1] as the pendant on the necklace in Image[0]. Treat Image[1] like a literal decal/insert.
-      2.  Do not redraw, regenerate, re-engrave, “improve,” clean up, simplify, stylize, or reinterpret the charm.
-      3.  The Charm must be very flat and thin, without any noticeable potrusions and the engraving is to be superficial.
-      4.  Engraving rule: preserve every engraving stroke exactly as in Image[1]. No stroke loss, no stroke merging, no thickening, no line cleanup, no mirrored text, no invented marks.
-      5.  Allowed charm edits (only): tiny exposure/white-balance shift to match scene lighting + a subtle contact shadow under the charm + mild specular highlight alignment. No geometry changes.
-      6.  BACKGROUND_DIAL: pastel studio backdrop in soft peach 
-      7.  LIGHTING_DIAL: window light, airy highlights Editorial Etsy portrait (neck + collarbone close crop). One adult female model with natural skin texture, realistic pores, no heavy retouching. Tight framing keeps neck/collarbone clear so the necklace stations are fully visible. Recreate the exact single-strand satellite chain necklace from the reference—identical bead station shape/size/spacing, identical chain link size/shape, identical drape/tension, identical placement on the neck; warm yellow gold tone with crisp specular highlights. Clean modern pastel grading, soft peach backdrop, powder blue white-tee look.  
+    ENGRAVING + CUTOUT FIDELITY (TOP PRIORITY — IMAGE[1] IS SINGLE TRUTH SOURCE)
+    • Treat Image[1] as pixel-truth. Do NOT redraw, “enhance,” simplify, smooth, stylize, thicken, sharpen, clean up, or reinterpret.
+    • Add a subtle contact shadow under charm + mild specular alignment as needed to the Final generated image.
+    • Outline lock: the outer perimeter must match Image[1] exactly (no rounding, no warping, no missing corners, no bulges).
+    • Cutout lock: every internal cutout/negative-space hole must match Image[1] exactly (shape + position + proportions). Do not fill-in holes. Do not merge holes.
+    • Engraving lock: preserve every stroke exactly as in Image[1] (no stroke loss, no merging, no thickening, no cleanup, no mirrored text, no invented marks).
+    • Edge integrity: keep cutout edges crisp. Do not blur/smear/over-anti-alias away fine cutout detail.
+    • Allowed Charm Edits: tiny exposure/white-balance match to Image[0] + subtle contact shadow under charm + mild specular alignment. No geometry changes.
 
     HARDWARE + HOOP CONNECTION (NON-NEGOTIABLE)
     • The charm’s top hoop/bail/loop MUST be an INTEGRATED part of the charm silhouette exactly like Image[1] — as if the entire charm (including the hoop) was laser-cut from one single sheet of metal.
@@ -632,29 +617,26 @@
     • Geometry lock: preserve the exact bridge/tab shape that connects the hoop to the charm body in Image[1] (width, curvature, thickness, edge bevel).
     • The hoop must be fully connected with a broad “tab” of metal. HARD FAIL if the hoop connects via a hairline neck, thin spike, or point-contact.
     • The jump ring must pass through the hoop and sit naturally inside it, but the hoop itself must remain part of the charm’s perimeter geometry (not re-invented hardware).
+    • ONE-PIECE LASER-CUT RULE: the hoop/bail is part of the SAME continuous metal piece as the charm body (like Image[1]) — NOT a separate ring “added,” “welded,” “soldered,” or “barely touching.”
+    • ROBUST ATTACHMENT RULE: the hoop-to-charm connection must have a thick/wide bridge of metal (large surface-area contact), not a tangential touchpoint.
+      - Minimum bridge width: ≥ 35% of the hoop’s OUTER diameter.
+      - Minimum contact length: ≥ 25% of the hoop’s outer arc must visibly blend into the charm’s body at the attachment region.
+      - If uncertain, OVER-CONNECT (thicker/wider bridge) rather than under-connect. Never reduce the bridge to a thin neck.
+    • HARD FAIL if the hoop looks “just barely touching,” hairline-connected, separated by any visible slit/gap, or reads as a separate component sitting on top of the charm.
     • Scale rule: when you shrink the charm, the hoop + its bridge/tab must shrink proportionally as part of the same silhouette (do NOT shrink only the body and leave a weak connection).
 
-    ENGRAVING COLOR (NON-NEGOTIABLE)
-    • Engraving must remain a bright metal tone consistent with the charm’s metal (warm yellow).
-    • Engraving lines may be only slightly darker than the surrounding metal due to shading.
-    • Engraving must be filled-in exactly like in Image[0]
+    LOCKS (NON-NEGOTIABLE)
+    • Preserve EVERYTHING ELSE from Image[0]: chain links, bead stations, jump ring placement, clasp, metal tone, lighting, background, hardware alignment.
+    • Do not add objects. Do not remove objects (other than replacing the charm itself). Do not change the chain geometry.
 
-    FOCUS (REALISM PRIORITY)
-    • High-res, sharp focus on beads + links + charm surface. Moderate depth of field.
-    • If the charm becomes illegible, DO NOT alter engraving. Use camera/zoom changes ONLY at the end, after charm is locked.
-    • Jump ring must be closed + correctly connected to charm and chain; no floating, no broken links.
-    • The charm’s hoop/bail/loop must be visibly attached to the charm itself (no gap). The jump ring must pass through that attached hoop (no “hovering” ring above the charm).
-
-    NECKLACE LOCK
-    Single strand only. Station count/spacing + link geometry + drape must remain consistent with Image[0]. No added jewelry.
-
-    LOOK
-    Soft peach backdrop, pale taupe styling, punchy-neutral pastel grade. Natural pores, no plastic skin. Jewelry tack sharp.
+    OUTPUT ZOOM (NON-NEGOTIABLE)
+    • The FINAL GENERATED image must be zoomed OUT by 1.5× compared to Image[0] (wider view), keeping the same center framing.
+    • Do NOT crop tighter than Image[0]. Never zoom in.
 
     HARD FAIL CONDITIONS
-    - Warped links, doubled chain, altered charm outline, missing strokes, simplified engraving, blur/smear on charm, any engraving rendered as grey/dark grey/dark brown/black or “filled, second strand, altered spacing, thicker chain, neon colors, plastic skin, warped links.
-    - Charm Engraving must never appear grey, dark grey, dark brown, black, charcoal, ink-like, oxidized, soot-filled, painted, or enamel-filled.
-    - Never show model jawline, chin, face.`;
+    - Any charm larger than Image[0]'s charm, any engraving changes, any altered cutout geometry, any changed chain geometry/station spacing, blur/smear on charm details, or any added objects.
+    - Any hoop/bail connection that is point-touching, hairline, barely touching, offset, floating, or looks like a separate welded/soldered ring.
+    - Any hoop/bail that appears barely touching, point-connected, hairline-connected, floating, hovering, separated, or “attached later” (weld/solder/glue look). The hoop must look like part of the same laser-cut charm silhouette from Image[1].`;
 
 
 
@@ -704,45 +686,30 @@ HARD FAIL CONDITIONS
 
     // Default prompt (edit freely)
     const DEFAULT_PROMPT =
-    `CRITICAL: This is a standard fashion product photo. Do not add nudity. Always keep the subject modest.
+`CRITICAL: Slot 1 is a charm replacement task. This must be a single-pass edit.
 
     PROCESS ORDER (NON-NEGOTIABLE)
-    • First: generate the model variation + necklace (no charm).
-    • Second: add the charm from Image[1] onto the necklace (placement + hardware correctness).
-    • Third: final charm downscale is applied AFTER generation as a deterministic postprocess (no redraw). Do not “fix” size by changing engraving.
-
-    SIZE RULE (NON-NEGOTIABLE)
-    • Place the charm slightly LARGE during the “add charm” step to preserve micro-engraving fidelity.
-    • Final size is applied as a postprocess downscale of the charm pixels only (no regeneration, no re-engraving).
-    • Do NOT thicken, simplify, or redraw engraving to solve size.
-
-    ZOOM RANGE CLAMP (NON-NEGOTIABLE)
-    • The visible necklace span (left-to-right chain) should fill roughly 97%–100% of the image width.
-    • Final framing MUST be upper bust + collarbones only.
-    • TOP CROP RULE: the top edge must cut at the base of the neck.
-    • BOTTOM CROP RULE: bottom edge must be upper bust only.
-    • Keep the pendant centered in the frame. Never show any part of the head and face.
-    • Keep the neck short and proportional.
+    • Single pass only.
+    • Use Image[0] as the base photo.
+    • Replace the charm/pendant in Image[0] with the charm from Image[1].
 
     INPUT IMAGES (ORDER MATTERS)
-    • Image[0] = base model photo (necklace position + scene + camera)
-    • Image[1] = charm macro (pixel-truth source for charm silhouette + engraving)
+    • Image[0] = base photo (scene + camera + chain placement + hardware position)
+    • Image[1] = charm macro (pixel-truth source for silhouette + cutouts + engraving)
 
-    TRAITS OVERRIDE (NON-NEGOTIABLE)
-    • A "Traits:" block will be appended at the end of this prompt.
-    • Treat every trait line as a hard requirement to apply literally (not suggestions, not metadata).
-    • If any style text above conflicts with Traits, Traits win for: skin, camera framing, wardrobe, backdrop, lighting.
-    • Exception: jewelry locks always win (necklace + charm fidelity rules never change).
-    • Do not average traits. Do not ignore traits. Do not partially apply traits. Apply all traits.
+    CHARM SCALE OVERRIDE (NON-NEGOTIABLE)
+    • The placed/replaced charm MUST be smaller than the charm being replaced in Image[0].
+    • Apply an extra downscale of 1.6× (i.e. final charm must be ~40% of the size you would normally choose).
+    • Do NOT compensate by thickening lines, enlarging cutouts, or changing engraving. Size change must be a pure scale change only.
 
-    TASK (CRITICAL)
-      1.  Place Image[1] as the pendant on the necklace in Image[0]. Treat Image[1] like a literal decal/insert.
-      2.  Do not redraw, regenerate, re-engrave, “improve,” clean up, simplify, stylize, or reinterpret the charm.
-      3.  The Charm must be very flat and thin, without any noticeable potrusions and the engraving is to be superficial.
-      4.  Engraving rule: preserve every engraving stroke exactly as in Image[1]. No stroke loss, no stroke merging, no thickening, no line cleanup, no mirrored text, no invented marks.
-      5.  Allowed charm edits (only): tiny exposure/white-balance shift to match scene lighting + a subtle contact shadow under the charm + mild specular highlight alignment. No geometry changes.
-      6.  BACKGROUND_DIAL: pastel studio backdrop in soft peach 
-      7.  LIGHTING_DIAL: window light, airy highlights Editorial Etsy portrait (neck + collarbone close crop). One adult female model with natural skin texture, realistic pores, no heavy retouching. Tight framing keeps neck/collarbone clear so the necklace stations are fully visible. Recreate the exact single-strand satellite chain necklace from the reference—identical bead station shape/size/spacing, identical chain link size/shape, identical drape/tension, identical placement on the neck; warm yellow gold tone with crisp specular highlights. Clean modern pastel grading, soft peach backdrop, powder blue white-tee look.  
+    ENGRAVING + CUTOUT FIDELITY (TOP PRIORITY — IMAGE[1] IS SINGLE TRUTH SOURCE)
+    • Treat Image[1] as pixel-truth. Do NOT redraw, “enhance,” simplify, smooth, stylize, thicken, sharpen, clean up, or reinterpret.
+    • Add a subtle contact shadow under charm + mild specular alignment as needed to the Final generated image.
+    • Outline lock: the outer perimeter must match Image[1] exactly (no rounding, no warping, no missing corners, no bulges).
+    • Cutout lock: every internal cutout/negative-space hole must match Image[1] exactly (shape + position + proportions). Do not fill-in holes. Do not merge holes.
+    • Engraving lock: preserve every stroke exactly as in Image[1] (no stroke loss, no merging, no thickening, no cleanup, no mirrored text, no invented marks).
+    • Edge integrity: keep cutout edges crisp. Do not blur/smear/over-anti-alias away fine cutout detail.
+    • Allowed Charm Edits: tiny exposure/white-balance match to Image[0] + subtle contact shadow under charm + mild specular alignment. No geometry changes.
 
     HARDWARE + HOOP CONNECTION (NON-NEGOTIABLE)
     • The charm’s top hoop/bail/loop MUST be an INTEGRATED part of the charm silhouette exactly like Image[1] — as if the entire charm (including the hoop) was laser-cut from one single sheet of metal.
@@ -751,29 +718,27 @@ HARD FAIL CONDITIONS
     • Geometry lock: preserve the exact bridge/tab shape that connects the hoop to the charm body in Image[1] (width, curvature, thickness, edge bevel).
     • The hoop must be fully connected with a broad “tab” of metal. HARD FAIL if the hoop connects via a hairline neck, thin spike, or point-contact.
     • The jump ring must pass through the hoop and sit naturally inside it, but the hoop itself must remain part of the charm’s perimeter geometry (not re-invented hardware).
+    • ONE-PIECE LASER-CUT RULE: the hoop/bail is part of the SAME continuous metal piece as the charm body (like Image[1]) — NOT a separate ring “added,” “welded,” “soldered,” or “barely touching.”
+    • ROBUST ATTACHMENT RULE: the hoop-to-charm connection must have a thick/wide bridge of metal (large surface-area contact), not a tangential touchpoint.
+      - Minimum bridge width: ≥ 35% of the hoop’s OUTER diameter.
+      - Minimum contact length: ≥ 25% of the hoop’s outer arc must visibly blend into the charm’s body at the attachment region.
+      - If uncertain, OVER-CONNECT (thicker/wider bridge) rather than under-connect. Never reduce the bridge to a thin neck.
+    • HARD FAIL if the hoop looks “just barely touching,” hairline-connected, separated by any visible slit/gap, or reads as a separate component sitting on top of the charm.
     • Scale rule: when you shrink the charm, the hoop + its bridge/tab must shrink proportionally as part of the same silhouette (do NOT shrink only the body and leave a weak connection).
 
-    ENGRAVING COLOR (NON-NEGOTIABLE)
-    • Engraving must remain a bright metal tone consistent with the charm’s metal (warm yellow).
-    • Engraving lines may be only slightly darker than the surrounding metal due to shading.
-    • Engraving must be filled-in exactly like in Image[0]
+    LOCKS (NON-NEGOTIABLE)
+    • Preserve EVERYTHING ELSE from Image[0]: chain links, bead stations, jump ring placement, clasp, metal tone, lighting, background, hardware alignment.
+    • Do not add objects. Do not remove objects (other than replacing the charm itself). Do not change the chain geometry.
 
-    FOCUS (REALISM PRIORITY)
-    • High-res, sharp focus on beads + links + charm surface. Moderate depth of field.
-    • If the charm becomes illegible, DO NOT alter engraving. Use camera/zoom changes ONLY at the end, after charm is locked.
-    • Jump ring must be closed + correctly connected to charm and chain; no floating, no broken links.
-    • The charm’s hoop/bail/loop must be visibly attached to the charm itself (no gap). The jump ring must pass through that attached hoop (no “hovering” ring above the charm).
-
-    NECKLACE LOCK
-    Single strand only. Station count/spacing + link geometry + drape must remain consistent with Image[0]. No added jewelry.
-
-    LOOK
-    Soft peach backdrop, pale taupe styling, punchy-neutral pastel grade. Natural pores, no plastic skin. Jewelry tack sharp.
+    OUTPUT ZOOM (NON-NEGOTIABLE)
+    • The FINAL GENERATED image must be zoomed OUT by 1.5× compared to Image[0] (wider view), keeping the same center framing.
+    • Do NOT crop tighter than Image[0]. Never zoom in.
 
     HARD FAIL CONDITIONS
-    - Warped links, doubled chain, altered charm outline, missing strokes, simplified engraving, blur/smear on charm, any engraving rendered as grey/dark grey/dark brown/black or “filled, second strand, altered spacing, thicker chain, neon colors, plastic skin, warped links.
-    - Charm Engraving must never appear grey, dark grey, dark brown, black, charcoal, ink-like, oxidized, soot-filled, painted, or enamel-filled.
-    - Never show model jawline, chin, face.`;
+    - Any charm larger than Image[0]'s charm, any engraving changes, any altered cutout geometry, any changed chain geometry/station spacing, blur/smear on charm details, or any added objects.
+    - Any hoop/bail connection that is point-touching, hairline, barely touching, offset, floating, or looks like a separate welded/soldered ring.
+    - Any hoop/bail that appears barely touching, point-connected, hairline-connected, floating, hovering, separated, or “attached later” (weld/solder/glue look). The hoop must look like part of the same laser-cut charm silhouette from Image[1].`;
+
 
     const PROMPT_BY_SLOT = Array.from({ length: SLOT_COUNT }, () => DEFAULT_PROMPT);
     // Seed per-slot prompts (Slot 2 + Slot 3)
@@ -1527,13 +1492,13 @@ HARD FAIL CONDITIONS
       }
     }
 
-    function buildPrompt(base, traits, hasCharmMacro, stage /* "placement" | "final" */, charmPlan){
+    function buildPrompt(base, traits, hasCharmMacro, stage /* "placement" | "single" | "final" */, charmPlan){
       const imageRoleBlock = hasCharmMacro ? [
         "INPUT IMAGES (ORDER MATTERS)",
-        stage === "placement"
+        (stage === "placement" || stage === "single")
           ? "- Image[0]: reference photo (truth source for necklace placement + chain geometry + station spacing + metal tone + drape)."
           : "- Image[0]: pass-A composite (truth source: charm already placed/locked + necklace already correct).",
-        "- Image[1]: charm macro (single truth source for charm silhouette + engraving; if any conflict, Image[1] wins for charm details).",
+        "- Image[1]: charm macro (single truth source for charm silhouette + cutouts + engraving; if any conflict, Image[1] wins for charm details).",
         "",
       ].join("\n") : "";
 
@@ -1574,12 +1539,14 @@ HARD FAIL CONDITIONS
         "",
       ].join("\n");
 
-      const stageBlock = stage === "placement"
-        ? [
-            "STAGE A (PLACEMENT LOCK)",
-            "- Keep framing close enough that the charm is large/clear while placing it.",
-            "- Do NOT zoom out in this stage.",
-            "",
+      const hasPlan = !!(charmPlan && charmPlan.instr && Number.isFinite(charmPlan.instr.targetPx));
+      const stageBlock =
+        stage === "placement" ? [
+          "STAGE A (PLACEMENT LOCK)",
+          "- Keep framing close enough that the charm is large/clear while placing it.",
+          "- Do NOT zoom out in this stage.",
+          "",
+          ...(hasPlan ? [
             "CHARM SIZE CONTROL (STAGE A — HARD NUMBERS, BIAS-COMPENSATED)",
             `- Lens: ${charmPlan?.lensMm}mm (${charmPlan?.lensKey}) | Framing: ${charmPlan?.zoomGroup}`,
             `- TRUE final goal later (Stage B): ${charmPlan?.finalTrue?.minPx}–${charmPlan?.finalTrue?.maxPx}px (target ${charmPlan?.finalTrue?.targetPx}px)`,
@@ -1587,21 +1554,37 @@ HARD FAIL CONDITIONS
             `- PLACE NOW (instruction target): charm bbox height ${charmPlan?.instr?.minPx}–${charmPlan?.instr?.maxPx}px (target ${charmPlan?.instr?.targetPx}px)`,
             "- If the charm still looks large, keep shrinking until it hits the instruction px window. Do not stop early.",
             "",
-
-          ].join("\n")
-        : [
-            "STAGE B (FINAL CAMERA)",
-            "- Start from Image[0] (pass-A composite). Treat charm + necklace as pixel-locked truth.",
-            "- Do NOT alter charm silhouette, engraving strokes, jump ring connection, or necklace geometry.",
-            "- Only adjust camera framing/zoom at the end per CAMERA + LENS block.",
+          ] : []),
+        ].join("\n")
+        : (stage === "single" ? [
+          "SINGLE PASS (MICRO CHARM ADD)",
+          "- Start from Image[0] as the base photo.",
+         "- Add the charm from Image[1] onto the necklace in Image[0].",
+          "- Preserve chain geometry + bead stations exactly; no added chain, no extra jewelry.",
+          "- Preserve engraving/cutouts exactly; do not redraw to fix size.",
+          "",
+          ...(hasPlan ? [
+            "CHARM SIZE CONTROL (SINGLE PASS — FINAL HARD NUMBERS, BIAS-COMPENSATED)",
+            `- TRUE required final size: charm bbox height ${charmPlan?.finalTrue?.minPx}–${charmPlan?.finalTrue?.maxPx}px (target ${charmPlan?.finalTrue?.targetPx}px)`,
+            `- Instruction window (compensated): ${charmPlan?.instr?.minPx}–${charmPlan?.instr?.maxPx}px (target ${charmPlan?.instr?.targetPx}px)`,
+            "- If unsure, err smaller. Never thicken engraving to keep it visible.",
             "",
+          ] : []),
+        ].join("\n")
+        : [
+          "STAGE B (FINAL CAMERA)",
+          "- Start from Image[0] (pass-A composite). Treat charm + necklace as pixel-locked truth.",
+          "- Do NOT alter charm silhouette, engraving strokes, jump ring connection, or necklace geometry.",
+          "- Only adjust camera framing/zoom at the end per CAMERA + LENS block.",
+          "",
+          ...(hasPlan ? [
             "CHARM SIZE CONTROL (STAGE B — FINAL HARD NUMBERS, BIAS-COMPENSATED)",
             `- TRUE required final size: charm bbox height ${charmPlan?.finalTrue?.minPx}–${charmPlan?.finalTrue?.maxPx}px (target ${charmPlan?.finalTrue?.targetPx}px)`,
             `- Instruction window (compensated): ${charmPlan?.instr?.minPx}–${charmPlan?.instr?.maxPx}px (target ${charmPlan?.instr?.targetPx}px)`,
             "- IMPORTANT: do NOT redraw engraving to satisfy size. Only adjust framing/zoom until charm reaches TRUE size.",
-            //"- If output charm is still ~2× too large, shrink it again (repeat the reduction) until it lands inside TRUE window.",
             "",
-          ].join("\n");
+          ] : []),
+        ].join("\n"));
 
       return [
         imageRoleBlock,
@@ -1622,10 +1605,14 @@ HARD FAIL CONDITIONS
       // Resolve per-slot reference images from: listing-generator-1/Beady Necklace/Slot_X/
       const { image0Path, image1Path } = await resolveSlotRequiredImages(i);
 
-      // Slot 2 + Slot 3 are strict single-pass pipelines
+      // Slot 1 + Slot 2 + Slot 3 are strict single-pass pipelines
+      const isSlot1 = (i === 0);
       const isSlot2 = (i === 1);
       const isSlot3 = (i === 2);
-      const hasCharm = (isSlot2 || isSlot3) ? false : !!image1Path;
+      const singlePassOnly = (isSlot1 || isSlot2 || isSlot3);
+
+      // hasCharm drives the TWO-PASS branch only
+      const hasCharm = singlePassOnly ? false : !!image1Path;
 
       const baseText =
         isSlot2 ? SLOT2_DUPLICATE_PROMPT.trim() :
@@ -1646,18 +1633,27 @@ HARD FAIL CONDITIONS
       setBar(i, 5);
       setMeta(
         i,
-        isSlot2 ? "Queued (Slot 2 Duplicate)…"
+        isSlot1 ? "Queued (Slot 1 Single-pass)…"
+        : (isSlot2 ? "Queued (Slot 2 Duplicate)…"
         : (isSlot3 ? "Queued (Slot 3 Sizing Guide)…"
-        : (hasCharm ? "Queued (Pass A)…" : "Queued…"))
+        : (hasCharm ? "Queued (Pass A)…" : "Queued…")))
       );
 
       try {
         // ---------- Single-pass fallback (no charm macro) ----------
         if (!hasCharm) {
-          const fullPrompt =
+          let fullPrompt =
             isSlot2 ? SLOT2_DUPLICATE_PROMPT.trim()
             : (isSlot3 ? SLOT3_SIZING_GUIDE_PROMPT.trim()
-            : buildPrompt(baseText, slot.traits, false, "final"));
+            : (isSlot1 ? null
+            : buildPrompt(baseText, slot.traits, false, "final")));
+          // Slot 1 requires Image[1] and uses a single-pass prompt with traits injected
+          if (isSlot1) {
+            if (!image1Path) throw new Error("Slot 1 requires Image[1] (charm macro). Upload the charm macro to Slot 1.");
+            const planSingle = charmPlanFromTraits(slot.traits, "single");
+            fullPrompt = buildPrompt(baseText, slot.traits, true, "single", planSingle);
+          }
+
           slot.prompt = fullPrompt;
 
           let unsub = null;
