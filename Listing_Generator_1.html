@@ -1603,8 +1603,9 @@ HARD FAIL CONDITIONS
       // Resolve per-slot reference images from: listing-generator-1/Beady Necklace/Slot_X/
       const { image0Path, image1Path } = await resolveSlotRequiredImages(i);
 
-      // Slot 2 is a strict single-pass "best duplicate" pipeline
+      // Slot 2 + Slot 3 are strict single-pass pipelines
       const isSlot2 = (i === 1);
+      const isSlot3 = (i === 2);
       const hasCharm = (isSlot2 || isSlot3) ? false : !!image1Path;
 
       const baseText =
@@ -1624,12 +1625,20 @@ HARD FAIL CONDITIONS
       let unsubB = null;
 
       setBar(i, 5);
-      setMeta(i, isSlot2 ? "Queued (Slot 2 Duplicate)…" : (hasCharm ? "Queued (Pass A)…" : "Queued…"));
+      setMeta(
+        i,
+        isSlot2 ? "Queued (Slot 2 Duplicate)…"
+        : (isSlot3 ? "Queued (Slot 3 Sizing Guide)…"
+        : (hasCharm ? "Queued (Pass A)…" : "Queued…"))
+      );
 
       try {
         // ---------- Single-pass fallback (no charm macro) ----------
         if (!hasCharm) {
-          const fullPrompt = isSlot2 ? SLOT2_DUPLICATE_PROMPT.trim() : buildPrompt(baseText, slot.traits, false, "final");
+          const fullPrompt =
+            isSlot2 ? SLOT2_DUPLICATE_PROMPT.trim()
+            : (isSlot3 ? SLOT3_SIZING_GUIDE_PROMPT.trim()
+            : buildPrompt(baseText, slot.traits, false, "final"));
           slot.prompt = fullPrompt;
 
           let unsub = null;
