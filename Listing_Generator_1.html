@@ -1237,12 +1237,14 @@ HARD FAIL CONDITIONS
     // Slot image management (Firebase Storage)
     // -------------------------
     function guessRoleFromName(name){
-      if (/(?:^|[^a-z0-9])image[\s_-]*2(?:[^a-z0-9]|$)/.test(raw)) return "image2";
-      if (/(?:^|[^a-z0-9])img[\s_-]*2(?:[^a-z0-9]|$)/.test(raw)) return "image2";
-      if (compact.includes("image2") || compact.includes("img2")) return "image2";
       // Normalize to catch: "Image 0", "Image_0", "IMAGE-0", "img 1", etc.
       const raw = String(name || "").toLowerCase();
       const compact = raw.replace(/[^a-z0-9]+/g, ""); // strips spaces/_/-/etc
+
+      // Priority: explicit Image2 tags in the filename
+      if (/(?:^|[^a-z0-9])image[\s_-]*2(?:[^a-z0-9]|$)/.test(raw)) return "image2";
+      if (/(?:^|[^a-z0-9])img[\s_-]*2(?:[^a-z0-9]|$)/.test(raw)) return "image2";
+      if (compact.includes("image2") || compact.includes("img2")) return "image2";
 
       // Priority: explicit Image0/Image1 tags in the filename
       if (/(?:^|[^a-z0-9])image[\s_-]*1(?:[^a-z0-9]|$)/.test(raw)) return "image1";
