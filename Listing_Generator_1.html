@@ -1634,7 +1634,7 @@ HARD FAIL
             if (j.status === "running") {
               const pct = j.stage === "calling_gemini" ? 55 : : j.stage === "uploading" ? 80 : 25;
               setBar(i, pct);
-              setMeta(i, j.stage === "uploading" ? "Uploading…" : "Generating…");
+              setMeta(i, j.stage === "uploading" ? statusEl.textContent = (j.stage === "uploading" ? "Uploading…" : "Generating…");
             }
             if (j.status === "done") {
               if (j.downloadURL) {
