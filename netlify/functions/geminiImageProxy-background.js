@@ -217,7 +217,7 @@ async function callGeminiGenerateContentImage({
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${geminiModel}:generateContent`;
 
   // Strong output spec: Gemini image models can still vary; this nudges consistent dimensions/format.
-  const m = /^(\\d+)\\s*x\\s*(\\d+)$/.exec(String(size || "").trim());
+  const m = /^(\d+)\s*x\s*(\d+)$/.exec(String(size || "").trim());
   const wantW = m ? Number(m[1]) : null;
   const wantH = m ? Number(m[2]) : null;
   const wantAR = sizeToAspectRatio(size);
