@@ -696,13 +696,13 @@ HARD FAIL CONDITIONS
     `CRITICAL: This is a standard fashion product photo edit. Keep the subject modest. No nudity.
 
     TASK (SLOT 1 — IMAGE EDIT, SINGLE PASS)
-    Edit Image[0] only by adding the charm from Image[1] onto the existing necklace chain in Image[0] as a hanging pendant.
+    Edit Image[0] only by replacing the charm from Image[1] onto the existing necklace chain in Image[0] as a hanging pendant.
     Return one photorealistic edited image. Do not output text.
 
 
     ULTRA-MICRO SIZE OVERRIDE (TOP PRIORITY — MAKE IT BARELY VISIBLE)
-    • Force the pendant to be very small: final on-image charm height MUST be about ~10 pixels tall (absolute pixel height, not relative).
-    • If you cannot measure pixels, choose the smallest size that is still technically visible on the chain, almost imperceptible at normal viewing.
+    • Force the pendant to be very small: final on-image charm height MUST be 8 pixels tall (absolute pixel height, not relative).
+    • If you cannot measure pixels, choose the smallest size that is still visually visible on the chain.
     • Strict rule: if the charm engravings are clearly visible at a glance, it is TOO LARGE — keep shrinking until the charm engravings are barely noticeable.
     • Do NOT compensate by zooming out, reframing, cropping, changing camera, changing necklace scale, changing model scale, changing engraving thickness, or changing chain thickness.
     • The chain must remain exactly the same size and detail as Image[0]. Only the charm is scaled.`;
@@ -1047,7 +1047,7 @@ HARD FAIL CONDITIONS
         statusEl.textContent = "Preparing reference…";
         // Preview only (safe to downscale for UI). Upload will use ORIGINAL bytes (no re-encode).
         referenceDataUrl = await fileToDataUrl(file, {
-          maxDim: 2048,
+          maxDim: 4096,
           mime: "image/png",
           quality: 1.0,
         });
@@ -1719,7 +1719,7 @@ HARD FAIL CONDITIONS
             anchorX: FINAL_ANCHOR_X,
             anchorY: FINAL_ANCHOR_Y,
           },
-            size: "2048x2048",
+            size: "4096x4096",
             quality: "high",
             output_format: "png",
             traits: slot.traits
@@ -1806,7 +1806,7 @@ HARD FAIL CONDITIONS
               anchorX: FINAL_ANCHOR_X,
               anchorY: FINAL_ANCHOR_Y,
             },
-            size: "2048x2048",
+            size: "4096x4096",
             quality: "high",
             output_format: "png",
             traits: slot.traits,
@@ -1958,7 +1958,7 @@ HARD FAIL CONDITIONS
                       anchorX: FINAL_ANCHOR_X,
                       anchorY: FINAL_ANCHOR_Y
                     },
-                    size: "2048x2048",
+                    size: "4096x4096",
                     quality: "high",
                     output_format: "png",
                     traits: slot.traits
@@ -2007,7 +2007,7 @@ HARD FAIL CONDITIONS
           prompt: promptA,
           input_storage_path: image0Path,
           input_charm_storage_path: image1Path,
-          size: "2048x2048",
+          size: "4096x4096",
           quality: "high",
           output_format: "png",
           postprocess: {
