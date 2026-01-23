@@ -724,6 +724,13 @@ HARD FAIL CONDITIONS
     HARD FAIL
     • Any engraving/cutout loss, any perimeter warping, any added necklace chain, any disconnected hoop/jump ring, or any change to chain geometry from Image[0].`;
 
+    // ---------------------------------------------
+    // Slot 1 prompt authority (TEMP TOGGLE)
+    // ---------------------------------------------
+    // When true, Slot 1 will ALWAYS send DEFAULT_PROMPT to the backend
+    // and will skip the dynamic buildPrompt()/two-pass pipeline entirely.
+    const SLOT1_DEFAULT_PROMPT_ONLY = true;
+
 
     const PROMPT_BY_SLOT = Array.from({ length: SLOT_COUNT }, () => DEFAULT_PROMPT);
     // Seed per-slot prompts (Slot 2 + Slot 3)
@@ -1735,6 +1742,92 @@ HARD FAIL CONDITIONS
           });
 
           // Wait until job completes so runPool concurrency actually limits load.
+          await doneP;
+          return;
+        }
+
+
+
+        // ---------- Slot 1: DEFAULT_PROMPT ONLY (single-pass; bypass buildPrompt/two-pass) ----------
+        // This temporarily disables the Slot 1 dynamic prompt assembly you pasted (buildPrompt + stages).
+        // Slot 2/3 keep their current behavior.
+        if (SLOT1_DEFAULT_PROMPT_ONLY && i === 0) {
+          if (!image1Path) throw new Error("Slot 1 requires Image[1] (charm macro).");
+
+          const fullPrompt = DEFAULT_PROMPT; // Slot 1 source-of-truth
+          slot.prompt = fullPrompt;
+
+          // Watch this job until complete (so runPool concurrency actually limits load)
+          let unsub = null;
+          let done = false;
+          let resolveDone;
+          const doneP = new Promise((r) => (resolveDone = r));
+
+          const jobRef = window.db.collection(JOBS_COLL).doc(jobIdB);
+          unsub = jobRef.onSnapshot(
+            (snap) => {
+              if (!snap.exists) return;
+              const j = snap.data() || {};
+
+              if (j.status === "running") {
+                const pct =
+                  (j.stage === "calling_gemini") ? 55 :
+                  (j.stage === "uploading") ? 80 :
+                  25;
+                setBar(i, pct);
+                const stageLabel = (j.stage === "uploading") ? "Uploading…" : "Generating…";
+                setMeta(i, stageLabel);
+                statusEl.textContent = stageLabel;
+              }
+
+              if (j.status === "done") {
+                if (j.downloadURL) {
+                  slot.uploadUrl = j.downloadURL;
+                  slot.imageDataUrl = j.downloadURL;
+                  setSlotPreview(i, j.downloadURL);
+                }
+                setBar(i, 100);
+                setMeta(i, `Done: ${j.storagePath || ""}`);
+                if (unsub) unsub();
+                if (!done) { done = true; resolveDone(); }
+              }
+
+              if (j.status === "error") {
+                setBar(i, 0);
+                setMeta(i, `Error: ${j?.error?.message || "Unknown error"}`);
+                if (unsub) unsub();
+                if (!done) { done = true; resolveDone(); }
+              }
+            },
+            (err) => {
+              console.error("job onSnapshot error", err);
+              setBar(i, 0);
+              setMeta(i, `Error: ${err?.message || String(err)}`);
+              if (unsub) unsub();
+              if (!done) { done = true; resolveDone(); }
+            }
+          );
+
+          await enqueueGeminiImageJob({
+            jobId: jobIdB,
+            runId,
+            slotIndex: i,
+            kind: "edits",
+            model,
+            prompt: fullPrompt,
+            input_storage_path: image0Path,
+            input_charm_storage_path: image1Path,
+            postprocess: {
+              finalFrameZoom: FINAL_FRAME_ZOOM,
+              anchorX: FINAL_ANCHOR_X,
+              anchorY: FINAL_ANCHOR_Y,
+            },
+            size: "1024x1024",
+            quality: "high",
+            output_format: "png",
+            traits: slot.traits,
+          });
+
           await doneP;
           return;
         }
