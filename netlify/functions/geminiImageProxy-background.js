@@ -274,9 +274,9 @@ async function callGeminiGenerateContentImage({
     (wantW && wantH ? `Exact size ${wantW}x${wantH}. ` : "") +
     `Return an image suitable for a product photo.`;
 
-  // NOTE: For multimodal editing, parts can include multiple inline_data images.
-  // We keep text first (instruction) then images (conditioning inputs).
-  const parts = [{ text: promptText }];
+  // NOTE: For multimodal image editing, Gemini tends to follow edits more reliably when
+  // the reference images come BEFORE the instruction text in the parts array.
+  const parts = [];
   for (const img of images || []) {
     parts.push({
       inline_data: {
@@ -285,12 +285,18 @@ async function callGeminiGenerateContentImage({
       },
     });
   }
+  parts.push({ text: promptText });
 
   const body = stripUndefined({
     contents: [{ role: "user", parts }],
     generationConfig: {
       // Gemini image models typically return both; request both to avoid empty responses.
       responseModalities: ["TEXT", "IMAGE"],
+     // Determinism knobs (best-effort): keep randomness low for repeatable framing/sizing.
+      candidateCount: 1,
+      temperature: 0,
+      topK: 1,
+      topP: 1,
     },
   });
 
