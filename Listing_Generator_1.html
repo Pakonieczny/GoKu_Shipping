@@ -1632,9 +1632,15 @@ HARD FAIL
             if (!snap.exists) return;
             const j = snap.data() || {};
             if (j.status === "running") {
-              const pct = j.stage === "calling_gemini" ? 55 : : j.stage === "uploading" ? 80 : 25;
+              const pct =
+                (j.stage === "calling_gemini") ? 55 :
+                (j.stage === "uploading") ? 80 :
+                25;
               setBar(i, pct);
-              setMeta(i, j.stage === "uploading" ? statusEl.textContent = (j.stage === "uploading" ? "Uploading…" : "Generating…");
+
+              const stageLabel = (j.stage === "uploading") ? "Uploading…" : "Generating…";
+              setMeta(i, stageLabel);
+              statusEl.textContent = stageLabel;
             }
             if (j.status === "done") {
               if (j.downloadURL) {
