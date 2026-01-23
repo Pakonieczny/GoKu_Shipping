@@ -205,6 +205,18 @@
 
     window.db = firebase.firestore();
 
+    // Firestore transport hardening
+    // Fixes: "Deadline expired before operation could complete."
+    // Must be called BEFORE any reads/writes/onSnapshot listeners.
+    try {
+      window.db.settings({
+        ignoreUndefinedProperties: true,
+        experimentalForceLongPolling: true,
+      });
+    } catch (e) {
+      console.warn("Firestore settings skipped:", e);
+    }
+
     // modular twin (same approach as shipping-1 resumable uploader)
     let modApp;
     try { modApp = getApp(); } catch { modApp = initializeApp(firebase.app().options); }
@@ -800,8 +812,8 @@ HARD FAIL
         quality = 1.0,
 
         // --- NEW: deterministic framing lock (crop -> resize) ---
-        outW = null,            // e.g. 2048
-        outH = null,            // e.g. 2048
+        outW = null,            // e.g. 1024
+        outH = null,            // e.g. 1024
         frameZoom = 1.00,        // e.g. 1.07 means "zoom in" by cropping to 1/1.07 area
         anchorX = 0.5,          // 0..1 crop center X
         anchorY = 0.6,          // 0..1 crop center Y (biased lower to favor necklace)
@@ -1041,7 +1053,7 @@ HARD FAIL
         statusEl.textContent = "Preparing reference…";
         // Preview only (safe to downscale for UI). Upload will use ORIGINAL bytes (no re-encode).
         referenceDataUrl = await fileToDataUrl(file, {
-          maxDim: 2048,
+          maxDim: 1024,
           mime: "image/png",
           quality: 1.0,
         });
@@ -1673,7 +1685,7 @@ HARD FAIL
             anchorX: FINAL_ANCHOR_X,
             anchorY: FINAL_ANCHOR_Y,
           },
-            size: "2048x2048",
+            size: "1024x1024",
             quality: "high",
             output_format: "png",
             traits: slot.traits
@@ -1804,7 +1816,7 @@ HARD FAIL
                 anchorX: FINAL_ANCHOR_X,
                 anchorY: FINAL_ANCHOR_Y
               },
-              size: "2048x2048",
+              size: "1024x1024",
               quality: "high",
               output_format: "png",
               traits: slot.traits
@@ -1829,7 +1841,7 @@ HARD FAIL
           prompt: promptA,
           input_storage_path: image0Path,
           input_charm_storage_path: image1Path,
-          size: "2048x2048",
+          size: "1024x1024",
           quality: "high",
           output_format: "png",
           postprocess: {
