@@ -1618,11 +1618,7 @@ HARD FAIL
       // which triggers Firestore "Deadline expired..." bursts.
       const JOB_TIMEOUT_MS = 14 * 60 * 1000; // keep < Netlify background max runtime
       let done = false;
-
-      // NOTE: do not reference `doneP` inside the Promise executor (TDZ error).
-      // Use a separate closure function for clearing the timeout.
       let clearDoneTimer = () => {};
-
       const doneP = new Promise((resolve) => {
         const t = setTimeout(() => {
           if (done) return;
@@ -1633,6 +1629,7 @@ HARD FAIL
           setMeta(i, "Error: Timeout waiting for job completion");
           resolve();
         }, JOB_TIMEOUT_MS);
+        // IMPORTANT: do NOT reference doneP inside this executor (TDZ). Use the closure.
         clearDoneTimer = () => clearTimeout(t);
       });
 

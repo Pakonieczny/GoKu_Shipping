@@ -779,19 +779,23 @@ exports.handler = async (event) => {
   const jobRef = db.collection(JOBS_COLL).doc(jobId);
 
   try {
-    await firestoreRetry(() => jobRef.set(
-      {
-        status: "running",
-        stage: "starting",
-        runId: runId || null,
-        slotIndex: typeof slotIndex === "number" ? slotIndex : null,
-        kind,
-        model,
-        clientModel: _clientModel || null,
-        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-        createdAt: admin.firestore.FieldValue.serverTimestamp(),
-      ), "jobRef.set");
-      { merge: true }
+    await firestoreRetry(
+      () =>
+        jobRef.set(
+          {
+            status: "running",
+            stage: "starting",
+            runId: runId || null,
+            slotIndex: typeof slotIndex === "number" ? slotIndex : null,
+            kind,
+            model,
+            clientModel: _clientModel || null,
+            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+            createdAt: admin.firestore.FieldValue.serverTimestamp(),
+          },
+          { merge: true }
+        ),
+      "jobRef.set"
     );
 
     const apiKey = process.env.GEMINI_API_KEY;
