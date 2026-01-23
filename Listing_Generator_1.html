@@ -1485,7 +1485,7 @@ HARD FAIL CONDITIONS
     }
 
       function buildPrompt(base, traits, hasCharmMacro, stage /* "placement" | "single" | "final" */, charmPlan){
-  /*    const imageRoleBlock = hasCharmMacro ? [
+      const imageRoleBlock = hasCharmMacro ? [
         "INPUT IMAGES (ORDER MATTERS)",
         (stage === "placement" || stage === "single")
           ? "- Image[0]: reference photo (truth source for necklace placement + chain geometry + station spacing + metal tone + drape)."
@@ -1587,7 +1587,7 @@ HARD FAIL CONDITIONS
         "",
         cameraLast,
       ].filter(Boolean).join("\n");
-    } */
+    } 
 
      async function generateOne(i){
       const slot = slots[i];
