@@ -5,6 +5,7 @@
 
 const admin = require("./firebaseAdmin");
 const sharp = require("sharp");
+const { initializeFirestore, getFirestore } = require("firebase-admin/firestore");
 
 // Node 18 on Netlify provides fetch/FormData/Blob globally.
 // If your build ever lacks fetch, uncomment:
@@ -98,6 +99,51 @@ function clampNumber(n, min, max, fallback) {
   const x = Number(n);
   if (!Number.isFinite(x)) return fallback;
   return Math.max(min, Math.min(max, x));
+}
+
+// -------------------------
+// Firestore (Admin) hardening for serverless
+// - preferRest avoids gRPC/HTTP2 flakiness in some serverless environments
+// - retries smooth over transient DEADLINE_EXCEEDED / UNAVAILABLE spikes
+let _db;
+function getDb() {
+  if (_db) return _db;
+  try {
+    _db = initializeFirestore(admin.app(), { preferRest: true });
+  } catch (e) {
+    _db = getFirestore(admin.app());
+  }
+  return _db;
+}
+function sleep(ms) { return new Promise((r) => setTimeout(r, ms)); }
+function isRetryableFirestoreError(err) {
+  const code = err?.code || err?.details;
+  const msg = String(err?.message || "").toLowerCase();
+  return (
+    code === "deadline-exceeded" ||
+    code === "resource-exhausted" ||
+    code === "unavailable" ||
+    code === "aborted" ||
+    code === "internal" ||
+    msg.includes("deadline") ||
+    msg.includes("resource") ||
+    msg.includes("unavailable")
+  );
+}
+async function firestoreRetry(fn, label = "firestore") {
+  let lastErr;
+  for (let attempt = 1; attempt <= 8; attempt++) {
+    try {
+      return await fn();
+    } catch (err) {
+      lastErr = err;
+      if (attempt === 8 || !isRetryableFirestoreError(err)) throw err;
+      const backoff = Math.min(6000, 250 * (2 ** (attempt - 1))) + Math.floor(Math.random() * 250);
+      console.log(`[${label}] retry ${attempt} after ${backoff}ms`, safeErr(err));
+      await sleep(backoff);
+    }
+  }
+  throw lastErr;
 }
 
 // Deterministic final framing: crop -> resize back to original size.
@@ -729,11 +775,11 @@ exports.handler = async (event) => {
 
   if (!jobId) return json(400, { error: { message: "jobId is required" } });
 
-  const db = admin.firestore();
+  const db = getDb();
   const jobRef = db.collection(JOBS_COLL).doc(jobId);
 
   try {
-    await jobRef.set(
+    await firestoreRetry(() => jobRef.set(
       {
         status: "running",
         stage: "starting",
@@ -744,7 +790,7 @@ exports.handler = async (event) => {
         clientModel: _clientModel || null,
         updatedAt: admin.firestore.FieldValue.serverTimestamp(),
         createdAt: admin.firestore.FieldValue.serverTimestamp(),
-      },
+      ), "jobRef.set");
       { merge: true }
     );
 
@@ -760,10 +806,17 @@ exports.handler = async (event) => {
         throw new Error("charm_postscale requires input_storage_path or input_image (Pass A output)");
       }
 
-      await jobRef.set(
-        { stage: "downloading_inputs", updatedAt: admin.firestore.FieldValue.serverTimestamp() },
-        { merge: true }
-      );
+   await firestoreRetry(
+      () =>
+        jobRef.set(
+          {
+            stage: "downloading_inputs",
+            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+          },
+          { merge: true }
+        ),
+      "jobRef.set"
+    );
 
       const passA = input_storage_path
         ? await storagePathToBuffer(input_storage_path)
@@ -771,10 +824,10 @@ exports.handler = async (event) => {
 
       // Step 1: obtain a "no-charm base" with identical framing.
       // Prefer an explicit base (original Image[0]) to avoid inpaint drift that breaks diff-masking.
-      await jobRef.set(
+      await firestoreRetry(() => jobRef.set(
         { stage: "removing_charm", updatedAt: admin.firestore.FieldValue.serverTimestamp() },
         { merge: true }
-      );
+      ), "jobRef.set");
 
       let rp = String(remove_prompt || "").trim();
       let baseNoCharmBuf;
@@ -816,10 +869,10 @@ exports.handler = async (event) => {
       }
 
       // Step 2: postprocess scale (no re-generation of engraving)
-      await jobRef.set(
+      await firestoreRetry(() => jobRef.set(
         { stage: "postprocessing", updatedAt: admin.firestore.FieldValue.serverTimestamp() },
         { merge: true }
-      );
+      ), "jobRef.set");
 
       let finalBuf = await postScaleCharmComposite({
         passABuf: passA.buffer,
@@ -836,15 +889,15 @@ exports.handler = async (event) => {
       // Final deterministic framing (OUTPUT only)
       finalBuf = await applyFinalFrameZoomIfNeeded(finalBuf, postprocess);
 
-      await jobRef.set(
+      await firestoreRetry(() => jobRef.set(
         { stage: "uploading", updatedAt: admin.firestore.FieldValue.serverTimestamp() },
         { merge: true }
-      );
+      ), "jobRef.set");
 
       const { storagePath, downloadURL, effectiveRunId, effectiveSlot } =
         await uploadPngBufferToStorage({ outBuf: finalBuf, jobId, runId, slotIndex });
 
-      await db.collection(IMAGES_COLL).add({
+      await firestoreRetry(() => db.collection(IMAGES_COLL).add({
         runId: effectiveRunId,
         slotIndex: effectiveSlot,
         createdAt: new Date(),
@@ -856,19 +909,23 @@ exports.handler = async (event) => {
         jobId,
         kind,
         postprocess: postprocess || null,
-      });
+      }), "images.add");
 
-      await jobRef.set(
-        {
-          status: "done",
-          stage: "done",
-          storagePath,
-          downloadURL,
-          finishedAt: admin.firestore.FieldValue.serverTimestamp(),
-          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-        },
-        { merge: true }
-      );
+    await firestoreRetry(
+      () =>
+        jobRef.set(
+          {
+            status: "done",
+            stage: "done",
+            storagePath,
+            downloadURL,
+            finishedAt: admin.firestore.FieldValue.serverTimestamp(),
+            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+          },
+          { merge: true }
+        ),
+      "jobRef.set"
+    );
 
       return json(202, { ok: true, jobId });
     }
@@ -882,12 +939,16 @@ exports.handler = async (event) => {
       return json(400, { error: { message: "kind must be 'edits', 'generations', or 'charm_postscale'" } });
     }
 
-    await jobRef.set(
-      {
-        stage: "calling_gemini",
-        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-      },
-      { merge: true }
+    await firestoreRetry(
+      () =>
+        jobRef.set(
+          {
+            stage: "uploading",
+            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+          },
+          { merge: true }
+        ),
+      "jobRef.set"
     );
 
     let outBuf;
@@ -939,12 +1000,16 @@ exports.handler = async (event) => {
       });
     }
 
-    await jobRef.set(
-      {
-        stage: "uploading",
-        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-      },
-      { merge: true }
+    await firestoreRetry(
+      () =>
+        jobRef.set(
+          {
+            stage: "uploading",
+            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+          },
+          { merge: true }
+        ),
+      "jobRef.set"
     );
 
        // Final deterministic framing (OUTPUT only)
@@ -953,7 +1018,7 @@ exports.handler = async (event) => {
       const { storagePath, downloadURL, effectiveRunId, effectiveSlot } =
       await uploadPngBufferToStorage({ outBuf, jobId, runId, slotIndex });
 
-    await db.collection(IMAGES_COLL).add({
+    await firestoreRetry(() => db.collection(IMAGES_COLL).add({
       runId: effectiveRunId,
       slotIndex: effectiveSlot,
       createdAt: new Date(),
@@ -964,9 +1029,9 @@ exports.handler = async (event) => {
       traits: body.traits || null,
       jobId,
       kind,
-    });
+    }), "images.add");
 
-    await jobRef.set(
+    await firestoreRetry(() => jobRef.set(
       {
         status: "done",
         stage: "done",
@@ -976,18 +1041,22 @@ exports.handler = async (event) => {
         updatedAt: admin.firestore.FieldValue.serverTimestamp(),
       },
       { merge: true }
-    );
+    ), "jobRef.set");
 
     return json(202, { ok: true, jobId });
   } catch (err) {
-    await jobRef.set(
-      {
-        status: "error",
-        stage: "error",
-        error: safeErr(err),
-        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-      },
-      { merge: true }
+    await firestoreRetry(
+      () =>
+        jobRef.set(
+          {
+            status: "error",
+            stage: "error",
+            error: safeErr(err),
+            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+          },
+          { merge: true }
+        ),
+      "jobRef.set"
     );
 
     // Still 202 so the browser doesn’t treat the request as “failed to enqueue”

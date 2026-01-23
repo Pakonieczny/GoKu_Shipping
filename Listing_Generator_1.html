@@ -1612,6 +1612,26 @@ HARD FAIL
       let unsubA = null;
       let unsubB = null;
 
+     // IMPORTANT:
+      // We must not "return" immediately after enqueueing jobs.
+      // If we return early, runPool's concurrency does NOT limit active jobs/listeners,
+      // which triggers Firestore "Deadline expired..." bursts.
+      const JOB_TIMEOUT_MS = 14 * 60 * 1000; // keep < Netlify background max runtime
+      let done = false;
+      const doneP = new Promise((resolve) => {
+        const t = setTimeout(() => {
+          if (done) return;
+          done = true;
+          try { if (unsubA) { unsubA(); unsubA = null; } } catch {}
+          try { if (unsubB) { unsubB(); unsubB = null; } } catch {}
+          setBar(i, 0);
+          setMeta(i, "Error: Timeout waiting for job completion");
+          resolve();
+        }, JOB_TIMEOUT_MS);
+        // stash timer handle on the promise via closure
+        doneP._clear = () => clearTimeout(t);
+      });
+
       setBar(i, 5);
       setMeta(
         i,
@@ -1663,11 +1683,30 @@ HARD FAIL
               setBar(i, 100);
               setMeta(i, `Done: ${j.storagePath || ""}`);
               if (unsub) unsub();
+              if (!done) {
+                done = true;
+                try { doneP._clear && doneP._clear(); } catch {}
+                doneP.then(()=>{}); // no-op
+              }
             }
             if (j.status === "error") {
               setBar(i, 0);
               setMeta(i, `Error: ${j?.error?.message || "Unknown error"}`);
               if (unsub) unsub();
+              if (!done) {
+                done = true;
+                try { doneP._clear && doneP._clear(); } catch {}
+              }
+            }
+
+            }, (err) => {
+            console.error("job onSnapshot error", err);
+            setBar(i, 0);
+            setMeta(i, `Error: ${err?.message || String(err)}`);
+            if (unsub) unsub();
+            if (!done) {
+              done = true;
+              try { doneP._clear && doneP._clear(); } catch {}
             }
           });
 
@@ -1691,6 +1730,8 @@ HARD FAIL
             traits: slot.traits
           });
 
+          // Wait until job completes so runPool concurrency actually limits load.
+          await doneP;
           return;
         }
 
@@ -1714,6 +1755,8 @@ HARD FAIL
         slot.prompt = `${promptA}\n\n-----\n\n[Pass B: charm_postscale targetPx=${finalCharmTargetPx} (fallbackScale=${postScale.toFixed(3)})]`;
 
         let passAStoragePath = null;
+
+        let passBEnqueued = false;
 
         // Listen Pass B (final)
         unsubB = jobRefB.onSnapshot((snap) => {
@@ -1750,6 +1793,10 @@ HARD FAIL
             }            
             setBar(i, 100);
             setMeta(i, "Done");
+           if (!done) {
+              done = true;
+              try { doneP._clear && doneP._clear(); } catch {}
+            }
           }
 
           if (jb.status === "error") {
@@ -1757,6 +1804,19 @@ HARD FAIL
             setBar(i, 0);
             setMeta(i, "Error");
             console.error("Pass B error", jb.error);
+           if (!done) {
+              done = true;
+              try { doneP._clear && doneP._clear(); } catch {}
+            }
+          }
+         }, (err) => {
+          console.error("Pass B onSnapshot error", err);
+          setBar(i, 0);
+          setMeta(i, `Error: ${err?.message || String(err)}`);
+          if (unsubB) { unsubB(); unsubB = null; }
+          if (!done) {
+            done = true;
+            try { doneP._clear && doneP._clear(); } catch {}
           }
         });
 
@@ -1793,34 +1853,46 @@ HARD FAIL
             setMeta(i, "Queued (Pass B)…");
 
             // Enqueue Pass B (non-regenerative post-scale composite)
-            enqueueGeminiImageJob({
-              jobId: jobIdB,
-              runId,
-              slotIndex: i,
-              kind: "charm_postscale",
-              model,
-              input_storage_path: passAStoragePath,
-              // NEW: use the original Image[0] as the true "no-charm" base.
-              // This avoids inpaint drift → stable diff mask → slider reliably controls final charm size.
-              base_storage_path: image0Path,
-              remove_prompt: removePrompt,
-              postprocess: {
-                // NEW: stable proportional sizing
-                targetPx: finalCharmTargetPx,
-                // OLD: kept for backwards compatibility (server ignores if targetPx exists)
-                scale: postScale,                
-                shadowOpacity: 0.22,
-                shadowBlur: 2,
-                diffThreshold: 18,
-                finalFrameZoom: FINAL_FRAME_ZOOM,
-                anchorX: FINAL_ANCHOR_X,
-                anchorY: FINAL_ANCHOR_Y
-              },
-              size: "1024x1024",
-              quality: "high",
-              output_format: "png",
-              traits: slot.traits
-            });
+            if (!passBEnqueued) {
+              passBEnqueued = true;
+              (async () => {
+                try {
+                  await enqueueGeminiImageJob({
+                    jobId: jobIdB,
+                    runId,
+                    slotIndex: i,
+                    kind: "charm_postscale",
+                    model,
+                    input_storage_path: passAStoragePath,
+                    // NEW: use the original Image[0] as the true "no-charm" base.
+                    base_storage_path: image0Path,
+                    remove_prompt: removePrompt,
+                    postprocess: {
+                      targetPx: finalCharmTargetPx,
+                      scale: postScale,
+                      shadowOpacity: 0.22,
+                      shadowBlur: 2,
+                      diffThreshold: 18,
+                      finalFrameZoom: FINAL_FRAME_ZOOM,
+                      anchorX: FINAL_ANCHOR_X,
+                      anchorY: FINAL_ANCHOR_Y
+                    },
+                    size: "1024x1024",
+                    quality: "high",
+                    output_format: "png",
+                    traits: slot.traits
+                  });
+                } catch (e) {
+                  console.error("Pass B enqueue failed", e);
+                  setBar(i, 0);
+                  setMeta(i, `Error: ${e?.message || String(e)}`);
+                  if (!done) {
+                    done = true;
+                    try { doneP._clear && doneP._clear(); } catch {}
+                  }
+                }
+              })();
+            }
           }
 
           if (jb.status === "error") {
@@ -1828,6 +1900,19 @@ HARD FAIL
             setBar(i, 0);
             setMeta(i, "Error");
             console.error("Pass A error", jb.error);
+          if (!done) {
+              done = true;
+              try { doneP._clear && doneP._clear(); } catch {}
+            }
+          }
+          }, (err) => {
+          console.error("Pass A onSnapshot error", err);
+          setBar(i, 0);
+          setMeta(i, `Error: ${err?.message || String(err)}`);
+          if (unsubA) { unsubA(); unsubA = null; }
+          if (!done) {
+            done = true;
+            try { doneP._clear && doneP._clear(); } catch {}
           }
         });
 
@@ -1851,21 +1936,32 @@ HARD FAIL
             },
           traits: slot.traits
         });
+
+        // Wait until Pass B completes (or error/timeout) before returning.
+        await doneP;
+
       } catch (e) {
         setBar(i, 0);
         setMeta(i, `Error: ${e.message}`);
         console.error(e);
         if (unsubA) { unsubA(); unsubA = null; }
         if (unsubB) { unsubB(); unsubB = null; }
+        if (!done) {
+          done = true;
+          try { doneP._clear && doneP._clear(); } catch {}
+        }
       }
 
      }
+
+    const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
     async function runPool(items, worker, concurrency = 2) {
       const queue = items.slice();
       const runners = Array.from({ length: concurrency }, async () => {
         while (queue.length) {
           const item = queue.shift();
+          await sleep(250); // slight stagger to reduce bursty Firestore + function load
           await worker(item);
         }
       });
