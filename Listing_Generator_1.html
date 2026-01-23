@@ -115,7 +115,7 @@
       <div class="drop" id="charmDrop">
         <div>
           <strong id="charmName">No charm macro selected</strong>
-          <div class="muted">Upload a sharp macro of the charm only (flat, legible engraving). Sent to OpenAI as Image[1].</div>
+           <div class="muted">Upload a sharp macro of the charm only (flat, legible engraving). Sent to Gemini as Image[1].</div>
         </div>
         <div class="row">
           <input id="charmFile" type="file" accept="image/*" />
@@ -133,10 +133,9 @@
       <label>Generative description (live editable)</label>
       <textarea id="prompt"></textarea>
 
-      <label>Model (Images API)</label>
+        <label>Model (Gemini Image)</label>
       <select id="model">
-        <option value="gpt-image-1.5">gpt-image-1.5 (if enabled)</option>
-        <option value="gpt-image-1">gpt-image-1</option>
+        <option value="gemini-3-pro-image-preview">gemini-3-pro-image-preview</option>
       </select>
 
       <label>Final charm size (px) (postprocess)</label>
@@ -1448,9 +1447,9 @@ HARD FAIL
 
     const JOBS_COLL = "ListingGenerator1Jobs";
 
-    async function enqueueOpenAIImageJob(payload){
+    async function enqueueGeminiImageJob(payload){
       // Background function: returns fast; work continues server-side.
-      const resp = await fetch("/.netlify/functions/openaiImageProxy-background", {
+      const resp = await fetch("/.netlify/functions/geminiImageProxy-background", {
         method: "POST",
         headers: { "Content-Type":"application/json" },
         body: JSON.stringify(payload)
@@ -1459,7 +1458,7 @@ HARD FAIL
       // Background functions respond immediately; we only need a 2xx here.
       if (!resp.ok) {
         const raw = await resp.text().catch(()=> "");
-        throw new Error(raw || `openaiImageProxy-background HTTP ${resp.status}`);
+        throw new Error(raw || `geminiImageProxy-background HTTP ${resp.status}`);
       }
     }
 
@@ -1633,7 +1632,7 @@ HARD FAIL
             if (!snap.exists) return;
             const j = snap.data() || {};
             if (j.status === "running") {
-              const pct = j.stage === "calling_openai" ? 35 : j.stage === "uploading" ? 80 : 25;
+              const pct = j.stage === "calling_gemini" ? 55 : : j.stage === "uploading" ? 80 : 25;
               setBar(i, pct);
               setMeta(i, j.stage === "uploading" ? "Uploading…" : "Generating…");
             }
@@ -1654,7 +1653,7 @@ HARD FAIL
             }
           });
 
-          await enqueueOpenAIImageJob({
+          await enqueueGeminiImageJob({
             jobId: jobIdB,
             runId,
             slotIndex: i,
@@ -1679,7 +1678,7 @@ HARD FAIL
 
         // ---------- Two-pass (has charm macro) ----------
         // Pass A: generate variant WITH pendant (allow larger for detail)
-        // Pass B: remove pendant via OpenAI, then post-scale composite (no regen scaling of engraving)
+        // Pass B: remove pendant via Gemini, then add pendant macro & post-shrink deterministically.
 
         const planA = charmPlanFromTraits(slot.traits, "placement");
         const promptA = buildPrompt(baseText, slot.traits, true, "placement", planA);
@@ -1709,7 +1708,7 @@ HARD FAIL
               jb.stage === "removing_charm" ? 70 :
               jb.stage === "postprocessing" ? 82 :
               jb.stage === "uploading" ? 92 :
-              jb.stage === "calling_openai" ? 70 :
+              jb.stage === "calling_gemini" ? 70 :
               65;
             setBar(i, pct);
 
@@ -1750,7 +1749,7 @@ HARD FAIL
 
           if (jb.status === "running") {
             const pct =
-              jb.stage === "calling_openai" ? 55 :
+              jb.stage === "calling_gemini" ? 55 :
               jb.stage === "uploading" ? 68 :
               50;
             setBar(i, pct);
@@ -1776,7 +1775,7 @@ HARD FAIL
             setMeta(i, "Queued (Pass B)…");
 
             // Enqueue Pass B (non-regenerative post-scale composite)
-            enqueueOpenAIImageJob({
+            enqueueGeminiImageJob({
               jobId: jobIdB,
               runId,
               slotIndex: i,
@@ -1815,7 +1814,7 @@ HARD FAIL
         });
 
         // Enqueue Pass A
-        await enqueueOpenAIImageJob({
+        await enqueueGeminiImageJob({
           jobId: jobIdA,
           runId,
           slotIndex: i,
@@ -1859,7 +1858,7 @@ HARD FAIL
       statusEl.textContent = "Generating 8…";
       gen8Btn.disabled = true;
 
-      // IMPORTANT: prevents Netlify/OpenAI proxy inactivity timeouts
+      // IMPORTANT: prevents Netlify/Gemini background inactivity timeouts
       // Keep at 2–3 for stability; you still generate 8 total.
       await runPool(slots.map(s => s.i), generateOne, 2);
 

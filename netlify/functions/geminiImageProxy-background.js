@@ -1,4 +1,4 @@
-/* netlify/functions/openaiImageProxy-background.js
+/* netlify/functions/geminiImageProxy-background.js
    Background Function: runs long Gemini image generation/edits without browser/edge inactivity 504s.
    Writes realtime status to Firestore + uploads final PNG to Firebase Storage.
 */
@@ -724,6 +724,9 @@ exports.handler = async (event) => {
 
   } = body || {};
 
+  // Hard-lock the Gemini model (ignore any client-provided model)
+  const model = GEMINI_IMAGE_MODEL;
+
   if (!jobId) return json(400, { error: { message: "jobId is required" } });
 
   const db = admin.firestore();
@@ -738,6 +741,7 @@ exports.handler = async (event) => {
         slotIndex: typeof slotIndex === "number" ? slotIndex : null,
         kind,
         model,
+        clientModel: _clientModel || null,
         updatedAt: admin.firestore.FieldValue.serverTimestamp(),
         createdAt: admin.firestore.FieldValue.serverTimestamp(),
       },
@@ -880,7 +884,7 @@ exports.handler = async (event) => {
 
     await jobRef.set(
       {
-        stage: "calling_gemini"
+        stage: "calling_gemini",
         updatedAt: admin.firestore.FieldValue.serverTimestamp(),
       },
       { merge: true }
