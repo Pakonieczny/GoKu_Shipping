@@ -179,7 +179,7 @@ async function callGeminiImagesGenerations({
   });
 }
 
-function sizeToAspectRatio(size = "1024x1024") {
+function sizeToAspectRatio(size = "2048x2048") {
   const m = /^(\d+)\s*x\s*(\d+)$/.exec(String(size || "").trim());
   if (!m) return "1:1";
   const w = Number(m[1]), h = Number(m[2]);
@@ -701,7 +701,7 @@ exports.handler = async (event) => {
     kind = "edits", // "edits" | "generations" | "charm_postscale"
     model: _clientModel,
     prompt,
-    size = "1024x1024",
+    size = "2048x2048",
     quality = "high",
     output_format = "png",
 
