@@ -189,6 +189,29 @@ function filenameForMime(base, mime) {
   return `${base}.${ext}`;
 }
 
+// Ensure the optional Image[2] (second model reference) matches Image[0]'s pixel frame.
+// This does NOT correct true focal length / distance mistakes in the source photo,
+// but it removes accidental dimension/aspect mismatches before Gemini sees the images.
+async function normalizeModel2ToReference(ref, model2) {
+  try {
+    const refMeta = await sharp(ref.buffer).metadata();
+    const m2Meta = await sharp(model2.buffer).metadata();
+    const rw = refMeta?.width || 0;
+    const rh = refMeta?.height || 0;
+    const mw = m2Meta?.width || 0;
+    const mh = m2Meta?.height || 0;
+    if (!rw || !rh || !mw || !mh) return model2;
+    if (rw === mw && rh === mh) return model2;
+    const buf = await sharp(model2.buffer)
+      .resize(rw, rh, { fit: "cover", position: "center", kernel: "lanczos3" })
+      .png()
+      .toBuffer();
+    return { buffer: buf, mime: "image/png" };
+  } catch {
+    return model2;
+  }
+}
+
 async function callGeminiImagesEdits({
   apiKey,
   model,
@@ -759,6 +782,10 @@ exports.handler = async (event) => {
     input_charm_storage_path,
     input_charm_image,
 
+    // Optional second model reference (Image[2]) — used by Slot 1 hybrid compose
+    input_model2_storage_path,
+    input_model2_image,
+
     // For charm_postscale:
     remove_prompt,
     postprocess,
@@ -978,6 +1005,20 @@ exports.handler = async (event) => {
         ? await storagePathToBuffer(input_storage_path)
         : dataUrlToBuffer(input_image);
 
+     // Optional second model reference (Image[2]) — used by Slot 1 hybrid compose
+      let model2 = null;
+      if (input_model2_storage_path || input_model2_image) {
+        model2 = input_model2_storage_path
+          ? await storagePathToBuffer(input_model2_storage_path)
+          : dataUrlToBuffer(input_model2_image);
+        model2 = await normalizeModel2ToReference(ref, model2);
+      }
+
+      // Slot 1 requires Image[2]
+      if (Number(slotIndex) === 0 && !model2) {
+        return json(400, { error: { message: "Slot 1 requires input_model2_storage_path or input_model2_image (Image[2])" } });
+      }
+
       // Charm macro (Image[1]) — optional second image
       let charm = null;
       if (input_charm_storage_path || input_charm_image) {
@@ -987,6 +1028,10 @@ exports.handler = async (event) => {
       }
 
       const images = [{ buffer: ref.buffer, mime: ref.mime, filename: filenameForMime("reference", ref.mime) }];
+
+      if (model2) {
+        images.push({ buffer: model2.buffer, mime: model2.mime, filename: filenameForMime("model_ref_2", model2.mime) });
+      }
 
       if (charm) {
         images.push({ buffer: charm.buffer, mime: charm.mime, filename: filenameForMime("charm_macro", charm.mime) });
