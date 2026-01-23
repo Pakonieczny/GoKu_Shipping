@@ -279,22 +279,6 @@
       const v = Number.isFinite(raw) ? raw : 14;
       return Math.round(clampNum(v, 4, 32));
     }
-
-    // Slot 1 prompt is the single source of truth.
-    // We inject numeric sizing targets into the DEFAULT_PROMPT placeholders to improve Gemini consistency.
-    function buildSlot1Prompt(baseText, finalCharmTargetPx){
-      const targetPx = Math.round(clampNum(finalCharmTargetPx, 4, 128));
-      const placePx = Math.round(clampNum(targetPx * CHARM_A_MULT, 4, 256));
-      const tolPx = Math.max(2, Math.round(placePx * 0.08)); // ~8% tolerance window for the placement step
-
-      // Placeholders are intentionally plain strings so the prompt remains editable in the UI.
-      return String(baseText || "")
-        .trim()
-        .replaceAll("{{CHARM_TARGET_PX}}", String(targetPx))
-        .replaceAll("{{CHARM_PLACE_PX}}", String(placePx))
-        .replaceAll("{{CHARM_PLACE_TOL_PX}}", String(tolPx));
-    }
-
     function syncFinalCharmTargetPxUI(v){
       const x = String(Math.round(v));
       if (finalCharmTargetPxEl) finalCharmTargetPxEl.value = x;
@@ -708,45 +692,48 @@ HARD FAIL CONDITIONS
 
 
     // Default prompt (edit freely)
- const DEFAULT_PROMPT =
+    const DEFAULT_PROMPT =
     `CRITICAL: This is a standard fashion product photo edit. Keep the subject modest. No nudity.
 
-TASK (SLOT 1 — IMAGE EDIT)
-• Edit Image[0] only by adding the charm from Image[1] as a hanging micro pendant on the existing chain.
-• Return exactly one photorealistic edited image. Do not output text.
+    TASK (SLOT 1 — IMAGE EDIT, SINGLE PASS)
+    Edit Image[0] only by adding the charm from Image[1] onto the existing necklace chain in Image[0] as a hanging pendant.
+    Return one photorealistic edited image. Do not output text.
 
-INPUT IMAGES (ORDER MATTERS)
-• Image[0] = base photo and pixel-truth for everything except the charm (model, skin, hair, clothing, background, lighting, chain geometry, bead stations, clasp, camera framing).
-• Image[1] = charm macro and pixel-truth for charm silhouette, cutouts, engraving, and the integrated hoop/bail.
+    INPUT IMAGES (ORDER MATTERS)
+    • Image[0] = base photo and single truth source for EVERYTHING except the charm (model, skin, hair, clothing, background, lighting, chain geometry, bead stations, clasp, camera framing).
+    • Image[1] = charm macro and single truth source for charm silhouette, cutouts, engraving, and the integrated hoop/bail.
 
-LOCK (DO NOT CHANGE IMAGE[0])
-• Do not change crop, zoom, perspective, pose, wardrobe, background, lighting, or skin.
-• Do not change the necklace chain geometry: station spacing, drape, clasp position, metal tone, reflections.
-• No added chain. No extra jewelry. No removed objects. Add only the pendant + one jump ring.
+    WHAT MUST NOT CHANGE (LOCK)
+    • Do not change Image[0] in any way except adding the pendant + its jump ring.
+    • No new necklace chain. No extra jewelry. No added objects. No removed objects.
+    • Preserve chain geometry exactly: station spacing, drape, clasp position, metal tone, reflections.
+    • Preserve camera framing exactly: same crop, same zoom, same perspective, same angle.
 
-CHARM FIDELITY (COPY IMAGE[1], NO REDRAW)
-• Copy the charm exactly from Image[1]. Do NOT redraw, reinterpret, stylize, smooth, sharpen, thicken, simplify, or clean up engraving/cutouts.
-• Size changes must be pure scaling only. Never change engraving/cutouts to make them “readable”.
-• Charm-only allowed: tiny exposure/white-balance match to Image[0], barely-there contact shadow, mild specular alignment. No geometry changes.
+    CHARM FIDELITY (IMAGE[1] IS PIXEL-TRUTH)
+    • Copy the charm exactly from Image[1]. Do NOT redraw, reinterpret, stylize, smooth, clean up, sharpen, thicken, simplify engraving/cutouts.
+    • Size changes must be pure scaling only. Never change engraving/cutouts to make them readable.
+    • IMPORTANT: At the requested tiny size, engraving may be unreadable. That is EXPECTED. Do not “fix” it by changing the engraving.
 
-HARDWARE + CONNECTION (NON-NEGOTIABLE)
-• The hoop/bail/loop is an INTEGRATED part of the charm silhouette exactly like Image[1] (one-piece laser-cut look).
-• Add exactly one realistic jump ring that passes through that integrated hoop and connects naturally to the existing chain.
-• HARD FAIL if the hoop/jump ring looks floating, disconnected, mis-threaded, or “attached later.”
+    PLACEMENT + HARDWARE (NON-NEGOTIABLE)
+    • The charm must hang from the existing chain in Image[0] at the same position a real pendant would sit.
+    • The hoop/bail/loop is an INTEGRATED part of the charm silhouette exactly like Image[1] (one-piece laser-cut look).
+    • The jump ring must pass through that integrated hoop and connect naturally to the chain.
 
-CHARM SIZE (CONSISTENT, PIXEL TARGET)
-• Place the charm at this on-image bbox HEIGHT now: {{CHARM_PLACE_PX}}px (target). Stay within ±{{CHARM_PLACE_TOL_PX}}px.
-• Do NOT change camera framing to satisfy size. Do NOT alter engraving/cutouts to compensate.
-• A deterministic post-scale will be applied after generation to reach final bbox height {{CHARM_TARGET_PX}}px.
+    ULTRA-MICRO SIZE OVERRIDE (TOP PRIORITY — MAKE IT BARELY VISIBLE)
+    • Force the pendant to be EXTREMELY small: final on-image charm height MUST be about 4–6 pixels tall (absolute pixel height, not relative).
+    • If you cannot measure pixels, choose the smallest size that is still technically visible on the chain, almost imperceptible at normal viewing.
+    • Strict rule: if the charm appears clearly visible at a glance, it is TOO LARGE — keep shrinking until it is barely noticeable.
+    • Do NOT compensate by zooming out, reframing, cropping, changing camera, changing necklace scale, changing model scale, changing engraving thickness, or changing chain thickness.
+    • The chain must remain exactly the same size as Image[0]. Only the charm is scaled.
 
-REALISM
-• Add a short, barely-there contact shadow directly under the charm so it reads as photographed, not pasted.
-• Keep the charm thin and close to the model’s body.
-• Keep skin photorealistic with natural texture (no plastic smoothing).
+    REALISM (SUBTLE ONLY)
+    • Add a barely-there contact shadow directly under the charm so it reads as photographed, not pasted.
+    • Keep the charm thin and close to the model’s body.
 
-HARD FAIL
-• Any change to Image[0] beyond adding the pendant + jump ring.
-• Any engraving/cutout loss, any perimeter warping, any added necklace chain, any disconnected hoop/jump ring, or any change to chain geometry/camera framing from Image[0].`;
+    HARD FAIL
+    • Any change to Image[0] beyond adding the pendant + jump ring.
+    • Any added chain, disconnected hoop/jump ring, or any change to chain geometry or camera framing.
+    • Any engraving/cutout loss due to redraw/reinterpretation (loss due to extreme downscaling is acceptable; do not alter geometry to prevent it).`;
 
 
     // ---------------------------------------------
@@ -1626,7 +1613,7 @@ HARD FAIL
       const isSlot1 = (i === 0);
       const isSlot2 = (i === 1);
       const isSlot3 = (i === 2);
-      const singlePassOnly = (isSlot2 || isSlot3);
+      const singlePassOnly = (isSlot1 || isSlot2 || isSlot3);
 
       // hasCharm drives the TWO-PASS branch only
       const hasCharm = singlePassOnly ? false : !!image1Path;
@@ -1671,7 +1658,7 @@ HARD FAIL
       setBar(i, 5);
       setMeta(
         i,
-        isSlot1 ? "Queued (Slot 1)…"
+        isSlot1 ? "Queued (Slot 1 Single-pass)…"
         : (isSlot2 ? "Queued (Slot 2 Duplicate)…"
         : (isSlot3 ? "Queued (Slot 3 Sizing Guide)…"
         : (hasCharm ? "Queued (Pass A)…" : "Queued…")))
@@ -1683,7 +1670,14 @@ HARD FAIL
           let fullPrompt =
             isSlot2 ? SLOT2_DUPLICATE_PROMPT.trim()
             : (isSlot3 ? SLOT3_SIZING_GUIDE_PROMPT.trim()
-            : buildPrompt(baseText, slot.traits, false, "final"));
+            : (isSlot1 ? null
+            : buildPrompt(baseText, slot.traits, false, "final")));
+          // Slot 1 requires Image[1] and uses a single-pass prompt with traits injected
+          if (isSlot1) {
+            if (!image1Path) throw new Error("Slot 1 requires Image[1] (charm macro). Upload the charm macro to Slot 1.");
+            const planSingle = charmPlanFromTraits(slot.traits, "single");
+            fullPrompt = buildPrompt(baseText, slot.traits, true, "single", planSingle);
+          }
 
           slot.prompt = fullPrompt;
 
@@ -1854,26 +1848,20 @@ HARD FAIL
         // Pass A: generate variant WITH pendant (allow larger for detail)
         // Pass B: remove pendant via Gemini, then add pendant macro & post-shrink deterministically.
 
-        const promptA = isSlot1
-          ? buildSlot1Prompt(baseText, finalCharmTargetPx)
-          : (()=>{
-              const planA = charmPlanFromTraits(slot.traits, "placement");
-              return buildPrompt(baseText, slot.traits, true, "placement", planA);
-            })();
+        const planA = charmPlanFromTraits(slot.traits, "placement");
+        const promptA = buildPrompt(baseText, slot.traits, true, "placement", planA);
 
         // OLD multiplier retained ONLY as fallback compatibility for older server code
         const postScale = clamp(1 / CHARM_A_MULT, 0.5, 0.7);
 
-        const removePrompt = isSlot1 ? "" : [
+        const removePrompt = [
           "Remove the pendant charm entirely.",
           "Keep the necklace chain, bead stations, clasp, metal tone, model, wardrobe, lighting, and camera exactly the same.",
           "Do not add any new jewelry. Do not change the chain geometry.",
           "Fill the removed area realistically (skin/clothing/background) with matching lighting and texture."
         ].join("\n");
 
-         slot.prompt = isSlot1
-          ? `${promptA}\n\n-----\n\n[Slot 1: charm_postscale targetPx=${finalCharmTargetPx} (placementPx≈${Math.round(finalCharmTargetPx * CHARM_A_MULT)})]`
-          : `${promptA}\n\n-----\n\n[Pass B: charm_postscale targetPx=${finalCharmTargetPx} (fallbackScale=${postScale.toFixed(3)})]`;
+        slot.prompt = `${promptA}\n\n-----\n\n[Pass B: charm_postscale targetPx=${finalCharmTargetPx} (fallbackScale=${postScale.toFixed(3)})]`;
 
         let passAStoragePath = null;
 
