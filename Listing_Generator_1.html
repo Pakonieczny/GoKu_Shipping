@@ -1047,7 +1047,7 @@ HARD FAIL CONDITIONS
         statusEl.textContent = "Preparing reference…";
         // Preview only (safe to downscale for UI). Upload will use ORIGINAL bytes (no re-encode).
         referenceDataUrl = await fileToDataUrl(file, {
-          maxDim: 1024,
+          maxDim: 2048,
           mime: "image/png",
           quality: 1.0,
         });
@@ -1719,7 +1719,7 @@ HARD FAIL CONDITIONS
             anchorX: FINAL_ANCHOR_X,
             anchorY: FINAL_ANCHOR_Y,
           },
-            size: "1024x1024",
+            size: "2048x2048",
             quality: "high",
             output_format: "png",
             traits: slot.traits
@@ -1806,7 +1806,7 @@ HARD FAIL CONDITIONS
               anchorX: FINAL_ANCHOR_X,
               anchorY: FINAL_ANCHOR_Y,
             },
-            size: "1024x1024",
+            size: "2048x2048",
             quality: "high",
             output_format: "png",
             traits: slot.traits,
@@ -1958,7 +1958,7 @@ HARD FAIL CONDITIONS
                       anchorX: FINAL_ANCHOR_X,
                       anchorY: FINAL_ANCHOR_Y
                     },
-                    size: "1024x1024",
+                    size: "2048x2048",
                     quality: "high",
                     output_format: "png",
                     traits: slot.traits
@@ -2007,7 +2007,7 @@ HARD FAIL CONDITIONS
           prompt: promptA,
           input_storage_path: image0Path,
           input_charm_storage_path: image1Path,
-          size: "1024x1024",
+          size: "2048x2048",
           quality: "high",
           output_format: "png",
           postprocess: {

@@ -225,15 +225,15 @@ async function callGeminiImagesGenerations({
   });
 }
 
-function sizeToAspectRatio(size = "1024x1024") {
+function sizeToAspectRatio(size = "2048x2048") {
   const m = /^(\d+)\s*x\s*(\d+)$/.exec(String(size || "").trim());
   if (!m) return "1:1";
   const w = Number(m[1]), h = Number(m[2]);
   if (!Number.isFinite(w) || !Number.isFinite(h) || w <= 0 || h <= 0) return "1:1";
   if (Math.abs(w - h) < 2) return "1:1";
   // Common cases you use
-  if (w === 1024 && h === 1024) return "1:1";
-  if (w === 1024 && h === 1024) return "1:1";
+  if (w === 2048 && h === 2048) return "1:1";
+  if (w === 2048 && h === 2048) return "1:1";
   // Fallback: reduce ratio
   const gcd = (a,b)=> b ? gcd(b, a%b) : a;
   const g = gcd(w, h);
@@ -274,9 +274,9 @@ async function callGeminiGenerateContentImage({
     (wantW && wantH ? `Exact size ${wantW}x${wantH}. ` : "") +
     `Return an image suitable for a product photo.`;
 
-  // NOTE: For multimodal image editing, Gemini tends to follow edits more reliably when
-  // the reference images come BEFORE the instruction text in the parts array.
-  const parts = [];
+  // NOTE: For multimodal editing, parts can include multiple inline_data images.
+  // We keep text first (instruction) then images (conditioning inputs).
+  const parts = [{ text: promptText }];
   for (const img of images || []) {
     parts.push({
       inline_data: {
@@ -285,18 +285,12 @@ async function callGeminiGenerateContentImage({
       },
     });
   }
-  parts.push({ text: promptText });
 
   const body = stripUndefined({
     contents: [{ role: "user", parts }],
     generationConfig: {
       // Gemini image models typically return both; request both to avoid empty responses.
       responseModalities: ["TEXT", "IMAGE"],
-     // Determinism knobs (best-effort): keep randomness low for repeatable framing/sizing.
-      candidateCount: 1,
-      temperature: 0,
-      topK: 1,
-      topP: 1,
     },
   });
 
@@ -753,7 +747,7 @@ exports.handler = async (event) => {
     kind = "edits", // "edits" | "generations" | "charm_postscale"
     model: _clientModel,
     prompt,
-    size = "1024x1024",
+    size = "2048x2048",
     quality = "high",
     output_format = "png",
 
