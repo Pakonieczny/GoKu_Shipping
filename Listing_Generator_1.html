@@ -696,21 +696,20 @@ HARD FAIL CONDITIONS
     `CRITICAL: This is a standard fashion product photo edit. Keep the subject modest. No nudity.
 
     ULTRA-MICRO SIZE OVERRIDE (TOP PRIORITY — MAKE IT BARELY VISIBLE)
-    • Force the pendant charm to be extremely small and extremely thin: final on-image charm height MUST be 8 pixels tall (absolute pixel height, not relative).
-    • If you cannot measure pixels, choose the smallest size that is still visible on the chain.
-    • The Charm must be extremeley flat and can must not contain any rounded edges, the Charm material is extremely thin with shallow and superficial engraving only. 
-    • DO NOT add any shadows, remove all contact shadows under the Charm
+    • Force the pendant to be very small: final on-image charm height MUST be 12 pixels tall (absolute pixel height, not relative).
+    • If you cannot measure pixels, choose the smallest size that is still legible on the chain.
     • Do NOT compensate by zooming out, reframing, cropping, changing camera, changing necklace scale, changing model scale, changing engraving thickness, or changing chain thickness.
-    • The chain must remain exactly the same size and detail as Image[0] or Image[2]. Only the charm is scaled.
-    
-    TASK (SLOT 1 — HYBRID MODEL + CHARM EDIT)
-    • Use Image[0] and Image[2] as two matching-framing model references (same distance, crop, lens look, zoom). Compose a completely brand new hybrid output image.
-    • CRITICAL: the output framing must match Image[0] and/or Image[2] exactly — no zooming in or out, no reframing, no cropping, no camera/lens changes.
-    • Preserve the necklace chain from Image[0] exactly (chain geometry, stations, clasp, drape, metal tone, lighting, background).
-    • Add only the charm from Image[1] onto the existing necklace chain as a hanging pendant.
-    • Focus on micro engraving accuracy from Image[1]. Do not simplify or thicken engraving.
-    • No contact shadow under the charm. Match charm colour, shading, reflections to the chain in Image[0] (avoid over-saturation).
-    • Return one photorealistic edited image. Do not output text.`;
+    • The chain must remain exactly the same size and detail as Image[0]. Only the charm is scaled.
+
+    TASK (SLOT 1 — IMAGE EDIT, SINGLE PASS)
+    Edit Image[0] only by replacing the charm from Image[1] onto the existing necklace chain in Image[0] as a hanging pendant.
+    DO not zoom out when generating the image. Keep model and frame consistent with Image_0
+    Return one photorealistic edited image. 
+    Focus on Charm Engraving details and ensure 100% accuracy to Image_1
+    Do not output text.
+    Ensure the charm colour, shading and reflections match the necklace chain in Image_0.
+    Do not saturate the Charm's gold colour.
+    The Necklace Chain and Charm must be shiny and have realistic shimmering. `;
 
 
     // ---------------------------------------------
@@ -1171,10 +1170,6 @@ HARD FAIL CONDITIONS
             <div class="slotRefEmpty">Image[1]</div>
             <div class="slotRefLabel">Image[1]</div>
           </div>
-           <div class="slotRefBox" id="ref2_${i}" title="Image[2] second model reference (Slot 1)">
-            <div class="slotRefEmpty">Image[2]</div>
-            <div class="slotRefLabel">Image[2]</div>
-          </div>
         </div>
         <div class="slotPrev" id="prev_${i}"></div>
         <div class="bar"><div id="bar_${i}"></div></div>
@@ -1194,10 +1189,8 @@ HARD FAIL CONDITIONS
         uploading: false,
         image0StoragePath: null,
         image1StoragePath: null,
-        image2StoragePath: null,
         ref0Url: null,
         ref1Url: null,
-        ref2Url: null,
       }));
       slots.forEach((s)=> gridEl.appendChild(makeSlot(s.i)));
 
@@ -1242,11 +1235,6 @@ HARD FAIL CONDITIONS
       const raw = String(name || "").toLowerCase();
       const compact = raw.replace(/[^a-z0-9]+/g, ""); // strips spaces/_/-/etc
 
-      // Priority: explicit Image2 tags in the filename
-      if (/(?:^|[^a-z0-9])image[\s_-]*2(?:[^a-z0-9]|$)/.test(raw)) return "image2";
-      if (/(?:^|[^a-z0-9])img[\s_-]*2(?:[^a-z0-9]|$)/.test(raw)) return "image2";
-      if (compact.includes("image2") || compact.includes("img2")) return "image2";
-
       // Priority: explicit Image0/Image1 tags in the filename
       if (/(?:^|[^a-z0-9])image[\s_-]*1(?:[^a-z0-9]|$)/.test(raw)) return "image1";
       if (/(?:^|[^a-z0-9])img[\s_-]*1(?:[^a-z0-9]|$)/.test(raw)) return "image1";
@@ -1259,7 +1247,6 @@ HARD FAIL CONDITIONS
       // Secondary hints
       if (/(macro|charm|pendant)/.test(raw)) return "image1";
       if (/(base|reference)/.test(raw)) return "image0";
-      if (/(alt|alternate|second|model2|complement|complimentary)/.test(raw)) return "image2";
 
       return "unknown";
     }
@@ -1297,25 +1284,12 @@ HARD FAIL CONDITIONS
         const image0Path = base.fullPath;
         const image1Path = charm ? charm.fullPath : null;
 
-        // Slot 1 supports Image[2] (second model reference)
-        let model2 =
-          tagged.find(x => x.role === "image2" && x.fullPath !== base.fullPath && x.fullPath !== (charm?.fullPath || "")) ||
-          tagged.find(x => x.fullPath !== base.fullPath && x.fullPath !== (charm?.fullPath || "")) ||
-          null;
-        const image2Path = model2 ? model2.fullPath : null;
-
-        if (slotIndex === 0 && !image2Path) {
-          throw new Error(`Slot 1: Image[2] (second model reference) is required in "${slotFolder(slotIndex)}/"`);
-        }
-
-        return { image0Path, image1Path, image2Path, all: tagged };
+        return { image0Path, image1Path, all: tagged };
       } catch (e) {
         // Fallback: if listAll is blocked by Storage rules, rely on last-known uploaded paths
         const s = slots[slotIndex];
         if (s?.image0StoragePath) {
-          const image2 = s.image2StoragePath || null;
-          if (slotIndex === 0 && !image2) throw new Error("Slot 1: Image[2] (second model reference) is required.");
-          return { image0Path: s.image0StoragePath, image1Path: s.image1StoragePath || null, image2Path: image2, all: [] };
+          return { image0Path: s.image0StoragePath, image1Path: s.image1StoragePath || null, all: [] };
         }
         throw e;
       }
@@ -1348,14 +1322,12 @@ HARD FAIL CONDITIONS
         // heuristics: set slot image0/image1 pointers
         if (role === "image0" && slots[slotIndex]) slots[slotIndex].image0StoragePath = storagePath;
         if (role === "image1" && slots[slotIndex]) slots[slotIndex].image1StoragePath = storagePath;
-        if (role === "image2" && slots[slotIndex]) slots[slotIndex].image2StoragePath = storagePath;
       }
 
-      // If user uploaded files without role hints, assign order
+      // If user uploaded 1-2 files without role hints, assign order
       if (slots[slotIndex]) {
         if (!slots[slotIndex].image0StoragePath && uploaded[0]) slots[slotIndex].image0StoragePath = uploaded[0];
         if (!slots[slotIndex].image1StoragePath && uploaded[1]) slots[slotIndex].image1StoragePath = uploaded[1];
-        if (!slots[slotIndex].image2StoragePath && uploaded[2]) slots[slotIndex].image2StoragePath = uploaded[2];
       }
 
       return uploaded;
@@ -1436,27 +1408,21 @@ HARD FAIL CONDITIONS
       const box0 = document.getElementById(`ref0_${slotIndex}`);
       const box1 = document.getElementById(`ref1_${slotIndex}`);
       if (!box0 || !box1) return;
-      const box2 = document.getElementById(`ref2_${slotIndex}`);
-      if (!box0 || !box1 || !box2) return;
 
       let image0Path = null;
       let image1Path = null;
-      let image2Path = null;
       try {
         const resolved = await resolveSlotRequiredImages(slotIndex);
         image0Path = resolved?.image0Path || null;
         image1Path = resolved?.image1Path || null;
-        image2Path = resolved?.image2Path || null;
       } catch (e) {
         setSlotRefBox(box0, null, "Image[0] (missing)", "");
         setSlotRefBox(box1, null, "Image[1]", "");
-        setSlotRefBox(box2, null, "Image[2]", "");
         return;
       }
 
       let url0 = null;
       let url1 = null;
-      let url2 = null;
 
       // Image[0] is required; attempt to read a download URL for preview
       try {
@@ -1474,33 +1440,19 @@ HARD FAIL CONDITIONS
         }
       }
 
-     // Image[2] (second model reference) preview if present
-      if (image2Path) {
-        try { url2 = await getDownloadURL(ref(storage, image2Path)); } catch { url2 = null; }
-      }
-
       if (slots?.[slotIndex]) {
         slots[slotIndex].ref0Url = url0;
         slots[slotIndex].ref1Url = url1;
-        slots[slotIndex].ref2Url = url2;
       }
 
       const name0 = (image0Path || "").split("/").pop() || "";
       const name1 = (image1Path || "").split("/").pop() || "";
-      const name2 = (image2Path || "").split("/").pop() || "";
 
       const label0 = name0 ? `Image[0] ${name0}` : (url0 ? "Image[0]" : "Image[0]");
       const label1 = name1 ? `Image[1] ${name1}` : (image1Path ? "Image[1]" : "Image[1]");
-      const label2 = name2 ? `Image[2] ${name2}` : (image2Path ? "Image[2]" : "Image[2]");
 
       setSlotRefBox(box0, url0, url0 ? label0 : `${label0} (no read)`, image0Path || "");
       setSlotRefBox(box1, url1, url1 ? label1 : (image1Path ? `${label1} (no read)` : label1), image1Path || "");
-      setSlotRefBox(
-        box2,
-        url2,
-        url2 ? label2 : (image2Path ? `${label2} (no read)` : label2),
-        image2Path || ""
-      );
     }
 
     const JOBS_COLL = "ListingGenerator1Jobs";
@@ -1631,7 +1583,7 @@ HARD FAIL CONDITIONS
       renderTraits(slot.traits);
 
       // Resolve per-slot reference images from: listing-generator-1/Beady Necklace/Slot_X/
-      const { image0Path, image1Path, image2Path } = await resolveSlotRequiredImages(i);
+      const { image0Path, image1Path } = await resolveSlotRequiredImages(i);
 
       // Slot 1 + Slot 2 + Slot 3 are strict single-pass pipelines
       const isSlot1 = (i === 0);
@@ -1766,9 +1718,11 @@ HARD FAIL CONDITIONS
             prompt: fullPrompt,
             input_storage_path: image0Path,
             input_charm_storage_path: image1Path,
-            input_model2_storage_path: image2Path,
-            // Slot 1: output must match Image[0] framing; do not apply final crop/zoom.
-            postprocess: null,
+            postprocess: (isSlot2 || isSlot3) ? null : {
+            finalFrameZoom: FINAL_FRAME_ZOOM,
+            anchorX: FINAL_ANCHOR_X,
+            anchorY: FINAL_ANCHOR_Y,
+          },
             size: "2048x2048",
             quality: "high",
             output_format: "png",
@@ -1787,7 +1741,6 @@ HARD FAIL CONDITIONS
         // Slot 2/3 keep their current behavior.
         if (SLOT1_DEFAULT_PROMPT_ONLY && i === 0) {
           if (!image1Path) throw new Error("Slot 1 requires Image[1] (charm macro).");
-          if (!image2Path) throw new Error("Slot 1 requires Image[2] (second model reference).");
 
           const fullPrompt = DEFAULT_PROMPT; // Slot 1 source-of-truth
           slot.prompt = fullPrompt;
