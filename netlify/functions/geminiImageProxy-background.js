@@ -179,15 +179,15 @@ async function callGeminiImagesGenerations({
   });
 }
 
-function sizeToAspectRatio(size = "2048x2048") {
+function sizeToAspectRatio(size = "1024x1024") {
   const m = /^(\d+)\s*x\s*(\d+)$/.exec(String(size || "").trim());
   if (!m) return "1:1";
   const w = Number(m[1]), h = Number(m[2]);
   if (!Number.isFinite(w) || !Number.isFinite(h) || w <= 0 || h <= 0) return "1:1";
   if (Math.abs(w - h) < 2) return "1:1";
   // Common cases you use
-  if (w === 2048 && h === 2048) return "1:1";
-  if (w === 2048 && h === 2048) return "1:1";
+  if (w === 1024 && h === 1024) return "1:1";
+  if (w === 1024 && h === 1024) return "1:1";
   // Fallback: reduce ratio
   const gcd = (a,b)=> b ? gcd(b, a%b) : a;
   const g = gcd(w, h);
@@ -701,7 +701,7 @@ exports.handler = async (event) => {
     kind = "edits", // "edits" | "generations" | "charm_postscale"
     model: _clientModel,
     prompt,
-    size = "2048x2048",
+    size = "1024x1024",
     quality = "high",
     output_format = "png",
 
