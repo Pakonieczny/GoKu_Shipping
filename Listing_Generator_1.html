@@ -1618,6 +1618,11 @@ HARD FAIL
       // which triggers Firestore "Deadline expired..." bursts.
       const JOB_TIMEOUT_MS = 14 * 60 * 1000; // keep < Netlify background max runtime
       let done = false;
+
+      // NOTE: do not reference `doneP` inside the Promise executor (TDZ error).
+      // Use a separate closure function for clearing the timeout.
+      let clearDoneTimer = () => {};
+
       const doneP = new Promise((resolve) => {
         const t = setTimeout(() => {
           if (done) return;
@@ -1628,8 +1633,7 @@ HARD FAIL
           setMeta(i, "Error: Timeout waiting for job completion");
           resolve();
         }, JOB_TIMEOUT_MS);
-        // stash timer handle on the promise via closure
-        doneP._clear = () => clearTimeout(t);
+        clearDoneTimer = () => clearTimeout(t);
       });
 
       setBar(i, 5);
@@ -1685,7 +1689,7 @@ HARD FAIL
               if (unsub) unsub();
               if (!done) {
                 done = true;
-                try { doneP._clear && doneP._clear(); } catch {}
+                try { clearDoneTimer(); } catch {}
                 doneP.then(()=>{}); // no-op
               }
             }
@@ -1695,7 +1699,7 @@ HARD FAIL
               if (unsub) unsub();
               if (!done) {
                 done = true;
-                try { doneP._clear && doneP._clear(); } catch {}
+                try { clearDoneTimer(); } catch {}
               }
             }
 
@@ -1706,7 +1710,7 @@ HARD FAIL
             if (unsub) unsub();
             if (!done) {
               done = true;
-              try { doneP._clear && doneP._clear(); } catch {}
+              try { clearDoneTimer(); } catch {}
             }
           });
 
@@ -1795,7 +1799,7 @@ HARD FAIL
             setMeta(i, "Done");
            if (!done) {
               done = true;
-              try { doneP._clear && doneP._clear(); } catch {}
+              try { clearDoneTimer(); } catch {}
             }
           }
 
@@ -1806,7 +1810,7 @@ HARD FAIL
             console.error("Pass B error", jb.error);
            if (!done) {
               done = true;
-              try { doneP._clear && doneP._clear(); } catch {}
+              try { clearDoneTimer(); } catch {}
             }
           }
          }, (err) => {
@@ -1816,7 +1820,7 @@ HARD FAIL
           if (unsubB) { unsubB(); unsubB = null; }
           if (!done) {
             done = true;
-            try { doneP._clear && doneP._clear(); } catch {}
+            try { clearDoneTimer(); } catch {}
           }
         });
 
@@ -1888,7 +1892,7 @@ HARD FAIL
                   setMeta(i, `Error: ${e?.message || String(e)}`);
                   if (!done) {
                     done = true;
-                    try { doneP._clear && doneP._clear(); } catch {}
+                    try { clearDoneTimer(); } catch {}
                   }
                 }
               })();
@@ -1902,7 +1906,7 @@ HARD FAIL
             console.error("Pass A error", jb.error);
           if (!done) {
               done = true;
-              try { doneP._clear && doneP._clear(); } catch {}
+              try { clearDoneTimer(); } catch {}
             }
           }
           }, (err) => {
@@ -1912,7 +1916,7 @@ HARD FAIL
           if (unsubA) { unsubA(); unsubA = null; }
           if (!done) {
             done = true;
-            try { doneP._clear && doneP._clear(); } catch {}
+            try { clearDoneTimer(); } catch {}
           }
         });
 
@@ -1948,7 +1952,7 @@ HARD FAIL
         if (unsubB) { unsubB(); unsubB = null; }
         if (!done) {
           done = true;
-          try { doneP._clear && doneP._clear(); } catch {}
+          try { clearDoneTimer(); } catch {}
         }
       }
 
