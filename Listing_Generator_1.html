@@ -1486,13 +1486,20 @@ HARD FAIL CONDITIONS
 
       const name0 = (image0Path || "").split("/").pop() || "";
       const name1 = (image1Path || "").split("/").pop() || "";
+      const name2 = (image2Path || "").split("/").pop() || "";
 
       const label0 = name0 ? `Image[0] ${name0}` : (url0 ? "Image[0]" : "Image[0]");
       const label1 = name1 ? `Image[1] ${name1}` : (image1Path ? "Image[1]" : "Image[1]");
+      const label2 = name2 ? `Image[2] ${name2}` : (image2Path ? "Image[2]" : "Image[2]");
 
       setSlotRefBox(box0, url0, url0 ? label0 : `${label0} (no read)`, image0Path || "");
       setSlotRefBox(box1, url1, url1 ? label1 : (image1Path ? `${label1} (no read)` : label1), image1Path || "");
-      setSlotRefBox(box2, url2, url2 ? label2 : `${label2} (no read)`, image2Path || "");
+      setSlotRefBox(
+        box2,
+        url2,
+        url2 ? label2 : (image2Path ? `${label2} (no read)` : label2),
+        image2Path || ""
+      );
     }
 
     const JOBS_COLL = "ListingGenerator1Jobs";
