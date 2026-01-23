@@ -696,17 +696,18 @@ HARD FAIL CONDITIONS
     `CRITICAL: This is a standard fashion product photo. Do not add nudity. Always keep the subject modest.
 
     SLOT 1 GOAL (NON-NEGOTIABLE)
-    • Use Image[0] as the base photo.
-    • Add the charm from Image[1] onto the existing necklace chain in Image[0] as a hanging micro pendant.
-    • Do NOT add any new necklace chain. Preserve the chain, bead stations, clasp, metal tone, lighting, background, and camera framing from Image[0].
+    • Use Image_0 as the base photo.
+    • Add the charm from Image[1] onto the existing necklace chain in Image0 as a hanging micro pendant.
+    • Do NOT add any new necklace chain. Preserve the chain, bead stations, clasp, metal tone, lighting, background, and camera framing from Image_0.
 
     INPUT IMAGES (ORDER MATTERS)
-    • Image[0] = base photo (scene + camera + chain placement + hardware position)
-    • Image[1] = charm macro (pixel-truth source for silhouette + cutouts + engraving)
+    • Image_0 = base photo (scene + camera + chain placement + hardware position)
+    • Image_1 = charm macro (pixel-truth source for silhouette + cutouts + engraving)
 
     DETAIL PRESERVATION (NON-NEGOTIABLE)
-    • Image[1] is pixel-truth. Do NOT redraw, simplify, thicken, smooth, “clean up,” stylize, or reinterpret any cutouts or engraving.
-    • Apply an extra downscale of 1.6× (i.e. final charm must be ~40% of the size you would normally choose).
+    • Image_1 is pixel-truth. Do NOT redraw, simplify, thicken, smooth, “clean up,” stylize, or reinterpret any cutouts or engraving.
+    • Do not alter Image_0 and always reproduce the model, background, framing, clothing, lens, and zoom levels. 
+    • Apply an extra downscale of 1.9× (i.e. final charm must be ~10% of the size you would normally choose).
     • Do NOT “fix size” by changing engraving/cutouts. Size changes must be pure scaling only.
     • Allowed edits to charm: tiny exposure/white-balance match to Image[0], barely-there contact shadow, mild specular alignment. No geometry changes.
 
@@ -721,7 +722,7 @@ HARD FAIL CONDITIONS
     • Keep the skin of the model ultra realistic and slightly impeerfect. Keep the skin smooth.
 
     HARD FAIL
-    • Any engraving/cutout loss, any perimeter warping, any added necklace chain, any disconnected hoop/jump ring, or any change to chain geometry from Image[0].`;
+    • Any engraving/cutout loss, any perimeter warping, any added necklace chain, any disconnected hoop/jump ring, or any change to chain geometry from Image0 .`;
 
     // ---------------------------------------------
     // Slot 1 prompt authority (TEMP TOGGLE)
@@ -1483,15 +1484,15 @@ HARD FAIL CONDITIONS
       }
     }
 
-    function buildPrompt(base, traits, hasCharmMacro, stage /* "placement" | "single" | "final" */, charmPlan){
-      const imageRoleBlock = hasCharmMacro ? [
+     // function buildPrompt(base, traits, hasCharmMacro, stage /* "placement" | "single" | "final" */, charmPlan){
+  /*    const imageRoleBlock = hasCharmMacro ? [
         "INPUT IMAGES (ORDER MATTERS)",
         (stage === "placement" || stage === "single")
           ? "- Image[0]: reference photo (truth source for necklace placement + chain geometry + station spacing + metal tone + drape)."
           : "- Image[0]: pass-A composite (truth source: charm already placed/locked + necklace already correct).",
         "- Image[1]: charm macro (single truth source for charm silhouette + cutouts + engraving; if any conflict, Image[1] wins for charm details).",
         "",
-      ].join("\n") : "";
+      ].join("\n") : ""; 
 
       const processOrder = [
         "PROCESS ORDER (DO NOT REORDER)",
@@ -1586,7 +1587,7 @@ HARD FAIL CONDITIONS
         "",
         cameraLast,
       ].filter(Boolean).join("\n");
-    }
+    } */
 
      async function generateOne(i){
       const slot = slots[i];
