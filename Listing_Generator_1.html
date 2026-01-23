@@ -701,8 +701,9 @@ HARD FAIL CONDITIONS
     • DO NOT allow any generated contact shadow under the Charm
     • Do NOT compensate by zooming out, reframing, cropping, changing camera, changing necklace scale, changing model scale, changing engraving thickness, or changing chain thickness.
     • The chain must remain exactly the same size and detail as Image[0]. Only the charm is scaled.
-
+    
     TASK (SLOT 1 — IMAGE EDIT, SINGLE PASS)
+    The model and background in Image_0 must always be reproduced perfectly in the generated image with the exception of "CLOTHING OPTIONS :".
     Edit Image[0] only by replacing the charm from Image[1] onto the existing necklace chain as a hanging pendant, zoom into the image by a factor of 1.50.
     DO not zoom out when generating the image. Keep model and frame consistent with Image_0
     Return one photorealistic edited image. 
@@ -710,7 +711,39 @@ HARD FAIL CONDITIONS
     Do not output text.
     Ensure the charm colour, shading and reflections match the necklace chain in Image_0.
     Do not saturate the Charm's gold colour.
-    The Necklace Chain and Charm must be shiny and have realistic shimmering.`;
+    The Necklace Chain and Charm must be shiny and have realistic shimmering.
+
+    
+    CLOTHING OPTIONS :
+              // Tops
+              "linen button-down shirt",
+              "cotton poplin shirt",
+              "ribbed knit tank",
+              "silky camisole",
+              "classic crewneck tee",
+              "soft scoop-neck tee",
+              "fitted long-sleeve top",
+              "mock-neck top",
+              "lightweight turtleneck",
+              "wrap blouse",
+              "peasant blouse subtle texture",
+              "satin blouse matte sheen",
+
+              // Knitwear
+              "chunky knit sweater",
+              "fine-gauge knit sweater",
+              "cardigan open front",
+              "cropped cardigan",
+              "cashmere pullover",
+              "cable knit sweater subtle",
+
+              // Outer layers
+              "blazer over neutral top",
+              "cropped blazer",
+              "soft trench coat open",
+              "lightweight wool coat open",
+              "denim jacket light wash",
+              "tailored vest over top",`;
 
 
     // ---------------------------------------------
