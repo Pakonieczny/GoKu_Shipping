@@ -693,36 +693,46 @@ HARD FAIL CONDITIONS
 
     // Default prompt (edit freely)
     const DEFAULT_PROMPT =
-    `CRITICAL: This is a standard fashion product photo. Do not add nudity. Always keep the subject modest.
+    `CRITICAL: This is a standard fashion product photo edit. Keep the subject modest. No nudity.
 
-    SLOT 1 GOAL (NON-NEGOTIABLE)
-    • Use Image_0 as the base photo.
-    • Add the charm from Image[1] onto the existing necklace chain in Image0 as a hanging micro pendant.
-    • Do NOT add any new necklace chain. Preserve the chain, bead stations, clasp, metal tone, lighting, background, and camera framing from Image_0.
+    TASK (SLOT 1 — IMAGE EDIT, SINGLE PASS)
+    Edit Image[0] only by adding the charm from Image[1] onto the existing necklace chain in Image[0] as a hanging micro pendant.
+    Return one photorealistic edited image. Do not output text.
 
     INPUT IMAGES (ORDER MATTERS)
-    • Image_0 = base photo (scene + camera + chain placement + hardware position)
-    • Image_1 = charm macro (pixel-truth source for silhouette + cutouts + engraving)
+    • Image[0] = base photo and single truth source for EVERYTHING except the charm (model, skin, hair, clothing, background, lighting, chain geometry, bead stations, clasp, camera framing).
+    • Image[1] = charm macro and single truth source for charm silhouette, cutouts, engraving, and the integrated hoop/bail.
 
-    DETAIL PRESERVATION (NON-NEGOTIABLE)
-    • Image_1 is pixel-truth. Do NOT redraw, simplify, thicken, smooth, “clean up,” stylize, or reinterpret any cutouts or engraving.
-    • Do not alter Image_0 and always reproduce the model, background, framing, clothing, lens, and zoom levels. 
-    • Apply an extra downscale of 1.9× (i.e. final charm must be ~10% of the size you would normally choose).
-    • Do NOT “fix size” by changing engraving/cutouts. Size changes must be pure scaling only.
-    • Allowed edits to charm: tiny exposure/white-balance match to Image[0], barely-there contact shadow, mild specular alignment. No geometry changes.
+    WHAT MUST NOT CHANGE (LOCK)
+    • Do not change Image[0] in any way except adding the pendant + its jump ring.
+    • No new necklace chain. No extra jewelry. No added objects. No removed objects.
+    • Preserve chain geometry exactly: station spacing, drape, clasp position, metal tone, and reflections.
+    • Preserve camera framing exactly: same crop, same zoom, same perspective, same angle.
 
-    HARDWARE + CONNECTION (NON-NEGOTIABLE)
-    • The charm’s hoop/bail/loop is part of the charm silhouette exactly like Image[1] (one-piece laser-cut look).
-    • The jump ring must pass through that hoop and connect naturally to the chain.
-    • HARD FAIL if the hoop/jump ring is floating, disconnected, mis-threaded, or looks “attached later.”
+    CHARM FIDELITY (IMAGE[1] IS PIXEL-TRUTH)
+    • Copy the charm exactly from Image[1]. Do NOT redraw, reinterpret, stylize, smooth, clean up, sharpen, thicken, or simplify engraving/cutouts.
+    • Size changes must be pure scaling only. Never change engraving/cutouts to make them “readable”.
+    • Allowed charm-only edits: tiny exposure/white-balance match to Image[0], barely-there contact shadow, mild specular alignment. No geometry changes.
+
+    PLACEMENT + HARDWARE (NON-NEGOTIABLE)
+    • The charm must hang from the existing chain in Image[0] at the same position a real pendant would sit.
+    • The hoop/bail/loop is an INTEGRATED part of the charm silhouette exactly like Image[1] (one-piece laser-cut look).
+    • The jump ring must pass through that integrated hoop and connect naturally to the chain.
+    • HARD FAIL if the hoop/jump ring is floating, disconnected, mis-threaded, offset, point-touching, hairline-connected, or looks “attached later”.
+
+    SIZE CONSISTENCY (GEMINI STABILITY)
+    • Match the on-image pendant size to Image[0]’s necklace scale (micro pendant look). If unsure, err slightly smaller rather than larger.
+    • Do not zoom out to make the pendant look smaller. Keep the camera framing locked.
 
     REALISM
     • Add a short, barely-there contact shadow directly under the charm so it reads as photographed, not pasted.
-    • Keep the charm material thin and close to the body of the model. 
-    • Keep the skin of the model ultra realistic and slightly impeerfect. Keep the skin smooth.
+    • Keep the charm thin and close to the model’s body.
+    • Skin must remain photorealistic with natural texture (no plastic smoothing).
 
     HARD FAIL
-    • Any engraving/cutout loss, any perimeter warping, any added necklace chain, any disconnected hoop/jump ring, or any change to chain geometry from Image0 .`;
+    • Any change to Image[0] beyond adding the pendant + jump ring.
+    • Any engraving/cutout loss, any perimeter warping, any added chain, any disconnected hoop/jump ring, or any change to chain geometry/camera framing.`;
+
 
     // ---------------------------------------------
     // Slot 1 prompt authority (TEMP TOGGLE)
