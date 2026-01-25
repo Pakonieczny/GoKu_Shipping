@@ -334,6 +334,9 @@
     const statusEl = document.getElementById("status");
     const finalCharmTargetPxEl = document.getElementById("finalCharmTargetPx");
     const finalCharmTargetPxValEl = document.getElementById("finalCharmTargetPxVal");
+    // Optional legacy controls (may not exist after UI cleanup)
+    const promptEl = document.getElementById("prompt");
+    const activeSlotEl = document.getElementById("activeSlot");
 
     function setStatus(msg){ statusEl.textContent = msg; }
 
@@ -944,6 +947,7 @@ HARD FAIL CONDITIONS
     PROMPT_BY_SLOT[1] = SLOT2_DUPLICATE_PROMPT;
     PROMPT_BY_SLOT[2] = SLOT3_SIZING_GUIDE_PROMPT;
     // Initialize editor (Slot 1 by default)
+    if (promptEl) promptEl.value = PROMPT_BY_SLOT[0];
     promptEl.value = PROMPT_BY_SLOT[0];
 
     // -------------------------
@@ -954,7 +958,8 @@ HARD FAIL CONDITIONS
       activeSlotIndex = idx;
       if (activeSlotEl) activeSlotEl.value = String(idx);
 
-      // Load slot-specific prompt into the editor
+    // Load slot-specific prompt into the editor
+     if (promptEl) promptEl.value = PROMPT_BY_SLOT[idx] || "";
       promptEl.value = PROMPT_BY_SLOT[idx] || "";
 
       // Show slot-specific traits
