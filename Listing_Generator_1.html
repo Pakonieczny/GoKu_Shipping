@@ -338,6 +338,10 @@
     const promptEl = document.getElementById("prompt");
     const activeSlotEl = document.getElementById("activeSlot");
 
+    // Grid/prompt/traits slot count (matches the 8-slot UI)
+    const SLOT_COUNT = 8;
+    let activeSlotIndex = 0;
+
     function setStatus(msg){ statusEl.textContent = msg; }
 
     function folderPath(category, subfolder) {
@@ -478,10 +482,6 @@
     activeCategoryEl.addEventListener("change", () => renderCategoryUI(activeCategoryEl.value));
 
     // Per-slot editing context (Slot 1..8)
-    // Grid/prompt/traits slot count (matches the 8-slot UI)
-    const SLOT_COUNT = 8;
-    let activeSlotIndex = 0;
-
     // UI previews show only the currently selected slot
     let referenceDataUrl = null;    // active slot Image[0] preview
     let charmMacroDataUrl = null;   // active slot Image[1] preview
@@ -948,7 +948,6 @@ HARD FAIL CONDITIONS
     PROMPT_BY_SLOT[2] = SLOT3_SIZING_GUIDE_PROMPT;
     // Initialize editor (Slot 1 by default)
     if (promptEl) promptEl.value = PROMPT_BY_SLOT[0];
-    promptEl.value = PROMPT_BY_SLOT[0];
 
     // -------------------------
     // Slot editor plumbing
