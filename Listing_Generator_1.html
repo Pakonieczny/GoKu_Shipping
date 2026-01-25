@@ -83,33 +83,9 @@
     <!-- LEFT -->
     <div class="card">
       <h1>Listing-Generator-1</h1>
-      <div class="muted">Each slot has its own pipeline: images + prompt + traits. Upload references per slot, then generate.</div>
+      
+        <div class="muted">Pick a category, upload assets into the right folders, then click Generate Set.</div>
 
-      <label>Active slot (edits apply to this slot only)</label>
-      <div class="row">
-        <select id="activeSlot" style="width:100%;">
-          <option value="0">Slot 1</option>
-          <option value="1">Slot 2</option>
-          <option value="2">Slot 3</option>
-          <option value="3">Slot 4</option>
-          <option value="4">Slot 5</option>
-          <option value="5">Slot 6</option>
-          <option value="6">Slot 7</option>
-          <option value="7">Slot 8</option>
-        </select>
-      </div>
-      <div class="muted">Uploads save into Firebase Storage: <b>listing-generator-1/Beady Necklace/Slot_X/</b>. Each slot uses only its own folder.</div>
-
-      <label>Slot Image[0] base photo (drag/drop or pick)</label>
-      <div class="drop" id="drop">
-        <div>
-          <strong id="refName">No image selected</strong>
-          <div class="muted">Tip: large images work, but faster if you keep them &lt; ~2–3MB.</div>
-        </div>
-        <div class="row">
-          <input id="file" type="file" accept="image/*" />
-        </div>
-      </div>
 
       <label>Category (Storage source of truth)</label>
       <select id="activeCategory"></select>
@@ -334,9 +310,6 @@
     const statusEl = document.getElementById("status");
     const finalCharmTargetPxEl = document.getElementById("finalCharmTargetPx");
     const finalCharmTargetPxValEl = document.getElementById("finalCharmTargetPxVal");
-    // Optional legacy controls (may not exist after UI cleanup)
-    const promptEl = document.getElementById("prompt");
-    const activeSlotEl = document.getElementById("activeSlot");
 
     // Grid/prompt/traits slot count (matches the 8-slot UI)
     const SLOT_COUNT = 8;
@@ -949,28 +922,16 @@ HARD FAIL CONDITIONS
     // Initialize editor (Slot 1 by default)
     if (promptEl) promptEl.value = PROMPT_BY_SLOT[0];
 
-    // -------------------------
-    // Slot editor plumbing
+     // -------------------------
+    // Slot selection (UI-agnostic)
     // -------------------------
     function setActiveSlot(i){
       const idx = Math.max(0, Math.min(SLOT_COUNT-1, Number(i) || 0));
       activeSlotIndex = idx;
-      if (activeSlotEl) activeSlotEl.value = String(idx);
-
-    // Load slot-specific prompt into the editor
-     if (promptEl) promptEl.value = PROMPT_BY_SLOT[idx] || "";
-      promptEl.value = PROMPT_BY_SLOT[idx] || "";
-
-      // Show slot-specific traits
       if (slots[idx]?.traits) renderTraits(slots[idx].traits);
+      // Best-effort previews; ignore rule/permission failures
+      refreshSlotRefPreviews(idx).catch(()=>{});
     }
-
-    activeSlotEl?.addEventListener("change", ()=> setActiveSlot(activeSlotEl.value));
-
-    // Persist prompt edits into the active slot only
-    promptEl?.addEventListener("input", ()=>{
-      PROMPT_BY_SLOT[activeSlotIndex] = promptEl.value;
-    });
 
     // --- Zoom + pan listeners ---
     function attachZoomPan(box){
@@ -1178,36 +1139,6 @@ HARD FAIL CONDITIONS
         return canvas.toDataURL(mime, quality);
       }
     }
-
-    // Drag/drop
-    dropEl.addEventListener("dragover", (e)=>{ e.preventDefault(); dropEl.style.borderColor="#2b6cff"; });
-    dropEl.addEventListener("dragleave", ()=>{ dropEl.style.borderColor="#3a4262"; });
-    dropEl.addEventListener("drop", async (e)=>{
-      e.preventDefault(); dropEl.style.borderColor="#3a4262";
-      const f = e.dataTransfer.files?.[0];
-      if (!f) return;
-      await loadReference(f);
-    });
-    fileEl.addEventListener("change", async ()=>{
-      const f = fileEl.files?.[0];
-      if (!f) return;
-      await loadReference(f);
-    });
-
-  // Charm macro drag/drop
-    charmDropEl.addEventListener("dragover", (e)=>{ e.preventDefault(); charmDropEl.style.borderColor="#2b6cff"; });
-    charmDropEl.addEventListener("dragleave", ()=>{ charmDropEl.style.borderColor="#3a4262"; });
-    charmDropEl.addEventListener("drop", async (e)=>{
-      e.preventDefault(); charmDropEl.style.borderColor="#3a4262";
-      const f = e.dataTransfer.files?.[0];
-      if (!f) return;
-      await loadCharmMacro(f);
-    });
-    charmFileEl.addEventListener("change", async ()=>{
-      const f = charmFileEl.files?.[0];
-      if (!f) return;
-      await loadCharmMacro(f);
-    });
 
     // Helpers
     function b64ToBlob(b64, mime="image/png"){
@@ -1820,7 +1751,7 @@ HARD FAIL CONDITIONS
       const baseText =
         isSlot2 ? SLOT2_DUPLICATE_PROMPT.trim() :
         isSlot3 ? SLOT3_SIZING_GUIDE_PROMPT.trim() :
-        (PROMPT_BY_SLOT[i] || "").trim();
+        DEFAULT_PROMPT.trim();
 
       const finalCharmTargetPx = readFinalCharmTargetPx();
 
