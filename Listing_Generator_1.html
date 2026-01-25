@@ -115,6 +115,9 @@
     </div>
   </div>
 
+  <!-- Hidden picker used by per-slot "Img Upload" buttons -->
+  <input id="slotImgFiles" type="file" accept="image/*" multiple style="display:none" />
+
   <!-- Firebase (same style as shipping-1 uses: compat init + modular storage/auth) -->
   <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
@@ -310,8 +313,13 @@
     const statusEl = document.getElementById("status");
     const finalCharmTargetPxEl = document.getElementById("finalCharmTargetPx");
     const finalCharmTargetPxValEl = document.getElementById("finalCharmTargetPxVal");
-    // Legacy prompt editor (may not exist in the new UI)
+    // Optional (legacy editor may be removed from DOM; keep ref so code never throws)
     const promptEl = document.getElementById("prompt");
+
+    // Hidden per-slot image picker (used by "Img Upload" buttons)
+    const slotImgFilesEl = document.getElementById("slotImgFiles");
+
+
 
     // Grid/prompt/traits slot count (matches the 8-slot UI)
     const SLOT_COUNT = 8;
