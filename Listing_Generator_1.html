@@ -399,7 +399,17 @@
           const res = await listAll(ref(storage, targetFullPath));
           countEl.textContent = `${res.items.length} file(s)`;
         } catch (e) {
-          countEl.textContent = `Error: ${e?.message || e}`;
+          const msg = String(e?.message || e);
+          const looksUnauthorized =
+            msg.includes("storage/unauthorized") ||
+            msg.includes("403") ||
+            msg.toLowerCase().includes("permission");
+          if (looksUnauthorized) {
+            countEl.textContent = `No permission to list: ${targetFullPath} (update Firebase Storage rules to allow LIST)`;
+          } else {
+            countEl.textContent = `Error: ${msg}`;
+          }
+          console.warn("[Storage:listAll] failed", { targetFullPath, msg, e });
         }
       }
 
@@ -465,6 +475,8 @@
     activeCategoryEl.addEventListener("change", () => renderCategoryUI(activeCategoryEl.value));
 
     // Per-slot editing context (Slot 1..8)
+    // Grid/prompt/traits slot count (matches the 8-slot UI)
+    const SLOT_COUNT = 8;
     let activeSlotIndex = 0;
 
     // UI previews show only the currently selected slot
