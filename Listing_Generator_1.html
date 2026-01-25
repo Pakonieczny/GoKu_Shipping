@@ -332,6 +332,8 @@
     const generateSetBtn = document.getElementById("generateSet");
     const gridEl = document.getElementById("grid");
     const statusEl = document.getElementById("status");
+    const finalCharmTargetPxEl = document.getElementById("finalCharmTargetPx");
+    const finalCharmTargetPxValEl = document.getElementById("finalCharmTargetPxVal");
 
     function setStatus(msg){ statusEl.textContent = msg; }
 
@@ -347,6 +349,7 @@
       // Deterministic:
       // 1) prefer most recently uploaded (metadata.updated/timeCreated)
       // 2) tie-break lexicographically by name
+      await ensureStorageSignedIn();
       const folderRef = ref(storage, fullFolderPath);
       const res = await listAll(folderRef);
       if (!res.items?.length) return null;
@@ -392,6 +395,7 @@
 
       async function refreshCount() {
         try {
+          await ensureStorageSignedIn();
           const res = await listAll(ref(storage, targetFullPath));
           countEl.textContent = `${res.items.length} file(s)`;
         } catch (e) {
@@ -430,6 +434,7 @@
       });
 
       refreshCount();
+      refreshCount().catch((e) => console.warn("refreshCount failed", e));
       return el;
     }
 

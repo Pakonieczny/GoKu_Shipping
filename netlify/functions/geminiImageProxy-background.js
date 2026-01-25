@@ -941,7 +941,7 @@ exports.handler = async (event) => {
       const img0 = await storagePathToBuffer(basePath0);
       const img1 = await storagePathToBuffer(basePath1);
 
-      const outBuf = await callGeminiImagesEdits({
+      let outBuf = await callGeminiImagesEdits({
         apiKey,
         model,
         prompt,
@@ -954,14 +954,11 @@ exports.handler = async (event) => {
         ],
       });
 
-      const saved = await uploadPngBufferToStorage({
-        outBuf,
-        jobId: null,
-        runId: null,
-        slotIndex: effectiveSlot,
-        outputBasePath,
-      });
+      // Optional: enforce final framing/zoom lock for output only
+      outBuf = await applyFinalFrameZoomIfNeeded(outBuf, postprocess);
 
+      // Always save to: ${output_base_path}/Slot_{slotIndex+1}.png
+      const saved = await uploadPngBufferToSetPath(outBuf, outputBasePath, effectiveSlot, null, null);
       return json(200, { ok: true, storagePath: saved.storagePath, downloadURL: saved.downloadURL });
     }
 
