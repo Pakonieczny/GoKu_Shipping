@@ -111,53 +111,28 @@
         </div>
       </div>
 
-     <label>Slot Image[1] charm macro (truth source)</label>
-      <div class="drop" id="charmDrop">
-        <div>
-          <strong id="charmName">No charm macro selected</strong>
-           <div class="muted">Upload a sharp macro of the charm only (flat, legible engraving). Sent to Gemini as Image[1].</div>
-        </div>
-        <div class="row">
-          <input id="charmFile" type="file" accept="image/*" />
-        </div>
+      <label>Category (Storage source of truth)</label>
+      <select id="activeCategory"></select>
+      <div class="muted" style="margin-top:6px;">
+        Inputs come from Firebase Storage folders under <code>listing-generator-1/{Category}/...</code>.
+        Generation is disabled for <code>New_Charms</code> + <code>Completed_Charm</code>.
       </div>
-
-      <label>Charm macro preview (zoom + pan)</label>
-      <div class="preview-box" id="charmPreview" style="height:200px;"></div>
-
-      <label>Reference preview (zoom + pan)</label>
-      <div class="preview-box" id="refPreview"></div>
-
-      <input id="slotImgFiles" type="file" accept="image/*" multiple style="display:none" />
-
-      <label>Generative description (live editable)</label>
-      <textarea id="prompt"></textarea>
-
-        <label>Model (Gemini Image)</label>
-      <select id="model">
-        <option value="gemini-3-pro-image-preview">gemini-3-pro-image-preview</option>
-      </select>
-
-      <label>Final charm size (px) (postprocess)</label>
-      <div class="row">
-        <input id="finalCharmTargetPx" type="range" min="4" max="32" step="1" value="14" />
-        <input id="finalCharmTargetPxVal" type="text" value="14" style="width:86px;" />
-      </div>
-      <div class="muted">Sets the FINAL charm height in pixels after AI placement (stable, proportional control).</div>
 
       <div class="row" style="margin-top:10px;">
-        <button class="btn" id="gen8">Generate 8</button>
-        <button class="btn" id="clear">Clear</button>
+        <button class="btn" id="generateSet">Generate Set</button>
       </div>
 
-      <label>Selected traits (template → randomized per slot)</label>
-      <div class="traits" id="traitsBox"></div>
+      <label style="margin-top:12px;">Category Asset Manager (Drag & Drop)</label>
+      <div id="panels"></div>
+
+      <label style="margin-top:12px;">Shared Pool: New_Charms (always used in generation)</label>
+      <div id="panelNewCharms"></div>
     </div>
 
     <!-- RIGHT -->
     <div class="card">
       <div class="row" style="justify-content:space-between; align-items:center;">
-        <h1 style="margin:0;">Generated images (8)</h1>
+        <h1 style="margin:0;">Generated set</h1>
         <div class="muted" id="status">Idle</div>
       </div>
       <div class="grid" id="grid"></div>
@@ -171,7 +146,7 @@
 
   <script type="module">
    import { initializeApp, getApp } from "https://www.gstatic.com/firebasejs/9.23.0/firebase-app.js";
-   import { getStorage, ref, uploadBytesResumable, getDownloadURL, listAll } from "https://www.gstatic.com/firebasejs/9.23.0/firebase-storage.js";
+   import { getStorage, ref, uploadBytesResumable, getDownloadURL, listAll, getMetadata } from "https://www.gstatic.com/firebasejs/9.23.0/firebase-storage.js";
    import { getAuth, signInAnonymously as modSignInAnonymously, onAuthStateChanged as modOnAuthStateChanged } from "https://www.gstatic.com/firebasejs/9.23.0/firebase-auth.js";
 
 
@@ -181,9 +156,119 @@
     // -------------------------
     // Per-slot folder layout (Firebase Storage)
     // -------------------------
-    const SLOT_PARENT_FOLDER = "listing-generator-1/Beady Necklace";
-    const SLOT_COUNT = 8;
-    function slotFolder(i){ return `${SLOT_PARENT_FOLDER}/Slot_${i+1}`; }
+    const ROOT = "listing-generator-1";
+
+    const GENERATABLE_CATEGORIES = new Set([
+      "Beady_Necklace",
+      "Regular_Necklace",
+      "Stud_Earrings",
+      "Hoop_Earrings",
+      "Charms",
+      "Bracelets",
+    ]);
+
+    const ALL_CATEGORIES = [
+      "Beady_Necklace",
+      "Regular_Necklace",
+      "Stud_Earrings",
+      "Hoop_Earrings",
+      "Charms",
+      "Bracelets",
+      "New_Charms",
+      "Completed_Charm",
+    ];
+
+    const CATEGORY_SUBFOLDERS = {
+      Beady_Necklace: [
+        "Primary_Models","Secondary_Models","Background_AI_Images","Product_Shots","Back_Engraving",
+        "Necklace_Size_Guide","Charm_Size_Guide","Care_Metal_Guide","Ready_To_List","Completed_&_Listed_Sets"
+      ],
+      Regular_Necklace: [
+        "Primary_Models","Secondary_Models","Background_AI_Images","Product_Shots","Back_Engraving",
+        "Necklace_Size_Guide","Charm_Size_Guide","Care_Metal_Guide","Ready_To_List","Completed_&_Listed_Sets"
+      ],
+      Stud_Earrings: [
+        "Primary_Models","Secondary_Models","Background_AI_Images","Product_Shots",
+        "Charm_Size_Guide","Care_Metal_Guide","Ready_To_List","Completed_&_Listed_Sets"
+      ],
+      Hoop_Earrings: [
+        "Primary_Models","Secondary_Models","Background_AI_Images","Product_Shots",
+        "Hoop_Size_Guide","Charm_Size_Guide","Care_Metal_Guide","Ready_To_List","Completed_&_Listed_Sets"
+      ],
+      Charms: [
+        "Primary_Charm_Template","Charm_Types","Primary_Models","Back_Engraving",
+        "Hoop_Charm_Size_Guide","Charm_Size_Guide","Care_Metal_Guide","Gold_Filled_Guide",
+        "Ready_To_List","Completed_&_Listed_Sets"
+      ],
+      Bracelets: [
+        "Primary_Models","Secondary_Models","Background_AI_Images","Product_Shots","Back_Engraving",
+        "Bracelet_Size_Guide","Charm_Size_Guide","Care_Metal_Guide","Ready_To_List","Completed_&_Listed_Sets"
+      ],
+      New_Charms: [],
+      Completed_Charm: [],
+    };
+
+    const SLOT_MAP = {
+      Beady_Necklace: [
+        { type:"gen", folder:"Primary_Models" },
+        { type:"gen", folder:"Background_AI_Images" },
+        { type:"gen", folder:"Charm_Size_Guide" },
+        { type:"gen", folder:"Back_Engraving" },
+        { type:"gen", folder:"Secondary_Models" },
+        { type:"copy", folder:"Necklace_Size_Guide" },
+        { type:"gen", folder:"Product_Shots" },
+        { type:"copy", folder:"Care_Metal_Guide" },
+      ],
+      Regular_Necklace: [
+        { type:"gen", folder:"Primary_Models" },
+        { type:"gen", folder:"Background_AI_Images" },
+        { type:"gen", folder:"Charm_Size_Guide" },
+        { type:"gen", folder:"Back_Engraving" },
+        { type:"gen", folder:"Secondary_Models" },
+        { type:"copy", folder:"Necklace_Size_Guide" },
+        { type:"gen", folder:"Product_Shots" },
+        { type:"copy", folder:"Care_Metal_Guide" },
+      ],
+      Stud_Earrings: [
+        { type:"gen", folder:"Primary_Models" },
+        { type:"gen", folder:"Background_AI_Images" },
+        { type:"gen", folder:"Charm_Size_Guide" },
+        { type:"gen", folder:"Product_Shots" },
+        { type:"gen", folder:"Secondary_Models" },
+        { type:"gen", folder:"Product_Shots" },
+        { type:"copy", folder:"Care_Metal_Guide" },
+      ],
+      Hoop_Earrings: [
+        { type:"gen", folder:"Primary_Models" },
+        { type:"gen", folder:"Background_AI_Images" },
+        { type:"gen", folder:"Charm_Size_Guide" },
+        { type:"gen", folder:"Product_Shots" },
+        { type:"gen", folder:"Hoop_Size_Guide" },
+        { type:"gen", folder:"Secondary_Models" },
+        { type:"gen", folder:"Product_Shots" },
+        { type:"copy", folder:"Care_Metal_Guide" },
+      ],
+      Charms: [
+        { type:"gen", folder:"Primary_Charm_Template" },
+        { type:"gen", folder:"Charm_Types" },
+        { type:"gen", folder:"Primary_Models" },
+        { type:"gen", folder:"Back_Engraving" },
+        { type:"gen", folder:"Hoop_Charm_Size_Guide" },
+        { type:"gen", folder:"Charm_Size_Guide" },
+        { type:"copy", folder:"Care_Metal_Guide" },
+        { type:"copy", folder:"Gold_Filled_Guide" },
+      ],
+      Bracelets: [
+        { type:"gen", folder:"Primary_Models" },
+        { type:"gen", folder:"Background_AI_Images" },
+        { type:"gen", folder:"Charm_Size_Guide" },
+        { type:"gen", folder:"Back_Engraving" },
+        { type:"gen", folder:"Secondary_Models" },
+        { type:"copy", folder:"Bracelet_Size_Guide" },
+        { type:"gen", folder:"Product_Shots" },
+        { type:"copy", folder:"Care_Metal_Guide" },
+      ],
+    };
 
     // --- Firebase config (matches shipping-1 patterns) ---
     const firebaseConfig = {
@@ -241,25 +326,138 @@
     }
 
     // --- UI State ---
-    const fileEl = document.getElementById("file");
-    const dropEl = document.getElementById("drop");
-    const refNameEl = document.getElementById("refName");
-    const refPreviewEl = document.getElementById("refPreview");
-    const activeSlotEl = document.getElementById("activeSlot");
-    const slotImgFilesEl = document.getElementById("slotImgFiles");
-    const promptEl = document.getElementById("prompt");
-    const modelEl = document.getElementById("model");
-    const finalCharmTargetPxEl = document.getElementById("finalCharmTargetPx");
-    const finalCharmTargetPxValEl = document.getElementById("finalCharmTargetPxVal");
-    const gen8Btn = document.getElementById("gen8");
-    const clearBtn = document.getElementById("clear");
+    const activeCategoryEl = document.getElementById("activeCategory");
+    const panelsEl = document.getElementById("panels");
+    const panelNewCharmsEl = document.getElementById("panelNewCharms");
+    const generateSetBtn = document.getElementById("generateSet");
     const gridEl = document.getElementById("grid");
     const statusEl = document.getElementById("status");
-    const charmFileEl = document.getElementById("charmFile");
-    const charmDropEl = document.getElementById("charmDrop");
-    const charmNameEl = document.getElementById("charmName");
-    const charmPreviewEl = document.getElementById("charmPreview");
-    const traitsBox = document.getElementById("traitsBox");
+
+    function setStatus(msg){ statusEl.textContent = msg; }
+
+    function folderPath(category, subfolder) {
+      return `${ROOT}/${category}/${subfolder}`;
+    }
+
+    function newCharmsPath() {
+      return `${ROOT}/New_Charms`;
+    }
+
+    async function listLatestFile(fullFolderPath) {
+      // Deterministic:
+      // 1) prefer most recently uploaded (metadata.updated/timeCreated)
+      // 2) tie-break lexicographically by name
+      const folderRef = ref(storage, fullFolderPath);
+      const res = await listAll(folderRef);
+      if (!res.items?.length) return null;
+
+      const metas = await Promise.all(res.items.map(async (it) => {
+        const meta = await getMetadata(it);
+        return {
+          fullPath: it.fullPath,
+          name: it.name,
+          updatedMs: Date.parse(meta?.updated || meta?.timeCreated || "") || 0,
+        };
+      }));
+
+      metas.sort((a, b) => {
+        if (a.updatedMs !== b.updatedMs) return a.updatedMs - b.updatedMs;
+        return a.name < b.name ? -1 : a.name > b.name ? 1 : 0;
+      });
+
+      const latest = metas[metas.length - 1];
+      // Only fetch download URL for the chosen file (faster)
+      const latestRef = ref(storage, latest.fullPath);
+      const url = await getDownloadURL(latestRef);
+      return { fullPath: latest.fullPath, name: latest.name, url };
+    }
+
+    function makeUploadPanel(targetFullPath, title) {
+     const el = document.createElement("div");
+      el.className = "drop";
+      el.style.marginBottom = "10px";
+      el.innerHTML = `
+        <div style="flex:1;">
+          <strong>${title}</strong>
+          <div class="muted"><code>${targetFullPath}/</code></div>
+          <div class="muted" id="count">Loading…</div>
+        </div>
+        <div class="row">
+          <input type="file" multiple accept="image/*" />
+        </div>
+      `;
+
+      const input = el.querySelector("input");
+      const countEl = el.querySelector("#count");
+
+      async function refreshCount() {
+        try {
+          const res = await listAll(ref(storage, targetFullPath));
+          countEl.textContent = `${res.items.length} file(s)`;
+        } catch (e) {
+          countEl.textContent = `Error: ${e?.message || e}`;
+        }
+      }
+
+      async function uploadFiles(files) {
+        if (!files?.length) return;
+        await ensureStorageSignedIn();
+        setStatus(`Uploading → ${title}`);
+
+        for (const f of files) {
+          const safeName = `${Date.now()}_${f.name.replace(/[^\w.\-]+/g, "_")}`;
+          const dst = ref(storage, `${targetFullPath}/${safeName}`);
+          await new Promise((resolve, reject) => {
+            const task = uploadBytesResumable(dst, f, { contentType: f.type || "application/octet-stream" });
+            task.on("state_changed", null, reject, resolve);
+          });
+        }
+        await refreshCount();
+        setStatus("Idle");
+      }
+
+      el.addEventListener("dragover", (e) => { e.preventDefault(); el.classList.add("hover"); });
+      el.addEventListener("dragleave", () => el.classList.remove("hover"));
+      el.addEventListener("drop", async (e) => {
+        e.preventDefault();
+        el.classList.remove("hover");
+        await uploadFiles([...e.dataTransfer.files]);
+      });
+
+      input.addEventListener("change", async (e) => {
+        await uploadFiles([...e.target.files]);
+        input.value = "";
+      });
+
+      refreshCount();
+      return el;
+    }
+
+    function renderCategoryUI(category) {
+      panelsEl.innerHTML = "";
+
+      const subs = CATEGORY_SUBFOLDERS[category] || [];
+      for (const sub of subs) {
+        panelsEl.appendChild(makeUploadPanel(folderPath(category, sub), sub));
+      }
+
+      panelNewCharmsEl.innerHTML = "";
+      panelNewCharmsEl.appendChild(makeUploadPanel(newCharmsPath(), "New_Charms"));
+
+      // Slot visibility hint in UI (Stud_Earrings = 7 slots)
+      const slotCount = (SLOT_MAP[category]?.length) || 0;
+      if (GENERATABLE_CATEGORIES.has(category)) {
+        setStatus(`Ready (${slotCount} slot(s))`);
+      } else {
+        setStatus("Asset manager only");
+      }
+    }
+
+    // Populate dropdown
+    activeCategoryEl.innerHTML = ALL_CATEGORIES.map(c => `<option value="${c}">${c}</option>`).join("");
+    activeCategoryEl.value = "Beady_Necklace";
+    renderCategoryUI(activeCategoryEl.value);
+    activeCategoryEl.addEventListener("change", () => renderCategoryUI(activeCategoryEl.value));
 
     // Per-slot editing context (Slot 1..8)
     let activeSlotIndex = 0;
@@ -2072,22 +2270,138 @@ HARD FAIL CONDITIONS
     // Init
     renderGrid();
 
-    gen8Btn.addEventListener("click", generateEight);
-    clearBtn.addEventListener("click", ()=>{
-    // UI reset only (does NOT delete from Firebase Storage)
-      referenceDataUrl = null;
-      refNameEl.textContent = "No image selected";
-      refPreviewEl.innerHTML = "";
-      charmMacroDataUrl = null;
-      charmNameEl.textContent = "No charm macro selected";
-      charmPreviewEl.innerHTML = "";
-      charmFileEl.value = "";
+    async function postJson(path, body) {
+      const res = await fetch(`${functionsBaseUrl}/${path}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      const j = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(j?.error?.message || j?.error || `HTTP ${res.status}`);
+      return j;
+    }
 
-      // Reset per-slot pointers (does not delete stored files)
-      slots.forEach(s=>{ s.image0StoragePath = null; s.image1StoragePath = null; });
-      renderGrid();
-      statusEl.textContent = "Idle";
-      gen8Btn.disabled = false;
+    async function allocSet(category) {
+      return await postJson("geminiImageProxy-background", { kind: "alloc_set", activeCategory: category });
+    }
+
+    function slotRefFolder(category, folder) {
+      return `${ROOT}/${category}/${folder}`;
+    }
+
+    async function generateSet() {
+      const category = activeCategoryEl.value;
+      if (!GENERATABLE_CATEGORIES.has(category)) {
+        setStatus("Pick a generatable category to run generation.");
+        return;
+      }
+
+      const slotPlan = SLOT_MAP[category];
+      if (!slotPlan?.length) throw new Error(`No slot map for ${category}`);
+
+      setStatus("Allocating Set…");
+      const alloc = await allocSet(category);
+      const outputBasePath = alloc.outputBasePath; // listing-generator-1/{cat}/Ready_To_List/Set_N
+      const setN = alloc.setN;
+
+      const charmLatest = await listLatestFile(newCharmsPath());
+      if (!charmLatest) throw new Error("No files in listing-generator-1/New_Charms/");
+
+      const manifest = {
+        category,
+        setN,
+        outputBasePath,
+        timestamp: new Date().toISOString(),
+        slots: [],
+        model: "gemini-3-pro-image-preview",
+      };
+
+      // Clear grid
+      gridEl.innerHTML = "";
+
+      for (let i = 0; i < slotPlan.length; i++) {
+        const spec = slotPlan[i];
+        const slotNum = i + 1;
+
+        setStatus(`Slot ${slotNum}/${slotPlan.length}…`);
+
+        const srcFolder = slotRefFolder(category, spec.folder);
+        const srcLatest = await listLatestFile(srcFolder);
+        if (!srcLatest) throw new Error(`No files in ${srcFolder}/`);
+
+        const slotCard = document.createElement("div");
+        slotCard.className = "cell";
+        slotCard.innerHTML = `<div class="muted">Slot ${slotNum}</div><div class="muted" style="font-size:12px;">${spec.type}: ${spec.folder}</div>`;
+        gridEl.appendChild(slotCard);
+
+        if (spec.type === "copy") {
+          const r = await postJson("geminiImageProxy-background", {
+            kind: "copy_to_slot",
+            activeCategory: category,
+            source_storage_path: srcLatest.fullPath,
+            output_base_path: outputBasePath,
+            slotIndex: i,
+          });
+          const img = document.createElement("img");
+          img.src = r.downloadURL;
+          slotCard.appendChild(img);
+
+          manifest.slots.push({
+            slot: slotNum,
+            type: "copy",
+            source: srcLatest.fullPath,
+            newCharm: null,
+            output: r.storagePath,
+          });
+        } else {
+          const r = await postJson("geminiImageProxy-background", {
+            kind: "edits",
+            activeCategory: category,
+            input_storage_path: srcLatest.fullPath,
+            input_charm_storage_path: charmLatest.fullPath,
+            output_base_path: outputBasePath,
+            slotIndex: i,
+            model: "gemini-3-pro-image-preview",
+            prompt: buildSlotPrompt(category, spec.folder),
+          });
+          const img = document.createElement("img");
+          img.src = r.downloadURL;
+          slotCard.appendChild(img);
+
+          manifest.slots.push({
+            slot: slotNum,
+            type: "gen",
+            source: srcLatest.fullPath,
+            newCharm: charmLatest.fullPath,
+            output: r.storagePath,
+          });
+        }
+      }
+
+      setStatus("Writing manifest…");
+      await postJson("geminiImageProxy-background", {
+        kind: "write_manifest",
+        activeCategory: category,
+        output_base_path: outputBasePath,
+        manifest,
+      });
+
+      setStatus(`Done → ${category}/Ready_To_List/Set_${setN}`);
+    }
+
+    // Minimal prompt builder: you can expand per-slot later
+    function buildSlotPrompt(category, folderName) {
+      return `CRITICAL: Standard fashion product photo edit. Keep subject modest.\n\n` +
+        `Use Image[0] as base. Add the charm from Image[1] onto the existing product context from Image[0].\n` +
+        `Do not add new chain or hardware. Preserve lighting, framing, colors, text.\n` +
+        `Category: ${category}\nSlot source folder: ${folderName}\n`;
+    }
+
+    generateSetBtn.addEventListener("click", () => {
+      generateSet().catch((e) => {
+        console.error(e);
+        setStatus(`Error: ${e?.message || e}`);
+      });
     });
   </script>
 </body>

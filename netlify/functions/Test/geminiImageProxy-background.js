@@ -59,15 +59,9 @@ async function storagePathToBuffer(storagePath) {
   // Allowlist to prevent arbitrary bucket reads.
   // Must match the prefixes your pipeline uses (reference, charm macro, pass-A outputs).
   const ALLOWED_INPUT_PREFIXES = [
-    "listing-generator-1/Beady_Necklace/",
-    "listing-generator-1/Regular_Necklace/",
-    "listing-generator-1/Stud_Earrings/",
-    "listing-generator-1/Hoop_Earrings/",
-    "listing-generator-1/Charms/",
-    "listing-generator-1/Bracelets/",
-    "listing-generator-1/New_Charms/",
-    "listing-generator-1/Completed_Charm/",
-    // keep legacy during transition
+    "listing-generator-1/reference/",
+    "listing-generator-1/charm-macro/",
+    "listing-generator-1/Beady Necklace/Slot_",
     "listing-generator-1/generated/",
   ];
 
@@ -360,7 +354,7 @@ async function callGeminiGenerateContentImage({
 
   return outBuf;}
 
-async function uploadPngBufferToStorage({ outBuf, jobId, runId, slotIndex, outputBasePath }) {
+async function uploadPngBufferToStorage({ outBuf, jobId, runId, slotIndex }) {
   const bucket = admin.storage().bucket(); // uses storageBucket from firebaseAdmin.js init
   const token = globalThis.crypto?.randomUUID
     ? globalThis.crypto.randomUUID()
@@ -369,18 +363,7 @@ async function uploadPngBufferToStorage({ outBuf, jobId, runId, slotIndex, outpu
   const effectiveRunId = runId || `lg1_${Date.now()}`;
   const effectiveSlot = typeof slotIndex === "number" ? slotIndex : null;
 
-  let storagePath;
-  if (outputBasePath) {
-    const base = String(outputBasePath).trim();
-    // Must be under listing-generator-1/{Category}/Ready_To_List/Set_N
-    if (!/^listing-generator-1\/[^/]+\/Ready_To_List\/Set_\d+$/i.test(base)) {
-      throw new Error("output_base_path not allowed");
-    }
-    storagePath = `${base}/Slot_${effectiveSlot + 1}.png`;
-  } else {
-    // fallback legacy
-    storagePath = `listing-generator-1/generated/${effectiveRunId}/slot_${effectiveSlot + 1}.png`;
-  }
+  const storagePath = `listing-generator-1/generated/${effectiveRunId}/${jobId}.png`;
   const file = bucket.file(storagePath);
 
   await file.save(outBuf, {
@@ -750,38 +733,6 @@ async function postScaleCharmComposite({
 }
 
 // ---- handler ----
-
-function normalizeCategory(s) {
-  return String(s || "").trim();
-}
-
-const GENERATABLE_CATEGORIES = new Set([
-  "Beady_Necklace",
-  "Regular_Necklace",
-  "Stud_Earrings",
-  "Hoop_Earrings",
-  "Charms",
-  "Bracelets",
-]);
-
-async function allocNextSet(activeCategory) {
-  const cat = normalizeCategory(activeCategory);
-  if (!GENERATABLE_CATEGORIES.has(cat)) throw new Error("activeCategory not generatable");
-
-  const bucket = admin.storage().bucket();
-  const prefix = `listing-generator-1/${cat}/Ready_To_List/`;
-  const [files] = await bucket.getFiles({ prefix });
-
-  let maxN = 0;
-  for (const f of files) {
-    const m = f.name.match(/Ready_To_List\/Set_(\d+)\//);
-    if (m) maxN = Math.max(maxN, Number(m[1]) || 0);
-  }
-  const setN = maxN + 1;
-  const outputBasePath = `listing-generator-1/${cat}/Ready_To_List/Set_${setN}`;
-  return { setN, outputBasePath };
-}
-
 exports.handler = async (event) => {
   if (event.httpMethod === "OPTIONS") return json(200, { ok: true });
   if (event.httpMethod !== "POST") return json(405, { error: { message: "Method not allowed" } });
@@ -790,18 +741,11 @@ exports.handler = async (event) => {
   if (!body) return json(400, { error: { message: "Invalid JSON body" } });
 
   const {
-    // existing job pipeline
     jobId,
     runId,
     slotIndex,
-
-    // NEW + existing kinds:
-   // "edits" | "generations" | "charm_postscale" | "alloc_set" | "copy_to_slot" | "write_manifest"
-    kind = "edits",
-
-    // client-sent model is ignored (hard locked)
+    kind = "edits", // "edits" | "generations" | "charm_postscale"
     model: _clientModel,
-
     prompt,
     size = "2048x2048",
     quality = "high",
@@ -819,168 +763,16 @@ exports.handler = async (event) => {
     remove_prompt,
     postprocess,
 
-    // Optional: explicit "no-charm base" input for charm_postscale
-    base_storage_path,
-    base_image,
+   // Optional: explicit "no-charm base" input for charm_postscale
+   // (preferred over inpainting removal because it's deterministic)
+   base_storage_path,
+   base_image,
 
-    // NEW: category/set pipeline support
-    activeCategory,
-    output_base_path,
-    source_storage_path,
-    manifest,
   } = body || {};
 
   // Hard-lock the Gemini model (ignore any client-provided model)
   const model = GEMINI_IMAGE_MODEL;
 
-  // ---------- helpers (scoped to handler for zero external dependencies) ----------
-  const GENERATABLE_CATEGORIES = new Set([
-    "Beady_Necklace",
-    "Regular_Necklace",
-    "Stud_Earrings",
-    "Hoop_Earrings",
-    "Charms",
-    "Bracelets",
-  ]);
-
-  function normCategory(s) {
-    return String(s || "").trim();
-  }
-
-  function assertAllowedOutputBase(base) {
-    const b = String(base || "").trim();
-    // Must be: listing-generator-1/{Category}/Ready_To_List/Set_N
-    if (!/^listing-generator-1\/[^/]+\/Ready_To_List\/Set_\d+$/i.test(b)) {
-      throw new Error("output_base_path not allowed");
-    }
-    return b;
-  }
-
-  async function signedUrlFor(bucketFile) {
-    const [url] = await bucketFile.getSignedUrl({
-      action: "read",
-      expires: Date.now() + 1000 * 60 * 60 * 24 * 7, // 7 days
-    });
-    return url;
-  }
-
-  async function allocNextSet(cat) {
-    const c = normCategory(cat);
-    if (!GENERATABLE_CATEGORIES.has(c)) throw new Error("activeCategory not generatable");
-
-    const bucket = admin.storage().bucket();
-    const prefix = `listing-generator-1/${c}/Ready_To_List/`;
-    const [files] = await bucket.getFiles({ prefix });
-
-    let maxN = 0;
-    for (const f of files) {
-      const m = f.name.match(/Ready_To_List\/Set_(\d+)\//);
-      if (m) maxN = Math.max(maxN, Number(m[1]) || 0);
-    }
-    const setN = maxN + 1;
-    const outputBasePath = `listing-generator-1/${c}/Ready_To_List/Set_${setN}`;
-    return { setN, outputBasePath };
-  }
-
-  async function uploadPngBufferToSetPath(outBuf, basePath, sIndex, fallbackJobId, fallbackRunId) {
-    const bucket = admin.storage().bucket();
-    const effectiveSlot = Number.isFinite(Number(sIndex)) && Number(sIndex) >= 0 ? Number(sIndex) : 0;
-
-    if (basePath) {
-      const base = assertAllowedOutputBase(basePath);
-      const storagePath = `${base}/Slot_${effectiveSlot + 1}.png`;
-      const file = bucket.file(storagePath);
-      await file.save(outBuf, { contentType: "image/png", resumable: false });
-      const downloadURL = await signedUrlFor(file);
-      return { storagePath, downloadURL, effectiveRunId: fallbackRunId || fallbackJobId || null, effectiveSlot };
-    }
-
-    // legacy behavior (existing helper)
-    return await uploadPngBufferToStorage({ outBuf, jobId: fallbackJobId, runId: fallbackRunId, slotIndex: effectiveSlot });
-  }
-
-  // ---------- NEW: non-job operations (no jobId required) ----------
-  try {
-    if (kind === "alloc_set") {
-      const { setN, outputBasePath } = await allocNextSet(activeCategory);
-      return json(200, { ok: true, setN, outputBasePath });
-    }
-
-    if (kind === "copy_to_slot") {
-      const cat = normCategory(activeCategory);
-      if (!GENERATABLE_CATEGORIES.has(cat)) return json(400, { error: { message: "activeCategory not generatable" } });
-
-      const src = String(source_storage_path || "").trim();
-      if (!src) return json(400, { error: { message: "source_storage_path is required" } });
-
-      const base = assertAllowedOutputBase(output_base_path);
-      const effectiveSlot = Number.isFinite(Number(slotIndex)) && Number(slotIndex) >= 0 ? Number(slotIndex) : 0;
-      const dst = `${base}/Slot_${effectiveSlot + 1}.png`;
-
-      const bucket = admin.storage().bucket();
-      await bucket.file(src).copy(bucket.file(dst));
-      const downloadURL = await signedUrlFor(bucket.file(dst));
-      return json(200, { ok: true, storagePath: dst, downloadURL });
-    }
-
-   if (kind === "edits") {
-      const cat = normCategory(activeCategory);
-      if (!GENERATABLE_CATEGORIES.has(cat)) return json(400, { error: { message: "activeCategory not generatable" } });
-
-      const basePath0 = String(input_storage_path || "").trim();
-      const basePath1 = String(input_charm_storage_path || "").trim();
-      if (!basePath0) return json(400, { error: { message: "input_storage_path is required" } });
-      if (!basePath1) return json(400, { error: { message: "input_charm_storage_path is required" } });
-
-      const apiKey = process.env.GEMINI_API_KEY;
-      if (!apiKey) return json(400, { error: { message: "Missing GEMINI_API_KEY env var" } });
-
-      const outputBasePath = assertAllowedOutputBase(output_base_path);
-      const effectiveSlot = Number.isFinite(Number(slotIndex)) && Number(slotIndex) >= 0 ? Number(slotIndex) : 0;
-
-      const img0 = await storagePathToBuffer(basePath0);
-      const img1 = await storagePathToBuffer(basePath1);
-
-      const outBuf = await callGeminiImagesEdits({
-        apiKey,
-        model,
-        prompt,
-        size,
-        quality,
-        output_format,
-        images: [
-          { buffer: img0.buffer, mime: img0.mime, filename: filenameForMime("image0", img0.mime) },
-          { buffer: img1.buffer, mime: img1.mime, filename: filenameForMime("image1", img1.mime) },
-        ],
-      });
-
-      const saved = await uploadPngBufferToStorage({
-        outBuf,
-        jobId: null,
-        runId: null,
-        slotIndex: effectiveSlot,
-        outputBasePath,
-      });
-
-      return json(200, { ok: true, storagePath: saved.storagePath, downloadURL: saved.downloadURL });
-    }
-
-    if (kind === "write_manifest") {
-      const cat = normCategory(activeCategory);
-      if (!GENERATABLE_CATEGORIES.has(cat)) return json(400, { error: { message: "activeCategory not generatable" } });
-
-      const base = assertAllowedOutputBase(output_base_path);
-      const bucket = admin.storage().bucket();
-      const p = `${base}/manifest.json`;
-      const buf = Buffer.from(JSON.stringify(manifest || {}, null, 2), "utf8");
-      await bucket.file(p).save(buf, { contentType: "application/json", resumable: false });
-      return json(200, { ok: true, storagePath: p });
-    }
-  } catch (e) {
-    return json(400, { ok: false, error: safeErr(e) });
-  }
-
-  // ---------- existing job-based operations (jobId required) ----------
   if (!jobId) return json(400, { error: { message: "jobId is required" } });
 
   const db = getDb();
@@ -998,8 +790,6 @@ exports.handler = async (event) => {
             kind,
             model,
             clientModel: _clientModel || null,
-            activeCategory: activeCategory || null,
-            outputBasePath: output_base_path || null,
             updatedAt: admin.firestore.FieldValue.serverTimestamp(),
             createdAt: admin.firestore.FieldValue.serverTimestamp(),
           },
@@ -1109,7 +899,7 @@ exports.handler = async (event) => {
       ), "jobRef.set");
 
       const { storagePath, downloadURL, effectiveRunId, effectiveSlot } =
-      await uploadPngBufferToSetPath(finalBuf, output_base_path, slotIndex, jobId, runId);
+        await uploadPngBufferToStorage({ outBuf: finalBuf, jobId, runId, slotIndex });
 
       await firestoreRetry(() => db.collection(IMAGES_COLL).add({
         runId: effectiveRunId,
@@ -1150,7 +940,7 @@ exports.handler = async (event) => {
     if (!prompt) return json(400, { error: { message: "prompt is required" } });
 
     if (kind !== "edits" && kind !== "generations") {
-      return json(400, { error: { message: "kind must be 'edits', 'generations', or 'charm_postscale' (or use alloc_set/copy_to_slot/write_manifest)" } });
+      return json(400, { error: { message: "kind must be 'edits', 'generations', or 'charm_postscale'" } });
     }
 
     await firestoreRetry(
@@ -1229,8 +1019,8 @@ exports.handler = async (event) => {
        // Final deterministic framing (OUTPUT only)
       outBuf = await applyFinalFrameZoomIfNeeded(outBuf, postprocess);
 
-    const { storagePath, downloadURL, effectiveRunId, effectiveSlot } =
-      await uploadPngBufferToSetPath(outBuf, output_base_path, slotIndex, jobId, runId);
+      const { storagePath, downloadURL, effectiveRunId, effectiveSlot } =
+      await uploadPngBufferToStorage({ outBuf, jobId, runId, slotIndex });
 
     await firestoreRetry(() => db.collection(IMAGES_COLL).add({
       runId: effectiveRunId,
@@ -1243,8 +1033,6 @@ exports.handler = async (event) => {
       traits: body.traits || null,
       jobId,
       kind,
-      activeCategory: activeCategory || null,
-      outputBasePath: output_base_path || null,
     }), "images.add");
 
     await firestoreRetry(() => jobRef.set(
