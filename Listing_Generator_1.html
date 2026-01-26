@@ -465,6 +465,33 @@
       return await postJson("geminiImageProxy-background", { kind: "alloc_set", activeCategory: category });
     }
 
+   function pickFirstString(...candidates) {
+      for (const v of candidates) {
+        if (typeof v === "string" && v.trim()) return v.trim();
+      }
+      return null;
+    }
+
+    function normalizeAllocOutputBasePath(alloc) {
+      // Some backends return a string directly, others nest under data/result/payload.
+      if (typeof alloc === "string") return alloc.trim() || null;
+      if (!alloc || typeof alloc !== "object") return null;
+
+      const a = alloc;
+      const d = a.data && typeof a.data === "object" ? a.data : null;
+      const r = a.result && typeof a.result === "object" ? a.result : null;
+      const p = a.payload && typeof a.payload === "object" ? a.payload : null;
+
+      return pickFirstString(
+        // top-level
+        a.outputBasePath, a.output_base_path, a.output_base_path, a.outputBase, a.basePath,
+        // common nesting
+        d?.outputBasePath, d?.output_base_path, d?.outputBase, d?.basePath,
+        r?.outputBasePath, r?.output_base_path, r?.outputBase, r?.basePath,
+        p?.outputBasePath, p?.output_base_path, p?.outputBase, p?.basePath
+      );
+    }
+
     function slotRefFolder(category, folder) {
       return `${ROOT}/${category}/${folder}`;
     }
@@ -481,16 +508,10 @@
 
       setStatus("Allocating Set…");
       const alloc = await allocSet(category);
-      // alloc_set response shape can vary (camelCase vs snake_case)
       console.log("[alloc_set] response:", alloc);
-      const outputBasePath =
-        alloc?.outputBasePath ||
-        alloc?.output_base_path ||
-        alloc?.outputBasePath ||
-        alloc?.outputBase ||
-        alloc?.basePath ||
-        alloc?.outputBase; // listing-generator-1/{cat}/Ready_To_List/Set_N
-      if (!outputBasePath || typeof outputBasePath !== "string") {
+      const outputBasePath = normalizeAllocOutputBasePath(alloc);
+      if (!outputBasePath) {
+        console.warn("[alloc_set] missing output base path; keys:", Object.keys(alloc || {}));
         throw new Error("alloc_set did not return a valid outputBasePath");
       }
 
