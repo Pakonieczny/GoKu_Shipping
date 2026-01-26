@@ -487,8 +487,11 @@
       return j;
     }
 
+    // Use the NON-background endpoint so we always get JSON back.
+    const GEMINI_FN = "geminiImageProxy";
+
     async function allocSet(category) {
-      return await postJson("geminiImageProxy-background", { kind: "alloc_set", activeCategory: category });
+      return await postJson(GEMINI_FN, { kind: "alloc_set", activeCategory: category });
     }
 
    function pickFirstString(...candidates) {
@@ -587,7 +590,7 @@
         };
 
         if (spec.type === "copy") {
-          const r = await postJson("geminiImageProxy-background", {
+          const r = await postJson(GEMINI_FN, {
             kind: "copy_to_slot",
             activeCategory: category,
             source_storage_path: srcLatest.fullPath,
@@ -604,7 +607,7 @@
             output: r.storagePath,
           });
         } else {
-          const r = await postJson("geminiImageProxy-background", {
+          const r = await postJson(GEMINI_FN, {
             kind: "edits",
             activeCategory: category,
             input_storage_path: srcLatest.fullPath,
@@ -628,7 +631,7 @@
       }
 
       setStatus("Writing manifest…");
-      await postJson("geminiImageProxy-background", {
+      await postJson("geminiImageProxy", {
         kind: "write_manifest",
         activeCategory: category,
         output_base_path: outputBasePath,
