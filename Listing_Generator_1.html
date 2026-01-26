@@ -115,9 +115,6 @@
     </div>
   </div>
 
-  <!-- Hidden picker used by per-slot "Img Upload" buttons -->
-  <input id="slotImgFiles" type="file" accept="image/*" multiple style="display:none" />
-
   <!-- Firebase (same style as shipping-1 uses: compat init + modular storage/auth) -->
   <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
@@ -311,19 +308,8 @@
     const generateSetBtn = document.getElementById("generateSet");
     const gridEl = document.getElementById("grid");
     const statusEl = document.getElementById("status");
-    const finalCharmTargetPxEl = document.getElementById("finalCharmTargetPx");
-    const finalCharmTargetPxValEl = document.getElementById("finalCharmTargetPxVal");
-    // Optional (legacy editor may be removed from DOM; keep ref so code never throws)
-    const promptEl = document.getElementById("prompt");
+    // Category-only UI (no legacy slot editor / per-slot uploads)
 
-    // Hidden per-slot image picker (used by "Img Upload" buttons)
-    const slotImgFilesEl = document.getElementById("slotImgFiles");
-
-
-
-    // Grid/prompt/traits slot count (matches the 8-slot UI)
-    const SLOT_COUNT = 8;
-    let activeSlotIndex = 0;
 
     function setStatus(msg){ statusEl.textContent = msg; }
 
@@ -463,1775 +449,7 @@
     activeCategoryEl.value = "Beady_Necklace";
     renderCategoryUI(activeCategoryEl.value);
     activeCategoryEl.addEventListener("change", () => renderCategoryUI(activeCategoryEl.value));
-
-    // Per-slot editing context (Slot 1..8)
-    // UI previews show only the currently selected slot
-    let referenceDataUrl = null;    // active slot Image[0] preview
-    let charmMacroDataUrl = null;   // active slot Image[1] preview
-
-    // Slots hold their own pipelines: prompt + traits + reference image paths (Firebase Storage)
-    let slots = [];
-    let pendingImgUploadSlotIndex = null;
-
-    // Keep UI slider + text in sync (NEW: integer px target)
-    function clampNum(n, lo, hi){ return Math.max(lo, Math.min(hi, n)); }
-    function readFinalCharmTargetPx(){
-      const raw = parseInt(finalCharmTargetPxEl?.value || "14", 10);
-      const v = Number.isFinite(raw) ? raw : 14;
-      return Math.round(clampNum(v, 4, 32));
-    }
-    function syncFinalCharmTargetPxUI(v){
-      const x = String(Math.round(v));
-      if (finalCharmTargetPxEl) finalCharmTargetPxEl.value = x;
-      if (finalCharmTargetPxValEl) finalCharmTargetPxValEl.value = x;
-    }
-    if (finalCharmTargetPxEl && finalCharmTargetPxValEl){
-      finalCharmTargetPxEl.addEventListener("input", ()=> syncFinalCharmTargetPxUI(readFinalCharmTargetPx()));
-      finalCharmTargetPxValEl.addEventListener("change", ()=>{
-        const raw = parseInt(finalCharmTargetPxValEl.value || "14", 10);
-        const v = Number.isFinite(raw) ? raw : 14;
-        syncFinalCharmTargetPxUI(clampNum(v, 4, 32));
-      });
-      syncFinalCharmTargetPxUI(readFinalCharmTargetPx());
-    }
-
-    // Trait defs (Etsy-friendly: clean necklines, pastel/neutral palette, jewelry-forward)
-    const DEFAULT_TRAITS = {
-            skin: [
-              "medium",
-              "tan",
-              "very tan",
-              "deep",
-              "very deep",
-              "dark"
-            ],
-            wardrobe: [
-              // Tops
-              "linen button-down shirt",
-              "cotton poplin shirt",
-              "ribbed knit tank",
-              "silky camisole",
-              "classic crewneck tee",
-              "soft scoop-neck tee",
-              "fitted long-sleeve top",
-              "mock-neck top",
-              "lightweight turtleneck",
-              "wrap blouse",
-              "peasant blouse subtle texture",
-              "satin blouse matte sheen",
-
-              // Knitwear
-              "chunky knit sweater",
-              "fine-gauge knit sweater",
-              "cardigan open front",
-              "cropped cardigan",
-              "cashmere pullover",
-              "cable knit sweater subtle",
-
-              // Outer layers
-              "blazer over neutral top",
-              "cropped blazer",
-              "soft trench coat open",
-              "lightweight wool coat open",
-              "denim jacket light wash",
-              "tailored vest over top",
-
-              // Dresses (still good for neck/collarbone crops)
-              "slip dress",
-              "square-neck dress",
-              "ribbed knit dress",
-              "wrap dress solid",
-              "minimal sundress"
-              ],
-
-            wardrobeColor: [
-              // Neutrals that make gold pop
-              "pale taupe",
-              "warm beige",
-              "oatmeal",
-              "ivory",
-              "soft cream",
-              "stone",
-              "mushroom",
-              "warm greige",
-              "light caramel",
-
-              // Pastels that stay punchy-neutral
-              "sage",
-              "dusty olive",
-              "misty blue",
-              "powder blue",
-              "soft periwinkle",
-              "muted lavender",
-              "dusty lilac",
-              "blush pink",
-              "muted rose",
-              "soft peach",
-              "buttercream",
-              "pistachio",
-              "seafoam"
-              ],
-
-            backdrop: [
-              "soft peach studio backdrop",
-              "warm sand studio backdrop",
-              "misty blue studio backdrop",
-              "pale lilac studio backdrop",
-              "cream paper seamless backdrop",
-              "warm beige gradient backdrop",
-              "muted pastel colorwash backdrop",
-              "airy off-white lifestyle wall backdrop"
-            ],
-
-            backgroundAccent: [
-              "no accent",
-              "subtle tonal gradient",
-              "very soft vignette",
-              "faint paper texture",
-              "gentle studio falloff"
-            ],
-
-            lighting: [
-              "soft diffused daylight window light",
-              "large softbox studio light gentle shadows",
-              "north-facing window light airy highlights",
-              "two-softbox wrap light minimal contrast",
-              "beauty-dish softened with diffusion",
-              "overcast daylight look clean neutral"
-            ],
-
-            colorGrade: [
-              "punchy-neutral pastel grade",
-              "warm editorial pastel grade",
-              "clean creamy highlights low saturation",
-              "soft contrast with preserved skin texture",
-              "neutral whites with warm metal emphasis"
-            ],
-
-            stylingMood: [
-              "minimal editorial",
-              "clean lifestyle",
-              "soft romantic pastel",
-              "modern neutral",
-              "quiet luxury"
-            ],
-
-            makeup: [
-              "no-makeup makeup natural",
-              "soft matte neutral makeup",
-              "dewy skin minimal makeup",
-              "barely-there blush natural lip",
-              "clean editorial minimal makeup"
-            ],
-
-            hair: [
-              "loose waves behind shoulders",
-              "sleek straight hair tucked behind ear",
-              "low bun clean neckline",
-              "low ponytail clean neckline",
-              "half-up style clear collarbone"
-            ],
-
-            pose: [
-              "shoulders relaxed straight-on",
-              "shoulders relaxed, 2/3 left turn subtle",
-              "shoulders relaxed, 2/3 right turn subtle"
-            ],
-
-            // Pass A: still place the charm clearly, but KEEP the crop ultra-tight and zoomed.
-            cameraPlacement: [
-              "Only show upper bust + collarbone close crop, TOP EDGE cuts at mid-neck (no jawline, no chin, no face), necklace centered, 120mm"
-            ],
-
-            // Pass B: final framing MUST be bust/collarbone only.
-            cameraFinal: [
-              "Only show upper bust + collarbone close crop, TOP EDGE cuts at mid-neck (no jawline, no chin, no face), necklace centered, 120mm"
-            ],
-
-              // lens look (perspective/compression)
-            lensLook: [
-              "120mm portrait close crop realistic"
-
-            ],
-
-            textureRules: [
-              "no logos",
-              "no busy patterns",
-              "no jewelry besides the necklace",
-              "fabric texture subtle only",
-              "keep neckline unobstructed"
-            ]
-    };
-
-    // One traits set per slot (independent copies)
-    function deepClone(o){ return JSON.parse(JSON.stringify(o)); }
-    const TRAITS_BY_SLOT = Array.from({ length: SLOT_COUNT }, () => deepClone(DEFAULT_TRAITS));
-
-    // -------------------------
-    // Charm sizing control (hard numeric plan)
-    // -------------------------
-    // TRUE DESIRED final size (what you actually want to see in the final image)
-    const CHARM_FINAL_PX_TRUE = { min: 12, max: 16, target: 14 };
-
-    // MODEL OVERSCALE COMPENSATION:
-    // The model tends to render the charm ~1.5–2.0x too large even when given px targets.
-    // So we instruct a *smaller* px window (bias-compensated) to land at TRUE 12–16px.
-    // These are inverse multipliers (smaller = stronger shrink).
-    const CHARM_INV_OVERSCALE_BASE = {
-      mm120: 0.35,
-      macro: 0.48
-    };
-    const CHARM_INV_OVERSCALE_ZOOM = {
-      wide: 0.75,    // chest-up tends to overscale more → instruct smaller
-      medium: 0.9,
-      tight: 1.00
-    };
-
-    // Pass A should keep the charm larger to preserve engraving detail while placing.
-    // This is the whole point of the 2-pass pipeline: generate bigger → deterministic downscale.
-    const CHARM_A_MULT = 2.0;
-
-    // -------------------------
-    // Deterministic final framing (server-side, applied to OUTPUT only)
-    // -------------------------
-    const FINAL_FRAME_ZOOM = 1.07;  // increase to zoom in more (e.g. 1.65)
-    const FINAL_ANCHOR_X = 0.50;
-    const FINAL_ANCHOR_Y = 0.45;   // shift crop UP so necklace lands lower in the final frame
-
-    function parseLensMm(lensLook = "") {
-      const s = String(lensLook).toLowerCase();
-      if (s.includes("120mm")) return 120;
-      return 120;
-    }
-
-    function parseFinalZoomGroup(cameraFinal = "") {
-      const s = String(cameraFinal).toLowerCase();
-      // more zoomed out framing groups
-      if (s.includes("chest-up")) return "wide";
-      if (s.includes("neck/jawline")) return "medium";
-      if (s.includes("neck + collarbone")) return "tight";
-      return "medium";
-    }
-
-    function clamp(n, lo, hi){ return Math.max(lo, Math.min(hi, n)); }
-
-    function charmPlanFromTraits(traits, stage /* "placement" | "final" */) {
-      const lensMm = parseLensMm(traits?.lensLook);
-      const zoomGroup = parseFinalZoomGroup(traits?.cameraFinal);
-
-      // --- bias-compensated instruction window ---
-      const lensKey =
-        (String(traits?.lensLook || "").toLowerCase().includes("macro")) ? "macro" :
-        (lensMm >= 120) ? "mm120" : "mm120";
-
-      const invBase = CHARM_INV_OVERSCALE_BASE[lensKey] ?? 0.50;
-      const invZoom = CHARM_INV_OVERSCALE_ZOOM[zoomGroup] ?? 1.00;
-      // Final inverse multiplier applied to TRUE targets to produce MODEL-INSTRUCTION targets
-      const invOverscale = clamp(invBase * invZoom, 0.32, 0.70);
-
-      // TRUE target (what you want)
-      const finalTrue = {
-        minPx: CHARM_FINAL_PX_TRUE.min,
-        maxPx: CHARM_FINAL_PX_TRUE.max,
-        targetPx: CHARM_FINAL_PX_TRUE.target,
-      };
-
-      // MODEL-INSTRUCTION target (what we tell the model)
-      const finalInstr = {
-        minPx: Math.round(finalTrue.minPx * invOverscale),
-        maxPx: Math.round(finalTrue.maxPx * invOverscale),
-        targetPx: Math.round(finalTrue.targetPx * invOverscale),
-      };
-
-      // Pass A instruction target (larger for engraving placement fidelity)
-      const placementInstr = {
-        minPx: Math.round(finalInstr.minPx * CHARM_A_MULT),
-        maxPx: Math.round(finalInstr.maxPx * CHARM_A_MULT),
-        targetPx: Math.round(finalInstr.targetPx * CHARM_A_MULT),
-      };
-
-      return {
-        stage,
-        lensMm,
-        zoomGroup,
-        lensKey,
-        invOverscale,          // how much smaller we instruct vs TRUE targets
-        finalTrue,             // your real desired window (12–16px)
-        finalInstr,            // bias-compensated instruction window
-        ...(stage === "placement" ? { instr: placementInstr } : { instr: finalInstr }),
-      };
-    }
-
-
-       function pick(arr, label="trait"){
-       if (!Array.isArray(arr) || arr.length === 0) {
-         console.warn(`pick(): TRAITS.${label} missing or empty`, arr);
-         return "";
-       }
-       return arr[Math.floor(Math.random() * arr.length)];
-       }
-    function makeTraits(traitsSet){
-      const T = traitsSet || TRAITS_BY_SLOT[0];
-      return {
-        skin: pick(T.skin, "skin"),
-        cameraPlacement: pick(T.cameraPlacement, "cameraPlacement"),
-        cameraFinal: pick(T.cameraFinal, "cameraFinal"),
-        wardrobe: pick(T.wardrobe, "wardrobe"),
-        wardrobeColor: pick(T.wardrobeColor, "wardrobeColor"),
-        backdrop: pick(T.backdrop, "backdrop"),
-        backgroundAccent: pick(T.backgroundAccent, "backgroundAccent"),
-        lighting: pick(T.lighting, "lighting"),
-        colorGrade: pick(T.colorGrade, "colorGrade"),
-        stylingMood: pick(T.stylingMood, "stylingMood"),
-        makeup: pick(T.makeup, "makeup"),
-        hair: pick(T.hair, "hair"),
-        pose: pick(T.pose, "pose"),
-        lensLook: pick(T.lensLook, "lensLook"),
-        textureRules: pick(T.textureRules, "textureRules"),
-      };
-    }
-
-    function makeTraitsForSlot(i){
-      return makeTraits(TRAITS_BY_SLOT[i]);
-    }
-
-   // Slot 2 prompt: ONE-PASS charm replacement + engraving fidelity + OUTPUT zoom-out 1.6×
-    const SLOT2_DUPLICATE_PROMPT =
-    `CRITICAL: Slot 2 is a charm replacement task. This must be a single-pass edit.
-
-    PROCESS ORDER (NON-NEGOTIABLE)
-    • Single pass only.
-    • Use Image[0] as the base photo.
-    • Replace the charm/pendant in Image[0] with the charm from Image[1].
-
-    INPUT IMAGES (ORDER MATTERS)
-    • Image[0] = base photo (scene + camera + chain placement + hardware position)
-    • Image[1] = charm macro (pixel-truth source for silhouette + cutouts + engraving)
-
-    CHARM SCALE OVERRIDE (NON-NEGOTIABLE)
-    • The placed/replaced charm MUST be smaller than the charm being replaced in Image[0].
-    • Apply an extra downscale of 1.6× (i.e. final charm must be ~40% of the size you would normally choose).
-    • Do NOT compensate by thickening lines, enlarging cutouts, or changing engraving. Size change must be a pure scale change only.
-
-    ENGRAVING + CUTOUT FIDELITY (TOP PRIORITY — IMAGE[1] IS SINGLE TRUTH SOURCE)
-    • Treat Image[1] as pixel-truth. Do NOT redraw, “enhance,” simplify, smooth, stylize, thicken, sharpen, clean up, or reinterpret.
-    • Add a subtle contact shadow under charm + mild specular alignment as needed to the Final generated image.
-    • Outline lock: the outer perimeter must match Image[1] exactly (no rounding, no warping, no missing corners, no bulges).
-    • Cutout lock: every internal cutout/negative-space hole must match Image[1] exactly (shape + position + proportions). Do not fill-in holes. Do not merge holes.
-    • Engraving lock: preserve every stroke exactly as in Image[1] (no stroke loss, no merging, no thickening, no cleanup, no mirrored text, no invented marks).
-    • Edge integrity: keep cutout edges crisp. Do not blur/smear/over-anti-alias away fine cutout detail.
-    • Allowed Charm Edits: tiny exposure/white-balance match to Image[0] + subtle contact shadow under charm + mild specular alignment. No geometry changes.
-
-    HARDWARE + HOOP CONNECTION (NON-NEGOTIABLE)
-    • The charm’s top hoop/bail/loop MUST be an INTEGRATED part of the charm silhouette exactly like Image[1] — as if the entire charm (including the hoop) was laser-cut from one single sheet of metal.
-    • The hoop-to-charm attachment MUST have a robust, wide contact area like Image[1]. This is NOT a tiny touch-point. It must NOT look “barely touching.”
-    • The attachment must read like one continuous metal piece: no seam line, no solder/weld look, no separate part glued on, no “ring sitting on top.”
-    • Geometry lock: preserve the exact bridge/tab shape that connects the hoop to the charm body in Image[1] (width, curvature, thickness, edge bevel).
-    • The hoop must be fully connected with a broad “tab” of metal. HARD FAIL if the hoop connects via a hairline neck, thin spike, or point-contact.
-    • The jump ring must pass through the hoop and sit naturally inside it, but the hoop itself must remain part of the charm’s perimeter geometry (not re-invented hardware).
-    • ONE-PIECE LASER-CUT RULE: the hoop/bail is part of the SAME continuous metal piece as the charm body (like Image[1]) — NOT a separate ring “added,” “welded,” “soldered,” or “barely touching.”
-    • ROBUST ATTACHMENT RULE: the hoop-to-charm connection must have a thick/wide bridge of metal (large surface-area contact), not a tangential touchpoint.
-      - Minimum bridge width: ≥ 35% of the hoop’s OUTER diameter.
-      - Minimum contact length: ≥ 25% of the hoop’s outer arc must visibly blend into the charm’s body at the attachment region.
-      - If uncertain, OVER-CONNECT (thicker/wider bridge) rather than under-connect. Never reduce the bridge to a thin neck.
-    • HARD FAIL if the hoop looks “just barely touching,” hairline-connected, separated by any visible slit/gap, or reads as a separate component sitting on top of the charm.
-    • Scale rule: when you shrink the charm, the hoop + its bridge/tab must shrink proportionally as part of the same silhouette (do NOT shrink only the body and leave a weak connection).
-
-    LOCKS (NON-NEGOTIABLE)
-    • Preserve EVERYTHING ELSE from Image[0]: chain links, bead stations, jump ring placement, clasp, metal tone, lighting, background, hardware alignment.
-    • Do not add objects. Do not remove objects (other than replacing the charm itself). Do not change the chain geometry.
-
-    HARD FAIL CONDITIONS
-    - Any charm larger than Image[0]'s charm, any engraving changes, any altered cutout geometry, any changed chain geometry/station spacing, blur/smear on charm details, or any added objects.
-    - Any hoop/bail connection that is point-touching, hairline, barely touching, offset, floating, or looks like a separate welded/soldered ring.
-    - Any hoop/bail that appears barely touching, point-connected, hairline-connected, floating, hovering, separated, or “attached later” (weld/solder/glue look). The hoop must look like part of the same laser-cut charm silhouette from Image[1].`;
-
-
-
-// Slot 3 prompt: ONE-PASS sizing-guide charm replacement (NO necklace)
-const SLOT3_SIZING_GUIDE_PROMPT =
-`CRITICAL: Slot 3 is a sizing-guide charm replacement task. This must be a single-pass edit.
-
-PROCESS ORDER (NON-NEGOTIABLE)
-• Single pass only.
-• Use Image[0] as the base sizing-guide graphic.
-• Replace ONLY the charm in Image[0] with the charm from Image[1].
-
-INPUT IMAGES (ORDER MATTERS)
-• Image[0] = sizing guide base image (ALL text, layout, pencil, line, background)
-• Image[1] = charm macro (pixel-truth source for silhouette, cutouts, engraving, integrated hoop)
-
-ABSOLUTE LOCKS (DO NOT CHANGE)
-• Do NOT add any necklace chain, jump ring, or jewelry.
-• Do NOT move, resize, restyle, blur, or alter any text.
-• The text “~12mm x 12mm” MUST remain visible, crisp, and identical.
-• The short black pointer line MUST remain visible and MUST point to the charm exactly.
-• Do NOT crop, zoom, or reframe the image.
-
-CHARM POSITION + SIZE MATCH (NON-NEGOTIABLE)
-• The new charm must sit in the EXACT same position as the original charm in Image[0].
-• The new charm must match the original charm’s on-image size EXACTLY.
-• This is a strict size match — no scaling up or down.
-
-CHARM FIDELITY (IMAGE[1] IS SINGLE TRUTH SOURCE)
-• Preserve the exact outer perimeter, cutouts, engraving, and integrated hoop from Image[1.
-• Do NOT redraw, smooth, stylize, thicken, clean up, or reinterpret.
-• Keep edges crisp. No blur or smear.
-
-INTEGRATED HOOP RULE
-• The hoop/bail MUST be part of the same laser-cut silhouette as the charm body.
-• The hoop MUST connect with a wide, solid bridge of metal (large surface area).
-• HARD FAIL if the hoop looks barely touching, point-connected, floating, or welded-on.
-
-HARD FAIL CONDITIONS
-- Any text change.
-- Any necklace or jewelry added.
-- Any charm size mismatch vs Image[0].
-- Any weak or disconnected hoop connection.`;
-
-
-
-
-    // Default prompt (edit freely)
-    const DEFAULT_PROMPT =
-    `CRITICAL: This is a standard fashion product photo edit. Keep the subject modest. No nudity. 
-
-    ULTRA-MICRO SIZE OVERRIDE (TOP PRIORITY — MAKE IT BARELY VISIBLE)
-    • Force the Charm to be very small: final on-image charm height MUST be 9 pixels tall (absolute pixel height, not relative).
-    • If you cannot measure pixels, choose the smallest size that is still legible on the chain.
-    • Do NOT compensate by zooming out, reframing, cropping, changing camera, changing necklace scale, changing model scale, changing engraving thickness, or changing chain thickness.
-    • Never allow embossed engravings on the Charm/Pendant, all engravings must be flat and superficial having no descerable depth.  
-    • Do NOT allow any shadows (Contact or otherwise) to be visible undereath and around the Charm/Pendant placement, block all Charm/Pendant related shadows.
-    • The Charm/Pendant must be bright yellow gold colour, do not saturate the Charm/Pendant gold colour colour.
-    • The chain must remain exactly the same size and detail as Image[0]. Only the charm is scaled.
-
-    TASK (SLOT 1 — IMAGE EDIT, SINGLE PASS)
-    Duplicate and zoom-in into the female model in Image[0], only replace the charm from Image[1] onto the existing necklace chain in Image[0] as a hanging flat charm.
-    DO NOT generate models with Dark Black skin tones, reject all Dark Black skin tones.
-    DO NOT allow skin colour to be grey around the Charm/Pendant. The skin tone/colour near the Charm/Pendant must be uniform with the rest of the body.
-    HARD LOCK: Never render female model above the neck and below the bust.
-    HARD LOCK: The Charm/Pendant material is a perfectly flat and very thin sheet of metal, always render the Charm/Pendant completely flat and very thin, DO NOT allow any rounded/radius on the cutout edges.
-    DO not zoom out when generating the image. Keep model and frame consistent with Image_0 
-    Focus on Charm Engraving details and ensure 100% accuracy to Image_1
-    Do not output text.
-    Ensure the charm colour, shading and reflections match the necklace chain in Image_0.`;
-
-
-    // ---------------------------------------------
-    // Slot 1 prompt authority (TEMP TOGGLE)
-    // ---------------------------------------------
-    // When true, Slot 1 will ALWAYS send DEFAULT_PROMPT to the backend
-    // and will skip the dynamic buildPrompt()/two-pass pipeline entirely.
-    const SLOT1_DEFAULT_PROMPT_ONLY = true;
-
-
-    const PROMPT_BY_SLOT = Array.from({ length: SLOT_COUNT }, () => DEFAULT_PROMPT);
-    // Seed per-slot prompts (Slot 2 + Slot 3)
-    PROMPT_BY_SLOT[1] = SLOT2_DUPLICATE_PROMPT;
-    PROMPT_BY_SLOT[2] = SLOT3_SIZING_GUIDE_PROMPT;
-    // Initialize editor (Slot 1 by default)
-    if (promptEl) promptEl.value = PROMPT_BY_SLOT[0];
-
-     // -------------------------
-    // Slot selection (UI-agnostic)
-    // -------------------------
-    function setActiveSlot(i){
-      const idx = Math.max(0, Math.min(SLOT_COUNT-1, Number(i) || 0));
-      activeSlotIndex = idx;
-      if (slots[idx]?.traits) renderTraits(slots[idx].traits);
-      // Best-effort previews; ignore rule/permission failures
-      refreshSlotRefPreviews(idx).catch(()=>{});
-    }
-
-    // --- Zoom + pan listeners ---
-    function attachZoomPan(box){
-      let isMouseDown = false;
-      let dragStartX = 0, dragStartY = 0;
-      let lastX = 0, lastY = 0;
-
-      box.addEventListener("wheel", (ev) => {
-        const img = box.querySelector("img");
-        if (!img) return;
-        ev.preventDefault();
-        let s = parseFloat(img.dataset.scale) || 1;
-        let ox = parseFloat(img.dataset.offsetX) || 0;
-        let oy = parseFloat(img.dataset.offsetY) || 0;
-        if (ev.deltaY < 0) s *= 1.1;
-        else {
-          s /= 1.1;
-          if (s <= 1) { s = 1; ox = 0; oy = 0; }
-        }
-        if (s > 8) s = 8;
-        img.dataset.scale = s;
-        img.dataset.offsetX = ox;
-        img.dataset.offsetY = oy;
-        img.style.transform = `translate(${ox}px, ${oy}px) scale(${s})`;
-      }, { passive:false });
-
-      box.addEventListener("mousedown", (ev) => {
-        const img = box.querySelector("img");
-        if (!img) return;
-        isMouseDown = true;
-        dragStartX = ev.clientX;
-        dragStartY = ev.clientY;
-        lastX = parseFloat(img.dataset.offsetX) || 0;
-        lastY = parseFloat(img.dataset.offsetY) || 0;
-      });
-      window.addEventListener("mouseup", () => { isMouseDown = false; });
-      window.addEventListener("mousemove", (ev) => {
-        const img = box.querySelector("img");
-        if (!img || !isMouseDown) return;
-        const dx = ev.clientX - dragStartX;
-        const dy = ev.clientY - dragStartY;
-        const ox = lastX + dx;
-        const oy = lastY + dy;
-        img.dataset.offsetX = ox;
-        img.dataset.offsetY = oy;
-        const s = parseFloat(img.dataset.scale) || 1;
-        img.style.transform = `translate(${ox}px, ${oy}px) scale(${s})`;
-      });
-    }
-
-    function setPreview(box, dataUrl){
-      box.innerHTML = `<img src="${dataUrl}" data-scale="1" data-offsetX="0" data-offsetY="0" />`;
-      attachZoomPan(box);
-    }
-
-    async function fileToDataUrl(file, opts = {}){
-      const {
-        maxDim = 10000,          // keep detail, shrink payload
-        mime = "image/png",
-        quality = 1.0,
-
-        // --- NEW: deterministic framing lock (crop -> resize) ---
-        outW = null,            // e.g. 1024
-        outH = null,            // e.g. 1024
-        frameZoom = 1.00,        // e.g. 1.07 means "zoom in" by cropping to 1/1.07 area
-        anchorX = 0.5,          // 0..1 crop center X
-        anchorY = 0.6,          // 0..1 crop center Y (biased lower to favor necklace)
-      } = opts;
-
-      const clamp01 = (v) => Math.max(0, Math.min(1, Number(v)));
-      const wantFrameLock =
-        Number.isFinite(Number(outW)) &&
-        Number.isFinite(Number(outH)) &&
-        Number(outW) > 0 &&
-        Number(outH) > 0;
-
-      // Modern path
-      try {
-        const bmp = await createImageBitmap(file);
-        const w = bmp.width, h = bmp.height;
-        let tw, th;
-        let sx = 0, sy = 0, sw = w, sh = h;
-
-        if (wantFrameLock) {
-          // 1) crop to target aspect
-          const targetAR = Number(outW) / Number(outH);
-          const srcAR = w / h;
-          if (srcAR > targetAR) {
-            sh = h;
-            sw = Math.max(1, Math.round(h * targetAR));
-          } else {
-            sw = w;
-            sh = Math.max(1, Math.round(w / targetAR));
-          }
-
-          // 2) apply zoom (smaller crop => more zoom)
-          const z = Math.max(1, Number(frameZoom) || 1);
-          sw = Math.max(1, Math.round(sw / z));
-          sh = Math.max(1, Math.round(sh / z));
-
-          // 3) anchor (biased slightly lower by default)
-          const ax = clamp01(anchorX);
-          const ay = clamp01(anchorY);
-          const cx = w * ax;
-          const cy = h * ay;
-          sx = Math.round(cx - sw / 2);
-          sy = Math.round(cy - sh / 2);
-          sx = Math.max(0, Math.min(w - sw, sx));
-          sy = Math.max(0, Math.min(h - sh, sy));
-
-          tw = Math.max(1, Math.round(Number(outW)));
-          th = Math.max(1, Math.round(Number(outH)));
-        } else {
-          const scale = Math.min(1, maxDim / Math.max(w, h));
-          tw = Math.max(1, Math.round(w * scale));
-          th = Math.max(1, Math.round(h * scale));
-        }
-
-        const canvas = document.createElement("canvas");
-        canvas.width = tw;
-        canvas.height = th;
-
-        const ctx = canvas.getContext("2d", { alpha: false });
-        ctx.imageSmoothingEnabled = true;
-        ctx.imageSmoothingQuality = "high";
-       if (wantFrameLock) {
-          ctx.drawImage(bmp, sx, sy, sw, sh, 0, 0, tw, th);
-        } else {
-          ctx.drawImage(bmp, 0, 0, tw, th);
-        }
-        // Important: toDataURL on jpeg dramatically reduces size
-        return canvas.toDataURL(mime, quality);
-      } catch (_) {
-        // Fallback: FileReader -> Image -> canvas
-        const dataUrl = await new Promise((resolve, reject)=>{
-          const reader = new FileReader();
-          reader.onload = ()=> resolve(reader.result);
-          reader.onerror = reject;
-          reader.readAsDataURL(file);
-        });
-
-        const img = await new Promise((resolve, reject)=>{
-          const i = new Image();
-          i.onload = ()=> resolve(i);
-          i.onerror = reject;
-          i.src = dataUrl;
-        });
-
-        const w = img.naturalWidth || img.width;
-        const h = img.naturalHeight || img.height;
-        let tw, th;
-        let sx = 0, sy = 0, sw = w, sh = h;
-
-        const clamp01 = (v) => Math.max(0, Math.min(1, Number(v)));
-        const wantFrameLock =
-          Number.isFinite(Number(outW)) &&
-          Number.isFinite(Number(outH)) &&
-          Number(outW) > 0 &&
-          Number(outH) > 0;
-
-        if (wantFrameLock) {
-          const targetAR = Number(outW) / Number(outH);
-          const srcAR = w / h;
-          if (srcAR > targetAR) {
-            sh = h;
-            sw = Math.max(1, Math.round(h * targetAR));
-          } else {
-            sw = w;
-            sh = Math.max(1, Math.round(w / targetAR));
-          }
-
-          const z = Math.max(1, Number(frameZoom) || 1);
-          sw = Math.max(1, Math.round(sw / z));
-          sh = Math.max(1, Math.round(sh / z));
-
-          const ax = clamp01(anchorX);
-          const ay = clamp01(anchorY);
-          const cx = w * ax;
-          const cy = h * ay;
-          sx = Math.round(cx - sw / 2);
-          sy = Math.round(cy - sh / 2);
-          sx = Math.max(0, Math.min(w - sw, sx));
-          sy = Math.max(0, Math.min(h - sh, sy));
-
-          tw = Math.max(1, Math.round(Number(outW)));
-          th = Math.max(1, Math.round(Number(outH)));
-        } else {
-          const scale = Math.min(1, maxDim / Math.max(w, h));
-          tw = Math.max(1, Math.round(w * scale));
-          th = Math.max(1, Math.round(h * scale));
-        }
-
-        const canvas = document.createElement("canvas");
-        canvas.width = tw;
-        canvas.height = th;
-
-        const ctx = canvas.getContext("2d", { alpha: false });
-        ctx.imageSmoothingEnabled = true;
-        ctx.imageSmoothingQuality = "high";
-        if (wantFrameLock) {
-          ctx.drawImage(img, sx, sy, sw, sh, 0, 0, tw, th);
-        } else {
-          ctx.drawImage(img, 0, 0, tw, th);
-        }
-        return canvas.toDataURL(mime, quality);
-      }
-    }
-
-    // Helpers
-    function b64ToBlob(b64, mime="image/png"){
-      const bin = atob(b64);
-      const len = bin.length;
-      const bytes = new Uint8Array(len);
-      for (let i=0;i<len;i++) bytes[i] = bin.charCodeAt(i);
-      return new Blob([bytes], { type: mime });
-    }
-
-    function dataUrlToFile(dataUrl, filenameBase = "reference"){
-      const m = /^data:([^;]+);base64,(.+)$/.exec(dataUrl || "");
-      if (!m) throw new Error("Bad data URL");
-      const mime = m[1];
-      const b64 = m[2];
-      const blob = b64ToBlob(b64, mime);
-      const ext =
-        mime.includes("jpeg") ? "jpg" :
-        mime.includes("png") ? "png" :
-        (mime.split("/")[1] || "bin");
-      return new File([blob], `${filenameBase}.${ext}`, { type: mime });
-    }
-
-    // Upload with realtime progress
-    async function uploadWithProgress(path, file, onProgress, opts = {}){
-      // Ensure request.auth is present before Storage calls (Storage uses modular auth)
-      await ensureStorageSignedIn();
-      const storageRef = ref(storage, path);
-      const task = uploadBytesResumable(storageRef, file, { contentType: file.type });
-      await new Promise((resolve, reject) => {
-        task.on("state_changed",
-          (snap) => {
-            if (!snap.totalBytes) return;
-            onProgress?.(snap.bytesTransferred / snap.totalBytes);
-          },
-          reject,
-          resolve
-        );
-      });
-      const wantUrl = opts.returnDownloadUrl === true;
-      if (!wantUrl) return null;
-
-      // If you explicitly ask for a URL, try it — but READ rules may still deny it.
-      try { return await getDownloadURL(storageRef); }
-      catch (err) { throw err; }
-    }
-
-    async function loadReference(file){
-      // NEW: upload reference to Firebase Storage so we never send base64 to Netlify background functions.
-      refNameEl.textContent = file.name;
-
-      // Ensure Storage auth is ready before any upload attempt
-      await ensureStorageSignedIn();
-
-      // prevent clicking Generate while reference is uploading
-      gen8Btn.disabled = true;
-
-      // reset any prior reference cache (active slot only)
-      referenceDataUrl = null;
-      if (slots[activeSlotIndex]) slots[activeSlotIndex].image0StoragePath = null;
-
-      try {
-        // NEW: ensure auth is established before we attempt Storage upload
-        statusEl.textContent = "Preparing reference…";
-        // Preview only (safe to downscale for UI). Upload will use ORIGINAL bytes (no re-encode).
-        referenceDataUrl = await fileToDataUrl(file, {
-          maxDim: 2048,
-          mime: "image/png",
-          quality: 1.0,
-        });
-        setPreview(refPreviewEl, referenceDataUrl);
-
-        // Upload ORIGINAL file bytes to preserve original dimensions + maximum quality
-        const refFile = file;
-
-        // must match server allowlist prefix: listing-generator-1/Beady Necklace/Slot_X/...
-        const slotIndex = activeSlotIndex;
-        const folder = slotFolder(slotIndex);
-        const refId = `image0_${Date.now()}_${Math.random().toString(16).slice(2)}`;
-        const ext = refFile.name.split(".").pop() || "png";
-        const storagePath = `${folder}/${refId}.${ext}`;
-        slots[slotIndex].image0StoragePath = storagePath;
-
-        statusEl.textContent = "Uploading slot Image[0]… 0%";
-
-        // Upload the *slot* base photo (Image[0])
-        await uploadWithProgress(
-          storagePath,
-          refFile,
-          (p) => {
-            const pct = Math.max(0, Math.min(100, Math.round((p || 0) * 100)));
-            statusEl.textContent = `Uploading slot Image[0]… ${pct}%`;
-          },
-          { returnDownloadUrl: false }
-        );
-
-        statusEl.textContent = "Reference ready";
-      } catch (e) {
-        console.error(e);
-        statusEl.textContent = `Reference error: ${e.message || e}`;
-        // allow user to try again
-        gen8Btn.disabled = false;
-        throw e;
-      } finally {
-        // re-enable if we have a valid storage path
-        if (slots[activeSlotIndex]?.image0StoragePath) gen8Btn.disabled = false;
-      }
-    }
-
-    async function loadCharmMacro(file){
-    charmNameEl.textContent = file.name;
-    await ensureStorageSignedIn();
-
-    // prevent clicking Generate while charm macro is uploading
-    gen8Btn.disabled = true;
-
-    // reset any prior charm macro cache (active slot only)
-    charmMacroDataUrl = null;
-    if (slots[activeSlotIndex]) slots[activeSlotIndex].image1StoragePath = null;
-
-    try {
-      statusEl.textContent = "Preparing charm macro…";
-      // Keep more detail for macro (slightly higher quality)
-      charmMacroDataUrl = await fileToDataUrl(file, { maxDim: 10000, mime: "image/png", quality: 1.00 });
-      setPreview(charmPreviewEl, charmMacroDataUrl);
-
-      // IMPORTANT: upload the ORIGINAL file bytes to avoid any canvas smoothing / re-encoding drift
-      // (Preview can still use charmMacroDataUrl above.)
-      const macroFile = file;
-
-      const slotIndex = activeSlotIndex;
-      const folder = slotFolder(slotIndex);
-      const macroId = `image1_${Date.now()}_${Math.random().toString(16).slice(2)}`;
-      const ext = macroFile.name.split(".").pop() || "jpg";
-      const storagePath = `${folder}/${macroId}.${ext}`;
-      if (slots[slotIndex]) slots[slotIndex].image1StoragePath = storagePath;
-
-      statusEl.textContent = "Uploading slot Image[1]… 0%";
-
-      // IMPORTANT: do NOT request a download URL here (avoids read/metadata rule mismatch -> 403)
-      await uploadWithProgress(
-        storagePath,
-        macroFile,
-        (p) => {
-          const pct = Math.max(0, Math.min(100, Math.round((p || 0) * 100)));
-          statusEl.textContent = `Uploading slot Image[1]… ${pct}%`;
-        },
-        { returnDownloadUrl: false }
-      );
-
-      statusEl.textContent = "Slot Image[1] ready";
-    } catch (e) {
-      console.error(e);
-      statusEl.textContent = `Slot Image[1] error: ${e.message || e}`;
-      gen8Btn.disabled = false;
-      throw e;
-    } finally {
-      // re-enable if reference is ready (charm macro is optional)
-      if (slots[activeSlotIndex]?.image0StoragePath) gen8Btn.disabled = false;
-    }
-  }
-
-    // Grid
-    function makeSlot(i){
-      const el = document.createElement("div");
-      el.className = "slot";
-      el.innerHTML = `
-        <div class="slotTop">
-          <b>Slot ${i+1}</b>
-            <div class="row" style="gap:6px;">
-            <button class="btn" data-edit="${i}" title="Edit this slot (prompt + traits)">Edit</button>
-            <button class="btn" data-imgup="${i}" title="Upload reference images to this slot">Img Upload</button>
-            <button class="btn" data-reg="${i}" title="Re-run this slot generation">Regenerate</button>
-          </div>
-        </div>
-        <div class="muted small">Storage: ${SLOT_PARENT_FOLDER}/Slot_${i+1}/</div>
-        <div class="slotRefs">
-          <div class="slotRefBox" id="ref0_${i}" title="Image[0] reference">
-            <div class="slotRefEmpty">Image[0]</div>
-            <div class="slotRefLabel">Image[0]</div>
-          </div>
-          <div class="slotRefBox" id="ref1_${i}" title="Image[1] macro (optional)">
-            <div class="slotRefEmpty">Image[1]</div>
-            <div class="slotRefLabel">Image[1]</div>
-          </div>
-        </div>
-        <div class="slotPrev" id="prev_${i}"></div>
-        <div class="bar"><div id="bar_${i}"></div></div>
-        <div class="small" id="meta_${i}">—</div>
-      `;
-      return el;
-    }
-
-    function renderGrid(){
-      gridEl.innerHTML = "";
-      slots = Array.from({ length: SLOT_COUNT }).map((_,i)=>({
-        i,
-        traits: makeTraitsForSlot(i),
-        prompt: "",
-        imageDataUrl: null,
-        uploadUrl: null,
-        uploading: false,
-        image0StoragePath: null,
-        image1StoragePath: null,
-        ref0Url: null,
-        ref1Url: null,
-      }));
-      slots.forEach((s)=> gridEl.appendChild(makeSlot(s.i)));
-
-      // Default editor context = Slot 1
-      setActiveSlot(0);
-
-     // populate reference previews for all slots (best-effort)
-      slots.forEach((s)=>{
-        refreshSlotRefPreviews(s.i).catch(()=>{});
-      });
-
-      // edit handler
-      gridEl.querySelectorAll("button[data-edit]").forEach(btn=>{
-        btn.addEventListener("click", ()=>{
-          const idx = Number(btn.getAttribute("data-edit"));
-          setActiveSlot(idx);
-        });
-      });
-
-      // per-slot image upload picker
-      gridEl.querySelectorAll("button[data-imgup]").forEach(btn=>{
-        btn.addEventListener("click", ()=>{
-          const idx = Number(btn.getAttribute("data-imgup"));
-          openSlotImgPicker(idx);
-        });
-      });
-
-      // regen handler
-      gridEl.querySelectorAll("button[data-reg]").forEach(btn=>{
-        btn.addEventListener("click", async ()=>{
-          const idx = Number(btn.getAttribute("data-reg"));
-          await generateOne(idx);
-        });
-      });
-    }
-
-    // -------------------------
-    // Slot image management (Firebase Storage)
-    // -------------------------
-    function guessRoleFromName(name){
-      // Normalize to catch: "Image 0", "Image_0", "IMAGE-0", "img 1", etc.
-      const raw = String(name || "").toLowerCase();
-      const compact = raw.replace(/[^a-z0-9]+/g, ""); // strips spaces/_/-/etc
-
-      // Priority: explicit Image0/Image1 tags in the filename
-      if (/(?:^|[^a-z0-9])image[\s_-]*1(?:[^a-z0-9]|$)/.test(raw)) return "image1";
-      if (/(?:^|[^a-z0-9])img[\s_-]*1(?:[^a-z0-9]|$)/.test(raw)) return "image1";
-      if (compact.includes("image1") || compact.includes("img1")) return "image1";
-
-      if (/(?:^|[^a-z0-9])image[\s_-]*0(?:[^a-z0-9]|$)/.test(raw)) return "image0";
-      if (/(?:^|[^a-z0-9])img[\s_-]*0(?:[^a-z0-9]|$)/.test(raw)) return "image0";
-      if (compact.includes("image0") || compact.includes("img0")) return "image0";
-
-      // Secondary hints
-      if (/(macro|charm|pendant)/.test(raw)) return "image1";
-      if (/(base|reference)/.test(raw)) return "image0";
-
-      return "unknown";
-    }
-
-    async function listSlotImages(slotIndex){
-      await ensureStorageSignedIn();
-      const folder = slotFolder(slotIndex);
-      const folderRef = ref(storage, folder);
-      const res = await listAll(folderRef);
-      return (res?.items || []).map(it => ({ name: it.name, fullPath: it.fullPath }));
-    }
-
-    async function resolveSlotRequiredImages(slotIndex){
-      // Primary: list the folder and pick images by filename hints
-      try {
-        const items = await listSlotImages(slotIndex);
-        if (!items || items.length === 0) {
-          throw new Error(`Slot ${slotIndex+1}: no reference images found in "${slotFolder(slotIndex)}/"`);
-        }
-
-        // Annotate roles once
-        const tagged = items.map(it => ({
-          ...it,
-          role: guessRoleFromName(it.name),
-        }));
-
-        const base = tagged.find(x => x.role === "image0") || tagged[0];
-
-        // Prefer explicit image1, but NEVER allow same fullPath as image0
-        let charm =
-          tagged.find(x => x.role === "image1" && x.fullPath !== base.fullPath) ||
-          tagged.find(x => x.fullPath !== base.fullPath) ||
-          null;
-
-        const image0Path = base.fullPath;
-        const image1Path = charm ? charm.fullPath : null;
-
-        return { image0Path, image1Path, all: tagged };
-      } catch (e) {
-        // Fallback: if listAll is blocked by Storage rules, rely on last-known uploaded paths
-        const s = slots[slotIndex];
-        if (s?.image0StoragePath) {
-          return { image0Path: s.image0StoragePath, image1Path: s.image1StoragePath || null, all: [] };
-        }
-        throw e;
-      }
-    }
-
-    async function uploadImagesToSlot(slotIndex, files){
-      if (!files || !files.length) return;
-      await ensureStorageSignedIn();
-
-      const folder = slotFolder(slotIndex);
-      const uploaded = [];
-
-      for (let k=0; k<files.length; k++){
-        const f = files[k];
-        const role = guessRoleFromName(f.name);
-        const baseName = String(f.name || "upload").replace(/[^a-zA-Z0-9._-]+/g, "_").slice(0, 60);
-        const id = `${Date.now()}_${Math.random().toString(16).slice(2)}`;
-        const objectName = `${role !== "unknown" ? role : "ref"}_${id}_${baseName}`;
-        const storagePath = `${folder}/${objectName}`;
-
-        await uploadWithProgress(
-          storagePath,
-          f,
-          (p)=>{},
-          { returnDownloadUrl: false }
-        );
-
-        uploaded.push(storagePath);
-
-        // heuristics: set slot image0/image1 pointers
-        if (role === "image0" && slots[slotIndex]) slots[slotIndex].image0StoragePath = storagePath;
-        if (role === "image1" && slots[slotIndex]) slots[slotIndex].image1StoragePath = storagePath;
-      }
-
-      // If user uploaded 1-2 files without role hints, assign order
-      if (slots[slotIndex]) {
-        if (!slots[slotIndex].image0StoragePath && uploaded[0]) slots[slotIndex].image0StoragePath = uploaded[0];
-        if (!slots[slotIndex].image1StoragePath && uploaded[1]) slots[slotIndex].image1StoragePath = uploaded[1];
-      }
-
-      return uploaded;
-    }
-
-    function openSlotImgPicker(slotIndex){
-      pendingImgUploadSlotIndex = slotIndex;
-      slotImgFilesEl.value = "";
-      slotImgFilesEl.click();
-    }
-
-    slotImgFilesEl?.addEventListener("change", async ()=>{
-      const idx = pendingImgUploadSlotIndex;
-      const files = Array.from(slotImgFilesEl.files || []);
-      if (idx == null || !files.length) return;
-
-      try {
-        statusEl.textContent = `Uploading ${files.length} image(s) to Slot ${idx+1}…`;
-        await uploadImagesToSlot(idx, files);
-        statusEl.textContent = `Slot ${idx+1} images uploaded`;
-        // refresh the per-slot Firebase reference previews
-        await refreshSlotRefPreviews(idx);
-      } catch(e){
-        console.error(e);
-        statusEl.textContent = `Slot upload error: ${e.message || e}`;
-      } finally {
-        pendingImgUploadSlotIndex = null;
-        slotImgFilesEl.value = "";
-      }
-    });
-
-    function renderTraits(t){
-      traitsBox.innerHTML = "";
-      Object.entries(t).forEach(([k,v])=>{
-        const d = document.createElement("div");
-        d.className = "pill";
-        d.textContent = `${k}: ${v}`;
-        traitsBox.appendChild(d);
-      });
-    }
-
-    function setBar(i, pct){
-      const bar = document.getElementById(`bar_${i}`);
-      if (bar) bar.style.width = `${Math.max(0, Math.min(100, pct))}%`;
-    }
-
-    function setMeta(i, txt){
-      const m = document.getElementById(`meta_${i}`);
-      if (m) m.textContent = txt;
-    }
-
-    function setSlotPreview(i, dataUrl){
-      const box = document.getElementById(`prev_${i}`);
-      if (!box) return;
-      box.innerHTML = `<img src="${dataUrl}" data-scale="1" data-offsetX="0" data-offsetY="0" />`;
-      attachZoomPan(box);
-    }
-
-   function setSlotRefBox(el, url, label, titleText){
-      if (!el) return;
-      const safeTitle = titleText || "";
-      el.title = safeTitle;
-      if (url) {
-        el.innerHTML = `
-          <img src="${url}" alt="${label}" />
-          <div class="slotRefLabel">${label}</div>
-        `;
-      } else {
-        el.innerHTML = `
-          <div class="slotRefEmpty">${label}</div>
-          <div class="slotRefLabel">${label}</div>
-        `;
-      }
-    }
-
-    async function refreshSlotRefPreviews(slotIndex){
-      // best-effort: show whatever we can without breaking generation if Storage rules block reads
-      const box0 = document.getElementById(`ref0_${slotIndex}`);
-      const box1 = document.getElementById(`ref1_${slotIndex}`);
-      if (!box0 || !box1) return;
-
-      let image0Path = null;
-      let image1Path = null;
-      try {
-        const resolved = await resolveSlotRequiredImages(slotIndex);
-        image0Path = resolved?.image0Path || null;
-        image1Path = resolved?.image1Path || null;
-      } catch (e) {
-        setSlotRefBox(box0, null, "Image[0] (missing)", "");
-        setSlotRefBox(box1, null, "Image[1]", "");
-        return;
-      }
-
-      let url0 = null;
-      let url1 = null;
-
-      // Image[0] is required; attempt to read a download URL for preview
-      try {
-        url0 = await getDownloadURL(ref(storage, image0Path));
-      } catch (e) {
-        url0 = null;
-      }
-
-      // Image[1] is optional; attempt preview if present
-      if (image1Path) {
-        try {
-          url1 = await getDownloadURL(ref(storage, image1Path));
-        } catch (e) {
-          url1 = null;
-        }
-      }
-
-      if (slots?.[slotIndex]) {
-        slots[slotIndex].ref0Url = url0;
-        slots[slotIndex].ref1Url = url1;
-      }
-
-      const name0 = (image0Path || "").split("/").pop() || "";
-      const name1 = (image1Path || "").split("/").pop() || "";
-
-      const label0 = name0 ? `Image[0] ${name0}` : (url0 ? "Image[0]" : "Image[0]");
-      const label1 = name1 ? `Image[1] ${name1}` : (image1Path ? "Image[1]" : "Image[1]");
-
-      setSlotRefBox(box0, url0, url0 ? label0 : `${label0} (no read)`, image0Path || "");
-      setSlotRefBox(box1, url1, url1 ? label1 : (image1Path ? `${label1} (no read)` : label1), image1Path || "");
-    }
-
-    const JOBS_COLL = "ListingGenerator1Jobs";
-
-    async function enqueueGeminiImageJob(payload){
-      // Background function: returns fast; work continues server-side.
-      const resp = await fetch("/.netlify/functions/geminiImageProxy-background", {
-        method: "POST",
-        headers: { "Content-Type":"application/json" },
-        body: JSON.stringify(payload)
-      });
-
-      // Background functions respond immediately; we only need a 2xx here.
-      if (!resp.ok) {
-        const raw = await resp.text().catch(()=> "");
-        throw new Error(raw || `geminiImageProxy-background HTTP ${resp.status}`);
-      }
-    }
-
-      function buildPrompt(base, traits, hasCharmMacro, stage /* "placement" | "single" | "final" */, charmPlan){
-      const imageRoleBlock = hasCharmMacro ? [
-        "INPUT IMAGES (ORDER MATTERS)",
-        (stage === "placement" || stage === "single")
-          ? "- Image[0]: reference photo (truth source for necklace placement + chain geometry + station spacing + metal tone + drape)."
-          : "- Image[0]: pass-A composite (truth source: charm already placed/locked + necklace already correct).",
-        "- Image[1]: charm macro (single truth source for charm silhouette + cutouts + engraving; if any conflict, Image[1] wins for charm details).",
-        "",
-      ].join("\n") : ""; 
-
-      const processOrder = [
-        "PROCESS ORDER (DO NOT REORDER)",
-        "1) Place charm + hardware first. Preserve macro engraving exactly.",
-        "2) Confirm scale clamp (pixel height + on-screen %).",
-        "3) ONLY AT THE END apply camera/lens/zoom instructions (no engraving redraw).",
-        "",
-      ].join("\n");
-
-      // Apply all non-camera traits immediately (so wardrobe/backdrop/lighting happen),
-      // but force camera instructions to appear LAST to reduce “camera-first” re-generation.
-      const immediateTraits = [
-        "TRAITS LOCK (APPLY NOW — obey exactly, do not average out or ignore)",
-        `- skin tone: ${traits.skin}`,
-        `- wardrobe: ${traits.wardrobe}`,
-        `- wardrobe color: ${traits.wardrobeColor}`,
-        `- backdrop: ${traits.backdrop}`,
-        `- backdrop accent: ${traits.backgroundAccent}`,
-        `- lighting: ${traits.lighting}`,
-        `- color grade: ${traits.colorGrade}`,
-        `- styling mood: ${traits.stylingMood}`,
-        `- hair: ${traits.hair}`,
-        `- makeup: ${traits.makeup}`,
-        `- pose: ${traits.pose}`,
-        `- rules: ${traits.textureRules}`,
-        "",
-      ].join("\n");
-
-      const cameraLast = [
-        "CAMERA + LENS (APPLY LAST — after charm is locked)",
-        `- camera framing: ${stage === "placement" ? traits.cameraPlacement : traits.cameraFinal}`,
-        `- lens look: ${traits.lensLook}`,
-        "- focus: charm pendant + chain stations tack sharp; background softly blurred",
-        "- zoom rule: do not zoom until charm is correct; never redraw engraving to compensate for zoom",
-        "- HARD CROP GUARD: show only upper bust + collarbones; TOP EDGE cuts at mid-neck; absolutely no jawline/chin/face",
-        "",
-      ].join("\n");
-
-      const hasPlan = !!(charmPlan && charmPlan.instr && Number.isFinite(charmPlan.instr.targetPx));
-      const stageBlock =
-        stage === "placement" ? [
-          "STAGE A (PLACEMENT LOCK)",
-          "- Keep framing close enough that the charm is large/clear while placing it.",
-          "- Do NOT zoom out in this stage.",
-          "",
-          ...(hasPlan ? [
-            "CHARM SIZE CONTROL (STAGE A — HARD NUMBERS, BIAS-COMPENSATED)",
-            `- Lens: ${charmPlan?.lensMm}mm (${charmPlan?.lensKey}) | Framing: ${charmPlan?.zoomGroup}`,
-            `- TRUE final goal later (Stage B): ${charmPlan?.finalTrue?.minPx}–${charmPlan?.finalTrue?.maxPx}px (target ${charmPlan?.finalTrue?.targetPx}px)`,
-            `- Model overscale correction factor: ${charmPlan?.invOverscale}× (we instruct smaller to land at the TRUE goal)`,
-            `- PLACE NOW (instruction target): charm bbox height ${charmPlan?.instr?.minPx}–${charmPlan?.instr?.maxPx}px (target ${charmPlan?.instr?.targetPx}px)`,
-            "- If the charm still looks large, keep shrinking until it hits the instruction px window. Do not stop early.",
-            "",
-          ] : []),
-        ].join("\n")
-        : (stage === "single" ? [
-          "SINGLE PASS (MICRO CHARM ADD)",
-          "- Start from Image[0] as the base photo.",
-         "- Add the charm from Image[1] onto the necklace in Image[0].",
-          "- Preserve chain geometry + bead stations exactly; no added chain, no extra jewelry.",
-          "- Preserve engraving/cutouts exactly; do not redraw to fix size.",
-          "",
-          ...(hasPlan ? [
-            "CHARM SIZE CONTROL (SINGLE PASS — FINAL HARD NUMBERS, BIAS-COMPENSATED)",
-            `- TRUE required final size: charm bbox height ${charmPlan?.finalTrue?.minPx}–${charmPlan?.finalTrue?.maxPx}px (target ${charmPlan?.finalTrue?.targetPx}px)`,
-            `- Instruction window (compensated): ${charmPlan?.instr?.minPx}–${charmPlan?.instr?.maxPx}px (target ${charmPlan?.instr?.targetPx}px)`,
-            "- If unsure, err smaller. Never thicken engraving to keep it visible.",
-            "",
-          ] : []),
-        ].join("\n")
-        : [
-          "STAGE B (FINAL CAMERA)",
-          "- Start from Image[0] (pass-A composite). Treat charm + necklace as pixel-locked truth.",
-          "- Do NOT alter charm silhouette, engraving strokes, jump ring connection, or necklace geometry.",
-          "- Only adjust camera framing/zoom at the end per CAMERA + LENS block.",
-          "",
-          ...(hasPlan ? [
-            "CHARM SIZE CONTROL (STAGE B — FINAL HARD NUMBERS, BIAS-COMPENSATED)",
-            `- TRUE required final size: charm bbox height ${charmPlan?.finalTrue?.minPx}–${charmPlan?.finalTrue?.maxPx}px (target ${charmPlan?.finalTrue?.targetPx}px)`,
-            `- Instruction window (compensated): ${charmPlan?.instr?.minPx}–${charmPlan?.instr?.maxPx}px (target ${charmPlan?.instr?.targetPx}px)`,
-            "- IMPORTANT: do NOT redraw engraving to satisfy size. Only adjust framing/zoom until charm reaches TRUE size.",
-            "",
-          ] : []),
-        ].join("\n"));
-
-      return [
-        imageRoleBlock,
-        processOrder,
-        stageBlock,
-        immediateTraits,
-        base,
-        "",
-        cameraLast,
-      ].filter(Boolean).join("\n");
-    } 
-
-     async function generateOne(i){
-      const slot = slots[i];
-      slot.traits = makeTraitsForSlot(i); // new random traits per regeneration (slot-specific)
-      renderTraits(slot.traits);
-
-      // Resolve per-slot reference images from: listing-generator-1/Beady Necklace/Slot_X/
-      const { image0Path, image1Path } = await resolveSlotRequiredImages(i);
-
-      // Slot 1 + Slot 2 + Slot 3 are strict single-pass pipelines
-      const isSlot1 = (i === 0);
-      const isSlot2 = (i === 1);
-      const isSlot3 = (i === 2);
-      const singlePassOnly = (isSlot1 || isSlot2 || isSlot3);
-
-      // hasCharm drives the TWO-PASS branch only
-      const hasCharm = singlePassOnly ? false : !!image1Path;
-
-      const baseText =
-        isSlot2 ? SLOT2_DUPLICATE_PROMPT.trim() :
-        isSlot3 ? SLOT3_SIZING_GUIDE_PROMPT.trim() :
-        DEFAULT_PROMPT.trim();
-
-      const finalCharmTargetPx = readFinalCharmTargetPx();
-
-      const model = modelEl.value;
-      const runId = `lg1_${Date.now()}_${Math.random().toString(16).slice(2)}`;
-      const jobIdA = `${runId}_slot_${i+1}_A`;
-      const jobIdB = `${runId}_slot_${i+1}_B`;
-      const jobRefA = window.db.collection(JOBS_COLL).doc(jobIdA);
-      const jobRefB = window.db.collection(JOBS_COLL).doc(jobIdB);
-      let unsubA = null;
-      let unsubB = null;
-
-     // IMPORTANT:
-      // We must not "return" immediately after enqueueing jobs.
-      // If we return early, runPool's concurrency does NOT limit active jobs/listeners,
-      // which triggers Firestore "Deadline expired..." bursts.
-      const JOB_TIMEOUT_MS = 14 * 60 * 1000; // keep < Netlify background max runtime
-      let done = false;
-      let clearDoneTimer = () => {};
-      const doneP = new Promise((resolve) => {
-        const t = setTimeout(() => {
-          if (done) return;
-          done = true;
-          try { if (unsubA) { unsubA(); unsubA = null; } } catch {}
-          try { if (unsubB) { unsubB(); unsubB = null; } } catch {}
-          setBar(i, 0);
-          setMeta(i, "Error: Timeout waiting for job completion");
-          resolve();
-        }, JOB_TIMEOUT_MS);
-        // IMPORTANT: do NOT reference doneP inside this executor (TDZ). Use the closure.
-        clearDoneTimer = () => clearTimeout(t);
-      });
-
-      setBar(i, 5);
-      setMeta(
-        i,
-        isSlot1 ? "Queued (Slot 1 Single-pass)…"
-        : (isSlot2 ? "Queued (Slot 2 Duplicate)…"
-        : (isSlot3 ? "Queued (Slot 3 Sizing Guide)…"
-        : (hasCharm ? "Queued (Pass A)…" : "Queued…")))
-      );
-
-      try {
-        // ---------- Single-pass fallback (no charm macro) ----------
-        if (!hasCharm) {
-          let fullPrompt =
-            isSlot2 ? SLOT2_DUPLICATE_PROMPT.trim()
-            : (isSlot3 ? SLOT3_SIZING_GUIDE_PROMPT.trim()
-            : (isSlot1 ? null
-            : buildPrompt(baseText, slot.traits, false, "final")));
-          // Slot 1 requires Image[1] and uses a single-pass prompt with traits injected
-          if (isSlot1) {
-            if (!image1Path) throw new Error("Slot 1 requires Image[1] (charm macro). Upload the charm macro to Slot 1.");
-            const planSingle = charmPlanFromTraits(slot.traits, "single");
-            fullPrompt = buildPrompt(baseText, slot.traits, true, "single", planSingle);
-          }
-
-          slot.prompt = fullPrompt;
-
-          let unsub = null;
-          const jobRef = window.db.collection(JOBS_COLL).doc(jobIdB);
-          unsub = jobRef.onSnapshot((snap)=>{
-            if (!snap.exists) return;
-            const j = snap.data() || {};
-            if (j.status === "running") {
-              const pct =
-                (j.stage === "calling_gemini") ? 55 :
-                (j.stage === "uploading") ? 80 :
-                25;
-              setBar(i, pct);
-
-              const stageLabel = (j.stage === "uploading") ? "Uploading…" : "Generating…";
-              setMeta(i, stageLabel);
-              statusEl.textContent = stageLabel;
-            }
-            if (j.status === "done") {
-              if (j.downloadURL) {
-                slot.uploadUrl = j.downloadURL;
-                slot.imageDataUrl = j.downloadURL;
-                setSlotPreview(i, j.downloadURL);
-              }
-              setBar(i, 100);
-              setMeta(i, `Done: ${j.storagePath || ""}`);
-              if (unsub) unsub();
-              if (!done) {
-                done = true;
-                try { clearDoneTimer(); } catch {}
-                doneP.then(()=>{}); // no-op
-              }
-            }
-            if (j.status === "error") {
-              setBar(i, 0);
-              setMeta(i, `Error: ${j?.error?.message || "Unknown error"}`);
-              if (unsub) unsub();
-              if (!done) {
-                done = true;
-                try { clearDoneTimer(); } catch {}
-              }
-            }
-
-            }, (err) => {
-            console.error("job onSnapshot error", err);
-            setBar(i, 0);
-            setMeta(i, `Error: ${err?.message || String(err)}`);
-            if (unsub) unsub();
-            if (!done) {
-              done = true;
-              try { clearDoneTimer(); } catch {}
-            }
-          });
-
-          await enqueueGeminiImageJob({
-            jobId: jobIdB,
-            runId,
-            slotIndex: i,
-            kind: "edits",
-            model,
-            prompt: fullPrompt,
-            input_storage_path: image0Path,
-            input_charm_storage_path: image1Path,
-            postprocess: (isSlot2 || isSlot3) ? null : {
-            finalFrameZoom: FINAL_FRAME_ZOOM,
-            anchorX: FINAL_ANCHOR_X,
-            anchorY: FINAL_ANCHOR_Y,
-          },
-            size: "2048x2048",
-            quality: "high",
-            output_format: "png",
-            traits: slot.traits
-          });
-
-          // Wait until job completes so runPool concurrency actually limits load.
-          await doneP;
-          return;
-        }
-
-
-
-        // ---------- Slot 1: DEFAULT_PROMPT ONLY (single-pass; bypass buildPrompt/two-pass) ----------
-        // This temporarily disables the Slot 1 dynamic prompt assembly you pasted (buildPrompt + stages).
-        // Slot 2/3 keep their current behavior.
-        if (SLOT1_DEFAULT_PROMPT_ONLY && i === 0) {
-          if (!image1Path) throw new Error("Slot 1 requires Image[1] (charm macro).");
-
-          const fullPrompt = DEFAULT_PROMPT; // Slot 1 source-of-truth
-          slot.prompt = fullPrompt;
-
-          // Watch this job until complete (so runPool concurrency actually limits load)
-          let unsub = null;
-          let done = false;
-          let resolveDone;
-          const doneP = new Promise((r) => (resolveDone = r));
-
-          const jobRef = window.db.collection(JOBS_COLL).doc(jobIdB);
-          unsub = jobRef.onSnapshot(
-            (snap) => {
-              if (!snap.exists) return;
-              const j = snap.data() || {};
-
-              if (j.status === "running") {
-                const pct =
-                  (j.stage === "calling_gemini") ? 55 :
-                  (j.stage === "uploading") ? 80 :
-                  25;
-                setBar(i, pct);
-                const stageLabel = (j.stage === "uploading") ? "Uploading…" : "Generating…";
-                setMeta(i, stageLabel);
-                statusEl.textContent = stageLabel;
-              }
-
-              if (j.status === "done") {
-                if (j.downloadURL) {
-                  slot.uploadUrl = j.downloadURL;
-                  slot.imageDataUrl = j.downloadURL;
-                  setSlotPreview(i, j.downloadURL);
-                }
-                setBar(i, 100);
-                setMeta(i, `Done: ${j.storagePath || ""}`);
-                if (unsub) unsub();
-                if (!done) { done = true; resolveDone(); }
-              }
-
-              if (j.status === "error") {
-                setBar(i, 0);
-                setMeta(i, `Error: ${j?.error?.message || "Unknown error"}`);
-                if (unsub) unsub();
-                if (!done) { done = true; resolveDone(); }
-              }
-            },
-            (err) => {
-              console.error("job onSnapshot error", err);
-              setBar(i, 0);
-              setMeta(i, `Error: ${err?.message || String(err)}`);
-              if (unsub) unsub();
-              if (!done) { done = true; resolveDone(); }
-            }
-          );
-
-          await enqueueGeminiImageJob({
-            jobId: jobIdB,
-            runId,
-            slotIndex: i,
-            kind: "edits",
-            model,
-            prompt: fullPrompt,
-            input_storage_path: image0Path,
-            input_charm_storage_path: image1Path,
-            postprocess: {
-              finalFrameZoom: FINAL_FRAME_ZOOM,
-              anchorX: FINAL_ANCHOR_X,
-              anchorY: FINAL_ANCHOR_Y,
-            },
-            size: "2048x2048",
-            quality: "high",
-            output_format: "png",
-            traits: slot.traits,
-          });
-
-          await doneP;
-          return;
-        }
-
-        // ---------- Two-pass (has charm macro) ----------
-        // Pass A: generate variant WITH pendant (allow larger for detail)
-        // Pass B: remove pendant via Gemini, then add pendant macro & post-shrink deterministically.
-
-        const planA = charmPlanFromTraits(slot.traits, "placement");
-        const promptA = buildPrompt(baseText, slot.traits, true, "placement", planA);
-
-        // OLD multiplier retained ONLY as fallback compatibility for older server code
-        const postScale = clamp(1 / CHARM_A_MULT, 0.5, 0.7);
-
-        const removePrompt = [
-          "Remove the pendant charm entirely.",
-          "Keep the necklace chain, bead stations, clasp, metal tone, model, wardrobe, lighting, and camera exactly the same.",
-          "Do not add any new jewelry. Do not change the chain geometry.",
-          "Fill the removed area realistically (skin/clothing/background) with matching lighting and texture."
-        ].join("\n");
-
-        slot.prompt = `${promptA}\n\n-----\n\n[Pass B: charm_postscale targetPx=${finalCharmTargetPx} (fallbackScale=${postScale.toFixed(3)})]`;
-
-        let passAStoragePath = null;
-
-        let passBEnqueued = false;
-
-        // Listen Pass B (final)
-        unsubB = jobRefB.onSnapshot((snap) => {
-          if (!snap.exists) return;
-          const jb = snap.data() || {};
-
-          if (jb.status === "running") {
-            const pct =
-              jb.stage === "downloading_inputs" ? 62 :
-              jb.stage === "removing_charm" ? 70 :
-              jb.stage === "postprocessing" ? 82 :
-              jb.stage === "uploading" ? 92 :
-              jb.stage === "calling_gemini" ? 70 :
-              65;
-            setBar(i, pct);
-
-            const stageLabel =
-              jb.stage === "downloading_inputs" ? "Preparing (Pass B)…" :
-              jb.stage === "removing_charm" ? "Removing Charm (Pass B)…" :
-              jb.stage === "postprocessing" ? "Postprocessing (Pass B)…" :
-              jb.stage === "uploading" ? "Uploading (Pass B)…" :
-              "Working (Pass B)…";
-            setMeta(i, stageLabel);
-          }
-
-          if (jb.status === "done") {
-            if (unsubB) { unsubB(); unsubB = null; }
-            const url = jb.resultUrl || jb.downloadURL || "";
-            if (url) {
-              // Persist + show final image for this slot (matches Pass A behavior)
-              slot.uploadUrl = url;
-              slot.imageDataUrl = url;
-              setSlotPreview(i, url);
-            }            
-            setBar(i, 100);
-            setMeta(i, "Done");
-           if (!done) {
-              done = true;
-              try { clearDoneTimer(); } catch {}
-            }
-          }
-
-          if (jb.status === "error") {
-            if (unsubB) { unsubB(); unsubB = null; }
-            setBar(i, 0);
-            setMeta(i, "Error");
-            console.error("Pass B error", jb.error);
-           if (!done) {
-              done = true;
-              try { clearDoneTimer(); } catch {}
-            }
-          }
-         }, (err) => {
-          console.error("Pass B onSnapshot error", err);
-          setBar(i, 0);
-          setMeta(i, `Error: ${err?.message || String(err)}`);
-          if (unsubB) { unsubB(); unsubB = null; }
-          if (!done) {
-            done = true;
-            try { clearDoneTimer(); } catch {}
-          }
-        });
-
-        // Listen Pass A → when done, enqueue Pass B (non-regenerative post-scale)
-        unsubA = jobRefA.onSnapshot((snap) => {
-          if (!snap.exists) return;
-          const jb = snap.data() || {};
-
-          if (jb.status === "running") {
-            const pct =
-              jb.stage === "calling_gemini" ? 55 :
-              jb.stage === "uploading" ? 68 :
-              50;
-            setBar(i, pct);
-            setMeta(i, jb.stage === "uploading" ? "Uploading (Pass A)…" : "Generating (Pass A)…");
-          }
-
-          if (jb.status === "done") {
-            if (unsubA) { unsubA(); unsubA = null; }
-
-            // Your background function writes these on success:
-            // - storagePath (preferred)
-            // - downloadURL (but we need storagePath for Pass B input)
-            passAStoragePath = jb.storagePath || jb.output_storage_path || null;
-
-            if (!passAStoragePath) {
-              setBar(i, 0);
-              setMeta(i, "Error");
-              console.error("Pass A done but missing storagePath", jb);
-              return;
-            }
-
-            setBar(i, 70);
-            setMeta(i, "Queued (Pass B)…");
-
-            // Enqueue Pass B (non-regenerative post-scale composite)
-            if (!passBEnqueued) {
-              passBEnqueued = true;
-              (async () => {
-                try {
-                  await enqueueGeminiImageJob({
-                    jobId: jobIdB,
-                    runId,
-                    slotIndex: i,
-                    kind: "charm_postscale",
-                    model,
-                    input_storage_path: passAStoragePath,
-                    // NEW: use the original Image[0] as the true "no-charm" base.
-                    base_storage_path: image0Path,
-                    remove_prompt: removePrompt,
-                    postprocess: {
-                      targetPx: finalCharmTargetPx,
-                      scale: postScale,
-                      shadowOpacity: 0.22,
-                      shadowBlur: 2,
-                      diffThreshold: 18,
-                      finalFrameZoom: FINAL_FRAME_ZOOM,
-                      anchorX: FINAL_ANCHOR_X,
-                      anchorY: FINAL_ANCHOR_Y
-                    },
-                    size: "2048x2048",
-                    quality: "high",
-                    output_format: "png",
-                    traits: slot.traits
-                  });
-                } catch (e) {
-                  console.error("Pass B enqueue failed", e);
-                  setBar(i, 0);
-                  setMeta(i, `Error: ${e?.message || String(e)}`);
-                  if (!done) {
-                    done = true;
-                    try { clearDoneTimer(); } catch {}
-                  }
-                }
-              })();
-            }
-          }
-
-          if (jb.status === "error") {
-            if (unsubA) { unsubA(); unsubA = null; }
-            setBar(i, 0);
-            setMeta(i, "Error");
-            console.error("Pass A error", jb.error);
-          if (!done) {
-              done = true;
-              try { clearDoneTimer(); } catch {}
-            }
-          }
-          }, (err) => {
-          console.error("Pass A onSnapshot error", err);
-          setBar(i, 0);
-          setMeta(i, `Error: ${err?.message || String(err)}`);
-          if (unsubA) { unsubA(); unsubA = null; }
-          if (!done) {
-            done = true;
-            try { clearDoneTimer(); } catch {}
-          }
-        });
-
-        // Enqueue Pass A
-        await enqueueGeminiImageJob({
-          jobId: jobIdA,
-          runId,
-          slotIndex: i,
-          kind: "edits",
-          model,
-          prompt: promptA,
-          input_storage_path: image0Path,
-          input_charm_storage_path: image1Path,
-          size: "2048x2048",
-          quality: "high",
-          output_format: "png",
-          postprocess: {
-              finalFrameZoom: FINAL_FRAME_ZOOM,
-              anchorX: FINAL_ANCHOR_X,
-              anchorY: FINAL_ANCHOR_Y
-            },
-          traits: slot.traits
-        });
-
-        // Wait until Pass B completes (or error/timeout) before returning.
-        await doneP;
-
-      } catch (e) {
-        setBar(i, 0);
-        setMeta(i, `Error: ${e.message}`);
-        console.error(e);
-        if (unsubA) { unsubA(); unsubA = null; }
-        if (unsubB) { unsubB(); unsubB = null; }
-        if (!done) {
-          done = true;
-          try { clearDoneTimer(); } catch {}
-        }
-      }
-
-     }
-
-    const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-
-    async function runPool(items, worker, concurrency = 2) {
-      const queue = items.slice();
-      const runners = Array.from({ length: concurrency }, async () => {
-        while (queue.length) {
-          const item = queue.shift();
-          await sleep(250); // slight stagger to reduce bursty Firestore + function load
-          await worker(item);
-        }
-      });
-      await Promise.all(runners);
-    }
-
-    async function generateEight(){
-      statusEl.textContent = "Generating 8…";
-      gen8Btn.disabled = true;
-
-      // IMPORTANT: prevents Netlify/Gemini background inactivity timeouts
-      // Keep at 2–3 for stability; you still generate 8 total.
-      await runPool(slots.map(s => s.i), generateOne, 2);
-
-      gen8Btn.disabled = false;
-      statusEl.textContent = "Done";
-    }
-
-    // Init
-    renderGrid();
-
+    
     async function postJson(path, body) {
       const res = await fetch(`${functionsBaseUrl}/${path}`, {
         method: "POST",
@@ -2292,9 +510,22 @@ HARD FAIL CONDITIONS
         if (!srcLatest) throw new Error(`No files in ${srcFolder}/`);
 
         const slotCard = document.createElement("div");
-        slotCard.className = "cell";
-        slotCard.innerHTML = `<div class="muted">Slot ${slotNum}</div><div class="muted" style="font-size:12px;">${spec.type}: ${spec.folder}</div>`;
+        slotCard.className = "slot";
+        slotCard.innerHTML = `
+          <div class="slotTop">
+            <b>Slot ${slotNum}</b>
+            <div class="muted" style="font-size:12px;">${spec.type}: ${spec.folder}</div>
+          </div>
+          <div class="slotPrev" id="slotPrev_${i}"><div class="slotRefEmpty">Working…</div></div>
+          <div class="small" id="slotMeta_${i}">Source: ${srcLatest.fullPath}</div>
+        `;
         gridEl.appendChild(slotCard);
+
+        const prevBox = slotCard.querySelector(`#slotPrev_${i}`);
+        const setImg = (url) => {
+          if (!prevBox) return;
+          prevBox.innerHTML = `<img src="${url}" />`;
+        };
 
         if (spec.type === "copy") {
           const r = await postJson("geminiImageProxy-background", {
@@ -2304,10 +535,8 @@ HARD FAIL CONDITIONS
             output_base_path: outputBasePath,
             slotIndex: i,
           });
-          const img = document.createElement("img");
-          img.src = r.downloadURL;
-          slotCard.appendChild(img);
-
+          
+          if (r?.downloadURL) setImg(r.downloadURL);
           manifest.slots.push({
             slot: slotNum,
             type: "copy",
@@ -2324,11 +553,10 @@ HARD FAIL CONDITIONS
             output_base_path: outputBasePath,
             slotIndex: i,
             model: "gemini-3-pro-image-preview",
-            prompt: buildSlotPrompt(category, spec.folder),
+            prompt: buildSlotPrompt(category, spec.folder, slotNum),
           });
-          const img = document.createElement("img");
-          img.src = r.downloadURL;
-          slotCard.appendChild(img);
+          
+          if (r?.downloadURL) setImg(r.downloadURL);
 
           manifest.slots.push({
             slot: slotNum,
@@ -2351,12 +579,134 @@ HARD FAIL CONDITIONS
       setStatus(`Done → ${category}/Ready_To_List/Set_${setN}`);
     }
 
-    // Minimal prompt builder: you can expand per-slot later
-    function buildSlotPrompt(category, folderName) {
-      return `CRITICAL: Standard fashion product photo edit. Keep subject modest.\n\n` +
-        `Use Image[0] as base. Add the charm from Image[1] onto the existing product context from Image[0].\n` +
-        `Do not add new chain or hardware. Preserve lighting, framing, colors, text.\n` +
-        `Category: ${category}\nSlot source folder: ${folderName}\n`;
+    // ------------------------------------------------------------
+    // Per-slot prompt pipelines (Slots 1–8)
+    // ------------------------------------------------------------
+
+    // Slot 2 prompt: ONE-PASS charm replacement + engraving fidelity + OUTPUT zoom-out 1.6×
+    const SLOT2_DUPLICATE_PROMPT =
+    `CRITICAL: Slot 2 is a charm replacement task. This must be a single-pass edit.
+
+    PROCESS ORDER (NON-NEGOTIABLE)
+    • Single pass only.
+    • Use Image[0] as the base photo.
+    • Replace the charm/pendant in Image[0] with the charm from Image[1].
+
+    INPUT IMAGES (ORDER MATTERS)
+    • Image[0] = base photo (scene + camera + chain placement + hardware position)
+    • Image[1] = charm macro (pixel-truth source for silhouette + cutouts + engraving)
+
+    CHARM SCALE OVERRIDE (NON-NEGOTIABLE)
+    • The placed/replaced charm MUST be smaller than the charm being replaced in Image[0].
+    • Apply an extra downscale of 1.6× (i.e. final charm must be ~40% of the size you would normally choose).
+    • Do NOT compensate by thickening lines, enlarging cutouts, or changing engraving. Size change must be a pure scale change only.
+
+    ENGRAVING + CUTOUT FIDELITY (TOP PRIORITY — IMAGE[1] IS SINGLE TRUTH SOURCE)
+    • Treat Image[1] as pixel-truth. Do NOT redraw, “enhance,” simplify, smooth, stylize, thicken, sharpen, clean up, or reinterpret.
+    • Add a subtle contact shadow under charm + mild specular alignment as needed to the Final generated image.
+    • Outline lock: the outer perimeter must match Image[1] exactly (no rounding, no warping, no missing corners, no bulges).
+    • Cutout lock: every internal cutout/negative-space hole must match Image[1] exactly (shape + position + proportions). Do not fill-in holes. Do not merge holes.
+    • Engraving lock: preserve every stroke exactly as in Image[1] (no stroke loss, no merging, no thickening, no cleanup, no mirrored text, no invented marks).
+    • Edge integrity: keep cutout edges crisp. Do not blur/smear/over-anti-alias away fine cutout detail.
+    • Allowed Charm Edits: tiny exposure/white-balance match to Image[0] + subtle contact shadow under charm + mild specular alignment. No geometry changes.
+
+    HARDWARE + HOOP CONNECTION (NON-NEGOTIABLE)
+    • The charm’s top hoop/bail/loop MUST be an INTEGRATED part of the charm silhouette exactly like Image[1] — as if the entire charm (including the hoop) was laser-cut from one single sheet of metal.
+    • The hoop-to-charm attachment MUST have a robust, wide contact area like Image[1]. This is NOT a tiny touch-point. It must NOT look “barely touching.”
+    • The attachment must read like one continuous metal piece: no seam line, no solder/weld look, no separate part glued on, no “ring sitting on top.”
+    • Geometry lock: preserve the exact bridge/tab shape that connects the hoop to the charm body in Image[1] (width, curvature, thickness, edge bevel).
+    • The hoop must be fully connected with a broad “tab” of metal. HARD FAIL if the hoop connects via a hairline neck, thin spike, or point-contact.
+    • The jump ring must pass through the hoop and sit naturally inside it, but the hoop itself must remain part of the charm’s perimeter geometry (not re-invented hardware).
+    • ONE-PIECE LASER-CUT RULE: the hoop/bail is part of the SAME continuous metal piece as the charm body (like Image[1]) — NOT a separate ring “added,” “welded,” “soldered,” or “barely touching.”
+    • ROBUST ATTACHMENT RULE: the hoop-to-charm connection must have a thick/wide bridge of metal (large surface-area contact), not a tangential touchpoint.
+      - Minimum bridge width: ≥ 35% of the hoop’s OUTER diameter.
+      - Minimum contact length: ≥ 25% of the hoop’s outer arc must visibly blend into the charm’s body at the attachment region.
+      - If uncertain, OVER-CONNECT (thicker/wider bridge) rather than under-connect. Never reduce the bridge to a thin neck.
+    • HARD FAIL if the hoop looks “just barely touching,” hairline-connected, separated by any visible slit/gap, or reads as a separate component sitting on top of the charm.
+    • Scale rule: when you shrink the charm, the hoop + its bridge/tab must shrink proportionally as part of the same silhouette (do NOT shrink only the body and leave a weak connection).
+
+    LOCKS (NON-NEGOTIABLE)
+    • Preserve EVERYTHING ELSE from Image[0]: chain links, bead stations, jump ring placement, clasp, metal tone, lighting, background, hardware alignment.
+    • Do not add objects. Do not remove objects (other than replacing the charm itself). Do not change the chain geometry.
+
+    HARD FAIL CONDITIONS
+    - Any charm larger than Image[0]'s charm, any engraving changes, any altered cutout geometry, any changed chain geometry/station spacing, blur/smear on charm details, or any added objects.
+    - Any hoop/bail connection that is point-touching, hairline, barely touching, offset, floating, or looks like a separate welded/soldered ring.
+    - Any hoop/bail that appears barely touching, point-connected, hairline-connected, floating, hovering, separated, or “attached later” (weld/solder/glue look). The hoop must look like part of the same laser-cut charm silhouette from Image[1].`;
+
+        // Slot 3 prompt: ONE-PASS sizing-guide charm replacement (NO necklace)
+        const SLOT3_SIZING_GUIDE_PROMPT =
+    `CRITICAL: Slot 3 is a sizing-guide charm replacement task. This must be a single-pass edit.
+
+    PROCESS ORDER (NON-NEGOTIABLE)
+    • Single pass only.
+    • Use Image[0] as the base sizing-guide graphic.
+    • Replace ONLY the charm in Image[0] with the charm from Image[1].
+
+    INPUT IMAGES (ORDER MATTERS)
+    • Image[0] = sizing guide base image (ALL text, layout, pencil, line, background)
+    • Image[1] = charm macro (pixel-truth source for silhouette, cutouts, engraving, integrated hoop)
+
+    ABSOLUTE LOCKS (DO NOT CHANGE)
+    • Do NOT add any necklace chain, jump ring, or jewelry.
+    • Do NOT move, resize, restyle, blur, or alter any text.
+    • The text “~12mm x 12mm” MUST remain visible, crisp, and identical.
+    • The short black pointer line MUST remain visible and MUST point to the charm exactly.
+    • Do NOT crop, zoom, or reframe the image.
+
+    CHARM POSITION + SIZE MATCH (NON-NEGOTIABLE)
+    • The new charm must sit in the EXACT same position as the original charm in Image[0].
+    • The new charm must match the original charm’s on-image size EXACTLY.
+    • This is a strict size match — no scaling up or down.
+
+    CHARM FIDELITY (IMAGE[1] IS SINGLE TRUTH SOURCE)
+    • Preserve the exact outer perimeter, cutouts, engraving, and integrated hoop from Image[1].
+    • Do NOT redraw, smooth, stylize, thicken, clean up, or reinterpret.
+    • Keep edges crisp. No blur or smear.
+
+    INTEGRATED HOOP RULE
+    • The hoop/bail MUST be part of the same laser-cut silhouette as the charm body.
+    • The hoop MUST connect with a wide, solid bridge of metal (large surface area).
+    • HARD FAIL if the hoop looks barely touching, point-connected, floating, or welded-on.
+
+    HARD FAIL CONDITIONS
+    - Any text change.
+    - Any necklace or jewelry added.
+    - Any charm size mismatch vs Image[0].
+    - Any weak or disconnected hoop connection.`;
+
+        // Slot 1 default prompt (edit freely)
+        const DEFAULT_PROMPT =
+    `CRITICAL: This is a standard fashion product photo edit. Keep the subject modest. No nudity.
+
+    ULTRA-MICRO SIZE OVERRIDE (TOP PRIORITY — MAKE IT BARELY VISIBLE)
+    • Force the Charm to be very small: final on-image charm height MUST be 9 pixels tall (absolute pixel height, not relative).
+    • If you cannot measure pixels, choose the smallest size that is still legible on the chain.
+    • Do NOT compensate by zooming out, reframing, cropping, changing camera, changing necklace scale, changing model scale, changing engraving thickness, or changing chain thickness.
+    • Never allow embossed engravings on the Charm/Pendant, all engravings must be flat and superficial having no descernable depth.
+    • Do NOT allow any shadows (Contact or otherwise) to be visible undereath and around the Charm/Pendant placement, block all Charm/Pendant related shadows.
+    • The Charm/Pendant must be bright yellow gold colour, do not saturate the Charm/Pendant gold colour.
+    • The chain must remain exactly the same size and detail as Image[0]. Only the charm is scaled.
+
+    TASK (SLOT 1 — IMAGE EDIT, SINGLE PASS)
+    Duplicate and zoom-in into the female model in Image[0], only replace the charm from Image[1] onto the existing necklace chain in Image[0] as a hanging flat charm.
+    Match the subject identity from Image[0]; do not change the model’s appearance or skin tone.
+    Do NOT allow skin colour to be grey around the Charm/Pendant. The skin tone/colour near the Charm/Pendant must be uniform with the rest of the body.
+    HARD LOCK: Never render female model above the neck and below the bust.
+    HARD LOCK: The Charm/Pendant material is a perfectly flat and very thin sheet of metal, always render the Charm/Pendant completely flat and very thin, DO NOT allow any rounded/radius on the cutout edges.
+    DO not zoom out when generating the image. Keep model and frame consistent with Image_0
+    Focus on Charm Engraving details and ensure 100% accuracy to Image_1
+    Do not output text.
+    Ensure the charm colour, shading and reflections match the necklace chain in Image_0.`;
+
+    function buildSlotPrompt(category, folderName, slotNum) {
+      let core;
+      if (slotNum === 2) core = SLOT2_DUPLICATE_PROMPT;
+      else if (slotNum === 3) core = SLOT3_SIZING_GUIDE_PROMPT;
+      else core = DEFAULT_PROMPT; // Slot 1 + Slots 4–8 fallback
+
+      // Standard footer to help debugging / traceability without changing core rules
+      return `${core}\n\n[METADATA]\nCategory: ${category}\nSlot: ${slotNum}\nSlot source folder: ${folderName}\n`;
     }
 
     generateSetBtn.addEventListener("click", () => {
