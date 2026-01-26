@@ -227,6 +227,38 @@ async function firestoreRetry(fn, label = "firestore") {
   throw lastErr;
 }
 
+// -------------------------
+// GEMINI RETRY HELPER
+// -------------------------
+async function callGeminiWithRetry(fn, label = "gemini", maxRetries = 3) {
+  let lastErr;
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    try {
+      return await fn();
+    } catch (err) {
+      lastErr = err;
+      const msg = String(err?.message || "").toLowerCase();
+      
+      // Check specifically for overload/rate-limit signals
+      const isOverloaded = 
+        msg.includes("overloaded") || 
+        msg.includes("429") || 
+        msg.includes("503") ||
+        msg.includes("resource exhausted");
+
+      if (!isOverloaded || attempt === maxRetries) {
+        throw err; // Fatal error or out of retries
+      }
+
+      // Exponential backoff: 2s, 4s, 8s... + random jitter
+      const backoff = (2000 * Math.pow(2, attempt)) + Math.floor(Math.random() * 1000);
+      console.log(`[${label}] Model overloaded (attempt ${attempt + 1}/${maxRetries}), retrying in ${backoff}ms...`);
+      await sleep(backoff);
+    }
+  }
+  throw lastErr;
+}
+
 // Deterministic final framing: crop -> resize back to original size.
 async function applyFinalFrameZoomIfNeeded(buf, postprocess = {}) {
   const z = Number(postprocess?.finalFrameZoom);
@@ -925,18 +957,21 @@ exports.handler = async (event) => {
           const img0 = await storagePathToBuffer(basePath0);
           const img1 = await storagePathToBuffer(basePath1);
 
-          let outBuf = await callGeminiImagesEdits({
-            apiKey,
-            model: GEMINI_IMAGE_MODEL,
-            prompt: promptT,
-            size: String(t?.size || body?.size || "2048x2048"),
-            quality: "high",
-            output_format: "png",
-            images: [
-              { buffer: img0.buffer, mime: img0.mime, filename: filenameForMime("image0", img0.mime) },
-              { buffer: img1.buffer, mime: img1.mime, filename: filenameForMime("image1", img1.mime) },
-            ],
-          });
+          // ✅ RETRY WRAPPER: Handles "Model overloaded" (503/429) automatically
+          let outBuf = await callGeminiWithRetry(async () => {
+             return await callGeminiImagesEdits({
+              apiKey,
+              model: GEMINI_IMAGE_MODEL,
+              prompt: promptT,
+              size: String(t?.size || body?.size || "2048x2048"),
+              quality: "high",
+              output_format: "png",
+              images: [
+                { buffer: img0.buffer, mime: img0.mime, filename: filenameForMime("image0", img0.mime) },
+                { buffer: img1.buffer, mime: img1.mime, filename: filenameForMime("image1", img1.mime) },
+              ],
+            });
+          }, `slot_${slot}`);
 
           outBuf = await applyFinalFrameZoomIfNeeded(outBuf, t?.postprocess || body?.postprocess);
           
