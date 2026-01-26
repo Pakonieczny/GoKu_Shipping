@@ -81,7 +81,6 @@
 
 <body>
   <div class="wrap">
-    <!-- LEFT -->
     <div class="card">
       <h1>Listing-Generator-1</h1>
       
@@ -106,7 +105,6 @@
       <div id="panelNewCharms"></div>
     </div>
 
-    <!-- RIGHT -->
     <div class="card">
       <div class="row" style="justify-content:space-between; align-items:center;">
         <h1 style="margin:0;">Generated set</h1>
@@ -116,7 +114,6 @@
     </div>
   </div>
 
-  <!-- Firebase (same style as shipping-1 uses: compat init + modular storage/auth) -->
   <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
@@ -882,7 +879,11 @@
       }
     }
 
-// =========================================================================
+    // ------------------------------------------------------------
+    // Per-slot prompt pipelines (Slots 1–8)
+    // ------------------------------------------------------------
+    
+    // =========================================================================
     // 1. EXISTING BEADY_NECKLACE PROMPTS (DO NOT ALTER)
     // =========================================================================
 
@@ -1200,12 +1201,6 @@
       // This preserves existing behavior for unknown inputs.
       const DEFAULT_MAP = PROMPT_MAPS["Beady_Necklace"];
       return DEFAULT_MAP[slotNum] || DEFAULT_PROMPT;
-    }
-
-    function buildSlotPrompt(category, folderName, slotNum) {
-      // Keep signature the same to avoid touching callsites.
-      // (category/folderName reserved for future slot-specific prompt variants)
-      return SLOT_PROMPTS[slotNum] || DEFAULT_PROMPT;
     }
 
     generateSetBtn.addEventListener("click", () => {
