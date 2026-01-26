@@ -882,10 +882,9 @@
       }
     }
 
-    // ------------------------------------------------------------
-    // Per-slot prompt pipelines (Slots 1–8)
-    // ------------------------------------------------------------
-
+// =========================================================================
+    // 1. EXISTING BEADY_NECKLACE PROMPTS (DO NOT ALTER)
+    // =========================================================================
 
     const SLOT2_DUPLICATE_PROMPT =
     `ULTRA-MICRO SIZE OVERRIDE (TOP PRIORITY — MAKE IT BARELY VISIBLE)
@@ -905,8 +904,7 @@
     Do not output text.
     Ensure the charm colour, shading and reflections match the necklace chain in the reference image.`;
 
-
-        const SLOT3_SIZING_GUIDE_PROMPT =
+    const SLOT3_SIZING_GUIDE_PROMPT =
     `CRITICAL: Slot 3 is a sizing-guide charm replacement task. This must be a single-pass edit.
 
     PROCESS ORDER (NON-NEGOTIABLE)
@@ -944,7 +942,6 @@
     - Any text change.
     - Any charm size mismatch vs charm image.
     - Any weak or disconnected hoop connection.`;
-
 
     const DEFAULT_PROMPT =
     `CRITICAL: This is a standard fashion product photo edit. Keep the subject modest. No nudity.
@@ -1021,10 +1018,9 @@
     Do not output text.
     Ensure the charm colour, shading and reflections match the necklace chain in Reference Image.`;
 
-
     const SLOT7_PROMPT =
     `    ULTRA-MICRO SIZE OVERRIDE (TOP PRIORITY — MAKE IT BARELY VISIBLE)
-    • Force the Charm to be very small: final on-image charm height MUST be 12 pixels tall (absolute pixel height, not relative).
+    • Force the Charm to be very small: final on-image charm height MUST be 13 pixels tall (absolute pixel height, not relative).
     • If you cannot measure pixels, choose the smallest size that is still legible on the chain.
      • Do NOT compensate by zooming out, reframing, cropping, changing camera, changing necklace scale, changing model scale, changing engraving thickness, or changing chain thickness.
     • Do not embossed engravings on the Charm/Pendant, all engravings must be visible and flat and superficial having no descernable depth.
@@ -1042,19 +1038,169 @@
     Ensure the charm colour, shading and reflections match the necklace chain in the reference image.`;
 
 
-    // ------------------------------------------------------------
-    // Explicit per-slot prompt pipelines (Slots 1–8)
-    // explicitly mapped so each slot has its own pipeline hook.
-    // ------------------------------------------------------------
-    const SLOT_PROMPTS = Object.freeze({
-      1: DEFAULT_PROMPT,
-      2: SLOT2_DUPLICATE_PROMPT,
-      3: SLOT3_SIZING_GUIDE_PROMPT,
-      4: SLOT4_PROMPT,
-      5: SLOT5_PROMPT,
-      7: SLOT7_PROMPT,
+    // =========================================================================
+    // 2. NEW PROMPTS (ADAPTED FOR OTHER CATEGORIES)
+    // =========================================================================
 
-    });
+    // --- BRACELET PROMPTS (Adapts "neck" to "wrist" and "necklace" to "bracelet") ---
+    const BRACELET_MODEL_PROMPT = DEFAULT_PROMPT
+      .replace(/necklace chain/g, "bracelet chain")
+      .replace(/female model above the neck and below the bust/g, "female model's wrist or arm");
+    
+    const BRACELET_CREATIVE_PROMPT = SLOT2_DUPLICATE_PROMPT.replace(/necklace chain/g, "bracelet chain");
+    
+    const BRACELET_SIZE_GUIDE_PROMPT = SLOT3_SIZING_GUIDE_PROMPT.replace(/necklace chain/g, "bracelet chain");
+    
+    const BRACELET_ENGRAVING_PROMPT = SLOT4_PROMPT.replace(/necklace charm/g, "bracelet charm").replace(/gold chain/g, "gold bracelet chain");
+    
+    const BRACELET_SEC_MODEL_PROMPT = SLOT5_PROMPT
+      .replace(/necklace chain/g, "bracelet chain")
+      .replace(/female model above the neck and below the bust/g, "female model's wrist or arm");
+
+    const BRACELET_PRODUCT_PROMPT = SLOT7_PROMPT.replace(/necklace chain/g, "bracelet chain");
+
+
+    // --- EARRING PROMPTS (Adapts "neck" to "ear" and "chain" to "hoop/stud") ---
+    // STUD EARRINGS
+    const STUD_MODEL_PROMPT = DEFAULT_PROMPT
+      .replace(/necklace chain/g, "earring post/stud setting")
+      .replace(/hanging flat charm/g, "charm attached to the stud")
+      .replace(/female model above the neck and below the bust/g, "female model's ear and face profile");
+
+    const STUD_CREATIVE_PROMPT = SLOT2_DUPLICATE_PROMPT
+      .replace(/necklace chain/g, "earring setting")
+      .replace(/hanging flat charm/g, "charm attached to the stud");
+
+    const STUD_SIZE_GUIDE_PROMPT = SLOT3_SIZING_GUIDE_PROMPT
+      .replace(/necklace chain/g, "earring part");
+
+    const STUD_SEC_MODEL_PROMPT = SLOT5_PROMPT
+      .replace(/necklace chain/g, "earring post/stud setting")
+      .replace(/hanging flat charm/g, "charm attached to the stud")
+      .replace(/female model above the neck and below the bust/g, "female model's ear");
+
+    const STUD_PRODUCT_PROMPT = SLOT7_PROMPT
+      .replace(/necklace chain/g, "earring stud")
+      .replace(/hanging flat charm/g, "charm attached to the stud");
+
+    // HOOP EARRINGS
+    const HOOP_MODEL_PROMPT = DEFAULT_PROMPT
+      .replace(/necklace chain/g, "hoop earring")
+      .replace(/hanging flat charm/g, "charm sliding on the hoop")
+      .replace(/female model above the neck and below the bust/g, "female model's ear and face profile");
+
+    const HOOP_CREATIVE_PROMPT = SLOT2_DUPLICATE_PROMPT
+      .replace(/necklace chain/g, "hoop earring")
+      .replace(/hanging flat charm/g, "charm on the hoop");
+
+    const HOOP_SIZE_GUIDE_PROMPT = SLOT3_SIZING_GUIDE_PROMPT
+      .replace(/necklace chain/g, "hoop earring");
+
+    const HOOP_SEC_MODEL_PROMPT = SLOT5_PROMPT
+      .replace(/necklace chain/g, "hoop earring")
+      .replace(/hanging flat charm/g, "charm sliding on the hoop")
+      .replace(/female model above the neck and below the bust/g, "female model's ear");
+
+    const HOOP_PRODUCT_PROMPT = SLOT7_PROMPT
+      .replace(/necklace chain/g, "hoop earring")
+      .replace(/hanging flat charm/g, "charm on the hoop");
+
+
+    // --- CHARM PROMPTS (Specialized for standalone/macro views) ---
+    const CHARM_TEMPLATE_PROMPT = 
+    `TASK: Create a pure white background product shot of the Charm.
+    • Use the Charm Image as the absolute source of truth for the shape, engraving, and cutouts.
+    • The output must be a high-resolution, sharp product image on #FFFFFF background.
+    • Flatten the charm logic: It must look like a flat metal sheet.
+    • Ensure the jump ring is visible and aligned at the top.`;
+
+    const CHARM_TYPES_PROMPT = 
+    `TASK: Create a composite view of the Charm variations if applicable, or a stylized macro shot.
+    • Keep the charm flat and metallic.
+    • Focus on the engraving details from the Charm Image.`;
+    
+    const CHARM_MODEL_PROMPT = DEFAULT_PROMPT; // Re-use standard model prompt logic
+    const CHARM_ENGRAVING_PROMPT = SLOT4_PROMPT; // Re-use engraving prompt logic
+    const CHARM_HOOP_GUIDE_PROMPT = HOOP_SIZE_GUIDE_PROMPT; // Borrow from hoops
+    const CHARM_SIZE_GUIDE_PROMPT = SLOT3_SIZING_GUIDE_PROMPT; // Standard size guide
+
+
+    // =========================================================================
+    // 3. MASTER MAPPING
+    // =========================================================================
+
+    const PROMPT_MAPS = {
+      // 1. Regular_Necklace (Uses identical prompts to Beady)
+      "Regular_Necklace": {
+        1: DEFAULT_PROMPT,
+        2: SLOT2_DUPLICATE_PROMPT,
+        3: SLOT3_SIZING_GUIDE_PROMPT,
+        4: SLOT4_PROMPT,
+        5: SLOT5_PROMPT,
+        7: SLOT7_PROMPT
+      },
+      // 2. Beady_Necklace (Original)
+      "Beady_Necklace": {
+        1: DEFAULT_PROMPT,
+        2: SLOT2_DUPLICATE_PROMPT,
+        3: SLOT3_SIZING_GUIDE_PROMPT,
+        4: SLOT4_PROMPT,
+        5: SLOT5_PROMPT,
+        7: SLOT7_PROMPT
+      },
+      // 3. Stud_Earrings
+      "Stud_Earrings": {
+        1: STUD_MODEL_PROMPT,
+        2: STUD_CREATIVE_PROMPT,
+        3: STUD_SIZE_GUIDE_PROMPT,
+        4: STUD_PRODUCT_PROMPT,
+        5: STUD_SEC_MODEL_PROMPT,
+        6: STUD_PRODUCT_PROMPT // Mapped to Slot 6 in SLOT_MAP
+      },
+      // 4. Hoop_Earrings
+      "Hoop_Earrings": {
+        1: HOOP_MODEL_PROMPT,
+        2: HOOP_CREATIVE_PROMPT,
+        3: HOOP_SIZE_GUIDE_PROMPT,
+        4: HOOP_PRODUCT_PROMPT, 
+        5: HOOP_SIZE_GUIDE_PROMPT, // Slot 5 is "Hoop_Size_Guide"
+        6: HOOP_SEC_MODEL_PROMPT,
+        7: HOOP_PRODUCT_PROMPT
+      },
+      // 5. Charms
+      "Charms": {
+        1: CHARM_TEMPLATE_PROMPT,
+        2: CHARM_TYPES_PROMPT,
+        3: CHARM_MODEL_PROMPT,
+        4: CHARM_ENGRAVING_PROMPT,
+        5: CHARM_HOOP_GUIDE_PROMPT,
+        6: CHARM_SIZE_GUIDE_PROMPT
+      },
+      // 6. Bracelets
+      "Bracelets": {
+        1: BRACELET_MODEL_PROMPT,
+        2: BRACELET_CREATIVE_PROMPT,
+        3: BRACELET_SIZE_GUIDE_PROMPT,
+        4: BRACELET_ENGRAVING_PROMPT,
+        5: BRACELET_SEC_MODEL_PROMPT,
+        7: BRACELET_PRODUCT_PROMPT
+      }
+    };
+
+    function buildSlotPrompt(category, folderName, slotNum) {
+      // Look up the specific map for this category
+      const map = PROMPT_MAPS[category];
+      
+      // If we have a map and a specific prompt for this slot, use it.
+      if (map && map[slotNum]) {
+        return map[slotNum];
+      }
+      
+      // Fallback to default (Beady style) if category or slot undefined
+      // This preserves existing behavior for unknown inputs.
+      const DEFAULT_MAP = PROMPT_MAPS["Beady_Necklace"];
+      return DEFAULT_MAP[slotNum] || DEFAULT_PROMPT;
+    }
 
     function buildSlotPrompt(category, folderName, slotNum) {
       // Keep signature the same to avoid touching callsites.
