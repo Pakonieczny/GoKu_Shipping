@@ -14,6 +14,22 @@ const { initializeFirestore, getFirestore } = require("firebase-admin/firestore"
 const JOBS_COLL = "ListingGenerator1Jobs";
 const IMAGES_COLL = "ListingGenerator1Images";
 
+// -------------------------
+// Storage bucket selection
+// -------------------------
+// If the Admin SDK defaults to a different bucket than the browser (Firebase JS SDK),
+// async generation will upload Slot_*.png to the wrong place and the UI will poll forever.
+// Force a single bucket handle everywhere (can be overridden by env).
+function getBucket() {
+  const name =
+    process.env.FIREBASE_STORAGE_BUCKET ||
+    process.env.GCLOUD_STORAGE_BUCKET ||
+    admin.app()?.options?.storageBucket ||
+    // Fallback for this project (prevents silent mismatch when options.storageBucket is unset)
+    "gokudatabase.firebasestorage.app";
+  return admin.storage().bucket(name);
+}
+
 // Hard-lock the Gemini image model (ignore any client-provided model)
 const GEMINI_IMAGE_MODEL = "gemini-3-pro-image-preview";
 
@@ -87,7 +103,7 @@ async function storagePathToBuffer(storagePath) {
     throw new Error("input_storage_path not allowed");
   }
 
-  const bucket = admin.storage().bucket();
+  const bucket = getBucket();
   const file = bucket.file(p);
 
   const [exists] = await file.exists();
@@ -881,7 +897,12 @@ exports.handler = async (event) => {
               const src = String(t?.source_storage_path || "").trim();
               if (!src) throw new Error("copy task missing source_storage_path");
               const dst = `${base}/Slot_${slot + 1}.png`;
-              await bucket.file(src).copy(bucket.file(dst));
+              const dstFile = bucket.file(dst);
+              await bucket.file(src).copy(dstFile);
+
+              // Ensure browser previews can load: getDownloadURL() relies on firebaseStorageDownloadTokens.
+              const token = newDownloadToken();
+              await dstFile.setMetadata({ metadata: { firebaseStorageDownloadTokens: token } });
               continue;
             }
 

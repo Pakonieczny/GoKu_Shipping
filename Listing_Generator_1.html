@@ -348,8 +348,25 @@
               }
             }
 
-            const url = await getDownloadURL(hit);
-            return { storagePath: hit.fullPath, url };
+            try {
+              const url = await getDownloadURL(hit);
+              return { storagePath: hit.fullPath, url };
+            } catch (eUrl) {
+              const msg = String(eUrl?.message || eUrl);
+              const looksUnauthorized =
+                msg.includes("storage/unauthorized") ||
+                msg.includes("403") ||
+                msg.toLowerCase().includes("permission");
+
+              if (looksUnauthorized) {
+                throw new Error(
+                  `Cannot download ${hit.fullPath} (permission/token issue).\n` +
+                  `If this slot was produced via server-side copy(), ensure metadata.firebaseStorageDownloadTokens is set on the copied object.\n` +
+                  `Server fix: after copy() call setMetadata({ metadata: { firebaseStorageDownloadTokens: <uuid> } }).`
+                );
+              }
+              throw eUrl;
+            }
           }
         } catch (e) {
           // If LIST is blocked by Storage rules, we cannot poll without causing 404s.
