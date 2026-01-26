@@ -301,6 +301,28 @@
       });
     }
 
+    function sleep(ms){ return new Promise(r => setTimeout(r, ms)); }
+
+    async function waitForSlotPngUrl(outputBasePath, slotIndex, opts = {}) {
+      const timeoutMs  = Number(opts.timeoutMs ?? 180000);  // 3 min
+      const intervalMs = Number(opts.intervalMs ?? 1500);   // 1.5s
+      const storagePath = `${outputBasePath}/Slot_${slotIndex + 1}.png`;
+
+      const t0 = Date.now();
+      while (true) {
+        try {
+          await ensureStorageSignedIn();
+          const url = await getDownloadURL(ref(storage, storagePath));
+          return { storagePath, url };
+        } catch (e) {
+          if ((Date.now() - t0) > timeoutMs) {
+            throw new Error(`Timed out waiting for Slot_${slotIndex + 1}.png at ${storagePath}`);
+          }
+          await sleep(intervalMs);
+        }
+      }
+    }
+
     // --- UI State ---
     const activeCategoryEl = document.getElementById("activeCategory");
     const panelsEl = document.getElementById("panels");
@@ -480,15 +502,19 @@
         throw new Error(msg);
       }
 
-      // If backend returned 200 but not JSON, surface it instead of {}.
+      // Netlify background functions often return 202 with an empty body.
       if (!j) {
-        throw new Error(`Non-JSON success response from ${path}: ${raw ? raw.slice(0, 300) : "(empty body)"}`);
+        if (res.status === 202 && (!raw || !raw.trim())) {
+          return { ok: true, accepted: true, status: 202 };
+        }
+        throw new Error(`Non-JSON success response from ${fnName}: ${raw ? raw.slice(0,120) : "(empty body)"}`);
       }
       return j;
     }
 
     // Use the NON-background endpoint so we always get JSON back.
     const GEMINI_FN = "geminiImageProxy";
+    const GEMINI_BG_FN = "geminiImageProxy-background";
 
     async function allocSet(category) {
       return await postJson(GEMINI_FN, { kind: "alloc_set", activeCategory: category });
@@ -590,7 +616,8 @@
         };
 
         if (spec.type === "copy") {
-          const r = await postJson(GEMINI_FN, {
+           // Run long edits in the background function to avoid Netlify inactivity 504s.
+           await postJson(GEMINI_BG_FN, {
             kind: "copy_to_slot",
             activeCategory: category,
             source_storage_path: srcLatest.fullPath,
@@ -618,14 +645,18 @@
             prompt: buildSlotPrompt(category, spec.folder, slotNum),
           });
           
-          if (r?.downloadURL) setImg(r.downloadURL);
+          // Background returns 202 w/ empty body; poll Storage until Slot_{n}.png exists.
+          const waited = await waitForSlotPngUrl(outputBasePath, i);
+          const finalUrl = waited.url;
+          const storagePath = waited.storagePath;
+          setImg(finalUrl);
 
           manifest.slots.push({
             slot: slotNum,
             type: "gen",
             source: srcLatest.fullPath,
             newCharm: charmLatest.fullPath,
-            output: r.storagePath,
+            output: storagePath,
           });
         }
       }
