@@ -304,7 +304,7 @@
     function sleep(ms){ return new Promise(r => setTimeout(r, ms)); }
 
     async function waitForSlotPngUrl(outputBasePath, slotIndex, opts = {}) {
-      const timeoutMs  = Number(opts.timeoutMs ?? 180000);  // 3 min
+      const timeoutMs  = Number(opts.timeoutMs ?? 420000);  // 7 min
       const intervalMs = Number(opts.intervalMs ?? 1500);   // 1.5s
       const storagePath = `${outputBasePath}/Slot_${slotIndex + 1}.png`;
 
@@ -507,7 +507,7 @@
         if (res.status === 202 && (!raw || !raw.trim())) {
           return { ok: true, accepted: true, status: 202 };
         }
-        throw new Error(`Non-JSON success response from ${fnName}: ${raw ? raw.slice(0,120) : "(empty body)"}`);
+        throw new Error(`Non-JSON success response from ${path}: ${raw ? raw.slice(0,120) : "(empty body)"}`);
       }
       return j;
     }
@@ -615,26 +615,26 @@
           prevBox.innerHTML = `<img src="${url}" />`;
         };
 
-        if (spec.type === "copy") {
-           // Run long edits in the background function to avoid Netlify inactivity 504s.
-           await postJson(GEMINI_BG_FN, {
-            kind: "copy_to_slot",
-            activeCategory: category,
-            source_storage_path: srcLatest.fullPath,
-            output_base_path: outputBasePath,
-            slotIndex: i,
-          });
-          
-          if (r?.downloadURL) setImg(r.downloadURL);
-          manifest.slots.push({
-            slot: slotNum,
-            type: "copy",
-            source: srcLatest.fullPath,
-            newCharm: null,
-            output: r.storagePath,
-          });
-        } else {
-          const r = await postJson(GEMINI_FN, {
+         if (spec.type === "copy") {
+            // copy_to_slot is fast; use the JSON (non-background) endpoint
+            const r = await postJson(GEMINI_FN, {
+              kind: "copy_to_slot",
+              activeCategory: category,
+              source_storage_path: srcLatest.fullPath,
+              output_base_path: outputBasePath,
+              slotIndex: i,
+            });
+ 
+            if (r?.downloadURL) setImg(r.downloadURL);
+            manifest.slots.push({
+              slot: slotNum,
+              type: "copy",
+              source: srcLatest.fullPath,
+              newCharm: null,
+              output: r?.storagePath || `${outputBasePath}/Slot_${i + 1}.png`,
+            });
+          } else {
+          await postJson(GEMINI_BG_FN, {
             kind: "edits",
             activeCategory: category,
             input_storage_path: srcLatest.fullPath,
