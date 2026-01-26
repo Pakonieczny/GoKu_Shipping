@@ -481,8 +481,17 @@
 
       setStatus("Allocating Set…");
       const alloc = await allocSet(category);
-      const outputBasePath = alloc.outputBasePath; // listing-generator-1/{cat}/Ready_To_List/Set_N
-      const setN = alloc.setN;
+      const outputBasePath = alloc?.outputBasePath; // listing-generator-1/{cat}/Ready_To_List/Set_N
+      if (!outputBasePath || typeof outputBasePath !== "string") {
+        throw new Error("alloc_set did not return a valid outputBasePath");
+      }
+
+      // Prefer server-provided setN, but fall back to parsing from outputBasePath
+      let setN = alloc?.setN;
+      if (setN == null) {
+        const m = outputBasePath.match(/\/Set_(\d+)\b/);
+        if (m) setN = Number(m[1]);
+      }
 
       const charmLatest = await listLatestFile(newCharmsPath());
       if (!charmLatest) throw new Error("No files in listing-generator-1/New_Charms/");
@@ -675,8 +684,8 @@
     - Any charm size mismatch vs Image[0].
     - Any weak or disconnected hoop connection.`;
 
-        // Slot 1 default prompt (edit freely)
-        const DEFAULT_PROMPT =
+    // Slot 1 prompt (edit freely)
+    const DEFAULT_PROMPT =
     `CRITICAL: This is a standard fashion product photo edit. Keep the subject modest. No nudity.
 
     ULTRA-MICRO SIZE OVERRIDE (TOP PRIORITY — MAKE IT BARELY VISIBLE)
@@ -699,14 +708,26 @@
     Do not output text.
     Ensure the charm colour, shading and reflections match the necklace chain in Image_0.`;
 
-    function buildSlotPrompt(category, folderName, slotNum) {
-      let core;
-      if (slotNum === 2) core = SLOT2_DUPLICATE_PROMPT;
-      else if (slotNum === 3) core = SLOT3_SIZING_GUIDE_PROMPT;
-      else core = DEFAULT_PROMPT; // Slot 1 + Slots 4–8 fallback
+    // ------------------------------------------------------------
+    // Explicit per-slot prompt pipelines (Slots 1–8)
+    // NOTE: Slots 4–8 currently reuse Slot 1 prompt text, but remain
+    // explicitly mapped so each slot has its own pipeline hook.
+    // ------------------------------------------------------------
+    const SLOT_PROMPTS = Object.freeze({
+      1: DEFAULT_PROMPT,
+      2: SLOT2_DUPLICATE_PROMPT,
+      3: SLOT3_SIZING_GUIDE_PROMPT,
+      4: DEFAULT_PROMPT,
+      5: DEFAULT_PROMPT,
+      6: DEFAULT_PROMPT,
+      7: DEFAULT_PROMPT,
+      8: DEFAULT_PROMPT,
+    });
 
-      // Standard footer to help debugging / traceability without changing core rules
-      return `${core}\n\n[METADATA]\nCategory: ${category}\nSlot: ${slotNum}\nSlot source folder: ${folderName}\n`;
+    function buildSlotPrompt(category, folderName, slotNum) {
+      // Keep signature the same to avoid touching callsites.
+      // (category/folderName reserved for future slot-specific prompt variants)
+      return SLOT_PROMPTS[slotNum] || DEFAULT_PROMPT;
     }
 
     generateSetBtn.addEventListener("click", () => {
