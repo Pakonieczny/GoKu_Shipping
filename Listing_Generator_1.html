@@ -310,11 +310,13 @@
       const storagePath = `${outputBasePath}/${fileName}`;
 
       const t0 = Date.now();
+      let tries = 0;
       while (true) {
+    tries++;
     await ensureStorageSignedIn();
 
+    // 1) Best path (no 404 spam): list folder contents, if LIST is permitted by rules.
     try {
-      // ✅ Poll folder contents first to avoid noisy 404s from getDownloadURL() before the file exists.
       const folderRef = ref(storage, outputBasePath);
       const res = await listAll(folderRef);
       const hit = (res.items || []).find(it => it.name === fileName);
@@ -322,8 +324,19 @@
         const url = await getDownloadURL(hit);
         return { storagePath: hit.fullPath, url };
       }
-    } catch (e) {
-      // If listing fails transiently (or rules temporarily block LIST), just keep waiting.
+    } catch (_) {
+      // LIST often blocked by Storage rules; ignore + fall back below.
+    }
+
+    // 2) Fallback (works even when LIST is blocked): try the exact object path.
+    //    To reduce noisy 404s, only attempt this every few polls.
+    if (tries % 4 === 0) {
+      try {
+        const url = await getDownloadURL(ref(storage, storagePath));
+        return { storagePath, url };
+      } catch (_) {
+        // Not found yet (or temporarily not readable) — keep waiting.
+      }
     }
 
     if ((Date.now() - t0) > timeoutMs) {
