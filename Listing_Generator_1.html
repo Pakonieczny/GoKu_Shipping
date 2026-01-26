@@ -512,11 +512,18 @@
       return `${ROOT}/${category}/${folder}`;
     }
 
-    // REMOVE / disable the duplicate OLD generateSet() implementation
-    // (You already have the normalized generateSet() elsewhere in this file.)
-    async function generateSet_OLD_DISABLED() {
-      throw new Error("generateSet_OLD_DISABLED should never be called. Remove duplicate generateSet() blocks.");
-    }
+    async function generateSet() {
+      setBusy(true);
+      const category = String(categoryEl.value || "").trim();
+      if (!category) throw new Error("Pick a category first.");
+      const slotPlan = SLOT_MAP[category];
+      if (!slotPlan) throw new Error(`Unknown category: ${category}`);
+
+      setStatus("Allocating Set…");
+      const alloc = await allocSet(category);
+      console.log("alloc_set response:", alloc);
+      const outputBasePath = normalizeAllocOutputBasePath(alloc);
+      if (!outputBasePath) throw new Error("alloc_set did not return a valid outputBasePath");
 
       // Prefer server-provided setN, but fall back to parsing from outputBasePath
       let setN = alloc?.setN ?? alloc?.set_n;
