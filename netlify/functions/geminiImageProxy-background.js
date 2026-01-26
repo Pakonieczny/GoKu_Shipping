@@ -882,7 +882,8 @@ exports.handler = async (event) => {
       const runToken =
         globalThis.crypto?.randomUUID ? globalThis.crypto.randomUUID() : require("crypto").randomUUID();
 
-      (async () => {
+      // ✅ FIX: Await the async work so the function does not exit early.
+      await (async () => {
         const bucket = admin.storage().bucket();
 
         // Only delay between Gemini submissions (edits tasks).
@@ -941,9 +942,10 @@ exports.handler = async (event) => {
             // Keep going so other slots can finish.
           }
         }
-      })().catch((err) => console.log("[run_set_async] fatal", { err: safeErr(err) }));
+      })();
 
-      return json(202, { ok: true, accepted: true, runId: runToken });
+      // Return successful completion (client received 202 long ago)
+      return json(200, { ok: true, finished: true, runId: runToken });
     }
 
     if (kind === "copy_to_slot") {
