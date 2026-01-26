@@ -883,10 +883,9 @@ exports.handler = async (event) => {
         globalThis.crypto?.randomUUID ? globalThis.crypto.randomUUID() : require("crypto").randomUUID();
 
       // ✅ FIX: Await the async work so the function does not exit early.
+      // The client polls for results, so we just need to ensure this runs to completion on the server.
       await (async () => {
         const bucket = admin.storage().bucket();
-
-        // Only delay between Gemini submissions (edits tasks).
         let firstGemini = true;
 
         for (const t of tasks) {
@@ -894,6 +893,7 @@ exports.handler = async (event) => {
           if (!Number.isFinite(slot) || slot < 0) continue;
 
           try {
+            // 1. Handle "Copy" tasks (instant, no delay needed)
             if (String(t?.type) === "copy") {
               const src = String(t?.source_storage_path || "").trim();
               if (!src) throw new Error("copy task missing source_storage_path");
@@ -907,16 +907,20 @@ exports.handler = async (event) => {
               continue;
             }
 
-            // edits task (Gemini)
+            // 2. Handle "Edits" tasks (Gemini)
             const basePath0 = String(t?.input_storage_path || "").trim();
             const basePath1 = String(t?.input_charm_storage_path || "").trim();
             const promptT = String(t?.prompt || "").trim();
-            if (!basePath0) throw new Error("edits task missing input_storage_path");
-            if (!basePath1) throw new Error("edits task missing input_charm_storage_path");
-            if (!promptT) throw new Error("edits task missing prompt");
+            
+            if (!basePath0 || !basePath1 || !promptT) {
+                 console.warn(`Skipping invalid task slot ${slot}`);
+                 continue;
+            }
 
-            // ✅ throttle: delay BETWEEN Gemini slot submissions
-            if (!firstGemini && delayMs > 0) await sleep(delayMs);
+            // ✅ THROTTLE: Delay before submission (except the very first one)
+            if (!firstGemini && delayMs > 0) {
+                await sleep(delayMs);
+            }
             firstGemini = false;
 
             const img0 = await storagePathToBuffer(basePath0);
@@ -936,10 +940,13 @@ exports.handler = async (event) => {
             });
 
             outBuf = await applyFinalFrameZoomIfNeeded(outBuf, t?.postprocess || body?.postprocess);
+            
+            // Upload result (Client polling will detect this file appearing)
             await uploadPngBufferToSetPath(outBuf, base, slot, null, runToken);
+
           } catch (err) {
-            console.log("[run_set_async] task failed", { runToken, slot, err: safeErr(err) });
-            // Keep going so other slots can finish.
+            console.error(`[run_set_async] task failed at slot ${slot}`, safeErr(err));
+            // We continue the loop so other slots still generate
           }
         }
       })();
