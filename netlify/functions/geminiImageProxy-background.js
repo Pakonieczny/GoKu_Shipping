@@ -853,12 +853,11 @@ exports.handler = async (event) => {
       return json(200, { ok: true, setN, outputBasePath });
     }
 
-    // ------------------------------------------------------------
+// ------------------------------------------------------------
     // NEW: run_set_async
     // - One request kicks off the whole set
-    // - Server processes tasks sequentially
-    // - Enforces delayMs BETWEEN Gemini calls (prevents burst overload)
-    // - Returns immediately (Netlify BG responds 202 anyway)
+    // - Server processes tasks ASYNCHRONOUSLY (Parallel)
+    // - Enforces delayMs only on START times (staggered launch)
     // ------------------------------------------------------------
     if (kind === "run_set_async") {
       const cat = normalizeCategory(activeCategory);
@@ -882,74 +881,73 @@ exports.handler = async (event) => {
       const runToken =
         globalThis.crypto?.randomUUID ? globalThis.crypto.randomUUID() : require("crypto").randomUUID();
 
-      // ✅ FIX: Await the async work so the function does not exit early.
-      // The client polls for results, so we just need to ensure this runs to completion on the server.
-      await (async () => {
-        const bucket = admin.storage().bucket();
-        let firstGemini = true;
+      // ✅ FIX: Use Promise.all() to run tasks in parallel
+      // We map the tasks to an array of promises, allowing them to execute concurrently.
+      await Promise.all(tasks.map(async (t, i) => {
+        const slot = Number(t?.slotIndex);
+        if (!Number.isFinite(slot) || slot < 0) return;
 
-        for (const t of tasks) {
-          const slot = Number(t?.slotIndex);
-          if (!Number.isFinite(slot) || slot < 0) continue;
+        try {
+          // ✅ STAGGERED START:
+          // Instead of waiting for the previous task to *finish*, we only delay the *start*.
+          // Task 0 starts at 0ms. Task 1 starts at 1500ms (if delayMs=1500).
+          // They will all be processing simultaneously after the initial delay.
+          const startDelay = i * delayMs;
+          if (startDelay > 0) await sleep(startDelay);
 
-          try {
-            // 1. Handle "Copy" tasks (instant, no delay needed)
-            if (String(t?.type) === "copy") {
-              const src = String(t?.source_storage_path || "").trim();
-              if (!src) throw new Error("copy task missing source_storage_path");
-              const dst = `${base}/Slot_${slot + 1}.png`;
-              const dstFile = bucket.file(dst);
-              await bucket.file(src).copy(dstFile);
+          const bucket = admin.storage().bucket();
 
-              // Ensure browser previews can load: getDownloadURL() relies on firebaseStorageDownloadTokens.
-              const token = newDownloadToken();
-              await dstFile.setMetadata({ metadata: { firebaseStorageDownloadTokens: token } });
-              continue;
-            }
-
-            // 2. Handle "Edits" tasks (Gemini)
-            const basePath0 = String(t?.input_storage_path || "").trim();
-            const basePath1 = String(t?.input_charm_storage_path || "").trim();
-            const promptT = String(t?.prompt || "").trim();
+          // 1. Handle "Copy" tasks (instant)
+          if (String(t?.type) === "copy") {
+            const src = String(t?.source_storage_path || "").trim();
+            if (!src) throw new Error("copy task missing source_storage_path");
+            const dst = `${base}/Slot_${slot + 1}.png`;
+            const dstFile = bucket.file(dst);
             
-            if (!basePath0 || !basePath1 || !promptT) {
-                 console.warn(`Skipping invalid task slot ${slot}`);
-                 continue;
-            }
+            await bucket.file(src).copy(dstFile);
 
-            // ✅ THROTTLE: Delay before submission (except the very first one)
-            if (!firstGemini && delayMs > 0) {
-                await sleep(delayMs);
-            }
-            firstGemini = false;
-
-            const img0 = await storagePathToBuffer(basePath0);
-            const img1 = await storagePathToBuffer(basePath1);
-
-            let outBuf = await callGeminiImagesEdits({
-              apiKey,
-              model: GEMINI_IMAGE_MODEL,
-              prompt: promptT,
-              size: String(t?.size || body?.size || "2048x2048"),
-              quality: "high",
-              output_format: "png",
-              images: [
-                { buffer: img0.buffer, mime: img0.mime, filename: filenameForMime("image0", img0.mime) },
-                { buffer: img1.buffer, mime: img1.mime, filename: filenameForMime("image1", img1.mime) },
-              ],
-            });
-
-            outBuf = await applyFinalFrameZoomIfNeeded(outBuf, t?.postprocess || body?.postprocess);
-            
-            // Upload result (Client polling will detect this file appearing)
-            await uploadPngBufferToSetPath(outBuf, base, slot, null, runToken);
-
-          } catch (err) {
-            console.error(`[run_set_async] task failed at slot ${slot}`, safeErr(err));
-            // We continue the loop so other slots still generate
+            // Ensure browser previews can load: getDownloadURL() relies on firebaseStorageDownloadTokens.
+            const token = newDownloadToken();
+            await dstFile.setMetadata({ metadata: { firebaseStorageDownloadTokens: token } });
+            return; // Done with this task
           }
+
+          // 2. Handle "Edits" tasks (Gemini)
+          const basePath0 = String(t?.input_storage_path || "").trim();
+          const basePath1 = String(t?.input_charm_storage_path || "").trim();
+          const promptT = String(t?.prompt || "").trim();
+          
+          if (!basePath0 || !basePath1 || !promptT) {
+               console.warn(`Skipping invalid task slot ${slot}`);
+               return;
+          }
+
+          const img0 = await storagePathToBuffer(basePath0);
+          const img1 = await storagePathToBuffer(basePath1);
+
+          let outBuf = await callGeminiImagesEdits({
+            apiKey,
+            model: GEMINI_IMAGE_MODEL,
+            prompt: promptT,
+            size: String(t?.size || body?.size || "2048x2048"),
+            quality: "high",
+            output_format: "png",
+            images: [
+              { buffer: img0.buffer, mime: img0.mime, filename: filenameForMime("image0", img0.mime) },
+              { buffer: img1.buffer, mime: img1.mime, filename: filenameForMime("image1", img1.mime) },
+            ],
+          });
+
+          outBuf = await applyFinalFrameZoomIfNeeded(outBuf, t?.postprocess || body?.postprocess);
+          
+          // Upload result (Client polling will detect this file appearing)
+          await uploadPngBufferToSetPath(outBuf, base, slot, null, runToken);
+
+        } catch (err) {
+          console.error(`[run_set_async] task failed at slot ${slot}`, safeErr(err));
+          // We catch errors here so Promise.all() doesn't fail the entire set if one slot fails.
         }
-      })();
+      }));
 
       // Return successful completion (client received 202 long ago)
       return json(200, { ok: true, finished: true, runId: runToken });
