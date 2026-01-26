@@ -313,6 +313,16 @@
 
     function setStatus(msg){ statusEl.textContent = msg; }
 
+    // Busy-state helper (Generate button + basic UI lock)
+    function setBusy(isBusy){
+      generateSetBtn.disabled = !!isBusy;
+      generateSetBtn.style.opacity = isBusy ? "0.6" : "1";
+      generateSetBtn.style.cursor = isBusy ? "not-allowed" : "pointer";
+    }
+
+    // Back-compat alias (some blocks reference categoryEl)
+    const categoryEl = activeCategoryEl;
+
     function folderPath(category, subfolder) {
       return `${ROOT}/${category}/${subfolder}`;
     }
@@ -514,10 +524,11 @@
 
     async function generateSet() {
       setBusy(true);
-      const category = String(categoryEl.value || "").trim();
-      if (!category) throw new Error("Pick a category first.");
-      const slotPlan = SLOT_MAP[category];
-      if (!slotPlan) throw new Error(`Unknown category: ${category}`);
+      try {
+        const category = String(categoryEl.value || "").trim();
+        if (!category) throw new Error("Pick a category first.");
+        const slotPlan = SLOT_MAP[category];
+        if (!slotPlan) throw new Error(`Unknown category: ${category}`);
 
       setStatus("Allocating Set…");
       const alloc = await allocSet(category);
@@ -625,6 +636,9 @@
       });
 
       setStatus(`Done → ${category}/Ready_To_List/Set_${setN}`);
+      } finally {
+        setBusy(false);
+      }
     }
 
     // ------------------------------------------------------------
