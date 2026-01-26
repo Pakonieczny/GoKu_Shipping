@@ -967,10 +967,10 @@
     Do NOT allow skin colour to be grey around the Charm/Pendant. The skin tone/colour near the Charm/Pendant must be uniform with the rest of the body.
     HARD LOCK: Never render female model above the neck and below the bust.
     HARD LOCK: The Charm/Pendant material is a perfectly flat and very thin sheet of metal, always render the Charm/Pendant completely flat and very thin, DO NOT allow any rounded/radius on the cutout edges.
-    DO not zoom out when generating the image. Keep model and frame consistent with Image_0
+    DO not zoom out when generating the image. Keep model and frame consistent with Reference Image
     Focus on Charm Engraving details and ensure 100% accuracy to Image_1
     Do not output text.
-    Ensure the charm colour, shading and reflections match the necklace chain in Image_0.`;
+    Ensure the charm colour, shading and reflections match the necklace chain in Reference Image.`;
 
     const SLOT4_PROMPT =
     `PROCESS ORDER (NON-NEGOTIABLE)
@@ -1002,59 +1002,69 @@
     - Any weak or disconnected hoop connection.`;
 
     const SLOT5_PROMPT =
-    `CRITICAL: This is a standard fashion product photo edit (Slot 5).
-    ULTRA-MICRO SIZE OVERRIDE (TOP PRIORITY — MAKE IT BARELY VISIBLE)
-    • Force the Charm to be very small: final on-image charm height MUST be 9 pixels tall.
-    • The chain must remain exactly the same size and detail as Image[0]. Only the charm is scaled.
-    TASK: Duplicate and zoom-in into the female model in Image[0], replace the charm from Image[1].
-    Match the subject identity from Image[0]. Do NOT allow skin colour to be grey around the Charm.
-    HARD LOCK: Never render female model above the neck and below the bust.
-    Ensure the charm colour, shading and reflections match the necklace chain in Image_0.`;
+    `CRITICAL: This is a standard fashion product photo edit. Keep the subject modest. No nudity.
 
-    const SLOT6_PROMPT =
-    `CRITICAL: This is a standard fashion product photo edit (Slot 6).
     ULTRA-MICRO SIZE OVERRIDE (TOP PRIORITY — MAKE IT BARELY VISIBLE)
-    • Force the Charm to be very small: final on-image charm height MUST be 9 pixels tall.
+    • Force the Charm to be very small: final on-image charm height MUST be 9 pixels tall (absolute pixel height, not relative).
+    • If you cannot measure pixels, choose the smallest size that is still legible on the chain.
+    • Do NOT compensate by zooming out, reframing, cropping, changing camera, changing necklace scale, changing model scale, changing engraving thickness, or changing chain thickness.
+    • Never allow embossed engravings on the Charm/Pendant, all engravings must be flat and superficial having no descernable depth.
+    • Do NOT allow any shadows (Contact or otherwise) to be visible undereath and around the Charm/Pendant placement, block all Charm/Pendant related shadows.
+    • The Charm/Pendant must be bright yellow gold colour, do not saturate the Charm/Pendant gold colour.
     • The chain must remain exactly the same size and detail as Image[0]. Only the charm is scaled.
-    TASK: Duplicate and zoom-in into the female model in Image[0], replace the charm from Image[1].
-    Match the subject identity from Image[0]. Do NOT allow skin colour to be grey around the Charm.
+
+    TASK (SLOT 1 — IMAGE EDIT, SINGLE PASS)
+    Duplicate and zoom-in into the female model in Image[0], only replace the charm from Image[1] onto the existing necklace chain in Image[0] as a hanging flat charm.
+    Match the subject identity from Image[0]; do not change the model’s appearance or skin tone.
+    Do NOT allow skin colour to be grey around the Charm/Pendant. The skin tone/colour near the Charm/Pendant must be uniform with the rest of the body.
     HARD LOCK: Never render female model above the neck and below the bust.
-    Ensure the charm colour, shading and reflections match the necklace chain in Image_0.`;
+    HARD LOCK: The Charm/Pendant material is a perfectly flat and very thin sheet of metal, always render the Charm/Pendant completely flat and very thin, DO NOT allow any rounded/radius on the cutout edges.
+    DO not zoom out when generating the image. Keep model and frame consistent with Reference Image
+    Focus on Charm Engraving details and ensure 100% accuracy to Image_1
+    Do not output text.
+    Ensure the charm colour, shading and reflections match the necklace chain in Reference Image.`;
+
 
     const SLOT7_PROMPT =
-    `CRITICAL: This is a standard fashion product photo edit (Slot 7).
-    ULTRA-MICRO SIZE OVERRIDE (TOP PRIORITY — MAKE IT BARELY VISIBLE)
-    • Force the Charm to be very small: final on-image charm height MUST be 9 pixels tall.
-    • The chain must remain exactly the same size and detail as Image[0]. Only the charm is scaled.
-    TASK: Duplicate and zoom-in into the female model in Image[0], replace the charm from Image[1].
-    Match the subject identity from Image[0]. Do NOT allow skin colour to be grey around the Charm.
-    HARD LOCK: Never render female model above the neck and below the bust.
-    Ensure the charm colour, shading and reflections match the necklace chain in Image_0.`;
+    `PROCESS ORDER (NON-NEGOTIABLE)
+    • Use reference image as the base sizing-guide graphic.
+    • Replace BOTH charms in the reference image with the charm from Charm image.
 
-    const SLOT8_PROMPT =
-    `CRITICAL: This is a standard fashion product photo edit (Slot 8).
-    ULTRA-MICRO SIZE OVERRIDE (TOP PRIORITY — MAKE IT BARELY VISIBLE)
-    • Force the Charm to be very small: final on-image charm height MUST be 9 pixels tall.
-    • The chain must remain exactly the same size and detail as Image[0]. Only the charm is scaled.
-    TASK: Duplicate and zoom-in into the female model in Image[0], replace the charm from Image[1].
-    Match the subject identity from Image[0]. Do NOT allow skin colour to be grey around the Charm.
-    HARD LOCK: Never render female model above the neck and below the bust.
-    Ensure the charm colour, shading and reflections match the necklace chain in Image_0.`;
+    INPUT IMAGES (ORDER MATTERS)
+    • Reference Image = sizing guide base image (ALL text, layout, pencil, line, background)
+    • Charm Image = charm macro (pixel-truth source for silhouette, cutouts, engraving, integrated hoop)
+
+    ABSOLUTE LOCKS (DO NOT CHANGE)
+    • Do NOT move, resize, restyle, blur, or alter any text.
+    • Do NOT crop, zoom, or reframe the image.
+
+    CHARM POSITION + SIZE MATCH (NON-NEGOTIABLE)
+    • The new charm must match the original charm’s on-image size EXACTLY.
+    • This is a strict size match — no scaling up or down.
+
+    CHARM FIDELITY
+    • Preserve the exact outer perimeter, cutouts, engraving, and integrated hoop from the reference image.
+    • Do NOT redraw, smooth, stylize, thicken, clean up, or reinterpret.
+    • Keep edges crisp. No blur or smear.
+
+    HARD FAIL CONDITIONS
+    - Any text change.
+    - Any charm size mismatch vs charm image.
+    - Any weak or disconnected hoop connection.`;
+
 
     // ------------------------------------------------------------
     // Explicit per-slot prompt pipelines (Slots 1–8)
-    // NOTE: Slots 4–8 currently reuse Slot 1 prompt text, but remain
     // explicitly mapped so each slot has its own pipeline hook.
     // ------------------------------------------------------------
     const SLOT_PROMPTS = Object.freeze({
       1: DEFAULT_PROMPT,
       2: SLOT2_DUPLICATE_PROMPT,
       3: SLOT3_SIZING_GUIDE_PROMPT,
-      4: DEFAULT_PROMPT,
-      5: DEFAULT_PROMPT,
-      6: DEFAULT_PROMPT,
-      7: DEFAULT_PROMPT,
-      8: DEFAULT_PROMPT,
+      4: SLOT4_PROMPT,
+      5: SLOT5_PROMPT,
+      7: SLOT7_PROMPT,
+
     });
 
     function buildSlotPrompt(category, folderName, slotNum) {
