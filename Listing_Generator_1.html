@@ -15,6 +15,7 @@
     textarea{ min-height:120px; resize:vertical; }
     .row{ display:flex; gap:8px; }
     .btn{ cursor:pointer; border-radius:12px; border:1px solid var(--line); padding:10px 12px; background:#0e1220; color:var(--text); }
+    .btnSmall{ padding:6px 10px; border-radius:10px; font-size:11px; line-height:1; }
     .btn:disabled{ opacity:0.5; cursor:not-allowed; }
     .muted{ color:var(--muted); font-size:12px; line-height:1.35; }
     .drop{
@@ -366,6 +367,89 @@
       generateSetBtn.style.cursor = isBusy ? "not-allowed" : "pointer";
     }
 
+   // Current generated set context (used by per-slot Redo)
+    let CURRENT_SET = null; // { category, outputBasePath, setN }
+
+    function setAllRedoEnabled(enabled){
+      gridEl.querySelectorAll("button.redoBtn").forEach(b => { b.disabled = !enabled; });
+    }
+
+    function cacheBust(url){
+      if (!url) return url;
+      const sep = url.includes("?") ? "&" : "?";
+      return `${url}${sep}v=${Date.now()}`;
+    }
+
+    async function redoSlot(slotIndex){
+      if (!CURRENT_SET?.outputBasePath || !CURRENT_SET?.category) {
+        throw new Error("No active set to redo yet. Generate a set first.");
+      }
+
+      const category = CURRENT_SET.category;
+      const outputBasePath = CURRENT_SET.outputBasePath;
+      const slotPlan = SLOT_MAP[category];
+      const spec = slotPlan?.[slotIndex];
+      if (!spec) throw new Error(`Invalid slotIndex ${slotIndex} for ${category}`);
+
+      const slotCard = gridEl.querySelector(`.slot[data-slot-index="${slotIndex}"]`);
+      const prevBox  = slotCard?.querySelector(`#slotPrev_${slotIndex}`);
+      const metaEl   = slotCard?.querySelector(`#slotMeta_${slotIndex}`);
+      const redoBtn  = slotCard?.querySelector(`#redo_${slotIndex}`);
+
+      const setImg = (url) => {
+        if (!prevBox) return;
+        prevBox.innerHTML = `<img src="${cacheBust(url)}" />`;
+      };
+
+      // UI lock for this slot only
+      if (redoBtn) redoBtn.disabled = true;
+      if (prevBox) prevBox.innerHTML = `<div class="slotRefEmpty">Working…</div>`;
+      setStatus(`Redo Slot ${slotIndex + 1}…`);
+
+      // Always re-pull latest inputs at the time of redo
+      const srcFolder = slotRefFolder(category, spec.folder);
+      const srcLatest = await listLatestFile(srcFolder);
+      if (!srcLatest) throw new Error(`No files in ${srcFolder}/`);
+
+      const charmLatest = await listLatestFile(newCharmsPath());
+      if (!charmLatest) throw new Error("No files in listing-generator-1/New_Charms/");
+
+      if (spec.type === "copy") {
+        const r = await postJson(GEMINI_FN, {
+          kind: "copy_to_slot",
+          activeCategory: category,
+          source_storage_path: srcLatest.fullPath,
+          output_base_path: outputBasePath,
+          slotIndex,
+        });
+
+        if (r?.downloadURL) {
+          setImg(r.downloadURL);
+        } else {
+          const waited = await waitForSlotPngUrl(outputBasePath, slotIndex);
+          setImg(waited.url);
+        }
+      } else {
+        await postJson(GEMINI_BG_FN, {
+          kind: "edits",
+          activeCategory: category,
+          input_storage_path: srcLatest.fullPath,
+          input_charm_storage_path: charmLatest.fullPath,
+          output_base_path: outputBasePath,
+          slotIndex,
+          model: "gemini-3-pro-image-preview",
+          prompt: buildSlotPrompt(category, spec.folder, slotIndex + 1),
+        });
+
+        const waited = await waitForSlotPngUrl(outputBasePath, slotIndex);
+        setImg(waited.url);
+      }
+
+      if (metaEl) metaEl.textContent = `Source: ${srcLatest.fullPath}`;
+      setStatus(`Ready (Set_${CURRENT_SET.setN ?? "?"})`);
+      if (redoBtn) redoBtn.disabled = false;
+    }
+
     // Back-compat alias (some blocks reference categoryEl)
     const categoryEl = activeCategoryEl;
 
@@ -596,6 +680,9 @@
         if (m) setN = Number(m[1]);
       }
 
+      // Save current set context for per-slot Redo
+      CURRENT_SET = { category, outputBasePath, setN };
+
       const charmLatest = await listLatestFile(newCharmsPath());
       if (!charmLatest) throw new Error("No files in listing-generator-1/New_Charms/");
 
@@ -611,6 +698,9 @@
       // Clear grid
       gridEl.innerHTML = "";
 
+     // Redo buttons should be disabled while a full set is generating
+     // (they will be enabled when the set is complete)
+
       for (let i = 0; i < slotPlan.length; i++) {
         const spec = slotPlan[i];
         const slotNum = i + 1;
@@ -623,15 +713,25 @@
 
         const slotCard = document.createElement("div");
         slotCard.className = "slot";
+        slotCard.dataset.slotIndex = String(i);
         slotCard.innerHTML = `
           <div class="slotTop">
             <b>Slot ${slotNum}</b>
-            <div class="muted" style="font-size:12px;">${spec.type}: ${spec.folder}</div>
+             <div class="row" style="align-items:center; justify-content:flex-end; gap:8px;">
+             <div class="muted" style="font-size:12px;">${spec.type}: ${spec.folder}</div>
+             <button class="btn btnSmall redoBtn" id="redo_${i}" disabled>Redo</button>
+            </div>
           </div>
           <div class="slotPrev" id="slotPrev_${i}"><div class="slotRefEmpty">Working…</div></div>
           <div class="small" id="slotMeta_${i}">Source: ${srcLatest.fullPath}</div>
         `;
         gridEl.appendChild(slotCard);
+
+        // Hook Redo click (regenerates ONLY this slot)
+         slotCard.querySelector(`#redo_${i}`)?.addEventListener("click", async () => {
+         try { await redoSlot(i); }
+         catch (e) { console.error(e); setStatus(String(e?.message || e)); }
+         });
 
         const prevBox = slotCard.querySelector(`#slotPrev_${i}`);
         const setImg = (url) => {
@@ -694,6 +794,8 @@
       });
 
       setStatus(`Done → ${category}/Ready_To_List/Set_${setN}`);
+      // Now that the set is done, enable per-slot Redo buttons
+      setAllRedoEnabled(true);
       } finally {
         setBusy(false);
       }
