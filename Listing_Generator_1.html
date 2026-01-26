@@ -481,13 +481,21 @@
 
       setStatus("Allocating Set…");
       const alloc = await allocSet(category);
-      const outputBasePath = alloc?.outputBasePath; // listing-generator-1/{cat}/Ready_To_List/Set_N
+      // alloc_set response shape can vary (camelCase vs snake_case)
+      console.log("[alloc_set] response:", alloc);
+      const outputBasePath =
+        alloc?.outputBasePath ||
+        alloc?.output_base_path ||
+        alloc?.outputBasePath ||
+        alloc?.outputBase ||
+        alloc?.basePath ||
+        alloc?.outputBase; // listing-generator-1/{cat}/Ready_To_List/Set_N
       if (!outputBasePath || typeof outputBasePath !== "string") {
         throw new Error("alloc_set did not return a valid outputBasePath");
       }
 
       // Prefer server-provided setN, but fall back to parsing from outputBasePath
-      let setN = alloc?.setN;
+      let setN = alloc?.setN ?? alloc?.set_n;
       if (setN == null) {
         const m = outputBasePath.match(/\/Set_(\d+)\b/);
         if (m) setN = Number(m[1]);
