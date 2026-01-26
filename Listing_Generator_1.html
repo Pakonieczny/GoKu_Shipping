@@ -746,89 +746,86 @@
      // Redo buttons should be disabled while a full set is generating
      // (they will be enabled when the set is complete)
 
-      for (let i = 0; i < slotPlan.length; i++) {
-        const spec = slotPlan[i];
-        const slotNum = i + 1;
-
-        setStatus(`Slot ${slotNum}/${slotPlan.length}…`);
-
+      // 1) Resolve all slot sources up front (Storage-only; no Gemini calls here)
+      setStatus("Preparing slots…");
+      const slotResolved = await Promise.all(slotPlan.map(async (spec, i) => {
         const srcFolder = slotRefFolder(category, spec.folder);
         const srcLatest = await listLatestFile(srcFolder);
         if (!srcLatest) throw new Error(`No files in ${srcFolder}/`);
+        return { spec, i, slotNum: i + 1, srcLatest };
+      }));
 
+      // 2) Render all slot cards immediately
+      for (const r of slotResolved) {
+        const { spec, i, slotNum, srcLatest } = r;
         const slotCard = document.createElement("div");
         slotCard.className = "slot";
-        slotCard.dataset.slotIndex = String(i);
         slotCard.innerHTML = `
           <div class="slotTop">
             <b>Slot ${slotNum}</b>
-             <div class="row" style="align-items:center; justify-content:flex-end; gap:8px;">
-             <div class="muted" style="font-size:12px;">${spec.type}: ${spec.folder}</div>
-             <button class="btn btnSmall redoBtn" id="redo_${i}" disabled>Redo</button>
-            </div>
+            <div class="muted" style="font-size:12px;">${spec.type}: ${spec.folder}</div>
           </div>
-          <div class="slotPrev" id="slotPrev_${i}"><div class="slotRefEmpty">Working…</div></div>
+          <div class="slotPrev" id="slotPrev_${i}"><div class="slotRefEmpty">Queued…</div></div>
           <div class="small" id="slotMeta_${i}">Source: ${srcLatest.fullPath}</div>
         `;
         gridEl.appendChild(slotCard);
-
-        // Hook Redo click (regenerates ONLY this slot)
-         slotCard.querySelector(`#redo_${i}`)?.addEventListener("click", async () => {
-         try { await redoSlot(i); }
-         catch (e) { console.error(e); setStatus(String(e?.message || e)); }
-         });
-
-        const prevBox = slotCard.querySelector(`#slotPrev_${i}`);
-        const setImg = (url) => {
-          if (!prevBox) return;
-          prevBox.innerHTML = `<img src="${url}" />`;
-        };
-
-         if (spec.type === "copy") {
-            // copy_to_slot is fast; use the JSON (non-background) endpoint
-            const r = await postJson(GEMINI_FN, {
-              kind: "copy_to_slot",
-              activeCategory: category,
-              source_storage_path: srcLatest.fullPath,
-              output_base_path: outputBasePath,
-              slotIndex: i,
-            });
- 
-            if (r?.downloadURL) setImg(r.downloadURL);
-            manifest.slots.push({
-              slot: slotNum,
-              type: "copy",
-              source: srcLatest.fullPath,
-              newCharm: null,
-              output: r?.storagePath || `${outputBasePath}/Slot_${i + 1}.png`,
-            });
-          } else {
-          await postJson(GEMINI_BG_FN, {
-            kind: "edits",
-            activeCategory: category,
-            input_storage_path: srcLatest.fullPath,
-            input_charm_storage_path: charmLatest.fullPath,
-            output_base_path: outputBasePath,
-            slotIndex: i,
-            model: "gemini-3-pro-image-preview",
-            prompt: buildSlotPrompt(category, spec.folder, slotNum),
-          });
-          
-          // Background returns 202 w/ empty body; poll Storage until Slot_{n}.png exists.
-          const waited = await waitForSlotPngUrl(outputBasePath, i);
-          const finalUrl = waited.url;
-          const storagePath = waited.storagePath;
-          setImg(finalUrl);
-
-          manifest.slots.push({
-            slot: slotNum,
-            type: "gen",
-            source: srcLatest.fullPath,
-            newCharm: charmLatest.fullPath,
-            output: storagePath,
-          });
-        }
       }
+
+      // 3) Kick off ONE background run that processes slots sequentially with delay between Gemini calls
+      setStatus("Starting background run…");
+      const tasks = slotResolved.map((r) => {
+        const { spec, i, slotNum, srcLatest } = r;
+        if (spec.type === "copy") {
+          return {
+            type: "copy",
+            slotIndex: i,
+            source_storage_path: srcLatest.fullPath,
+          };
+        }
+        return {
+          type: "edits",
+          slotIndex: i,
+          input_storage_path: srcLatest.fullPath,
+          input_charm_storage_path: charmLatest.fullPath,
+          prompt: buildSlotPrompt(category, spec.folder, slotNum),
+          // model is hard-locked server-side; included here is harmless but not required
+          model: "gemini-3-pro-image-preview",
+        };
+      });
+
+      // Netlify background function returns 202 immediately; work continues server-side.
+      await postJson(GEMINI_BG_FN, {
+       kind: "run_set_async",
+        activeCategory: category,
+        output_base_path: outputBasePath,
+       delayMs: 1000,          // ✅ 1000ms spacing between Gemini slot submissions (server-enforced)
+        tasks,
+      });
+
+      // 4) Poll each Slot PNG in parallel; update previews as each arrives
+      setStatus("Generating…");
+      const slotWaiters = slotResolved.map(async (r) => {
+       const { spec, i, slotNum, srcLatest } = r;
+       const prevBox = document.getElementById(`slotPrev_${i}`);
+       const setImg = (url) => { if (prevBox) prevBox.innerHTML = `<img src="${url}" />`; };
+
+        const waited = await waitForSlotPngUrl(outputBasePath, i);
+        // cache-bust so the preview updates even if the filename is overwritten
+        const finalUrl = `${waited.url}${waited.url.includes("?") ? "&" : "?"}cb=${Date.now()}`;
+        setImg(finalUrl);
+
+        return {
+          slot: slotNum,
+          type: spec.type === "copy" ? "copy" : "gen",
+          source: srcLatest.fullPath,
+          newCharm: spec.type === "copy" ? null : charmLatest.fullPath,
+          output: waited.storagePath,
+        };
+      });
+
+      const results = await Promise.all(slotWaiters);
+      results.sort((a, b) => a.slot - b.slot);
+      manifest.slots = results;
 
       setStatus("Writing manifest…");
       await postJson("geminiImageProxy", {

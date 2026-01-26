@@ -817,6 +817,94 @@ exports.handler = async (event) => {
       return json(200, { ok: true, setN, outputBasePath });
     }
 
+    // ------------------------------------------------------------
+    // NEW: run_set_async
+    // - One request kicks off the whole set
+    // - Server processes tasks sequentially
+    // - Enforces delayMs BETWEEN Gemini calls (prevents burst overload)
+    // - Returns immediately (Netlify BG responds 202 anyway)
+    // ------------------------------------------------------------
+    if (kind === "run_set_async") {
+      const cat = normalizeCategory(activeCategory);
+      if (!GENERATABLE_CATEGORIES.has(cat)) {
+        return json(400, { error: { message: "activeCategory not generatable" } });
+      }
+
+      const base = assertAllowedOutputBase(output_base_path);
+      const delayMs = clampNumber(body?.delayMs ?? body?.delay_ms ?? 1000, 0, 10000, 1000);
+      const tasks = Array.isArray(body?.tasks) ? body.tasks : null;
+      if (!tasks || !tasks.length) {
+        return json(400, { error: { message: "tasks must be a non-empty array" } });
+      }
+      if (tasks.length > 8) {
+        return json(400, { error: { message: "tasks max length is 8" } });
+      }
+
+      const apiKey = process.env.GEMINI_API_KEY;
+      if (!apiKey) return json(400, { error: { message: "Missing GEMINI_API_KEY env var" } });
+
+      const runToken =
+        globalThis.crypto?.randomUUID ? globalThis.crypto.randomUUID() : require("crypto").randomUUID();
+
+      (async () => {
+        const bucket = admin.storage().bucket();
+
+        // Only delay between Gemini submissions (edits tasks).
+        let firstGemini = true;
+
+        for (const t of tasks) {
+          const slot = Number(t?.slotIndex);
+          if (!Number.isFinite(slot) || slot < 0) continue;
+
+          try {
+            if (String(t?.type) === "copy") {
+              const src = String(t?.source_storage_path || "").trim();
+              if (!src) throw new Error("copy task missing source_storage_path");
+              const dst = `${base}/Slot_${slot + 1}.png`;
+              await bucket.file(src).copy(bucket.file(dst));
+              continue;
+            }
+
+            // edits task (Gemini)
+            const basePath0 = String(t?.input_storage_path || "").trim();
+            const basePath1 = String(t?.input_charm_storage_path || "").trim();
+            const promptT = String(t?.prompt || "").trim();
+            if (!basePath0) throw new Error("edits task missing input_storage_path");
+            if (!basePath1) throw new Error("edits task missing input_charm_storage_path");
+            if (!promptT) throw new Error("edits task missing prompt");
+
+            // ✅ throttle: delay BETWEEN Gemini slot submissions
+            if (!firstGemini && delayMs > 0) await sleep(delayMs);
+            firstGemini = false;
+
+            const img0 = await storagePathToBuffer(basePath0);
+            const img1 = await storagePathToBuffer(basePath1);
+
+            let outBuf = await callGeminiImagesEdits({
+              apiKey,
+              model: GEMINI_IMAGE_MODEL,
+              prompt: promptT,
+              size: String(t?.size || body?.size || "2048x2048"),
+              quality: "high",
+              output_format: "png",
+              images: [
+                { buffer: img0.buffer, mime: img0.mime, filename: filenameForMime("image0", img0.mime) },
+                { buffer: img1.buffer, mime: img1.mime, filename: filenameForMime("image1", img1.mime) },
+              ],
+            });
+
+            outBuf = await applyFinalFrameZoomIfNeeded(outBuf, t?.postprocess || body?.postprocess);
+            await uploadPngBufferToSetPath(outBuf, base, slot, null, runToken);
+          } catch (err) {
+            console.log("[run_set_async] task failed", { runToken, slot, err: safeErr(err) });
+            // Keep going so other slots can finish.
+          }
+        }
+      })().catch((err) => console.log("[run_set_async] fatal", { err: safeErr(err) }));
+
+      return json(202, { ok: true, accepted: true, runId: runToken });
+    }
+
     if (kind === "copy_to_slot") {
       const cat = normalizeCategory(activeCategory);
       if (!GENERATABLE_CATEGORIES.has(cat)) return json(400, { error: { message: "activeCategory not generatable" } });
