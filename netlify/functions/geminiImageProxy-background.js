@@ -125,13 +125,27 @@ async function allocNextSet(activeCategory) {
 
   const bucket = admin.storage().bucket();
   const prefix = `listing-generator-1/${cat}/Ready_To_List/`;
-  const [files] = await bucket.getFiles({ prefix });
 
+  // OPTIMIZED: Use delimiter to only fetch "subfolders" (prefixes)
+  // This prevents downloading metadata for thousands of files, which causes OOM crashes.
+  const [files, nextQuery, apiResponse] = await bucket.getFiles({
+    prefix,
+    delimiter: "/",
+    autoPaginate: false, // We only need the top-level "folders"
+  });
+
+  const prefixes = apiResponse?.prefixes || [];
+  
   let maxN = 0;
-  for (const f of files) {
-    const m = f.name.match(/Ready_To_List\/Set_(\d+)\//);
-    if (m) maxN = Math.max(maxN, Number(m[1]) || 0);
+  
+  // Prefixes look like: "listing-generator-1/Beady_Necklace/Ready_To_List/Set_1/"
+  for (const p of prefixes) {
+    const m = p.match(/\/Set_(\d+)\/$/);
+    if (m) {
+      maxN = Math.max(maxN, Number(m[1]) || 0);
+    }
   }
+
   const setN = maxN + 1;
   const outputBasePath = `listing-generator-1/${cat}/Ready_To_List/Set_${setN}`;
   return { setN, outputBasePath };
