@@ -414,11 +414,20 @@ async function callGeminiGenerateContentImage({
   return outBuf;
 }
 
+ function newDownloadToken() {
+   return globalThis.crypto?.randomUUID
+     ? globalThis.crypto.randomUUID()
+     : require("crypto").randomUUID();
+ }
+
+ function tokenDownloadURLFor(bucketName, storagePath, token) {
+   const encoded = encodeURIComponent(storagePath).replace(/%2F/g, "%2F");
+   return `https://firebasestorage.googleapis.com/v0/b/${bucketName}/o/${encoded}?alt=media&token=${token}`;
+ }
+
 async function uploadPngBufferToStorage({ outBuf, jobId, runId, slotIndex, outputBasePath }) {
   const bucket = admin.storage().bucket();
-  const token = globalThis.crypto?.randomUUID
-    ? globalThis.crypto.randomUUID()
-    : require("crypto").randomUUID();
+  const token = newDownloadToken();
 
   const effectiveRunId = runId || `lg1_${Date.now()}`;
   const effectiveSlot = typeof slotIndex === "number" ? slotIndex : null;
@@ -447,8 +456,7 @@ async function uploadPngBufferToStorage({ outBuf, jobId, runId, slotIndex, outpu
   });
 
   const bucketName = bucket.name;
-  const encoded = encodeURIComponent(storagePath).replace(/%2F/g, "%2F");
-  const downloadURL = `https://firebasestorage.googleapis.com/v0/b/${bucketName}/o/${encoded}?alt=media&token=${token}`;
+  const downloadURL = tokenDownloadURLFor(bucketName, storagePath, token);
 
   return { storagePath, downloadURL, effectiveRunId, effectiveSlot };
 }
@@ -461,9 +469,21 @@ async function uploadPngBufferToSetPath(outBuf, basePath, sIndex, fallbackJobId,
     const base = assertAllowedOutputBase(basePath);
     const storagePath = `${base}/Slot_${effectiveSlot + 1}.png`;
     const file = bucket.file(storagePath);
-    await file.save(outBuf, { contentType: "image/png", resumable: false });
-    const downloadURL = await signedUrlFor(file);
-    return { storagePath, downloadURL, effectiveRunId: fallbackRunId || fallbackJobId || null, effectiveSlot };
+     // IMPORTANT: Always attach firebaseStorageDownloadTokens so browser previews can load reliably.
+     const token = newDownloadToken();
+
+     await file.save(outBuf, {
+       resumable: false,
+       contentType: "image/png",
+       metadata: {
+         metadata: {
+           firebaseStorageDownloadTokens: token,
+         },
+       },
+     });
+
+     const downloadURL = tokenDownloadURLFor(bucket.name, storagePath, token);
+     return { storagePath, downloadURL, effectiveRunId: fallbackRunId || fallbackJobId || null, effectiveSlot };
   }
 
   return await uploadPngBufferToStorage({ outBuf, jobId: fallbackJobId, runId: fallbackRunId, slotIndex: effectiveSlot });
@@ -917,8 +937,13 @@ exports.handler = async (event) => {
       const dst = `${base}/Slot_${effectiveSlot + 1}.png`;
 
       const bucket = admin.storage().bucket();
-      await bucket.file(src).copy(bucket.file(dst));
-      const downloadURL = await signedUrlFor(bucket.file(dst));
+       const dstFile = bucket.file(dst);
+       await bucket.file(src).copy(dstFile);
+
+       // Ensure a Firebase download token exists on the copied object.
+       const token = newDownloadToken();
+       await dstFile.setMetadata({ metadata: { firebaseStorageDownloadTokens: token } });
+       const downloadURL = tokenDownloadURLFor(bucket.name, dst, token);
       return json(200, { ok: true, storagePath: dst, downloadURL });
     }
 
