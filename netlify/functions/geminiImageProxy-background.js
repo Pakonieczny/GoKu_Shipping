@@ -4,7 +4,7 @@
 */
 
 const admin = require("./firebaseAdmin");
-const sharp = require("sharp");
+// const sharp = require("sharp"); // ensure sharp is installed in package.json
 const { initializeFirestore, getFirestore } = require("firebase-admin/firestore");
 
 // Node 18 on Netlify provides fetch/FormData/Blob globally.
@@ -17,7 +17,21 @@ const IMAGES_COLL = "ListingGenerator1Images";
 // Hard-lock the Gemini image model (ignore any client-provided model)
 const GEMINI_IMAGE_MODEL = "gemini-3-pro-image-preview";
 
+const GENERATABLE_CATEGORIES = new Set([
+  "Beady_Necklace",
+  "Regular_Necklace",
+  "Stud_Earrings",
+  "Hoop_Earrings",
+  "Charms",
+  "Bracelets",
+]);
+
 // ---- helpers ----
+
+function normalizeCategory(s) {
+  return String(s || "").trim();
+}
+
 function json(statusCode, obj) {
   return {
     statusCode,
@@ -57,7 +71,6 @@ async function storagePathToBuffer(storagePath) {
   if (!p) throw new Error("input_storage_path must be a non-empty string");
 
   // Allowlist to prevent arbitrary bucket reads.
-  // Must match the prefixes your pipeline uses (reference, charm macro, pass-A outputs).
   const ALLOWED_INPUT_PREFIXES = [
     "listing-generator-1/Beady_Necklace/",
     "listing-generator-1/Regular_Necklace/",
@@ -67,7 +80,6 @@ async function storagePathToBuffer(storagePath) {
     "listing-generator-1/Bracelets/",
     "listing-generator-1/New_Charms/",
     "listing-generator-1/Completed_Charm/",
-    // keep legacy during transition
     "listing-generator-1/generated/",
   ];
 
@@ -107,10 +119,43 @@ function clampNumber(n, min, max, fallback) {
   return Math.max(min, Math.min(max, x));
 }
 
+async function allocNextSet(activeCategory) {
+  const cat = normalizeCategory(activeCategory);
+  if (!GENERATABLE_CATEGORIES.has(cat)) throw new Error("activeCategory not generatable");
+
+  const bucket = admin.storage().bucket();
+  const prefix = `listing-generator-1/${cat}/Ready_To_List/`;
+  const [files] = await bucket.getFiles({ prefix });
+
+  let maxN = 0;
+  for (const f of files) {
+    const m = f.name.match(/Ready_To_List\/Set_(\d+)\//);
+    if (m) maxN = Math.max(maxN, Number(m[1]) || 0);
+  }
+  const setN = maxN + 1;
+  const outputBasePath = `listing-generator-1/${cat}/Ready_To_List/Set_${setN}`;
+  return { setN, outputBasePath };
+}
+
+function assertAllowedOutputBase(base) {
+  const b = String(base || "").trim();
+  // Must be: listing-generator-1/{Category}/Ready_To_List/Set_N
+  if (!/^listing-generator-1\/[^/]+\/Ready_To_List\/Set_\d+$/i.test(b)) {
+    throw new Error("output_base_path not allowed");
+  }
+  return b;
+}
+
+async function signedUrlFor(bucketFile) {
+  const [url] = await bucketFile.getSignedUrl({
+    action: "read",
+    expires: Date.now() + 1000 * 60 * 60 * 24 * 7, // 7 days
+  });
+  return url;
+}
+
 // -------------------------
 // Firestore (Admin) hardening for serverless
-// - preferRest avoids gRPC/HTTP2 flakiness in some serverless environments
-// - retries smooth over transient DEADLINE_EXCEEDED / UNAVAILABLE spikes
 let _db;
 function getDb() {
   if (_db) return _db;
@@ -153,7 +198,6 @@ async function firestoreRetry(fn, label = "firestore") {
 }
 
 // Deterministic final framing: crop -> resize back to original size.
-// This is applied ONLY to the OUTPUT buffer, never to the reference input.
 async function applyFinalFrameZoomIfNeeded(buf, postprocess = {}) {
   const z = Number(postprocess?.finalFrameZoom);
   if (!Number.isFinite(z) || z <= 1.0001) return buf;
@@ -202,9 +246,8 @@ async function callGeminiImagesEdits({
   size,
   quality,
   output_format,
-  images, // [{ buffer, mime, filename }]
+  images, 
 }) {
-
   return callGeminiGenerateContentImage({
     apiKey,
     model,
@@ -237,10 +280,6 @@ function sizeToAspectRatio(size = "2048x2048") {
   const w = Number(m[1]), h = Number(m[2]);
   if (!Number.isFinite(w) || !Number.isFinite(h) || w <= 0 || h <= 0) return "1:1";
   if (Math.abs(w - h) < 2) return "1:1";
-  // Common cases you use
-  if (w === 2048 && h === 2048) return "1:1";
-  if (w === 2048 && h === 2048) return "1:1";
-  // Fallback: reduce ratio
   const gcd = (a,b)=> b ? gcd(b, a%b) : a;
   const g = gcd(w, h);
   return `${Math.round(w/g)}:${Math.round(h/g)}`;
@@ -261,14 +300,13 @@ async function callGeminiGenerateContentImage({
   model,
   prompt,
   size,
-  images, // [{ buffer, mime, filename }]
+  images,
 }) {
   const geminiModel =
     String(model || "gemini-3-pro-image-preview").trim() ||
     "gemini-3-pro-image-preview";
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${geminiModel}:generateContent`;
 
-  // Strong output spec: Gemini image models can still vary; this nudges consistent dimensions/format.
   const m = /^(\d+)\s*x\s*(\d+)$/.exec(String(size || "").trim());
   const wantW = m ? Number(m[1]) : null;
   const wantH = m ? Number(m[2]) : null;
@@ -280,8 +318,6 @@ async function callGeminiGenerateContentImage({
     (wantW && wantH ? `Exact size ${wantW}x${wantH}. ` : "") +
     `Return an image suitable for a product photo.`;
 
-  // NOTE: For multimodal editing, parts can include multiple inline_data images.
-  // We keep text first (instruction) then images (conditioning inputs).
   const parts = [{ text: promptText }];
   for (const img of images || []) {
     parts.push({
@@ -295,7 +331,6 @@ async function callGeminiGenerateContentImage({
   const body = stripUndefined({
     contents: [{ role: "user", parts }],
     generationConfig: {
-      // Gemini image models typically return both; request both to avoid empty responses.
       responseModalities: ["TEXT", "IMAGE"],
     },
   });
@@ -343,25 +378,30 @@ async function callGeminiGenerateContentImage({
 
   let outBuf = Buffer.from(b64, "base64");
 
-  // Normalize to PNG + requested size (defensive for downstream pipeline)
+  // Normalize to PNG + requested size
   try {
-    const img = sharp(outBuf);
-    const meta = await img.metadata();
-    const needResize =
-      wantW && wantH && (meta?.width !== wantW || meta?.height !== wantH);
-    if (needResize) {
-      outBuf = await img.resize(wantW, wantH, { fit: "cover" }).png().toBuffer();
-    } else {
-      outBuf = await img.png().toBuffer();
+    let sharp;
+    try { sharp = require("sharp"); } catch(_) {}
+    if (sharp) {
+      const img = sharp(outBuf);
+      const meta = await img.metadata();
+      const needResize =
+        wantW && wantH && (meta?.width !== wantW || meta?.height !== wantH);
+      if (needResize) {
+        outBuf = await img.resize(wantW, wantH, { fit: "cover" }).png().toBuffer();
+      } else {
+        outBuf = await img.png().toBuffer();
+      }
     }
   } catch (_) {
-    // If sharp fails, still return raw bytes.
+    // If sharp fails or not present, still return raw bytes.
   }
 
-  return outBuf;}
+  return outBuf;
+}
 
 async function uploadPngBufferToStorage({ outBuf, jobId, runId, slotIndex, outputBasePath }) {
-  const bucket = admin.storage().bucket(); // uses storageBucket from firebaseAdmin.js init
+  const bucket = admin.storage().bucket();
   const token = globalThis.crypto?.randomUUID
     ? globalThis.crypto.randomUUID()
     : require("crypto").randomUUID();
@@ -372,7 +412,6 @@ async function uploadPngBufferToStorage({ outBuf, jobId, runId, slotIndex, outpu
   let storagePath;
   if (outputBasePath) {
     const base = String(outputBasePath).trim();
-    // Must be under listing-generator-1/{Category}/Ready_To_List/Set_N
     if (!/^listing-generator-1\/[^/]+\/Ready_To_List\/Set_\d+$/i.test(base)) {
       throw new Error("output_base_path not allowed");
     }
@@ -400,20 +439,31 @@ async function uploadPngBufferToStorage({ outBuf, jobId, runId, slotIndex, outpu
   return { storagePath, downloadURL, effectiveRunId, effectiveSlot };
 }
 
+async function uploadPngBufferToSetPath(outBuf, basePath, sIndex, fallbackJobId, fallbackRunId) {
+  const bucket = admin.storage().bucket();
+  const effectiveSlot = Number.isFinite(Number(sIndex)) && Number(sIndex) >= 0 ? Number(sIndex) : 0;
+
+  if (basePath) {
+    const base = assertAllowedOutputBase(basePath);
+    const storagePath = `${base}/Slot_${effectiveSlot + 1}.png`;
+    const file = bucket.file(storagePath);
+    await file.save(outBuf, { contentType: "image/png", resumable: false });
+    const downloadURL = await signedUrlFor(file);
+    return { storagePath, downloadURL, effectiveRunId: fallbackRunId || fallbackJobId || null, effectiveSlot };
+  }
+
+  return await uploadPngBufferToStorage({ outBuf, jobId: fallbackJobId, runId: fallbackRunId, slotIndex: effectiveSlot });
+}
+
 /**
  * Postprocess pipeline:
- * - Given passA (with oversized charm),
- * - inpaint-remove charm to recover base pixels,
- * - compute diff mask to isolate charm pixels from passA,
- * - scale charm crop down with Lanczos,
- * - add subtle contact shadow,
- * - composite onto recovered base.
+ * charm_postscale logic
  */
 async function postScaleCharmComposite({
   passABuf,
   baseNoCharmBuf,
   scale,
-  targetPx,          // NEW: preferred final charm height in pixels (stable slider behavior)
+  targetPx,
   shadowOpacity,
   shadowBlur,
   diffThreshold,
@@ -441,11 +491,10 @@ async function postScaleCharmComposite({
   const width = aMeta.width;
   const height = aMeta.height;
 
-  // Decode raw RGBA for both images
+  // Decode raw RGBA
   const aRaw = await sharp(passABuf).ensureAlpha().raw().toBuffer();
   const bRaw = await sharp(baseNoCharmBuf).ensureAlpha().raw().toBuffer();
 
-  // Build per-pixel diff map (max RGB channel delta)
   const diffVals = new Uint8Array(width * height);
   for (let i = 0, p = 0; i < aRaw.length; i += 4, p++) {
     const dr = Math.abs(aRaw[i] - bRaw[i]);
@@ -458,17 +507,13 @@ async function postScaleCharmComposite({
     const mask = Buffer.alloc(width * height);
     for (let p = 0; p < diffVals.length; p++) mask[p] = diffVals[p] > thr ? 255 : 0;
 
-    // Feather + tighten after blur to reduce speckle
     const maskRaw = await sharp(mask, { raw: { width, height, channels: 1 } })
       .blur(feather)
       .threshold(18)
       .raw()
       .toBuffer();
 
-    let minX = width,
-      minY = height,
-      maxX = -1,
-      maxY = -1;
+    let minX = width, minY = height, maxX = -1, maxY = -1;
     let count = 0;
 
     for (let y = 0; y < height; y++) {
@@ -487,26 +532,24 @@ async function postScaleCharmComposite({
 
     const found = maxX >= 0;
     const bboxArea = found ? (maxX - minX + 1) * (maxY - minY + 1) : 0;
-    const density = found && bboxArea > 0 ? count / bboxArea : 0; // sparse speckle guard
-    return { found, maskRaw, minX, minY, maxX, maxY, count, bboxArea };
+    const density = found && bboxArea > 0 ? count / bboxArea : 0; 
+    return { found, maskRaw, minX, minY, maxX, maxY, count, bboxArea, density };
   }
 
-  // Adaptive thresholding: raise threshold until bbox is plausibly “just the charm”
   const baseThr = clampNumber(diffThreshold, 8, 120, 40);
-  const feather = 1; // keep tight; we're only trying to reduce speckle, not grow the region
+  const feather = 1;
 
   const totalPx = width * height;
-  // Tighten these so we never "accidentally select half the shirt/skin"
-  const MAX_MASK_PX_RATIO = 0.035;     // 3.5%
-  const MAX_BBOX_AREA_RATIO = 0.075;   // 7.5%
-  const MAX_BBOX_W_RATIO = 0.35;       // 35% of width
-  const MAX_BBOX_H_RATIO = 0.35;       // 35% of height
-  const MIN_DENSITY = 0.035;           // reject sparse speckle bboxes
-  const CENTER_X_MIN = 0.12, CENTER_X_MAX = 0.88; // charm should be roughly central
+  const MAX_MASK_PX_RATIO = 0.035; 
+  const MAX_BBOX_AREA_RATIO = 0.075; 
+  const MAX_BBOX_W_RATIO = 0.35; 
+  const MAX_BBOX_H_RATIO = 0.35; 
+  const MIN_DENSITY = 0.035; 
+  const CENTER_X_MIN = 0.12, CENTER_X_MAX = 0.88; 
   const CENTER_Y_MIN = 0.12, CENTER_Y_MAX = 0.88;
 
   let chosen = null;
-  let best = null; // smallest bbox fallback
+  let best = null; 
 
   for (let thr = baseThr; thr <= 90; thr += 8) {
     const m = await buildMaskAndBBox(thr, feather);
@@ -539,7 +582,6 @@ async function postScaleCharmComposite({
   if (!chosen) chosen = best;
   if (!chosen || !chosen.found) return passABuf;
 
-  // Hard safety: if bbox is still huge, skip postscale to avoid picture-in-picture.
   if (chosen.bboxArea > totalPx * 0.25) {
     console.log("[postscale] bbox too large; skipping charm_postscale", {
       bboxArea: chosen.bboxArea,
@@ -551,9 +593,6 @@ async function postScaleCharmComposite({
 
   let { maskRaw, minX, minY, maxX, maxY } = chosen;
 
-  // Refine bbox to the dominant connected component (stabilizes size when the diff-mask catches
-  // tiny speckles on skin/necklace that would otherwise inflate the bbox).
-  // Runs on a 4× downsampled binary mask to stay fast.
   try {
     const DS = 4;
     const smallW = Math.max(1, Math.round(width / DS));
@@ -578,7 +617,6 @@ async function postScaleCharmComposite({
         if (visited[idx]) continue;
         if (small[idx] === 0) { visited[idx] = 1; continue; }
 
-        // BFS
         visited[idx] = 1;
         let head = 0, tail = 0;
         qx[tail] = x; qy[tail] = y; tail++;
@@ -596,7 +634,6 @@ async function postScaleCharmComposite({
           if (cx > mxx) mxx = cx;
           if (cy > mxy) mxy = cy;
 
-          // 4-neighborhood
           const n1 = cx > 0 ? (cy * smallW + (cx - 1)) : -1;
           const n2 = cx + 1 < smallW ? (cy * smallW + (cx + 1)) : -1;
           const n3 = cy > 0 ? ((cy - 1) * smallW + cx) : -1;
@@ -608,7 +645,6 @@ async function postScaleCharmComposite({
           if (n4 >= 0 && !visited[n4] && small[n4]) { visited[n4] = 1; qx[tail] = cx; qy[tail] = cy + 1; tail++; }
         }
 
-        // Ignore tiny speckle components (noise)
         if (area < 12) continue;
 
         if (area > bestArea) {
@@ -619,7 +655,6 @@ async function postScaleCharmComposite({
     }
 
     if (best) {
-      // Scale bbox back up to full-res coordinates
       const padSmall = 2;
       const sx1 = Math.max(0, best.mnx - padSmall);
       const sy1 = Math.max(0, best.mny - padSmall);
@@ -635,21 +670,18 @@ async function postScaleCharmComposite({
     // If refinement fails for any reason, keep the original bbox.
   }
 
-  // Expand bbox slightly (jump ring + edge pixels)
   const pad = 6;
   const left = Math.max(0, minX - pad);
   const top = Math.max(0, minY - pad);
   const bboxW = Math.min(width - left, maxX - minX + 1 + pad * 2);
   const bboxH = Math.min(height - top, maxY - minY + 1 + pad * 2);
 
-  // Make a soft alpha crop for cleaner edges
   const maskPng = await sharp(maskRaw, { raw: { width, height, channels: 1 } })
     .extract({ left, top, width: bboxW, height: bboxH })
     .blur(0.8)
     .png()
     .toBuffer();
 
-  // Extract charm crop from passA; set alpha from diff-mask crop
   const charmCrop = await sharp(passABuf)
     .extract({ left, top, width: bboxW, height: bboxH })
     .removeAlpha()
@@ -657,22 +689,14 @@ async function postScaleCharmComposite({
     .png()
     .toBuffer();
 
-  // -------------------------
-  // OUTPUT SIZE (NEW)
-  // Prefer an absolute pixel target for height (stable + proportional slider behavior).
-  // Falls back to old scale-multiplier behavior if targetPx isn't provided.
-  // -------------------------
   const tp = Number(targetPx);
   let outW, outH;
   if (Number.isFinite(tp)) {
-    // Clamp to a sane range. (UI may go very small; server allows it, but extremely small
-    // values will naturally lose engraving readability.)
     const targetH = Math.round(clampNumber(tp, 4, 96, 14));
     const aspect = bboxH > 0 ? (bboxW / bboxH) : 1;
     outH = Math.max(1, targetH);
     outW = Math.max(1, Math.round(outH * aspect));
 
-    // Safety: never exceed canvas
     if (outW > width) {
       const k = width / outW;
       outW = Math.max(1, Math.floor(outW * k));
@@ -684,34 +708,27 @@ async function postScaleCharmComposite({
       outH = Math.max(1, Math.floor(outH * k));
     }
   } else {
-    // Old behavior (kept for compatibility)
     const s = clampNumber(scale, 0.50, 0.70, 0.65);
     outW = Math.max(1, Math.round(bboxW * s));
     outH = Math.max(1, Math.round(bboxH * s));
   }
 
-  // Downscale charm crop (high-quality resampling)
   const scaledCharm = await sharp(charmCrop)
     .resize(outW, outH, { kernel: "lanczos3" })
-    // Mild sharpen helps micro-engraving survive aggressive downscales.
     .sharpen(0.6)
     .png()
     .toBuffer();
 
-  // If alpha somehow collapses, never try to composite (prevents black blocks)
   try {
     const aStats = await sharp(scaledCharm).extractChannel(3).stats();
     if (!aStats?.channels?.[0] || aStats.channels[0].max === 0) return passABuf;
   } catch (_) {
-    // if stats fails, fall back safely
     return passABuf;
   }
 
-  // Contact shadow from the scaled alpha channel
   const shBlur = clampNumber(shadowBlur, 0, 12, 2);
   const shOp = clampNumber(shadowOpacity, 0, 0.6, 0.28);
 
-  // Build shadow as RGBA with a real alpha channel (prevents occasional "solid black rectangle" artifacts)
   const shadowAlphaRaw = await sharp(scaledCharm)
     .extractChannel(3)
     .blur(shBlur)
@@ -731,13 +748,10 @@ async function postScaleCharmComposite({
     .png()
     .toBuffer();
 
-  // Anchor: keep top-center-ish of original bbox fixed so jump ring stays on chain.
-  // (Center anchor is robust; if you want tighter ring-lock later, we can move anchor up.)
   const anchorX = left + Math.round(bboxW / 2);
   const newLeft = Math.max(0, Math.min(width - outW, Math.round(anchorX - outW / 2)));
   const newTop = Math.max(0, Math.min(height - outH, top));
 
-  // Composite: recovered base -> shadow -> charm
   const finalBuf = await sharp(baseNoCharmBuf)
     .composite([
       { input: shadowLayer, left: newLeft, top: Math.min(height - outH, newTop + 1), blend: "multiply" },
@@ -749,39 +763,6 @@ async function postScaleCharmComposite({
   return finalBuf;
 }
 
-// ---- handler ----
-
-function normalizeCategory(s) {
-  return String(s || "").trim();
-}
-
-const GENERATABLE_CATEGORIES = new Set([
-  "Beady_Necklace",
-  "Regular_Necklace",
-  "Stud_Earrings",
-  "Hoop_Earrings",
-  "Charms",
-  "Bracelets",
-]);
-
-async function allocNextSet(activeCategory) {
-  const cat = normalizeCategory(activeCategory);
-  if (!GENERATABLE_CATEGORIES.has(cat)) throw new Error("activeCategory not generatable");
-
-  const bucket = admin.storage().bucket();
-  const prefix = `listing-generator-1/${cat}/Ready_To_List/`;
-  const [files] = await bucket.getFiles({ prefix });
-
-  let maxN = 0;
-  for (const f of files) {
-    const m = f.name.match(/Ready_To_List\/Set_(\d+)\//);
-    if (m) maxN = Math.max(maxN, Number(m[1]) || 0);
-  }
-  const setN = maxN + 1;
-  const outputBasePath = `listing-generator-1/${cat}/Ready_To_List/Set_${setN}`;
-  return { setN, outputBasePath };
-}
-
 exports.handler = async (event) => {
   if (event.httpMethod === "OPTIONS") return json(200, { ok: true });
   if (event.httpMethod !== "POST") return json(405, { error: { message: "Method not allowed" } });
@@ -790,114 +771,30 @@ exports.handler = async (event) => {
   if (!body) return json(400, { error: { message: "Invalid JSON body" } });
 
   const {
-    // existing job pipeline
     jobId,
     runId,
     slotIndex,
-
-    // NEW + existing kinds:
-   // "edits" | "generations" | "charm_postscale" | "alloc_set" | "copy_to_slot" | "write_manifest"
     kind = "edits",
-
-    // client-sent model is ignored (hard locked)
-    model: _clientModel,
-
+    model: _clientModel, // ignored
     prompt,
     size = "2048x2048",
     quality = "high",
     output_format = "png",
-
-    // Reference image input (either already in storage or inline base64)
     input_storage_path,
     input_image,
-
-    // Charm macro optional second image (for normal edits flow)
     input_charm_storage_path,
     input_charm_image,
-
-    // For charm_postscale:
     remove_prompt,
     postprocess,
-
-    // Optional: explicit "no-charm base" input for charm_postscale
     base_storage_path,
     base_image,
-
-    // NEW: category/set pipeline support
     activeCategory,
     output_base_path,
     source_storage_path,
     manifest,
   } = body || {};
 
-  // Hard-lock the Gemini model (ignore any client-provided model)
   const model = GEMINI_IMAGE_MODEL;
-
-  // ---------- helpers (scoped to handler for zero external dependencies) ----------
-  const GENERATABLE_CATEGORIES = new Set([
-    "Beady_Necklace",
-    "Regular_Necklace",
-    "Stud_Earrings",
-    "Hoop_Earrings",
-    "Charms",
-    "Bracelets",
-  ]);
-
-  function normCategory(s) {
-    return String(s || "").trim();
-  }
-
-  function assertAllowedOutputBase(base) {
-    const b = String(base || "").trim();
-    // Must be: listing-generator-1/{Category}/Ready_To_List/Set_N
-    if (!/^listing-generator-1\/[^/]+\/Ready_To_List\/Set_\d+$/i.test(b)) {
-      throw new Error("output_base_path not allowed");
-    }
-    return b;
-  }
-
-  async function signedUrlFor(bucketFile) {
-    const [url] = await bucketFile.getSignedUrl({
-      action: "read",
-      expires: Date.now() + 1000 * 60 * 60 * 24 * 7, // 7 days
-    });
-    return url;
-  }
-
-  async function allocNextSet(cat) {
-    const c = normCategory(cat);
-    if (!GENERATABLE_CATEGORIES.has(c)) throw new Error("activeCategory not generatable");
-
-    const bucket = admin.storage().bucket();
-    const prefix = `listing-generator-1/${c}/Ready_To_List/`;
-    const [files] = await bucket.getFiles({ prefix });
-
-    let maxN = 0;
-    for (const f of files) {
-      const m = f.name.match(/Ready_To_List\/Set_(\d+)\//);
-      if (m) maxN = Math.max(maxN, Number(m[1]) || 0);
-    }
-    const setN = maxN + 1;
-    const outputBasePath = `listing-generator-1/${c}/Ready_To_List/Set_${setN}`;
-    return { setN, outputBasePath };
-  }
-
-  async function uploadPngBufferToSetPath(outBuf, basePath, sIndex, fallbackJobId, fallbackRunId) {
-    const bucket = admin.storage().bucket();
-    const effectiveSlot = Number.isFinite(Number(sIndex)) && Number(sIndex) >= 0 ? Number(sIndex) : 0;
-
-    if (basePath) {
-      const base = assertAllowedOutputBase(basePath);
-      const storagePath = `${base}/Slot_${effectiveSlot + 1}.png`;
-      const file = bucket.file(storagePath);
-      await file.save(outBuf, { contentType: "image/png", resumable: false });
-      const downloadURL = await signedUrlFor(file);
-      return { storagePath, downloadURL, effectiveRunId: fallbackRunId || fallbackJobId || null, effectiveSlot };
-    }
-
-    // legacy behavior (existing helper)
-    return await uploadPngBufferToStorage({ outBuf, jobId: fallbackJobId, runId: fallbackRunId, slotIndex: effectiveSlot });
-  }
 
   // ---------- NEW: non-job operations (no jobId required) ----------
   try {
@@ -907,7 +804,7 @@ exports.handler = async (event) => {
     }
 
     if (kind === "copy_to_slot") {
-      const cat = normCategory(activeCategory);
+      const cat = normalizeCategory(activeCategory);
       if (!GENERATABLE_CATEGORIES.has(cat)) return json(400, { error: { message: "activeCategory not generatable" } });
 
       const src = String(source_storage_path || "").trim();
@@ -924,7 +821,7 @@ exports.handler = async (event) => {
     }
 
    if (kind === "edits") {
-      const cat = normCategory(activeCategory);
+      const cat = normalizeCategory(activeCategory);
       if (!GENERATABLE_CATEGORIES.has(cat)) return json(400, { error: { message: "activeCategory not generatable" } });
 
       const basePath0 = String(input_storage_path || "").trim();
@@ -954,16 +851,14 @@ exports.handler = async (event) => {
         ],
       });
 
-      // Optional: enforce final framing/zoom lock for output only
       outBuf = await applyFinalFrameZoomIfNeeded(outBuf, postprocess);
 
-      // Always save to: ${output_base_path}/Slot_{slotIndex+1}.png
       const saved = await uploadPngBufferToSetPath(outBuf, outputBasePath, effectiveSlot, null, null);
       return json(200, { ok: true, storagePath: saved.storagePath, downloadURL: saved.downloadURL });
     }
 
     if (kind === "write_manifest") {
-      const cat = normCategory(activeCategory);
+      const cat = normalizeCategory(activeCategory);
       if (!GENERATABLE_CATEGORIES.has(cat)) return json(400, { error: { message: "activeCategory not generatable" } });
 
       const base = assertAllowedOutputBase(output_base_path);
@@ -1012,29 +907,26 @@ exports.handler = async (event) => {
     // SPECIAL: charm_postscale
     // -------------------------
     if (kind === "charm_postscale") {
-      // input_storage_path must point to Pass A output (oversized charm)
       if (!input_storage_path && !input_image) {
         throw new Error("charm_postscale requires input_storage_path or input_image (Pass A output)");
       }
 
-   await firestoreRetry(
-      () =>
-        jobRef.set(
-          {
-            stage: "downloading_inputs",
-            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-          },
-          { merge: true }
-        ),
-      "jobRef.set"
-    );
+      await firestoreRetry(
+        () =>
+          jobRef.set(
+            {
+              stage: "downloading_inputs",
+              updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+            },
+            { merge: true }
+          ),
+        "jobRef.set"
+      );
 
       const passA = input_storage_path
         ? await storagePathToBuffer(input_storage_path)
         : dataUrlToBuffer(input_image);
 
-      // Step 1: obtain a "no-charm base" with identical framing.
-      // Prefer an explicit base (original Image[0]) to avoid inpaint drift that breaks diff-masking.
       await firestoreRetry(() => jobRef.set(
         { stage: "removing_charm", updatedAt: admin.firestore.FieldValue.serverTimestamp() },
         { merge: true }
@@ -1048,7 +940,6 @@ exports.handler = async (event) => {
           ? await storagePathToBuffer(base_storage_path)
           : dataUrlToBuffer(base_image);
 
-        // Ensure dimensions match Pass A (defensive, but should already match in your pipeline)
         const [mA, mB] = await Promise.all([
           sharp(passA.buffer).metadata(),
           sharp(base.buffer).metadata(),
@@ -1063,11 +954,7 @@ exports.handler = async (event) => {
           baseNoCharmBuf = base.buffer;
         }
       } else {
-        // Fallback (older behavior): inpaint-remove charm
-        rp =
-          rp ||
-          "Remove the pendant charm + jump ring completely and reconstruct the satellite chain and skin behind it. Keep EVERYTHING else identical. Do not change framing, color grade, wardrobe, lighting, face, pose. Only remove the pendant and restore the pixels behind it.";
-
+        rp = rp || "Remove the pendant charm + jump ring completely...";
         baseNoCharmBuf = await callGeminiImagesEdits({
           apiKey,
           model,
@@ -1079,7 +966,6 @@ exports.handler = async (event) => {
         });
       }
 
-      // Step 2: postprocess scale (no re-generation of engraving)
       await firestoreRetry(() => jobRef.set(
         { stage: "postprocessing", updatedAt: admin.firestore.FieldValue.serverTimestamp() },
         { merge: true }
@@ -1088,16 +974,13 @@ exports.handler = async (event) => {
       let finalBuf = await postScaleCharmComposite({
         passABuf: passA.buffer,
         baseNoCharmBuf,
-        // NEW: stable sizing control (preferred)
         targetPx: postprocess?.targetPx,
-        // OLD: multiplier control (fallback)
         scale: postprocess?.scale,
         shadowOpacity: postprocess?.shadowOpacity,
         shadowBlur: postprocess?.shadowBlur,
         diffThreshold: postprocess?.diffThreshold,
       });
 
-      // Final deterministic framing (OUTPUT only)
       finalBuf = await applyFinalFrameZoomIfNeeded(finalBuf, postprocess);
 
       await firestoreRetry(() => jobRef.set(
@@ -1122,27 +1005,27 @@ exports.handler = async (event) => {
         postprocess: postprocess || null,
       }), "images.add");
 
-    await firestoreRetry(
-      () =>
-        jobRef.set(
-          {
-            status: "done",
-            stage: "done",
-            storagePath,
-            downloadURL,
-            finishedAt: admin.firestore.FieldValue.serverTimestamp(),
-            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-          },
-          { merge: true }
-        ),
-      "jobRef.set"
-    );
+      await firestoreRetry(
+        () =>
+          jobRef.set(
+            {
+              status: "done",
+              stage: "done",
+              storagePath,
+              downloadURL,
+              finishedAt: admin.firestore.FieldValue.serverTimestamp(),
+              updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+            },
+            { merge: true }
+          ),
+        "jobRef.set"
+      );
 
       return json(202, { ok: true, jobId });
     }
 
     // -------------------------
-    // DEFAULT: edits / generations behavior (preserved)
+    // DEFAULT: edits / generations behavior
     // -------------------------
     if (!prompt) return json(400, { error: { message: "prompt is required" } });
 
@@ -1165,7 +1048,6 @@ exports.handler = async (event) => {
     let outBuf;
 
     if (kind === "generations") {
-      // Correct JSON path for generations
       outBuf = await callGeminiImagesGenerations({
         apiKey,
         model,
@@ -1180,12 +1062,10 @@ exports.handler = async (event) => {
         return json(400, { error: { message: "Missing input_image or input_storage_path" } });
       }
 
-      // Reference image (Image[0])
       const ref = input_storage_path
         ? await storagePathToBuffer(input_storage_path)
         : dataUrlToBuffer(input_image);
 
-      // Charm macro (Image[1]) — optional second image
       let charm = null;
       if (input_charm_storage_path || input_charm_image) {
         charm = input_charm_storage_path
@@ -1197,7 +1077,6 @@ exports.handler = async (event) => {
 
       if (charm) {
         images.push({ buffer: charm.buffer, mime: charm.mime, filename: filenameForMime("charm_macro", charm.mime) });
-
       }
 
       outBuf = await callGeminiImagesEdits({
@@ -1211,6 +1090,8 @@ exports.handler = async (event) => {
       });
     }
 
+    outBuf = await applyFinalFrameZoomIfNeeded(outBuf, postprocess);
+
     await firestoreRetry(
       () =>
         jobRef.set(
@@ -1222,9 +1103,6 @@ exports.handler = async (event) => {
         ),
       "jobRef.set"
     );
-
-       // Final deterministic framing (OUTPUT only)
-      outBuf = await applyFinalFrameZoomIfNeeded(outBuf, postprocess);
 
     const { storagePath, downloadURL, effectiveRunId, effectiveSlot } =
       await uploadPngBufferToSetPath(outBuf, output_base_path, slotIndex, jobId, runId);
@@ -1272,7 +1150,6 @@ exports.handler = async (event) => {
       "jobRef.set"
     );
 
-    // Still 202 so the browser doesn’t treat the request as “failed to enqueue”
     return json(202, { ok: false, jobId, error: safeErr(err) });
   }
 };
