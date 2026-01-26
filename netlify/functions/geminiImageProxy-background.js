@@ -17,15 +17,11 @@ const IMAGES_COLL = "ListingGenerator1Images";
 // -------------------------
 // Storage bucket selection
 // -------------------------
-// If the Admin SDK defaults to a different bucket than the browser (Firebase JS SDK),
-// async generation will upload Slot_*.png to the wrong place and the UI will poll forever.
-// Force a single bucket handle everywhere (can be overridden by env).
 function getBucket() {
   const name =
     process.env.FIREBASE_STORAGE_BUCKET ||
     process.env.GCLOUD_STORAGE_BUCKET ||
     admin.app()?.options?.storageBucket ||
-    // Fallback for this project (prevents silent mismatch when options.storageBucket is unset)
     "gokudatabase.firebasestorage.app";
   return admin.storage().bucket(name);
 }
@@ -143,7 +139,6 @@ async function allocNextSet(activeCategory) {
   const prefix = `listing-generator-1/${cat}/Ready_To_List/`;
 
   // OPTIMIZED: Use delimiter to only fetch "subfolders" (prefixes)
-  // This prevents downloading metadata for thousands of files, which causes OOM crashes.
   const [files, nextQuery, apiResponse] = await bucket.getFiles({
     prefix,
     delimiter: "/",
@@ -228,9 +223,9 @@ async function firestoreRetry(fn, label = "firestore") {
 }
 
 // -------------------------
-// GEMINI RETRY HELPER
+// GEMINI RETRY HELPER (UPDATED: Aggressive 6s+ Backoff & 10 Retries)
 // -------------------------
-async function callGeminiWithRetry(fn, label = "gemini", maxRetries = 3) {
+async function callGeminiWithRetry(fn, label = "gemini", maxRetries = 10) {
   let lastErr;
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
     try {
@@ -244,15 +239,18 @@ async function callGeminiWithRetry(fn, label = "gemini", maxRetries = 3) {
         msg.includes("overloaded") || 
         msg.includes("429") || 
         msg.includes("503") ||
+        msg.includes("502") || 
+        msg.includes("500") || 
+        msg.includes("internal error") || 
         msg.includes("resource exhausted");
 
       if (!isOverloaded || attempt === maxRetries) {
         throw err; // Fatal error or out of retries
       }
 
-      // Exponential backoff: 2s, 4s, 8s... + random jitter
-      const backoff = (2000 * Math.pow(2, attempt)) + Math.floor(Math.random() * 1000);
-      console.log(`[${label}] Model overloaded (attempt ${attempt + 1}/${maxRetries}), retrying in ${backoff}ms...`);
+      // Aggressive Backoff: 6s, 12s, 24s, 48s... + random jitter
+      const backoff = (6000 * Math.pow(2, attempt)) + Math.floor(Math.random() * 2000);
+      console.log(`[${label}] Model overloaded/failed (attempt ${attempt + 1}/${maxRetries}), retrying in ${backoff}ms...`, safeErr(err));
       await sleep(backoff);
     }
   }
