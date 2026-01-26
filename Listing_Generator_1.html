@@ -306,47 +306,44 @@
     async function waitForSlotPngUrl(outputBasePath, slotIndex, opts = {}) {
       const timeoutMs  = Number(opts.timeoutMs ?? 420000);  // 7 min
       const intervalMs = Number(opts.intervalMs ?? 1500);   // 1.5s
-      // Delay + throttle exact-path probing to avoid noisy 404s in DevTools.
-      // (LIST-first path below is preferred + usually produces zero 404s.)
-      const firstExactTryAfterMs = Number(opts.firstExactTryAfterMs ?? 25000); // wait 25s before first exact-path probe
-      const exactEveryTries      = Number(opts.exactEveryTries ?? 20);         // then probe ~every 30s (20 * 1.5s)
       const fileName = `Slot_${slotIndex + 1}.png`;
-      const storagePath = `${outputBasePath}/${fileName}`;
 
       const t0 = Date.now();
-      let tries = 0;
       while (true) {
-    tries++;
-    await ensureStorageSignedIn();
+        await ensureStorageSignedIn();
 
-    // 1) Best path (no 404 spam): list folder contents, if LIST is permitted by rules.
-    try {
-      const folderRef = ref(storage, outputBasePath);
-      const res = await listAll(folderRef);
-      const hit = (res.items || []).find(it => it.name === fileName);
-      if (hit) {
-        const url = await getDownloadURL(hit);
-        return { storagePath: hit.fullPath, url };
-      }
-    } catch (_) {
-      // LIST often blocked by Storage rules; ignore + fall back below.
-    }
+        // ✅ Only LIST-first polling.
+        // This guarantees the browser never issues a GET for Slot_*.png before it exists,
+        // so you won't see any 404s in DevTools.
+        try {
+          const folderRef = ref(storage, outputBasePath);
+          const res = await listAll(folderRef);
+          const hit = (res.items || []).find(it => it.name === fileName);
+          if (hit) {
+            const url = await getDownloadURL(hit);
+            return { storagePath: hit.fullPath, url };
+          }
+        } catch (e) {
+          // If LIST is blocked by Storage rules, we cannot poll without causing 404s.
+          // Fail loudly with a targeted message instead of hammering getDownloadURL().
+          const msg = String(e?.message || e);
+          const looksUnauthorized =
+            msg.includes("storage/unauthorized") ||
+            msg.includes("403") ||
+            msg.toLowerCase().includes("permission");
+          if (looksUnauthorized) {
+            throw new Error(
+              `Storage rules block LIST on: ${outputBasePath}\n` +
+              `Allow LIST for Ready_To_List (or at least ${outputBasePath}) so the UI can detect Slot PNGs without any 404 polling.`
+            );
+          }
+          // transient listing issue: keep waiting
+        }
 
-    // 2) Fallback (works even when LIST is blocked): try the exact object path.
-    //    To reduce noisy 404s, delay the first attempt + probe much less often.
-    if ((Date.now() - t0) >= firstExactTryAfterMs && (tries % exactEveryTries === 0)) {
-      try {
-        const url = await getDownloadURL(ref(storage, storagePath));
-        return { storagePath, url };
-      } catch (_) {
-        // Not found yet (or temporarily not readable) — keep waiting.
-      }
-    }
-
-    if ((Date.now() - t0) > timeoutMs) {
-      throw new Error(`Timed out waiting for ${fileName} at ${storagePath}`);
-    }
-    await sleep(intervalMs);
+        if ((Date.now() - t0) > timeoutMs) {
+          throw new Error(`Timed out waiting for ${fileName} in ${outputBasePath}`);
+        }
+        await sleep(intervalMs);
       }
     }
 
