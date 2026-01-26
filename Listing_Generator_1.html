@@ -882,9 +882,12 @@
     // ------------------------------------------------------------
     // Per-slot prompt pipelines (Slots 1–8)
     // ------------------------------------------------------------
+
+
+
     
     // =========================================================================
-    // 1. EXISTING BEADY_NECKLACE PROMPTS (DO NOT ALTER)
+    // 0. BEADY_NECKLACE
     // =========================================================================
 
     const SLOT2_DUPLICATE_PROMPT =
@@ -1039,75 +1042,663 @@
     Ensure the charm colour, shading and reflections match the necklace chain in the reference image.`;
 
 
+
+
+
+
     // =========================================================================
-    // 2. NEW PROMPTS (ADAPTED FOR OTHER CATEGORIES)
+    // 1. // REGULAR NECKLACE
     // =========================================================================
+    const SLOT2_DUPLICATE_PROMPT =
+    `ULTRA-MICRO SIZE OVERRIDE (TOP PRIORITY — MAKE IT BARELY VISIBLE)
+    • Force the Charm to be very small: final on-image charm height MUST be 12 pixels tall (absolute pixel height, not relative).
+    • If you cannot measure pixels, choose the smallest size that is still legible on the chain.
+    • Do NOT compensate by zooming out, reframing, cropping, changing camera, changing necklace scale, changing model scale, changing engraving thickness, or changing chain thickness.
+    • Never allow embossed engravings on the Charm/Pendant, all engravings must be flat and superficial having no descernable depth.
+    • The Charm/Pendant must be gold in colour just like the necklace chain in the reference image, do not saturate the Charm/Pendant gold colour.
+    • The chain must remain exactly the same size and detail as in the reference image. Only the charm is scaled.
 
-    // --- BRACELET PROMPTS (Adapts "neck" to "wrist" and "necklace" to "bracelet") ---
-    const BRACELET_MODEL_PROMPT = DEFAULT_PROMPT
-      .replace(/necklace chain/g, "bracelet chain")
-      .replace(/female model above the neck and below the bust/g, "female model's wrist or arm");
+    TASK
+    Duplicate and zoom-in into the reference image, only replace the charm onto the existing necklace chain in the reference image as a hanging flat charm.
+    Match the subject identity from reference image; 
+    HARD LOCK: The Charm/Pendant material is a perfectly flat and very thin sheet of metal, always render the Charm/Pendant completely flat and very thin, DO NOT allow any rounded/radius on the cutout edges.
+    DO not zoom out when generating the image. Keep model and frame consistent with the reference image.
+    Focus on Charm Engraving details and ensure 100% accuracy to Charm image
+    Do not output text.
+    Ensure the charm colour, shading and reflections match the necklace chain in the reference image.`;
+
+    const SLOT3_SIZING_GUIDE_PROMPT =
+    `CRITICAL: Slot 3 is a sizing-guide charm replacement task. This must be a single-pass edit.
+
+    PROCESS ORDER (NON-NEGOTIABLE)
+    • Single pass only.
+    • Use reference image as the base sizing-guide graphic.
+    • Replace ONLY the charm in the reference image with the charm from Charm image.
+
+    INPUT IMAGES (ORDER MATTERS)
+    • Reference Image = sizing guide base image (ALL text, layout, pencil, line, background)
+    • Charm Image = charm macro (pixel-truth source for silhouette, cutouts, engraving, integrated hoop)
+
+    ABSOLUTE LOCKS (DO NOT CHANGE)
+    • Do NOT add any necklace chain, jump ring, or jewelry.
+    • Do NOT move, resize, restyle, blur, or alter any text.
+    • The text “~12mm x 12mm” MUST remain visible, crisp, and identical.
+    • The short black pointer line MUST remain visible and MUST point to the charm exactly.
+    • Do NOT crop, zoom, or reframe the image.
+
+    CHARM POSITION + SIZE MATCH (NON-NEGOTIABLE)
+    • The new charm must sit in the EXACT same position as the original charm in the reference image.
+    • The new charm must match the original charm’s on-image size EXACTLY.
+    • This is a strict size match — no scaling up or down.
+
+    CHARM FIDELITY (Charm Image IS SINGLE TRUTH SOURCE)
+    • Preserve the exact outer perimeter, cutouts, engraving, and integrated hoop from Charm Image.
+    • Do NOT redraw, smooth, stylize, thicken, clean up, or reinterpret.
+    • Keep edges crisp. No blur or smear.
+
+    INTEGRATED HOOP RULE
+    • The hoop/bail MUST be part of the same laser-cut silhouette as the charm body.
+    • The hoop MUST connect with a wide, solid bridge of metal (large surface area).
+    • HARD FAIL if the hoop looks barely touching, point-connected, floating, or welded-on.
+
+    HARD FAIL CONDITIONS
+    - Any text change.
+    - Any charm size mismatch vs charm image.
+    - Any weak or disconnected hoop connection.`;
+
+    const DEFAULT_PROMPT =
+    `CRITICAL: This is a standard fashion product photo edit. Keep the subject modest. No nudity.
+
+    ULTRA-MICRO SIZE OVERRIDE (TOP PRIORITY — MAKE IT BARELY VISIBLE)
+    • Force the Charm to be very small: final on-image charm height MUST be 9 pixels tall (absolute pixel height, not relative).
+    • If you cannot measure pixels, choose the smallest size that is still legible on the chain.
+    • Do NOT compensate by zooming out, reframing, cropping, changing camera, changing necklace scale, changing model scale, changing engraving thickness, or changing chain thickness.
+    • Never allow embossed engravings on the Charm/Pendant, all engravings must be flat and superficial having no descernable depth.
+    • Do NOT allow any shadows (Contact or otherwise) to be visible undereath and around the Charm/Pendant placement, block all Charm/Pendant related shadows.
+    • The Charm/Pendant must be bright yellow gold colour, do not saturate the Charm/Pendant gold colour.
+    • The chain must remain exactly the same size and detail as reference image. Only the charm is scaled.
+
+    TASK
+    Duplicate and zoom-in into the female model in reference image, only replace the charm from Charm Image onto the existing necklace chain in reference image as a hanging flat charm.
+    Match the subject identity from reference image; do not change the model’s appearance or skin tone.
+    Do NOT allow skin colour to be grey around the Charm/Pendant. The skin tone/colour near the Charm/Pendant must be uniform with the rest of the body.
+    HARD LOCK: Never render female model above the neck and below the bust.
+    HARD LOCK: The Charm/Pendant material is a perfectly flat and very thin sheet of metal, always render the Charm/Pendant completely flat and very thin, DO NOT allow any rounded/radius on the cutout edges.
+    DO not zoom out when generating the image. Keep model and frame consistent with Reference Image
+    Focus on Charm Engraving details and ensure 100% accuracy to Charm Image
+    Do not output text.
+    Ensure the charm colour, shading and reflections match the necklace chain in Reference Image.`;
+
+    const SLOT4_PROMPT =
+    `PROCESS ORDER (NON-NEGOTIABLE)
+    • Use reference image as the base sizing-guide graphic.
+    • Replace BOTH charms in the reference image with the charm from Charm image.
+
+    INPUT IMAGES (ORDER MATTERS)
+    • Reference Image = sizing guide base image (ALL text, layout, pencil, line, background)
+    • Charm Image = charm macro (pixel-truth source for silhouette, cutouts, engraving, integrated hoop)
+
+    ABSOLUTE LOCKS (DO NOT CHANGE)
+    • Do NOT move, resize, restyle, blur, or alter any text.
+    • Do NOT crop, zoom, or reframe the image.
+
+    CHARM POSITION + SIZE MATCH (NON-NEGOTIABLE)
+    • The silver necklace charm is the backside of the gold chain charm. When replacing the charms you must produce the same output where one charm is front facing and the silver charm is showing the bakc with an engraved name.
+    • Both new charms must sit in the EXACT same position as the original charms in the reference image.
+    • The new charm must match the original charm’s on-image size EXACTLY.
+    • This is a strict size match — no scaling up or down.
+
+    CHARM FIDELITY
+    • Preserve the exact outer perimeter, cutouts, engraving, and integrated hoop from the reference image.
+    • Do NOT redraw, smooth, stylize, thicken, clean up, or reinterpret.
+    • Keep edges crisp. No blur or smear.
+
+    HARD FAIL CONDITIONS
+    - Any text change.
+    - Any charm size mismatch vs charm image.
+    - Any weak or disconnected hoop connection.`;
+
+    const SLOT5_PROMPT =
+    `CRITICAL: This is a standard fashion product photo edit. Keep the subject modest. No nudity.
+
+    ULTRA-MICRO SIZE OVERRIDE (TOP PRIORITY — MAKE IT BARELY VISIBLE)
+    • Force the Charm to be very small: final on-image charm height MUST be 10 pixels tall (absolute pixel height, not relative).
+    • If you cannot measure pixels, choose the smallest size that is still legible on the chain.
+    • Do NOT compensate by zooming out, reframing, cropping, changing camera, changing necklace scale, changing model scale, changing engraving thickness, or changing chain thickness.
+    • Never allow embossed engravings on the Charm/Pendant, all engravings must be flat and superficial having no descernable depth.
+    • Do NOT allow any shadows (Contact or otherwise) to be visible undereath and around the Charm/Pendant placement, block all Charm/Pendant related shadows.
+    • The Charm/Pendant must be gold colour, do not saturate the Charm/Pendant gold colour, do not show visible reflections.
+    • The chain must remain exactly the same size and detail as reference image. Only the charm is scaled.
+
+    TASK
+    Duplicate and zoom-in into the female model in reference image, only replace the charm from Charm Image onto the existing necklace chain in reference image as a hanging flat charm.
+    Match the subject identity from reference image; do not change the model’s appearance or skin tone.
+    Do NOT allow skin colour to be grey around the Charm/Pendant. The skin tone/colour near the Charm/Pendant must be uniform with the rest of the body.
+    HARD LOCK: Never render female model above the neck and below the bust.
+    HARD LOCK: The Charm/Pendant material is a perfectly flat and very thin sheet of metal, always render the Charm/Pendant completely flat and very thin, DO NOT allow any rounded/radius on the cutout edges.
+    DO not zoom out when generating the image. Keep model and frame consistent with Reference Image
+    Focus on Charm Engraving details and ensure 100% accuracy to Reference image
+    Do not output text.
+    Ensure the charm colour, shading and reflections match the necklace chain in Reference Image.`;
+
+    const SLOT7_PROMPT =
+    `    ULTRA-MICRO SIZE OVERRIDE (TOP PRIORITY — MAKE IT BARELY VISIBLE)
+    • Force the Charm to be very small: final on-image charm height MUST be 13 pixels tall (absolute pixel height, not relative).
+    • If you cannot measure pixels, choose the smallest size that is still legible on the chain.
+     • Do NOT compensate by zooming out, reframing, cropping, changing camera, changing necklace scale, changing model scale, changing engraving thickness, or changing chain thickness.
+    • Do not embossed engravings on the Charm/Pendant, all engravings must be visible and flat and superficial having no descernable depth.
+    • Limit any shadows (Contact or otherwise) to be visible undereath and around the Charm/Pendant placement.
+    • The Charm/Pendant must be gold colour, do not saturate the Charm/Pendant gold colour.
+    • The chain must remain exactly the same size and detail as in the reference image. Only the charm is scaled.
+
+    TASK
+    Duplicate and zoom-in into the reference image, only replace the charm onto the existing necklace chain in the reference image as a hanging flat charm.
+    Match the subject identity from reference image; 
+    HARD LOCK: The Charm/Pendant material is a perfectly flat and very thin sheet of metal, always render the Charm/Pendant completely flat and very thin, DO NOT allow any rounded/radius on the cutout edges.
+    DO not zoom out when generating the image. Keep model and frame consistent with the reference image.
+    Focus on Charm Engraving details and ensure 100% accuracy to Charm image
+    Do not output text.
+    Ensure the charm colour, shading and reflections match the necklace chain in the reference image.`;
+
+  
+
+
+
+    // =========================================================================
+    // 2. // BRACELET PROMPTS
+    // =========================================================================
+    const BRACELET_MODEL_PROMPT =
+    `CRITICAL: This is a standard fashion product photo edit. Keep the subject modest. No nudity.
+
+    ULTRA-MICRO SIZE OVERRIDE (TOP PRIORITY — MAKE IT BARELY VISIBLE)
+    • Force the Charm to be very small: final on-image charm height MUST be 9 pixels tall (absolute pixel height, not relative).
+    • If you cannot measure pixels, choose the smallest size that is still legible on the chain.
+    • Do NOT compensate by zooming out, reframing, cropping, changing camera, changing necklace scale, changing model scale, changing engraving thickness, or changing chain thickness.
+    • Never allow embossed engravings on the Charm/Pendant, all engravings must be flat and superficial having no descernable depth.
+    • Do NOT allow any shadows (Contact or otherwise) to be visible undereath and around the Charm/Pendant placement, block all Charm/Pendant related shadows.
+    • The Charm/Pendant must be bright yellow gold colour, do not saturate the Charm/Pendant gold colour.
+    • The chain must remain exactly the same size and detail as reference image. Only the charm is scaled.
+
+    TASK
+    Duplicate and zoom-in into the female model in reference image, only replace the charm from Charm Image onto the existing bracelet chain in reference image as a hanging flat charm.
+    Match the subject identity from reference image; do not change the model’s appearance or skin tone.
+    Do NOT allow skin colour to be grey around the Charm/Pendant. The skin tone/colour near the Charm/Pendant must be uniform with the rest of the body.
+    HARD LOCK: Never render female model's wrist or arm.
+    HARD LOCK: The Charm/Pendant material is a perfectly flat and very thin sheet of metal, always render the Charm/Pendant completely flat and very thin, DO NOT allow any rounded/radius on the cutout edges.
+    DO not zoom out when generating the image. Keep model and frame consistent with Reference Image
+    Focus on Charm Engraving details and ensure 100% accuracy to Charm Image
+    Do not output text.
+    Ensure the charm colour, shading and reflections match the necklace chain in Reference Image.`;
     
-    const BRACELET_CREATIVE_PROMPT = SLOT2_DUPLICATE_PROMPT.replace(/necklace chain/g, "bracelet chain");
+    const BRACELET_CREATIVE_PROMPT =
+    `ULTRA-MICRO SIZE OVERRIDE (TOP PRIORITY — MAKE IT BARELY VISIBLE)
+    • Force the Charm to be very small: final on-image charm height MUST be 12 pixels tall (absolute pixel height, not relative).
+    • If you cannot measure pixels, choose the smallest size that is still legible on the chain.
+    • Do NOT compensate by zooming out, reframing, cropping, changing camera, changing necklace scale, changing model scale, changing engraving thickness, or changing chain thickness.
+    • Never allow embossed engravings on the Charm/Pendant, all engravings must be flat and superficial having no descernable depth.
+    • The Charm/Pendant must be gold in colour just like the necklace chain in the reference image, do not saturate the Charm/Pendant gold colour.
+    • The chain must remain exactly the same size and detail as in the reference image. Only the charm is scaled.
+
+    TASK
+    Duplicate and zoom-in into the reference image, only replace the charm onto the existing bracelet chain in the reference image as a hanging flat charm.
+    Match the subject identity from reference image; 
+    HARD LOCK: The Charm/Pendant material is a perfectly flat and very thin sheet of metal, always render the Charm/Pendant completely flat and very thin, DO NOT allow any rounded/radius on the cutout edges.
+    DO not zoom out when generating the image. Keep model and frame consistent with the reference image.
+    Focus on Charm Engraving details and ensure 100% accuracy to Charm image
+    Do not output text.
+    Ensure the charm colour, shading and reflections match the necklace chain in the reference image.`;
     
-    const BRACELET_SIZE_GUIDE_PROMPT = SLOT3_SIZING_GUIDE_PROMPT.replace(/necklace chain/g, "bracelet chain");
+    const BRACELET_SIZE_GUIDE_PROMPT =
+    `CRITICAL: Slot 3 is a sizing-guide charm replacement task. This must be a single-pass edit.
+
+    PROCESS ORDER (NON-NEGOTIABLE)
+    • Single pass only.
+    • Use reference image as the base sizing-guide graphic.
+    • Replace ONLY the charm in the reference image with the charm from Charm image.
+
+    INPUT IMAGES (ORDER MATTERS)
+    • Reference Image = sizing guide base image (ALL text, layout, pencil, line, background)
+    • Charm Image = charm macro (pixel-truth source for silhouette, cutouts, engraving, integrated hoop)
+
+    ABSOLUTE LOCKS (DO NOT CHANGE)
+    • Do NOT add any bracelet chain, jump ring, or jewelry.
+    • Do NOT move, resize, restyle, blur, or alter any text.
+    • The text “~12mm x 12mm” MUST remain visible, crisp, and identical.
+    • The short black pointer line MUST remain visible and MUST point to the charm exactly.
+    • Do NOT crop, zoom, or reframe the image.
+
+    CHARM POSITION + SIZE MATCH (NON-NEGOTIABLE)
+    • The new charm must sit in the EXACT same position as the original charm in the reference image.
+    • The new charm must match the original charm’s on-image size EXACTLY.
+    • This is a strict size match — no scaling up or down.
+
+    CHARM FIDELITY (Charm Image IS SINGLE TRUTH SOURCE)
+    • Preserve the exact outer perimeter, cutouts, engraving, and integrated hoop from Charm Image.
+    • Do NOT redraw, smooth, stylize, thicken, clean up, or reinterpret.
+    • Keep edges crisp. No blur or smear.
+
+    INTEGRATED HOOP RULE
+    • The hoop/bail MUST be part of the same laser-cut silhouette as the charm body.
+    • The hoop MUST connect with a wide, solid bridge of metal (large surface area).
+    • HARD FAIL if the hoop looks barely touching, point-connected, floating, or welded-on.
+
+    HARD FAIL CONDITIONS
+    - Any text change.
+    - Any charm size mismatch vs charm image.
+    - Any weak or disconnected hoop connection.`;
     
-    const BRACELET_ENGRAVING_PROMPT = SLOT4_PROMPT.replace(/necklace charm/g, "bracelet charm").replace(/gold chain/g, "gold bracelet chain");
+    const BRACELET_ENGRAVING_PROMPT =
+    `PROCESS ORDER (NON-NEGOTIABLE)
+    • Use reference image as the base sizing-guide graphic.
+    • Replace BOTH charms in the reference image with the charm from Charm image.
+
+    INPUT IMAGES (ORDER MATTERS)
+    • Reference Image = sizing guide base image (ALL text, layout, pencil, line, background)
+    • Charm Image = charm macro (pixel-truth source for silhouette, cutouts, engraving, integrated hoop)
+
+    ABSOLUTE LOCKS (DO NOT CHANGE)
+    • Do NOT move, resize, restyle, blur, or alter any text.
+    • Do NOT crop, zoom, or reframe the image.
+
+    CHARM POSITION + SIZE MATCH (NON-NEGOTIABLE)
+    • The silver bracelet charm is the backside of the gold bracelet chain charm. When replacing the charms you must produce the same output where one charm is front facing and the silver charm is showing the bakc with an engraved name.
+    • Both new charms must sit in the EXACT same position as the original charms in the reference image.
+    • The new charm must match the original charm’s on-image size EXACTLY.
+    • This is a strict size match — no scaling up or down.
+
+    CHARM FIDELITY
+    • Preserve the exact outer perimeter, cutouts, engraving, and integrated hoop from the reference image.
+    • Do NOT redraw, smooth, stylize, thicken, clean up, or reinterpret.
+    • Keep edges crisp. No blur or smear.
+
+    HARD FAIL CONDITIONS
+    - Any text change.
+    - Any charm size mismatch vs charm image.
+    - Any weak or disconnected hoop connection.`;
     
-    const BRACELET_SEC_MODEL_PROMPT = SLOT5_PROMPT
-      .replace(/necklace chain/g, "bracelet chain")
-      .replace(/female model above the neck and below the bust/g, "female model's wrist or arm");
+    const BRACELET_SEC_MODEL_PROMPT =
+    `CRITICAL: This is a standard fashion product photo edit. Keep the subject modest. No nudity.
 
-    const BRACELET_PRODUCT_PROMPT = SLOT7_PROMPT.replace(/necklace chain/g, "bracelet chain");
+    ULTRA-MICRO SIZE OVERRIDE (TOP PRIORITY — MAKE IT BARELY VISIBLE)
+    • Force the Charm to be very small: final on-image charm height MUST be 10 pixels tall (absolute pixel height, not relative).
+    • If you cannot measure pixels, choose the smallest size that is still legible on the chain.
+    • Do NOT compensate by zooming out, reframing, cropping, changing camera, changing necklace scale, changing model scale, changing engraving thickness, or changing chain thickness.
+    • Never allow embossed engravings on the Charm/Pendant, all engravings must be flat and superficial having no descernable depth.
+    • Do NOT allow any shadows (Contact or otherwise) to be visible undereath and around the Charm/Pendant placement, block all Charm/Pendant related shadows.
+    • The Charm/Pendant must be gold colour, do not saturate the Charm/Pendant gold colour, do not show visible reflections.
+    • The chain must remain exactly the same size and detail as reference image. Only the charm is scaled.
 
+    TASK
+    Duplicate and zoom-in into the female model in reference image, only replace the charm from Charm Image onto the existing bracelet chain in reference image as a hanging flat charm.
+    Match the subject identity from reference image; do not change the model’s appearance or skin tone.
+    Do NOT allow skin colour to be grey around the Charm/Pendant. The skin tone/colour near the Charm/Pendant must be uniform with the rest of the body.
+    HARD LOCK: Never render female model's wrist or arm.
+    HARD LOCK: The Charm/Pendant material is a perfectly flat and very thin sheet of metal, always render the Charm/Pendant completely flat and very thin, DO NOT allow any rounded/radius on the cutout edges.
+    DO not zoom out when generating the image. Keep model and frame consistent with Reference Image
+    Focus on Charm Engraving details and ensure 100% accuracy to Reference image
+    Do not output text.
+    Ensure the charm colour, shading and reflections match the necklace chain in Reference Image.`;
 
-    // --- EARRING PROMPTS (Adapts "neck" to "ear" and "chain" to "hoop/stud") ---
-    // STUD EARRINGS
-    const STUD_MODEL_PROMPT = DEFAULT_PROMPT
-      .replace(/necklace chain/g, "earring post/stud setting")
-      .replace(/hanging flat charm/g, "charm attached to the stud")
-      .replace(/female model above the neck and below the bust/g, "female model's ear and face profile");
+    const BRACELET_PRODUCT_PROMPT =
+    `    ULTRA-MICRO SIZE OVERRIDE (TOP PRIORITY — MAKE IT BARELY VISIBLE)
+    • Force the Charm to be very small: final on-image charm height MUST be 13 pixels tall (absolute pixel height, not relative).
+    • If you cannot measure pixels, choose the smallest size that is still legible on the chain.
+     • Do NOT compensate by zooming out, reframing, cropping, changing camera, changing necklace scale, changing model scale, changing engraving thickness, or changing chain thickness.
+    • Do not embossed engravings on the Charm/Pendant, all engravings must be visible and flat and superficial having no descernable depth.
+    • Limit any shadows (Contact or otherwise) to be visible undereath and around the Charm/Pendant placement.
+    • The Charm/Pendant must be gold colour, do not saturate the Charm/Pendant gold colour.
+    • The chain must remain exactly the same size and detail as in the reference image. Only the charm is scaled.
 
-    const STUD_CREATIVE_PROMPT = SLOT2_DUPLICATE_PROMPT
-      .replace(/necklace chain/g, "earring setting")
-      .replace(/hanging flat charm/g, "charm attached to the stud");
-
-    const STUD_SIZE_GUIDE_PROMPT = SLOT3_SIZING_GUIDE_PROMPT
-      .replace(/necklace chain/g, "earring part");
-
-    const STUD_SEC_MODEL_PROMPT = SLOT5_PROMPT
-      .replace(/necklace chain/g, "earring post/stud setting")
-      .replace(/hanging flat charm/g, "charm attached to the stud")
-      .replace(/female model above the neck and below the bust/g, "female model's ear");
-
-    const STUD_PRODUCT_PROMPT = SLOT7_PROMPT
-      .replace(/necklace chain/g, "earring stud")
-      .replace(/hanging flat charm/g, "charm attached to the stud");
-
-    // HOOP EARRINGS
-    const HOOP_MODEL_PROMPT = DEFAULT_PROMPT
-      .replace(/necklace chain/g, "hoop earring")
-      .replace(/hanging flat charm/g, "charm sliding on the hoop")
-      .replace(/female model above the neck and below the bust/g, "female model's ear and face profile");
-
-    const HOOP_CREATIVE_PROMPT = SLOT2_DUPLICATE_PROMPT
-      .replace(/necklace chain/g, "hoop earring")
-      .replace(/hanging flat charm/g, "charm on the hoop");
-
-    const HOOP_SIZE_GUIDE_PROMPT = SLOT3_SIZING_GUIDE_PROMPT
-      .replace(/necklace chain/g, "hoop earring");
-
-    const HOOP_SEC_MODEL_PROMPT = SLOT5_PROMPT
-      .replace(/necklace chain/g, "hoop earring")
-      .replace(/hanging flat charm/g, "charm sliding on the hoop")
-      .replace(/female model above the neck and below the bust/g, "female model's ear");
-
-    const HOOP_PRODUCT_PROMPT = SLOT7_PROMPT
-      .replace(/necklace chain/g, "hoop earring")
-      .replace(/hanging flat charm/g, "charm on the hoop");
+    TASK
+    Duplicate and zoom-in into the reference image, only replace the charm onto the existing bracelet chain in the reference image as a hanging flat charm.
+    Match the subject identity from reference image; 
+    HARD LOCK: The Charm/Pendant material is a perfectly flat and very thin sheet of metal, always render the Charm/Pendant completely flat and very thin, DO NOT allow any rounded/radius on the cutout edges.
+    DO not zoom out when generating the image. Keep model and frame consistent with the reference image.
+    Focus on Charm Engraving details and ensure 100% accuracy to Charm image
+    Do not output text.
+    Ensure the charm colour, shading and reflections match the necklace chain in the reference image.`;
 
 
-    // --- CHARM PROMPTS (Specialized for standalone/macro views) ---
+
+
+
+    // =========================================================================
+    // 3. // STUD EARRINGS PROMPTS
+    // =========================================================================
+    const STUD_MODEL_PROMPT =
+    `(TOP PRIORITY)
+    • Replace the existing stud earring charm only with the Reference Earring Charm.
+    • Final on-image charm height MUST be exactly 9 pixels tall (absolute pixel height, not relative).
+    • If pixel measurement is unavailable, select the smallest physically plausible size that remains barely legible at normal viewing distance.
+    • Do NOT compensate by zooming out, reframing, cropping, changing camera distance, changing ear scale, changing head scale, or thickening engraving.
+    • Never alter engraving thickness, depth, or line weight to improve visibility.
+
+    MATERIAL + GEOMETRY LOCKS (NON-NEGOTIABLE)
+    • The charm is a perfectly flat, ultra-thin metal sheet.
+    • No bevels, rounding, radii, embossing, or depth—all engravings must be flat and superficial.
+    • The charm color must be bright yellow gold, neutral saturation (no orange cast, no oversaturation).
+    • Reflections must be subtle and realistic for a flat metal surface at micro scale.
+
+    SHADOW + LIGHTING RULES
+    • Ear lighting must remain physically realistic, soft studio or window light with natural falloff.
+    • Preserve realistic ear shadows, folds, translucency, and cartilage depth—only charm shadows are suppressed.
+    • Do not introduce glow, bloom, or artificial rim light around the charm.
+
+    TASK (STUD EARRING CONTEXT)
+    • Duplicate and zoom into the ear region only from the Reference Image—no reframing beyond what is required to clearly show the stud.
+    • Replace the existing stud charm with the Reference Earring Charm, mounted on the same earring post and backing.
+    • Maintain exact alignment, orientation, and physical attachment to the stud post—no floating, misalignment, or scale drift.
+    • The stud post, backing, ear pierce, and surrounding skin must remain unchanged.
+
+    MODEL + SKIN LOCKS
+    • Match the subject identity from the Reference Image exactly.
+    • Do not alter skin tone, undertone, texture, pores, redness, or translucency.
+    • No gray, desaturated, or color-shifted skin near the charm or piercing.
+    • Preserve ultra-realistic ear anatomy: helix, antihelix, tragus, lobe thickness, and natural asymmetry.
+
+    HARD LOCKS (ABSOLUTE)
+    • Never render the full face or profile—ear-only framing.
+    • Do not zoom out or change camera perspective.
+    • Do not change lighting direction, intensity, or environment.
+    • Do not redraw, simplify, or reinterpret the charm geometry.
+    • Focus on 100% engraving accuracy relative to the Reference Charm Image.
+    • Output one photorealistic image only.
+    • Do not output text.`;
+
+    const STUD_CREATIVE_PROMPT =
+    `(PRODUCT PHOTO — AI BACKGROUND, MICRO DETAIL PRESERVATION)
+    • Replace both stud earring charms with the Reference Earring Charm (left and right earrings).
+    • Do NOT compensate by zooming out, reframing, cropping, changing camera distance, changing earring scale, changing post size, or thickening engraving lines.
+    • Never alter engraving geometry to improve visibility.
+
+    MATERIAL + GEOMETRY LOCKS (NON-NEGOTIABLE)
+    • The charm must be rendered as a perfectly flat, ultra-thin metal sheet.
+    • No embossing, bevels, rounding, depth, curvature, or edge radius.
+    • All engravings and cutouts must be flat, sharp, and superficial, exactly matching the Reference Charm geometry.
+    • Micro cutouts must remain open and clearly defined—no fill-in, no softening.
+
+    GOLD COLOR + SURFACE BEHAVIOR
+    • The charm must appear true gold in color, matching the earrings’ existing gold tone.
+    • Do not oversaturate or orange-shift the gold.
+    • Reflections must be subtle, realistic, and consistent with polished micro jewelry at this scale.
+    • Charm color, shading, and reflectivity must visually match the existing stud hardware.
+
+    SHADOW + LIGHTING RULES (PRODUCT REALISM)
+    • Maintain realistic, soft product-photo shadows beneath and around the earrings.
+    • Shadows must be light, controlled, and proportional to a AI background studio setup.
+    • Do not introduce harsh contact shadows, dark halos, or artificial grounding artifacts.
+    • Lighting must be clean, even, and realistic—soft studio or diffused light with natural falloff.
+    • No glow, bloom, vignette, or stylized lighting effects.
+
+    TASK (DUAL STUD REPLACEMENT)
+    • Duplicate the Reference Image and replace both existing stud charms with the Reference Earring Charm.
+    • Preserve the original stud posts, backings, alignment, spacing, and symmetry.
+    • Ensure both charms are identical in size, orientation, and attachment logic.
+    • No floating, tilting, scaling mismatch, or asymmetry between left and right earrings.
+
+    HARD LOCKS (ABSOLUTE)
+    • Do not zoom out or alter camera perspective.
+    • Do not modify the stud hardware or post geometry.
+    • Do not redraw, simplify, or reinterpret the charm shape.
+    • Maintain 100% engraving and cutout accuracy relative to the Reference Charm Image.
+    • Output one photorealistic product image only.
+    • Do not output text.`;
+
+    const STUD_SIZE_GUIDE_PROMPT =
+    `CRITICAL: Slot 3 is a sizing-guide charm replacement task.
+
+    PROCESS ORDER (NON-NEGOTIABLE)
+    • Single pass only.
+    • Use reference image as the base sizing-guide graphic.
+    • Replace ONLY the charm in the reference image with the charm from Charm image.
+
+    INPUT IMAGES (ORDER MATTERS)
+    • Reference Image = sizing guide base image (ALL text, layout, pencil, line, background)
+    • Charm Image = charm macro (pixel-truth source for silhouette, cutouts, engraving, integrated hoop)
+
+    ABSOLUTE LOCKS (DO NOT CHANGE)
+    • Do NOT add any earring part, jump ring, or jewelry.
+    • Do NOT move, resize, restyle, blur, or alter any text.
+    • The text “~12mm x 12mm” MUST remain visible, crisp, and identical.
+    • The short black pointer line MUST remain visible and MUST point to the charm exactly.
+    • Do NOT crop, zoom, or reframe the image.
+
+    CHARM POSITION + SIZE MATCH (NON-NEGOTIABLE)
+    • The new charm must sit in the EXACT same position as the original charm in the reference image.
+    • The new charm must match the original charm’s on-image size EXACTLY.
+    • This is a strict size match — no scaling up or down.
+
+    CHARM FIDELITY (Charm Image IS SINGLE TRUTH SOURCE)
+    • Preserve the exact outer perimeter, cutouts, engraving, and integrated hoop from Charm Image.
+    • Do NOT redraw, smooth, stylize, thicken, clean up, or reinterpret.
+    • Keep edges crisp. No blur or smear.
+
+    INTEGRATED HOOP RULE
+    • The hoop/bail MUST be part of the same laser-cut silhouette as the charm body.
+    • The hoop MUST connect with a wide, solid bridge of metal (large surface area).
+    • HARD FAIL if the hoop looks barely touching, point-connected, floating, or welded-on.
+
+    HARD FAIL CONDITIONS
+    - Any text change.
+    - Any charm size mismatch vs charm image.
+    - Any weak or disconnected hoop connection.`;
+
+    const STUD_SEC_MODEL_PROMPT =
+    `(TOP PRIORITY)
+    • Replace the existing stud earring charm only with the Reference Earring Charm.
+    • Final on-image charm height MUST be exactly 9 pixels tall (absolute pixel height, not relative).
+    • If pixel measurement is unavailable, select the smallest physically plausible size that remains barely legible at normal viewing distance.
+    • Do NOT compensate by zooming out, reframing, cropping, changing camera distance, changing ear scale, changing head scale, or thickening engraving.
+    • Never alter engraving thickness, depth, or line weight to improve visibility.
+
+    MATERIAL + GEOMETRY LOCKS (NON-NEGOTIABLE)
+    • The charm is a perfectly flat, ultra-thin metal sheet.
+    • No bevels, rounding, radii, embossing, or depth—all engravings must be flat and superficial.
+    • The charm color must be bright yellow gold, neutral saturation (no orange cast, no oversaturation).
+    • Reflections must be subtle and realistic for a flat metal surface at micro scale.
+
+    SHADOW + LIGHTING RULES
+    • Ear lighting must remain physically realistic, soft studio or window light with natural falloff.
+    • Preserve realistic ear shadows, folds, translucency, and cartilage depth—only charm shadows are suppressed.
+    • Do not introduce glow, bloom, or artificial rim light around the charm.
+
+    TASK (STUD EARRING CONTEXT)
+    • Duplicate and zoom into the ear region only from the Reference Image—no reframing beyond what is required to clearly show the stud.
+    • Replace the existing stud charm with the Reference Earring Charm, mounted on the same earring post and backing.
+    • Maintain exact alignment, orientation, and physical attachment to the stud post—no floating, misalignment, or scale drift.
+    • The stud post, backing, ear pierce, and surrounding skin must remain unchanged.
+
+    MODEL + SKIN LOCKS
+    • Match the subject identity from the Reference Image exactly.
+    • Do not alter skin tone, undertone, texture, pores, redness, or translucency.
+    • No gray, desaturated, or color-shifted skin near the charm or piercing.
+    • Preserve ultra-realistic ear anatomy: helix, antihelix, tragus, lobe thickness, and natural asymmetry.
+
+    HARD LOCKS (ABSOLUTE)
+    • Never render the full face or profile—ear-only framing.
+    • Do not zoom out or change camera perspective.
+    • Do not change lighting direction, intensity, or environment.
+    • Do not redraw, simplify, or reinterpret the charm geometry.
+    • Focus on 100% engraving accuracy relative to the Reference Charm Image.
+    • Output one photorealistic image only.
+    • Do not output text.`;
+
+    const STUD_PRODUCT_PROMPT =
+    `(PRODUCT PHOTO — WHITE BACKGROUND, MICRO DETAIL PRESERVATION)
+    • Replace both stud earring charms with the Reference Earring Charm (left and right earrings).
+    • Do NOT compensate by zooming out, reframing, cropping, changing camera distance, changing earring scale, changing post size, or thickening engraving lines.
+    • Never alter engraving geometry to improve visibility.
+
+    MATERIAL + GEOMETRY LOCKS (NON-NEGOTIABLE)
+    • The charm must be rendered as a perfectly flat, ultra-thin metal sheet.
+    • No embossing, bevels, rounding, depth, curvature, or edge radius.
+    • All engravings and cutouts must be flat, sharp, and superficial, exactly matching the Reference Charm geometry.
+    • Micro cutouts must remain open and clearly defined—no fill-in, no softening.
+
+    GOLD COLOR + SURFACE BEHAVIOR
+    • The charm must appear true gold in color, matching the earrings’ existing gold tone.
+    • Do not oversaturate or orange-shift the gold.
+    • Reflections must be subtle, realistic, and consistent with polished micro jewelry at this scale.
+    • Charm color, shading, and reflectivity must visually match the existing stud hardware.
+
+    SHADOW + LIGHTING RULES (PRODUCT REALISM)
+    • Maintain realistic, soft product-photo shadows beneath and around the earrings.
+    • Shadows must be light, controlled, and proportional to a white-background studio setup.
+    • Do not introduce harsh contact shadows, dark halos, or artificial grounding artifacts.
+    • Lighting must be clean, even, and realistic—soft studio or diffused light with natural falloff.
+    • No glow, bloom, vignette, or stylized lighting effects.
+
+    BACKGROUND + COMPOSITION
+    • Background must remain pure white or near-white, clean and uncluttered.
+    • No texture, gradients, props, or environmental elements.
+    • Do not change framing, orientation, or spacing of the earrings relative to the reference image.
+
+    TASK (DUAL STUD REPLACEMENT)
+    • Duplicate the Reference Image and replace both existing stud charms with the Reference Earring Charm.
+    • Preserve the original stud posts, backings, alignment, spacing, and symmetry.
+    • Ensure both charms are identical in size, orientation, and attachment logic.
+    • No floating, tilting, scaling mismatch, or asymmetry between left and right earrings.
+
+    HARD LOCKS (ABSOLUTE)
+    • Do not zoom out or alter camera perspective.
+    • Do not modify the stud hardware or post geometry.
+    • Do not redraw, simplify, or reinterpret the charm shape.
+    • Maintain 100% engraving and cutout accuracy relative to the Reference Charm Image.
+    • Output one photorealistic product image only.
+    • Do not output text.`;
+
+
+
+    // =========================================================================
+    // 4. // HOOP EARRINGS PROMPTS
+    // =========================================================================
+    const HOOP_MODEL_PROMPT =
+    `CRITICAL: This is a standard fashion product photo edit. Keep the subject modest. No nudity.
+
+    ULTRA-MICRO SIZE OVERRIDE (TOP PRIORITY — MAKE IT BARELY VISIBLE)
+    • Force the Charm to be very small: final on-image charm height MUST be 9 pixels tall (absolute pixel height, not relative).
+    • If you cannot measure pixels, choose the smallest size that is still legible on the chain.
+    • Do NOT compensate by zooming out, reframing, cropping, changing camera, changing necklace scale, changing model scale, changing engraving thickness, or changing chain thickness.
+    • Never allow embossed engravings on the Charm/Pendant, all engravings must be flat and superficial having no descernable depth.
+    • Do NOT allow any shadows (Contact or otherwise) to be visible undereath and around the Charm/Pendant placement, block all Charm/Pendant related shadows.
+    • The Charm/Pendant must be bright yellow gold colour, do not saturate the Charm/Pendant gold colour.
+    • The chain must remain exactly the same size and detail as reference image. Only the charm is scaled.
+
+    TASK
+    Duplicate and zoom-in into the female model in reference image, only replace the charm from Charm Image onto the existing hoop earring in reference image as a charm sliding on the hoop.
+    Match the subject identity from reference image; do not change the model’s appearance or skin tone.
+    Do NOT allow skin colour to be grey around the Charm/Pendant. The skin tone/colour near the Charm/Pendant must be uniform with the rest of the body.
+    HARD LOCK: Never render female model's ear and face profile.
+    HARD LOCK: The Charm/Pendant material is a perfectly flat and very thin sheet of metal, always render the Charm/Pendant completely flat and very thin, DO NOT allow any rounded/radius on the cutout edges.
+    DO not zoom out when generating the image. Keep model and frame consistent with Reference Image
+    Focus on Charm Engraving details and ensure 100% accuracy to Charm Image
+    Do not output text.
+    Ensure the charm colour, shading and reflections match the necklace chain in Reference Image.`;
+
+    const HOOP_CREATIVE_PROMPT =
+    `ULTRA-MICRO SIZE OVERRIDE (TOP PRIORITY — MAKE IT BARELY VISIBLE)
+    • Force the Charm to be very small: final on-image charm height MUST be 12 pixels tall (absolute pixel height, not relative).
+    • If you cannot measure pixels, choose the smallest size that is still legible on the chain.
+    • Do NOT compensate by zooming out, reframing, cropping, changing camera, changing necklace scale, changing model scale, changing engraving thickness, or changing chain thickness.
+    • Never allow embossed engravings on the Charm/Pendant, all engravings must be flat and superficial having no descernable depth.
+    • The Charm/Pendant must be gold in colour just like the necklace chain in the reference image, do not saturate the Charm/Pendant gold colour.
+    • The chain must remain exactly the same size and detail as in the reference image. Only the charm is scaled.
+
+    TASK
+    Duplicate and zoom-in into the reference image, only replace the charm onto the existing hoop earring in the reference image as a charm on the hoop.
+    Match the subject identity from reference image; 
+    HARD LOCK: The Charm/Pendant material is a perfectly flat and very thin sheet of metal, always render the Charm/Pendant completely flat and very thin, DO NOT allow any rounded/radius on the cutout edges.
+    DO not zoom out when generating the image. Keep model and frame consistent with the reference image.
+    Focus on Charm Engraving details and ensure 100% accuracy to Charm image
+    Do not output text.
+    Ensure the charm colour, shading and reflections match the necklace chain in the reference image.`;
+
+    const HOOP_SIZE_GUIDE_PROMPT =
+    `CRITICAL: Slot 3 is a sizing-guide charm replacement task. This must be a single-pass edit.
+
+    PROCESS ORDER (NON-NEGOTIABLE)
+    • Single pass only.
+    • Use reference image as the base sizing-guide graphic.
+    • Replace ONLY the charm in the reference image with the charm from Charm image.
+
+    INPUT IMAGES (ORDER MATTERS)
+    • Reference Image = sizing guide base image (ALL text, layout, pencil, line, background)
+    • Charm Image = charm macro (pixel-truth source for silhouette, cutouts, engraving, integrated hoop)
+
+    ABSOLUTE LOCKS (DO NOT CHANGE)
+    • Do NOT add any hoop earring, jump ring, or jewelry.
+    • Do NOT move, resize, restyle, blur, or alter any text.
+    • The text “~12mm x 12mm” MUST remain visible, crisp, and identical.
+    • The short black pointer line MUST remain visible and MUST point to the charm exactly.
+    • Do NOT crop, zoom, or reframe the image.
+
+    CHARM POSITION + SIZE MATCH (NON-NEGOTIABLE)
+    • The new charm must sit in the EXACT same position as the original charm in the reference image.
+    • The new charm must match the original charm’s on-image size EXACTLY.
+    • This is a strict size match — no scaling up or down.
+
+    CHARM FIDELITY (Charm Image IS SINGLE TRUTH SOURCE)
+    • Preserve the exact outer perimeter, cutouts, engraving, and integrated hoop from Charm Image.
+    • Do NOT redraw, smooth, stylize, thicken, clean up, or reinterpret.
+    • Keep edges crisp. No blur or smear.
+
+    INTEGRATED HOOP RULE
+    • The hoop/bail MUST be part of the same laser-cut silhouette as the charm body.
+    • The hoop MUST connect with a wide, solid bridge of metal (large surface area).
+    • HARD FAIL if the hoop looks barely touching, point-connected, floating, or welded-on.
+
+    HARD FAIL CONDITIONS
+    - Any text change.
+    - Any charm size mismatch vs charm image.
+    - Any weak or disconnected hoop connection.`;
+
+    const HOOP_SEC_MODEL_PROMPT =
+    `CRITICAL: This is a standard fashion product photo edit. Keep the subject modest. No nudity.
+
+    ULTRA-MICRO SIZE OVERRIDE (TOP PRIORITY — MAKE IT BARELY VISIBLE)
+    • Force the Charm to be very small: final on-image charm height MUST be 10 pixels tall (absolute pixel height, not relative).
+    • If you cannot measure pixels, choose the smallest size that is still legible on the chain.
+    • Do NOT compensate by zooming out, reframing, cropping, changing camera, changing necklace scale, changing model scale, changing engraving thickness, or changing chain thickness.
+    • Never allow embossed engravings on the Charm/Pendant, all engravings must be flat and superficial having no descernable depth.
+    • Do NOT allow any shadows (Contact or otherwise) to be visible undereath and around the Charm/Pendant placement, block all Charm/Pendant related shadows.
+    • The Charm/Pendant must be gold colour, do not saturate the Charm/Pendant gold colour, do not show visible reflections.
+    • The chain must remain exactly the same size and detail as reference image. Only the charm is scaled.
+
+    TASK
+    Duplicate and zoom-in into the female model in reference image, only replace the charm from Charm Image onto the existing hoop earring in reference image as a charm sliding on the hoop.
+    Match the subject identity from reference image; do not change the model’s appearance or skin tone.
+    Do NOT allow skin colour to be grey around the Charm/Pendant. The skin tone/colour near the Charm/Pendant must be uniform with the rest of the body.
+    HARD LOCK: Never render female model's ear.
+    HARD LOCK: The Charm/Pendant material is a perfectly flat and very thin sheet of metal, always render the Charm/Pendant completely flat and very thin, DO NOT allow any rounded/radius on the cutout edges.
+    DO not zoom out when generating the image. Keep model and frame consistent with Reference Image
+    Focus on Charm Engraving details and ensure 100% accuracy to Reference image
+    Do not output text.
+    Ensure the charm colour, shading and reflections match the necklace chain in Reference Image.`;
+
+    const HOOP_PRODUCT_PROMPT =
+    `    ULTRA-MICRO SIZE OVERRIDE (TOP PRIORITY — MAKE IT BARELY VISIBLE)
+    • Force the Charm to be very small: final on-image charm height MUST be 13 pixels tall (absolute pixel height, not relative).
+    • If you cannot measure pixels, choose the smallest size that is still legible on the chain.
+     • Do NOT compensate by zooming out, reframing, cropping, changing camera, changing necklace scale, changing model scale, changing engraving thickness, or changing chain thickness.
+    • Do not embossed engravings on the Charm/Pendant, all engravings must be visible and flat and superficial having no descernable depth.
+    • Limit any shadows (Contact or otherwise) to be visible undereath and around the Charm/Pendant placement.
+    • The Charm/Pendant must be gold colour, do not saturate the Charm/Pendant gold colour.
+    • The chain must remain exactly the same size and detail as in the reference image. Only the charm is scaled.
+
+    TASK
+    Duplicate and zoom-in into the reference image, only replace the charm onto the existing hoop earring in the reference image as a charm on the hoop.
+    Match the subject identity from reference image; 
+    HARD LOCK: The Charm/Pendant material is a perfectly flat and very thin sheet of metal, always render the Charm/Pendant completely flat and very thin, DO NOT allow any rounded/radius on the cutout edges.
+    DO not zoom out when generating the image. Keep model and frame consistent with the reference image.
+    Focus on Charm Engraving details and ensure 100% accuracy to Charm image
+    Do not output text.
+    Ensure the charm colour, shading and reflections match the necklace chain in the reference image.`;
+
+
+
+    // =========================================================================
+    // 5. // CHARM ONLY PROMPTS 
+    // =========================================================================
     const CHARM_TEMPLATE_PROMPT = 
     `TASK: Create a pure white background product shot of the Charm.
     • Use the Charm Image as the absolute source of truth for the shape, engraving, and cutouts.
@@ -1120,10 +1711,139 @@
     • Keep the charm flat and metallic.
     • Focus on the engraving details from the Charm Image.`;
     
-    const CHARM_MODEL_PROMPT = DEFAULT_PROMPT; // Re-use standard model prompt logic
-    const CHARM_ENGRAVING_PROMPT = SLOT4_PROMPT; // Re-use engraving prompt logic
-    const CHARM_HOOP_GUIDE_PROMPT = HOOP_SIZE_GUIDE_PROMPT; // Borrow from hoops
-    const CHARM_SIZE_GUIDE_PROMPT = SLOT3_SIZING_GUIDE_PROMPT; // Standard size guide
+    // Explicitly expanded to avoid variable dependency
+    const CHARM_MODEL_PROMPT = 
+    `CRITICAL: This is a standard fashion product photo edit. Keep the subject modest. No nudity.
+
+    ULTRA-MICRO SIZE OVERRIDE (TOP PRIORITY — MAKE IT BARELY VISIBLE)
+    • Force the Charm to be very small: final on-image charm height MUST be 9 pixels tall (absolute pixel height, not relative).
+    • If you cannot measure pixels, choose the smallest size that is still legible on the chain.
+    • Do NOT compensate by zooming out, reframing, cropping, changing camera, changing necklace scale, changing model scale, changing engraving thickness, or changing chain thickness.
+    • Never allow embossed engravings on the Charm/Pendant, all engravings must be flat and superficial having no descernable depth.
+    • Do NOT allow any shadows (Contact or otherwise) to be visible undereath and around the Charm/Pendant placement, block all Charm/Pendant related shadows.
+    • The Charm/Pendant must be bright yellow gold colour, do not saturate the Charm/Pendant gold colour.
+    • The chain must remain exactly the same size and detail as reference image. Only the charm is scaled.
+
+    TASK
+    Duplicate and zoom-in into the female model in reference image, only replace the charm from Charm Image onto the existing necklace chain in reference image as a hanging flat charm.
+    Match the subject identity from reference image; do not change the model’s appearance or skin tone.
+    Do NOT allow skin colour to be grey around the Charm/Pendant. The skin tone/colour near the Charm/Pendant must be uniform with the rest of the body.
+    HARD LOCK: Never render female model above the neck and below the bust.
+    HARD LOCK: The Charm/Pendant material is a perfectly flat and very thin sheet of metal, always render the Charm/Pendant completely flat and very thin, DO NOT allow any rounded/radius on the cutout edges.
+    DO not zoom out when generating the image. Keep model and frame consistent with Reference Image
+    Focus on Charm Engraving details and ensure 100% accuracy to Charm Image
+    Do not output text.
+    Ensure the charm colour, shading and reflections match the necklace chain in Reference Image.`;
+
+    // Explicitly expanded to avoid variable dependency
+    const CHARM_ENGRAVING_PROMPT = 
+    `PROCESS ORDER (NON-NEGOTIABLE)
+    • Use reference image as the base sizing-guide graphic.
+    • Replace BOTH charms in the reference image with the charm from Charm image.
+
+    INPUT IMAGES (ORDER MATTERS)
+    • Reference Image = sizing guide base image (ALL text, layout, pencil, line, background)
+    • Charm Image = charm macro (pixel-truth source for silhouette, cutouts, engraving, integrated hoop)
+
+    ABSOLUTE LOCKS (DO NOT CHANGE)
+    • Do NOT move, resize, restyle, blur, or alter any text.
+    • Do NOT crop, zoom, or reframe the image.
+
+    CHARM POSITION + SIZE MATCH (NON-NEGOTIABLE)
+    • The silver necklace charm is the backside of the gold chain charm. When replacing the charms you must produce the same output where one charm is front facing and the silver charm is showing the bakc with an engraved name.
+    • Both new charms must sit in the EXACT same position as the original charms in the reference image.
+    • The new charm must match the original charm’s on-image size EXACTLY.
+    • This is a strict size match — no scaling up or down.
+
+    CHARM FIDELITY
+    • Preserve the exact outer perimeter, cutouts, engraving, and integrated hoop from the reference image.
+    • Do NOT redraw, smooth, stylize, thicken, clean up, or reinterpret.
+    • Keep edges crisp. No blur or smear.
+
+    HARD FAIL CONDITIONS
+    - Any text change.
+    - Any charm size mismatch vs charm image.
+    - Any weak or disconnected hoop connection.`;
+
+    // Explicitly expanded to avoid variable dependency
+    const CHARM_HOOP_GUIDE_PROMPT = 
+    `CRITICAL: Slot 3 is a sizing-guide charm replacement task. This must be a single-pass edit.
+
+    PROCESS ORDER (NON-NEGOTIABLE)
+    • Single pass only.
+    • Use reference image as the base sizing-guide graphic.
+    • Replace ONLY the charm in the reference image with the charm from Charm image.
+
+    INPUT IMAGES (ORDER MATTERS)
+    • Reference Image = sizing guide base image (ALL text, layout, pencil, line, background)
+    • Charm Image = charm macro (pixel-truth source for silhouette, cutouts, engraving, integrated hoop)
+
+    ABSOLUTE LOCKS (DO NOT CHANGE)
+    • Do NOT add any hoop earring, jump ring, or jewelry.
+    • Do NOT move, resize, restyle, blur, or alter any text.
+    • The text “~12mm x 12mm” MUST remain visible, crisp, and identical.
+    • The short black pointer line MUST remain visible and MUST point to the charm exactly.
+    • Do NOT crop, zoom, or reframe the image.
+
+    CHARM POSITION + SIZE MATCH (NON-NEGOTIABLE)
+    • The new charm must sit in the EXACT same position as the original charm in the reference image.
+    • The new charm must match the original charm’s on-image size EXACTLY.
+    • This is a strict size match — no scaling up or down.
+
+    CHARM FIDELITY (Charm Image IS SINGLE TRUTH SOURCE)
+    • Preserve the exact outer perimeter, cutouts, engraving, and integrated hoop from Charm Image.
+    • Do NOT redraw, smooth, stylize, thicken, clean up, or reinterpret.
+    • Keep edges crisp. No blur or smear.
+
+    INTEGRATED HOOP RULE
+    • The hoop/bail MUST be part of the same laser-cut silhouette as the charm body.
+    • The hoop MUST connect with a wide, solid bridge of metal (large surface area).
+    • HARD FAIL if the hoop looks barely touching, point-connected, floating, or welded-on.
+
+    HARD FAIL CONDITIONS
+    - Any text change.
+    - Any charm size mismatch vs charm image.
+    - Any weak or disconnected hoop connection.`;
+
+    // Explicitly expanded to avoid variable dependency
+    const CHARM_SIZE_GUIDE_PROMPT = 
+    `CRITICAL: Slot 3 is a sizing-guide charm replacement task. This must be a single-pass edit.
+
+    PROCESS ORDER (NON-NEGOTIABLE)
+    • Single pass only.
+    • Use reference image as the base sizing-guide graphic.
+    • Replace ONLY the charm in the reference image with the charm from Charm image.
+
+    INPUT IMAGES (ORDER MATTERS)
+    • Reference Image = sizing guide base image (ALL text, layout, pencil, line, background)
+    • Charm Image = charm macro (pixel-truth source for silhouette, cutouts, engraving, integrated hoop)
+
+    ABSOLUTE LOCKS (DO NOT CHANGE)
+    • Do NOT add any necklace chain, jump ring, or jewelry.
+    • Do NOT move, resize, restyle, blur, or alter any text.
+    • The text “~12mm x 12mm” MUST remain visible, crisp, and identical.
+    • The short black pointer line MUST remain visible and MUST point to the charm exactly.
+    • Do NOT crop, zoom, or reframe the image.
+
+    CHARM POSITION + SIZE MATCH (NON-NEGOTIABLE)
+    • The new charm must sit in the EXACT same position as the original charm in the reference image.
+    • The new charm must match the original charm’s on-image size EXACTLY.
+    • This is a strict size match — no scaling up or down.
+
+    CHARM FIDELITY (Charm Image IS SINGLE TRUTH SOURCE)
+    • Preserve the exact outer perimeter, cutouts, engraving, and integrated hoop from Charm Image.
+    • Do NOT redraw, smooth, stylize, thicken, clean up, or reinterpret.
+    • Keep edges crisp. No blur or smear.
+
+    INTEGRATED HOOP RULE
+    • The hoop/bail MUST be part of the same laser-cut silhouette as the charm body.
+    • The hoop MUST connect with a wide, solid bridge of metal (large surface area).
+    • HARD FAIL if the hoop looks barely touching, point-connected, floating, or welded-on.
+
+    HARD FAIL CONDITIONS
+    - Any text change.
+    - Any charm size mismatch vs charm image.
+    - Any weak or disconnected hoop connection.`;
 
 
     // =========================================================================
