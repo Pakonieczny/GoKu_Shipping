@@ -890,7 +890,7 @@
     // 0. BEADY_NECKLACE
     // =========================================================================
 
-    const SLOT2_DUPLICATE_PROMPT =
+    const SLOT2_DUPLICATE_PROMPT = 
     `ULTRA-MICRO SIZE OVERRIDE (TOP PRIORITY — MAKE IT BARELY VISIBLE)
     • Force the Charm to be very small: final on-image charm height MUST be 12 pixels tall (absolute pixel height, not relative).
     • If you cannot measure pixels, choose the smallest size that is still legible on the chain.
@@ -1049,7 +1049,7 @@
     // =========================================================================
     // 1. // REGULAR NECKLACE
     // =========================================================================
-    const SLOT2_DUPLICATE_PROMPT =
+    const REGULAR_SLOT_1_PROMPT =
     `ULTRA-MICRO SIZE OVERRIDE (TOP PRIORITY — MAKE IT BARELY VISIBLE)
     • Force the Charm to be very small: final on-image charm height MUST be 12 pixels tall (absolute pixel height, not relative).
     • If you cannot measure pixels, choose the smallest size that is still legible on the chain.
@@ -1067,7 +1067,7 @@
     Do not output text.
     Ensure the charm colour, shading and reflections match the necklace chain in the reference image.`;
 
-    const SLOT3_SIZING_GUIDE_PROMPT =
+    const REGULAR_SLOT3_SIZING_GUIDE_PROMPT =
     `CRITICAL: Slot 3 is a sizing-guide charm replacement task. This must be a single-pass edit.
 
     PROCESS ORDER (NON-NEGOTIABLE)
@@ -1106,7 +1106,7 @@
     - Any charm size mismatch vs charm image.
     - Any weak or disconnected hoop connection.`;
 
-    const DEFAULT_PROMPT =
+    const REGULAR_DEFAULT_PROMPT =
     `CRITICAL: This is a standard fashion product photo edit. Keep the subject modest. No nudity.
 
     ULTRA-MICRO SIZE OVERRIDE (TOP PRIORITY — MAKE IT BARELY VISIBLE)
@@ -1129,7 +1129,7 @@
     Do not output text.
     Ensure the charm colour, shading and reflections match the necklace chain in Reference Image.`;
 
-    const SLOT4_PROMPT =
+    const REGULAR_SLOT4_PROMPT =
     `PROCESS ORDER (NON-NEGOTIABLE)
     • Use reference image as the base sizing-guide graphic.
     • Replace BOTH charms in the reference image with the charm from Charm image.
@@ -1158,7 +1158,7 @@
     - Any charm size mismatch vs charm image.
     - Any weak or disconnected hoop connection.`;
 
-    const SLOT5_PROMPT =
+    const REGULAR_SLOT5_PROMPT =
     `CRITICAL: This is a standard fashion product photo edit. Keep the subject modest. No nudity.
 
     ULTRA-MICRO SIZE OVERRIDE (TOP PRIORITY — MAKE IT BARELY VISIBLE)
@@ -1181,7 +1181,7 @@
     Do not output text.
     Ensure the charm colour, shading and reflections match the necklace chain in Reference Image.`;
 
-    const SLOT7_PROMPT =
+    const REGULAR_SLOT7_PROMPT =
     `    ULTRA-MICRO SIZE OVERRIDE (TOP PRIORITY — MAKE IT BARELY VISIBLE)
     • Force the Charm to be very small: final on-image charm height MUST be 13 pixels tall (absolute pixel height, not relative).
     • If you cannot measure pixels, choose the smallest size that is still legible on the chain.
@@ -1853,12 +1853,12 @@
     const PROMPT_MAPS = {
       // 1. Regular_Necklace (Uses identical prompts to Beady)
       "Regular_Necklace": {
-        1: DEFAULT_PROMPT,
-        2: SLOT2_DUPLICATE_PROMPT,
-        3: SLOT3_SIZING_GUIDE_PROMPT,
-        4: SLOT4_PROMPT,
-        5: SLOT5_PROMPT,
-        7: SLOT7_PROMPT
+        1: REGULAR_DEFAULT_PROMPT,
+        2: REGULAR_SLOT2_DUPLICATE_PROMPT,
+        3: REGULAR_SLOT3_SIZING_GUIDE_PROMPT,
+        4: REGULAR_SLOT4_PROMPT,
+        5: REGULAR_SLOT5_PROMPT,
+        7: REGULAR_SLOT7_PROMPT
       },
       // 2. Beady_Necklace (Original)
       "Beady_Necklace": {
