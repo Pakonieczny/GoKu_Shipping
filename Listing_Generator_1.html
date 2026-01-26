@@ -511,6 +511,9 @@
       setStatus(`Ready (Set_${CURRENT_SET.setN ?? "?"})`);
       if (redoBtn) redoBtn.disabled = false;
     }
+    
+    // Explicitly expose redoSlot to the window object so HTML onclick handlers can find it
+    window.redoSlot = redoSlot;
 
     // Back-compat alias (some blocks reference categoryEl)
     const categoryEl = activeCategoryEl;
