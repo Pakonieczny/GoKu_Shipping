@@ -456,8 +456,24 @@
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
       });
-      const j = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(j?.error?.message || j?.error || `HTTP ${res.status}`);
+
+      // IMPORTANT: do NOT silently turn non-JSON into {}
+      const raw = await res.text().catch(() => "");
+      let j = null;
+      try { j = raw ? JSON.parse(raw) : null; } catch { j = null; }
+
+      if (!res.ok) {
+        const msg =
+          (j?.error?.message || j?.error) ||
+          (raw ? raw.slice(0, 300) : "") ||
+          `HTTP ${res.status}`;
+        throw new Error(msg);
+      }
+
+      // If backend returned 200 but not JSON, surface it instead of {}.
+      if (!j) {
+        throw new Error(`Non-JSON success response from ${path}: ${raw ? raw.slice(0, 300) : "(empty body)"}`);
+      }
       return j;
     }
 
@@ -496,24 +512,11 @@
       return `${ROOT}/${category}/${folder}`;
     }
 
-    async function generateSet() {
-      const category = activeCategoryEl.value;
-      if (!GENERATABLE_CATEGORIES.has(category)) {
-        setStatus("Pick a generatable category to run generation.");
-        return;
-      }
-
-      const slotPlan = SLOT_MAP[category];
-      if (!slotPlan?.length) throw new Error(`No slot map for ${category}`);
-
-      setStatus("Allocating Set…");
-      const alloc = await allocSet(category);
-      console.log("[alloc_set] response:", alloc);
-      const outputBasePath = normalizeAllocOutputBasePath(alloc);
-      if (!outputBasePath) {
-        console.warn("[alloc_set] missing output base path; keys:", Object.keys(alloc || {}));
-        throw new Error("alloc_set did not return a valid outputBasePath");
-      }
+    // REMOVE / disable the duplicate OLD generateSet() implementation
+    // (You already have the normalized generateSet() elsewhere in this file.)
+    async function generateSet_OLD_DISABLED() {
+      throw new Error("generateSet_OLD_DISABLED should never be called. Remove duplicate generateSet() blocks.");
+    }
 
       // Prefer server-provided setN, but fall back to parsing from outputBasePath
       let setN = alloc?.setN ?? alloc?.set_n;
