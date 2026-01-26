@@ -308,6 +308,8 @@
       const timeoutMs  = Number(opts.timeoutMs ?? 420000);  // 7 min
       const intervalMs = Number(opts.intervalMs ?? 1500);   // 1.5s
       const fileName = `Slot_${slotIndex + 1}.png`;
+      const afterUpdatedMs  = opts.afterUpdatedMs == null ? null : Number(opts.afterUpdatedMs);
+      const afterGeneration = opts.afterGeneration == null ? null : Number(opts.afterGeneration);
 
       const t0 = Date.now();
       while (true) {
@@ -321,6 +323,31 @@
           const res = await listAll(folderRef);
           const hit = (res.items || []).find(it => it.name === fileName);
           if (hit) {
+            // If this call is part of a Redo, the slot file likely already exists.
+            // Only return once we detect the file has been overwritten (metadata changed).
+            if (afterUpdatedMs != null || afterGeneration != null) {
+              try {
+                const meta = await getMetadata(hit);
+                const updatedMs = Date.parse(meta?.updated || meta?.timeCreated || "") || 0;
+                const gen = Number(meta?.generation || 0) || 0;
+
+                const okGen = (afterGeneration == null) ? true : (gen > afterGeneration);
+                const okUpd = (afterUpdatedMs == null)  ? true : (updatedMs > afterUpdatedMs);
+
+                if (!okGen || !okUpd) {
+                  // Found the file, but it's still the old version — keep waiting.
+                  throw new Error("slot_not_updated_yet");
+                }
+              } catch (e2) {
+                if (String(e2?.message || e2).includes("slot_not_updated_yet")) {
+                  // keep waiting
+                } else {
+                  // transient metadata issue — keep waiting
+                }
+                throw e2;
+              }
+            }
+
             const url = await getDownloadURL(hit);
             return { storagePath: hit.fullPath, url };
           }
@@ -391,6 +418,20 @@
       const spec = slotPlan?.[slotIndex];
       if (!spec) throw new Error(`Invalid slotIndex ${slotIndex} for ${category}`);
 
+     // Capture the CURRENT slot PNG metadata so we can wait for a real overwrite.
+      const slotFileName = `Slot_${slotIndex + 1}.png`;
+      const slotStoragePath = `${outputBasePath}/${slotFileName}`;
+      let beforeUpdatedMs = 0;
+      let beforeGeneration = 0;
+      try {
+        await ensureStorageSignedIn();
+        const beforeMeta = await getMetadata(ref(storage, slotStoragePath));
+        beforeUpdatedMs = Date.parse(beforeMeta?.updated || beforeMeta?.timeCreated || "") || 0;
+        beforeGeneration = Number(beforeMeta?.generation || 0) || 0;
+      } catch (_) {
+        // Slot may not exist yet (first run) — that's fine.
+      }
+
       const slotCard = gridEl.querySelector(`.slot[data-slot-index="${slotIndex}"]`);
       const prevBox  = slotCard?.querySelector(`#slotPrev_${slotIndex}`);
       const metaEl   = slotCard?.querySelector(`#slotMeta_${slotIndex}`);
@@ -423,12 +464,13 @@
           slotIndex,
         });
 
-        if (r?.downloadURL) {
-          setImg(r.downloadURL);
-        } else {
-          const waited = await waitForSlotPngUrl(outputBasePath, slotIndex);
-          setImg(waited.url);
-        }
+        // Even if the server returns a URL, it may still be the old object if overwrite hasn't landed yet.
+        // Wait until Storage metadata shows the Slot PNG was actually replaced.
+        const waited = await waitForSlotPngUrl(outputBasePath, slotIndex, {
+          afterUpdatedMs: beforeUpdatedMs,
+          afterGeneration: beforeGeneration,
+        });
+        setImg(waited.url);
       } else {
         await postJson(GEMINI_BG_FN, {
           kind: "edits",
@@ -441,7 +483,10 @@
           prompt: buildSlotPrompt(category, spec.folder, slotIndex + 1),
         });
 
-        const waited = await waitForSlotPngUrl(outputBasePath, slotIndex);
+          const waited = await waitForSlotPngUrl(outputBasePath, slotIndex, {
+          afterUpdatedMs: beforeUpdatedMs,
+          afterGeneration: beforeGeneration,
+        });
         setImg(waited.url);
       }
 
