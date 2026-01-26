@@ -888,54 +888,25 @@
 
     // Slot 2 prompt: ONE-PASS charm replacement + engraving fidelity + OUTPUT zoom-out 1.6×
     const SLOT2_DUPLICATE_PROMPT =
-    `CRITICAL: Slot 2 is a charm replacement task. This must be a single-pass edit.
+    `CRITICAL: This is a standard fashion product photo edit. Keep the subject modest. No nudity.
 
-    PROCESS ORDER (NON-NEGOTIABLE)
-    • Single pass only.
-    • Use Image[0] as the base photo.
-    • Replace the charm/pendant in Image[0] with the charm from Image[1].
+    ULTRA-MICRO SIZE OVERRIDE (TOP PRIORITY — MAKE IT BARELY VISIBLE)
+    • Force the Charm to be very small: final on-image charm height MUST be 12 pixels tall (absolute pixel height, not relative).
+    • If you cannot measure pixels, choose the smallest size that is still legible on the chain.
+    • Do NOT compensate by zooming out, reframing, cropping, changing camera, changing necklace scale, changing model scale, changing engraving thickness, or changing chain thickness.
+    • Never allow embossed engravings on the Charm/Pendant, all engravings must be flat and superficial having no descernable depth.
+    • Do NOT allow any shadows (Contact or otherwise) to be visible undereath and around the Charm/Pendant placement, block all Charm/Pendant related shadows.
+    • The Charm/Pendant must be bright yellow gold colour, do not saturate the Charm/Pendant gold colour.
+    • The chain must remain exactly the same size and detail as in the reference image. Only the charm is scaled.
 
-    INPUT IMAGES (ORDER MATTERS)
-    • Image[0] = base photo (scene + camera + chain placement + hardware position)
-    • Image[1] = charm macro (pixel-truth source for silhouette + cutouts + engraving)
-
-    CHARM SCALE OVERRIDE (NON-NEGOTIABLE)
-    • The placed/replaced charm MUST be smaller than the charm being replaced in Image[0].
-    • Apply an extra downscale of 1.6× (i.e. final charm must be ~40% of the size you would normally choose).
-    • Do NOT compensate by thickening lines, enlarging cutouts, or changing engraving. Size change must be a pure scale change only.
-
-    ENGRAVING + CUTOUT FIDELITY (TOP PRIORITY — IMAGE[1] IS SINGLE TRUTH SOURCE)
-    • Treat Image[1] as pixel-truth. Do NOT redraw, “enhance,” simplify, smooth, stylize, thicken, sharpen, clean up, or reinterpret.
-    • Add a subtle contact shadow under charm + mild specular alignment as needed to the Final generated image.
-    • Outline lock: the outer perimeter must match Image[1] exactly (no rounding, no warping, no missing corners, no bulges).
-    • Cutout lock: every internal cutout/negative-space hole must match Image[1] exactly (shape + position + proportions). Do not fill-in holes. Do not merge holes.
-    • Engraving lock: preserve every stroke exactly as in Image[1] (no stroke loss, no merging, no thickening, no cleanup, no mirrored text, no invented marks).
-    • Edge integrity: keep cutout edges crisp. Do not blur/smear/over-anti-alias away fine cutout detail.
-    • Allowed Charm Edits: tiny exposure/white-balance match to Image[0] + subtle contact shadow under charm + mild specular alignment. No geometry changes.
-
-    HARDWARE + HOOP CONNECTION (NON-NEGOTIABLE)
-    • The charm’s top hoop/bail/loop MUST be an INTEGRATED part of the charm silhouette exactly like Image[1] — as if the entire charm (including the hoop) was laser-cut from one single sheet of metal.
-    • The hoop-to-charm attachment MUST have a robust, wide contact area like Image[1]. This is NOT a tiny touch-point. It must NOT look “barely touching.”
-    • The attachment must read like one continuous metal piece: no seam line, no solder/weld look, no separate part glued on, no “ring sitting on top.”
-    • Geometry lock: preserve the exact bridge/tab shape that connects the hoop to the charm body in Image[1] (width, curvature, thickness, edge bevel).
-    • The hoop must be fully connected with a broad “tab” of metal. HARD FAIL if the hoop connects via a hairline neck, thin spike, or point-contact.
-    • The jump ring must pass through the hoop and sit naturally inside it, but the hoop itself must remain part of the charm’s perimeter geometry (not re-invented hardware).
-    • ONE-PIECE LASER-CUT RULE: the hoop/bail is part of the SAME continuous metal piece as the charm body (like Image[1]) — NOT a separate ring “added,” “welded,” “soldered,” or “barely touching.”
-    • ROBUST ATTACHMENT RULE: the hoop-to-charm connection must have a thick/wide bridge of metal (large surface-area contact), not a tangential touchpoint.
-      - Minimum bridge width: ≥ 35% of the hoop’s OUTER diameter.
-      - Minimum contact length: ≥ 25% of the hoop’s outer arc must visibly blend into the charm’s body at the attachment region.
-      - If uncertain, OVER-CONNECT (thicker/wider bridge) rather than under-connect. Never reduce the bridge to a thin neck.
-    • HARD FAIL if the hoop looks “just barely touching,” hairline-connected, separated by any visible slit/gap, or reads as a separate component sitting on top of the charm.
-    • Scale rule: when you shrink the charm, the hoop + its bridge/tab must shrink proportionally as part of the same silhouette (do NOT shrink only the body and leave a weak connection).
-
-    LOCKS (NON-NEGOTIABLE)
-    • Preserve EVERYTHING ELSE from Image[0]: chain links, bead stations, jump ring placement, clasp, metal tone, lighting, background, hardware alignment.
-    • Do not add objects. Do not remove objects (other than replacing the charm itself). Do not change the chain geometry.
-
-    HARD FAIL CONDITIONS
-    - Any charm larger than Image[0]'s charm, any engraving changes, any altered cutout geometry, any changed chain geometry/station spacing, blur/smear on charm details, or any added objects.
-    - Any hoop/bail connection that is point-touching, hairline, barely touching, offset, floating, or looks like a separate welded/soldered ring.
-    - Any hoop/bail that appears barely touching, point-connected, hairline-connected, floating, hovering, separated, or “attached later” (weld/solder/glue look). The hoop must look like part of the same laser-cut charm silhouette from Image[1].`;
+    TASK
+    Duplicate and zoom-in into the reference image, only replace the charm onto the existing necklace chain in the reference image as a hanging flat charm.
+    Match the subject identity from reference image; 
+    HARD LOCK: The Charm/Pendant material is a perfectly flat and very thin sheet of metal, always render the Charm/Pendant completely flat and very thin, DO NOT allow any rounded/radius on the cutout edges.
+    DO not zoom out when generating the image. Keep model and frame consistent with the reference image.
+    Focus on Charm Engraving details and ensure 100% accuracy to Charm image
+    Do not output text.
+    Ensure the charm colour, shading and reflections match the necklace chain in the reference image.`;
 
         // Slot 3 prompt: ONE-PASS sizing-guide charm replacement (NO necklace)
         const SLOT3_SIZING_GUIDE_PROMPT =
@@ -943,12 +914,12 @@
 
     PROCESS ORDER (NON-NEGOTIABLE)
     • Single pass only.
-    • Use Image[0] as the base sizing-guide graphic.
-    • Replace ONLY the charm in Image[0] with the charm from Image[1].
+    • Use reference image as the base sizing-guide graphic.
+    • Replace ONLY the charm in the reference image with the charm from Charm image.
 
     INPUT IMAGES (ORDER MATTERS)
-    • Image[0] = sizing guide base image (ALL text, layout, pencil, line, background)
-    • Image[1] = charm macro (pixel-truth source for silhouette, cutouts, engraving, integrated hoop)
+    • Reference Image = sizing guide base image (ALL text, layout, pencil, line, background)
+    • Charm Image = charm macro (pixel-truth source for silhouette, cutouts, engraving, integrated hoop)
 
     ABSOLUTE LOCKS (DO NOT CHANGE)
     • Do NOT add any necklace chain, jump ring, or jewelry.
@@ -958,7 +929,7 @@
     • Do NOT crop, zoom, or reframe the image.
 
     CHARM POSITION + SIZE MATCH (NON-NEGOTIABLE)
-    • The new charm must sit in the EXACT same position as the original charm in Image[0].
+    • The new charm must sit in the EXACT same position as the original charm in the reference image.
     • The new charm must match the original charm’s on-image size EXACTLY.
     • This is a strict size match — no scaling up or down.
 
@@ -974,8 +945,7 @@
 
     HARD FAIL CONDITIONS
     - Any text change.
-    - Any necklace or jewelry added.
-    - Any charm size mismatch vs Image[0].
+    - Any charm size mismatch vs charm image.
     - Any weak or disconnected hoop connection.`;
 
     // Slot 1 prompt (edit freely)
@@ -1000,6 +970,75 @@
     DO not zoom out when generating the image. Keep model and frame consistent with Image_0
     Focus on Charm Engraving details and ensure 100% accuracy to Image_1
     Do not output text.
+    Ensure the charm colour, shading and reflections match the necklace chain in Image_0.`;
+
+    const SLOT4_PROMPT =
+    `PROCESS ORDER (NON-NEGOTIABLE)
+    • Use reference image as the base sizing-guide graphic.
+    • Replace BOTH charms in the reference image with the charm from Charm image.
+
+    INPUT IMAGES (ORDER MATTERS)
+    • Reference Image = sizing guide base image (ALL text, layout, pencil, line, background)
+    • Charm Image = charm macro (pixel-truth source for silhouette, cutouts, engraving, integrated hoop)
+
+    ABSOLUTE LOCKS (DO NOT CHANGE)
+    • Do NOT move, resize, restyle, blur, or alter any text.
+    • Do NOT crop, zoom, or reframe the image.
+
+    CHARM POSITION + SIZE MATCH (NON-NEGOTIABLE)
+    • The silver necklace charm is the backside of the gold chain charm. When replacing the charms you must produce the same output where one charm is front facing and the silver charm is showing the bakc with an engraved name.
+    • Both new charms must sit in the EXACT same position as the original charms in the reference image.
+    • The new charm must match the original charm’s on-image size EXACTLY.
+    • This is a strict size match — no scaling up or down.
+
+    CHARM FIDELITY
+    • Preserve the exact outer perimeter, cutouts, engraving, and integrated hoop from the reference image.
+    • Do NOT redraw, smooth, stylize, thicken, clean up, or reinterpret.
+    • Keep edges crisp. No blur or smear.
+
+    HARD FAIL CONDITIONS
+    - Any text change.
+    - Any charm size mismatch vs charm image.
+    - Any weak or disconnected hoop connection.`;
+
+    const SLOT5_PROMPT =
+    `CRITICAL: This is a standard fashion product photo edit (Slot 5).
+    ULTRA-MICRO SIZE OVERRIDE (TOP PRIORITY — MAKE IT BARELY VISIBLE)
+    • Force the Charm to be very small: final on-image charm height MUST be 9 pixels tall.
+    • The chain must remain exactly the same size and detail as Image[0]. Only the charm is scaled.
+    TASK: Duplicate and zoom-in into the female model in Image[0], replace the charm from Image[1].
+    Match the subject identity from Image[0]. Do NOT allow skin colour to be grey around the Charm.
+    HARD LOCK: Never render female model above the neck and below the bust.
+    Ensure the charm colour, shading and reflections match the necklace chain in Image_0.`;
+
+    const SLOT6_PROMPT =
+    `CRITICAL: This is a standard fashion product photo edit (Slot 6).
+    ULTRA-MICRO SIZE OVERRIDE (TOP PRIORITY — MAKE IT BARELY VISIBLE)
+    • Force the Charm to be very small: final on-image charm height MUST be 9 pixels tall.
+    • The chain must remain exactly the same size and detail as Image[0]. Only the charm is scaled.
+    TASK: Duplicate and zoom-in into the female model in Image[0], replace the charm from Image[1].
+    Match the subject identity from Image[0]. Do NOT allow skin colour to be grey around the Charm.
+    HARD LOCK: Never render female model above the neck and below the bust.
+    Ensure the charm colour, shading and reflections match the necklace chain in Image_0.`;
+
+    const SLOT7_PROMPT =
+    `CRITICAL: This is a standard fashion product photo edit (Slot 7).
+    ULTRA-MICRO SIZE OVERRIDE (TOP PRIORITY — MAKE IT BARELY VISIBLE)
+    • Force the Charm to be very small: final on-image charm height MUST be 9 pixels tall.
+    • The chain must remain exactly the same size and detail as Image[0]. Only the charm is scaled.
+    TASK: Duplicate and zoom-in into the female model in Image[0], replace the charm from Image[1].
+    Match the subject identity from Image[0]. Do NOT allow skin colour to be grey around the Charm.
+    HARD LOCK: Never render female model above the neck and below the bust.
+    Ensure the charm colour, shading and reflections match the necklace chain in Image_0.`;
+
+    const SLOT8_PROMPT =
+    `CRITICAL: This is a standard fashion product photo edit (Slot 8).
+    ULTRA-MICRO SIZE OVERRIDE (TOP PRIORITY — MAKE IT BARELY VISIBLE)
+    • Force the Charm to be very small: final on-image charm height MUST be 9 pixels tall.
+    • The chain must remain exactly the same size and detail as Image[0]. Only the charm is scaled.
+    TASK: Duplicate and zoom-in into the female model in Image[0], replace the charm from Image[1].
+    Match the subject identity from Image[0]. Do NOT allow skin colour to be grey around the Charm.
+    HARD LOCK: Never render female model above the neck and below the bust.
     Ensure the charm colour, shading and reflections match the necklace chain in Image_0.`;
 
     // ------------------------------------------------------------
