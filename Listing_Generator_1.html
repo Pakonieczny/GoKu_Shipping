@@ -306,20 +306,30 @@
     async function waitForSlotPngUrl(outputBasePath, slotIndex, opts = {}) {
       const timeoutMs  = Number(opts.timeoutMs ?? 420000);  // 7 min
       const intervalMs = Number(opts.intervalMs ?? 1500);   // 1.5s
-      const storagePath = `${outputBasePath}/Slot_${slotIndex + 1}.png`;
+      const fileName = `Slot_${slotIndex + 1}.png`;
+      const storagePath = `${outputBasePath}/${fileName}`;
 
       const t0 = Date.now();
       while (true) {
-        try {
-          await ensureStorageSignedIn();
-          const url = await getDownloadURL(ref(storage, storagePath));
-          return { storagePath, url };
-        } catch (e) {
-          if ((Date.now() - t0) > timeoutMs) {
-            throw new Error(`Timed out waiting for Slot_${slotIndex + 1}.png at ${storagePath}`);
-          }
-          await sleep(intervalMs);
-        }
+    await ensureStorageSignedIn();
+
+    try {
+      // ✅ Poll folder contents first to avoid noisy 404s from getDownloadURL() before the file exists.
+      const folderRef = ref(storage, outputBasePath);
+      const res = await listAll(folderRef);
+      const hit = (res.items || []).find(it => it.name === fileName);
+      if (hit) {
+        const url = await getDownloadURL(hit);
+        return { storagePath: hit.fullPath, url };
+      }
+    } catch (e) {
+      // If listing fails transiently (or rules temporarily block LIST), just keep waiting.
+    }
+
+    if ((Date.now() - t0) > timeoutMs) {
+      throw new Error(`Timed out waiting for ${fileName} at ${storagePath}`);
+    }
+    await sleep(intervalMs);
       }
     }
 
