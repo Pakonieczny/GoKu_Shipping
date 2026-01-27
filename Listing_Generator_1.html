@@ -1366,24 +1366,12 @@
     // 3. // STUD EARRINGS PROMPTS
     // =========================================================================
     const STUD_MODEL_PROMPT =
-    `(TOP PRIORITY)
-    • Replace the existing stud earring charm only with the Reference Earring Charm.
-    • Final on-image charm height MUST very small, exactly 9 pixels tall (absolute pixel height, not relative).
-    • If pixel measurement is unavailable, select the smallest physically plausible size that remains barely legible at normal viewing distance.
-    • Do NOT compensate by zooming out, reframing, cropping, changing camera distance, changing ear scale, changing head scale, or thickening engraving.
-    • Never alter engraving thickness, depth, or line weight to improve visibility.
-
-    MATERIAL + GEOMETRY LOCKS (NON-NEGOTIABLE)
-    • The charm is a perfectly flat, ultra-thin metal sheet.
+    `ULTRA-MICRO SIZE OVERRIDE (TOP PRIORITY — MAKE IT BARELY VISIBLE)
+    • Force the Charm to be very small: final on-image charm height MUST be 9 pixels tall (absolute pixel height, not relative).
+    • Do NOT compensate by zooming out, reframing, cropping, changing camera, changing necklace scale, changing model scale, changing engraving thickness, or changing chain thickness.
     • Never allow embossed engravings on the Charm/Pendant, all engravings must be flat and superficial having no descernable depth.
-    • No bevels, rounding, radii, embossing, or depth—all engravings must be flat and superficial.
-    • The charm color must be gold colour, neutral saturation (no orange cast, no oversaturation, no bright yellow).
-    • Reflections must be subtle and realistic for a flat metal surface at micro scale.
-
-    SHADOW + LIGHTING RULES
-    • Ear lighting must remain physically realistic, soft studio or window light with natural falloff.
-    • Preserve realistic ear shadows, folds, translucency, and cartilage depth—only charm shadows are suppressed.
-    • Do not introduce glow, bloom, or artificial rim light around the charm.
+    • The earring Charm must be gold colour, do not saturate the Earring Charm gold colour.
+    • The earrings must remain exactly the same size and detail as reference image.
 
     HARD LOCKS (ABSOLUTE)
     • Never render the full face or profile—ear-only framing.
@@ -1392,33 +1380,24 @@
     • Do not redraw, simplify, or reinterpret the charm geometry.
     • Focus on 100% engraving accuracy relative to the Reference Charm Image.
     • Output one photorealistic image only.
-    • Do not output text.`;
+    • Do not output text.
+
+      HARD LOCK: Never render female model above the neck and below the bust.
+      HARD LOCK: The Charm/Pendant material is a perfectly flat and very thin sheet of metal, always render the Charm/Pendant completely flat and very thin, DO NOT allow any rounded/radius on the cutout edges.
+      DO not zoom out when generating the image. Keep model and frame consistent with Reference Image
+      Focus on Charm Engraving details and ensure 100% accuracy to Charm Image`;
 
     const STUD_CREATIVE_PROMPT =
     `(PRODUCT PHOTO — AI BACKGROUND, MICRO DETAIL PRESERVATION)
     • Replace both stud earring charms with the Reference Earring Charm (left and right earrings).
-    • Do NOT compensate by zooming out, reframing, cropping, changing camera distance, changing earring scale, changing post size, or thickening engraving lines.
-    • Never alter engraving geometry to improve visibility.
-
-    MATERIAL + GEOMETRY LOCKS (NON-NEGOTIABLE)
     • The charm must be rendered as a perfectly flat, ultra-thin metal sheet.
-    • No embossing, bevels, rounding, depth, curvature, or edge radius.
-    • All Charm Engravings must be flat, sharp, and superficial, exactly matching the Reference Charm geometry.
-    • DO NOT replace engravings with cutouts, you must preserve all charm engravings.
-    • Micro cutouts must remain open and clearly defined—no fill-in, no softening.
-
-    GOLD COLOR + SURFACE BEHAVIOR
-    • The charm must appear true gold in color, matching the earrings’ existing gold tone.
-    • Do not oversaturate or orange-shift the gold.
-    • Reflections must be subtle, realistic, and consistent with polished micro jewelry at this scale.
-    • Charm color, shading, and reflectivity must visually match the existing stud hardware.
+    • DO NOT add earring backings, never render earring backings.
+    • Do NOT compensate by zooming out, reframing, cropping, changing camera, changing necklace scale, changing model scale, changing engraving thickness, or changing chain thickness.
+    • Never allow embossed engravings on the Charm/Pendant, all engravings must be flat and superficial having no descernable depth.
+    • The earring Charm must be gold colour, do not saturate the Earring Charm gold colour.
+    • The earrings must remain exactly the same size and detail as reference image.
 
     HARD LOCKS (ABSOLUTE)
-    • Do not zoom out or alter camera perspective.
-    • Do not modify the stud hardware or post geometry.
-    • Do not redraw, simplify, or reinterpret the charm shape.
-    • Maintain 100% engraving and cutout accuracy relative to the Reference Charm Image.
-    • Output one photorealistic product image only.
     • Do not output text.`;
 
     const STUD_SIZE_GUIDE_PROMPT =
@@ -1436,7 +1415,7 @@
     ABSOLUTE LOCKS (DO NOT CHANGE)
     • Do NOT add any earring part, jump ring, or jewelry.
     • Do NOT move, resize, restyle, blur, or alter any text.
-    • The text “~12mm x 12mm” MUST remain visible, crisp, and identical.
+    • The text “~8mm x 8mm” MUST remain visible, crisp, and identical.
     • The short black pointer line MUST remain visible and MUST point to the charm exactly.
     • Do NOT crop, zoom, or reframe the image.
 
@@ -1446,19 +1425,12 @@
     - Any weak or disconnected hoop connection.`;
 
     const STUD_SEC_MODEL_PROMPT =
-    `(TOP PRIORITY)
-    • Replace the existing stud earring charm only with the Reference Earring Charm.
-    • Final on-image charm height MUST very small, exactly 9 pixels tall (absolute pixel height, not relative).
-    • If pixel measurement is unavailable, select the smallest physically plausible size that remains barely legible at normal viewing distance.
-    • Do NOT compensate by zooming out, reframing, cropping, changing camera distance, changing ear scale, changing head scale, or thickening engraving.
-    • Never alter engraving thickness, depth, or line weight to improve visibility.
-
-    MATERIAL + GEOMETRY LOCKS (NON-NEGOTIABLE)
-    • The charm is a perfectly flat, ultra-thin metal sheet.
+    `ULTRA-MICRO SIZE OVERRIDE (TOP PRIORITY — MAKE IT BARELY VISIBLE)
+    • Force the Charm to be very small: final on-image charm height MUST be 9 pixels tall (absolute pixel height, not relative).
+    • Do NOT compensate by zooming out, reframing, cropping, changing camera, changing necklace scale, changing model scale, changing engraving thickness, or changing chain thickness.
     • Never allow embossed engravings on the Charm/Pendant, all engravings must be flat and superficial having no descernable depth.
-    • No bevels, rounding, radii, embossing, or depth—all engravings must be flat and superficial.
-    • The charm color must be gold colour, neutral saturation (no orange cast, no oversaturation, no bright yellow).
-    • Reflections must be subtle and realistic for a flat metal surface at micro scale.
+    • The earring Charm must be gold colour, do not saturate the Earring Charm gold colour.
+    • The earrings must remain exactly the same size and detail as reference image.
 
     HARD LOCKS (ABSOLUTE)
     • Never render the full face or profile—ear-only framing.
@@ -1467,37 +1439,29 @@
     • Do not redraw, simplify, or reinterpret the charm geometry.
     • Focus on 100% engraving accuracy relative to the Reference Charm Image.
     • Output one photorealistic image only.
-    • Do not output text.`;
+    • Do not output text.
+
+      HARD LOCK: Never render female model above the neck and below the bust.
+      HARD LOCK: The Charm/Pendant material is a perfectly flat and very thin sheet of metal, always render the Charm/Pendant completely flat and very thin, DO NOT allow any rounded/radius on the cutout edges.
+      DO not zoom out when generating the image. Keep model and frame consistent with Reference Image
+      Focus on Charm Engraving details and ensure 100% accuracy to Charm Image`;
 
     const STUD_PRODUCT_PROMPT =
     `(PRODUCT PHOTO — WHITE BACKGROUND, MICRO DETAIL PRESERVATION)
     • Replace both stud earring charms with the Reference Earring Charm (left and right earrings).
-    • Do NOT compensate by zooming out, reframing, cropping, changing camera distance, changing earring scale, changing post size, or thickening engraving lines.
-    • Never alter engraving geometry to improve visibility.
-
-    MATERIAL + GEOMETRY LOCKS (NON-NEGOTIABLE)
     • The charm must be rendered as a perfectly flat, ultra-thin metal sheet.
-    • No embossing, bevels, rounding, depth, curvature, or edge radius.
     • DO NOT add earring backings, never render earring backings.
-    • All engravings and cutouts must be flat, sharp, and superficial, exactly matching the Reference Charm geometry.
-    • Micro cutouts must remain open and clearly defined—no fill-in, no softening.
+    • Do NOT compensate by zooming out, reframing, cropping, changing camera, changing necklace scale, changing model scale, changing engraving thickness, or changing chain thickness.
+    • Never allow embossed engravings on the Charm/Pendant, all engravings must be flat and superficial having no descernable depth.
+    • The earring Charm must be gold colour, do not saturate the Earring Charm gold colour.
+    • The earrings must remain exactly the same size and detail as reference image.
 
     BACKGROUND + COMPOSITION
     • Background must remain pure white or near-white, clean and uncluttered.
     • No texture, gradients, props, or environmental elements.
     • Do not change framing, orientation, or spacing of the earrings relative to the reference image.
 
-    TASK (DUAL STUD REPLACEMENT)
-    • Duplicate the Reference Image and replace both existing stud charms with the Reference Earring Charm.
-    • Preserve the original stud posts, backings, alignment, spacing, and symmetry.
-    • Ensure both charms are identical in size, orientation, and attachment logic.
-    • No floating, tilting, scaling mismatch, or asymmetry between left and right earrings.
-
     HARD LOCKS (ABSOLUTE)
-    • Do not zoom out or alter camera perspective.
-    • Do not modify the stud hardware or post geometry.
-    • Do not redraw, simplify, or reinterpret the charm shape.
-    • Output one photorealistic product image only.
     • Do not output text.`;
 
 
