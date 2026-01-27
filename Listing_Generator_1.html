@@ -486,18 +486,11 @@
         });
         setImg(waited.url);
       } else {
-
-        // EXCLUSION LOGIC: Bracelets Slot 1 uses Reference ONLY (No Charm)
-        let charmInputPath = charmLatest.fullPath;
-        if (category === "Bracelets" && slotIndex === 0) { // Slot 1 is index 0
-             charmInputPath = null;
-        }
-
         await postJson(GEMINI_BG_FN, {
           kind: "edits",
           activeCategory: category,
           input_storage_path: srcLatest.fullPath,
-          input_charm_storage_path: charmInputPath, // Use the conditional path
+          input_charm_storage_path: charmLatest.fullPath,
           output_base_path: outputBasePath,
           slotIndex,
           model: "gemini-3-pro-image-preview",
@@ -805,18 +798,11 @@
               source_storage_path: srcLatest.fullPath,
             };
           }
-
-          // EXCLUSION LOGIC: Bracelets Slot 1 uses Reference ONLY (No Charm)
-          let charmInputPath = charmLatest.fullPath;
-          if (category === "Bracelets" && slotNum === 1) {
-             charmInputPath = null;
-          }
-
           return {
             type: "edits",
             slotIndex: i,
             input_storage_path: srcLatest.fullPath,
-            input_charm_storage_path: charmInputPath, // Use the conditional path
+            input_charm_storage_path: charmLatest.fullPath,
             prompt: buildSlotPrompt(category, spec.folder, slotNum),
             model: "gemini-3-pro-image-preview",
           };
@@ -1226,7 +1212,9 @@
     // 2. // BRACELET PROMPTS
     // =========================================================================
     const BRACELET_MODEL_PROMPT =
-    `Make a new image based on this model, you must keep necklace chain thickness, link spacing size, details, colour, and fidelity. Subtly vary clothing, maintain zoom level and frame.`;
+    `CRITICAL: This is a standard fashion product photo edit. Keep the subject modest. No nudity.
+
+      Make a new image based on this model, you must keep necklace chain thickness, link spacing size, details, colour, and fidelity. Subtly vary clothing, maintain zoom level and frame.`;
     
     const BRACELET_CREATIVE_PROMPT =
     `ULTRA-MICRO SIZE OVERRIDE (TOP PRIORITY — MAKE IT BARELY VISIBLE)
