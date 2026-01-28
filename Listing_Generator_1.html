@@ -1070,10 +1070,7 @@
     Ensure the charm colour, shading and reflections match the necklace chain in the reference image.`;
 
     const REGULAR_SLOT3_SIZING_GUIDE_PROMPT =
-    `CRITICAL: Slot 3 is a sizing-guide charm replacement task. This must be a single-pass edit.
-
-    PROCESS ORDER (NON-NEGOTIABLE)
-    • Single pass only.
+    `PROCESS ORDER (NON-NEGOTIABLE)
     • Use reference image as the base sizing-guide graphic.
     • Replace ONLY the charm in the reference image with the charm from Charm image.
 
@@ -1576,23 +1573,33 @@
     // 5. // CHARM ONLY PROMPTS 
     // =========================================================================
     const CHARM_TEMPLATE_PROMPT = 
-    `TASK: Create a pure white background product shot of the Charm.
-    • Use the Charm Image as the absolute source of truth for the shape, engraving, and cutouts.
-    • The output must be a high-resolution, sharp product image on #FFFFFF background.
-    • Flatten the charm logic: It must look like a flat metal sheet.
-    • Ensure the jump ring is visible and aligned at the top.`;
+    `TASK
+    Duplicate the reference image exactly, only replace the charm with the Charm Refernce image.
+    Match the subject and context identity from reference image; 
+    HARD LOCK: The Charm/Pendant material is a perfectly flat and very thin sheet of metal, always render the Charm/Pendant completely flat and very thin, DO NOT allow any rounded/radius on the cutout edges.
+    DO not zoom out when generating the image. Keep model and frame consistent with the reference image.
+    Focus on Charm Engraving details and ensure 100% accuracy to Charm image
+    You must output any visible text exactly like in the reference image.
+    Ensure the charm colour, shading and reflections match the necklace chain in the reference image.`;
 
     const CHARM_TYPES_PROMPT = 
-    `TASK: Create a composite view of the Charm variations if applicable, or a stylized macro shot.
-    • Keep the charm flat and metallic.
-    • Focus on the engraving details from the Charm Image.`;
+    `TASK
+    Duplicate the reference image exactly, only replace the 3 charms (2 smaller huggie Charms and 1 necklace Charm) with the Charm Refernce image.
+    Match the subject and context identity from reference image; 
+    HARD LOCK: The Charm/Pendant material is a perfectly flat and very thin sheet of metal, always render the Charm/Pendant completely flat and very thin, DO NOT allow any rounded/radius on the cutout edges.
+    DO not zoom out when generating the image. Keep model and frame consistent with the reference image.
+    Focus on Charm Engraving details and ensure 100% accuracy to Charm image
+    You must output any visible text exactly like in the reference image.
+    Ensure the charm colour, shading and reflections match the necklace chain in the reference image.`;
+
     
     // Explicitly expanded to avoid variable dependency
     const CHARM_MODEL_PROMPT = 
-    `"  TASK:
+    `"TASK:
         •Generate a super zoomed in high-end commercial jewelry photorealistic image based on the attached reference, use soft studio lighting and sharp focus on the necklace.
         • Critically: Keep necklace chain details, chainlink spacing, size, Yellow 14K gold colour , and fidelity just like in the reference image. 
         • Maintain zoom level and frame.
+        • HARD LOCK: The Charm/Pendant material is a perfectly flat and very thin sheet of metal, always render the Charm/Pendant completely flat and very thin, DO NOT allow any rounded/radius on the cutout edges.
         • The necklace chain must be Yellow 14K gold colour 
         • DO NOT allow the chain to be dark, grey, black, the necklace must be bright and light. 
         • The chain must be bright realistic Yellow 14K gold colour and light reflections.
@@ -1608,6 +1615,7 @@
     `PROCESS ORDER (NON-NEGOTIABLE)
     • Use reference image as the base sizing-guide graphic.
     • Replace BOTH charms in the reference image with the charm from Charm image.
+    • You must maintain the back of the charm concept and show the engraved name on the back of the Charm in the genreated image. 
 
     INPUT IMAGES (ORDER MATTERS)
     • Reference Image = sizing guide base image (ALL text, layout, pencil, line, background)
@@ -1635,8 +1643,9 @@
     // Explicitly expanded to avoid variable dependency
     const CHARM_HOOP_GUIDE_PROMPT = 
     `PROCESS ORDER (NON-NEGOTIABLE)
-    • Replace ONLY the 3 charms charm in the reference image with the charm from Charm image.
+    • Duplicte the Reference image perfectly and replace ONLY the hanging charm in the reference image with the charm from Charm image.
     • Use reference image as the base sizing-guide graphic.
+    • You must output any visible text exactly like in the reference image, you must match the sizng guid to the new Charm.
 
     INPUT IMAGES (ORDER MATTERS)
     • Reference Image = sizing guide base image (ALL text, layout, pencil, line, background)
@@ -1655,17 +1664,11 @@
     INTEGRATED HOOP RULE
     • The hoop/bail MUST be part of the same laser-cut silhouette as the charm body.
     • The hoop MUST connect with a wide, solid bridge of metal (large surface area).
-    • HARD FAIL if the hoop looks barely touching, point-connected, floating, or welded-on.
-
-    HARD FAIL CONDITIONS
-    - Any text change.
-    - Any charm size mismatch vs charm image.
-    - Any weak or disconnected hoop connection.`;
+    • HARD FAIL if the hoop looks barely touching, point-connected, floating, or welded-on.`;
 
     // Explicitly expanded to avoid variable dependency
     const CHARM_SIZE_GUIDE_PROMPT = 
     `PROCESS ORDER (NON-NEGOTIABLE)
-    • Single pass only.
     • Use reference image as the base sizing-guide graphic.
     • Replace ONLY the charm in the reference image with the charm from Charm image.
 
@@ -1693,12 +1696,7 @@
     INTEGRATED HOOP RULE
     • The hoop/bail MUST be part of the same laser-cut silhouette as the charm body.
     • The hoop MUST connect with a wide, solid bridge of metal (large surface area).
-    • HARD FAIL if the hoop looks barely touching, point-connected, floating, or welded-on.
-
-    HARD FAIL CONDITIONS
-    - Any text change.
-    - Any charm size mismatch vs charm image.
-    - Any weak or disconnected hoop connection.`;
+    • HARD FAIL if the hoop looks barely touching, point-connected, floating, or welded-on.`;
 
 
     // =========================================================================
@@ -1745,12 +1743,12 @@
       },
       // 5. Charms
       "Charms": {
-        1: CHARM_TEMPLATE_PROMPT,
-        2: CHARM_TYPES_PROMPT,
-        3: CHARM_MODEL_PROMPT,
-        4: CHARM_ENGRAVING_PROMPT,
-        5: CHARM_HOOP_GUIDE_PROMPT,
-        6: CHARM_SIZE_GUIDE_PROMPT
+        1: CHARM_TEMPLATE_PROMPT, //HAVE
+        2: CHARM_TYPES_PROMPT,  //HAVE
+        3: CHARM_MODEL_PROMPT,  //HAVE
+        4: CHARM_ENGRAVING_PROMPT, //HAVE
+        5: CHARM_HOOP_GUIDE_PROMPT, //HAVE
+        6: CHARM_SIZE_GUIDE_PROMPT  //HAVE
       },
       // 6. Bracelets
       "Bracelets": {
