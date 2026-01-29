@@ -1465,7 +1465,7 @@
     const HOOP_MODEL_PROMPT =
     `TASK
     • Duplicate the female earring model in reference image, only replace the charm from Charm Image onto the existing hoop earring in reference image.
-    ULTRA-MICRO SIZE OVERRIDE (TOP PRIORITY — MAKE IT BARELY VISIBLE)
+      ULTRA-MICRO SIZE OVERRIDE (TOP PRIORITY — MAKE IT BARELY VISIBLE)
     • Force the Charm to be ULTRA TINY, ALOMST INVISIBLE, EXTREMELEY, EXTREMELY SMALL. The new Charm must be the same or smaller size then the Reference Image. 
     • Your primary objective is to maintain Charm Engraving fidelity and accuracy to the Charm Reference image.
     • Never allow embossed engravings on the Charm/Pendant, all engravings must be flat and superficial having no descernable depth.
@@ -1476,26 +1476,28 @@
 
     const HOOP_METAL_OPTIONS_PROMPT =
     `TASK
-    • Duplicate the reference image exactly, only replace the 4 charms small Charms with the Charm Refernce image.
-    • ULTRA-MICRO SIZE OVERRIDE (TOP PRIORITY — MAKE IT BARELY VISIBLE)
+    • Duplicate the reference image exactly, only replace the 4 small Charms with the ones from Charm Refernce image.
+      ULTRA-MICRO SIZE OVERRIDE (TOP PRIORITY — MAKE IT BARELY VISIBLE)
     • Force the Charm to be ULTRA TINY, ALOMST INVISIBLE, EXTREMELEY, EXTREMELY SMALL. The new Charm must be the same or smaller size then the Reference Image. 
+    • HARD LOCK: Preserve all engravings, NEVER replace Charm engravings with cutouts, ALL Charm/Pendant engravings but remain intact as per Charm Reference image.
     • Your primary objective is to maintain Charm Engraving fidelity and accuracy to the Charm Reference image.
     • Focus on Charm Engraving details and ensure 100% accuracy to Charm image
     • You must Generate all visible text exactly like in the reference image.`;
 
     const HOOP_SIZE_PROMPT =
     `TASK
-    • Duplicate the Reference product image exactly, only replace the 4 charms small Charms with the Charm Refernce image.
-    • ULTRA-MICRO SIZE OVERRIDE (TOP PRIORITY — MAKE IT BARELY VISIBLE)
-    • Force the Charm to be ULTRA TINY, ALOMST INVISIBLE, EXTREMELEY, EXTREMELY SMALL. The new Charm must be the same or smaller size then the Reference Image. 
+    • Duplicate the Reference product image exactly, only replace the 4 Charms with the ones from Charm Refernce image.
+      ULTRA-MICRO SIZE OVERRIDE (TOP PRIORITY — MAKE IT BARELY VISIBLE)
+    • Force the Charm to be ULTRA TINY, ALOMST INVISIBLE, EXTREMELEY, EXTREMELY SMALL. The new Charm must be the same or slightly smaller size than the Reference Image. 
+    • HARD LOCK: Preserve all engravings, NEVER replace Charm engravings with cutouts, ALL Charm/Pendant engravings but remain intact as per Charm Reference image.
     • Your primary objective is to maintain Charm Engraving fidelity and accuracy to the Charm Reference image.
     • Focus on Charm Engraving details and ensure 100% accuracy to Charm image
-    • You must output any visible text exactly like in the reference image.`;
+    • You must output all text exactly like in the Reference image.`;
 
     const HOOP_SEC_MODEL_PROMPT =
     `TASK
     • Duplicate the female earring model in reference image, only replace the charm from Charm Image onto the existing hoop earring in reference image.
-    • ULTRA-MICRO SIZE OVERRIDE (TOP PRIORITY — MAKE IT BARELY VISIBLE)
+      ULTRA-MICRO SIZE OVERRIDE (TOP PRIORITY — MAKE IT BARELY VISIBLE)
     • Force the Charm to be ULTRA TINY, ALOMST INVISIBLE, EXTREMELEY, EXTREMELY SMALL. The new Charm must be the same or smaller size then the Reference Image. 
     • Your primary objective is to maintain Charm Engraving fidelity and accuracy to the Charm Reference image.
     • Never allow embossed engravings on the Charm/Pendant, all engravings must be flat and superficial having no descernable depth.
@@ -1506,8 +1508,8 @@
 
     const HOOP_DIMENSION_PROMPT =
     `TASK
-    • Duplicate the reference image exactly, only replace the 1 charm with the Charm Refernce image.
-    • HARD LOCK: Preserve all engravings, NEVER substitute Charm engravings with cutouts, ALL Charm/Pendant engravings but remain intact as per Charm Reference image.
+    • Duplicate the Reference image exactly, only replace the 1 charm with the Charm Refernce image.
+      HARD LOCK: Preserve all engravings, NEVER replace Charm engravings with cutouts, ALL Charm/Pendant engravings but remain intact as per Charm Reference image.
     • You must output ALL visible text and reference black lines exactly like in the reference image.
     • Force the Charm in the generated image to be exactly the same size as the Reference image.
     • Never allow embossed engravings on the Charm/Pendant, all engravings must be flat and superficial having no descernable depth.
@@ -1521,7 +1523,7 @@
     const HOOP_PRIMARY_PRODUCT_PROMPT = 
     `TASK
     • Duplicate the reference image exactly, only replace the 2 charms with the Charm Refernce image.
-    • HARD LOCK: Preserve all engravings, NEVER substitute Charm engravings with cutouts, ALL Charms engravings but remain intact as per Charm Reference image.
+    • HARD LOCK: Preserve all engravings, NEVER replace Charm engravings with cutouts, ALL Charms engravings but remain intact as per Charm Reference image.
     • You must output ALL visible text and reference black lines exactly like in the reference image.
     • Force the Charm in the generated image to be exactly the same size as the Reference image.
     • Never allow embossed engravings on the Charm/Pendant, all engravings must be flat and superficial having no descernable depth.
