@@ -1521,7 +1521,7 @@
     • Focus on Charm Engraving details and ensure 100% accuracy to Charm image
     • You must output any visible text exactly like in the reference image.`;       
 
-    const HOOP_PRIMARY_PRODUCT = 
+    const HOOP_PRIMARY_PRODUCT_PROMPT = 
     `TASK
     • Duplicate the reference image exactly, only replace the 2 charms with the Charm Refernce image.
     • HARD LOCK: Preserve all engravings, NEVER substitute Charm engravings with cutouts, ALL Charms engravings but remain intact as per Charm Reference image.
@@ -1724,7 +1724,7 @@
         3: HOOP_SEC_MODEL_PROMPT,
         4: HOOP_METAL_OPTIONS_PROMPT,
         5: HOOP_DIMENSION_PROMPT,
-        6: HOOP_PRIMARY_PRODUCT
+        6: HOOP_PRIMARY_PRODUCT_PROMPT
       }, 
       // 5. Charms
       "Charms": {
