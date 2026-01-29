@@ -1479,10 +1479,10 @@
     • Duplicate the Reference product image exactly
     • Replace both sets of 2 Gold and 2 Silver Charms with the ones from the Charm Reference image. Compensate Charm colour for the Silver Hoops, 
     • CRITICAL: You must preserve all of the detail in the Charm engravings exactly as in the Charm image.
+      HARD LOCK: The Charm/Pendant material is a perfectly flat and very thin sheet of metal, always render the Charm/Pendant completely flat and very thin, DO NOT allow any rounded/radius on the cutout edges.
     • There are 2 Huggie/Hoop Sets, one Gold and one Silver: 
         - Set 1: Must be Yellow 14K gold colour, it's critically important that the charms match the Huggie/Hoop colour
         - Set 2: Must be Silver colour, it's critically important that the charms match the Huggie/Hoop colour
-    • DO NOT allow any rounded/radius on the cutout edges.
     • You must output all text exactly like in the Reference image, do not add any additional lines or text beyond the Reference image`;
 
     const HOOP_SIZE_PROMPT =
@@ -1512,7 +1512,8 @@
     `TASK
     • Duplicate the Reference product image exactly
     • Replace 1 Charm with the one from the Charm Reference image. The generated Charm must look EXACTLY like Charm Reference image
-    • Preserve all engravings as they appear in the Charm Reference image, NEVER replace Charm engravings with cutouts.
+    • Preserve all engravings as they appear in the Charm Reference image.
+      HARD LOCK: The Charm/Pendant material is a perfectly flat and very thin sheet of metal, always render the Charm/Pendant completely flat and very thin, DO NOT allow any rounded/radius on the cutout edges.
     • Force the Charm to be EXTREMELY SMALL. 
     • The new Charm must be the same or slightly smaller size than the Reference Image. 
     • Your primary objective is to maintain Charm Engraving fidelity and accuracy to the Charm Reference image.
@@ -1521,7 +1522,8 @@
     const HOOP_PRIMARY_PRODUCT_PROMPT = 
     `TASK
     • Duplicate the reference image exactly, only replace the 2 charms with the Charm Refernce image.
-    • HARD LOCK: Preserve all engravings as they appear in the Charm Reference image, NEVER replace Charm engravings with cutouts.
+    • HARD LOCK: Preserve all engravings as they appear in the Charm Reference image, NEVER.
+      HARD LOCK: The Charm/Pendant material is a perfectly flat and very thin sheet of metal, always render the Charm/Pendant completely flat and very thin, DO NOT allow any rounded/radius on the cutout edges.
     • You must output ALL visible text and reference black lines exactly like in the reference image.
     • Force the Charm in the generated image to be exactly the same size as the Reference image.
     • DO NOT allow any rounded/radius on the cutout edges.
