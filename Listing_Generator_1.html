@@ -1313,7 +1313,7 @@
     // =========================================================================
     const STUD_MODEL_PROMPT =
     `CRITICAL
-    • Force the Charm to be small: final on-image charm height MUST be 17 pixels tall (absolute pixel height, not relative).
+    • Force the Charm to be small: final on-image charm height MUST be 15 pixels tall (absolute pixel height, not relative).
     • Do NOT compensate by zooming out, reframing, cropping, changing camera, changing necklace scale, changing model scale, changing engraving thickness, or changing chain thickness.
     • When several charms are present on the model ear then only replace the charm on the lower Lobe of the ear.
     • Never allow embossed engravings on the Charm/Pendant, all engravings must be flat and superficial having no descernable depth.
@@ -1469,6 +1469,7 @@
     • Force the Charm to be ULTRA TINY, ALOMST INVISIBLE, EXTREMELEY, EXTREMELY SMALL. The new Charm must be the same or smaller size then the Reference Image. 
     • Your primary objective is to maintain Charm Engraving fidelity and accuracy to the Charm Reference image.
     • Never allow embossed engravings on the Charm/Pendant, all engravings must be flat and superficial having no descernable depth.
+      HARD LOCK: The Charm/Pendant material is a perfectly flat and very thin sheet of metal, always render the Charm/Pendant completely flat and very thin, DO NOT allow any rounded/radius on the cutout edges.
     • The Charm/Pendant must be real gold colour, do not saturate the Charm/Pendant gold colour.
     • You muest ensure that the Charm hoop is always correctly aligned and hanging from the Earring hoop
     • Match the subject identity from reference image; Enhance the models skin realism. 
@@ -1479,7 +1480,8 @@
     • Duplicate the Reference product image exactly
     • Replace all 4 Charms with the ones from the Charm Reference image. The generated Charms must look EXACTLY like Charm Reference image
     • NEVER show a person, model, ear, head or any part of a persons body. Only Render the Reference image details.
-    • Preserve all engravings as they appear in the Charm Reference image, NEVER change/alter the Charm Engravings, use Charm Reference image as source of truth for all Charm Engravings.
+    • Preserve all engravings as they appear in the Charm Reference image.
+      HARD LOCK: The Charm/Pendant material is a perfectly flat and very thin sheet of metal, always render the Charm/Pendant completely flat and very thin, DO NOT allow any rounded/radius on the cutout edges.
     • Force the Charm to be ULTRA TINY, ALOMST INVISIBLE, EXTREMELEY, EXTREMELY SMALL. 
     • The new Charm must be the same or slightly smaller size than the Reference Image. 
     • Your primary objective is to maintain Charm Engraving fidelity and accuracy to the Charm Reference image.
@@ -1490,7 +1492,8 @@
     • Duplicate the Reference product image exactly
     • Replace all 4 Charms with the ones from the Charm Reference image. The generated Charms must look EXACTLY like Charm Reference image.
     • NEVER show a person, model, ear, head or any part of a persons body. Only Render the Reference image details.
-    • Preserve all engravings as they appear in the Charm Reference image, NEVER change/alter the Charm Engravings, use Charm Reference image as source of truth for all Charm Engravings.
+    • Preserve all engravings as they appear in the Charm Reference image.
+      HARD LOCK: The Charm/Pendant material is a perfectly flat and very thin sheet of metal, always render the Charm/Pendant completely flat and very thin, DO NOT allow any rounded/radius on the cutout edges.
     • Force the Charm to be ULTRA TINY, ALOMST INVISIBLE, EXTREMELEY, EXTREMELY SMALL. 
     • The new Charm must be the same or slightly smaller size than the Reference Image. 
     • Your primary objective is to maintain Charm Engraving fidelity and accuracy to the Charm Reference image.
@@ -1499,13 +1502,14 @@
     const HOOP_SEC_MODEL_PROMPT =
     `TASK
     • Duplicate the female model and hoop earrings in reference image, only replace the charm from Charm Image onto the existing hoop earring in reference image.
-      ULTRA-MICRO SIZE OVERRIDE.
+      ULTRA-MICRO SIZE OVERRIDE (TOP PRIORITY — MAKE IT BARELY VISIBLE)
     • Force the Charm to be ULTRA TINY, ALOMST INVISIBLE, EXTREMELEY, EXTREMELY SMALL. The new Charm must be the same or smaller size then the Reference Image. 
     • Your primary objective is to maintain Charm Engraving fidelity and accuracy to the Charm Reference image.
     • Never allow embossed engravings on the Charm/Pendant, all engravings must be flat and superficial having no descernable depth.
+      HARD LOCK: The Charm/Pendant material is a perfectly flat and very thin sheet of metal, always render the Charm/Pendant completely flat and very thin, DO NOT allow any rounded/radius on the cutout edges.
     • The Charm/Pendant must be real gold colour, do not saturate the Charm/Pendant gold colour.
     • You muest ensure that the Charm hoop is always correctly aligned and hanging from the Earring hoop
-    • Enhance the models skin realism. 
+    • Match the subject identity from reference image; Enhance the models skin realism. 
     • Do NOT allow skin colour to be grey around the Hoop/Huggie. The skin tone/colour near the Hoop/Huggie must be uniform with the rest of the ear.`;
 
     const HOOP_DIMENSION_PROMPT =
@@ -1588,7 +1592,7 @@
         • Do NOT compensate by zooming out, reframing, cropping, changing camera, changing necklace scale, changing model scale, changing engraving thickness, or changing chain thickness.
         • Never allow embossed engravings on the Charm/Pendant, all engravings must be flat and superficial having no descernable depth.
         • The Charm/Pendant must be gold in colour just like the necklace chain in the reference image, do not saturate the Charm/Pendant gold colour.
-        • The chain must remain exactly the same size and detail as in the reference image. Only the charm is scaled."`;
+        • The chain must remain exactly the same size and detail as in the reference image."`;
 
     const CHARM_ENGRAVING_PROMPT = 
     `PROCESS ORDER (NON-NEGOTIABLE)
