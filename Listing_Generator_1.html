@@ -1475,26 +1475,24 @@
     • Do NOT allow skin colour to be grey around the Hoop/Huggie. The skin tone/colour near the Hoop/Huggie must be uniform with the rest of the ear.`;
 
     const HOOP_METAL_OPTIONS_PROMPT =
-    `TASK
-    • Duplicate the Reference product image exactly
-    • Replace both sets of 2 Gold and 2 Silver Charms with the ones from the Charm Reference image. Compensate Charm colour for the Silver Hoops, 
-    • CRITICAL: You must preserve all of the detail in the Charm engravings exactly as in the Charm image.
-      HARD LOCK: The Charm/Pendant material is a perfectly flat and very thin sheet of metal, always render the Charm/Pendant completely flat and very thin, DO NOT allow any rounded/radius on the cutout edges.
-    • There are 2 Huggie/Hoop Sets, one Gold and one Silver: 
-        - Set 1: Must be Yellow 14K gold colour, it's critically important that the charms match the Huggie/Hoop colour
-        - Set 2: Must be Silver colour, it's critically important that the charms match the Huggie/Hoop colour
-    • You must output all text exactly like in the Reference image, do not add any additional lines or text beyond the Reference image`;
+    `"  TASK:
+        • Duplicate the Reference product image exactly and update all 4 charms from the Charm Reference image
+        • Critically: Keep Charm details, Charm Engravings, Colour, and fidelity just like in the Charm reference image. 
+        • Maintain zoom level and frame.
+        • The Earring Hoops must be consistent with the Reference image
+        • Force the Earring Charm/Pendant to be very small.
+        • If you cannot measure pixels, choose the smallest size that is still legible on the chain.
+        • Never allow embossed engravings on the Earring Charm/Pendant, all engravings must a darker colour tone and be flat and superficial."`;
 
     const HOOP_SIZE_PROMPT =
-    `TASK
-    • Duplicate the Reference product image exactly
-    • Replace all 4 Charms with the ones from the Charm Reference image. The generated Charms must look EXACTLY like Charm Reference image.
-    • NEVER show a person, model, ear, head or any part of a persons body. Only Render the Reference image details.
-    • Preserve all engravings as they appear in the Charm Reference image.
-    • DO NOT allow any rounded/radius on the cutout edges.
-    • The new Charm must be the same or slightly smaller size than the Reference Image. 
-    • Your primary objective is to maintain Charm Engraving fidelity and accuracy to the Charm Reference image.
-    • You must output all text exactly like in the Reference image, do not add any additional lines or text beyond the Reference image`;
+    `"  TASK:
+        • Duplicate the Reference product image exactly and update all 4 charm from the Charm Reference image
+        • Critically: Keep Charm details, Charm Engravings, Colour, and fidelity just like in the Charm reference image. 
+        • Maintain zoom level and frame.
+        • The Earring Hoops must be consistent with the Reference image
+        • Force the Earring Charm/Pendant to be very small.
+        • If you cannot measure pixels, choose the smallest size that is still legible on the chain.
+        • Never allow embossed engravings on the Earring Charm/Pendant, all engravings must a darker colour tone and be flat and superficial."`;
 
     const HOOP_SEC_MODEL_PROMPT =
     `" TASK:
