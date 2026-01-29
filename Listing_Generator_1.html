@@ -1498,25 +1498,18 @@
 
     const HOOP_DIMENSION_PROMPT =
     `TASK
-    • Duplicate the Reference product image exactly
-    • Replace 1 Charm with the one from the Charm Reference image. The generated Charm must look EXACTLY like Charm Reference image
+    • Duplicate the Reference product image exactly and only update the 1 charm from the Charm Reference image.
     • Preserve all engravings as they appear in the Charm Reference image.
-      HARD LOCK: The Charm/Pendant material is a perfectly flat and very thin sheet of metal, always render the Charm/Pendant completely flat and very thin, DO NOT allow any rounded/radius on the cutout edges.
-    • Force the Charm to be EXTREMELY SMALL. 
-    • The new Charm must be the same or slightly smaller size than the Reference Image. 
-    • Your primary objective is to maintain Charm Engraving fidelity and accuracy to the Charm Reference image.
-    • You must output all text exactly like in the Reference image, do not add any additional lines or text beyond the Reference image`;
+    • Force the Charm to be TINY, EXTREMELY SMALL. The new Charm must be the same or smaller size then the Hoop Earring Reference Image.
+    • Critically: When Generating the new image maintain Charm details, Charm Engravings, Colour, and fidelity just like in the Charm reference image.`;
+
+
 
     const HOOP_PRIMARY_PRODUCT_PROMPT = 
-    `TASK
-    • Duplicate the reference image exactly, only replace the 2 charms with the Charm Refernce image.
-    • Focus on Charm Engraving details and ensure 100% accuracy to Charm image
-      HARD LOCK: The Charm/Pendant material is a perfectly flat and very thin sheet of metal, always render the Charm/Pendant completely flat and very thin, DO NOT allow any rounded/radius on the cutout edges.
-    • You must output ALL visible text and reference black lines exactly like in the reference image.
-    • Force the Charm in the generated image to be exactly the same size as the Reference image.
-    • DO NOT allow any rounded/radius on the cutout edges.
-    • You must output any visible text exactly like in the reference image.`;                       
-
+    `"  TASK:
+        • Duplicate the Reference product image exactly and only update the 2 charms from the Charm Reference image.
+        • Force the Charm to be TINY, EXTREMELY SMALL. The new Charm must be the same or smaller size then the Hoop Earring Reference Image.
+        • Critically: When Generating the new image maintain Charm details, Charm Engravings, Colour, and fidelity just like in the Charm reference image.`;
 
 
 
