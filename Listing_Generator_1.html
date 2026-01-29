@@ -1445,6 +1445,7 @@
     // =========================================================================
     // 4. // HOOP EARRINGS PROMPTS
     // =========================================================================
+
     const HOOP_MODEL_PROMPT =
     `CRITICAL: This is a standard fashion product photo edit. Keep the subject modest. No nudity.
 
@@ -1479,7 +1480,8 @@
     You must output any visible text exactly like in the reference image.
     Ensure the charm colour, shading and reflections match the necklace chain in the reference image.`;
 
-    onst HOOP_SIZE_PROMPT =
+    // CORRECTION HERE: changed 'onst' to 'const'
+    const HOOP_SIZE_PROMPT =
     `TASK
     Duplicate the reference image exactly, only replace the 4 charms smaller huggie Charms with the Charm Refernce image.
     Force the Charm to be EXTREMELEY SMALL: final on-image charm height MUST be 6 pixels tall (absolute pixel height, not relative).
@@ -1524,7 +1526,12 @@
     DO not zoom out when generating the image. Keep model and frame consistent with the reference image.
     Focus on Charm Engraving details and ensure 100% accuracy to Charm image
     You must output any visible text exactly like in the reference image.
-    Ensure the charm colour, shading and reflections match the necklace chain in the reference image.`;                                              
+    Ensure the charm colour, shading and reflections match the necklace chain in the reference image.`;       
+
+    const HOOP_MODEL_SIZE_GUIDE_PROMPT = 
+    `TASK
+    Duplicate the model reference image exactly.
+    You must output ALL visible text and reference black lines exactly like in the reference image.`;                             
 
 
 
@@ -1692,12 +1699,13 @@
       },
       // 4. Hoop_Earrings
       "Hoop_Earrings": {
-        1: HOOP_MODEL_PROMPT,  
-        2: HOOP_SIZE_PROMPT,  
-        3: HOOP_SEC_MODEL_PROMPT,        
-        4: HOOP_METAL_OPTIONS_PROMPT,           
-        5: HOOP_DIMENSION_PROMPT,               
-        7: HOOP_MODEL_SIZE_GUIDE_PROMPT  
+        1: HOOP_MODEL_PROMPT,
+        2: HOOP_SIZE_PROMPT,
+        3: HOOP_SEC_MODEL_PROMPT,
+        4: HOOP_METAL_OPTIONS_PROMPT,
+        5: HOOP_DIMENSION_PROMPT,
+        7: HOOP_MODEL_SIZE_GUIDE_PROMPT
+      }, 
 
       },
       // 5. Charms
