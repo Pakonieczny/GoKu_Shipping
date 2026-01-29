@@ -168,7 +168,7 @@
       ],
 
       Hoop_Earrings: [
-        "Hoop_Earring_Models","Hoop_Earring_Sec_Models","Hoop_Charm_Dimensions","Hoop_Metal_Options","Hoop_Size_Options","Hoop_Model_Size_Guide","Hoop_Earring_Care_Guide","Ready_To_List","Completed_&_Listed_Sets", "Hoop_Primary_Product"
+        "Hoop_Earring_Models","Hoop_Earring_Sec_Models","Hoop_Charm_Dimensions","Hoop_Metal_Options","Hoop_Size_Options","Hoop_Model_Size_Guide","Hoop_Earring_Care_Guide","Hoop_Primary_Product","Ready_To_List","Completed_&_Listed_Sets" 
       ],
 
       Charms: [
@@ -1476,24 +1476,21 @@
 
     const HOOP_METAL_OPTIONS_PROMPT =
     `TASK
-    Duplicate the reference image exactly, only replace the 4 charms smaller huggie Charms with the Charm Refernce image.
-    ULTRA-MICRO SIZE OVERRIDE (TOP PRIORITY — MAKE IT BARELY VISIBLE)
-    • Force the Charm to be ULTRA TINY, ALOMST INVISIBLE, EXTREMELEY, EXTREMELY SMALL. The new Charm must be the same or smaller size then the Reference Image. 
-    • Your primary objective is to maintain Charm Engraving fidelity and accuracy to the Charm Reference image.
-    • Focus on Charm Engraving details and ensure 100% accuracy to Charm image
-    • You must output any visible text exactly like in the reference image.
-    • Ensure the charm colour, shading and reflections match the necklace chain in the reference image.`;
-
-    // CORRECTION HERE: changed 'onst' to 'const'
-    const HOOP_SIZE_PROMPT =
-    `TASK
-    • Duplicate the Reference HOOP_SIZE image exactly, only replace the 4 charms small Charms with the Charm Refernce image.
+    • Duplicate the reference image exactly, only replace the 4 charms small Charms with the Charm Refernce image.
     • ULTRA-MICRO SIZE OVERRIDE (TOP PRIORITY — MAKE IT BARELY VISIBLE)
     • Force the Charm to be ULTRA TINY, ALOMST INVISIBLE, EXTREMELEY, EXTREMELY SMALL. The new Charm must be the same or smaller size then the Reference Image. 
     • Your primary objective is to maintain Charm Engraving fidelity and accuracy to the Charm Reference image.
     • Focus on Charm Engraving details and ensure 100% accuracy to Charm image
-    • You must output any visible text exactly like in the reference image.
-    • Ensure the charm colour, shading and reflections match the necklace chain in the reference image.`;
+    • You must Generate all visible text exactly like in the reference image.`;
+
+    const HOOP_SIZE_PROMPT =
+    `TASK
+    • Duplicate the Reference product image exactly, only replace the 4 charms small Charms with the Charm Refernce image.
+    • ULTRA-MICRO SIZE OVERRIDE (TOP PRIORITY — MAKE IT BARELY VISIBLE)
+    • Force the Charm to be ULTRA TINY, ALOMST INVISIBLE, EXTREMELEY, EXTREMELY SMALL. The new Charm must be the same or smaller size then the Reference Image. 
+    • Your primary objective is to maintain Charm Engraving fidelity and accuracy to the Charm Reference image.
+    • Focus on Charm Engraving details and ensure 100% accuracy to Charm image
+    • You must output any visible text exactly like in the reference image.`;
 
     const HOOP_SEC_MODEL_PROMPT =
     `TASK
@@ -1578,8 +1575,6 @@
     You must output any visible text exactly like in the reference image.
     Ensure the charm colour, shading and reflections match the necklace chain in the reference image.`;
 
-    
-    // Explicitly expanded to avoid variable dependency
     const CHARM_MODEL_PROMPT = 
     `"TASK:
         •Generate a high-end photorealistic commercial jewelry image based on the attached reference image, use soft studio lighting and sharp focus on the necklace chain and charm/pendant details.
@@ -1596,7 +1591,6 @@
         • The Charm/Pendant must be gold in colour just like the necklace chain in the reference image, do not saturate the Charm/Pendant gold colour.
         • The chain must remain exactly the same size and detail as in the reference image. Only the charm is scaled."`;
 
-    // Explicitly expanded to avoid variable dependency
     const CHARM_ENGRAVING_PROMPT = 
     `PROCESS ORDER (NON-NEGOTIABLE)
     • Use reference image as the base sizing-guide graphic.
@@ -1626,7 +1620,7 @@
     - Any charm size mismatch vs charm image.
     - Any weak or disconnected hoop connection.`;
 
-    // Explicitly expanded to avoid variable dependency
+
     const CHARM_HOOP_GUIDE_PROMPT = 
     `PROCESS ORDER (NON-NEGOTIABLE)
     • Duplicte the Reference image perfectly and replace ONLY the hanging charm in the reference image with the charm from Charm image.
@@ -1652,7 +1646,7 @@
     • The hoop MUST connect with a wide, solid bridge of metal (large surface area).
     • HARD FAIL if the hoop looks barely touching, point-connected, floating, or welded-on.`;
 
-    // Explicitly expanded to avoid variable dependency
+
     const CHARM_SIZE_GUIDE_PROMPT = 
     `PROCESS ORDER (NON-NEGOTIABLE)
     • Use reference image as the base sizing-guide graphic.
