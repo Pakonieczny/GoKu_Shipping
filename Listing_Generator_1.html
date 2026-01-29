@@ -220,8 +220,8 @@
         { type:"gen", folder:"Hoop_Earring_Sec_Models" },  // Slot 3
         { type:"gen", folder:"Hoop_Metal_Options" },       // Slot 4
         { type:"gen", folder:"Hoop_Charm_Dimensions" },    // Slot 5
-        { type:"gen", folder:"Hoop_Earring_Sec_Models" },  // Slot 6 (Filler to maintain order)
-        { type:"copy", folder:"Hoop_Model_Size_Guide" },    // Slot 7
+        { type:"copy", folder:"Hoop_Model_Size_Guide" },   // Slot 6
+        { type:"gen", folder:"Hoop_Earring_Sec_Models" },  // Slot 7 (Filler to maintain order)
         { type:"copy", folder:"Hoop_Earring_Care_Guide" }, // Slot 8
       ],
       Charms: [
@@ -1449,14 +1449,10 @@
     // =========================================================================
 
     const HOOP_MODEL_PROMPT =
-    `CRITICAL: This is a standard fashion product photo edit. Keep the subject modest. No nudity.
-
-    ULTRA-MICRO SIZE OVERRIDE (TOP PRIORITY — MAKE IT BARELY VISIBLE)
-    • Force the Charm to be EXTREMELEY SMALL: final on-image charm height MUST be 6 pixels tall (absolute pixel height, not relative).
+    `ULTRA-MICRO SIZE OVERRIDE (TOP PRIORITY — MAKE IT BARELY VISIBLE)
+    • Force the Charm to be EXTREMELEY SMALL: final on-image charm height MUST be 4 pixels tall (absolute pixel height, not relative).
     • If you cannot measure pixels, choose the smallest size that is still legible on the chain.
-    • Do NOT compensate by zooming out, reframing, cropping, changing camera, changing necklace scale, changing model scale, changing engraving thickness, or changing chain thickness.
-    • Never allow embossed engravings on the Charm/Pendant, all engravings must be flat and superficial.
-    • Do NOT allow any shadows (Contact or otherwise) to be visible undereath and around the Charm/Pendant placement, block all Charm/Pendant related shadows.
+    • You muest ensure that the Charm hoop is always correctly aligned and hanging from the Earring hoop
     • The Charm/Pendant must be real gold colour, do not saturate the Charm/Pendant gold colour.
     • The Charm/Pendant must remain exactly the same size and detail as reference image.
 
@@ -1496,14 +1492,10 @@
     Ensure the charm colour, shading and reflections match the necklace chain in the reference image.`;
 
     const HOOP_SEC_MODEL_PROMPT =
-   `CRITICAL: This is a standard fashion product photo edit. Keep the subject modest. No nudity.
-
-    ULTRA-MICRO SIZE OVERRIDE (TOP PRIORITY — MAKE IT BARELY VISIBLE)
-    • Force the Charm to be EXTREMELEY SMALL: final on-image charm height MUST be 6 pixels tall (absolute pixel height, not relative).
+   `ULTRA-MICRO SIZE OVERRIDE (TOP PRIORITY — MAKE IT BARELY VISIBLE)
+    • Force the Charm to be EXTREMELEY SMALL: final on-image charm height MUST be 4 pixels tall (absolute pixel height, not relative).
     • If you cannot measure pixels, choose the smallest size that is still legible on the chain.
-    • Do NOT compensate by zooming out, reframing, cropping, changing camera, changing necklace scale, changing model scale, changing engraving thickness, or changing chain thickness.
-    • Never allow embossed engravings on the Charm/Pendant, all engravings must be flat and superficial.
-    • Do NOT allow any shadows (Contact or otherwise) to be visible undereath and around the Charm/Pendant placement, block all Charm/Pendant related shadows.
+    • You muest ensure that the Charm hoop is always correctly aligned and hanging from the Earring hoop
     • The Charm/Pendant must be real gold colour, do not saturate the Charm/Pendant gold colour.
     • The Charm/Pendant must remain exactly the same size and detail as reference image.
 
