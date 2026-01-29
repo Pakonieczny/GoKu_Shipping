@@ -152,6 +152,7 @@
       "Completed_Charm",
     ];
 
+
     const CATEGORY_SUBFOLDERS = {
       Beady_Necklace: [
         "Primary_Models","Secondary_Models","Background_AI_Images","Product_Shots","Back_Engraving",
@@ -167,8 +168,7 @@
       ],
 
       Hoop_Earrings: [
-        "Hoop_Earring_Models","Hoop_Earring_Sec_Models","Hoop_Charm_Dimensions","Hoop_Metal_Options",
-        "Hoop_Size_Options","Hoop_Model_Size_Guide","Hoop_Earring_Care_Guide","Ready_To_List","Completed_&_Listed_Sets"
+        "Hoop_Earring_Models","Hoop_Earring_Sec_Models","Hoop_Charm_Dimensions","Hoop_Metal_Options","Hoop_Size_Options","Hoop_Model_Size_Guide","Hoop_Earring_Care_Guide","Ready_To_List","Completed_&_Listed_Sets"
       ],
 
       Charms: [
@@ -215,14 +215,14 @@
         { type:"copy", folder:"Care_Metal_Guide" },
       ],
       Hoop_Earrings: [
-        { type:"gen", folder:"Primary_Models" },
-        { type:"gen", folder:"Background_AI_Images" },
-        { type:"gen", folder:"Charm_Size_Guide" },
-        { type:"gen", folder:"Product_Shots" },
-        { type:"gen", folder:"Hoop_Size_Guide" },
-        { type:"gen", folder:"Secondary_Models" },
-        { type:"gen", folder:"Product_Shots" },
-        { type:"copy", folder:"Care_Metal_Guide" },
+        { type:"gen", folder:"Hoop_Earring_Models" },      // Slot 1
+        { type:"gen", folder:"Hoop_Size_Options" },        // Slot 2
+        { type:"gen", folder:"Hoop_Earring_Sec_Models" },  // Slot 3
+        { type:"gen", folder:"Hoop_Metal_Options" },       // Slot 4
+        { type:"gen", folder:"Hoop_Charm_Dimensions" },    // Slot 5
+        { type:"gen", folder:"Hoop_Earring_Sec_Models" },  // Slot 6 (Filler to maintain order)
+        { type:"copy", folder:"Hoop_Model_Size_Guide" },    // Slot 7
+        { type:"copy", folder:"Hoop_Earring_Care_Guide" }, // Slot 8
       ],
       Charms: [
         { type:"gen", folder:"Primary_Charm_Template" },
