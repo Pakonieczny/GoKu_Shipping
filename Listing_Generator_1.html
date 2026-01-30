@@ -96,7 +96,7 @@
       </div>
 
       <div class="row" style="margin-top:10px;">
-        <button class="btn" id="generateSet">Generate Set</button>
+        <button class="btn" id="generateSet">Generate Set (Randomized Refs)</button>
       </div>
 
       <label style="margin-top:12px;">Category Asset Manager (Drag & Drop)</label>
@@ -466,22 +466,25 @@
       if (prevBox) prevBox.innerHTML = `<div class="slotRefEmpty">Working…</div>`;
       setStatus(`Redo Slot ${slotIndex + 1}…`);
 
-      // Always re-pull latest inputs at the time of redo
+      // -----------------------------------------------------------------------
+      // RANDOMIZER CHANGE: Pick a RANDOM reference file for Redo
+      // -----------------------------------------------------------------------
       const srcFolder = slotRefFolder(category, spec.folder);
-      const srcLatest = await listLatestFile(srcFolder);
-      if (!srcLatest) throw new Error(`No files in ${srcFolder}/`);
+      const srcRandom = await listRandomFile(srcFolder); // CHANGED from listLatestFile
+      if (!srcRandom) throw new Error(`No files in ${srcFolder}/`);
 
       // ✅ Use logic to determine which charm pool to use
+      // New_Charms folders are NOT randomized (Constraint C)
       const isEarring = ["Stud_Earrings", "Hoop_Earrings"].includes(category);
       const charmFolderPath = isEarring ? newCharmsEarringsPath() : newCharmsPath();
-      const charmLatest = await listLatestFile(charmFolderPath);
+      const charmLatest = await listLatestFile(charmFolderPath); // Keep Latest for Charms
       if (!charmLatest) throw new Error(`No files in ${charmFolderPath}/`);
 
       if (spec.type === "copy") {
         const r = await postJson(GEMINI_FN, {
           kind: "copy_to_slot",
           activeCategory: category,
-          source_storage_path: srcLatest.fullPath,
+          source_storage_path: srcRandom.fullPath, // Use the random file
           output_base_path: outputBasePath,
           slotIndex,
         });
@@ -497,7 +500,7 @@
         await postJson(GEMINI_BG_FN, {
           kind: "edits",
           activeCategory: category,
-          input_storage_path: srcLatest.fullPath,
+          input_storage_path: srcRandom.fullPath, // Use the random file
           input_charm_storage_path: charmLatest.fullPath,
           output_base_path: outputBasePath,
           slotIndex,
@@ -512,7 +515,7 @@
         setImg(waited.url);
       }
 
-      if (metaEl) metaEl.textContent = `Source: ${srcLatest.fullPath}`;
+      if (metaEl) metaEl.textContent = `Source: ${srcRandom.fullPath}`;
       setStatus(`Ready (Set_${CURRENT_SET.setN ?? "?"})`);
       if (redoBtn) redoBtn.disabled = false;
     }
@@ -533,6 +536,26 @@
 
     function newCharmsEarringsPath() {
       return `${ROOT}/New_Charms_Earrings`;
+    }
+
+    // -------------------------------------------------------------------------
+    // NEW: Randomizer Function
+    // -------------------------------------------------------------------------
+    async function listRandomFile(fullFolderPath) {
+      await ensureStorageSignedIn();
+      const folderRef = ref(storage, fullFolderPath);
+      const res = await listAll(folderRef);
+      
+      if (!res.items?.length) return null;
+
+      // Randomly select one item
+      const randomIndex = Math.floor(Math.random() * res.items.length);
+      const randomItem = res.items[randomIndex];
+
+      // Get URL only for the chosen file
+      const url = await getDownloadURL(randomItem);
+      
+      return { fullPath: randomItem.fullPath, name: randomItem.name, url };
     }
 
     async function listLatestFile(fullFolderPath) {
@@ -766,6 +789,7 @@
         const isEarring = ["Stud_Earrings", "Hoop_Earrings"].includes(category);
         const charmFolderPath = isEarring ? newCharmsEarringsPath() : newCharmsPath();
         
+        // Constraint C: Charms are NOT randomized. Keep listLatestFile here.
         const charmLatest = await listLatestFile(charmFolderPath);
         if (!charmLatest) throw new Error(`No files in ${charmFolderPath}/`);
 
@@ -778,13 +802,15 @@
           model: "gemini-3-pro-image-preview",
         };
 
-        // 1) Resolve all slot sources up front (Storage-only; no Gemini calls here)
-        setStatus("Preparing slots…");
+        // 1) Resolve all slot sources up front
+        // Constraint A & B: Randomize slot reference images.
+        setStatus("Preparing slots (Randomizing)…");
         const slotResolved = await Promise.all(slotPlan.map(async (spec, i) => {
           const srcFolder = slotRefFolder(category, spec.folder);
-          const srcLatest = await listLatestFile(srcFolder);
-          if (!srcLatest) throw new Error(`No files in ${srcFolder}/`);
-          return { spec, i, slotNum: i + 1, srcLatest };
+          // CHANGED: Use listRandomFile instead of listLatestFile
+          const srcRandom = await listRandomFile(srcFolder);
+          if (!srcRandom) throw new Error(`No files in ${srcFolder}/`);
+          return { spec, i, slotNum: i + 1, srcLatest: srcRandom };
         }));
 
         // 2) Render all slot cards immediately
