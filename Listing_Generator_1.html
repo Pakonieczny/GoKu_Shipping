@@ -91,7 +91,8 @@
       <select id="activeCategory"></select>
       <div class="muted" style="margin-top:6px;">
         Inputs come from Firebase Storage folders under <code>listing-generator-1/{Category}/...</code>.
-        Generation is disabled for <code>New_Charms</code> + <code>Completed_Charm</code>.
+        <br>
+        <strong>Note:</strong> Stud/Hoop Earrings use <code>New_Charms_Earrings</code>. Others use <code>New_Charms</code>.
       </div>
 
       <div class="row" style="margin-top:10px;">
@@ -101,7 +102,7 @@
       <label style="margin-top:12px;">Category Asset Manager (Drag & Drop)</label>
       <div id="panels"></div>
 
-      <label style="margin-top:12px;">Shared Pool: New_Charms (always used in generation)</label>
+      <label style="margin-top:12px;">Shared Pool (Autoselected based on category)</label>
       <div id="panelNewCharms"></div>
     </div>
 
@@ -149,6 +150,7 @@
       "Charms",
       "Bracelets",
       "New_Charms",
+      "New_Charms_Earrings", // Added for clarity, though it's a shared folder
       "Completed_Charm",
     ];
 
@@ -181,6 +183,7 @@
         "Bracelet_Size_Guide","Charm_Size_Guide","Care_Metal_Guide","Ready_To_List","Completed_&_Listed_Sets"
       ],
       New_Charms: [],
+      New_Charms_Earrings: [],
       Completed_Charm: [],
     };
 
@@ -468,8 +471,11 @@
       const srcLatest = await listLatestFile(srcFolder);
       if (!srcLatest) throw new Error(`No files in ${srcFolder}/`);
 
-      const charmLatest = await listLatestFile(newCharmsPath());
-      if (!charmLatest) throw new Error("No files in listing-generator-1/New_Charms/");
+      // ✅ Use logic to determine which charm pool to use
+      const isEarring = ["Stud_Earrings", "Hoop_Earrings"].includes(category);
+      const charmFolderPath = isEarring ? newCharmsEarringsPath() : newCharmsPath();
+      const charmLatest = await listLatestFile(charmFolderPath);
+      if (!charmLatest) throw new Error(`No files in ${charmFolderPath}/`);
 
       if (spec.type === "copy") {
         const r = await postJson(GEMINI_FN, {
@@ -523,6 +529,10 @@
 
     function newCharmsPath() {
       return `${ROOT}/New_Charms`;
+    }
+
+    function newCharmsEarringsPath() {
+      return `${ROOT}/New_Charms_Earrings`;
     }
 
     async function listLatestFile(fullFolderPath) {
@@ -636,8 +646,13 @@
         panelsEl.appendChild(makeUploadPanel(folderPath(category, sub), sub));
       }
 
+      // ✅ DYNAMICALLY SHOW CORRECT CHARM POOL
       panelNewCharmsEl.innerHTML = "";
-      panelNewCharmsEl.appendChild(makeUploadPanel(newCharmsPath(), "New_Charms"));
+      if (["Stud_Earrings", "Hoop_Earrings"].includes(category)) {
+        panelNewCharmsEl.appendChild(makeUploadPanel(newCharmsEarringsPath(), "New_Charms_Earrings (Earrings Only)"));
+      } else {
+        panelNewCharmsEl.appendChild(makeUploadPanel(newCharmsPath(), "New_Charms (Necklaces/Other)"));
+      }
 
       // Slot visibility hint in UI (Stud_Earrings = 7 slots)
       const slotCount = (SLOT_MAP[category]?.length) || 0;
@@ -747,8 +762,12 @@
         // Save current set context for per-slot Redo
         CURRENT_SET = { category, outputBasePath, setN };
 
-        const charmLatest = await listLatestFile(newCharmsPath());
-        if (!charmLatest) throw new Error("No files in listing-generator-1/New_Charms/");
+        // ✅ LOGIC UPDATE: Pick charm source based on category
+        const isEarring = ["Stud_Earrings", "Hoop_Earrings"].includes(category);
+        const charmFolderPath = isEarring ? newCharmsEarringsPath() : newCharmsPath();
+        
+        const charmLatest = await listLatestFile(charmFolderPath);
+        if (!charmLatest) throw new Error(`No files in ${charmFolderPath}/`);
 
         const manifest = {
           category,
@@ -804,7 +823,7 @@
             type: "edits",
             slotIndex: i,
             input_storage_path: srcLatest.fullPath,
-            input_charm_storage_path: charmLatest.fullPath,
+            input_charm_storage_path: charmLatest.fullPath, // Pass the correct charm file
             prompt: buildSlotPrompt(category, spec.folder, slotNum),
             model: "gemini-3-pro-image-preview",
           };
@@ -884,7 +903,7 @@
     // ------------------------------------------------------------
     // Per-slot prompt pipelines (Slots 1–8)
     // ------------------------------------------------------------
-
+    // ... [Rest of the Prompt strings and PROMPT_MAPS remain unchanged] ...
     
     // =========================================================================
     // 0. BEADY_NECKLACE
@@ -1040,10 +1059,6 @@
     Focus on Charm Engraving details and ensure 100% accuracy to Charm image
     Do not output text.
     Ensure the charm colour, shading and reflections match the necklace chain in the reference image.`;
-
-
-
-
 
 
     // =========================================================================

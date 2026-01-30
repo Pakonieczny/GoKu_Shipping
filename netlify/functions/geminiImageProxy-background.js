@@ -91,6 +91,7 @@ async function storagePathToBuffer(storagePath) {
     "listing-generator-1/Charms/",
     "listing-generator-1/Bracelets/",
     "listing-generator-1/New_Charms/",
+    "listing-generator-1/New_Charms_Earrings/", // ✅ Added this new folder
     "listing-generator-1/Completed_Charm/",
     "listing-generator-1/generated/",
   ];
