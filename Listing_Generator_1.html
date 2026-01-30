@@ -243,9 +243,9 @@
         { type:"gen", folder:"Charm_Size_Guide" },
         { type:"gen", folder:"Back_Engraving" },
         { type:"gen", folder:"Secondary_Models" },
-        { type:"copy", folder:"Bracelet_Size_Guide" },
+        { type:"gen", folder:"Bracelet_Size_Guide" },
         { type:"gen", folder:"Product_Shots" },
-        { type:"copy", folder:"Care_Metal_Guide" },
+        { type:"gen", folder:"Care_Metal_Guide" },
       ],
     };
 
@@ -1251,99 +1251,63 @@
     // =========================================================================
     const BRACELET_MODEL_PROMPT =
     `"  TASK:
-        •Generate a super zoomed in high-end commercial jewelry photorealistic image based on the attached reference, use soft studio lighting and sharp focus on the necklace.
+        •Generate a similar photorealistic image based on the attached reference, use soft studio lighting and sharp focus on the necklace.
         • Critically: Keep necklace chain details, chainlink spacing, size, Yellow 14K gold colour , and fidelity just like in the reference image. 
         • Maintain zoom level and frame.
         • The necklace chain must be Yellow 14K gold colour 
         • DO NOT allow the chain to be dark, grey, black, the necklace must be bright and light. 
         • The chain must be bright realistic Yellow 14K gold colour and light reflections.
-        • Force the Charm to be very small: final on-image charm height MUST be 12 pixels tall (absolute pixel height, not relative).
-        • If you cannot measure pixels, choose the smallest size that is still legible on the chain.
-        • Do NOT compensate by zooming out, reframing, cropping, changing camera, changing necklace scale, changing model scale, changing engraving thickness, or changing chain thickness.
-        • Never allow embossed engravings on the Charm/Pendant, all engravings must be flat and superficial having no descernable depth.
-        • The Charm/Pendant must be gold in colour just like the necklace chain in the reference image, do not saturate the Charm/Pendant gold colour.
-        • The chain must remain exactly the same size and detail as in the reference image. Only the charm is scaled.
-        • Vary the wardrobe style."`;
+        • Never allow embossed engravings on the Charm/Pendant, all engravings must be flat and superficial having no descernable depth."`;
     
     const BRACELET_CREATIVE_PROMPT =
     `"  TASK:
-        •Generate a super zoomed in high-end commercial jewelry photorealistic image based on the attached reference, use soft studio lighting and sharp focus on the necklace.
+        •Generate a similar photorealistic image based on the attached reference, use soft studio lighting and sharp focus on the necklace.
         • Critically: Keep necklace chain details, chainlink spacing, size, Yellow 14K gold colour , and fidelity just like in the reference image. 
         • Maintain zoom level and frame.
         • The necklace chain must be Yellow 14K gold colour 
         • DO NOT allow the chain to be dark, grey, black, the necklace must be bright and light. 
         • The chain must be bright realistic Yellow 14K gold colour and light reflections.
-        • Force the Charm to be very small: final on-image charm height MUST be 12 pixels tall (absolute pixel height, not relative).
-        • If you cannot measure pixels, choose the smallest size that is still legible on the chain.
-        • Do NOT compensate by zooming out, reframing, cropping, changing camera, changing necklace scale, changing model scale, changing engraving thickness, or changing chain thickness.
-        • Never allow embossed engravings on the Charm/Pendant, all engravings must be flat and superficial having no descernable depth.
-        • The Charm/Pendant must be gold in colour just like the necklace chain in the reference image, do not saturate the Charm/Pendant gold colour.
-        • The chain must remain exactly the same size and detail as in the reference image. Only the charm is scaled.
-        • Vary the wardrobe style."`;
+        • Never allow embossed engravings on the Charm/Pendant, all engravings must be flat and superficial having no descernable depth."`;
     
     const BRACELET_SIZE_GUIDE_PROMPT =
     `"  TASK:
-        •Generate a super zoomed in high-end commercial jewelry photorealistic image based on the attached reference, use soft studio lighting and sharp focus on the necklace.
+        •Generate a similar photorealistic image based on the attached reference, use soft studio lighting and sharp focus on the necklace.
         • Critically: Keep necklace chain details, chainlink spacing, size, Yellow 14K gold colour , and fidelity just like in the reference image. 
         • Maintain zoom level and frame.
         • The necklace chain must be Yellow 14K gold colour 
         • DO NOT allow the chain to be dark, grey, black, the necklace must be bright and light. 
         • The chain must be bright realistic Yellow 14K gold colour and light reflections.
-        • Force the Charm to be very small: final on-image charm height MUST be 12 pixels tall (absolute pixel height, not relative).
-        • If you cannot measure pixels, choose the smallest size that is still legible on the chain.
-        • Do NOT compensate by zooming out, reframing, cropping, changing camera, changing necklace scale, changing model scale, changing engraving thickness, or changing chain thickness.
-        • Never allow embossed engravings on the Charm/Pendant, all engravings must be flat and superficial having no descernable depth.
-        • The Charm/Pendant must be gold in colour just like the necklace chain in the reference image, do not saturate the Charm/Pendant gold colour.
-        • The chain must remain exactly the same size and detail as in the reference image. Only the charm is scaled.
-        • Vary the wardrobe style."`;
+        • Never allow embossed engravings on the Charm/Pendant, all engravings must be flat and superficial having no descernable depth."`;
 
     const BRACELET_ENGRAVING_PROMPT =
-    `"  TASK:
-        •Generate a super zoomed in high-end commercial jewelry photorealistic image based on the attached reference, use soft studio lighting and sharp focus on the necklace.
+      `"  TASK:
+        •Generate a similar photorealistic image based on the attached reference, use soft studio lighting and sharp focus on the necklace.
         • Critically: Keep necklace chain details, chainlink spacing, size, Yellow 14K gold colour , and fidelity just like in the reference image. 
         • Maintain zoom level and frame.
         • The necklace chain must be Yellow 14K gold colour 
         • DO NOT allow the chain to be dark, grey, black, the necklace must be bright and light. 
         • The chain must be bright realistic Yellow 14K gold colour and light reflections.
-        • Force the Charm to be very small: final on-image charm height MUST be 12 pixels tall (absolute pixel height, not relative).
-        • If you cannot measure pixels, choose the smallest size that is still legible on the chain.
-        • Do NOT compensate by zooming out, reframing, cropping, changing camera, changing necklace scale, changing model scale, changing engraving thickness, or changing chain thickness.
-        • Never allow embossed engravings on the Charm/Pendant, all engravings must be flat and superficial having no descernable depth.
-        • The Charm/Pendant must be gold in colour just like the necklace chain in the reference image, do not saturate the Charm/Pendant gold colour.
-        • The chain must remain exactly the same size and detail as in the reference image. Only the charm is scaled.
-        • Vary the wardrobe style."`;
+        • Never allow embossed engravings on the Charm/Pendant, all engravings must be flat and superficial having no descernable depth."`;
     
     const BRACELET_SEC_MODEL_PROMPT =
     `"  TASK:
-        •Generate a super zoomed in high-end commercial jewelry photorealistic image based on the attached reference, use soft studio lighting and sharp focus on the necklace.
+        •Generate a similar photorealistic image based on the attached reference, use soft studio lighting and sharp focus on the necklace.
         • Critically: Keep necklace chain details, chainlink spacing, size, Yellow 14K gold colour , and fidelity just like in the reference image. 
         • Maintain zoom level and frame.
         • The necklace chain must be Yellow 14K gold colour 
         • DO NOT allow the chain to be dark, grey, black, the necklace must be bright and light. 
         • The chain must be bright realistic Yellow 14K gold colour and light reflections.
-        • Force the Charm to be very small: final on-image charm height MUST be 12 pixels tall (absolute pixel height, not relative).
-        • If you cannot measure pixels, choose the smallest size that is still legible on the chain.
-        • Do NOT compensate by zooming out, reframing, cropping, changing camera, changing necklace scale, changing model scale, changing engraving thickness, or changing chain thickness.
-        • Never allow embossed engravings on the Charm/Pendant, all engravings must be flat and superficial having no descernable depth.
-        • The Charm/Pendant must be gold in colour just like the necklace chain in the reference image, do not saturate the Charm/Pendant gold colour.
-        • The chain must remain exactly the same size and detail as in the reference image. Only the charm is scaled.
-        • Vary the wardrobe style."`;
+        • Never allow embossed engravings on the Charm/Pendant, all engravings must be flat and superficial having no descernable depth."`;
 
     const BRACELET_PRODUCT_PROMPT =
     `"  TASK:
-        •Generate a super zoomed in high-end commercial jewelry photorealistic image based on the attached reference, use soft studio lighting and sharp focus on the necklace.
+        •Generate a similar photorealistic image based on the attached reference, use soft studio lighting and sharp focus on the necklace.
         • Critically: Keep necklace chain details, chainlink spacing, size, Yellow 14K gold colour , and fidelity just like in the reference image. 
         • Maintain zoom level and frame.
         • The necklace chain must be Yellow 14K gold colour 
         • DO NOT allow the chain to be dark, grey, black, the necklace must be bright and light. 
         • The chain must be bright realistic Yellow 14K gold colour and light reflections.
-        • Force the Charm to be very small: final on-image charm height MUST be 12 pixels tall (absolute pixel height, not relative).
-        • If you cannot measure pixels, choose the smallest size that is still legible on the chain.
-        • Do NOT compensate by zooming out, reframing, cropping, changing camera, changing necklace scale, changing model scale, changing engraving thickness, or changing chain thickness.
-        • Never allow embossed engravings on the Charm/Pendant, all engravings must be flat and superficial having no descernable depth.
-        • The Charm/Pendant must be gold in colour just like the necklace chain in the reference image, do not saturate the Charm/Pendant gold colour.
-        • The chain must remain exactly the same size and detail as in the reference image. Only the charm is scaled.
-        • Vary the wardrobe style."`;
+        • Never allow embossed engravings on the Charm/Pendant, all engravings must be flat and superficial having no descernable depth."`;
 
 
 
