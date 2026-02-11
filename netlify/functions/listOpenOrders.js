@@ -4,13 +4,23 @@
  * when offset==0, but fetches ONE page when an explicit offset is sent.
  */
 
-const fetch = require("node-fetch");
+// Netlify Functions (Node 18+) provides global fetch.
+// Fallback to node-fetch only if you’re on an older runtime.
+let fetchFn = global.fetch;
+if (!fetchFn) {
+  try { fetchFn = require("node-fetch"); } catch (_) {}
+}
 
 exports.handler = async (event) => {
   try {
-    /* 1.  OAuth token from front-end header */
+   /* 1) Normalize headers */
+    const h = {};
+    for (const [k, v] of Object.entries(event.headers || {})) h[String(k).toLowerCase()] = v;
+
+    /* 2) OAuth token from front-end header */
     const accessToken =
-      event.headers["access-token"] || event.headers["Access-Token"];
+      h["access-token"] ||
+      (h["authorization"] ? String(h["authorization"]).replace(/^bearer\s+/i, "") : "");
     if (!accessToken) {
       return {
         statusCode: 400,
@@ -18,69 +28,62 @@ exports.handler = async (event) => {
       };
     }
 
-    /* 2.  Required env vars */
-    const SHOP_ID   = process.env.SHOP_ID;      // numeric ID of your Etsy shop
-    const CLIENT_ID = process.env.CLIENT_ID;    // Etsy app key string
-    if (!SHOP_ID || !CLIENT_ID) {
+    /* 3) Required env vars */
+    const SHOP_ID        = process.env.SHOP_ID;        // numeric shop id
+    const CLIENT_ID      = process.env.CLIENT_ID;      // Etsy app keystring
+    const CLIENT_SECRET  = process.env.CLIENT_SECRET;  // Etsy app shared secret
+    if (!SHOP_ID || !CLIENT_ID || !CLIENT_SECRET) {
       return {
         statusCode: 500,
-        body: JSON.stringify({ error: "Missing SHOP_ID or CLIENT_ID env var" })
+        body: JSON.stringify({
+          error: "Missing SHOP_ID / CLIENT_ID / CLIENT_SECRET env var",
+          hint:  "Set CLIENT_SECRET to your Etsy app shared secret (x-api-key must be keystring:shared_secret)."
+        })
       };
     }
 
-    /* 3.  Loop through pages using offset pagination */
-    const allReceipts = [];
+    if (!fetchFn) {
+      return { statusCode: 500, body: JSON.stringify({ error: "No fetch available in this runtime" }) };
+    }
 
-    // ===== first requested offset comes from browser (unchanged) =====
-    let offset        = Number(event.queryStringParameters.offset || 0);
-    const firstOffset = offset;                 // remember what the browser asked for
+    /* 4) ONE page per call (your browser already paginates with offset) */
+    const offset = Number(event.queryStringParameters?.offset || 0);
+    const qs = new URLSearchParams({
+      status       : "open",
+      was_paid     : "true",
+      was_shipped  : "false",
+      was_canceled : "false",
+      limit        : "100",
+      offset       : String(offset),
+      sort_on      : "created",
+      sort_order   : "desc"
+    });
 
-    do {
-      /* ───── QUERY PARAMS (PRE-FILTERED) ───── */
-      const qs = new URLSearchParams({
-        status       : "open",     // still pulling “open” orders
-        was_paid     : "true",     // only paid
-        was_shipped  : "false",    // not yet shipped
-        was_canceled : "false",    // ← NEW • exclude every cancelled receipt
-        limit        : "100",
-        offset       : offset.toString(),
-        sort_on      : "created",
-        sort_order   : "desc"
-      });
-
-      const url =
-        `https://api.etsy.com/v3/application/shops/${SHOP_ID}/receipts?${qs}`;
-
-      const resp = await fetch(url, {
-        method: "GET",
-        headers: {
-          Authorization : `Bearer ${accessToken}`,
-          "x-api-key"   : CLIENT_ID,
-          "Content-Type": "application/json"
-        }
-      });
-
-      if (!resp.ok) {
-        const txt = await resp.text();
-        return { statusCode: resp.status, body: txt };
+    const url = `https://api.etsy.com/v3/application/shops/${SHOP_ID}/receipts?${qs}`;
+    const resp = await fetchFn(url, {
+      method: "GET",
+      headers: {
+        Authorization : `Bearer ${accessToken}`,
+        // IMPORTANT: Etsy requires keystring:shared_secret here.
+        "x-api-key"   : `${CLIENT_ID}:${CLIENT_SECRET}`,
+        "Accept"      : "application/json"
       }
+    });
 
-      /* ── keep Etsy’s payload UNCHANGED so pagination.next_offset is preserved */
-      const data = await resp.json();
-      console.log("DEBUG_BODY", JSON.stringify(data).slice(0, 300));  // log first 300 chars
-      return { statusCode: 200, body: JSON.stringify(data) };
+    if (!resp.ok) {
+      const txt = await resp.text();
+      return {
+        statusCode: resp.status,
+        headers: { "Content-Type": "application/json", "Cache-Control": "no-store" },
+        body: JSON.stringify({ error: "etsy_error", status: resp.status, body: txt.slice(0, 2000) })
+      };
+    }
 
-      /* Everything below this point never runs because of the return above.
-         It has been removed for clarity. */
-    } while (offset !== null);
-
-    /* ── AFTER the loop finishes ── */
+    const data = await resp.json();
     return {
       statusCode: 200,
-      body: JSON.stringify({
-        results    : allReceipts,
-        pagination : { next_offset: null }   // no more pages
-      })
+      headers: { "Content-Type": "application/json", "Cache-Control": "no-store" },
+      body: JSON.stringify(data)
     };
 
   } catch (err) {

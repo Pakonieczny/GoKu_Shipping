@@ -4033,7 +4033,12 @@ async function fetchOpenOrdersSequential() {
 
   while (true) {
     const resp = await apiFetch(`/listOpenOrders?offset=${offset}`);
-    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    if (!resp.ok) {
+      let bodyText = "";
+      try { bodyText = await resp.text(); } catch (_) {}
+      console.error("listOpenOrders failed:", resp.status, bodyText.slice(0, 2000));
+      throw new Error(`HTTP ${resp.status} – ${bodyText.slice(0, 180)}`);
+    }
     const payload = await resp.json();
 
     const receipts = payload.results || [];
