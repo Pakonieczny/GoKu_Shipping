@@ -490,6 +490,8 @@
       const charmFolderPath = isEarring ? newCharmsEarringsPath() : newCharmsPath();
       const charmLatest = await listLatestFile(charmFolderPath); // Keep Latest for Charms
       if (!charmLatest) throw new Error(`No files in ${charmFolderPath}/`);
+      
+      let waitedResult = null; // Store result to update manifest later
 
       if (spec.type === "copy") {
         const r = await postJson(GEMINI_FN, {
@@ -502,11 +504,11 @@
 
         // Even if the server returns a URL, it may still be the old object if overwrite hasn't landed yet.
         // Wait until Storage metadata shows the Slot PNG was actually replaced.
-        const waited = await waitForSlotPngUrl(outputBasePath, slotIndex, {
+        waitedResult = await waitForSlotPngUrl(outputBasePath, slotIndex, {
           afterUpdatedMs: beforeUpdatedMs,
           afterGeneration: beforeGeneration,
         });
-        setImg(waited.url);
+        setImg(waitedResult.url);
       } else {
         await postJson(GEMINI_BG_FN, {
           kind: "edits",
@@ -519,11 +521,53 @@
           prompt: buildSlotPrompt(category, spec.folder, slotIndex + 1),
         });
 
-          const waited = await waitForSlotPngUrl(outputBasePath, slotIndex, {
+          waitedResult = await waitForSlotPngUrl(outputBasePath, slotIndex, {
           afterUpdatedMs: beforeUpdatedMs,
           afterGeneration: beforeGeneration,
         });
-        setImg(waited.url);
+        setImg(waitedResult.url);
+      }
+
+      // -----------------------------------------------------------------------
+      // MANIFEST UPDATE: Sync the change to the Ready_To_List manifest
+      // -----------------------------------------------------------------------
+      try {
+        const manifestRef = ref(storage, `${outputBasePath}/manifest.json`);
+        
+        // Fetch current manifest (with cache bust)
+        const url = await getDownloadURL(manifestRef);
+        const manifestJson = await fetch(`${url}${url.includes('?') ? '&' : '?'}t=${Date.now()}`).then(r => r.json());
+
+        // Find slot entry
+        const slotNum = slotIndex + 1;
+        const idx = manifestJson.slots.findIndex(s => s.slot === slotNum);
+        
+        const newEntry = {
+            slot: slotNum,
+            type: spec.type === "copy" ? "copy" : "gen",
+            source: srcRandom.fullPath,
+            newCharm: spec.type === "copy" ? null : charmLatest.fullPath,
+            output: waitedResult.storagePath,
+            updatedAt: new Date().toISOString()
+        };
+
+        if (idx > -1) {
+            manifestJson.slots[idx] = { ...manifestJson.slots[idx], ...newEntry };
+        } else {
+            manifestJson.slots.push(newEntry);
+            manifestJson.slots.sort((a,b) => a.slot - b.slot);
+        }
+
+        // Write back
+        await postJson("geminiImageProxy", {
+            kind: "write_manifest",
+            activeCategory: category,
+            output_base_path: outputBasePath,
+            manifest: manifestJson,
+        });
+        console.log("Manifest updated successfully for Redo.");
+      } catch (e) {
+        console.warn("Manifest update failed (non-fatal):", e);
       }
 
       if (metaEl) metaEl.textContent = `Source: ${srcRandom.fullPath}`;
