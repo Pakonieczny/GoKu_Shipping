@@ -938,6 +938,9 @@
     const SLOT2_DUPLICATE_PROMPT = 
     `ULTRA-MICRO SIZE OVERRIDE (TOP PRIORITY — MAKE IT BARELY VISIBLE)
     • Force the Charm to be very small: final on-image charm height MUST be 12 pixels tall (absolute pixel height, not relative).
+
+    • Critical: Never Cut out darkened areas of the Charm/Pendant. Darkened portions of the Charm/Pendant are typically hatched engravings.
+
     • If you cannot measure pixels, choose the smallest size that is still legible on the chain.
     • Do NOT compensate by zooming out, reframing, cropping, changing camera, changing necklace scale, changing model scale, changing engraving thickness, or changing chain thickness.
     • Never allow embossed engravings on the Charm/Pendant, all engravings must be flat and superficial having no descernable depth.
@@ -1473,7 +1476,7 @@
     // =========================================================================
 
     const HOOP_MODEL_PROMPT =
-    `TASK
+    `TASK (Force the Charm to be ULTRA TINY, EXTREMELY SMALL. The new Charm must be the same or smaller size then the Reference Image)
     • Duplicate the female model and hoop earrings in reference image, only replace the charm from Charm Image onto the existing hoop earring in reference image.
     • Force the Charm to be ULTRA TINY, EXTREMELY SMALL. The new Charm must be the same or smaller size then the Reference Image. 
     • Your primary objective is to maintain Charm Engraving fidelity and accuracy to the Charm Reference image.
@@ -1495,12 +1498,12 @@
         • Critically: When Generating the new image maintain Charm details, Charm Engravings, Colour, and fidelity just like in the Charm reference image. `;
 
     const HOOP_SEC_MODEL_PROMPT =
-    `" TASK:
+    `" TASK: (Force the Charm to be ULTRA TINY, EXTREMELY SMALL. The new Charm must be the same or smaller size then the Reference Image)
         • Generate a super zoomed in high-end commercial hoop earring photorealistic image based on the attached reference, use soft studio lighting and sharp focus on the ear, hoopand and hanging Charm.
         • Critically: Keep Huggie/Hoop details, size, position, Yellow 14K gold colour , and fidelity just like in the reference image. 
+        • Force the Charm to be ULTRA TINY, EXTREMELY SMALL. The new Charm must be the same or smaller size then the Reference Image. 
         • Maintain zoom level and frame.
         • The huggie/hoops must be Yellow 14K gold colour 
-        • Force the Charm to be ULTRA TINY, EXTREMELY SMALL. The new Charm must be the same or smaller size then the Reference Image. 
         • If you cannot measure pixels, choose the smallest size that is still legible on the chain.
         • Do NOT compensate by zooming out, reframing, cropping, changing camera, changing necklace scale, changing model scale, changing engraving thickness, or changing chain thickness.
         • Never allow embossed engravings on the Charm/Pendant, all engravings must be flat and superficial having no descernable depth.
