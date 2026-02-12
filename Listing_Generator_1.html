@@ -1336,133 +1336,50 @@
     // 3. // STUD EARRINGS PROMPTS
     // =========================================================================
     const STUD_MODEL_PROMPT =
-    `CRITICAL
-    • Force the Charm to be small: final on-image charm height MUST be 15 pixels tall (absolute pixel height, not relative).
-    • Do NOT compensate by zooming out, reframing, cropping, changing camera, changing necklace scale, changing model scale, changing engraving thickness, or changing chain thickness.
-    • When several charms are present on the model ear then only replace the charm on the lower Lobe of the ear.
-    • Never allow embossed engravings on the Charm/Pendant, all engravings must be flat and superficial having no descernable depth.
-    • The earring Charm must be gold colour, do not saturate the Earring Charm gold colour.
-    • The earrings must remain exactly the same size and detail as reference image.
-
-    HARD LOCKS (ABSOLUTE)
-    • Never render the full face or profile—ear-only framing.
-    • Do not zoom out or change camera perspective.
-    • Do not change lighting direction, intensity, or environment.
-    • Do not redraw, simplify, or reinterpret the charm geometry.
-    • Focus on 100% engraving accuracy relative to the Reference Charm Image.
-    • Output one photorealistic image only.
-    • Do not output text.
-
-      HARD LOCK: Never render female model above the neck and below the bust.
-      HARD LOCK: The Charm/Pendant material is a perfectly flat and very thin sheet of metal, always render the Charm/Pendant completely flat and very thin, DO NOT allow any rounded/radius on the cutout edges.
-      DO not zoom out when generating the image. Keep model and frame consistent with Reference Image
-      Focus on Charm Engraving details and ensure 100% accuracy to Charm Image`;
+    `TASK (Force the Charm to be ULTRA TINY, EXTREMELY SMALL, BARELY VISIBLE AS SMALL AS YOU CAN MAKE IT)
+        • Duplicate the female model and stud earrings in reference image, only replace the charm from Charm Image onto the existing stud earring in reference image.
+        • The new Charm must be the same or smaller size then the Reference Image. 
+        • Your primary objective is to maintain Charm Engraving fidelity and accuracy to the Charm Reference image.
+        • Do NOT embossed the engravings on the Charm/Pendant, all engravings must be flat having only superficial depth.
+        • HARD LOCK: The Charm/Pendant material is a perfectly flat and thin sheet of metal, always render the Charm/Pendant completely flat
+        • DO NOT allow any rounded/radius on the cutout edges.
+        • The Charm/Pendant must be real gold colour, do not saturate the Charm/Pendant gold colour.
+        • Match the subject identity from reference image; Enhance the models skin realism. `;
 
     const STUD_CREATIVE_PROMPT =
-    `(PRODUCT PHOTO — AI BACKGROUND, MICRO DETAIL PRESERVATION)
-    • Replace both stud earring charms with the Reference Earring Charm (left and right earrings).
-    • The charm must be rendered as a perfectly flat, ultra-thin metal sheet.
-    • Preserve the Earring studs, the earring studs must be clearly visible exactly like in th ereference image.
-    • Always render the earring leaning  on the earring studs.
-    • DO NOT add earring backings, never render earring backings.
-    • Do NOT compensate by zooming out, reframing, cropping, changing camera, changing necklace scale, changing model scale, changing engraving thickness, or changing chain thickness.
-    • Never allow embossed engravings on the Charm/Pendant, all engravings must be flat and superficial having no descernable depth.
-    • The earring Charm must be gold colour, do not saturate the Earring Charm gold colour.
-    • The earrings must remain exactly the same size and detail as reference image.
-
-    HARD LOCKS (ABSOLUTE)
-    Keep the size/scaling of the generated stud earrings the same as the refernce image. 
-    Do noy cutout any engravings, preserve ALL Charm and earrings engravings in great detail.
-    • Do not output text.`;
+    `  TASK:
+        • Duplicate the Reference product image exactly and update all visible charms from the Charm Reference image
+        • Critically: When Generating the new image maintain Charm details, Charm Engravings, Colour, and fidelity just like in the Charm reference image. 
+        • Do NOT embossed the engravings on the Charm/Pendant, all engravings must be flat having only superficial depth.`;
 
     const STUD_SIZE_GUIDE_PROMPT =
-    `CRITICAL: Slot 3 is a sizing-guide charm replacement task.
-
-    PROCESS ORDER (NON-NEGOTIABLE)
-    • Replace the stud earring charm only with the Reference Earring Charm.
-    • The charm must be rendered as a perfectly flat, ultra-thin metal sheet.
-    • Preserve the Earring stud, the earring stud must be clearly visible exactly like in th ereference image.
-    • Always render the earring leaning  on the earring stud.
-    • DO NOT add earring backings, never render earring backings.
-
-    INPUT IMAGES (ORDER MATTERS)
-    • Reference Image = sizing guide base image (ALL text, layout, pencil, line, background)
-    • Charm Image = charm macro (pixel-truth source for silhouette, cutouts, engraving, integrated hoop)
-
-    ABSOLUTE LOCKS (DO NOT CHANGE)
-    • Do NOT add any earring part, jump ring, or jewelry.
-    • Do NOT move, resize, restyle, blur, or alter any text.
-    • The text “~8mm x 8mm” MUST remain visible, crisp, and identical.
-    • The short black pointer line MUST remain visible and MUST point to the charm exactly.
-    • Do NOT crop, zoom, or reframe the image.
-
-    HARD FAIL CONDITIONS
-    - Any text change.
-    - Any charm size mismatch vs charm image.
-    - Any weak or disconnected hoop connection.`;
+    `  TASK:
+        • Duplicate the Reference product image exactly and update all visible charms from the Charm Reference image
+        • Critically: When Generating the new image maintain Charm details, Charm Engravings, Colour, and fidelity just like in the Charm reference image. 
+        • Do NOT embossed the engravings on the Charm/Pendant, all engravings must be flat having only superficial depth.`;
 
     const STUD_SEC_MODEL_PROMPT =
-    `CRITICAL
-    • Force the Charm to be small: final on-image charm height MUST be 15 pixels tall (absolute pixel height, not relative).
-    • Do NOT compensate by zooming out, reframing, cropping, changing camera, changing necklace scale, changing model scale, changing engraving thickness, or changing chain thickness.
-    • When several charms are present on the model ear then only replace the charm on the lower Lobe of the ear.
-    • Never allow embossed engravings on the Charm/Pendant, all engravings must be flat and superficial having no descernable depth.
-    • The earring Charm must be gold colour, do not saturate the Earring Charm gold colour.
-    • The earrings must remain exactly the same size and detail as reference image.
-
-    HARD LOCKS (ABSOLUTE)
-    • Never render the full face or profile—ear-only framing.
-    • Do not zoom out or change camera perspective.
-    • Do not change lighting direction, intensity, or environment.
-    • Do not redraw, simplify, or reinterpret the charm geometry.
-    • Focus on 100% engraving accuracy relative to the Reference Charm Image.
-    • Output one photorealistic image only.
-    • Do not output text.
-
-      HARD LOCK: Never render female model above the neck and below the bust.
-      HARD LOCK: The Charm/Pendant material is a perfectly flat and very thin sheet of metal, always render the Charm/Pendant completely flat and very thin, DO NOT allow any rounded/radius on the cutout edges.
-      DO not zoom out when generating the image. Keep model and frame consistent with Reference Image
-      Focus on Charm Engraving details and ensure 100% accuracy to Charm Image`;
+    `TASK (Force the Charm to be ULTRA TINY, EXTREMELY SMALL, BARELY VISIBLE AS SMALL AS YOU CAN MAKE IT)
+        • Duplicate the female model and stud earrings in reference image, only replace the charm from Charm Image onto the existing stud earring in reference image.
+        • The new Charm must be the same or smaller size then the Reference Image. 
+        • Your primary objective is to maintain Charm Engraving fidelity and accuracy to the Charm Reference image.
+        • Do NOT embossed the engravings on the Charm/Pendant, all engravings must be flat having only superficial depth.
+        • HARD LOCK: The Charm/Pendant material is a perfectly flat and thin sheet of metal, always render the Charm/Pendant completely flat
+        • DO NOT allow any rounded/radius on the cutout edges.
+        • The Charm/Pendant must be real gold colour, do not saturate the Charm/Pendant gold colour.
+        • Match the subject identity from reference image; Enhance the models skin realism. `;
 
     const STUD_PRODUCT_PROMPT =
-    `(PRODUCT PHOTO — WHITE BACKGROUND, MICRO DETAIL PRESERVATION)
-    • Replace both stud earring charms with the Reference Earring Charm (left and right earrings).
-    • The charm must be rendered as a perfectly flat, ultra-thin metal sheet.
-    • Preserve the Earring studs, the earring studs must be clearly visible exactly like in th ereference image.
-    • Always render the earring leaning  on the earring studs.
-    • DO NOT add earring backings, never render earring backings.
-    • Do NOT compensate by zooming out, reframing, cropping, changing camera, changing necklace scale, changing model scale, changing engraving thickness, or changing chain thickness.
-    • Never allow embossed engravings on the Charm/Pendant, all engravings must be flat and superficial having no descernable depth.
-    • The earring Charm must be gold colour, do not saturate the Earring Charm gold colour.
-    • The earrings must remain exactly the same size and detail as reference image.
-
-    BACKGROUND + COMPOSITION
-    • Background must remain pure white or near-white, clean and uncluttered.
-    • No texture, gradients, props, or environmental elements.
-    • Do not change framing, orientation, or spacing of the earrings relative to the reference image.
-
-    HARD LOCKS (ABSOLUTE)
-    • Do not output text.`;
+    `  TASK:
+        • Duplicate the Reference product image exactly and update all visible charms from the Charm Reference image
+        • Critically: When Generating the new image maintain Charm details, Charm Engravings, Colour, and fidelity just like in the Charm reference image. 
+        • Do NOT embossed the engravings on the Charm/Pendant, all engravings must be flat having only superficial depth.`;
 
     const STUD_PRODUCT_2_PROMPT =
-    `(PRODUCT PHOTO — WHITE BACKGROUND, MICRO DETAIL PRESERVATION)
-    • You MUST ALWAYS keep/preserve all 3 earring colours, Gold, Silver Rose Gold when generating the new image
-    • Replace the 3 stud earrings with the Reference Earring Charm, preserve all 3 earring colours, Gold, Silver Rose Gold in the generated image.
-    • The charm must be rendered as a perfectly flat, ultra-thin metal sheet. 
-    • Always render the 3 earrings leaning on the earring studs.
-    • DO NOT add earring backings, never render earring backings.
-    • Do NOT compensate by zooming out, reframing, cropping, changing camera, changing necklace scale, changing model scale, changing engraving thickness, or changing chain thickness.
-    • Never allow embossed engravings on the Charm/Pendant, all engravings must be flat and superficial having no discernible depth.
-    • The earring Charm must be gold colour, do not saturate the Earring Charm gold colour.
-    • The earrings must remain exactly the same size and detail as reference image.
-
-    BACKGROUND + COMPOSITION
-    • Background must remain pure white or near-white, clean and uncluttered.
-    • No texture, gradients, props, or environmental elements.
-    • Do not change framing, orientation, or spacing of the earrings relative to the reference image.
-
-    HARD LOCKS (ABSOLUTE)
-    • Do not output text.`;
+    `  TASK:
+        • Duplicate the Reference product image exactly and update all visible charms from the Charm Reference image
+        • Critically: When Generating the new image maintain Charm details, Charm Engravings, Colour, and fidelity just like in the Charm reference image. 
+        • Do NOT embossed the engravings on the Charm/Pendant, all engravings must be flat having only superficial depth.`;
 
 
 
@@ -1494,11 +1411,11 @@
     • Do NOT embossed the engravings on the Charm/Pendant, all engravings must be flat having only superficial depth.
       HARD LOCK: The Charm/Pendant material is a perfectly flat and very thin sheet of metal, always render the Charm/Pendant completely flat and very thin, DO NOT allow any rounded/radius on the cutout edges.
     • The Charm/Pendant must be real gold colour, do not saturate the Charm/Pendant gold colour.
-    • You muest ensure that the Charm hoop is always correctly aligned and hanging from the Earring hoop
+    • You must ensure that the Charm hoop is always correctly aligned and hanging from the Earring hoop
     • Match the subject identity from reference image; Enhance the models skin realism. 
     • Do NOT allow skin colour to be grey around the Hoop/Huggie. The skin tone/colour near the Hoop/Huggie must be uniform with the rest of the ear.
     • Do NOT make engravings, brown, or black, ensure all engravings are a shade of copper in colour`;
-    
+
     const HOOP_METAL_OPTIONS_PROMPT =
     `  TASK:
         • Duplicate the Reference product image exactly and update all 4 charm (2 Yellow Gold & 2 Silver) using the Charm Reference image
@@ -1519,7 +1436,7 @@
         • Do NOT embossed the engravings on the Charm/Pendant, all engravings must be flat having only superficial depth.
           HARD LOCK: The Charm/Pendant material is a perfectly flat and very thin sheet of metal, always render the Charm/Pendant completely flat and very thin, DO NOT allow any rounded/radius on the cutout edges.
         • The Charm/Pendant must be real gold colour, do not saturate the Charm/Pendant gold colour.
-        • You muest ensure that the Charm hoop is always correctly aligned and hanging from the Earring hoop
+        • You must ensure that the Charm hoop is always correctly aligned and hanging from the Earring hoop
         • Match the subject identity from reference image; Enhance the models skin realism. 
         • Do NOT allow skin colour to be grey around the Hoop/Huggie. The skin tone/colour near the Hoop/Huggie must be uniform with the rest of the ear.`;
 
