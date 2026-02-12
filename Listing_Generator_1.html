@@ -944,7 +944,7 @@
            kind: "run_set_async",
            activeCategory: category,
            output_base_path: outputBasePath,
-           delayMs: 4000, // 4.0s spacing between Gemini slot submissions
+           delayMs: 8000, // 4.0s spacing between Gemini slot submissions
            tasks,
         }).then(res => {
             console.log("Background run triggered successfully", res);
