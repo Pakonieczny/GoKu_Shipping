@@ -938,20 +938,21 @@
         }));
 
         // B. Fire the Trigger (Send request to server)
-        // Do NOT await this here. We let it run in the background.
-        // We catch errors so they don't block the polling (if the server is working but the response is lost).
-        postJson(GEMINI_BG_FN, {
-           kind: "run_set_async",
-           activeCategory: category,
-           output_base_path: outputBasePath,
-           delayMs: 20000, // 20.0s spacing between Gemini slot submissions
-           tasks,
-        }).then(res => {
-            console.log("Background run triggered successfully", res);
-        }).catch(err => {
-            console.error("Background run trigger warning:", err);
-            setStatus(`Trigger sent (with warning: ${err.message})`);
-        });
+        // ✅ CRITICAL FIX: We MUST await this. 
+        // If the request fails, we throw immediately instead of waiting 10 minutes for a timeout.
+        try {
+            await postJson(GEMINI_BG_FN, {
+              kind: "run_set_async",
+              activeCategory: category,
+              output_base_path: outputBasePath,
+              delayMs: 20000, // 20.0s spacing between Gemini slot submissions
+              tasks,
+            });
+            console.log("Background run triggered successfully");
+        } catch (err) {
+            // Throwing here stops execution, preventing the polling timeout error.
+            throw new Error(`Failed to start generation on server: ${err.message}`);
+        }
 
         setStatus("Generating… (Monitoring Storage)");
 
