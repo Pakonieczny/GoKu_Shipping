@@ -83,9 +83,13 @@
   <div class="wrap">
     <div class="card">
       <h1>Listing-Generator-1</h1>
-      
-        <div class="muted">Pick a category, upload assets into the right folders, then click Generate Set.</div>
 
+      <div class="row" style="margin-bottom: 14px; background: #0e1220; padding: 4px; border-radius: 12px; border: 1px solid var(--line);">
+        <button class="btn" id="toggleGenerate" style="flex:1; background: var(--line); border:none; color: var(--text);">Generate</button>
+        <button class="btn" id="toggleReview" style="flex:1; background: transparent; border:none; color: var(--muted);">Review</button>
+      </div>
+      
+      <div class="muted">Pick a category, upload assets into the right folders, then click Generate Set.</div>
 
       <label>Category (Storage source of truth)</label>
       <select id="activeCategory"></select>
@@ -95,15 +99,25 @@
         <strong>Note:</strong> Stud/Hoop Earrings use <code>New_Charms_Earrings</code>. Others use <code>New_Charms</code>.
       </div>
 
-      <div class="row" style="margin-top:10px;">
-        <button class="btn" id="generateSet">Generate Set (Randomized Refs)</button>
+      <div id="generateSection">
+        <div class="row" style="margin-top:10px;">
+          <button class="btn" id="generateSet">Generate Set (Randomized Refs)</button>
+        </div>
+
+        <label style="margin-top:12px;">Category Asset Manager (Drag & Drop)</label>
+        <div id="panels"></div>
+
+        <label style="margin-top:12px;">Shared Pool (Autoselected based on category)</label>
+        <div id="panelNewCharms"></div>
       </div>
 
-      <label style="margin-top:12px;">Category Asset Manager (Drag & Drop)</label>
-      <div id="panels"></div>
-
-      <label style="margin-top:12px;">Shared Pool (Autoselected based on category)</label>
-      <div id="panelNewCharms"></div>
+      <div id="reviewSection" style="display: none;">
+        <label style="margin-top:12px;">Select Set to Review</label>
+        <div class="row">
+          <select id="reviewSetSelect"></select>
+          <button class="btn" id="loadReviewSet">Load Set Images</button>
+        </div>
+      </div>
     </div>
 
     <div class="card">
@@ -412,6 +426,16 @@
     const generateSetBtn = document.getElementById("generateSet");
     const gridEl = document.getElementById("grid");
     const statusEl = document.getElementById("status");
+
+    // --- Mode Variables ---
+    const toggleGenerateBtn = document.getElementById("toggleGenerate");
+    const toggleReviewBtn = document.getElementById("toggleReview");
+    const generateSection = document.getElementById("generateSection");
+    const reviewSection = document.getElementById("reviewSection");
+    const reviewSetSelect = document.getElementById("reviewSetSelect");
+    const loadReviewSetBtn = document.getElementById("loadReviewSet");
+    let appMode = "generate"; // 'generate' or 'review'
+
     // Category-only UI (no legacy slot editor / per-slot uploads)
 
 
@@ -422,6 +446,8 @@
       generateSetBtn.disabled = !!isBusy;
       generateSetBtn.style.opacity = isBusy ? "0.6" : "1";
       generateSetBtn.style.cursor = isBusy ? "not-allowed" : "pointer";
+      loadReviewSetBtn.disabled = !!isBusy;
+      loadReviewSetBtn.style.opacity = isBusy ? "0.6" : "1";
     }
 
    // Current generated set context (used by per-slot Redo)
@@ -745,7 +771,137 @@
     activeCategoryEl.innerHTML = ALL_CATEGORIES.map(c => `<option value="${c}">${c}</option>`).join("");
     activeCategoryEl.value = "Beady_Necklace";
     renderCategoryUI(activeCategoryEl.value);
-    activeCategoryEl.addEventListener("change", () => renderCategoryUI(activeCategoryEl.value));
+
+    // Main Listeners and View state changes
+    toggleGenerateBtn.addEventListener("click", () => {
+      appMode = "generate";
+      toggleGenerateBtn.style.background = "var(--line)";
+      toggleGenerateBtn.style.color = "var(--text)";
+      toggleReviewBtn.style.background = "transparent";
+      toggleReviewBtn.style.color = "var(--muted)";
+      generateSection.style.display = "block";
+      reviewSection.style.display = "none";
+      renderCategoryUI(activeCategoryEl.value);
+      gridEl.innerHTML = "";
+      setStatus("Ready");
+    });
+
+    toggleReviewBtn.addEventListener("click", () => {
+      appMode = "review";
+      toggleReviewBtn.style.background = "var(--line)";
+      toggleReviewBtn.style.color = "var(--text)";
+      toggleGenerateBtn.style.background = "transparent";
+      toggleGenerateBtn.style.color = "var(--muted)";
+      generateSection.style.display = "none";
+      reviewSection.style.display = "block";
+      gridEl.innerHTML = "";
+      loadReviewSets();
+    });
+
+    activeCategoryEl.addEventListener("change", () => {
+      if (appMode === "generate") {
+        renderCategoryUI(activeCategoryEl.value);
+      } else {
+        loadReviewSets();
+        gridEl.innerHTML = "";
+      }
+    });
+
+    // --- Loading Sets functionality ---
+    async function loadReviewSets() {
+      const category = activeCategoryEl.value;
+      setStatus("Loading sets...");
+      reviewSetSelect.innerHTML = `<option>Loading...</option>`;
+      try {
+        await ensureStorageSignedIn();
+        const readyToListRef = ref(storage, `${ROOT}/${category}/Ready_To_List`);
+        const res = await listAll(readyToListRef);
+        const sets = res.prefixes.map(p => p.name).filter(n => n.startsWith('Set_'));
+        sets.sort((a, b) => {
+          const numA = parseInt(a.replace('Set_', '')) || 0;
+          const numB = parseInt(b.replace('Set_', '')) || 0;
+          return numB - numA;
+        });
+
+        if (sets.length > 0) {
+          reviewSetSelect.innerHTML = sets.map(s => `<option value="${s}">${s}</option>`).join("");
+          setStatus(`Found ${sets.length} sets. Select one and click Load.`);
+        } else {
+          reviewSetSelect.innerHTML = `<option value="">No sets found</option>`;
+          setStatus("No sets found.");
+        }
+      } catch (e) {
+        console.error("Error loading sets:", e);
+        setStatus("Error loading sets");
+        reviewSetSelect.innerHTML = `<option value="">Error loading</option>`;
+      }
+    }
+
+    loadReviewSetBtn.addEventListener("click", async () => {
+      const category = activeCategoryEl.value;
+      const setName = reviewSetSelect.value;
+      if (!setName) return;
+
+      setBusy(true);
+      setStatus(`Loading ${setName}...`);
+      gridEl.innerHTML = "";
+
+      try {
+        await ensureStorageSignedIn();
+        const setPath = `${ROOT}/${category}/Ready_To_List/${setName}`;
+        const setRef = ref(storage, setPath);
+        const res = await listAll(setRef);
+
+        const slotPlan = SLOT_MAP[category] || [];
+        
+        slotPlan.forEach((spec, i) => {
+          const slotNum = i + 1;
+          const slotCard = document.createElement("div");
+          slotCard.className = "slot";
+          slotCard.dataset.slotIndex = i;
+          slotCard.innerHTML = `
+            <div class="slotTop">
+              <b>Slot ${slotNum}</b>
+              <div class="muted" style="font-size:12px;">Review: ${spec.folder}</div>
+            </div>
+            <div class="slotPrev" id="slotPrev_${i}"><div class="slotRefEmpty">Loading…</div></div>
+          `;
+          gridEl.appendChild(slotCard);
+        });
+
+        const slotFiles = res.items.filter(item => item.name.startsWith("Slot_") && item.name.endsWith(".png"));
+        
+        await Promise.all(slotFiles.map(async (fileRef) => {
+          const match = fileRef.name.match(/Slot_(\d+)\.png/);
+          if (match) {
+            const slotIndex = parseInt(match[1]) - 1;
+            try {
+              const url = await getDownloadURL(fileRef);
+              const prevBox = document.getElementById(`slotPrev_${slotIndex}`);
+              if (prevBox) {
+                prevBox.innerHTML = `<img src="${cacheBust(url)}" />`;
+              }
+            } catch (err) {
+              console.warn("Failed to load url for", fileRef.name, err);
+            }
+          }
+        }));
+
+        slotPlan.forEach((spec, i) => {
+          const prevBox = document.getElementById(`slotPrev_${i}`);
+          if (prevBox && prevBox.innerHTML.includes("Loading…")) {
+            prevBox.innerHTML = `<div class="slotRefEmpty">Not Found</div>`;
+          }
+        });
+
+        setStatus(`Viewing ${category} / ${setName}`);
+      } catch (e) {
+        console.error(e);
+        setStatus(`Error loading set: ${e.message}`);
+      } finally {
+        setBusy(false);
+      }
+    });
     
     async function postJson(path, body) {
       const res = await fetch(`${functionsBaseUrl}/${path}`, {
