@@ -852,6 +852,20 @@
         const setRef = ref(storage, setPath);
         const res = await listAll(setRef);
 
+        // INITIALIZE CURRENT_SET SO REDOSLOT KNOWS WHERE TO SAVE
+        let parsedSetN = parseInt(setName.replace('Set_', '')) || 0;
+        CURRENT_SET = { category, outputBasePath: setPath, setN: parsedSetN };
+
+        // Attempt to load manifest to display Source info
+        let manifestData = null;
+        try {
+            const manifestRef = ref(storage, `${setPath}/manifest.json`);
+            const mUrl = await getDownloadURL(manifestRef);
+            manifestData = await fetch(`${mUrl}${mUrl.includes('?') ? '&' : '?'}t=${Date.now()}`).then(r => r.json());
+        } catch(err) {
+            console.warn("Could not load manifest for review set, defaulting to unknown source", err);
+        }
+
         const slotPlan = SLOT_MAP[category] || [];
         
         slotPlan.forEach((spec, i) => {
@@ -859,12 +873,21 @@
           const slotCard = document.createElement("div");
           slotCard.className = "slot";
           slotCard.dataset.slotIndex = i;
+
+          let sourceStr = "Unknown";
+          if (manifestData && manifestData.slots) {
+              const slotMeta = manifestData.slots.find(s => s.slot === slotNum);
+              if (slotMeta && slotMeta.source) sourceStr = slotMeta.source;
+          }
+
           slotCard.innerHTML = `
             <div class="slotTop">
               <b>Slot ${slotNum}</b>
               <div class="muted" style="font-size:12px;">Review: ${spec.folder}</div>
             </div>
             <div class="slotPrev" id="slotPrev_${i}"><div class="slotRefEmpty">Loading…</div></div>
+            <div class="small" id="slotMeta_${i}">Source: ${sourceStr}</div>
+            <button class="btn btnSmall redoBtn" id="redo_${i}" style="margin-top:8px; width:100%;" onclick="redoSlot(${i})">Redo Slot ${slotNum}</button>
           `;
           gridEl.appendChild(slotCard);
         });
