@@ -73,6 +73,12 @@
     }
     .slotPrev{ width:100%; height:190px; border-radius:12px; border:1px solid var(--line); background:#0b0d12; overflow:hidden; }
     .slotPrev img{ width:100%; height:100%; object-fit:contain; transform-origin:center; }
+    
+    /* NEW: Success border style */
+    .slotPrev.success-border {
+      border: 3px solid lightgreen !important;
+    }
+
     .bar{ height:8px; border-radius:999px; background:#0b0d12; border:1px solid var(--line); overflow:hidden; margin-top:10px; }
     .bar > div{ height:100%; width:0%; background:#2b6cff; transition:width 120ms linear; }
     .small{ font-size:11px; color:var(--muted); margin-top:6px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
@@ -452,6 +458,10 @@
 
    // Current generated set context (used by per-slot Redo)
     let CURRENT_SET = null; // { category, outputBasePath, setN }
+    
+    // NEW: Global tracker for Redo operations across all sets
+    // Key: "outputBasePath::slotIndex", Value: { status: 'running'|'completed', url: string }
+    const REDO_STATE = {}; 
 
     function setAllRedoEnabled(enabled){
       gridEl.querySelectorAll("button.redoBtn").forEach(b => { b.disabled = !enabled; });
@@ -464,19 +474,27 @@
     }
 
     async function redoSlot(slotIndex){
+      // 1. Capture context *locally* to allow concurrent switching
       if (!CURRENT_SET?.outputBasePath || !CURRENT_SET?.category) {
         throw new Error("No active set to redo yet. Generate a set first.");
       }
 
-      const category = CURRENT_SET.category;
-      const outputBasePath = CURRENT_SET.outputBasePath;
-      const slotPlan = SLOT_MAP[category];
+      const ctxSetPath = CURRENT_SET.outputBasePath;
+      const ctxCategory = CURRENT_SET.category;
+      const ctxSetN = CURRENT_SET.setN;
+      
+      const slotPlan = SLOT_MAP[ctxCategory];
       const spec = slotPlan?.[slotIndex];
-      if (!spec) throw new Error(`Invalid slotIndex ${slotIndex} for ${category}`);
+      if (!spec) throw new Error(`Invalid slotIndex ${slotIndex} for ${ctxCategory}`);
+      
+      const redoKey = `${ctxSetPath}::${slotIndex}`;
 
-     // Capture the CURRENT slot PNG metadata so we can wait for a real overwrite.
+      // 2. Initial UI update (if still on the same screen)
+      // Always Update STATE first
+      REDO_STATE[redoKey] = { status: 'running' };
+
       const slotFileName = `Slot_${slotIndex + 1}.png`;
-      const slotStoragePath = `${outputBasePath}/${slotFileName}`;
+      const slotStoragePath = `${ctxSetPath}/${slotFileName}`;
       let beforeUpdatedMs = 0;
       let beforeGeneration = 0;
       try {
@@ -488,77 +506,105 @@
         // Slot may not exist yet (first run) — that's fine.
       }
 
-      const slotCard = gridEl.querySelector(`.slot[data-slot-index="${slotIndex}"]`);
-      const prevBox  = slotCard?.querySelector(`#slotPrev_${slotIndex}`);
-      const metaEl   = slotCard?.querySelector(`#slotMeta_${slotIndex}`);
-      const redoBtn  = slotCard?.querySelector(`#redo_${slotIndex}`);
-
-      const setImg = (url) => {
-        if (!prevBox) return;
-        prevBox.innerHTML = `<img src="${cacheBust(url)}" />`;
-      };
-
-      // UI lock for this slot only
-      if (redoBtn) redoBtn.disabled = true;
-      if (prevBox) prevBox.innerHTML = `<div class="slotRefEmpty">Working…</div>`;
-      setStatus(`Redo Slot ${slotIndex + 1}…`);
+      // Check if we are still viewing the set we initiated this from
+      const isViewing = (CURRENT_SET?.outputBasePath === ctxSetPath);
+      
+      if (isViewing) {
+          const slotCard = gridEl.querySelector(`.slot[data-slot-index="${slotIndex}"]`);
+          const prevBox  = slotCard?.querySelector(`#slotPrev_${slotIndex}`);
+          const redoBtn  = slotCard?.querySelector(`#redo_${slotIndex}`);
+          
+          if (redoBtn) redoBtn.disabled = true;
+          if (prevBox) {
+              prevBox.innerHTML = `<div class="slotRefEmpty">Working…</div>`;
+              prevBox.classList.remove("success-border"); // RESET BORDER
+          }
+          setStatus(`Redo Slot ${slotIndex + 1}…`);
+      }
 
       // -----------------------------------------------------------------------
       // RANDOMIZER CHANGE: Pick a RANDOM reference file for Redo
       // -----------------------------------------------------------------------
-      const srcFolder = slotRefFolder(category, spec.folder);
+      const srcFolder = slotRefFolder(ctxCategory, spec.folder);
       const srcRandom = await listRandomFile(srcFolder); // CHANGED from listLatestFile
       if (!srcRandom) throw new Error(`No files in ${srcFolder}/`);
 
       // ✅ Use logic to determine which charm pool to use
-      // New_Charms folders are NOT randomized (Constraint C)
-      const isEarring = ["Stud_Earrings", "Hoop_Earrings"].includes(category);
+      const isEarring = ["Stud_Earrings", "Hoop_Earrings"].includes(ctxCategory);
       const charmFolderPath = isEarring ? newCharmsEarringsPath() : newCharmsPath();
       const charmLatest = await listLatestFile(charmFolderPath); // Keep Latest for Charms
       if (!charmLatest) throw new Error(`No files in ${charmFolderPath}/`);
       
-      let waitedResult = null; // Store result to update manifest later
+      let waitedResult = null; 
 
-      if (spec.type === "copy") {
-        const r = await postJson(GEMINI_FN, {
-          kind: "copy_to_slot",
-          activeCategory: category,
-          source_storage_path: srcRandom.fullPath, // Use the random file
-          output_base_path: outputBasePath,
-          slotIndex,
-        });
+      try {
+          if (spec.type === "copy") {
+            const r = await postJson(GEMINI_FN, {
+              kind: "copy_to_slot",
+              activeCategory: ctxCategory,
+              source_storage_path: srcRandom.fullPath, 
+              output_base_path: ctxSetPath,
+              slotIndex,
+            });
 
-        // Even if the server returns a URL, it may still be the old object if overwrite hasn't landed yet.
-        // Wait until Storage metadata shows the Slot PNG was actually replaced.
-        waitedResult = await waitForSlotPngUrl(outputBasePath, slotIndex, {
-          afterUpdatedMs: beforeUpdatedMs,
-          afterGeneration: beforeGeneration,
-        });
-        setImg(waitedResult.url);
-      } else {
-        await postJson(GEMINI_BG_FN, {
-          kind: "edits",
-          activeCategory: category,
-          input_storage_path: srcRandom.fullPath, // Use the random file
-          input_charm_storage_path: charmLatest.fullPath,
-          output_base_path: outputBasePath,
-          slotIndex,
-          model: "gemini-3-pro-image-preview",
-          prompt: buildSlotPrompt(category, spec.folder, slotIndex + 1),
-        });
+            waitedResult = await waitForSlotPngUrl(ctxSetPath, slotIndex, {
+              afterUpdatedMs: beforeUpdatedMs,
+              afterGeneration: beforeGeneration,
+            });
+          } else {
+            await postJson(GEMINI_BG_FN, {
+              kind: "edits",
+              activeCategory: ctxCategory,
+              input_storage_path: srcRandom.fullPath, 
+              input_charm_storage_path: charmLatest.fullPath,
+              output_base_path: ctxSetPath,
+              slotIndex,
+              model: "gemini-3-pro-image-preview",
+              prompt: buildSlotPrompt(ctxCategory, spec.folder, slotIndex + 1),
+            });
 
-          waitedResult = await waitForSlotPngUrl(outputBasePath, slotIndex, {
-          afterUpdatedMs: beforeUpdatedMs,
-          afterGeneration: beforeGeneration,
-        });
-        setImg(waitedResult.url);
+              waitedResult = await waitForSlotPngUrl(ctxSetPath, slotIndex, {
+              afterUpdatedMs: beforeUpdatedMs,
+              afterGeneration: beforeGeneration,
+            });
+          }
+          
+          // SUCCESSS Handling
+          const finalUrl = cacheBust(waitedResult.url);
+          REDO_STATE[redoKey] = { status: 'completed', url: finalUrl };
+
+          // If still viewing, update DOM
+          if (CURRENT_SET?.outputBasePath === ctxSetPath) {
+              const slotCard = gridEl.querySelector(`.slot[data-slot-index="${slotIndex}"]`);
+              const prevBox  = slotCard?.querySelector(`#slotPrev_${slotIndex}`);
+              const metaEl   = slotCard?.querySelector(`#slotMeta_${slotIndex}`);
+              const redoBtn  = slotCard?.querySelector(`#redo_${slotIndex}`);
+              
+              if (prevBox) {
+                  prevBox.innerHTML = `<img src="${finalUrl}" />`;
+                  prevBox.classList.add("success-border"); // APPLY GREEN BORDER
+              }
+              if (metaEl) metaEl.textContent = `Source: ${srcRandom.fullPath}`;
+              if (redoBtn) redoBtn.disabled = false;
+              setStatus(`Ready (Set_${ctxSetN})`);
+          }
+
+      } catch(err) {
+          console.error("Redo failed", err);
+          // Simple error state (optional)
+          delete REDO_STATE[redoKey];
+          if (CURRENT_SET?.outputBasePath === ctxSetPath) {
+             const prevBox = gridEl.querySelector(`.slot[data-slot-index="${slotIndex}"] #slotPrev_${slotIndex}`);
+             if (prevBox) prevBox.innerHTML = `<div class="slotRefEmpty">Error</div>`;
+             setStatus("Redo failed: " + err.message);
+          }
       }
 
       // -----------------------------------------------------------------------
       // MANIFEST UPDATE: Sync the change to the Ready_To_List manifest
       // -----------------------------------------------------------------------
       try {
-        const manifestRef = ref(storage, `${outputBasePath}/manifest.json`);
+        const manifestRef = ref(storage, `${ctxSetPath}/manifest.json`);
         
         // Fetch current manifest (with cache bust)
         const url = await getDownloadURL(manifestRef);
@@ -573,7 +619,7 @@
             type: spec.type === "copy" ? "copy" : "gen",
             source: srcRandom.fullPath,
             newCharm: spec.type === "copy" ? null : charmLatest.fullPath,
-            output: waitedResult.storagePath,
+            output: waitedResult?.storagePath || "",
             updatedAt: new Date().toISOString()
         };
 
@@ -587,18 +633,14 @@
         // Write back
         await postJson("geminiImageProxy", {
             kind: "write_manifest",
-            activeCategory: category,
-            output_base_path: outputBasePath,
+            activeCategory: ctxCategory,
+            output_base_path: ctxSetPath,
             manifest: manifestJson,
         });
         console.log("Manifest updated successfully for Redo.");
       } catch (e) {
         console.warn("Manifest update failed (non-fatal):", e);
       }
-
-      if (metaEl) metaEl.textContent = `Source: ${srcRandom.fullPath}`;
-      setStatus(`Ready (Set_${CURRENT_SET.setN ?? "?"})`);
-      if (redoBtn) redoBtn.disabled = false;
     }
     
     // Explicitly expose redoSlot to the window object so HTML onclick handlers can find it
@@ -892,17 +934,47 @@
           gridEl.appendChild(slotCard);
         });
 
+        // 1. Check REDO_STATE first to show Running/Completed states for this specific set
+        slotPlan.forEach((_, i) => {
+             const key = `${setPath}::${i}`;
+             const state = REDO_STATE[key];
+             const prevBox = document.getElementById(`slotPrev_${i}`);
+             const redoBtn = document.getElementById(`redo_${i}`);
+
+             if (state && state.status === 'running') {
+                 // RE-RENDER WORKING STATE
+                 if (prevBox) {
+                    prevBox.innerHTML = `<div class="slotRefEmpty">Working…</div>`;
+                    prevBox.classList.remove("success-border");
+                 }
+                 if (redoBtn) redoBtn.disabled = true;
+             } 
+             else if (state && state.status === 'completed') {
+                 // RE-RENDER COMPLETED STATE
+                 // We will let the file list below handle the image, but we apply the border here
+                 if (prevBox) prevBox.classList.add("success-border");
+             }
+        });
+
+        // 2. Load standard files
         const slotFiles = res.items.filter(item => item.name.startsWith("Slot_") && item.name.endsWith(".png"));
         
         await Promise.all(slotFiles.map(async (fileRef) => {
           const match = fileRef.name.match(/Slot_(\d+)\.png/);
           if (match) {
             const slotIndex = parseInt(match[1]) - 1;
+            
+            // Skip image load if currently "Working..." (handled by REDO_STATE check above)
+            const key = `${setPath}::${slotIndex}`;
+            if (REDO_STATE[key]?.status === 'running') return;
+
             try {
               const url = await getDownloadURL(fileRef);
               const prevBox = document.getElementById(`slotPrev_${slotIndex}`);
               if (prevBox) {
-                prevBox.innerHTML = `<img src="${cacheBust(url)}" />`;
+                // cache bust if we have a fresh URL in state, otherwise just bust by time
+                const finalUrl = cacheBust(url);
+                prevBox.innerHTML = `<img src="${finalUrl}" />`;
               }
             } catch (err) {
               console.warn("Failed to load url for", fileRef.name, err);
@@ -912,6 +984,7 @@
 
         slotPlan.forEach((spec, i) => {
           const prevBox = document.getElementById(`slotPrev_${i}`);
+          // Only show Not Found if it's not Loading and not Working
           if (prevBox && prevBox.innerHTML.includes("Loading…")) {
             prevBox.innerHTML = `<div class="slotRefEmpty">Not Found</div>`;
           }
