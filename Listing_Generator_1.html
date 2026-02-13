@@ -121,7 +121,6 @@
         <label style="margin-top:12px;">Select Set to Review</label>
         <div class="row">
           <select id="reviewSetSelect"></select>
-          <button class="btn" id="loadReviewSet">Load Set Images</button>
         </div>
       </div>
     </div>
@@ -439,7 +438,6 @@
     const generateSection = document.getElementById("generateSection");
     const reviewSection = document.getElementById("reviewSection");
     const reviewSetSelect = document.getElementById("reviewSetSelect");
-    const loadReviewSetBtn = document.getElementById("loadReviewSet");
     let appMode = "generate"; // 'generate' or 'review'
 
     // Category-only UI (no legacy slot editor / per-slot uploads)
@@ -452,8 +450,6 @@
       generateSetBtn.disabled = !!isBusy;
       generateSetBtn.style.opacity = isBusy ? "0.6" : "1";
       generateSetBtn.style.cursor = isBusy ? "not-allowed" : "pointer";
-      loadReviewSetBtn.disabled = !!isBusy;
-      loadReviewSetBtn.style.opacity = isBusy ? "0.6" : "1";
     }
 
    // Current generated set context (used by per-slot Redo)
@@ -492,6 +488,7 @@
       // 2. Initial UI update (if still on the same screen)
       // Always Update STATE first
       REDO_STATE[redoKey] = { status: 'running' };
+      updateDropdownLabels(); // UPDATE DROPDOWN LABELS
 
       const slotFileName = `Slot_${slotIndex + 1}.png`;
       const slotStoragePath = `${ctxSetPath}/${slotFileName}`;
@@ -572,6 +569,7 @@
           // SUCCESSS Handling
           const finalUrl = cacheBust(waitedResult.url);
           REDO_STATE[redoKey] = { status: 'completed', url: finalUrl };
+          updateDropdownLabels(); // UPDATE DROPDOWN LABELS
 
           // If still viewing, update DOM
           if (CURRENT_SET?.outputBasePath === ctxSetPath) {
@@ -593,6 +591,7 @@
           console.error("Redo failed", err);
           // Simple error state (optional)
           delete REDO_STATE[redoKey];
+          updateDropdownLabels();
           if (CURRENT_SET?.outputBasePath === ctxSetPath) {
              const prevBox = gridEl.querySelector(`.slot[data-slot-index="${slotIndex}"] #slotPrev_${slotIndex}`);
              if (prevBox) prevBox.innerHTML = `<div class="slotRefEmpty">Error</div>`;
@@ -866,11 +865,21 @@
         });
 
         if (sets.length > 0) {
+          // Store raw set names in values, labels will be enhanced by updateDropdownLabels()
           reviewSetSelect.innerHTML = sets.map(s => `<option value="${s}">${s}</option>`).join("");
-          setStatus(`Found ${sets.length} sets. Select one and click Load.`);
+          setStatus(`Found ${sets.length} sets. Select one.`);
+          
+          // Initial label update based on existing REDO_STATE
+          updateDropdownLabels();
+          
+          // Auto-load first item if present
+          if (reviewSetSelect.value) {
+              loadSetImages(reviewSetSelect.value);
+          }
         } else {
           reviewSetSelect.innerHTML = `<option value="">No sets found</option>`;
           setStatus("No sets found.");
+          gridEl.innerHTML = "";
         }
       } catch (e) {
         console.error("Error loading sets:", e);
@@ -878,12 +887,47 @@
         reviewSetSelect.innerHTML = `<option value="">Error loading</option>`;
       }
     }
+    
+    // NEW: Function to update dropdown options based on REDO_STATE
+    function updateDropdownLabels() {
+        const category = activeCategoryEl.value;
+        const options = Array.from(reviewSetSelect.options);
+        
+        options.forEach(opt => {
+            const setName = opt.value;
+            if (!setName) return;
+            
+            const setPath = `${ROOT}/${category}/Ready_To_List/${setName}`;
+            
+            // Collect statuses for this set
+            const statuses = [];
+            // We scan REDO_STATE for keys starting with this setPath
+            Object.keys(REDO_STATE).forEach(key => {
+                if (key.startsWith(setPath)) {
+                    const slotIdx = key.split('::')[1];
+                    const slotNum = parseInt(slotIdx) + 1;
+                    const state = REDO_STATE[key];
+                    if (state.status === 'running') {
+                        statuses.push(`Slot ${slotNum}: ⏳`);
+                    } else if (state.status === 'completed') {
+                        statuses.push(`Slot ${slotNum}: 🟢`);
+                    }
+                }
+            });
+            
+            if (statuses.length > 0) {
+                opt.text = `${setName} (${statuses.join(', ')})`;
+            } else {
+                opt.text = setName;
+            }
+        });
+    }
 
-    loadReviewSetBtn.addEventListener("click", async () => {
-      const category = activeCategoryEl.value;
-      const setName = reviewSetSelect.value;
+    // NEW: Consolidated Load Function
+    async function loadSetImages(setName) {
       if (!setName) return;
 
+      const category = activeCategoryEl.value;
       setBusy(true);
       setStatus(`Loading ${setName}...`);
       gridEl.innerHTML = "";
@@ -997,6 +1041,11 @@
       } finally {
         setBusy(false);
       }
+    }
+    
+    // NEW Listener: Auto-load on change
+    reviewSetSelect.addEventListener("change", (e) => {
+        loadSetImages(e.target.value);
     });
     
     async function postJson(path, body) {
