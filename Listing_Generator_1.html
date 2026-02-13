@@ -484,6 +484,7 @@
 
       REDO_STATE[redoKey] = { status: 'running' };
       updateDropdownLabels(); 
+      updateApproveButtonState(); // NEW: Check state immediately
 
       const slotFileName = `Slot_${slotIndex + 1}.png`;
       const slotStoragePath = `${ctxSetPath}/${slotFileName}`;
@@ -561,6 +562,7 @@
           const finalUrl = cacheBust(waitedResult.url);
           REDO_STATE[redoKey] = { status: 'completed', url: finalUrl };
           updateDropdownLabels(); 
+          updateApproveButtonState(); // NEW: Check state again
 
           // If still viewing, update DOM
           if (CURRENT_SET?.outputBasePath === ctxSetPath) {
@@ -582,6 +584,7 @@
           console.error("Redo failed", err);
           delete REDO_STATE[redoKey];
           updateDropdownLabels();
+          updateApproveButtonState(); // NEW: Ensure state is reset on error
           if (CURRENT_SET?.outputBasePath === ctxSetPath) {
              const prevBox = gridEl.querySelector(`.slot[data-slot-index="${slotIndex}"] #slotPrev_${slotIndex}`);
              if (prevBox) prevBox.innerHTML = `<div class="slotRefEmpty">Error</div>`;
@@ -879,6 +882,52 @@
         });
     }
 
+    // NEW: Function to toggle approve button status
+    function updateApproveButtonState() {
+      if (!approveSetBtn) return;
+      
+      // Default Green Style
+      const setGreen = () => {
+        approveSetBtn.disabled = false;
+        approveSetBtn.style.background = "#1f4026";
+        approveSetBtn.style.color = "#7fdb96";
+        approveSetBtn.style.border = "1px solid #2f5e3a";
+        approveSetBtn.textContent = "Approve Set (Move to Completed)";
+        approveSetBtn.style.cursor = "pointer";
+        approveSetBtn.style.opacity = "1";
+      };
+
+      // Orange Style
+      const setOrange = () => {
+        approveSetBtn.disabled = true;
+        approveSetBtn.style.background = "#7c2d12"; // Darker orange/rust
+        approveSetBtn.style.color = "#fdba74"; // light orange
+        approveSetBtn.style.border = "1px solid #ea580c";
+        approveSetBtn.textContent = "Waiting for Redo...";
+        approveSetBtn.style.cursor = "not-allowed";
+        approveSetBtn.style.opacity = "0.8";
+      };
+
+      if (!CURRENT_SET || appMode !== 'review') {
+         return; 
+      }
+
+      const setPath = CURRENT_SET.outputBasePath;
+      let hasRunning = false;
+      
+      Object.keys(REDO_STATE).forEach(k => {
+        if (k.startsWith(setPath) && REDO_STATE[k].status === 'running') {
+          hasRunning = true;
+        }
+      });
+
+      if (hasRunning) {
+        setOrange();
+      } else {
+        setGreen();
+      }
+    }
+
     // NEW: Consolidated Load Function
     async function loadSetImages(setName) {
       if (!setName) return;
@@ -992,6 +1041,7 @@
         }
       } finally {
         setBusy(false);
+        updateApproveButtonState(); // NEW: Verify button state after load
       }
     }
     
