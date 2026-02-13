@@ -122,6 +122,9 @@
         <div class="row">
           <select id="reviewSetSelect"></select>
         </div>
+        <div class="row" style="margin-top:10px;">
+           <button class="btn" id="approveSetBtn" style="width:100%; background: #1f4026; color: #7fdb96; border: 1px solid #2f5e3a;">Approve Set (Move to Completed)</button>
+        </div>
       </div>
     </div>
 
@@ -140,7 +143,8 @@
 
   <script type="module">
    import { initializeApp, getApp } from "https://www.gstatic.com/firebasejs/9.23.0/firebase-app.js";
-   import { getStorage, ref, uploadBytesResumable, getDownloadURL, getBytes, listAll, getMetadata } from "https://www.gstatic.com/firebasejs/9.23.0/firebase-storage.js";
+   // Updated Import: Added deleteObject
+   import { getStorage, ref, uploadBytesResumable, getDownloadURL, getBytes, listAll, getMetadata, deleteObject } from "https://www.gstatic.com/firebasejs/9.23.0/firebase-storage.js";
    import { getAuth, signInAnonymously as modSignInAnonymously, onAuthStateChanged as modOnAuthStateChanged } from "https://www.gstatic.com/firebasejs/9.23.0/firebase-auth.js";
 
 
@@ -438,6 +442,7 @@
     const generateSection = document.getElementById("generateSection");
     const reviewSection = document.getElementById("reviewSection");
     const reviewSetSelect = document.getElementById("reviewSetSelect");
+    const approveSetBtn = document.getElementById("approveSetBtn"); // NEW BUTTON
     let appMode = "generate"; // 'generate' or 'review'
 
     // Category-only UI (no legacy slot editor / per-slot uploads)
@@ -450,6 +455,8 @@
       generateSetBtn.disabled = !!isBusy;
       generateSetBtn.style.opacity = isBusy ? "0.6" : "1";
       generateSetBtn.style.cursor = isBusy ? "not-allowed" : "pointer";
+      approveSetBtn.disabled = !!isBusy; // Lock approve button
+      approveSetBtn.style.opacity = isBusy ? "0.6" : "1";
     }
 
    // Current generated set context (used by per-slot Redo)
@@ -1047,6 +1054,66 @@
     reviewSetSelect.addEventListener("change", (e) => {
         loadSetImages(e.target.value);
     });
+
+    // NEW: Approve Set Logic (Move to Completed)
+    async function approveSet() {
+      const category = activeCategoryEl.value;
+      const setName = reviewSetSelect.value;
+      if (!setName) return;
+
+      if (!confirm(`Approve ${setName}? This will move it to Completed_Sets.`)) return;
+
+      setBusy(true);
+      setStatus(`Approving ${setName}...`);
+
+      const srcFolder = `${ROOT}/${category}/Ready_To_List/${setName}`;
+      // Convention: Category_Set_x
+      const destFolderName = `${category}_${setName}`; 
+      const destFolder = `${ROOT}/Completed_Sets/${destFolderName}`;
+
+      try {
+        await ensureStorageSignedIn();
+        
+        // 1. List all files in the source folder
+        const srcRef = ref(storage, srcFolder);
+        const res = await listAll(srcRef);
+        
+        const total = res.items.length;
+        let done = 0;
+
+        // 2. Move each file (Client-side Copy: Download -> Upload -> Delete)
+        for (const itemRef of res.items) {
+           const fileName = itemRef.name;
+           setStatus(`Moving ${fileName} (${done + 1}/${total})...`);
+           
+           // A. Download Blob
+           const url = await getDownloadURL(itemRef);
+           const blob = await fetch(url).then(r => r.blob());
+           
+           // B. Upload to New Location
+           const newRef = ref(storage, `${destFolder}/${fileName}`);
+           await uploadBytesResumable(newRef, blob);
+           
+           // C. Delete Old File
+           await deleteObject(itemRef);
+           done++;
+        }
+        
+        setStatus(`Approved ${setName}!`);
+        
+        // 3. Refresh the review list (which will remove the moved set)
+        await loadReviewSets();
+        gridEl.innerHTML = ""; // Clear the grid
+
+      } catch (e) {
+        console.error(e);
+        setStatus(`Error approving set: ${e.message}`);
+      } finally {
+        setBusy(false);
+      }
+    }
+
+    approveSetBtn.addEventListener("click", approveSet);
     
     async function postJson(path, body) {
       const res = await fetch(`${functionsBaseUrl}/${path}`, {
