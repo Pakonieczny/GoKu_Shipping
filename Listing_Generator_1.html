@@ -125,6 +125,7 @@
         <div class="row" style="margin-top:10px;">
            <button class="btn" id="approveSetBtn" style="width:100%; background: #1f4026; color: #7fdb96; border: 1px solid #2f5e3a;">Approve Set (Move to Completed)</button>
         </div>
+        <div style="margin-top: 8px; font-size: 11px; color: var(--muted);" id="backgroundQueueStatus"></div>
       </div>
     </div>
 
@@ -143,7 +144,6 @@
 
   <script type="module">
    import { initializeApp, getApp } from "https://www.gstatic.com/firebasejs/9.23.0/firebase-app.js";
-   // Updated Import: Added deleteObject
    import { getStorage, ref, uploadBytesResumable, getDownloadURL, getBytes, listAll, getMetadata, deleteObject } from "https://www.gstatic.com/firebasejs/9.23.0/firebase-storage.js";
    import { getAuth, signInAnonymously as modSignInAnonymously, onAuthStateChanged as modOnAuthStateChanged } from "https://www.gstatic.com/firebasejs/9.23.0/firebase-auth.js";
 
@@ -293,8 +293,6 @@
     window.db = firebase.firestore();
 
     // Firestore transport hardening
-    // Fixes: "Deadline expired before operation could complete."
-    // Must be called BEFORE any reads/writes/onSnapshot listeners.
     try {
       window.db.settings({
         ignoreUndefinedProperties: true,
@@ -344,8 +342,6 @@
         await ensureStorageSignedIn();
 
         // ✅ Only LIST-first polling.
-        // This guarantees the browser never issues a GET for Slot_*.png before it exists,
-        // so you won't see any 404s in DevTools.
         try {
           const folderRef = ref(storage, outputBasePath);
           const res = await listAll(folderRef);
@@ -398,7 +394,6 @@
           }
         } catch (e) {
           // If LIST is blocked by Storage rules, we cannot poll without causing 404s.
-          // Fail loudly with a targeted message instead of hammering getDownloadURL().
           const msg = String(e?.message || e);
           
           // Check for 500 error specifically and backoff
@@ -442,11 +437,9 @@
     const generateSection = document.getElementById("generateSection");
     const reviewSection = document.getElementById("reviewSection");
     const reviewSetSelect = document.getElementById("reviewSetSelect");
-    const approveSetBtn = document.getElementById("approveSetBtn"); // NEW BUTTON
+    const approveSetBtn = document.getElementById("approveSetBtn"); 
+    const backgroundQueueStatus = document.getElementById("backgroundQueueStatus"); // Status text
     let appMode = "generate"; // 'generate' or 'review'
-
-    // Category-only UI (no legacy slot editor / per-slot uploads)
-
 
     function setStatus(msg){ statusEl.textContent = msg; }
 
@@ -455,15 +448,13 @@
       generateSetBtn.disabled = !!isBusy;
       generateSetBtn.style.opacity = isBusy ? "0.6" : "1";
       generateSetBtn.style.cursor = isBusy ? "not-allowed" : "pointer";
-      approveSetBtn.disabled = !!isBusy; // Lock approve button
-      approveSetBtn.style.opacity = isBusy ? "0.6" : "1";
+      // approveSetBtn is now managed by the background Queue, not blocking the UI globally
     }
 
    // Current generated set context (used by per-slot Redo)
     let CURRENT_SET = null; // { category, outputBasePath, setN }
     
     // NEW: Global tracker for Redo operations across all sets
-    // Key: "outputBasePath::slotIndex", Value: { status: 'running'|'completed', url: string }
     const REDO_STATE = {}; 
 
     function setAllRedoEnabled(enabled){
@@ -477,7 +468,6 @@
     }
 
     async function redoSlot(slotIndex){
-      // 1. Capture context *locally* to allow concurrent switching
       if (!CURRENT_SET?.outputBasePath || !CURRENT_SET?.category) {
         throw new Error("No active set to redo yet. Generate a set first.");
       }
@@ -492,10 +482,8 @@
       
       const redoKey = `${ctxSetPath}::${slotIndex}`;
 
-      // 2. Initial UI update (if still on the same screen)
-      // Always Update STATE first
       REDO_STATE[redoKey] = { status: 'running' };
-      updateDropdownLabels(); // UPDATE DROPDOWN LABELS
+      updateDropdownLabels(); 
 
       const slotFileName = `Slot_${slotIndex + 1}.png`;
       const slotStoragePath = `${ctxSetPath}/${slotFileName}`;
@@ -507,7 +495,7 @@
         beforeUpdatedMs = Date.parse(beforeMeta?.updated || beforeMeta?.timeCreated || "") || 0;
         beforeGeneration = Number(beforeMeta?.generation || 0) || 0;
       } catch (_) {
-        // Slot may not exist yet (first run) — that's fine.
+        // Slot may not exist yet
       }
 
       // Check if we are still viewing the set we initiated this from
@@ -526,17 +514,13 @@
           setStatus(`Redo Slot ${slotIndex + 1}…`);
       }
 
-      // -----------------------------------------------------------------------
-      // RANDOMIZER CHANGE: Pick a RANDOM reference file for Redo
-      // -----------------------------------------------------------------------
       const srcFolder = slotRefFolder(ctxCategory, spec.folder);
-      const srcRandom = await listRandomFile(srcFolder); // CHANGED from listLatestFile
+      const srcRandom = await listRandomFile(srcFolder); 
       if (!srcRandom) throw new Error(`No files in ${srcFolder}/`);
 
-      // ✅ Use logic to determine which charm pool to use
       const isEarring = ["Stud_Earrings", "Hoop_Earrings"].includes(ctxCategory);
       const charmFolderPath = isEarring ? newCharmsEarringsPath() : newCharmsPath();
-      const charmLatest = await listLatestFile(charmFolderPath); // Keep Latest for Charms
+      const charmLatest = await listLatestFile(charmFolderPath); 
       if (!charmLatest) throw new Error(`No files in ${charmFolderPath}/`);
       
       let waitedResult = null; 
@@ -576,7 +560,7 @@
           // SUCCESSS Handling
           const finalUrl = cacheBust(waitedResult.url);
           REDO_STATE[redoKey] = { status: 'completed', url: finalUrl };
-          updateDropdownLabels(); // UPDATE DROPDOWN LABELS
+          updateDropdownLabels(); 
 
           // If still viewing, update DOM
           if (CURRENT_SET?.outputBasePath === ctxSetPath) {
@@ -587,7 +571,7 @@
               
               if (prevBox) {
                   prevBox.innerHTML = `<img src="${finalUrl}" />`;
-                  prevBox.classList.add("success-border"); // APPLY GREEN BORDER
+                  prevBox.classList.add("success-border"); 
               }
               if (metaEl) metaEl.textContent = `Source: ${srcRandom.fullPath}`;
               if (redoBtn) redoBtn.disabled = false;
@@ -596,7 +580,6 @@
 
       } catch(err) {
           console.error("Redo failed", err);
-          // Simple error state (optional)
           delete REDO_STATE[redoKey];
           updateDropdownLabels();
           if (CURRENT_SET?.outputBasePath === ctxSetPath) {
@@ -606,17 +589,13 @@
           }
       }
 
-      // -----------------------------------------------------------------------
-      // MANIFEST UPDATE: Sync the change to the Ready_To_List manifest
-      // -----------------------------------------------------------------------
+      // MANIFEST UPDATE (Non-blocking usually, but await here for consistency)
       try {
         const manifestRef = ref(storage, `${ctxSetPath}/manifest.json`);
         
-        // Fetch current manifest (with cache bust)
         const url = await getDownloadURL(manifestRef);
         const manifestJson = await fetch(`${url}${url.includes('?') ? '&' : '?'}t=${Date.now()}`).then(r => r.json());
 
-        // Find slot entry
         const slotNum = slotIndex + 1;
         const idx = manifestJson.slots.findIndex(s => s.slot === slotNum);
         
@@ -636,23 +615,20 @@
             manifestJson.slots.sort((a,b) => a.slot - b.slot);
         }
 
-        // Write back
         await postJson("geminiImageProxy", {
             kind: "write_manifest",
             activeCategory: ctxCategory,
             output_base_path: ctxSetPath,
             manifest: manifestJson,
         });
-        console.log("Manifest updated successfully for Redo.");
       } catch (e) {
         console.warn("Manifest update failed (non-fatal):", e);
       }
     }
     
-    // Explicitly expose redoSlot to the window object so HTML onclick handlers can find it
     window.redoSlot = redoSlot;
 
-    // Back-compat alias (some blocks reference categoryEl)
+    // Back-compat alias
     const categoryEl = activeCategoryEl;
 
     function folderPath(category, subfolder) {
@@ -677,20 +653,13 @@
       
       if (!res.items?.length) return null;
 
-      // Randomly select one item
       const randomIndex = Math.floor(Math.random() * res.items.length);
       const randomItem = res.items[randomIndex];
-
-      // Get URL only for the chosen file
       const url = await getDownloadURL(randomItem);
-      
       return { fullPath: randomItem.fullPath, name: randomItem.name, url };
     }
 
     async function listLatestFile(fullFolderPath) {
-      // Deterministic:
-      // 1) prefer most recently uploaded (metadata.updated/timeCreated)
-      // 2) tie-break lexicographically by name
       await ensureStorageSignedIn();
       const folderRef = ref(storage, fullFolderPath);
       const res = await listAll(folderRef);
@@ -711,7 +680,6 @@
       });
 
       const latest = metas[metas.length - 1];
-      // Only fetch download URL for the chosen file (faster)
       const latestRef = ref(storage, latest.fullPath);
       const url = await getDownloadURL(latestRef);
       return { fullPath: latest.fullPath, name: latest.name, url };
@@ -741,17 +709,7 @@
           const res = await listAll(ref(storage, targetFullPath));
           countEl.textContent = `${res.items.length} file(s)`;
         } catch (e) {
-          const msg = String(e?.message || e);
-          const looksUnauthorized =
-            msg.includes("storage/unauthorized") ||
-            msg.includes("403") ||
-            msg.toLowerCase().includes("permission");
-          if (looksUnauthorized) {
-            countEl.textContent = `No permission to list: ${targetFullPath} (update Firebase Storage rules to allow LIST)`;
-          } else {
-            countEl.textContent = `Error: ${msg}`;
-          }
-          console.warn("[Storage:listAll] failed", { targetFullPath, msg, e });
+          console.warn("[Storage:listAll] failed", { targetFullPath, e });
         }
       }
 
@@ -798,7 +756,6 @@
         panelsEl.appendChild(makeUploadPanel(folderPath(category, sub), sub));
       }
 
-      // ✅ DYNAMICALLY SHOW CORRECT CHARM POOL
       panelNewCharmsEl.innerHTML = "";
       if (["Stud_Earrings", "Hoop_Earrings"].includes(category)) {
         panelNewCharmsEl.appendChild(makeUploadPanel(newCharmsEarringsPath(), "New_Charms_Earrings (Earrings Only)"));
@@ -806,7 +763,6 @@
         panelNewCharmsEl.appendChild(makeUploadPanel(newCharmsPath(), "New_Charms (Necklaces/Other)"));
       }
 
-      // Slot visibility hint in UI (Stud_Earrings = 7 slots)
       const slotCount = (SLOT_MAP[category]?.length) || 0;
       if (GENERATABLE_CATEGORIES.has(category)) {
         setStatus(`Ready (${slotCount} slot(s))`);
@@ -815,12 +771,10 @@
       }
     }
 
-    // Populate dropdown
     activeCategoryEl.innerHTML = ALL_CATEGORIES.map(c => `<option value="${c}">${c}</option>`).join("");
     activeCategoryEl.value = "Beady_Necklace";
     renderCategoryUI(activeCategoryEl.value);
 
-    // Main Listeners and View state changes
     toggleGenerateBtn.addEventListener("click", () => {
       appMode = "generate";
       toggleGenerateBtn.style.background = "var(--line)";
@@ -872,11 +826,9 @@
         });
 
         if (sets.length > 0) {
-          // Store raw set names in values, labels will be enhanced by updateDropdownLabels()
           reviewSetSelect.innerHTML = sets.map(s => `<option value="${s}">${s}</option>`).join("");
-          setStatus(`Found ${sets.length} sets. Select one.`);
+          setStatus(`Found ${sets.length} sets.`);
           
-          // Initial label update based on existing REDO_STATE
           updateDropdownLabels();
           
           // Auto-load first item if present
@@ -895,7 +847,6 @@
       }
     }
     
-    // NEW: Function to update dropdown options based on REDO_STATE
     function updateDropdownLabels() {
         const category = activeCategoryEl.value;
         const options = Array.from(reviewSetSelect.options);
@@ -906,9 +857,7 @@
             
             const setPath = `${ROOT}/${category}/Ready_To_List/${setName}`;
             
-            // Collect statuses for this set
             const statuses = [];
-            // We scan REDO_STATE for keys starting with this setPath
             Object.keys(REDO_STATE).forEach(key => {
                 if (key.startsWith(setPath)) {
                     const slotIdx = key.split('::')[1];
@@ -945,18 +894,17 @@
         const setRef = ref(storage, setPath);
         const res = await listAll(setRef);
 
-        // INITIALIZE CURRENT_SET SO REDOSLOT KNOWS WHERE TO SAVE
         let parsedSetN = parseInt(setName.replace('Set_', '')) || 0;
         CURRENT_SET = { category, outputBasePath: setPath, setN: parsedSetN };
 
-        // Attempt to load manifest to display Source info
+        // 404 Safety: try/catch the manifest load
         let manifestData = null;
         try {
             const manifestRef = ref(storage, `${setPath}/manifest.json`);
             const mUrl = await getDownloadURL(manifestRef);
             manifestData = await fetch(`${mUrl}${mUrl.includes('?') ? '&' : '?'}t=${Date.now()}`).then(r => r.json());
         } catch(err) {
-            console.warn("Could not load manifest for review set, defaulting to unknown source", err);
+            // expected if manifest doesn't exist
         }
 
         const slotPlan = SLOT_MAP[category] || [];
@@ -985,7 +933,6 @@
           gridEl.appendChild(slotCard);
         });
 
-        // 1. Check REDO_STATE first to show Running/Completed states for this specific set
         slotPlan.forEach((_, i) => {
              const key = `${setPath}::${i}`;
              const state = REDO_STATE[key];
@@ -993,7 +940,6 @@
              const redoBtn = document.getElementById(`redo_${i}`);
 
              if (state && state.status === 'running') {
-                 // RE-RENDER WORKING STATE
                  if (prevBox) {
                     prevBox.innerHTML = `<div class="slotRefEmpty">Working…</div>`;
                     prevBox.classList.remove("success-border");
@@ -1001,13 +947,10 @@
                  if (redoBtn) redoBtn.disabled = true;
              } 
              else if (state && state.status === 'completed') {
-                 // RE-RENDER COMPLETED STATE
-                 // We will let the file list below handle the image, but we apply the border here
                  if (prevBox) prevBox.classList.add("success-border");
              }
         });
 
-        // 2. Load standard files
         const slotFiles = res.items.filter(item => item.name.startsWith("Slot_") && item.name.endsWith(".png"));
         
         await Promise.all(slotFiles.map(async (fileRef) => {
@@ -1015,7 +958,6 @@
           if (match) {
             const slotIndex = parseInt(match[1]) - 1;
             
-            // Skip image load if currently "Working..." (handled by REDO_STATE check above)
             const key = `${setPath}::${slotIndex}`;
             if (REDO_STATE[key]?.status === 'running') return;
 
@@ -1023,19 +965,17 @@
               const url = await getDownloadURL(fileRef);
               const prevBox = document.getElementById(`slotPrev_${slotIndex}`);
               if (prevBox) {
-                // cache bust if we have a fresh URL in state, otherwise just bust by time
                 const finalUrl = cacheBust(url);
                 prevBox.innerHTML = `<img src="${finalUrl}" />`;
               }
             } catch (err) {
-              console.warn("Failed to load url for", fileRef.name, err);
+              // ignore
             }
           }
         }));
 
         slotPlan.forEach((spec, i) => {
           const prevBox = document.getElementById(`slotPrev_${i}`);
-          // Only show Not Found if it's not Loading and not Working
           if (prevBox && prevBox.innerHTML.includes("Loading…")) {
             prevBox.innerHTML = `<div class="slotRefEmpty">Not Found</div>`;
           }
@@ -1043,74 +983,85 @@
 
         setStatus(`Viewing ${category} / ${setName}`);
       } catch (e) {
-        console.error(e);
-        setStatus(`Error loading set: ${e.message}`);
+        // If the set folder itself is gone (404 on listAll), handle gracefully
+        if (e.code === 'storage/object-not-found') {
+             gridEl.innerHTML = `<div class='slotRefEmpty'>Set '${setName}' not found (might be deleted/moved).</div>`;
+        } else {
+             console.error(e);
+             setStatus(`Error: ${e.message}`);
+        }
       } finally {
         setBusy(false);
       }
     }
     
-    // NEW Listener: Auto-load on change
     reviewSetSelect.addEventListener("change", (e) => {
         loadSetImages(e.target.value);
     });
 
-    // NEW: Approve Set Logic (Move to Completed)
-    async function approveSet() {
+    // NEW: "Optimistic" Approve function
+    function approveSet() {
       const category = activeCategoryEl.value;
       const setName = reviewSetSelect.value;
       if (!setName) return;
 
-      if (!confirm(`Approve ${setName}? This will move it to Completed_Sets.`)) return;
+      if (!confirm(`Approve ${setName}? (Instant Queue)`)) return;
 
-      setBusy(true);
-      setStatus(`Approving ${setName}...`);
+      // 1. Remove from UI immediately
+      const optionToRemove = reviewSetSelect.querySelector(`option[value="${setName}"]`);
+      if (optionToRemove) optionToRemove.remove();
 
-      const srcFolder = `${ROOT}/${category}/Ready_To_List/${setName}`;
-      // Convention: Category_Set_x
-      const destFolderName = `${category}_${setName}`; 
-      const destFolder = `${ROOT}/Completed_Sets/${destFolderName}`;
-
-      try {
-        await ensureStorageSignedIn();
-        
-        // 1. List all files in the source folder
-        const srcRef = ref(storage, srcFolder);
-        const res = await listAll(srcRef);
-        
-        const total = res.items.length;
-        let done = 0;
-
-        // 2. Move each file (Client-side Copy: Download -> Upload -> Delete)
-        for (const itemRef of res.items) {
-           const fileName = itemRef.name;
-           setStatus(`Moving ${fileName} (${done + 1}/${total})...`);
-           
-           // A. Download Blob
-           const url = await getDownloadURL(itemRef);
-           const blob = await fetch(url).then(r => r.blob());
-           
-           // B. Upload to New Location
-           const newRef = ref(storage, `${destFolder}/${fileName}`);
-           await uploadBytesResumable(newRef, blob);
-           
-           // C. Delete Old File
-           await deleteObject(itemRef);
-           done++;
-        }
-        
-        setStatus(`Approved ${setName}!`);
-        
-        // 3. Refresh the review list (which will remove the moved set)
-        await loadReviewSets();
-        gridEl.innerHTML = ""; // Clear the grid
-
-      } catch (e) {
-        console.error(e);
-        setStatus(`Error approving set: ${e.message}`);
-      } finally {
-        setBusy(false);
+      // 2. Load next set immediately if exists
+      if (reviewSetSelect.options.length > 0) {
+          // Select first available (or keep index)
+          reviewSetSelect.selectedIndex = 0; 
+          loadSetImages(reviewSetSelect.value);
+      } else {
+          gridEl.innerHTML = "<div class='slotRefEmpty'>No more sets to review!</div>";
+          setStatus("Queue clear.");
       }
+
+      // 3. Trigger background move
+      runBackgroundApproval(category, setName);
+    }
+
+    // NEW: Background Task
+    async function runBackgroundApproval(category, setName) {
+        const queueId = `${category}/${setName}`;
+        backgroundQueueStatus.textContent = `Queued: ${setName}...`;
+        console.log(`[Queue] Starting background move for ${setName}`);
+
+        const srcFolder = `${ROOT}/${category}/Ready_To_List/${setName}`;
+        const destFolderName = `${category}_${setName}`; 
+        const destFolder = `${ROOT}/Completed_Sets/${destFolderName}`;
+
+        try {
+            await ensureStorageSignedIn();
+            const srcRef = ref(storage, srcFolder);
+            const res = await listAll(srcRef);
+            
+            for (const itemRef of res.items) {
+               // Download -> Upload -> Delete
+               const url = await getDownloadURL(itemRef);
+               const blob = await fetch(url).then(r => r.blob());
+               const newRef = ref(storage, `${destFolder}/${itemRef.name}`);
+               await uploadBytesResumable(newRef, blob);
+               await deleteObject(itemRef);
+            }
+            console.log(`[Queue] Finished moving ${setName}`);
+            backgroundQueueStatus.textContent = `Completed: ${setName}`;
+            
+            // Clear status after 3s
+            setTimeout(() => {
+                if (backgroundQueueStatus.textContent.includes(setName)) {
+                    backgroundQueueStatus.textContent = "";
+                }
+            }, 3000);
+
+        } catch (e) {
+            console.error(`[Queue] Failed to move ${setName}`, e);
+            backgroundQueueStatus.textContent = `Error moving ${setName}`;
+        }
     }
 
     approveSetBtn.addEventListener("click", approveSet);
@@ -1754,7 +1705,7 @@
         • The new Charm must be the same or smaller size then the Reference Image. 
         • Your primary objective is to maintain Charm Engraving fidelity and accuracy to the Charm Reference image.
         • All engravings must be coloured-in/filled-in using a light shade of copper colour, and must be flat having only superficial depth.
-        • Ensure all engraving colours are a light shade of copper colour.
+        • Ensure all engravings are a light shade of copper colour.
         • The Charm/Pendant material is a perfectly flat and thin sheet of metal, always render the Charm/Pendant completely flat
         • DO NOT allow any rounded/radius on the cutout edges.
         • The Charm/Pendant must be real gold colour, do not saturate the Charm/Pendant gold colour.
