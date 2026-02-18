@@ -1,33 +1,50 @@
 // netlify/functions/updateListing.js
 const fetch = require('node-fetch');
 
-exports.handler = async function (event) {
+exports.handler = async function (event) { 
+const corsHeaders = {
+    "Access-Control-Allow-Origin": "*",
+    "Access-Control-Allow-Headers": "Content-Type, Authorization, access-token",
+    "Access-Control-Allow-Methods": "GET,POST,PUT,PATCH,OPTIONS",
+  };
+
+  if (event.httpMethod === "OPTIONS") {
+    return { statusCode: 204, headers: corsHeaders, body: "" };
+  }
+
   try {
     const listingId =
       (event.queryStringParameters && event.queryStringParameters.listingId) || null;
 
     // Token can come via query (?token=...), or headers
-    const token =
+    let token =
       (event.queryStringParameters && event.queryStringParameters.token) ||
       event.headers['access-token'] ||
       event.headers['Access-Token'] ||
-      event.headers['authorization']?.replace(/^Bearer\s+/i, '');
+      event.headers['authorization'] ||
+      event.headers['Authorization'] ||
+      null;
+    if (typeof token === "string") token = token.replace(/^Bearer\s+/i, "").trim();
 
     const clientId =
       process.env.CLIENT_ID ||
       process.env.ETSY_CLIENT_ID ||
       process.env.ETSY_API_KEY ||
       process.env.API_KEY;
+    const clientSecret =
+      process.env.CLIENT_SECRET ||
+      process.env.ETSY_CLIENT_SECRET ||
+      process.env.ETSY_SHARED_SECRET;
     const shopId = process.env.SHOP_ID;
 
     if (!listingId) {
-      return { statusCode: 400, body: JSON.stringify({ error: "Missing listingId parameter" }) };
+      return { statusCode: 400, headers: corsHeaders, body: JSON.stringify({ error: "Missing listingId parameter" }) };
     }
     if (!token) {
-      return { statusCode: 400, body: JSON.stringify({ error: "Missing access token" }) };
+      return { statusCode: 400, headers: corsHeaders, body: JSON.stringify({ error: "Missing access token" }) };
     }
     if (!shopId) {
-      return { statusCode: 500, body: JSON.stringify({ error: "SHOP_ID environment variable is not set." }) };
+      return { statusCode: 500, headers: corsHeaders, body: JSON.stringify({ error: "SHOP_ID environment variable is not set." }) };
     }
     if (!clientId) {
       console.error("Missing Etsy app key env var for x-api-key header.");
@@ -39,12 +56,32 @@ exports.handler = async function (event) {
       });
       return {
         statusCode: 500,
+        headers: corsHeaders,
         body: JSON.stringify({
           error: "Missing Etsy app key env var for x-api-key header.",
           checked: ["CLIENT_ID", "ETSY_CLIENT_ID", "ETSY_API_KEY", "API_KEY"],
         }),
       };
     }
+
+   if (!clientSecret) {
+      console.error("Missing Etsy shared secret env var for x-api-key header.");
+      console.log("Env presence:", {
+        CLIENT_SECRET: !!process.env.CLIENT_SECRET,
+        ETSY_CLIENT_SECRET: !!process.env.ETSY_CLIENT_SECRET,
+        ETSY_SHARED_SECRET: !!process.env.ETSY_SHARED_SECRET,
+      });
+      return {
+        statusCode: 500,
+        headers: corsHeaders,
+        body: JSON.stringify({
+          error: "Missing Etsy shared secret env var for x-api-key header.",
+          checked: ["CLIENT_SECRET", "ETSY_CLIENT_SECRET", "ETSY_SHARED_SECRET"],
+        }),
+      };
+    }
+
+    const xApiKey = `${String(clientId).trim()}:${String(clientSecret).trim()}`;
 
     // Parse JSON payload (title/description/tags/etc.)
     let payload = {};
@@ -84,7 +121,7 @@ exports.handler = async function (event) {
         "Content-Type": "application/x-www-form-urlencoded; charset=utf-8",
         "Accept": "application/json",
         "Authorization": `Bearer ${token}`,
-        "x-api-key": clientId
+        "x-api-key": xApiKey
       },
       body: form.toString()
     });
@@ -100,15 +137,17 @@ exports.handler = async function (event) {
     if (!response.ok) {
       return {
         statusCode: response.status,
+        headers: corsHeaders,
         body: JSON.stringify({ error: "Error updating listing", details: data })
       };
     }
 
     return {
       statusCode: 200,
+      headers: corsHeaders,
       body: JSON.stringify(data)
     };
   } catch (error) {
-    return { statusCode: 500, body: JSON.stringify({ error: error.message }) };
+    return { statusCode: 500, headers: corsHeaders, body: JSON.stringify({ error: error.message }) };
   }
 };
