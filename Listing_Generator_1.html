@@ -1287,8 +1287,7 @@
             
             for (const itemRef of res.items) {
                // Download -> Upload -> Delete
-               const url = await getDownloadURL(itemRef);
-               const blob = await fetch(url).then(r => r.blob());
+               const buffer = await getBytes(itemRef);
                const newRef = ref(storage, `${destFolder}/${itemRef.name}`);
                await uploadBytesResumable(newRef, blob);
                await deleteObject(itemRef);
