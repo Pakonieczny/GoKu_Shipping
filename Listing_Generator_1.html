@@ -1291,7 +1291,7 @@
                // Download -> Upload -> Delete
                const buffer = await getBytes(itemRef);
                const newRef = ref(storage, `${destFolder}/${itemRef.name}`);
-               await uploadBytesResumable(newRef, blob);
+               await uploadBytesResumable(newRef, buffer); // ✅ Changed 'blob' to 'buffer'
                await deleteObject(itemRef);
             }
             console.log(`[Queue] Finished moving ${setName}`);
