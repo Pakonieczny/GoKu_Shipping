@@ -789,8 +789,9 @@
       try {
         const manifestRef = ref(storage, `${ctxSetPath}/manifest.json`);
         
-        const url = await getDownloadURL(manifestRef);
-        const manifestJson = await fetch(`${url}${url.includes('?') ? '&' : '?'}t=${Date.now()}`).then(r => r.json());
+        const buffer = await getBytes(manifestRef);
+        const text = new TextDecoder().decode(buffer);
+        const manifestJson = JSON.parse(text);
 
         const slotNum = slotIndex + 1;
         const idx = manifestJson.slots.findIndex(s => s.slot === slotNum);
@@ -1143,8 +1144,9 @@
         let manifestData = null;
         try {
             const manifestRef = ref(storage, `${setPath}/manifest.json`);
-            const mUrl = await getDownloadURL(manifestRef);
-            manifestData = await fetch(`${mUrl}${mUrl.includes('?') ? '&' : '?'}t=${Date.now()}`).then(r => r.json());
+            const buffer = await getBytes(manifestRef);
+            const text = new TextDecoder().decode(buffer);
+            manifestData = JSON.parse(text);
         } catch(err) {
             // expected if manifest doesn't exist
         }
