@@ -229,11 +229,11 @@
           <div class="row" style="gap: 14px;">
             <div style="flex:1;">
               <div class="muted" style="margin-bottom:6px;">New_Charms Derivative</div>
-              <div class="slotPrev" id="resultPrevCharms"><div class="slotRefEmpty">Waiting...</div></div>
+              <div class="slotPrev" id="resultPrevCharms"><div class="slotRefEmpty">Ready</div></div>
             </div>
             <div style="flex:1;">
               <div class="muted" style="margin-bottom:6px;">New_Charms_Earrings Derivative</div>
-              <div class="slotPrev" id="resultPrevEarrings"><div class="slotRefEmpty">Waiting...</div></div>
+              <div class="slotPrev" id="resultPrevEarrings"><div class="slotRefEmpty">Ready</div></div>
             </div>
           </div>
         </div>
@@ -1259,7 +1259,7 @@
               <div class="muted" style="font-size:12px;">Review: ${spec.folder}</div>
             </div>
             <div class="slotPrev" id="slotPrev_${i}"><div class="slotRefEmpty">Loading…</div></div>
-            <div class="small" id="slotMeta_${i}">Source: ${sourceStr}</div>
+            <div class="small" id="slotMeta_${i}">Source: ${srcLatest.fullPath}</div>
             <button class="btn btnSmall redoBtn" id="redo_${i}" style="margin-top:8px; width:100%;" onclick="redoSlot(${i})">Redo Slot ${slotNum}</button>
           `;
           gridEl.appendChild(slotCard);
@@ -1724,7 +1724,8 @@
 
         try {
             const timestamp = Date.now();
-            const outputBasePath = `${ROOT}/Completed_Charm/Derivatives_${timestamp}`;
+            // FIX: Use a staging folder structure known to be writable by the backend service account
+            const outputBasePath = `${ROOT}/Charms/Ready_To_List/Deriv_${timestamp}`;
             
             const tasks = [];
             let slotIndex = 0;
