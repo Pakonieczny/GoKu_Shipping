@@ -258,9 +258,12 @@
    import { getStorage, ref, uploadBytesResumable, getDownloadURL, getBytes, listAll, getMetadata, deleteObject } from "https://www.gstatic.com/firebasejs/9.23.0/firebase-storage.js";
    import { getAuth, signInAnonymously as modSignInAnonymously, onAuthStateChanged as modOnAuthStateChanged } from "https://www.gstatic.com/firebasejs/9.23.0/firebase-auth.js";
 
-
-    // --- Netlify functions base ---
-    const functionsBaseUrl = `${window.location.origin}/.netlify/functions`;
+    // --- Netlify functions base (Safely handle file:// fallback) ---
+    let originStr = window.location.origin;
+    if (!originStr || originStr === "null" || window.location.protocol === "file:") {
+      originStr = "https://listing-generator-1.goldenspike.app"; // Fallback if opened locally
+    }
+    const functionsBaseUrl = `${originStr}/.netlify/functions`;
 
     // -------------------------
     // Per-slot folder layout (Firebase Storage)
