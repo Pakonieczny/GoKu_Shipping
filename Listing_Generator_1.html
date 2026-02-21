@@ -135,19 +135,20 @@
       <div class="row" style="margin-bottom: 14px; background: #0e1220; padding: 4px; border-radius: 12px; border: 1px solid var(--line);">
         <button class="btn" id="toggleGenerate" style="flex:1; background: var(--line); border:none; color: var(--text);">Generate</button>
         <button class="btn" id="toggleReview" style="flex:1; background: transparent; border:none; color: var(--muted);">Review</button>
+        <button class="btn" id="toggleCharmMaker" style="flex:1; background: transparent; border:none; color: var(--muted);">Charm Maker</button>
       </div>
       
-      <div class="muted">Pick a category, upload assets into the right folders, then click Generate Set.</div>
-
-      <label>Category (Storage source of truth)</label>
-      <select id="activeCategory"></select>
-      <div class="muted" style="margin-top:6px;">
-        Inputs come from Firebase Storage folders under <code>listing-generator-1/{Category}/...</code>.
-        <br>
-        <strong>Note:</strong> Stud/Hoop Earrings use <code>New_Charms_Earrings</code>. Others use <code>New_Charms</code>.
-      </div>
-
       <div id="generateSection">
+        <div class="muted">Pick a category, upload assets into the right folders, then click Generate Set.</div>
+
+        <label>Category (Storage source of truth)</label>
+        <select id="activeCategory"></select>
+        <div class="muted" style="margin-top:6px;">
+          Inputs come from Firebase Storage folders under <code>listing-generator-1/{Category}/...</code>.
+          <br>
+          <strong>Note:</strong> Stud/Hoop Earrings use <code>New_Charms_Earrings</code>. Others use <code>New_Charms</code>.
+        </div>
+
         <div class="row" style="margin-top:10px;">
           <button class="btn" id="generateSet">Generate Set (Randomized Refs)</button>
         </div>
@@ -168,6 +169,59 @@
            <button class="btn" id="approveSetBtn" style="width:100%; background: #1f4026; color: #7fdb96; border: 1px solid #2f5e3a;">Approve Set (Move to Completed)</button>
         </div>
         <div style="margin-top: 8px; font-size: 11px; color: var(--muted);" id="backgroundQueueStatus"></div>
+      </div>
+
+      <div id="charmMakerSection" style="display: none;">
+        <div class="row" style="margin-top:12px; gap: 14px;">
+          <div style="flex:1;">
+            <label>New_Charms (Next Available)</label>
+            <div class="slotPrev" id="previewNewCharms"><div class="slotRefEmpty">Loading...</div></div>
+          </div>
+          <div style="flex:1;">
+            <label>New_Charms_Earrings (Next Available)</label>
+            <div class="slotPrev" id="previewNewCharmsEarrings"><div class="slotRefEmpty">Loading...</div></div>
+          </div>
+        </div>
+
+        <label style="margin-top:16px;">Target Age Cohort</label>
+        <select id="cmTargetAge">
+          <option value="Teens / Gen Z (13-24)">Teens / Gen Z (13-24) - Y2K, chunky, celestial</option>
+          <option value="Young Professionals / Millennials (25-40)">Millennials (25-40) - Minimalist, dainty</option>
+          <option value="Mid-Life / Gen X (41-55)">Gen X (41-55) - Milestones, family</option>
+          <option value="Seniors / Boomers (56+)">Boomers (56+) - Classic motifs, heirlooms</option>
+        </select>
+
+        <label>Niche Interest & Lifestyle</label>
+        <select id="cmNicheInterest">
+          <option value="Nature & Botanical">Nature & Botanical</option>
+          <option value="Animals & Pets">Animals & Pets</option>
+          <option value="Celestial & Mystical">Celestial & Mystical</option>
+          <option value="Hobbies & Professions">Hobbies & Professions</option>
+          <option value="Aesthetic Subcultures">Aesthetic Subcultures</option>
+        </select>
+
+        <label>Occasion & Event</label>
+        <select id="cmOccasionType">
+          <option value="Life Milestones">Life Milestones (Sweet 16, New Mom)</option>
+          <option value="Relationship Events">Relationship Events (Bridesmaid, Anniversary)</option>
+          <option value="Calendar Holidays">Calendar Holidays (Valentine's, Mother's Day)</option>
+          <option value="Just Because / Encouragement">Just Because / Encouragement</option>
+        </select>
+
+        <label>Structural Design Parameters</label>
+        <select id="cmDesignParam">
+          <option value="Blank Space for [Initial]">Blank Space for [Initial]</option>
+          <option value="Bezel for [Birthstone]">Bezel for [Birthstone]</option>
+          <option value="Flat back for [Engraving]">Flat back for [Engraving]</option>
+          <option value="Outline/Wireframe">Outline/Wireframe</option>
+        </select>
+
+        <div class="row" style="margin-top:14px;">
+          <button class="btn" id="generateCharmConceptBtn" style="width:100%; background: #2b6cff; color: #fff; border: none;">Generate Derivative Concept</button>
+        </div>
+        
+        <label>Concept Matrix Output</label>
+        <textarea id="cmOutput" readonly placeholder="Your generated charm matrix will appear here..."></textarea>
       </div>
     </div>
 
@@ -625,12 +679,14 @@
     // --- Mode Variables ---
     const toggleGenerateBtn = document.getElementById("toggleGenerate");
     const toggleReviewBtn = document.getElementById("toggleReview");
+    const toggleCharmMakerBtn = document.getElementById("toggleCharmMaker");
     const generateSection = document.getElementById("generateSection");
     const reviewSection = document.getElementById("reviewSection");
+    const charmMakerSection = document.getElementById("charmMakerSection");
     const reviewSetSelect = document.getElementById("reviewSetSelect");
     const approveSetBtn = document.getElementById("approveSetBtn"); 
     const backgroundQueueStatus = document.getElementById("backgroundQueueStatus"); // Status text
-    let appMode = "generate"; // 'generate' or 'review'
+    let appMode = "generate"; // 'generate', 'review', or 'charmMaker'
 
     function setStatus(msg){ statusEl.textContent = msg; }
 
@@ -972,35 +1028,52 @@
     activeCategoryEl.value = "Beady_Necklace";
     renderCategoryUI(activeCategoryEl.value);
 
-    toggleGenerateBtn.addEventListener("click", () => {
-      appMode = "generate";
-      toggleGenerateBtn.style.background = "var(--line)";
-      toggleGenerateBtn.style.color = "var(--text)";
-      toggleReviewBtn.style.background = "transparent";
-      toggleReviewBtn.style.color = "var(--muted)";
-      generateSection.style.display = "block";
-      reviewSection.style.display = "none";
-      renderCategoryUI(activeCategoryEl.value);
-      gridEl.innerHTML = "";
-      setStatus("Ready");
-    });
-
-    toggleReviewBtn.addEventListener("click", () => {
-      appMode = "review";
-      toggleReviewBtn.style.background = "var(--line)";
-      toggleReviewBtn.style.color = "var(--text)";
+    // --- Tab Switching Logic ---
+    function setAppMode(mode) {
+      appMode = mode;
+      
       toggleGenerateBtn.style.background = "transparent";
       toggleGenerateBtn.style.color = "var(--muted)";
+      toggleReviewBtn.style.background = "transparent";
+      toggleReviewBtn.style.color = "var(--muted)";
+      toggleCharmMakerBtn.style.background = "transparent";
+      toggleCharmMakerBtn.style.color = "var(--muted)";
+      
       generateSection.style.display = "none";
-      reviewSection.style.display = "block";
+      reviewSection.style.display = "none";
+      charmMakerSection.style.display = "none";
+      
       gridEl.innerHTML = "";
-      loadReviewSets();
-    });
+
+      if (mode === "generate") {
+        toggleGenerateBtn.style.background = "var(--line)";
+        toggleGenerateBtn.style.color = "var(--text)";
+        generateSection.style.display = "block";
+        renderCategoryUI(activeCategoryEl.value);
+        setStatus("Ready");
+      } else if (mode === "review") {
+        toggleReviewBtn.style.background = "var(--line)";
+        toggleReviewBtn.style.color = "var(--text)";
+        reviewSection.style.display = "block";
+        loadReviewSets();
+      } else if (mode === "charmMaker") {
+        toggleCharmMakerBtn.style.background = "var(--line)";
+        toggleCharmMakerBtn.style.color = "var(--text)";
+        charmMakerSection.style.display = "block";
+        setStatus("Charm Maker Database");
+        loadCharmMakerPreviews();
+      }
+    }
+
+    toggleGenerateBtn.addEventListener("click", () => setAppMode("generate"));
+    toggleReviewBtn.addEventListener("click", () => setAppMode("review"));
+    toggleCharmMakerBtn.addEventListener("click", () => setAppMode("charmMaker"));
+
 
     activeCategoryEl.addEventListener("change", () => {
       if (appMode === "generate") {
         renderCategoryUI(activeCategoryEl.value);
-      } else {
+      } else if (appMode === "review") {
         loadReviewSets();
         gridEl.innerHTML = "";
       }
@@ -1552,6 +1625,54 @@
         setBusy(false);
       }
     }
+
+    // --- Charm Maker Logic ---
+    const previewNewCharms = document.getElementById("previewNewCharms");
+    const previewNewCharmsEarrings = document.getElementById("previewNewCharmsEarrings");
+    const generateCharmConceptBtn = document.getElementById("generateCharmConceptBtn");
+    const cmOutput = document.getElementById("cmOutput");
+
+    async function loadCharmMakerPreviews() {
+      previewNewCharms.innerHTML = `<div class="slotRefEmpty">Fetching...</div>`;
+      previewNewCharmsEarrings.innerHTML = `<div class="slotRefEmpty">Fetching...</div>`;
+      
+      try {
+        await ensureStorageSignedIn();
+        
+        // Fetch next available standard charm
+        const charmsLatest = await listLatestFile(newCharmsPath());
+        if (charmsLatest) {
+          previewNewCharms.innerHTML = `<img src="${cacheBust(charmsLatest.url)}" />`;
+        } else {
+          previewNewCharms.innerHTML = `<div class="slotRefEmpty">Queue Empty</div>`;
+        }
+
+        // Fetch next available earring charm
+        const earringsLatest = await listLatestFile(newCharmsEarringsPath());
+        if (earringsLatest) {
+          previewNewCharmsEarrings.innerHTML = `<img src="${cacheBust(earringsLatest.url)}" />`;
+        } else {
+          previewNewCharmsEarrings.innerHTML = `<div class="slotRefEmpty">Queue Empty</div>`;
+        }
+      } catch (e) {
+        console.error("Error fetching charm previews:", e);
+        previewNewCharms.innerHTML = `<div class="slotRefEmpty">Error loading</div>`;
+        previewNewCharmsEarrings.innerHTML = `<div class="slotRefEmpty">Error loading</div>`;
+      }
+    }
+
+    generateCharmConceptBtn.addEventListener("click", () => {
+      // Pulling text values to construct a database-friendly derivative string
+      const ageSelect = document.getElementById("cmTargetAge");
+      const age = ageSelect.options[ageSelect.selectedIndex].text;
+      const niche = document.getElementById("cmNicheInterest").value;
+      const occasion = document.getElementById("cmOccasionType").value;
+      const design = document.getElementById("cmDesignParam").value;
+      
+      const conceptString = `Derivative Generation Task:\n[${age}] + [${niche}] + [${occasion}] + [${design}]\n\n*This data structure can now be injected into your prompt pipeline or JSON payload.*`;
+      
+      cmOutput.value = conceptString;
+    });
 
     // ------------------------------------------------------------
     // Per-slot prompt pipelines (Slots 1–8)
