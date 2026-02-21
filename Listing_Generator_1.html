@@ -284,10 +284,9 @@
       "Charms",
       "Bracelets",
       "New_Charms",
-      "New_Charms_Earrings", // Added for clarity, though it's a shared folder
+      "New_Charms_Earrings", 
       "Completed_Charm",
     ];
-
 
     const CATEGORY_SUBFOLDERS = {
       Beady_Necklace: [
@@ -352,14 +351,14 @@
         { type:"copy", folder:"Care_Metal_Guide" },
       ],
       Hoop_Earrings: [
-        { type:"gen", folder:"Hoop_Earring_Models" },       // Slot 1
-        { type:"gen", folder:"Hoop_Primary_Product" },      // Slot 2
-        { type:"gen", folder:"Hoop_Size_Options" },         // Slot 3
-        { type:"gen", folder:"Hoop_Earring_Sec_Models" },   // Slot 4       
-        { type:"gen", folder:"Hoop_Charm_Dimensions" },     // Slot 5
-        { type:"copy", folder:"Hoop_Model_Size_Guide" },    // Slot 6
-        { type:"gen", folder:"Hoop_Metal_Options" },        // Slot 7 
-        { type:"copy", folder:"Hoop_Earring_Care_Guide" },  // Slot 8
+        { type:"gen", folder:"Hoop_Earring_Models" },       
+        { type:"gen", folder:"Hoop_Primary_Product" },      
+        { type:"gen", folder:"Hoop_Size_Options" },         
+        { type:"gen", folder:"Hoop_Earring_Sec_Models" },          
+        { type:"gen", folder:"Hoop_Charm_Dimensions" },     
+        { type:"copy", folder:"Hoop_Model_Size_Guide" },    
+        { type:"gen", folder:"Hoop_Metal_Options" },        
+        { type:"copy", folder:"Hoop_Earring_Care_Guide" },  
       ],
       Charms: [
         { type:"gen", folder:"Primary_Charm_Template" },
@@ -383,7 +382,7 @@
       ],
     };
 
-    // --- Firebase config (matches shipping-1 patterns) ---
+    // --- Firebase config ---
     const firebaseConfig = {
       apiKey: "AIzaSyBXhQLsYRa4i0bX1TPTRiElF9Zjy5vSHlA",
       authDomain: "gokudatabase.firebaseapp.com",
@@ -393,7 +392,7 @@
       appId: "1:1078662308113:web:41df0e5d229ff2af7a6cb0"
     };
     firebase.initializeApp(firebaseConfig);
-    // ✅ IMPORTANT: use COMPAT auth so COMPAT firestore (window.db) has permissions
+    
     try {
       const cred = await firebase.auth().signInAnonymously();
       console.log("Anon auth ✔", cred?.user?.uid);
@@ -403,7 +402,6 @@
 
     window.db = firebase.firestore();
 
-    // Firestore transport hardening
     try {
       window.db.settings({
         ignoreUndefinedProperties: true,
@@ -413,13 +411,11 @@
       console.warn("Firestore settings skipped:", e);
     }
 
-    // modular twin (same approach as shipping-1 resumable uploader)
     let modApp;
     try { modApp = getApp(); } catch { modApp = initializeApp(firebase.app().options); }
     const storage = getStorage(modApp);
     const modAuth = getAuth(modApp);
 
-    // Gate specifically for Storage (modular) so request.auth is never null in Storage rules
     async function ensureStorageSignedIn() {
       if (modAuth.currentUser) return modAuth.currentUser;
       try { await modSignInAnonymously(modAuth); } catch (_) {}
@@ -438,11 +434,8 @@
 
     function sleep(ms){ return new Promise(r => setTimeout(r, ms)); }
     
-    // -------------------------------------------------------------------------
-    // NEW: Zoom & Pan Logic (Ported from Index.html)
-    // -------------------------------------------------------------------------
+    // --- Zoom & Pan Logic ---
     function attachPreviewBoxListeners(box) {
-      // Clamp offsets so the image never bleeds outside the viewport
       function clampAndApply(img, scale, offX, offY) {
         const viewportW = box.clientWidth || 120;
         const viewportH = box.clientHeight || 120;
@@ -451,7 +444,6 @@
         const scaledW = baseW * scale;
         const scaledH = baseH * scale;
 
-        // allowable pre-scale translation so the scaled image still covers viewport
         const maxX = Math.max(0, (scaledW - viewportW) / 2 / scale);
         const maxY = Math.max(0, (scaledH - viewportH) / 2 / scale);
 
@@ -471,7 +463,6 @@
       const dragThreshold = 3;
       const MAX_SCALE = 8;
       
-      // Re-clamp the current image when the preview box resizes
       if (typeof ResizeObserver !== "undefined") {
         const ro = new ResizeObserver(() => {
           const img = box.querySelector("img");
@@ -493,10 +484,10 @@
         let offY = parseFloat(img.dataset.offsetY) || 0;
 
         if (ev.deltaY < 0) {
-          currentScale *= 1.1;            // zoom in
+          currentScale *= 1.1;
         } else {
-          currentScale /= 1.1;            // zoom out
-          if (currentScale <= 1) {        // snap back
+          currentScale /= 1.1;
+          if (currentScale <= 1) {
             currentScale = 1;
             offX = 0; offY = 0;
           }
@@ -509,7 +500,7 @@
         const img = box.querySelector("img");
         if (!img) return;
         const scaleNow = parseFloat(img.dataset.scale) || 1;
-        if (scaleNow <= 1) return;        // only drag when zoomed
+        if (scaleNow <= 1) return;
         ev.preventDefault();
         isMouseDown = true;
         isDragging = false;
@@ -544,43 +535,37 @@
         const img = box.querySelector("img");
         if (!img) return;
 
-        // Current transform (pre-scale offsets)
         const s0    = parseFloat(img.dataset.scale)   || 1;
         const offX0 = parseFloat(img.dataset.offsetX) || 0;
         const offY0 = parseFloat(img.dataset.offsetY) || 0;
 
-        // Click in screen space relative to box center
         const rect = box.getBoundingClientRect();
         const cx = rect.left + box.clientWidth  / 2;
         const cy = rect.top  + box.clientHeight / 2;
         const dx_screen = ev.clientX - cx;
         const dy_screen = ev.clientY - cy;
 
-        // Convert to pre-scale image space:
         const px = dx_screen / s0 - offX0;
         const py = dy_screen / s0 - offY0;
 
-        // Offsets that place the clicked point exactly at the center
         let targetOffX = -px;
         let targetOffY = -py;
 
-        // Minimum scale needed so that centering is valid (no blank edges)
         const halfW = (img.clientWidth  || 120) / 2;
         const halfH = (img.clientHeight || 120) / 2;
         function requiredScaleFor(delta, half) {
-          const ratio = Math.abs(delta) / half;     // in [0, 1]
-          if (ratio >= 1) return Infinity;          // edge pixel needs infinite scale
-          return 1 / (1 - ratio);                   // solve half*(1 - 1/s) >= |delta|
+          const ratio = Math.abs(delta) / half;
+          if (ratio >= 1) return Infinity;
+          return 1 / (1 - ratio);
         }
         const needX = requiredScaleFor(targetOffX, halfW);
         const needY = requiredScaleFor(targetOffY, halfH);
 
-        const DESIRED = 1.33;                          // your preferred zoom jump
+        const DESIRED = 1.33;
         let s1 = Math.max(DESIRED, s0 * 1.5, needX, needY);
         if (!Number.isFinite(s1)) s1 = MAX_SCALE;
         if (s1 > MAX_SCALE) s1 = MAX_SCALE;
         
-        // Toggle Zoom Out if already zoomed
         if (s0 > 1.2 && Math.abs(s1 - s0) < 0.5) s1 = 1; 
 
         clampAndApply(img, s1, targetOffX, targetOffY);
@@ -588,27 +573,23 @@
     }
 
     async function waitForSlotPngUrl(outputBasePath, slotIndex, opts = {}) {
-      const timeoutMs  = Number(opts.timeoutMs ?? 600000);  // Increased to 10 min
-      const intervalMs = Number(opts.intervalMs ?? 3000);   // Increased to 3s to reduce load
+      const timeoutMs  = Number(opts.timeoutMs ?? 600000); 
+      const intervalMs = Number(opts.intervalMs ?? 3000);  
       const fileName = `Slot_${slotIndex + 1}.png`;
       const afterUpdatedMs  = opts.afterUpdatedMs == null ? null : Number(opts.afterUpdatedMs);
       const afterGeneration = opts.afterGeneration == null ? null : Number(opts.afterGeneration);
 
-      // Stagger initial check to prevent thundering herd of 8 concurrent requests
       await sleep(Math.random() * 3000); 
 
       const t0 = Date.now();
       while (true) {
         await ensureStorageSignedIn();
 
-        // ✅ Only LIST-first polling.
         try {
           const folderRef = ref(storage, outputBasePath);
           const res = await listAll(folderRef);
           const hit = (res.items || []).find(it => it.name === fileName);
           if (hit) {
-            // If this call is part of a Redo, the slot file likely already exists.
-            // Only return once we detect the file has been overwritten (metadata changed).
             if (afterUpdatedMs != null || afterGeneration != null) {
               try {
                 const meta = await getMetadata(hit);
@@ -619,14 +600,11 @@
                 const okUpd = (afterUpdatedMs == null)  ? true : (updatedMs > afterUpdatedMs);
 
                 if (!okGen || !okUpd) {
-                  // Found the file, but it's still the old version — keep waiting.
                   throw new Error("slot_not_updated_yet");
                 }
               } catch (e2) {
                 if (String(e2?.message || e2).includes("slot_not_updated_yet")) {
-                  // keep waiting
                 } else {
-                  // transient metadata issue — keep waiting
                 }
                 throw e2;
               }
@@ -644,23 +622,17 @@
 
               if (looksUnauthorized) {
                 throw new Error(
-                  `Cannot download ${hit.fullPath} (permission/token issue).\n` +
-                  `If this slot was produced via server-side copy(), ensure metadata.firebaseStorageDownloadTokens is set on the copied object.\n` +
-                  `Server fix: after copy() call setMetadata({ metadata: { firebaseStorageDownloadTokens: <uuid> } }).`
+                  `Cannot download ${hit.fullPath} (permission/token issue).\n`
                 );
               }
               throw eUrl;
             }
           }
         } catch (e) {
-          // If LIST is blocked by Storage rules, we cannot poll without causing 404s.
           const msg = String(e?.message || e);
-          
-          // Check for 500 error specifically and backoff
           if (msg.includes("500") || msg.includes("internal")) {
              console.warn("Storage 500 error, retrying with backoff...", outputBasePath);
              await sleep(5000); 
-             // Don't throw, just loop again after wait
           } else {
              const looksUnauthorized =
                 msg.includes("storage/unauthorized") ||
@@ -668,11 +640,9 @@
                 msg.toLowerCase().includes("permission");
              if (looksUnauthorized) {
                 throw new Error(
-                `Storage rules block LIST on: ${outputBasePath}\n` +
-                `Allow LIST for Ready_To_List (or at least ${outputBasePath}) so the UI can detect Slot PNGs without any 404 polling.`
+                `Storage rules block LIST on: ${outputBasePath}\n`
                 );
              }
-             // transient listing issue: keep waiting
           }
         }
 
@@ -700,23 +670,19 @@
     const charmMakerSection = document.getElementById("charmMakerSection");
     const reviewSetSelect = document.getElementById("reviewSetSelect");
     const approveSetBtn = document.getElementById("approveSetBtn"); 
-    const backgroundQueueStatus = document.getElementById("backgroundQueueStatus"); // Status text
-    let appMode = "generate"; // 'generate', 'review', or 'charmMaker'
+    const backgroundQueueStatus = document.getElementById("backgroundQueueStatus");
+    let appMode = "generate"; 
 
     function setStatus(msg){ statusEl.textContent = msg; }
 
-    // Busy-state helper (Generate button + basic UI lock)
     function setBusy(isBusy){
       generateSetBtn.disabled = !!isBusy;
       generateSetBtn.style.opacity = isBusy ? "0.6" : "1";
       generateSetBtn.style.cursor = isBusy ? "not-allowed" : "pointer";
-      // approveSetBtn is now managed by the background Queue, not blocking the UI globally
     }
 
-   // Current generated set context (used by per-slot Redo)
-    let CURRENT_SET = null; // { category, outputBasePath, setN }
+    let CURRENT_SET = null; 
     
-    // NEW: Global tracker for Redo operations across all sets
     const REDO_STATE = {}; 
 
     function setAllRedoEnabled(enabled){
@@ -746,7 +712,7 @@
 
       REDO_STATE[redoKey] = { status: 'running' };
       updateDropdownLabels(); 
-      updateApproveButtonState(); // NEW: Check state immediately
+      updateApproveButtonState(); 
 
       const slotFileName = `Slot_${slotIndex + 1}.png`;
       const slotStoragePath = `${ctxSetPath}/${slotFileName}`;
@@ -758,10 +724,8 @@
         beforeUpdatedMs = Date.parse(beforeMeta?.updated || beforeMeta?.timeCreated || "") || 0;
         beforeGeneration = Number(beforeMeta?.generation || 0) || 0;
       } catch (_) {
-        // Slot may not exist yet
       }
 
-      // Check if we are still viewing the set we initiated this from
       const isViewing = (CURRENT_SET?.outputBasePath === ctxSetPath);
       
       if (isViewing) {
@@ -772,7 +736,7 @@
           if (redoBtn) redoBtn.disabled = true;
           if (prevBox) {
               prevBox.innerHTML = `<div class="slotRefEmpty">Working…</div>`;
-              prevBox.classList.remove("success-border"); // RESET BORDER
+              prevBox.classList.remove("success-border"); 
           }
           setStatus(`Redo Slot ${slotIndex + 1}…`);
       }
@@ -820,13 +784,11 @@
             });
           }
           
-          // SUCCESSS Handling
           const finalUrl = cacheBust(waitedResult.url);
           REDO_STATE[redoKey] = { status: 'completed', url: finalUrl };
           updateDropdownLabels(); 
-          updateApproveButtonState(); // NEW: Check state again
+          updateApproveButtonState(); 
 
-          // If still viewing, update DOM
           if (CURRENT_SET?.outputBasePath === ctxSetPath) {
               const slotCard = gridEl.querySelector(`.slot[data-slot-index="${slotIndex}"]`);
               const prevBox  = slotCard?.querySelector(`#slotPrev_${slotIndex}`);
@@ -835,7 +797,6 @@
               
               if (prevBox) {
                   prevBox.innerHTML = `<img src="${finalUrl}" />`;
-                  // ✅ ATTACH LISTENERS AFTER REDO
                   attachPreviewBoxListeners(prevBox);
                   prevBox.classList.add("success-border"); 
               }
@@ -848,7 +809,7 @@
           console.error("Redo failed", err);
           delete REDO_STATE[redoKey];
           updateDropdownLabels();
-          updateApproveButtonState(); // NEW: Ensure state is reset on error
+          updateApproveButtonState(); 
           if (CURRENT_SET?.outputBasePath === ctxSetPath) {
              const prevBox = gridEl.querySelector(`.slot[data-slot-index="${slotIndex}"] #slotPrev_${slotIndex}`);
              if (prevBox) prevBox.innerHTML = `<div class="slotRefEmpty">Error</div>`;
@@ -856,7 +817,6 @@
           }
       }
 
-      // MANIFEST UPDATE (Non-blocking usually, but await here for consistency)
       try {
         const manifestRef = ref(storage, `${ctxSetPath}/manifest.json`);
         
@@ -896,7 +856,6 @@
     
     window.redoSlot = redoSlot;
 
-    // Back-compat alias
     const categoryEl = activeCategoryEl;
 
     function folderPath(category, subfolder) {
@@ -911,9 +870,6 @@
       return `${ROOT}/New_Charms_Earrings`;
     }
 
-    // -------------------------------------------------------------------------
-    // NEW: Randomizer Function
-    // -------------------------------------------------------------------------
     async function listRandomFile(fullFolderPath) {
       await ensureStorageSignedIn();
       const folderRef = ref(storage, fullFolderPath);
@@ -1116,7 +1072,6 @@
           
           updateDropdownLabels();
           
-          // Auto-load first item if present
           if (reviewSetSelect.value) {
               loadSetImages(reviewSetSelect.value);
           }
@@ -1164,11 +1119,9 @@
         });
     }
 
-    // NEW: Function to toggle approve button status
     function updateApproveButtonState() {
       if (!approveSetBtn) return;
       
-      // Default Green Style
       const setGreen = () => {
         approveSetBtn.disabled = false;
         approveSetBtn.style.background = "#1f4026";
@@ -1179,11 +1132,10 @@
         approveSetBtn.style.opacity = "1";
       };
 
-      // Orange Style
       const setOrange = () => {
         approveSetBtn.disabled = true;
-        approveSetBtn.style.background = "#7c2d12"; // Darker orange/rust
-        approveSetBtn.style.color = "#fdba74"; // light orange
+        approveSetBtn.style.background = "#7c2d12"; 
+        approveSetBtn.style.color = "#fdba74"; 
         approveSetBtn.style.border = "1px solid #ea580c";
         approveSetBtn.textContent = "Waiting for Redo...";
         approveSetBtn.style.cursor = "not-allowed";
@@ -1210,7 +1162,6 @@
       }
     }
 
-    // NEW: Consolidated Load Function
     async function loadSetImages(setName) {
       if (!setName) return;
 
@@ -1228,7 +1179,6 @@
         let parsedSetN = parseInt(setName.replace('Set_', '')) || 0;
         CURRENT_SET = { category, outputBasePath: setPath, setN: parsedSetN };
 
-        // 404 Safety: try/catch the manifest load
         let manifestData = null;
         try {
             const manifestRef = ref(storage, `${setPath}/manifest.json`);
@@ -1236,7 +1186,6 @@
             const text = new TextDecoder().decode(buffer);
             manifestData = JSON.parse(text);
         } catch(err) {
-            // expected if manifest doesn't exist
         }
 
         const slotPlan = SLOT_MAP[category] || [];
@@ -1299,11 +1248,9 @@
               if (prevBox) {
                 const finalUrl = cacheBust(url);
                 prevBox.innerHTML = `<img src="${finalUrl}" />`;
-                // ✅ ATTACH LISTENERS AFTER LOADING
                 attachPreviewBoxListeners(prevBox);
               }
             } catch (err) {
-              // ignore
             }
           }
         }));
@@ -1317,7 +1264,6 @@
 
         setStatus(`Viewing ${category} / ${setName}`);
       } catch (e) {
-        // If the set folder itself is gone (404 on listAll), handle gracefully
         if (e.code === 'storage/object-not-found') {
              gridEl.innerHTML = `<div class='slotRefEmpty'>Set '${setName}' not found (might be deleted/moved).</div>`;
         } else {
@@ -1326,7 +1272,7 @@
         }
       } finally {
         setBusy(false);
-        updateApproveButtonState(); // NEW: Verify button state after load
+        updateApproveButtonState(); 
       }
     }
     
@@ -1334,7 +1280,6 @@
         loadSetImages(e.target.value);
     });
 
-    // NEW: "Optimistic" Approve function
     function approveSet() {
       const category = activeCategoryEl.value;
       const setName = reviewSetSelect.value;
@@ -1342,13 +1287,10 @@
 
       if (!confirm(`Approve ${setName}? (Instant Queue)`)) return;
 
-      // 1. Remove from UI immediately
       const optionToRemove = reviewSetSelect.querySelector(`option[value="${setName}"]`);
       if (optionToRemove) optionToRemove.remove();
 
-      // 2. Load next set immediately if exists
       if (reviewSetSelect.options.length > 0) {
-          // Select first available (or keep index)
           reviewSetSelect.selectedIndex = 0; 
           loadSetImages(reviewSetSelect.value);
       } else {
@@ -1356,11 +1298,9 @@
           setStatus("Queue clear.");
       }
 
-      // 3. Trigger background move
       runBackgroundApproval(category, setName);
     }
 
-    // NEW: Background Task
     async function runBackgroundApproval(category, setName) {
         const queueId = `${category}/${setName}`;
         backgroundQueueStatus.textContent = `Queued: ${setName}...`;
@@ -1376,16 +1316,14 @@
             const res = await listAll(srcRef);
             
             for (const itemRef of res.items) {
-               // Download -> Upload -> Delete
                const buffer = await getBytes(itemRef);
                const newRef = ref(storage, `${destFolder}/${itemRef.name}`);
-               await uploadBytesResumable(newRef, buffer); // ✅ Changed 'blob' to 'buffer'
+               await uploadBytesResumable(newRef, buffer); 
                await deleteObject(itemRef);
             }
             console.log(`[Queue] Finished moving ${setName}`);
             backgroundQueueStatus.textContent = `Completed: ${setName}`;
             
-            // Clear status after 3s
             setTimeout(() => {
                 if (backgroundQueueStatus.textContent.includes(setName)) {
                     backgroundQueueStatus.textContent = "";
@@ -1407,7 +1345,6 @@
         body: JSON.stringify(body),
       });
 
-      // IMPORTANT: do NOT silently turn non-JSON into {}
       const raw = await res.text().catch(() => "");
       let j = null;
       try { j = raw ? JSON.parse(raw) : null; } catch { j = null; }
@@ -1420,7 +1357,6 @@
         throw new Error(msg);
       }
 
-      // Netlify background functions often return 202 with an empty body.
       if (!j) {
         if (res.status === 202 && (!raw || !raw.trim())) {
           return { ok: true, accepted: true, status: 202 };
@@ -1430,7 +1366,6 @@
       return j;
     }
 
-    // Use the NON-background endpoint so we always get JSON back.
     const GEMINI_FN = "geminiImageProxy";
     const GEMINI_BG_FN = "geminiImageProxy-background";
 
@@ -1446,7 +1381,6 @@
     }
 
     function normalizeAllocOutputBasePath(alloc) {
-      // Some backends return a string directly, others nest under data/result/payload.
       if (typeof alloc === "string") return alloc.trim() || null;
       if (!alloc || typeof alloc !== "object") return null;
 
@@ -1456,9 +1390,7 @@
       const p = a.payload && typeof a.payload === "object" ? a.payload : null;
 
       return pickFirstString(
-        // top-level
         a.outputBasePath, a.output_base_path, a.output_base_path, a.outputBase, a.basePath,
-        // common nesting
         d?.outputBasePath, d?.output_base_path, d?.outputBase, d?.basePath,
         r?.outputBasePath, r?.output_base_path, r?.outputBase, r?.basePath,
         p?.outputBasePath, p?.output_base_path, p?.outputBase, p?.basePath
@@ -1483,21 +1415,17 @@
         const outputBasePath = normalizeAllocOutputBasePath(alloc);
         if (!outputBasePath) throw new Error("alloc_set did not return a valid outputBasePath");
 
-        // Prefer server-provided setN, but fall back to parsing from outputBasePath
         let setN = alloc?.setN ?? alloc?.set_n;
         if (setN == null) {
           const m = outputBasePath.match(/\/Set_(\d+)\b/);
           if (m) setN = Number(m[1]);
         }
 
-        // Save current set context for per-slot Redo
         CURRENT_SET = { category, outputBasePath, setN };
 
-        // ✅ LOGIC UPDATE: Pick charm source based on category
         const isEarring = ["Stud_Earrings", "Hoop_Earrings"].includes(category);
         const charmFolderPath = isEarring ? newCharmsEarringsPath() : newCharmsPath();
         
-        // Constraint C: Charms are NOT randomized. Keep listLatestFile here.
         const charmLatest = await listLatestFile(charmFolderPath);
         if (!charmLatest) throw new Error(`No files in ${charmFolderPath}/`);
 
@@ -1510,24 +1438,19 @@
           model: "gemini-3-pro-image-preview",
         };
 
-        // 1) Resolve all slot sources up front
-        // Constraint A & B: Randomize slot reference images.
         setStatus("Preparing slots (Randomizing)…");
         const slotResolved = await Promise.all(slotPlan.map(async (spec, i) => {
           const srcFolder = slotRefFolder(category, spec.folder);
-          // CHANGED: Use listRandomFile instead of listLatestFile
           const srcRandom = await listRandomFile(srcFolder);
           if (!srcRandom) throw new Error(`No files in ${srcFolder}/`);
           return { spec, i, slotNum: i + 1, srcLatest: srcRandom };
         }));
 
-        // 2) Render all slot cards immediately
         gridEl.innerHTML = "";
         for (const r of slotResolved) {
           const { spec, i, slotNum, srcLatest } = r;
           const slotCard = document.createElement("div");
           slotCard.className = "slot";
-          // Add data-slot-index for easier selection
           slotCard.dataset.slotIndex = i; 
           slotCard.innerHTML = `
             <div class="slotTop">
@@ -1543,7 +1466,6 @@
 
         setStatus("Starting background run…");
 
-        // 3) Construct Tasks Object
         const tasks = slotResolved.map((r) => {
           const { spec, i, slotNum, srcLatest } = r;
           if (spec.type === "copy") {
@@ -1557,33 +1479,24 @@
             type: "edits",
             slotIndex: i,
             input_storage_path: srcLatest.fullPath,
-            input_charm_storage_path: charmLatest.fullPath, // Pass the correct charm file
+            input_charm_storage_path: charmLatest.fullPath, 
             prompt: buildSlotPrompt(category, spec.folder, slotNum),
             model: "gemini-3-pro-image-preview",
           };
         });
 
-        // ---------------------------------------------------------
-        // FIX: Decouple Trigger and Polling
-        // ---------------------------------------------------------
-
-        // A. Start Polling Logic (Wait for images to appear in Storage)
-        // We start this PROMISE immediately, but await it later.
         const pollingPromise = Promise.all(slotResolved.map(async (r) => {
           const { spec, i, slotNum, srcLatest } = r;
           const prevBox = document.getElementById(`slotPrev_${i}`);
           const setImg = (url) => { 
             if (prevBox) {
                 prevBox.innerHTML = `<img src="${url}" />`;
-                // ✅ ATTACH LISTENERS AFTER GENERATION
                 attachPreviewBoxListeners(prevBox);
             } 
           };
 
-          // Wait for the file to appear
           const waited = await waitForSlotPngUrl(outputBasePath, i);
           
-          // cache-bust so the preview updates even if the filename is overwritten
           const finalUrl = `${waited.url}${waited.url.includes("?") ? "&" : "?"}cb=${Date.now()}`;
           setImg(finalUrl);
 
@@ -1594,31 +1507,25 @@
             newCharm: spec.type === "copy" ? null : charmLatest.fullPath,
             output: waited.storagePath,
           };
-        }));
+        });
 
-        // B. Fire the Trigger (Send request to server)
-        // ✅ CRITICAL FIX: We MUST await this. 
-        // If the request fails, we throw immediately instead of waiting 10 minutes for a timeout.
         try {
             await postJson(GEMINI_BG_FN, {
               kind: "run_set_async",
               activeCategory: category,
               output_base_path: outputBasePath,
-              delayMs: 20000, // 20.0s spacing between Gemini slot submissions
+              delayMs: 20000, 
               tasks,
             });
             console.log("Background run triggered successfully");
         } catch (err) {
-            // Throwing here stops execution, preventing the polling timeout error.
             throw new Error(`Failed to start generation on server: ${err.message}`);
         }
 
         setStatus("Generating… (Monitoring Storage)");
 
-        // C. Wait for Polling to finish (This confirms images are created)
         const results = await pollingPromise;
         
-        // Sort results to match manifest order
         results.sort((a, b) => a.slot - b.slot);
         manifest.slots = results;
 
@@ -1631,7 +1538,6 @@
         });
 
         setStatus(`Done → ${category}/Ready_To_List/Set_${setN}`);
-        // Now that the set is done, enable per-slot Redo buttons
         setAllRedoEnabled(true);
       } catch (e) {
         console.error(e);
@@ -1661,7 +1567,6 @@
       try {
         await ensureStorageSignedIn();
         
-        // Fetch next available standard charm
         const charmsLatest = await listLatestFile(newCharmsPath());
         currentCharmRef = charmsLatest;
         if (charmsLatest) {
@@ -1670,7 +1575,6 @@
           previewNewCharms.innerHTML = `<div class="slotRefEmpty">Queue Empty</div>`;
         }
 
-        // Fetch next available earring charm
         const earringsLatest = await listLatestFile(newCharmsEarringsPath());
         currentEarringRef = earringsLatest;
         if (earringsLatest) {
@@ -1686,7 +1590,6 @@
     }
 
     generateCharmConceptBtn.addEventListener("click", () => {
-      // Pulling text values to construct a database-friendly derivative string
       const ageSelect = document.getElementById("cmTargetAge");
       const age = ageSelect.options[ageSelect.selectedIndex].text;
       const niche = document.getElementById("cmNicheInterest").value;
@@ -1704,7 +1607,6 @@
             return;
         }
 
-        // Auto-generate concept if missing
         if (!cmOutput.value) {
             generateCharmConceptBtn.click();
         }
@@ -1728,13 +1630,12 @@
 
         try {
             const timestamp = Date.now();
-            const outputBasePath = `${ROOT}/Completed_Charm/Deriv_${timestamp}`;
+            
+            // FIX: Backend validation (assertAllowedOutputBase) strictly requires "Set_<numbers>"
+            const outputBasePath = `${ROOT}/Charms/Ready_To_List/Set_${timestamp}`;
             
             let charmSlot = -1;
             let earringSlot = -1;
-            
-            // FIX: We bypass the bulk 'run_set_async' which fails on non-standard batches
-            // Instead, we use 'edits' to process individual single-image edits, exactly like Redo does.
             
             if (currentCharmRef) {
                 charmSlot = 0;
@@ -1754,7 +1655,7 @@
             if (currentEarringRef) {
                 earringSlot = 1;
                 resultPrevEarrings.innerHTML = `<div class="slotRefEmpty">Generating...</div>`;
-                await sleep(4000); // Slightly delay second call to avoid rapid-fire API caps
+                await sleep(4000); 
                 await postJson(GEMINI_BG_FN, {
                     kind: "edits",
                     activeCategory: "Stud_Earrings", 
@@ -1767,7 +1668,6 @@
                 });
             }
 
-            // Poll for results
             const pollingPromises = [];
             if (charmSlot !== -1) {
                 pollingPromises.push(
