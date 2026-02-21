@@ -1259,7 +1259,7 @@
               <div class="muted" style="font-size:12px;">Review: ${spec.folder}</div>
             </div>
             <div class="slotPrev" id="slotPrev_${i}"><div class="slotRefEmpty">Loading…</div></div>
-            <div class="small" id="slotMeta_${i}">Source: ${srcLatest.fullPath}</div>
+            <div class="small" id="slotMeta_${i}">Source: ${sourceStr}</div>
             <button class="btn btnSmall redoBtn" id="redo_${i}" style="margin-top:8px; width:100%;" onclick="redoSlot(${i})">Redo Slot ${slotNum}</button>
           `;
           gridEl.appendChild(slotCard);
@@ -1719,90 +1719,88 @@
         charmMakerResults.style.display = "block";
         resultPrevCharms.classList.remove("success-border");
         resultPrevEarrings.classList.remove("success-border");
-        resultPrevCharms.innerHTML = `<div class="slotRefEmpty">Queued...</div>`;
-        resultPrevEarrings.innerHTML = `<div class="slotRefEmpty">Queued...</div>`;
+        
+        if (currentCharmRef) resultPrevCharms.innerHTML = `<div class="slotRefEmpty">Queued...</div>`;
+        else resultPrevCharms.innerHTML = `<div class="slotRefEmpty">N/A</div>`;
+        
+        if (currentEarringRef) resultPrevEarrings.innerHTML = `<div class="slotRefEmpty">Queued...</div>`;
+        else resultPrevEarrings.innerHTML = `<div class="slotRefEmpty">N/A</div>`;
 
         try {
             const timestamp = Date.now();
-            // FIX: Use a staging folder structure known to be writable by the backend service account
-            const outputBasePath = `${ROOT}/Charms/Ready_To_List/Deriv_${timestamp}`;
+            const outputBasePath = `${ROOT}/Completed_Charm/Deriv_${timestamp}`;
             
-            const tasks = [];
-            let slotIndex = 0;
             let charmSlot = -1;
             let earringSlot = -1;
-
+            
+            // FIX: We bypass the bulk 'run_set_async' which fails on non-standard batches
+            // Instead, we use 'edits' to process individual single-image edits, exactly like Redo does.
+            
             if (currentCharmRef) {
-                charmSlot = slotIndex++;
-                tasks.push({
-                    type: "edits",
-                    slotIndex: charmSlot,
+                charmSlot = 0;
+                resultPrevCharms.innerHTML = `<div class="slotRefEmpty">Generating...</div>`;
+                await postJson(GEMINI_BG_FN, {
+                    kind: "edits",
+                    activeCategory: "Charms", 
                     input_storage_path: currentCharmRef.fullPath,
                     input_charm_storage_path: currentCharmRef.fullPath,
-                    prompt: promptStr,
-                    model: "gemini-3-pro-image-preview"
+                    output_base_path: outputBasePath,
+                    slotIndex: charmSlot,
+                    model: "gemini-3-pro-image-preview",
+                    prompt: promptStr
                 });
             }
 
             if (currentEarringRef) {
-                earringSlot = slotIndex++;
-                tasks.push({
-                    type: "edits",
-                    slotIndex: earringSlot,
+                earringSlot = 1;
+                resultPrevEarrings.innerHTML = `<div class="slotRefEmpty">Generating...</div>`;
+                await sleep(4000); // Slightly delay second call to avoid rapid-fire API caps
+                await postJson(GEMINI_BG_FN, {
+                    kind: "edits",
+                    activeCategory: "Stud_Earrings", 
                     input_storage_path: currentEarringRef.fullPath,
                     input_charm_storage_path: currentEarringRef.fullPath,
-                    prompt: promptStr,
-                    model: "gemini-3-pro-image-preview"
+                    output_base_path: outputBasePath,
+                    slotIndex: earringSlot,
+                    model: "gemini-3-pro-image-preview",
+                    prompt: promptStr
                 });
             }
-
-            await postJson(GEMINI_BG_FN, {
-                kind: "run_set_async",
-                activeCategory: "Charms", // Standard base category mapping for background runner
-                output_base_path: outputBasePath,
-                delayMs: 5000,
-                tasks
-            });
-
-            resultPrevCharms.innerHTML = charmSlot !== -1 ? `<div class="slotRefEmpty">Generating...</div>` : `<div class="slotRefEmpty">N/A</div>`;
-            resultPrevEarrings.innerHTML = earringSlot !== -1 ? `<div class="slotRefEmpty">Generating...</div>` : `<div class="slotRefEmpty">N/A</div>`;
 
             // Poll for results
             const pollingPromises = [];
             if (charmSlot !== -1) {
                 pollingPromises.push(
-                    waitForSlotPngUrl(outputBasePath, charmSlot).then(res => {
+                    waitForSlotPngUrl(outputBasePath, charmSlot, { timeoutMs: 600000, intervalMs: 5000 }).then(res => {
                         resultPrevCharms.innerHTML = `<img src="${cacheBust(res.url)}" />`;
                         attachPreviewBoxListeners(resultPrevCharms);
                         resultPrevCharms.classList.add("success-border");
                     }).catch(e => {
-                        console.error(e);
-                        resultPrevCharms.innerHTML = `<div class="slotRefEmpty">Error</div>`;
+                        console.error("Charm Gen Polling Error:", e);
+                        resultPrevCharms.innerHTML = `<div class="slotRefEmpty">Error / Timeout</div>`;
                     })
                 );
             }
 
             if (earringSlot !== -1) {
                 pollingPromises.push(
-                    waitForSlotPngUrl(outputBasePath, earringSlot).then(res => {
+                    waitForSlotPngUrl(outputBasePath, earringSlot, { timeoutMs: 600000, intervalMs: 5000 }).then(res => {
                         resultPrevEarrings.innerHTML = `<img src="${cacheBust(res.url)}" />`;
                         attachPreviewBoxListeners(resultPrevEarrings);
                         resultPrevEarrings.classList.add("success-border");
                     }).catch(e => {
-                        console.error(e);
-                        resultPrevEarrings.innerHTML = `<div class="slotRefEmpty">Error</div>`;
+                        console.error("Earring Gen Polling Error:", e);
+                        resultPrevEarrings.innerHTML = `<div class="slotRefEmpty">Error / Timeout</div>`;
                     })
                 );
             }
 
             await Promise.all(pollingPromises);
-            setStatus("Derivatives Generated Successfully.");
+            setStatus("Derivatives Processing Complete.");
 
         } catch (err) {
-            console.error(err);
+            console.error("Master Generation Catch:", err);
             setStatus(`Error: ${err.message}`);
-            resultPrevCharms.innerHTML = `<div class="slotRefEmpty">Failed</div>`;
-            resultPrevEarrings.innerHTML = `<div class="slotRefEmpty">Failed</div>`;
         } finally {
             setBusy(false);
             executeCharmGenBtn.disabled = false;
