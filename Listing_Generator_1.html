@@ -1713,7 +1713,17 @@
         }
 
         const conceptString = cmOutput.value;
-        const promptStr = `TASK: Generate a highly similar derivative of the provided reference charm image.\n\nThe newly generated image must only differ based on the following Concept Matrix modifications. It must remain extremely similar to the original reference image in terms of size, style, lighting, background, and overall aesthetic.\n\n${conceptString}`;
+        const promptStr = `TASK: Generate a highly similar derivative of the provided reference charm image.
+
+GUARD RAILS (NON-NEGOTIABLE):
+• Duplicate the Reference product image exactly and only update the 1 charm from the Charm Reference image.
+• Preserve all engravings as they appear in the Charm Reference image.
+• Force the Charm to be TINY, EXTREMELY SMALL. The new Charm must be the same or smaller size then the Hoop Earring Reference Image.
+• Critically: When Generating the new image maintain Charm details, Charm Engravings, Colour, and fidelity just like in the Charm reference image.
+• Do NOT embossed the engravings on the Charm/Pendant, all engravings must be flat having only superficial depth.
+
+CONCEPT MATRIX MODIFICATIONS (Apply these as a subtle flair/differentiating design adjustment):
+${conceptString}`;
 
         setBusy(true);
         setStatus("Generating Charm Derivatives...");
