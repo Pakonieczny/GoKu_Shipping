@@ -166,8 +166,12 @@ async function allocNextSet(activeCategory) {
 function assertAllowedOutputBase(base) {
   const b = String(base || "").trim();
   // Must be: listing-generator-1/{Category}/Ready_To_List/Set_N
-  if (!/^listing-generator-1\/[^/]+\/Ready_To_List\/Set_\d+$/i.test(b)) {
-    throw new Error("output_base_path not allowed");
+  // OR: listing-generator-1/Completed_Charm/Deriv_N
+  const isSet = /^listing-generator-1\/[^/]+\/Ready_To_List\/Set_\d+$/i.test(b);
+  const isDeriv = /^listing-generator-1\/Completed_Charm\/Deriv_\d+$/i.test(b);
+
+  if (!isSet && !isDeriv) {
+    throw new Error("output_base_path not allowed: " + b);
   }
   return b;
 }
@@ -482,7 +486,9 @@ async function uploadPngBufferToStorage({ outBuf, jobId, runId, slotIndex, outpu
   let storagePath;
   if (outputBasePath) {
     const base = String(outputBasePath).trim();
-    if (!/^listing-generator-1\/[^/]+\/Ready_To_List\/Set_\d+$/i.test(base)) {
+    const isSet = /^listing-generator-1\/[^/]+\/Ready_To_List\/Set_\d+$/i.test(base);
+    const isDeriv = /^listing-generator-1\/Completed_Charm\/Deriv_\d+$/i.test(base);
+    if (!isSet && !isDeriv) {
       throw new Error("output_base_path not allowed");
     }
     storagePath = `${base}/Slot_${effectiveSlot + 1}.png`;
