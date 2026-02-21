@@ -1713,17 +1713,25 @@
         }
 
         const conceptString = cmOutput.value;
-        const promptStr = `TASK: Generate a highly similar derivative of the provided reference charm image.
+        const promptStr = `TASK: Generate a highly realistic derivative of the provided reference charm. Your goal is to maintain the exact physical silhouette and base aesthetic of the reference, while introducing a subtle, tasteful engraving variation based exclusively on the Concept Matrix.
 
-GUARD RAILS (NON-NEGOTIABLE):
-• Duplicate the Reference product image exactly and only update the 1 charm from the Charm Reference image.
-• Preserve all engravings as they appear in the Charm Reference image.
-• Force the Charm to be TINY, EXTREMELY SMALL. The new Charm must be the same or smaller size then the Hoop Earring Reference Image.
-• Critically: When Generating the new image maintain Charm details, Charm Engravings, Colour, and fidelity just like in the Charm reference image.
-• Do NOT embossed the engravings on the Charm/Pendant, all engravings must be flat having only superficial depth.
+        HARD PHYSICAL CONSTRAINTS (NON-NEGOTIABLE):
+        • EXACT SILHOUETTE: Strictly preserve the exact cutout shape and outer perimeter of the reference charm. Do not alter the contour, add loops, or modify the silhouette in any way.
+        • FLAT SHEET METAL: The charm material is a perfectly flat, very thin sheet of metal.
+        • SHARP CUTOUTS: Do NOT allow any rounded, beveled, or radiused effects on the cutout edges. It must look like laser-cut, 2D sheet metal.
 
-CONCEPT MATRIX MODIFICATIONS (Apply these as a subtle flair/differentiating design adjustment):
-${conceptString}`;
+        ENGRAVING & AESTHETIC DETAILS:
+        • SUPERFICIAL DEPTH: Do NOT emboss or extrude the engravings. All engravings must be completely flat, surface-level laser etchings with only superficial visual depth.
+        • FIDELITY & COLOR: Maintain the exact metal color, lighting, shading, and photorealistic fidelity of the reference image. 
+        • TASTEFUL ADAPTATION: Use the original reference engravings as a structural baseline, but seamlessly integrate the "Concept Matrix Modifications" below as a subtle, elegant surface motif.
+
+        STRICT NEGATIVE CONSTRAINTS (NEVER DO THESE):
+        • NEVER render or include any text or words on the charm.
+        • NEVER change the physical 3D shape, thickness, or outline of the charm.
+
+        CONCEPT MATRIX MODIFICATIONS (Apply these as a subtle flair/differentiating design adjustment to the surface engraving only):
+        [Insert Concept Matrix Output Here]
+        ${conceptString}`;
 
         setBusy(true);
         setStatus("Generating Charm Derivatives...");
