@@ -217,11 +217,26 @@
         </select>
 
         <div class="row" style="margin-top:14px;">
-          <button class="btn" id="generateCharmConceptBtn" style="width:100%; background: #2b6cff; color: #fff; border: none;">Generate Derivative Concept</button>
+          <button class="btn" id="generateCharmConceptBtn" style="flex:1; background: #2b6cff; color: #fff; border: none;">Generate Derivative Concept</button>
+          <button class="btn" id="executeCharmGenBtn" style="flex:1; background: #1f4026; color: #7fdb96; border: 1px solid #2f5e3a;">Generate Charms</button>
         </div>
         
         <label>Concept Matrix Output</label>
         <textarea id="cmOutput" readonly placeholder="Your generated charm matrix will appear here..."></textarea>
+
+        <div id="charmMakerResults" style="display:none; margin-top:20px;">
+          <label style="color:#7fdb96;">Generated Derivatives Previews</label>
+          <div class="row" style="gap: 14px;">
+            <div style="flex:1;">
+              <div class="muted" style="margin-bottom:6px;">New_Charms Derivative</div>
+              <div class="slotPrev" id="resultPrevCharms"><div class="slotRefEmpty">Waiting...</div></div>
+            </div>
+            <div style="flex:1;">
+              <div class="muted" style="margin-bottom:6px;">New_Charms_Earrings Derivative</div>
+              <div class="slotPrev" id="resultPrevEarrings"><div class="slotRefEmpty">Waiting...</div></div>
+            </div>
+          </div>
+        </div>
       </div>
     </div>
 
@@ -1627,9 +1642,16 @@
     }
 
     // --- Charm Maker Logic ---
+    let currentCharmRef = null;
+    let currentEarringRef = null;
+
     const previewNewCharms = document.getElementById("previewNewCharms");
     const previewNewCharmsEarrings = document.getElementById("previewNewCharmsEarrings");
     const generateCharmConceptBtn = document.getElementById("generateCharmConceptBtn");
+    const executeCharmGenBtn = document.getElementById("executeCharmGenBtn");
+    const charmMakerResults = document.getElementById("charmMakerResults");
+    const resultPrevCharms = document.getElementById("resultPrevCharms");
+    const resultPrevEarrings = document.getElementById("resultPrevEarrings");
     const cmOutput = document.getElementById("cmOutput");
 
     async function loadCharmMakerPreviews() {
@@ -1641,6 +1663,7 @@
         
         // Fetch next available standard charm
         const charmsLatest = await listLatestFile(newCharmsPath());
+        currentCharmRef = charmsLatest;
         if (charmsLatest) {
           previewNewCharms.innerHTML = `<img src="${cacheBust(charmsLatest.url)}" />`;
         } else {
@@ -1649,6 +1672,7 @@
 
         // Fetch next available earring charm
         const earringsLatest = await listLatestFile(newCharmsEarringsPath());
+        currentEarringRef = earringsLatest;
         if (earringsLatest) {
           previewNewCharmsEarrings.innerHTML = `<img src="${cacheBust(earringsLatest.url)}" />`;
         } else {
@@ -1674,10 +1698,119 @@
       cmOutput.value = conceptString;
     });
 
+    executeCharmGenBtn.addEventListener("click", async () => {
+        if (!currentCharmRef && !currentEarringRef) {
+            alert("No reference charms loaded in queues. Please upload to New_Charms or New_Charms_Earrings.");
+            return;
+        }
+
+        // Auto-generate concept if missing
+        if (!cmOutput.value) {
+            generateCharmConceptBtn.click();
+        }
+
+        const conceptString = cmOutput.value;
+        const promptStr = `TASK: Generate a highly similar derivative of the provided reference charm image.\n\nThe newly generated image must only differ based on the following Concept Matrix modifications. It must remain extremely similar to the original reference image in terms of size, style, lighting, background, and overall aesthetic.\n\n${conceptString}`;
+
+        setBusy(true);
+        setStatus("Generating Charm Derivatives...");
+        executeCharmGenBtn.disabled = true;
+        
+        charmMakerResults.style.display = "block";
+        resultPrevCharms.classList.remove("success-border");
+        resultPrevEarrings.classList.remove("success-border");
+        resultPrevCharms.innerHTML = `<div class="slotRefEmpty">Queued...</div>`;
+        resultPrevEarrings.innerHTML = `<div class="slotRefEmpty">Queued...</div>`;
+
+        try {
+            const timestamp = Date.now();
+            const outputBasePath = `${ROOT}/Completed_Charm/Derivatives_${timestamp}`;
+            
+            const tasks = [];
+            let slotIndex = 0;
+            let charmSlot = -1;
+            let earringSlot = -1;
+
+            if (currentCharmRef) {
+                charmSlot = slotIndex++;
+                tasks.push({
+                    type: "edits",
+                    slotIndex: charmSlot,
+                    input_storage_path: currentCharmRef.fullPath,
+                    input_charm_storage_path: currentCharmRef.fullPath,
+                    prompt: promptStr,
+                    model: "gemini-3-pro-image-preview"
+                });
+            }
+
+            if (currentEarringRef) {
+                earringSlot = slotIndex++;
+                tasks.push({
+                    type: "edits",
+                    slotIndex: earringSlot,
+                    input_storage_path: currentEarringRef.fullPath,
+                    input_charm_storage_path: currentEarringRef.fullPath,
+                    prompt: promptStr,
+                    model: "gemini-3-pro-image-preview"
+                });
+            }
+
+            await postJson(GEMINI_BG_FN, {
+                kind: "run_set_async",
+                activeCategory: "Charms", // Standard base category mapping for background runner
+                output_base_path: outputBasePath,
+                delayMs: 5000,
+                tasks
+            });
+
+            resultPrevCharms.innerHTML = charmSlot !== -1 ? `<div class="slotRefEmpty">Generating...</div>` : `<div class="slotRefEmpty">N/A</div>`;
+            resultPrevEarrings.innerHTML = earringSlot !== -1 ? `<div class="slotRefEmpty">Generating...</div>` : `<div class="slotRefEmpty">N/A</div>`;
+
+            // Poll for results
+            const pollingPromises = [];
+            if (charmSlot !== -1) {
+                pollingPromises.push(
+                    waitForSlotPngUrl(outputBasePath, charmSlot).then(res => {
+                        resultPrevCharms.innerHTML = `<img src="${cacheBust(res.url)}" />`;
+                        attachPreviewBoxListeners(resultPrevCharms);
+                        resultPrevCharms.classList.add("success-border");
+                    }).catch(e => {
+                        console.error(e);
+                        resultPrevCharms.innerHTML = `<div class="slotRefEmpty">Error</div>`;
+                    })
+                );
+            }
+
+            if (earringSlot !== -1) {
+                pollingPromises.push(
+                    waitForSlotPngUrl(outputBasePath, earringSlot).then(res => {
+                        resultPrevEarrings.innerHTML = `<img src="${cacheBust(res.url)}" />`;
+                        attachPreviewBoxListeners(resultPrevEarrings);
+                        resultPrevEarrings.classList.add("success-border");
+                    }).catch(e => {
+                        console.error(e);
+                        resultPrevEarrings.innerHTML = `<div class="slotRefEmpty">Error</div>`;
+                    })
+                );
+            }
+
+            await Promise.all(pollingPromises);
+            setStatus("Derivatives Generated Successfully.");
+
+        } catch (err) {
+            console.error(err);
+            setStatus(`Error: ${err.message}`);
+            resultPrevCharms.innerHTML = `<div class="slotRefEmpty">Failed</div>`;
+            resultPrevEarrings.innerHTML = `<div class="slotRefEmpty">Failed</div>`;
+        } finally {
+            setBusy(false);
+            executeCharmGenBtn.disabled = false;
+        }
+    });
+
     // ------------------------------------------------------------
     // Per-slot prompt pipelines (Slots 1–8)
     // ------------------------------------------------------------
-    // ... [Rest of the Prompt strings and PROMPT_MAPS remain unchanged] ...
     
     // =========================================================================
     // 0. BEADY_NECKLACE
