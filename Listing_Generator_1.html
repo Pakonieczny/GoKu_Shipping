@@ -183,46 +183,9 @@
           </div>
         </div>
 
-        <label style="margin-top:16px;">Target Age Cohort</label>
-        <select id="cmTargetAge">
-          <option value="Teens / Gen Z (13-24)">Teens / Gen Z (13-24) - Y2K, chunky, celestial</option>
-          <option value="Young Professionals / Millennials (25-40)">Millennials (25-40) - Minimalist, dainty</option>
-          <option value="Mid-Life / Gen X (41-55)">Gen X (41-55) - Milestones, family</option>
-          <option value="Seniors / Boomers (56+)">Boomers (56+) - Classic motifs, heirlooms</option>
-        </select>
-
-        <label>Niche Interest & Lifestyle</label>
-        <select id="cmNicheInterest">
-          <option value="Nature & Botanical">Nature & Botanical</option>
-          <option value="Animals & Pets">Animals & Pets</option>
-          <option value="Celestial & Mystical">Celestial & Mystical</option>
-          <option value="Hobbies & Professions">Hobbies & Professions</option>
-          <option value="Aesthetic Subcultures">Aesthetic Subcultures</option>
-        </select>
-
-        <label>Occasion & Event</label>
-        <select id="cmOccasionType">
-          <option value="Life Milestones">Life Milestones (Sweet 16, New Mom)</option>
-          <option value="Relationship Events">Relationship Events (Bridesmaid, Anniversary)</option>
-          <option value="Calendar Holidays">Calendar Holidays (Valentine's, Mother's Day)</option>
-          <option value="Just Because / Encouragement">Just Because / Encouragement</option>
-        </select>
-
-        <label>Structural Design Parameters</label>
-        <select id="cmDesignParam">
-          <option value="Blank Space for [Initial]">Blank Space for [Initial]</option>
-          <option value="Bezel for [Birthstone]">Bezel for [Birthstone]</option>
-          <option value="Flat back for [Engraving]">Flat back for [Engraving]</option>
-          <option value="Outline/Wireframe">Outline/Wireframe</option>
-        </select>
-
         <div class="row" style="margin-top:14px;">
-          <button class="btn" id="generateCharmConceptBtn" style="flex:1; background: #2b6cff; color: #fff; border: none;">Generate Derivative Concept</button>
-          <button class="btn" id="executeCharmGenBtn" style="flex:1; background: #1f4026; color: #7fdb96; border: 1px solid #2f5e3a;">Generate Charms</button>
+          <button class="btn" id="executeCharmGenBtn" style="width:100%; background: #1f4026; color: #7fdb96; border: 1px solid #2f5e3a;">Generate Charms</button>
         </div>
-        
-        <label>Concept Matrix Output</label>
-        <textarea id="cmOutput" readonly placeholder="Your generated charm matrix will appear here..."></textarea>
 
         <div id="charmMakerResults" style="display:none; margin-top:20px;">
           <label style="color:#7fdb96;">Generated Derivatives Previews</label>
@@ -1650,12 +1613,10 @@
 
     const previewNewCharms = document.getElementById("previewNewCharms");
     const previewNewCharmsEarrings = document.getElementById("previewNewCharmsEarrings");
-    const generateCharmConceptBtn = document.getElementById("generateCharmConceptBtn");
     const executeCharmGenBtn = document.getElementById("executeCharmGenBtn");
     const charmMakerResults = document.getElementById("charmMakerResults");
     const resultPrevCharms = document.getElementById("resultPrevCharms");
     const resultPrevEarrings = document.getElementById("resultPrevEarrings");
-    const cmOutput = document.getElementById("cmOutput");
 
     async function loadCharmMakerPreviews() {
       previewNewCharms.innerHTML = `<div class="slotRefEmpty">Fetching...</div>`;
@@ -1688,59 +1649,32 @@
       }
     }
 
-    generateCharmConceptBtn.addEventListener("click", () => {
-      // Pulling text values to construct a database-friendly derivative string
-      const ageSelect = document.getElementById("cmTargetAge");
-      const age = ageSelect.options[ageSelect.selectedIndex].text;
-      const niche = document.getElementById("cmNicheInterest").value;
-      const occasion = document.getElementById("cmOccasionType").value;
-      const design = document.getElementById("cmDesignParam").value;
-      
-      const conceptString = `Derivative Generation Task:\n[${age}] + [${niche}] + [${occasion}] + [${design}]\n\n*This data structure can now be injected into your prompt pipeline or JSON payload.*`;
-      
-      cmOutput.value = conceptString;
-    });
-
     executeCharmGenBtn.addEventListener("click", async () => {
         if (!currentCharmRef && !currentEarringRef) {
             alert("No reference charms loaded in queues. Please upload to New_Charms or New_Charms_Earrings.");
             return;
         }
 
-        // Auto-generate concept if missing
-        if (!cmOutput.value) {
-            generateCharmConceptBtn.click();
-        }
+        const promptStr = `TASK: Generate a highly realistic, 2D jewelry charm that functions as a thematic and aesthetic extension of the provided reference. While the materiality and quality must be identical, you are encouraged to adapt the silhouette and internal engravings to suit new demographics and occasions while remaining within the same "Design Family."
 
-        const conceptString = cmOutput.value;
-        const promptStr = `TASK: Generate a highly realistic derivative of the provided reference charm. Your goal is to maintain a very similar physical silhouette, shape and base aesthetic of the reference, while introducing a subtle shape variations, tasteful engraving variation based exclusively on the Concept Matrix.
+HARD PHYSICAL CONSTRAINTS (NON-NEGOTIABLE):
+• FLAT SHEET METAL: The charm must appear as a perfectly flat, thin sheet of high-polish metal.
+• SHARP 2D CUTOUTS: Use laser-cut precision. Do NOT allow rounded edges, bevels, or 3D thickness.
+• VIEWPOINT: Always render the charm perfectly front-facing (orthographic) with 0% perspective tilt.
+• TRANSPARENCY: Generate the charm on a 100% transparent background with no environmental shadows or reflections.
+• NO TEXT: Never render letters, numbers, or words.
 
-        HARD PHYSICAL CONSTRAINTS (NON-NEGOTIABLE):
-        • EXACT SILHOUETTE: Strictly preserve the exact cutout shape and outer perimeter of the reference charm. Do not alter the contour, add loops, or modify the silhouette in any way.
-        • FLAT SHEET METAL: The charm material is a perfectly flat, very thin sheet of metal.
-        • SHARP CUTOUTS: Do NOT allow any rounded, beveled, or radiused effects on the cutout edges. It must look like laser-cut, 2D sheet metal.
-        • ALWAYS display the charm as a 2D object with no visible thickness, ensure the charm is always front facing
-        • ALWAYS generate the charm without a white background, ensure the background is always 100% transparent.
+THEMATIC & AESTHETIC EVOLUTION:
+• AESTHETIC ANCHORING: Maintain the exact gold tone, luminosity, and "luxe-minimalist" feel of the reference image. The "vibe" must remain cohesive.
+• SHAPE VARIATION: You may subtly evolve the outer silhouette to represent different symbols (e.g., botanical, celestial, geometric), provided it maintains the same visual weight and scale as the original.
+• EXPANDED APPEAL: Adapt internal engravings and cutouts to resonate with diverse occasions and demographics.
+• ENGRAVING DEPTH: All internal details must be surface-level laser etchings. No embossing or 3D extrusion.
 
-        ENGRAVING & AESTHETIC DETAILS:
-        • SUPERFICIAL DEPTH: Do NOT emboss or extrude the engravings. All engravings must be completely flat, surface-level laser etchings with only superficial visual depth.
-        • FIDELITY & COLOR: Maintain the exact gold metal color, lighting, shading, and photorealistic fidelity of the reference charm image. 
-        • TASTEFUL ADAPTATION: Use the original reference engravings as a structural baseline, but seamlessly integrate the "Concept Matrix Modifications" below as a subtle, elegant surface motif.
-
-        STRICT NEGATIVE CONSTRAINTS (NEVER DO THESE):
-        • NEVER render or include any text or words on the charm.
-        • NEVER change the physical 3D shape, thickness, or outline of the charm.
-        • NEVER render any environmental shadows
-        • NEVER alter the orientation of the generated charm. 
-
-        CONCEPT MATRIX MODIFICATIONS:
-        • Apply these as a subtle flair/differentiating design adjustment to the surface engraving only. 
-        • These charms are very small 10mm in size and can n ot have too many intricate engravings. 
-        • Limit the amount of engravings you add to keep a good amount of white space on the charm. Never cram the engravings tightly.
-        • Introduce slight variations to the shape of the charm while maintaining the same aesthetic of the reference charm image
-
-        [Insert Concept Matrix Output Here]
-        ${conceptString}`;
+NEGATIVE CONSTRAINTS (NEVER DO THESE):
+• NEVER add jump rings, loops, or chains.
+• NEVER introduce 3D volume, thickness, or side-profile views.
+• NEVER use matte or brushed textures if the reference is high-polish.
+• NEVER deviate from the established level of intricate detail seen in the reference.`;
 
         setBusy(true);
         setStatus("Generating Charm Derivatives...");
