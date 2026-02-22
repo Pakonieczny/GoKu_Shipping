@@ -1655,27 +1655,30 @@
             return;
         }
 
-        const promptStr = `TASK: Generate a highly realistic, 2D jewelry charm that functions as a thematic and aesthetic extension of the provided reference. Your goal is to keep the SAME genre and loosely similar subject matter and overal concept but adapt to attract similar audiences.
+        const promptStr = `CRITICAL INITIAL ANALYSIS: Before generating, conceptually analyze the reference image to determine its exact genre and subject matter (e.g., "Genre: Animal, Subject Matter: Rabbit/Leporidae"). Use this specific analysis as the strict foundational concept for the new charm.
 
-HARD PHYSICAL CONSTRAINTS (NON-NEGOTIABLE):
-• Use engravings very sparingly and very strategically. Do not cram too maany pointless engravings onto the charm.
-• Leave a lot of white space between the engravings, do not bunch up engravings and cutouts closely together.
-• FLAT SHEET METAL: The charm must appear as a perfectly flat, thin sheet of high-polish metal.
-• SHARP 2D CUTOUTS: Use laser-cut precision. Do NOT allow rounded edges, bevels, or 3D thickness.
-• VIEWPOINT: Always render the charm perfectly front-facing (orthographic) with 0% perspective tilt.
-• TRANSPARENCY: Generate the charm on a 100% black background with no environmental shadows or reflections.
-• NO TEXT: Never render letters, numbers, or words.
+        TASK: Generate a highly realistic, 2D jewelry charm that functions as a thematic and aesthetic extension of the provided reference based on your analysis. Your goal is to keep the SAME genre and loosely similar subject matter and overall concept but adapt it to attract similar audiences.
 
-THEMATIC & AESTHETIC EVOLUTION:
-• You may only introduce minor stylistic alterations to the outer contour (e.g., slightly sharper points, smoother curves, or stylistic edges) while preserving the exact overall recognizable footprint.
-• AESTHETIC ANCHORING: Maintain the exact gold tone, luminosity, and "luxe-minimalist" feel of the reference image. The "vibe" must remain cohesive.
-• ENGRAVING DEPTH: All internal details must be surface-level laser etchings. No embossing or 3D extrusion.
+        HARD PHYSICAL CONSTRAINTS (NON-NEGOTIABLE):
+        • INTEGRATED HOOP/BAIL (ABSOLUTELY CRUCIAL): You MUST ensure that the hoop/bail already present in the reference image is accurately, securely, and strategically positioned on the newly generated Charm. It must be a functional, integrated part of the silhouette design (not floating, not a separate jump ring).
+        • Use engravings very sparingly and very strategically. Do not cram too many pointless engravings onto the charm.
+        • Leave a lot of white space between the engravings; do not bunch up engravings and cutouts closely together.
+        • FLAT SHEET METAL: The charm must appear as a perfectly flat, thin sheet of high-polish metal.
+        • SHARP 2D CUTOUTS: Use laser-cut precision. Do NOT allow rounded edges, bevels, or 3D thickness.
+        • VIEWPOINT: Always render the charm perfectly front-facing (orthographic) with 0% perspective tilt.
+        • TRANSPARENCY: Generate the charm on a 100% black background with no environmental shadows or reflections.
+        • NO TEXT: Never render letters, numbers, or words.
 
-NEGATIVE CONSTRAINTS (NEVER DO THESE)
-• NEVER add jump rings and chains.
-• NEVER introduce 3D volume, thickness, or side-profile views.
-• NEVER use matte or brushed textures if the reference is high-polish.
-• NEVER deviate from the established level of intricate detail seen in the reference.`;
+        THEMATIC & AESTHETIC EVOLUTION:
+        • You may only introduce minor stylistic alterations to the outer contour (e.g., slightly sharper points, smoother curves, or stylistic edges) while preserving the exact overall recognizable footprint.
+        • AESTHETIC ANCHORING: Maintain the exact gold tone, luminosity, and "luxe-minimalist" feel of the reference image. The "vibe" must remain cohesive.
+        • ENGRAVING DEPTH: All internal details must be surface-level laser etchings. No embossing or 3D extrusion.
+
+        NEGATIVE CONSTRAINTS (NEVER DO THESE):
+        • NEVER add additional jump rings and chains (only the integrated base hoop is allowed).
+        • NEVER introduce 3D volume, thickness, or side-profile views.
+        • NEVER use matte or brushed textures if the reference is high-polish.
+        • NEVER deviate from the established level of intricate detail seen in the reference.`;
 
         setBusy(true);
         setStatus("Generating Charm Derivatives...");
