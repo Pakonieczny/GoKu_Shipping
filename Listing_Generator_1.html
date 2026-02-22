@@ -1656,7 +1656,7 @@ executeCharmGenBtn.addEventListener("click", async () => {
             return;
         }
 
-        const basePrompt = `CRITICAL INITIAL ANALYSIS: Before generating, conceptually analyze the reference image to determine its exact genre and subject matter (e.g., "Genre: Animal, Subject Matter: Rabbit/Leporidae"). Use this specific analysis as the strict foundational concept for the new charm. DO NOT add additional jump rings and chains.
+        const basePrompt = `CRITICAL INITIAL ANALYSIS: Before generating, conceptually analyze the reference image to determine its exact genre and subject matter (e.g., "Genre: Animal, Subject Matter: Rabbit/Leporidae"). Use this specific analysis as the strict foundational concept for the new charm. DO NOT add additional jump rings, bails, or chains under ANY circumstances.
 
         TASK: Generate a highly realistic, 2D jewelry charm that functions as a thematic and aesthetic extension of the provided reference based on your analysis. Your goal is to keep the SAME genre and loosely similar subject matter and overall concept but adapt it to attract similar audiences.
 
@@ -1666,7 +1666,7 @@ executeCharmGenBtn.addEventListener("click", async () => {
         • FLAT SHEET METAL: The charm must appear as a perfectly flat, thin sheet of high-polish metal.
         • SHARP 2D CUTOUTS: Use laser-cut precision. Do NOT allow rounded edges, bevels, or 3D thickness.
         • VIEWPOINT: Always render the charm perfectly front-facing (orthographic) with 0% perspective tilt.
-        • BACKGROUND COLOR (CRITICAL): Generate the charm on a 100% PURE SOLID BLACK (#000000) background. Absolutely NO white backgrounds, NO grey backgrounds, and NO transparency.
+        • BACKGROUND COLOR (CRITICAL & ABSOLUTE): You MUST generate the charm on a 100% PURE SOLID BLACK (#000000) background. Absolutely NO white backgrounds, NO grey backgrounds, NO gradients, and NO transparency. If the background is not pure black, it is a failure.
         • NO TEXT: Never render letters, numbers, or words.
 
         THEMATIC & AESTHETIC EVOLUTION:
@@ -1674,16 +1674,16 @@ executeCharmGenBtn.addEventListener("click", async () => {
         • AESTHETIC ANCHORING: Maintain the exact gold tone, luminosity, and "luxe-minimalist" feel of the reference image. The "vibe" must remain cohesive.
         • ENGRAVING DEPTH: All internal details must be surface-level laser etchings. No embossing or 3D extrusion.
 
-        NEGATIVE CONSTRAINTS (NEVER DO THESE):
-        • NEVER generate a white background. It MUST be pure solid black.
-        • NEVER add additional jump rings and chains
+        NEGATIVE CONSTRAINTS (NEVER DO THESE - EXTREME PENALTY):
+        • NEVER generate a white or light background. It MUST be pure solid black (#000000).
+        • NEVER add additional jump rings, O-rings, bails, or chains of any kind.
         • NEVER introduce 3D volume, thickness, or side-profile views.
         • NEVER use matte or brushed textures if the reference is high-polish.
         • NEVER deviate from the established level of intricate detail seen in the reference.`;
 
         // Add the Hoop Prompt ONLY for standard New_Charms
         const promptStrCharm = basePrompt + `\n\nHOOP/BAIL REQUIREMENT (CRITICAL):
-        • We must ensure that the hoop already present in the reference image MUST ALWAYS be correctly and strategically positioned on the newly generated Charm. THIS IS A MUST AND ABSOLUTELY CRUCIAL!!!!`;
+        • We must ensure that the integrated hoop already present in the reference image MUST ALWAYS be correctly and strategically positioned on the newly generated Charm. THIS IS A MUST AND ABSOLUTELY CRUCIAL!!!! DO NOT ADD EXTRA JUMP RINGS TO IT.`;
 
         // NEW EARRING PROMPT: Strict instruction to only remove the hoop from the newly generated base charm
         const promptStrEarring = `CRITICAL INSTRUCTION: Analyze the provided reference image of a jewelry charm. 
@@ -1691,11 +1691,12 @@ executeCharmGenBtn.addEventListener("click", async () => {
         
         Exception 1: Completely remove the hoop/bail from the top of the charm.
 
-        HARD CONSTRAINTS:
-        • Keep the exact same solid pure black (#000000) background. NO white or grey backgrounds.
+        HARD CONSTRAINTS (NON-NEGOTIABLE):
+        • BACKGROUND COLOR (CRITICAL): Keep the exact same solid pure black (#000000) background. ABSOLUTELY NO white, grey, or transparent backgrounds.
+        • JUMP RINGS: NEVER add jump rings, O-rings, bails, or chains.
         • Keep all engravings, cutouts, overall shape, proportions, and gold tone 100% identical to the reference.
         • Do not introduce any new elements, 3D thickness, or styling changes.
-        • The final output MUST be the exact same charm, just missing the top hoop.`;
+        • The final output MUST be the exact same charm, just missing the top hoop, on a PURE BLACK background.`;
 
         setBusy(true);
         setStatus("Generating Base Charm Derivative...");
