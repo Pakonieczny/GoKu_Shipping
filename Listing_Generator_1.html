@@ -199,9 +199,17 @@
               <div class="slotPrev" id="resultPrevEarrings"><div class="slotRefEmpty">Ready</div></div>
             </div>
           </div>
+          <div class="row" style="gap: 14px; margin-top:14px;">
+            <div style="flex:1;">
+              <div class="muted" style="margin-bottom:6px;">B&W Line Art (Standard)</div>
+              <div class="slotPrev" id="resultPrevCharmsBW"><div class="slotRefEmpty">Ready</div></div>
+            </div>
+            <div style="flex:1;">
+              <div class="muted" style="margin-bottom:6px;">B&W Line Art (Earrings)</div>
+              <div class="slotPrev" id="resultPrevEarringsBW"><div class="slotRefEmpty">Ready</div></div>
+            </div>
+          </div>
         </div>
-      </div>
-    </div>
 
     <div class="card">
       <div class="row" style="justify-content:space-between; align-items:center;">
@@ -1649,8 +1657,7 @@
       }
     }
 
-executeCharmGenBtn.addEventListener("click", async () => {
-        // Step 1: We now only require the base Charm reference from New_Charms
+    executeCharmGenBtn.addEventListener("click", async () => {
         if (!currentCharmRef) {
             alert("No reference charm loaded in the New_Charms queue. Please upload to New_Charms.");
             return;
@@ -1681,11 +1688,9 @@ executeCharmGenBtn.addEventListener("click", async () => {
         • NEVER use matte or brushed textures if the reference is high-polish.
         • NEVER deviate from the established level of intricate detail seen in the reference.`;
 
-        // Add the Hoop Prompt ONLY for standard New_Charms
         const promptStrCharm = basePrompt + `\n\nHOOP/BAIL REQUIREMENT (CRITICAL):
         • We must ensure that the integrated hoop already present in the reference image MUST ALWAYS be correctly and strategically positioned on the newly generated Charm. THIS IS A MUST AND ABSOLUTELY CRUCIAL!!!! DO NOT ADD EXTRA JUMP RINGS TO IT.`;
 
-        // NEW EARRING PROMPT: Strict instruction to only remove the hoop from the newly generated base charm
         const promptStrEarring = `CRITICAL INSTRUCTION: Analyze the provided reference image of a jewelry charm. 
         Your task is to generate an image that is 100% identical to this reference, keeping everything absolutely the same, with ONLY 1 EXCEPTION:
         
@@ -1698,18 +1703,46 @@ executeCharmGenBtn.addEventListener("click", async () => {
         • Do not introduce any new elements, 3D thickness, or styling changes.
         • The final output MUST be the exact same charm, just missing the top hoop, on a PURE BLACK background.`;
 
+        // ✅ NEW BLACK AND WHITE LINE ART PROMPT
+        const promptStrBW = `TASK: Generate a black and white outline image based strictly on the newly generated charm shown in the FIRST image. 
+        Use the SECOND image strictly as a stylistic sample output to better understand the desired line art style outcome.
+
+        HARD CONSTRAINTS (NON-NEGOTIABLE):
+        • Create a black and white outline image using the newly generated charm.
+        • Pay very close attention to the engraving details and follow the lines exactly.
+        • Fill in all engravings with solid black colour.
+        • Be very accurate as to the size, position, and exact details of the charm engravings.
+        • Ensure the Charm outer perimeter black outline line is only 2px thick.
+        • Use a solid, pure WHITE (#FFFFFF) background. Absolutely no transparency.
+        • Do NOT add any shading, 3D extrusion, colours, or grey tones. Flat 2D vector style only.`;
+
         setBusy(true);
         setStatus("Generating Base Charm Derivative...");
         executeCharmGenBtn.disabled = true;
         
         charmMakerResults.style.display = "block";
+        const resultPrevCharmsBW = document.getElementById("resultPrevCharmsBW");
+        const resultPrevEarringsBW = document.getElementById("resultPrevEarringsBW");
+
         resultPrevCharms.classList.remove("success-border");
         resultPrevEarrings.classList.remove("success-border");
+        resultPrevCharmsBW.classList.remove("success-border");
+        resultPrevEarringsBW.classList.remove("success-border");
         
         resultPrevCharms.innerHTML = `<div class="slotRefEmpty">Generating...</div>`;
         resultPrevEarrings.innerHTML = `<div class="slotRefEmpty">Waiting for Base...</div>`;
+        resultPrevCharmsBW.innerHTML = `<div class="slotRefEmpty">Waiting...</div>`;
+        resultPrevEarringsBW.innerHTML = `<div class="slotRefEmpty">Waiting...</div>`;
 
         try {
+            // ✅ Fetch the stylistic line art reference
+            let lineArtRef = null;
+            try {
+                lineArtRef = await listLatestFile(`${ROOT}/Reference_Line_Art_Image`);
+            } catch (e) {
+                console.warn("No line art reference found in Reference_Line_Art_Image. Will fallback to charm itself.", e);
+            }
+
             const timestamp = Date.now();
             const outputBasePath = `${ROOT}/Completed_Charm/Deriv_${timestamp}`;
             
@@ -1727,10 +1760,7 @@ executeCharmGenBtn.addEventListener("click", async () => {
                 prompt: promptStrCharm
             });
 
-            // Poll for the Base Charm Result
             const charmRes = await waitForSlotPngUrl(outputBasePath, 0, { timeoutMs: 600000, intervalMs: 5000 });
-            
-            // Update UI for Base Charm
             resultPrevCharms.innerHTML = `<img src="${cacheBust(charmRes.url)}" />`;
             attachPreviewBoxListeners(resultPrevCharms);
             resultPrevCharms.classList.add("success-border");
@@ -1740,13 +1770,11 @@ executeCharmGenBtn.addEventListener("click", async () => {
             // =========================================================
             setStatus("Generating Earring Twin (Removing Hoop)...");
             resultPrevEarrings.innerHTML = `<div class="slotRefEmpty">Removing Hoop...</div>`;
-            
-            await sleep(2000); // Brief pause before firing second request
+            await sleep(2000); 
             
             await postJson(GEMINI_BG_FN, {
                 kind: "edits",
                 activeCategory: "Stud_Earrings", 
-                // CRITICAL: Pass the NEWLY generated charm's storage path as the input!
                 input_storage_path: charmRes.storagePath,
                 input_charm_storage_path: charmRes.storagePath,
                 output_base_path: outputBasePath,
@@ -1755,24 +1783,72 @@ executeCharmGenBtn.addEventListener("click", async () => {
                 prompt: promptStrEarring
             });
 
-            // Poll for Earring Twin Result
             const earringRes = await waitForSlotPngUrl(outputBasePath, 1, { timeoutMs: 600000, intervalMs: 5000 });
-            
-            // Update UI for Earring Twin
             resultPrevEarrings.innerHTML = `<img src="${cacheBust(earringRes.url)}" />`;
             attachPreviewBoxListeners(resultPrevEarrings);
             resultPrevEarrings.classList.add("success-border");
 
-            setStatus("Derivatives Processing Complete.");
+            // =========================================================
+            // STEP 3: Generate B&W Line Art for Base Charm
+            // =========================================================
+            setStatus("Generating B&W Line Art (Standard)...");
+            resultPrevCharmsBW.innerHTML = `<div class="slotRefEmpty">Generating Line Art...</div>`;
+            await sleep(2000);
+            
+            // We feed the new coloured charm as Image 1, and the Line Art reference as Image 2
+            const refPathForBaseBW = lineArtRef ? lineArtRef.fullPath : charmRes.storagePath;
+
+            await postJson(GEMINI_BG_FN, {
+                kind: "edits",
+                activeCategory: "Charms", 
+                input_storage_path: charmRes.storagePath, // Newly generated colored charm
+                input_charm_storage_path: refPathForBaseBW, // Stylistic line art reference
+                output_base_path: outputBasePath,
+                slotIndex: 2,
+                model: "gemini-3-pro-image-preview",
+                prompt: promptStrBW
+            });
+
+            const charmBWRes = await waitForSlotPngUrl(outputBasePath, 2, { timeoutMs: 600000, intervalMs: 5000 });
+            resultPrevCharmsBW.innerHTML = `<img src="${cacheBust(charmBWRes.url)}" />`;
+            attachPreviewBoxListeners(resultPrevCharmsBW);
+            resultPrevCharmsBW.classList.add("success-border");
+
+            // =========================================================
+            // STEP 4: Generate B&W Line Art for Earring Twin
+            // =========================================================
+            setStatus("Generating B&W Line Art (Earrings)...");
+            resultPrevEarringsBW.innerHTML = `<div class="slotRefEmpty">Generating Line Art...</div>`;
+            await sleep(2000);
+
+            const refPathForEarringBW = lineArtRef ? lineArtRef.fullPath : earringRes.storagePath;
+
+            await postJson(GEMINI_BG_FN, {
+                kind: "edits",
+                activeCategory: "Stud_Earrings", 
+                input_storage_path: earringRes.storagePath, // Newly generated earring twin
+                input_charm_storage_path: refPathForEarringBW, // Stylistic line art reference
+                output_base_path: outputBasePath,
+                slotIndex: 3,
+                model: "gemini-3-pro-image-preview",
+                prompt: promptStrBW
+            });
+
+            const earringBWRes = await waitForSlotPngUrl(outputBasePath, 3, { timeoutMs: 600000, intervalMs: 5000 });
+            resultPrevEarringsBW.innerHTML = `<img src="${cacheBust(earringBWRes.url)}" />`;
+            attachPreviewBoxListeners(resultPrevEarringsBW);
+            resultPrevEarringsBW.classList.add("success-border");
+
+            setStatus("All Derivatives & Line Art Complete.");
 
         } catch (err) {
             console.error("Master Generation Catch:", err);
             setStatus(`Error: ${err.message}`);
             
-            // Reset "Waiting" state if it failed before reaching step 2
-            if (resultPrevEarrings.innerHTML.includes("Waiting for Base...")) {
-                resultPrevEarrings.innerHTML = `<div class="slotRefEmpty">Aborted</div>`;
-            }
+            // Graceful reset of remaining queues
+            if (resultPrevEarrings.innerHTML.includes("Waiting for Base...")) resultPrevEarrings.innerHTML = `<div class="slotRefEmpty">Aborted</div>`;
+            if (resultPrevCharmsBW.innerHTML.includes("Waiting...")) resultPrevCharmsBW.innerHTML = `<div class="slotRefEmpty">Aborted</div>`;
+            if (resultPrevEarringsBW.innerHTML.includes("Waiting...")) resultPrevEarringsBW.innerHTML = `<div class="slotRefEmpty">Aborted</div>`;
         } finally {
             setBusy(false);
             executeCharmGenBtn.disabled = false;
