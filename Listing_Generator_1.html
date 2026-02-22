@@ -1649,24 +1649,23 @@
       }
     }
 
-    executeCharmGenBtn.addEventListener("click", async () => {
+        executeCharmGenBtn.addEventListener("click", async () => {
         if (!currentCharmRef && !currentEarringRef) {
             alert("No reference charms loaded in queues. Please upload to New_Charms or New_Charms_Earrings.");
             return;
         }
 
-        const promptStr = `CRITICAL INITIAL ANALYSIS: Before generating, conceptually analyze the reference image to determine its exact genre and subject matter (e.g., "Genre: Animal, Subject Matter: Rabbit/Leporidae"). Use this specific analysis as the strict foundational concept for the new charm.
+        const basePrompt = `CRITICAL INITIAL ANALYSIS: Before generating, conceptually analyze the reference image to determine its exact genre and subject matter (e.g., "Genre: Animal, Subject Matter: Rabbit/Leporidae"). Use this specific analysis as the strict foundational concept for the new charm.
 
         TASK: Generate a highly realistic, 2D jewelry charm that functions as a thematic and aesthetic extension of the provided reference based on your analysis. Your goal is to keep the SAME genre and loosely similar subject matter and overall concept but adapt it to attract similar audiences.
 
         HARD PHYSICAL CONSTRAINTS (NON-NEGOTIABLE):
-        • INTEGRATED HOOP/BAIL (ABSOLUTELY CRUCIAL): You MUST ensure that the hoop/bail already present in the reference image is accurately, securely, and strategically positioned on the newly generated Charm. It must be a functional, integrated part of the silhouette design (not floating, not a separate jump ring).
         • Use engravings very sparingly and very strategically. Do not cram too many pointless engravings onto the charm.
         • Leave a lot of white space between the engravings; do not bunch up engravings and cutouts closely together.
         • FLAT SHEET METAL: The charm must appear as a perfectly flat, thin sheet of high-polish metal.
         • SHARP 2D CUTOUTS: Use laser-cut precision. Do NOT allow rounded edges, bevels, or 3D thickness.
         • VIEWPOINT: Always render the charm perfectly front-facing (orthographic) with 0% perspective tilt.
-        • TRANSPARENCY: Generate the charm on a 100% black background with no environmental shadows or reflections.
+        • BACKGROUND COLOR (CRITICAL): Generate the charm on a 100% PURE SOLID BLACK (#000000) background. Absolutely NO white backgrounds, NO grey backgrounds, and NO transparency.
         • NO TEXT: Never render letters, numbers, or words.
 
         THEMATIC & AESTHETIC EVOLUTION:
@@ -1675,10 +1674,18 @@
         • ENGRAVING DEPTH: All internal details must be surface-level laser etchings. No embossing or 3D extrusion.
 
         NEGATIVE CONSTRAINTS (NEVER DO THESE):
-        • NEVER add additional jump rings and chains (only the integrated base hoop is allowed).
+        • NEVER generate a white background. It MUST be pure solid black.
+        • NEVER add additional jump rings and chains (only the integrated base hoop is allowed if requested).
         • NEVER introduce 3D volume, thickness, or side-profile views.
         • NEVER use matte or brushed textures if the reference is high-polish.
         • NEVER deviate from the established level of intricate detail seen in the reference.`;
+
+        // Add the Hoop Prompt ONLY for standard New_Charms
+        const promptStrCharm = basePrompt + `\n\nHOOP/BAIL REQUIREMENT (CRITICAL):
+        • We must ensure that the hoop already present in the reference image MUST ALWAYS be correctly and strategically positioned on the newly generated Charm. THIS IS A MUST AND ABSOLUTELY CRUCIAL!!!!`;
+
+        // Earrings get the base prompt without the forced hoop rule
+        const promptStrEarring = basePrompt;
 
         setBusy(true);
         setStatus("Generating Charm Derivatives...");
@@ -1715,7 +1722,7 @@
                     output_base_path: outputBasePath,
                     slotIndex: charmSlot,
                     model: "gemini-3-pro-image-preview",
-                    prompt: promptStr
+                    prompt: promptStrCharm // <-- Updated
                 });
             }
 
@@ -1731,7 +1738,7 @@
                     output_base_path: outputBasePath,
                     slotIndex: earringSlot,
                     model: "gemini-3-pro-image-preview",
-                    prompt: promptStr
+                    prompt: promptStrEarring // <-- Updated
                 });
             }
 
