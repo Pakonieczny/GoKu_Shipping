@@ -1649,13 +1649,14 @@
       }
     }
 
-        executeCharmGenBtn.addEventListener("click", async () => {
-        if (!currentCharmRef && !currentEarringRef) {
-            alert("No reference charms loaded in queues. Please upload to New_Charms or New_Charms_Earrings.");
+executeCharmGenBtn.addEventListener("click", async () => {
+        // Step 1: We now only require the base Charm reference from New_Charms
+        if (!currentCharmRef) {
+            alert("No reference charm loaded in the New_Charms queue. Please upload to New_Charms.");
             return;
         }
 
-        const basePrompt = `CRITICAL INITIAL ANALYSIS: Before generating, conceptually analyze the reference image to determine its exact genre and subject matter (e.g., "Genre: Animal, Subject Matter: Rabbit/Leporidae"). Use this specific analysis as the strict foundational concept for the new charm.
+        const basePrompt = `CRITICAL INITIAL ANALYSIS: Before generating, conceptually analyze the reference image to determine its exact genre and subject matter (e.g., "Genre: Animal, Subject Matter: Rabbit/Leporidae"). Use this specific analysis as the strict foundational concept for the new charm. DO NOT add additional jump rings and chains.
 
         TASK: Generate a highly realistic, 2D jewelry charm that functions as a thematic and aesthetic extension of the provided reference based on your analysis. Your goal is to keep the SAME genre and loosely similar subject matter and overall concept but adapt it to attract similar audiences.
 
@@ -1675,7 +1676,7 @@
 
         NEGATIVE CONSTRAINTS (NEVER DO THESE):
         • NEVER generate a white background. It MUST be pure solid black.
-        • NEVER add additional jump rings and chains (only the integrated base hoop is allowed if requested).
+        • NEVER add additional jump rings and chains
         • NEVER introduce 3D volume, thickness, or side-profile views.
         • NEVER use matte or brushed textures if the reference is high-polish.
         • NEVER deviate from the established level of intricate detail seen in the reference.`;
@@ -1684,98 +1685,93 @@
         const promptStrCharm = basePrompt + `\n\nHOOP/BAIL REQUIREMENT (CRITICAL):
         • We must ensure that the hoop already present in the reference image MUST ALWAYS be correctly and strategically positioned on the newly generated Charm. THIS IS A MUST AND ABSOLUTELY CRUCIAL!!!!`;
 
-        // Earrings get the base prompt without the forced hoop rule
-        const promptStrEarring = basePrompt;
+        // NEW EARRING PROMPT: Strict instruction to only remove the hoop from the newly generated base charm
+        const promptStrEarring = `CRITICAL INSTRUCTION: Analyze the provided reference image of a jewelry charm. 
+        Your task is to generate an image that is 100% identical to this reference, keeping everything absolutely the same, with ONLY 1 EXCEPTION:
+        
+        Exception 1: Completely remove the hoop/bail from the top of the charm.
+
+        HARD CONSTRAINTS:
+        • Keep the exact same solid pure black (#000000) background. NO white or grey backgrounds.
+        • Keep all engravings, cutouts, overall shape, proportions, and gold tone 100% identical to the reference.
+        • Do not introduce any new elements, 3D thickness, or styling changes.
+        • The final output MUST be the exact same charm, just missing the top hoop.`;
 
         setBusy(true);
-        setStatus("Generating Charm Derivatives...");
+        setStatus("Generating Base Charm Derivative...");
         executeCharmGenBtn.disabled = true;
         
         charmMakerResults.style.display = "block";
         resultPrevCharms.classList.remove("success-border");
         resultPrevEarrings.classList.remove("success-border");
         
-        if (currentCharmRef) resultPrevCharms.innerHTML = `<div class="slotRefEmpty">Queued...</div>`;
-        else resultPrevCharms.innerHTML = `<div class="slotRefEmpty">N/A</div>`;
-        
-        if (currentEarringRef) resultPrevEarrings.innerHTML = `<div class="slotRefEmpty">Queued...</div>`;
-        else resultPrevEarrings.innerHTML = `<div class="slotRefEmpty">N/A</div>`;
+        resultPrevCharms.innerHTML = `<div class="slotRefEmpty">Generating...</div>`;
+        resultPrevEarrings.innerHTML = `<div class="slotRefEmpty">Waiting for Base...</div>`;
 
         try {
             const timestamp = Date.now();
             const outputBasePath = `${ROOT}/Completed_Charm/Deriv_${timestamp}`;
             
-            let charmSlot = -1;
-            let earringSlot = -1;
+            // =========================================================
+            // STEP 1: Generate the Base Charm (New_Charms Derivative)
+            // =========================================================
+            await postJson(GEMINI_BG_FN, {
+                kind: "edits",
+                activeCategory: "Charms", 
+                input_storage_path: currentCharmRef.fullPath,
+                input_charm_storage_path: currentCharmRef.fullPath,
+                output_base_path: outputBasePath,
+                slotIndex: 0,
+                model: "gemini-3-pro-image-preview",
+                prompt: promptStrCharm
+            });
+
+            // Poll for the Base Charm Result
+            const charmRes = await waitForSlotPngUrl(outputBasePath, 0, { timeoutMs: 600000, intervalMs: 5000 });
             
-            // FIX: We bypass the bulk 'run_set_async' which fails on non-standard batches
-            // Instead, we use 'edits' to process individual single-image edits, exactly like Redo does.
+            // Update UI for Base Charm
+            resultPrevCharms.innerHTML = `<img src="${cacheBust(charmRes.url)}" />`;
+            attachPreviewBoxListeners(resultPrevCharms);
+            resultPrevCharms.classList.add("success-border");
+
+            // =========================================================
+            // STEP 2: Generate the Earring Twin using the Base Charm
+            // =========================================================
+            setStatus("Generating Earring Twin (Removing Hoop)...");
+            resultPrevEarrings.innerHTML = `<div class="slotRefEmpty">Removing Hoop...</div>`;
             
-            if (currentCharmRef) {
-                charmSlot = 0;
-                resultPrevCharms.innerHTML = `<div class="slotRefEmpty">Generating...</div>`;
-                await postJson(GEMINI_BG_FN, {
-                    kind: "edits",
-                    activeCategory: "Charms", 
-                    input_storage_path: currentCharmRef.fullPath,
-                    input_charm_storage_path: currentCharmRef.fullPath,
-                    output_base_path: outputBasePath,
-                    slotIndex: charmSlot,
-                    model: "gemini-3-pro-image-preview",
-                    prompt: promptStrCharm // <-- Updated
-                });
-            }
+            await sleep(2000); // Brief pause before firing second request
+            
+            await postJson(GEMINI_BG_FN, {
+                kind: "edits",
+                activeCategory: "Stud_Earrings", 
+                // CRITICAL: Pass the NEWLY generated charm's storage path as the input!
+                input_storage_path: charmRes.storagePath,
+                input_charm_storage_path: charmRes.storagePath,
+                output_base_path: outputBasePath,
+                slotIndex: 1,
+                model: "gemini-3-pro-image-preview",
+                prompt: promptStrEarring
+            });
 
-            if (currentEarringRef) {
-                earringSlot = 1;
-                resultPrevEarrings.innerHTML = `<div class="slotRefEmpty">Generating...</div>`;
-                await sleep(4000); // Slightly delay second call to avoid rapid-fire API caps
-                await postJson(GEMINI_BG_FN, {
-                    kind: "edits",
-                    activeCategory: "Stud_Earrings", 
-                    input_storage_path: currentEarringRef.fullPath,
-                    input_charm_storage_path: currentEarringRef.fullPath,
-                    output_base_path: outputBasePath,
-                    slotIndex: earringSlot,
-                    model: "gemini-3-pro-image-preview",
-                    prompt: promptStrEarring // <-- Updated
-                });
-            }
+            // Poll for Earring Twin Result
+            const earringRes = await waitForSlotPngUrl(outputBasePath, 1, { timeoutMs: 600000, intervalMs: 5000 });
+            
+            // Update UI for Earring Twin
+            resultPrevEarrings.innerHTML = `<img src="${cacheBust(earringRes.url)}" />`;
+            attachPreviewBoxListeners(resultPrevEarrings);
+            resultPrevEarrings.classList.add("success-border");
 
-            // Poll for results
-            const pollingPromises = [];
-            if (charmSlot !== -1) {
-                pollingPromises.push(
-                    waitForSlotPngUrl(outputBasePath, charmSlot, { timeoutMs: 600000, intervalMs: 5000 }).then(res => {
-                        resultPrevCharms.innerHTML = `<img src="${cacheBust(res.url)}" />`;
-                        attachPreviewBoxListeners(resultPrevCharms);
-                        resultPrevCharms.classList.add("success-border");
-                    }).catch(e => {
-                        console.error("Charm Gen Polling Error:", e);
-                        resultPrevCharms.innerHTML = `<div class="slotRefEmpty">Error / Timeout</div>`;
-                    })
-                );
-            }
-
-            if (earringSlot !== -1) {
-                pollingPromises.push(
-                    waitForSlotPngUrl(outputBasePath, earringSlot, { timeoutMs: 600000, intervalMs: 5000 }).then(res => {
-                        resultPrevEarrings.innerHTML = `<img src="${cacheBust(res.url)}" />`;
-                        attachPreviewBoxListeners(resultPrevEarrings);
-                        resultPrevEarrings.classList.add("success-border");
-                    }).catch(e => {
-                        console.error("Earring Gen Polling Error:", e);
-                        resultPrevEarrings.innerHTML = `<div class="slotRefEmpty">Error / Timeout</div>`;
-                    })
-                );
-            }
-
-            await Promise.all(pollingPromises);
             setStatus("Derivatives Processing Complete.");
 
         } catch (err) {
             console.error("Master Generation Catch:", err);
             setStatus(`Error: ${err.message}`);
+            
+            // Reset "Waiting" state if it failed before reaching step 2
+            if (resultPrevEarrings.innerHTML.includes("Waiting for Base...")) {
+                resultPrevEarrings.innerHTML = `<div class="slotRefEmpty">Aborted</div>`;
+            }
         } finally {
             setBusy(false);
             executeCharmGenBtn.disabled = false;
