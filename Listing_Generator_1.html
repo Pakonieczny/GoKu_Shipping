@@ -55,6 +55,7 @@
       justify-content:center;
       font-size:11px;
       color:var(--muted);
+      text-align:center;
     }
     .slotRefLabel{
       position:absolute;
@@ -121,6 +122,34 @@
       border: 3px solid lightgreen !important;
     }
 
+    /* === CHARM MAKER QUAD LAYOUT === */
+    .charm-card {
+      background: #0e1220; 
+      border: 1px solid var(--line); 
+      border-radius: 14px; 
+      padding: 14px;
+      grid-column: span 2; /* takes 2 columns out of 4 */
+      display: grid; 
+      grid-template-columns: 1fr 1fr; 
+      gap: 14px;
+    }
+    .charm-card-title { 
+      grid-column: span 2; 
+      font-size: 14px; 
+      color: #7fdb96; 
+      border-bottom: 1px solid var(--line); 
+      padding-bottom: 8px; 
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .charm-col { 
+      display: flex; 
+      flex-direction: column; 
+      gap: 8px; 
+    }
+    .charm-col .muted { margin-bottom: 0; }
+
     .bar{ height:8px; border-radius:999px; background:#0b0d12; border:1px solid var(--line); overflow:hidden; margin-top:10px; }
     .bar > div{ height:100%; width:0%; background:#2b6cff; transition:width 120ms linear; }
     .small{ font-size:11px; color:var(--muted); margin-top:6px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
@@ -186,37 +215,23 @@
         <div class="row" style="margin-top:14px;">
           <button class="btn" id="executeCharmGenBtn" style="width:100%; background: #1f4026; color: #7fdb96; border: 1px solid #2f5e3a;">Generate Charms</button>
         </div>
-
-        <div id="charmMakerResults" style="display:none; margin-top:20px;">
-          <label style="color:#7fdb96;">Generated Derivatives Previews</label>
-          <div class="row" style="gap: 14px;">
-            <div style="flex:1;">
-              <div class="muted" style="margin-bottom:6px;">New_Charms Derivative</div>
-              <div class="slotPrev" id="resultPrevCharms"><div class="slotRefEmpty">Ready</div></div>
-            </div>
-            <div style="flex:1;">
-              <div class="muted" style="margin-bottom:6px;">New_Charms_Earrings Derivative</div>
-              <div class="slotPrev" id="resultPrevEarrings"><div class="slotRefEmpty">Ready</div></div>
-            </div>
-          </div>
-      <div class="row" style="gap: 14px; margin-top:14px;">
-              <div style="flex:1;">
-                <div class="muted" style="margin-bottom:6px;">B&W Line Art (Standard)</div>
-                <div class="slotPrev" id="resultPrevCharmsBW"><div class="slotRefEmpty">Ready</div></div>
-              </div>
-              <div style="flex:1;">
-                <div class="muted" style="margin-bottom:6px;">B&W Line Art (Earrings)</div>
-                <div class="slotPrev" id="resultPrevEarringsBW"><div class="slotRefEmpty">Ready</div></div>
-              </div>
-            </div>
-          </div> </div> </div> <div class="card">
+      </div> 
+    </div> 
+    
+    <div class="card">
       <div class="row" style="justify-content:space-between; align-items:center;">
         <h1 style="margin:0;">Generated set</h1>
         <div class="muted" id="status">Idle</div>
       </div>
       <div class="grid" id="grid"></div>
+      
+      <div id="charmPagination" class="row" style="display: none; justify-content: space-between; align-items: center; margin-top: 14px; padding: 10px; background: #0e1220; border-radius: 12px; border: 1px solid var(--line);">
+          <button class="btn btnSmall" id="charmPrevPage" style="width: 80px;">Previous</button>
+          <div id="charmPageInfo" class="muted">Page 1</div>
+          <button class="btn btnSmall" id="charmNextPage" style="width: 80px;">Next</button>
+      </div>
     </div>
-  </div> <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+  </div> 
 
   <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
@@ -259,7 +274,6 @@
       "New_Charms_Earrings", // Added for clarity, though it's a shared folder
       "Completed_Charm",
     ];
-
 
     const CATEGORY_SUBFOLDERS = {
       Beady_Necklace: [
@@ -391,7 +405,6 @@
     const storage = getStorage(modApp);
     const modAuth = getAuth(modApp);
 
-    // Gate specifically for Storage (modular) so request.auth is never null in Storage rules
     async function ensureStorageSignedIn() {
       if (modAuth.currentUser) return modAuth.currentUser;
       try { await modSignInAnonymously(modAuth); } catch (_) {}
@@ -414,7 +427,6 @@
     // NEW: Zoom & Pan Logic (Ported from Index.html)
     // -------------------------------------------------------------------------
     function attachPreviewBoxListeners(box) {
-      // Clamp offsets so the image never bleeds outside the viewport
       function clampAndApply(img, scale, offX, offY) {
         const viewportW = box.clientWidth || 120;
         const viewportH = box.clientHeight || 120;
@@ -423,7 +435,6 @@
         const scaledW = baseW * scale;
         const scaledH = baseH * scale;
 
-        // allowable pre-scale translation so the scaled image still covers viewport
         const maxX = Math.max(0, (scaledW - viewportW) / 2 / scale);
         const maxY = Math.max(0, (scaledH - viewportH) / 2 / scale);
 
@@ -443,7 +454,6 @@
       const dragThreshold = 3;
       const MAX_SCALE = 8;
       
-      // Re-clamp the current image when the preview box resizes
       if (typeof ResizeObserver !== "undefined") {
         const ro = new ResizeObserver(() => {
           const img = box.querySelector("img");
@@ -481,7 +491,7 @@
         const img = box.querySelector("img");
         if (!img) return;
         const scaleNow = parseFloat(img.dataset.scale) || 1;
-        if (scaleNow <= 1) return;        // only drag when zoomed
+        if (scaleNow <= 1) return;        
         ev.preventDefault();
         isMouseDown = true;
         isDragging = false;
@@ -516,43 +526,37 @@
         const img = box.querySelector("img");
         if (!img) return;
 
-        // Current transform (pre-scale offsets)
         const s0    = parseFloat(img.dataset.scale)   || 1;
         const offX0 = parseFloat(img.dataset.offsetX) || 0;
         const offY0 = parseFloat(img.dataset.offsetY) || 0;
 
-        // Click in screen space relative to box center
         const rect = box.getBoundingClientRect();
         const cx = rect.left + box.clientWidth  / 2;
         const cy = rect.top  + box.clientHeight / 2;
         const dx_screen = ev.clientX - cx;
         const dy_screen = ev.clientY - cy;
 
-        // Convert to pre-scale image space:
         const px = dx_screen / s0 - offX0;
         const py = dy_screen / s0 - offY0;
 
-        // Offsets that place the clicked point exactly at the center
         let targetOffX = -px;
         let targetOffY = -py;
 
-        // Minimum scale needed so that centering is valid (no blank edges)
         const halfW = (img.clientWidth  || 120) / 2;
         const halfH = (img.clientHeight || 120) / 2;
         function requiredScaleFor(delta, half) {
-          const ratio = Math.abs(delta) / half;     // in [0, 1]
-          if (ratio >= 1) return Infinity;          // edge pixel needs infinite scale
-          return 1 / (1 - ratio);                   // solve half*(1 - 1/s) >= |delta|
+          const ratio = Math.abs(delta) / half;     
+          if (ratio >= 1) return Infinity;          
+          return 1 / (1 - ratio);                   
         }
         const needX = requiredScaleFor(targetOffX, halfW);
         const needY = requiredScaleFor(targetOffY, halfH);
 
-        const DESIRED = 1.33;                          // your preferred zoom jump
+        const DESIRED = 1.33;                          
         let s1 = Math.max(DESIRED, s0 * 1.5, needX, needY);
         if (!Number.isFinite(s1)) s1 = MAX_SCALE;
         if (s1 > MAX_SCALE) s1 = MAX_SCALE;
         
-        // Toggle Zoom Out if already zoomed
         if (s0 > 1.2 && Math.abs(s1 - s0) < 0.5) s1 = 1; 
 
         clampAndApply(img, s1, targetOffX, targetOffY);
@@ -560,27 +564,23 @@
     }
 
     async function waitForSlotPngUrl(outputBasePath, slotIndex, opts = {}) {
-      const timeoutMs  = Number(opts.timeoutMs ?? 600000);  // Increased to 10 min
-      const intervalMs = Number(opts.intervalMs ?? 3000);   // Increased to 3s to reduce load
+      const timeoutMs  = Number(opts.timeoutMs ?? 600000);  
+      const intervalMs = Number(opts.intervalMs ?? 3000);   
       const fileName = `Slot_${slotIndex + 1}.png`;
       const afterUpdatedMs  = opts.afterUpdatedMs == null ? null : Number(opts.afterUpdatedMs);
       const afterGeneration = opts.afterGeneration == null ? null : Number(opts.afterGeneration);
 
-      // Stagger initial check to prevent thundering herd of 8 concurrent requests
       await sleep(Math.random() * 3000); 
 
       const t0 = Date.now();
       while (true) {
         await ensureStorageSignedIn();
 
-        // ✅ Only LIST-first polling.
         try {
           const folderRef = ref(storage, outputBasePath);
           const res = await listAll(folderRef);
           const hit = (res.items || []).find(it => it.name === fileName);
           if (hit) {
-            // If this call is part of a Redo, the slot file likely already exists.
-            // Only return once we detect the file has been overwritten (metadata changed).
             if (afterUpdatedMs != null || afterGeneration != null) {
               try {
                 const meta = await getMetadata(hit);
@@ -591,14 +591,11 @@
                 const okUpd = (afterUpdatedMs == null)  ? true : (updatedMs > afterUpdatedMs);
 
                 if (!okGen || !okUpd) {
-                  // Found the file, but it's still the old version — keep waiting.
                   throw new Error("slot_not_updated_yet");
                 }
               } catch (e2) {
-                if (String(e2?.message || e2).includes("slot_not_updated_yet")) {
-                  // keep waiting
-                } else {
-                  // transient metadata issue — keep waiting
+                if (!String(e2?.message || e2).includes("slot_not_updated_yet")) {
+                   // keep waiting
                 }
                 throw e2;
               }
@@ -615,36 +612,24 @@
                 msg.toLowerCase().includes("permission");
 
               if (looksUnauthorized) {
-                throw new Error(
-                  `Cannot download ${hit.fullPath} (permission/token issue).\n` +
-                  `If this slot was produced via server-side copy(), ensure metadata.firebaseStorageDownloadTokens is set on the copied object.\n` +
-                  `Server fix: after copy() call setMetadata({ metadata: { firebaseStorageDownloadTokens: <uuid> } }).`
-                );
+                throw new Error(`Cannot download ${hit.fullPath} (permission/token issue).`);
               }
               throw eUrl;
             }
           }
         } catch (e) {
-          // If LIST is blocked by Storage rules, we cannot poll without causing 404s.
           const msg = String(e?.message || e);
-          
-          // Check for 500 error specifically and backoff
           if (msg.includes("500") || msg.includes("internal")) {
              console.warn("Storage 500 error, retrying with backoff...", outputBasePath);
              await sleep(5000); 
-             // Don't throw, just loop again after wait
           } else {
              const looksUnauthorized =
                 msg.includes("storage/unauthorized") ||
                 msg.includes("403") ||
                 msg.toLowerCase().includes("permission");
              if (looksUnauthorized) {
-                throw new Error(
-                `Storage rules block LIST on: ${outputBasePath}\n` +
-                `Allow LIST for Ready_To_List (or at least ${outputBasePath}) so the UI can detect Slot PNGs without any 404 polling.`
-                );
+                throw new Error(`Storage rules block LIST on: ${outputBasePath}`);
              }
-             // transient listing issue: keep waiting
           }
         }
 
@@ -662,6 +647,7 @@
     const generateSetBtn = document.getElementById("generateSet");
     const gridEl = document.getElementById("grid");
     const statusEl = document.getElementById("status");
+    const charmPaginationEl = document.getElementById("charmPagination");
 
     // --- Mode Variables ---
     const toggleGenerateBtn = document.getElementById("toggleGenerate");
@@ -672,23 +658,18 @@
     const charmMakerSection = document.getElementById("charmMakerSection");
     const reviewSetSelect = document.getElementById("reviewSetSelect");
     const approveSetBtn = document.getElementById("approveSetBtn"); 
-    const backgroundQueueStatus = document.getElementById("backgroundQueueStatus"); // Status text
-    let appMode = "generate"; // 'generate', 'review', or 'charmMaker'
+    const backgroundQueueStatus = document.getElementById("backgroundQueueStatus"); 
+    let appMode = "generate"; 
 
     function setStatus(msg){ statusEl.textContent = msg; }
 
-    // Busy-state helper (Generate button + basic UI lock)
     function setBusy(isBusy){
       generateSetBtn.disabled = !!isBusy;
       generateSetBtn.style.opacity = isBusy ? "0.6" : "1";
       generateSetBtn.style.cursor = isBusy ? "not-allowed" : "pointer";
-      // approveSetBtn is now managed by the background Queue, not blocking the UI globally
     }
 
-   // Current generated set context (used by per-slot Redo)
-    let CURRENT_SET = null; // { category, outputBasePath, setN }
-    
-    // NEW: Global tracker for Redo operations across all sets
+    let CURRENT_SET = null; 
     const REDO_STATE = {}; 
 
     function setAllRedoEnabled(enabled){
@@ -703,7 +684,7 @@
 
     async function redoSlot(slotIndex){
       if (!CURRENT_SET?.outputBasePath || !CURRENT_SET?.category) {
-        throw new Error("No active set to redo yet. Generate a set first.");
+        throw new Error("No active set to redo yet.");
       }
 
       const ctxSetPath = CURRENT_SET.outputBasePath;
@@ -712,13 +693,13 @@
       
       const slotPlan = SLOT_MAP[ctxCategory];
       const spec = slotPlan?.[slotIndex];
-      if (!spec) throw new Error(`Invalid slotIndex ${slotIndex} for ${ctxCategory}`);
+      if (!spec) throw new Error(`Invalid slotIndex ${slotIndex}`);
       
       const redoKey = `${ctxSetPath}::${slotIndex}`;
 
       REDO_STATE[redoKey] = { status: 'running' };
       updateDropdownLabels(); 
-      updateApproveButtonState(); // NEW: Check state immediately
+      updateApproveButtonState(); 
 
       const slotFileName = `Slot_${slotIndex + 1}.png`;
       const slotStoragePath = `${ctxSetPath}/${slotFileName}`;
@@ -729,11 +710,8 @@
         const beforeMeta = await getMetadata(ref(storage, slotStoragePath));
         beforeUpdatedMs = Date.parse(beforeMeta?.updated || beforeMeta?.timeCreated || "") || 0;
         beforeGeneration = Number(beforeMeta?.generation || 0) || 0;
-      } catch (_) {
-        // Slot may not exist yet
-      }
+      } catch (_) {}
 
-      // Check if we are still viewing the set we initiated this from
       const isViewing = (CURRENT_SET?.outputBasePath === ctxSetPath);
       
       if (isViewing) {
@@ -744,7 +722,7 @@
           if (redoBtn) redoBtn.disabled = true;
           if (prevBox) {
               prevBox.innerHTML = `<div class="slotRefEmpty">Working…</div>`;
-              prevBox.classList.remove("success-border"); // RESET BORDER
+              prevBox.classList.remove("success-border"); 
           }
           setStatus(`Redo Slot ${slotIndex + 1}…`);
       }
@@ -792,13 +770,11 @@
             });
           }
           
-          // SUCCESSS Handling
           const finalUrl = cacheBust(waitedResult.url);
           REDO_STATE[redoKey] = { status: 'completed', url: finalUrl };
           updateDropdownLabels(); 
-          updateApproveButtonState(); // NEW: Check state again
+          updateApproveButtonState();
 
-          // If still viewing, update DOM
           if (CURRENT_SET?.outputBasePath === ctxSetPath) {
               const slotCard = gridEl.querySelector(`.slot[data-slot-index="${slotIndex}"]`);
               const prevBox  = slotCard?.querySelector(`#slotPrev_${slotIndex}`);
@@ -807,7 +783,6 @@
               
               if (prevBox) {
                   prevBox.innerHTML = `<img src="${finalUrl}" />`;
-                  // ✅ ATTACH LISTENERS AFTER REDO
                   attachPreviewBoxListeners(prevBox);
                   prevBox.classList.add("success-border"); 
               }
@@ -820,7 +795,7 @@
           console.error("Redo failed", err);
           delete REDO_STATE[redoKey];
           updateDropdownLabels();
-          updateApproveButtonState(); // NEW: Ensure state is reset on error
+          updateApproveButtonState(); 
           if (CURRENT_SET?.outputBasePath === ctxSetPath) {
              const prevBox = gridEl.querySelector(`.slot[data-slot-index="${slotIndex}"] #slotPrev_${slotIndex}`);
              if (prevBox) prevBox.innerHTML = `<div class="slotRefEmpty">Error</div>`;
@@ -828,10 +803,8 @@
           }
       }
 
-      // MANIFEST UPDATE (Non-blocking usually, but await here for consistency)
       try {
         const manifestRef = ref(storage, `${ctxSetPath}/manifest.json`);
-        
         const buffer = await getBytes(manifestRef);
         const text = new TextDecoder().decode(buffer);
         const manifestJson = JSON.parse(text);
@@ -868,7 +841,6 @@
     
     window.redoSlot = redoSlot;
 
-    // Back-compat alias
     const categoryEl = activeCategoryEl;
 
     function folderPath(category, subfolder) {
@@ -883,9 +855,6 @@
       return `${ROOT}/New_Charms_Earrings`;
     }
 
-    // -------------------------------------------------------------------------
-    // NEW: Randomizer Function
-    // -------------------------------------------------------------------------
     async function listRandomFile(fullFolderPath) {
       await ensureStorageSignedIn();
       const folderRef = ref(storage, fullFolderPath);
@@ -1029,6 +998,7 @@
       generateSection.style.display = "none";
       reviewSection.style.display = "none";
       charmMakerSection.style.display = "none";
+      charmPaginationEl.style.display = "none"; 
       
       gridEl.innerHTML = "";
 
@@ -1049,6 +1019,7 @@
         charmMakerSection.style.display = "block";
         setStatus("Charm Maker Database");
         loadCharmMakerPreviews();
+        loadCharmMakerHistory(); // Initialize the custom grid
       }
     }
 
@@ -1066,7 +1037,6 @@
       }
     });
 
-    // --- Loading Sets functionality ---
     async function loadReviewSets() {
       const category = activeCategoryEl.value;
       setStatus("Loading sets...");
@@ -1085,10 +1055,7 @@
         if (sets.length > 0) {
           reviewSetSelect.innerHTML = sets.map(s => `<option value="${s}">${s}</option>`).join("");
           setStatus(`Found ${sets.length} sets.`);
-          
           updateDropdownLabels();
-          
-          // Auto-load first item if present
           if (reviewSetSelect.value) {
               loadSetImages(reviewSetSelect.value);
           }
@@ -1105,15 +1072,14 @@
     }
     
     function updateDropdownLabels() {
+        if(appMode !== "review") return;
         const category = activeCategoryEl.value;
         const options = Array.from(reviewSetSelect.options);
         
         options.forEach(opt => {
             const setName = opt.value;
             if (!setName) return;
-            
             const setPath = `${ROOT}/${category}/Ready_To_List/${setName}`;
-            
             const statuses = [];
             Object.keys(REDO_STATE).forEach(key => {
                 if (key.startsWith(setPath)) {
@@ -1127,7 +1093,6 @@
                     }
                 }
             });
-            
             if (statuses.length > 0) {
                 opt.text = `${setName} (${statuses.join(', ')})`;
             } else {
@@ -1136,11 +1101,9 @@
         });
     }
 
-    // NEW: Function to toggle approve button status
     function updateApproveButtonState() {
       if (!approveSetBtn) return;
       
-      // Default Green Style
       const setGreen = () => {
         approveSetBtn.disabled = false;
         approveSetBtn.style.background = "#1f4026";
@@ -1151,20 +1114,17 @@
         approveSetBtn.style.opacity = "1";
       };
 
-      // Orange Style
       const setOrange = () => {
         approveSetBtn.disabled = true;
-        approveSetBtn.style.background = "#7c2d12"; // Darker orange/rust
-        approveSetBtn.style.color = "#fdba74"; // light orange
+        approveSetBtn.style.background = "#7c2d12"; 
+        approveSetBtn.style.color = "#fdba74"; 
         approveSetBtn.style.border = "1px solid #ea580c";
         approveSetBtn.textContent = "Waiting for Redo...";
         approveSetBtn.style.cursor = "not-allowed";
         approveSetBtn.style.opacity = "0.8";
       };
 
-      if (!CURRENT_SET || appMode !== 'review') {
-         return; 
-      }
+      if (!CURRENT_SET || appMode !== 'review') return; 
 
       const setPath = CURRENT_SET.outputBasePath;
       let hasRunning = false;
@@ -1182,7 +1142,6 @@
       }
     }
 
-    // NEW: Consolidated Load Function
     async function loadSetImages(setName) {
       if (!setName) return;
 
@@ -1200,16 +1159,13 @@
         let parsedSetN = parseInt(setName.replace('Set_', '')) || 0;
         CURRENT_SET = { category, outputBasePath: setPath, setN: parsedSetN };
 
-        // 404 Safety: try/catch the manifest load
         let manifestData = null;
         try {
             const manifestRef = ref(storage, `${setPath}/manifest.json`);
             const buffer = await getBytes(manifestRef);
             const text = new TextDecoder().decode(buffer);
             manifestData = JSON.parse(text);
-        } catch(err) {
-            // expected if manifest doesn't exist
-        }
+        } catch(err) {}
 
         const slotPlan = SLOT_MAP[category] || [];
         
@@ -1271,12 +1227,9 @@
               if (prevBox) {
                 const finalUrl = cacheBust(url);
                 prevBox.innerHTML = `<img src="${finalUrl}" />`;
-                // ✅ ATTACH LISTENERS AFTER LOADING
                 attachPreviewBoxListeners(prevBox);
               }
-            } catch (err) {
-              // ignore
-            }
+            } catch (err) {}
           }
         }));
 
@@ -1289,7 +1242,6 @@
 
         setStatus(`Viewing ${category} / ${setName}`);
       } catch (e) {
-        // If the set folder itself is gone (404 on listAll), handle gracefully
         if (e.code === 'storage/object-not-found') {
              gridEl.innerHTML = `<div class='slotRefEmpty'>Set '${setName}' not found (might be deleted/moved).</div>`;
         } else {
@@ -1298,7 +1250,7 @@
         }
       } finally {
         setBusy(false);
-        updateApproveButtonState(); // NEW: Verify button state after load
+        updateApproveButtonState(); 
       }
     }
     
@@ -1306,7 +1258,6 @@
         loadSetImages(e.target.value);
     });
 
-    // NEW: "Optimistic" Approve function
     function approveSet() {
       const category = activeCategoryEl.value;
       const setName = reviewSetSelect.value;
@@ -1314,13 +1265,10 @@
 
       if (!confirm(`Approve ${setName}? (Instant Queue)`)) return;
 
-      // 1. Remove from UI immediately
       const optionToRemove = reviewSetSelect.querySelector(`option[value="${setName}"]`);
       if (optionToRemove) optionToRemove.remove();
 
-      // 2. Load next set immediately if exists
       if (reviewSetSelect.options.length > 0) {
-          // Select first available (or keep index)
           reviewSetSelect.selectedIndex = 0; 
           loadSetImages(reviewSetSelect.value);
       } else {
@@ -1328,11 +1276,9 @@
           setStatus("Queue clear.");
       }
 
-      // 3. Trigger background move
       runBackgroundApproval(category, setName);
     }
 
-    // NEW: Background Task
     async function runBackgroundApproval(category, setName) {
         const queueId = `${category}/${setName}`;
         backgroundQueueStatus.textContent = `Queued: ${setName}...`;
@@ -1348,16 +1294,14 @@
             const res = await listAll(srcRef);
             
             for (const itemRef of res.items) {
-               // Download -> Upload -> Delete
                const buffer = await getBytes(itemRef);
                const newRef = ref(storage, `${destFolder}/${itemRef.name}`);
-               await uploadBytesResumable(newRef, buffer); // ✅ Changed 'blob' to 'buffer'
+               await uploadBytesResumable(newRef, buffer); 
                await deleteObject(itemRef);
             }
             console.log(`[Queue] Finished moving ${setName}`);
             backgroundQueueStatus.textContent = `Completed: ${setName}`;
             
-            // Clear status after 3s
             setTimeout(() => {
                 if (backgroundQueueStatus.textContent.includes(setName)) {
                     backgroundQueueStatus.textContent = "";
@@ -1379,20 +1323,15 @@
         body: JSON.stringify(body),
       });
 
-      // IMPORTANT: do NOT silently turn non-JSON into {}
       const raw = await res.text().catch(() => "");
       let j = null;
       try { j = raw ? JSON.parse(raw) : null; } catch { j = null; }
 
       if (!res.ok) {
-        const msg =
-          (j?.error?.message || j?.error) ||
-          (raw ? raw.slice(0, 300) : "") ||
-          `HTTP ${res.status}`;
+        const msg = (j?.error?.message || j?.error) || (raw ? raw.slice(0, 300) : "") || `HTTP ${res.status}`;
         throw new Error(msg);
       }
 
-      // Netlify background functions often return 202 with an empty body.
       if (!j) {
         if (res.status === 202 && (!raw || !raw.trim())) {
           return { ok: true, accepted: true, status: 202 };
@@ -1402,7 +1341,6 @@
       return j;
     }
 
-    // Use the NON-background endpoint so we always get JSON back.
     const GEMINI_FN = "geminiImageProxy";
     const GEMINI_BG_FN = "geminiImageProxy-background";
 
@@ -1418,7 +1356,6 @@
     }
 
     function normalizeAllocOutputBasePath(alloc) {
-      // Some backends return a string directly, others nest under data/result/payload.
       if (typeof alloc === "string") return alloc.trim() || null;
       if (!alloc || typeof alloc !== "object") return null;
 
@@ -1428,9 +1365,7 @@
       const p = a.payload && typeof a.payload === "object" ? a.payload : null;
 
       return pickFirstString(
-        // top-level
         a.outputBasePath, a.output_base_path, a.output_base_path, a.outputBase, a.basePath,
-        // common nesting
         d?.outputBasePath, d?.output_base_path, d?.outputBase, d?.basePath,
         r?.outputBasePath, r?.output_base_path, r?.outputBase, r?.basePath,
         p?.outputBasePath, p?.output_base_path, p?.outputBase, p?.basePath
@@ -1451,25 +1386,20 @@
 
         setStatus("Allocating Set…");
         const alloc = await allocSet(category);
-        console.log("alloc_set response:", alloc);
         const outputBasePath = normalizeAllocOutputBasePath(alloc);
         if (!outputBasePath) throw new Error("alloc_set did not return a valid outputBasePath");
 
-        // Prefer server-provided setN, but fall back to parsing from outputBasePath
         let setN = alloc?.setN ?? alloc?.set_n;
         if (setN == null) {
           const m = outputBasePath.match(/\/Set_(\d+)\b/);
           if (m) setN = Number(m[1]);
         }
 
-        // Save current set context for per-slot Redo
         CURRENT_SET = { category, outputBasePath, setN };
 
-        // ✅ LOGIC UPDATE: Pick charm source based on category
         const isEarring = ["Stud_Earrings", "Hoop_Earrings"].includes(category);
         const charmFolderPath = isEarring ? newCharmsEarringsPath() : newCharmsPath();
         
-        // Constraint C: Charms are NOT randomized. Keep listLatestFile here.
         const charmLatest = await listLatestFile(charmFolderPath);
         if (!charmLatest) throw new Error(`No files in ${charmFolderPath}/`);
 
@@ -1482,24 +1412,19 @@
           model: "gemini-3-pro-image-preview",
         };
 
-        // 1) Resolve all slot sources up front
-        // Constraint A & B: Randomize slot reference images.
         setStatus("Preparing slots (Randomizing)…");
         const slotResolved = await Promise.all(slotPlan.map(async (spec, i) => {
           const srcFolder = slotRefFolder(category, spec.folder);
-          // CHANGED: Use listRandomFile instead of listLatestFile
           const srcRandom = await listRandomFile(srcFolder);
           if (!srcRandom) throw new Error(`No files in ${srcFolder}/`);
           return { spec, i, slotNum: i + 1, srcLatest: srcRandom };
         }));
 
-        // 2) Render all slot cards immediately
         gridEl.innerHTML = "";
         for (const r of slotResolved) {
           const { spec, i, slotNum, srcLatest } = r;
           const slotCard = document.createElement("div");
           slotCard.className = "slot";
-          // Add data-slot-index for easier selection
           slotCard.dataset.slotIndex = i; 
           slotCard.innerHTML = `
             <div class="slotTop">
@@ -1515,7 +1440,6 @@
 
         setStatus("Starting background run…");
 
-        // 3) Construct Tasks Object
         const tasks = slotResolved.map((r) => {
           const { spec, i, slotNum, srcLatest } = r;
           if (spec.type === "copy") {
@@ -1529,33 +1453,23 @@
             type: "edits",
             slotIndex: i,
             input_storage_path: srcLatest.fullPath,
-            input_charm_storage_path: charmLatest.fullPath, // Pass the correct charm file
+            input_charm_storage_path: charmLatest.fullPath, 
             prompt: buildSlotPrompt(category, spec.folder, slotNum),
             model: "gemini-3-pro-image-preview",
           };
         });
 
-        // ---------------------------------------------------------
-        // FIX: Decouple Trigger and Polling
-        // ---------------------------------------------------------
-
-        // A. Start Polling Logic (Wait for images to appear in Storage)
-        // We start this PROMISE immediately, but await it later.
         const pollingPromise = Promise.all(slotResolved.map(async (r) => {
           const { spec, i, slotNum, srcLatest } = r;
           const prevBox = document.getElementById(`slotPrev_${i}`);
           const setImg = (url) => { 
             if (prevBox) {
                 prevBox.innerHTML = `<img src="${url}" />`;
-                // ✅ ATTACH LISTENERS AFTER GENERATION
                 attachPreviewBoxListeners(prevBox);
             } 
           };
 
-          // Wait for the file to appear
           const waited = await waitForSlotPngUrl(outputBasePath, i);
-          
-          // cache-bust so the preview updates even if the filename is overwritten
           const finalUrl = `${waited.url}${waited.url.includes("?") ? "&" : "?"}cb=${Date.now()}`;
           setImg(finalUrl);
 
@@ -1568,29 +1482,22 @@
           };
         }));
 
-        // B. Fire the Trigger (Send request to server)
-        // ✅ CRITICAL FIX: We MUST await this. 
-        // If the request fails, we throw immediately instead of waiting 10 minutes for a timeout.
         try {
             await postJson(GEMINI_BG_FN, {
               kind: "run_set_async",
               activeCategory: category,
               output_base_path: outputBasePath,
-              delayMs: 20000, // 20.0s spacing between Gemini slot submissions
+              delayMs: 20000, 
               tasks,
             });
             console.log("Background run triggered successfully");
         } catch (err) {
-            // Throwing here stops execution, preventing the polling timeout error.
             throw new Error(`Failed to start generation on server: ${err.message}`);
         }
 
         setStatus("Generating… (Monitoring Storage)");
 
-        // C. Wait for Polling to finish (This confirms images are created)
         const results = await pollingPromise;
-        
-        // Sort results to match manifest order
         results.sort((a, b) => a.slot - b.slot);
         manifest.slots = results;
 
@@ -1603,7 +1510,6 @@
         });
 
         setStatus(`Done → ${category}/Ready_To_List/Set_${setN}`);
-        // Now that the set is done, enable per-slot Redo buttons
         setAllRedoEnabled(true);
       } catch (e) {
         console.error(e);
@@ -1620,18 +1526,70 @@
     const previewNewCharms = document.getElementById("previewNewCharms");
     const previewNewCharmsEarrings = document.getElementById("previewNewCharmsEarrings");
     const executeCharmGenBtn = document.getElementById("executeCharmGenBtn");
-    const charmMakerResults = document.getElementById("charmMakerResults");
-    const resultPrevCharms = document.getElementById("resultPrevCharms");
-    const resultPrevEarrings = document.getElementById("resultPrevEarrings");
+
+    // --- Charm Maker Pagination State ---
+    let charmSetsHistory = [];
+    let charmCurrentPage = 1;
+    const CHARM_ITEMS_PER_PAGE = 50;
+
+    // Base prompts hoisted for global access
+    const promptStrCharm = `CRITICAL INITIAL ANALYSIS: Before generating, conceptually analyze the reference image to determine its exact genre and subject matter (e.g., "Genre: Animal, Subject Matter: Rabbit/Leporidae"). Use this specific analysis as the strict foundational concept for the new charm. DO NOT add additional jump rings, bails, or chains under ANY circumstances.
+
+    TASK: Generate a highly realistic, 2D jewelry charm that functions as a thematic and aesthetic extension of the provided reference based on your analysis. Your goal is to keep the SAME genre and loosely similar subject matter and overall concept but adapt it to attract similar audiences.
+
+    HARD PHYSICAL CONSTRAINTS (NON-NEGOTIABLE):
+    • Use engravings very sparingly and very strategically. Do not cram too many pointless engravings onto the charm.
+    • Leave a lot of white space between the engravings; do not bunch up engravings and cutouts closely together.
+    • FLAT SHEET METAL: The charm must appear as a perfectly flat, thin sheet of high-polish metal.
+    • SHARP 2D CUTOUTS: Use laser-cut precision. Do NOT allow rounded edges, bevels, or 3D thickness.
+    • VIEWPOINT: Always render the charm perfectly front-facing (orthographic) with 0% perspective tilt.
+    • BACKGROUND COLOR (CRITICAL & ABSOLUTE): You MUST generate the charm on a 100% PURE SOLID BLACK (#000000) background. Absolutely NO white backgrounds, NO grey backgrounds, NO gradients, and NO transparency. If the background is not pure black, it is a failure.
+    • NO TEXT: Never render letters, numbers, or words.
+
+    THEMATIC & AESTHETIC EVOLUTION:
+    • You may only introduce minor stylistic alterations to the outer contour (e.g., slightly sharper points, smoother curves, or stylistic edges) while preserving the exact overall recognizable footprint.
+    • AESTHETIC ANCHORING: Maintain the exact gold tone, luminosity, and "luxe-minimalist" feel of the reference image. The "vibe" must remain cohesive.
+    • ENGRAVING DEPTH: All internal details must be surface-level laser etchings. No embossing or 3D extrusion.
+
+    NEGATIVE CONSTRAINTS (NEVER DO THESE - EXTREME PENALTY):
+    • NEVER generate a white or light background. It MUST be pure solid black (#000000).
+    • NEVER add additional jump rings, O-rings, bails, or chains of any kind.
+    • NEVER introduce 3D volume, thickness, or side-profile views.
+    • NEVER use matte or brushed textures if the reference is high-polish.
+    • NEVER deviate from the established level of intricate detail seen in the reference.
+    
+    HOOP/BAIL REQUIREMENT (CRITICAL):
+    • We must ensure that the integrated hoop already present in the reference image MUST ALWAYS be correctly and strategically positioned on the newly generated Charm. THIS IS A MUST AND ABSOLUTELY CRUCIAL!!!! DO NOT ADD EXTRA JUMP RINGS TO IT.`;
+
+    const promptStrEarring = `CRITICAL INSTRUCTION: Analyze the provided reference image of a jewelry charm. 
+    Your task is to generate an image that is 100% identical to this reference, keeping everything absolutely the same, with ONLY 1 EXCEPTION:
+    
+    Exception 1: Completely remove the hoop/bail from the top of the charm.
+
+    HARD CONSTRAINTS (NON-NEGOTIABLE):
+    • BACKGROUND COLOR (CRITICAL): Keep the exact same solid pure black (#000000) background. ABSOLUTELY NO white, grey, or transparent backgrounds.
+    • JUMP RINGS: NEVER add jump rings, O-rings, bails, or chains.
+    • Keep all engravings, cutouts, overall shape, proportions, and gold tone 100% identical to the reference.
+    • Do not introduce any new elements, 3D thickness, or styling changes.
+    • The final output MUST be the exact same charm, just missing the top hoop, on a PURE BLACK background.`;
+
+    const promptStrBW = `TASK: Generate a black and white outline image based strictly on the newly generated charm shown in the FIRST image. 
+    Use the SECOND image strictly as a stylistic sample output to better understand the desired line art style outcome.
+
+    HARD CONSTRAINTS (NON-NEGOTIABLE):
+    • Create a black and white outline image using the newly generated charm.
+    • Pay very close attention to the engraving details and follow the lines exactly.
+    • Fill in all engravings with solid black colour.
+    • Be very accurate as to the size, position, and exact details of the charm engravings.
+    • Ensure the Charm outer perimeter black outline line is only 2px thick.
+    • Use a solid, pure WHITE (#FFFFFF) background. Absolutely no transparency.
+    • Do NOT add any shading, 3D extrusion, colours, or grey tones. Flat 2D vector style only.`;
 
     async function loadCharmMakerPreviews() {
       previewNewCharms.innerHTML = `<div class="slotRefEmpty">Fetching...</div>`;
       previewNewCharmsEarrings.innerHTML = `<div class="slotRefEmpty">Fetching...</div>`;
-      
       try {
         await ensureStorageSignedIn();
-        
-        // Fetch next available standard charm
         const charmsLatest = await listLatestFile(newCharmsPath());
         currentCharmRef = charmsLatest;
         if (charmsLatest) {
@@ -1640,7 +1598,6 @@
           previewNewCharms.innerHTML = `<div class="slotRefEmpty">Queue Empty</div>`;
         }
 
-        // Fetch next available earring charm
         const earringsLatest = await listLatestFile(newCharmsEarringsPath());
         currentEarringRef = earringsLatest;
         if (earringsLatest) {
@@ -1655,198 +1612,340 @@
       }
     }
 
+    async function loadCharmMakerHistory() {
+        setStatus("Loading history...");
+        charmSetsHistory = [];
+        charmCurrentPage = 1;
+        try {
+            await ensureStorageSignedIn();
+            const completedCharmsRef = ref(storage, `${ROOT}/Completed_Charm`);
+            const res = await listAll(completedCharmsRef);
+            
+            const prefixes = res.prefixes.map(p => p.name).filter(n => n.startsWith('Deriv_'));
+            prefixes.sort((a, b) => {
+                const tsA = parseInt(a.replace('Deriv_', '')) || 0;
+                const tsB = parseInt(b.replace('Deriv_', '')) || 0;
+                return tsB - tsA; // descending
+            });
+            charmSetsHistory = prefixes;
+            renderCharmPage();
+        } catch (e) {
+            console.error("Failed to load Charm Maker history:", e);
+            setStatus("Error loading history");
+        }
+    }
+
+    function createCharmCardHTML(folderId) {
+        return `
+            <div class="charm-card" id="card_${folderId}">
+                <div class="charm-card-title">Generated Derivatives Previews <span class="muted" style="font-size:11px;">${folderId}</span></div>
+                
+                <div class="charm-col">
+                    <div class="muted">New_Charms Derivative</div>
+                    <div class="slotPrev" id="prevBox_${folderId}_0"><div class="slotRefEmpty">Loading...</div></div>
+                    <button class="btn btnSmall redoBtn" id="redo_${folderId}_0" onclick="redoCharmSlot('${folderId}', 0)">Redo</button>
+                </div>
+                
+                <div class="charm-col">
+                    <div class="muted">New_Charms_Earrings Derivative</div>
+                    <div class="slotPrev" id="prevBox_${folderId}_1"><div class="slotRefEmpty">Loading...</div></div>
+                    <button class="btn btnSmall redoBtn" id="redo_${folderId}_1" onclick="redoCharmSlot('${folderId}', 1)">Redo</button>
+                </div>
+                
+                <div class="charm-col">
+                    <div class="muted">B&W Line Art (Standard)</div>
+                    <div class="slotPrev" id="prevBox_${folderId}_2"><div class="slotRefEmpty">Loading...</div></div>
+                    <button class="btn btnSmall redoBtn" id="redo_${folderId}_2" onclick="redoCharmSlot('${folderId}', 2)">Redo</button>
+                </div>
+                
+                <div class="charm-col">
+                    <div class="muted">B&W Line Art (Earrings)</div>
+                    <div class="slotPrev" id="prevBox_${folderId}_3"><div class="slotRefEmpty">Loading...</div></div>
+                    <button class="btn btnSmall redoBtn" id="redo_${folderId}_3" onclick="redoCharmSlot('${folderId}', 3)">Redo</button>
+                </div>
+            </div>
+        `;
+    }
+
+    function renderCharmPage() {
+        gridEl.innerHTML = "";
+        
+        if (charmSetsHistory.length === 0) {
+            gridEl.innerHTML = `<div class="slotRefEmpty" style="grid-column:span 4;">No historical sets found. Generate one!</div>`;
+            charmPaginationEl.style.display = "none";
+            setStatus("Ready");
+            return;
+        }
+
+        const totalPages = Math.ceil(charmSetsHistory.length / CHARM_ITEMS_PER_PAGE);
+        document.getElementById("charmPageInfo").textContent = `Page ${charmCurrentPage} of ${totalPages}`;
+        
+        document.getElementById("charmPrevPage").disabled = (charmCurrentPage === 1);
+        document.getElementById("charmNextPage").disabled = (charmCurrentPage === totalPages);
+        
+        charmPaginationEl.style.display = totalPages > 1 ? "flex" : "none";
+
+        const startIndex = (charmCurrentPage - 1) * CHARM_ITEMS_PER_PAGE;
+        const pageItems = charmSetsHistory.slice(startIndex, startIndex + CHARM_ITEMS_PER_PAGE);
+
+        pageItems.forEach(folderId => {
+            const tempDiv = document.createElement("div");
+            tempDiv.innerHTML = createCharmCardHTML(folderId);
+            const cardNode = tempDiv.firstElementChild;
+            gridEl.appendChild(cardNode);
+            loadSetImagesForCharm(folderId);
+        });
+        
+        setStatus(`Viewing Page ${charmCurrentPage}`);
+    }
+
+    async function loadSetImagesForCharm(folderId) {
+        const folderPath = `${ROOT}/Completed_Charm/${folderId}`;
+        for (let i = 0; i < 4; i++) {
+            const fileName = `Slot_${i+1}.png`;
+            const fileRef = ref(storage, `${folderPath}/${fileName}`);
+            const prevBox = document.getElementById(`prevBox_${folderId}_${i}`);
+            if (!prevBox) continue;
+            
+            getDownloadURL(fileRef).then(url => {
+                prevBox.innerHTML = `<img src="${cacheBust(url)}" />`;
+                attachPreviewBoxListeners(prevBox);
+            }).catch(e => {
+                prevBox.innerHTML = `<div class="slotRefEmpty">Not Found</div>`;
+            });
+        }
+    }
+
+    document.getElementById("charmPrevPage").addEventListener("click", () => {
+        if (charmCurrentPage > 1) {
+            charmCurrentPage--;
+            renderCharmPage();
+        }
+    });
+
+    document.getElementById("charmNextPage").addEventListener("click", () => {
+        const totalPages = Math.ceil(charmSetsHistory.length / CHARM_ITEMS_PER_PAGE);
+        if (charmCurrentPage < totalPages) {
+            charmCurrentPage++;
+            renderCharmPage();
+        }
+    });
+
+    window.redoCharmSlot = async function(folderId, slotIndex) {
+        const folderPath = `${ROOT}/Completed_Charm/${folderId}`;
+        const redoBtn = document.getElementById(`redo_${folderId}_${slotIndex}`);
+        const prevBox = document.getElementById(`prevBox_${folderId}_${slotIndex}`);
+        
+        redoBtn.disabled = true;
+        prevBox.innerHTML = `<div class="slotRefEmpty">Working…</div>`;
+        prevBox.classList.remove("success-border");
+        
+        try {
+            const slotFileName = `Slot_${slotIndex + 1}.png`;
+            const slotStoragePath = `${folderPath}/${slotFileName}`;
+            let beforeUpdatedMs = 0, beforeGeneration = 0;
+            try {
+                const beforeMeta = await getMetadata(ref(storage, slotStoragePath));
+                beforeUpdatedMs = Date.parse(beforeMeta?.updated || beforeMeta?.timeCreated || "") || 0;
+                beforeGeneration = Number(beforeMeta?.generation || 0) || 0;
+            } catch(e) {}
+
+            let manifest = {};
+            try {
+                const manifestBuffer = await getBytes(ref(storage, `${folderPath}/manifest.json`));
+                manifest = JSON.parse(new TextDecoder().decode(manifestBuffer));
+            } catch(e) {
+                console.warn("No manifest found for", folderId, "falling back to runtime refs if possible");
+            }
+
+            let inputPath = "";
+            let inputCharmPath = "";
+            let promptStr = "";
+            let category = "";
+
+            if (slotIndex === 0) {
+                inputPath = manifest.sourceCharm || currentCharmRef?.fullPath; 
+                if (!inputPath) throw new Error("Missing source reference for base charm.");
+                inputCharmPath = inputPath;
+                promptStr = promptStrCharm;
+                category = "Charms";
+            } else if (slotIndex === 1) {
+                inputPath = `${folderPath}/Slot_1.png`;
+                inputCharmPath = inputPath;
+                promptStr = promptStrEarring;
+                category = "Stud_Earrings";
+            } else if (slotIndex === 2) {
+                inputPath = `${folderPath}/Slot_1.png`;
+                inputCharmPath = manifest.lineArtRef || inputPath;
+                promptStr = promptStrBW;
+                category = "Charms";
+            } else if (slotIndex === 3) {
+                inputPath = `${folderPath}/Slot_2.png`;
+                inputCharmPath = manifest.lineArtRef || inputPath;
+                promptStr = promptStrBW;
+                category = "Stud_Earrings";
+            }
+
+            await postJson(GEMINI_BG_FN, {
+                kind: "edits",
+                activeCategory: category,
+                input_storage_path: inputPath,
+                input_charm_storage_path: inputCharmPath,
+                output_base_path: folderPath,
+                slotIndex: slotIndex,
+                model: "gemini-3-pro-image-preview",
+                prompt: promptStr
+            });
+
+            const waitedRes = await waitForSlotPngUrl(folderPath, slotIndex, {
+                afterUpdatedMs: beforeUpdatedMs,
+                afterGeneration: beforeGeneration,
+                timeoutMs: 600000, intervalMs: 5000
+            });
+
+            prevBox.innerHTML = `<img src="${cacheBust(waitedRes.url)}" />`;
+            attachPreviewBoxListeners(prevBox);
+            prevBox.classList.add("success-border");
+        } catch (err) {
+            console.error("Charm Redo failed", err);
+            prevBox.innerHTML = `<div class="slotRefEmpty">Error: ${err.message}</div>`;
+        } finally {
+            redoBtn.disabled = false;
+        }
+    };
+
     executeCharmGenBtn.addEventListener("click", async () => {
         if (!currentCharmRef) {
             alert("No reference charm loaded in the New_Charms queue. Please upload to New_Charms.");
             return;
         }
 
-        const basePrompt = `CRITICAL INITIAL ANALYSIS: Before generating, conceptually analyze the reference image to determine its exact genre and subject matter (e.g., "Genre: Animal, Subject Matter: Rabbit/Leporidae"). Use this specific analysis as the strict foundational concept for the new charm. DO NOT add additional jump rings, bails, or chains under ANY circumstances.
-
-        TASK: Generate a highly realistic, 2D jewelry charm that functions as a thematic and aesthetic extension of the provided reference based on your analysis. Your goal is to keep the SAME genre and loosely similar subject matter and overall concept but adapt it to attract similar audiences.
-
-        HARD PHYSICAL CONSTRAINTS (NON-NEGOTIABLE):
-        • Use engravings very sparingly and very strategically. Do not cram too many pointless engravings onto the charm.
-        • Leave a lot of white space between the engravings; do not bunch up engravings and cutouts closely together.
-        • FLAT SHEET METAL: The charm must appear as a perfectly flat, thin sheet of high-polish metal.
-        • SHARP 2D CUTOUTS: Use laser-cut precision. Do NOT allow rounded edges, bevels, or 3D thickness.
-        • VIEWPOINT: Always render the charm perfectly front-facing (orthographic) with 0% perspective tilt.
-        • BACKGROUND COLOR (CRITICAL & ABSOLUTE): You MUST generate the charm on a 100% PURE SOLID BLACK (#000000) background. Absolutely NO white backgrounds, NO grey backgrounds, NO gradients, and NO transparency. If the background is not pure black, it is a failure.
-        • NO TEXT: Never render letters, numbers, or words.
-
-        THEMATIC & AESTHETIC EVOLUTION:
-        • You may only introduce minor stylistic alterations to the outer contour (e.g., slightly sharper points, smoother curves, or stylistic edges) while preserving the exact overall recognizable footprint.
-        • AESTHETIC ANCHORING: Maintain the exact gold tone, luminosity, and "luxe-minimalist" feel of the reference image. The "vibe" must remain cohesive.
-        • ENGRAVING DEPTH: All internal details must be surface-level laser etchings. No embossing or 3D extrusion.
-
-        NEGATIVE CONSTRAINTS (NEVER DO THESE - EXTREME PENALTY):
-        • NEVER generate a white or light background. It MUST be pure solid black (#000000).
-        • NEVER add additional jump rings, O-rings, bails, or chains of any kind.
-        • NEVER introduce 3D volume, thickness, or side-profile views.
-        • NEVER use matte or brushed textures if the reference is high-polish.
-        • NEVER deviate from the established level of intricate detail seen in the reference.`;
-
-        const promptStrCharm = basePrompt + `\n\nHOOP/BAIL REQUIREMENT (CRITICAL):
-        • We must ensure that the integrated hoop already present in the reference image MUST ALWAYS be correctly and strategically positioned on the newly generated Charm. THIS IS A MUST AND ABSOLUTELY CRUCIAL!!!! DO NOT ADD EXTRA JUMP RINGS TO IT.`;
-
-        const promptStrEarring = `CRITICAL INSTRUCTION: Analyze the provided reference image of a jewelry charm. 
-        Your task is to generate an image that is 100% identical to this reference, keeping everything absolutely the same, with ONLY 1 EXCEPTION:
-        
-        Exception 1: Completely remove the hoop/bail from the top of the charm.
-
-        HARD CONSTRAINTS (NON-NEGOTIABLE):
-        • BACKGROUND COLOR (CRITICAL): Keep the exact same solid pure black (#000000) background. ABSOLUTELY NO white, grey, or transparent backgrounds.
-        • JUMP RINGS: NEVER add jump rings, O-rings, bails, or chains.
-        • Keep all engravings, cutouts, overall shape, proportions, and gold tone 100% identical to the reference.
-        • Do not introduce any new elements, 3D thickness, or styling changes.
-        • The final output MUST be the exact same charm, just missing the top hoop, on a PURE BLACK background.`;
-
-        // ✅ NEW BLACK AND WHITE LINE ART PROMPT
-        const promptStrBW = `TASK: Generate a black and white outline image based strictly on the newly generated charm shown in the FIRST image. 
-        Use the SECOND image strictly as a stylistic sample output to better understand the desired line art style outcome.
-
-        HARD CONSTRAINTS (NON-NEGOTIABLE):
-        • Create a black and white outline image using the newly generated charm.
-        • Pay very close attention to the engraving details and follow the lines exactly.
-        • Fill in all engravings with solid black colour.
-        • Be very accurate as to the size, position, and exact details of the charm engravings.
-        • Ensure the Charm outer perimeter black outline line is only 2px thick.
-        • Use a solid, pure WHITE (#FFFFFF) background. Absolutely no transparency.
-        • Do NOT add any shading, 3D extrusion, colours, or grey tones. Flat 2D vector style only.`;
-
         setBusy(true);
         setStatus("Generating Base Charm Derivative...");
         executeCharmGenBtn.disabled = true;
-        
-        charmMakerResults.style.display = "block";
-        const resultPrevCharmsBW = document.getElementById("resultPrevCharmsBW");
-        const resultPrevEarringsBW = document.getElementById("resultPrevEarringsBW");
 
-        resultPrevCharms.classList.remove("success-border");
-        resultPrevEarrings.classList.remove("success-border");
-        resultPrevCharmsBW.classList.remove("success-border");
-        resultPrevEarringsBW.classList.remove("success-border");
-        
-        resultPrevCharms.innerHTML = `<div class="slotRefEmpty">Generating...</div>`;
-        resultPrevEarrings.innerHTML = `<div class="slotRefEmpty">Waiting for Base...</div>`;
-        resultPrevCharmsBW.innerHTML = `<div class="slotRefEmpty">Waiting...</div>`;
-        resultPrevEarringsBW.innerHTML = `<div class="slotRefEmpty">Waiting...</div>`;
+        const timestamp = Date.now();
+        const folderId = `Deriv_${timestamp}`;
+        const outputBasePath = `${ROOT}/Completed_Charm/${folderId}`;
 
+        if (charmCurrentPage !== 1) {
+            charmCurrentPage = 1;
+            renderCharmPage();
+        }
+
+        const tempDiv = document.createElement("div");
+        tempDiv.innerHTML = createCharmCardHTML(folderId);
+        const cardNode = tempDiv.firstElementChild;
+        gridEl.insertBefore(cardNode, gridEl.firstChild);
+        
+        if (charmSetsHistory.indexOf(folderId) === -1) {
+            charmSetsHistory.unshift(folderId);
+        }
+
+        const prev0 = document.getElementById(`prevBox_${folderId}_0`);
+        const prev1 = document.getElementById(`prevBox_${folderId}_1`);
+        const prev2 = document.getElementById(`prevBox_${folderId}_2`);
+        const prev3 = document.getElementById(`prevBox_${folderId}_3`);
+
+        [prev0, prev1, prev2, prev3].forEach(p => p.innerHTML = `<div class="slotRefEmpty">Queued...</div>`);
+        [0, 1, 2, 3].forEach(i => document.getElementById(`redo_${folderId}_${i}`).disabled = true);
+        
         try {
-            // ✅ Fetch the stylistic line art reference
             let lineArtRef = null;
             try {
                 lineArtRef = await listLatestFile(`${ROOT}/Reference_Line_Art_Image`);
             } catch (e) {
-                console.warn("No line art reference found in Reference_Line_Art_Image. Will fallback to charm itself.", e);
+                console.warn("No line art reference found. Will fallback to charm itself.", e);
             }
 
-            const timestamp = Date.now();
-            const outputBasePath = `${ROOT}/Completed_Charm/Deriv_${timestamp}`;
-            
-            // =========================================================
-            // STEP 1: Generate the Base Charm (New_Charms Derivative)
-            // =========================================================
-            await postJson(GEMINI_BG_FN, {
-                kind: "edits",
-                activeCategory: "Charms", 
-                input_storage_path: currentCharmRef.fullPath,
-                input_charm_storage_path: currentCharmRef.fullPath,
+            const manifest = {
+                sourceCharm: currentCharmRef.fullPath,
+                sourceEarring: currentEarringRef?.fullPath || null,
+                lineArtRef: lineArtRef?.fullPath || null,
+                timestamp: new Date().toISOString()
+            };
+
+            await postJson("geminiImageProxy", {
+                kind: "write_manifest",
+                activeCategory: "Charms",
                 output_base_path: outputBasePath,
-                slotIndex: 0,
-                model: "gemini-3-pro-image-preview",
-                prompt: promptStrCharm
+                manifest: manifest,
             });
 
+            // STEP 1
+            prev0.innerHTML = `<div class="slotRefEmpty">Generating Base...</div>`;
+            await postJson(GEMINI_BG_FN, {
+                kind: "edits", activeCategory: "Charms", 
+                input_storage_path: currentCharmRef.fullPath, input_charm_storage_path: currentCharmRef.fullPath,
+                output_base_path: outputBasePath, slotIndex: 0,
+                model: "gemini-3-pro-image-preview", prompt: promptStrCharm
+            });
             const charmRes = await waitForSlotPngUrl(outputBasePath, 0, { timeoutMs: 600000, intervalMs: 5000 });
-            resultPrevCharms.innerHTML = `<img src="${cacheBust(charmRes.url)}" />`;
-            attachPreviewBoxListeners(resultPrevCharms);
-            resultPrevCharms.classList.add("success-border");
+            prev0.innerHTML = `<img src="${cacheBust(charmRes.url)}" />`;
+            attachPreviewBoxListeners(prev0);
+            prev0.classList.add("success-border");
+            document.getElementById(`redo_${folderId}_0`).disabled = false;
 
-            // =========================================================
-            // STEP 2: Generate the Earring Twin using the Base Charm
-            // =========================================================
+            // STEP 2
             setStatus("Generating Earring Twin (Removing Hoop)...");
-            resultPrevEarrings.innerHTML = `<div class="slotRefEmpty">Removing Hoop...</div>`;
+            prev1.innerHTML = `<div class="slotRefEmpty">Removing Hoop...</div>`;
             await sleep(2000); 
-            
             await postJson(GEMINI_BG_FN, {
-                kind: "edits",
-                activeCategory: "Stud_Earrings", 
-                input_storage_path: charmRes.storagePath,
-                input_charm_storage_path: charmRes.storagePath,
-                output_base_path: outputBasePath,
-                slotIndex: 1,
-                model: "gemini-3-pro-image-preview",
-                prompt: promptStrEarring
+                kind: "edits", activeCategory: "Stud_Earrings", 
+                input_storage_path: charmRes.storagePath, input_charm_storage_path: charmRes.storagePath,
+                output_base_path: outputBasePath, slotIndex: 1,
+                model: "gemini-3-pro-image-preview", prompt: promptStrEarring
             });
-
             const earringRes = await waitForSlotPngUrl(outputBasePath, 1, { timeoutMs: 600000, intervalMs: 5000 });
-            resultPrevEarrings.innerHTML = `<img src="${cacheBust(earringRes.url)}" />`;
-            attachPreviewBoxListeners(resultPrevEarrings);
-            resultPrevEarrings.classList.add("success-border");
+            prev1.innerHTML = `<img src="${cacheBust(earringRes.url)}" />`;
+            attachPreviewBoxListeners(prev1);
+            prev1.classList.add("success-border");
+            document.getElementById(`redo_${folderId}_1`).disabled = false;
 
-            // =========================================================
-            // STEP 3: Generate B&W Line Art for Base Charm
-            // =========================================================
+            // STEP 3
             setStatus("Generating B&W Line Art (Standard)...");
-            resultPrevCharmsBW.innerHTML = `<div class="slotRefEmpty">Generating Line Art...</div>`;
+            prev2.innerHTML = `<div class="slotRefEmpty">Generating Line Art...</div>`;
             await sleep(2000);
-            
-            // We feed the new coloured charm as Image 1, and the Line Art reference as Image 2
             const refPathForBaseBW = lineArtRef ? lineArtRef.fullPath : charmRes.storagePath;
-
             await postJson(GEMINI_BG_FN, {
-                kind: "edits",
-                activeCategory: "Charms", 
-                input_storage_path: charmRes.storagePath, // Newly generated colored charm
-                input_charm_storage_path: refPathForBaseBW, // Stylistic line art reference
-                output_base_path: outputBasePath,
-                slotIndex: 2,
-                model: "gemini-3-pro-image-preview",
-                prompt: promptStrBW
+                kind: "edits", activeCategory: "Charms", 
+                input_storage_path: charmRes.storagePath, input_charm_storage_path: refPathForBaseBW,
+                output_base_path: outputBasePath, slotIndex: 2,
+                model: "gemini-3-pro-image-preview", prompt: promptStrBW
             });
-
             const charmBWRes = await waitForSlotPngUrl(outputBasePath, 2, { timeoutMs: 600000, intervalMs: 5000 });
-            resultPrevCharmsBW.innerHTML = `<img src="${cacheBust(charmBWRes.url)}" />`;
-            attachPreviewBoxListeners(resultPrevCharmsBW);
-            resultPrevCharmsBW.classList.add("success-border");
+            prev2.innerHTML = `<img src="${cacheBust(charmBWRes.url)}" />`;
+            attachPreviewBoxListeners(prev2);
+            prev2.classList.add("success-border");
+            document.getElementById(`redo_${folderId}_2`).disabled = false;
 
-            // =========================================================
-            // STEP 4: Generate B&W Line Art for Earring Twin
-            // =========================================================
+            // STEP 4
             setStatus("Generating B&W Line Art (Earrings)...");
-            resultPrevEarringsBW.innerHTML = `<div class="slotRefEmpty">Generating Line Art...</div>`;
+            prev3.innerHTML = `<div class="slotRefEmpty">Generating Line Art...</div>`;
             await sleep(2000);
-
             const refPathForEarringBW = lineArtRef ? lineArtRef.fullPath : earringRes.storagePath;
-
             await postJson(GEMINI_BG_FN, {
-                kind: "edits",
-                activeCategory: "Stud_Earrings", 
-                input_storage_path: earringRes.storagePath, // Newly generated earring twin
-                input_charm_storage_path: refPathForEarringBW, // Stylistic line art reference
-                output_base_path: outputBasePath,
-                slotIndex: 3,
-                model: "gemini-3-pro-image-preview",
-                prompt: promptStrBW
+                kind: "edits", activeCategory: "Stud_Earrings", 
+                input_storage_path: earringRes.storagePath, input_charm_storage_path: refPathForEarringBW,
+                output_base_path: outputBasePath, slotIndex: 3,
+                model: "gemini-3-pro-image-preview", prompt: promptStrBW
             });
-
             const earringBWRes = await waitForSlotPngUrl(outputBasePath, 3, { timeoutMs: 600000, intervalMs: 5000 });
-            resultPrevEarringsBW.innerHTML = `<img src="${cacheBust(earringBWRes.url)}" />`;
-            attachPreviewBoxListeners(resultPrevEarringsBW);
-            resultPrevEarringsBW.classList.add("success-border");
+            prev3.innerHTML = `<img src="${cacheBust(earringBWRes.url)}" />`;
+            attachPreviewBoxListeners(prev3);
+            prev3.classList.add("success-border");
+            document.getElementById(`redo_${folderId}_3`).disabled = false;
 
             setStatus("All Derivatives & Line Art Complete.");
+            renderCharmPage();
 
         } catch (err) {
             console.error("Master Generation Catch:", err);
             setStatus(`Error: ${err.message}`);
             
-            // Graceful reset of remaining queues
-            if (resultPrevEarrings.innerHTML.includes("Waiting for Base...")) resultPrevEarrings.innerHTML = `<div class="slotRefEmpty">Aborted</div>`;
-            if (resultPrevCharmsBW.innerHTML.includes("Waiting...")) resultPrevCharmsBW.innerHTML = `<div class="slotRefEmpty">Aborted</div>`;
-            if (resultPrevEarringsBW.innerHTML.includes("Waiting...")) resultPrevEarringsBW.innerHTML = `<div class="slotRefEmpty">Aborted</div>`;
+            if (prev1.innerHTML.includes("Queued") || prev1.innerHTML.includes("Removing")) prev1.innerHTML = `<div class="slotRefEmpty">Aborted</div>`;
+            if (prev2.innerHTML.includes("Queued") || prev2.innerHTML.includes("Generating")) prev2.innerHTML = `<div class="slotRefEmpty">Aborted</div>`;
+            if (prev3.innerHTML.includes("Queued") || prev3.innerHTML.includes("Generating")) prev3.innerHTML = `<div class="slotRefEmpty">Aborted</div>`;
         } finally {
             setBusy(false);
             executeCharmGenBtn.disabled = false;
@@ -2549,16 +2648,10 @@
     };
 
     function buildSlotPrompt(category, folderName, slotNum) {
-      // Look up the specific map for this category
       const map = PROMPT_MAPS[category];
-      
-      // If we have a map and a specific prompt for this slot, use it.
       if (map && map[slotNum]) {
         return map[slotNum];
       }
-      
-      // Fallback to default (Beady style) if category or slot undefined
-      // This preserves existing behavior for unknown inputs.
       const DEFAULT_MAP = PROMPT_MAPS["Beady_Necklace"];
       return DEFAULT_MAP[slotNum] || DEFAULT_PROMPT;
     }
