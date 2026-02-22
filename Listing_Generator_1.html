@@ -1663,6 +1663,12 @@
                     <div class="slotPrev" id="prevBox_${folderId}_3"><div class="slotRefEmpty">Loading...</div></div>
                     <button class="btn btnSmall redoBtn" id="redo_${folderId}_3" onclick="redoCharmSlot('${folderId}', 3)">Redo</button>
                 </div>
+
+                <div class="row" style="grid-column: span 2; gap: 8px; margin-top: 4px;">
+                    <button class="btn btnSmall redoBtn" style="flex:1;" onclick="regenCharmQuad('${folderId}')">Regen Quad</button>
+                    <button class="btn btnSmall redoBtn" style="flex:1; background: #3d1c1c; border-color: #7a3838; color: #fca5a5;" onclick="deleteCharmQuad('${folderId}')">Delete</button>
+                    <button class="btn btnSmall redoBtn" style="flex:1; background: #1f4026; border-color: #2f5e3a; color: #7fdb96;" onclick="approveCharmQuad('${folderId}')">Approve</button>
+                </div>
             </div>
         `;
     }
@@ -1811,6 +1817,205 @@
             prevBox.innerHTML = `<div class="slotRefEmpty">Error: ${err.message}</div>`;
         } finally {
             redoBtn.disabled = false;
+        }
+    };
+
+    window.regenCharmQuad = async function(folderId) {
+        const folderPath = `${ROOT}/Completed_Charm/${folderId}`;
+        
+        const prev0 = document.getElementById(`prevBox_${folderId}_0`);
+        const prev1 = document.getElementById(`prevBox_${folderId}_1`);
+        const prev2 = document.getElementById(`prevBox_${folderId}_2`);
+        const prev3 = document.getElementById(`prevBox_${folderId}_3`);
+        
+        if (!prev0) return;
+
+        setBusy(true);
+        setStatus(`Regenerating Quad ${folderId}...`);
+
+        [prev0, prev1, prev2, prev3].forEach(p => p.innerHTML = `<div class="slotRefEmpty">Working...</div>`);
+        [prev0, prev1, prev2, prev3].forEach(p => p.classList.remove("success-border"));
+        [0, 1, 2, 3].forEach(i => document.getElementById(`redo_${folderId}_${i}`).disabled = true);
+
+        try {
+            await ensureStorageSignedIn();
+            let manifest = {};
+            try {
+                const manifestBuffer = await getBytes(ref(storage, `${folderPath}/manifest.json`));
+                manifest = JSON.parse(new TextDecoder().decode(manifestBuffer));
+            } catch(e) {
+                console.warn("No manifest found for", folderId, "falling back to runtime refs if possible");
+            }
+            
+            const sourceCharmPath = manifest.sourceCharm || currentCharmRef?.fullPath;
+            if (!sourceCharmPath) throw new Error("No source charm reference found.");
+            
+            let lineArtRefPath = manifest.lineArtRef;
+            if (!lineArtRefPath) {
+                try {
+                    const lat = await listLatestFile(`${ROOT}/Reference_Line_Art_Image`);
+                    if(lat) lineArtRefPath = lat.fullPath;
+                } catch(e) {}
+            }
+
+            const beforeMeta = {};
+            for (let i = 0; i < 4; i++) {
+                try {
+                    const m = await getMetadata(ref(storage, `${folderPath}/Slot_${i+1}.png`));
+                    beforeMeta[i] = {
+                        updatedMs: Date.parse(m?.updated || m?.timeCreated || "") || 0,
+                        generation: Number(m?.generation || 0) || 0
+                    };
+                } catch(e) {
+                    beforeMeta[i] = { updatedMs: 0, generation: 0 };
+                }
+            }
+
+            // STEP 1
+            prev0.innerHTML = `<div class="slotRefEmpty">Generating Base...</div>`;
+            await postJson(GEMINI_BG_FN, {
+                kind: "edits", activeCategory: "Charms", 
+                input_storage_path: sourceCharmPath, input_charm_storage_path: sourceCharmPath,
+                output_base_path: folderPath, slotIndex: 0,
+                model: "gemini-3-pro-image-preview", prompt: promptStrCharm
+            });
+            const charmRes = await waitForSlotPngUrl(folderPath, 0, { 
+                timeoutMs: 600000, intervalMs: 5000,
+                afterUpdatedMs: beforeMeta[0].updatedMs, afterGeneration: beforeMeta[0].generation 
+            });
+            prev0.innerHTML = `<img src="${cacheBust(charmRes.url)}" />`;
+            attachPreviewBoxListeners(prev0);
+            prev0.classList.add("success-border");
+            document.getElementById(`redo_${folderId}_0`).disabled = false;
+
+            // STEP 2
+            setStatus("Generating Earring Twin (Removing Hoop)...");
+            prev1.innerHTML = `<div class="slotRefEmpty">Removing Hoop...</div>`;
+            await sleep(2000); 
+            await postJson(GEMINI_BG_FN, {
+                kind: "edits", activeCategory: "Stud_Earrings", 
+                input_storage_path: charmRes.storagePath, input_charm_storage_path: charmRes.storagePath,
+                output_base_path: folderPath, slotIndex: 1,
+                model: "gemini-3-pro-image-preview", prompt: promptStrEarring
+            });
+            const earringRes = await waitForSlotPngUrl(folderPath, 1, { 
+                timeoutMs: 600000, intervalMs: 5000,
+                afterUpdatedMs: beforeMeta[1].updatedMs, afterGeneration: beforeMeta[1].generation 
+            });
+            prev1.innerHTML = `<img src="${cacheBust(earringRes.url)}" />`;
+            attachPreviewBoxListeners(prev1);
+            prev1.classList.add("success-border");
+            document.getElementById(`redo_${folderId}_1`).disabled = false;
+
+            // STEP 3
+            setStatus("Generating B&W Line Art (Standard)...");
+            prev2.innerHTML = `<div class="slotRefEmpty">Generating Line Art...</div>`;
+            await sleep(2000);
+            const refPathForBaseBW = lineArtRefPath || charmRes.storagePath;
+            await postJson(GEMINI_BG_FN, {
+                kind: "edits", activeCategory: "Charms", 
+                input_storage_path: charmRes.storagePath, input_charm_storage_path: refPathForBaseBW,
+                output_base_path: folderPath, slotIndex: 2,
+                model: "gemini-3-pro-image-preview", prompt: promptStrBW
+            });
+            const charmBWRes = await waitForSlotPngUrl(folderPath, 2, { 
+                timeoutMs: 600000, intervalMs: 5000,
+                afterUpdatedMs: beforeMeta[2].updatedMs, afterGeneration: beforeMeta[2].generation 
+            });
+            prev2.innerHTML = `<img src="${cacheBust(charmBWRes.url)}" />`;
+            attachPreviewBoxListeners(prev2);
+            prev2.classList.add("success-border");
+            document.getElementById(`redo_${folderId}_2`).disabled = false;
+
+            // STEP 4
+            setStatus("Generating B&W Line Art (Earrings)...");
+            prev3.innerHTML = `<div class="slotRefEmpty">Generating Line Art...</div>`;
+            await sleep(2000);
+            const refPathForEarringBW = lineArtRefPath || earringRes.storagePath;
+            await postJson(GEMINI_BG_FN, {
+                kind: "edits", activeCategory: "Stud_Earrings", 
+                input_storage_path: earringRes.storagePath, input_charm_storage_path: refPathForEarringBW,
+                output_base_path: folderPath, slotIndex: 3,
+                model: "gemini-3-pro-image-preview", prompt: promptStrBW
+            });
+            const earringBWRes = await waitForSlotPngUrl(folderPath, 3, { 
+                timeoutMs: 600000, intervalMs: 5000,
+                afterUpdatedMs: beforeMeta[3].updatedMs, afterGeneration: beforeMeta[3].generation 
+            });
+            prev3.innerHTML = `<img src="${cacheBust(earringBWRes.url)}" />`;
+            attachPreviewBoxListeners(prev3);
+            prev3.classList.add("success-border");
+            document.getElementById(`redo_${folderId}_3`).disabled = false;
+
+            setStatus("Quad Regeneration Complete.");
+        } catch(err) {
+            console.error("Regen Quad failed:", err);
+            setStatus(`Error: ${err.message}`);
+        } finally {
+            [0, 1, 2, 3].forEach(i => {
+                const btn = document.getElementById(`redo_${folderId}_${i}`);
+                if(btn) btn.disabled = false;
+            });
+            setBusy(false);
+        }
+    };
+
+    window.deleteCharmQuad = async function(folderId) {
+        if (!confirm(`Are you sure you want to completely delete the quad '${folderId}'?`)) return;
+        
+        setStatus(`Deleting ${folderId}...`);
+        try {
+            await ensureStorageSignedIn();
+            const folderPath = `${ROOT}/Completed_Charm/${folderId}`;
+            const folderRef = ref(storage, folderPath);
+            const res = await listAll(folderRef);
+            
+            for (const item of res.items) {
+                await deleteObject(item);
+            }
+            
+            charmSetsHistory = charmSetsHistory.filter(id => id !== folderId);
+            
+            const totalPages = Math.ceil(charmSetsHistory.length / CHARM_ITEMS_PER_PAGE);
+            if (charmCurrentPage > totalPages) charmCurrentPage = Math.max(1, totalPages);
+            
+            renderCharmPage();
+            setStatus(`Deleted ${folderId}.`);
+        } catch (err) {
+            console.error("Delete Quad failed:", err);
+            setStatus(`Error deleting: ${err.message}`);
+        }
+    };
+
+    window.approveCharmQuad = async function(folderId) {
+        if (!confirm(`Approve '${folderId}' and move to Approved Sets?`)) return;
+        
+        setStatus(`Approving ${folderId}...`);
+        try {
+            await ensureStorageSignedIn();
+            const srcFolder = `${ROOT}/Completed_Charm/${folderId}`;
+            const destFolder = `${ROOT}/Completed_Approved_Charm_Sets/${folderId}`;
+            
+            const srcRef = ref(storage, srcFolder);
+            const res = await listAll(srcRef);
+            
+            for (const item of res.items) {
+                const buffer = await getBytes(item);
+                const newRef = ref(storage, `${destFolder}/${item.name}`);
+                await uploadBytesResumable(newRef, buffer);
+                await deleteObject(item);
+            }
+            
+            charmSetsHistory = charmSetsHistory.filter(id => id !== folderId);
+            
+            const totalPages = Math.ceil(charmSetsHistory.length / CHARM_ITEMS_PER_PAGE);
+            if (charmCurrentPage > totalPages) charmCurrentPage = Math.max(1, totalPages);
+            
+            renderCharmPage();
+            setStatus(`Approved and moved ${folderId}.`);
+        } catch (err) {
+            console.error("Approve Quad failed:", err);
+            setStatus(`Error approving: ${err.message}`);
         }
     };
 
