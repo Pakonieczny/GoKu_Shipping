@@ -615,9 +615,9 @@
       });
     }
 
-    async function waitForSlotPngUrl(outputBasePath, slotIndex, opts = {}) {
-      const timeoutMs  = Number(opts.timeoutMs ?? 600000);  
-      const intervalMs = Number(opts.intervalMs ?? 3000);   
+      async function waitForSlotPngUrl(outputBasePath, slotIndex, opts = {}) {
+      const timeoutMs  = Number(opts.timeoutMs ?? 1200000);  // Increased to 20 minutes
+      const intervalMs = Number(opts.intervalMs ?? 5000);    // Polling every 5 seconds
       const fileName = `Slot_${slotIndex + 1}.png`;
       const afterUpdatedMs  = opts.afterUpdatedMs == null ? null : Number(opts.afterUpdatedMs);
       const afterGeneration = opts.afterGeneration == null ? null : Number(opts.afterGeneration);
@@ -1665,11 +1665,12 @@ function setAppMode(mode) {
           };
         });
 
-        const pollingPromise = Promise.all(slotResolved.map(async (r) => {
+          const pollingPromise = Promise.all(slotResolved.map(async (r) => {
           const { spec, i, slotNum, srcLatest } = r;
           const prevBox = document.getElementById(`slotPrev_${i}`);
 
-          const waited = await waitForSlotPngUrl(outputBasePath, i);
+          // Explicitly pass the extended 20-min timeout and 5s interval to the call
+          const waited = await waitForSlotPngUrl(outputBasePath, i, { timeoutMs: 1200000, intervalMs: 5000 });
           
           // Instant Cache Write
           const newBlob = await fetchAndCacheBlob(waited.url, waited.storagePath, Date.now());
@@ -1983,19 +1984,24 @@ function setAppMode(mode) {
         const folderPath = `${ROOT}/${currentCharmViewFolder}/${folderId}`;
         
         // Fetch manifest and source reference image
-        try {
+      try {
             const manifestBuffer = await getBytes(ref(storage, `${folderPath}/manifest.json`));
             const manifest = JSON.parse(new TextDecoder().decode(manifestBuffer));
             if (manifest.sourceCharm) {
                 const refBox = document.getElementById(`prevBox_${folderId}_ref`);
                 if (refBox) {
                     const srcRef = ref(storage, manifest.sourceCharm);
-                    const url = await getDownloadURL(srcRef);
-                    setBoxImage(refBox, cacheBust(url));
+                    try {
+                        const url = await getDownloadURL(srcRef);
+                        setBoxImage(refBox, cacheBust(url));
+                    } catch (urlErr) {
+                        // Suppress the console error and update the UI cleanly if the original was deleted
+                        refBox.innerHTML = `<div class="slotRefEmpty" style="font-size: 9px; color: #fca5a5;">Ref Missing</div>`;
+                    }
                 }
             }
         } catch(e) {
-            console.warn("Could not load source charm ref for", folderId, e);
+            console.warn("Could not load manifest/ref for", folderId);
         }
 
         for (let i = 0; i < 4; i++) {
