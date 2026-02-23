@@ -384,11 +384,18 @@ async function callGeminiGenerateContentImage({
     (wantW && wantH ? `Exact size ${wantW}x${wantH}. ` : "") +
     `Return an image suitable for a product photo.`;
 
-  const parts = [{ text: promptText }];
+ const parts = [{ text: promptText }];
   for (const img of images || []) {
+    // Gemini will hard-crash if passed application/octet-stream.
+    // Force a valid image MIME type so the API attempts to process the buffer.
+    let safeMime = img?.mime || "image/png";
+    if (safeMime.includes("octet-stream") || !safeMime.startsWith("image/")) {
+      safeMime = "image/png"; 
+    }
+
     parts.push({
       inline_data: {
-        mime_type: img?.mime || "image/png",
+        mime_type: safeMime,
         data: Buffer.from(img?.buffer || Buffer.alloc(0)).toString("base64"),
       },
     });
