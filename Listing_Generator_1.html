@@ -122,6 +122,22 @@
       border: 3px solid lightgreen !important;
     }
 
+    /* Visual feedback for working state */
+    .working-box {
+      border: 2px solid #fdba74 !important;
+      opacity: 0.7;
+      animation: pulse 1.5s infinite;
+    }
+    .working-card {
+      border: 2px solid #fdba74 !important;
+      transition: all 0.3s ease;
+    }
+    @keyframes pulse {
+      0% { opacity: 0.7; }
+      50% { opacity: 1; }
+      100% { opacity: 0.7; }
+    }
+
     /* === CHARM MAKER QUAD LAYOUT === */
     .charm-card {
       background: #0e1220; 
@@ -165,6 +181,7 @@
         <button class="btn" id="toggleGenerate" style="flex:1; background: var(--line); border:none; color: var(--text);">Generate</button>
         <button class="btn" id="toggleReview" style="flex:1; background: transparent; border:none; color: var(--muted);">Review</button>
         <button class="btn" id="toggleCharmMaker" style="flex:1; background: transparent; border:none; color: var(--muted);">Charm Maker</button>
+        <button class="btn" id="toggleApprovedCharms" style="flex:1; background: transparent; border:none; color: var(--muted);">Approved Sets</button>
       </div>
       
       <div id="generateSection">
@@ -653,6 +670,7 @@
     const toggleGenerateBtn = document.getElementById("toggleGenerate");
     const toggleReviewBtn = document.getElementById("toggleReview");
     const toggleCharmMakerBtn = document.getElementById("toggleCharmMaker");
+    const toggleApprovedCharmsBtn = document.getElementById("toggleApprovedCharms");
     const generateSection = document.getElementById("generateSection");
     const reviewSection = document.getElementById("reviewSection");
     const charmMakerSection = document.getElementById("charmMakerSection");
@@ -985,6 +1003,8 @@
     renderCategoryUI(activeCategoryEl.value);
 
     // --- Tab Switching Logic ---
+    let currentCharmViewFolder = "Completed_Charm";
+
     function setAppMode(mode) {
       appMode = mode;
       
@@ -994,6 +1014,8 @@
       toggleReviewBtn.style.color = "var(--muted)";
       toggleCharmMakerBtn.style.background = "transparent";
       toggleCharmMakerBtn.style.color = "var(--muted)";
+      toggleApprovedCharmsBtn.style.background = "transparent";
+      toggleApprovedCharmsBtn.style.color = "var(--muted)";
       
       generateSection.style.display = "none";
       reviewSection.style.display = "none";
@@ -1019,14 +1041,20 @@
         charmMakerSection.style.display = "block";
         setStatus("Charm Maker Database");
         loadCharmMakerPreviews();
-        loadCharmMakerHistory(); // Initialize the custom grid
+        loadCharmHistoryList("Completed_Charm"); 
+      } else if (mode === "approvedCharms") {
+        toggleApprovedCharmsBtn.style.background = "var(--line)";
+        toggleApprovedCharmsBtn.style.color = "var(--text)";
+        charmMakerSection.style.display = "none"; 
+        setStatus("Approved Charm Sets");
+        loadCharmHistoryList("Completed_Approved_Charm_Sets");
       }
     }
 
     toggleGenerateBtn.addEventListener("click", () => setAppMode("generate"));
     toggleReviewBtn.addEventListener("click", () => setAppMode("review"));
     toggleCharmMakerBtn.addEventListener("click", () => setAppMode("charmMaker"));
-
+    toggleApprovedCharmsBtn.addEventListener("click", () => setAppMode("approvedCharms"));
 
     activeCategoryEl.addEventListener("change", () => {
       if (appMode === "generate") {
@@ -1612,13 +1640,14 @@
       }
     }
 
-    async function loadCharmMakerHistory() {
+    async function loadCharmHistoryList(folderName) {
         setStatus("Loading history...");
         charmSetsHistory = [];
         charmCurrentPage = 1;
+        currentCharmViewFolder = folderName;
         try {
             await ensureStorageSignedIn();
-            const completedCharmsRef = ref(storage, `${ROOT}/Completed_Charm`);
+            const completedCharmsRef = ref(storage, `${ROOT}/${folderName}`);
             const res = await listAll(completedCharmsRef);
             
             const prefixes = res.prefixes.map(p => p.name).filter(n => n.startsWith('Deriv_'));
@@ -1630,12 +1659,28 @@
             charmSetsHistory = prefixes;
             renderCharmPage();
         } catch (e) {
-            console.error("Failed to load Charm Maker history:", e);
+            console.error("Failed to load Charm history:", e);
             setStatus("Error loading history");
         }
     }
 
-    function createCharmCardHTML(folderId) {
+    function createCharmCardHTML(folderId, isApprovedView) {
+        const redoHTML0 = isApprovedView ? '' : `<button class="btn btnSmall redoBtn" id="redo_${folderId}_0" onclick="redoCharmSlot('${folderId}', 0)">Redo</button>`;
+        const redoHTML1 = isApprovedView ? '' : `<button class="btn btnSmall redoBtn" id="redo_${folderId}_1" onclick="redoCharmSlot('${folderId}', 1)">Redo</button>`;
+        const redoHTML2 = isApprovedView ? '' : `<button class="btn btnSmall redoBtn" id="redo_${folderId}_2" onclick="redoCharmSlot('${folderId}', 2)">Redo</button>`;
+        const redoHTML3 = isApprovedView ? '' : `<button class="btn btnSmall redoBtn" id="redo_${folderId}_3" onclick="redoCharmSlot('${folderId}', 3)">Redo</button>`;
+
+        const actionButtons = isApprovedView ? 
+            `<div class="row" style="grid-column: span 2; gap: 8px; margin-top: 4px;">
+                <button class="btn btnSmall redoBtn" style="flex:1; background: #3d1c1c; border-color: #7a3838; color: #fca5a5;" onclick="deleteCharmQuad('${folderId}')">Delete</button>
+            </div>` 
+            : 
+            `<div class="row" style="grid-column: span 2; gap: 8px; margin-top: 4px;">
+                <button class="btn btnSmall redoBtn" style="flex:1;" onclick="regenCharmQuad('${folderId}')">Regen Quad</button>
+                <button class="btn btnSmall redoBtn" style="flex:1; background: #3d1c1c; border-color: #7a3838; color: #fca5a5;" onclick="deleteCharmQuad('${folderId}')">Delete</button>
+                <button class="btn btnSmall redoBtn" style="flex:1; background: #1f4026; border-color: #2f5e3a; color: #7fdb96;" onclick="approveCharmQuad('${folderId}')">Approve</button>
+            </div>`;
+
         return `
             <div class="charm-card" id="card_${folderId}">
                 <div class="charm-card-title">Generated Derivatives Previews <span class="muted" style="font-size:11px;">${folderId}</span></div>
@@ -1643,32 +1688,28 @@
                 <div class="charm-col">
                     <div class="muted">New_Charms Derivative</div>
                     <div class="slotPrev" id="prevBox_${folderId}_0"><div class="slotRefEmpty">Loading...</div></div>
-                    <button class="btn btnSmall redoBtn" id="redo_${folderId}_0" onclick="redoCharmSlot('${folderId}', 0)">Redo</button>
+                    ${redoHTML0}
                 </div>
                 
                 <div class="charm-col">
                     <div class="muted">New_Charms_Earrings Derivative</div>
                     <div class="slotPrev" id="prevBox_${folderId}_1"><div class="slotRefEmpty">Loading...</div></div>
-                    <button class="btn btnSmall redoBtn" id="redo_${folderId}_1" onclick="redoCharmSlot('${folderId}', 1)">Redo</button>
+                    ${redoHTML1}
                 </div>
                 
                 <div class="charm-col">
                     <div class="muted">B&W Line Art (Standard)</div>
                     <div class="slotPrev" id="prevBox_${folderId}_2"><div class="slotRefEmpty">Loading...</div></div>
-                    <button class="btn btnSmall redoBtn" id="redo_${folderId}_2" onclick="redoCharmSlot('${folderId}', 2)">Redo</button>
+                    ${redoHTML2}
                 </div>
                 
                 <div class="charm-col">
                     <div class="muted">B&W Line Art (Earrings)</div>
                     <div class="slotPrev" id="prevBox_${folderId}_3"><div class="slotRefEmpty">Loading...</div></div>
-                    <button class="btn btnSmall redoBtn" id="redo_${folderId}_3" onclick="redoCharmSlot('${folderId}', 3)">Redo</button>
+                    ${redoHTML3}
                 </div>
 
-                <div class="row" style="grid-column: span 2; gap: 8px; margin-top: 4px;">
-                    <button class="btn btnSmall redoBtn" style="flex:1;" onclick="regenCharmQuad('${folderId}')">Regen Quad</button>
-                    <button class="btn btnSmall redoBtn" style="flex:1; background: #3d1c1c; border-color: #7a3838; color: #fca5a5;" onclick="deleteCharmQuad('${folderId}')">Delete</button>
-                    <button class="btn btnSmall redoBtn" style="flex:1; background: #1f4026; border-color: #2f5e3a; color: #7fdb96;" onclick="approveCharmQuad('${folderId}')">Approve</button>
-                </div>
+                ${actionButtons}
             </div>
         `;
     }
@@ -1677,7 +1718,7 @@
         gridEl.innerHTML = "";
         
         if (charmSetsHistory.length === 0) {
-            gridEl.innerHTML = `<div class="slotRefEmpty" style="grid-column:span 4;">No historical sets found. Generate one!</div>`;
+            gridEl.innerHTML = `<div class="slotRefEmpty" style="grid-column:span 4;">No historical sets found.</div>`;
             charmPaginationEl.style.display = "none";
             setStatus("Ready");
             return;
@@ -1694,9 +1735,11 @@
         const startIndex = (charmCurrentPage - 1) * CHARM_ITEMS_PER_PAGE;
         const pageItems = charmSetsHistory.slice(startIndex, startIndex + CHARM_ITEMS_PER_PAGE);
 
+        const isApprovedView = currentCharmViewFolder === "Completed_Approved_Charm_Sets";
+
         pageItems.forEach(folderId => {
             const tempDiv = document.createElement("div");
-            tempDiv.innerHTML = createCharmCardHTML(folderId);
+            tempDiv.innerHTML = createCharmCardHTML(folderId, isApprovedView);
             const cardNode = tempDiv.firstElementChild;
             gridEl.appendChild(cardNode);
             loadSetImagesForCharm(folderId);
@@ -1706,7 +1749,7 @@
     }
 
     async function loadSetImagesForCharm(folderId) {
-        const folderPath = `${ROOT}/Completed_Charm/${folderId}`;
+        const folderPath = `${ROOT}/${currentCharmViewFolder}/${folderId}`;
         for (let i = 0; i < 4; i++) {
             const fileName = `Slot_${i+1}.png`;
             const fileRef = ref(storage, `${folderPath}/${fileName}`);
@@ -1738,13 +1781,14 @@
     });
 
     window.redoCharmSlot = async function(folderId, slotIndex) {
-        const folderPath = `${ROOT}/Completed_Charm/${folderId}`;
+        const folderPath = `${ROOT}/${currentCharmViewFolder}/${folderId}`;
         const redoBtn = document.getElementById(`redo_${folderId}_${slotIndex}`);
         const prevBox = document.getElementById(`prevBox_${folderId}_${slotIndex}`);
         
         redoBtn.disabled = true;
         prevBox.innerHTML = `<div class="slotRefEmpty">Working…</div>`;
         prevBox.classList.remove("success-border");
+        prevBox.classList.add("working-box");
         
         try {
             const slotFileName = `Slot_${slotIndex + 1}.png`;
@@ -1809,11 +1853,13 @@
                 timeoutMs: 600000, intervalMs: 5000
             });
 
+            prevBox.classList.remove("working-box");
             prevBox.innerHTML = `<img src="${cacheBust(waitedRes.url)}" />`;
             attachPreviewBoxListeners(prevBox);
             prevBox.classList.add("success-border");
         } catch (err) {
             console.error("Charm Redo failed", err);
+            prevBox.classList.remove("working-box");
             prevBox.innerHTML = `<div class="slotRefEmpty">Error: ${err.message}</div>`;
         } finally {
             redoBtn.disabled = false;
@@ -1821,7 +1867,8 @@
     };
 
     window.regenCharmQuad = async function(folderId) {
-        const folderPath = `${ROOT}/Completed_Charm/${folderId}`;
+        const folderPath = `${ROOT}/${currentCharmViewFolder}/${folderId}`;
+        const cardObj = document.getElementById(`card_${folderId}`);
         
         const prev0 = document.getElementById(`prevBox_${folderId}_0`);
         const prev1 = document.getElementById(`prevBox_${folderId}_1`);
@@ -1833,8 +1880,12 @@
         setBusy(true);
         setStatus(`Regenerating Quad ${folderId}...`);
 
-        [prev0, prev1, prev2, prev3].forEach(p => p.innerHTML = `<div class="slotRefEmpty">Working...</div>`);
-        [prev0, prev1, prev2, prev3].forEach(p => p.classList.remove("success-border"));
+        if (cardObj) cardObj.classList.add("working-card");
+        [prev0, prev1, prev2, prev3].forEach(p => {
+            p.innerHTML = `<div class="slotRefEmpty">Working...</div>`;
+            p.classList.remove("success-border");
+            p.classList.add("working-box");
+        });
         [0, 1, 2, 3].forEach(i => document.getElementById(`redo_${folderId}_${i}`).disabled = true);
 
         try {
@@ -1883,6 +1934,7 @@
                 timeoutMs: 600000, intervalMs: 5000,
                 afterUpdatedMs: beforeMeta[0].updatedMs, afterGeneration: beforeMeta[0].generation 
             });
+            prev0.classList.remove("working-box");
             prev0.innerHTML = `<img src="${cacheBust(charmRes.url)}" />`;
             attachPreviewBoxListeners(prev0);
             prev0.classList.add("success-border");
@@ -1902,6 +1954,7 @@
                 timeoutMs: 600000, intervalMs: 5000,
                 afterUpdatedMs: beforeMeta[1].updatedMs, afterGeneration: beforeMeta[1].generation 
             });
+            prev1.classList.remove("working-box");
             prev1.innerHTML = `<img src="${cacheBust(earringRes.url)}" />`;
             attachPreviewBoxListeners(prev1);
             prev1.classList.add("success-border");
@@ -1922,6 +1975,7 @@
                 timeoutMs: 600000, intervalMs: 5000,
                 afterUpdatedMs: beforeMeta[2].updatedMs, afterGeneration: beforeMeta[2].generation 
             });
+            prev2.classList.remove("working-box");
             prev2.innerHTML = `<img src="${cacheBust(charmBWRes.url)}" />`;
             attachPreviewBoxListeners(prev2);
             prev2.classList.add("success-border");
@@ -1942,6 +1996,7 @@
                 timeoutMs: 600000, intervalMs: 5000,
                 afterUpdatedMs: beforeMeta[3].updatedMs, afterGeneration: beforeMeta[3].generation 
             });
+            prev3.classList.remove("working-box");
             prev3.innerHTML = `<img src="${cacheBust(earringBWRes.url)}" />`;
             attachPreviewBoxListeners(prev3);
             prev3.classList.add("success-border");
@@ -1952,6 +2007,8 @@
             console.error("Regen Quad failed:", err);
             setStatus(`Error: ${err.message}`);
         } finally {
+            if (cardObj) cardObj.classList.remove("working-card");
+            [prev0, prev1, prev2, prev3].forEach(p => p.classList.remove("working-box"));
             [0, 1, 2, 3].forEach(i => {
                 const btn = document.getElementById(`redo_${folderId}_${i}`);
                 if(btn) btn.disabled = false;
@@ -1963,10 +2020,13 @@
     window.deleteCharmQuad = async function(folderId) {
         if (!confirm(`Are you sure you want to completely delete the quad '${folderId}'?`)) return;
         
+        const cardObj = document.getElementById(`card_${folderId}`);
+        if (cardObj) cardObj.classList.add("working-card");
         setStatus(`Deleting ${folderId}...`);
+        
         try {
             await ensureStorageSignedIn();
-            const folderPath = `${ROOT}/Completed_Charm/${folderId}`;
+            const folderPath = `${ROOT}/${currentCharmViewFolder}/${folderId}`;
             const folderRef = ref(storage, folderPath);
             const res = await listAll(folderRef);
             
@@ -1975,22 +2035,23 @@
             }
             
             charmSetsHistory = charmSetsHistory.filter(id => id !== folderId);
+            if (cardObj) cardObj.remove();
             
-            const totalPages = Math.ceil(charmSetsHistory.length / CHARM_ITEMS_PER_PAGE);
-            if (charmCurrentPage > totalPages) charmCurrentPage = Math.max(1, totalPages);
-            
-            renderCharmPage();
             setStatus(`Deleted ${folderId}.`);
         } catch (err) {
             console.error("Delete Quad failed:", err);
             setStatus(`Error deleting: ${err.message}`);
+            if (cardObj) cardObj.classList.remove("working-card");
         }
     };
 
     window.approveCharmQuad = async function(folderId) {
         if (!confirm(`Approve '${folderId}' and move to Approved Sets?`)) return;
         
+        const cardObj = document.getElementById(`card_${folderId}`);
+        if (cardObj) cardObj.classList.add("working-card");
         setStatus(`Approving ${folderId}...`);
+        
         try {
             await ensureStorageSignedIn();
             const srcFolder = `${ROOT}/Completed_Charm/${folderId}`;
@@ -2007,15 +2068,13 @@
             }
             
             charmSetsHistory = charmSetsHistory.filter(id => id !== folderId);
+            if (cardObj) cardObj.remove();
             
-            const totalPages = Math.ceil(charmSetsHistory.length / CHARM_ITEMS_PER_PAGE);
-            if (charmCurrentPage > totalPages) charmCurrentPage = Math.max(1, totalPages);
-            
-            renderCharmPage();
             setStatus(`Approved and moved ${folderId}.`);
         } catch (err) {
             console.error("Approve Quad failed:", err);
             setStatus(`Error approving: ${err.message}`);
+            if (cardObj) cardObj.classList.remove("working-card");
         }
     };
 
@@ -2039,7 +2098,7 @@
         }
 
         const tempDiv = document.createElement("div");
-        tempDiv.innerHTML = createCharmCardHTML(folderId);
+        tempDiv.innerHTML = createCharmCardHTML(folderId, false);
         const cardNode = tempDiv.firstElementChild;
         gridEl.insertBefore(cardNode, gridEl.firstChild);
         
@@ -2047,12 +2106,16 @@
             charmSetsHistory.unshift(folderId);
         }
 
+        cardNode.classList.add("working-card");
         const prev0 = document.getElementById(`prevBox_${folderId}_0`);
         const prev1 = document.getElementById(`prevBox_${folderId}_1`);
         const prev2 = document.getElementById(`prevBox_${folderId}_2`);
         const prev3 = document.getElementById(`prevBox_${folderId}_3`);
 
-        [prev0, prev1, prev2, prev3].forEach(p => p.innerHTML = `<div class="slotRefEmpty">Queued...</div>`);
+        [prev0, prev1, prev2, prev3].forEach(p => {
+            p.innerHTML = `<div class="slotRefEmpty">Queued...</div>`;
+            p.classList.add("working-box");
+        });
         [0, 1, 2, 3].forEach(i => document.getElementById(`redo_${folderId}_${i}`).disabled = true);
         
         try {
@@ -2086,6 +2149,7 @@
                 model: "gemini-3-pro-image-preview", prompt: promptStrCharm
             });
             const charmRes = await waitForSlotPngUrl(outputBasePath, 0, { timeoutMs: 600000, intervalMs: 5000 });
+            prev0.classList.remove("working-box");
             prev0.innerHTML = `<img src="${cacheBust(charmRes.url)}" />`;
             attachPreviewBoxListeners(prev0);
             prev0.classList.add("success-border");
@@ -2102,6 +2166,7 @@
                 model: "gemini-3-pro-image-preview", prompt: promptStrEarring
             });
             const earringRes = await waitForSlotPngUrl(outputBasePath, 1, { timeoutMs: 600000, intervalMs: 5000 });
+            prev1.classList.remove("working-box");
             prev1.innerHTML = `<img src="${cacheBust(earringRes.url)}" />`;
             attachPreviewBoxListeners(prev1);
             prev1.classList.add("success-border");
@@ -2119,6 +2184,7 @@
                 model: "gemini-3-pro-image-preview", prompt: promptStrBW
             });
             const charmBWRes = await waitForSlotPngUrl(outputBasePath, 2, { timeoutMs: 600000, intervalMs: 5000 });
+            prev2.classList.remove("working-box");
             prev2.innerHTML = `<img src="${cacheBust(charmBWRes.url)}" />`;
             attachPreviewBoxListeners(prev2);
             prev2.classList.add("success-border");
@@ -2136,13 +2202,13 @@
                 model: "gemini-3-pro-image-preview", prompt: promptStrBW
             });
             const earringBWRes = await waitForSlotPngUrl(outputBasePath, 3, { timeoutMs: 600000, intervalMs: 5000 });
+            prev3.classList.remove("working-box");
             prev3.innerHTML = `<img src="${cacheBust(earringBWRes.url)}" />`;
             attachPreviewBoxListeners(prev3);
             prev3.classList.add("success-border");
             document.getElementById(`redo_${folderId}_3`).disabled = false;
 
             setStatus("All Derivatives & Line Art Complete.");
-            renderCharmPage();
 
         } catch (err) {
             console.error("Master Generation Catch:", err);
@@ -2151,7 +2217,9 @@
             if (prev1.innerHTML.includes("Queued") || prev1.innerHTML.includes("Removing")) prev1.innerHTML = `<div class="slotRefEmpty">Aborted</div>`;
             if (prev2.innerHTML.includes("Queued") || prev2.innerHTML.includes("Generating")) prev2.innerHTML = `<div class="slotRefEmpty">Aborted</div>`;
             if (prev3.innerHTML.includes("Queued") || prev3.innerHTML.includes("Generating")) prev3.innerHTML = `<div class="slotRefEmpty">Aborted</div>`;
+            [prev0, prev1, prev2, prev3].forEach(p => p.classList.remove("working-box"));
         } finally {
+            cardNode.classList.remove("working-card");
             setBusy(false);
             executeCharmGenBtn.disabled = false;
         }
