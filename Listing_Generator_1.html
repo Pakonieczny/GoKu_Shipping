@@ -217,38 +217,47 @@
         <div style="margin-top: 8px; font-size: 11px; color: var(--muted);" id="backgroundQueueStatus"></div>
       </div>
 
-      <div id="charmMakerSection" style="display: none;">
-        <div class="row" style="margin-top:12px; gap: 14px;">
-          <div style="flex:1;">
-            <label>New_Charms (Next Available)</label>
-            <div class="slotPrev" id="previewNewCharms"><div class="slotRefEmpty">Loading...</div></div>
+  <div id="charmMakerSection" style="display: none;">
+          <div class="row" style="margin-top:12px; gap: 14px;">
+            <div style="flex:1;">
+              <label>New_Charms (Next Available)</label>
+              <div class="slotPrev" id="previewNewCharms" style="height: 380px;"><div class="slotRefEmpty">Loading...</div></div>
+            </div>
           </div>
-          <div style="flex:1;">
-            <label>New_Charms_Earrings (Next Available)</label>
-            <div class="slotPrev" id="previewNewCharmsEarrings"><div class="slotRefEmpty">Loading...</div></div>
-          </div>
-        </div>
 
-        <div class="row" style="margin-top:14px;">
-          <button class="btn" id="executeCharmGenBtn" style="width:100%; background: #1f4026; color: #7fdb96; border: 1px solid #2f5e3a;">Generate Charms</button>
+          <div class="row" style="margin-top:14px;">
+            <button class="btn" id="executeCharmGenBtn" style="width:100%; background: #1f4026; color: #7fdb96; border: 1px solid #2f5e3a;">Generate Charms</button>
+          </div>
+
+          <div class="row" style="margin-top:14px; gap:14px; background: #0e1220; padding: 14px; border-radius: 12px; border: 1px solid var(--line);">
+            <div style="flex:1;">
+              <label style="margin-top:0;">1. Unique Charms to Process (Simultaneous)</label>
+              <div class="row" style="margin-top:6px;">
+                <select id="batchUniqueSelect" class="btn" style="width:80px; padding: 6px;">
+                  <option value="1">1</option>
+                  <option value="2">2</option>
+                  <option value="5">5</option>
+                  <option value="10">10</option>
+                  <option value="custom">Custom</option>
+                </select>
+                <input type="number" id="batchUniqueInput" value="1" min="1" style="display:none; flex:1;" />
+              </div>
+            </div>
+            <div style="flex:1;">
+              <label style="margin-top:0;">2. Quad Sets per Charm (Iterations)</label>
+              <div class="row" style="margin-top:6px;">
+                <select id="batchIterSelect" class="btn" style="width:80px; padding: 6px;">
+                  <option value="1">1</option>
+                  <option value="2">2</option>
+                  <option value="3">3</option>
+                  <option value="5">5</option>
+                  <option value="custom">Custom</option>
+                </select>
+                <input type="number" id="batchIterInput" value="1" min="1" style="display:none; flex:1;" />
+              </div>
+            </div>
+          </div>
         </div>
-      </div> 
-    </div> 
-    
-    <div class="card">
-      <div class="row" style="justify-content:space-between; align-items:center;">
-        <h1 style="margin:0;">Generated set</h1>
-        <div class="muted" id="status">Idle</div>
-      </div>
-      <div class="grid" id="grid"></div>
-      
-      <div id="charmPagination" class="row" style="display: none; justify-content: space-between; align-items: center; margin-top: 14px; padding: 10px; background: #0e1220; border-radius: 12px; border: 1px solid var(--line);">
-          <button class="btn btnSmall" id="charmPrevPage" style="width: 80px;">Previous</button>
-          <div id="charmPageInfo" class="muted">Page 1</div>
-          <button class="btn btnSmall" id="charmNextPage" style="width: 80px;">Next</button>
-      </div>
-    </div>
-  </div> 
 
   <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
@@ -1651,18 +1660,39 @@
       }
     }
 
-    // --- Charm Maker Logic ---
+// --- Charm Maker Logic ---
     let currentCharmRef = null;
-    let currentEarringRef = null;
 
     const previewNewCharms = document.getElementById("previewNewCharms");
-    const previewNewCharmsEarrings = document.getElementById("previewNewCharmsEarrings");
     const executeCharmGenBtn = document.getElementById("executeCharmGenBtn");
 
     // --- Charm Maker Pagination State ---
     let charmSetsHistory = [];
     let charmCurrentPage = 1;
     const CHARM_ITEMS_PER_PAGE = 50;
+
+    // --- New Batch Selection State & Listeners ---
+    const batchUniqueSelect = document.getElementById("batchUniqueSelect");
+    const batchUniqueInput = document.getElementById("batchUniqueInput");
+    const batchIterSelect = document.getElementById("batchIterSelect");
+    const batchIterInput = document.getElementById("batchIterInput");
+
+    batchUniqueSelect.addEventListener("change", (e) => {
+        batchUniqueInput.style.display = e.target.value === "custom" ? "block" : "none";
+    });
+    batchIterSelect.addEventListener("change", (e) => {
+        batchIterInput.style.display = e.target.value === "custom" ? "block" : "none";
+    });
+
+    function getBatchUniqueCount() {
+        if (batchUniqueSelect.value === "custom") return Math.max(1, parseInt(batchUniqueInput.value) || 1);
+        return parseInt(batchUniqueSelect.value) || 1;
+    }
+    
+    function getBatchIterCount() {
+        if (batchIterSelect.value === "custom") return Math.max(1, parseInt(batchIterInput.value) || 1);
+        return parseInt(batchIterSelect.value) || 1;
+    }
 
     // Base prompts hoisted for global access
     const promptStrCharm = `CRITICAL INITIAL ANALYSIS: Before generating, conceptually analyze the reference image to determine its exact genre and subject matter (e.g., "Genre: Animal, Subject Matter: Rabbit/Leporidae"). Use this specific analysis as the strict foundational concept for the new charm. DO NOT add additional jump rings, bails, or chains under ANY circumstances.
@@ -1717,30 +1747,21 @@
     • Use a solid, pure WHITE (#FFFFFF) background. Absolutely no transparency.
     • Do NOT add any shading, 3D extrusion, colours, or grey tones. Flat 2D vector style only.`;
 
-    async function loadCharmMakerPreviews() {
+async function loadCharmMakerPreviews() {
       previewNewCharms.innerHTML = `<div class="slotRefEmpty">Fetching...</div>`;
-      previewNewCharmsEarrings.innerHTML = `<div class="slotRefEmpty">Fetching...</div>`;
       try {
         await ensureStorageSignedIn();
         const charmsLatest = await listLatestFile(newCharmsPath());
         currentCharmRef = charmsLatest;
         if (charmsLatest) {
-          previewNewCharms.innerHTML = `<img src="${cacheBust(charmsLatest.url)}" />`;
+          // Utilizing setBoxImage directly attaches the Zoom/Pan event listeners
+          setBoxImage(previewNewCharms, cacheBust(charmsLatest.url));
         } else {
           previewNewCharms.innerHTML = `<div class="slotRefEmpty">Queue Empty</div>`;
-        }
-
-        const earringsLatest = await listLatestFile(newCharmsEarringsPath());
-        currentEarringRef = earringsLatest;
-        if (earringsLatest) {
-          previewNewCharmsEarrings.innerHTML = `<img src="${cacheBust(earringsLatest.url)}" />`;
-        } else {
-          previewNewCharmsEarrings.innerHTML = `<div class="slotRefEmpty">Queue Empty</div>`;
         }
       } catch (e) {
         console.error("Error fetching charm previews:", e);
         previewNewCharms.innerHTML = `<div class="slotRefEmpty">Error loading</div>`;
-        previewNewCharmsEarrings.innerHTML = `<div class="slotRefEmpty">Error loading</div>`;
       }
     }
 
@@ -2144,13 +2165,12 @@ window.regenCharmQuad = async function(folderId) {
         }
     };
 
-        window.approveCharmQuad = async function(folderId) {
-        if (!confirm(`Approve '${folderId}' and move to Approved Sets?`)) return;
+        window.deleteCharmQuad = async function(folderId) {
+        if (!confirm(`Are you sure you want to completely delete the quad '${folderId}'?`)) return;
         
-        await removeCachedFolder(folderId); // <-- Add this here
+        await removeCachedFolder(folderId); 
 
         const cardObj = document.getElementById(`card_${folderId}`);
-        // ... rest of approve logic
         if (cardObj) cardObj.classList.add("working-card");
         setStatus(`Deleting ${folderId}...`);
         
@@ -2178,6 +2198,8 @@ window.regenCharmQuad = async function(folderId) {
     window.approveCharmQuad = async function(folderId) {
         if (!confirm(`Approve '${folderId}' and move to Approved Sets?`)) return;
         
+        await removeCachedFolder(folderId); 
+
         const cardObj = document.getElementById(`card_${folderId}`);
         if (cardObj) cardObj.classList.add("working-card");
         setStatus(`Approving ${folderId}...`);
@@ -2214,142 +2236,178 @@ executeCharmGenBtn.addEventListener("click", async () => {
             return;
         }
 
+        const uniqueCount = getBatchUniqueCount();
+        const iterCount = getBatchIterCount();
+        const totalTasks = uniqueCount * iterCount;
+
         setBusy(true);
-        setStatus("Generating Base Charm Derivative...");
+        setStatus(`Fetching top ${uniqueCount} charms for batching...`);
         executeCharmGenBtn.disabled = true;
 
-        const timestamp = Date.now();
-        const folderId = `Deriv_${timestamp}`;
-        const outputBasePath = `${ROOT}/Completed_Charm/${folderId}`;
-
-        if (charmCurrentPage !== 1) {
-            charmCurrentPage = 1;
-            renderCharmPage();
-        }
-
-        const tempDiv = document.createElement("div");
-        tempDiv.innerHTML = createCharmCardHTML(folderId, false);
-        const cardNode = tempDiv.firstElementChild;
-        gridEl.insertBefore(cardNode, gridEl.firstChild);
-        
-        if (charmSetsHistory.indexOf(folderId) === -1) {
-            charmSetsHistory.unshift(folderId);
-        }
-
-        cardNode.classList.add("working-card");
-        const prev0 = document.getElementById(`prevBox_${folderId}_0`);
-        const prev1 = document.getElementById(`prevBox_${folderId}_1`);
-        const prev2 = document.getElementById(`prevBox_${folderId}_2`);
-        const prev3 = document.getElementById(`prevBox_${folderId}_3`);
-
-        [prev0, prev1, prev2, prev3].forEach(p => {
-            p.innerHTML = `<div class="slotRefEmpty">Queued...</div>`;
-            p.classList.add("working-box");
-        });
-        [0, 1, 2, 3].forEach(i => document.getElementById(`redo_${folderId}_${i}`).disabled = true);
-        
         try {
-            let lineArtRef = null;
-            try {
-                lineArtRef = await listLatestFile(`${ROOT}/Reference_Line_Art_Image`);
-            } catch (e) {
-                console.warn("No line art reference found. Will fallback to charm itself.", e);
+            await ensureStorageSignedIn();
+            
+            // 1. Fetch Top N distinct charms based on user UI input
+            const folderRef = ref(storage, newCharmsPath());
+            const res = await listAll(folderRef);
+            
+            if (!res.items?.length) throw new Error("No items found in New_Charms folder.");
+
+            const metas = await Promise.all(res.items.map(async (it) => {
+                const meta = await getMetadata(it);
+                return {
+                    fullPath: it.fullPath,
+                    updatedMs: Date.parse(meta?.updated || meta?.timeCreated || "") || 0,
+                };
+            }));
+
+            // Sort newest first
+            metas.sort((a, b) => b.updatedMs - a.updatedMs);
+            const charmsToProcess = metas.slice(0, uniqueCount);
+
+            if (charmCurrentPage !== 1) {
+                charmCurrentPage = 1;
+                renderCharmPage();
             }
 
-            const manifest = {
-                sourceCharm: currentCharmRef.fullPath,
-                sourceEarring: currentEarringRef?.fullPath || null,
-                lineArtRef: lineArtRef?.fullPath || null,
-                timestamp: new Date().toISOString()
-            };
+            // Function to process a single iteration
+            async function processSingleDerivative(charmData, overallIndex) {
+                const timestamp = Date.now() + overallIndex; // Force uniqueness
+                const folderId = `Deriv_${timestamp}`;
+                const outputBasePath = `${ROOT}/Completed_Charm/${folderId}`;
 
-            await postJson("geminiImageProxy", {
-                kind: "write_manifest",
-                activeCategory: "Charms",
-                output_base_path: outputBasePath,
-                manifest: manifest,
-            });
+                setStatus(`Processing Quad ${overallIndex + 1} of ${totalTasks}...`);
 
-            // STEP 1
-            prev0.innerHTML = `<div class="slotRefEmpty">Generating Base...</div>`;
-            await postJson(GEMINI_BG_FN, {
-                kind: "edits", activeCategory: "Charms", 
-                input_storage_path: currentCharmRef.fullPath, input_charm_storage_path: currentCharmRef.fullPath,
-                output_base_path: outputBasePath, slotIndex: 0,
-                model: "gemini-3-pro-image-preview", prompt: promptStrCharm
-            });
-            const charmRes = await waitForSlotPngUrl(outputBasePath, 0, { timeoutMs: 600000, intervalMs: 5000 });
-            const newBlob0 = await fetchAndCacheBlob(charmRes.url, charmRes.storagePath, Date.now());
-            prev0.classList.remove("working-box");
-            setBoxImage(prev0, newBlob0 ? URL.createObjectURL(newBlob0) : cacheBust(charmRes.url));
-            prev0.classList.add("success-border");
-            document.getElementById(`redo_${folderId}_0`).disabled = false;
+                const tempDiv = document.createElement("div");
+                tempDiv.innerHTML = createCharmCardHTML(folderId, false);
+                const cardNode = tempDiv.firstElementChild;
+                gridEl.insertBefore(cardNode, gridEl.firstChild);
+                
+                if (charmSetsHistory.indexOf(folderId) === -1) {
+                    charmSetsHistory.unshift(folderId);
+                }
 
-            // STEP 2
-            setStatus("Generating Earring Twin (Removing Hoop)...");
-            prev1.innerHTML = `<div class="slotRefEmpty">Removing Hoop...</div>`;
-            await sleep(2000); 
-            await postJson(GEMINI_BG_FN, {
-                kind: "edits", activeCategory: "Stud_Earrings", 
-                input_storage_path: charmRes.storagePath, input_charm_storage_path: charmRes.storagePath,
-                output_base_path: outputBasePath, slotIndex: 1,
-                model: "gemini-3-pro-image-preview", prompt: promptStrEarring
-            });
-            const earringRes = await waitForSlotPngUrl(outputBasePath, 1, { timeoutMs: 600000, intervalMs: 5000 });
-            const newBlob1 = await fetchAndCacheBlob(earringRes.url, earringRes.storagePath, Date.now());
-            prev1.classList.remove("working-box");
-            setBoxImage(prev1, newBlob1 ? URL.createObjectURL(newBlob1) : cacheBust(earringRes.url));
-            prev1.classList.add("success-border");
-            document.getElementById(`redo_${folderId}_1`).disabled = false;
+                cardNode.classList.add("working-card");
+                const prev0 = document.getElementById(`prevBox_${folderId}_0`);
+                const prev1 = document.getElementById(`prevBox_${folderId}_1`);
+                const prev2 = document.getElementById(`prevBox_${folderId}_2`);
+                const prev3 = document.getElementById(`prevBox_${folderId}_3`);
 
-            // STEP 3
-            setStatus("Generating B&W Line Art (Standard)...");
-            prev2.innerHTML = `<div class="slotRefEmpty">Generating Line Art...</div>`;
-            await sleep(2000);
-            const refPathForBaseBW = lineArtRef ? lineArtRef.fullPath : charmRes.storagePath;
-            await postJson(GEMINI_BG_FN, {
-                kind: "edits", activeCategory: "Charms", 
-                input_storage_path: charmRes.storagePath, input_charm_storage_path: refPathForBaseBW,
-                output_base_path: outputBasePath, slotIndex: 2,
-                model: "gemini-3-pro-image-preview", prompt: promptStrBW
-            });
-            const charmBWRes = await waitForSlotPngUrl(outputBasePath, 2, { timeoutMs: 600000, intervalMs: 5000 });
-            const newBlob2 = await fetchAndCacheBlob(charmBWRes.url, charmBWRes.storagePath, Date.now());
-            prev2.classList.remove("working-box");
-            setBoxImage(prev2, newBlob2 ? URL.createObjectURL(newBlob2) : cacheBust(charmBWRes.url));
-            prev2.classList.add("success-border");
-            document.getElementById(`redo_${folderId}_2`).disabled = false;
+                [prev0, prev1, prev2, prev3].forEach(p => {
+                    p.innerHTML = `<div class="slotRefEmpty">Queued...</div>`;
+                    p.classList.add("working-box");
+                });
+                [0, 1, 2, 3].forEach(i => document.getElementById(`redo_${folderId}_${i}`).disabled = true);
+                
+                let lineArtRef = null;
+                try { lineArtRef = await listLatestFile(`${ROOT}/Reference_Line_Art_Image`); } catch (e) {}
 
-            // STEP 4
-            setStatus("Generating B&W Line Art (Earrings)...");
-            prev3.innerHTML = `<div class="slotRefEmpty">Generating Line Art...</div>`;
-            await sleep(2000);
-            const refPathForEarringBW = lineArtRef ? lineArtRef.fullPath : earringRes.storagePath;
-            await postJson(GEMINI_BG_FN, {
-                kind: "edits", activeCategory: "Stud_Earrings", 
-                input_storage_path: earringRes.storagePath, input_charm_storage_path: refPathForEarringBW,
-                output_base_path: outputBasePath, slotIndex: 3,
-                model: "gemini-3-pro-image-preview", prompt: promptStrBW
-            });
-            const earringBWRes = await waitForSlotPngUrl(outputBasePath, 3, { timeoutMs: 600000, intervalMs: 5000 });
-            const newBlob3 = await fetchAndCacheBlob(earringBWRes.url, earringBWRes.storagePath, Date.now());
-            prev3.classList.remove("working-box");
-            setBoxImage(prev3, newBlob3 ? URL.createObjectURL(newBlob3) : cacheBust(earringBWRes.url));
-            prev3.classList.add("success-border");
-            document.getElementById(`redo_${folderId}_3`).disabled = false;
+                const manifest = {
+                    sourceCharm: charmData.fullPath,
+                    sourceEarring: null, // Hardcoded since we dropped specific earrings folder tracking
+                    lineArtRef: lineArtRef?.fullPath || null,
+                    timestamp: new Date().toISOString()
+                };
 
-            setStatus("All Derivatives & Line Art Complete.");
+                await postJson("geminiImageProxy", {
+                    kind: "write_manifest",
+                    activeCategory: "Charms",
+                    output_base_path: outputBasePath,
+                    manifest: manifest,
+                });
+
+                try {
+                    // STEP 1
+                    prev0.innerHTML = `<div class="slotRefEmpty">Generating Base...</div>`;
+                    await postJson(GEMINI_BG_FN, {
+                        kind: "edits", activeCategory: "Charms", 
+                        input_storage_path: charmData.fullPath, input_charm_storage_path: charmData.fullPath,
+                        output_base_path: outputBasePath, slotIndex: 0,
+                        model: "gemini-3-pro-image-preview", prompt: promptStrCharm
+                    });
+                    const charmRes = await waitForSlotPngUrl(outputBasePath, 0, { timeoutMs: 600000, intervalMs: 5000 });
+                    const newBlob0 = await fetchAndCacheBlob(charmRes.url, charmRes.storagePath, Date.now());
+                    prev0.classList.remove("working-box");
+                    setBoxImage(prev0, newBlob0 ? URL.createObjectURL(newBlob0) : cacheBust(charmRes.url));
+                    prev0.classList.add("success-border");
+                    document.getElementById(`redo_${folderId}_0`).disabled = false;
+
+                    // STEP 2
+                    prev1.innerHTML = `<div class="slotRefEmpty">Removing Hoop...</div>`;
+                    await sleep(2000); 
+                    await postJson(GEMINI_BG_FN, {
+                        kind: "edits", activeCategory: "Stud_Earrings", 
+                        input_storage_path: charmRes.storagePath, input_charm_storage_path: charmRes.storagePath,
+                        output_base_path: outputBasePath, slotIndex: 1,
+                        model: "gemini-3-pro-image-preview", prompt: promptStrEarring
+                    });
+                    const earringRes = await waitForSlotPngUrl(outputBasePath, 1, { timeoutMs: 600000, intervalMs: 5000 });
+                    const newBlob1 = await fetchAndCacheBlob(earringRes.url, earringRes.storagePath, Date.now());
+                    prev1.classList.remove("working-box");
+                    setBoxImage(prev1, newBlob1 ? URL.createObjectURL(newBlob1) : cacheBust(earringRes.url));
+                    prev1.classList.add("success-border");
+                    document.getElementById(`redo_${folderId}_1`).disabled = false;
+
+                    // STEP 3
+                    prev2.innerHTML = `<div class="slotRefEmpty">Generating Line Art...</div>`;
+                    await sleep(2000);
+                    const refPathForBaseBW = lineArtRef ? lineArtRef.fullPath : charmRes.storagePath;
+                    await postJson(GEMINI_BG_FN, {
+                        kind: "edits", activeCategory: "Charms", 
+                        input_storage_path: charmRes.storagePath, input_charm_storage_path: refPathForBaseBW,
+                        output_base_path: outputBasePath, slotIndex: 2,
+                        model: "gemini-3-pro-image-preview", prompt: promptStrBW
+                    });
+                    const charmBWRes = await waitForSlotPngUrl(outputBasePath, 2, { timeoutMs: 600000, intervalMs: 5000 });
+                    const newBlob2 = await fetchAndCacheBlob(charmBWRes.url, charmBWRes.storagePath, Date.now());
+                    prev2.classList.remove("working-box");
+                    setBoxImage(prev2, newBlob2 ? URL.createObjectURL(newBlob2) : cacheBust(charmBWRes.url));
+                    prev2.classList.add("success-border");
+                    document.getElementById(`redo_${folderId}_2`).disabled = false;
+
+                    // STEP 4
+                    prev3.innerHTML = `<div class="slotRefEmpty">Generating Line Art...</div>`;
+                    await sleep(2000);
+                    const refPathForEarringBW = lineArtRef ? lineArtRef.fullPath : earringRes.storagePath;
+                    await postJson(GEMINI_BG_FN, {
+                        kind: "edits", activeCategory: "Stud_Earrings", 
+                        input_storage_path: earringRes.storagePath, input_charm_storage_path: refPathForEarringBW,
+                        output_base_path: outputBasePath, slotIndex: 3,
+                        model: "gemini-3-pro-image-preview", prompt: promptStrBW
+                    });
+                    const earringBWRes = await waitForSlotPngUrl(outputBasePath, 3, { timeoutMs: 600000, intervalMs: 5000 });
+                    const newBlob3 = await fetchAndCacheBlob(earringBWRes.url, earringBWRes.storagePath, Date.now());
+                    prev3.classList.remove("working-box");
+                    setBoxImage(prev3, newBlob3 ? URL.createObjectURL(newBlob3) : cacheBust(earringBWRes.url));
+                    prev3.classList.add("success-border");
+                    document.getElementById(`redo_${folderId}_3`).disabled = false;
+
+                } catch (err) {
+                    console.error(`Error processing Quad ${folderId}:`, err);
+                    if (prev1.innerHTML.includes("Queued") || prev1.innerHTML.includes("Removing")) prev1.innerHTML = `<div class="slotRefEmpty">Aborted</div>`;
+                    if (prev2.innerHTML.includes("Queued") || prev2.innerHTML.includes("Generating")) prev2.innerHTML = `<div class="slotRefEmpty">Aborted</div>`;
+                    if (prev3.innerHTML.includes("Queued") || prev3.innerHTML.includes("Generating")) prev3.innerHTML = `<div class="slotRefEmpty">Aborted</div>`;
+                    [prev0, prev1, prev2, prev3].forEach(p => p.classList.remove("working-box"));
+                } finally {
+                    cardNode.classList.remove("working-card");
+                }
+            }
+
+            // Loop execution: Sequential processing to maintain UI stability & rate limits
+            let overallIndex = 0;
+            for (let c = 0; c < charmsToProcess.length; c++) {
+                for (let i = 0; i < iterCount; i++) {
+                    await processSingleDerivative(charmsToProcess[c], overallIndex);
+                    overallIndex++;
+                }
+            }
+
+            setStatus(`All ${totalTasks} Quad Sets Completed Successfully.`);
 
         } catch (err) {
-            console.error("Master Generation Catch:", err);
+            console.error("Master Generation Batch Catch:", err);
             setStatus(`Error: ${err.message}`);
-            
-            if (prev1.innerHTML.includes("Queued") || prev1.innerHTML.includes("Removing")) prev1.innerHTML = `<div class="slotRefEmpty">Aborted</div>`;
-            if (prev2.innerHTML.includes("Queued") || prev2.innerHTML.includes("Generating")) prev2.innerHTML = `<div class="slotRefEmpty">Aborted</div>`;
-            if (prev3.innerHTML.includes("Queued") || prev3.innerHTML.includes("Generating")) prev3.innerHTML = `<div class="slotRefEmpty">Aborted</div>`;
-            [prev0, prev1, prev2, prev3].forEach(p => p.classList.remove("working-box"));
         } finally {
-            cardNode.classList.remove("working-card");
             setBusy(false);
             executeCharmGenBtn.disabled = false;
         }
