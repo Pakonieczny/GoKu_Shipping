@@ -265,7 +265,7 @@
       </div> 
     </div> 
     
-<div class="card">
+    <div class="card">
       <div class="row" style="justify-content:space-between; align-items:center;">
         <h1 style="margin:0;" id="mainGridTitle">Generated set</h1>
         <div class="muted" id="status">Idle</div>
@@ -275,7 +275,9 @@
         Total Approved Sets: <span style="font-weight: bold; font-size: 15px;">0</span>
       </div>
 
-      <div class="grid" id="grid"></div>
+      <div class="grid" id="generateGrid"></div>
+      <div class="grid" id="reviewGrid" style="display: none;"></div>
+      <div class="grid" id="charmGrid" style="display: none;"></div>
       
       <div id="charmPagination" class="row" style="display: none; justify-content: space-between; align-items: center; margin-top: 14px; padding: 10px; background: #0e1220; border-radius: 12px; border: 1px solid var(--line);">
           <button class="btn btnSmall" id="charmPrevPage" style="width: 80px;">Previous</button>
@@ -294,16 +296,12 @@
    import { getStorage, ref, uploadBytesResumable, getDownloadURL, getBytes, listAll, getMetadata, deleteObject } from "https://www.gstatic.com/firebasejs/9.23.0/firebase-storage.js";
    import { getAuth, signInAnonymously as modSignInAnonymously, onAuthStateChanged as modOnAuthStateChanged } from "https://www.gstatic.com/firebasejs/9.23.0/firebase-auth.js";
 
-    // --- Netlify functions base (Safely handle file:// fallback) ---
     let originStr = window.location.origin;
     if (!originStr || originStr === "null" || window.location.protocol === "file:") {
-      originStr = "https://listing-generator-1.goldenspike.app"; // Fallback if opened locally
+      originStr = "https://listing-generator-1.goldenspike.app"; 
     }
     const functionsBaseUrl = `${originStr}/.netlify/functions`;
 
-    // -------------------------
-    // Per-slot folder layout (Firebase Storage)
-    // -------------------------
     const ROOT = "listing-generator-1";
 
     const GENERATABLE_CATEGORIES = new Set([
@@ -323,7 +321,7 @@
       "Charms",
       "Bracelets",
       "New_Charms",
-      "New_Charms_Earrings", // Added for clarity, though it's a shared folder
+      "New_Charms_Earrings",
       "Completed_Charm",
     ];
 
@@ -421,7 +419,6 @@
       ],
     };
 
-    // --- Firebase config (matches shipping-1 patterns) ---
     const firebaseConfig = {
       apiKey: "AIzaSyBXhQLsYRa4i0bX1TPTRiElF9Zjy5vSHlA",
       authDomain: "gokudatabase.firebaseapp.com",
@@ -431,7 +428,6 @@
       appId: "1:1078662308113:web:41df0e5d229ff2af7a6cb0"
     };
     firebase.initializeApp(firebaseConfig);
-    // ✅ IMPORTANT: use COMPAT auth so COMPAT firestore (window.db) has permissions
     try {
       const cred = await firebase.auth().signInAnonymously();
       console.log("Anon auth ✔", cred?.user?.uid);
@@ -441,7 +437,6 @@
 
     window.db = firebase.firestore();
 
-    // Firestore transport hardening
     try {
       window.db.settings({
         ignoreUndefinedProperties: true,
@@ -451,7 +446,6 @@
       console.warn("Firestore settings skipped:", e);
     }
 
-    // modular twin (same approach as shipping-1 resumable uploader)
     let modApp;
     try { modApp = getApp(); } catch { modApp = initializeApp(firebase.app().options); }
     const storage = getStorage(modApp);
@@ -475,9 +469,6 @@
 
     function sleep(ms){ return new Promise(r => setTimeout(r, ms)); }
     
-    // -------------------------------------------------------------------------
-    // NEW: Zoom & Pan Logic (Ported from Index.html)
-    // -------------------------------------------------------------------------
     function attachPreviewBoxListeners(box) {
       function clampAndApply(img, scale, offX, offY) {
         const viewportW = box.clientWidth || 120;
@@ -697,7 +688,9 @@
     const panelsEl = document.getElementById("panels");
     const panelNewCharmsEl = document.getElementById("panelNewCharms");
     const generateSetBtn = document.getElementById("generateSet");
-    const gridEl = document.getElementById("grid");
+    const generateGrid = document.getElementById("generateGrid");
+    const reviewGrid = document.getElementById("reviewGrid");
+    const charmGrid = document.getElementById("charmGrid");
     const statusEl = document.getElementById("status");
     const charmPaginationEl = document.getElementById("charmPagination");
 
@@ -726,7 +719,7 @@
     const REDO_STATE = {}; 
 
     function setAllRedoEnabled(enabled){
-      gridEl.querySelectorAll("button.redoBtn").forEach(b => { b.disabled = !enabled; });
+      document.querySelectorAll("button.redoBtn").forEach(b => { b.disabled = !enabled; });
     }
 
     function cacheBust(url){
@@ -735,7 +728,7 @@
       return `${url}${sep}v=${Date.now()}`;
     }
 
-    async function redoSlot(slotIndex){
+    async function redoSlot(slotIndex, prefix = 'gen'){
       if (!CURRENT_SET?.outputBasePath || !CURRENT_SET?.category) {
         throw new Error("No active set to redo yet.");
       }
@@ -768,9 +761,10 @@
       const isViewing = (CURRENT_SET?.outputBasePath === ctxSetPath);
       
       if (isViewing) {
-          const slotCard = gridEl.querySelector(`.slot[data-slot-index="${slotIndex}"]`);
-          const prevBox  = slotCard?.querySelector(`#slotPrev_${slotIndex}`);
-          const redoBtn  = slotCard?.querySelector(`#redo_${slotIndex}`);
+          const targetGrid = prefix === 'gen' ? generateGrid : reviewGrid;
+          const slotCard = targetGrid.querySelector(`.slot[data-slot-index="${slotIndex}"]`);
+          const prevBox  = document.getElementById(`${prefix}_slotPrev_${slotIndex}`);
+          const redoBtn  = document.getElementById(`${prefix}_redo_${slotIndex}`);
           
           if (redoBtn) redoBtn.disabled = true;
           if (prevBox) {
@@ -829,10 +823,11 @@
           updateApproveButtonState();
 
           if (CURRENT_SET?.outputBasePath === ctxSetPath) {
-              const slotCard = gridEl.querySelector(`.slot[data-slot-index="${slotIndex}"]`);
-              const prevBox  = slotCard?.querySelector(`#slotPrev_${slotIndex}`);
-              const metaEl   = slotCard?.querySelector(`#slotMeta_${slotIndex}`);
-              const redoBtn  = slotCard?.querySelector(`#redo_${slotIndex}`);
+              const targetGrid = prefix === 'gen' ? generateGrid : reviewGrid;
+              const slotCard = targetGrid.querySelector(`.slot[data-slot-index="${slotIndex}"]`);
+              const prevBox  = document.getElementById(`${prefix}_slotPrev_${slotIndex}`);
+              const metaEl   = document.getElementById(`${prefix}_slotMeta_${slotIndex}`);
+              const redoBtn  = document.getElementById(`${prefix}_redo_${slotIndex}`);
               
               if (prevBox) {
                   // Instant Cache Write
@@ -851,7 +846,7 @@
           updateDropdownLabels();
           updateApproveButtonState(); 
           if (CURRENT_SET?.outputBasePath === ctxSetPath) {
-             const prevBox = gridEl.querySelector(`.slot[data-slot-index="${slotIndex}"] #slotPrev_${slotIndex}`);
+             const prevBox = document.getElementById(`${prefix}_slotPrev_${slotIndex}`);
              if (prevBox) prevBox.innerHTML = `<div class="slotRefEmpty">Error</div>`;
              setStatus("Redo failed: " + err.message);
           }
@@ -1163,7 +1158,7 @@
 
     let currentCharmViewFolder = "Completed_Charm";
 
-function setAppMode(mode) {
+    function setAppMode(mode) {
       appMode = mode;
       
       toggleGenerateBtn.style.background = "transparent";
@@ -1180,7 +1175,10 @@ function setAppMode(mode) {
       charmMakerSection.style.display = "none";
       charmPaginationEl.style.display = "none"; 
       
-      gridEl.innerHTML = "";
+      // Hide all grids, don't clear them
+      generateGrid.style.display = "none";
+      reviewGrid.style.display = "none";
+      charmGrid.style.display = "none";
       
       const mainGridTitle = document.getElementById("mainGridTitle");
       const approvedSetsCounter = document.getElementById("approvedSetsCounter");
@@ -1191,6 +1189,7 @@ function setAppMode(mode) {
         toggleGenerateBtn.style.background = "var(--line)";
         toggleGenerateBtn.style.color = "var(--text)";
         generateSection.style.display = "block";
+        generateGrid.style.display = "grid";
         renderCategoryUI(activeCategoryEl.value);
         setStatus("Ready");
       } else if (mode === "review") {
@@ -1198,23 +1197,43 @@ function setAppMode(mode) {
         toggleReviewBtn.style.background = "var(--line)";
         toggleReviewBtn.style.color = "var(--text)";
         reviewSection.style.display = "block";
-        loadReviewSets();
+        reviewGrid.style.display = "grid";
+        // Only load if empty to prevent wiping existing review state
+        if (reviewSetSelect.options.length === 0 || reviewSetSelect.innerHTML.includes("Loading...")) {
+            loadReviewSets();
+        } else {
+            setStatus("Review Queue");
+        }
       } else if (mode === "charmMaker") {
         mainGridTitle.textContent = "Charm Maker Database";
         toggleCharmMakerBtn.style.background = "var(--line)";
         toggleCharmMakerBtn.style.color = "var(--text)";
         charmMakerSection.style.display = "block";
+        charmGrid.style.display = "grid";
         setStatus("Charm Maker Database");
-        loadCharmMakerPreviews();
-        loadCharmHistoryList("Completed_Charm"); 
+        
+        // Only load if empty to prevent interrupting running charm quads
+        if (currentCharmViewFolder !== "Completed_Charm" || charmSetsHistory.length === 0) {
+            loadCharmMakerPreviews();
+            loadCharmHistoryList("Completed_Charm"); 
+        } else {
+            const totalPages = Math.ceil(charmSetsHistory.length / CHARM_ITEMS_PER_PAGE);
+            charmPaginationEl.style.display = totalPages > 1 ? "flex" : "none";
+        }
       } else if (mode === "approvedCharms") {
         mainGridTitle.textContent = "Approved Charm Sets";
         if (approvedSetsCounter) approvedSetsCounter.style.display = "block";
         toggleApprovedCharmsBtn.style.background = "var(--line)";
         toggleApprovedCharmsBtn.style.color = "var(--text)";
         charmMakerSection.style.display = "none"; 
+        charmGrid.style.display = "grid";
         setStatus("Approved Charm Sets");
-        loadCharmHistoryList("Completed_Approved_Charm_Sets");
+        if (currentCharmViewFolder !== "Completed_Approved_Charm_Sets" || charmSetsHistory.length === 0) {
+            loadCharmHistoryList("Completed_Approved_Charm_Sets");
+        } else {
+            const totalPages = Math.ceil(charmSetsHistory.length / CHARM_ITEMS_PER_PAGE);
+            charmPaginationEl.style.display = totalPages > 1 ? "flex" : "none";
+        }
       }
     }
 
@@ -1228,7 +1247,7 @@ function setAppMode(mode) {
         renderCategoryUI(activeCategoryEl.value);
       } else if (appMode === "review") {
         loadReviewSets();
-        gridEl.innerHTML = "";
+        reviewGrid.innerHTML = "";
       }
     });
 
@@ -1257,7 +1276,7 @@ function setAppMode(mode) {
         } else {
           reviewSetSelect.innerHTML = `<option value="">No sets found</option>`;
           setStatus("No sets found.");
-          gridEl.innerHTML = "";
+          reviewGrid.innerHTML = "";
         }
       } catch (e) {
         console.error("Error loading sets:", e);
@@ -1343,7 +1362,7 @@ function setAppMode(mode) {
       const category = activeCategoryEl.value;
       setBusy(true);
       setStatus(`Loading ${setName}...`);
-      gridEl.innerHTML = "";
+      reviewGrid.innerHTML = "";
 
       try {
         await ensureStorageSignedIn();
@@ -1381,18 +1400,18 @@ function setAppMode(mode) {
               <b>Slot ${slotNum}</b>
               <div class="muted" style="font-size:12px;">Review: ${spec.folder}</div>
             </div>
-            <div class="slotPrev" id="slotPrev_${i}"><div class="slotRefEmpty">Loading…</div></div>
-            <div class="small" id="slotMeta_${i}">Source: ${sourceStr}</div>
-            <button class="btn btnSmall redoBtn" id="redo_${i}" style="margin-top:8px; width:100%;" onclick="redoSlot(${i})">Redo Slot ${slotNum}</button>
+            <div class="slotPrev" id="rev_slotPrev_${i}"><div class="slotRefEmpty">Loading…</div></div>
+            <div class="small" id="rev_slotMeta_${i}">Source: ${sourceStr}</div>
+            <button class="btn btnSmall redoBtn" id="rev_redo_${i}" style="margin-top:8px; width:100%;" onclick="redoSlot(${i}, 'rev')">Redo Slot ${slotNum}</button>
           `;
-          gridEl.appendChild(slotCard);
+          reviewGrid.appendChild(slotCard);
         });
 
         slotPlan.forEach((_, i) => {
              const key = `${setPath}::${i}`;
              const state = REDO_STATE[key];
-             const prevBox = document.getElementById(`slotPrev_${i}`);
-             const redoBtn = document.getElementById(`redo_${i}`);
+             const prevBox = document.getElementById(`rev_slotPrev_${i}`);
+             const redoBtn = document.getElementById(`rev_redo_${i}`);
 
              if (state && state.status === 'running') {
                  if (prevBox) {
@@ -1416,7 +1435,7 @@ function setAppMode(mode) {
             const key = `${setPath}::${slotIndex}`;
             if (REDO_STATE[key]?.status === 'running') return;
 
-            const prevBox = document.getElementById(`slotPrev_${slotIndex}`);
+            const prevBox = document.getElementById(`rev_slotPrev_${slotIndex}`);
             if (!prevBox) return;
 
             try {
@@ -1452,7 +1471,7 @@ function setAppMode(mode) {
         setStatus(`Viewing ${category} / ${setName}`);
       } catch (e) {
         if (e.code === 'storage/object-not-found') {
-             gridEl.innerHTML = `<div class='slotRefEmpty'>Set '${setName}' not found (might be deleted/moved).</div>`;
+             reviewGrid.innerHTML = `<div class='slotRefEmpty'>Set '${setName}' not found (might be deleted/moved).</div>`;
         } else {
              console.error(e);
              setStatus(`Error: ${e.message}`);
@@ -1479,7 +1498,7 @@ function setAppMode(mode) {
           reviewSetSelect.selectedIndex = 0; 
           loadSetImages(reviewSetSelect.value);
       } else {
-          gridEl.innerHTML = "<div class='slotRefEmpty'>No more sets to review!</div>";
+          reviewGrid.innerHTML = "<div class='slotRefEmpty'>No more sets to review!</div>";
           setStatus("Queue clear.");
       }
 
@@ -1626,7 +1645,7 @@ function setAppMode(mode) {
           return { spec, i, slotNum: i + 1, srcLatest: srcRandom };
         }));
 
-        gridEl.innerHTML = "";
+        generateGrid.innerHTML = "";
         for (const r of slotResolved) {
           const { spec, i, slotNum, srcLatest } = r;
           const slotCard = document.createElement("div");
@@ -1637,45 +1656,59 @@ function setAppMode(mode) {
               <b>Slot ${slotNum}</b>
               <div class="muted" style="font-size:12px;">${spec.type}: ${spec.folder}</div>
             </div>
-            <div class="slotPrev" id="slotPrev_${i}"><div class="slotRefEmpty">Queued…</div></div>
-            <div class="small" id="slotMeta_${i}">Source: ${srcLatest.fullPath}</div>
-            <button class="btn btnSmall redoBtn" id="redo_${i}" style="margin-top:8px; width:100%;" disabled onclick="redoSlot(${i})">Redo Slot ${slotNum}</button>
+            <div class="slotPrev" id="gen_slotPrev_${i}"><div class="slotRefEmpty">Queued…</div></div>
+            <div class="small" id="gen_slotMeta_${i}">Source: ${srcLatest.fullPath}</div>
+            <button class="btn btnSmall redoBtn" id="gen_redo_${i}" style="margin-top:8px; width:100%;" disabled onclick="redoSlot(${i}, 'gen')">Redo Slot ${slotNum}</button>
           `;
-          gridEl.appendChild(slotCard);
+          generateGrid.appendChild(slotCard);
         }
 
-        setStatus("Starting background run…");
+        setStatus("Starting parallel staggered generation…");
 
-        const tasks = slotResolved.map((r) => {
+        // Process slots in parallel, but stagger the API requests to prevent rate limiting
+        const generationPromises = slotResolved.map(async (r, index) => {
           const { spec, i, slotNum, srcLatest } = r;
-          if (spec.type === "copy") {
-            return {
-              type: "copy",
-              slotIndex: i,
-              source_storage_path: srcLatest.fullPath,
-            };
+          
+          // Delay each request by 2.5 seconds multiplied by its index (0s, 2.5s, 5s, 7.5s...)
+          await sleep(index * 2500); 
+
+          const prevBox = document.getElementById(`gen_slotPrev_${i}`);
+          if (prevBox) {
+             prevBox.innerHTML = `<div class="slotRefEmpty">Working…</div>`;
+             prevBox.classList.add("working-box");
           }
-          return {
-            type: "edits",
-            slotIndex: i,
-            input_storage_path: srcLatest.fullPath,
-            input_charm_storage_path: charmLatest.fullPath, 
-            prompt: buildSlotPrompt(category, spec.folder, slotNum),
-            model: "gemini-3-pro-image-preview",
-          };
-        });
 
-          const pollingPromise = Promise.all(slotResolved.map(async (r) => {
-          const { spec, i, slotNum, srcLatest } = r;
-          const prevBox = document.getElementById(`slotPrev_${i}`);
+          // Dispatch the individual API request
+          if (spec.type === "copy") {
+            await postJson(GEMINI_FN, {
+              kind: "copy_to_slot",
+              activeCategory: category,
+              source_storage_path: srcLatest.fullPath,
+              output_base_path: outputBasePath,
+              slotIndex: i,
+            });
+          } else {
+            await postJson(GEMINI_BG_FN, {
+              kind: "edits",
+              activeCategory: category,
+              input_storage_path: srcLatest.fullPath,
+              input_charm_storage_path: charmLatest.fullPath, 
+              output_base_path: outputBasePath,
+              slotIndex: i,
+              prompt: buildSlotPrompt(category, spec.folder, slotNum),
+              model: "gemini-3-pro-image-preview",
+            });
+          }
 
           // Explicitly pass the extended 20-min timeout and 5s interval to the call
           const waited = await waitForSlotPngUrl(outputBasePath, i, { timeoutMs: 1200000, intervalMs: 5000 });
           
-          // Instant Cache Write
+          // Instant Cache Write and UI Update
           const newBlob = await fetchAndCacheBlob(waited.url, waited.storagePath, Date.now());
           if (prevBox) {
+              prevBox.classList.remove("working-box");
               setBoxImage(prevBox, newBlob ? URL.createObjectURL(newBlob) : cacheBust(waited.url));
+              prevBox.classList.add("success-border");
           }
 
           return {
@@ -1685,24 +1718,12 @@ function setAppMode(mode) {
             newCharm: spec.type === "copy" ? null : charmLatest.fullPath,
             output: waited.storagePath,
           };
-        }));
-
-        try {
-            await postJson(GEMINI_BG_FN, {
-              kind: "run_set_async",
-              activeCategory: category,
-              output_base_path: outputBasePath,
-              delayMs: 20000, 
-              tasks,
-            });
-            console.log("Background run triggered successfully");
-        } catch (err) {
-            throw new Error(`Failed to start generation on server: ${err.message}`);
-        }
+        });
 
         setStatus("Generating… (Monitoring Storage)");
 
-        const results = await pollingPromise;
+        // Wait for all staggered slots to finish
+        const results = await Promise.all(generationPromises);
         results.sort((a, b) => a.slot - b.slot);
         manifest.slots = results;
 
@@ -1947,10 +1968,10 @@ function setAppMode(mode) {
     }
 
     function renderCharmPage() {
-        gridEl.innerHTML = "";
+        charmGrid.innerHTML = "";
         
         if (charmSetsHistory.length === 0) {
-            gridEl.innerHTML = `<div class="slotRefEmpty" style="grid-column:span 4;">No historical sets found.</div>`;
+            charmGrid.innerHTML = `<div class="slotRefEmpty" style="grid-column:span 4;">No historical sets found.</div>`;
             charmPaginationEl.style.display = "none";
             setStatus("Ready");
             return;
@@ -1973,7 +1994,7 @@ function setAppMode(mode) {
             const tempDiv = document.createElement("div");
             tempDiv.innerHTML = createCharmCardHTML(folderId, isApprovedView);
             const cardNode = tempDiv.firstElementChild;
-            gridEl.appendChild(cardNode);
+            charmGrid.appendChild(cardNode);
             loadSetImagesForCharm(folderId);
         });
         
@@ -1983,7 +2004,6 @@ function setAppMode(mode) {
     async function loadSetImagesForCharm(folderId) {
         const folderPath = `${ROOT}/${currentCharmViewFolder}/${folderId}`;
         
-        // Fetch manifest and source reference image
       try {
             const manifestBuffer = await getBytes(ref(storage, `${folderPath}/manifest.json`));
             const manifest = JSON.parse(new TextDecoder().decode(manifestBuffer));
@@ -1995,7 +2015,6 @@ function setAppMode(mode) {
                         const url = await getDownloadURL(srcRef);
                         setBoxImage(refBox, cacheBust(url));
                     } catch (urlErr) {
-                        // Suppress the console error and update the UI cleanly if the original was deleted
                         refBox.innerHTML = `<div class="slotRefEmpty" style="font-size: 9px; color: #fca5a5;">Ref Missing</div>`;
                     }
                 }
@@ -2365,7 +2384,7 @@ window.approveCharmQuad = async function(folderId) {
         const tempDiv = document.createElement("div");
         tempDiv.innerHTML = createCharmCardHTML(folderId, false);
         const cardNode = tempDiv.firstElementChild;
-        gridEl.insertBefore(cardNode, gridEl.firstChild);
+        charmGrid.insertBefore(cardNode, charmGrid.firstChild);
         
         // Render Source immediately for UX
         const refBoxNode = document.getElementById(`prevBox_${folderId}_ref`);
