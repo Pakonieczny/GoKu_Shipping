@@ -1789,6 +1789,20 @@
     • Use a solid, pure WHITE (#FFFFFF) background. Absolutely no transparency.
     • Do NOT add any shading, 3D extrusion, colours, or grey tones. Flat 2D vector style only.`;
 
+    window.setPreviewNewCharmsFromRef = function(folderId) {
+        const refBox = document.getElementById(`prevBox_${folderId}_ref`);
+        if (refBox) {
+            const img = refBox.querySelector('img');
+            if (img && img.src) {
+                const mainPrev = document.getElementById('previewNewCharms');
+                if (mainPrev) {
+                    setBoxImage(mainPrev, img.src);
+                    window.scrollTo({ top: 0, behavior: 'smooth' });
+                }
+            }
+        }
+    };
+
     async function loadCharmMakerPreviews() {
       previewNewCharms.innerHTML = `<div class="slotRefEmpty">Fetching...</div>`;
       try {
@@ -1856,6 +1870,13 @@
             <div class="charm-card" id="card_${folderId}">
                 <div class="charm-card-title">Generated Derivatives Previews <span class="muted" style="font-size:11px;">${folderId}</span></div>
                 
+                <div style="grid-column: span 2; display: flex; align-items: center; gap: 10px; padding-bottom: 10px; border-bottom: 1px solid var(--line);">
+                    <div class="muted" style="font-size: 11px;">Source Ref:</div>
+                    <div class="slotPrev" id="prevBox_${folderId}_ref" style="width: 50px; height: 50px; border-radius: 6px; cursor: pointer; border: 1px dashed var(--muted);" onclick="setPreviewNewCharmsFromRef('${folderId}')" title="Click to load in New_Charms preview">
+                        <div class="slotRefEmpty" style="font-size: 9px;">...</div>
+                    </div>
+                </div>
+
                 <div class="charm-col">
                     <div class="muted">New_Charms Derivative</div>
                     <div class="slotPrev" id="prevBox_${folderId}_0"><div class="slotRefEmpty">Loading...</div></div>
@@ -1919,8 +1940,25 @@
         setStatus(`Viewing Page ${charmCurrentPage}`);
     }
 
-async function loadSetImagesForCharm(folderId) {
+    async function loadSetImagesForCharm(folderId) {
         const folderPath = `${ROOT}/${currentCharmViewFolder}/${folderId}`;
+        
+        // Fetch manifest and source reference image
+        try {
+            const manifestBuffer = await getBytes(ref(storage, `${folderPath}/manifest.json`));
+            const manifest = JSON.parse(new TextDecoder().decode(manifestBuffer));
+            if (manifest.sourceCharm) {
+                const refBox = document.getElementById(`prevBox_${folderId}_ref`);
+                if (refBox) {
+                    const srcRef = ref(storage, manifest.sourceCharm);
+                    const url = await getDownloadURL(srcRef);
+                    setBoxImage(refBox, cacheBust(url));
+                }
+            }
+        } catch(e) {
+            console.warn("Could not load source charm ref for", folderId, e);
+        }
+
         for (let i = 0; i < 4; i++) {
             const fileName = `Slot_${i+1}.png`;
             const storagePath = `${folderPath}/${fileName}`;
@@ -2025,9 +2063,9 @@ async function loadSetImagesForCharm(folderId) {
                 promptStr = promptStrBW;
                 category = "Charms";
             } else if (slotIndex === 3) {
-                inputPath = `${folderPath}/Slot_2.png`;
-                inputCharmPath = manifest.lineArtRef || inputPath;
-                promptStr = promptStrBW;
+                inputPath = `${folderPath}/Slot_3.png`; // Use the Base B&W image
+                inputCharmPath = inputPath; 
+                promptStr = promptStrEarring; // Hoop removal prompt
                 category = "Stud_Earrings";
             }
 
@@ -2061,7 +2099,7 @@ async function loadSetImagesForCharm(folderId) {
         }
     };
 
-window.regenCharmQuad = async function(folderId) {
+    window.regenCharmQuad = async function(folderId) {
         const folderPath = `${ROOT}/${currentCharmViewFolder}/${folderId}`;
         const cardObj = document.getElementById(`card_${folderId}`);
         
@@ -2176,16 +2214,15 @@ window.regenCharmQuad = async function(folderId) {
             prev2.classList.add("success-border");
             document.getElementById(`redo_${folderId}_2`).disabled = false;
 
-            // STEP 4
+            // STEP 4 - UPDATED logic to use Step 3's output and remove hoop
             setStatus("Generating B&W Line Art (Earrings)...");
-            prev3.innerHTML = `<div class="slotRefEmpty">Generating Line Art...</div>`;
+            prev3.innerHTML = `<div class="slotRefEmpty">Removing Hoop...</div>`;
             await sleep(2000);
-            const refPathForEarringBW = lineArtRefPath || earringRes.storagePath;
             await postJson(GEMINI_BG_FN, {
                 kind: "edits", activeCategory: "Stud_Earrings", 
-                input_storage_path: earringRes.storagePath, input_charm_storage_path: refPathForEarringBW,
+                input_storage_path: charmBWRes.storagePath, input_charm_storage_path: charmBWRes.storagePath,
                 output_base_path: folderPath, slotIndex: 3,
-                model: "gemini-3-pro-image-preview", prompt: promptStrBW
+                model: "gemini-3-pro-image-preview", prompt: promptStrEarring
             });
             const earringBWRes = await waitForSlotPngUrl(folderPath, 3, { 
                 timeoutMs: 600000, intervalMs: 5000,
@@ -2289,6 +2326,15 @@ window.regenCharmQuad = async function(folderId) {
         const cardNode = tempDiv.firstElementChild;
         gridEl.insertBefore(cardNode, gridEl.firstChild);
         
+        // Render Source immediately for UX
+        const refBoxNode = document.getElementById(`prevBox_${folderId}_ref`);
+        if (refBoxNode) {
+            try {
+                const url = await getDownloadURL(targetCharmRef.itemRef || ref(storage, targetCharmRef.fullPath));
+                setBoxImage(refBoxNode, cacheBust(url));
+            } catch(e) { console.warn("Could not preload target ref"); }
+        }
+        
         if (charmSetsHistory.indexOf(folderId) === -1) {
             charmSetsHistory.unshift(folderId);
         }
@@ -2377,16 +2423,15 @@ window.regenCharmQuad = async function(folderId) {
             prev2.classList.add("success-border");
             document.getElementById(`redo_${folderId}_2`).disabled = false;
 
-            // STEP 4
+            // STEP 4 - UPDATED logic to use Step 3's output and remove hoop
             setStatus("Generating B&W Line Art (Earrings)...");
-            prev3.innerHTML = `<div class="slotRefEmpty">Generating Line Art...</div>`;
+            prev3.innerHTML = `<div class="slotRefEmpty">Removing Hoop...</div>`;
             await sleep(2000);
-            const refPathForEarringBW = lineArtRef ? lineArtRef.fullPath : earringRes.storagePath;
             await postJson(GEMINI_BG_FN, {
                 kind: "edits", activeCategory: "Stud_Earrings", 
-                input_storage_path: earringRes.storagePath, input_charm_storage_path: refPathForEarringBW,
+                input_storage_path: charmBWRes.storagePath, input_charm_storage_path: charmBWRes.storagePath,
                 output_base_path: outputBasePath, slotIndex: 3,
-                model: "gemini-3-pro-image-preview", prompt: promptStrBW
+                model: "gemini-3-pro-image-preview", prompt: promptStrEarring
             });
             const earringBWRes = await waitForSlotPngUrl(outputBasePath, 3, { timeoutMs: 600000, intervalMs: 5000 });
             const newBlob3 = await fetchAndCacheBlob(earringBWRes.url, earringBWRes.storagePath, Date.now());
