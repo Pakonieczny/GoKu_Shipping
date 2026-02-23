@@ -3252,8 +3252,8 @@ window.approveCharmQuad = async function(folderId) {
             try {
                 await ensureStorageSignedIn();
                 
-                // Using the updated path from your current codebase variables
-                const folderPath = `${ROOT}/Charm_Maker/Completed_Approved_Charm_Sets`;
+                // Updated to target the correct legacy Firebase folder path
+                const folderPath = `${ROOT}/Completed_Approved_Charm_Sets`;
                 const baseRef = ref(storage, folderPath);
                 const res = await listAll(baseRef);
                 
