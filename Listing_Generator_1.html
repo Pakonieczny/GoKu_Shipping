@@ -1455,8 +1455,6 @@
       const setName = reviewSetSelect.value;
       if (!setName) return;
 
-      if (!confirm(`Approve ${setName}? (Instant Queue)`)) return;
-
       const optionToRemove = reviewSetSelect.querySelector(`option[value="${setName}"]`);
       if (optionToRemove) optionToRemove.remove();
 
@@ -1470,7 +1468,6 @@
 
       runBackgroundApproval(category, setName);
     }
-
     async function runBackgroundApproval(category, setName) {
         const queueId = `${category}/${setName}`;
         backgroundQueueStatus.textContent = `Queued: ${setName}...`;
@@ -2261,9 +2258,7 @@
         }
     };
 
-    window.approveCharmQuad = async function(folderId) {
-        if (!confirm(`Approve '${folderId}' and move to Approved Sets?`)) return;
-        
+window.approveCharmQuad = async function(folderId) {
         await removeCachedFolder(folderId); // <-- Add this here
 
         const cardObj = document.getElementById(`card_${folderId}`);
@@ -2298,8 +2293,6 @@
     };
 
     window.deleteCharmQuad = async function(folderId) {
-        if (!confirm(`Delete '${folderId}' permanently?`)) return;
-        
         await removeCachedFolder(folderId);
 
         const cardObj = document.getElementById(`card_${folderId}`);
