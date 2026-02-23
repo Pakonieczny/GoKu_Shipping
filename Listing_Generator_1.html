@@ -221,17 +221,44 @@
         <div class="row" style="margin-top:12px; gap: 14px;">
           <div style="flex:1;">
             <label>New_Charms (Next Available)</label>
-            <div class="slotPrev" id="previewNewCharms"><div class="slotRefEmpty">Loading...</div></div>
-          </div>
-          <div style="flex:1;">
-            <label>New_Charms_Earrings (Next Available)</label>
-            <div class="slotPrev" id="previewNewCharmsEarrings"><div class="slotRefEmpty">Loading...</div></div>
+            <div class="slotPrev" id="previewNewCharms" style="height: 380px;"><div class="slotRefEmpty">Loading...</div></div>
           </div>
         </div>
 
         <div class="row" style="margin-top:14px;">
           <button class="btn" id="executeCharmGenBtn" style="width:100%; background: #1f4026; color: #7fdb96; border: 1px solid #2f5e3a;">Generate Charms</button>
         </div>
+
+        <div class="row" style="margin-top:14px; gap:14px;">
+           <div style="flex:1; background: #0e1220; padding: 12px; border-radius: 12px; border: 1px solid var(--line);">
+              <label style="margin-top:0;">Amount of Charm images to process simultaneously:</label>
+              <div class="row" style="margin-top:8px;">
+                 <select id="batchProcessCount" style="width: 80px;">
+                    <option value="1">1</option>
+                    <option value="2">2</option>
+                    <option value="3">3</option>
+                    <option value="4">4</option>
+                    <option value="5">5</option>
+                 </select>
+                 <input type="number" id="batchProcessCountInput" value="1" min="1" style="flex:1;" placeholder="Count...">
+              </div>
+           </div>
+           
+           <div style="flex:1; background: #0e1220; padding: 12px; border-radius: 12px; border: 1px solid var(--line);">
+              <label style="margin-top:0;">Derivatives per Charm (Times same charm is used):</label>
+              <div class="row" style="margin-top:8px;">
+                 <select id="derivativesPerCharm" style="width: 80px;">
+                    <option value="1">1</option>
+                    <option value="2">2</option>
+                    <option value="3">3</option>
+                    <option value="4">4</option>
+                    <option value="5">5</option>
+                 </select>
+                 <input type="number" id="derivativesPerCharmInput" value="1" min="1" style="flex:1;" placeholder="Count...">
+              </div>
+           </div>
+        </div>
+
       </div> 
     </div> 
     
@@ -911,6 +938,37 @@
       const latestRef = ref(storage, latest.fullPath);
       const url = await getDownloadURL(latestRef);
       return { fullPath: latest.fullPath, name: latest.name, url };
+    }
+
+    // Function to retrieve top N latest files from storage
+    async function listTopNFiles(fullFolderPath, n) {
+      await ensureStorageSignedIn();
+      const folderRef = ref(storage, fullFolderPath);
+      const res = await listAll(folderRef);
+      if (!res.items?.length) return [];
+
+      const metas = await Promise.all(res.items.map(async (it) => {
+        const meta = await getMetadata(it);
+        return {
+          fullPath: it.fullPath,
+          name: it.name,
+          updatedMs: Date.parse(meta?.updated || meta?.timeCreated || "") || 0,
+          itemRef: it
+        };
+      }));
+
+      metas.sort((a, b) => {
+        if (a.updatedMs !== b.updatedMs) return a.updatedMs - b.updatedMs;
+        return a.name < b.name ? -1 : a.name > b.name ? 1 : 0;
+      });
+
+      const topN = metas.slice(-n);
+      const results = [];
+      for (const item of topN) {
+          const url = await getDownloadURL(item.itemRef);
+          results.push({ fullPath: item.fullPath, name: item.name, url: url });
+      }
+      return results;
     }
 
     function makeUploadPanel(targetFullPath, title) {
@@ -1652,12 +1710,26 @@
     }
 
     // --- Charm Maker Logic ---
-    let currentCharmRef = null;
     let currentEarringRef = null;
 
     const previewNewCharms = document.getElementById("previewNewCharms");
-    const previewNewCharmsEarrings = document.getElementById("previewNewCharmsEarrings");
     const executeCharmGenBtn = document.getElementById("executeCharmGenBtn");
+    
+    // --- Input UI variables ---
+    const batchSelect = document.getElementById("batchProcessCount");
+    const batchInput = document.getElementById("batchProcessCountInput");
+    const derivSelect = document.getElementById("derivativesPerCharm");
+    const derivInput = document.getElementById("derivativesPerCharmInput");
+
+    // Sync input handlers
+    if (batchSelect && batchInput) {
+        batchSelect.addEventListener("change", () => batchInput.value = batchSelect.value);
+        batchInput.addEventListener("input", () => batchSelect.value = batchInput.value);
+    }
+    if (derivSelect && derivInput) {
+        derivSelect.addEventListener("change", () => derivInput.value = derivSelect.value);
+        derivInput.addEventListener("input", () => derivSelect.value = derivInput.value);
+    }
 
     // --- Charm Maker Pagination State ---
     let charmSetsHistory = [];
@@ -1719,28 +1791,23 @@
 
     async function loadCharmMakerPreviews() {
       previewNewCharms.innerHTML = `<div class="slotRefEmpty">Fetching...</div>`;
-      previewNewCharmsEarrings.innerHTML = `<div class="slotRefEmpty">Fetching...</div>`;
       try {
         await ensureStorageSignedIn();
+        
         const charmsLatest = await listLatestFile(newCharmsPath());
-        currentCharmRef = charmsLatest;
         if (charmsLatest) {
-          previewNewCharms.innerHTML = `<img src="${cacheBust(charmsLatest.url)}" />`;
+          setBoxImage(previewNewCharms, cacheBust(charmsLatest.url));
         } else {
           previewNewCharms.innerHTML = `<div class="slotRefEmpty">Queue Empty</div>`;
         }
 
+        // Keep Earring silently loaded for logic integrity even though UI is gone
         const earringsLatest = await listLatestFile(newCharmsEarringsPath());
         currentEarringRef = earringsLatest;
-        if (earringsLatest) {
-          previewNewCharmsEarrings.innerHTML = `<img src="${cacheBust(earringsLatest.url)}" />`;
-        } else {
-          previewNewCharmsEarrings.innerHTML = `<div class="slotRefEmpty">Queue Empty</div>`;
-        }
+
       } catch (e) {
         console.error("Error fetching charm previews:", e);
         previewNewCharms.innerHTML = `<div class="slotRefEmpty">Error loading</div>`;
-        previewNewCharmsEarrings.innerHTML = `<div class="slotRefEmpty">Error loading</div>`;
       }
     }
 
@@ -1941,7 +2008,8 @@ async function loadSetImagesForCharm(folderId) {
             let category = "";
 
             if (slotIndex === 0) {
-                inputPath = manifest.sourceCharm || currentCharmRef?.fullPath; 
+                // Ensure charm source exists
+                inputPath = manifest.sourceCharm || (await listLatestFile(newCharmsPath()))?.fullPath; 
                 if (!inputPath) throw new Error("Missing source reference for base charm.");
                 inputCharmPath = inputPath;
                 promptStr = promptStrCharm;
@@ -2025,7 +2093,7 @@ window.regenCharmQuad = async function(folderId) {
                 console.warn("No manifest found for", folderId, "falling back to runtime refs if possible");
             }
             
-            const sourceCharmPath = manifest.sourceCharm || currentCharmRef?.fullPath;
+            const sourceCharmPath = manifest.sourceCharm || (await listLatestFile(newCharmsPath()))?.fullPath;
             if (!sourceCharmPath) throw new Error("No source charm reference found.");
             
             let lineArtRefPath = manifest.lineArtRef;
@@ -2144,41 +2212,13 @@ window.regenCharmQuad = async function(folderId) {
         }
     };
 
-        window.approveCharmQuad = async function(folderId) {
+    window.approveCharmQuad = async function(folderId) {
         if (!confirm(`Approve '${folderId}' and move to Approved Sets?`)) return;
         
         await removeCachedFolder(folderId); // <-- Add this here
 
         const cardObj = document.getElementById(`card_${folderId}`);
         // ... rest of approve logic
-        if (cardObj) cardObj.classList.add("working-card");
-        setStatus(`Deleting ${folderId}...`);
-        
-        try {
-            await ensureStorageSignedIn();
-            const folderPath = `${ROOT}/${currentCharmViewFolder}/${folderId}`;
-            const folderRef = ref(storage, folderPath);
-            const res = await listAll(folderRef);
-            
-            for (const item of res.items) {
-                await deleteObject(item);
-            }
-            
-            charmSetsHistory = charmSetsHistory.filter(id => id !== folderId);
-            if (cardObj) cardObj.remove();
-            
-            setStatus(`Deleted ${folderId}.`);
-        } catch (err) {
-            console.error("Delete Quad failed:", err);
-            setStatus(`Error deleting: ${err.message}`);
-            if (cardObj) cardObj.classList.remove("working-card");
-        }
-    };
-
-    window.approveCharmQuad = async function(folderId) {
-        if (!confirm(`Approve '${folderId}' and move to Approved Sets?`)) return;
-        
-        const cardObj = document.getElementById(`card_${folderId}`);
         if (cardObj) cardObj.classList.add("working-card");
         setStatus(`Approving ${folderId}...`);
         
@@ -2208,24 +2248,41 @@ window.regenCharmQuad = async function(folderId) {
         }
     };
 
-executeCharmGenBtn.addEventListener("click", async () => {
-        if (!currentCharmRef) {
-            alert("No reference charm loaded in the New_Charms queue. Please upload to New_Charms.");
-            return;
+    window.deleteCharmQuad = async function(folderId) {
+        if (!confirm(`Delete '${folderId}' permanently?`)) return;
+        
+        await removeCachedFolder(folderId);
+
+        const cardObj = document.getElementById(`card_${folderId}`);
+        if (cardObj) cardObj.classList.add("working-card");
+        setStatus(`Deleting ${folderId}...`);
+        
+        try {
+            await ensureStorageSignedIn();
+            const folderPath = `${ROOT}/${currentCharmViewFolder}/${folderId}`;
+            const folderRef = ref(storage, folderPath);
+            const res = await listAll(folderRef);
+            
+            for (const item of res.items) {
+                await deleteObject(item);
+            }
+            
+            charmSetsHistory = charmSetsHistory.filter(id => id !== folderId);
+            if (cardObj) cardObj.remove();
+            
+            setStatus(`Deleted ${folderId}.`);
+        } catch (err) {
+            console.error("Delete Quad failed:", err);
+            setStatus(`Error deleting: ${err.message}`);
+            if (cardObj) cardObj.classList.remove("working-card");
         }
+    };
 
-        setBusy(true);
-        setStatus("Generating Base Charm Derivative...");
-        executeCharmGenBtn.disabled = true;
-
-        const timestamp = Date.now();
+    // Internal helper function for single iteration runs
+    async function generateCharmQuad(targetCharmRef, targetEarringRef) {
+        const timestamp = Date.now() + Math.floor(Math.random() * 10000);
         const folderId = `Deriv_${timestamp}`;
         const outputBasePath = `${ROOT}/Completed_Charm/${folderId}`;
-
-        if (charmCurrentPage !== 1) {
-            charmCurrentPage = 1;
-            renderCharmPage();
-        }
 
         const tempDiv = document.createElement("div");
         tempDiv.innerHTML = createCharmCardHTML(folderId, false);
@@ -2257,8 +2314,8 @@ executeCharmGenBtn.addEventListener("click", async () => {
             }
 
             const manifest = {
-                sourceCharm: currentCharmRef.fullPath,
-                sourceEarring: currentEarringRef?.fullPath || null,
+                sourceCharm: targetCharmRef.fullPath,
+                sourceEarring: targetEarringRef?.fullPath || null,
                 lineArtRef: lineArtRef?.fullPath || null,
                 timestamp: new Date().toISOString()
             };
@@ -2274,7 +2331,7 @@ executeCharmGenBtn.addEventListener("click", async () => {
             prev0.innerHTML = `<div class="slotRefEmpty">Generating Base...</div>`;
             await postJson(GEMINI_BG_FN, {
                 kind: "edits", activeCategory: "Charms", 
-                input_storage_path: currentCharmRef.fullPath, input_charm_storage_path: currentCharmRef.fullPath,
+                input_storage_path: targetCharmRef.fullPath, input_charm_storage_path: targetCharmRef.fullPath,
                 output_base_path: outputBasePath, slotIndex: 0,
                 model: "gemini-3-pro-image-preview", prompt: promptStrCharm
             });
@@ -2338,8 +2395,7 @@ executeCharmGenBtn.addEventListener("click", async () => {
             prev3.classList.add("success-border");
             document.getElementById(`redo_${folderId}_3`).disabled = false;
 
-            setStatus("All Derivatives & Line Art Complete.");
-
+            setStatus("Derivatives & Line Art Loop Complete.");
         } catch (err) {
             console.error("Master Generation Catch:", err);
             setStatus(`Error: ${err.message}`);
@@ -2350,6 +2406,49 @@ executeCharmGenBtn.addEventListener("click", async () => {
             [prev0, prev1, prev2, prev3].forEach(p => p.classList.remove("working-box"));
         } finally {
             cardNode.classList.remove("working-card");
+        }
+    }
+
+    executeCharmGenBtn.addEventListener("click", async () => {
+        const batchCount = parseInt(document.getElementById("batchProcessCountInput").value) || 1;
+        const derivCount = parseInt(document.getElementById("derivativesPerCharmInput").value) || 1;
+
+        setBusy(true);
+        setStatus("Starting Batch Generation...");
+        executeCharmGenBtn.disabled = true;
+
+        if (charmCurrentPage !== 1) {
+            charmCurrentPage = 1;
+            renderCharmPage();
+        }
+        
+        try {
+            const charmsToProcess = await listTopNFiles(newCharmsPath(), batchCount);
+            if (charmsToProcess.length === 0) {
+                alert("No reference charms loaded in the New_Charms queue. Please upload to New_Charms.");
+                return;
+            }
+
+            // Ensure we at least have currentEarringRef setup properly behind the scenes
+            if (!currentEarringRef) {
+                currentEarringRef = await listLatestFile(newCharmsEarringsPath());
+            }
+
+            const promises = [];
+            for (const charmData of charmsToProcess) {
+                for (let d = 0; d < derivCount; d++) {
+                    promises.push(generateCharmQuad(charmData, currentEarringRef));
+                    await sleep(300); // Small stagger to mitigate rate limiting on bulk request startup
+                }
+            }
+
+            // Await all background loops in this batch job
+            await Promise.allSettled(promises);
+            setStatus("Batch Processing Complete.");
+        } catch (e) {
+            console.error(e);
+            setStatus(`Error: ${e.message}`);
+        } finally {
             setBusy(false);
             executeCharmGenBtn.disabled = false;
         }
