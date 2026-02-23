@@ -1789,6 +1789,18 @@
     • Use a solid, pure WHITE (#FFFFFF) background. Absolutely no transparency.
     • Do NOT add any shading, 3D extrusion, colours, or grey tones. Flat 2D vector style only.`;
 
+    const promptStrBWEarring = `CRITICAL INSTRUCTION: Analyze the provided reference image, which is a Black & White line art drawing of a jewelry charm on a pure white background. 
+    Your task is to generate an image that is 100% identical to this reference, keeping everything absolutely the same, with ONLY 1 EXCEPTION:
+    
+    Exception 1: Completely remove the hoop/bail from the top of the charm.
+
+    HARD CONSTRAINTS (NON-NEGOTIABLE):
+    • BACKGROUND COLOR (CRITICAL): Keep the exact same solid pure WHITE (#FFFFFF) background. ABSOLUTELY NO black, grey, or transparent backgrounds.
+    • JUMP RINGS: NEVER add jump rings, O-rings, bails, or chains.
+    • IDENTICAL REPLICATION: Keep all engravings, cutouts, overall shape, proportions, and line thickness 100% identical to the reference.
+    • Do not introduce any new elements, 3D thickness, shading, colors, or styling changes. Flat 2D B&W vector style only.
+    • The final output MUST be the exact same B&W line art charm, just missing the top hoop, on a PURE WHITE background.`;
+
     window.setPreviewNewCharmsFromRef = function(folderId) {
         const refBox = document.getElementById(`prevBox_${folderId}_ref`);
         if (refBox) {
@@ -1872,7 +1884,7 @@
                 
                 <div style="grid-column: span 2; display: flex; align-items: center; gap: 10px; padding-bottom: 10px; border-bottom: 1px solid var(--line);">
                     <div class="muted" style="font-size: 11px;">Source Ref:</div>
-                    <div class="slotPrev" id="prevBox_${folderId}_ref" style="width: 50px; height: 50px; border-radius: 6px; cursor: pointer; border: 1px dashed var(--muted);" onclick="setPreviewNewCharmsFromRef('${folderId}')" title="Click to load in New_Charms preview">
+                    <div class="slotPrev" id="prevBox_${folderId}_ref" style="width: 66px; height: 66px; border-radius: 6px; cursor: pointer; border: 1px dashed var(--muted);" onclick="setPreviewNewCharmsFromRef('${folderId}')" title="Click to load in New_Charms preview">
                         <div class="slotRefEmpty" style="font-size: 9px;">...</div>
                     </div>
                 </div>
@@ -2065,7 +2077,7 @@
             } else if (slotIndex === 3) {
                 inputPath = `${folderPath}/Slot_3.png`; // Use the Base B&W image
                 inputCharmPath = inputPath; 
-                promptStr = promptStrEarring; // Hoop removal prompt
+                promptStr = promptStrBWEarring; // B&W Hoop removal prompt
                 category = "Stud_Earrings";
             }
 
@@ -2222,7 +2234,7 @@
                 kind: "edits", activeCategory: "Stud_Earrings", 
                 input_storage_path: charmBWRes.storagePath, input_charm_storage_path: charmBWRes.storagePath,
                 output_base_path: folderPath, slotIndex: 3,
-                model: "gemini-3-pro-image-preview", prompt: promptStrEarring
+                model: "gemini-3-pro-image-preview", prompt: promptStrBWEarring
             });
             const earringBWRes = await waitForSlotPngUrl(folderPath, 3, { 
                 timeoutMs: 600000, intervalMs: 5000,
@@ -2431,7 +2443,7 @@
                 kind: "edits", activeCategory: "Stud_Earrings", 
                 input_storage_path: charmBWRes.storagePath, input_charm_storage_path: charmBWRes.storagePath,
                 output_base_path: outputBasePath, slotIndex: 3,
-                model: "gemini-3-pro-image-preview", prompt: promptStrEarring
+                model: "gemini-3-pro-image-preview", prompt: promptStrBWEarring
             });
             const earringBWRes = await waitForSlotPngUrl(outputBasePath, 3, { timeoutMs: 600000, intervalMs: 5000 });
             const newBlob3 = await fetchAndCacheBlob(earringBWRes.url, earringBWRes.storagePath, Date.now());
@@ -2963,24 +2975,6 @@
         • DO NOT allow any rounded/radius on the cutout edges.
         • DO NOT allow any form of earring backings. Backings are the metal clips that slide onto the earring stud`;
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
     // =========================================================================
     // 4. // HOOP EARRINGS PROMPTS
     // =========================================================================
@@ -3031,8 +3025,6 @@
         • Critically: When Generating the new image maintain Charm details, Charm Engravings, Colour, and fidelity just like in the Charm reference image.
         • Do NOT embossed the engravings on the Charm/Pendant, all engravings must be flat having only superficial depth.`;
 
-
-
     const HOOP_PRIMARY_PRODUCT_PROMPT = 
     `  TASK:
         • Duplicate the Reference product image exactly and only update the 2 charms from the Charm Reference image.
@@ -3040,25 +3032,6 @@
         • Critically: When Generating the new image maintain Charm details, Charm Engravings, Colour, and fidelity just like in the Charm reference image.
         • Do NOT embossed the engravings on the Charm/Pendant, all engravings must be flat having only superficial depth.
         • Do NOT make engravings, brown, or black, ensure all engravings are a shade of copper in colour`;
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
     // =========================================================================
     // 5. // CHARM ONLY PROMPTS 
