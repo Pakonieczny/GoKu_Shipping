@@ -220,7 +220,10 @@
       <div id="charmMakerSection" style="display: none;">
         <div class="row" style="margin-top:12px; gap: 14px;">
           <div style="flex:1;">
-            <label>New_Charms (Next Available)</label>
+            <label style="display: flex; justify-content: space-between; align-items: center;">
+              New_Charms (Next Available)
+              <span id="newCharmsTotalCount" style="color: #7fdb96; font-weight: bold; background: #1f4026; padding: 4px 8px; border-radius: 6px; border: 1px solid #2f5e3a;">Count: Loading...</span>
+            </label>
             <div class="slotPrev" id="previewNewCharms" style="height: 380px;"><div class="slotRefEmpty">Loading...</div></div>
           </div>
         </div>
@@ -262,11 +265,16 @@
       </div> 
     </div> 
     
-    <div class="card">
+<div class="card">
       <div class="row" style="justify-content:space-between; align-items:center;">
-        <h1 style="margin:0;">Generated set</h1>
+        <h1 style="margin:0;" id="mainGridTitle">Generated set</h1>
         <div class="muted" id="status">Idle</div>
       </div>
+      
+      <div id="approvedSetsCounter" style="display: none; margin-top: 10px; margin-bottom: 10px; font-size: 13px; color: #7fdb96; background: #1f4026; padding: 8px 12px; border-radius: 8px; border: 1px solid #2f5e3a; width: max-content;">
+        Total Approved Sets: <span style="font-weight: bold; font-size: 15px;">0</span>
+      </div>
+
       <div class="grid" id="grid"></div>
       
       <div id="charmPagination" class="row" style="display: none; justify-content: space-between; align-items: center; margin-top: 14px; padding: 10px; background: #0e1220; border-radius: 12px; border: 1px solid var(--line);">
@@ -1155,7 +1163,7 @@
 
     let currentCharmViewFolder = "Completed_Charm";
 
-    function setAppMode(mode) {
+function setAppMode(mode) {
       appMode = mode;
       
       toggleGenerateBtn.style.background = "transparent";
@@ -1173,19 +1181,26 @@
       charmPaginationEl.style.display = "none"; 
       
       gridEl.innerHTML = "";
+      
+      const mainGridTitle = document.getElementById("mainGridTitle");
+      const approvedSetsCounter = document.getElementById("approvedSetsCounter");
+      if (approvedSetsCounter) approvedSetsCounter.style.display = "none";
 
       if (mode === "generate") {
+        mainGridTitle.textContent = "Generated set";
         toggleGenerateBtn.style.background = "var(--line)";
         toggleGenerateBtn.style.color = "var(--text)";
         generateSection.style.display = "block";
         renderCategoryUI(activeCategoryEl.value);
         setStatus("Ready");
       } else if (mode === "review") {
+        mainGridTitle.textContent = "Review Queue";
         toggleReviewBtn.style.background = "var(--line)";
         toggleReviewBtn.style.color = "var(--text)";
         reviewSection.style.display = "block";
         loadReviewSets();
       } else if (mode === "charmMaker") {
+        mainGridTitle.textContent = "Charm Maker Database";
         toggleCharmMakerBtn.style.background = "var(--line)";
         toggleCharmMakerBtn.style.color = "var(--text)";
         charmMakerSection.style.display = "block";
@@ -1193,6 +1208,8 @@
         loadCharmMakerPreviews();
         loadCharmHistoryList("Completed_Charm"); 
       } else if (mode === "approvedCharms") {
+        mainGridTitle.textContent = "Approved Charm Sets";
+        if (approvedSetsCounter) approvedSetsCounter.style.display = "block";
         toggleApprovedCharmsBtn.style.background = "var(--line)";
         toggleApprovedCharmsBtn.style.color = "var(--text)";
         charmMakerSection.style.display = "none"; 
@@ -1814,8 +1831,14 @@
 
     async function loadCharmMakerPreviews() {
       previewNewCharms.innerHTML = `<div class="slotRefEmpty">Fetching...</div>`;
+      document.getElementById("newCharmsTotalCount").textContent = "Count: Loading...";
       try {
         await ensureStorageSignedIn();
+        
+        // ADDED: Fetch and display New_Charms total
+        const newCharmsRef = ref(storage, newCharmsPath());
+        const newCharmsRes = await listAll(newCharmsRef);
+        document.getElementById("newCharmsTotalCount").textContent = `Count: ${newCharmsRes.items.length}`;
         
         const charmsLatest = await listLatestFile(newCharmsPath());
         if (charmsLatest) {
@@ -1850,7 +1873,14 @@
                 const tsB = parseInt(b.replace('Deriv_', '')) || 0;
                 return tsB - tsA; // descending
             });
-            charmSetsHistory = prefixes;
+        charmSetsHistory = prefixes;
+            
+            // ADDED: Update Approved Sets Counter
+            if (folderName === "Completed_Approved_Charm_Sets") {
+                const countSpan = document.querySelector("#approvedSetsCounter span");
+                if (countSpan) countSpan.textContent = charmSetsHistory.length;
+            }
+            
             renderCharmPage();
         } catch (e) {
             console.error("Failed to load Charm history:", e);
