@@ -2165,12 +2165,13 @@ window.regenCharmQuad = async function(folderId) {
         }
     };
 
-        window.deleteCharmQuad = async function(folderId) {
-        if (!confirm(`Are you sure you want to completely delete the quad '${folderId}'?`)) return;
+        window.approveCharmQuad = async function(folderId) {
+        if (!confirm(`Approve '${folderId}' and move to Approved Sets?`)) return;
         
-        await removeCachedFolder(folderId); 
+        await removeCachedFolder(folderId); // <-- Add this here
 
         const cardObj = document.getElementById(`card_${folderId}`);
+        // ... rest of approve logic
         if (cardObj) cardObj.classList.add("working-card");
         setStatus(`Deleting ${folderId}...`);
         
@@ -2198,8 +2199,6 @@ window.regenCharmQuad = async function(folderId) {
     window.approveCharmQuad = async function(folderId) {
         if (!confirm(`Approve '${folderId}' and move to Approved Sets?`)) return;
         
-        await removeCachedFolder(folderId); 
-
         const cardObj = document.getElementById(`card_${folderId}`);
         if (cardObj) cardObj.classList.add("working-card");
         setStatus(`Approving ${folderId}...`);
