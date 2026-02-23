@@ -4,6 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>Listing-Generator-1</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
   <style>
     :root { --bg:#0b0d12; --card:#121624; --muted:#8b93a7; --text:#e9ecf5; --line:#242a3d; }
     body{ margin:0; font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial; background:var(--bg); color:var(--text); }
@@ -271,8 +272,11 @@
         <div class="muted" id="status">Idle</div>
       </div>
       
-      <div id="approvedSetsCounter" style="display: none; margin-top: 10px; margin-bottom: 10px; font-size: 13px; color: #7fdb96; background: #1f4026; padding: 8px 12px; border-radius: 8px; border: 1px solid #2f5e3a; width: max-content;">
-        Total Approved Sets: <span style="font-weight: bold; font-size: 15px;">0</span>
+      <div id="approvedSetsHeader" style="display: none; justify-content: space-between; align-items: center; margin-top: 10px; margin-bottom: 10px;">
+        <div id="approvedSetsCounter" style="font-size: 13px; color: #7fdb96; background: #1f4026; padding: 8px 12px; border-radius: 8px; border: 1px solid #2f5e3a; width: max-content;">
+          Total Approved Sets: <span style="font-weight: bold; font-size: 15px;">0</span>
+        </div>
+        <button class="btn" id="downloadApprovedSetsBtn" style="background: #2b6cff; color: #fff; border: 1px solid #1a4bbf; font-weight: bold;">Download Sets (ZIP)</button>
       </div>
 
       <div class="grid" id="generateGrid"></div>
@@ -313,7 +317,7 @@
       "Bracelets",
     ]);
 
-    const ALL_CATEGORIES = [
+const ALL_CATEGORIES = [
       "Beady_Necklace",
       "Regular_Necklace",
       "Stud_Earrings",
@@ -322,7 +326,7 @@
       "Bracelets",
       "New_Charms",
       "New_Charms_Earrings",
-      "Completed_Charm",
+      "Charm_Maker/Generated_Charm_Sets", // UPDATED
     ];
 
     const CATEGORY_SUBFOLDERS = {
@@ -354,7 +358,7 @@
       ],
       New_Charms: [],
       New_Charms_Earrings: [],
-      Completed_Charm: [],
+      "Charm_Maker/Generated_Charm_Sets": [], // UPDATED
     };
 
     const SLOT_MAP = {
@@ -1156,7 +1160,7 @@
         attachPreviewBoxListeners(box);
     }
 
-    let currentCharmViewFolder = "Completed_Charm";
+    let currentCharmViewFolder = "Charm_Maker/Generated_Charm_Sets";
 
     function setAppMode(mode) {
       appMode = mode;
@@ -1181,8 +1185,8 @@
       charmGrid.style.display = "none";
       
       const mainGridTitle = document.getElementById("mainGridTitle");
-      const approvedSetsCounter = document.getElementById("approvedSetsCounter");
-      if (approvedSetsCounter) approvedSetsCounter.style.display = "none";
+      const approvedSetsHeader = document.getElementById("approvedSetsHeader");
+      if (approvedSetsHeader) approvedSetsHeader.style.display = "none";
 
       if (mode === "generate") {
         mainGridTitle.textContent = "Generated set";
@@ -1213,23 +1217,23 @@
         setStatus("Charm Maker Database");
         
         // Only load if empty to prevent interrupting running charm quads
-        if (currentCharmViewFolder !== "Completed_Charm" || charmSetsHistory.length === 0) {
+        if (currentCharmViewFolder !== "Charm_Maker/Generated_Charm_Sets" || charmSetsHistory.length === 0) { // UPDATED
             loadCharmMakerPreviews();
-            loadCharmHistoryList("Completed_Charm"); 
+            loadCharmHistoryList("Charm_Maker/Generated_Charm_Sets"); // UPDATED
         } else {
             const totalPages = Math.ceil(charmSetsHistory.length / CHARM_ITEMS_PER_PAGE);
             charmPaginationEl.style.display = totalPages > 1 ? "flex" : "none";
         }
-      } else if (mode === "approvedCharms") {
+        } else if (mode === "approvedCharms") {
         mainGridTitle.textContent = "Approved Charm Sets";
-        if (approvedSetsCounter) approvedSetsCounter.style.display = "block";
+        if (approvedSetsHeader) approvedSetsHeader.style.display = "flex";
         toggleApprovedCharmsBtn.style.background = "var(--line)";
         toggleApprovedCharmsBtn.style.color = "var(--text)";
         charmMakerSection.style.display = "none"; 
         charmGrid.style.display = "grid";
         setStatus("Approved Charm Sets");
-        if (currentCharmViewFolder !== "Completed_Approved_Charm_Sets" || charmSetsHistory.length === 0) {
-            loadCharmHistoryList("Completed_Approved_Charm_Sets");
+        if (currentCharmViewFolder !== "Charm_Maker/Completed_Approved_Charm_Sets" || charmSetsHistory.length === 0) { // UPDATED
+            loadCharmHistoryList("Charm_Maker/Completed_Approved_Charm_Sets"); // UPDATED
         } else {
             const totalPages = Math.ceil(charmSetsHistory.length / CHARM_ITEMS_PER_PAGE);
             charmPaginationEl.style.display = totalPages > 1 ? "flex" : "none";
@@ -1511,7 +1515,7 @@
 
         const srcFolder = `${ROOT}/${category}/Ready_To_List/${setName}`;
         const destFolderName = `${category}_${setName}`; 
-        const destFolder = `${ROOT}/Completed_Sets/${destFolderName}`;
+        const destFolder = `${ROOT}/Generated_Listing_Sets/Completed_Listing_Sets/${destFolderName}`; // UPDATED
 
         try {
             await ensureStorageSignedIn();
@@ -1898,10 +1902,10 @@
         charmSetsHistory = prefixes;
             
             // ADDED: Update Approved Sets Counter
-            if (folderName === "Completed_Approved_Charm_Sets") {
-                const countSpan = document.querySelector("#approvedSetsCounter span");
-                if (countSpan) countSpan.textContent = charmSetsHistory.length;
-            }
+        if (folderName === "Charm_Maker/Completed_Approved_Charm_Sets") { // UPDATED
+            const countSpan = document.querySelector("#approvedSetsCounter span");
+            if (countSpan) countSpan.textContent = charmSetsHistory.length;
+        }
             
             renderCharmPage();
         } catch (e) {
@@ -1988,7 +1992,7 @@
         const startIndex = (charmCurrentPage - 1) * CHARM_ITEMS_PER_PAGE;
         const pageItems = charmSetsHistory.slice(startIndex, startIndex + CHARM_ITEMS_PER_PAGE);
 
-        const isApprovedView = currentCharmViewFolder === "Completed_Approved_Charm_Sets";
+        const isApprovedView = currentCharmViewFolder === "Charm_Maker/Completed_Approved_Charm_Sets"; // UPDATED
 
         pageItems.forEach(folderId => {
             const tempDiv = document.createElement("div");
@@ -2201,7 +2205,7 @@
             let lineArtRefPath = manifest.lineArtRef;
             if (!lineArtRefPath) {
                 try {
-                    const lat = await listLatestFile(`${ROOT}/Reference_Line_Art_Image`);
+                    const lat = await listLatestFile(`${ROOT}/Charm_Maker/Reference_Line_Art_Image`); // UPDATED
                     if(lat) lineArtRefPath = lat.fullPath;
                 } catch(e) {}
             }
@@ -2323,8 +2327,8 @@ window.approveCharmQuad = async function(folderId) {
         
         try {
             await ensureStorageSignedIn();
-            const srcFolder = `${ROOT}/Completed_Charm/${folderId}`;
-            const destFolder = `${ROOT}/Completed_Approved_Charm_Sets/${folderId}`;
+            const srcFolder = `${ROOT}/Charm_Maker/Generated_Charm_Sets/${folderId}`; // UPDATED
+            const destFolder = `${ROOT}/Charm_Maker/Completed_Approved_Charm_Sets/${folderId}`; // UPDATED
             
             const srcRef = ref(storage, srcFolder);
             const res = await listAll(srcRef);
@@ -2379,7 +2383,7 @@ window.approveCharmQuad = async function(folderId) {
     async function generateCharmQuad(targetCharmRef, targetEarringRef) {
         const timestamp = Date.now() + Math.floor(Math.random() * 10000);
         const folderId = `Deriv_${timestamp}`;
-        const outputBasePath = `${ROOT}/Completed_Charm/${folderId}`;
+        const outputBasePath = `${ROOT}/Charm_Maker/Generated_Charm_Sets/${folderId}`; // UPDATED
 
         const tempDiv = document.createElement("div");
         tempDiv.innerHTML = createCharmCardHTML(folderId, false);
@@ -2414,7 +2418,7 @@ window.approveCharmQuad = async function(folderId) {
         try {
             let lineArtRef = null;
             try {
-                lineArtRef = await listLatestFile(`${ROOT}/Reference_Line_Art_Image`);
+                lineArtRef = await listLatestFile(`${ROOT}/Charm_Maker/Reference_Line_Art_Image`); // UPDATED
             } catch (e) {
                 console.warn("No line art reference found. Will fallback to charm itself.", e);
             }
@@ -3230,6 +3234,85 @@ window.approveCharmQuad = async function(folderId) {
         setStatus(`Error: ${e?.message || e}`);
       });
     });
+    // --- Download Approved Sets Logic ---
+    const downloadApprovedSetsBtn = document.getElementById("downloadApprovedSetsBtn");
+
+    if (downloadApprovedSetsBtn) {
+        downloadApprovedSetsBtn.addEventListener("click", async () => {
+            if (!window.JSZip) {
+                alert("JSZip library not loaded. Check your internet connection.");
+                return;
+            }
+
+            const originalText = downloadApprovedSetsBtn.textContent;
+            downloadApprovedSetsBtn.disabled = true;
+            downloadApprovedSetsBtn.style.opacity = "0.7";
+            downloadApprovedSetsBtn.textContent = "Fetching list...";
+
+            try {
+                await ensureStorageSignedIn();
+                
+                // Using the updated path from your current codebase variables
+                const folderPath = `${ROOT}/Charm_Maker/Completed_Approved_Charm_Sets`;
+                const baseRef = ref(storage, folderPath);
+                const res = await listAll(baseRef);
+                
+                const prefixes = res.prefixes;
+                if (prefixes.length === 0) {
+                    alert("No approved sets found to download.");
+                    throw new Error("Empty Directory");
+                }
+
+                const zip = new JSZip();
+                let processedFolders = 0;
+
+                // Process sequentially to keep browser memory stable
+                for (const folderRef of prefixes) {
+                    downloadApprovedSetsBtn.textContent = `Zipping folder ${processedFolders + 1} of ${prefixes.length}...`;
+                    const folderName = folderRef.name; // e.g., Deriv_12345
+                    const folderItems = await listAll(folderRef);
+
+                    // Fetch files within the folder in parallel
+                    await Promise.all(folderItems.items.map(async (itemRef) => {
+                        const fileData = await getBytes(itemRef);
+                        // Store it in the zip under its respective folder
+                        zip.file(`${folderName}/${itemRef.name}`, fileData);
+                    }));
+                    processedFolders++;
+                }
+
+                downloadApprovedSetsBtn.textContent = "Generating ZIP file...";
+                const zipBlob = await zip.generateAsync({ type: "blob" });
+
+                // Trigger the local browser download
+                const url = URL.createObjectURL(zipBlob);
+                const a = document.createElement("a");
+                a.href = url;
+                const dateStr = new Date().toISOString().split('T')[0];
+                a.download = `Approved_Charm_Sets_${dateStr}.zip`;
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                URL.revokeObjectURL(url);
+
+                downloadApprovedSetsBtn.textContent = "Download Complete!";
+                setTimeout(() => {
+                    downloadApprovedSetsBtn.textContent = originalText;
+                    downloadApprovedSetsBtn.disabled = false;
+                    downloadApprovedSetsBtn.style.opacity = "1";
+                }, 3000);
+
+            } catch (error) {
+                if (error.message !== "Empty Directory") {
+                    console.error("Error downloading sets:", error);
+                    alert(`Failed to download sets: ${error.message}`);
+                }
+                downloadApprovedSetsBtn.textContent = originalText;
+                downloadApprovedSetsBtn.disabled = false;
+                downloadApprovedSetsBtn.style.opacity = "1";
+            }
+        });
+    }
   </script>
 </body>
 </html>
