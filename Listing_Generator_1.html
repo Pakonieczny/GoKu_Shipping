@@ -788,7 +788,7 @@
             });
           }
           
-          const finalUrl = cacheBust(waitedResult.url);
+      const finalUrl = cacheBust(waitedResult.url);
           REDO_STATE[redoKey] = { status: 'completed', url: finalUrl };
           updateDropdownLabels(); 
           updateApproveButtonState();
@@ -800,8 +800,9 @@
               const redoBtn  = slotCard?.querySelector(`#redo_${slotIndex}`);
               
               if (prevBox) {
-                  prevBox.innerHTML = `<img src="${finalUrl}" />`;
-                  attachPreviewBoxListeners(prevBox);
+                  // Instant Cache Write
+                  const newBlob = await fetchAndCacheBlob(waitedResult.url, waitedResult.storagePath, Date.now());
+                  setBoxImage(prevBox, newBlob ? URL.createObjectURL(newBlob) : finalUrl);
                   prevBox.classList.add("success-border"); 
               }
               if (metaEl) metaEl.textContent = `Source: ${srcRandom.fullPath}`;
@@ -1003,6 +1004,97 @@
     renderCategoryUI(activeCategoryEl.value);
 
     // --- Tab Switching Logic ---
+
+    // -------------------------------------------------------------------------
+    // LOCAL BROWSER CACHING SYSTEM (IndexedDB)
+    // -------------------------------------------------------------------------
+    const CACHE_DB_NAME = "CharmMakerCache";
+    const CACHE_STORE_NAME = "images";
+
+    function openCacheDB() {
+        return new Promise((resolve, reject) => {
+            const req = indexedDB.open(CACHE_DB_NAME, 1);
+            req.onupgradeneeded = (e) => {
+                e.target.result.createObjectStore(CACHE_STORE_NAME, { keyPath: "path" });
+            };
+            req.onsuccess = () => resolve(req.result);
+            req.onerror = () => reject(req.error);
+        });
+    }
+
+    async function getCachedBlob(path) {
+        try {
+            const db = await openCacheDB();
+            return new Promise((resolve) => {
+                const tx = db.transaction(CACHE_STORE_NAME, "readonly");
+                const req = tx.objectStore(CACHE_STORE_NAME).get(path);
+                req.onsuccess = () => resolve(req.result);
+                req.onerror = () => resolve(null);
+            });
+        } catch(e) {
+            console.warn("IndexedDB read error", e);
+            return null;
+        }
+    }
+
+    async function setCachedBlob(path, blob, updatedMs) {
+        try {
+            const db = await openCacheDB();
+            return new Promise((resolve) => {
+                const tx = db.transaction(CACHE_STORE_NAME, "readwrite");
+                tx.objectStore(CACHE_STORE_NAME).put({ path, blob, updatedMs });
+                tx.oncomplete = () => resolve();
+                tx.onerror = () => resolve();
+            });
+        } catch(e) {
+            console.warn("IndexedDB write error", e);
+        }
+    }
+
+    async function removeCachedFolder(folderId) {
+        try {
+            const db = await openCacheDB();
+            return new Promise((resolve) => {
+                const tx = db.transaction(CACHE_STORE_NAME, "readwrite");
+                const store = tx.objectStore(CACHE_STORE_NAME);
+                const req = store.openCursor();
+                req.onsuccess = (e) => {
+                    const cursor = e.target.result;
+                    if (cursor) {
+                        if (cursor.value.path.includes(folderId)) cursor.delete();
+                        cursor.continue();
+                    } else {
+                        resolve();
+                    }
+                };
+            });
+        } catch(e) {}
+    }
+
+    async function fetchAndCacheBlob(url, storagePath, updatedMs) {
+        try {
+            const res = await fetch(cacheBust(url), { mode: 'cors' });
+            if (!res.ok) throw new Error("Network response not ok");
+            const blob = await res.blob();
+            await setCachedBlob(storagePath, blob, updatedMs);
+            return blob;
+        } catch (e) {
+            console.error("Failed to fetch/cache blob:", e);
+            return null;
+        }
+    }
+
+    // Helper to prevent memory leaks by revoking old blob URLs
+    function setBoxImage(box, srcUrl) {
+        if (!box) return;
+        const oldImg = box.querySelector("img");
+        if (oldImg && oldImg.src.startsWith("blob:")) {
+            URL.revokeObjectURL(oldImg.src);
+        }
+        box.innerHTML = `<img src="${srcUrl}" />`;
+        attachPreviewBoxListeners(box);
+    }
+
     let currentCharmViewFolder = "Completed_Charm";
 
     function setAppMode(mode) {
@@ -1239,7 +1331,7 @@
              }
         });
 
-        const slotFiles = res.items.filter(item => item.name.startsWith("Slot_") && item.name.endsWith(".png"));
+    const slotFiles = res.items.filter(item => item.name.startsWith("Slot_") && item.name.endsWith(".png"));
         
         await Promise.all(slotFiles.map(async (fileRef) => {
           const match = fileRef.name.match(/Slot_(\d+)\.png/);
@@ -1249,24 +1341,38 @@
             const key = `${setPath}::${slotIndex}`;
             if (REDO_STATE[key]?.status === 'running') return;
 
+            const prevBox = document.getElementById(`slotPrev_${slotIndex}`);
+            if (!prevBox) return;
+
             try {
-              const url = await getDownloadURL(fileRef);
-              const prevBox = document.getElementById(`slotPrev_${slotIndex}`);
-              if (prevBox) {
-                const finalUrl = cacheBust(url);
-                prevBox.innerHTML = `<img src="${finalUrl}" />`;
-                attachPreviewBoxListeners(prevBox);
+              // 1. Instant load from local IndexedDB Cache
+              let cached = await getCachedBlob(fileRef.fullPath);
+              if (cached && cached.blob) {
+                  setBoxImage(prevBox, URL.createObjectURL(cached.blob));
               }
-            } catch (err) {}
+
+              // 2. Background verification with Firebase
+              const meta = await getMetadata(fileRef);
+              const cloudUpdatedMs = Date.parse(meta?.updated || meta?.timeCreated || "") || 0;
+
+              // Only fetch if no cache exists or cloud is newer
+              if (!cached || cloudUpdatedMs > cached.updatedMs) {
+                  const url = await getDownloadURL(fileRef);
+                  const newBlob = await fetchAndCacheBlob(url, fileRef.fullPath, cloudUpdatedMs);
+                  
+                  // Ensure we don't overwrite if a user clicked Redo in the meantime
+                  if (REDO_STATE[key]?.status !== 'running') {
+                      setBoxImage(prevBox, newBlob ? URL.createObjectURL(newBlob) : cacheBust(url));
+                  }
+              }
+            } catch (err) {
+              // If it fails but we don't have a cache, mark as not found
+              if (!await getCachedBlob(fileRef.fullPath)) {
+                prevBox.innerHTML = `<div class="slotRefEmpty">Not Found</div>`;
+              }
+            }
           }
         }));
-
-        slotPlan.forEach((spec, i) => {
-          const prevBox = document.getElementById(`slotPrev_${i}`);
-          if (prevBox && prevBox.innerHTML.includes("Loading…")) {
-            prevBox.innerHTML = `<div class="slotRefEmpty">Not Found</div>`;
-          }
-        });
 
         setStatus(`Viewing ${category} / ${setName}`);
       } catch (e) {
@@ -1490,16 +1596,14 @@
         const pollingPromise = Promise.all(slotResolved.map(async (r) => {
           const { spec, i, slotNum, srcLatest } = r;
           const prevBox = document.getElementById(`slotPrev_${i}`);
-          const setImg = (url) => { 
-            if (prevBox) {
-                prevBox.innerHTML = `<img src="${url}" />`;
-                attachPreviewBoxListeners(prevBox);
-            } 
-          };
 
           const waited = await waitForSlotPngUrl(outputBasePath, i);
-          const finalUrl = `${waited.url}${waited.url.includes("?") ? "&" : "?"}cb=${Date.now()}`;
-          setImg(finalUrl);
+          
+          // Instant Cache Write
+          const newBlob = await fetchAndCacheBlob(waited.url, waited.storagePath, Date.now());
+          if (prevBox) {
+              setBoxImage(prevBox, newBlob ? URL.createObjectURL(newBlob) : cacheBust(waited.url));
+          }
 
           return {
             slot: slotNum,
@@ -1748,20 +1852,43 @@
         setStatus(`Viewing Page ${charmCurrentPage}`);
     }
 
-    async function loadSetImagesForCharm(folderId) {
+async function loadSetImagesForCharm(folderId) {
         const folderPath = `${ROOT}/${currentCharmViewFolder}/${folderId}`;
         for (let i = 0; i < 4; i++) {
             const fileName = `Slot_${i+1}.png`;
-            const fileRef = ref(storage, `${folderPath}/${fileName}`);
+            const storagePath = `${folderPath}/${fileName}`;
+            const fileRef = ref(storage, storagePath);
             const prevBox = document.getElementById(`prevBox_${folderId}_${i}`);
             if (!prevBox) continue;
             
-            getDownloadURL(fileRef).then(url => {
-                prevBox.innerHTML = `<img src="${cacheBust(url)}" />`;
-                attachPreviewBoxListeners(prevBox);
-            }).catch(e => {
-                prevBox.innerHTML = `<div class="slotRefEmpty">Not Found</div>`;
-            });
+            // 1. Instant load from local IndexedDB Cache
+            let cached = await getCachedBlob(storagePath);
+            if (cached && cached.blob) {
+                setBoxImage(prevBox, URL.createObjectURL(cached.blob));
+            }
+
+            // 2. Background verification with Firebase
+            try {
+                const meta = await getMetadata(fileRef);
+                const cloudUpdatedMs = Date.parse(meta?.updated || meta?.timeCreated || "") || 0;
+
+                // Only fetch new if we didn't have a cache, or the cloud version is newer
+                if (!cached || cloudUpdatedMs > cached.updatedMs) {
+                    const url = await getDownloadURL(fileRef);
+                    const newBlob = await fetchAndCacheBlob(url, storagePath, cloudUpdatedMs);
+                    
+                    // Prevent overwriting if user clicked "Redo/Regen" while we were downloading
+                    const currentBox = document.getElementById(`prevBox_${folderId}_${i}`);
+                    if (currentBox && !currentBox.classList.contains("working-box")) {
+                        const finalSrc = newBlob ? URL.createObjectURL(newBlob) : cacheBust(url);
+                        setBoxImage(currentBox, finalSrc);
+                    }
+                }
+            } catch (e) {
+                if (!cached) {
+                    prevBox.innerHTML = `<div class="slotRefEmpty">Not Found</div>`;
+                }
+            }
         }
     }
 
@@ -1853,9 +1980,9 @@
                 timeoutMs: 600000, intervalMs: 5000
             });
 
+            const newBlob = await fetchAndCacheBlob(waitedRes.url, waitedRes.storagePath, Date.now());
             prevBox.classList.remove("working-box");
-            prevBox.innerHTML = `<img src="${cacheBust(waitedRes.url)}" />`;
-            attachPreviewBoxListeners(prevBox);
+            setBoxImage(prevBox, newBlob ? URL.createObjectURL(newBlob) : cacheBust(waitedRes.url));
             prevBox.classList.add("success-border");
         } catch (err) {
             console.error("Charm Redo failed", err);
@@ -1866,7 +1993,7 @@
         }
     };
 
-    window.regenCharmQuad = async function(folderId) {
+window.regenCharmQuad = async function(folderId) {
         const folderPath = `${ROOT}/${currentCharmViewFolder}/${folderId}`;
         const cardObj = document.getElementById(`card_${folderId}`);
         
@@ -1934,9 +2061,9 @@
                 timeoutMs: 600000, intervalMs: 5000,
                 afterUpdatedMs: beforeMeta[0].updatedMs, afterGeneration: beforeMeta[0].generation 
             });
+            const newBlob0 = await fetchAndCacheBlob(charmRes.url, charmRes.storagePath, Date.now());
             prev0.classList.remove("working-box");
-            prev0.innerHTML = `<img src="${cacheBust(charmRes.url)}" />`;
-            attachPreviewBoxListeners(prev0);
+            setBoxImage(prev0, newBlob0 ? URL.createObjectURL(newBlob0) : cacheBust(charmRes.url));
             prev0.classList.add("success-border");
             document.getElementById(`redo_${folderId}_0`).disabled = false;
 
@@ -1954,9 +2081,9 @@
                 timeoutMs: 600000, intervalMs: 5000,
                 afterUpdatedMs: beforeMeta[1].updatedMs, afterGeneration: beforeMeta[1].generation 
             });
+            const newBlob1 = await fetchAndCacheBlob(earringRes.url, earringRes.storagePath, Date.now());
             prev1.classList.remove("working-box");
-            prev1.innerHTML = `<img src="${cacheBust(earringRes.url)}" />`;
-            attachPreviewBoxListeners(prev1);
+            setBoxImage(prev1, newBlob1 ? URL.createObjectURL(newBlob1) : cacheBust(earringRes.url));
             prev1.classList.add("success-border");
             document.getElementById(`redo_${folderId}_1`).disabled = false;
 
@@ -1975,9 +2102,9 @@
                 timeoutMs: 600000, intervalMs: 5000,
                 afterUpdatedMs: beforeMeta[2].updatedMs, afterGeneration: beforeMeta[2].generation 
             });
+            const newBlob2 = await fetchAndCacheBlob(charmBWRes.url, charmBWRes.storagePath, Date.now());
             prev2.classList.remove("working-box");
-            prev2.innerHTML = `<img src="${cacheBust(charmBWRes.url)}" />`;
-            attachPreviewBoxListeners(prev2);
+            setBoxImage(prev2, newBlob2 ? URL.createObjectURL(newBlob2) : cacheBust(charmBWRes.url));
             prev2.classList.add("success-border");
             document.getElementById(`redo_${folderId}_2`).disabled = false;
 
@@ -1996,9 +2123,9 @@
                 timeoutMs: 600000, intervalMs: 5000,
                 afterUpdatedMs: beforeMeta[3].updatedMs, afterGeneration: beforeMeta[3].generation 
             });
+            const newBlob3 = await fetchAndCacheBlob(earringBWRes.url, earringBWRes.storagePath, Date.now());
             prev3.classList.remove("working-box");
-            prev3.innerHTML = `<img src="${cacheBust(earringBWRes.url)}" />`;
-            attachPreviewBoxListeners(prev3);
+            setBoxImage(prev3, newBlob3 ? URL.createObjectURL(newBlob3) : cacheBust(earringBWRes.url));
             prev3.classList.add("success-border");
             document.getElementById(`redo_${folderId}_3`).disabled = false;
 
@@ -2017,10 +2144,13 @@
         }
     };
 
-    window.deleteCharmQuad = async function(folderId) {
-        if (!confirm(`Are you sure you want to completely delete the quad '${folderId}'?`)) return;
+        window.approveCharmQuad = async function(folderId) {
+        if (!confirm(`Approve '${folderId}' and move to Approved Sets?`)) return;
         
+        await removeCachedFolder(folderId); // <-- Add this here
+
         const cardObj = document.getElementById(`card_${folderId}`);
+        // ... rest of approve logic
         if (cardObj) cardObj.classList.add("working-card");
         setStatus(`Deleting ${folderId}...`);
         
@@ -2078,7 +2208,7 @@
         }
     };
 
-    executeCharmGenBtn.addEventListener("click", async () => {
+executeCharmGenBtn.addEventListener("click", async () => {
         if (!currentCharmRef) {
             alert("No reference charm loaded in the New_Charms queue. Please upload to New_Charms.");
             return;
@@ -2149,9 +2279,9 @@
                 model: "gemini-3-pro-image-preview", prompt: promptStrCharm
             });
             const charmRes = await waitForSlotPngUrl(outputBasePath, 0, { timeoutMs: 600000, intervalMs: 5000 });
+            const newBlob0 = await fetchAndCacheBlob(charmRes.url, charmRes.storagePath, Date.now());
             prev0.classList.remove("working-box");
-            prev0.innerHTML = `<img src="${cacheBust(charmRes.url)}" />`;
-            attachPreviewBoxListeners(prev0);
+            setBoxImage(prev0, newBlob0 ? URL.createObjectURL(newBlob0) : cacheBust(charmRes.url));
             prev0.classList.add("success-border");
             document.getElementById(`redo_${folderId}_0`).disabled = false;
 
@@ -2166,9 +2296,9 @@
                 model: "gemini-3-pro-image-preview", prompt: promptStrEarring
             });
             const earringRes = await waitForSlotPngUrl(outputBasePath, 1, { timeoutMs: 600000, intervalMs: 5000 });
+            const newBlob1 = await fetchAndCacheBlob(earringRes.url, earringRes.storagePath, Date.now());
             prev1.classList.remove("working-box");
-            prev1.innerHTML = `<img src="${cacheBust(earringRes.url)}" />`;
-            attachPreviewBoxListeners(prev1);
+            setBoxImage(prev1, newBlob1 ? URL.createObjectURL(newBlob1) : cacheBust(earringRes.url));
             prev1.classList.add("success-border");
             document.getElementById(`redo_${folderId}_1`).disabled = false;
 
@@ -2184,9 +2314,9 @@
                 model: "gemini-3-pro-image-preview", prompt: promptStrBW
             });
             const charmBWRes = await waitForSlotPngUrl(outputBasePath, 2, { timeoutMs: 600000, intervalMs: 5000 });
+            const newBlob2 = await fetchAndCacheBlob(charmBWRes.url, charmBWRes.storagePath, Date.now());
             prev2.classList.remove("working-box");
-            prev2.innerHTML = `<img src="${cacheBust(charmBWRes.url)}" />`;
-            attachPreviewBoxListeners(prev2);
+            setBoxImage(prev2, newBlob2 ? URL.createObjectURL(newBlob2) : cacheBust(charmBWRes.url));
             prev2.classList.add("success-border");
             document.getElementById(`redo_${folderId}_2`).disabled = false;
 
@@ -2202,9 +2332,9 @@
                 model: "gemini-3-pro-image-preview", prompt: promptStrBW
             });
             const earringBWRes = await waitForSlotPngUrl(outputBasePath, 3, { timeoutMs: 600000, intervalMs: 5000 });
+            const newBlob3 = await fetchAndCacheBlob(earringBWRes.url, earringBWRes.storagePath, Date.now());
             prev3.classList.remove("working-box");
-            prev3.innerHTML = `<img src="${cacheBust(earringBWRes.url)}" />`;
-            attachPreviewBoxListeners(prev3);
+            setBoxImage(prev3, newBlob3 ? URL.createObjectURL(newBlob3) : cacheBust(earringBWRes.url));
             prev3.classList.add("success-border");
             document.getElementById(`redo_${folderId}_3`).disabled = false;
 
