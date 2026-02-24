@@ -482,7 +482,19 @@
       });
     }
 
-    function sleep(ms){ return new Promise(r => setTimeout(r, ms)); }
+// Updated sleep to support AbortSignal
+    function sleep(ms, signal) { 
+      return new Promise((resolve, reject) => {
+        if (signal && signal.aborted) return reject(new Error("AbortError"));
+        const timeout = setTimeout(resolve, ms);
+        if (signal) {
+          signal.addEventListener('abort', () => {
+            clearTimeout(timeout);
+            reject(new Error("AbortError"));
+          }, { once: true });
+        }
+      }); 
+    }
     
     function attachPreviewBoxListeners(box) {
       function clampAndApply(img, scale, offX, offY) {
@@ -621,17 +633,24 @@
       });
     }
 
-      async function waitForSlotPngUrl(outputBasePath, slotIndex, opts = {}) {
-      const timeoutMs  = Number(opts.timeoutMs ?? 1200000);  // Increased to 20 minutes
-      const intervalMs = Number(opts.intervalMs ?? 5000);    // Polling every 5 seconds
+    async function waitForSlotPngUrl(outputBasePath, slotIndex, opts = {}) {
+      const timeoutMs  = Number(opts.timeoutMs ?? 1200000); 
+      const intervalMs = Number(opts.intervalMs ?? 5000);   
       const fileName = `Slot_${slotIndex + 1}.png`;
       const afterUpdatedMs  = opts.afterUpdatedMs == null ? null : Number(opts.afterUpdatedMs);
       const afterGeneration = opts.afterGeneration == null ? null : Number(opts.afterGeneration);
+      const signal = opts.signal; // Capture the abort signal
 
-      await sleep(Math.random() * 3000); 
+      // Check if already aborted before starting
+      if (signal && signal.aborted) throw new Error("AbortError");
+
+      await sleep(Math.random() * 3000, signal); 
 
       const t0 = Date.now();
       while (true) {
+        // Exit loop if cancellation is requested
+        if (signal && signal.aborted) throw new Error("AbortError");
+
         await ensureStorageSignedIn();
 
         try {
@@ -679,7 +698,7 @@
           const msg = String(e?.message || e);
           if (msg.includes("500") || msg.includes("internal")) {
              console.warn("Storage 500 error, retrying with backoff...", outputBasePath);
-             await sleep(5000); 
+             await sleep(5000, signal); 
           } else {
              const looksUnauthorized =
                 msg.includes("storage/unauthorized") ||
@@ -694,7 +713,7 @@
         if ((Date.now() - t0) > timeoutMs) {
           throw new Error(`Timed out waiting for ${fileName} in ${outputBasePath}`);
         }
-        await sleep(intervalMs);
+        await sleep(intervalMs, signal);
       }
     }
 
@@ -1571,38 +1590,46 @@
     }
 
     approveSetBtn.addEventListener("click", approveSet);
-    
-    async function postJson(path, body) {
-      const res = await fetch(`${functionsBaseUrl}/${path}`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-      });
+        
+        // Updated postJson to accept a signal for cancellation
+        async function postJson(path, body, signal) {
+          const fetchOptions = {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(body),
+          };
 
-      const raw = await res.text().catch(() => "");
-      let j = null;
-      try { j = raw ? JSON.parse(raw) : null; } catch { j = null; }
+          // Attach the signal to the fetch request if provided
+          if (signal) {
+            fetchOptions.signal = signal;
+          }
 
-      if (!res.ok) {
-        const msg = (j?.error?.message || j?.error) || (raw ? raw.slice(0, 300) : "") || `HTTP ${res.status}`;
-        throw new Error(msg);
-      }
+          const res = await fetch(`${functionsBaseUrl}/${path}`, fetchOptions);
 
-      if (!j) {
-        if (res.status === 202 && (!raw || !raw.trim())) {
-          return { ok: true, accepted: true, status: 202 };
+          const raw = await res.text().catch(() => "");
+          let j = null;
+          try { j = raw ? JSON.parse(raw) : null; } catch { j = null; }
+
+          if (!res.ok) {
+            const msg = (j?.error?.message || j?.error) || (raw ? raw.slice(0, 300) : "") || `HTTP ${res.status}`;
+            throw new Error(msg);
+          }
+
+          if (!j) {
+            if (res.status === 202 && (!raw || !raw.trim())) {
+              return { ok: true, accepted: true, status: 202 };
+            }
+            throw new Error(`Non-JSON success response from ${path}: ${raw ? raw.slice(0,120) : "(empty body)"}`);
+          }
+          return j;
         }
-        throw new Error(`Non-JSON success response from ${path}: ${raw ? raw.slice(0,120) : "(empty body)"}`);
+
+        const GEMINI_FN = "geminiImageProxy";
+        const GEMINI_BG_FN = "geminiImageProxy-background";
+
+        async function allocSet(category) {
+        return await postJson(GEMINI_FN, { kind: "alloc_set", activeCategory: category });
       }
-      return j;
-    }
-
-    const GEMINI_FN = "geminiImageProxy";
-    const GEMINI_BG_FN = "geminiImageProxy-background";
-
-    async function allocSet(category) {
-      return await postJson(GEMINI_FN, { kind: "alloc_set", activeCategory: category });
-    }
 
    function pickFirstString(...candidates) {
       for (const v of candidates) {
@@ -2171,13 +2198,26 @@ const promptStrBW = `CRITICAL INSTRUCTION: You are performing a 1:1 structural r
         }
     });
 
-    window.redoCharmSlot = async function(folderId, slotIndex) {
+window.redoCharmSlot = async function(folderId, slotIndex) {
         const folderPath = `${ROOT}/${currentCharmViewFolder}/${folderId}`;
         const redoBtn = document.getElementById(`redo_${folderId}_${slotIndex}`);
         let prevBox = document.getElementById(`prevBox_${folderId}_${slotIndex}`);
         
+        const jobKey = `${folderId}_${slotIndex}`;
         window.ACTIVE_CHARM_JOBS = window.ACTIVE_CHARM_JOBS || new Set();
-        window.ACTIVE_CHARM_JOBS.add(`${folderId}_${slotIndex}`);
+        window.CHARM_ABORT_CONTROLLERS = window.CHARM_ABORT_CONTROLLERS || new Map();
+        
+        // 1. Cancel previous job if it exists on this slot
+        if (window.CHARM_ABORT_CONTROLLERS.has(jobKey)) {
+            window.CHARM_ABORT_CONTROLLERS.get(jobKey).abort();
+        }
+        
+        // 2. Register new abort controller
+        const abortController = new AbortController();
+        window.CHARM_ABORT_CONTROLLERS.set(jobKey, abortController);
+        const signal = abortController.signal;
+
+        window.ACTIVE_CHARM_JOBS.add(jobKey);
         
         if (redoBtn) redoBtn.disabled = true;
         if (prevBox) {
@@ -2207,10 +2247,9 @@ const promptStrBW = `CRITICAL INSTRUCTION: You are performing a 1:1 structural r
             let inputPath = "";
             let inputCharmPath = "";
             let promptStr = "";
-            let category = "Charms"; // <--- CHANGED FROM "Charm_Maker"
+            let category = "Charms"; 
 
             if (slotIndex === 0) {
-                // Ensure charm source exists
                 inputPath = manifest.sourceCharm || (await listLatestFile(newCharmsPath()))?.fullPath; 
                 if (!inputPath) throw new Error("Missing source reference for base charm.");
                 inputCharmPath = inputPath;
@@ -2224,11 +2263,12 @@ const promptStrBW = `CRITICAL INSTRUCTION: You are performing a 1:1 structural r
                 inputCharmPath = manifest.lineArtRef || inputPath;
                 promptStr = promptStrBW;
             } else if (slotIndex === 3) {
-                inputPath = `${folderPath}/Slot_3.png`; // Use the Base B&W image
+                inputPath = `${folderPath}/Slot_3.png`; 
                 inputCharmPath = inputPath; 
-                promptStr = promptStrBWEarring; // B&W Hoop removal prompt
+                promptStr = promptStrBWEarring; 
             }
 
+            // PASS SIGNAL TO REQUEST
             await postJson(GEMINI_BG_FN, {
                 kind: "edits",
                 activeCategory: category,
@@ -2238,17 +2278,18 @@ const promptStrBW = `CRITICAL INSTRUCTION: You are performing a 1:1 structural r
                 slotIndex: slotIndex,
                 model: "gemini-3-pro-image-preview",
                 prompt: promptStr
-            });
+            }, signal);
 
+            // PASS SIGNAL TO POLLER
             const waitedRes = await waitForSlotPngUrl(folderPath, slotIndex, {
                 afterUpdatedMs: beforeUpdatedMs,
                 afterGeneration: beforeGeneration,
-                timeoutMs: 600000, intervalMs: 5000
+                timeoutMs: 600000, intervalMs: 5000,
+                signal: signal 
             });
 
             const newBlob = await fetchAndCacheBlob(waitedRes.url, waitedRes.storagePath, Date.now());
             
-            // Re-fetch dynamically
             prevBox = document.getElementById(`prevBox_${folderId}_${slotIndex}`);
             if (prevBox) {
                 prevBox.classList.remove("working-box");
@@ -2256,6 +2297,10 @@ const promptStrBW = `CRITICAL INSTRUCTION: You are performing a 1:1 structural r
                 prevBox.classList.add("success-border");
             }
         } catch (err) {
+            if (err.name === "AbortError" || err.message === "AbortError") {
+                console.log(`Redo for ${jobKey} gracefully aborted.`);
+                return; // Suppress error, Regen is taking over
+            }
             console.error("Charm Redo failed", err);
             prevBox = document.getElementById(`prevBox_${folderId}_${slotIndex}`);
             if (prevBox) {
@@ -2263,9 +2308,13 @@ const promptStrBW = `CRITICAL INSTRUCTION: You are performing a 1:1 structural r
                 prevBox.innerHTML = `<div class="slotRefEmpty">Error: ${err.message}</div>`;
             }
         } finally {
-            window.ACTIVE_CHARM_JOBS.delete(`${folderId}_${slotIndex}`);
-            const updatedBtn = document.getElementById(`redo_${folderId}_${slotIndex}`);
-            if (updatedBtn) updatedBtn.disabled = false;
+            // ONLY clean up UI if we haven't been overwritten by Regen
+            if (window.CHARM_ABORT_CONTROLLERS.get(jobKey) === abortController) {
+                window.ACTIVE_CHARM_JOBS.delete(jobKey);
+                window.CHARM_ABORT_CONTROLLERS.delete(jobKey);
+                const updatedBtn = document.getElementById(`redo_${folderId}_${slotIndex}`);
+                if (updatedBtn) updatedBtn.disabled = false;
+            }
         }
     };
 
@@ -2279,8 +2328,23 @@ window.regenCharmQuad = async function(folderId) {
         if (cardObj) cardObj.classList.add("working-card");
         
         window.ACTIVE_CHARM_JOBS = window.ACTIVE_CHARM_JOBS || new Set();
+        window.CHARM_ABORT_CONTROLLERS = window.CHARM_ABORT_CONTROLLERS || new Map();
+        
+        const myControllers = [];
+        
+        // 1. Interrupt any actively running redos on this quad
         [0, 1, 2, 3].forEach(i => {
-            window.ACTIVE_CHARM_JOBS.add(`${folderId}_${i}`);
+            const jobKey = `${folderId}_${i}`;
+            if (window.CHARM_ABORT_CONTROLLERS.has(jobKey)) {
+                window.CHARM_ABORT_CONTROLLERS.get(jobKey).abort();
+            }
+            
+            // Register fresh controllers for this batch process
+            const controller = new AbortController();
+            window.CHARM_ABORT_CONTROLLERS.set(jobKey, controller);
+            myControllers[i] = controller;
+            
+            window.ACTIVE_CHARM_JOBS.add(jobKey);
             const p = document.getElementById(`prevBox_${folderId}_${i}`);
             if(p) {
                 p.innerHTML = `<div class="slotRefEmpty">Working...</div>`;
@@ -2326,6 +2390,7 @@ window.regenCharmQuad = async function(folderId) {
             }
 
             // STEP 1
+            const sig0 = myControllers[0].signal;
             let prev0 = document.getElementById(`prevBox_${folderId}_0`);
             if(prev0) prev0.innerHTML = `<div class="slotRefEmpty">Generating Base...</div>`;
             await postJson(GEMINI_BG_FN, {
@@ -2333,10 +2398,12 @@ window.regenCharmQuad = async function(folderId) {
                 input_storage_path: sourceCharmPath, input_charm_storage_path: sourceCharmPath,
                 output_base_path: folderPath, slotIndex: 0,
                 model: "gemini-3-pro-image-preview", prompt: promptStrCharm
-            });
+            }, sig0);
+            
             const charmRes = await waitForSlotPngUrl(folderPath, 0, { 
                 timeoutMs: 600000, intervalMs: 5000,
-                afterUpdatedMs: beforeMeta[0].updatedMs, afterGeneration: beforeMeta[0].generation 
+                afterUpdatedMs: beforeMeta[0].updatedMs, afterGeneration: beforeMeta[0].generation,
+                signal: sig0
             });
             const newBlob0 = await fetchAndCacheBlob(charmRes.url, charmRes.storagePath, Date.now());
             
@@ -2351,19 +2418,22 @@ window.regenCharmQuad = async function(folderId) {
             if(btn0) btn0.disabled = false;
 
             // STEP 2
+            const sig1 = myControllers[1].signal;
             setStatus("Generating Earring Twin (Removing Hoop)...");
             let prev1 = document.getElementById(`prevBox_${folderId}_1`);
             if(prev1) prev1.innerHTML = `<div class="slotRefEmpty">Removing Hoop...</div>`;
-            await sleep(2000); 
+            await sleep(2000, sig1); 
             await postJson(GEMINI_BG_FN, {
                 kind: "edits", activeCategory: "Charms",
                 input_storage_path: charmRes.storagePath, input_charm_storage_path: charmRes.storagePath,
                 output_base_path: folderPath, slotIndex: 1,
                 model: "gemini-3-pro-image-preview", prompt: promptStrEarring
-            });
+            }, sig1);
+            
             const earringRes = await waitForSlotPngUrl(folderPath, 1, { 
                 timeoutMs: 600000, intervalMs: 5000,
-                afterUpdatedMs: beforeMeta[1].updatedMs, afterGeneration: beforeMeta[1].generation 
+                afterUpdatedMs: beforeMeta[1].updatedMs, afterGeneration: beforeMeta[1].generation,
+                signal: sig1
             });
             const newBlob1 = await fetchAndCacheBlob(earringRes.url, earringRes.storagePath, Date.now());
             
@@ -2378,20 +2448,23 @@ window.regenCharmQuad = async function(folderId) {
             if(btn1) btn1.disabled = false;
 
             // STEP 3
+            const sig2 = myControllers[2].signal;
             setStatus("Generating B&W Line Art (Standard)...");
             let prev2 = document.getElementById(`prevBox_${folderId}_2`);
             if(prev2) prev2.innerHTML = `<div class="slotRefEmpty">Generating Line Art...</div>`;
-            await sleep(2000);
+            await sleep(2000, sig2);
             const refPathForBaseBW = lineArtRefPath || charmRes.storagePath;
             await postJson(GEMINI_BG_FN, {
                 kind: "edits", activeCategory: "Charms",
                 input_storage_path: charmRes.storagePath, input_charm_storage_path: refPathForBaseBW,
                 output_base_path: folderPath, slotIndex: 2,
                 model: "gemini-3-pro-image-preview", prompt: promptStrBW
-            });
+            }, sig2);
+            
             const charmBWRes = await waitForSlotPngUrl(folderPath, 2, { 
                 timeoutMs: 600000, intervalMs: 5000,
-                afterUpdatedMs: beforeMeta[2].updatedMs, afterGeneration: beforeMeta[2].generation 
+                afterUpdatedMs: beforeMeta[2].updatedMs, afterGeneration: beforeMeta[2].generation,
+                signal: sig2
             });
             const newBlob2 = await fetchAndCacheBlob(charmBWRes.url, charmBWRes.storagePath, Date.now());
             
@@ -2405,20 +2478,23 @@ window.regenCharmQuad = async function(folderId) {
             const btn2 = document.getElementById(`redo_${folderId}_2`);
             if(btn2) btn2.disabled = false;
 
-            // STEP 4 - UPDATED logic to use Step 3's output and remove hoop
+            // STEP 4
+            const sig3 = myControllers[3].signal;
             setStatus("Generating B&W Line Art (Earrings)...");
             let prev3 = document.getElementById(`prevBox_${folderId}_3`);
             if(prev3) prev3.innerHTML = `<div class="slotRefEmpty">Removing Hoop...</div>`;
-            await sleep(2000);
+            await sleep(2000, sig3);
             await postJson(GEMINI_BG_FN, {
                 kind: "edits", activeCategory: "Charms",
                 input_storage_path: charmBWRes.storagePath, input_charm_storage_path: charmBWRes.storagePath,
                 output_base_path: folderPath, slotIndex: 3,
                 model: "gemini-3-pro-image-preview", prompt: promptStrBWEarring
-            });
+            }, sig3);
+            
             const earringBWRes = await waitForSlotPngUrl(folderPath, 3, { 
                 timeoutMs: 600000, intervalMs: 5000,
-                afterUpdatedMs: beforeMeta[3].updatedMs, afterGeneration: beforeMeta[3].generation 
+                afterUpdatedMs: beforeMeta[3].updatedMs, afterGeneration: beforeMeta[3].generation,
+                signal: sig3 
             });
             const newBlob3 = await fetchAndCacheBlob(earringBWRes.url, earringBWRes.storagePath, Date.now());
             
@@ -2434,26 +2510,36 @@ window.regenCharmQuad = async function(folderId) {
 
             setStatus("Quad Regeneration Complete.");
         } catch(err) {
+            if (err.name === "AbortError" || err.message === "AbortError") {
+                console.log(`Regen Quad ${folderId} gracefully aborted.`);
+                return;
+            }
             console.error("Regen Quad failed:", err);
             setStatus(`Error: ${err.message}`);
             [0, 1, 2, 3].forEach(i => {
-                window.ACTIVE_CHARM_JOBS.delete(`${folderId}_${i}`);
-                const p = document.getElementById(`prevBox_${folderId}_${i}`);
-                if(p) {
-                    p.classList.remove("working-box");
-                    if (p.innerHTML.includes("Queued") || p.innerHTML.includes("Generating") || p.innerHTML.includes("Removing") || p.innerHTML.includes("Working")) {
-                        p.innerHTML = `<div class="slotRefEmpty">Aborted</div>`;
+                if (window.CHARM_ABORT_CONTROLLERS.get(`${folderId}_${i}`) === myControllers[i]) {
+                    window.ACTIVE_CHARM_JOBS.delete(`${folderId}_${i}`);
+                    const p = document.getElementById(`prevBox_${folderId}_${i}`);
+                    if(p) {
+                        p.classList.remove("working-box");
+                        if (p.innerHTML.includes("Queued") || p.innerHTML.includes("Generating") || p.innerHTML.includes("Removing") || p.innerHTML.includes("Working")) {
+                            p.innerHTML = `<div class="slotRefEmpty">Aborted</div>`;
+                        }
                     }
                 }
             });
         } finally {
             if (cardObj) cardObj.classList.remove("working-card");
             [0, 1, 2, 3].forEach(i => {
-                window.ACTIVE_CHARM_JOBS.delete(`${folderId}_${i}`);
-                const p = document.getElementById(`prevBox_${folderId}_${i}`);
-                if (p) p.classList.remove("working-box");
-                const btn = document.getElementById(`redo_${folderId}_${i}`);
-                if(btn) btn.disabled = false;
+                const jobKey = `${folderId}_${i}`;
+                if (window.CHARM_ABORT_CONTROLLERS.get(jobKey) === myControllers[i]) {
+                    window.ACTIVE_CHARM_JOBS.delete(jobKey);
+                    window.CHARM_ABORT_CONTROLLERS.delete(jobKey);
+                    const p = document.getElementById(`prevBox_${folderId}_${i}`);
+                    if (p) p.classList.remove("working-box");
+                    const btn = document.getElementById(`redo_${folderId}_${i}`);
+                    if(btn) btn.disabled = false;
+                }
             });
             setBusy(false);
         }
