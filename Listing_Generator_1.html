@@ -1844,17 +1844,19 @@
     • Do not introduce any new elements, 3D thickness, or styling changes.
     • The final output MUST be the exact same charm, just missing the top hoop, on a PURE BLACK background.`;
 
-    const promptStrBW = `TASK: Generate a black and white outline image based strictly on the newly generated charm shown in the FIRST image. 
-    Use the SECOND image strictly as a stylistic sample output to better understand the desired line art style outcome.
+  const promptStrBW = `CRITICAL INSTRUCTION: You are performing a 1:1 structural replication of the FIRST image, converting it into a specific Black & White line art style. 
+
+    The SECOND image is strictly a STYLE REFERENCE. You must NEVER copy, merge, or include the subject matter or object shown in the second image. 
+
+    TASK: Generate a black and white outline image based STRICTLY on the object shown in the FIRST image. The final image must be the EXACT SAME object as the FIRST image.
 
     HARD CONSTRAINTS (NON-NEGOTIABLE):
-    • Create a black and white outline image using the newly generated charm.
-    • Pay very close attention to the engraving details and follow the lines exactly.
-    • Fill in all engravings with solid black colour.
-    • Be very accurate as to the size, position, and exact details of the charm engravings.
-    • Ensure the Charm outer perimeter black outline line is only 2px thick.
-    • Use a solid, pure WHITE (#FFFFFF) background. Absolutely no transparency.
-    • Do NOT add any shading, 3D extrusion, colours, or grey tones. Flat 2D vector style only.`;
+    • 100% STRUCTURAL MATCH: Keep all outer perimeters, cutouts, overall shape, and proportions 100% identical to the FIRST image.
+    • IGNORE SECOND IMAGE SUBJECT: Do NOT add or draw the object from the SECOND image. (e.g., If the second image is a turtle, DO NOT DRAW A TURTLE). Use the second image ONLY to understand the B&W aesthetic.
+    • STYLE: Pay very close attention to the engraving details from the FIRST image and follow the lines exactly. Fill in all internal engravings with solid black colour.
+    • OUTLINE: Ensure the Charm's outer perimeter black outline is only 2px thick.
+    • BACKGROUND: Use a solid, pure WHITE (#FFFFFF) background. Absolutely no transparency.
+    • NO 3D/SHADING: Do NOT add any shading, 3D extrusion, colours, or grey tones. Flat 2D vector style only.`;
 
     const promptStrBWEarring = `CRITICAL INSTRUCTION: Analyze the provided reference image, which is a Black & White line art drawing of a jewelry charm on a pure white background. 
     Your task is to generate an image that is 100% identical to this reference, keeping everything absolutely the same, with ONLY 1 EXCEPTION:
@@ -2484,7 +2486,7 @@ window.approveCharmQuad = async function(folderId) {
         }
     };
 
-    window.deleteCharmQuad = async function(folderId) {
+      window.deleteCharmQuad = async function(folderId, isApproved = false) {
         await removeCachedFolder(folderId);
 
         const cardObj = document.getElementById(`card_${folderId}`);
@@ -2493,15 +2495,30 @@ window.approveCharmQuad = async function(folderId) {
         
         try {
             await ensureStorageSignedIn();
-            const folderPath = `${ROOT}/${currentCharmViewFolder}/${folderId}`;
+            
+            // 1. Target the correct Firebase Storage path
+            const parentFolder = isApproved 
+                ? "Charm_Maker/Completed_Approved_Charm_Sets" 
+                : "Charm_Maker/Generated_Charm_Sets";
+            
+            const folderPath = `${ROOT}/${parentFolder}/${folderId}`;
             const folderRef = ref(storage, folderPath);
             const res = await listAll(folderRef);
             
+            // 2. Delete all files inside the targeted folder
             for (const item of res.items) {
                 await deleteObject(item);
             }
             
-            charmSetsHistory = charmSetsHistory.filter(id => id !== folderId);
+            // 3. Update the correct state array and UI counters
+            if (isApproved) {
+                approvedSetsHistory = approvedSetsHistory.filter(id => id !== folderId);
+                const countSpan = document.querySelector("#approvedSetsCounter span");
+                if (countSpan) countSpan.textContent = approvedSetsHistory.length;
+            } else {
+                charmSetsHistory = charmSetsHistory.filter(id => id !== folderId);
+            }
+            
             if (cardObj) cardObj.remove();
             
             setStatus(`Deleted ${folderId}.`);
@@ -2510,7 +2527,7 @@ window.approveCharmQuad = async function(folderId) {
             setStatus(`Error deleting: ${err.message}`);
             if (cardObj) cardObj.classList.remove("working-card");
         }
-    };
+      };
 
     // Internal helper function for single iteration runs
     async function generateCharmQuad(targetCharmRef, targetEarringRef) {
