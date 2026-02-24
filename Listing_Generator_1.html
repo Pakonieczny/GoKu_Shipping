@@ -3874,9 +3874,9 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
                     console.error("Error downloading sets:", error);
                     alert(`Failed to download sets: ${error.message}`);
                 }
-                downloadCompletedSetsBtn.textContent = originalText;
-                downloadCompletedSetsBtn.disabled = false;
-                downloadCompletedSetsBtn.style.opacity = "1";
+                downloadApprovedSetsBtn.textContent = originalText;
+                downloadApprovedSetsBtn.disabled = false;
+                downloadApprovedSetsBtn.style.opacity = "1";
             }
         });
     }
