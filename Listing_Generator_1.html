@@ -1986,13 +1986,15 @@ const promptStrBW = `CRITICAL INSTRUCTION: You are performing a 1:1 structural r
         }
     }
 
-    function createCharmCardHTML(folderId, isApprovedView) {
+function createCharmCardHTML(folderId, isApprovedView) {
         const redoHTML0 = isApprovedView ? '' : `<button class="btn btnSmall redoBtn" id="redo_${folderId}_0" onclick="redoCharmSlot('${folderId}', 0)">Redo</button>`;
         const redoHTML1 = isApprovedView ? '' : `<button class="btn btnSmall redoBtn" id="redo_${folderId}_1" onclick="redoCharmSlot('${folderId}', 1)">Redo</button>`;
         const redoHTML2 = isApprovedView ? '' : `<button class="btn btnSmall redoBtn" id="redo_${folderId}_2" onclick="redoCharmSlot('${folderId}', 2)">Redo</button>`;
         const redoHTML3 = isApprovedView ? '' : `<button class="btn btnSmall redoBtn" id="redo_${folderId}_3" onclick="redoCharmSlot('${folderId}', 3)">Redo</button>`;
 
         const folderArg = isApprovedView ? 'true' : 'false';
+        
+        // --- UPDATED ACTION BUTTONS ---
         const actionButtons = isApprovedView ? 
             `<div class="row" style="grid-column: span 2; gap: 8px; margin-top: 4px;">
                 <button class="btn btnSmall redoBtn" style="flex:1; background: #3d1c1c; border-color: #7a3838; color: #fca5a5;" onclick="deleteCharmQuad('${folderId}', ${folderArg})">Delete</button>
@@ -2000,8 +2002,9 @@ const promptStrBW = `CRITICAL INSTRUCTION: You are performing a 1:1 structural r
             : 
             `<div class="row" style="grid-column: span 2; gap: 8px; margin-top: 4px;">
                 <button class="btn btnSmall redoBtn" style="flex:1;" onclick="regenCharmQuad('${folderId}')">Regen Quad</button>
+                <button class="btn btnSmall redoBtn" style="flex:1; background: #b45309; border-color: #d97706; color: #fde68a; display: none;" id="continue_${folderId}" onclick="continueCharmQuad('${folderId}')">Approve Base & Continue</button>
                 <button class="btn btnSmall redoBtn" style="flex:1; background: #3d1c1c; border-color: #7a3838; color: #fca5a5;" onclick="deleteCharmQuad('${folderId}', ${folderArg})">Delete</button>
-                <button class="btn btnSmall redoBtn" style="flex:1; background: #1f4026; border-color: #2f5e3a; color: #7fdb96;" onclick="approveCharmQuad('${folderId}')">Approve</button>
+                <button class="btn btnSmall redoBtn" style="flex:1; background: #1f4026; border-color: #2f5e3a; color: #7fdb96;" onclick="approveCharmQuad('${folderId}')">Approve Set</button>
             </div>`;
 
         return `
@@ -2044,55 +2047,56 @@ const promptStrBW = `CRITICAL INSTRUCTION: You are performing a 1:1 structural r
         `;
     }
 
-    function renderCharmPage(isApprovedView) {
-            if (typeof isApprovedView !== "boolean") {
-                 isApprovedView = (appMode === "approvedCharms");
-            }
-
-            const targetGrid = isApprovedView ? approvedCharmGrid : charmGrid;
-            const targetHistory = isApprovedView ? approvedSetsHistory : charmSetsHistory;
-            const targetPage = isApprovedView ? approvedCurrentPage : charmCurrentPage;
-            const targetPagination = isApprovedView ? approvedCharmPaginationEl : charmPaginationEl;
-            
-            targetGrid.innerHTML = "";
-            
-            if (targetHistory.length === 0) {
-                targetGrid.innerHTML = `<div class="slotRefEmpty" style="grid-column:span 4;">No historical sets found.</div>`;
-                if (targetPagination) targetPagination.style.display = "none";
-                setStatus("Ready");
-                return;
-            }
-
-            const totalPages = Math.ceil(targetHistory.length / CHARM_ITEMS_PER_PAGE);
-            
-            if (isApprovedView) {
-                document.getElementById("approvedPageInfo").textContent = `Page ${targetPage} of ${totalPages}`;
-                document.getElementById("approvedPrevPage").disabled = (targetPage === 1);
-                document.getElementById("approvedNextPage").disabled = (targetPage === totalPages);
-            } else {
-                document.getElementById("charmPageInfo").textContent = `Page ${targetPage} of ${totalPages}`;
-                document.getElementById("charmPrevPage").disabled = (targetPage === 1);
-                document.getElementById("charmNextPage").disabled = (targetPage === totalPages);
-            }
-            
-            if (targetPagination) targetPagination.style.display = totalPages > 1 ? "flex" : "none";
-
-            const startIndex = (targetPage - 1) * CHARM_ITEMS_PER_PAGE;
-            const pageItems = targetHistory.slice(startIndex, startIndex + CHARM_ITEMS_PER_PAGE);
-
-            pageItems.forEach(folderId => {
-                const tempDiv = document.createElement("div");
-                tempDiv.innerHTML = createCharmCardHTML(folderId, isApprovedView);
-                const cardNode = tempDiv.firstElementChild;
-                targetGrid.appendChild(cardNode);
-                loadSetImagesForCharm(folderId, isApprovedView ? "Charm_Maker/Completed_Approved_Charm_Sets" : "Charm_Maker/Generated_Charm_Sets");
-            });
-            
-            setStatus(`Viewing Page ${targetPage}`);
+function renderCharmPage(isApprovedView) {
+        if (typeof isApprovedView !== "boolean") {
+            isApprovedView = (appMode === "approvedCharms");
         }
+
+        const targetGrid = isApprovedView ? approvedCharmGrid : charmGrid;
+        const targetHistory = isApprovedView ? approvedSetsHistory : charmSetsHistory;
+        const targetPage = isApprovedView ? approvedCurrentPage : charmCurrentPage;
+        const targetPagination = isApprovedView ? approvedCharmPaginationEl : charmPaginationEl;
+        
+        targetGrid.innerHTML = "";
+        
+        if (targetHistory.length === 0) {
+            targetGrid.innerHTML = `<div class="slotRefEmpty" style="grid-column:span 4;">No historical sets found.</div>`;
+            if (targetPagination) targetPagination.style.display = "none";
+            setStatus("Ready");
+            return;
+        }
+
+        const totalPages = Math.ceil(targetHistory.length / CHARM_ITEMS_PER_PAGE);
+        
+        if (isApprovedView) {
+            document.getElementById("approvedPageInfo").textContent = `Page ${targetPage} of ${totalPages}`;
+            document.getElementById("approvedPrevPage").disabled = (targetPage === 1);
+            document.getElementById("approvedNextPage").disabled = (targetPage === totalPages);
+        } else {
+            document.getElementById("charmPageInfo").textContent = `Page ${targetPage} of ${totalPages}`;
+            document.getElementById("charmPrevPage").disabled = (targetPage === 1);
+            document.getElementById("charmNextPage").disabled = (targetPage === totalPages);
+        }
+        
+        if (targetPagination) targetPagination.style.display = totalPages > 1 ? "flex" : "none";
+
+        const startIndex = (targetPage - 1) * CHARM_ITEMS_PER_PAGE;
+        const pageItems = targetHistory.slice(startIndex, startIndex + CHARM_ITEMS_PER_PAGE);
+
+        pageItems.forEach(folderId => {
+            const tempDiv = document.createElement("div");
+            tempDiv.innerHTML = createCharmCardHTML(folderId, isApprovedView);
+            const cardNode = tempDiv.firstElementChild;
+            targetGrid.appendChild(cardNode);
+            loadSetImagesForCharm(folderId, isApprovedView ? "Charm_Maker/Completed_Approved_Charm_Sets" : "Charm_Maker/Generated_Charm_Sets");
+        });
+        
+        setStatus(`Viewing Page ${targetPage}`);
+    }
 
     async function loadSetImagesForCharm(folderId, folderName) {
         const folderPath = `${ROOT}/${folderName}/${folderId}`;
+        const isApprovedView = folderName === "Charm_Maker/Completed_Approved_Charm_Sets";
         
         try {
             const manifestBuffer = await getBytes(ref(storage, `${folderPath}/manifest.json`));
@@ -2180,6 +2184,19 @@ const promptStrBW = `CRITICAL INSTRUCTION: You are performing a 1:1 structural r
                     prevBox.innerHTML = `<div class="slotRefEmpty">Not Found</div>`;
                 }
             }
+        }
+
+        // --- NEW: Detect if the workflow is paused and visually restore the state ---
+        if (!existingFiles.has("Slot_2.png") && existingFiles.has("Slot_1.png") && !isApprovedView) {
+            const continueBtn = document.getElementById(`continue_${folderId}`);
+            if (continueBtn) continueBtn.style.display = "block";
+
+            [1, 2, 3].forEach(i => {
+                const p = document.getElementById(`prevBox_${folderId}_${i}`);
+                if (p && !window.ACTIVE_CHARM_JOBS.has(`${folderId}_${i}`)) {
+                    p.innerHTML = `<div class="slotRefEmpty" style="color: #fde68a;">Waiting for Base Approval...</div>`;
+                }
+            });
         }
     }
 
@@ -2389,6 +2406,8 @@ window.regenCharmQuad = async function(folderId) {
                 }
             }
 
+
+
             // STEP 1
             const sig0 = myControllers[0].signal;
             let prev0 = document.getElementById(`prevBox_${folderId}_0`);
@@ -2545,6 +2564,139 @@ window.regenCharmQuad = async function(folderId) {
         }
     };
 
+    window.continueCharmQuad = async function(folderId) {
+        const folderPath = `${ROOT}/${currentCharmViewFolder}/${folderId}`;
+        const cardObj = document.getElementById(`card_${folderId}`);
+
+        if (cardObj) cardObj.classList.add("working-card");
+        const continueBtn = document.getElementById(`continue_${folderId}`);
+        if (continueBtn) continueBtn.style.display = "none"; // Hide once clicked
+
+        window.ACTIVE_CHARM_JOBS = window.ACTIVE_CHARM_JOBS || new Set();
+        [1, 2, 3].forEach(i => {
+            window.ACTIVE_CHARM_JOBS.add(`${folderId}_${i}`);
+            const p = document.getElementById(`prevBox_${folderId}_${i}`);
+            if(p) {
+                p.innerHTML = `<div class="slotRefEmpty">Queued...</div>`;
+                p.classList.add("working-box");
+            }
+            const btn = document.getElementById(`redo_${folderId}_${i}`);
+            if(btn) btn.disabled = true;
+        });
+
+        try {
+            const baseCharmStoragePath = `${folderPath}/Slot_1.png`;
+
+            let lineArtRefPath = null;
+            try {
+                const manifestBuffer = await getBytes(ref(storage, `${folderPath}/manifest.json`));
+                const manifest = JSON.parse(new TextDecoder().decode(manifestBuffer));
+                lineArtRefPath = manifest.lineArtRef;
+            } catch(e) {}
+
+            if (!lineArtRefPath) {
+                try {
+                    const lat = await listLatestFile(`${ROOT}/Charm_Maker/Reference_Line_Art_Image`);
+                    if(lat) lineArtRefPath = lat.fullPath;
+                } catch(e) {}
+            }
+
+            // STEP 2
+            setStatus("Generating Earring Twin (Removing Hoop)...");
+            let prev1 = document.getElementById(`prevBox_${folderId}_1`);
+            if(prev1) prev1.innerHTML = `<div class="slotRefEmpty">Removing Hoop...</div>`;
+            await sleep(2000);
+            await postJson(GEMINI_BG_FN, {
+                kind: "edits", activeCategory: "Stud_Earrings",
+                input_storage_path: baseCharmStoragePath, input_charm_storage_path: baseCharmStoragePath,
+                output_base_path: folderPath, slotIndex: 1,
+                model: "gemini-3-pro-image-preview", prompt: promptStrEarring
+            });
+            const earringRes = await waitForSlotPngUrl(folderPath, 1, { timeoutMs: 600000, intervalMs: 5000 });
+            const newBlob1 = await fetchAndCacheBlob(earringRes.url, earringRes.storagePath, Date.now());
+
+            window.ACTIVE_CHARM_JOBS.delete(`${folderId}_1`);
+            prev1 = document.getElementById(`prevBox_${folderId}_1`);
+            if(prev1) {
+                prev1.classList.remove("working-box");
+                setBoxImage(prev1, newBlob1 ? URL.createObjectURL(newBlob1) : cacheBust(earringRes.url));
+                prev1.classList.add("success-border");
+            }
+            const btn1 = document.getElementById(`redo_${folderId}_1`);
+            if(btn1) btn1.disabled = false;
+
+            // STEP 3
+            setStatus("Generating B&W Line Art (Standard)...");
+            let prev2 = document.getElementById(`prevBox_${folderId}_2`);
+            if(prev2) prev2.innerHTML = `<div class="slotRefEmpty">Generating Line Art...</div>`;
+            await sleep(2000);
+            const refPathForBaseBW = lineArtRefPath || baseCharmStoragePath;
+            await postJson(GEMINI_BG_FN, {
+                kind: "edits", activeCategory: "Charms",
+                input_storage_path: baseCharmStoragePath, input_charm_storage_path: refPathForBaseBW,
+                output_base_path: folderPath, slotIndex: 2,
+                model: "gemini-3-pro-image-preview", prompt: promptStrBW
+            });
+            const charmBWRes = await waitForSlotPngUrl(folderPath, 2, { timeoutMs: 600000, intervalMs: 5000 });
+            const newBlob2 = await fetchAndCacheBlob(charmBWRes.url, charmBWRes.storagePath, Date.now());
+
+            window.ACTIVE_CHARM_JOBS.delete(`${folderId}_2`);
+            prev2 = document.getElementById(`prevBox_${folderId}_2`);
+            if(prev2) {
+                prev2.classList.remove("working-box");
+                setBoxImage(prev2, newBlob2 ? URL.createObjectURL(newBlob2) : cacheBust(charmBWRes.url));
+                prev2.classList.add("success-border");
+            }
+            const btn2 = document.getElementById(`redo_${folderId}_2`);
+            if(btn2) btn2.disabled = false;
+
+            // STEP 4
+            setStatus("Generating B&W Line Art (Earrings)...");
+            let prev3 = document.getElementById(`prevBox_${folderId}_3`);
+            if(prev3) prev3.innerHTML = `<div class="slotRefEmpty">Removing Hoop...</div>`;
+            await sleep(2000);
+            await postJson(GEMINI_BG_FN, {
+                kind: "edits", activeCategory: "Stud_Earrings",
+                input_storage_path: charmBWRes.storagePath, input_charm_storage_path: charmBWRes.storagePath,
+                output_base_path: folderPath, slotIndex: 3,
+                model: "gemini-3-pro-image-preview", prompt: promptStrBWEarring
+            });
+            const earringBWRes = await waitForSlotPngUrl(folderPath, 3, { timeoutMs: 600000, intervalMs: 5000 });
+            const newBlob3 = await fetchAndCacheBlob(earringBWRes.url, earringBWRes.storagePath, Date.now());
+
+            window.ACTIVE_CHARM_JOBS.delete(`${folderId}_3`);
+            prev3 = document.getElementById(`prevBox_${folderId}_3`);
+            if(prev3) {
+                prev3.classList.remove("working-box");
+                setBoxImage(prev3, newBlob3 ? URL.createObjectURL(newBlob3) : cacheBust(earringBWRes.url));
+                prev3.classList.add("success-border");
+            }
+            const btn3 = document.getElementById(`redo_${folderId}_3`);
+            if(btn3) btn3.disabled = false;
+
+            setStatus("Derivatives & Line Art Loop Complete.");
+        } catch (err) {
+            console.error("Master Generation Catch (Continue):", err);
+            setStatus(`Error: ${err.message}`);
+
+            [1, 2, 3].forEach(i => {
+                window.ACTIVE_CHARM_JOBS.delete(`${folderId}_${i}`);
+                const p = document.getElementById(`prevBox_${folderId}_${i}`);
+                if(p) {
+                    p.classList.remove("working-box");
+                    if (p.innerHTML.includes("Queued") || p.innerHTML.includes("Generating") || p.innerHTML.includes("Removing") || p.innerHTML.includes("Working")) {
+                        p.innerHTML = `<div class="slotRefEmpty">Aborted</div>`;
+                    }
+                }
+                const btn = document.getElementById(`redo_${folderId}_${i}`);
+                if(btn) btn.disabled = false;
+            });
+            if (continueBtn) continueBtn.style.display = "block"; 
+        } finally {
+            if (cardObj) cardObj.classList.remove("working-card");
+        }
+    };
+
 window.approveCharmQuad = async function(folderId) {
         await removeCachedFolder(folderId); // <-- Add this here
 
@@ -2623,17 +2775,16 @@ window.approveCharmQuad = async function(folderId) {
       };
 
     // Internal helper function for single iteration runs
-    async function generateCharmQuad(targetCharmRef, targetEarringRef) {
+async function generateCharmQuad(targetCharmRef, targetEarringRef) {
         const timestamp = Date.now() + Math.floor(Math.random() * 10000);
         const folderId = `Deriv_${timestamp}`;
-        const outputBasePath = `${ROOT}/Charm_Maker/Generated_Charm_Sets/${folderId}`; // UPDATED
+        const outputBasePath = `${ROOT}/Charm_Maker/Generated_Charm_Sets/${folderId}`;
 
         const tempDiv = document.createElement("div");
         tempDiv.innerHTML = createCharmCardHTML(folderId, false);
         const cardNode = tempDiv.firstElementChild;
         charmGrid.insertBefore(cardNode, charmGrid.firstChild);
         
-        // Render Source immediately for UX
         const refBoxNode = document.getElementById(`prevBox_${folderId}_ref`);
         if (refBoxNode) {
             try {
@@ -2663,7 +2814,7 @@ window.approveCharmQuad = async function(folderId) {
         try {
             let lineArtRef = null;
             try {
-                lineArtRef = await listLatestFile(`${ROOT}/Charm_Maker/Reference_Line_Art_Image`); // UPDATED
+                lineArtRef = await listLatestFile(`${ROOT}/Charm_Maker/Reference_Line_Art_Image`);
             } catch (e) {
                 console.warn("No line art reference found. Will fallback to charm itself.", e);
             }
@@ -2677,12 +2828,12 @@ window.approveCharmQuad = async function(folderId) {
 
             await postJson("geminiImageProxy", {
                 kind: "write_manifest",
-                activeCategory: "Charms", // <--- CHANGED FROM "Charm_Maker"
+                activeCategory: "Charms",
                 output_base_path: outputBasePath,
                 manifest: manifest,
             });
 
-            // STEP 1
+            // STEP 1 - ONLY GENERATE THE BASE CHARM
             let prev0 = document.getElementById(`prevBox_${folderId}_0`);
             if(prev0) prev0.innerHTML = `<div class="slotRefEmpty">Generating Base...</div>`;
             await postJson(GEMINI_BG_FN, {
@@ -2704,80 +2855,21 @@ window.approveCharmQuad = async function(folderId) {
             const btn0 = document.getElementById(`redo_${folderId}_0`);
             if(btn0) btn0.disabled = false;
 
-            // STEP 2
-            setStatus("Generating Earring Twin (Removing Hoop)...");
-            let prev1 = document.getElementById(`prevBox_${folderId}_1`);
-            if(prev1) prev1.innerHTML = `<div class="slotRefEmpty">Removing Hoop...</div>`;
-            await sleep(2000); 
-            await postJson(GEMINI_BG_FN, {
-                kind: "edits", activeCategory: "Stud_Earrings", 
-                input_storage_path: charmRes.storagePath, input_charm_storage_path: charmRes.storagePath,
-                output_base_path: outputBasePath, slotIndex: 1,
-                model: "gemini-3-pro-image-preview", prompt: promptStrEarring
+            // --- PAUSE WORKFLOW FOR INTERSTITIAL APPROVAL ---
+            [1, 2, 3].forEach(i => {
+                window.ACTIVE_CHARM_JOBS.delete(`${folderId}_${i}`);
+                const p = document.getElementById(`prevBox_${folderId}_${i}`);
+                if(p) {
+                    p.classList.remove("working-box");
+                    p.innerHTML = `<div class="slotRefEmpty" style="color: #fde68a;">Waiting for Base Approval...</div>`;
+                }
             });
-            const earringRes = await waitForSlotPngUrl(outputBasePath, 1, { timeoutMs: 600000, intervalMs: 5000 });
-            const newBlob1 = await fetchAndCacheBlob(earringRes.url, earringRes.storagePath, Date.now());
-            
-            window.ACTIVE_CHARM_JOBS.delete(`${folderId}_1`);
-            prev1 = document.getElementById(`prevBox_${folderId}_1`);
-            if(prev1) {
-                prev1.classList.remove("working-box");
-                setBoxImage(prev1, newBlob1 ? URL.createObjectURL(newBlob1) : cacheBust(earringRes.url));
-                prev1.classList.add("success-border");
-            }
-            const btn1 = document.getElementById(`redo_${folderId}_1`);
-            if(btn1) btn1.disabled = false;
 
-            // STEP 3
-            setStatus("Generating B&W Line Art (Standard)...");
-            let prev2 = document.getElementById(`prevBox_${folderId}_2`);
-            if(prev2) prev2.innerHTML = `<div class="slotRefEmpty">Generating Line Art...</div>`;
-            await sleep(2000);
-            const refPathForBaseBW = lineArtRef ? lineArtRef.fullPath : charmRes.storagePath;
-            await postJson(GEMINI_BG_FN, {
-                kind: "edits", activeCategory: "Charms", 
-                input_storage_path: charmRes.storagePath, input_charm_storage_path: refPathForBaseBW,
-                output_base_path: outputBasePath, slotIndex: 2,
-                model: "gemini-3-pro-image-preview", prompt: promptStrBW
-            });
-            const charmBWRes = await waitForSlotPngUrl(outputBasePath, 2, { timeoutMs: 600000, intervalMs: 5000 });
-            const newBlob2 = await fetchAndCacheBlob(charmBWRes.url, charmBWRes.storagePath, Date.now());
-            
-            window.ACTIVE_CHARM_JOBS.delete(`${folderId}_2`);
-            prev2 = document.getElementById(`prevBox_${folderId}_2`);
-            if(prev2) {
-                prev2.classList.remove("working-box");
-                setBoxImage(prev2, newBlob2 ? URL.createObjectURL(newBlob2) : cacheBust(charmBWRes.url));
-                prev2.classList.add("success-border");
-            }
-            const btn2 = document.getElementById(`redo_${folderId}_2`);
-            if(btn2) btn2.disabled = false;
+            const continueBtn = document.getElementById(`continue_${folderId}`);
+            if (continueBtn) continueBtn.style.display = "block";
 
-            // STEP 4 - UPDATED logic to use Step 3's output and remove hoop
-            setStatus("Generating B&W Line Art (Earrings)...");
-            let prev3 = document.getElementById(`prevBox_${folderId}_3`);
-            if(prev3) prev3.innerHTML = `<div class="slotRefEmpty">Removing Hoop...</div>`;
-            await sleep(2000);
-            await postJson(GEMINI_BG_FN, {
-                kind: "edits", activeCategory: "Stud_Earrings", 
-                input_storage_path: charmBWRes.storagePath, input_charm_storage_path: charmBWRes.storagePath,
-                output_base_path: outputBasePath, slotIndex: 3,
-                model: "gemini-3-pro-image-preview", prompt: promptStrBWEarring
-            });
-            const earringBWRes = await waitForSlotPngUrl(outputBasePath, 3, { timeoutMs: 600000, intervalMs: 5000 });
-            const newBlob3 = await fetchAndCacheBlob(earringBWRes.url, earringBWRes.storagePath, Date.now());
-            
-            window.ACTIVE_CHARM_JOBS.delete(`${folderId}_3`);
-            prev3 = document.getElementById(`prevBox_${folderId}_3`);
-            if(prev3) {
-                prev3.classList.remove("working-box");
-                setBoxImage(prev3, newBlob3 ? URL.createObjectURL(newBlob3) : cacheBust(earringBWRes.url));
-                prev3.classList.add("success-border");
-            }
-            const btn3 = document.getElementById(`redo_${folderId}_3`);
-            if(btn3) btn3.disabled = false;
+            setStatus("Base Charm generated. Awaiting approval to continue.");
 
-            setStatus("Derivatives & Line Art Loop Complete.");
         } catch (err) {
             console.error("Master Generation Catch:", err);
             setStatus(`Error: ${err.message}`);
