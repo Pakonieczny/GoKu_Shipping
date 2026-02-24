@@ -1265,13 +1265,14 @@
         approvedCharmGrid.style.display = "grid"; // Target new grid
         setStatus("Approved Charm Sets");
         
-        if (approvedSetsHistory.length === 0) { 
+    if (approvedSetsHistory.length === 0) { 
             loadCharmHistoryList("Charm_Maker/Completed_Approved_Charm_Sets"); 
         } else {
             const totalPages = Math.ceil(approvedSetsHistory.length / CHARM_ITEMS_PER_PAGE);
             if (approvedCharmPaginationEl) approvedCharmPaginationEl.style.display = totalPages > 1 ? "flex" : "none";
         }
       }
+    } // <--- ADD THIS MISSING BRACE HERE
 
     toggleGenerateBtn.addEventListener("click", () => setAppMode("generate"));
     toggleReviewBtn.addEventListener("click", () => setAppMode("review"));
@@ -1928,7 +1929,7 @@
             charmSetsHistory = [];
             charmCurrentPage = 1;
         }
-        
+
         try {
             await ensureStorageSignedIn();
             const completedCharmsRef = ref(storage, `${ROOT}/${folderName}`);
