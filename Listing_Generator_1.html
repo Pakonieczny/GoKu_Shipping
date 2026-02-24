@@ -1248,13 +1248,14 @@
         charmGrid.style.display = "grid";
         setStatus("Charm Maker Database");
         
-        // Only load if completely empty to preserve live processing state
+        loadCharmMakerPreviews(); // Always update the preview queue
+
         if (charmSetsHistory.length === 0) { 
-            loadCharmMakerPreviews();
             loadCharmHistoryList("Charm_Maker/Generated_Charm_Sets"); 
         } else {
             const totalPages = Math.ceil(charmSetsHistory.length / CHARM_ITEMS_PER_PAGE);
             charmPaginationEl.style.display = totalPages > 1 ? "flex" : "none";
+            renderCharmPage(); // MUST render to restore the view
         }
       } else if (mode === "approvedCharms") {
         mainGridTitle.textContent = "Approved Charm Sets";
@@ -1265,14 +1266,15 @@
         approvedCharmGrid.style.display = "grid"; // Target new grid
         setStatus("Approved Charm Sets");
         
-    if (approvedSetsHistory.length === 0) { 
+        if (approvedSetsHistory.length === 0) { 
             loadCharmHistoryList("Charm_Maker/Completed_Approved_Charm_Sets"); 
         } else {
             const totalPages = Math.ceil(approvedSetsHistory.length / CHARM_ITEMS_PER_PAGE);
             if (approvedCharmPaginationEl) approvedCharmPaginationEl.style.display = totalPages > 1 ? "flex" : "none";
+            renderCharmPage(); // MUST render to restore the view
         }
       }
-    } // <--- ADD THIS MISSING BRACE HERE
+    } 
 
     toggleGenerateBtn.addEventListener("click", () => setAppMode("generate"));
     toggleReviewBtn.addEventListener("click", () => setAppMode("review"));
@@ -1941,13 +1943,15 @@
                 const tsB = parseInt(b.replace('Deriv_', '')) || 0;
                 return tsB - tsA; // descending
             });
-        charmSetsHistory = prefixes;
             
-            // ADDED: Update Approved Sets Counter
-        if (folderName === "Charm_Maker/Completed_Approved_Charm_Sets") { // UPDATED
-            const countSpan = document.querySelector("#approvedSetsCounter span");
-            if (countSpan) countSpan.textContent = charmSetsHistory.length;
-        }
+            // FIX: Ensure correct state assignment so arrays don't get mixed up between tabs
+            if (isApproved) {
+                approvedSetsHistory = prefixes;
+                const countSpan = document.querySelector("#approvedSetsCounter span");
+                if (countSpan) countSpan.textContent = approvedSetsHistory.length;
+            } else {
+                charmSetsHistory = prefixes;
+            }
             
             renderCharmPage();
         } catch (e) {
@@ -2061,10 +2065,10 @@
             setStatus(`Viewing Page ${targetPage}`);
         }
 
-        async function loadSetImagesForCharm(folderId, folderName) {
+    async function loadSetImagesForCharm(folderId, folderName) {
         const folderPath = `${ROOT}/${folderName}/${folderId}`;
         
-      try {
+        try {
             const manifestBuffer = await getBytes(ref(storage, `${folderPath}/manifest.json`));
             const manifest = JSON.parse(new TextDecoder().decode(manifestBuffer));
             if (manifest.sourceCharm) {
@@ -2083,6 +2087,16 @@
             console.warn("Could not load manifest/ref for", folderId);
         }
 
+        // PREVENT 404 CONSOLE ERRORS BY LISTING AVAILABLE FILES FIRST
+        const existingFiles = new Set();
+        try {
+            const folderRef = ref(storage, folderPath);
+            const res = await listAll(folderRef);
+            res.items.forEach(item => existingFiles.add(item.name));
+        } catch (e) {
+            console.warn("Could not list folder contents", folderPath);
+        }
+
         for (let i = 0; i < 4; i++) {
             const fileName = `Slot_${i+1}.png`;
             const storagePath = `${folderPath}/${fileName}`;
@@ -2094,6 +2108,14 @@
             let cached = await getCachedBlob(storagePath);
             if (cached && cached.blob) {
                 setBoxImage(prevBox, URL.createObjectURL(cached.blob));
+            }
+
+            // Skip Firebase network requests if the file doesn't exist (eliminates 404s)
+            if (!existingFiles.has(fileName)) {
+                if (!cached) {
+                    prevBox.innerHTML = `<div class="slotRefEmpty">Not Found</div>`;
+                }
+                continue; 
             }
 
             // 2. Background verification with Firebase
