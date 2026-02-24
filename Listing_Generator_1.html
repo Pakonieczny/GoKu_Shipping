@@ -252,11 +252,16 @@
         </div>
         
 <div class="row" style="margin-top: 10px; justify-content: space-between; align-items: center; background: #0e1220; padding: 10px; border-radius: 12px; border: 1px solid var(--line);">
-           <div id="completedSetsCounter" style="font-size: 13px; color: #7fdb96;">
-             Completed Sets Available: <span style="font-weight: bold; font-size: 15px;">0</span>
-           </div>
-           <button class="btn" id="downloadCompletedSetsBtn" style="background: #2b6cff; color: #fff; border: 1px solid #1a4bbf; font-weight: bold; font-size: 12px; padding: 6px 12px;">Download Sets (ZIP)</button>
-        </div>
+   <div style="display: flex; flex-direction: column; gap: 4px;">
+       <div id="completedSetsCounter" style="font-size: 13px; color: #7fdb96;">
+         Completed Sets Available: <span style="font-weight: bold; font-size: 15px;">0</span>
+       </div>
+       <div id="totalAllTimeCounter" style="font-size: 11px; color: var(--muted);">
+         Total (All Time): <span style="font-weight: bold;">0</span>
+       </div>
+   </div>
+   <button class="btn" id="downloadCompletedSetsBtn" style="background: #2b6cff; color: #fff; border: 1px solid #1a4bbf; font-weight: bold; font-size: 12px; padding: 6px 12px;">Download Sets (ZIP)</button>
+</div>
         <div style="margin-top: 8px; font-size: 11px; color: var(--muted);" id="backgroundQueueStatus"></div>
       </div> <div id="charmMakerSection" style="display: none;">
         <div class="row" style="margin-top:12px; gap: 14px;">
@@ -1328,6 +1333,7 @@
         reviewSection.style.display = "block";
         reviewGrid.style.display = "grid";
         updateCompletedSetsCounter(); // <--- ADD THIS LINE HERE
+        updateTotalAllTimeCounter();
         
         // Only load if empty to prevent wiping existing review state
         // Only load if empty to prevent wiping existing review state
@@ -1424,6 +1430,35 @@
         } catch (e) {
             console.warn("Failed to get completed sets count:", e);
             counterSpan.textContent = "Error";
+        }
+    }
+
+    async function updateTotalAllTimeCounter() {
+        const totalCounterSpan = document.querySelector("#totalAllTimeCounter span");
+        if (!totalCounterSpan) return;
+        try {
+            await ensureStorageSignedIn();
+            
+            // Get current active completed sets
+            const completedFolder = `${ROOT}/Generated_Listing_Sets/Completed_Listing_Sets`;
+            let completedCount = 0;
+            try {
+                const completedRes = await listAll(ref(storage, completedFolder));
+                completedCount = completedRes.prefixes.length;
+            } catch(e) {}
+            
+            // Get permanently stored approved sets
+            const approvedFolder = `${ROOT}/Generated_Listing_Sets/Approved_Listing_Sets`;
+            let approvedCount = 0;
+            try {
+                const approvedRes = await listAll(ref(storage, approvedFolder));
+                approvedCount = approvedRes.prefixes.length;
+            } catch(e) {}
+
+            totalCounterSpan.textContent = completedCount + approvedCount;
+        } catch (e) {
+            console.warn("Failed to get total all time sets count:", e);
+            totalCounterSpan.textContent = "Error";
         }
     }
     
@@ -1674,6 +1709,7 @@
                     backgroundQueueStatus.textContent = "";
                 }
                 updateCompletedSetsCounter(); // <--- ADD THIS LINE HERE
+                updateTotalAllTimeCounter();
             }, 3000);
 
         } catch (e) {
@@ -3773,25 +3809,49 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
                 downloadApprovedSetsBtn.textContent = "Generating ZIP file...";
                 const zipBlob = await zip.generateAsync({ type: "blob" });
 
-                // Trigger the local browser download
+// Trigger the local browser download
                 const url = URL.createObjectURL(zipBlob);
                 const a = document.createElement("a");
                 a.href = url;
                 const dateStr = new Date().toISOString().split('T')[0];
-                a.download = `Approved_Charm_Sets_${dateStr}.zip`;
+                a.download = `Completed_Listing_Sets_${dateStr}.zip`;
                 document.body.appendChild(a);
                 a.click();
                 document.body.removeChild(a);
                 URL.revokeObjectURL(url);
 
-                downloadApprovedSetsBtn.textContent = "Download Complete!";
+                // --- NEW LOGIC: Move Sets to Permanent Storage ---
+                downloadCompletedSetsBtn.textContent = "Moving to storage...";
+                const destBaseFolderPath = `${ROOT}/Generated_Listing_Sets/Approved_Listing_Sets`;
+                
+                let movedCount = 0;
+                for (const folderRef of prefixes) {
+                    downloadCompletedSetsBtn.textContent = `Moving folder ${movedCount + 1} of ${prefixes.length}...`;
+                    const folderName = folderRef.name;
+                    const folderItems = await listAll(folderRef);
+                    
+                    // Copy each file to the Approved folder, then delete the original
+                    for (const itemRef of folderItems.items) {
+                        const fileData = await getBytes(itemRef);
+                        const newFileRef = ref(storage, `${destBaseFolderPath}/${folderName}/${itemRef.name}`);
+                        await uploadBytesResumable(newFileRef, fileData);
+                        await deleteObject(itemRef); // Remove from Completed queue
+                    }
+                    movedCount++;
+                }
+
+                // Refresh UI Counters
+                updateCompletedSetsCounter();
+                updateTotalAllTimeCounter();
+
+                downloadCompletedSetsBtn.textContent = "Download & Move Complete!";
                 setTimeout(() => {
-                    downloadApprovedSetsBtn.textContent = originalText;
-                    downloadApprovedSetsBtn.disabled = false;
-                    downloadApprovedSetsBtn.style.opacity = "1";
+                    downloadCompletedSetsBtn.textContent = originalText;
+                    downloadCompletedSetsBtn.disabled = false;
+                    downloadCompletedSetsBtn.style.opacity = "1";
                 }, 3000);
 
-                } catch (error) {
+            } catch (error) {
                 if (error.message !== "Empty Directory") {
                     console.error("Error downloading sets:", error);
                     alert(`Failed to download sets: ${error.message}`);
