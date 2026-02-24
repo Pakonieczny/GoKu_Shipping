@@ -247,11 +247,17 @@
         <div class="row">
           <select id="reviewSetSelect"></select>
         </div>
-        <div class="row" style="margin-top:10px;">
+<div class="row" style="margin-top:10px;">
            <button class="btn" id="approveSetBtn" style="width:100%; background: #1f4026; color: #7fdb96; border: 1px solid #2f5e3a;">Approve Set (Move to Completed)</button>
         </div>
+        
+        <div class="row" style="margin-top: 10px; justify-content: space-between; align-items: center; background: #0e1220; padding: 10px; border-radius: 12px; border: 1px solid var(--line);">
+           <div id="completedSetsCounter" style="font-size: 13px; color: #7fdb96;">
+             Completed Sets Available: <span style="font-weight: bold; font-size: 15px;">0</span>
+           </div>
+           <button class="btn" id="downloadCompletedSetsBtn" style="background: #2b6cff; color: #fff; border: 1px solid #1a4bbf; font-weight: bold; font-size: 12px; padding: 6px 12px;">Download Sets (ZIP)</button>
+        </div>
         <div style="margin-top: 8px; font-size: 11px; color: var(--muted);" id="backgroundQueueStatus"></div>
-      </div>
 
       <div id="charmMakerSection" style="display: none;">
         <div class="row" style="margin-top:12px; gap: 14px;">
@@ -1322,6 +1328,9 @@
         toggleReviewBtn.style.color = "var(--text)";
         reviewSection.style.display = "block";
         reviewGrid.style.display = "grid";
+        updateCompletedSetsCounter(); // <--- ADD THIS LINE HERE
+        
+        // Only load if empty to prevent wiping existing review state
         // Only load if empty to prevent wiping existing review state
         if (reviewSetSelect.options.length === 0 || reviewSetSelect.innerHTML.includes("Loading...")) {
             loadReviewSets();
@@ -1402,6 +1411,21 @@
         setStatus("Error loading sets");
         reviewSetSelect.innerHTML = `<option value="">Error loading</option>`;
       }
+    }
+
+    async function updateCompletedSetsCounter() {
+        const counterSpan = document.querySelector("#completedSetsCounter span");
+        if (!counterSpan) return;
+        try {
+            await ensureStorageSignedIn();
+            const folderPath = `${ROOT}/Generated_Listing_Sets/Completed_Listing_Sets`;
+            const baseRef = ref(storage, folderPath);
+            const res = await listAll(baseRef);
+            counterSpan.textContent = res.prefixes.length; // Counting folders
+        } catch (e) {
+            console.warn("Failed to get completed sets count:", e);
+            counterSpan.textContent = "Error";
+        }
     }
     
     function updateDropdownLabels() {
@@ -1650,6 +1674,7 @@
                 if (backgroundQueueStatus.textContent.includes(setName)) {
                     backgroundQueueStatus.textContent = "";
                 }
+                updateCompletedSetsCounter(); // <--- ADD THIS LINE HERE
             }, 3000);
 
         } catch (e) {
@@ -3775,6 +3800,83 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
                 downloadApprovedSetsBtn.textContent = originalText;
                 downloadApprovedSetsBtn.disabled = false;
                 downloadApprovedSetsBtn.style.opacity = "1";
+
+// --- Download Completed Listing Sets Logic ---
+    const downloadCompletedSetsBtn = document.getElementById("downloadCompletedSetsBtn");
+
+    if (downloadCompletedSetsBtn) {
+        downloadCompletedSetsBtn.addEventListener("click", async () => {
+            if (!window.JSZip) {
+                alert("JSZip library not loaded. Check your internet connection.");
+                return;
+            }
+
+            const originalText = downloadCompletedSetsBtn.textContent;
+            downloadCompletedSetsBtn.disabled = true;
+            downloadCompletedSetsBtn.style.opacity = "0.7";
+            downloadCompletedSetsBtn.textContent = "Fetching list...";
+
+            try {
+                await ensureStorageSignedIn();
+                
+                // Target the Completed_Listing_Sets folder
+                const folderPath = `${ROOT}/Generated_Listing_Sets/Completed_Listing_Sets`;
+                const baseRef = ref(storage, folderPath);
+                const res = await listAll(baseRef);
+                
+                const prefixes = res.prefixes;
+                if (prefixes.length === 0) {
+                    alert("No completed sets found to download.");
+                    throw new Error("Empty Directory");
+                }
+
+                const zip = new JSZip();
+                let processedFolders = 0;
+
+                // Process sequentially to keep browser memory stable
+                for (const folderRef of prefixes) {
+                    downloadCompletedSetsBtn.textContent = `Zipping folder ${processedFolders + 1} of ${prefixes.length}...`;
+                    const folderName = folderRef.name; // e.g., Category_Set_123
+                    const folderItems = await listAll(folderRef);
+
+                    // Fetch files within the folder in parallel
+                    await Promise.all(folderItems.items.map(async (itemRef) => {
+                        const fileData = await getBytes(itemRef);
+                        // Store it in the zip under its respective folder
+                        zip.file(`${folderName}/${itemRef.name}`, fileData);
+                    }));
+                    processedFolders++;
+                }
+
+                downloadCompletedSetsBtn.textContent = "Generating ZIP file...";
+                const zipBlob = await zip.generateAsync({ type: "blob" });
+
+                // Trigger the local browser download
+                const url = URL.createObjectURL(zipBlob);
+                const a = document.createElement("a");
+                a.href = url;
+                const dateStr = new Date().toISOString().split('T')[0];
+                a.download = `Completed_Listing_Sets_${dateStr}.zip`;
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                URL.revokeObjectURL(url);
+
+                downloadCompletedSetsBtn.textContent = "Download Complete!";
+                setTimeout(() => {
+                    downloadCompletedSetsBtn.textContent = originalText;
+                    downloadCompletedSetsBtn.disabled = false;
+                    downloadCompletedSetsBtn.style.opacity = "1";
+                }, 3000);
+
+            } catch (error) {
+                if (error.message !== "Empty Directory") {
+                    console.error("Error downloading sets:", error);
+                    alert(`Failed to download sets: ${error.message}`);
+                }
+                downloadCompletedSetsBtn.textContent = originalText;
+                downloadCompletedSetsBtn.disabled = false;
+                downloadCompletedSetsBtn.style.opacity = "1";
             }
         });
     }
