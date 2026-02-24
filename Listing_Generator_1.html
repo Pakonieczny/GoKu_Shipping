@@ -284,12 +284,20 @@
 
       <div class="grid" id="generateGrid"></div>
       <div class="grid" id="reviewGrid" style="display: none;"></div>
+      
       <div class="grid" id="charmGrid" style="display: none;"></div>
+      <div class="grid" id="approvedCharmGrid" style="display: none;"></div>
       
       <div id="charmPagination" class="row" style="display: none; justify-content: space-between; align-items: center; margin-top: 14px; padding: 10px; background: #0e1220; border-radius: 12px; border: 1px solid var(--line);">
           <button class="btn btnSmall" id="charmPrevPage" style="width: 80px;">Previous</button>
           <div id="charmPageInfo" class="muted">Page 1</div>
           <button class="btn btnSmall" id="charmNextPage" style="width: 80px;">Next</button>
+      </div>
+
+      <div id="approvedCharmPagination" class="row" style="display: none; justify-content: space-between; align-items: center; margin-top: 14px; padding: 10px; background: #0e1220; border-radius: 12px; border: 1px solid var(--line);">
+          <button class="btn btnSmall" id="approvedPrevPage" style="width: 80px;">Previous</button>
+          <div id="approvedPageInfo" class="muted">Page 1</div>
+          <button class="btn btnSmall" id="approvedNextPage" style="width: 80px;">Next</button>
       </div>
     </div>
   </div> 
@@ -698,8 +706,13 @@
     const generateGrid = document.getElementById("generateGrid");
     const reviewGrid = document.getElementById("reviewGrid");
     const charmGrid = document.getElementById("charmGrid");
+    const approvedCharmGrid = document.getElementById("approvedCharmGrid"); // NEW
     const statusEl = document.getElementById("status");
     const charmPaginationEl = document.getElementById("charmPagination");
+    const approvedCharmPaginationEl = document.getElementById("approvedCharmPagination"); // NEW
+
+    let approvedSetsHistory = []; // NEW
+    let approvedCurrentPage = 1;  // NEW
 
     // --- Mode Variables ---
     const toggleGenerateBtn = document.getElementById("toggleGenerate");
@@ -1200,6 +1213,8 @@
       generateGrid.style.display = "none";
       reviewGrid.style.display = "none";
       charmGrid.style.display = "none";
+      if (approvedCharmGrid) approvedCharmGrid.style.display = "none";
+      if (approvedCharmPaginationEl) approvedCharmPaginationEl.style.display = "none";
       
       const mainGridTitle = document.getElementById("mainGridTitle");
       const approvedSetsHeader = document.getElementById("approvedSetsHeader");
@@ -1233,30 +1248,30 @@
         charmGrid.style.display = "grid";
         setStatus("Charm Maker Database");
         
-        // Only load if empty to prevent interrupting running charm quads
-        if (currentCharmViewFolder !== "Charm_Maker/Generated_Charm_Sets" || charmSetsHistory.length === 0) { // UPDATED
+        // Only load if completely empty to preserve live processing state
+        if (charmSetsHistory.length === 0) { 
             loadCharmMakerPreviews();
-            loadCharmHistoryList("Charm_Maker/Generated_Charm_Sets"); // UPDATED
+            loadCharmHistoryList("Charm_Maker/Generated_Charm_Sets"); 
         } else {
             const totalPages = Math.ceil(charmSetsHistory.length / CHARM_ITEMS_PER_PAGE);
             charmPaginationEl.style.display = totalPages > 1 ? "flex" : "none";
         }
-        } else if (mode === "approvedCharms") {
+      } else if (mode === "approvedCharms") {
         mainGridTitle.textContent = "Approved Charm Sets";
         if (approvedSetsHeader) approvedSetsHeader.style.display = "flex";
         toggleApprovedCharmsBtn.style.background = "var(--line)";
         toggleApprovedCharmsBtn.style.color = "var(--text)";
         charmMakerSection.style.display = "none"; 
-        charmGrid.style.display = "grid";
+        approvedCharmGrid.style.display = "grid"; // Target new grid
         setStatus("Approved Charm Sets");
-        if (currentCharmViewFolder !== "Charm_Maker/Completed_Approved_Charm_Sets" || charmSetsHistory.length === 0) { // UPDATED
-            loadCharmHistoryList("Charm_Maker/Completed_Approved_Charm_Sets"); // UPDATED
+        
+        if (approvedSetsHistory.length === 0) { 
+            loadCharmHistoryList("Charm_Maker/Completed_Approved_Charm_Sets"); 
         } else {
-            const totalPages = Math.ceil(charmSetsHistory.length / CHARM_ITEMS_PER_PAGE);
-            charmPaginationEl.style.display = totalPages > 1 ? "flex" : "none";
+            const totalPages = Math.ceil(approvedSetsHistory.length / CHARM_ITEMS_PER_PAGE);
+            if (approvedCharmPaginationEl) approvedCharmPaginationEl.style.display = totalPages > 1 ? "flex" : "none";
         }
       }
-    }
 
     toggleGenerateBtn.addEventListener("click", () => setAppMode("generate"));
     toggleReviewBtn.addEventListener("click", () => setAppMode("review"));
@@ -1904,9 +1919,42 @@
 
     async function loadCharmHistoryList(folderName) {
         setStatus("Loading history...");
-        charmSetsHistory = [];
-        charmCurrentPage = 1;
-        currentCharmViewFolder = folderName;
+        
+        const isApproved = folderName === "Charm_Maker/Completed_Approved_Charm_Sets";
+        if (isApproved) {
+            approvedSetsHistory = [];
+            approvedCurrentPage = 1;
+        } else {
+            charmSetsHistory = [];
+            charmCurrentPage = 1;
+        }
+        
+        try {
+            await ensureStorageSignedIn();
+            const completedCharmsRef = ref(storage, `${ROOT}/${folderName}`);
+            const res = await listAll(completedCharmsRef);
+            
+            const prefixes = res.prefixes.map(p => p.name).filter(n => n.startsWith('Deriv_'));
+            prefixes.sort((a, b) => {
+                const tsA = parseInt(a.replace('Deriv_', '')) || 0;
+                const tsB = parseInt(b.replace('Deriv_', '')) || 0;
+                return tsB - tsA; // descending
+            });
+            
+            if (isApproved) {
+                approvedSetsHistory = prefixes;
+                const countSpan = document.querySelector("#approvedSetsCounter span");
+                if (countSpan) countSpan.textContent = approvedSetsHistory.length;
+            } else {
+                charmSetsHistory = prefixes;
+            }
+            
+            renderCharmPage(isApproved);
+        } catch (e) {
+            console.error("Failed to load Charm history:", e);
+            setStatus("Error loading history");
+        }
+    }
         try {
             await ensureStorageSignedIn();
             const completedCharmsRef = ref(storage, `${ROOT}/${folderName}`);
@@ -1939,14 +1987,15 @@
         const redoHTML2 = isApprovedView ? '' : `<button class="btn btnSmall redoBtn" id="redo_${folderId}_2" onclick="redoCharmSlot('${folderId}', 2)">Redo</button>`;
         const redoHTML3 = isApprovedView ? '' : `<button class="btn btnSmall redoBtn" id="redo_${folderId}_3" onclick="redoCharmSlot('${folderId}', 3)">Redo</button>`;
 
+        const folderArg = isApprovedView ? 'true' : 'false';
         const actionButtons = isApprovedView ? 
             `<div class="row" style="grid-column: span 2; gap: 8px; margin-top: 4px;">
-                <button class="btn btnSmall redoBtn" style="flex:1; background: #3d1c1c; border-color: #7a3838; color: #fca5a5;" onclick="deleteCharmQuad('${folderId}')">Delete</button>
+                <button class="btn btnSmall redoBtn" style="flex:1; background: #3d1c1c; border-color: #7a3838; color: #fca5a5;" onclick="deleteCharmQuad('${folderId}', ${folderArg})">Delete</button>
             </div>` 
             : 
             `<div class="row" style="grid-column: span 2; gap: 8px; margin-top: 4px;">
                 <button class="btn btnSmall redoBtn" style="flex:1;" onclick="regenCharmQuad('${folderId}')">Regen Quad</button>
-                <button class="btn btnSmall redoBtn" style="flex:1; background: #3d1c1c; border-color: #7a3838; color: #fca5a5;" onclick="deleteCharmQuad('${folderId}')">Delete</button>
+                <button class="btn btnSmall redoBtn" style="flex:1; background: #3d1c1c; border-color: #7a3838; color: #fca5a5;" onclick="deleteCharmQuad('${folderId}', ${folderArg})">Delete</button>
                 <button class="btn btnSmall redoBtn" style="flex:1; background: #1f4026; border-color: #2f5e3a; color: #7fdb96;" onclick="approveCharmQuad('${folderId}')">Approve</button>
             </div>`;
 
@@ -1990,42 +2039,55 @@
         `;
     }
 
-    function renderCharmPage() {
-        charmGrid.innerHTML = "";
-        
-        if (charmSetsHistory.length === 0) {
-            charmGrid.innerHTML = `<div class="slotRefEmpty" style="grid-column:span 4;">No historical sets found.</div>`;
-            charmPaginationEl.style.display = "none";
-            setStatus("Ready");
-            return;
+    function renderCharmPage(isApprovedView) {
+            if (typeof isApprovedView !== "boolean") {
+                 isApprovedView = (appMode === "approvedCharms");
+            }
+
+            const targetGrid = isApprovedView ? approvedCharmGrid : charmGrid;
+            const targetHistory = isApprovedView ? approvedSetsHistory : charmSetsHistory;
+            const targetPage = isApprovedView ? approvedCurrentPage : charmCurrentPage;
+            const targetPagination = isApprovedView ? approvedCharmPaginationEl : charmPaginationEl;
+            
+            targetGrid.innerHTML = "";
+            
+            if (targetHistory.length === 0) {
+                targetGrid.innerHTML = `<div class="slotRefEmpty" style="grid-column:span 4;">No historical sets found.</div>`;
+                if (targetPagination) targetPagination.style.display = "none";
+                setStatus("Ready");
+                return;
+            }
+
+            const totalPages = Math.ceil(targetHistory.length / CHARM_ITEMS_PER_PAGE);
+            
+            if (isApprovedView) {
+                document.getElementById("approvedPageInfo").textContent = `Page ${targetPage} of ${totalPages}`;
+                document.getElementById("approvedPrevPage").disabled = (targetPage === 1);
+                document.getElementById("approvedNextPage").disabled = (targetPage === totalPages);
+            } else {
+                document.getElementById("charmPageInfo").textContent = `Page ${targetPage} of ${totalPages}`;
+                document.getElementById("charmPrevPage").disabled = (targetPage === 1);
+                document.getElementById("charmNextPage").disabled = (targetPage === totalPages);
+            }
+            
+            if (targetPagination) targetPagination.style.display = totalPages > 1 ? "flex" : "none";
+
+            const startIndex = (targetPage - 1) * CHARM_ITEMS_PER_PAGE;
+            const pageItems = targetHistory.slice(startIndex, startIndex + CHARM_ITEMS_PER_PAGE);
+
+            pageItems.forEach(folderId => {
+                const tempDiv = document.createElement("div");
+                tempDiv.innerHTML = createCharmCardHTML(folderId, isApprovedView);
+                const cardNode = tempDiv.firstElementChild;
+                targetGrid.appendChild(cardNode);
+                loadSetImagesForCharm(folderId, isApprovedView ? "Charm_Maker/Completed_Approved_Charm_Sets" : "Charm_Maker/Generated_Charm_Sets");
+            });
+            
+            setStatus(`Viewing Page ${targetPage}`);
         }
 
-        const totalPages = Math.ceil(charmSetsHistory.length / CHARM_ITEMS_PER_PAGE);
-        document.getElementById("charmPageInfo").textContent = `Page ${charmCurrentPage} of ${totalPages}`;
-        
-        document.getElementById("charmPrevPage").disabled = (charmCurrentPage === 1);
-        document.getElementById("charmNextPage").disabled = (charmCurrentPage === totalPages);
-        
-        charmPaginationEl.style.display = totalPages > 1 ? "flex" : "none";
-
-        const startIndex = (charmCurrentPage - 1) * CHARM_ITEMS_PER_PAGE;
-        const pageItems = charmSetsHistory.slice(startIndex, startIndex + CHARM_ITEMS_PER_PAGE);
-
-        const isApprovedView = currentCharmViewFolder === "Charm_Maker/Completed_Approved_Charm_Sets"; // UPDATED
-
-        pageItems.forEach(folderId => {
-            const tempDiv = document.createElement("div");
-            tempDiv.innerHTML = createCharmCardHTML(folderId, isApprovedView);
-            const cardNode = tempDiv.firstElementChild;
-            charmGrid.appendChild(cardNode);
-            loadSetImagesForCharm(folderId);
-        });
-        
-        setStatus(`Viewing Page ${charmCurrentPage}`);
-    }
-
-    async function loadSetImagesForCharm(folderId) {
-        const folderPath = `${ROOT}/${currentCharmViewFolder}/${folderId}`;
+        async function loadSetImagesForCharm(folderId, folderName) {
+        const folderPath = `${ROOT}/${folderName}/${folderId}`;
         
       try {
             const manifestBuffer = await getBytes(ref(storage, `${folderPath}/manifest.json`));
