@@ -899,9 +899,9 @@
 
             await postJson("geminiImageProxy", {
                 kind: "write_manifest",
-                activeCategory: "Charm_Maker",
-                output_base_path: outputBasePath,
-                manifest: manifest,
+                activeCategory: ctxCategory, // <--- CHANGED FROM "Charm_Maker"
+                output_base_path: ctxSetPath, // <--- CHANGED FROM outputBasePath
+                manifest: manifestJson, // <--- CHANGED FROM manifest
             });
       } catch (e) {
         console.warn("Manifest update failed (non-fatal):", e);
@@ -1769,7 +1769,7 @@
         setStatus("Writing manifest…");
             await postJson("geminiImageProxy", {
                 kind: "write_manifest",
-                activeCategory: "Charm_Maker",
+                activeCategory: category, // <--- CHANGED FROM "Charm_Maker"
                 output_base_path: outputBasePath,
                 manifest: manifest,
             });
@@ -2167,7 +2167,7 @@
             let inputPath = "";
             let inputCharmPath = "";
             let promptStr = "";
-            let category = "Charm_Maker"; // <--- Set universally for the backend check
+            let category = "Charms"; // <--- CHANGED FROM "Charm_Maker"
 
             if (slotIndex === 0) {
                 // Ensure charm source exists
@@ -2278,7 +2278,7 @@ window.regenCharmQuad = async function(folderId) {
             // STEP 1
             prev0.innerHTML = `<div class="slotRefEmpty">Generating Base...</div>`;
             await postJson(GEMINI_BG_FN, {
-                kind: "edits", activeCategory: "Charm_Maker", 
+                kind: "edits", activeCategory: "Charms",
                 input_storage_path: sourceCharmPath, input_charm_storage_path: sourceCharmPath,
                 output_base_path: folderPath, slotIndex: 0,
                 model: "gemini-3-pro-image-preview", prompt: promptStrCharm
@@ -2298,7 +2298,7 @@ window.regenCharmQuad = async function(folderId) {
             prev1.innerHTML = `<div class="slotRefEmpty">Removing Hoop...</div>`;
             await sleep(2000); 
             await postJson(GEMINI_BG_FN, {
-                kind: "edits", activeCategory: "Charm_Maker", 
+                kind: "edits", activeCategory: "Charms",
                 input_storage_path: charmRes.storagePath, input_charm_storage_path: charmRes.storagePath,
                 output_base_path: folderPath, slotIndex: 1,
                 model: "gemini-3-pro-image-preview", prompt: promptStrEarring
@@ -2319,7 +2319,7 @@ window.regenCharmQuad = async function(folderId) {
             await sleep(2000);
             const refPathForBaseBW = lineArtRefPath || charmRes.storagePath;
             await postJson(GEMINI_BG_FN, {
-                kind: "edits", activeCategory: "Charm_Maker", 
+                kind: "edits", activeCategory: "Charms",
                 input_storage_path: charmRes.storagePath, input_charm_storage_path: refPathForBaseBW,
                 output_base_path: folderPath, slotIndex: 2,
                 model: "gemini-3-pro-image-preview", prompt: promptStrBW
@@ -2339,7 +2339,7 @@ window.regenCharmQuad = async function(folderId) {
             prev3.innerHTML = `<div class="slotRefEmpty">Removing Hoop...</div>`;
             await sleep(2000);
             await postJson(GEMINI_BG_FN, {
-                kind: "edits", activeCategory: "Charm_Maker", 
+                kind: "edits", activeCategory: "Charms",
                 input_storage_path: charmBWRes.storagePath, input_charm_storage_path: charmBWRes.storagePath,
                 output_base_path: folderPath, slotIndex: 3,
                 model: "gemini-3-pro-image-preview", prompt: promptStrBWEarring
@@ -2484,7 +2484,7 @@ window.approveCharmQuad = async function(folderId) {
 
             await postJson("geminiImageProxy", {
                 kind: "write_manifest",
-                activeCategory: "Charm_Maker",
+                activeCategory: "Charms", // <--- CHANGED FROM "Charm_Maker"
                 output_base_path: outputBasePath,
                 manifest: manifest,
             });
