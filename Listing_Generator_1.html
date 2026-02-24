@@ -1179,7 +1179,7 @@
         }
     }
 
-    // Helper to prevent memory leaks by revoking old blob URLs
+// Helper to prevent memory leaks by revoking old blob URLs
     function setBoxImage(box, srcUrl) {
         if (!box) return;
         const oldImg = box.querySelector("img");
@@ -1250,13 +1250,8 @@
         
         loadCharmMakerPreviews(); // Always update the preview queue
 
-        if (charmSetsHistory.length === 0) { 
-            loadCharmHistoryList("Charm_Maker/Generated_Charm_Sets"); 
-        } else {
-            const totalPages = Math.ceil(charmSetsHistory.length / CHARM_ITEMS_PER_PAGE);
-            charmPaginationEl.style.display = totalPages > 1 ? "flex" : "none";
-            renderCharmPage(); // MUST render to restore the view
-        }
+        // ALWAYS fetch the latest list to auto-detect new generations
+        loadCharmHistoryList("Charm_Maker/Generated_Charm_Sets"); 
       } else if (mode === "approvedCharms") {
         mainGridTitle.textContent = "Approved Charm Sets";
         if (approvedSetsHeader) approvedSetsHeader.style.display = "flex";
@@ -1266,13 +1261,8 @@
         approvedCharmGrid.style.display = "grid"; // Target new grid
         setStatus("Approved Charm Sets");
         
-        if (approvedSetsHistory.length === 0) { 
-            loadCharmHistoryList("Charm_Maker/Completed_Approved_Charm_Sets"); 
-        } else {
-            const totalPages = Math.ceil(approvedSetsHistory.length / CHARM_ITEMS_PER_PAGE);
-            if (approvedCharmPaginationEl) approvedCharmPaginationEl.style.display = totalPages > 1 ? "flex" : "none";
-            renderCharmPage(); // MUST render to restore the view
-        }
+        // ALWAYS fetch the latest list to auto-detect newly approved sets
+        loadCharmHistoryList("Charm_Maker/Completed_Approved_Charm_Sets"); 
       }
     } 
 
