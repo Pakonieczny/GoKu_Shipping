@@ -252,14 +252,18 @@
         </div>
         
 <div class="row" style="margin-top: 10px; justify-content: space-between; align-items: center; background: #0e1220; padding: 10px; border-radius: 12px; border: 1px solid var(--line);">
-   <div style="display: flex; flex-direction: column; gap: 4px;">
-       <div id="completedSetsCounter" style="font-size: 13px; color: #7fdb96;">
-         Completed Sets Available: <span style="font-weight: bold; font-size: 15px;">0</span>
-       </div>
-       <div id="totalAllTimeCounter" style="font-size: 11px; color: var(--muted);">
-         Total (All Time): <span style="font-weight: bold;">0</span>
-       </div>
+   <div id="completedSetsCounter" style="font-size: 13px; color: #7fdb96;">
+     Completed Sets Available: <span style="font-weight: bold; font-size: 15px;">0</span>
    </div>
+   <button class="btn" id="downloadCompletedSetsBtn" style="background: #2b6cff; color: #fff; border: 1px solid #1a4bbf; font-weight: bold; font-size: 12px; padding: 6px 12px;">Download Sets (ZIP)</button>
+</div>
+
+<div class="row" style="margin-top: 8px; justify-content: space-between; align-items: center; background: #0b0d12; padding: 10px; border-radius: 12px; border: 1px dashed #3a4262;">
+   <div style="font-size: 12px; color: var(--muted);">Permanent Storage:</div>
+   <div id="totalAllTimeCounter" style="font-size: 13px; color: #a5b4fc; font-weight: bold;">
+     Total Approved (All Time): <span>0</span>
+   </div>
+</div>
    <button class="btn" id="downloadCompletedSetsBtn" style="background: #2b6cff; color: #fff; border: 1px solid #1a4bbf; font-weight: bold; font-size: 12px; padding: 6px 12px;">Download Sets (ZIP)</button>
 </div>
         <div style="margin-top: 8px; font-size: 11px; color: var(--muted);" id="backgroundQueueStatus"></div>
@@ -1433,29 +1437,23 @@
         }
     }
 
-    async function updateTotalAllTimeCounter() {
+async function updateTotalAllTimeCounter() {
         const totalCounterSpan = document.querySelector("#totalAllTimeCounter span");
         if (!totalCounterSpan) return;
         try {
             await ensureStorageSignedIn();
             
-            // Get current active completed sets
-            const completedFolder = `${ROOT}/Generated_Listing_Sets/Completed_Listing_Sets`;
-            let completedCount = 0;
-            try {
-                const completedRes = await listAll(ref(storage, completedFolder));
-                completedCount = completedRes.prefixes.length;
-            } catch(e) {}
-            
-            // Get permanently stored approved sets
+            // Get permanently stored approved sets ONLY
             const approvedFolder = `${ROOT}/Generated_Listing_Sets/Approved_Listing_Sets`;
             let approvedCount = 0;
             try {
                 const approvedRes = await listAll(ref(storage, approvedFolder));
                 approvedCount = approvedRes.prefixes.length;
-            } catch(e) {}
+            } catch(e) {
+                console.warn("Could not read Approved folder:", e);
+            }
 
-            totalCounterSpan.textContent = completedCount + approvedCount;
+            totalCounterSpan.textContent = approvedCount;
         } catch (e) {
             console.warn("Failed to get total all time sets count:", e);
             totalCounterSpan.textContent = "Error";
