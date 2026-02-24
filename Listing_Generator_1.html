@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>Listing-Generator-1</title>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
-  <style>
+<style>
     :root { --bg:#0b0d12; --card:#121624; --muted:#8b93a7; --text:#e9ecf5; --line:#242a3d; }
     body{ margin:0; font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial; background:var(--bg); color:var(--text); }
     .wrap{ padding:14px; display:grid; grid-template-columns: 420px 1fr; gap:14px; }
@@ -170,6 +170,38 @@
     .bar{ height:8px; border-radius:999px; background:#0b0d12; border:1px solid var(--line); overflow:hidden; margin-top:10px; }
     .bar > div{ height:100%; width:0%; background:#2b6cff; transition:width 120ms linear; }
     .small{ font-size:11px; color:var(--muted); margin-top:6px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+
+    /* === SPINNER & BUTTON GUARDS === */
+    .spinner {
+      width: 22px;
+      height: 22px;
+      border: 3px solid rgba(255,255,255,0.1);
+      border-radius: 50%;
+      border-top-color: #7fdb96;
+      animation: spin 1s ease-in-out infinite;
+      margin: 0 auto 6px auto;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    
+    .spinner-container {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      width: 100%;
+      height: 100%;
+      color: #fdba74;
+      font-size: 11px;
+    }
+    
+    /* We use pointer-events: none to fully kill clicks while disabled */
+    button.disabled-action {
+      background: #1a1e2b !important;
+      border-color: #2a3143 !important;
+      color: #5b637a !important;
+      cursor: not-allowed !important;
+      pointer-events: none !important;
+    }
   </style>
 </head>
 
@@ -717,7 +749,7 @@
       }
     }
 
-    // --- UI State ---
+// --- UI State ---
     const activeCategoryEl = document.getElementById("activeCategory");
     const panelsEl = document.getElementById("panels");
     const panelNewCharmsEl = document.getElementById("panelNewCharms");
@@ -732,6 +764,43 @@
 
     let approvedSetsHistory = []; // NEW
     let approvedCurrentPage = 1;  // NEW
+
+    // --- UI Helper Functions for Spinners and Button Locks ---
+    window.getSpinnerHTML = function(msg) {
+        return `<div class="spinner-container"><div class="spinner"></div><div style="margin-top: 8px;">${msg}</div></div>`;
+    };
+
+    window.setQuadButtonsState = function(folderId, disabled) {
+        const cardObj = document.getElementById(`card_${folderId}`);
+        if (!cardObj) return;
+        
+        // Target the action row at the bottom of the card
+        const actionRow = cardObj.querySelector('.row:last-child');
+        if (actionRow) {
+            const btns = actionRow.querySelectorAll('button');
+            btns.forEach(btn => {
+                btn.disabled = disabled;
+                if (disabled) {
+                    btn.classList.add('disabled-action');
+                } else {
+                    btn.classList.remove('disabled-action');
+                }
+            });
+        }
+    };
+
+    window.updateQuadActionButtons = function(folderId) {
+        let isBusy = false;
+        if (window.ACTIVE_CHARM_JOBS) {
+            for (let i = 0; i < 4; i++) {
+                if (window.ACTIVE_CHARM_JOBS.has(`${folderId}_${i}`)) {
+                    isBusy = true;
+                    break;
+                }
+            }
+        }
+        window.setQuadButtonsState(folderId, isBusy);
+    };
 
     // --- Mode Variables ---
     const toggleGenerateBtn = document.getElementById("toggleGenerate");
@@ -2094,7 +2163,7 @@ function renderCharmPage(isApprovedView) {
         setStatus(`Viewing Page ${targetPage}`);
     }
 
-    async function loadSetImagesForCharm(folderId, folderName) {
+async function loadSetImagesForCharm(folderId, folderName) {
         const folderPath = `${ROOT}/${folderName}/${folderId}`;
         const isApprovedView = folderName === "Charm_Maker/Completed_Approved_Charm_Sets";
         
@@ -2136,9 +2205,9 @@ function renderCharmPage(isApprovedView) {
             const prevBox = document.getElementById(`prevBox_${folderId}_${i}`);
             if (!prevBox) continue;
             
-            // --- NEW: Check if this specific slot is actively generating ---
+            // --- Check if this specific slot is actively generating ---
             if (window.ACTIVE_CHARM_JOBS.has(`${folderId}_${i}`)) {
-                prevBox.innerHTML = `<div class="slotRefEmpty">Working...</div>`;
+                prevBox.innerHTML = window.getSpinnerHTML("Working...");
                 prevBox.classList.add("working-box");
                 prevBox.classList.remove("success-border");
                 
@@ -2186,7 +2255,7 @@ function renderCharmPage(isApprovedView) {
             }
         }
 
-        // --- NEW: Detect if the workflow is paused and visually restore the state ---
+        // --- Detect if the workflow is paused and visually restore the state ---
         if (!existingFiles.has("Slot_2.png") && existingFiles.has("Slot_1.png") && !isApprovedView) {
             const continueBtn = document.getElementById(`continue_${folderId}`);
             if (continueBtn) continueBtn.style.display = "block";
@@ -2235,10 +2304,11 @@ window.redoCharmSlot = async function(folderId, slotIndex) {
         const signal = abortController.signal;
 
         window.ACTIVE_CHARM_JOBS.add(jobKey);
+        window.updateQuadActionButtons(folderId);
         
         if (redoBtn) redoBtn.disabled = true;
         if (prevBox) {
-            prevBox.innerHTML = `<div class="slotRefEmpty">Working…</div>`;
+            prevBox.innerHTML = window.getSpinnerHTML("Working...");
             prevBox.classList.remove("success-border");
             prevBox.classList.add("working-box");
         }
@@ -2332,6 +2402,7 @@ window.redoCharmSlot = async function(folderId, slotIndex) {
                 const updatedBtn = document.getElementById(`redo_${folderId}_${slotIndex}`);
                 if (updatedBtn) updatedBtn.disabled = false;
             }
+            window.updateQuadActionButtons(folderId);
         }
     };
 
@@ -2343,6 +2414,7 @@ window.regenCharmQuad = async function(folderId) {
         setStatus(`Regenerating Quad ${folderId}...`);
 
         if (cardObj) cardObj.classList.add("working-card");
+        window.setQuadButtonsState(folderId, true);
         
         window.ACTIVE_CHARM_JOBS = window.ACTIVE_CHARM_JOBS || new Set();
         window.CHARM_ABORT_CONTROLLERS = window.CHARM_ABORT_CONTROLLERS || new Map();
@@ -2364,7 +2436,7 @@ window.regenCharmQuad = async function(folderId) {
             window.ACTIVE_CHARM_JOBS.add(jobKey);
             const p = document.getElementById(`prevBox_${folderId}_${i}`);
             if(p) {
-                p.innerHTML = `<div class="slotRefEmpty">Working...</div>`;
+                p.innerHTML = window.getSpinnerHTML("Working...");
                 p.classList.remove("success-border");
                 p.classList.add("working-box");
             }
@@ -2411,7 +2483,7 @@ window.regenCharmQuad = async function(folderId) {
             // STEP 1
             const sig0 = myControllers[0].signal;
             let prev0 = document.getElementById(`prevBox_${folderId}_0`);
-            if(prev0) prev0.innerHTML = `<div class="slotRefEmpty">Generating Base...</div>`;
+            if(prev0) prev0.innerHTML = window.getSpinnerHTML("Generating Base...");
             await postJson(GEMINI_BG_FN, {
                 kind: "edits", activeCategory: "Charms",
                 input_storage_path: sourceCharmPath, input_charm_storage_path: sourceCharmPath,
@@ -2440,7 +2512,7 @@ window.regenCharmQuad = async function(folderId) {
             const sig1 = myControllers[1].signal;
             setStatus("Generating Earring Twin (Removing Hoop)...");
             let prev1 = document.getElementById(`prevBox_${folderId}_1`);
-            if(prev1) prev1.innerHTML = `<div class="slotRefEmpty">Removing Hoop...</div>`;
+            if(prev1) prev1.innerHTML = window.getSpinnerHTML("Removing Hoop...");
             await sleep(2000, sig1); 
             await postJson(GEMINI_BG_FN, {
                 kind: "edits", activeCategory: "Charms",
@@ -2470,7 +2542,7 @@ window.regenCharmQuad = async function(folderId) {
             const sig2 = myControllers[2].signal;
             setStatus("Generating B&W Line Art (Standard)...");
             let prev2 = document.getElementById(`prevBox_${folderId}_2`);
-            if(prev2) prev2.innerHTML = `<div class="slotRefEmpty">Generating Line Art...</div>`;
+            if(prev2) prev2.innerHTML = window.getSpinnerHTML("Generating Line Art...");
             await sleep(2000, sig2);
             const refPathForBaseBW = lineArtRefPath || charmRes.storagePath;
             await postJson(GEMINI_BG_FN, {
@@ -2501,7 +2573,7 @@ window.regenCharmQuad = async function(folderId) {
             const sig3 = myControllers[3].signal;
             setStatus("Generating B&W Line Art (Earrings)...");
             let prev3 = document.getElementById(`prevBox_${folderId}_3`);
-            if(prev3) prev3.innerHTML = `<div class="slotRefEmpty">Removing Hoop...</div>`;
+            if(prev3) prev3.innerHTML = window.getSpinnerHTML("Removing Hoop...");
             await sleep(2000, sig3);
             await postJson(GEMINI_BG_FN, {
                 kind: "edits", activeCategory: "Charms",
@@ -2561,6 +2633,7 @@ window.regenCharmQuad = async function(folderId) {
                 }
             });
             setBusy(false);
+            window.updateQuadActionButtons(folderId);
         }
     };
 
@@ -2572,12 +2645,14 @@ window.regenCharmQuad = async function(folderId) {
         const continueBtn = document.getElementById(`continue_${folderId}`);
         if (continueBtn) continueBtn.style.display = "none"; // Hide once clicked
 
+        window.setQuadButtonsState(folderId, true);
+
         window.ACTIVE_CHARM_JOBS = window.ACTIVE_CHARM_JOBS || new Set();
         [1, 2, 3].forEach(i => {
             window.ACTIVE_CHARM_JOBS.add(`${folderId}_${i}`);
             const p = document.getElementById(`prevBox_${folderId}_${i}`);
             if(p) {
-                p.innerHTML = `<div class="slotRefEmpty">Queued...</div>`;
+                p.innerHTML = window.getSpinnerHTML("Queued...");
                 p.classList.add("working-box");
             }
             const btn = document.getElementById(`redo_${folderId}_${i}`);
@@ -2604,7 +2679,7 @@ window.regenCharmQuad = async function(folderId) {
             // STEP 2
             setStatus("Generating Earring Twin (Removing Hoop)...");
             let prev1 = document.getElementById(`prevBox_${folderId}_1`);
-            if(prev1) prev1.innerHTML = `<div class="slotRefEmpty">Removing Hoop...</div>`;
+            if(prev1) prev1.innerHTML = window.getSpinnerHTML("Removing Hoop...");
             await sleep(2000);
             await postJson(GEMINI_BG_FN, {
                 kind: "edits", activeCategory: "Stud_Earrings",
@@ -2628,7 +2703,7 @@ window.regenCharmQuad = async function(folderId) {
             // STEP 3
             setStatus("Generating B&W Line Art (Standard)...");
             let prev2 = document.getElementById(`prevBox_${folderId}_2`);
-            if(prev2) prev2.innerHTML = `<div class="slotRefEmpty">Generating Line Art...</div>`;
+            if(prev2) prev2.innerHTML = window.getSpinnerHTML("Generating Line Art...");
             await sleep(2000);
             const refPathForBaseBW = lineArtRefPath || baseCharmStoragePath;
             await postJson(GEMINI_BG_FN, {
@@ -2653,7 +2728,7 @@ window.regenCharmQuad = async function(folderId) {
             // STEP 4
             setStatus("Generating B&W Line Art (Earrings)...");
             let prev3 = document.getElementById(`prevBox_${folderId}_3`);
-            if(prev3) prev3.innerHTML = `<div class="slotRefEmpty">Removing Hoop...</div>`;
+            if(prev3) prev3.innerHTML = window.getSpinnerHTML("Removing Hoop...");
             await sleep(2000);
             await postJson(GEMINI_BG_FN, {
                 kind: "edits", activeCategory: "Stud_Earrings",
@@ -2694,6 +2769,7 @@ window.regenCharmQuad = async function(folderId) {
             if (continueBtn) continueBtn.style.display = "block"; 
         } finally {
             if (cardObj) cardObj.classList.remove("working-card");
+            window.updateQuadActionButtons(folderId);
         }
     };
 
@@ -2701,9 +2777,14 @@ window.approveCharmQuad = async function(folderId) {
         await removeCachedFolder(folderId); // <-- Add this here
 
         const cardObj = document.getElementById(`card_${folderId}`);
-        // ... rest of approve logic
         if (cardObj) cardObj.classList.add("working-card");
         setStatus(`Approving ${folderId}...`);
+        window.setQuadButtonsState(folderId, true);
+        
+        [0, 1, 2, 3].forEach(i => {
+            const p = document.getElementById(`prevBox_${folderId}_${i}`);
+            if (p) p.innerHTML = window.getSpinnerHTML("Approving...");
+        });
         
         try {
             await ensureStorageSignedIn();
@@ -2728,6 +2809,7 @@ window.approveCharmQuad = async function(folderId) {
             console.error("Approve Quad failed:", err);
             setStatus(`Error approving: ${err.message}`);
             if (cardObj) cardObj.classList.remove("working-card");
+            window.setQuadButtonsState(folderId, false);
         }
     };
 
@@ -2737,6 +2819,12 @@ window.approveCharmQuad = async function(folderId) {
         const cardObj = document.getElementById(`card_${folderId}`);
         if (cardObj) cardObj.classList.add("working-card");
         setStatus(`Deleting ${folderId}...`);
+        window.setQuadButtonsState(folderId, true);
+        
+        [0, 1, 2, 3].forEach(i => {
+            const p = document.getElementById(`prevBox_${folderId}_${i}`);
+            if (p) p.innerHTML = window.getSpinnerHTML("Deleting...");
+        });
         
         try {
             await ensureStorageSignedIn();
@@ -2771,6 +2859,7 @@ window.approveCharmQuad = async function(folderId) {
             console.error("Delete Quad failed:", err);
             setStatus(`Error deleting: ${err.message}`);
             if (cardObj) cardObj.classList.remove("working-card");
+            window.setQuadButtonsState(folderId, false);
         }
       };
 
@@ -2784,6 +2873,8 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
         tempDiv.innerHTML = createCharmCardHTML(folderId, false);
         const cardNode = tempDiv.firstElementChild;
         charmGrid.insertBefore(cardNode, charmGrid.firstChild);
+        
+        window.setQuadButtonsState(folderId, true);
         
         const refBoxNode = document.getElementById(`prevBox_${folderId}_ref`);
         if (refBoxNode) {
@@ -2804,7 +2895,7 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
             window.ACTIVE_CHARM_JOBS.add(`${folderId}_${i}`);
             const p = document.getElementById(`prevBox_${folderId}_${i}`);
             if(p) {
-                p.innerHTML = `<div class="slotRefEmpty">Queued...</div>`;
+                p.innerHTML = window.getSpinnerHTML("Queued...");
                 p.classList.add("working-box");
             }
             const btn = document.getElementById(`redo_${folderId}_${i}`);
@@ -2835,7 +2926,7 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
 
             // STEP 1 - ONLY GENERATE THE BASE CHARM
             let prev0 = document.getElementById(`prevBox_${folderId}_0`);
-            if(prev0) prev0.innerHTML = `<div class="slotRefEmpty">Generating Base...</div>`;
+            if(prev0) prev0.innerHTML = window.getSpinnerHTML("Generating Base...");
             await postJson(GEMINI_BG_FN, {
                 kind: "edits", activeCategory: "Charms", 
                 input_storage_path: targetCharmRef.fullPath, input_charm_storage_path: targetCharmRef.fullPath,
@@ -2888,6 +2979,7 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
             });
         } finally {
             cardNode.classList.remove("working-card");
+            window.updateQuadActionButtons(folderId);
         }
     }
 
