@@ -193,7 +193,7 @@
         <div class="muted" style="margin-top:6px;">
           Inputs come from Firebase Storage folders under <code>listing-generator-1/{Category}/...</code>.
           <br>
-          <strong>Note:</strong> Stud/Hoop Earrings use <code>New_Charms_Earrings</code>. Others use <code>New_Charms</code>.
+          <strong>Note:</strong> Stud/Hoop Earrings use <code>Charm_Maker/New_Charms_Earrings</code>. Others use <code>Charm_Maker/New_Charms</code>.
         </div>
 
         <div class="row" style="margin-top:10px;">
@@ -317,16 +317,16 @@
       "Bracelets",
     ]);
 
-const ALL_CATEGORIES = [
+    const ALL_CATEGORIES = [
       "Beady_Necklace",
       "Regular_Necklace",
       "Stud_Earrings",
       "Hoop_Earrings",
       "Charms",
       "Bracelets",
-      "New_Charms",
-      "New_Charms_Earrings",
-      "Charm_Maker/Generated_Charm_Sets", // UPDATED
+      "Charm_Maker/New_Charms",           // UPDATED
+      "Charm_Maker/New_Charms_Earrings",  // UPDATED
+      "Charm_Maker/Generated_Charm_Sets", 
     ];
 
     const CATEGORY_SUBFOLDERS = {
@@ -356,9 +356,9 @@ const ALL_CATEGORIES = [
         "Primary_Models","Secondary_Models","Background_AI_Images","Product_Shots","Back_Engraving",
         "Bracelet_Size_Guide","Charm_Size_Guide","Care_Metal_Guide","Ready_To_List","Completed_&_Listed_Sets"
       ],
-      New_Charms: [],
-      New_Charms_Earrings: [],
-      "Charm_Maker/Generated_Charm_Sets": [], // UPDATED
+      "Charm_Maker/New_Charms": [],          // UPDATED
+      "Charm_Maker/New_Charms_Earrings": [], // UPDATED
+      "Charm_Maker/Generated_Charm_Sets": [], 
     };
 
     const SLOT_MAP = {
@@ -901,13 +901,12 @@ const ALL_CATEGORIES = [
     }
 
     function newCharmsPath() {
-      return `${ROOT}/New_Charms`;
+      return `${ROOT}/Charm_Maker/New_Charms`; // UPDATED
     }
 
     function newCharmsEarringsPath() {
-      return `${ROOT}/New_Charms_Earrings`;
+      return `${ROOT}/Charm_Maker/New_Charms_Earrings`; // UPDATED
     }
-
     async function listRandomFile(fullFolderPath) {
       await ensureStorageSignedIn();
       const folderRef = ref(storage, fullFolderPath);
