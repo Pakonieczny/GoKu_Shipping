@@ -3792,7 +3792,7 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
                     downloadApprovedSetsBtn.style.opacity = "1";
                 }, 3000);
 
-            } catch (error) {
+                } catch (error) {
                 if (error.message !== "Empty Directory") {
                     console.error("Error downloading sets:", error);
                     alert(`Failed to download sets: ${error.message}`);
@@ -3800,6 +3800,9 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
                 downloadApprovedSetsBtn.textContent = originalText;
                 downloadApprovedSetsBtn.disabled = false;
                 downloadApprovedSetsBtn.style.opacity = "1";
+            }
+        });
+    }
 
 // --- Download Completed Listing Sets Logic ---
     const downloadCompletedSetsBtn = document.getElementById("downloadCompletedSetsBtn");
