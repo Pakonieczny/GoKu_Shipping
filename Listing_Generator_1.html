@@ -1940,32 +1940,6 @@
                 const tsB = parseInt(b.replace('Deriv_', '')) || 0;
                 return tsB - tsA; // descending
             });
-            
-            if (isApproved) {
-                approvedSetsHistory = prefixes;
-                const countSpan = document.querySelector("#approvedSetsCounter span");
-                if (countSpan) countSpan.textContent = approvedSetsHistory.length;
-            } else {
-                charmSetsHistory = prefixes;
-            }
-            
-            renderCharmPage(isApproved);
-        } catch (e) {
-            console.error("Failed to load Charm history:", e);
-            setStatus("Error loading history");
-        }
-    }
-        try {
-            await ensureStorageSignedIn();
-            const completedCharmsRef = ref(storage, `${ROOT}/${folderName}`);
-            const res = await listAll(completedCharmsRef);
-            
-            const prefixes = res.prefixes.map(p => p.name).filter(n => n.startsWith('Deriv_'));
-            prefixes.sort((a, b) => {
-                const tsA = parseInt(a.replace('Deriv_', '')) || 0;
-                const tsB = parseInt(b.replace('Deriv_', '')) || 0;
-                return tsB - tsA; // descending
-            });
         charmSetsHistory = prefixes;
             
             // ADDED: Update Approved Sets Counter
