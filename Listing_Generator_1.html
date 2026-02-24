@@ -259,11 +259,14 @@
            <button class="btn" id="downloadCompletedSetsBtn" style="background: #2b6cff; color: #fff; border: 1px solid #1a4bbf; font-weight: bold; font-size: 12px; padding: 6px 12px;">Download Sets (ZIP)</button>
         </div>
 
-        <div class="row" style="margin-top: 8px; justify-content: space-between; align-items: center; background: #0b0d12; padding: 10px; border-radius: 12px; border: 1px dashed #3a4262;">
-           <div style="font-size: 12px; color: var(--muted);">Permanent Storage:</div>
-           <div id="totalAllTimeCounter" style="font-size: 13px; color: #a5b4fc; font-weight: bold;">
-             Total Approved (All Time): <span>0</span>
+<div class="row" style="margin-top: 8px; justify-content: space-between; align-items: center; background: #0b0d12; padding: 10px; border-radius: 12px; border: 1px dashed #3a4262;">
+           <div>
+               <div style="font-size: 12px; color: var(--muted);">Permanent Storage:</div>
+               <div id="totalAllTimeCounter" style="font-size: 13px; color: #a5b4fc; font-weight: bold;">
+                 Total Approved (All Time): <span>0</span>
+               </div>
            </div>
+           <button class="btn" id="downloadPermanentSetsBtn" style="background: #3a4262; color: #fff; border: 1px dashed #5c6792; font-weight: bold; font-size: 12px; padding: 6px 12px;">Download All (ZIP)</button>
         </div>
         
         <div style="margin-top: 8px; font-size: 11px; color: var(--muted);" id="backgroundQueueStatus"></div>
@@ -3863,32 +3866,32 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
         });
     }
 
-// --- Download Completed Listing Sets Logic ---
-    const downloadCompletedSetsBtn = document.getElementById("downloadCompletedSetsBtn");
+// --- Download Permanent Storage Listing Sets Logic ---
+    const downloadPermanentSetsBtn = document.getElementById("downloadPermanentSetsBtn");
 
-    if (downloadCompletedSetsBtn) {
-        downloadCompletedSetsBtn.addEventListener("click", async () => {
+    if (downloadPermanentSetsBtn) {
+        downloadPermanentSetsBtn.addEventListener("click", async () => {
             if (!window.JSZip) {
                 alert("JSZip library not loaded. Check your internet connection.");
                 return;
             }
 
-            const originalText = downloadCompletedSetsBtn.textContent;
-            downloadCompletedSetsBtn.disabled = true;
-            downloadCompletedSetsBtn.style.opacity = "0.7";
-            downloadCompletedSetsBtn.textContent = "Fetching list...";
+            const originalText = downloadPermanentSetsBtn.textContent;
+            downloadPermanentSetsBtn.disabled = true;
+            downloadPermanentSetsBtn.style.opacity = "0.7";
+            downloadPermanentSetsBtn.textContent = "Fetching list...";
 
             try {
                 await ensureStorageSignedIn();
                 
-                // Target the Completed_Listing_Sets folder
-                const folderPath = `${ROOT}/Generated_Listing_Sets/Completed_Listing_Sets`;
+                // Target the permanent Approved_Listing_Sets folder
+                const folderPath = `${ROOT}/Generated_Listing_Sets/Approved_Listing_Sets`;
                 const baseRef = ref(storage, folderPath);
                 const res = await listAll(baseRef);
                 
                 const prefixes = res.prefixes;
                 if (prefixes.length === 0) {
-                    alert("No completed sets found to download.");
+                    alert("No permanent sets found to download.");
                     throw new Error("Empty Directory");
                 }
 
@@ -3897,20 +3900,19 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
 
                 // Process sequentially to keep browser memory stable
                 for (const folderRef of prefixes) {
-                    downloadCompletedSetsBtn.textContent = `Zipping folder ${processedFolders + 1} of ${prefixes.length}...`;
-                    const folderName = folderRef.name; // e.g., Category_Set_123
+                    downloadPermanentSetsBtn.textContent = `Zipping folder ${processedFolders + 1} of ${prefixes.length}...`;
+                    const folderName = folderRef.name; 
                     const folderItems = await listAll(folderRef);
 
                     // Fetch files within the folder in parallel
                     await Promise.all(folderItems.items.map(async (itemRef) => {
                         const fileData = await getBytes(itemRef);
-                        // Store it in the zip under its respective folder
                         zip.file(`${folderName}/${itemRef.name}`, fileData);
                     }));
                     processedFolders++;
                 }
 
-                downloadCompletedSetsBtn.textContent = "Generating ZIP file...";
+                downloadPermanentSetsBtn.textContent = "Generating ZIP file...";
                 const zipBlob = await zip.generateAsync({ type: "blob" });
 
                 // Trigger the local browser download
@@ -3918,30 +3920,33 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
                 const a = document.createElement("a");
                 a.href = url;
                 const dateStr = new Date().toISOString().split('T')[0];
-                a.download = `Completed_Listing_Sets_${dateStr}.zip`;
+                a.download = `All_Time_Approved_Sets_${dateStr}.zip`;
                 document.body.appendChild(a);
                 a.click();
                 document.body.removeChild(a);
                 URL.revokeObjectURL(url);
 
-                downloadCompletedSetsBtn.textContent = "Download Complete!";
+                downloadPermanentSetsBtn.textContent = "Download Complete!";
                 setTimeout(() => {
-                    downloadCompletedSetsBtn.textContent = originalText;
-                    downloadCompletedSetsBtn.disabled = false;
-                    downloadCompletedSetsBtn.style.opacity = "1";
+                    downloadPermanentSetsBtn.textContent = originalText;
+                    downloadPermanentSetsBtn.disabled = false;
+                    downloadPermanentSetsBtn.style.opacity = "1";
                 }, 3000);
 
             } catch (error) {
                 if (error.message !== "Empty Directory") {
-                    console.error("Error downloading sets:", error);
-                    alert(`Failed to download sets: ${error.message}`);
+                    console.error("Error downloading permanent sets:", error);
+                    alert(`Failed to download permanent sets: ${error.message}`);
                 }
-                downloadApprovedSetsBtn.textContent = originalText;
-                downloadApprovedSetsBtn.disabled = false;
-                downloadApprovedSetsBtn.style.opacity = "1";
+                downloadPermanentSetsBtn.textContent = originalText;
+                downloadPermanentSetsBtn.disabled = false;
+                downloadPermanentSetsBtn.style.opacity = "1";
             }
         });
     }
+
+
+    
   </script>
 </body>
 </html>
