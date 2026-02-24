@@ -3762,32 +3762,32 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
         setStatus(`Error: ${e?.message || e}`);
       });
     });
-    // --- Download Approved Sets Logic ---
-    const downloadApprovedSetsBtn = document.getElementById("downloadApprovedSetsBtn");
+    // --- 1. Download Completed Listing Sets Logic (Downloads & Moves to Permanent) ---
+    const downloadCompletedSetsBtn = document.getElementById("downloadCompletedSetsBtn");
 
-    if (downloadApprovedSetsBtn) {
-        downloadApprovedSetsBtn.addEventListener("click", async () => {
+    if (downloadCompletedSetsBtn) {
+        downloadCompletedSetsBtn.addEventListener("click", async () => {
             if (!window.JSZip) {
                 alert("JSZip library not loaded. Check your internet connection.");
                 return;
             }
 
-            const originalText = downloadApprovedSetsBtn.textContent;
-            downloadApprovedSetsBtn.disabled = true;
-            downloadApprovedSetsBtn.style.opacity = "0.7";
-            downloadApprovedSetsBtn.textContent = "Fetching list...";
+            const originalText = downloadCompletedSetsBtn.textContent;
+            downloadCompletedSetsBtn.disabled = true;
+            downloadCompletedSetsBtn.style.opacity = "0.7";
+            downloadCompletedSetsBtn.textContent = "Fetching list...";
 
             try {
                 await ensureStorageSignedIn();
                 
-                // Target the correct Charm_Maker subfolder path
-                const folderPath = `${ROOT}/Charm_Maker/Completed_Approved_Charm_Sets`;
+                // Target the Completed_Listing_Sets folder
+                const folderPath = `${ROOT}/Generated_Listing_Sets/Completed_Listing_Sets`;
                 const baseRef = ref(storage, folderPath);
                 const res = await listAll(baseRef);
                 
                 const prefixes = res.prefixes;
                 if (prefixes.length === 0) {
-                    alert("No approved sets found to download.");
+                    alert("No completed sets found to download.");
                     throw new Error("Empty Directory");
                 }
 
@@ -3796,23 +3796,22 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
 
                 // Process sequentially to keep browser memory stable
                 for (const folderRef of prefixes) {
-                    downloadApprovedSetsBtn.textContent = `Zipping folder ${processedFolders + 1} of ${prefixes.length}...`;
-                    const folderName = folderRef.name; // e.g., Deriv_12345
+                    downloadCompletedSetsBtn.textContent = `Zipping folder ${processedFolders + 1} of ${prefixes.length}...`;
+                    const folderName = folderRef.name;
                     const folderItems = await listAll(folderRef);
 
                     // Fetch files within the folder in parallel
                     await Promise.all(folderItems.items.map(async (itemRef) => {
                         const fileData = await getBytes(itemRef);
-                        // Store it in the zip under its respective folder
                         zip.file(`${folderName}/${itemRef.name}`, fileData);
                     }));
                     processedFolders++;
                 }
 
-                downloadApprovedSetsBtn.textContent = "Generating ZIP file...";
+                downloadCompletedSetsBtn.textContent = "Generating ZIP file...";
                 const zipBlob = await zip.generateAsync({ type: "blob" });
 
-// Trigger the local browser download
+                // Trigger the local browser download
                 const url = URL.createObjectURL(zipBlob);
                 const a = document.createElement("a");
                 a.href = url;
@@ -3823,7 +3822,7 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
                 document.body.removeChild(a);
                 URL.revokeObjectURL(url);
 
-                // --- NEW LOGIC: Move Sets to Permanent Storage ---
+                // --- Move Sets to Permanent Storage ---
                 downloadCompletedSetsBtn.textContent = "Moving to storage...";
                 const destBaseFolderPath = `${ROOT}/Generated_Listing_Sets/Approved_Listing_Sets`;
                 
@@ -3859,6 +3858,82 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
                     console.error("Error downloading sets:", error);
                     alert(`Failed to download sets: ${error.message}`);
                 }
+                downloadCompletedSetsBtn.textContent = originalText;
+                downloadCompletedSetsBtn.disabled = false;
+                downloadCompletedSetsBtn.style.opacity = "1";
+            }
+        });
+    }
+
+    // --- 2. Download Approved Charm Sets Logic (Downloads only) ---
+    const downloadApprovedSetsBtn = document.getElementById("downloadApprovedSetsBtn");
+
+    if (downloadApprovedSetsBtn) {
+        downloadApprovedSetsBtn.addEventListener("click", async () => {
+            if (!window.JSZip) {
+                alert("JSZip library not loaded. Check your internet connection.");
+                return;
+            }
+
+            const originalText = downloadApprovedSetsBtn.textContent;
+            downloadApprovedSetsBtn.disabled = true;
+            downloadApprovedSetsBtn.style.opacity = "0.7";
+            downloadApprovedSetsBtn.textContent = "Fetching list...";
+
+            try {
+                await ensureStorageSignedIn();
+                
+                // Target the correct Charm_Maker subfolder path
+                const folderPath = `${ROOT}/Charm_Maker/Completed_Approved_Charm_Sets`;
+                const baseRef = ref(storage, folderPath);
+                const res = await listAll(baseRef);
+                
+                const prefixes = res.prefixes;
+                if (prefixes.length === 0) {
+                    alert("No approved charm sets found to download.");
+                    throw new Error("Empty Directory");
+                }
+
+                const zip = new JSZip();
+                let processedFolders = 0;
+
+                for (const folderRef of prefixes) {
+                    downloadApprovedSetsBtn.textContent = `Zipping folder ${processedFolders + 1} of ${prefixes.length}...`;
+                    const folderName = folderRef.name; 
+                    const folderItems = await listAll(folderRef);
+
+                    await Promise.all(folderItems.items.map(async (itemRef) => {
+                        const fileData = await getBytes(itemRef);
+                        zip.file(`${folderName}/${itemRef.name}`, fileData);
+                    }));
+                    processedFolders++;
+                }
+
+                downloadApprovedSetsBtn.textContent = "Generating ZIP file...";
+                const zipBlob = await zip.generateAsync({ type: "blob" });
+
+                const url = URL.createObjectURL(zipBlob);
+                const a = document.createElement("a");
+                a.href = url;
+                const dateStr = new Date().toISOString().split('T')[0];
+                a.download = `Approved_Charm_Sets_${dateStr}.zip`;
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                URL.revokeObjectURL(url);
+
+                downloadApprovedSetsBtn.textContent = "Download Complete!";
+                setTimeout(() => {
+                    downloadApprovedSetsBtn.textContent = originalText;
+                    downloadApprovedSetsBtn.disabled = false;
+                    downloadApprovedSetsBtn.style.opacity = "1";
+                }, 3000);
+
+            } catch (error) {
+                if (error.message !== "Empty Directory") {
+                    console.error("Error downloading charm sets:", error);
+                    alert(`Failed to download sets: ${error.message}`);
+                }
                 downloadApprovedSetsBtn.textContent = originalText;
                 downloadApprovedSetsBtn.disabled = false;
                 downloadApprovedSetsBtn.style.opacity = "1";
@@ -3866,7 +3941,7 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
         });
     }
 
-// --- Download Permanent Storage Listing Sets Logic ---
+    // --- 3. Download Permanent Storage Listing Sets Logic (Downloads only) ---
     const downloadPermanentSetsBtn = document.getElementById("downloadPermanentSetsBtn");
 
     if (downloadPermanentSetsBtn) {
