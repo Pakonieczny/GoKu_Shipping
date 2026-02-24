@@ -1821,7 +1821,7 @@
     HARD PHYSICAL CONSTRAINTS (NON-NEGOTIABLE):
     • Use engravings very sparingly and very strategically. Do not cram too many pointless engravings onto the charm.
     • Leave a lot of white space between the engravings; do not bunch up engravings and cutouts closely together.
-    • FLAT SHEET METAL: The charm must appear as a perfectly flat, thin sheet of high-polish metal.
+    • FLAT SHEET METAL: The charm must appear as a perfectly flat, thin sheet of high polish metal.
     • SHARP 2D CUTOUTS: Use laser-cut precision. Do NOT allow rounded edges, bevels, or 3D thickness.
     • VIEWPOINT: Always render the charm perfectly front-facing (orthographic) with 0% perspective tilt.
     • BACKGROUND COLOR (CRITICAL & ABSOLUTE): You MUST generate the charm on a 100% PURE SOLID BLACK (#000000) background. Absolutely NO white backgrounds, NO grey backgrounds, NO gradients, and NO transparency. If the background is not pure black, it is a failure.
@@ -2097,6 +2097,8 @@
             console.warn("Could not list folder contents", folderPath);
         }
 
+        window.ACTIVE_CHARM_JOBS = window.ACTIVE_CHARM_JOBS || new Set();
+
         for (let i = 0; i < 4; i++) {
             const fileName = `Slot_${i+1}.png`;
             const storagePath = `${folderPath}/${fileName}`;
@@ -2104,6 +2106,18 @@
             const prevBox = document.getElementById(`prevBox_${folderId}_${i}`);
             if (!prevBox) continue;
             
+            // --- NEW: Check if this specific slot is actively generating ---
+            if (window.ACTIVE_CHARM_JOBS.has(`${folderId}_${i}`)) {
+                prevBox.innerHTML = `<div class="slotRefEmpty">Working...</div>`;
+                prevBox.classList.add("working-box");
+                prevBox.classList.remove("success-border");
+                
+                const btn = document.getElementById(`redo_${folderId}_${i}`);
+                if (btn) btn.disabled = true;
+                continue; // Skip the cache/firebase check, let the background job handle it
+            }
+            // ---------------------------------------------------------------
+
             // 1. Instant load from local IndexedDB Cache
             let cached = await getCachedBlob(storagePath);
             if (cached && cached.blob) {
@@ -2161,12 +2175,17 @@
     window.redoCharmSlot = async function(folderId, slotIndex) {
         const folderPath = `${ROOT}/${currentCharmViewFolder}/${folderId}`;
         const redoBtn = document.getElementById(`redo_${folderId}_${slotIndex}`);
-        const prevBox = document.getElementById(`prevBox_${folderId}_${slotIndex}`);
+        let prevBox = document.getElementById(`prevBox_${folderId}_${slotIndex}`);
         
-        redoBtn.disabled = true;
-        prevBox.innerHTML = `<div class="slotRefEmpty">Working…</div>`;
-        prevBox.classList.remove("success-border");
-        prevBox.classList.add("working-box");
+        window.ACTIVE_CHARM_JOBS = window.ACTIVE_CHARM_JOBS || new Set();
+        window.ACTIVE_CHARM_JOBS.add(`${folderId}_${slotIndex}`);
+        
+        if (redoBtn) redoBtn.disabled = true;
+        if (prevBox) {
+            prevBox.innerHTML = `<div class="slotRefEmpty">Working…</div>`;
+            prevBox.classList.remove("success-border");
+            prevBox.classList.add("working-box");
+        }
         
         try {
             const slotFileName = `Slot_${slotIndex + 1}.png`;
@@ -2229,15 +2248,25 @@
             });
 
             const newBlob = await fetchAndCacheBlob(waitedRes.url, waitedRes.storagePath, Date.now());
-            prevBox.classList.remove("working-box");
-            setBoxImage(prevBox, newBlob ? URL.createObjectURL(newBlob) : cacheBust(waitedRes.url));
-            prevBox.classList.add("success-border");
+            
+            // Re-fetch dynamically
+            prevBox = document.getElementById(`prevBox_${folderId}_${slotIndex}`);
+            if (prevBox) {
+                prevBox.classList.remove("working-box");
+                setBoxImage(prevBox, newBlob ? URL.createObjectURL(newBlob) : cacheBust(waitedRes.url));
+                prevBox.classList.add("success-border");
+            }
         } catch (err) {
             console.error("Charm Redo failed", err);
-            prevBox.classList.remove("working-box");
-            prevBox.innerHTML = `<div class="slotRefEmpty">Error: ${err.message}</div>`;
+            prevBox = document.getElementById(`prevBox_${folderId}_${slotIndex}`);
+            if (prevBox) {
+                prevBox.classList.remove("working-box");
+                prevBox.innerHTML = `<div class="slotRefEmpty">Error: ${err.message}</div>`;
+            }
         } finally {
-            redoBtn.disabled = false;
+            window.ACTIVE_CHARM_JOBS.delete(`${folderId}_${slotIndex}`);
+            const updatedBtn = document.getElementById(`redo_${folderId}_${slotIndex}`);
+            if (updatedBtn) updatedBtn.disabled = false;
         }
     };
 
@@ -2245,23 +2274,23 @@ window.regenCharmQuad = async function(folderId) {
         const folderPath = `${ROOT}/${currentCharmViewFolder}/${folderId}`;
         const cardObj = document.getElementById(`card_${folderId}`);
         
-        const prev0 = document.getElementById(`prevBox_${folderId}_0`);
-        const prev1 = document.getElementById(`prevBox_${folderId}_1`);
-        const prev2 = document.getElementById(`prevBox_${folderId}_2`);
-        const prev3 = document.getElementById(`prevBox_${folderId}_3`);
-        
-        if (!prev0) return;
-
         setBusy(true);
         setStatus(`Regenerating Quad ${folderId}...`);
 
         if (cardObj) cardObj.classList.add("working-card");
-        [prev0, prev1, prev2, prev3].forEach(p => {
-            p.innerHTML = `<div class="slotRefEmpty">Working...</div>`;
-            p.classList.remove("success-border");
-            p.classList.add("working-box");
+        
+        window.ACTIVE_CHARM_JOBS = window.ACTIVE_CHARM_JOBS || new Set();
+        [0, 1, 2, 3].forEach(i => {
+            window.ACTIVE_CHARM_JOBS.add(`${folderId}_${i}`);
+            const p = document.getElementById(`prevBox_${folderId}_${i}`);
+            if(p) {
+                p.innerHTML = `<div class="slotRefEmpty">Working...</div>`;
+                p.classList.remove("success-border");
+                p.classList.add("working-box");
+            }
+            const btn = document.getElementById(`redo_${folderId}_${i}`);
+            if(btn) btn.disabled = true;
         });
-        [0, 1, 2, 3].forEach(i => document.getElementById(`redo_${folderId}_${i}`).disabled = true);
 
         try {
             await ensureStorageSignedIn();
@@ -2298,7 +2327,8 @@ window.regenCharmQuad = async function(folderId) {
             }
 
             // STEP 1
-            prev0.innerHTML = `<div class="slotRefEmpty">Generating Base...</div>`;
+            let prev0 = document.getElementById(`prevBox_${folderId}_0`);
+            if(prev0) prev0.innerHTML = `<div class="slotRefEmpty">Generating Base...</div>`;
             await postJson(GEMINI_BG_FN, {
                 kind: "edits", activeCategory: "Charms",
                 input_storage_path: sourceCharmPath, input_charm_storage_path: sourceCharmPath,
@@ -2310,14 +2340,21 @@ window.regenCharmQuad = async function(folderId) {
                 afterUpdatedMs: beforeMeta[0].updatedMs, afterGeneration: beforeMeta[0].generation 
             });
             const newBlob0 = await fetchAndCacheBlob(charmRes.url, charmRes.storagePath, Date.now());
-            prev0.classList.remove("working-box");
-            setBoxImage(prev0, newBlob0 ? URL.createObjectURL(newBlob0) : cacheBust(charmRes.url));
-            prev0.classList.add("success-border");
-            document.getElementById(`redo_${folderId}_0`).disabled = false;
+            
+            window.ACTIVE_CHARM_JOBS.delete(`${folderId}_0`);
+            prev0 = document.getElementById(`prevBox_${folderId}_0`);
+            if(prev0) {
+                prev0.classList.remove("working-box");
+                setBoxImage(prev0, newBlob0 ? URL.createObjectURL(newBlob0) : cacheBust(charmRes.url));
+                prev0.classList.add("success-border");
+            }
+            const btn0 = document.getElementById(`redo_${folderId}_0`);
+            if(btn0) btn0.disabled = false;
 
             // STEP 2
             setStatus("Generating Earring Twin (Removing Hoop)...");
-            prev1.innerHTML = `<div class="slotRefEmpty">Removing Hoop...</div>`;
+            let prev1 = document.getElementById(`prevBox_${folderId}_1`);
+            if(prev1) prev1.innerHTML = `<div class="slotRefEmpty">Removing Hoop...</div>`;
             await sleep(2000); 
             await postJson(GEMINI_BG_FN, {
                 kind: "edits", activeCategory: "Charms",
@@ -2330,14 +2367,21 @@ window.regenCharmQuad = async function(folderId) {
                 afterUpdatedMs: beforeMeta[1].updatedMs, afterGeneration: beforeMeta[1].generation 
             });
             const newBlob1 = await fetchAndCacheBlob(earringRes.url, earringRes.storagePath, Date.now());
-            prev1.classList.remove("working-box");
-            setBoxImage(prev1, newBlob1 ? URL.createObjectURL(newBlob1) : cacheBust(earringRes.url));
-            prev1.classList.add("success-border");
-            document.getElementById(`redo_${folderId}_1`).disabled = false;
+            
+            window.ACTIVE_CHARM_JOBS.delete(`${folderId}_1`);
+            prev1 = document.getElementById(`prevBox_${folderId}_1`);
+            if(prev1) {
+                prev1.classList.remove("working-box");
+                setBoxImage(prev1, newBlob1 ? URL.createObjectURL(newBlob1) : cacheBust(earringRes.url));
+                prev1.classList.add("success-border");
+            }
+            const btn1 = document.getElementById(`redo_${folderId}_1`);
+            if(btn1) btn1.disabled = false;
 
             // STEP 3
             setStatus("Generating B&W Line Art (Standard)...");
-            prev2.innerHTML = `<div class="slotRefEmpty">Generating Line Art...</div>`;
+            let prev2 = document.getElementById(`prevBox_${folderId}_2`);
+            if(prev2) prev2.innerHTML = `<div class="slotRefEmpty">Generating Line Art...</div>`;
             await sleep(2000);
             const refPathForBaseBW = lineArtRefPath || charmRes.storagePath;
             await postJson(GEMINI_BG_FN, {
@@ -2351,14 +2395,21 @@ window.regenCharmQuad = async function(folderId) {
                 afterUpdatedMs: beforeMeta[2].updatedMs, afterGeneration: beforeMeta[2].generation 
             });
             const newBlob2 = await fetchAndCacheBlob(charmBWRes.url, charmBWRes.storagePath, Date.now());
-            prev2.classList.remove("working-box");
-            setBoxImage(prev2, newBlob2 ? URL.createObjectURL(newBlob2) : cacheBust(charmBWRes.url));
-            prev2.classList.add("success-border");
-            document.getElementById(`redo_${folderId}_2`).disabled = false;
+            
+            window.ACTIVE_CHARM_JOBS.delete(`${folderId}_2`);
+            prev2 = document.getElementById(`prevBox_${folderId}_2`);
+            if(prev2) {
+                prev2.classList.remove("working-box");
+                setBoxImage(prev2, newBlob2 ? URL.createObjectURL(newBlob2) : cacheBust(charmBWRes.url));
+                prev2.classList.add("success-border");
+            }
+            const btn2 = document.getElementById(`redo_${folderId}_2`);
+            if(btn2) btn2.disabled = false;
 
             // STEP 4 - UPDATED logic to use Step 3's output and remove hoop
             setStatus("Generating B&W Line Art (Earrings)...");
-            prev3.innerHTML = `<div class="slotRefEmpty">Removing Hoop...</div>`;
+            let prev3 = document.getElementById(`prevBox_${folderId}_3`);
+            if(prev3) prev3.innerHTML = `<div class="slotRefEmpty">Removing Hoop...</div>`;
             await sleep(2000);
             await postJson(GEMINI_BG_FN, {
                 kind: "edits", activeCategory: "Charms",
@@ -2371,19 +2422,37 @@ window.regenCharmQuad = async function(folderId) {
                 afterUpdatedMs: beforeMeta[3].updatedMs, afterGeneration: beforeMeta[3].generation 
             });
             const newBlob3 = await fetchAndCacheBlob(earringBWRes.url, earringBWRes.storagePath, Date.now());
-            prev3.classList.remove("working-box");
-            setBoxImage(prev3, newBlob3 ? URL.createObjectURL(newBlob3) : cacheBust(earringBWRes.url));
-            prev3.classList.add("success-border");
-            document.getElementById(`redo_${folderId}_3`).disabled = false;
+            
+            window.ACTIVE_CHARM_JOBS.delete(`${folderId}_3`);
+            prev3 = document.getElementById(`prevBox_${folderId}_3`);
+            if(prev3) {
+                prev3.classList.remove("working-box");
+                setBoxImage(prev3, newBlob3 ? URL.createObjectURL(newBlob3) : cacheBust(earringBWRes.url));
+                prev3.classList.add("success-border");
+            }
+            const btn3 = document.getElementById(`redo_${folderId}_3`);
+            if(btn3) btn3.disabled = false;
 
             setStatus("Quad Regeneration Complete.");
         } catch(err) {
             console.error("Regen Quad failed:", err);
             setStatus(`Error: ${err.message}`);
+            [0, 1, 2, 3].forEach(i => {
+                window.ACTIVE_CHARM_JOBS.delete(`${folderId}_${i}`);
+                const p = document.getElementById(`prevBox_${folderId}_${i}`);
+                if(p) {
+                    p.classList.remove("working-box");
+                    if (p.innerHTML.includes("Queued") || p.innerHTML.includes("Generating") || p.innerHTML.includes("Removing") || p.innerHTML.includes("Working")) {
+                        p.innerHTML = `<div class="slotRefEmpty">Aborted</div>`;
+                    }
+                }
+            });
         } finally {
             if (cardObj) cardObj.classList.remove("working-card");
-            [prev0, prev1, prev2, prev3].forEach(p => p.classList.remove("working-box"));
             [0, 1, 2, 3].forEach(i => {
+                window.ACTIVE_CHARM_JOBS.delete(`${folderId}_${i}`);
+                const p = document.getElementById(`prevBox_${folderId}_${i}`);
+                if (p) p.classList.remove("working-box");
                 const btn = document.getElementById(`redo_${folderId}_${i}`);
                 if(btn) btn.disabled = false;
             });
@@ -2478,16 +2547,18 @@ window.approveCharmQuad = async function(folderId) {
         }
 
         cardNode.classList.add("working-card");
-        const prev0 = document.getElementById(`prevBox_${folderId}_0`);
-        const prev1 = document.getElementById(`prevBox_${folderId}_1`);
-        const prev2 = document.getElementById(`prevBox_${folderId}_2`);
-        const prev3 = document.getElementById(`prevBox_${folderId}_3`);
-
-        [prev0, prev1, prev2, prev3].forEach(p => {
-            p.innerHTML = `<div class="slotRefEmpty">Queued...</div>`;
-            p.classList.add("working-box");
+        
+        window.ACTIVE_CHARM_JOBS = window.ACTIVE_CHARM_JOBS || new Set();
+        [0, 1, 2, 3].forEach(i => {
+            window.ACTIVE_CHARM_JOBS.add(`${folderId}_${i}`);
+            const p = document.getElementById(`prevBox_${folderId}_${i}`);
+            if(p) {
+                p.innerHTML = `<div class="slotRefEmpty">Queued...</div>`;
+                p.classList.add("working-box");
+            }
+            const btn = document.getElementById(`redo_${folderId}_${i}`);
+            if(btn) btn.disabled = true;
         });
-        [0, 1, 2, 3].forEach(i => document.getElementById(`redo_${folderId}_${i}`).disabled = true);
         
         try {
             let lineArtRef = null;
@@ -2512,7 +2583,8 @@ window.approveCharmQuad = async function(folderId) {
             });
 
             // STEP 1
-            prev0.innerHTML = `<div class="slotRefEmpty">Generating Base...</div>`;
+            let prev0 = document.getElementById(`prevBox_${folderId}_0`);
+            if(prev0) prev0.innerHTML = `<div class="slotRefEmpty">Generating Base...</div>`;
             await postJson(GEMINI_BG_FN, {
                 kind: "edits", activeCategory: "Charms", 
                 input_storage_path: targetCharmRef.fullPath, input_charm_storage_path: targetCharmRef.fullPath,
@@ -2521,14 +2593,21 @@ window.approveCharmQuad = async function(folderId) {
             });
             const charmRes = await waitForSlotPngUrl(outputBasePath, 0, { timeoutMs: 600000, intervalMs: 5000 });
             const newBlob0 = await fetchAndCacheBlob(charmRes.url, charmRes.storagePath, Date.now());
-            prev0.classList.remove("working-box");
-            setBoxImage(prev0, newBlob0 ? URL.createObjectURL(newBlob0) : cacheBust(charmRes.url));
-            prev0.classList.add("success-border");
-            document.getElementById(`redo_${folderId}_0`).disabled = false;
+            
+            window.ACTIVE_CHARM_JOBS.delete(`${folderId}_0`);
+            prev0 = document.getElementById(`prevBox_${folderId}_0`);
+            if(prev0) {
+                prev0.classList.remove("working-box");
+                setBoxImage(prev0, newBlob0 ? URL.createObjectURL(newBlob0) : cacheBust(charmRes.url));
+                prev0.classList.add("success-border");
+            }
+            const btn0 = document.getElementById(`redo_${folderId}_0`);
+            if(btn0) btn0.disabled = false;
 
             // STEP 2
             setStatus("Generating Earring Twin (Removing Hoop)...");
-            prev1.innerHTML = `<div class="slotRefEmpty">Removing Hoop...</div>`;
+            let prev1 = document.getElementById(`prevBox_${folderId}_1`);
+            if(prev1) prev1.innerHTML = `<div class="slotRefEmpty">Removing Hoop...</div>`;
             await sleep(2000); 
             await postJson(GEMINI_BG_FN, {
                 kind: "edits", activeCategory: "Stud_Earrings", 
@@ -2538,14 +2617,21 @@ window.approveCharmQuad = async function(folderId) {
             });
             const earringRes = await waitForSlotPngUrl(outputBasePath, 1, { timeoutMs: 600000, intervalMs: 5000 });
             const newBlob1 = await fetchAndCacheBlob(earringRes.url, earringRes.storagePath, Date.now());
-            prev1.classList.remove("working-box");
-            setBoxImage(prev1, newBlob1 ? URL.createObjectURL(newBlob1) : cacheBust(earringRes.url));
-            prev1.classList.add("success-border");
-            document.getElementById(`redo_${folderId}_1`).disabled = false;
+            
+            window.ACTIVE_CHARM_JOBS.delete(`${folderId}_1`);
+            prev1 = document.getElementById(`prevBox_${folderId}_1`);
+            if(prev1) {
+                prev1.classList.remove("working-box");
+                setBoxImage(prev1, newBlob1 ? URL.createObjectURL(newBlob1) : cacheBust(earringRes.url));
+                prev1.classList.add("success-border");
+            }
+            const btn1 = document.getElementById(`redo_${folderId}_1`);
+            if(btn1) btn1.disabled = false;
 
             // STEP 3
             setStatus("Generating B&W Line Art (Standard)...");
-            prev2.innerHTML = `<div class="slotRefEmpty">Generating Line Art...</div>`;
+            let prev2 = document.getElementById(`prevBox_${folderId}_2`);
+            if(prev2) prev2.innerHTML = `<div class="slotRefEmpty">Generating Line Art...</div>`;
             await sleep(2000);
             const refPathForBaseBW = lineArtRef ? lineArtRef.fullPath : charmRes.storagePath;
             await postJson(GEMINI_BG_FN, {
@@ -2556,14 +2642,21 @@ window.approveCharmQuad = async function(folderId) {
             });
             const charmBWRes = await waitForSlotPngUrl(outputBasePath, 2, { timeoutMs: 600000, intervalMs: 5000 });
             const newBlob2 = await fetchAndCacheBlob(charmBWRes.url, charmBWRes.storagePath, Date.now());
-            prev2.classList.remove("working-box");
-            setBoxImage(prev2, newBlob2 ? URL.createObjectURL(newBlob2) : cacheBust(charmBWRes.url));
-            prev2.classList.add("success-border");
-            document.getElementById(`redo_${folderId}_2`).disabled = false;
+            
+            window.ACTIVE_CHARM_JOBS.delete(`${folderId}_2`);
+            prev2 = document.getElementById(`prevBox_${folderId}_2`);
+            if(prev2) {
+                prev2.classList.remove("working-box");
+                setBoxImage(prev2, newBlob2 ? URL.createObjectURL(newBlob2) : cacheBust(charmBWRes.url));
+                prev2.classList.add("success-border");
+            }
+            const btn2 = document.getElementById(`redo_${folderId}_2`);
+            if(btn2) btn2.disabled = false;
 
             // STEP 4 - UPDATED logic to use Step 3's output and remove hoop
             setStatus("Generating B&W Line Art (Earrings)...");
-            prev3.innerHTML = `<div class="slotRefEmpty">Removing Hoop...</div>`;
+            let prev3 = document.getElementById(`prevBox_${folderId}_3`);
+            if(prev3) prev3.innerHTML = `<div class="slotRefEmpty">Removing Hoop...</div>`;
             await sleep(2000);
             await postJson(GEMINI_BG_FN, {
                 kind: "edits", activeCategory: "Stud_Earrings", 
@@ -2573,20 +2666,34 @@ window.approveCharmQuad = async function(folderId) {
             });
             const earringBWRes = await waitForSlotPngUrl(outputBasePath, 3, { timeoutMs: 600000, intervalMs: 5000 });
             const newBlob3 = await fetchAndCacheBlob(earringBWRes.url, earringBWRes.storagePath, Date.now());
-            prev3.classList.remove("working-box");
-            setBoxImage(prev3, newBlob3 ? URL.createObjectURL(newBlob3) : cacheBust(earringBWRes.url));
-            prev3.classList.add("success-border");
-            document.getElementById(`redo_${folderId}_3`).disabled = false;
+            
+            window.ACTIVE_CHARM_JOBS.delete(`${folderId}_3`);
+            prev3 = document.getElementById(`prevBox_${folderId}_3`);
+            if(prev3) {
+                prev3.classList.remove("working-box");
+                setBoxImage(prev3, newBlob3 ? URL.createObjectURL(newBlob3) : cacheBust(earringBWRes.url));
+                prev3.classList.add("success-border");
+            }
+            const btn3 = document.getElementById(`redo_${folderId}_3`);
+            if(btn3) btn3.disabled = false;
 
             setStatus("Derivatives & Line Art Loop Complete.");
         } catch (err) {
             console.error("Master Generation Catch:", err);
             setStatus(`Error: ${err.message}`);
             
-            if (prev1.innerHTML.includes("Queued") || prev1.innerHTML.includes("Removing")) prev1.innerHTML = `<div class="slotRefEmpty">Aborted</div>`;
-            if (prev2.innerHTML.includes("Queued") || prev2.innerHTML.includes("Generating")) prev2.innerHTML = `<div class="slotRefEmpty">Aborted</div>`;
-            if (prev3.innerHTML.includes("Queued") || prev3.innerHTML.includes("Generating")) prev3.innerHTML = `<div class="slotRefEmpty">Aborted</div>`;
-            [prev0, prev1, prev2, prev3].forEach(p => p.classList.remove("working-box"));
+            [0, 1, 2, 3].forEach(i => {
+                window.ACTIVE_CHARM_JOBS.delete(`${folderId}_${i}`);
+                const p = document.getElementById(`prevBox_${folderId}_${i}`);
+                if(p) {
+                    p.classList.remove("working-box");
+                    if (p.innerHTML.includes("Queued") || p.innerHTML.includes("Generating") || p.innerHTML.includes("Removing") || p.innerHTML.includes("Working")) {
+                        p.innerHTML = `<div class="slotRefEmpty">Aborted</div>`;
+                    }
+                }
+                const btn = document.getElementById(`redo_${folderId}_${i}`);
+                if(btn) btn.disabled = false;
+            });
         } finally {
             cardNode.classList.remove("working-card");
         }
