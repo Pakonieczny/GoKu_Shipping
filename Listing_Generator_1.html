@@ -897,12 +897,12 @@
             manifestJson.slots.sort((a,b) => a.slot - b.slot);
         }
 
-        await postJson("geminiImageProxy", {
-            kind: "write_manifest",
-            activeCategory: ctxCategory,
-            output_base_path: ctxSetPath,
-            manifest: manifestJson,
-        });
+            await postJson("geminiImageProxy", {
+                kind: "write_manifest",
+                activeCategory: "Charm_Maker",
+                output_base_path: outputBasePath,
+                manifest: manifest,
+            });
       } catch (e) {
         console.warn("Manifest update failed (non-fatal):", e);
       }
@@ -1767,12 +1767,12 @@
         manifest.slots = results;
 
         setStatus("Writing manifest…");
-        await postJson("geminiImageProxy", {
-          kind: "write_manifest",
-          activeCategory: category,
-          output_base_path: outputBasePath,
-          manifest,
-        });
+            await postJson("geminiImageProxy", {
+                kind: "write_manifest",
+                activeCategory: "Charm_Maker",
+                output_base_path: outputBasePath,
+                manifest: manifest,
+            });
 
         setStatus(`Done → ${category}/Ready_To_List/Set_${setN}`);
         setAllRedoEnabled(true);
@@ -2167,7 +2167,7 @@
             let inputPath = "";
             let inputCharmPath = "";
             let promptStr = "";
-            let category = "";
+            let category = "Charm_Maker"; // <--- Set universally for the backend check
 
             if (slotIndex === 0) {
                 // Ensure charm source exists
@@ -2175,22 +2175,18 @@
                 if (!inputPath) throw new Error("Missing source reference for base charm.");
                 inputCharmPath = inputPath;
                 promptStr = promptStrCharm;
-                category = "Charms";
             } else if (slotIndex === 1) {
                 inputPath = `${folderPath}/Slot_1.png`;
                 inputCharmPath = inputPath;
                 promptStr = promptStrEarring;
-                category = "Stud_Earrings";
             } else if (slotIndex === 2) {
                 inputPath = `${folderPath}/Slot_1.png`;
                 inputCharmPath = manifest.lineArtRef || inputPath;
                 promptStr = promptStrBW;
-                category = "Charms";
             } else if (slotIndex === 3) {
                 inputPath = `${folderPath}/Slot_3.png`; // Use the Base B&W image
                 inputCharmPath = inputPath; 
                 promptStr = promptStrBWEarring; // B&W Hoop removal prompt
-                category = "Stud_Earrings";
             }
 
             await postJson(GEMINI_BG_FN, {
@@ -2223,7 +2219,7 @@
         }
     };
 
-    window.regenCharmQuad = async function(folderId) {
+window.regenCharmQuad = async function(folderId) {
         const folderPath = `${ROOT}/${currentCharmViewFolder}/${folderId}`;
         const cardObj = document.getElementById(`card_${folderId}`);
         
@@ -2261,7 +2257,7 @@
             let lineArtRefPath = manifest.lineArtRef;
             if (!lineArtRefPath) {
                 try {
-                    const lat = await listLatestFile(`${ROOT}/Charm_Maker/Reference_Line_Art_Image`); // UPDATED
+                    const lat = await listLatestFile(`${ROOT}/Charm_Maker/Reference_Line_Art_Image`);
                     if(lat) lineArtRefPath = lat.fullPath;
                 } catch(e) {}
             }
@@ -2282,7 +2278,7 @@
             // STEP 1
             prev0.innerHTML = `<div class="slotRefEmpty">Generating Base...</div>`;
             await postJson(GEMINI_BG_FN, {
-                kind: "edits", activeCategory: "Charms", 
+                kind: "edits", activeCategory: "Charm_Maker", 
                 input_storage_path: sourceCharmPath, input_charm_storage_path: sourceCharmPath,
                 output_base_path: folderPath, slotIndex: 0,
                 model: "gemini-3-pro-image-preview", prompt: promptStrCharm
@@ -2302,7 +2298,7 @@
             prev1.innerHTML = `<div class="slotRefEmpty">Removing Hoop...</div>`;
             await sleep(2000); 
             await postJson(GEMINI_BG_FN, {
-                kind: "edits", activeCategory: "Stud_Earrings", 
+                kind: "edits", activeCategory: "Charm_Maker", 
                 input_storage_path: charmRes.storagePath, input_charm_storage_path: charmRes.storagePath,
                 output_base_path: folderPath, slotIndex: 1,
                 model: "gemini-3-pro-image-preview", prompt: promptStrEarring
@@ -2323,7 +2319,7 @@
             await sleep(2000);
             const refPathForBaseBW = lineArtRefPath || charmRes.storagePath;
             await postJson(GEMINI_BG_FN, {
-                kind: "edits", activeCategory: "Charms", 
+                kind: "edits", activeCategory: "Charm_Maker", 
                 input_storage_path: charmRes.storagePath, input_charm_storage_path: refPathForBaseBW,
                 output_base_path: folderPath, slotIndex: 2,
                 model: "gemini-3-pro-image-preview", prompt: promptStrBW
@@ -2343,7 +2339,7 @@
             prev3.innerHTML = `<div class="slotRefEmpty">Removing Hoop...</div>`;
             await sleep(2000);
             await postJson(GEMINI_BG_FN, {
-                kind: "edits", activeCategory: "Stud_Earrings", 
+                kind: "edits", activeCategory: "Charm_Maker", 
                 input_storage_path: charmBWRes.storagePath, input_charm_storage_path: charmBWRes.storagePath,
                 output_base_path: folderPath, slotIndex: 3,
                 model: "gemini-3-pro-image-preview", prompt: promptStrBWEarring
@@ -2488,7 +2484,7 @@ window.approveCharmQuad = async function(folderId) {
 
             await postJson("geminiImageProxy", {
                 kind: "write_manifest",
-                activeCategory: "Charms",
+                activeCategory: "Charm_Maker",
                 output_base_path: outputBasePath,
                 manifest: manifest,
             });
