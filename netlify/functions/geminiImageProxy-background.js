@@ -90,15 +90,12 @@ async function storagePathToBuffer(storagePath) {
     "listing-generator-1/Hoop_Earrings/",
     "listing-generator-1/Charms/",
     "listing-generator-1/Bracelets/",
-    "listing-generator-1/New_Charms/",
-    "listing-generator-1/New_Charms_Earrings/", 
-    "listing-generator-1/Completed_Charm/",
-    "listing-generator-1/Reference_Line_Art_Image/", // ✅ Added for B&W Line Art references
+    "listing-generator-1/Charm_Maker/", // ✅ Updated to cover the new structure broadly
     "listing-generator-1/generated/",
   ];
 
   if (!ALLOWED_INPUT_PREFIXES.some((prefix) => p.startsWith(prefix))) {
-    throw new Error("input_storage_path not allowed");
+    throw new Error("input_storage_path not allowed: " + p);
   }
 
   const bucket = getBucket();
@@ -167,9 +164,9 @@ async function allocNextSet(activeCategory) {
 function assertAllowedOutputBase(base) {
   const b = String(base || "").trim();
   // Must be: listing-generator-1/{Category}/Ready_To_List/Set_N
-  // OR: listing-generator-1/Completed_Charm/Deriv_N
+  // OR: listing-generator-1/Charm_Maker/Generated_Charm_Sets/Deriv_N
   const isSet = /^listing-generator-1\/[^/]+\/Ready_To_List\/Set_\d+$/i.test(b);
-  const isDeriv = /^listing-generator-1\/Completed_Charm\/Deriv_\d+$/i.test(b);
+  const isDeriv = /^listing-generator-1\/Charm_Maker\/Generated_Charm_Sets\/Deriv_\d+$/i.test(b); // ✅ Updated Regex
 
   if (!isSet && !isDeriv) {
     throw new Error("output_base_path not allowed: " + b);
@@ -495,7 +492,7 @@ async function uploadPngBufferToStorage({ outBuf, jobId, runId, slotIndex, outpu
   if (outputBasePath) {
     const base = String(outputBasePath).trim();
     const isSet = /^listing-generator-1\/[^/]+\/Ready_To_List\/Set_\d+$/i.test(base);
-    const isDeriv = /^listing-generator-1\/Completed_Charm\/Deriv_\d+$/i.test(base);
+    const isDeriv = /^listing-generator-1\/Charm_Maker\/Generated_Charm_Sets\/Deriv_\d+$/i.test(base); // ✅ Updated Regex
     if (!isSet && !isDeriv) {
       throw new Error("output_base_path not allowed");
     }
