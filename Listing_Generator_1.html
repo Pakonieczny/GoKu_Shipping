@@ -1844,16 +1844,19 @@
     • Do not introduce any new elements, 3D thickness, or styling changes.
     • The final output MUST be the exact same charm, just missing the top hoop, on a PURE BLACK background.`;
 
-  const promptStrBW = `CRITICAL INSTRUCTION: You are performing a 1:1 structural replication of the FIRST image, converting it into a specific Black & White line art style. 
+const promptStrBW = `CRITICAL INSTRUCTION: You are performing a 1:1 structural replication of the FIRST image, converting it into a specific Black & White line art style. 
 
     The SECOND image is strictly a STYLE REFERENCE. You must NEVER copy, merge, or include the subject matter or object shown in the second image. 
 
     TASK: Generate a black and white outline image based STRICTLY on the object shown in the FIRST image. The final image must be the EXACT SAME object as the FIRST image.
 
     HARD CONSTRAINTS (NON-NEGOTIABLE):
-    • 100% STRUCTURAL MATCH: Keep all outer perimeters, cutouts, overall shape, and proportions 100% identical to the FIRST image.
+    • 100% STRUCTURAL MATCH: Keep all outer perimeters, overall shape, and proportions 100% identical to the FIRST image.
     • IGNORE SECOND IMAGE SUBJECT: Do NOT add or draw the object from the SECOND image. Use the second image ONLY to understand the B&W aesthetic.
-    • ENGRAVING FIDELITY: Pay precise attention to the internal engravings. If an engraving is an outline (like a hollow shape or a single thin line), draw it EXACTLY as a thin black line. DO NOT fill shapes with solid black unless they are completely filled/darkened in the first image.
+    • FEATURE DIFFERENTIATION (CRITICAL): You must accurately distinguish between three types of internal features:
+        1. DARKENED/FILLED ENGRAVINGS: If a section is heavily darkened, textured, or filled with dark patina (like deep recesses or bristle textures), you MUST fill that exact shape with SOLID BLACK.
+        2. HOLLOW OUTLINES: If an engraving is just a thin line or a hollow outline (like a lightly drawn heart), draw it EXACTLY as a thin black line. DO NOT fill the inside of these shapes.
+        3. CUTOUTS/HOLES: If there is a physical hole cut completely through the metal, outline the edges of the hole, but leave the inside PURE WHITE (empty space).
     • OUTLINE: Ensure the Charm's outer perimeter black outline is only 2px thick.
     • BACKGROUND: Use a solid, pure WHITE (#FFFFFF) background. Absolutely no transparency.
     • NO 3D/SHADING: Do NOT add any shading, 3D extrusion, colours, or grey tones. Flat 2D vector style only.`;
@@ -1866,8 +1869,11 @@
     HARD CONSTRAINTS (NON-NEGOTIABLE):
     • BACKGROUND COLOR (CRITICAL): Keep the exact same solid pure WHITE (#FFFFFF) background. ABSOLUTELY NO black, grey, or transparent backgrounds.
     • JUMP RINGS: NEVER add jump rings, O-rings, bails, or chains.
-    • IDENTICAL REPLICATION: Keep all engravings, cutouts, overall shape, proportions, and line thickness 100% identical to the reference.
-    • ENGRAVING FIDELITY: Do NOT fill in any hollow shapes or outlines with solid black. Match the exact fill and line style of the reference image perfectly.
+    • IDENTICAL REPLICATION: Keep all overall shapes, proportions, and line thickness 100% identical to the reference.
+    • FEATURE DIFFERENTIATION (CRITICAL): Preserve the exact style of the reference features:
+        1. DARKENED/FILLED ENGRAVINGS: Keep solid black fills exactly as they are.
+        2. HOLLOW OUTLINES: Keep thin lines and hollow outlines completely unfilled.
+        3. CUTOUTS/HOLES: Keep physical holes completely white inside.
     • Do not introduce any new elements, 3D thickness, shading, colors, or styling changes. Flat 2D B&W vector style only.
     • The final output MUST be the exact same B&W line art charm, just missing the top hoop, on a PURE WHITE background.`;
 
