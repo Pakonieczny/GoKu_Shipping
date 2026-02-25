@@ -1,0 +1,343 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Game-Generator-1</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+  <style>
+    :root { --bg:#0b0d12; --card:#121624; --muted:#8b93a7; --text:#e9ecf5; --line:#242a3d; --accent: #2b6cff; --success: #7fdb96; --danger: #fca5a5; }
+    body{ margin:0; font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial; background:var(--bg); color:var(--text); }
+    .wrap{ padding:14px; display:grid; grid-template-columns: 350px 1fr; gap:14px; max-width: 1600px; margin: 0 auto;}
+    .card{ background:var(--card); border:1px solid var(--line); border-radius:14px; padding:16px; }
+    h1{ font-size:18px; margin:0 0 14px 0; color: #fff;}
+    h2{ font-size:14px; margin:0 0 10px 0; color: var(--muted);}
+    label{ display:block; font-size:12px; color:var(--muted); margin:10px 0 6px; }
+    select, input{ width:100%; border-radius:10px; border:1px solid var(--line); background:#0e1220; color:var(--text); padding:10px; box-sizing:border-box; outline: none; }
+    .row{ display:flex; gap:8px; align-items: center; }
+    .btn{ cursor:pointer; border-radius:12px; border:1px solid var(--line); padding:10px 12px; background:#0e1220; color:var(--text); font-weight: 600; transition: all 0.2s;}
+    .btn:hover{ background: #1a1e2b; }
+    .btnPrimary { background: var(--accent); color: #fff; border-color: #1a4bbf; }
+    .btnPrimary:hover { background: #1a4bbf; }
+    .btnDanger { color: var(--danger); border-color: #7a3838; background: #3d1c1c; }
+    .btnDanger:hover { background: #5c2424; }
+    .btnSmall{ padding:6px 10px; border-radius:8px; font-size:11px; line-height:1; }
+    .btn:disabled{ opacity:0.5; cursor:not-allowed; }
+    
+    .drop-zone {
+      border: 2px dashed #3a4262; border-radius: 14px; padding: 16px; background: #0e1220;
+      transition: all 0.2s ease; display: flex; flex-direction: column; gap: 10px; margin-bottom: 14px;
+    }
+    .drop-zone.hover { border-color: var(--success); background: #13221c; }
+    .drop-header { display: flex; justify-content: space-between; align-items: center; }
+    .drop-header strong { font-size: 14px; color: #fff; }
+    .drop-header span { font-size: 11px; color: var(--muted); background: #1a1e2b; padding: 3px 8px; border-radius: 999px; }
+    
+    .file-list { display: flex; flex-direction: column; gap: 6px; }
+    .file-item { 
+      display: flex; justify-content: space-between; align-items: center; 
+      background: #0b0d12; border: 1px solid var(--line); padding: 8px 12px; border-radius: 8px; font-size: 12px;
+    }
+    .file-name { word-break: break-all; margin-right: 10px; }
+    .file-actions { display: flex; gap: 6px; }
+
+    /* Progress UI */
+    .status-bar { margin-top: 10px; padding: 10px; border-radius: 10px; background: #0e1220; border: 1px solid var(--line); font-size: 12px; color: var(--success); display: none;}
+    .status-bar.active { display: block; }
+  </style>
+</head>
+
+<body>
+  <div class="wrap">
+    
+    <div class="card">
+      <h1>Game Generator Projects</h1>
+      
+      <label>Active Project</label>
+      <select id="projectSelect">
+        <option value="">Loading projects...</option>
+      </select>
+
+      <div style="margin-top: 20px; border-top: 1px solid var(--line); padding-top: 20px;">
+        <label>Create New Project</label>
+        <div class="row">
+          <input type="text" id="newProjectName" placeholder="e.g. SpaceShooter_v1" />
+          <button class="btn btnPrimary" id="createProjectBtn">Create</button>
+        </div>
+      </div>
+
+      <div id="globalStatus" class="status-bar">System ready.</div>
+    </div>
+
+    <div class="card" id="mainPanel" style="opacity: 0.5; pointer-events: none;">
+      <div class="row" style="justify-content: space-between; margin-bottom: 20px;">
+        <h1>Project Assets Manager</h1>
+        <div class="row">
+            <button class="btn btnPrimary" id="generateGameBtn" disabled>Generate Game Zip (Future)</button>
+        </div>
+      </div>
+
+      <div id="dropZones">
+        </div>
+    </div>
+  </div>
+
+  <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
+
+  <script type="module">
+    import { initializeApp, getApp } from "https://www.gstatic.com/firebasejs/9.23.0/firebase-app.js";
+    import { getStorage, ref, uploadBytesResumable, getDownloadURL, listAll, deleteObject } from "https://www.gstatic.com/firebasejs/9.23.0/firebase-storage.js";
+    import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/9.23.0/firebase-auth.js";
+
+    const ROOT = "game-generator-1/projects";
+    
+    // Config matches your Listing Generator
+    const firebaseConfig = {
+      apiKey: "AIzaSyBXhQLsYRa4i0bX1TPTRiElF9Zjy5vSHlA",
+      authDomain: "gokudatabase.firebaseapp.com",
+      projectId: "gokudatabase",
+      storageBucket: "gokudatabase.firebasestorage.app",
+      messagingSenderId: "1078662308113",
+      appId: "1:1078662308113:web:41df0e5d229ff2af7a6cb0"
+    };
+
+    firebase.initializeApp(firebaseConfig);
+    const app = getApp();
+    const storage = getStorage(app);
+    const auth = getAuth(app);
+
+    // Categories config
+    const FILE_CATEGORIES = [
+      { id: "models", title: "3D Models", accepts: ".obj,.glb", folder: "models" },
+      { id: "html", title: "HTML Framework", accepts: ".html", folder: "html" },
+      { id: "json", title: "JSON Configs", accepts: ".json", folder: "json" },
+      { id: "js", title: "JavaScript Logic", accepts: ".js", folder: "js" },
+      { id: "reference", title: "Reference Project ZIP", accepts: ".zip", folder: "reference_zip" }
+    ];
+
+    let currentProject = null;
+
+    // --- UI Elements ---
+    const projectSelect = document.getElementById('projectSelect');
+    const newProjectName = document.getElementById('newProjectName');
+    const createProjectBtn = document.getElementById('createProjectBtn');
+    const mainPanel = document.getElementById('mainPanel');
+    const dropZonesContainer = document.getElementById('dropZones');
+    const globalStatus = document.getElementById('globalStatus');
+
+    function setStatus(msg) {
+        globalStatus.textContent = msg;
+        globalStatus.classList.add('active');
+        setTimeout(() => globalStatus.classList.remove('active'), 4000);
+    }
+
+    // --- Auth Initialization ---
+    async function ensureAuth() {
+      if (auth.currentUser) return auth.currentUser;
+      try { await signInAnonymously(auth); } catch(e) { console.error("Auth failed", e); }
+      return new Promise(resolve => {
+        const unsub = onAuthStateChanged(auth, u => {
+          if (u) { unsub(); resolve(u); }
+        });
+      });
+    }
+
+    // --- Project Management ---
+    async function loadProjects() {
+      await ensureAuth();
+      const listRef = ref(storage, ROOT);
+      try {
+        const res = await listAll(listRef);
+        projectSelect.innerHTML = res.prefixes.length > 0 ? '' : '<option value="">No projects found</option>';
+        
+        res.prefixes.forEach(folderRef => {
+          const opt = document.createElement('option');
+          opt.value = folderRef.name;
+          opt.textContent = folderRef.name;
+          projectSelect.appendChild(opt);
+        });
+
+        if (res.prefixes.length > 0) {
+          selectProject(projectSelect.value);
+        }
+      } catch (e) {
+        console.error("Error loading projects", e);
+        projectSelect.innerHTML = '<option value="">Error loading</option>';
+      }
+    }
+
+    createProjectBtn.addEventListener('click', async () => {
+      const name = newProjectName.value.trim().replace(/[^a-zA-Z0-9_-]/g, '_');
+      if (!name) return alert("Enter a valid project name.");
+      
+      setStatus(`Creating project: ${name}...`);
+      await ensureAuth();
+      
+      // Firebase doesn't make empty folders. We upload a dummy file to initialize the prefix.
+      const dummyRef = ref(storage, `${ROOT}/${name}/meta.json`);
+      const blob = new Blob([JSON.stringify({ created: new Date() })], { type: 'application/json' });
+      await uploadBytesResumable(dummyRef, blob);
+      
+      newProjectName.value = '';
+      await loadProjects();
+      projectSelect.value = name;
+      selectProject(name);
+    });
+
+    projectSelect.addEventListener('change', (e) => selectProject(e.target.value));
+
+    function selectProject(name) {
+      if (!name) return;
+      currentProject = name;
+      mainPanel.style.opacity = '1';
+      mainPanel.style.pointerEvents = 'all';
+      setStatus(`Switched to project: ${name}`);
+      renderDropZones();
+      refreshAllFiles();
+    }
+
+    // --- Drag & Drop UI & Logic ---
+    function renderDropZones() {
+      dropZonesContainer.innerHTML = '';
+      
+      FILE_CATEGORIES.forEach(cat => {
+        const zone = document.createElement('div');
+        zone.className = 'drop-zone';
+        zone.id = `zone_${cat.id}`;
+        
+        zone.innerHTML = `
+          <div class="drop-header">
+            <strong>${cat.title}</strong>
+            <span>Accepts: ${cat.accepts}</span>
+          </div>
+          <div class="file-list" id="list_${cat.id}">
+             <div style="font-size:11px; color:var(--muted);">Loading files...</div>
+          </div>
+          <input type="file" accept="${cat.accepts}" id="input_${cat.id}" style="display:none;" />
+          <button class="btn btnSmall" onclick="document.getElementById('input_${cat.id}').click()" style="width: max-content;">+ Upload File</button>
+        `;
+
+        // Drag events
+        zone.addEventListener('dragover', (e) => { e.preventDefault(); zone.classList.add('hover'); });
+        zone.addEventListener('dragleave', () => zone.classList.remove('hover'));
+        zone.addEventListener('drop', async (e) => {
+          e.preventDefault();
+          zone.classList.remove('hover');
+          handleFiles(e.dataTransfer.files, cat);
+        });
+
+        // Click event
+        const fileInput = zone.querySelector(`#input_${cat.id}`);
+        fileInput.addEventListener('change', (e) => {
+          handleFiles(e.target.files, cat);
+          fileInput.value = ''; // reset
+        });
+
+        dropZonesContainer.appendChild(zone);
+      });
+    }
+
+    async function handleFiles(files, categoryConfig, specificName = null) {
+      if (!files || files.length === 0) return;
+      await ensureAuth();
+
+      const validExts = categoryConfig.accepts.split(',');
+      
+      for (let i = 0; i < files.length; i++) {
+        const file = files[i];
+        
+        // Basic validation
+        const fileExt = '.' + file.name.split('.').pop().toLowerCase();
+        if (!validExts.includes(fileExt)) {
+           alert(`Invalid file: ${file.name}. Expected ${categoryConfig.accepts}`);
+           continue;
+        }
+
+        const fileName = specificName || file.name.replace(/[^a-zA-Z0-9_.-]/g, '_');
+        const path = `${ROOT}/${currentProject}/${categoryConfig.folder}/${fileName}`;
+        const targetRef = ref(storage, path);
+        
+        setStatus(`Uploading ${fileName}...`);
+        
+        try {
+          await new Promise((resolve, reject) => {
+            const task = uploadBytesResumable(targetRef, file);
+            task.on('state_changed', null, reject, resolve);
+          });
+        } catch(e) {
+          console.error("Upload failed", e);
+          alert(`Upload failed for ${fileName}`);
+        }
+      }
+      
+      setStatus(`Uploads complete.`);
+      refreshFileList(categoryConfig);
+    }
+
+    // --- File Listing & Actions ---
+    async function refreshAllFiles() {
+      FILE_CATEGORIES.forEach(cat => refreshFileList(cat));
+    }
+
+    async function refreshFileList(categoryConfig) {
+      if (!currentProject) return;
+      const listContainer = document.getElementById(`list_${categoryConfig.id}`);
+      if (!listContainer) return;
+      
+      const folderRef = ref(storage, `${ROOT}/${currentProject}/${categoryConfig.folder}`);
+      
+      try {
+        const res = await listAll(folderRef);
+        listContainer.innerHTML = '';
+        
+        if (res.items.length === 0) {
+            listContainer.innerHTML = `<div style="font-size:11px; color:var(--muted);">No files uploaded. Drag & Drop here.</div>`;
+            return;
+        }
+
+        res.items.forEach(itemRef => {
+          const itemDiv = document.createElement('div');
+          itemDiv.className = 'file-item';
+          
+          itemDiv.innerHTML = `
+            <div class="file-name">${itemRef.name}</div>
+            <div class="file-actions">
+               <input type="file" style="display:none;" id="replace_${itemRef.name}" accept="${categoryConfig.accepts}">
+               <button class="btn btnSmall" onclick="document.getElementById('replace_${itemRef.name}').click()">Replace</button>
+               <button class="btn btnSmall btnDanger" id="del_${itemRef.name}">Delete</button>
+            </div>
+          `;
+
+          // Delete Logic
+          itemDiv.querySelector(`#del_${itemRef.name}`).addEventListener('click', async () => {
+             if(confirm(`Delete ${itemRef.name}?`)) {
+                 setStatus(`Deleting ${itemRef.name}...`);
+                 await deleteObject(itemRef);
+                 refreshFileList(categoryConfig);
+                 setStatus(`Deleted.`);
+             }
+          });
+
+          // Replace Logic (Uploads over exact same filename)
+          itemDiv.querySelector(`#replace_${itemRef.name}`).addEventListener('change', (e) => {
+              handleFiles(e.target.files, categoryConfig, itemRef.name);
+          });
+
+          listContainer.appendChild(itemDiv);
+        });
+
+      } catch (e) {
+        console.error(`Error loading files for ${categoryConfig.id}`, e);
+        listContainer.innerHTML = `<div style="font-size:11px; color:var(--danger);">Error fetching files.</div>`;
+      }
+    }
+
+    // Init
+    window.addEventListener('DOMContentLoaded', () => {
+      loadProjects();
+    });
+  </script>
+</body>
+</html>
