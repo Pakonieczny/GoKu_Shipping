@@ -67,6 +67,9 @@
       </div>
 
       <div id="globalStatus" class="status-bar">System ready.</div>
+      <div id="progressContainer" style="display: none; margin-top: 10px; background: var(--line); border-radius: 8px; height: 8px; overflow: hidden;">
+        <div id="progressBar" style="width: 0%; height: 100%; background: var(--accent); transition: width 0.2s ease;"></div>
+      </div>
     </div>
 
     <div class="card" id="mainPanel" style="opacity: 0.5; pointer-events: none;">
@@ -99,14 +102,13 @@
       appId: "1:1078662308113:web:41df0e5d229ff2af7a6cb0"
     };
 
-    // Use the modular initializeApp that you imported at the top
     const app = initializeApp(firebaseConfig);
     const storage = getStorage(app);
     const auth = getAuth(app);
 
-    // Categories config
+    // Categories config (FIXED: Added .mtl and .fbx)
     const FILE_CATEGORIES = [
-      { id: "models", title: "3D Models", accepts: ".obj,.glb,.js", folder: "models" },
+      { id: "models", title: "3D Models", accepts: ".obj,.glb,.fbx,.js,.mtl", folder: "models" },
       { id: "html", title: "HTML Framework", accepts: ".html", folder: "html" },
       { id: "json", title: "JSON Configs", accepts: ".json", folder: "json" },
       { id: "js", title: "JavaScript Logic", accepts: ".js", folder: "js" },
@@ -122,7 +124,9 @@
     const mainPanel = document.getElementById('mainPanel');
     const dropZonesContainer = document.getElementById('dropZones');
     const globalStatus = document.getElementById('globalStatus');
-    const generateGameBtn = document.getElementById('generateGameBtn'); // Grabbed the button
+    const generateGameBtn = document.getElementById('generateGameBtn');
+    const progressContainer = document.getElementById('progressContainer');
+    const progressBar = document.getElementById('progressBar');
 
     function setStatus(msg) {
         globalStatus.textContent = msg;
@@ -172,7 +176,6 @@
       setStatus(`Creating project: ${name}...`);
       await ensureAuth();
       
-      // Firebase doesn't make empty folders. We upload a dummy file to initialize the prefix.
       const dummyRef = ref(storage, `${ROOT}/${name}/meta.json`);
       const blob = new Blob([JSON.stringify({ created: new Date() })], { type: 'application/json' });
       await uploadBytesResumable(dummyRef, blob);
@@ -191,7 +194,6 @@
       mainPanel.style.opacity = '1';
       mainPanel.style.pointerEvents = 'all';
       
-      // Enable the button
       generateGameBtn.disabled = false; 
 
       setStatus(`Switched to project: ${name}`);
@@ -220,7 +222,6 @@
           <button class="btn btnSmall" onclick="document.getElementById('input_${cat.id}').click()" style="width: max-content;">+ Upload File</button>
         `;
 
-        // Drag events
         zone.addEventListener('dragover', (e) => { e.preventDefault(); zone.classList.add('hover'); });
         zone.addEventListener('dragleave', () => zone.classList.remove('hover'));
         zone.addEventListener('drop', async (e) => {
@@ -229,11 +230,10 @@
           handleFiles(e.dataTransfer.files, cat);
         });
 
-        // Click event
         const fileInput = zone.querySelector(`#input_${cat.id}`);
         fileInput.addEventListener('change', (e) => {
           handleFiles(e.target.files, cat);
-          fileInput.value = ''; // reset
+          fileInput.value = ''; 
         });
 
         dropZonesContainer.appendChild(zone);
@@ -249,9 +249,12 @@
       for (let i = 0; i < files.length; i++) {
         const file = files[i];
         
-        // Basic validation
-        const fileExt = '.' + file.name.split('.').pop().toLowerCase();
-        if (!validExts.includes(fileExt)) {
+        // FIXED: Safely check for files without extensions (like game object IDs)
+        const parts = file.name.split('.');
+        const hasExtension = parts.length > 1;
+        const fileExt = hasExtension ? '.' + parts.pop().toLowerCase() : '';
+        
+        if (hasExtension && !validExts.includes(fileExt)) {
            alert(`Invalid file: ${file.name}. Expected ${categoryConfig.accepts}`);
            continue;
         }
@@ -311,7 +314,6 @@
             </div>
           `;
 
-          // Delete Logic (FIXED: Using attribute selectors [id="..."] to handle dots in filenames)
           itemDiv.querySelector(`[id="del_${itemRef.name}"]`).addEventListener('click', async () => {
              if(confirm(`Delete ${itemRef.name}?`)) {
                  setStatus(`Deleting ${itemRef.name}...`);
@@ -321,7 +323,6 @@
              }
           });
 
-          // Replace Logic (FIXED: Using attribute selectors [id="..."] to handle dots in filenames)
           itemDiv.querySelector(`[id="replace_${itemRef.name}"]`).addEventListener('change', (e) => {
               handleFiles(e.target.files, categoryConfig, itemRef.name);
           });
@@ -341,9 +342,10 @@
       
       try {
         generateGameBtn.disabled = true;
+        progressContainer.style.display = 'block';
+        progressBar.style.width = '5%';
         setStatus(`Fetching Reference ZIP for ${currentProject}...`);
         
-        // 1. Fetch the reference zip from Firebase
         const refFolder = ref(storage, `${ROOT}/${currentProject}/reference_zip`);
         const refList = await listAll(refFolder);
         
@@ -352,57 +354,70 @@
            throw new Error("Missing reference zip");
         }
         
-        // Grab the first uploaded zip file
         const referenceZipRef = refList.items[0]; 
         const refUrl = await getDownloadURL(referenceZipRef);
         const refRes = await fetch(refUrl);
         const refBlob = await refRes.blob();
         
+        progressBar.style.width = '15%';
         setStatus(`Loading template ZIP into memory...`);
         const zip = new JSZip();
-        
-        // 2. Unzip it in the browser's memory
         await zip.loadAsync(refBlob);
-        
-        // Extract an array of every internal file path (e.g., "assets/models/player.glb")
         const zipPaths = Object.keys(zip.files);
         
-        // 3. Loop through our uploaded assets to swap them in
+        progressBar.style.width = '20%';
+        setStatus(`Indexing project files...`);
+        let totalFiles = 0;
+        let processedFiles = 0;
+        const cachedCategories = {};
+
         for (const cat of FILE_CATEGORIES) {
-          if (cat.id === 'reference') continue; // Skip the reference category
-          
+          if (cat.id === 'reference') continue;
           const folderRef = ref(storage, `${ROOT}/${currentProject}/${cat.folder}`);
-          let res;
-          try { res = await listAll(folderRef); } catch(e) { continue; }
+          try { 
+             const res = await listAll(folderRef); 
+             cachedCategories[cat.id] = res.items;
+             totalFiles += res.items.length;
+          } catch(e) { 
+             cachedCategories[cat.id] = []; 
+          }
+        }
+
+        for (const cat of FILE_CATEGORIES) {
+          if (cat.id === 'reference') continue; 
           
-          for (const itemRef of res.items) {
+          const items = cachedCategories[cat.id];
+          
+          for (const itemRef of items) {
             setStatus(`Processing ${itemRef.name}...`);
             const url = await getDownloadURL(itemRef);
             const response = await fetch(url);
             const blob = await response.blob();
             
-            // 4. THE MAGIC: Try to find the exact filename anywhere in the reference zip's folder structure
             const match = zipPaths.find(p => p === itemRef.name || p.endsWith('/' + itemRef.name));
-            
             if (match) {
-               // Overwrite the template file in its exact original location
                zip.file(match, blob);
-               console.log(`Replaced ${itemRef.name} at ${match}`);
             } else {
-               // Fallback: If it's a completely new file not in the template, place it based on its category
                let newPath = cat.id === 'html' ? itemRef.name : `${cat.folder}/${itemRef.name}`;
                zip.file(newPath, blob);
-               console.log(`Added new file ${itemRef.name} at ${newPath}`);
+            }
+
+            processedFiles++;
+            if (totalFiles > 0) {
+               const percentComplete = 20 + ((processedFiles / totalFiles) * 65);
+               progressBar.style.width = `${percentComplete}%`;
             }
           }
         }
         
+        progressBar.style.width = '90%';
         setStatus(`Compiling final Game ZIP...`);
         
-        // 5. Package it back up
         const finalZipBlob = await zip.generateAsync({ type: "blob", compression: "STORE" });
         
-        // 6. Trigger the download
+        progressBar.style.width = '100%';
+        setStatus(`Game Zip Generated Successfully! Downloading...`);
+
         const downloadUrl = URL.createObjectURL(finalZipBlob);
         const a = document.createElement('a');
         a.href = downloadUrl;
@@ -410,21 +425,25 @@
         document.body.appendChild(a);
         a.click();
         
-        // Cleanup
         document.body.removeChild(a);
         URL.revokeObjectURL(downloadUrl);
-        
-        setStatus(`Game Zip Generated Successfully!`);
+
       } catch (error) {
         console.error("Zip generation error:", error);
         setStatus(`Error generating zip. Check console.`);
+        progressBar.style.backgroundColor = 'var(--danger)';
       } finally {
         generateGameBtn.disabled = false;
         generateGameBtn.textContent = "Generate Game Zip"; 
+        
+        setTimeout(() => {
+           progressContainer.style.display = 'none';
+           progressBar.style.width = '0%';
+           progressBar.style.backgroundColor = 'var(--accent)';
+        }, 3000);
       }
     });
 
-    // Init
     window.addEventListener('DOMContentLoaded', () => {
       loadProjects();
     });
