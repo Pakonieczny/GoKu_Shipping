@@ -380,7 +380,7 @@
 
     const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
-    sendToAiBtn.addEventListener('click', async () => {
+sendToAiBtn.addEventListener('click', async () => {
       const prompt = aiPromptInput.value.trim();
       if (!prompt || !currentProject) return;
 
@@ -416,6 +416,7 @@
         const responseFileRef = ref(storage, `${projectPath}/ai_response.json`);
         const errorFileRef = ref(storage, `${projectPath}/ai_error.json`);
         
+        // Note: You will still see 404s in the console here if the files don't exist yet. This is normal.
         try { await deleteObject(responseFileRef); } catch(e) {}
         try { await deleteObject(errorFileRef); } catch(e) {}
 
@@ -438,18 +439,21 @@
           attempts++;
 
           // Check for error file first
+          let hasErrorFile = false;
+          let errorMessage = "AI Generation Failed";
           try {
             const errUrl = await getDownloadURL(errorFileRef);
             const errRes = await fetch(errUrl);
             const errData = await errRes.json();
-            throw new Error(errData.error || "AI Generation Failed");
+            errorMessage = errData.error || errorMessage;
+            hasErrorFile = true;
           } catch(e) {
-            if (e.message !== "storage/object-not-found" && !e.message.includes("AI Generation")) {
-               // A real error occurred checking the error file
-            }
-            if (e.message.includes("AI Generation") || e.message === e.message) {
-               if(e.message !== "storage/object-not-found") throw e;
-            }
+            // Ignore all errors here (including 404 object-not-found).
+            // It just means the background function hasn't crashed.
+          }
+
+          if (hasErrorFile) {
+            throw new Error(errorMessage);
           }
 
           // Check for success file
