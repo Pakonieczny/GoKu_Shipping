@@ -73,7 +73,7 @@
       <div class="row" style="justify-content: space-between; margin-bottom: 20px;">
         <h1>Project Assets Manager</h1>
         <div class="row">
-            <button class="btn btnPrimary" id="generateGameBtn" disabled>Generate Game Zip (Future)</button>
+            <button class="btn btnPrimary" id="generateGameBtn" disabled>Generate Game Zip</button>
         </div>
       </div>
 
@@ -106,7 +106,7 @@
 
     // Categories config
     const FILE_CATEGORIES = [
-      { id: "models", title: "3D Models", accepts: ".obj,.glb", folder: "models" },
+      { id: "models", title: "3D Models", accepts: ".obj,.glb,.js", folder: "models" },
       { id: "html", title: "HTML Framework", accepts: ".html", folder: "html" },
       { id: "json", title: "JSON Configs", accepts: ".json", folder: "json" },
       { id: "js", title: "JavaScript Logic", accepts: ".js", folder: "js" },
@@ -122,6 +122,7 @@
     const mainPanel = document.getElementById('mainPanel');
     const dropZonesContainer = document.getElementById('dropZones');
     const globalStatus = document.getElementById('globalStatus');
+    const generateGameBtn = document.getElementById('generateGameBtn'); // Grabbed the button
 
     function setStatus(msg) {
         globalStatus.textContent = msg;
@@ -189,6 +190,10 @@
       currentProject = name;
       mainPanel.style.opacity = '1';
       mainPanel.style.pointerEvents = 'all';
+      
+      // Enable the button
+      generateGameBtn.disabled = false; 
+
       setStatus(`Switched to project: ${name}`);
       renderDropZones();
       refreshAllFiles();
@@ -293,7 +298,7 @@
             return;
         }
 
-res.items.forEach(itemRef => {
+        res.items.forEach(itemRef => {
           const itemDiv = document.createElement('div');
           itemDiv.className = 'file-item';
           
@@ -329,6 +334,95 @@ res.items.forEach(itemRef => {
         listContainer.innerHTML = `<div style="font-size:11px; color:var(--danger);">Error fetching files.</div>`;
       }
     }
+
+    // --- Zip Generation Logic (Template Matcher) ---
+    generateGameBtn.addEventListener('click', async () => {
+      if (!currentProject) return;
+      
+      try {
+        generateGameBtn.disabled = true;
+        setStatus(`Fetching Reference ZIP for ${currentProject}...`);
+        
+        // 1. Fetch the reference zip from Firebase
+        const refFolder = ref(storage, `${ROOT}/${currentProject}/reference_zip`);
+        const refList = await listAll(refFolder);
+        
+        if (refList.items.length === 0) {
+           alert("No Reference ZIP found! Please upload one to the Reference Project ZIP drop zone first.");
+           throw new Error("Missing reference zip");
+        }
+        
+        // Grab the first uploaded zip file
+        const referenceZipRef = refList.items[0]; 
+        const refUrl = await getDownloadURL(referenceZipRef);
+        const refRes = await fetch(refUrl);
+        const refBlob = await refRes.blob();
+        
+        setStatus(`Loading template ZIP into memory...`);
+        const zip = new JSZip();
+        
+        // 2. Unzip it in the browser's memory
+        await zip.loadAsync(refBlob);
+        
+        // Extract an array of every internal file path (e.g., "assets/models/player.glb")
+        const zipPaths = Object.keys(zip.files);
+        
+        // 3. Loop through our uploaded assets to swap them in
+        for (const cat of FILE_CATEGORIES) {
+          if (cat.id === 'reference') continue; // Skip the reference category
+          
+          const folderRef = ref(storage, `${ROOT}/${currentProject}/${cat.folder}`);
+          let res;
+          try { res = await listAll(folderRef); } catch(e) { continue; }
+          
+          for (const itemRef of res.items) {
+            setStatus(`Processing ${itemRef.name}...`);
+            const url = await getDownloadURL(itemRef);
+            const response = await fetch(url);
+            const blob = await response.blob();
+            
+            // 4. THE MAGIC: Try to find the exact filename anywhere in the reference zip's folder structure
+            const match = zipPaths.find(p => p === itemRef.name || p.endsWith('/' + itemRef.name));
+            
+            if (match) {
+               // Overwrite the template file in its exact original location
+               zip.file(match, blob);
+               console.log(`Replaced ${itemRef.name} at ${match}`);
+            } else {
+               // Fallback: If it's a completely new file not in the template, place it based on its category
+               let newPath = cat.id === 'html' ? itemRef.name : `${cat.folder}/${itemRef.name}`;
+               zip.file(newPath, blob);
+               console.log(`Added new file ${itemRef.name} at ${newPath}`);
+            }
+          }
+        }
+        
+        setStatus(`Compiling final Game ZIP...`);
+        
+        // 5. Package it back up
+        const finalZipBlob = await zip.generateAsync({ type: "blob", compression: "STORE" });
+        
+        // 6. Trigger the download
+        const downloadUrl = URL.createObjectURL(finalZipBlob);
+        const a = document.createElement('a');
+        a.href = downloadUrl;
+        a.download = `${currentProject}_Custom_Build.zip`;
+        document.body.appendChild(a);
+        a.click();
+        
+        // Cleanup
+        document.body.removeChild(a);
+        URL.revokeObjectURL(downloadUrl);
+        
+        setStatus(`Game Zip Generated Successfully!`);
+      } catch (error) {
+        console.error("Zip generation error:", error);
+        setStatus(`Error generating zip. Check console.`);
+      } finally {
+        generateGameBtn.disabled = false;
+        generateGameBtn.textContent = "Generate Game Zip"; 
+      }
+    });
 
     // Init
     window.addEventListener('DOMContentLoaded', () => {
