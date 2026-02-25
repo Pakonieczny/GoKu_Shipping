@@ -560,7 +560,9 @@ sendToAiBtn.addEventListener('click', async () => {
           for (const itemRef of items) {
             setStatus(`Processing ${itemRef.name}...`);
             const url = await getDownloadURL(itemRef);
-            const response = await fetch(url);
+            
+            // Force the browser to skip the cache and download the fresh file
+            const response = await fetch(url + '&v=' + Date.now(), { cache: 'no-store' }); 
             const blob = await response.blob();
             
             const match = zipPaths.find(p => p === itemRef.name || p.endsWith('/' + itemRef.name));
