@@ -82,12 +82,8 @@
     </div>
   </div>
 
-  <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
-  <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
-  <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
-
   <script type="module">
-    import { initializeApp, getApp } from "https://www.gstatic.com/firebasejs/9.23.0/firebase-app.js";
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/9.23.0/firebase-app.js";
     import { getStorage, ref, uploadBytesResumable, getDownloadURL, listAll, deleteObject } from "https://www.gstatic.com/firebasejs/9.23.0/firebase-storage.js";
     import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/9.23.0/firebase-auth.js";
 
@@ -103,8 +99,8 @@
       appId: "1:1078662308113:web:41df0e5d229ff2af7a6cb0"
     };
 
-    firebase.initializeApp(firebaseConfig);
-    const app = getApp();
+    // Use the modular initializeApp that you imported at the top
+    const app = initializeApp(firebaseConfig);
     const storage = getStorage(app);
     const auth = getAuth(app);
 
