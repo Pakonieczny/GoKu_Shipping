@@ -414,13 +414,23 @@
         appendToChatLog('System', 'Analyzing and writing code...', 'muted');
         setStatus('AI is processing files...');
         
-        const response = await fetch('/.netlify/functions/geminiCodeProxy', {
+const response = await fetch('/.netlify/functions/geminiCodeProxy', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ prompt, files: projectFiles })
         });
 
-        if (!response.ok) throw new Error(`Server responded with HTTP ${response.status}`);
+        if (!response.ok) {
+          let errorMsg = `HTTP ${response.status}`;
+          try {
+             const errData = await response.json();
+             if (errData.error) errorMsg = errData.error;
+          } catch(e) {
+             // Fallback if the server didn't even return JSON (e.g., routing failure)
+             errorMsg = await response.text();
+          }
+          throw new Error(`Server Error: ${errorMsg}`);
+        }
         
         const result = await response.json();
         
