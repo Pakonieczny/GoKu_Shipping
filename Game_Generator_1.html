@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>Game-Generator-1</title>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+  <script src="[https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js](https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js)"></script>
   <style>
     :root { --bg:#0b0d12; --card:#121624; --muted:#8b93a7; --text:#e9ecf5; --line:#242a3d; --accent: #2b6cff; --success: #7fdb96; --danger: #fca5a5; }
     body{ margin:0; font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial; background:var(--bg); color:var(--text); }
@@ -41,6 +41,18 @@
     }
     .file-name { word-break: break-all; margin-right: 10px; }
     .file-actions { display: flex; gap: 6px; }
+
+    /* Review Panel Styles */
+    .review-panel { 
+        margin-top: 20px; border: 1px dashed var(--accent); border-radius: 14px; 
+        padding: 16px; background: rgba(43, 108, 255, 0.05); display: none; 
+    }
+    .review-panel.active { display: block; }
+    .review-list { display: grid; grid-template-columns: 1fr; gap: 8px; margin-top: 10px; }
+    .review-item { 
+        display: flex; justify-content: space-between; align-items: center; 
+        background: var(--card); border: 1px solid var(--accent); padding: 8px 12px; border-radius: 8px; font-size: 12px;
+    }
 
     /* Progress UI */
     .status-bar { margin-top: 10px; padding: 10px; border-radius: 10px; background: #0e1220; border: 1px solid var(--line); font-size: 12px; color: var(--success); display: none;}
@@ -94,6 +106,14 @@
       <div id="dropZones">
       </div>
 
+      <div id="reviewPanel" class="review-panel">
+        <div class="row" style="justify-content: space-between;">
+            <h2 style="color: var(--accent); margin:0;">AI Changes Review (Copies)</h2>
+            <button class="btn btnSmall" id="clearReviewBtn">Dismiss All</button>
+        </div>
+        <div id="reviewFileList" class="review-list"></div>
+      </div>
+
       <div style="margin-top: 30px; border-top: 1px solid var(--line); padding-top: 20px;">
         <h2>AI Context Window</h2>
         <div style="display: flex; flex-direction: column; gap: 10px;">
@@ -113,9 +133,9 @@
   </div>
 
   <script type="module">
-    import { initializeApp } from "https://www.gstatic.com/firebasejs/9.23.0/firebase-app.js";
-    import { getStorage, ref, uploadBytesResumable, uploadString, getDownloadURL, listAll, deleteObject } from "https://www.gstatic.com/firebasejs/9.23.0/firebase-storage.js";
-    import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/9.23.0/firebase-auth.js";
+    import { initializeApp } from "[https://www.gstatic.com/firebasejs/9.23.0/firebase-app.js](https://www.gstatic.com/firebasejs/9.23.0/firebase-app.js)";
+    import { getStorage, ref, uploadBytesResumable, uploadString, getDownloadURL, listAll, deleteObject } from "[https://www.gstatic.com/firebasejs/9.23.0/firebase-storage.js](https://www.gstatic.com/firebasejs/9.23.0/firebase-storage.js)";
+    import { getAuth, signInAnonymously, onAuthStateChanged } from "[https://www.gstatic.com/firebasejs/9.23.0/firebase-auth.js](https://www.gstatic.com/firebasejs/9.23.0/firebase-auth.js)";
 
     const ROOT = "game-generator-1/projects";
     
@@ -159,6 +179,11 @@
     const aiPromptInput = document.getElementById('aiPromptInput');
     const sendToAiBtn = document.getElementById('sendToAiBtn');
     const aiChatLog = document.getElementById('aiChatLog');
+
+    // Review UI Elements
+    const reviewPanel = document.getElementById('reviewPanel');
+    const reviewFileList = document.getElementById('reviewFileList');
+    const clearReviewBtn = document.getElementById('clearReviewBtn');
 
     function setStatus(msg) {
         globalStatus.textContent = msg;
@@ -231,6 +256,7 @@
       setStatus(`Switched to project: ${name}`);
       renderDropZones();
       refreshAllFiles();
+      refreshReviewList(); // NEW: load reviews on switch
       aiChatLog.innerHTML = `<div style="color: var(--muted);">AI Context ready for project: ${name}. Enter instructions below.</div>`;
     }
 
@@ -341,13 +367,13 @@
           itemDiv.innerHTML = `
             <div class="file-name">${itemRef.name}</div>
             <div class="file-actions">
-               <input type="file" style="display:none;" id="replace_${itemRef.name}" accept="${categoryConfig.accepts}">
-               <button class="btn btnSmall" onclick="document.getElementById('replace_${itemRef.name}').click()">Replace</button>
-               <button class="btn btnSmall btnDanger" id="del_${itemRef.name}">Delete</button>
+               <input type="file" style="display:none;" id="replace_${itemRef.name.replace(/\./g,'_')}" accept="${categoryConfig.accepts}">
+               <button class="btn btnSmall" onclick="document.getElementById('replace_${itemRef.name.replace(/\./g,'_')}').click()">Replace</button>
+               <button class="btn btnSmall btnDanger" id="del_${itemRef.name.replace(/\./g,'_')}">Delete</button>
             </div>
           `;
 
-          itemDiv.querySelector(`[id="del_${itemRef.name}"]`).addEventListener('click', async () => {
+          itemDiv.querySelector(`[id="del_${itemRef.name.replace(/\./g,'_')}"]`).addEventListener('click', async () => {
              if(confirm(`Delete ${itemRef.name}?`)) {
                  setStatus(`Deleting ${itemRef.name}...`);
                  await deleteObject(itemRef);
@@ -356,7 +382,7 @@
              }
           });
 
-          itemDiv.querySelector(`[id="replace_${itemRef.name}"]`).addEventListener('change', (e) => {
+          itemDiv.querySelector(`[id="replace_${itemRef.name.replace(/\./g,'_')}"]`).addEventListener('change', (e) => {
               handleFiles(e.target.files, categoryConfig, itemRef.name);
           });
 
@@ -369,6 +395,59 @@
       }
     }
 
+    // --- NEW: AI Review Persistence Logic ---
+    async function refreshReviewList() {
+        if (!currentProject) return;
+        const reviewFolderRef = ref(storage, `${ROOT}/${currentProject}/review`);
+
+        try {
+            const res = await listAll(reviewFolderRef);
+            if (res.items.length === 0) {
+                reviewPanel.classList.remove('active');
+                return;
+            }
+
+            reviewPanel.classList.add('active');
+            reviewFileList.innerHTML = '';
+
+            for (const itemRef of res.items) {
+                const itemDiv = document.createElement('div');
+                itemDiv.className = 'review-item';
+                itemDiv.innerHTML = `
+                    <div class="file-name">✨ ${itemRef.name}</div>
+                    <div class="file-actions">
+                        <button class="btn btnSmall" id="dl_rev_${itemRef.name.replace(/\./g,'_')}">Download</button>
+                        <button class="btn btnSmall btnDanger" id="del_rev_${itemRef.name.replace(/\./g,'_')}">Delete Copy</button>
+                    </div>
+                `;
+
+                // Download Link
+                itemDiv.querySelector(`#dl_rev_${itemRef.name.replace(/\./g,'_')}`).onclick = async () => {
+                    const url = await getDownloadURL(itemRef);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = `PREVIEW_${itemRef.name}`;
+                    a.click();
+                };
+
+                // Delete only the copy
+                itemDiv.querySelector(`#del_rev_${itemRef.name.replace(/\./g,'_')}`).onclick = async () => {
+                    await deleteObject(itemRef);
+                    refreshReviewList();
+                };
+
+                reviewFileList.appendChild(itemDiv);
+            }
+        } catch (e) { console.error("Review list error", e); }
+    }
+
+    clearReviewBtn.onclick = async () => {
+        const reviewFolderRef = ref(storage, `${ROOT}/${currentProject}/review`);
+        const res = await listAll(reviewFolderRef);
+        await Promise.all(res.items.map(item => deleteObject(item)));
+        refreshReviewList();
+    };
+
     // --- AI Context Window Logic & Loop ---
     function appendToChatLog(sender, message, type = 'normal') {
       const msgDiv = document.createElement('div');
@@ -380,7 +459,7 @@
 
     const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
-sendToAiBtn.addEventListener('click', async () => {
+    sendToAiBtn.addEventListener('click', async () => {
       const prompt = aiPromptInput.value.trim();
       if (!prompt || !currentProject) return;
 
@@ -470,7 +549,7 @@ sendToAiBtn.addEventListener('click', async () => {
             throw new Error("AI request timed out waiting for background completion.");
         }
 
-// 5. Write updated files back to Firebase
+        // 5. Write updated files back to Firebase
         appendToChatLog('System', `Writing ${result.updatedFiles.length} updated files to Firebase...`, 'muted');
         
         for (const file of result.updatedFiles) {
@@ -521,6 +600,7 @@ sendToAiBtn.addEventListener('click', async () => {
         setStatus('AI update complete.');
         
         refreshAllFiles();
+        refreshReviewList(); // NEW: Refresh the preview list after AI run
 
       } catch (error) {
         console.error("AI Update Error:", error);
