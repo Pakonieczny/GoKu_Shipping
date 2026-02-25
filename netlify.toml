@@ -5,6 +5,7 @@
 [functions]
   node_bundler = "esbuild"
   external_node_modules = ["sharp"]
+  timeout = "26s"
 
 [[redirects]]
   from = "https://scanner.goldenspike.app"
