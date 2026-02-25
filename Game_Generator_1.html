@@ -13,7 +13,8 @@
     h1{ font-size:18px; margin:0 0 14px 0; color: #fff;}
     h2{ font-size:14px; margin:0 0 10px 0; color: var(--muted);}
     label{ display:block; font-size:12px; color:var(--muted); margin:10px 0 6px; }
-    select, input{ width:100%; border-radius:10px; border:1px solid var(--line); background:#0e1220; color:var(--text); padding:10px; box-sizing:border-box; outline: none; }
+    select, input, textarea { width:100%; border-radius:10px; border:1px solid var(--line); background:#0e1220; color:var(--text); padding:10px; box-sizing:border-box; outline: none; font-family: inherit; }
+    textarea { line-height: 1.4; }
     .row{ display:flex; gap:8px; align-items: center; }
     .btn{ cursor:pointer; border-radius:12px; border:1px solid var(--line); padding:10px 12px; background:#0e1220; color:var(--text); font-weight: 600; transition: all 0.2s;}
     .btn:hover{ background: #1a1e2b; }
@@ -44,6 +45,16 @@
     /* Progress UI */
     .status-bar { margin-top: 10px; padding: 10px; border-radius: 10px; background: #0e1220; border: 1px solid var(--line); font-size: 12px; color: var(--success); display: none;}
     .status-bar.active { display: block; }
+
+    /* Visual Feedback for AI Updates */
+    @keyframes pulse-border {
+      0% { border-color: var(--line); box-shadow: 0 0 0 rgba(127, 219, 150, 0); }
+      50% { border-color: var(--success); box-shadow: 0 0 10px rgba(127, 219, 150, 0.4); }
+      100% { border-color: var(--line); box-shadow: 0 0 0 rgba(127, 219, 150, 0); }
+    }
+    .pulse-update {
+      animation: pulse-border 2s ease-out;
+    }
   </style>
 </head>
 
@@ -81,13 +92,30 @@
       </div>
 
       <div id="dropZones">
+      </div>
+
+      <div style="margin-top: 30px; border-top: 1px solid var(--line); padding-top: 20px;">
+        <h2>AI Context Window</h2>
+        <div style="display: flex; flex-direction: column; gap: 10px;">
+          <div id="aiChatLog" style="height: 150px; overflow-y: auto; background: #0b0d12; border: 1px solid var(--line); border-radius: 10px; padding: 10px; font-size: 12px; font-family: monospace; display: flex; flex-direction: column; gap: 8px;">
+            <div style="color: var(--muted);">AI Context ready. Enter instructions below to modify the active project.</div>
+          </div>
+          
+          <textarea id="aiPromptInput" placeholder="e.g., 'Change the player movement speed in main.js to 500 and update the index.html title...'" style="min-height: 80px; resize: vertical;"></textarea>
+          
+          <div class="row" style="justify-content: flex-end;">
+            <button class="btn btnPrimary" id="sendToAiBtn">Apply AI Update</button>
+          </div>
         </div>
+      </div>
+
     </div>
   </div>
 
   <script type="module">
     import { initializeApp } from "https://www.gstatic.com/firebasejs/9.23.0/firebase-app.js";
-    import { getStorage, ref, uploadBytesResumable, getDownloadURL, listAll, deleteObject } from "https://www.gstatic.com/firebasejs/9.23.0/firebase-storage.js";
+    // ADDED uploadString to the imports below
+    import { getStorage, ref, uploadBytesResumable, uploadString, getDownloadURL, listAll, deleteObject } from "https://www.gstatic.com/firebasejs/9.23.0/firebase-storage.js";
     import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/9.23.0/firebase-auth.js";
 
     const ROOT = "game-generator-1/projects";
@@ -106,7 +134,7 @@
     const storage = getStorage(app);
     const auth = getAuth(app);
 
-    // Categories config (FIXED: Added .mtl and .fbx)
+    // Categories config
     const FILE_CATEGORIES = [
       { id: "models", title: "3D Models", accepts: ".obj,.glb,.fbx,.js,.mtl", folder: "models" },
       { id: "html", title: "HTML Framework", accepts: ".html", folder: "html" },
@@ -127,6 +155,11 @@
     const generateGameBtn = document.getElementById('generateGameBtn');
     const progressContainer = document.getElementById('progressContainer');
     const progressBar = document.getElementById('progressBar');
+
+    // AI UI Elements
+    const aiPromptInput = document.getElementById('aiPromptInput');
+    const sendToAiBtn = document.getElementById('sendToAiBtn');
+    const aiChatLog = document.getElementById('aiChatLog');
 
     function setStatus(msg) {
         globalStatus.textContent = msg;
@@ -199,6 +232,7 @@
       setStatus(`Switched to project: ${name}`);
       renderDropZones();
       refreshAllFiles();
+      aiChatLog.innerHTML = `<div style="color: var(--muted);">AI Context ready for project: ${name}. Enter instructions below.</div>`;
     }
 
     // --- Drag & Drop UI & Logic ---
@@ -249,7 +283,6 @@
       for (let i = 0; i < files.length; i++) {
         const file = files[i];
         
-        // FIXED: Safely check for files without extensions (like game object IDs)
         const parts = file.name.split('.');
         const hasExtension = parts.length > 1;
         const fileExt = hasExtension ? '.' + parts.pop().toLowerCase() : '';
@@ -304,6 +337,7 @@
         res.items.forEach(itemRef => {
           const itemDiv = document.createElement('div');
           itemDiv.className = 'file-item';
+          itemDiv.id = `item_${itemRef.name.replace(/[^a-zA-Z0-9]/g, '_')}`; // For animations
           
           itemDiv.innerHTML = `
             <div class="file-name">${itemRef.name}</div>
@@ -335,6 +369,100 @@
         listContainer.innerHTML = `<div style="font-size:11px; color:var(--danger);">Error fetching files.</div>`;
       }
     }
+
+    // --- AI Context Window Logic & Loop ---
+    function appendToChatLog(sender, message, type = 'normal') {
+      const msgDiv = document.createElement('div');
+      const color = sender === 'AI' ? 'var(--success)' : (type === 'error' ? 'var(--danger)' : 'var(--text)');
+      msgDiv.innerHTML = `<strong style="color: ${color}">${sender}:</strong> ${message}`;
+      aiChatLog.appendChild(msgDiv);
+      aiChatLog.scrollTop = aiChatLog.scrollHeight;
+    }
+
+    sendToAiBtn.addEventListener('click', async () => {
+      const prompt = aiPromptInput.value.trim();
+      if (!prompt || !currentProject) return;
+
+      aiPromptInput.value = '';
+      sendToAiBtn.disabled = true;
+      appendToChatLog('You', prompt);
+      appendToChatLog('System', 'Gathering active project text files...', 'muted');
+
+      try {
+        // 1. Gather all text-based files (HTML, JS, JSON). We do not send binary 3D models.
+        const textCategories = FILE_CATEGORIES.filter(c => ['html', 'js', 'json'].includes(c.id));
+        const projectFiles = {};
+
+        for (const cat of textCategories) {
+          const folderRef = ref(storage, `${ROOT}/${currentProject}/${cat.folder}`);
+          let res;
+          try { res = await listAll(folderRef); } catch (e) { continue; } // Folder might not exist yet
+          
+          for (const itemRef of res.items) {
+            const url = await getDownloadURL(itemRef);
+            const fetched = await fetch(url);
+            const text = await fetched.text();
+            projectFiles[`${cat.folder}/${itemRef.name}`] = text; 
+          }
+        }
+
+        if (Object.keys(projectFiles).length === 0) {
+          throw new Error("No text files (HTML, JS, JSON) found in the project to edit.");
+        }
+
+        // 2. Send to Gemini Backend Proxy
+        appendToChatLog('System', 'Analyzing and writing code...', 'muted');
+        setStatus('AI is processing files...');
+        
+        const response = await fetch('/.netlify/functions/geminiCodeProxy', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ prompt, files: projectFiles })
+        });
+
+        if (!response.ok) throw new Error(`Server responded with HTTP ${response.status}`);
+        
+        const result = await response.json();
+        
+        if (!result.updatedFiles || !Array.isArray(result.updatedFiles)) {
+          throw new Error("Invalid response format from AI.");
+        }
+
+        // 3. Write updated files back to Firebase
+        appendToChatLog('System', `Writing ${result.updatedFiles.length} updated files to Firebase...`, 'muted');
+        
+        for (const file of result.updatedFiles) {
+          const targetRef = ref(storage, `${ROOT}/${currentProject}/${file.path}`);
+          await uploadString(targetRef, file.content);
+          
+          // Visual feedback: Highlight the category zone temporarily
+          const catFolder = file.path.split('/')[0];
+          const catConfig = FILE_CATEGORIES.find(c => c.folder === catFolder);
+          if (catConfig) {
+            const zone = document.getElementById(`zone_${catConfig.id}`);
+            if (zone) {
+              zone.classList.remove('pulse-update'); // reset if already pulsing
+              void zone.offsetWidth; // trigger reflow
+              zone.classList.add('pulse-update');
+            }
+          }
+        }
+
+        // 4. Update UI
+        appendToChatLog('AI', result.message || "Files have been updated successfully.");
+        setStatus('AI update complete.');
+        
+        // Refresh UI so new files/updated timestamps are synced visually
+        refreshAllFiles();
+
+      } catch (error) {
+        console.error("AI Update Error:", error);
+        appendToChatLog('System', `Error: ${error.message}`, 'error');
+        setStatus('AI update failed.');
+      } finally {
+        sendToAiBtn.disabled = false;
+      }
+    });
 
     // --- Zip Generation Logic (Template Matcher) ---
     generateGameBtn.addEventListener('click', async () => {
