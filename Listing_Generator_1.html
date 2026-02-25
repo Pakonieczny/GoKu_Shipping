@@ -239,7 +239,7 @@
         <div id="panelNewCharms"></div>
       </div>
 
-<div id="reviewSection" style="display: none;">
+        <div id="reviewSection" style="display: none;">
         <label style="margin-top:12px;">Category</label>
         <select id="reviewCategory"></select>
 
@@ -252,6 +252,10 @@
            <button class="btn" id="approveSetBtn" style="width:100%; background: #1f4026; color: #7fdb96; border: 1px solid #2f5e3a;">Approve Set (Move to Completed)</button>
         </div>
         
+        <div class="row" style="margin-top:10px;">
+           <button class="btn" id="deleteSetBtn" style="width:100%; background: #3d1c1c; color: #fca5a5; border: 1px solid #7a3838;">Delete Set</button>
+        </div>
+        
         <div class="row" style="margin-top: 10px; justify-content: space-between; align-items: center; background: #0e1220; padding: 10px; border-radius: 12px; border: 1px solid var(--line);">
            <div id="completedSetsCounter" style="font-size: 13px; color: #7fdb96;">
              Completed Sets Available: <span style="font-weight: bold; font-size: 15px;">0</span>
@@ -259,7 +263,7 @@
            <button class="btn" id="downloadCompletedSetsBtn" style="background: #2b6cff; color: #fff; border: 1px solid #1a4bbf; font-weight: bold; font-size: 12px; padding: 6px 12px;">Download Sets (ZIP)</button>
         </div>
 
-<div class="row" style="margin-top: 8px; justify-content: space-between; align-items: center; background: #0b0d12; padding: 10px; border-radius: 12px; border: 1px dashed #3a4262;">
+        <div class="row" style="margin-top: 8px; justify-content: space-between; align-items: center; background: #0b0d12; padding: 10px; border-radius: 12px; border: 1px dashed #3a4262;">
            <div>
                <div style="font-size: 12px; color: var(--muted);">Permanent Storage:</div>
                <div id="totalAllTimeCounter" style="font-size: 13px; color: #a5b4fc; font-weight: bold;">
@@ -831,6 +835,7 @@
     const charmMakerSection = document.getElementById("charmMakerSection");
     const reviewSetSelect = document.getElementById("reviewSetSelect");
     const approveSetBtn = document.getElementById("approveSetBtn"); 
+    const deleteSetBtn = document.getElementById("deleteSetBtn"); // <--- ADD THIS
     const backgroundQueueStatus = document.getElementById("backgroundQueueStatus"); 
     let appMode = "generate"; 
 
@@ -1495,7 +1500,7 @@ async function updateTotalAllTimeCounter() {
         });
     }
 
-    function updateApproveButtonState() {
+function updateApproveButtonState() {
       if (!approveSetBtn) return;
       
       const setGreen = () => {
@@ -1506,6 +1511,16 @@ async function updateTotalAllTimeCounter() {
         approveSetBtn.textContent = "Approve Set (Move to Completed)";
         approveSetBtn.style.cursor = "pointer";
         approveSetBtn.style.opacity = "1";
+
+        if (deleteSetBtn) {
+            deleteSetBtn.disabled = false;
+            deleteSetBtn.style.background = "#3d1c1c";
+            deleteSetBtn.style.color = "#fca5a5";
+            deleteSetBtn.style.border = "1px solid #7a3838";
+            deleteSetBtn.textContent = "Delete Set";
+            deleteSetBtn.style.cursor = "pointer";
+            deleteSetBtn.style.opacity = "1";
+        }
       };
 
       const setOrange = () => {
@@ -1516,6 +1531,16 @@ async function updateTotalAllTimeCounter() {
         approveSetBtn.textContent = "Waiting for Redo...";
         approveSetBtn.style.cursor = "not-allowed";
         approveSetBtn.style.opacity = "0.8";
+
+        if (deleteSetBtn) {
+            deleteSetBtn.disabled = true;
+            deleteSetBtn.style.background = "#2a1515"; 
+            deleteSetBtn.style.color = "#8b5a5a"; 
+            deleteSetBtn.style.border = "1px solid #4a2222";
+            deleteSetBtn.textContent = "Waiting for Redo...";
+            deleteSetBtn.style.cursor = "not-allowed";
+            deleteSetBtn.style.opacity = "0.8";
+        }
       };
 
       if (!CURRENT_SET || appMode !== 'review') return; 
@@ -1722,6 +1747,61 @@ async function updateTotalAllTimeCounter() {
     }
 
     approveSetBtn.addEventListener("click", approveSet);
+
+    function deleteSet() {
+      const category = activeCategoryEl.value;
+      const setName = reviewSetSelect.value;
+      if (!setName) return;
+
+      const confirmDelete = confirm(`Are you sure you want to permanently delete ${setName}?`);
+      if (!confirmDelete) return;
+
+      const optionToRemove = reviewSetSelect.querySelector(`option[value="${setName}"]`);
+      if (optionToRemove) optionToRemove.remove();
+
+      if (reviewSetSelect.options.length > 0) {
+          reviewSetSelect.selectedIndex = 0; 
+          loadSetImages(reviewSetSelect.value);
+      } else {
+          reviewGrid.innerHTML = "<div class='slotRefEmpty'>No more sets to review!</div>";
+          setStatus("Queue clear.");
+      }
+
+      runBackgroundDelete(category, setName);
+    }
+
+    async function runBackgroundDelete(category, setName) {
+        backgroundQueueStatus.textContent = `Deleting: ${setName}...`;
+        console.log(`[Queue] Starting background delete for ${setName}`);
+
+        const targetFolder = `${ROOT}/${category}/Ready_To_List/${setName}`;
+
+        try {
+            await ensureStorageSignedIn();
+            const folderRef = ref(storage, targetFolder);
+            const res = await listAll(folderRef);
+            
+            // Delete all files in the directory
+            for (const itemRef of res.items) {
+               await deleteObject(itemRef);
+            }
+            console.log(`[Queue] Finished deleting ${setName}`);
+            backgroundQueueStatus.textContent = `Deleted: ${setName}`;
+            
+            setTimeout(() => {
+                if (backgroundQueueStatus.textContent.includes(setName)) {
+                    backgroundQueueStatus.textContent = "";
+                }
+            }, 3000);
+
+        } catch (e) {
+            console.error(`[Queue] Failed to delete ${setName}`, e);
+            backgroundQueueStatus.textContent = `Error deleting ${setName}`;
+        }
+    }
+
+    approveSetBtn.addEventListener("click", approveSet);
+    if (deleteSetBtn) deleteSetBtn.addEventListener("click", deleteSet); // <--- ADD THIS
         
         // Updated postJson to accept a signal for cancellation
         async function postJson(path, body, signal) {
@@ -4021,7 +4101,7 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
     }
 
 
-    
+
   </script>
 </body>
 </html>
