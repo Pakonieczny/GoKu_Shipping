@@ -114,7 +114,6 @@
 
   <script type="module">
     import { initializeApp } from "https://www.gstatic.com/firebasejs/9.23.0/firebase-app.js";
-    // ADDED uploadString to the imports below
     import { getStorage, ref, uploadBytesResumable, uploadString, getDownloadURL, listAll, deleteObject } from "https://www.gstatic.com/firebasejs/9.23.0/firebase-storage.js";
     import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/9.23.0/firebase-auth.js";
 
@@ -379,6 +378,8 @@
       aiChatLog.scrollTop = aiChatLog.scrollHeight;
     }
 
+    const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+
     sendToAiBtn.addEventListener('click', async () => {
       const prompt = aiPromptInput.value.trim();
       if (!prompt || !currentProject) return;
@@ -389,14 +390,14 @@
       appendToChatLog('System', 'Gathering active project text files...', 'muted');
 
       try {
-        // 1. Gather all text-based files (HTML, JS, JSON). We do not send binary 3D models.
+        // 1. Gather all text-based files
         const textCategories = FILE_CATEGORIES.filter(c => ['html', 'js', 'json'].includes(c.id));
         const projectFiles = {};
 
         for (const cat of textCategories) {
           const folderRef = ref(storage, `${ROOT}/${currentProject}/${cat.folder}`);
           let res;
-          try { res = await listAll(folderRef); } catch (e) { continue; } // Folder might not exist yet
+          try { res = await listAll(folderRef); } catch (e) { continue; } 
           
           for (const itemRef of res.items) {
             const url = await getDownloadURL(itemRef);
@@ -410,43 +411,85 @@
           throw new Error("No text files (HTML, JS, JSON) found in the project to edit.");
         }
 
-        // 2. Send to Gemini Backend Proxy
-        appendToChatLog('System', 'Analyzing and writing code...', 'muted');
-        setStatus('AI is processing files...');
+        // 2. Prepare Storage references and clean up old runs
+        const projectPath = `${ROOT}/${currentProject}`;
+        const responseFileRef = ref(storage, `${projectPath}/ai_response.json`);
+        const errorFileRef = ref(storage, `${projectPath}/ai_error.json`);
         
-          const response = await fetch('/.netlify/functions/geminiCodeProxy', {
+        try { await deleteObject(responseFileRef); } catch(e) {}
+        try { await deleteObject(errorFileRef); } catch(e) {}
+
+        // 3. Trigger Gemini Background Proxy
+        appendToChatLog('System', 'Analyzing and writing code...', 'muted');
+        setStatus('AI is processing files (This may take a minute)...');
+        
+        await fetch('/.netlify/functions/geminiCodeProxy-background', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ prompt, files: projectFiles })
+          body: JSON.stringify({ prompt, files: projectFiles, projectPath })
         });
 
-        let errorMsg = `HTTP ${response.status}`;
+        // 4. Poll Firebase Storage for the result file
+        let result = null;
+        let attempts = 0;
+        
+        while (!result && attempts < 60) { // Poll for up to 5 minutes
+          await sleep(5000);
+          attempts++;
 
-        // 3. Write updated files back to Firebase
+          // Check for error file first
+          try {
+            const errUrl = await getDownloadURL(errorFileRef);
+            const errRes = await fetch(errUrl);
+            const errData = await errRes.json();
+            throw new Error(errData.error || "AI Generation Failed");
+          } catch(e) {
+            if (e.message !== "storage/object-not-found" && !e.message.includes("AI Generation")) {
+               // A real error occurred checking the error file
+            }
+            if (e.message.includes("AI Generation") || e.message === e.message) {
+               if(e.message !== "storage/object-not-found") throw e;
+            }
+          }
+
+          // Check for success file
+          try {
+            const url = await getDownloadURL(responseFileRef);
+            const res = await fetch(url + `&v=${Date.now()}`); // Cache-bust to get fresh file
+            result = await res.json();
+          } catch(e) {
+             // Not found yet, keep waiting
+          }
+        }
+
+        if (!result) {
+            throw new Error("AI request timed out waiting for background completion.");
+        }
+
+        // 5. Write updated files back to Firebase
         appendToChatLog('System', `Writing ${result.updatedFiles.length} updated files to Firebase...`, 'muted');
         
         for (const file of result.updatedFiles) {
           const targetRef = ref(storage, `${ROOT}/${currentProject}/${file.path}`);
           await uploadString(targetRef, file.content);
           
-          // Visual feedback: Highlight the category zone temporarily
+          // Visual feedback
           const catFolder = file.path.split('/')[0];
           const catConfig = FILE_CATEGORIES.find(c => c.folder === catFolder);
           if (catConfig) {
             const zone = document.getElementById(`zone_${catConfig.id}`);
             if (zone) {
-              zone.classList.remove('pulse-update'); // reset if already pulsing
-              void zone.offsetWidth; // trigger reflow
+              zone.classList.remove('pulse-update');
+              void zone.offsetWidth; 
               zone.classList.add('pulse-update');
             }
           }
         }
 
-        // 4. Update UI
+        // 6. Update UI
         appendToChatLog('AI', result.message || "Files have been updated successfully.");
         setStatus('AI update complete.');
         
-        // Refresh UI so new files/updated timestamps are synced visually
         refreshAllFiles();
 
       } catch (error) {
