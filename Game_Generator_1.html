@@ -293,7 +293,7 @@
             return;
         }
 
-        res.items.forEach(itemRef => {
+res.items.forEach(itemRef => {
           const itemDiv = document.createElement('div');
           itemDiv.className = 'file-item';
           
@@ -306,8 +306,8 @@
             </div>
           `;
 
-          // Delete Logic
-          itemDiv.querySelector(`#del_${itemRef.name}`).addEventListener('click', async () => {
+          // Delete Logic (FIXED: Using attribute selectors [id="..."] to handle dots in filenames)
+          itemDiv.querySelector(`[id="del_${itemRef.name}"]`).addEventListener('click', async () => {
              if(confirm(`Delete ${itemRef.name}?`)) {
                  setStatus(`Deleting ${itemRef.name}...`);
                  await deleteObject(itemRef);
@@ -316,8 +316,8 @@
              }
           });
 
-          // Replace Logic (Uploads over exact same filename)
-          itemDiv.querySelector(`#replace_${itemRef.name}`).addEventListener('change', (e) => {
+          // Replace Logic (FIXED: Using attribute selectors [id="..."] to handle dots in filenames)
+          itemDiv.querySelector(`[id="replace_${itemRef.name}"]`).addEventListener('change', (e) => {
               handleFiles(e.target.files, categoryConfig, itemRef.name);
           });
 
