@@ -420,56 +420,54 @@
       }
     }
 
-// --- Game Assets & Models Library Rendering ---
+// --- Game Assets Library Rendering ---
     async function refreshAssetLibrary() {
         if (!currentProject) return;
         const libraryContainer = document.getElementById('assetLibrary');
         const listContainer = document.getElementById('assetList');
         
-        // Fetch from BOTH assets and models folders
+        // Fetch ONLY from the assets folder
         const assetsRef = ref(storage, `${ROOT}/${currentProject}/assets`);
-        const modelsRef = ref(storage, `${ROOT}/${currentProject}/models`);
 
         try {
-            const [assetsRes, modelsRes] = await Promise.all([
-                listAll(assetsRef).catch(() => ({ items: [] })),
-                listAll(modelsRef).catch(() => ({ items: [] }))
-            ]);
+            const res = await listAll(assetsRef);
 
-            const allItems = [...assetsRes.items, ...modelsRes.items];
-
-            if (allItems.length === 0) {
+            if (res.items.length === 0) {
                 libraryContainer.classList.remove('active');
+                listContainer.innerHTML = '';
                 return;
             }
 
-            libraryContainer.classList.add('active');
-            listContainer.innerHTML = '';
+            // Generate HTML in a buffer first to prevent async race conditions (duplicates)
+            let htmlBuffer = '';
 
-            for (const itemRef of allItems) {
+            for (const itemRef of res.items) {
                 const meta = await getMetadata(itemRef);
                 const url = await getDownloadURL(itemRef);
                 const dateStr = new Date(meta.timeCreated).toLocaleString();
-                
-                // Determine folder path (assets/ or models/) for the data-path
-                const parentFolder = itemRef.parent.name; 
 
-                const div = document.createElement('div');
-                div.className = 'asset-item';
-                div.innerHTML = `
-                    <label>
-                        <input type="checkbox" class="asset-checkbox" 
-                            data-path="${parentFolder}/${itemRef.name}" 
-                            data-url="${url}" 
-                            data-type="${meta.contentType || ''}" 
-                            data-name="${itemRef.name}">
-                        <span>✨ ${itemRef.name}</span>
-                    </label>
-                    <span class="asset-date">${dateStr}</span>
+                htmlBuffer += `
+                    <div class="asset-item">
+                        <label>
+                            <input type="checkbox" class="asset-checkbox" 
+                                data-path="assets/${itemRef.name}" 
+                                data-url="${url}" 
+                                data-type="${meta.contentType || ''}" 
+                                data-name="${itemRef.name}">
+                            <span>✨ ${itemRef.name}</span>
+                        </label>
+                        <span class="asset-date">${dateStr}</span>
+                    </div>
                 `;
-                listContainer.appendChild(div);
             }
-        } catch (e) { console.error("Asset library error", e); }
+            
+            // Apply the fully built HTML all at once
+            listContainer.innerHTML = htmlBuffer;
+            libraryContainer.classList.add('active');
+
+        } catch (e) { 
+            console.error("Asset library error", e); 
+        }
     }
 
     // --- AI Review Persistence Logic ---
