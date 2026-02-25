@@ -474,11 +474,27 @@ sendToAiBtn.addEventListener('click', async () => {
         appendToChatLog('System', `Writing ${result.updatedFiles.length} updated files to Firebase...`, 'muted');
         
         for (const file of result.updatedFiles) {
-          const targetRef = ref(storage, `${ROOT}/${currentProject}/${file.path}`);
-          await uploadString(targetRef, file.content);
+          // FIX 1: Strip Markdown formatting if the AI included it (prevents syntax errors)
+          let cleanContent = file.content;
+          if (cleanContent.trim().startsWith('```')) {
+            cleanContent = cleanContent.replace(/^```[a-z]*\n/i, '').replace(/\n```$/i, '').trim();
+          }
+
+          // FIX 2: Reconstruct the correct folder path if the AI stripped it
+          let safePath = file.path;
+          if (!safePath.includes('/')) {
+            const ext = safePath.split('.').pop().toLowerCase();
+            const catConfig = FILE_CATEGORIES.find(c => c.accepts.includes('.' + ext));
+            if (catConfig) {
+               safePath = `${catConfig.folder}/${safePath}`;
+            }
+          }
+
+          const targetRef = ref(storage, `${ROOT}/${currentProject}/${safePath}`);
+          await uploadString(targetRef, cleanContent);
           
           // Visual feedback
-          const catFolder = file.path.split('/')[0];
+          const catFolder = safePath.split('/')[0];
           const catConfig = FILE_CATEGORIES.find(c => c.folder === catFolder);
           if (catConfig) {
             const zone = document.getElementById(`zone_${catConfig.id}`);
