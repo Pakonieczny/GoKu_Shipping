@@ -256,7 +256,7 @@
       setStatus(`Switched to project: ${name}`);
       renderDropZones();
       refreshAllFiles();
-      refreshReviewList(); // NEW: load reviews on switch
+      refreshReviewList(); // load reviews on switch
       aiChatLog.innerHTML = `<div style="color: var(--muted);">AI Context ready for project: ${name}. Enter instructions below.</div>`;
     }
 
@@ -362,18 +362,19 @@
         res.items.forEach(itemRef => {
           const itemDiv = document.createElement('div');
           itemDiv.className = 'file-item';
-          itemDiv.id = `item_${itemRef.name.replace(/[^a-zA-Z0-9]/g, '_')}`; // For animations
+          const safeId = itemRef.name.replace(/[^a-zA-Z0-9]/g, '_');
+          itemDiv.id = `item_${safeId}`; 
           
           itemDiv.innerHTML = `
             <div class="file-name">${itemRef.name}</div>
             <div class="file-actions">
-               <input type="file" style="display:none;" id="replace_${itemRef.name.replace(/\./g,'_')}" accept="${categoryConfig.accepts}">
-               <button class="btn btnSmall" onclick="document.getElementById('replace_${itemRef.name.replace(/\./g,'_')}').click()">Replace</button>
-               <button class="btn btnSmall btnDanger" id="del_${itemRef.name.replace(/\./g,'_')}">Delete</button>
+               <input type="file" style="display:none;" id="replace_${safeId}" accept="${categoryConfig.accepts}">
+               <button class="btn btnSmall" onclick="document.getElementById('replace_${safeId}').click()">Replace</button>
+               <button class="btn btnSmall btnDanger" id="del_${safeId}">Delete</button>
             </div>
           `;
 
-          itemDiv.querySelector(`[id="del_${itemRef.name.replace(/\./g,'_')}"]`).addEventListener('click', async () => {
+          itemDiv.querySelector(`#del_${safeId}`).addEventListener('click', async () => {
              if(confirm(`Delete ${itemRef.name}?`)) {
                  setStatus(`Deleting ${itemRef.name}...`);
                  await deleteObject(itemRef);
@@ -382,7 +383,7 @@
              }
           });
 
-          itemDiv.querySelector(`[id="replace_${itemRef.name.replace(/\./g,'_')}"]`).addEventListener('change', (e) => {
+          itemDiv.querySelector(`#replace_${safeId}`).addEventListener('change', (e) => {
               handleFiles(e.target.files, categoryConfig, itemRef.name);
           });
 
@@ -395,34 +396,38 @@
       }
     }
 
-    // --- NEW: AI Review Persistence Logic ---
+    // --- AI Review Persistence Logic ---
     async function refreshReviewList() {
         if (!currentProject) return;
+        const listContainer = document.getElementById('reviewFileList');
+        const panel = document.getElementById('reviewPanel');
         const reviewFolderRef = ref(storage, `${ROOT}/${currentProject}/review`);
 
         try {
             const res = await listAll(reviewFolderRef);
             if (res.items.length === 0) {
-                reviewPanel.classList.remove('active');
+                panel.classList.remove('active');
                 return;
             }
 
-            reviewPanel.classList.add('active');
-            reviewFileList.innerHTML = '';
+            panel.classList.add('active');
+            listContainer.innerHTML = '';
 
             for (const itemRef of res.items) {
                 const itemDiv = document.createElement('div');
                 itemDiv.className = 'review-item';
+                const safeId = itemRef.name.replace(/[^a-zA-Z0-9]/g, '_');
+                
                 itemDiv.innerHTML = `
                     <div class="file-name">✨ ${itemRef.name}</div>
                     <div class="file-actions">
-                        <button class="btn btnSmall" id="dl_rev_${itemRef.name.replace(/\./g,'_')}">Download</button>
-                        <button class="btn btnSmall btnDanger" id="del_rev_${itemRef.name.replace(/\./g,'_')}">Delete Copy</button>
+                        <button class="btn btnSmall" id="dl_rev_${safeId}">Download</button>
+                        <button class="btn btnSmall btnDanger" id="del_rev_${safeId}">Delete Copy</button>
                     </div>
                 `;
 
-                // Download Link
-                itemDiv.querySelector(`#dl_rev_${itemRef.name.replace(/\./g,'_')}`).onclick = async () => {
+                // Download logic using backticks
+                itemDiv.querySelector(`#dl_rev_${safeId}`).onclick = async () => {
                     const url = await getDownloadURL(itemRef);
                     const a = document.createElement('a');
                     a.href = url;
@@ -430,13 +435,13 @@
                     a.click();
                 };
 
-                // Delete only the copy
-                itemDiv.querySelector(`#del_rev_${itemRef.name.replace(/\./g,'_')}`).onclick = async () => {
+                // Delete logic using backticks
+                itemDiv.querySelector(`#del_rev_${safeId}`).onclick = async () => {
                     await deleteObject(itemRef);
                     refreshReviewList();
                 };
 
-                reviewFileList.appendChild(itemDiv);
+                listContainer.appendChild(itemDiv);
             }
         } catch (e) { console.error("Review list error", e); }
     }
@@ -469,7 +474,6 @@
       appendToChatLog('System', 'Gathering active project text files...', 'muted');
 
       try {
-        // 1. Gather all text-based files
         const textCategories = FILE_CATEGORIES.filter(c => ['html', 'js', 'json'].includes(c.id));
         const projectFiles = {};
 
@@ -490,18 +494,15 @@
           throw new Error("No text files (HTML, JS, JSON) found in the project to edit.");
         }
 
-        // 2. Prepare Storage references and clean up old runs
         const projectPath = `${ROOT}/${currentProject}`;
         const responseFileRef = ref(storage, `${projectPath}/ai_response.json`);
         const errorFileRef = ref(storage, `${projectPath}/ai_error.json`);
         
-        // Note: You will still see 404s in the console here if the files don't exist yet. This is normal.
         try { await deleteObject(responseFileRef); } catch(e) {}
         try { await deleteObject(errorFileRef); } catch(e) {}
 
-        // 3. Trigger Gemini Background Proxy
         appendToChatLog('System', 'Analyzing and writing code...', 'muted');
-        setStatus('AI is processing files (This may take a minute)...');
+        setStatus('AI is processing files...');
         
         await fetch('/.netlify/functions/geminiCodeProxy-background', {
           method: 'POST',
@@ -509,98 +510,48 @@
           body: JSON.stringify({ prompt, files: projectFiles, projectPath })
         });
 
-        // 4. Poll Firebase Storage for the result file
         let result = null;
         let attempts = 0;
         
-        while (!result && attempts < 60) { // Poll for up to 5 minutes
+        while (!result && attempts < 60) {
           await sleep(5000);
           attempts++;
 
-          // Check for error file first
-          let hasErrorFile = false;
-          let errorMessage = "AI Generation Failed";
           try {
             const errUrl = await getDownloadURL(errorFileRef);
             const errRes = await fetch(errUrl);
             const errData = await errRes.json();
-            errorMessage = errData.error || errorMessage;
-            hasErrorFile = true;
-          } catch(e) {
-            // Ignore all errors here (including 404 object-not-found).
-            // It just means the background function hasn't crashed.
-          }
+            throw new Error(errData.error || "AI Generation Failed");
+          } catch(e) { if(e.message !== "Failed to fetch") throw e; }
 
-          if (hasErrorFile) {
-            throw new Error(errorMessage);
-          }
-
-          // Check for success file
           try {
             const url = await getDownloadURL(responseFileRef);
-            const res = await fetch(url + `&v=${Date.now()}`); // Cache-bust to get fresh file
+            const res = await fetch(url + `&v=${Date.now()}`);
             result = await res.json();
-          } catch(e) {
-             // Not found yet, keep waiting
-          }
+          } catch(e) {}
         }
 
-        if (!result) {
-            throw new Error("AI request timed out waiting for background completion.");
-        }
+        if (!result) throw new Error("AI request timed out.");
 
-        // 5. Write updated files back to Firebase
-        appendToChatLog('System', `Writing ${result.updatedFiles.length} updated files to Firebase...`, 'muted');
-        
         for (const file of result.updatedFiles) {
-          // FIX 1: Strip Markdown formatting 
           let cleanContent = file.content;
           if (cleanContent.trim().startsWith('```')) {
             cleanContent = cleanContent.replace(/^```[a-z]*\n/i, '').replace(/\n```$/i, '').trim();
           }
 
-          // FIX 2: Bulletproof Path Routing
-          // Extract just the filename to defeat AI path hallucinations (e.g., "SubwaySurfer/js/main.js")
           let fileName = file.path.split('/').pop(); 
-          let safePath = file.path;
-
-          // Look for this exact filename in the original files we sent to the AI
           const originalFileKey = Object.keys(projectFiles).find(k => k.endsWith('/' + fileName));
-          
-          if (originalFileKey) {
-             // Route it back to its exact original folder (e.g., "js/main.js")
-             safePath = originalFileKey; 
-          } else {
-             // Fallback routing if the AI generated a brand new file
-             const ext = fileName.split('.').pop().toLowerCase();
-             if (ext === 'js') safePath = `js/${fileName}`;
-             else if (ext === 'html') safePath = `html/${fileName}`;
-             else if (ext === 'json') safePath = `json/${fileName}`;
-             else safePath = `models/${fileName}`;
-          }
+          let safePath = originalFileKey || `js/${fileName}`;
 
           const targetRef = ref(storage, `${ROOT}/${currentProject}/${safePath}`);
           await uploadString(targetRef, cleanContent);
-          
-          // Visual feedback
-          const catFolder = safePath.split('/')[0];
-          const catConfig = FILE_CATEGORIES.find(c => c.folder === catFolder);
-          if (catConfig) {
-            const zone = document.getElementById(`zone_${catConfig.id}`);
-            if (zone) {
-              zone.classList.remove('pulse-update');
-              void zone.offsetWidth; 
-              zone.classList.add('pulse-update');
-            }
-          }
         }
 
-        // 6. Update UI
-        appendToChatLog('AI', result.message || "Files have been updated successfully.");
+        appendToChatLog('AI', result.message || "Files updated.");
         setStatus('AI update complete.');
         
         refreshAllFiles();
-        refreshReviewList(); // NEW: Refresh the preview list after AI run
+        refreshReviewList(); 
 
       } catch (error) {
         console.error("AI Update Error:", error);
@@ -611,119 +562,58 @@
       }
     });
 
-    // --- Zip Generation Logic (Template Matcher) ---
     generateGameBtn.addEventListener('click', async () => {
       if (!currentProject) return;
-      
       try {
         generateGameBtn.disabled = true;
         progressContainer.style.display = 'block';
         progressBar.style.width = '5%';
-        setStatus(`Fetching Reference ZIP for ${currentProject}...`);
+        setStatus(`Fetching Reference ZIP...`);
         
         const refFolder = ref(storage, `${ROOT}/${currentProject}/reference_zip`);
         const refList = await listAll(refFolder);
+        if (refList.items.length === 0) throw new Error("Missing Reference ZIP");
         
-        if (refList.items.length === 0) {
-           alert("No Reference ZIP found! Please upload one to the Reference Project ZIP drop zone first.");
-           throw new Error("Missing reference zip");
-        }
-        
-        const referenceZipRef = refList.items[0]; 
-        const refUrl = await getDownloadURL(referenceZipRef);
-        const refRes = await fetch(refUrl);
-        const refBlob = await refRes.blob();
-        
-        progressBar.style.width = '15%';
-        setStatus(`Loading template ZIP into memory...`);
+        const refBlob = await (await fetch(await getDownloadURL(refList.items[0]))).blob();
         const zip = new JSZip();
         await zip.loadAsync(refBlob);
         const zipPaths = Object.keys(zip.files);
         
-        progressBar.style.width = '20%';
-        setStatus(`Indexing project files...`);
         let totalFiles = 0;
         let processedFiles = 0;
-        const cachedCategories = {};
+        const cachedCats = {};
 
         for (const cat of FILE_CATEGORIES) {
           if (cat.id === 'reference') continue;
-          const folderRef = ref(storage, `${ROOT}/${currentProject}/${cat.folder}`);
-          try { 
-             const res = await listAll(folderRef); 
-             cachedCategories[cat.id] = res.items;
-             totalFiles += res.items.length;
-          } catch(e) { 
-             cachedCategories[cat.id] = []; 
-          }
+          const res = await listAll(ref(storage, `${ROOT}/${currentProject}/${cat.folder}`));
+          cachedCats[cat.id] = res.items;
+          totalFiles += res.items.length;
         }
 
         for (const cat of FILE_CATEGORIES) {
           if (cat.id === 'reference') continue; 
-          
-          const items = cachedCategories[cat.id];
-          
-          for (const itemRef of items) {
-            setStatus(`Processing ${itemRef.name}...`);
-            const url = await getDownloadURL(itemRef);
-            
-            // Force the browser to skip the cache and download the fresh file
-            const response = await fetch(url + '&v=' + Date.now(), { cache: 'no-store' }); 
-            const blob = await response.blob();
-            
+          for (const itemRef of cachedCats[cat.id]) {
+            const blob = await (await fetch(await getDownloadURL(itemRef) + '&v=' + Date.now())).blob();
             const match = zipPaths.find(p => p === itemRef.name || p.endsWith('/' + itemRef.name));
-            if (match) {
-               zip.file(match, blob);
-            } else {
-               let newPath = cat.id === 'html' ? itemRef.name : `${cat.folder}/${itemRef.name}`;
-               zip.file(newPath, blob);
-            }
-
+            zip.file(match || (cat.id === 'html' ? itemRef.name : `${cat.folder}/${itemRef.name}`), blob);
             processedFiles++;
-            if (totalFiles > 0) {
-               const percentComplete = 20 + ((processedFiles / totalFiles) * 65);
-               progressBar.style.width = `${percentComplete}%`;
-            }
+            progressBar.style.width = `${20 + ((processedFiles / totalFiles) * 65)}%`;
           }
         }
         
-        progressBar.style.width = '90%';
-        setStatus(`Compiling final Game ZIP...`);
-        
-        const finalZipBlob = await zip.generateAsync({ type: "blob", compression: "STORE" });
-        
-        progressBar.style.width = '100%';
-        setStatus(`Game Zip Generated Successfully! Downloading...`);
-
-        const downloadUrl = URL.createObjectURL(finalZipBlob);
+        const finalZip = await zip.generateAsync({ type: "blob" });
         const a = document.createElement('a');
-        a.href = downloadUrl;
-        a.download = `${currentProject}_Custom_Build.zip`;
-        document.body.appendChild(a);
+        a.href = URL.createObjectURL(finalZip);
+        a.download = `${currentProject}_Build.zip`;
         a.click();
-        
-        document.body.removeChild(a);
-        URL.revokeObjectURL(downloadUrl);
-
-      } catch (error) {
-        console.error("Zip generation error:", error);
-        setStatus(`Error generating zip. Check console.`);
-        progressBar.style.backgroundColor = 'var(--danger)';
-      } finally {
+      } catch (error) { setStatus(`Error: ${error.message}`); } 
+      finally { 
         generateGameBtn.disabled = false;
-        generateGameBtn.textContent = "Generate Game Zip"; 
-        
-        setTimeout(() => {
-           progressContainer.style.display = 'none';
-           progressBar.style.width = '0%';
-           progressBar.style.backgroundColor = 'var(--accent)';
-        }, 3000);
+        setTimeout(() => progressContainer.style.display = 'none', 3000);
       }
     });
 
-    window.addEventListener('DOMContentLoaded', () => {
-      loadProjects();
-    });
+    window.addEventListener('DOMContentLoaded', loadProjects);
   </script>
 </body>
 </html>
