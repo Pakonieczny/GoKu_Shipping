@@ -3,16 +3,13 @@ const fetch = require("node-fetch");
 const admin = require("./firebaseAdmin");
 
 exports.handler = async (event) => {
-  // Background functions only return a 202 to the browser immediately. 
-  // We must handle all logic and save the result to Firebase Storage.
   try {
-    const { prompt, files, projectPath } = JSON.parse(event.body);
+    const { prompt, files, projectPath, selectedAssets } = JSON.parse(event.body);
     const apiKey = process.env.GEMINI_API_KEY;
 
     if (!apiKey) throw new Error("Missing GEMINI_API_KEY");
     if (!prompt || !projectPath) throw new Error("Missing instructions or project details");
 
-    // Construct the context payload for Gemini
     let fileContext = "Here are the current project files:\n\n";
     for (const [path, content] of Object.entries(files)) {
       fileContext += `--- FILE: ${path} ---\n${content}\n\n`;
@@ -33,8 +30,39 @@ exports.handler = async (event) => {
       Only include files in 'updatedFiles' that actually need to be changed.
     `;
 
+    // Initialize the parts array with text
+    const parts = [{ text: systemInstruction + fileContext + "\nUser Request: " + prompt }];
+
+    // --- NEW: Inject Multi-Modal Assets ---
+    if (selectedAssets && selectedAssets.length > 0) {
+        let assetContext = "\n\nThe user has also provided the following media assets for you to use. Their relative paths in the project are:\n";
+        
+        for (const asset of selectedAssets) {
+            assetContext += `- ${asset.path} \n`;
+            
+            try {
+                // Fetch the asset buffer from Firebase Storage URL
+                const assetRes = await fetch(asset.url);
+                const arrayBuffer = await assetRes.arrayBuffer();
+                const base64Data = Buffer.from(arrayBuffer).toString('base64');
+                
+                // Append the file directly to Gemini's vision/audio context
+                parts.push({
+                    inlineData: {
+                        data: base64Data,
+                        mimeType: asset.type || "image/png"
+                    }
+                });
+            } catch (fetchErr) {
+                console.error(`Failed to fetch asset ${asset.name}:`, fetchErr);
+            }
+        }
+        // Add the path context text so the AI knows how to code the paths
+        parts[0].text += assetContext;
+    }
+
     const body = {
-      contents: [{ role: "user", parts: [{ text: systemInstruction + fileContext + "\nUser Request: " + prompt }] }],
+      contents: [{ role: "user", parts: parts }],
       generationConfig: {
         responseMimeType: "application/json", 
         temperature: 0.2 
@@ -55,7 +83,6 @@ exports.handler = async (event) => {
     const responseText = data.candidates?.[0]?.content?.parts?.[0]?.text;
     if (!responseText) throw new Error("Empty response from Gemini");
 
-    // Save the success payload directly to Firebase Storage
     const bucket = admin.storage().bucket(process.env.FIREBASE_STORAGE_BUCKET || "gokudatabase.firebasestorage.app");
     await bucket.file(`${projectPath}/ai_response.json`).save(responseText, {
         contentType: "application/json",
@@ -64,7 +91,6 @@ exports.handler = async (event) => {
 
   } catch (error) {
     console.error("Code Proxy Background Error:", error);
-    // Write an error file so the frontend polling knows to stop and show an error
     try {
         const { projectPath } = JSON.parse(event.body);
         const bucket = admin.storage().bucket(process.env.FIREBASE_STORAGE_BUCKET || "gokudatabase.firebasestorage.app");

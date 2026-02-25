@@ -67,6 +67,16 @@
     .pulse-update {
       animation: pulse-border 2s ease-out;
     }
+
+    /* Game Asset Library Styles */
+    .asset-library { margin-top: 20px; border: 1px dashed var(--success); border-radius: 14px; padding: 16px; background: rgba(127, 219, 150, 0.05); display: none; }
+    .asset-library.active { display: block; }
+    .asset-item { display: flex; align-items: center; justify-content: space-between; padding: 10px; border-bottom: 1px solid var(--line); font-size: 12px; transition: background 0.2s; }
+    .asset-item:hover { background: var(--card); }
+    .asset-item:last-child { border-bottom: none; }
+    .asset-item label { display: flex; align-items: center; gap: 10px; cursor: pointer; margin: 0; color: var(--text); flex: 1; font-weight: 500;}
+    .asset-date { color: var(--muted); font-size: 11px; }
+    input[type="checkbox"].asset-checkbox { width: 16px; height: 16px; accent-color: var(--success); cursor: pointer; margin: 0; }
   </style>
 </head>
 
@@ -114,6 +124,15 @@
         <div id="reviewFileList" class="review-list"></div>
       </div>
 
+      <div id="assetLibrary" class="asset-library">
+        <div class="row" style="justify-content: space-between; margin-bottom: 10px;">
+            <h2 style="color: var(--success); margin:0;">Game Assets Library</h2>
+            <span style="font-size: 11px; color: var(--muted);">Select files to include in your next AI prompt</span>
+        </div>
+        <div id="assetList" style="display:flex; flex-direction:column; max-height: 250px; overflow-y:auto; border: 1px solid var(--line); border-radius: 8px; background: #0b0d12;">
+            </div>
+      </div>
+
       <div style="margin-top: 30px; border-top: 1px solid var(--line); padding-top: 20px;">
         <h2>AI Context Window</h2>
         <div style="display: flex; flex-direction: column; gap: 10px;">
@@ -134,7 +153,7 @@
 
   <script type="module">
     import { initializeApp } from "https://www.gstatic.com/firebasejs/9.23.0/firebase-app.js";
-    import { getStorage, ref, uploadBytesResumable, uploadString, getDownloadURL, listAll, deleteObject } from "https://www.gstatic.com/firebasejs/9.23.0/firebase-storage.js";
+    import { getStorage, ref, uploadBytesResumable, uploadString, getDownloadURL, listAll, deleteObject, getMetadata } from "https://www.gstatic.com/firebasejs/9.23.0/firebase-storage.js";
     import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/9.23.0/firebase-auth.js";
 
     const ROOT = "game-generator-1/projects";
@@ -155,6 +174,7 @@
 
     // Categories config
     const FILE_CATEGORIES = [
+      { id: "assets", title: "Game Assets (Images/Audio)", accepts: "image/*,audio/*,.png,.jpg,.jpeg,.mp3,.wav", folder: "assets" },
       { id: "models", title: "3D Models", accepts: ".obj,.glb,.fbx,.js,.mtl", folder: "models" },
       { id: "html", title: "HTML Framework", accepts: ".html", folder: "html" },
       { id: "json", title: "JSON Configs", accepts: ".json", folder: "json" },
@@ -256,7 +276,8 @@
       setStatus(`Switched to project: ${name}`);
       renderDropZones();
       refreshAllFiles();
-      refreshReviewList(); // load reviews on switch
+      refreshReviewList();
+      refreshAssetLibrary();
       aiChatLog.innerHTML = `<div style="color: var(--muted);">AI Context ready for project: ${name}. Enter instructions below.</div>`;
     }
 
@@ -304,6 +325,7 @@
       await ensureAuth();
 
       const validExts = categoryConfig.accepts.split(',');
+      const isWildcard = categoryConfig.accepts.includes('*');
       
       for (let i = 0; i < files.length; i++) {
         const file = files[i];
@@ -312,7 +334,7 @@
         const hasExtension = parts.length > 1;
         const fileExt = hasExtension ? '.' + parts.pop().toLowerCase() : '';
         
-        if (hasExtension && !validExts.includes(fileExt)) {
+        if (hasExtension && !validExts.includes(fileExt) && !isWildcard) {
            alert(`Invalid file: ${file.name}. Expected ${categoryConfig.accepts}`);
            continue;
         }
@@ -362,19 +384,18 @@
         res.items.forEach(itemRef => {
           const itemDiv = document.createElement('div');
           itemDiv.className = 'file-item';
-          const safeId = itemRef.name.replace(/[^a-zA-Z0-9]/g, '_');
-          itemDiv.id = `item_${safeId}`; 
+          itemDiv.id = `item_${itemRef.name.replace(/[^a-zA-Z0-9]/g, '_')}`; // For animations
           
           itemDiv.innerHTML = `
             <div class="file-name">${itemRef.name}</div>
             <div class="file-actions">
-               <input type="file" style="display:none;" id="replace_${safeId}" accept="${categoryConfig.accepts}">
-               <button class="btn btnSmall" onclick="document.getElementById('replace_${safeId}').click()">Replace</button>
-               <button class="btn btnSmall btnDanger" id="del_${safeId}">Delete</button>
+               <input type="file" style="display:none;" id="replace_${itemRef.name.replace(/\./g,'_')}" accept="${categoryConfig.accepts}">
+               <button class="btn btnSmall" onclick="document.getElementById('replace_${itemRef.name.replace(/\./g,'_')}').click()">Replace</button>
+               <button class="btn btnSmall btnDanger" id="del_${itemRef.name.replace(/\./g,'_')}">Delete</button>
             </div>
           `;
 
-          itemDiv.querySelector(`#del_${safeId}`).addEventListener('click', async () => {
+          itemDiv.querySelector(`[id="del_${itemRef.name.replace(/\./g,'_')}"]`).addEventListener('click', async () => {
              if(confirm(`Delete ${itemRef.name}?`)) {
                  setStatus(`Deleting ${itemRef.name}...`);
                  await deleteObject(itemRef);
@@ -383,12 +404,15 @@
              }
           });
 
-          itemDiv.querySelector(`#replace_${safeId}`).addEventListener('change', (e) => {
+          itemDiv.querySelector(`[id="replace_${itemRef.name.replace(/\./g,'_')}"]`).addEventListener('change', (e) => {
               handleFiles(e.target.files, categoryConfig, itemRef.name);
           });
 
           listContainer.appendChild(itemDiv);
         });
+
+        // Trigger refresh of the asset library preview if we're dealing with assets
+        if (categoryConfig.id === 'assets') refreshAssetLibrary();
 
       } catch (e) {
         console.error(`Error loading files for ${categoryConfig.id}`, e);
@@ -396,38 +420,74 @@
       }
     }
 
+    // --- Game Assets Library Rendering ---
+    async function refreshAssetLibrary() {
+        if (!currentProject) return;
+        const libraryContainer = document.getElementById('assetLibrary');
+        const listContainer = document.getElementById('assetList');
+        const folderRef = ref(storage, `${ROOT}/${currentProject}/assets`);
+
+        try {
+            const res = await listAll(folderRef);
+            if (res.items.length === 0) {
+                libraryContainer.classList.remove('active');
+                return;
+            }
+
+            libraryContainer.classList.add('active');
+            listContainer.innerHTML = '';
+
+            for (const itemRef of res.items) {
+                const meta = await getMetadata(itemRef);
+                const url = await getDownloadURL(itemRef);
+                const dateStr = new Date(meta.timeCreated).toLocaleString();
+
+                const div = document.createElement('div');
+                div.className = 'asset-item';
+                div.innerHTML = `
+                    <label>
+                        <input type="checkbox" class="asset-checkbox" 
+                            data-path="assets/${itemRef.name}" 
+                            data-url="${url}" 
+                            data-type="${meta.contentType}" 
+                            data-name="${itemRef.name}">
+                        <span>✨ ${itemRef.name}</span>
+                    </label>
+                    <span class="asset-date">${dateStr}</span>
+                `;
+                listContainer.appendChild(div);
+            }
+        } catch (e) { console.error("Asset library error", e); }
+    }
+
     // --- AI Review Persistence Logic ---
     async function refreshReviewList() {
         if (!currentProject) return;
-        const listContainer = document.getElementById('reviewFileList');
-        const panel = document.getElementById('reviewPanel');
         const reviewFolderRef = ref(storage, `${ROOT}/${currentProject}/review`);
 
         try {
             const res = await listAll(reviewFolderRef);
             if (res.items.length === 0) {
-                panel.classList.remove('active');
+                reviewPanel.classList.remove('active');
                 return;
             }
 
-            panel.classList.add('active');
-            listContainer.innerHTML = '';
+            reviewPanel.classList.add('active');
+            reviewFileList.innerHTML = '';
 
             for (const itemRef of res.items) {
                 const itemDiv = document.createElement('div');
                 itemDiv.className = 'review-item';
-                const safeId = itemRef.name.replace(/[^a-zA-Z0-9]/g, '_');
-                
                 itemDiv.innerHTML = `
                     <div class="file-name">✨ ${itemRef.name}</div>
                     <div class="file-actions">
-                        <button class="btn btnSmall" id="dl_rev_${safeId}">Download</button>
-                        <button class="btn btnSmall btnDanger" id="del_rev_${safeId}">Delete Copy</button>
+                        <button class="btn btnSmall" id="dl_rev_${itemRef.name.replace(/\./g,'_')}">Download</button>
+                        <button class="btn btnSmall btnDanger" id="del_rev_${itemRef.name.replace(/\./g,'_')}">Delete Copy</button>
                     </div>
                 `;
 
-                // Download logic using backticks
-                itemDiv.querySelector(`#dl_rev_${safeId}`).onclick = async () => {
+                // Download Link
+                itemDiv.querySelector(`#dl_rev_${itemRef.name.replace(/\./g,'_')}`).onclick = async () => {
                     const url = await getDownloadURL(itemRef);
                     const a = document.createElement('a');
                     a.href = url;
@@ -435,13 +495,13 @@
                     a.click();
                 };
 
-                // Delete logic using backticks
-                itemDiv.querySelector(`#del_rev_${safeId}`).onclick = async () => {
+                // Delete only the copy
+                itemDiv.querySelector(`#del_rev_${itemRef.name.replace(/\./g,'_')}`).onclick = async () => {
                     await deleteObject(itemRef);
                     refreshReviewList();
                 };
 
-                listContainer.appendChild(itemDiv);
+                reviewFileList.appendChild(itemDiv);
             }
         } catch (e) { console.error("Review list error", e); }
     }
@@ -474,6 +534,7 @@
       appendToChatLog('System', 'Gathering active project text files...', 'muted');
 
       try {
+        // 1. Gather all text-based files
         const textCategories = FILE_CATEGORIES.filter(c => ['html', 'js', 'json'].includes(c.id));
         const projectFiles = {};
 
@@ -494,6 +555,7 @@
           throw new Error("No text files (HTML, JS, JSON) found in the project to edit.");
         }
 
+        // 2. Prepare Storage references and clean up old runs
         const projectPath = `${ROOT}/${currentProject}`;
         const responseFileRef = ref(storage, `${projectPath}/ai_response.json`);
         const errorFileRef = ref(storage, `${projectPath}/ai_error.json`);
@@ -501,57 +563,115 @@
         try { await deleteObject(responseFileRef); } catch(e) {}
         try { await deleteObject(errorFileRef); } catch(e) {}
 
+        // 2b. Gather Selected Assets
+        const selectedAssetNodes = document.querySelectorAll('.asset-checkbox:checked');
+        const selectedAssets = Array.from(selectedAssetNodes).map(cb => ({
+            name: cb.dataset.name,
+            path: cb.dataset.path,
+            url: cb.dataset.url,
+            type: cb.dataset.type
+        }));
+
+        // 3. Trigger Gemini Background Proxy
         appendToChatLog('System', 'Analyzing and writing code...', 'muted');
-        setStatus('AI is processing files...');
+        setStatus('AI is processing files (This may take a minute)...');
         
         await fetch('/.netlify/functions/geminiCodeProxy-background', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ prompt, files: projectFiles, projectPath })
+          body: JSON.stringify({ prompt, files: projectFiles, projectPath, selectedAssets })
         });
 
+        // 4. Poll Firebase Storage for the result file
         let result = null;
         let attempts = 0;
         
-        while (!result && attempts < 60) {
+        while (!result && attempts < 60) { // Poll for up to 5 minutes
           await sleep(5000);
           attempts++;
 
+          // Check for error file first
+          let hasErrorFile = false;
+          let errorMessage = "AI Generation Failed";
           try {
             const errUrl = await getDownloadURL(errorFileRef);
             const errRes = await fetch(errUrl);
             const errData = await errRes.json();
-            throw new Error(errData.error || "AI Generation Failed");
-          } catch(e) { if(e.message !== "Failed to fetch") throw e; }
+            errorMessage = errData.error || errorMessage;
+            hasErrorFile = true;
+          } catch(e) {
+            // Ignore all errors here (including 404 object-not-found).
+          }
 
+          if (hasErrorFile) {
+            throw new Error(errorMessage);
+          }
+
+          // Check for success file
           try {
             const url = await getDownloadURL(responseFileRef);
-            const res = await fetch(url + `&v=${Date.now()}`);
+            const res = await fetch(url + `&v=${Date.now()}`); // Cache-bust to get fresh file
             result = await res.json();
-          } catch(e) {}
+          } catch(e) {
+             // Not found yet, keep waiting
+          }
         }
 
-        if (!result) throw new Error("AI request timed out.");
+        if (!result) {
+            throw new Error("AI request timed out waiting for background completion.");
+        }
 
+        // 5. Write updated files back to Firebase
+        appendToChatLog('System', `Writing ${result.updatedFiles.length} updated files to Firebase...`, 'muted');
+        
         for (const file of result.updatedFiles) {
+          // FIX 1: Strip Markdown formatting 
           let cleanContent = file.content;
           if (cleanContent.trim().startsWith('```')) {
             cleanContent = cleanContent.replace(/^```[a-z]*\n/i, '').replace(/\n```$/i, '').trim();
           }
 
+          // FIX 2: Bulletproof Path Routing
           let fileName = file.path.split('/').pop(); 
+          let safePath = file.path;
+
           const originalFileKey = Object.keys(projectFiles).find(k => k.endsWith('/' + fileName));
-          let safePath = originalFileKey || `js/${fileName}`;
+          
+          if (originalFileKey) {
+             safePath = originalFileKey; 
+          } else {
+             const ext = fileName.split('.').pop().toLowerCase();
+             if (ext === 'js') safePath = `js/${fileName}`;
+             else if (ext === 'html') safePath = `html/${fileName}`;
+             else if (ext === 'json') safePath = `json/${fileName}`;
+             else safePath = `models/${fileName}`;
+          }
 
           const targetRef = ref(storage, `${ROOT}/${currentProject}/${safePath}`);
           await uploadString(targetRef, cleanContent);
+          
+          // Visual feedback
+          const catFolder = safePath.split('/')[0];
+          const catConfig = FILE_CATEGORIES.find(c => c.folder === catFolder);
+          if (catConfig) {
+            const zone = document.getElementById(`zone_${catConfig.id}`);
+            if (zone) {
+              zone.classList.remove('pulse-update');
+              void zone.offsetWidth; 
+              zone.classList.add('pulse-update');
+            }
+          }
         }
 
-        appendToChatLog('AI', result.message || "Files updated.");
+        // 6. Update UI
+        appendToChatLog('AI', result.message || "Files have been updated successfully.");
         setStatus('AI update complete.');
         
         refreshAllFiles();
         refreshReviewList(); 
+
+        // Optional: uncheck the boxes after successful run so they aren't accidentally sent again
+        document.querySelectorAll('.asset-checkbox').forEach(cb => cb.checked = false);
 
       } catch (error) {
         console.error("AI Update Error:", error);
@@ -562,58 +682,118 @@
       }
     });
 
+    // --- Zip Generation Logic (Template Matcher) ---
     generateGameBtn.addEventListener('click', async () => {
       if (!currentProject) return;
+      
       try {
         generateGameBtn.disabled = true;
         progressContainer.style.display = 'block';
         progressBar.style.width = '5%';
-        setStatus(`Fetching Reference ZIP...`);
+        setStatus(`Fetching Reference ZIP for ${currentProject}...`);
         
         const refFolder = ref(storage, `${ROOT}/${currentProject}/reference_zip`);
         const refList = await listAll(refFolder);
-        if (refList.items.length === 0) throw new Error("Missing Reference ZIP");
         
-        const refBlob = await (await fetch(await getDownloadURL(refList.items[0]))).blob();
+        if (refList.items.length === 0) {
+           alert("No Reference ZIP found! Please upload one to the Reference Project ZIP drop zone first.");
+           throw new Error("Missing reference zip");
+        }
+        
+        const referenceZipRef = refList.items[0]; 
+        const refUrl = await getDownloadURL(referenceZipRef);
+        const refRes = await fetch(refUrl);
+        const refBlob = await refRes.blob();
+        
+        progressBar.style.width = '15%';
+        setStatus(`Loading template ZIP into memory...`);
         const zip = new JSZip();
         await zip.loadAsync(refBlob);
         const zipPaths = Object.keys(zip.files);
         
+        progressBar.style.width = '20%';
+        setStatus(`Indexing project files...`);
         let totalFiles = 0;
         let processedFiles = 0;
-        const cachedCats = {};
+        const cachedCategories = {};
 
         for (const cat of FILE_CATEGORIES) {
           if (cat.id === 'reference') continue;
-          const res = await listAll(ref(storage, `${ROOT}/${currentProject}/${cat.folder}`));
-          cachedCats[cat.id] = res.items;
-          totalFiles += res.items.length;
+          const folderRef = ref(storage, `${ROOT}/${currentProject}/${cat.folder}`);
+          try { 
+             const res = await listAll(folderRef); 
+             cachedCategories[cat.id] = res.items;
+             totalFiles += res.items.length;
+          } catch(e) { 
+             cachedCategories[cat.id] = []; 
+          }
         }
 
         for (const cat of FILE_CATEGORIES) {
           if (cat.id === 'reference') continue; 
-          for (const itemRef of cachedCats[cat.id]) {
-            const blob = await (await fetch(await getDownloadURL(itemRef) + '&v=' + Date.now())).blob();
+          
+          const items = cachedCategories[cat.id];
+          
+          for (const itemRef of items) {
+            setStatus(`Processing ${itemRef.name}...`);
+            const url = await getDownloadURL(itemRef);
+            
+            const response = await fetch(url + '&v=' + Date.now(), { cache: 'no-store' }); 
+            const blob = await response.blob();
+            
             const match = zipPaths.find(p => p === itemRef.name || p.endsWith('/' + itemRef.name));
-            zip.file(match || (cat.id === 'html' ? itemRef.name : `${cat.folder}/${itemRef.name}`), blob);
+            if (match) {
+               zip.file(match, blob);
+            } else {
+               let newPath = cat.id === 'html' ? itemRef.name : `${cat.folder}/${itemRef.name}`;
+               zip.file(newPath, blob);
+            }
+
             processedFiles++;
-            progressBar.style.width = `${20 + ((processedFiles / totalFiles) * 65)}%`;
+            if (totalFiles > 0) {
+               const percentComplete = 20 + ((processedFiles / totalFiles) * 65);
+               progressBar.style.width = `${percentComplete}%`;
+            }
           }
         }
         
-        const finalZip = await zip.generateAsync({ type: "blob" });
+        progressBar.style.width = '90%';
+        setStatus(`Compiling final Game ZIP...`);
+        
+        const finalZipBlob = await zip.generateAsync({ type: "blob", compression: "STORE" });
+        
+        progressBar.style.width = '100%';
+        setStatus(`Game Zip Generated Successfully! Downloading...`);
+
+        const downloadUrl = URL.createObjectURL(finalZipBlob);
         const a = document.createElement('a');
-        a.href = URL.createObjectURL(finalZip);
-        a.download = `${currentProject}_Build.zip`;
+        a.href = downloadUrl;
+        a.download = `${currentProject}_Custom_Build.zip`;
+        document.body.appendChild(a);
         a.click();
-      } catch (error) { setStatus(`Error: ${error.message}`); } 
-      finally { 
+        
+        document.body.removeChild(a);
+        URL.revokeObjectURL(downloadUrl);
+
+      } catch (error) {
+        console.error("Zip generation error:", error);
+        setStatus(`Error generating zip. Check console.`);
+        progressBar.style.backgroundColor = 'var(--danger)';
+      } finally {
         generateGameBtn.disabled = false;
-        setTimeout(() => progressContainer.style.display = 'none', 3000);
+        generateGameBtn.textContent = "Generate Game Zip"; 
+        
+        setTimeout(() => {
+           progressContainer.style.display = 'none';
+           progressBar.style.width = '0%';
+           progressBar.style.backgroundColor = 'var(--accent)';
+        }, 3000);
       }
     });
 
-    window.addEventListener('DOMContentLoaded', loadProjects);
+    window.addEventListener('DOMContentLoaded', () => {
+      loadProjects();
+    });
   </script>
 </body>
 </html>
