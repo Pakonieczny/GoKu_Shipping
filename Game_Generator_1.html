@@ -420,16 +420,25 @@
       }
     }
 
-    // --- Game Assets Library Rendering ---
+// --- Game Assets & Models Library Rendering ---
     async function refreshAssetLibrary() {
         if (!currentProject) return;
         const libraryContainer = document.getElementById('assetLibrary');
         const listContainer = document.getElementById('assetList');
-        const folderRef = ref(storage, `${ROOT}/${currentProject}/assets`);
+        
+        // Fetch from BOTH assets and models folders
+        const assetsRef = ref(storage, `${ROOT}/${currentProject}/assets`);
+        const modelsRef = ref(storage, `${ROOT}/${currentProject}/models`);
 
         try {
-            const res = await listAll(folderRef);
-            if (res.items.length === 0) {
+            const [assetsRes, modelsRes] = await Promise.all([
+                listAll(assetsRef).catch(() => ({ items: [] })),
+                listAll(modelsRef).catch(() => ({ items: [] }))
+            ]);
+
+            const allItems = [...assetsRes.items, ...modelsRes.items];
+
+            if (allItems.length === 0) {
                 libraryContainer.classList.remove('active');
                 return;
             }
@@ -437,19 +446,22 @@
             libraryContainer.classList.add('active');
             listContainer.innerHTML = '';
 
-            for (const itemRef of res.items) {
+            for (const itemRef of allItems) {
                 const meta = await getMetadata(itemRef);
                 const url = await getDownloadURL(itemRef);
                 const dateStr = new Date(meta.timeCreated).toLocaleString();
+                
+                // Determine folder path (assets/ or models/) for the data-path
+                const parentFolder = itemRef.parent.name; 
 
                 const div = document.createElement('div');
                 div.className = 'asset-item';
                 div.innerHTML = `
                     <label>
                         <input type="checkbox" class="asset-checkbox" 
-                            data-path="assets/${itemRef.name}" 
+                            data-path="${parentFolder}/${itemRef.name}" 
                             data-url="${url}" 
-                            data-type="${meta.contentType}" 
+                            data-type="${meta.contentType || ''}" 
                             data-name="${itemRef.name}">
                         <span>✨ ${itemRef.name}</span>
                     </label>

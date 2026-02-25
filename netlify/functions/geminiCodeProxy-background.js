@@ -30,34 +30,53 @@ exports.handler = async (event) => {
       Only include files in 'updatedFiles' that actually need to be changed.
     `;
 
-    // Initialize the parts array with text
     const parts = [{ text: systemInstruction + fileContext + "\nUser Request: " + prompt }];
 
-    // --- NEW: Inject Multi-Modal Assets ---
+    // --- Inject Multi-Modal Assets SAFELY ---
     if (selectedAssets && selectedAssets.length > 0) {
-        let assetContext = "\n\nThe user has also provided the following media assets for you to use. Their relative paths in the project are:\n";
+        let assetContext = "\n\nThe user has designated the following files for you to use. Their relative paths in the project are:\n";
         
         for (const asset of selectedAssets) {
             assetContext += `- ${asset.path} \n`;
             
-            try {
-                // Fetch the asset buffer from Firebase Storage URL
-                const assetRes = await fetch(asset.url);
-                const arrayBuffer = await assetRes.arrayBuffer();
-                const base64Data = Buffer.from(arrayBuffer).toString('base64');
-                
-                // Append the file directly to Gemini's vision/audio context
-                parts.push({
-                    inlineData: {
-                        data: base64Data,
-                        mimeType: asset.type || "image/png"
+            // Filter out 3D models and unsupported files from inlineData
+            const isSupportedMedia = 
+                asset.type.startsWith('image/') || 
+                asset.type.startsWith('audio/') || 
+                asset.type.startsWith('video/') ||
+                asset.name.match(/\.(png|jpe?g|webp|mp3|wav|ogg)$/i);
+
+            if (isSupportedMedia) {
+                try {
+                    const assetRes = await fetch(asset.url);
+                    const arrayBuffer = await assetRes.arrayBuffer();
+                    const base64Data = Buffer.from(arrayBuffer).toString('base64');
+                    
+                    // Fallback mime type if undefined
+                    let mime = asset.type;
+                    if (!mime) {
+                        if (asset.name.endsWith('.png')) mime = 'image/png';
+                        else if (asset.name.endsWith('.jpg') || asset.name.endsWith('.jpeg')) mime = 'image/jpeg';
+                        else if (asset.name.endsWith('.mp3')) mime = 'audio/mp3';
+                        else mime = 'image/png'; // generic fallback
                     }
-                });
-            } catch (fetchErr) {
-                console.error(`Failed to fetch asset ${asset.name}:`, fetchErr);
+
+                    parts.push({
+                        inlineData: {
+                            data: base64Data,
+                            mimeType: mime
+                        }
+                    });
+                } catch (fetchErr) {
+                    console.error(`Failed to fetch visual asset ${asset.name}:`, fetchErr);
+                }
+            } else {
+                // It's a 3D model (.obj, .glb, etc). Just add a text note about it.
+                assetContext += `  (Note: ${asset.name} is a 3D model/binary file. Use the path provided above to load it in your code.)\n`;
             }
         }
-        // Add the path context text so the AI knows how to code the paths
+        
+        // Add the path context text so the AI knows the exact strings to write
         parts[0].text += assetContext;
     }
 
