@@ -754,7 +754,16 @@ if (Object.keys(projectFiles).length === 0) {
         
         const referenceZipRef = refList.items[0]; 
         const refUrl = await getDownloadURL(referenceZipRef);
-        const refRes = await fetch(refUrl);
+        const refCacheBust = refUrl.includes('?') ? `${refUrl}&_ts=${new Date().getTime()}` : `${refUrl}?_ts=${new Date().getTime()}`;
+
+        const refRes = await fetch(refCacheBust, {
+            cache: 'no-store',
+            headers: {
+                'Cache-Control': 'no-cache, no-store, must-revalidate',
+                'Pragma': 'no-cache',
+                'Expires': '0'
+            }
+        });
         const refBlob = await refRes.blob();
         
         progressBar.style.width = '15%';
@@ -788,10 +797,18 @@ if (Object.keys(projectFiles).length === 0) {
           
           for (const itemRef of items) {
             setStatus(`Processing ${itemRef.name}...`);
-            const url = await getDownloadURL(itemRef);
-            
-            const response = await fetch(url + '&v=' + Date.now(), { cache: 'no-store' }); 
-            const blob = await response.blob();
+          const url = await getDownloadURL(itemRef);
+          const cacheBustUrl = url.includes('?') ? `${url}&_ts=${new Date().getTime()}` : `${url}?_ts=${new Date().getTime()}`;
+
+          const response = await fetch(cacheBustUrl, { 
+              cache: 'no-store',
+              headers: {
+                  'Cache-Control': 'no-cache, no-store, must-revalidate',
+                  'Pragma': 'no-cache',
+                  'Expires': '0'
+              }
+          }); 
+          const blob = await response.blob();
             
             // Filter out Mac hidden folders and hidden files starting with a dot
             let possibleMatches = zipPaths.filter(p => 
@@ -808,7 +825,16 @@ if (Object.keys(projectFiles).length === 0) {
             if (match) {
                zip.file(match, blob);
             } else {
-               let newPath = cat.id === 'html' ? itemRef.name : `${cat.folder}/${itemRef.name}`;
+               let newPath;
+               
+               if (cat.id === 'html') {
+                   newPath = itemRef.name;
+               } else if (cat.id === 'assets') {
+                   newPath = `files/${itemRef.name}`; // Forces new assets into the 'files' folder
+               } else {
+                   newPath = `${cat.folder}/${itemRef.name}`;
+               }
+               
                zip.file(newPath, blob);
             }
 
