@@ -556,7 +556,7 @@ sendToAiBtn.addEventListener('click', async () => {
           
           for (const itemRef of res.items) {
             const url = await getDownloadURL(itemRef);
-            const fetched = await fetch(url);
+            const fetched = await fetch(url + '&v=' + Date.now(), { cache: 'no-store' });
             const text = await fetched.text();
             projectFiles[`${cat.folder}/${itemRef.name}`] = text; 
           }
@@ -636,17 +636,20 @@ sendToAiBtn.addEventListener('click', async () => {
         appendToChatLog('System', `Writing ${result.updatedFiles.length} updated files to Firebase...`, 'muted');
         
         for (const file of result.updatedFiles) {
-          // FIX 1: Strip Markdown formatting 
-          let cleanContent = file.content;
-          if (cleanContent.trim().startsWith('```')) {
-            cleanContent = cleanContent.replace(/^```[a-z]*\n/i, '').replace(/\n```$/i, '').trim();
+          // FIX 1: Strip Markdown formatting robustly
+          let cleanContent = file.content.trim();
+          if (cleanContent.startsWith('```')) {
+              const lines = cleanContent.split('\n');
+              if (lines[0].startsWith('```')) lines.shift();
+              if (lines[lines.length - 1].trim().startsWith('```')) lines.pop();
+              cleanContent = lines.join('\n').trim();
           }
 
           // FIX 2: Bulletproof Path Routing
           let fileName = file.path.split('/').pop(); 
           let safePath = file.path;
 
-          const originalFileKey = Object.keys(projectFiles).find(k => k.endsWith('/' + fileName));
+          const originalFileKey = Object.keys(projectFiles).find(k => k.toLowerCase().endsWith('/' + fileName.toLowerCase()));
           
           if (originalFileKey) {
              safePath = originalFileKey; 
@@ -752,7 +755,7 @@ sendToAiBtn.addEventListener('click', async () => {
             const response = await fetch(url + '&v=' + Date.now(), { cache: 'no-store' }); 
             const blob = await response.blob();
             
-            const match = zipPaths.find(p => p === itemRef.name || p.endsWith('/' + itemRef.name));
+            const match = zipPaths.find(p => p.toLowerCase() === itemRef.name.toLowerCase() || p.toLowerCase().endsWith('/' + itemRef.name.toLowerCase()));
             if (match) {
                zip.file(match, blob);
             } else {
