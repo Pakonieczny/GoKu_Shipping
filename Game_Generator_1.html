@@ -620,7 +620,7 @@ sendToAiBtn.addEventListener('click', async () => {
 
         CRITICAL SYSTEM RULE: The main logic file is named "2" and the main HTML file is named "23", both located in the "models" folder. You MUST use the exact name "2" instead of "WorldController.js" and "23" instead of "document.html" in all your code, updates, references, and output paths. Never save or output a file named "WorldController.js" or "document.html".
 
-        ASSET CONFIGURATION RULE: You must ensure "assets.json" (in the "json" folder) is updated to include any new assets requested by the user. If an asset the user mentions is not yet mapped in "assets.json", you MUST map it and return the updated "assets.json" file in your payload. When updating "assets.json", the "key" name and the corresponding file/asset name MUST always match exactly using sequential numbers.
+        ASSET CONFIGURATION RULE: You must ensure "assets.json" (in the "json" folder) is updated to include any new assets requested by the user. If an asset the user mentions is not yet mapped in "assets.json", you MUST map it and return the updated "assets.json" file in your payload. When updating "assets.json", the "key" name and the corresponding file/asset name MUST always match exactly using sequential numbers. CRITICAL: If you add or update an asset in "assets.json", you MUST also update file "2" to properly reference, load, or instantiate that new asset key so it is recognized and works within the system.
 
         RESPONSE RULE: In your 'message' response, you MUST provide a highly detailed changelog. Break down exactly which files you modified and summarize the specific code changes, line updates, logic shifts, or additions made within each individual file so the user knows exactly what happened under the hood.
 
@@ -839,33 +839,12 @@ sendToAiBtn.addEventListener('click', async () => {
             const match = possibleMatches.length > 0 ? possibleMatches[0] : null;
 
             if (match) {
-               // If this is our "2" or "23" file overwriting the template's file, rename it in the zip
-               if (cat.folder === 'models' && itemRef.name === '2') {
-                   zip.remove(match);
-                   const newMatchPath = match.replace(/WorldController\.js$/i, '2');
-                   zip.file(newMatchPath, blob);
-               } else if (cat.folder === 'models' && itemRef.name === '23') {
-                   zip.remove(match);
-                   const newMatchPath = match.replace(/document\.html$/i, '23');
-                   zip.file(newMatchPath, blob);
-               } else {
-                   zip.file(match, blob);
-               }
-            } else {
-               let newPath;
-               
-               if (cat.id === 'assets') {
-                   newPath = `files/${itemRef.name}`; 
-               } else if (cat.folder === 'models' && itemRef.name === '2') {
-                   newPath = `models/2`; 
-               } else if (cat.folder === 'models' && itemRef.name === '23') {
-                   newPath = `models/23`; 
-               } else {
-                   newPath = `${cat.folder}/${itemRef.name}`;
-               }
-               
-               zip.file(newPath, blob);
+               // Remove the original file from the template so we don't have duplicates
+               zip.remove(match);
             }
+            
+            // Per requirements: File 2, 23, and ALL new/updated files MUST ALWAYS be saved in the "files" folder
+            zip.file(`files/${itemRef.name}`, blob);
 
             processedFiles++;
             if (totalFiles > 0) {
