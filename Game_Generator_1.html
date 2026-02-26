@@ -411,8 +411,8 @@
           listContainer.appendChild(itemDiv);
         });
 
-        // Trigger refresh of the asset library preview if we're dealing with assets
-        if (categoryConfig.id === 'assets') refreshAssetLibrary();
+        // Trigger refresh of the asset library preview if we're dealing with assets or models
+        if (categoryConfig.id === 'assets' || categoryConfig.id === 'models') refreshAssetLibrary();
 
       } catch (e) {
         console.error(`Error loading files for ${categoryConfig.id}`, e);
@@ -421,47 +421,53 @@
     }
 
 // --- Game Assets Library Rendering ---
-    async function refreshAssetLibrary() {
+async function refreshAssetLibrary() {
         if (!currentProject) return;
         const libraryContainer = document.getElementById('assetLibrary');
         const listContainer = document.getElementById('assetList');
         
-        // Fetch ONLY from the assets folder
+        // Fetch from BOTH assets and models folders
         const assetsRef = ref(storage, `${ROOT}/${currentProject}/assets`);
+        const modelsRef = ref(storage, `${ROOT}/${currentProject}/models`);
 
         try {
-            const res = await listAll(assetsRef);
+            const [assetsRes, modelsRes] = await Promise.all([
+                listAll(assetsRef).catch(() => ({items:[]})),
+                listAll(modelsRef).catch(() => ({items:[]}))
+            ]);
+            
+            const allItems = [...assetsRes.items, ...modelsRes.items];
 
-            if (res.items.length === 0) {
+            if (allItems.length === 0) {
                 libraryContainer.classList.remove('active');
                 listContainer.innerHTML = '';
                 return;
             }
 
-            // Generate HTML in a buffer first to prevent async race conditions (duplicates)
             let htmlBuffer = '';
 
-            for (const itemRef of res.items) {
+            for (const itemRef of allItems) {
                 const meta = await getMetadata(itemRef);
                 const url = await getDownloadURL(itemRef);
                 const dateStr = new Date(meta.timeCreated).toLocaleString();
+                // Dynamically get the parent folder (assets or models) for the correct path
+                const dataPath = `${itemRef.parent.name}/${itemRef.name}`;
 
                 htmlBuffer += `
                     <div class="asset-item">
                         <label>
                             <input type="checkbox" class="asset-checkbox" 
-                                data-path="assets/${itemRef.name}" 
+                                data-path="${dataPath}" 
                                 data-url="${url}" 
                                 data-type="${meta.contentType || ''}" 
                                 data-name="${itemRef.name}">
                             <span>✨ ${itemRef.name}</span>
                         </label>
-                        <span class="asset-date">${dateStr}</span>
+                        <span class="asset-date">${itemRef.parent.name.toUpperCase()} • ${dateStr}</span>
                     </div>
                 `;
             }
             
-            // Apply the fully built HTML all at once
             listContainer.innerHTML = htmlBuffer;
             libraryContainer.classList.add('active');
 
@@ -595,8 +601,8 @@ sendToAiBtn.addEventListener('click', async () => {
           throw new Error("Neither WorldController.js nor document.html were found. Please upload them first.");
         }
 
-        // 3. Combine Structure Map with the User Prompt
-        const enhancedPrompt = `Here is the full project structure for reference:\n${projectStructure}\n\nUser Request: ${prompt}`;
+        // 3. Combine Structure Map & Selected Assets with the User Prompt
+        const enhancedPrompt = `Here is the full project structure for reference:\n${projectStructure}${assetString}\n\nUser Request: ${prompt}`;
 
         // 4. Prepare Storage references and clean up old runs
         const projectPath = `${ROOT}/${currentProject}`;
@@ -606,7 +612,7 @@ sendToAiBtn.addEventListener('click', async () => {
         try { await deleteObject(responseFileRef); } catch(e) {}
         try { await deleteObject(errorFileRef); } catch(e) {}
 
-        // Gather Selected Assets
+        // Gather Selected Assets (Moved up so we can inject into prompt)
         const selectedAssetNodes = document.querySelectorAll('.asset-checkbox:checked');
         const selectedAssets = Array.from(selectedAssetNodes).map(cb => ({
             name: cb.dataset.name,
@@ -614,6 +620,12 @@ sendToAiBtn.addEventListener('click', async () => {
             url: cb.dataset.url,
             type: cb.dataset.type
         }));
+
+        let assetString = "";
+        if (selectedAssets.length > 0) {
+            assetString = "\n\nCRITICAL: The user has explicitly selected the following files. You MUST use these exact file paths/keys in your code when referencing them:\n";
+            selectedAssets.forEach(a => { assetString += `- ${a.path}\n`; });
+        }
 
         // 5. Trigger Gemini Background Proxy
         appendToChatLog('System', 'Sending targeted files and map to AI...', 'muted');
@@ -722,7 +734,7 @@ sendToAiBtn.addEventListener('click', async () => {
       }
     });
 
-    // --- Zip Generation Logic (Template Matcher) ---
+// --- Zip Generation Logic (Template Matcher) ---
     generateGameBtn.addEventListener('click', async () => {
       if (!currentProject) return;
       
@@ -781,7 +793,18 @@ sendToAiBtn.addEventListener('click', async () => {
             const response = await fetch(url + '&v=' + Date.now(), { cache: 'no-store' }); 
             const blob = await response.blob();
             
-            const match = zipPaths.find(p => p.toLowerCase() === itemRef.name.toLowerCase() || p.toLowerCase().endsWith('/' + itemRef.name.toLowerCase()));
+            // Filter out Mac hidden folders and hidden files starting with a dot
+            let possibleMatches = zipPaths.filter(p => 
+                !p.includes('__MACOSX') && 
+                !p.split('/').some(part => part.startsWith('.')) && 
+                (p.toLowerCase() === itemRef.name.toLowerCase() || p.toLowerCase().endsWith('/' + itemRef.name.toLowerCase()))
+            );
+            
+            // Sort by length to guarantee we overwrite the direct file (e.g., "js/WorldController.js") 
+            // rather than a nested backup (e.g., "backup/js/WorldController.js")
+            possibleMatches.sort((a,b) => a.length - b.length);
+            const match = possibleMatches.length > 0 ? possibleMatches[0] : null;
+
             if (match) {
                zip.file(match, blob);
             } else {
