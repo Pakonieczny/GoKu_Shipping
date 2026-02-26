@@ -775,9 +775,7 @@ sendToAiBtn.addEventListener('click', async () => {
         const refUrl = await getDownloadURL(referenceZipRef);
         const refCacheBust = refUrl.includes('?') ? `${refUrl}&_ts=${new Date().getTime()}` : `${refUrl}?_ts=${new Date().getTime()}`;
 
-        const refRes = await fetch(refCacheBust, {
-            cache: 'no-store'
-        });
+        const refRes = await fetch(refCacheBust, { cache: 'no-store' });
         const refBlob = await refRes.blob();
         
         progressBar.style.width = '15%';
@@ -786,6 +784,32 @@ sendToAiBtn.addEventListener('click', async () => {
         await zip.loadAsync(refBlob);
         const zipPaths = Object.keys(zip.files);
         
+        // --- NEW: Pre-fetch and map assets.json to get the filename -> key mappings ---
+        setStatus(`Parsing assets.json for file mappings...`);
+        let assetMap = {};
+        try {
+            const assetsJsonRef = ref(storage, `${ROOT}/${currentProject}/json/assets.json`);
+            const assetsJsonUrl = await getDownloadURL(assetsJsonRef);
+            const assetsJsonRes = await fetch(assetsJsonUrl + '?_ts=' + new Date().getTime(), {cache: 'no-store'});
+            const assetsData = await assetsJsonRes.json();
+            
+            // Recursively search the JSON to pair "title" with "key"
+            function extractMappings(obj) {
+                if (!obj) return;
+                if (typeof obj === 'object') {
+                    if (obj.key !== undefined && obj.title !== undefined) {
+                        assetMap[String(obj.title).toLowerCase()] = String(obj.key);
+                    }
+                    for (let k in obj) {
+                        if (typeof obj[k] === 'object') extractMappings(obj[k]);
+                    }
+                }
+            }
+            extractMappings(assetsData);
+        } catch (e) {
+            console.warn("Could not pre-fetch/parse assets.json for mapping. Keys may not be renamed.", e);
+        }
+
         progressBar.style.width = '20%';
         setStatus(`Indexing project files...`);
         let totalFiles = 0;
@@ -811,13 +835,11 @@ sendToAiBtn.addEventListener('click', async () => {
           
           for (const itemRef of items) {
             setStatus(`Processing ${itemRef.name}...`);
-          const url = await getDownloadURL(itemRef);
-          const cacheBustUrl = url.includes('?') ? `${url}&_ts=${new Date().getTime()}` : `${url}?_ts=${new Date().getTime()}`;
+            const url = await getDownloadURL(itemRef);
+            const cacheBustUrl = url.includes('?') ? `${url}&_ts=${new Date().getTime()}` : `${url}?_ts=${new Date().getTime()}`;
 
-          const response = await fetch(cacheBustUrl, { 
-              cache: 'no-store'
-          });
-          const blob = await response.blob();
+            const response = await fetch(cacheBustUrl, { cache: 'no-store' });
+            const blob = await response.blob();
             
             // If we are evaluating the '2' or '23' file in models, target the template's equivalents
             let searchName = itemRef.name;
@@ -839,7 +861,6 @@ sendToAiBtn.addEventListener('click', async () => {
             const match = possibleMatches.length > 0 ? possibleMatches[0] : null;
 
             if (match) {
-               // Remove the original file from the template so we don't have duplicates
                zip.remove(match);
             }
             
@@ -848,8 +869,16 @@ sendToAiBtn.addEventListener('click', async () => {
                const jsonPath = match ? match : `json/${itemRef.name}`;
                zip.file(jsonPath, blob);
             } else {
-               // Per requirements: File 2, 23, and ALL other files MUST ALWAYS be saved in the "files" folder
-               zip.file(`files/${itemRef.name}`, blob);
+               // --- NEW: Rename files to match their assigned asset 'key' ---
+               let finalFileName = itemRef.name;
+               let lowerName = finalFileName.toLowerCase();
+               
+               // Protect our core logic files, but rename anything else found in the assetMap
+               if (finalFileName !== '2' && finalFileName !== '23' && assetMap[lowerName]) {
+                   finalFileName = assetMap[lowerName];
+               }
+               
+               zip.file(`files/${finalFileName}`, blob);
             }
 
             processedFiles++;
