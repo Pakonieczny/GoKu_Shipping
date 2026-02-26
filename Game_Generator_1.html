@@ -173,12 +173,10 @@
     const auth = getAuth(app);
 
     // Categories config
-    const FILE_CATEGORIES = [
+const FILE_CATEGORIES = [
       { id: "assets", title: "Game Assets (Images/Audio)", accepts: "image/*,audio/*,.png,.jpg,.jpeg,.mp3,.wav", folder: "assets" },
-      { id: "models", title: "3D Models", accepts: ".obj,.glb,.fbx,.js,.mtl", folder: "models" },
-      { id: "html", title: "HTML Framework", accepts: ".html", folder: "html" },
+      { id: "models", title: "Models, Logic & HTML", accepts: ".obj,.glb,.fbx,.js,.mtl,.html", folder: "models" },
       { id: "json", title: "JSON Configs", accepts: ".json", folder: "json" },
-      { id: "js", title: "JavaScript Logic", accepts: ".js", folder: "js" },
       { id: "reference", title: "Reference Project ZIP", accepts: ".zip", folder: "reference_zip" }
     ];
 
@@ -576,12 +574,13 @@ sendToAiBtn.addEventListener('click', async () => {
             projectStructure += "(No Reference ZIP uploaded yet)";
         }
 
-        // 2. Gather explicitly targeted files (WorldController.js and document.html)
-        appendToChatLog('System', 'Gathering WorldController.js and document.html...', 'muted');
+        // 2. Gather explicitly targeted files ('2', '23', and 'assets.json')
+        appendToChatLog('System', 'Gathering logic file "2", HTML file "23", and config "assets.json"...', 'muted');
         const projectFiles = {};
         const targetFiles = [
-          { folder: 'js', name: 'WorldController.js' },
-          { folder: 'html', name: 'document.html' }
+          { folder: 'models', name: '2' },
+          { folder: 'models', name: '23' },
+          { folder: 'json', name: 'assets.json' }
         ];
 
         for (const target of targetFiles) {
@@ -597,8 +596,8 @@ sendToAiBtn.addEventListener('click', async () => {
           } 
         }
 
-if (Object.keys(projectFiles).length === 0) {
-          throw new Error("Neither WorldController.js nor document.html were found. Please upload them first.");
+        if (Object.keys(projectFiles).length === 0) {
+          throw new Error("Could not find '2', '23', or 'assets.json'. Please upload them first.");
         }
 
         // Gather Selected Assets (Moved up BEFORE step 3 so it initializes properly)
@@ -617,7 +616,7 @@ if (Object.keys(projectFiles).length === 0) {
         }
 
         // 3. Combine Structure Map & Selected Assets with the User Prompt
-        const enhancedPrompt = `Here is the full project structure for reference:\n${projectStructure}${assetString}\n\nUser Request: ${prompt}`;
+        const enhancedPrompt = `Here is the full project structure for reference:\n${projectStructure}${assetString}\n\nCRITICAL SYSTEM RULE: The main logic file is named "2" and the main HTML file is named "23", both located in the "models" folder. You MUST use the exact name "2" instead of "WorldController.js" and "23" instead of "document.html" in all your code, updates, references, and output paths. Never save or output a file named "WorldController.js" or "document.html".\n\nASSET CONFIGURATION RULE: You must update the "assets.json" file (located in the "json" folder) whenever new assets or files are added to the project. When updating "assets.json", the "key" name and the corresponding file/asset name MUST always match exactly. You must continue using sequential numbers for both the "key" and corresponding file names when adding new entries.\n\nUser Request: ${prompt}`;
 
         // 4. Prepare Storage references and clean up old runs
         const projectPath = `${ROOT}/${currentProject}`;
@@ -690,16 +689,28 @@ if (Object.keys(projectFiles).length === 0) {
           let fileName = file.path.split('/').pop(); 
           let safePath = file.path;
 
+          // Enforce rule: never save WorldController.js or document.html, force "2" and "23", secure assets.json
+          if (fileName.toLowerCase() === 'worldcontroller.js' || fileName === '2.js') {
+              fileName = '2';
+              safePath = 'models/2';
+          } else if (fileName.toLowerCase() === 'document.html' || fileName === '23.html') {
+              fileName = '23';
+              safePath = 'models/23';
+          } else if (fileName.toLowerCase() === 'assets.json') {
+              fileName = 'assets.json';
+              safePath = 'json/assets.json';
+          }
+
           const originalFileKey = Object.keys(projectFiles).find(k => k.toLowerCase().endsWith('/' + fileName.toLowerCase()));
           
           if (originalFileKey) {
              safePath = originalFileKey; 
           } else {
-             const ext = fileName.split('.').pop().toLowerCase();
-             if (ext === 'js') safePath = `js/${fileName}`;
-             else if (ext === 'html') safePath = `html/${fileName}`;
+             const ext = fileName.includes('.') ? fileName.split('.').pop().toLowerCase() : '';
+             if (fileName === '2') safePath = `models/2`;
+             else if (fileName === '23') safePath = `models/23`;
              else if (ext === 'json') safePath = `json/${fileName}`;
-             else safePath = `models/${fileName}`;
+             else safePath = `models/${fileName}`; // Default everything else (js, html, models) to models
           }
 
           const targetRef = ref(storage, `${ROOT}/${currentProject}/${safePath}`);
@@ -800,27 +811,47 @@ if (Object.keys(projectFiles).length === 0) {
           });
           const blob = await response.blob();
             
+            // If we are evaluating the '2' or '23' file in models, target the template's equivalents
+            let searchName = itemRef.name;
+            if (cat.folder === 'models' && itemRef.name === '2') {
+                searchName = 'WorldController.js';
+            } else if (cat.folder === 'models' && itemRef.name === '23') {
+                searchName = 'document.html';
+            }
+
             // Filter out Mac hidden folders and hidden files starting with a dot
             let possibleMatches = zipPaths.filter(p => 
                 !p.includes('__MACOSX') && 
                 !p.split('/').some(part => part.startsWith('.')) && 
-                (p.toLowerCase() === itemRef.name.toLowerCase() || p.toLowerCase().endsWith('/' + itemRef.name.toLowerCase()))
+                (p.toLowerCase() === searchName.toLowerCase() || p.toLowerCase().endsWith('/' + searchName.toLowerCase()))
             );
             
-            // Sort by length to guarantee we overwrite the direct file (e.g., "js/WorldController.js") 
-            // rather than a nested backup (e.g., "backup/js/WorldController.js")
+            // Sort by length to guarantee we overwrite the direct file
             possibleMatches.sort((a,b) => a.length - b.length);
             const match = possibleMatches.length > 0 ? possibleMatches[0] : null;
 
             if (match) {
-               zip.file(match, blob);
+               // If this is our "2" or "23" file overwriting the template's file, rename it in the zip
+               if (cat.folder === 'models' && itemRef.name === '2') {
+                   zip.remove(match);
+                   const newMatchPath = match.replace(/WorldController\.js$/i, '2');
+                   zip.file(newMatchPath, blob);
+               } else if (cat.folder === 'models' && itemRef.name === '23') {
+                   zip.remove(match);
+                   const newMatchPath = match.replace(/document\.html$/i, '23');
+                   zip.file(newMatchPath, blob);
+               } else {
+                   zip.file(match, blob);
+               }
             } else {
                let newPath;
                
-               if (cat.id === 'html') {
-                   newPath = itemRef.name;
-               } else if (cat.id === 'assets') {
-                   newPath = `files/${itemRef.name}`; // Forces new assets into the 'files' folder
+               if (cat.id === 'assets') {
+                   newPath = `files/${itemRef.name}`; 
+               } else if (cat.folder === 'models' && itemRef.name === '2') {
+                   newPath = `models/2`; 
+               } else if (cat.folder === 'models' && itemRef.name === '23') {
+                   newPath = `models/23`; 
                } else {
                    newPath = `${cat.folder}/${itemRef.name}`;
                }
