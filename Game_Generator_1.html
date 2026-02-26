@@ -757,12 +757,7 @@ if (Object.keys(projectFiles).length === 0) {
         const refCacheBust = refUrl.includes('?') ? `${refUrl}&_ts=${new Date().getTime()}` : `${refUrl}?_ts=${new Date().getTime()}`;
 
         const refRes = await fetch(refCacheBust, {
-            cache: 'no-store',
-            headers: {
-                'Cache-Control': 'no-cache, no-store, must-revalidate',
-                'Pragma': 'no-cache',
-                'Expires': '0'
-            }
+            cache: 'no-store'
         });
         const refBlob = await refRes.blob();
         
@@ -801,13 +796,8 @@ if (Object.keys(projectFiles).length === 0) {
           const cacheBustUrl = url.includes('?') ? `${url}&_ts=${new Date().getTime()}` : `${url}?_ts=${new Date().getTime()}`;
 
           const response = await fetch(cacheBustUrl, { 
-              cache: 'no-store',
-              headers: {
-                  'Cache-Control': 'no-cache, no-store, must-revalidate',
-                  'Pragma': 'no-cache',
-                  'Expires': '0'
-              }
-          }); 
+              cache: 'no-store'
+          });
           const blob = await response.blob();
             
             // Filter out Mac hidden folders and hidden files starting with a dot
