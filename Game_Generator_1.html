@@ -790,7 +790,15 @@ sendToAiBtn.addEventListener('click', async () => {
         try {
             const assetsJsonRef = ref(storage, `${ROOT}/${currentProject}/json/assets.json`);
             const assetsJsonUrl = await getDownloadURL(assetsJsonRef);
-            const assetsJsonRes = await fetch(assetsJsonUrl + '?_ts=' + new Date().getTime(), {cache: 'no-store'});
+            
+            // FIXED: Safely append the cache-busting timestamp
+            const safeAssetsUrl = assetsJsonUrl.includes('?') 
+                ? `${assetsJsonUrl}&_ts=${new Date().getTime()}` 
+                : `${assetsJsonUrl}?_ts=${new Date().getTime()}`;
+                
+            const assetsJsonRes = await fetch(safeAssetsUrl, {cache: 'no-store'});
+            
+            if (!assetsJsonRes.ok) throw new Error(`Failed to fetch assets.json: ${assetsJsonRes.statusText}`);
             const assetsData = await assetsJsonRes.json();
             
             // Recursively search the JSON to pair "title" with "key"
@@ -798,7 +806,14 @@ sendToAiBtn.addEventListener('click', async () => {
                 if (!obj) return;
                 if (typeof obj === 'object') {
                     if (obj.key !== undefined && obj.title !== undefined) {
-                        assetMap[String(obj.title).toLowerCase()] = String(obj.key);
+                        const titleStr = String(obj.title).toLowerCase();
+                        assetMap[titleStr] = String(obj.key);
+                        
+                        // Robustness: Map the filename without extension as a backup
+                        if (titleStr.includes('.')) {
+                            const nameOnly = titleStr.substring(0, titleStr.lastIndexOf('.'));
+                            assetMap[nameOnly] = String(obj.key);
+                        }
                     }
                     for (let k in obj) {
                         if (typeof obj[k] === 'object') extractMappings(obj[k]);
@@ -868,14 +883,24 @@ sendToAiBtn.addEventListener('click', async () => {
                // Save .json files in the exact same folder structure as the Reference Project ZIP
                const jsonPath = match ? match : `json/${itemRef.name}`;
                zip.file(jsonPath, blob);
-            } else {
+               
+                } else {
                // --- NEW: Rename files to match their assigned asset 'key' ---
                let finalFileName = itemRef.name;
                let lowerName = finalFileName.toLowerCase();
                
                // Protect our core logic files, but rename anything else found in the assetMap
-               if (finalFileName !== '2' && finalFileName !== '23' && assetMap[lowerName]) {
-                   finalFileName = assetMap[lowerName];
+               if (finalFileName !== '2' && finalFileName !== '23') {
+                   if (assetMap[lowerName]) {
+                       // Exact match found (e.g., "seablade.obj")
+                       finalFileName = assetMap[lowerName];
+                   } else {
+                       // Backup match check without extension (e.g., "seablade")
+                       const nameNoExt = lowerName.includes('.') ? lowerName.substring(0, lowerName.lastIndexOf('.')) : lowerName;
+                       if (assetMap[nameNoExt]) {
+                           finalFileName = assetMap[nameNoExt];
+                       }
+                   }
                }
                
                zip.file(`files/${finalFileName}`, blob);
