@@ -133,10 +133,10 @@
             </div>
       </div>
 
-      <div style="margin-top: 30px; border-top: 1px solid var(--line); padding-top: 20px;">
+        <div style="margin-top: 30px; border-top: 1px solid var(--line); padding-top: 20px;">
         <h2>AI Context Window</h2>
         <div style="display: flex; flex-direction: column; gap: 10px;">
-          <div id="aiChatLog" style="height: 150px; overflow-y: auto; background: #0b0d12; border: 1px solid var(--line); border-radius: 10px; padding: 10px; font-size: 12px; font-family: monospace; display: flex; flex-direction: column; gap: 8px;">
+          <div id="aiChatLog" style="height: 400px; overflow-y: auto; background: #0b0d12; border: 1px solid var(--line); border-radius: 10px; padding: 14px; font-size: 13px; font-family: monospace; display: flex; flex-direction: column; gap: 12px; white-space: pre-wrap; line-height: 1.5;">
             <div style="color: var(--muted);">AI Context ready. Enter instructions below to modify the active project.</div>
           </div>
           
@@ -616,7 +616,15 @@ sendToAiBtn.addEventListener('click', async () => {
         }
 
         // 3. Combine Structure Map & Selected Assets with the User Prompt
-        const enhancedPrompt = `Here is the full project structure for reference:\n${projectStructure}${assetString}\n\nCRITICAL SYSTEM RULE: The main logic file is named "2" and the main HTML file is named "23", both located in the "models" folder. You MUST use the exact name "2" instead of "WorldController.js" and "23" instead of "document.html" in all your code, updates, references, and output paths. Never save or output a file named "WorldController.js" or "document.html".\n\nASSET CONFIGURATION RULE: You must update the "assets.json" file (located in the "json" folder) whenever new assets or files are added to the project. When updating "assets.json", the "key" name and the corresponding file/asset name MUST always match exactly. You must continue using sequential numbers for both the "key" and corresponding file names when adding new entries.\n\nUser Request: ${prompt}`;
+                const enhancedPrompt = `Here is the full project structure for reference:\n${projectStructure}${assetString}
+
+        CRITICAL SYSTEM RULE: The main logic file is named "2" and the main HTML file is named "23", both located in the "models" folder. You MUST use the exact name "2" instead of "WorldController.js" and "23" instead of "document.html" in all your code, updates, references, and output paths. Never save or output a file named "WorldController.js" or "document.html".
+
+        ASSET CONFIGURATION RULE: You must ensure "assets.json" (in the "json" folder) is updated to include any new assets requested by the user. If an asset the user mentions is not yet mapped in "assets.json", you MUST map it and return the updated "assets.json" file in your payload. When updating "assets.json", the "key" name and the corresponding file/asset name MUST always match exactly using sequential numbers.
+
+        RESPONSE RULE: In your 'message' response, you MUST provide a highly detailed changelog. Break down exactly which files you modified and summarize the specific code changes, line updates, logic shifts, or additions made within each individual file so the user knows exactly what happened under the hood.
+
+        User Request: ${prompt}`;
 
         // 4. Prepare Storage references and clean up old runs
         const projectPath = `${ROOT}/${currentProject}`;
