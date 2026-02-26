@@ -843,8 +843,14 @@ sendToAiBtn.addEventListener('click', async () => {
                zip.remove(match);
             }
             
-            // Per requirements: File 2, 23, and ALL new/updated files MUST ALWAYS be saved in the "files" folder
-            zip.file(`files/${itemRef.name}`, blob);
+            if (cat.id === 'json' || itemRef.name.toLowerCase().endsWith('.json')) {
+               // Save .json files in the exact same folder structure as the Reference Project ZIP
+               const jsonPath = match ? match : `json/${itemRef.name}`;
+               zip.file(jsonPath, blob);
+            } else {
+               // Per requirements: File 2, 23, and ALL other files MUST ALWAYS be saved in the "files" folder
+               zip.file(`files/${itemRef.name}`, blob);
+            }
 
             processedFiles++;
             if (totalFiles > 0) {
