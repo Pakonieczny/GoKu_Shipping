@@ -534,7 +534,7 @@
 
     const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
-    sendToAiBtn.addEventListener('click', async () => {
+sendToAiBtn.addEventListener('click', async () => {
       const prompt = aiPromptInput.value.trim();
       if (!prompt || !currentProject) return;
 
@@ -547,6 +547,7 @@
         // 1. Gather all text-based files
         const textCategories = FILE_CATEGORIES.filter(c => ['html', 'js', 'json'].includes(c.id));
         const projectFiles = {};
+        // ... (Original looping logic) ...
 
         for (const cat of textCategories) {
           const folderRef = ref(storage, `${ROOT}/${currentProject}/${cat.folder}`);
