@@ -544,25 +544,24 @@
       appendToChatLog('System', 'Gathering active project text files...', 'muted');
 
       try {
-        // 1. Gather all text-based files
-        const textCategories = FILE_CATEGORIES.filter(c => ['html', 'js', 'json'].includes(c.id));
+        // 1. Gather ONLY WorldController.js and document.html
         const projectFiles = {};
+        const targetFiles = ['js/WorldController.js', 'html/document.html'];
 
-        for (const cat of textCategories) {
-          const folderRef = ref(storage, `${ROOT}/${currentProject}/${cat.folder}`);
-          let res;
-          try { res = await listAll(folderRef); } catch (e) { continue; } 
-          
-          for (const itemRef of res.items) {
-            const url = await getDownloadURL(itemRef);
+        for (const filePath of targetFiles) {
+          const fileRef = ref(storage, `${ROOT}/${currentProject}/${filePath}`);
+          try { 
+            const url = await getDownloadURL(fileRef);
             const fetched = await fetch(url);
             const text = await fetched.text();
-            projectFiles[`${cat.folder}/${itemRef.name}`] = text; 
+            projectFiles[filePath] = text; 
+          } catch (e) { 
+            console.warn(`Could not fetch ${filePath}. It may not exist yet.`, e);
           }
         }
 
         if (Object.keys(projectFiles).length === 0) {
-          throw new Error("No text files (HTML, JS, JSON) found in the project to edit.");
+          throw new Error("Neither WorldController.js nor document.html were found in the project.");
         }
 
         // 2. Prepare Storage references and clean up old runs
@@ -582,14 +581,22 @@
             type: cb.dataset.type
         }));
 
-        // 3. Trigger Gemini Background Proxy
+        // 3. Append Hardcoded Instructions & Trigger Background Proxy
         appendToChatLog('System', 'Analyzing and writing code...', 'muted');
         setStatus('AI is processing files (This may take a minute)...');
         
+        const systemInstructions = `
+        CRITICAL RULES FOR THIS UPDATE:
+        1. NEVER truncate, omit, or shorten any code or annotations from the files you modify. You must return the ENTIRE file content with your changes included.
+        2. First, carefully read and analyze 'WorldController.js' and all of its code annotations. Use this file to understand the game's core architecture, mechanics, and logic. Adapt all of your new game modifications and code to match the patterns found in this file.
+        `;
+
+        const enhancedPrompt = prompt + "\n\n" + systemInstructions;
+
         await fetch('/.netlify/functions/geminiCodeProxy-background', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ prompt, files: projectFiles, projectPath, selectedAssets })
+          body: JSON.stringify({ prompt: enhancedPrompt, files: projectFiles, projectPath, selectedAssets })
         });
 
         // 4. Poll Firebase Storage for the result file
@@ -635,7 +642,7 @@
         appendToChatLog('System', `Writing ${result.updatedFiles.length} updated files to Firebase...`, 'muted');
         
         for (const file of result.updatedFiles) {
-          // FIX 1: Strip Markdown formatting 
+          // FIX 1: Strip Markdown formatting
           let cleanContent = file.content;
           if (cleanContent.trim().startsWith('```')) {
             cleanContent = cleanContent.replace(/^```[a-z]*\n/i, '').replace(/\n```$/i, '').trim();
