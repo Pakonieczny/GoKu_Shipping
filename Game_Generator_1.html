@@ -597,22 +597,11 @@ sendToAiBtn.addEventListener('click', async () => {
           } 
         }
 
-        if (Object.keys(projectFiles).length === 0) {
+if (Object.keys(projectFiles).length === 0) {
           throw new Error("Neither WorldController.js nor document.html were found. Please upload them first.");
         }
 
-        // 3. Combine Structure Map & Selected Assets with the User Prompt
-        const enhancedPrompt = `Here is the full project structure for reference:\n${projectStructure}${assetString}\n\nUser Request: ${prompt}`;
-
-        // 4. Prepare Storage references and clean up old runs
-        const projectPath = `${ROOT}/${currentProject}`;
-        const responseFileRef = ref(storage, `${projectPath}/ai_response.json`);
-        const errorFileRef = ref(storage, `${projectPath}/ai_error.json`);
-        
-        try { await deleteObject(responseFileRef); } catch(e) {}
-        try { await deleteObject(errorFileRef); } catch(e) {}
-
-        // Gather Selected Assets (Moved up so we can inject into prompt)
+        // Gather Selected Assets (Moved up BEFORE step 3 so it initializes properly)
         const selectedAssetNodes = document.querySelectorAll('.asset-checkbox:checked');
         const selectedAssets = Array.from(selectedAssetNodes).map(cb => ({
             name: cb.dataset.name,
@@ -626,6 +615,17 @@ sendToAiBtn.addEventListener('click', async () => {
             assetString = "\n\nCRITICAL: The user has explicitly selected the following files. You MUST use these exact file paths/keys in your code when referencing them:\n";
             selectedAssets.forEach(a => { assetString += `- ${a.path}\n`; });
         }
+
+        // 3. Combine Structure Map & Selected Assets with the User Prompt
+        const enhancedPrompt = `Here is the full project structure for reference:\n${projectStructure}${assetString}\n\nUser Request: ${prompt}`;
+
+        // 4. Prepare Storage references and clean up old runs
+        const projectPath = `${ROOT}/${currentProject}`;
+        const responseFileRef = ref(storage, `${projectPath}/ai_response.json`);
+        const errorFileRef = ref(storage, `${projectPath}/ai_error.json`);
+        
+        try { await deleteObject(responseFileRef); } catch(e) {}
+        try { await deleteObject(errorFileRef); } catch(e) {}
 
         // 5. Trigger Gemini Background Proxy
         appendToChatLog('System', 'Sending targeted files and map to AI...', 'muted');
