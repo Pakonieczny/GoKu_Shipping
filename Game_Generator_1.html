@@ -5,6 +5,14 @@
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>Game-Generator-1</title>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+  
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.13/codemirror.min.css">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.13/theme/monokai.min.css">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.13/codemirror.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.13/mode/javascript/javascript.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.13/mode/xml/xml.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.13/mode/htmlmixed/htmlmixed.min.js"></script>
+  
   <style>
     :root { --bg:#0b0d12; --card:#121624; --muted:#8b93a7; --text:#e9ecf5; --line:#242a3d; --accent: #2b6cff; --success: #7fdb96; --danger: #fca5a5; }
     body{ margin:0; font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial; background:var(--bg); color:var(--text); }
@@ -77,6 +85,10 @@
     .asset-item label { display: flex; align-items: center; gap: 10px; cursor: pointer; margin: 0; color: var(--text); flex: 1; font-weight: 500;}
     .asset-date { color: var(--muted); font-size: 11px; }
     input[type="checkbox"].asset-checkbox { width: 16px; height: 16px; accent-color: var(--success); cursor: pointer; margin: 0; }
+    
+    /* CodeMirror Custom Overrides */
+    .CodeMirror { height: auto; min-height: 300px; border-radius: 8px; font-family: monospace; font-size: 13px; margin-top: 10px; z-index: 0; }
+    .CodeMirror-scroll { max-height: 600px; }
   </style>
 </head>
 
@@ -921,19 +933,30 @@ sendToAiBtn.addEventListener('click', async () => {
                 fileHeader.appendChild(titleSpan);
                 fileHeader.appendChild(copyBtn);
 
-                const fileCode = document.createElement('pre');
-                fileCode.style.margin = '0';
-                fileCode.style.maxHeight = '650px'; // Increased height to better support full files
-                fileCode.style.overflowY = 'auto';
-                fileCode.style.color = 'var(--text)';
-                fileCode.style.fontFamily = 'monospace';
+                const editorContainer = document.createElement('div');
+                editorContainer.style.width = '100%';
                 
-                // Use innerHTML so the span tags with colors render properly
-                fileCode.innerHTML = file.uiContent; 
-
                 fileContainer.appendChild(fileHeader);
-                fileContainer.appendChild(fileCode);
+                fileContainer.appendChild(editorContainer);
                 aiCodeReviewLog.appendChild(fileContainer);
+
+                // Determine language syntax based on file extension
+                let editorMode = "javascript";
+                if (file.path.endsWith('.html')) editorMode = "htmlmixed";
+                else if (file.path.endsWith('.json')) editorMode = "application/json";
+
+                // Initialize fully-fledged CodeMirror editor
+                const editor = CodeMirror(editorContainer, {
+                    value: file.rawContent || '',
+                    mode: editorMode,
+                    theme: "monokai",
+                    lineNumbers: true,
+                    lineWrapping: true, // Forces text to wrap correctly
+                    readOnly: false     // Makes it fully editable
+                });
+
+                // Small timeout to force layout refresh after injection
+                setTimeout(() => editor.refresh(), 100);
             });
         } else {
             aiCodeReviewLog.innerHTML = '<div style="color: var(--muted);">No code changes detected in this run.</div>';
@@ -1051,6 +1074,39 @@ sendToAiBtn.addEventListener('click', async () => {
             const response = await fetch(cacheBustUrl, { cache: 'no-store' });
             const blob = await response.blob();
             
+            if (cat.id === 'object_zip') {
+                const tempZip = new JSZip();
+                await tempZip.loadAsync(blob);
+                
+                for (const relativePath in tempZip.files) {
+                    const zipEntry = tempZip.files[relativePath];
+                    if (zipEntry.dir || relativePath.includes('__MACOSX')) continue;
+                    
+                    const entryName = relativePath.split('/').pop();
+                    const lowerName = entryName.toLowerCase();
+                    const nameNoExt = lowerName.includes('.') ? lowerName.substring(0, lowerName.lastIndexOf('.')) : lowerName;
+                    
+                    let mappedKey = null;
+                    if (assetMap[lowerName]) {
+                        mappedKey = assetMap[lowerName];
+                    } else if (assetMap[nameNoExt]) {
+                        mappedKey = assetMap[nameNoExt];
+                    }
+                    
+                    if (mappedKey) {
+                        const entryBlob = await zipEntry.async('blob');
+                        zip.file(`files/${mappedKey}`, entryBlob);
+                    }
+                }
+                
+                processedFiles++;
+                if (totalFiles > 0) {
+                   const percentComplete = 20 + ((processedFiles / totalFiles) * 65);
+                   progressBar.style.width = `${percentComplete}%`;
+                }
+                continue; 
+            }
+
             let searchName = itemRef.name;
             if (cat.folder === 'models' && itemRef.name === '2') {
                 searchName = 'WorldController.js';
