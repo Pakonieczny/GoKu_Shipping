@@ -799,7 +799,8 @@ sendToAiBtn.addEventListener('click', async () => {
              }
           }
           
-          file.uiContent = uiDisplayContent; // Attach the formatted HTML context for step 8
+      file.uiContent = uiDisplayContent; // Attach the formatted HTML context for step 8
+          file.rawContent = finalContentToSave; // Store the raw unescaped code for the clipboard
           // --------------------------
 
           const targetRef = ref(storage, `${ROOT}/${currentProject}/${safePath}`);
@@ -835,13 +836,42 @@ sendToAiBtn.addEventListener('click', async () => {
                 fileContainer.style.boxShadow = '0 6px 20px rgba(0,0,0,0.4)';
 
                 const fileHeader = document.createElement('div');
-                fileHeader.style.color = 'var(--accent)';
-                fileHeader.style.fontSize = '16px';
-                fileHeader.style.fontWeight = 'bold';
+                fileHeader.style.display = 'flex';
+                fileHeader.style.justifyContent = 'space-between';
+                fileHeader.style.alignItems = 'center';
                 fileHeader.style.borderBottom = '2px solid var(--line)';
                 fileHeader.style.paddingBottom = '12px';
                 fileHeader.style.marginBottom = '16px';
-                fileHeader.textContent = `File Updated: ${file.path} (Full Context View)`;
+
+                const titleSpan = document.createElement('span');
+                titleSpan.style.color = 'var(--accent)';
+                titleSpan.style.fontSize = '16px';
+                titleSpan.style.fontWeight = 'bold';
+                titleSpan.textContent = `File Updated: ${file.path} (Full Context View)`;
+
+                const copyBtn = document.createElement('button');
+                copyBtn.className = 'btn btnSmall';
+                copyBtn.textContent = 'Copy Code';
+                copyBtn.onclick = () => {
+                    navigator.clipboard.writeText(file.rawContent || '').then(() => {
+                        copyBtn.textContent = 'Copied!';
+                        copyBtn.style.backgroundColor = 'var(--success)';
+                        copyBtn.style.borderColor = 'var(--success)';
+                        copyBtn.style.color = '#000';
+                        setTimeout(() => {
+                            copyBtn.textContent = 'Copy Code';
+                            copyBtn.style.backgroundColor = '';
+                            copyBtn.style.borderColor = '';
+                            copyBtn.style.color = '';
+                        }, 2000);
+                    }).catch(err => {
+                        console.error('Failed to copy code: ', err);
+                        copyBtn.textContent = 'Failed';
+                    });
+                };
+
+                fileHeader.appendChild(titleSpan);
+                fileHeader.appendChild(copyBtn);
 
                 const fileCode = document.createElement('pre');
                 fileCode.style.margin = '0';
