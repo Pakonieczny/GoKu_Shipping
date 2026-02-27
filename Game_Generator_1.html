@@ -151,7 +151,7 @@
       <div style="margin-top: 30px; border-top: 1px solid var(--line); padding-top: 20px;">
         <h2>AI Context Code Review</h2>
         <div id="aiCodeReviewLog" style="height: 400px; overflow-y: auto; background: #0b0d12; border: 1px solid var(--line); border-radius: 10px; padding: 14px; font-size: 13px; font-family: monospace; display: flex; flex-direction: column; gap: 12px; white-space: pre-wrap; line-height: 1.5;">
-          <div style="color: var(--muted);">Code updates will appear here after an AI run.</div>
+          <div style="color: var(--muted);">Code diff updates will appear here after an AI run.</div>
         </div>
       </div>
 
@@ -286,7 +286,7 @@
       refreshReviewList();
       refreshAssetLibrary();
       aiChatLog.innerHTML = `<div style="color: var(--muted);">AI Context ready for project: ${name}. Enter instructions below.</div>`;
-      aiCodeReviewLog.innerHTML = `<div style="color: var(--muted);">Code updates will appear here after an AI run.</div>`;
+      aiCodeReviewLog.innerHTML = `<div style="color: var(--muted);">Code diff updates will appear here after an AI run.</div>`;
     }
 
     // --- Drag & Drop UI & Logic ---
@@ -419,7 +419,6 @@
           listContainer.appendChild(itemDiv);
         });
 
-        // Trigger refresh of the asset library preview if we're dealing with assets or models
         if (categoryConfig.id === 'assets' || categoryConfig.id === 'models') refreshAssetLibrary();
 
       } catch (e) {
@@ -434,7 +433,6 @@ async function refreshAssetLibrary() {
         const libraryContainer = document.getElementById('assetLibrary');
         const listContainer = document.getElementById('assetList');
         
-        // Fetch from BOTH assets and models folders
         const assetsRef = ref(storage, `${ROOT}/${currentProject}/assets`);
         const modelsRef = ref(storage, `${ROOT}/${currentProject}/models`);
 
@@ -458,7 +456,6 @@ async function refreshAssetLibrary() {
                 const meta = await getMetadata(itemRef);
                 const url = await getDownloadURL(itemRef);
                 const dateStr = new Date(meta.timeCreated).toLocaleString();
-                // Dynamically get the parent folder (assets or models) for the correct path
                 const dataPath = `${itemRef.parent.name}/${itemRef.name}`;
 
                 htmlBuffer += `
@@ -510,7 +507,6 @@ async function refreshAssetLibrary() {
                     </div>
                 `;
 
-                // Download Link
                 itemDiv.querySelector(`#dl_rev_${itemRef.name.replace(/\./g,'_')}`).onclick = async () => {
                     const url = await getDownloadURL(itemRef);
                     const a = document.createElement('a');
@@ -519,7 +515,6 @@ async function refreshAssetLibrary() {
                     a.click();
                 };
 
-                // Delete only the copy
                 itemDiv.querySelector(`#del_rev_${itemRef.name.replace(/\./g,'_')}`).onclick = async () => {
                     await deleteObject(itemRef);
                     refreshReviewList();
@@ -572,7 +567,6 @@ sendToAiBtn.addEventListener('click', async () => {
             
             const zip = new JSZip();
             await zip.loadAsync(refBlob);
-            // Extract all file and folder paths
             projectStructure += Object.keys(zip.files).join('\n');
             zipFound = true;
           }
@@ -584,7 +578,7 @@ sendToAiBtn.addEventListener('click', async () => {
             projectStructure += "(No Reference ZIP uploaded yet)";
         }
 
-        // 2. Gather explicitly targeted files ('2', '23', and 'assets.json')
+        // 2. Gather explicitly targeted files
         appendToChatLog('System', 'Gathering logic file "2", HTML file "23", and config "assets.json"...', 'muted');
         const projectFiles = {};
         const targetFiles = [
@@ -610,7 +604,7 @@ sendToAiBtn.addEventListener('click', async () => {
           throw new Error("Could not find '2', '23', or 'assets.json'. Please upload them first.");
         }
 
-        // Gather Selected Assets (Moved up BEFORE step 3 so it initializes properly)
+        // Gather Selected Assets
         const selectedAssetNodes = document.querySelectorAll('.asset-checkbox:checked');
         const selectedAssets = Array.from(selectedAssetNodes).map(cb => ({
             name: cb.dataset.name,
@@ -632,7 +626,6 @@ sendToAiBtn.addEventListener('click', async () => {
         try {
             const instList = await listAll(instructionsFolderRef);
             if (instList.items.length > 0) {
-                // Fetch the first uploaded .txt file
                 const instUrl = await getDownloadURL(instList.items[0]);
                 const instRes = await fetch(instUrl + '&v=' + Date.now(), { cache: 'no-store' });
                 if (instRes.ok) {
@@ -644,6 +637,7 @@ sendToAiBtn.addEventListener('click', async () => {
         }
 
         // 3. Combine Structure Map, Instructions & Selected Assets with the User Prompt
+        // --- PROMPT OPTIMIZED TO FORCE DIFF GENERATION ---
         const enhancedPrompt = `Here is the full project structure for reference:\n${projectStructure}${assetString}
 
         === AI SYSTEM INSTRUCTIONS ===
@@ -658,7 +652,23 @@ sendToAiBtn.addEventListener('click', async () => {
 
         ASSET CONFIGURATION RULE: You must ensure "assets.json" (in the "json" folder) is updated to include any new assets requested by the user. If an asset the user mentions is not yet mapped in "assets.json", you MUST map it and return the updated "assets.json" file in your payload. When updating "assets.json", the "key" name and the corresponding file/asset name MUST always match exactly using sequential numbers. CRITICAL: If you add or update an asset in "assets.json", you MUST also update file "2" to properly reference, load, or instantiate that new asset key so it is recognized and works within the system.
 
-        RESPONSE RULE: In your 'message' response, you MUST provide a highly detailed changelog. Break down exactly which files you modified and summarize the specific code changes, line updates, logic shifts, or additions made within individual file so the user knows exactly what happened under the hood.
+        RESPONSE RULE - CRITICAL OPTIMIZATION:
+        To save time and tokens, YOU MUST NEVER OUTPUT THE FULL CONTENT OF A FILE. You must ONLY output the specific lines being changed using a SEARCH/REPLACE block format inside the "content" field of your JSON response. 
+        Format your "content" string EXACTLY like this for every change:
+
+        <<<<<<< SEARCH
+        [exact code from the original file to be replaced, including a few lines of context before and after]
+        =======
+        [the new code to replace it with]
+        >>>>>>> REPLACE
+
+        Rules for SEARCH/REPLACE blocks:
+        1. The SEARCH section MUST match the existing code in the file exactly, line for line, preserving whitespace and indentation. 
+        2. Include enough context lines to ensure a unique match.
+        3. You can include multiple SEARCH/REPLACE blocks for a single file.
+        4. If adding a completely new file (not editing an existing one), output the full code without SEARCH/REPLACE tags.
+
+        In your 'message' response, provide a highly detailed changelog breaking down exactly which files you modified and summarize the logic shifts.
 
         User Request: ${prompt}`;
 
@@ -677,7 +687,6 @@ sendToAiBtn.addEventListener('click', async () => {
         await fetch('/.netlify/functions/geminiCodeProxy-background', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          // Sending the 'enhancedPrompt' which contains the ZIP structure map
           body: JSON.stringify({ prompt: enhancedPrompt, files: projectFiles, projectPath, selectedAssets })
         });
 
@@ -685,11 +694,10 @@ sendToAiBtn.addEventListener('click', async () => {
         let result = null;
         let attempts = 0;
         
-        while (!result && attempts < 60) { // Poll for up to 5 minutes
+        while (!result && attempts < 60) {
           await sleep(5000);
           attempts++;
 
-          // Check for error file first
           let hasErrorFile = false;
           let errorMessage = "AI Generation Failed";
           try {
@@ -698,42 +706,34 @@ sendToAiBtn.addEventListener('click', async () => {
             const errData = await errRes.json();
             errorMessage = errData.error || errorMessage;
             hasErrorFile = true;
-          } catch(e) {
-            // Ignore missing error file
-          }
+          } catch(e) {}
 
-          if (hasErrorFile) {
-            throw new Error(errorMessage);
-          }
+          if (hasErrorFile) throw new Error(errorMessage);
 
-          // Check for success file
           try {
             const url = await getDownloadURL(responseFileRef);
             const res = await fetch(url + `&v=${Date.now()}`);
             result = await res.json();
-          } catch(e) {
-             // Not found yet, keep waiting
-          }
+          } catch(e) {}
         }
 
         if (!result) throw new Error("AI request timed out waiting for background completion.");
 
-        // 7. Write updated files back to Firebase
+        // 7. Write updated files back to Firebase (WITH PATCHING LOGIC)
         appendToChatLog('System', `Writing ${result.updatedFiles.length} updated files to Firebase...`, 'muted');
         
         for (const file of result.updatedFiles) {
-          let cleanContent = file.content.trim();
-          if (cleanContent.startsWith('```')) {
-              const lines = cleanContent.split('\n');
+          let aiOutputContent = file.content.trim();
+          if (aiOutputContent.startsWith('```')) {
+              const lines = aiOutputContent.split('\n');
               if (lines[0].startsWith('```')) lines.shift();
               if (lines[lines.length - 1].trim().startsWith('```')) lines.pop();
-              cleanContent = lines.join('\n').trim();
+              aiOutputContent = lines.join('\n').trim();
           }
 
           let fileName = file.path.split('/').pop(); 
           let safePath = file.path;
 
-          // Enforce rule: never save WorldController.js or document.html, force "2" and "23", secure assets.json
           if (fileName.toLowerCase() === 'worldcontroller.js' || fileName === '2.js') {
               fileName = '2';
               safePath = 'models/2';
@@ -747,18 +747,47 @@ sendToAiBtn.addEventListener('click', async () => {
 
           const originalFileKey = Object.keys(projectFiles).find(k => k.toLowerCase().endsWith('/' + fileName.toLowerCase()));
           
-          if (originalFileKey) {
-             safePath = originalFileKey; 
-          } else {
-             const ext = fileName.includes('.') ? fileName.split('.').pop().toLowerCase() : '';
-             if (fileName === '2') safePath = `models/2`;
-             else if (fileName === '23') safePath = `models/23`;
-             else if (ext === 'json') safePath = `json/${fileName}`;
-             else safePath = `models/${fileName}`; // Default everything else (js, html, models) to models
+          let finalContentToSave = aiOutputContent;
+
+          // --- NEW PATCHING LOGIC ---
+          // If the AI returned search/replace blocks, we patch the original code
+          if (aiOutputContent.includes('<<<<<<< SEARCH')) {
+             let originalContent = originalFileKey ? projectFiles[originalFileKey] : "";
+             
+             if (!originalContent) {
+                 appendToChatLog('System', `Warning: Could not find original content for ${fileName} to apply patch. Skipping file.`, 'error');
+                 continue; // Don't wipe out the file if we can't patch it
+             }
+
+             const blockRegex = /<<<<<<< SEARCH[\r\n]+([\s\S]*?)[\r\n]+=======[\r\n]+([\s\S]*?)[\r\n]+>>>>>>> REPLACE/g;
+             let normalizedResult = originalContent.replace(/\r\n/g, '\n');
+             let match;
+             let changesMade = 0;
+
+             while ((match = blockRegex.exec(aiOutputContent)) !== null) {
+                 const searchTarget = match[1].replace(/\r\n/g, '\n');
+                 const replacement = match[2];
+
+                 if (normalizedResult.includes(searchTarget)) {
+                     normalizedResult = normalizedResult.split(searchTarget).join(replacement);
+                     changesMade++;
+                 } else {
+                     console.warn(`Patch failed for ${fileName}. Code not found:\n`, searchTarget);
+                     appendToChatLog('System', `Warning: A patch block for ${fileName} failed to match the existing code.`, 'error');
+                 }
+             }
+
+             if (changesMade > 0) {
+                 finalContentToSave = normalizedResult;
+             } else {
+                 appendToChatLog('System', `Failed to apply any patches to ${fileName}. Ensure AI provides exact matching code.`, 'error');
+                 continue; // Skip uploading this broken file
+             }
           }
+          // --------------------------
 
           const targetRef = ref(storage, `${ROOT}/${currentProject}/${safePath}`);
-          await uploadString(targetRef, cleanContent);
+          await uploadString(targetRef, finalContentToSave);
           
           const catFolder = safePath.split('/')[0];
           const catConfig = FILE_CATEGORIES.find(c => c.folder === catFolder);
@@ -772,12 +801,11 @@ sendToAiBtn.addEventListener('click', async () => {
           }
         }
 
-        // 8. Update UI
+        // 8. Update UI Code Review
         appendToChatLog('AI', result.message || "Files have been updated successfully.");
         setStatus('AI update complete.');
 
-        // --- NEW: Populate AI Context Code Review ---
-        aiCodeReviewLog.innerHTML = ''; // Clear the panel for the new run
+        aiCodeReviewLog.innerHTML = ''; 
         
         if (result.updatedFiles && result.updatedFiles.length > 0) {
             result.updatedFiles.forEach(file => {
@@ -797,10 +825,12 @@ sendToAiBtn.addEventListener('click', async () => {
 
                 const fileCode = document.createElement('pre');
                 fileCode.style.margin = '0';
-                fileCode.style.maxHeight = '350px'; // Keeps massive files from taking up the whole screen
+                fileCode.style.maxHeight = '350px'; 
                 fileCode.style.overflowY = 'auto';
                 fileCode.style.color = 'var(--text)';
-                // Using textContent safely renders code without parsing HTML tags
+                
+                // Since the AI now returns the SEARCH/REPLACE blocks instead of the full file,
+                // injecting file.content here naturally displays ONLY the diff updates!
                 fileCode.textContent = file.content; 
 
                 fileContainer.appendChild(fileHeader);
@@ -810,7 +840,6 @@ sendToAiBtn.addEventListener('click', async () => {
         } else {
             aiCodeReviewLog.innerHTML = '<div style="color: var(--muted);">No code changes detected in this run.</div>';
         }
-        // --------------------------------------------
 
         refreshAllFiles();
         refreshReviewList(); 
@@ -856,14 +885,12 @@ sendToAiBtn.addEventListener('click', async () => {
         await zip.loadAsync(refBlob);
         const zipPaths = Object.keys(zip.files);
         
-        // --- NEW: Pre-fetch and map assets.json to get the filename -> key mappings ---
         setStatus(`Parsing assets.json for file mappings...`);
         let assetMap = {};
         try {
             const assetsJsonRef = ref(storage, `${ROOT}/${currentProject}/json/assets.json`);
             const assetsJsonUrl = await getDownloadURL(assetsJsonRef);
             
-            // FIXED: Safely append the cache-busting timestamp
             const safeAssetsUrl = assetsJsonUrl.includes('?') 
                 ? `${assetsJsonUrl}&_ts=${new Date().getTime()}` 
                 : `${assetsJsonUrl}?_ts=${new Date().getTime()}`;
@@ -873,7 +900,6 @@ sendToAiBtn.addEventListener('click', async () => {
             if (!assetsJsonRes.ok) throw new Error(`Failed to fetch assets.json: ${assetsJsonRes.statusText}`);
             const assetsData = await assetsJsonRes.json();
             
-            // Recursively search the JSON to pair "title" with "key"
             function extractMappings(obj) {
                 if (!obj) return;
                 if (typeof obj === 'object') {
@@ -881,7 +907,6 @@ sendToAiBtn.addEventListener('click', async () => {
                         const titleStr = String(obj.title).toLowerCase();
                         assetMap[titleStr] = String(obj.key);
                         
-                        // Robustness: Map the filename without extension as a backup
                         if (titleStr.includes('.')) {
                             const nameOnly = titleStr.substring(0, titleStr.lastIndexOf('.'));
                             assetMap[nameOnly] = String(obj.key);
@@ -928,7 +953,6 @@ sendToAiBtn.addEventListener('click', async () => {
             const response = await fetch(cacheBustUrl, { cache: 'no-store' });
             const blob = await response.blob();
             
-            // If we are evaluating the '2' or '23' file in models, target the template's equivalents
             let searchName = itemRef.name;
             if (cat.folder === 'models' && itemRef.name === '2') {
                 searchName = 'WorldController.js';
@@ -936,14 +960,12 @@ sendToAiBtn.addEventListener('click', async () => {
                 searchName = 'document.html';
             }
 
-            // Filter out Mac hidden folders and hidden files starting with a dot
             let possibleMatches = zipPaths.filter(p => 
                 !p.includes('__MACOSX') && 
                 !p.split('/').some(part => part.startsWith('.')) && 
                 (p.toLowerCase() === searchName.toLowerCase() || p.toLowerCase().endsWith('/' + searchName.toLowerCase()))
             );
             
-            // Sort by length to guarantee we overwrite the direct file
             possibleMatches.sort((a,b) => a.length - b.length);
             const match = possibleMatches.length > 0 ? possibleMatches[0] : null;
 
@@ -952,22 +974,17 @@ sendToAiBtn.addEventListener('click', async () => {
             }
             
             if (cat.id === 'json' || itemRef.name.toLowerCase().endsWith('.json')) {
-               // Save .json files in the exact same folder structure as the Reference Project ZIP
                const jsonPath = match ? match : `json/${itemRef.name}`;
                zip.file(jsonPath, blob);
 
                 } else {
-               // --- NEW: Rename files to match their assigned asset 'key' ---
                let finalFileName = itemRef.name;
                let lowerName = finalFileName.toLowerCase();
                
-               // Protect our core logic files, but rename anything else found in the assetMap
                if (finalFileName !== '2' && finalFileName !== '23') {
                    if (assetMap[lowerName]) {
-                       // Exact match found (e.g., "seablade.obj")
                        finalFileName = assetMap[lowerName];
                    } else {
-                       // Backup match check without extension (e.g., "seablade")
                        const nameNoExt = lowerName.includes('.') ? lowerName.substring(0, lowerName.lastIndexOf('.')) : lowerName;
                        if (assetMap[nameNoExt]) {
                            finalFileName = assetMap[nameNoExt];
