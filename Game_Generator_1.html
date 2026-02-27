@@ -173,7 +173,8 @@
     const auth = getAuth(app);
 
     // Categories config
-const FILE_CATEGORIES = [
+    const FILE_CATEGORIES = [
+      { id: "instructions", title: "AI System Instructions", accepts: ".txt", folder: "ai_system_instructions" },
       { id: "assets", title: "Game Assets (Images/Audio)", accepts: "image/*,audio/*,.png,.jpg,.jpeg,.mp3,.wav", folder: "assets" },
       { id: "models", title: "Models, Logic & HTML", accepts: ".obj,.glb,.fbx,.js,.mtl,.html", folder: "models" },
       { id: "json", title: "JSON Configs", accepts: ".json", folder: "json" },
@@ -615,14 +616,40 @@ sendToAiBtn.addEventListener('click', async () => {
             selectedAssets.forEach(a => { assetString += `- ${a.path}\n`; });
         }
 
-        // 3. Combine Structure Map & Selected Assets with the User Prompt
-                const enhancedPrompt = `Here is the full project structure for reference:\n${projectStructure}${assetString}
+        // 2.5 Gather AI System Instructions
+        appendToChatLog('System', 'Fetching AI System Instructions...', 'muted');
+        let aiInstructionsText = "No AI System Instructions provided.";
+        const instructionsFolderRef = ref(storage, `${ROOT}/${currentProject}/ai_system_instructions`);
+        try {
+            const instList = await listAll(instructionsFolderRef);
+            if (instList.items.length > 0) {
+                // Fetch the first uploaded .txt file
+                const instUrl = await getDownloadURL(instList.items[0]);
+                const instRes = await fetch(instUrl + '&v=' + Date.now(), { cache: 'no-store' });
+                if (instRes.ok) {
+                    aiInstructionsText = await instRes.text();
+                }
+            }
+        } catch (e) {
+            console.warn("Could not fetch AI System Instructions.", e);
+        }
+
+        // 3. Combine Structure Map, Instructions & Selected Assets with the User Prompt
+        const enhancedPrompt = `Here is the full project structure for reference:\n${projectStructure}${assetString}
+
+        === AI SYSTEM INSTRUCTIONS ===
+        ${aiInstructionsText}
+        ==============================
+
+        CRITICAL PROCESSING STEPS:
+        1. Before starting analysis, you must first strictly read and interpret the "AI SYSTEM INSTRUCTIONS" provided above.
+        2. Next, read, interpret, and understand the purpose and context of the explicitly targeted files ("2", "23", and "assets.json"), their relationship to the other files in the project map, and their function specifically in the context of the "AI SYSTEM INSTRUCTIONS".
 
         CRITICAL SYSTEM RULE: The main logic file is named "2" and the main HTML file is named "23", both located in the "models" folder. You MUST use the exact name "2" instead of "WorldController.js" and "23" instead of "document.html" in all your code, updates, references, and output paths. Never save or output a file named "WorldController.js" or "document.html".
 
         ASSET CONFIGURATION RULE: You must ensure "assets.json" (in the "json" folder) is updated to include any new assets requested by the user. If an asset the user mentions is not yet mapped in "assets.json", you MUST map it and return the updated "assets.json" file in your payload. When updating "assets.json", the "key" name and the corresponding file/asset name MUST always match exactly using sequential numbers. CRITICAL: If you add or update an asset in "assets.json", you MUST also update file "2" to properly reference, load, or instantiate that new asset key so it is recognized and works within the system.
 
-        RESPONSE RULE: In your 'message' response, you MUST provide a highly detailed changelog. Break down exactly which files you modified and summarize the specific code changes, line updates, logic shifts, or additions made within each individual file so the user knows exactly what happened under the hood.
+        RESPONSE RULE: In your 'message' response, you MUST provide a highly detailed changelog. Break down exactly which files you modified and summarize the specific code changes, line updates, logic shifts, or additions made within individual file so the user knows exactly what happened under the hood.
 
         User Request: ${prompt}`;
 
@@ -832,7 +859,7 @@ sendToAiBtn.addEventListener('click', async () => {
         const cachedCategories = {};
 
         for (const cat of FILE_CATEGORIES) {
-          if (cat.id === 'reference') continue;
+          if (cat.id === 'reference' || cat.id === 'instructions') continue;
           const folderRef = ref(storage, `${ROOT}/${currentProject}/${cat.folder}`);
           try { 
              const res = await listAll(folderRef); 
@@ -844,7 +871,7 @@ sendToAiBtn.addEventListener('click', async () => {
         }
 
         for (const cat of FILE_CATEGORIES) {
-          if (cat.id === 'reference') continue; 
+          if (cat.id === 'reference' || cat.id === 'instructions') continue;
           
           const items = cachedCategories[cat.id];
           
@@ -883,7 +910,7 @@ sendToAiBtn.addEventListener('click', async () => {
                // Save .json files in the exact same folder structure as the Reference Project ZIP
                const jsonPath = match ? match : `json/${itemRef.name}`;
                zip.file(jsonPath, blob);
-               
+
                 } else {
                // --- NEW: Rename files to match their assigned asset 'key' ---
                let finalFileName = itemRef.name;
