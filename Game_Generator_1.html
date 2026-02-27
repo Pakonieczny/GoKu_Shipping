@@ -133,7 +133,7 @@
             </div>
       </div>
 
-        <div style="margin-top: 30px; border-top: 1px solid var(--line); padding-top: 20px;">
+      <div style="margin-top: 30px; border-top: 1px solid var(--line); padding-top: 20px;">
         <h2>AI Context Window</h2>
         <div style="display: flex; flex-direction: column; gap: 10px;">
           <div id="aiChatLog" style="height: 400px; overflow-y: auto; background: #0b0d12; border: 1px solid var(--line); border-radius: 10px; padding: 14px; font-size: 13px; font-family: monospace; display: flex; flex-direction: column; gap: 12px; white-space: pre-wrap; line-height: 1.5;">
@@ -145,6 +145,13 @@
           <div class="row" style="justify-content: flex-end;">
             <button class="btn btnPrimary" id="sendToAiBtn">Apply AI Update</button>
           </div>
+        </div>
+      </div>
+
+      <div style="margin-top: 30px; border-top: 1px solid var(--line); padding-top: 20px;">
+        <h2>AI Context Code Review</h2>
+        <div id="aiCodeReviewLog" style="height: 400px; overflow-y: auto; background: #0b0d12; border: 1px solid var(--line); border-radius: 10px; padding: 14px; font-size: 13px; font-family: monospace; display: flex; flex-direction: column; gap: 12px; white-space: pre-wrap; line-height: 1.5;">
+          <div style="color: var(--muted);">Code updates will appear here after an AI run.</div>
         </div>
       </div>
 
@@ -198,6 +205,7 @@
     const aiPromptInput = document.getElementById('aiPromptInput');
     const sendToAiBtn = document.getElementById('sendToAiBtn');
     const aiChatLog = document.getElementById('aiChatLog');
+    const aiCodeReviewLog = document.getElementById('aiCodeReviewLog');
 
     // Review UI Elements
     const reviewPanel = document.getElementById('reviewPanel');
@@ -278,6 +286,7 @@
       refreshReviewList();
       refreshAssetLibrary();
       aiChatLog.innerHTML = `<div style="color: var(--muted);">AI Context ready for project: ${name}. Enter instructions below.</div>`;
+      aiCodeReviewLog.innerHTML = `<div style="color: var(--muted);">Code updates will appear here after an AI run.</div>`;
     }
 
     // --- Drag & Drop UI & Logic ---
@@ -766,7 +775,43 @@ sendToAiBtn.addEventListener('click', async () => {
         // 8. Update UI
         appendToChatLog('AI', result.message || "Files have been updated successfully.");
         setStatus('AI update complete.');
+
+        // --- NEW: Populate AI Context Code Review ---
+        aiCodeReviewLog.innerHTML = ''; // Clear the panel for the new run
         
+        if (result.updatedFiles && result.updatedFiles.length > 0) {
+            result.updatedFiles.forEach(file => {
+                const fileContainer = document.createElement('div');
+                fileContainer.style.border = '1px solid var(--line)';
+                fileContainer.style.borderRadius = '8px';
+                fileContainer.style.background = 'var(--card)';
+                fileContainer.style.padding = '10px';
+
+                const fileHeader = document.createElement('div');
+                fileHeader.style.color = 'var(--accent)';
+                fileHeader.style.fontWeight = 'bold';
+                fileHeader.style.borderBottom = '1px solid var(--line)';
+                fileHeader.style.paddingBottom = '8px';
+                fileHeader.style.marginBottom = '8px';
+                fileHeader.textContent = `File Updated: ${file.path}`;
+
+                const fileCode = document.createElement('pre');
+                fileCode.style.margin = '0';
+                fileCode.style.maxHeight = '350px'; // Keeps massive files from taking up the whole screen
+                fileCode.style.overflowY = 'auto';
+                fileCode.style.color = 'var(--text)';
+                // Using textContent safely renders code without parsing HTML tags
+                fileCode.textContent = file.content; 
+
+                fileContainer.appendChild(fileHeader);
+                fileContainer.appendChild(fileCode);
+                aiCodeReviewLog.appendChild(fileContainer);
+            });
+        } else {
+            aiCodeReviewLog.innerHTML = '<div style="color: var(--muted);">No code changes detected in this run.</div>';
+        }
+        // --------------------------------------------
+
         refreshAllFiles();
         refreshReviewList(); 
         document.querySelectorAll('.asset-checkbox').forEach(cb => cb.checked = false);
