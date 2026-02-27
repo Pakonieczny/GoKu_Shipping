@@ -694,8 +694,9 @@ sendToAiBtn.addEventListener('click', async () => {
         let result = null;
         let attempts = 0;
         
+        // Poll 60 times, waiting 30 seconds between each check (30 minutes total)
         while (!result && attempts < 60) {
-          await sleep(5000);
+          await sleep(30000); // 30,000 milliseconds = 30 seconds
           attempts++;
 
           let hasErrorFile = false;

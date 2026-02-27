@@ -47,7 +47,7 @@ exports.handler = async (event) => {
       }
     };
 
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3-pro-preview:generateContent`;
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-pro-preview:generateContent`;
     
     const res = await fetch(url, {
       method: "POST",
