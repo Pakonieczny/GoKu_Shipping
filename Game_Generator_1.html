@@ -637,7 +637,6 @@ sendToAiBtn.addEventListener('click', async () => {
         }
 
         // 3. Combine Structure Map, Instructions & Selected Assets with the User Prompt
-        // --- PROMPT OPTIMIZED TO FORCE DIFF GENERATION ---
         const enhancedPrompt = `Here is the full project structure for reference:\n${projectStructure}${assetString}
 
         === AI SYSTEM INSTRUCTIONS ===
@@ -694,9 +693,8 @@ sendToAiBtn.addEventListener('click', async () => {
         let result = null;
         let attempts = 0;
         
-        // Poll 60 times, waiting 30 seconds between each check (30 minutes total)
         while (!result && attempts < 60) {
-          await sleep(30000); // 30,000 milliseconds = 30 seconds
+          await sleep(30000); 
           attempts++;
 
           let hasErrorFile = false;
@@ -719,6 +717,11 @@ sendToAiBtn.addEventListener('click', async () => {
         }
 
         if (!result) throw new Error("AI request timed out waiting for background completion.");
+
+        // Helper to safely escape HTML for the UI code review
+        const escapeHTML = (str) => str.replace(/[&<>'"]/g, tag => ({
+            '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;'
+        }[tag]));
 
         // 7. Write updated files back to Firebase (WITH PATCHING LOGIC)
         appendToChatLog('System', `Writing ${result.updatedFiles.length} updated files to Firebase...`, 'muted');
@@ -749,19 +752,20 @@ sendToAiBtn.addEventListener('click', async () => {
           const originalFileKey = Object.keys(projectFiles).find(k => k.toLowerCase().endsWith('/' + fileName.toLowerCase()));
           
           let finalContentToSave = aiOutputContent;
+          let uiDisplayContent = escapeHTML(aiOutputContent); // Default if no patch tags
 
-          // --- NEW PATCHING LOGIC ---
-          // If the AI returned search/replace blocks, we patch the original code
+          // --- NEW PATCHING & UI INJECTION LOGIC ---
           if (aiOutputContent.includes('<<<<<<< SEARCH')) {
              let originalContent = originalFileKey ? projectFiles[originalFileKey] : "";
              
              if (!originalContent) {
                  appendToChatLog('System', `Warning: Could not find original content for ${fileName} to apply patch. Skipping file.`, 'error');
-                 continue; // Don't wipe out the file if we can't patch it
+                 continue; 
              }
 
              const blockRegex = /<<<<<<< SEARCH[\r\n]+([\s\S]*?)[\r\n]+=======[\r\n]+([\s\S]*?)[\r\n]+>>>>>>> REPLACE/g;
              let normalizedResult = originalContent.replace(/\r\n/g, '\n');
+             let uiResult = escapeHTML(normalizedResult); // Start with the full original escaped code
              let match;
              let changesMade = 0;
 
@@ -770,7 +774,15 @@ sendToAiBtn.addEventListener('click', async () => {
                  const replacement = match[2];
 
                  if (normalizedResult.includes(searchTarget)) {
+                     // 1. Execute standard patch for the file to be saved to Firebase
                      normalizedResult = normalizedResult.split(searchTarget).join(replacement);
+                     
+                     // 2. Execute UI string replacement with colors
+                     const escapedSearch = escapeHTML(searchTarget);
+                     const escapedReplace = escapeHTML(replacement);
+                     const uiPatch = `<span style="color: var(--success); font-weight: bold;">${escapedSearch}</span>\n<span style="color: var(--danger); font-weight: bold;">${escapedReplace}</span>`;
+                     
+                     uiResult = uiResult.split(escapedSearch).join(uiPatch);
                      changesMade++;
                  } else {
                      console.warn(`Patch failed for ${fileName}. Code not found:\n`, searchTarget);
@@ -780,11 +792,14 @@ sendToAiBtn.addEventListener('click', async () => {
 
              if (changesMade > 0) {
                  finalContentToSave = normalizedResult;
+                 uiDisplayContent = uiResult; // Store the HTML-injected full file for UI rendering
              } else {
                  appendToChatLog('System', `Failed to apply any patches to ${fileName}. Ensure AI provides exact matching code.`, 'error');
-                 continue; // Skip uploading this broken file
+                 continue; 
              }
           }
+          
+          file.uiContent = uiDisplayContent; // Attach the formatted HTML context for step 8
           // --------------------------
 
           const targetRef = ref(storage, `${ROOT}/${currentProject}/${safePath}`);
@@ -811,28 +826,32 @@ sendToAiBtn.addEventListener('click', async () => {
         if (result.updatedFiles && result.updatedFiles.length > 0) {
             result.updatedFiles.forEach(file => {
                 const fileContainer = document.createElement('div');
-                fileContainer.style.border = '1px solid var(--line)';
-                fileContainer.style.borderRadius = '8px';
-                fileContainer.style.background = 'var(--card)';
-                fileContainer.style.padding = '10px';
+                // Creating a much larger and more visible separation block
+                fileContainer.style.border = '2px solid var(--accent)';
+                fileContainer.style.borderRadius = '12px';
+                fileContainer.style.background = '#151a2a'; // Slightly offset from standard background
+                fileContainer.style.padding = '24px';
+                fileContainer.style.marginBottom = '50px'; 
+                fileContainer.style.boxShadow = '0 6px 20px rgba(0,0,0,0.4)';
 
                 const fileHeader = document.createElement('div');
                 fileHeader.style.color = 'var(--accent)';
+                fileHeader.style.fontSize = '16px';
                 fileHeader.style.fontWeight = 'bold';
-                fileHeader.style.borderBottom = '1px solid var(--line)';
-                fileHeader.style.paddingBottom = '8px';
-                fileHeader.style.marginBottom = '8px';
-                fileHeader.textContent = `File Updated: ${file.path}`;
+                fileHeader.style.borderBottom = '2px solid var(--line)';
+                fileHeader.style.paddingBottom = '12px';
+                fileHeader.style.marginBottom = '16px';
+                fileHeader.textContent = `File Updated: ${file.path} (Full Context View)`;
 
                 const fileCode = document.createElement('pre');
                 fileCode.style.margin = '0';
-                fileCode.style.maxHeight = '350px'; 
+                fileCode.style.maxHeight = '650px'; // Increased height to better support full files
                 fileCode.style.overflowY = 'auto';
                 fileCode.style.color = 'var(--text)';
+                fileCode.style.fontFamily = 'monospace';
                 
-                // Since the AI now returns the SEARCH/REPLACE blocks instead of the full file,
-                // injecting file.content here naturally displays ONLY the diff updates!
-                fileCode.textContent = file.content; 
+                // Use innerHTML so the span tags with colors render properly
+                fileCode.innerHTML = file.uiContent; 
 
                 fileContainer.appendChild(fileHeader);
                 fileContainer.appendChild(fileCode);
