@@ -179,10 +179,11 @@
     const storage = getStorage(app);
     const auth = getAuth(app);
 
-    // Categories config
+    // AI INSTRUCTION CATEGORY UPDATED
     const FILE_CATEGORIES = [
       { id: "instructions", title: "AI System Instructions", accepts: "text/plain,.txt", folder: "ai_system_instructions" },
       { id: "assets", title: "Game Assets (Images/Audio)", accepts: "image/*,audio/*,.png,.jpg,.jpeg,.mp3,.wav", folder: "assets" },
+      { id: "object_zip", title: "Animated/Textured Object ZIP Package", accepts: ".zip", folder: "object_zips" },
       { id: "models", title: "Models, Logic & HTML", accepts: ".obj,.glb,.fbx,.js,.mtl,.html", folder: "models" },
       { id: "json", title: "JSON Configs", accepts: ".json", folder: "json" },
       { id: "reference", title: "Reference Project ZIP", accepts: ".zip", folder: "reference_zip" }
@@ -419,7 +420,7 @@
           listContainer.appendChild(itemDiv);
         });
 
-        if (categoryConfig.id === 'assets' || categoryConfig.id === 'models') refreshAssetLibrary();
+        if (categoryConfig.id === 'assets' || categoryConfig.id === 'models' || categoryConfig.id === 'object_zip') refreshAssetLibrary();
 
       } catch (e) {
         console.error(`Error loading files for ${categoryConfig.id}`, e);
@@ -435,14 +436,16 @@ async function refreshAssetLibrary() {
         
         const assetsRef = ref(storage, `${ROOT}/${currentProject}/assets`);
         const modelsRef = ref(storage, `${ROOT}/${currentProject}/models`);
+        const objectZipsRef = ref(storage, `${ROOT}/${currentProject}/object_zips`);
 
         try {
-            const [assetsRes, modelsRes] = await Promise.all([
+            const [assetsRes, modelsRes, objectZipsRes] = await Promise.all([
                 listAll(assetsRef).catch(() => ({items:[]})),
-                listAll(modelsRef).catch(() => ({items:[]}))
+                listAll(modelsRef).catch(() => ({items:[]})),
+                listAll(objectZipsRef).catch(() => ({items:[]}))
             ]);
             
-            const allItems = [...assetsRes.items, ...modelsRes.items];
+            const allItems = [...assetsRes.items, ...modelsRes.items, ...objectZipsRes.items];
 
             if (allItems.length === 0) {
                 libraryContainer.classList.remove('active');
@@ -604,7 +607,7 @@ sendToAiBtn.addEventListener('click', async () => {
           throw new Error("Could not find '2', '23', or 'assets.json'. Please upload them first.");
         }
 
-        // Gather Selected Assets
+        // Gather Selected Assets & Extract Custom Object Zips on the fly
         const selectedAssetNodes = document.querySelectorAll('.asset-checkbox:checked');
         const selectedAssets = Array.from(selectedAssetNodes).map(cb => ({
             name: cb.dataset.name,
@@ -614,9 +617,54 @@ sendToAiBtn.addEventListener('click', async () => {
         }));
 
         let assetString = "";
+        let zipContextString = "";
+
         if (selectedAssets.length > 0) {
             assetString = "\n\nCRITICAL: The user has explicitly selected the following files. You MUST use these exact file paths/keys in your code when referencing them:\n";
-            selectedAssets.forEach(a => { assetString += `- ${a.path}\n`; });
+            for (const a of selectedAssets) {
+                assetString += `- ${a.path}\n`;
+                
+                // UNZIP LOGIC FOR OBJECT ZIPS IN SELECTED ASSETS
+                if (a.path.includes('object_zips') && a.name.toLowerCase().endsWith('.zip')) {
+                    appendToChatLog('System', `Extracting contents of Object Package ${a.name}...`, 'muted');
+                    try {
+                        const zipUrl = await getDownloadURL(ref(storage, `${ROOT}/${currentProject}/${a.path}`));
+                        const zipRes = await fetch(zipUrl);
+                        const zipBlob = await zipRes.blob();
+                        const zipObj = new JSZip();
+                        await zipObj.loadAsync(zipBlob);
+                        
+                        let parsedModels = [];
+                        let parsedTextures = [];
+                        let parsedAnimInfo = "";
+                        
+                        for (const relativePath of Object.keys(zipObj.files)) {
+                            const file = zipObj.files[relativePath];
+                            if (file.dir || relativePath.includes('__MACOSX')) continue;
+                            
+                            const lowerPath = relativePath.toLowerCase();
+                            if (lowerPath.endsWith('.obj') || lowerPath.endsWith('.glb') || lowerPath.endsWith('.fbx')) {
+                                parsedModels.push(relativePath);
+                            } else if (lowerPath.endsWith('.jpg') || lowerPath.endsWith('.png') || lowerPath.endsWith('.jpeg')) {
+                                parsedTextures.push(relativePath);
+                            } else if (lowerPath.endsWith('.txt')) {
+                                parsedAnimInfo += `\n--- Content of ${relativePath} ---\n`;
+                                parsedAnimInfo += await file.async('string');
+                            }
+                        }
+                        
+                        zipContextString += `\n\n=== PARSED ZIP PACKAGE CONTENTS: ${a.name} ===\n`;
+                        zipContextString += `3D Models Included: ${parsedModels.join(', ')}\n`;
+                        zipContextString += `Textures Included: ${parsedTextures.join(', ')}\n`;
+                        zipContextString += `Animation ID Reference File: ${parsedAnimInfo}\n`;
+                        zipContextString += `AI INSTRUCTION: Automatically infer the PBR texture maps (Albedo, Normal, etc.) based on the texture file suffixes and apply them to the material using createMaterial(). Use the Animation ID Reference to trigger the correct animations via gameState.playAnimation().\n`;
+                        
+                    } catch (e) {
+                        console.warn(`Failed to parse object zip ${a.name}`, e);
+                        appendToChatLog('System', `Warning: Could not parse ${a.name}`, 'error');
+                    }
+                }
+            }
         }
 
         // 2.5 Gather AI System Instructions
@@ -637,7 +685,7 @@ sendToAiBtn.addEventListener('click', async () => {
         }
 
         // 3. Combine Structure Map, Instructions & Selected Assets with the User Prompt
-        const enhancedPrompt = `Here is the full project structure for reference:\n${projectStructure}${assetString}
+        const enhancedPrompt = `Here is the full project structure for reference:\n${projectStructure}${assetString}${zipContextString}
 
         === AI SYSTEM INSTRUCTIONS ===
         ${aiInstructionsText}
