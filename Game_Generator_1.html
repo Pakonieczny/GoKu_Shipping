@@ -1086,17 +1086,15 @@ sendToAiBtn.addEventListener('click', async () => {
                     const lowerName = entryName.toLowerCase();
                     const nameNoExt = lowerName.includes('.') ? lowerName.substring(0, lowerName.lastIndexOf('.')) : lowerName;
                     
-                    let mappedKey = null;
+                let mappedKey = entryName;
                     if (assetMap[lowerName]) {
                         mappedKey = assetMap[lowerName];
                     } else if (assetMap[nameNoExt]) {
                         mappedKey = assetMap[nameNoExt];
                     }
                     
-                    if (mappedKey) {
-                        const entryBlob = await zipEntry.async('blob');
-                        zip.file(`files/${mappedKey}`, entryBlob);
-                    }
+                    const entryBlob = await zipEntry.async('blob');
+                    zip.file(`files/${mappedKey}`, entryBlob);
                 }
                 
                 processedFiles++;
