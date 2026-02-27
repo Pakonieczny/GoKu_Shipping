@@ -27,7 +27,7 @@ function getBucket() {
 }
 
 // Hard-lock the Gemini image model (ignore any client-provided model)
-const GEMINI_IMAGE_MODEL = "gemini-3-pro-image-preview";
+const GEMINI_IMAGE_MODEL = "gemini-3.1-flash-image-preview";
 
 const GENERATABLE_CATEGORIES = new Set([
   "Beady_Necklace",
@@ -366,8 +366,8 @@ async function callGeminiGenerateContentImage({
   images,
 }) {
   const geminiModel =
-    String(model || "gemini-3-pro-image-preview").trim() ||
-    "gemini-3-pro-image-preview";
+    String(model || "gemini-3.1-flash-image-preview").trim() ||
+    "gemini-3.1-flash-image-preview";
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${geminiModel}:generateContent`;
 
   const m = /^(\d+)\s*x\s*(\d+)$/.exec(String(size || "").trim());

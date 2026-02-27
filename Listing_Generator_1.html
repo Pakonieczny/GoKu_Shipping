@@ -939,7 +939,7 @@
               input_charm_storage_path: charmLatest.fullPath,
               output_base_path: ctxSetPath,
               slotIndex,
-              model: "gemini-3-pro-image-preview",
+              model: "gemini-3.1-flash-image-preview",
               prompt: buildSlotPrompt(ctxCategory, spec.folder, slotIndex + 1),
             });
 
@@ -1904,7 +1904,7 @@ function updateApproveButtonState() {
           outputBasePath,
           timestamp: new Date().toISOString(),
           slots: [],
-          model: "gemini-3-pro-image-preview",
+          model: "gemini-3.1-flash-image-preview",
         };
 
         setStatus("Preparing slots (Randomizing)…");
@@ -1966,7 +1966,7 @@ function updateApproveButtonState() {
               output_base_path: outputBasePath,
               slotIndex: i,
               prompt: buildSlotPrompt(category, spec.folder, slotNum),
-              model: "gemini-3-pro-image-preview",
+              model: "gemini-3.1-flash-image-preview",
             });
           }
 
@@ -2506,7 +2506,7 @@ window.redoCharmSlot = async function(folderId, slotIndex) {
                 input_charm_storage_path: inputCharmPath,
                 output_base_path: folderPath,
                 slotIndex: slotIndex,
-                model: "gemini-3-pro-image-preview",
+                model: "gemini-3.1-flash-image-preview",
                 prompt: promptStr
             }, signal);
 
@@ -2631,7 +2631,7 @@ window.regenCharmQuad = async function(folderId) {
                 kind: "edits", activeCategory: "Charms",
                 input_storage_path: sourceCharmPath, input_charm_storage_path: sourceCharmPath,
                 output_base_path: folderPath, slotIndex: 0,
-                model: "gemini-3-pro-image-preview", prompt: promptStrCharm
+                model: "gemini-3.1-flash-image-preview", prompt: promptStrCharm
             }, sig0);
             
             const charmRes = await waitForSlotPngUrl(folderPath, 0, { 
@@ -2661,7 +2661,7 @@ window.regenCharmQuad = async function(folderId) {
                 kind: "edits", activeCategory: "Charms",
                 input_storage_path: charmRes.storagePath, input_charm_storage_path: charmRes.storagePath,
                 output_base_path: folderPath, slotIndex: 1,
-                model: "gemini-3-pro-image-preview", prompt: promptStrEarring
+                model: "gemini-3.1-flash-image-preview", prompt: promptStrEarring
             }, sig1);
             
             const earringRes = await waitForSlotPngUrl(folderPath, 1, { 
@@ -2692,7 +2692,7 @@ window.regenCharmQuad = async function(folderId) {
                 kind: "edits", activeCategory: "Charms",
                 input_storage_path: charmRes.storagePath, input_charm_storage_path: refPathForBaseBW,
                 output_base_path: folderPath, slotIndex: 2,
-                model: "gemini-3-pro-image-preview", prompt: promptStrBW
+                model: "gemini-3.1-flash-image-preview", prompt: promptStrBW
             }, sig2);
             
             const charmBWRes = await waitForSlotPngUrl(folderPath, 2, { 
@@ -2722,7 +2722,7 @@ window.regenCharmQuad = async function(folderId) {
                 kind: "edits", activeCategory: "Charms",
                 input_storage_path: charmBWRes.storagePath, input_charm_storage_path: charmBWRes.storagePath,
                 output_base_path: folderPath, slotIndex: 3,
-                model: "gemini-3-pro-image-preview", prompt: promptStrBWEarring
+                model: "gemini-3.1-flash-image-preview", prompt: promptStrBWEarring
             }, sig3);
             
             const earringBWRes = await waitForSlotPngUrl(folderPath, 3, { 
@@ -2828,7 +2828,7 @@ window.regenCharmQuad = async function(folderId) {
                 kind: "edits", activeCategory: "Stud_Earrings",
                 input_storage_path: baseCharmStoragePath, input_charm_storage_path: baseCharmStoragePath,
                 output_base_path: folderPath, slotIndex: 1,
-                model: "gemini-3-pro-image-preview", prompt: promptStrEarring
+                model: "gemini-3.1-flash-image-preview", prompt: promptStrEarring
             });
             const earringRes = await waitForSlotPngUrl(folderPath, 1, { timeoutMs: 600000, intervalMs: 5000 });
             const newBlob1 = await fetchAndCacheBlob(earringRes.url, earringRes.storagePath, Date.now());
@@ -2853,7 +2853,7 @@ window.regenCharmQuad = async function(folderId) {
                 kind: "edits", activeCategory: "Charms",
                 input_storage_path: baseCharmStoragePath, input_charm_storage_path: refPathForBaseBW,
                 output_base_path: folderPath, slotIndex: 2,
-                model: "gemini-3-pro-image-preview", prompt: promptStrBW
+                model: "gemini-3.1-flash-image-preview", prompt: promptStrBW
             });
             const charmBWRes = await waitForSlotPngUrl(folderPath, 2, { timeoutMs: 600000, intervalMs: 5000 });
             const newBlob2 = await fetchAndCacheBlob(charmBWRes.url, charmBWRes.storagePath, Date.now());
@@ -2877,7 +2877,7 @@ window.regenCharmQuad = async function(folderId) {
                 kind: "edits", activeCategory: "Stud_Earrings",
                 input_storage_path: charmBWRes.storagePath, input_charm_storage_path: charmBWRes.storagePath,
                 output_base_path: folderPath, slotIndex: 3,
-                model: "gemini-3-pro-image-preview", prompt: promptStrBWEarring
+                model: "gemini-3.1-flash-image-preview", prompt: promptStrBWEarring
             });
             const earringBWRes = await waitForSlotPngUrl(folderPath, 3, { timeoutMs: 600000, intervalMs: 5000 });
             const newBlob3 = await fetchAndCacheBlob(earringBWRes.url, earringBWRes.storagePath, Date.now());
@@ -3074,7 +3074,7 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef) {
                 kind: "edits", activeCategory: "Charms", 
                 input_storage_path: targetCharmRef.fullPath, input_charm_storage_path: targetCharmRef.fullPath,
                 output_base_path: outputBasePath, slotIndex: 0,
-                model: "gemini-3-pro-image-preview", prompt: promptStrCharm
+                model: "gemini-3.1-flash-image-preview", prompt: promptStrCharm
             });
             const charmRes = await waitForSlotPngUrl(outputBasePath, 0, { timeoutMs: 600000, intervalMs: 5000 });
             const newBlob0 = await fetchAndCacheBlob(charmRes.url, charmRes.storagePath, Date.now());
