@@ -946,61 +946,101 @@
         let zipContextString = "";
 
         if (allAssets.length > 0) {
-            assetString = "\n\n=== FULL ASSET INVENTORY ===\nCRITICAL: The following files are available in the project storage. You MUST ensure all relevant files are mapped into assets.json:\n";
-            for (const a of allAssets) {
-                const selectionNote = a.isChecked ? " [EXPLICITLY SELECTED BY USER]" : "";
-                assetString += `- ${a.path}${selectionNote}\n`;
+    assetString = "\n\n=== FULL ASSET INVENTORY ===\nCRITICAL: The following files are available in the project storage. You MUST ensure all relevant files are mapped into assets.json:\n";
+    for (const a of allAssets) {
+        const selectionNote = a.isChecked ? " [EXPLICITLY SELECTED BY USER]" : "";
+        assetString += `- ${a.path}${selectionNote}\n`;
+        
+        // UNZIP LOGIC FOR ALL OBJECT ZIPS
+        if (a.path.includes('object_zips') && a.name.toLowerCase().endsWith('.zip')) {
+            appendToChatLog('System', `Extracting contents of Object Package ${a.name}...`, 'muted');
+            try {
+                const zipUrl = await getDownloadURL(ref(storage, `${ROOT}/${currentProject}/${a.path}`));
+                const zipRes = await fetch(zipUrl);
+                const zipBlob = await zipRes.blob();
+                const zipObj = new JSZip();
+                await zipObj.loadAsync(zipBlob);
                 
-                // UNZIP LOGIC FOR ALL OBJECT ZIPS
-                if (a.path.includes('object_zips') && a.name.toLowerCase().endsWith('.zip')) {
-                    appendToChatLog('System', `Extracting contents of Object Package ${a.name}...`, 'muted');
-                    try {
-                        const zipUrl = await getDownloadURL(ref(storage, `${ROOT}/${currentProject}/${a.path}`));
-                        const zipRes = await fetch(zipUrl);
-                        const zipBlob = await zipRes.blob();
-                        const zipObj = new JSZip();
-                        await zipObj.loadAsync(zipBlob);
+                let parsedModels = [];
+                let parsedTextures = [];
+                let parsedAudio = [];
+                let parsedOther = [];
+                let parsedAnimInfo = "";
+                
+                for (const relativePath of Object.keys(zipObj.files)) {
+                    const file = zipObj.files[relativePath];
+                    if (file.dir || relativePath.includes('__MACOSX')) continue;
+                    
+                    const lowerPath = relativePath.toLowerCase();
+                    
+                    // --- NEW: Calculate .obj extents without modifying the file ---
+                    if (lowerPath.endsWith('.obj')) {
+                        parsedModels.push(relativePath);
                         
-                        let parsedModels = [];
-                        let parsedTextures = [];
-                        let parsedAudio = [];
-                        let parsedOther = [];
-                        let parsedAnimInfo = "";
-                        
-                        for (const relativePath of Object.keys(zipObj.files)) {
-                            const file = zipObj.files[relativePath];
-                            if (file.dir || relativePath.includes('__MACOSX')) continue;
+                        try {
+                            const objText = await file.async('string');
+                            const lines = objText.split('\n');
+                            let minY = Infinity, minX = Infinity, minZ = Infinity;
+                            let maxY = -Infinity, maxX = -Infinity, maxZ = -Infinity;
                             
-                            const lowerPath = relativePath.toLowerCase();
-                            if (lowerPath.endsWith('.obj') || lowerPath.endsWith('.glb') || lowerPath.endsWith('.gltf') || lowerPath.endsWith('.fbx') || lowerPath.endsWith('.c3b')) {
-                                parsedModels.push(relativePath);
-                            } else if (lowerPath.endsWith('.jpg') || lowerPath.endsWith('.png') || lowerPath.endsWith('.jpeg') || lowerPath.endsWith('.webp')) {
-                                parsedTextures.push(relativePath);
-                            } else if (lowerPath.endsWith('.wav') || lowerPath.endsWith('.mp3') || lowerPath.endsWith('.ogg')) {
-                                parsedAudio.push(relativePath);
-                            } else if (lowerPath.endsWith('.txt')) {
-                                parsedAnimInfo += `\n--- Content of ${relativePath} ---\n`;
-                                parsedAnimInfo += await file.async('string');
-                            } else {
-                                parsedOther.push(relativePath);
+                            for (const line of lines) {
+                                if (line.trim().startsWith('v ')) {
+                                    const parts = line.trim().split(/\s+/);
+                                    if (parts.length >= 4) {
+                                        const x = parseFloat(parts[1]);
+                                        const y = parseFloat(parts[2]);
+                                        const z = parseFloat(parts[3]);
+                                        
+                                        if (x < minX) minX = x; if (y < minY) minY = y; if (z < minZ) minZ = z;
+                                        if (x > maxX) maxX = x; if (y > maxY) maxY = y; if (z > maxZ) maxZ = z;
+                                    }
+                                }
                             }
+                            
+                            // Calculate the exact offset needed to place the bottom of the object at Y=0
+                            const yOffsetToFloor = (minY < 0) ? Math.abs(minY) : -minY;
+                            const height = maxY - minY;
+                            const width = maxX - minX;
+                            const depth = maxZ - minZ;
+
+                            // Inject this data directly into the AI's context window
+                            parsedAnimInfo += `\n--- 3D Extents Data for ${relativePath} ---\n`;
+                            parsedAnimInfo += `Dimensions: Width: ${width.toFixed(3)}, Height: ${height.toFixed(3)}, Depth: ${depth.toFixed(3)}\n`;
+                            parsedAnimInfo += `Bounding Box: Min Y: ${minY.toFixed(3)}, Max Y: ${maxY.toFixed(3)}\n`;
+                            parsedAnimInfo += `AI INSTRUCTION: This object's pivot is not perfectly centered. When spawning this model, you MUST apply an offset of ${yOffsetToFloor.toFixed(3)} to its Y-position so it does not clip through the floor.\n`;
+                            
+                        } catch (err) {
+                            console.warn(`Could not parse extents for ${relativePath}`, err);
                         }
-                        
-                        zipContextString += `\n\n=== PARSED ZIP PACKAGE CONTENTS: ${a.name} ===\n`;
-                        zipContextString += `3D Models Included: ${parsedModels.length > 0 ? parsedModels.join(', ') : 'None'}\n`;
-                        zipContextString += `Textures Included: ${parsedTextures.length > 0 ? parsedTextures.join(', ') : 'None'}\n`;
-                        zipContextString += `Audio Included: ${parsedAudio.length > 0 ? parsedAudio.join(', ') : 'None'}\n`;
-                        if (parsedOther.length > 0) zipContextString += `Other Files: ${parsedOther.join(', ')}\n`;
-                        if (parsedAnimInfo) zipContextString += `Animation ID Reference File: ${parsedAnimInfo}\n`;
-                        zipContextString += `AI INSTRUCTION: Map ALL of these extracted file names into assets.json. Automatically infer the PBR texture maps (Albedo, Normal, etc.) based on the texture file suffixes and apply them to the material using createMaterial(). Use the Animation ID Reference to trigger the correct animations via gameState.playAnimation().\n`;
-                        
-                    } catch (e) {
-                        console.warn(`Failed to parse object zip ${a.name}`, e);
-                        appendToChatLog('System', `Warning: Could not parse ${a.name}`, 'error');
+                    } else if (lowerPath.endsWith('.glb') || lowerPath.endsWith('.gltf') || lowerPath.endsWith('.fbx') || lowerPath.endsWith('.c3b')) {
+                        parsedModels.push(relativePath);
+                    } else if (lowerPath.endsWith('.jpg') || lowerPath.endsWith('.png') || lowerPath.endsWith('.jpeg') || lowerPath.endsWith('.webp')) {
+                        parsedTextures.push(relativePath);
+                    } else if (lowerPath.endsWith('.wav') || lowerPath.endsWith('.mp3') || lowerPath.endsWith('.ogg')) {
+                        parsedAudio.push(relativePath);
+                    } else if (lowerPath.endsWith('.txt')) {
+                        parsedAnimInfo += `\n--- Content of ${relativePath} ---\n`;
+                        parsedAnimInfo += await file.async('string');
+                    } else {
+                        parsedOther.push(relativePath);
                     }
                 }
+                
+                zipContextString += `\n\n=== PARSED ZIP PACKAGE CONTENTS: ${a.name} ===\n`;
+                zipContextString += `3D Models Included: ${parsedModels.length > 0 ? parsedModels.join(', ') : 'None'}\n`;
+                zipContextString += `Textures Included: ${parsedTextures.length > 0 ? parsedTextures.join(', ') : 'None'}\n`;
+                zipContextString += `Audio Included: ${parsedAudio.length > 0 ? parsedAudio.join(', ') : 'None'}\n`;
+                if (parsedOther.length > 0) zipContextString += `Other Files: ${parsedOther.join(', ')}\n`;
+                if (parsedAnimInfo) zipContextString += `Animation ID Reference File: ${parsedAnimInfo}\n`;
+                zipContextString += `AI INSTRUCTION: Map ALL of these extracted file names into assets.json. Automatically infer the PBR texture maps (Albedo, Normal, etc.) based on the texture file suffixes and apply them to the material using createMaterial(). Use the Animation ID Reference to trigger the correct animations via gameState.playAnimation().\n`;
+                
+            } catch (e) {
+                console.warn(`Failed to parse object zip ${a.name}`, e);
+                appendToChatLog('System', `Warning: Could not parse ${a.name}`, 'error');
             }
         }
+    }
+}
 
         // 2.5 Gather AI System Instructions
         appendToChatLog('System', 'Fetching AI System Instructions...', 'muted');
