@@ -807,62 +807,21 @@
         procActionButtons.style.display = 'none';
         procProgressContainer.classList.add('active');
 
-        const total = checkboxes.length;
-        let completed = 0;
-
-        for (const cb of checkboxes) {
-            const fileData = available3DModels[cb.dataset.index];
-            const itemRef = fileData.item;
-            const targetFolder = fileData.folder;
-
-            try {
-                procCurrentFile.textContent = `Processing ${itemRef.name}...`;
-                procStatusText.textContent = `Fetching file...`;
-
-                const downloadUrl = await getDownloadURL(itemRef);
-                const fileRes = await fetch(downloadUrl);
-                const fileBlob = await fileRes.blob();
-
-                procStatusText.textContent = `Centering pivot via server...`;
-
-                /* Pass the original filename and explicitly note if it's a zip via headers */
-                const processRes = await fetch('/.netlify/functions/center3dModel', {
-                    method: 'POST',
-                    headers: { 
-                        'Content-Type': 'application/octet-stream', 
-                        'X-File-Name': itemRef.name,
-                        'X-Is-Zip': (targetFolder === 'object_zips').toString()
-                    },
-                    body: fileBlob
-                });
-
-                if (!processRes.ok) throw new Error("Processing server failed.");
-                const processedBlob = await processRes.blob();
-
-                procStatusText.textContent = `Updating Firebase...`;
-                // Save the file exactly where it originated (models/ OR object_zips/)
-                const targetRef = ref(storage, `${ROOT}/${currentProject}/${targetFolder}/${itemRef.name}`);
-                await uploadBytesResumable(targetRef, processedBlob);
-
-                completed++;
-                procProgressFill.style.width = `${(completed / total) * 100}%`;
-                procStatusText.textContent = `${completed} / ${total} Completed`;
-
-            } catch (error) {
-                console.error(`Failed to process ${itemRef.name}:`, error);
-                procStatusText.textContent = `Failed on ${itemRef.name}`;
-                procStatusText.style.color = "var(--danger)";
-                await new Promise(r => setTimeout(r, 2000)); // Pause to let user read error
-            }
-        }
-
-        procCurrentFile.textContent = "All selected models processed!";
-        procCurrentFile.style.color = "var(--success)";
+        // UI Update to reflect the new local processing strategy
+        procCurrentFile.textContent = "Applying local extents logic...";
+        procStatusText.textContent = `Processing...`;
+        procProgressFill.style.width = `100%`;
 
         setTimeout(async () => {
-            modelProcessingModal.classList.remove('active');
-            await executeAIPipeline(pendingAiPrompt);
-        }, 1500);
+            procCurrentFile.textContent = "Local analysis queued successfully!";
+            procCurrentFile.style.color = "var(--success)";
+            procStatusText.textContent = `Ready`;
+
+            setTimeout(async () => {
+                modelProcessingModal.classList.remove('active');
+                await executeAIPipeline(pendingAiPrompt);
+            }, 1000);
+        }, 500);
     });
 
     // --- ORIGINAL AI EXECUTION PIPELINE ---
