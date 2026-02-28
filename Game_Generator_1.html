@@ -272,7 +272,6 @@
     const storage = getStorage(app);
     const auth = getAuth(app);
 
-    // AI INSTRUCTION CATEGORY UPDATED
     const FILE_CATEGORIES = [
       { id: "instructions", title: "AI System Instructions", accepts: "text/plain,.txt", folder: "ai_system_instructions" },
       { id: "assets", title: "Game Assets (Images/Audio)", accepts: "image/*,audio/*,.png,.jpg,.jpeg,.mp3,.wav", folder: "assets" },
@@ -521,8 +520,8 @@
       }
     }
 
-// --- Game Assets Library Rendering ---
-async function refreshAssetLibrary() {
+    // --- Game Assets Library Rendering ---
+    async function refreshAssetLibrary() {
         if (!currentProject) return;
         const libraryContainer = document.getElementById('assetLibrary');
         const listContainer = document.getElementById('assetList');
@@ -579,7 +578,7 @@ async function refreshAssetLibrary() {
 
     // --- Image Drag & Drop for AI Prompt ---
     const imageTagContainer = document.getElementById('imageTagContainer');
-    let attachedPromptImages = []; // Array to store the actual File objects for the AI payload
+    let attachedPromptImages = [];
 
     function renderPromptImages() {
         imageTagContainer.innerHTML = '';
@@ -592,7 +591,6 @@ async function refreshAssetLibrary() {
             `;
             imageTagContainer.appendChild(tag);
 
-            // Open Preview Modal on click
             tag.querySelector('.preview-trigger').addEventListener('click', () => {
                 const reader = new FileReader();
                 reader.onload = (e) => {
@@ -603,7 +601,6 @@ async function refreshAssetLibrary() {
             });
         });
 
-        // Add event listeners to the new "x" buttons
         document.querySelectorAll('.remove-img').forEach(btn => {
             btn.addEventListener('click', (e) => {
                 const idx = parseInt(e.target.getAttribute('data-index'));
@@ -637,7 +634,6 @@ async function refreshAssetLibrary() {
         }
     });
 
-    // --- Close Preview Modal Logic ---
     const closePreviewBtn = document.getElementById('closePreviewBtn');
     if (closePreviewBtn) {
         closePreviewBtn.addEventListener('click', () => {
@@ -646,7 +642,6 @@ async function refreshAssetLibrary() {
         });
     }
     
-    // Close modal if clicking outside the image itself
     const imagePreviewModal = document.getElementById('imagePreviewModal');
     if (imagePreviewModal) {
         imagePreviewModal.addEventListener('click', (e) => {
@@ -708,7 +703,6 @@ async function refreshAssetLibrary() {
         refreshReviewList();
     };
 
-    // --- AI Context Window Logic & Loop ---
     function appendToChatLog(sender, message, type = 'normal') {
       const msgDiv = document.createElement('div');
       const color = sender === 'AI' ? 'var(--success)' : (type === 'error' ? 'var(--danger)' : 'var(--text)');
@@ -737,25 +731,41 @@ async function refreshAssetLibrary() {
         pendingAiPrompt = aiPromptInput.value.trim();
         if (!pendingAiPrompt || !currentProject) return;
 
-        setStatus("Checking for 3D models...");
+        setStatus("Checking for 3D models and ZIP packages...");
         sendToAiBtn.disabled = true;
 
         available3DModels = [];
+        
+        // Target both the models and object_zips folders
         const modelsRef = ref(storage, `${ROOT}/${currentProject}/models`);
+        const zipsRef = ref(storage, `${ROOT}/${currentProject}/object_zips`);
 
         try {
-            const res = await listAll(modelsRef);
+            const [modelsRes, zipsRes] = await Promise.all([
+                listAll(modelsRef).catch(() => ({items:[]})),
+                listAll(zipsRef).catch(() => ({items:[]}))
+            ]);
+
             const validExtensions = ['.obj', '.glb', '.fbx', '.c3b'];
 
-            res.items.forEach(item => {
+            // Process Standalone Models
+            modelsRes.items.forEach(item => {
                 const lowerName = item.name.toLowerCase();
                 if (validExtensions.some(ext => lowerName.endsWith(ext))) {
-                    available3DModels.push(item);
+                    available3DModels.push({ item, folder: 'models' });
                 }
             });
-        } catch(e) { console.warn("Could not fetch models folder", e); }
 
-        // If no models found, bypass the modal and go straight to AI
+            // Process Object Zips
+            zipsRes.items.forEach(item => {
+                if (item.name.toLowerCase().endsWith('.zip')) {
+                    available3DModels.push({ item, folder: 'object_zips' });
+                }
+            });
+
+        } catch(e) { console.warn("Could not fetch models/zips folders", e); }
+
+        // If no models/zips found, bypass the modal and go straight to AI
         if (available3DModels.length === 0) {
             await executeAIPipeline(pendingAiPrompt);
             return;
@@ -763,12 +773,13 @@ async function refreshAssetLibrary() {
 
         // Populate Modal
         modalModelList.innerHTML = '';
-        available3DModels.forEach((item, index) => {
+        available3DModels.forEach((obj, index) => {
+            const icon = obj.folder === 'object_zips' ? '🗜️' : '📦';
             modalModelList.innerHTML += `
                 <div class="model-item">
                     <label>
                         <input type="checkbox" class="modal-model-cb" data-index="${index}" checked>
-                        <span>📦 ${item.name}</span>
+                        <span>${icon} ${obj.item.name}</span>
                     </label>
                 </div>
             `;
@@ -800,7 +811,9 @@ async function refreshAssetLibrary() {
         let completed = 0;
 
         for (const cb of checkboxes) {
-            const itemRef = available3DModels[cb.dataset.index];
+            const fileData = available3DModels[cb.dataset.index];
+            const itemRef = fileData.item;
+            const targetFolder = fileData.folder;
 
             try {
                 procCurrentFile.textContent = `Processing ${itemRef.name}...`;
@@ -812,10 +825,14 @@ async function refreshAssetLibrary() {
 
                 procStatusText.textContent = `Centering pivot via server...`;
 
-                /* NOTE: Ensure your Netlify function /.netlify/functions/center3dModel is set up to handle this Blob */
+                /* Pass the original filename and explicitly note if it's a zip via headers */
                 const processRes = await fetch('/.netlify/functions/center3dModel', {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/octet-stream', 'X-File-Name': itemRef.name },
+                    headers: { 
+                        'Content-Type': 'application/octet-stream', 
+                        'X-File-Name': itemRef.name,
+                        'X-Is-Zip': (targetFolder === 'object_zips').toString()
+                    },
                     body: fileBlob
                 });
 
@@ -823,7 +840,8 @@ async function refreshAssetLibrary() {
                 const processedBlob = await processRes.blob();
 
                 procStatusText.textContent = `Updating Firebase...`;
-                const targetRef = ref(storage, `${ROOT}/${currentProject}/models/${itemRef.name}`);
+                // Save the file exactly where it originated (models/ OR object_zips/)
+                const targetRef = ref(storage, `${ROOT}/${currentProject}/${targetFolder}/${itemRef.name}`);
                 await uploadBytesResumable(targetRef, processedBlob);
 
                 completed++;
