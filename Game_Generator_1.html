@@ -1009,6 +1009,7 @@ sendToAiBtn.addEventListener('click', async () => {
         setStatus(`Parsing assets.json for file mappings...`);
         const normalizeStr = (str) => String(str).toLowerCase().replace(/[^a-z0-9]/g, '');
         let assetMap = {};
+        let assetList = []; // Array for tokenized smart matching
         try {
             const assetsJsonRef = ref(storage, `${ROOT}/${currentProject}/json/assets.json`);
             const assetsJsonUrl = await getDownloadURL(assetsJsonRef);
@@ -1027,15 +1028,18 @@ sendToAiBtn.addEventListener('click', async () => {
                 if (typeof obj === 'object') {
                     if (obj.key !== undefined && obj.title !== undefined) {
                         const titleStr = String(obj.title).toLowerCase();
-                        assetMap[titleStr] = String(obj.key);
-                        assetMap[normalizeStr(obj.title)] = String(obj.key);
+                        const keyStr = String(obj.key);
+                        assetMap[titleStr] = keyStr;
+                        assetMap[normalizeStr(obj.title)] = keyStr;
+                        assetList.push({ title: obj.title, key: keyStr });
                         
                         if (titleStr.includes('.')) {
                             const nameOnly = titleStr.substring(0, titleStr.lastIndexOf('.'));
-                            assetMap[nameOnly] = String(obj.key);
-                            assetMap[normalizeStr(nameOnly)] = String(obj.key);
+                            assetMap[nameOnly] = keyStr;
+                            assetMap[normalizeStr(nameOnly)] = keyStr;
+                            assetList.push({ title: nameOnly, key: keyStr });
                         } else {
-                            assetMap[normalizeStr(obj.title)] = String(obj.key);
+                            assetMap[normalizeStr(obj.title)] = keyStr;
                         }
                     }
                     for (let k in obj) {
@@ -1050,6 +1054,38 @@ sendToAiBtn.addEventListener('click', async () => {
 
         progressBar.style.width = '20%';
         setStatus(`Indexing project files...`);
+        
+        // Smart Matcher Algorithm
+        const findBestSmartMatch = (filename) => {
+            const getTokens = (str) => String(str).toLowerCase().replace(/\.[^/.]+$/, "").split(/[^a-z0-9]/).filter(Boolean);
+            const fileTokens = getTokens(filename);
+            const fileNoExt = filename.toLowerCase().replace(/\.[^/.]+$/, "");
+            
+            let bestScore = 0;
+            let bestMatch = null;
+            
+            for (const asset of assetList) {
+                const assetTokens = getTokens(asset.title);
+                const assetNoExt = String(asset.title).toLowerCase();
+                let score = 0;
+                
+                if (fileNoExt.includes(assetNoExt) || assetNoExt.includes(fileNoExt)) {
+                    score += 10; // Heavy boost for containing the phrase
+                }
+                
+                for (const token of assetTokens) {
+                    if (fileTokens.includes(token)) score += 2; // Token match
+                    else if (fileNoExt.includes(token)) score += 1; // Partial token match
+                }
+                
+                if (score > bestScore && score > 0) {
+                    bestScore = score;
+                    bestMatch = asset.key;
+                }
+            }
+            return bestMatch;
+        };
+
         let totalFiles = 0;
         let processedFiles = 0;
         const cachedCategories = {};
@@ -1102,6 +1138,8 @@ sendToAiBtn.addEventListener('click', async () => {
                         mappedKey = assetMap[normName];
                     } else if (assetMap[normNoExt]) {
                         mappedKey = assetMap[normNoExt];
+                    } else {
+                        mappedKey = findBestSmartMatch(entryName);
                     }
                     
                     if (mappedKey) {
@@ -1151,7 +1189,7 @@ sendToAiBtn.addEventListener('click', async () => {
                    const normName = normalizeStr(finalFileName);
                    const normNoExt = normalizeStr(nameNoExt);
 
-                   if (assetMap[lowerName]) {
+                if (assetMap[lowerName]) {
                        finalFileName = assetMap[lowerName];
                    } else if (assetMap[nameNoExt]) {
                        finalFileName = assetMap[nameNoExt];
@@ -1159,6 +1197,9 @@ sendToAiBtn.addEventListener('click', async () => {
                        finalFileName = assetMap[normName];
                    } else if (assetMap[normNoExt]) {
                        finalFileName = assetMap[normNoExt];
+                   } else {
+                       const smartKey = findBestSmartMatch(finalFileName);
+                       if (smartKey) finalFileName = smartKey;
                    }
                }
                
