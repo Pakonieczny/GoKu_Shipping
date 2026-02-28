@@ -4,6 +4,16 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>Game-Generator-1</title>
+  
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+        "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+      }
+    }
+  </script>
+
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
   
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.13/codemirror.min.css">
@@ -256,9 +266,12 @@
     import { getStorage, ref, uploadBytesResumable, uploadString, getDownloadURL, listAll, deleteObject, getMetadata } from "https://www.gstatic.com/firebasejs/9.23.0/firebase-storage.js";
     import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/9.23.0/firebase-auth.js";
 
+    import * as THREE from 'three';
+    import { OBJLoader } from 'three/addons/loaders/OBJLoader.js';
+    import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+
     const ROOT = "game-generator-1/projects";
     
-    // Config matches your Listing Generator
     const firebaseConfig = {
       apiKey: "AIzaSyBXhQLsYRa4i0bX1TPTRiElF9Zjy5vSHlA",
       authDomain: "gokudatabase.firebaseapp.com",
@@ -283,7 +296,6 @@
 
     let currentProject = null;
 
-    // --- UI Elements ---
     const projectSelect = document.getElementById('projectSelect');
     const newProjectName = document.getElementById('newProjectName');
     const createProjectBtn = document.getElementById('createProjectBtn');
@@ -294,13 +306,11 @@
     const progressContainer = document.getElementById('progressContainer');
     const progressBar = document.getElementById('progressBar');
 
-    // AI UI Elements
     const aiPromptInput = document.getElementById('aiPromptInput');
     const sendToAiBtn = document.getElementById('sendToAiBtn');
     const aiChatLog = document.getElementById('aiChatLog');
     const aiCodeReviewLog = document.getElementById('aiCodeReviewLog');
 
-    // Review UI Elements
     const reviewPanel = document.getElementById('reviewPanel');
     const reviewFileList = document.getElementById('reviewFileList');
     const clearReviewBtn = document.getElementById('clearReviewBtn');
@@ -311,7 +321,6 @@
         setTimeout(() => globalStatus.classList.remove('active'), 4000);
     }
 
-    // --- Auth Initialization ---
     async function ensureAuth() {
       if (auth.currentUser) return auth.currentUser;
       try { await signInAnonymously(auth); } catch(e) { console.error("Auth failed", e); }
@@ -322,7 +331,6 @@
       });
     }
 
-    // --- Project Management ---
     async function loadProjects() {
       await ensureAuth();
       const listRef = ref(storage, ROOT);
@@ -382,7 +390,6 @@
       aiCodeReviewLog.innerHTML = `<div style="color: var(--muted);">Code diff updates will appear here after an AI run.</div>`;
     }
 
-    // --- Drag & Drop UI & Logic ---
     function renderDropZones() {
       dropZonesContainer.innerHTML = '';
       
@@ -461,7 +468,6 @@
       refreshFileList(categoryConfig);
     }
 
-    // --- File Listing & Actions ---
     async function refreshAllFiles() {
       FILE_CATEGORIES.forEach(cat => refreshFileList(cat));
     }
@@ -485,7 +491,7 @@
         res.items.forEach(itemRef => {
           const itemDiv = document.createElement('div');
           itemDiv.className = 'file-item';
-          itemDiv.id = `item_${itemRef.name.replace(/[^a-zA-Z0-9]/g, '_')}`; // For animations
+          itemDiv.id = `item_${itemRef.name.replace(/[^a-zA-Z0-9]/g, '_')}`; 
           
           itemDiv.innerHTML = `
             <div class="file-name">${itemRef.name}</div>
@@ -520,7 +526,6 @@
       }
     }
 
-    // --- Game Assets Library Rendering ---
     async function refreshAssetLibrary() {
         if (!currentProject) return;
         const libraryContainer = document.getElementById('assetLibrary');
@@ -576,7 +581,6 @@
         }
     }
 
-    // --- Image Drag & Drop for AI Prompt ---
     const imageTagContainer = document.getElementById('imageTagContainer');
     let attachedPromptImages = [];
 
@@ -652,7 +656,6 @@
         });
     }
 
-    // --- AI Review Persistence Logic ---
     async function refreshReviewList() {
         if (!currentProject) return;
         const reviewFolderRef = ref(storage, `${ROOT}/${currentProject}/review`);
@@ -713,7 +716,6 @@
 
     const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
-    // --- NEW: Extents Review Modal Logic ---
     function showExtentsReviewModal(extentsData) {
         return new Promise((resolve) => {
             const modal = document.getElementById('extentsResultModal');
@@ -725,10 +727,19 @@
                 container.innerHTML += `
                     <div style="background: #1a1e2b; padding: 10px; border-radius: 6px; border: 1px solid var(--line); font-size: 12px;">
                         <strong style="color: var(--accent);">📦 ${ext.name}</strong><br>
-                        <div style="margin-top: 4px; color: var(--muted);">
-                            Dimensions (X, Y, Z): <span style="color: var(--text);">${ext.width}</span> x <span style="color: var(--text);">${ext.height}</span> x <span style="color: var(--text);">${ext.depth}</span>
+                        
+                        <div style="margin-top: 8px; color: var(--muted); border-left: 2px solid var(--success); padding-left: 8px;">
+                            <strong style="color: #fff;">Overall Object (Visuals)</strong><br>
+                            Dimensions (X, Y, Z): <span style="color: var(--text);">${ext.objWidth}</span> x <span style="color: var(--text);">${ext.objHeight}</span> x <span style="color: var(--text);">${ext.objDepth}</span>
                         </div>
-                        <div style="margin-top: 4px;">
+                        
+                        ${ext.hasMesh ? `
+                        <div style="margin-top: 8px; color: var(--muted); border-left: 2px solid var(--danger); padding-left: 8px;">
+                            <strong style="color: #fff;">Inner Mesh (Physics)</strong><br>
+                            Dimensions (X, Y, Z): <span style="color: var(--text);">${ext.meshWidth}</span> x <span style="color: var(--text);">${ext.meshHeight}</span> x <span style="color: var(--text);">${ext.meshDepth}</span>
+                        </div>` : ''}
+
+                        <div style="margin-top: 8px; padding-top: 8px; border-top: 1px dashed var(--line);">
                             <span style="color: var(--success);">Calculated Floor Y-Offset:</span> ${ext.offset}
                         </div>
                     </div>
@@ -737,7 +748,6 @@
 
             modal.classList.add('active');
 
-            // Wait for user to click continue before resolving the promise
             btn.onclick = () => {
                 modal.classList.remove('active');
                 resolve();
@@ -745,7 +755,6 @@
         });
     }
 
-    // --- NEW MODAL INTERCEPTOR LOGIC FOR SEND TO AI ---
     const modelProcessingModal = document.getElementById('modelProcessingModal');
     const modalModelList = document.getElementById('modalModelList');
     const skipProcessingBtn = document.getElementById('skipProcessingBtn');
@@ -768,7 +777,6 @@
 
         available3DModels = [];
         
-        // Target both the models and object_zips folders
         const modelsRef = ref(storage, `${ROOT}/${currentProject}/models`);
         const zipsRef = ref(storage, `${ROOT}/${currentProject}/object_zips`);
 
@@ -780,7 +788,6 @@
 
             const validExtensions = ['.obj', '.glb', '.fbx', '.c3b'];
 
-            // Process Standalone Models
             modelsRes.items.forEach(item => {
                 const lowerName = item.name.toLowerCase();
                 if (validExtensions.some(ext => lowerName.endsWith(ext))) {
@@ -788,7 +795,6 @@
                 }
             });
 
-            // Process Object Zips
             zipsRes.items.forEach(item => {
                 if (item.name.toLowerCase().endsWith('.zip')) {
                     available3DModels.push({ item, folder: 'object_zips' });
@@ -797,13 +803,11 @@
 
         } catch(e) { console.warn("Could not fetch models/zips folders", e); }
 
-        // If no models/zips found, bypass the modal and go straight to AI
         if (available3DModels.length === 0) {
             await executeAIPipeline(pendingAiPrompt);
             return;
         }
 
-        // Populate Modal
         modalModelList.innerHTML = '';
         available3DModels.forEach((obj, index) => {
             const icon = obj.folder === 'object_zips' ? '🗜️' : '📦';
@@ -817,7 +821,6 @@
             `;
         });
 
-        // Reset UI state and show modal
         procProgressContainer.classList.remove('active');
         procActionButtons.style.display = 'flex';
         modelProcessingModal.classList.add('active');
@@ -839,7 +842,6 @@
         procActionButtons.style.display = 'none';
         procProgressContainer.classList.add('active');
 
-        // UI Update to reflect the new local processing strategy
         procCurrentFile.textContent = "Applying local extents logic...";
         procStatusText.textContent = `Processing...`;
         procProgressFill.style.width = `100%`;
@@ -856,7 +858,6 @@
         }, 500);
     });
 
-    // --- ORIGINAL AI EXECUTION PIPELINE ---
     async function executeAIPipeline(promptOverride) {
       const prompt = promptOverride || aiPromptInput.value.trim();
       if (!prompt || !currentProject) {
@@ -864,13 +865,12 @@
           return;
       }
 
-      let scannedExtentsList = []; // --- NEW: Track scanned data for the popup ---
+      let scannedExtentsList = []; 
       
       aiPromptInput.value = '';
       appendToChatLog('You', prompt);
       
       try {
-        // 1. Read Reference ZIP and Map Structure
         appendToChatLog('System', 'Mapping project structure from Reference ZIP...', 'muted');
         let projectStructure = "Project Directory Map:\n";
         const refFolder = ref(storage, `${ROOT}/${currentProject}/reference_zip`);
@@ -896,7 +896,6 @@
             projectStructure += "(No Reference ZIP uploaded yet)";
         }
 
-        // 2. Gather explicitly targeted files
         appendToChatLog('System', 'Gathering logic file "2", HTML file "23", and config "assets.json"...', 'muted');
         const projectFiles = {};
         const targetFiles = [
@@ -922,7 +921,6 @@
           throw new Error("Could not find '2', '23', or 'assets.json'. Please upload them first.");
         }
 
-        // Gather ALL Uploaded Assets & Extract Custom Object Zips on the fly
         const allAssetNodes = document.querySelectorAll('.asset-checkbox');
         const allAssets = Array.from(allAssetNodes).map(cb => ({
             name: cb.dataset.name,
@@ -932,7 +930,6 @@
             isChecked: cb.checked
         }));
         
-        // Preserve selectedAssets for the backend proxy payload
         const selectedAssets = allAssets.filter(a => a.isChecked);
 
         let assetString = "";
@@ -944,7 +941,6 @@
                 const selectionNote = a.isChecked ? " [EXPLICITLY SELECTED BY USER]" : "";
                 assetString += `- ${a.path}${selectionNote}\n`;
                 
-                // UNZIP LOGIC FOR ALL OBJECT ZIPS
                 if (a.path.includes('object_zips') && a.name.toLowerCase().endsWith('.zip')) {
                     appendToChatLog('System', `Extracting contents of Object Package ${a.name}...`, 'muted');
                     try {
@@ -966,56 +962,74 @@
                             
                             const lowerPath = relativePath.toLowerCase();
                             
-                            // --- NEW: Calculate .obj extents without modifying the file ---
-                            if (lowerPath.endsWith('.obj')) {
+                            // --- NEW: DUAL EXTENTS LOGIC (Object vs Mesh) ---
+                            if (lowerPath.endsWith('.obj') || lowerPath.endsWith('.glb') || lowerPath.endsWith('.gltf') || lowerPath.endsWith('.fbx') || lowerPath.endsWith('.c3b')) {
                                 parsedModels.push(relativePath);
                                 
-                                try {
-                                    const objText = await file.async('string');
-                                    const lines = objText.split('\n');
-                                    let minY = Infinity, minX = Infinity, minZ = Infinity;
-                                    let maxY = -Infinity, maxX = -Infinity, maxZ = -Infinity;
-                                    
-                                    for (const line of lines) {
-                                        if (line.trim().startsWith('v ')) {
-                                            const parts = line.trim().split(/\s+/);
-                                            if (parts.length >= 4) {
-                                                const x = parseFloat(parts[1]);
-                                                const y = parseFloat(parts[2]);
-                                                const z = parseFloat(parts[3]);
-                                                
-                                                if (x < minX) minX = x; if (y < minY) minY = y; if (z < minZ) minZ = z;
-                                                if (x > maxX) maxX = x; if (y > maxY) maxY = y; if (z > maxZ) maxZ = z;
-                                            }
+                                if (lowerPath.endsWith('.obj') || lowerPath.endsWith('.glb') || lowerPath.endsWith('.gltf')) {
+                                    const fileBlob = await file.async('blob');
+                                    const objectUrl = URL.createObjectURL(fileBlob);
+
+                                    try {
+                                        let model;
+                                        if (lowerPath.endsWith('.obj')) {
+                                            const loader = new OBJLoader();
+                                            model = await new Promise((resolve, reject) => loader.load(objectUrl, resolve, undefined, reject));
+                                        } else {
+                                            const loader = new GLTFLoader();
+                                            const gltf = await new Promise((resolve, reject) => loader.load(objectUrl, resolve, undefined, reject));
+                                            model = gltf.scene;
                                         }
+
+                                        if (model) {
+                                            // 1. Calculate the Overall Bounding Box (Parent Object)
+                                            const objectBox = new THREE.Box3().setFromObject(model);
+                                            const objectSize = new THREE.Vector3();
+                                            objectBox.getSize(objectSize);
+
+                                            // 2. Find and calculate the Inner Bounding Box (Actual Mesh)
+                                            let meshSize = new THREE.Vector3(0, 0, 0);
+                                            let hasMesh = false;
+                                            
+                                            model.traverse((child) => {
+                                                if (child.isMesh && !hasMesh) {
+                                                    const meshBox = new THREE.Box3().setFromObject(child);
+                                                    meshBox.getSize(meshSize);
+                                                    hasMesh = true; 
+                                                }
+                                            });
+
+                                            // Floor offset calculation uses the overall object
+                                            const minY = objectBox.min.y;
+                                            const maxY = objectBox.max.y;
+                                            const yOffsetToFloor = (minY < 0) ? Math.abs(minY) : -minY;
+
+                                            scannedExtentsList.push({
+                                                name: relativePath,
+                                                objWidth: objectSize.x.toFixed(3),
+                                                objHeight: objectSize.y.toFixed(3),
+                                                objDepth: objectSize.z.toFixed(3),
+                                                hasMesh: hasMesh,
+                                                meshWidth: hasMesh ? meshSize.x.toFixed(3) : "N/A",
+                                                meshHeight: hasMesh ? meshSize.y.toFixed(3) : "N/A",
+                                                meshDepth: hasMesh ? meshSize.z.toFixed(3) : "N/A",
+                                                offset: yOffsetToFloor.toFixed(3)
+                                            });
+
+                                            parsedAnimInfo += `\n--- 3D Extents Data for ${relativePath} ---\n`;
+                                            parsedAnimInfo += `OVERALL OBJECT (Visual Wrapper): Width: ${objectSize.x.toFixed(3)}, Height: ${objectSize.y.toFixed(3)}, Depth: ${objectSize.z.toFixed(3)}\n`;
+                                            if (hasMesh) {
+                                                parsedAnimInfo += `INNER MESH (Physics Collider): Width: ${meshSize.x.toFixed(3)}, Height: ${meshSize.y.toFixed(3)}, Depth: ${meshSize.z.toFixed(3)}\n`;
+                                            }
+                                            parsedAnimInfo += `Bounding Box: Min Y: ${minY.toFixed(3)}, Max Y: ${maxY.toFixed(3)}\n`;
+                                            parsedAnimInfo += `AI INSTRUCTION: This object's pivot is not perfectly centered. When spawning this visual model via createObject, apply a Y-offset of ${yOffsetToFloor.toFixed(3)}. Use the INNER MESH dimensions to calculate the true scale of the RigidBody.\n`;
+                                        }
+                                    } catch (err) {
+                                        console.warn(`Could not parse Three.js extents for ${relativePath}`, err);
+                                    } finally {
+                                        URL.revokeObjectURL(objectUrl); 
                                     }
-                                    
-                                    // Calculate the exact offset needed to place the bottom of the object at Y=0
-                                    const yOffsetToFloor = (minY < 0) ? Math.abs(minY) : -minY;
-                                    const height = maxY - minY;
-                                    const width = maxX - minX;
-                                    const depth = maxZ - minZ;
-
-                                    // --- ADD THIS BLOCK TO SAVE DATA FOR THE POPUP ---
-                                    scannedExtentsList.push({
-                                        name: relativePath,
-                                        width: width.toFixed(3),
-                                        height: height.toFixed(3),
-                                        depth: depth.toFixed(3),
-                                        offset: yOffsetToFloor.toFixed(3)
-                                    });
-
-                                    // Inject this data directly into the AI's context window
-                                    parsedAnimInfo += `\n--- 3D Extents Data for ${relativePath} ---\n`;
-                                    parsedAnimInfo += `Dimensions: Width: ${width.toFixed(3)}, Height: ${height.toFixed(3)}, Depth: ${depth.toFixed(3)}\n`;
-                                    parsedAnimInfo += `Bounding Box: Min Y: ${minY.toFixed(3)}, Max Y: ${maxY.toFixed(3)}\n`;
-                                    parsedAnimInfo += `AI INSTRUCTION: This object's pivot is not perfectly centered. When spawning this model, you MUST apply an offset of ${yOffsetToFloor.toFixed(3)} to its Y-position so it does not clip through the floor.\n`;
-                                    
-                                } catch (err) {
-                                    console.warn(`Could not parse extents for ${relativePath}`, err);
                                 }
-                            } else if (lowerPath.endsWith('.glb') || lowerPath.endsWith('.gltf') || lowerPath.endsWith('.fbx') || lowerPath.endsWith('.c3b')) {
-                                parsedModels.push(relativePath);
                             } else if (lowerPath.endsWith('.jpg') || lowerPath.endsWith('.png') || lowerPath.endsWith('.jpeg') || lowerPath.endsWith('.webp')) {
                                 parsedTextures.push(relativePath);
                             } else if (lowerPath.endsWith('.wav') || lowerPath.endsWith('.mp3') || lowerPath.endsWith('.ogg')) {
@@ -1044,7 +1058,6 @@
             }
         }
 
-        // 2.5 Gather AI System Instructions
         appendToChatLog('System', 'Fetching AI System Instructions...', 'muted');
         let aiInstructionsText = "No AI System Instructions provided.";
         const instructionsFolderRef = ref(storage, `${ROOT}/${currentProject}/ai_system_instructions`);
@@ -1061,14 +1074,12 @@
             console.warn("Could not fetch AI System Instructions.", e);
         }
 
-        // --- NEW: Show the Review Modal if any objects were scanned ---
         if (scannedExtentsList.length > 0) {
             setStatus('Waiting for user to review calculated extents...');
             await showExtentsReviewModal(scannedExtentsList);
             setStatus('Extents approved. Proceeding to AI...');
         }
 
-        // 3. Combine Structure Map, Instructions & Selected Assets with the User Prompt
         const enhancedPrompt = `Here is the full project structure for reference:\n${projectStructure}${assetString}${zipContextString}
 
         === AI SYSTEM INSTRUCTIONS ===
@@ -1103,7 +1114,6 @@
 
         User Request: ${prompt}`;
 
-        // 4. Prepare Storage references and clean up old runs
         const projectPath = `${ROOT}/${currentProject}`;
         const responseFileRef = ref(storage, `${projectPath}/ai_response.json`);
         const errorFileRef = ref(storage, `${projectPath}/ai_error.json`);
@@ -1111,17 +1121,14 @@
         try { await deleteObject(responseFileRef); } catch(e) {}
         try { await deleteObject(errorFileRef); } catch(e) {}
 
-        // 5. Trigger Gemini Background Proxy
         appendToChatLog('System', 'Sending targeted files and map to AI...', 'muted');
         setStatus('AI is processing files (This may take a minute)...');
 
-        // 4.5 Convert attached prompt images to Base64 for the AI
         appendToChatLog('System', 'Processing attached reference images...', 'muted');
         const inlineImages = await Promise.all(attachedPromptImages.map(async (file) => {
             return new Promise((resolve, reject) => {
                 const reader = new FileReader();
                 reader.onload = () => {
-                    // Extract just the base64 data, removing the "data:image/png;base64," prefix
                     const base64Data = reader.result.split(',')[1];
                     resolve({
                         name: file.name,
@@ -1134,7 +1141,6 @@
             });
         }));
 
-        // Clear the attached images from the UI now that they are processed
         attachedPromptImages = [];
         renderPromptImages();
         
@@ -1144,7 +1150,6 @@
           body: JSON.stringify({ prompt: enhancedPrompt, files: projectFiles, projectPath, selectedAssets, inlineImages })
         });
 
-        // 6. Poll Firebase Storage for the result file
         let result = null;
         let attempts = 0;
         
@@ -1173,12 +1178,10 @@
 
         if (!result) throw new Error("AI request timed out waiting for background completion.");
 
-        // Helper to safely escape HTML for the UI code review
         const escapeHTML = (str) => str.replace(/[&<>'"]/g, tag => ({
             '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;'
         }[tag]));
 
-        // 7. Write updated files back to Firebase (WITH PATCHING LOGIC)
         appendToChatLog('System', `Writing ${result.updatedFiles.length} updated files to Firebase...`, 'muted');
         
         for (const file of result.updatedFiles) {
@@ -1207,9 +1210,8 @@
           const originalFileKey = Object.keys(projectFiles).find(k => k.toLowerCase().endsWith('/' + fileName.toLowerCase()));
           
           let finalContentToSave = aiOutputContent;
-          let uiDisplayContent = escapeHTML(aiOutputContent); // Default if no patch tags
+          let uiDisplayContent = escapeHTML(aiOutputContent); 
 
-          // --- NEW PATCHING & UI INJECTION LOGIC ---
           if (aiOutputContent.includes('<<<<<<< SEARCH')) {
              let originalContent = originalFileKey ? projectFiles[originalFileKey] : "";
              
@@ -1220,7 +1222,7 @@
 
              const blockRegex = /<<<<<<< SEARCH[\r\n]+([\s\S]*?)[\r\n]+=======[\r\n]+([\s\S]*?)[\r\n]+>>>>>>> REPLACE/g;
              let normalizedResult = originalContent.replace(/\r\n/g, '\n');
-             let uiResult = escapeHTML(normalizedResult); // Start with the full original escaped code
+             let uiResult = escapeHTML(normalizedResult); 
              let match;
              let changesMade = 0;
 
@@ -1229,10 +1231,8 @@
                  const replacement = match[2];
 
                  if (normalizedResult.includes(searchTarget)) {
-                     // 1. Execute standard patch for the file to be saved to Firebase
                      normalizedResult = normalizedResult.split(searchTarget).join(replacement);
                      
-                     // 2. Execute UI string replacement with colors
                      const escapedSearch = escapeHTML(searchTarget);
                      const escapedReplace = escapeHTML(replacement);
                      const uiPatch = `<span style="color: var(--success); font-weight: bold;">${escapedSearch}</span>\n<span style="color: var(--danger); font-weight: bold;">${escapedReplace}</span>`;
@@ -1247,16 +1247,15 @@
 
              if (changesMade > 0) {
                  finalContentToSave = normalizedResult;
-                 uiDisplayContent = uiResult; // Store the HTML-injected full file for UI rendering
+                 uiDisplayContent = uiResult; 
              } else {
                  appendToChatLog('System', `Failed to apply any patches to ${fileName}. Ensure AI provides exact matching code.`, 'error');
                  continue; 
              }
           }
           
-      file.uiContent = uiDisplayContent; // Attach the formatted HTML context for step 8
-          file.rawContent = finalContentToSave; // Store the raw unescaped code for the clipboard
-          // --------------------------
+          file.uiContent = uiDisplayContent; 
+          file.rawContent = finalContentToSave; 
 
           const targetRef = ref(storage, `${ROOT}/${currentProject}/${safePath}`);
           await uploadString(targetRef, finalContentToSave);
@@ -1273,7 +1272,6 @@
           }
         }
 
-        // 8. Update UI Code Review
         appendToChatLog('AI', result.message || "Files have been updated successfully.");
         setStatus('AI update complete.');
 
@@ -1282,10 +1280,9 @@
         if (result.updatedFiles && result.updatedFiles.length > 0) {
             result.updatedFiles.forEach(file => {
                 const fileContainer = document.createElement('div');
-                // Creating a much larger and more visible separation block
                 fileContainer.style.border = '2px solid var(--accent)';
                 fileContainer.style.borderRadius = '12px';
-                fileContainer.style.background = '#151a2a'; // Slightly offset from standard background
+                fileContainer.style.background = '#151a2a'; 
                 fileContainer.style.padding = '24px';
                 fileContainer.style.marginBottom = '50px'; 
                 fileContainer.style.boxShadow = '0 6px 20px rgba(0,0,0,0.4)';
@@ -1335,22 +1332,19 @@
                 fileContainer.appendChild(editorContainer);
                 aiCodeReviewLog.appendChild(fileContainer);
 
-                // Determine language syntax based on file extension
                 let editorMode = "javascript";
                 if (file.path.endsWith('.html')) editorMode = "htmlmixed";
                 else if (file.path.endsWith('.json')) editorMode = "application/json";
 
-                // Initialize fully-fledged CodeMirror editor
                 const editor = CodeMirror(editorContainer, {
                     value: file.rawContent || '',
                     mode: editorMode,
                     theme: "monokai",
                     lineNumbers: true,
-                    lineWrapping: true, // Forces text to wrap correctly
-                    readOnly: false     // Makes it fully editable
+                    lineWrapping: true, 
+                    readOnly: false     
                 });
 
-                // Small timeout to force layout refresh after injection
                 setTimeout(() => editor.refresh(), 100);
             });
         } else {
@@ -1370,7 +1364,6 @@
       }
     }
 
-// --- Zip Generation Logic (Template Matcher) ---
     generateGameBtn.addEventListener('click', async () => {
       if (!currentProject) return;
       
@@ -1421,7 +1414,6 @@
                 if (!obj) return;
                 if (typeof obj === 'object') {
                     if (obj.key !== undefined && obj.title !== undefined) {
-                        // Store the exact title for exact matching
                         assetMap[String(obj.title)] = String(obj.key);
                         
                         const titleStr = String(obj.title).toLowerCase();
