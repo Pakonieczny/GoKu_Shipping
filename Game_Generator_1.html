@@ -1007,6 +1007,7 @@ sendToAiBtn.addEventListener('click', async () => {
         const zipPaths = Object.keys(zip.files);
         
         setStatus(`Parsing assets.json for file mappings...`);
+        const normalizeStr = (str) => String(str).toLowerCase().replace(/[^a-z0-9]/g, '');
         let assetMap = {};
         try {
             const assetsJsonRef = ref(storage, `${ROOT}/${currentProject}/json/assets.json`);
@@ -1027,10 +1028,14 @@ sendToAiBtn.addEventListener('click', async () => {
                     if (obj.key !== undefined && obj.title !== undefined) {
                         const titleStr = String(obj.title).toLowerCase();
                         assetMap[titleStr] = String(obj.key);
+                        assetMap[normalizeStr(obj.title)] = String(obj.key);
                         
                         if (titleStr.includes('.')) {
                             const nameOnly = titleStr.substring(0, titleStr.lastIndexOf('.'));
                             assetMap[nameOnly] = String(obj.key);
+                            assetMap[normalizeStr(nameOnly)] = String(obj.key);
+                        } else {
+                            assetMap[normalizeStr(obj.title)] = String(obj.key);
                         }
                     }
                     for (let k in obj) {
@@ -1085,16 +1090,24 @@ sendToAiBtn.addEventListener('click', async () => {
                     const entryName = relativePath.split('/').pop();
                     const lowerName = entryName.toLowerCase();
                     const nameNoExt = lowerName.includes('.') ? lowerName.substring(0, lowerName.lastIndexOf('.')) : lowerName;
+                    const normName = normalizeStr(entryName);
+                    const normNoExt = normalizeStr(nameNoExt);
                     
-                let mappedKey = entryName;
+                    let mappedKey = null;
                     if (assetMap[lowerName]) {
                         mappedKey = assetMap[lowerName];
                     } else if (assetMap[nameNoExt]) {
                         mappedKey = assetMap[nameNoExt];
+                    } else if (assetMap[normName]) {
+                        mappedKey = assetMap[normName];
+                    } else if (assetMap[normNoExt]) {
+                        mappedKey = assetMap[normNoExt];
                     }
                     
-                    const entryBlob = await zipEntry.async('blob');
-                    zip.file(`files/${mappedKey}`, entryBlob);
+                    if (mappedKey) {
+                        const entryBlob = await zipEntry.async('blob');
+                        zip.file(`files/${mappedKey}`, entryBlob);
+                    }
                 }
                 
                 processedFiles++;
@@ -1133,14 +1146,19 @@ sendToAiBtn.addEventListener('click', async () => {
                let finalFileName = itemRef.name;
                let lowerName = finalFileName.toLowerCase();
                
-               if (finalFileName !== '2' && finalFileName !== '23') {
+                if (finalFileName !== '2' && finalFileName !== '23') {
+                   const nameNoExt = lowerName.includes('.') ? lowerName.substring(0, lowerName.lastIndexOf('.')) : lowerName;
+                   const normName = normalizeStr(finalFileName);
+                   const normNoExt = normalizeStr(nameNoExt);
+
                    if (assetMap[lowerName]) {
                        finalFileName = assetMap[lowerName];
-                   } else {
-                       const nameNoExt = lowerName.includes('.') ? lowerName.substring(0, lowerName.lastIndexOf('.')) : lowerName;
-                       if (assetMap[nameNoExt]) {
-                           finalFileName = assetMap[nameNoExt];
-                       }
+                   } else if (assetMap[nameNoExt]) {
+                       finalFileName = assetMap[nameNoExt];
+                   } else if (assetMap[normName]) {
+                       finalFileName = assetMap[normName];
+                   } else if (assetMap[normNoExt]) {
+                       finalFileName = assetMap[normNoExt];
                    }
                }
                
