@@ -709,7 +709,7 @@ sendToAiBtn.addEventListener('click', async () => {
 
         CRITICAL SYSTEM RULE: The main logic file is named "2" and the main HTML file is named "23", both located in the "models" folder. You MUST use the exact name "2" instead of "WorldController.js" and "23" instead of "document.html" in all your code, updates, references, and output paths. Never save or output a file named "WorldController.js" or "document.html".
 
-        ASSET CONFIGURATION RULE: You must ensure "assets.json" (in the "json" folder) is updated to include any new assets requested by the user. If an asset the user mentions is not yet mapped in "assets.json", you MUST map it and return the updated "assets.json" file in your payload. When updating "assets.json", the "key" name and the corresponding file/asset name MUST always match exactly using sequential numbers. CRITICAL: If you add or update an asset in "assets.json", you MUST also update file "2" to properly reference, load, or instantiate that new asset key so it is recognized and works within the system.
+        ASSET CONFIGURATION RULE: You must ensure "assets.json" (in the "json" folder) is updated to include any new assets requested by the user. If an asset the user mentions is not yet mapped in "assets.json", you MUST map it and return the updated "assets.json" file in your payload. When updating "assets.json", assign sequential numbers for the "key" property. CRITICAL: The "title" property for each mapped asset MUST be transposed exactly as its original file name, with no changes (e.g., {"key":"34","type":"object","title":"plane.obj"}). If you add or update an asset in "assets.json", you MUST also update file "2" to properly reference, load, or instantiate that new asset key so it is recognized and works within the system.
 
         RESPONSE RULE - CRITICAL OPTIMIZATION:
         To save time and tokens, YOU MUST NEVER OUTPUT THE FULL CONTENT OF A FILE. You must ONLY output the specific lines being changed using a SEARCH/REPLACE block format inside the "content" field of your JSON response. 
@@ -1009,7 +1009,6 @@ sendToAiBtn.addEventListener('click', async () => {
         setStatus(`Parsing assets.json for file mappings...`);
         const normalizeStr = (str) => String(str).toLowerCase().replace(/[^a-z0-9]/g, '');
         let assetMap = {};
-        let assetList = []; // Array for tokenized smart matching
         try {
             const assetsJsonRef = ref(storage, `${ROOT}/${currentProject}/json/assets.json`);
             const assetsJsonUrl = await getDownloadURL(assetsJsonRef);
@@ -1027,19 +1026,19 @@ sendToAiBtn.addEventListener('click', async () => {
                 if (!obj) return;
                 if (typeof obj === 'object') {
                     if (obj.key !== undefined && obj.title !== undefined) {
+                        // Store the exact title for exact matching
+                        assetMap[String(obj.title)] = String(obj.key);
+                        
                         const titleStr = String(obj.title).toLowerCase();
-                        const keyStr = String(obj.key);
-                        assetMap[titleStr] = keyStr;
-                        assetMap[normalizeStr(obj.title)] = keyStr;
-                        assetList.push({ title: obj.title, key: keyStr });
+                        assetMap[titleStr] = String(obj.key);
+                        assetMap[normalizeStr(obj.title)] = String(obj.key);
                         
                         if (titleStr.includes('.')) {
                             const nameOnly = titleStr.substring(0, titleStr.lastIndexOf('.'));
-                            assetMap[nameOnly] = keyStr;
-                            assetMap[normalizeStr(nameOnly)] = keyStr;
-                            assetList.push({ title: nameOnly, key: keyStr });
+                            assetMap[nameOnly] = String(obj.key);
+                            assetMap[normalizeStr(nameOnly)] = String(obj.key);
                         } else {
-                            assetMap[normalizeStr(obj.title)] = keyStr;
+                            assetMap[normalizeStr(obj.title)] = String(obj.key);
                         }
                     }
                     for (let k in obj) {
@@ -1054,38 +1053,6 @@ sendToAiBtn.addEventListener('click', async () => {
 
         progressBar.style.width = '20%';
         setStatus(`Indexing project files...`);
-        
-        // Smart Matcher Algorithm
-        const findBestSmartMatch = (filename) => {
-            const getTokens = (str) => String(str).toLowerCase().replace(/\.[^/.]+$/, "").split(/[^a-z0-9]/).filter(Boolean);
-            const fileTokens = getTokens(filename);
-            const fileNoExt = filename.toLowerCase().replace(/\.[^/.]+$/, "");
-            
-            let bestScore = 0;
-            let bestMatch = null;
-            
-            for (const asset of assetList) {
-                const assetTokens = getTokens(asset.title);
-                const assetNoExt = String(asset.title).toLowerCase();
-                let score = 0;
-                
-                if (fileNoExt.includes(assetNoExt) || assetNoExt.includes(fileNoExt)) {
-                    score += 10; // Heavy boost for containing the phrase
-                }
-                
-                for (const token of assetTokens) {
-                    if (fileTokens.includes(token)) score += 2; // Token match
-                    else if (fileNoExt.includes(token)) score += 1; // Partial token match
-                }
-                
-                if (score > bestScore && score > 0) {
-                    bestScore = score;
-                    bestMatch = asset.key;
-                }
-            }
-            return bestMatch;
-        };
-
         let totalFiles = 0;
         let processedFiles = 0;
         const cachedCategories = {};
@@ -1124,13 +1091,16 @@ sendToAiBtn.addEventListener('click', async () => {
                     if (zipEntry.dir || relativePath.includes('__MACOSX')) continue;
                     
                     const entryName = relativePath.split('/').pop();
+                    let exactName = entryName;
                     const lowerName = entryName.toLowerCase();
                     const nameNoExt = lowerName.includes('.') ? lowerName.substring(0, lowerName.lastIndexOf('.')) : lowerName;
                     const normName = normalizeStr(entryName);
                     const normNoExt = normalizeStr(nameNoExt);
                     
                     let mappedKey = null;
-                    if (assetMap[lowerName]) {
+                    if (assetMap[exactName]) {
+                        mappedKey = assetMap[exactName];
+                    } else if (assetMap[lowerName]) {
                         mappedKey = assetMap[lowerName];
                     } else if (assetMap[nameNoExt]) {
                         mappedKey = assetMap[nameNoExt];
@@ -1138,8 +1108,6 @@ sendToAiBtn.addEventListener('click', async () => {
                         mappedKey = assetMap[normName];
                     } else if (assetMap[normNoExt]) {
                         mappedKey = assetMap[normNoExt];
-                    } else {
-                        mappedKey = findBestSmartMatch(entryName);
                     }
                     
                     if (mappedKey) {
@@ -1182,6 +1150,7 @@ sendToAiBtn.addEventListener('click', async () => {
 
                 } else {
                let finalFileName = itemRef.name;
+               let exactName = finalFileName;
                let lowerName = finalFileName.toLowerCase();
                
                 if (finalFileName !== '2' && finalFileName !== '23') {
@@ -1189,7 +1158,9 @@ sendToAiBtn.addEventListener('click', async () => {
                    const normName = normalizeStr(finalFileName);
                    const normNoExt = normalizeStr(nameNoExt);
 
-                if (assetMap[lowerName]) {
+                   if (assetMap[exactName]) {
+                       finalFileName = assetMap[exactName];
+                   } else if (assetMap[lowerName]) {
                        finalFileName = assetMap[lowerName];
                    } else if (assetMap[nameNoExt]) {
                        finalFileName = assetMap[nameNoExt];
@@ -1197,9 +1168,6 @@ sendToAiBtn.addEventListener('click', async () => {
                        finalFileName = assetMap[normName];
                    } else if (assetMap[normNoExt]) {
                        finalFileName = assetMap[normNoExt];
-                   } else {
-                       const smartKey = findBestSmartMatch(finalFileName);
-                       if (smartKey) finalFileName = smartKey;
                    }
                }
                
