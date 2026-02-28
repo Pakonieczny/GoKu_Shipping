@@ -104,6 +104,29 @@
       background-color: rgba(43, 108, 255, 0.05) !important;
     }
 
+    /* Image Preview Modal */
+    .image-preview-modal {
+        display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+        background: rgba(0, 0, 0, 0.8); z-index: 9999; justify-content: center; align-items: center;
+        backdrop-filter: blur(3px);
+    }
+    .image-preview-modal.active { display: flex; }
+    .image-preview-content {
+        position: relative; max-width: 90%; max-height: 90%; background: var(--card);
+        padding: 8px; border-radius: 12px; border: 1px solid var(--line);
+        box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+    }
+    .image-preview-content img { 
+        max-width: 100%; max-height: 85vh; border-radius: 6px; display: block; object-fit: contain;
+    }
+    .close-preview {
+        position: absolute; top: -12px; right: -12px; background: var(--danger); color: #000;
+        border: none; border-radius: 50%; width: 28px; height: 28px; cursor: pointer;
+        font-weight: bold; display: flex; justify-content: center; align-items: center; 
+        box-shadow: 0 2px 8px rgba(0,0,0,0.4); transition: transform 0.2s;
+    }
+    .close-preview:hover { transform: scale(1.1); }
+
     /* Game Asset Library Styles */
     .asset-library { margin-top: 20px; border: 1px dashed var(--success); border-radius: 14px; padding: 16px; background: rgba(127, 219, 150, 0.05); display: none; }
     .asset-library.active { display: block; }
@@ -537,10 +560,20 @@ async function refreshAssetLibrary() {
             const tag = document.createElement('div');
             tag.className = 'img-ref-tag';
             tag.innerHTML = `
-                <span style="max-width: 120px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">🖼️ ${file.name}</span>
+                <span class="preview-trigger" style="max-width: 120px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: pointer;" title="Click to preview">🖼️ ${file.name}</span>
                 <span class="remove-img" data-index="${index}">✕</span>
             `;
             imageTagContainer.appendChild(tag);
+
+            // Open Preview Modal on click
+            tag.querySelector('.preview-trigger').addEventListener('click', () => {
+                const reader = new FileReader();
+                reader.onload = (e) => {
+                    document.getElementById('previewImageSrc').src = e.target.result;
+                    document.getElementById('imagePreviewModal').classList.add('active');
+                };
+                reader.readAsDataURL(file);
+            });
         });
 
         // Add event listeners to the new "x" buttons
@@ -576,6 +609,26 @@ async function refreshAssetLibrary() {
             renderPromptImages();
         }
     });
+
+    // --- Close Preview Modal Logic ---
+    const closePreviewBtn = document.getElementById('closePreviewBtn');
+    if (closePreviewBtn) {
+        closePreviewBtn.addEventListener('click', () => {
+            document.getElementById('imagePreviewModal').classList.remove('active');
+            document.getElementById('previewImageSrc').src = '';
+        });
+    }
+    
+    // Close modal if clicking outside the image itself
+    const imagePreviewModal = document.getElementById('imagePreviewModal');
+    if (imagePreviewModal) {
+        imagePreviewModal.addEventListener('click', (e) => {
+            if (e.target === imagePreviewModal) {
+                imagePreviewModal.classList.remove('active');
+                document.getElementById('previewImageSrc').src = '';
+            }
+        });
+    }
 
     // --- AI Review Persistence Logic ---
     async function refreshReviewList() {
@@ -836,11 +889,34 @@ sendToAiBtn.addEventListener('click', async () => {
         // 5. Trigger Gemini Background Proxy
         appendToChatLog('System', 'Sending targeted files and map to AI...', 'muted');
         setStatus('AI is processing files (This may take a minute)...');
+
+        // 4.5 Convert attached prompt images to Base64 for the AI
+        appendToChatLog('System', 'Processing attached reference images...', 'muted');
+        const inlineImages = await Promise.all(attachedPromptImages.map(async (file) => {
+            return new Promise((resolve, reject) => {
+                const reader = new FileReader();
+                reader.onload = () => {
+                    // Extract just the base64 data, removing the "data:image/png;base64," prefix
+                    const base64Data = reader.result.split(',')[1];
+                    resolve({
+                        name: file.name,
+                        mimeType: file.type,
+                        data: base64Data
+                    });
+                };
+                reader.onerror = reject;
+                reader.readAsDataURL(file);
+            });
+        }));
+
+        // Clear the attached images from the UI now that they are processed
+        attachedPromptImages = [];
+        renderPromptImages();
         
         await fetch('/.netlify/functions/geminiCodeProxy-background', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ prompt: enhancedPrompt, files: projectFiles, projectPath, selectedAssets })
+          body: JSON.stringify({ prompt: enhancedPrompt, files: projectFiles, projectPath, selectedAssets, inlineImages })
         });
 
         // 6. Poll Firebase Storage for the result file
@@ -1314,5 +1390,11 @@ sendToAiBtn.addEventListener('click', async () => {
       loadProjects();
     });
   </script>
+  <div id="imagePreviewModal" class="image-preview-modal">
+      <div class="image-preview-content">
+          <button class="close-preview" id="closePreviewBtn">✕</button>
+          <img id="previewImageSrc" src="" alt="Preview">
+      </div>
+  </div>
 </body>
 </html>
