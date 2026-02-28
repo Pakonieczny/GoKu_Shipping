@@ -76,6 +76,34 @@
       animation: pulse-border 2s ease-out;
     }
 
+    /* AI Prompt Image Tag Styles */
+    .img-ref-tag {
+      background: #e9ecf5;
+      color: #0b0d12;
+      border-radius: 6px;
+      padding: 4px 8px;
+      font-size: 11px;
+      font-weight: 500;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      box-shadow: 0 2px 5px rgba(0,0,0,0.2);
+      pointer-events: auto;
+    }
+    .img-ref-tag .remove-img {
+      cursor: pointer;
+      color: #555;
+      font-weight: bold;
+      transition: color 0.2s;
+    }
+    .img-ref-tag .remove-img:hover {
+      color: var(--danger);
+    }
+    .ai-prompt-drag-hover {
+      border-color: var(--accent) !important;
+      background-color: rgba(43, 108, 255, 0.05) !important;
+    }
+
     /* Game Asset Library Styles */
     .asset-library { margin-top: 20px; border: 1px dashed var(--success); border-radius: 14px; padding: 16px; background: rgba(127, 219, 150, 0.05); display: none; }
     .asset-library.active { display: block; }
@@ -152,7 +180,10 @@
             <div style="color: var(--muted);">AI Context ready. Enter instructions below to modify the active project.</div>
           </div>
           
-          <textarea id="aiPromptInput" placeholder="e.g., 'Change the player movement speed in main.js to 500 and update the index.html title...'" style="min-height: 80px; resize: vertical;"></textarea>
+          <div style="position: relative; width: 100%;">
+            <textarea id="aiPromptInput" placeholder="e.g., 'Change the player movement speed in main.js to 500 and update the index.html title...'" style="min-height: 80px; resize: vertical; width: 100%; padding-right: 140px;"></textarea>
+            <div id="imageTagContainer" style="position: absolute; top: 10px; right: 10px; display: flex; flex-direction: column; gap: 6px; z-index: 10; pointer-events: none;"></div>
+          </div>
           
           <div class="row" style="justify-content: flex-end;">
             <button class="btn btnPrimary" id="sendToAiBtn">Apply AI Update</button>
@@ -495,6 +526,56 @@ async function refreshAssetLibrary() {
             console.error("Asset library error", e); 
         }
     }
+
+    // --- Image Drag & Drop for AI Prompt ---
+    const imageTagContainer = document.getElementById('imageTagContainer');
+    let attachedPromptImages = []; // Array to store the actual File objects for the AI payload
+
+    function renderPromptImages() {
+        imageTagContainer.innerHTML = '';
+        attachedPromptImages.forEach((file, index) => {
+            const tag = document.createElement('div');
+            tag.className = 'img-ref-tag';
+            tag.innerHTML = `
+                <span style="max-width: 120px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">🖼️ ${file.name}</span>
+                <span class="remove-img" data-index="${index}">✕</span>
+            `;
+            imageTagContainer.appendChild(tag);
+        });
+
+        // Add event listeners to the new "x" buttons
+        document.querySelectorAll('.remove-img').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                const idx = parseInt(e.target.getAttribute('data-index'));
+                attachedPromptImages.splice(idx, 1);
+                renderPromptImages();
+            });
+        });
+    }
+
+    aiPromptInput.addEventListener('dragover', (e) => {
+        e.preventDefault();
+        aiPromptInput.classList.add('ai-prompt-drag-hover');
+    });
+
+    aiPromptInput.addEventListener('dragleave', (e) => {
+        e.preventDefault();
+        aiPromptInput.classList.remove('ai-prompt-drag-hover');
+    });
+
+    aiPromptInput.addEventListener('drop', (e) => {
+        e.preventDefault();
+        aiPromptInput.classList.remove('ai-prompt-drag-hover');
+        
+        if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+            Array.from(e.dataTransfer.files).forEach(file => {
+                if (file.type.startsWith('image/')) {
+                    attachedPromptImages.push(file);
+                }
+            });
+            renderPromptImages();
+        }
+    });
 
     // --- AI Review Persistence Logic ---
     async function refreshReviewList() {
