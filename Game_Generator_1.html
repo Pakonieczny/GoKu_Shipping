@@ -619,24 +619,29 @@ sendToAiBtn.addEventListener('click', async () => {
           throw new Error("Could not find '2', '23', or 'assets.json'. Please upload them first.");
         }
 
-        // Gather Selected Assets & Extract Custom Object Zips on the fly
-        const selectedAssetNodes = document.querySelectorAll('.asset-checkbox:checked');
-        const selectedAssets = Array.from(selectedAssetNodes).map(cb => ({
+// Gather ALL Uploaded Assets & Extract Custom Object Zips on the fly
+        const allAssetNodes = document.querySelectorAll('.asset-checkbox');
+        const allAssets = Array.from(allAssetNodes).map(cb => ({
             name: cb.dataset.name,
             path: cb.dataset.path,
             url: cb.dataset.url,
-            type: cb.dataset.type
+            type: cb.dataset.type,
+            isChecked: cb.checked
         }));
+        
+        // Preserve selectedAssets for the backend proxy payload
+        const selectedAssets = allAssets.filter(a => a.isChecked);
 
         let assetString = "";
         let zipContextString = "";
 
-        if (selectedAssets.length > 0) {
-            assetString = "\n\nCRITICAL: The user has explicitly selected the following files. You MUST use these exact file paths/keys in your code when referencing them:\n";
-            for (const a of selectedAssets) {
-                assetString += `- ${a.path}\n`;
+        if (allAssets.length > 0) {
+            assetString = "\n\n=== FULL ASSET INVENTORY ===\nCRITICAL: The following files are available in the project storage. You MUST ensure all relevant files are mapped into assets.json:\n";
+            for (const a of allAssets) {
+                const selectionNote = a.isChecked ? " [EXPLICITLY SELECTED BY USER]" : "";
+                assetString += `- ${a.path}${selectionNote}\n`;
                 
-                // UNZIP LOGIC FOR OBJECT ZIPS IN SELECTED ASSETS
+                // UNZIP LOGIC FOR ALL OBJECT ZIPS
                 if (a.path.includes('object_zips') && a.name.toLowerCase().endsWith('.zip')) {
                     appendToChatLog('System', `Extracting contents of Object Package ${a.name}...`, 'muted');
                     try {
@@ -648,6 +653,8 @@ sendToAiBtn.addEventListener('click', async () => {
                         
                         let parsedModels = [];
                         let parsedTextures = [];
+                        let parsedAudio = [];
+                        let parsedOther = [];
                         let parsedAnimInfo = "";
                         
                         for (const relativePath of Object.keys(zipObj.files)) {
@@ -655,21 +662,27 @@ sendToAiBtn.addEventListener('click', async () => {
                             if (file.dir || relativePath.includes('__MACOSX')) continue;
                             
                             const lowerPath = relativePath.toLowerCase();
-                            if (lowerPath.endsWith('.obj') || lowerPath.endsWith('.glb') || lowerPath.endsWith('.fbx')) {
+                            if (lowerPath.endsWith('.obj') || lowerPath.endsWith('.glb') || lowerPath.endsWith('.gltf') || lowerPath.endsWith('.fbx') || lowerPath.endsWith('.c3b')) {
                                 parsedModels.push(relativePath);
-                            } else if (lowerPath.endsWith('.jpg') || lowerPath.endsWith('.png') || lowerPath.endsWith('.jpeg')) {
+                            } else if (lowerPath.endsWith('.jpg') || lowerPath.endsWith('.png') || lowerPath.endsWith('.jpeg') || lowerPath.endsWith('.webp')) {
                                 parsedTextures.push(relativePath);
+                            } else if (lowerPath.endsWith('.wav') || lowerPath.endsWith('.mp3') || lowerPath.endsWith('.ogg')) {
+                                parsedAudio.push(relativePath);
                             } else if (lowerPath.endsWith('.txt')) {
                                 parsedAnimInfo += `\n--- Content of ${relativePath} ---\n`;
                                 parsedAnimInfo += await file.async('string');
+                            } else {
+                                parsedOther.push(relativePath);
                             }
                         }
                         
                         zipContextString += `\n\n=== PARSED ZIP PACKAGE CONTENTS: ${a.name} ===\n`;
-                        zipContextString += `3D Models Included: ${parsedModels.join(', ')}\n`;
-                        zipContextString += `Textures Included: ${parsedTextures.join(', ')}\n`;
-                        zipContextString += `Animation ID Reference File: ${parsedAnimInfo}\n`;
-                        zipContextString += `AI INSTRUCTION: Automatically infer the PBR texture maps (Albedo, Normal, etc.) based on the texture file suffixes and apply them to the material using createMaterial(). Use the Animation ID Reference to trigger the correct animations via gameState.playAnimation().\n`;
+                        zipContextString += `3D Models Included: ${parsedModels.length > 0 ? parsedModels.join(', ') : 'None'}\n`;
+                        zipContextString += `Textures Included: ${parsedTextures.length > 0 ? parsedTextures.join(', ') : 'None'}\n`;
+                        zipContextString += `Audio Included: ${parsedAudio.length > 0 ? parsedAudio.join(', ') : 'None'}\n`;
+                        if (parsedOther.length > 0) zipContextString += `Other Files: ${parsedOther.join(', ')}\n`;
+                        if (parsedAnimInfo) zipContextString += `Animation ID Reference File: ${parsedAnimInfo}\n`;
+                        zipContextString += `AI INSTRUCTION: Map ALL of these extracted file names into assets.json. Automatically infer the PBR texture maps (Albedo, Normal, etc.) based on the texture file suffixes and apply them to the material using createMaterial(). Use the Animation ID Reference to trigger the correct animations via gameState.playAnimation().\n`;
                         
                     } catch (e) {
                         console.warn(`Failed to parse object zip ${a.name}`, e);
