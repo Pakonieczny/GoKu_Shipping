@@ -713,6 +713,38 @@
 
     const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
+    // --- NEW: Extents Review Modal Logic ---
+    function showExtentsReviewModal(extentsData) {
+        return new Promise((resolve) => {
+            const modal = document.getElementById('extentsResultModal');
+            const container = document.getElementById('extentsListContainer');
+            const btn = document.getElementById('confirmExtentsBtn');
+
+            container.innerHTML = '';
+            extentsData.forEach(ext => {
+                container.innerHTML += `
+                    <div style="background: #1a1e2b; padding: 10px; border-radius: 6px; border: 1px solid var(--line); font-size: 12px;">
+                        <strong style="color: var(--accent);">📦 ${ext.name}</strong><br>
+                        <div style="margin-top: 4px; color: var(--muted);">
+                            Dimensions (X, Y, Z): <span style="color: var(--text);">${ext.width}</span> x <span style="color: var(--text);">${ext.height}</span> x <span style="color: var(--text);">${ext.depth}</span>
+                        </div>
+                        <div style="margin-top: 4px;">
+                            <span style="color: var(--success);">Calculated Floor Y-Offset:</span> ${ext.offset}
+                        </div>
+                    </div>
+                `;
+            });
+
+            modal.classList.add('active');
+
+            // Wait for user to click continue before resolving the promise
+            btn.onclick = () => {
+                modal.classList.remove('active');
+                resolve();
+            };
+        });
+    }
+
     // --- NEW MODAL INTERCEPTOR LOGIC FOR SEND TO AI ---
     const modelProcessingModal = document.getElementById('modelProcessingModal');
     const modalModelList = document.getElementById('modalModelList');
@@ -832,6 +864,8 @@
           return;
       }
 
+      let scannedExtentsList = []; // --- NEW: Track scanned data for the popup ---
+      
       aiPromptInput.value = '';
       appendToChatLog('You', prompt);
       
@@ -905,101 +939,110 @@
         let zipContextString = "";
 
         if (allAssets.length > 0) {
-    assetString = "\n\n=== FULL ASSET INVENTORY ===\nCRITICAL: The following files are available in the project storage. You MUST ensure all relevant files are mapped into assets.json:\n";
-    for (const a of allAssets) {
-        const selectionNote = a.isChecked ? " [EXPLICITLY SELECTED BY USER]" : "";
-        assetString += `- ${a.path}${selectionNote}\n`;
-        
-        // UNZIP LOGIC FOR ALL OBJECT ZIPS
-        if (a.path.includes('object_zips') && a.name.toLowerCase().endsWith('.zip')) {
-            appendToChatLog('System', `Extracting contents of Object Package ${a.name}...`, 'muted');
-            try {
-                const zipUrl = await getDownloadURL(ref(storage, `${ROOT}/${currentProject}/${a.path}`));
-                const zipRes = await fetch(zipUrl);
-                const zipBlob = await zipRes.blob();
-                const zipObj = new JSZip();
-                await zipObj.loadAsync(zipBlob);
+            assetString = "\n\n=== FULL ASSET INVENTORY ===\nCRITICAL: The following files are available in the project storage. You MUST ensure all relevant files are mapped into assets.json:\n";
+            for (const a of allAssets) {
+                const selectionNote = a.isChecked ? " [EXPLICITLY SELECTED BY USER]" : "";
+                assetString += `- ${a.path}${selectionNote}\n`;
                 
-                let parsedModels = [];
-                let parsedTextures = [];
-                let parsedAudio = [];
-                let parsedOther = [];
-                let parsedAnimInfo = "";
-                
-                for (const relativePath of Object.keys(zipObj.files)) {
-                    const file = zipObj.files[relativePath];
-                    if (file.dir || relativePath.includes('__MACOSX')) continue;
-                    
-                    const lowerPath = relativePath.toLowerCase();
-                    
-                    // --- NEW: Calculate .obj extents without modifying the file ---
-                    if (lowerPath.endsWith('.obj')) {
-                        parsedModels.push(relativePath);
+                // UNZIP LOGIC FOR ALL OBJECT ZIPS
+                if (a.path.includes('object_zips') && a.name.toLowerCase().endsWith('.zip')) {
+                    appendToChatLog('System', `Extracting contents of Object Package ${a.name}...`, 'muted');
+                    try {
+                        const zipUrl = await getDownloadURL(ref(storage, `${ROOT}/${currentProject}/${a.path}`));
+                        const zipRes = await fetch(zipUrl);
+                        const zipBlob = await zipRes.blob();
+                        const zipObj = new JSZip();
+                        await zipObj.loadAsync(zipBlob);
                         
-                        try {
-                            const objText = await file.async('string');
-                            const lines = objText.split('\n');
-                            let minY = Infinity, minX = Infinity, minZ = Infinity;
-                            let maxY = -Infinity, maxX = -Infinity, maxZ = -Infinity;
+                        let parsedModels = [];
+                        let parsedTextures = [];
+                        let parsedAudio = [];
+                        let parsedOther = [];
+                        let parsedAnimInfo = "";
+                        
+                        for (const relativePath of Object.keys(zipObj.files)) {
+                            const file = zipObj.files[relativePath];
+                            if (file.dir || relativePath.includes('__MACOSX')) continue;
                             
-                            for (const line of lines) {
-                                if (line.trim().startsWith('v ')) {
-                                    const parts = line.trim().split(/\s+/);
-                                    if (parts.length >= 4) {
-                                        const x = parseFloat(parts[1]);
-                                        const y = parseFloat(parts[2]);
-                                        const z = parseFloat(parts[3]);
-                                        
-                                        if (x < minX) minX = x; if (y < minY) minY = y; if (z < minZ) minZ = z;
-                                        if (x > maxX) maxX = x; if (y > maxY) maxY = y; if (z > maxZ) maxZ = z;
+                            const lowerPath = relativePath.toLowerCase();
+                            
+                            // --- NEW: Calculate .obj extents without modifying the file ---
+                            if (lowerPath.endsWith('.obj')) {
+                                parsedModels.push(relativePath);
+                                
+                                try {
+                                    const objText = await file.async('string');
+                                    const lines = objText.split('\n');
+                                    let minY = Infinity, minX = Infinity, minZ = Infinity;
+                                    let maxY = -Infinity, maxX = -Infinity, maxZ = -Infinity;
+                                    
+                                    for (const line of lines) {
+                                        if (line.trim().startsWith('v ')) {
+                                            const parts = line.trim().split(/\s+/);
+                                            if (parts.length >= 4) {
+                                                const x = parseFloat(parts[1]);
+                                                const y = parseFloat(parts[2]);
+                                                const z = parseFloat(parts[3]);
+                                                
+                                                if (x < minX) minX = x; if (y < minY) minY = y; if (z < minZ) minZ = z;
+                                                if (x > maxX) maxX = x; if (y > maxY) maxY = y; if (z > maxZ) maxZ = z;
+                                            }
+                                        }
                                     }
-                                }
-                            }
-                            
-                            // Calculate the exact offset needed to place the bottom of the object at Y=0
-                            const yOffsetToFloor = (minY < 0) ? Math.abs(minY) : -minY;
-                            const height = maxY - minY;
-                            const width = maxX - minX;
-                            const depth = maxZ - minZ;
+                                    
+                                    // Calculate the exact offset needed to place the bottom of the object at Y=0
+                                    const yOffsetToFloor = (minY < 0) ? Math.abs(minY) : -minY;
+                                    const height = maxY - minY;
+                                    const width = maxX - minX;
+                                    const depth = maxZ - minZ;
 
-                            // Inject this data directly into the AI's context window
-                            parsedAnimInfo += `\n--- 3D Extents Data for ${relativePath} ---\n`;
-                            parsedAnimInfo += `Dimensions: Width: ${width.toFixed(3)}, Height: ${height.toFixed(3)}, Depth: ${depth.toFixed(3)}\n`;
-                            parsedAnimInfo += `Bounding Box: Min Y: ${minY.toFixed(3)}, Max Y: ${maxY.toFixed(3)}\n`;
-                            parsedAnimInfo += `AI INSTRUCTION: This object's pivot is not perfectly centered. When spawning this model, you MUST apply an offset of ${yOffsetToFloor.toFixed(3)} to its Y-position so it does not clip through the floor.\n`;
-                            
-                        } catch (err) {
-                            console.warn(`Could not parse extents for ${relativePath}`, err);
+                                    // --- ADD THIS BLOCK TO SAVE DATA FOR THE POPUP ---
+                                    scannedExtentsList.push({
+                                        name: relativePath,
+                                        width: width.toFixed(3),
+                                        height: height.toFixed(3),
+                                        depth: depth.toFixed(3),
+                                        offset: yOffsetToFloor.toFixed(3)
+                                    });
+
+                                    // Inject this data directly into the AI's context window
+                                    parsedAnimInfo += `\n--- 3D Extents Data for ${relativePath} ---\n`;
+                                    parsedAnimInfo += `Dimensions: Width: ${width.toFixed(3)}, Height: ${height.toFixed(3)}, Depth: ${depth.toFixed(3)}\n`;
+                                    parsedAnimInfo += `Bounding Box: Min Y: ${minY.toFixed(3)}, Max Y: ${maxY.toFixed(3)}\n`;
+                                    parsedAnimInfo += `AI INSTRUCTION: This object's pivot is not perfectly centered. When spawning this model, you MUST apply an offset of ${yOffsetToFloor.toFixed(3)} to its Y-position so it does not clip through the floor.\n`;
+                                    
+                                } catch (err) {
+                                    console.warn(`Could not parse extents for ${relativePath}`, err);
+                                }
+                            } else if (lowerPath.endsWith('.glb') || lowerPath.endsWith('.gltf') || lowerPath.endsWith('.fbx') || lowerPath.endsWith('.c3b')) {
+                                parsedModels.push(relativePath);
+                            } else if (lowerPath.endsWith('.jpg') || lowerPath.endsWith('.png') || lowerPath.endsWith('.jpeg') || lowerPath.endsWith('.webp')) {
+                                parsedTextures.push(relativePath);
+                            } else if (lowerPath.endsWith('.wav') || lowerPath.endsWith('.mp3') || lowerPath.endsWith('.ogg')) {
+                                parsedAudio.push(relativePath);
+                            } else if (lowerPath.endsWith('.txt')) {
+                                parsedAnimInfo += `\n--- Content of ${relativePath} ---\n`;
+                                parsedAnimInfo += await file.async('string');
+                            } else {
+                                parsedOther.push(relativePath);
+                            }
                         }
-                    } else if (lowerPath.endsWith('.glb') || lowerPath.endsWith('.gltf') || lowerPath.endsWith('.fbx') || lowerPath.endsWith('.c3b')) {
-                        parsedModels.push(relativePath);
-                    } else if (lowerPath.endsWith('.jpg') || lowerPath.endsWith('.png') || lowerPath.endsWith('.jpeg') || lowerPath.endsWith('.webp')) {
-                        parsedTextures.push(relativePath);
-                    } else if (lowerPath.endsWith('.wav') || lowerPath.endsWith('.mp3') || lowerPath.endsWith('.ogg')) {
-                        parsedAudio.push(relativePath);
-                    } else if (lowerPath.endsWith('.txt')) {
-                        parsedAnimInfo += `\n--- Content of ${relativePath} ---\n`;
-                        parsedAnimInfo += await file.async('string');
-                    } else {
-                        parsedOther.push(relativePath);
+                        
+                        zipContextString += `\n\n=== PARSED ZIP PACKAGE CONTENTS: ${a.name} ===\n`;
+                        zipContextString += `3D Models Included: ${parsedModels.length > 0 ? parsedModels.join(', ') : 'None'}\n`;
+                        zipContextString += `Textures Included: ${parsedTextures.length > 0 ? parsedTextures.join(', ') : 'None'}\n`;
+                        zipContextString += `Audio Included: ${parsedAudio.length > 0 ? parsedAudio.join(', ') : 'None'}\n`;
+                        if (parsedOther.length > 0) zipContextString += `Other Files: ${parsedOther.join(', ')}\n`;
+                        if (parsedAnimInfo) zipContextString += `Animation ID Reference File: ${parsedAnimInfo}\n`;
+                        zipContextString += `AI INSTRUCTION: Map ALL of these extracted file names into assets.json. Automatically infer the PBR texture maps (Albedo, Normal, etc.) based on the texture file suffixes and apply them to the material using createMaterial(). Use the Animation ID Reference to trigger the correct animations via gameState.playAnimation().\n`;
+                        
+                    } catch (e) {
+                        console.warn(`Failed to parse object zip ${a.name}`, e);
+                        appendToChatLog('System', `Warning: Could not parse ${a.name}`, 'error');
                     }
                 }
-                
-                zipContextString += `\n\n=== PARSED ZIP PACKAGE CONTENTS: ${a.name} ===\n`;
-                zipContextString += `3D Models Included: ${parsedModels.length > 0 ? parsedModels.join(', ') : 'None'}\n`;
-                zipContextString += `Textures Included: ${parsedTextures.length > 0 ? parsedTextures.join(', ') : 'None'}\n`;
-                zipContextString += `Audio Included: ${parsedAudio.length > 0 ? parsedAudio.join(', ') : 'None'}\n`;
-                if (parsedOther.length > 0) zipContextString += `Other Files: ${parsedOther.join(', ')}\n`;
-                if (parsedAnimInfo) zipContextString += `Animation ID Reference File: ${parsedAnimInfo}\n`;
-                zipContextString += `AI INSTRUCTION: Map ALL of these extracted file names into assets.json. Automatically infer the PBR texture maps (Albedo, Normal, etc.) based on the texture file suffixes and apply them to the material using createMaterial(). Use the Animation ID Reference to trigger the correct animations via gameState.playAnimation().\n`;
-                
-            } catch (e) {
-                console.warn(`Failed to parse object zip ${a.name}`, e);
-                appendToChatLog('System', `Warning: Could not parse ${a.name}`, 'error');
             }
         }
-    }
-}
 
         // 2.5 Gather AI System Instructions
         appendToChatLog('System', 'Fetching AI System Instructions...', 'muted');
@@ -1016,6 +1059,13 @@
             }
         } catch (e) {
             console.warn("Could not fetch AI System Instructions.", e);
+        }
+
+        // --- NEW: Show the Review Modal if any objects were scanned ---
+        if (scannedExtentsList.length > 0) {
+            setStatus('Waiting for user to review calculated extents...');
+            await showExtentsReviewModal(scannedExtentsList);
+            setStatus('Extents approved. Proceeding to AI...');
         }
 
         // 3. Combine Structure Map, Instructions & Selected Assets with the User Prompt
@@ -1592,6 +1642,22 @@
           <div class="row" style="justify-content: flex-end; margin-top: 10px;" id="procActionButtons">
               <button class="btn" id="skipProcessingBtn">Skip & Continue to AI</button>
               <button class="btn btnPrimary" id="startProcessingBtn">Process Selected</button>
+          </div>
+      </div>
+  </div>
+
+  <div id="extentsResultModal" class="processing-modal">
+      <div class="processing-content" style="width: 500px;">
+          <h2 style="color: #fff; font-size: 18px;">Scanned Object Extents</h2>
+          <p style="font-size: 13px; color: var(--muted); margin-top: -10px; line-height: 1.4;">
+              The following bounding boxes and floor offsets were calculated locally. These instructions will be injected into the AI prompt.
+          </p>
+          
+          <div class="model-list-container" id="extentsListContainer" style="max-height: 300px; padding: 10px; display: flex; flex-direction: column; gap: 10px;">
+              </div>
+
+          <div class="row" style="justify-content: flex-end; margin-top: 10px;">
+              <button class="btn btnPrimary" id="confirmExtentsBtn">Approve & Continue to AI</button>
           </div>
       </div>
   </div>
