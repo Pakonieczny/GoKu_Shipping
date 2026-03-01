@@ -290,8 +290,7 @@
       { id: "assets", title: "Game Assets (Images/Audio)", accepts: "image/*,audio/*,.png,.jpg,.jpeg,.mp3,.wav", folder: "assets" },
       { id: "object_zip", title: "Animated/Textured Object ZIP Package", accepts: ".zip", folder: "object_zips" },
       { id: "models", title: "Models, Logic & HTML", accepts: ".obj,.glb,.fbx,.js,.mtl,.html", folder: "models" },
-      { id: "json", title: "JSON Configs", accepts: ".json", folder: "json" },
-      { id: "reference", title: "Reference Project ZIP", accepts: ".zip", folder: "reference_zip" }
+      { id: "json", title: "JSON Configs", accepts: ".json", folder: "json" }
     ];
 
     let currentProject = null;
@@ -882,30 +881,7 @@
       appendToChatLog('You', prompt);
       
       try {
-        appendToChatLog('System', 'Mapping project structure from Reference ZIP...', 'muted');
-        let projectStructure = "Project Directory Map:\n";
-        const refFolder = ref(storage, `${ROOT}/${currentProject}/reference_zip`);
-        let zipFound = false;
-        
-        try {
-          const refList = await listAll(refFolder);
-          if (refList.items.length > 0) {
-            const refUrl = await getDownloadURL(refList.items[0]);
-            const refRes = await fetch(refUrl);
-            const refBlob = await refRes.blob();
-            
-            const zip = new JSZip();
-            await zip.loadAsync(refBlob);
-            projectStructure += Object.keys(zip.files).join('\n');
-            zipFound = true;
-          }
-        } catch (e) {
-          console.warn("Could not read Reference ZIP for structure.", e);
-        }
-
-        if (!zipFound) {
-            projectStructure += "(No Reference ZIP uploaded yet)";
-        }
+        let projectStructure = "Project Directory Map:\n(No reference ZIP)";
 
         appendToChatLog('System', 'Gathering logic file "2", HTML file "23", and config "assets.json"...', 'muted');
         const projectFiles = {};
@@ -1409,28 +1385,12 @@
         generateGameBtn.disabled = true;
         progressContainer.style.display = 'block';
         progressBar.style.width = '5%';
-        setStatus(`Fetching Reference ZIP for ${currentProject}...`);
-        
-        const refFolder = ref(storage, `${ROOT}/${currentProject}/reference_zip`);
-        const refList = await listAll(refFolder);
-        
-        if (refList.items.length === 0) {
-           alert("No Reference ZIP found! Please upload one to the Reference Project ZIP drop zone first.");
-           throw new Error("Missing reference zip");
-        }
-        
-        const referenceZipRef = refList.items[0]; 
-        const refUrl = await getDownloadURL(referenceZipRef);
-        const refCacheBust = refUrl.includes('?') ? `${refUrl}&_ts=${new Date().getTime()}` : `${refUrl}?_ts=${new Date().getTime()}`;
+        setStatus(`Initializing Game ZIP for ${currentProject}...`);
 
-        const refRes = await fetch(refCacheBust, { cache: 'no-store' });
-        const refBlob = await refRes.blob();
-        
         progressBar.style.width = '15%';
-        setStatus(`Loading template ZIP into memory...`);
+        setStatus(`Preparing output ZIP...`);
         const zip = new JSZip();
-        await zip.loadAsync(refBlob);
-        const zipPaths = Object.keys(zip.files);
+        const zipPaths = [];
         
         setStatus(`Parsing assets.json for file mappings...`);
         const normalizeStr = (str) => String(str).toLowerCase().replace(/[^a-z0-9]/g, '');
