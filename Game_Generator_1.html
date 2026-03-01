@@ -716,50 +716,7 @@
 
     const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
-    function showExtentsReviewModal(extentsData) {
-        return new Promise((resolve) => {
-            const modal = document.getElementById('extentsResultModal');
-            const container = document.getElementById('extentsListContainer');
-            const btn = document.getElementById('confirmExtentsBtn');
-
-            container.innerHTML = '';
-            extentsData.forEach(ext => {
-                container.innerHTML += `
-                    <div style="background: #1a1e2b; padding: 10px; border-radius: 6px; border: 1px solid var(--line); font-size: 12px;">
-                        <strong style="color: var(--accent);">📦 ${ext.name}</strong><br>
-                        
-                        <div style="margin-top: 8px; color: var(--muted); border-left: 2px solid var(--success); padding-left: 8px;">
-                            <strong style="color: #fff;">Overall Object (Visuals)</strong><br>
-                            Dimensions (X, Y, Z): <span style="color: var(--text);">${ext.objWidth}</span> x <span style="color: var(--text);">${ext.objHeight}</span> x <span style="color: var(--text);">${ext.objDepth}</span>
-                        </div>
-                        
-                        ${ext.hasMesh ? `
-                        ${ext.hasMesh ? `
-                        <div style="margin-top: 8px; color: var(--muted); border-left: 2px solid var(--danger); padding-left: 8px;">
-                            <strong style="color: #fff;">Inner Mesh (Physics)</strong><br>
-                            Dimensions (X, Y, Z): <span style="color: var(--text);">${ext.meshWidth}</span> x <span style="color: var(--text);">${ext.meshHeight}</span> x <span style="color: var(--text);">${ext.meshDepth}</span>
-                        </div>` : ''}
-
-                        ${ext.materials && ext.materials.length > 0 ? `
-                        <div style="margin-top: 8px; color: var(--muted); border-left: 2px solid var(--accent); padding-left: 8px;">
-                            <strong style="color: #fff;">Scanned Materials</strong><br>
-                            <div style="font-size: 11px; white-space: pre-wrap; margin-top: 4px;">${ext.materials.join('<br>')}</div>
-                        </div>` : ''}
-
-                        <div style="margin-top: 8px; padding-top: 8px; border-top: 1px dashed var(--line);">
-                            <span style="color: var(--success);">Calculated Floor Y-Offset:</span> ${ext.offset}
-                        </div>
-                    </div>
-            });
-
-            modal.classList.add('active');
-
-            btn.onclick = () => {
-                modal.classList.remove('active');
-                resolve();
-            };
-        });
-    }
+function showExtentsReviewModal(extentsData) {
 
     const modelProcessingModal = document.getElementById('modelProcessingModal');
     const modalModelList = document.getElementById('modalModelList');
