@@ -1264,11 +1264,32 @@
              let match;
              let changesMade = 0;
 
+             // Fuzzy whitespace matcher: strips leading indent from each line, finds the block
+             // in the original file, and returns the actual verbatim slice so we can replace it.
+             function findWithNormalizedWhitespace(haystack, needle) {
+                 const normalizeLines = (str) => str.split('\n').map(l => l.trimStart()).join('\n');
+                 const needleNorm = normalizeLines(needle.trim());
+                 const haystackLines = haystack.split('\n');
+                 const needleLines = needle.trim().split('\n');
+                 const needleCount = needleLines.length;
+
+                 for (let i = 0; i <= haystackLines.length - needleCount; i++) {
+                     const slice = haystackLines.slice(i, i + needleCount);
+                     const sliceNorm = slice.map(l => l.trimStart()).join('\n');
+                     if (sliceNorm === needleNorm) {
+                         // Return the verbatim matched text from the original file
+                         return slice.join('\n');
+                     }
+                 }
+                 return null;
+             }
+
              while ((match = blockRegex.exec(aiOutputContent)) !== null) {
                  const searchTarget = match[1].replace(/\r\n/g, '\n');
                  const replacement = match[2];
 
                  if (normalizedResult.includes(searchTarget)) {
+                     // Exact match — fast path
                      normalizedResult = normalizedResult.split(searchTarget).join(replacement);
                      
                      const escapedSearch = escapeHTML(searchTarget);
@@ -1278,8 +1299,22 @@
                      uiResult = uiResult.split(escapedSearch).join(uiPatch);
                      changesMade++;
                  } else {
-                     console.warn(`Patch failed for ${fileName}. Code not found:\n`, searchTarget);
-                     appendToChatLog('System', `Warning: A patch block for ${fileName} failed to match the existing code.`, 'error');
+                     // Fallback: try whitespace-normalized match
+                     const verbatimMatch = findWithNormalizedWhitespace(normalizedResult, searchTarget);
+                     if (verbatimMatch !== null) {
+                         console.info(`Patch for ${fileName}: exact match failed, using whitespace-normalized match.`);
+                         normalizedResult = normalizedResult.split(verbatimMatch).join(replacement);
+
+                         const escapedSearch = escapeHTML(verbatimMatch);
+                         const escapedReplace = escapeHTML(replacement);
+                         const uiPatch = `<span style="color: var(--success); font-weight: bold;">${escapedSearch}</span>\n<span style="color: var(--danger); font-weight: bold;">${escapedReplace}</span>`;
+
+                         uiResult = uiResult.split(escapedSearch).join(uiPatch);
+                         changesMade++;
+                     } else {
+                         console.warn(`Patch failed for ${fileName}. Code not found:\n`, searchTarget);
+                         appendToChatLog('System', `Warning: A patch block for ${fileName} failed to match the existing code.`, 'error');
+                     }
                  }
              }
 
