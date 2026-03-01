@@ -734,9 +734,16 @@
                         </div>
                         
                         ${ext.hasMesh ? `
+                        ${ext.hasMesh ? `
                         <div style="margin-top: 8px; color: var(--muted); border-left: 2px solid var(--danger); padding-left: 8px;">
                             <strong style="color: #fff;">Inner Mesh (Physics)</strong><br>
                             Dimensions (X, Y, Z): <span style="color: var(--text);">${ext.meshWidth}</span> x <span style="color: var(--text);">${ext.meshHeight}</span> x <span style="color: var(--text);">${ext.meshDepth}</span>
+                        </div>` : ''}
+
+                        ${ext.materials && ext.materials.length > 0 ? `
+                        <div style="margin-top: 8px; color: var(--muted); border-left: 2px solid var(--accent); padding-left: 8px;">
+                            <strong style="color: #fff;">Scanned Materials</strong><br>
+                            <div style="font-size: 11px; white-space: pre-wrap; margin-top: 4px;">${ext.materials.join('<br>')}</div>
                         </div>` : ''}
 
                         <div style="margin-top: 8px; padding-top: 8px; border-top: 1px dashed var(--line);">
@@ -990,12 +997,27 @@
                                             // 2. Find and calculate the Inner Bounding Box (Actual Mesh)
                                             let meshSize = new THREE.Vector3(0, 0, 0);
                                             let hasMesh = false;
-                                            
+                                            let materialInfo = []; // Array to store mesh/material maps
+
                                             model.traverse((child) => {
-                                                if (child.isMesh && !hasMesh) {
-                                                    const meshBox = new THREE.Box3().setFromObject(child);
-                                                    meshBox.getSize(meshSize);
-                                                    hasMesh = true; 
+                                                if (child.isMesh) {
+                                                    // Grab bounding box of the first mesh found
+                                                    if (!hasMesh) {
+                                                        const meshBox = new THREE.Box3().setFromObject(child);
+                                                        meshBox.getSize(meshSize);
+                                                        hasMesh = true; 
+                                                    }
+                                                    
+                                                    // Extract Material and Mesh names
+                                                    let matNames = [];
+                                                    if (Array.isArray(child.material)) {
+                                                        matNames = child.material.map(m => m.name || 'unnamed_material');
+                                                    } else if (child.material) {
+                                                        matNames.push(child.material.name || 'unnamed_material');
+                                                    }
+                                                    
+                                                    const meshName = child.name || 'unnamed_mesh';
+                                                    materialInfo.push(`Mesh: "${meshName}" -> Material(s): [${matNames.join(', ')}]`);
                                                 }
                                             });
 
@@ -1013,16 +1035,20 @@
                                                 meshWidth: hasMesh ? meshSize.x.toFixed(3) : "N/A",
                                                 meshHeight: hasMesh ? meshSize.y.toFixed(3) : "N/A",
                                                 meshDepth: hasMesh ? meshSize.z.toFixed(3) : "N/A",
-                                                offset: yOffsetToFloor.toFixed(3)
+                                                offset: yOffsetToFloor.toFixed(3),
+                                                materials: materialInfo // Add materials array to UI state
                                             });
 
-                                            parsedAnimInfo += `\n--- 3D Extents Data for ${relativePath} ---\n`;
+                                            parsedAnimInfo += `\n--- 3D Extents & Material Data for ${relativePath} ---\n`;
                                             parsedAnimInfo += `OVERALL OBJECT (Visual Wrapper): Width: ${objectSize.x.toFixed(3)}, Height: ${objectSize.y.toFixed(3)}, Depth: ${objectSize.z.toFixed(3)}\n`;
                                             if (hasMesh) {
                                                 parsedAnimInfo += `INNER MESH (Physics Collider): Width: ${meshSize.x.toFixed(3)}, Height: ${meshSize.y.toFixed(3)}, Depth: ${meshSize.z.toFixed(3)}\n`;
                                             }
                                             parsedAnimInfo += `Bounding Box: Min Y: ${minY.toFixed(3)}, Max Y: ${maxY.toFixed(3)}\n`;
-                                            parsedAnimInfo += `AI INSTRUCTION: This object's pivot is not perfectly centered. When spawning this visual model via createObject, apply a Y-offset of ${yOffsetToFloor.toFixed(3)}. Use the INNER MESH dimensions to calculate the true scale of the RigidBody.\n`;
+                                            if (materialInfo.length > 0) {
+                                                parsedAnimInfo += `MESH & MATERIAL MAP:\n  - ${materialInfo.join('\n  - ')}\n`;
+                                            }
+                                            parsedAnimInfo += `AI INSTRUCTION: This object's pivot is not perfectly centered. When spawning this visual model via createObject, apply a Y-offset of ${yOffsetToFloor.toFixed(3)}. Use the INNER MESH dimensions to calculate the true scale of the RigidBody. Use the MESH & MATERIAL MAP to explicitly target the correct meshes when mapping textures.\n`;
                                         }
                                     } catch (err) {
                                         console.warn(`Could not parse Three.js extents for ${relativePath}`, err);
