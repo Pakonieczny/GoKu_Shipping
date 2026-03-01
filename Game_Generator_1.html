@@ -1168,7 +1168,6 @@
       Progress.start('Starting AI pipeline...');
       
       try {
-        appendToChatLog('System', 'Mapping project structure from Reference ZIP...', 'muted');
         Progress.step('Mapping project structure', 'Reading Reference ZIP...');
         let projectStructure = "Project Directory Map:\n";
         const refFolder = ref(storage, `${ROOT}/${currentProject}/reference_zip`);
@@ -1194,7 +1193,6 @@
             projectStructure += "(No Reference ZIP uploaded yet)";
         }
 
-        appendToChatLog('System', 'Gathering logic file "2", HTML file "23", and config "assets.json"...', 'muted');
         Progress.step('Loading core project files', '"2", "23", assets.json');
         const projectFiles = {};
         const targetFiles = [
@@ -1245,7 +1243,6 @@
                     const lowerName = a.name.toLowerCase();
                     const shouldProcess = (activeSelectedModelNames === null) || activeSelectedModelNames.has(a.name);
                     if (shouldProcess && (lowerName.endsWith('.obj') || lowerName.endsWith('.glb') || lowerName.endsWith('.gltf'))) {
-                        appendToChatLog('System', `Scanning extents for model: ${a.name}...`, 'muted');
                         Progress.step(`Scanning 3D extents`, a.name);
                         try {
                             const modelUrl = a.url;
@@ -1312,9 +1309,8 @@
                     // activeSelectedModelNames is a Set means only process names in the set
                     const shouldProcess = (activeSelectedModelNames === null) || activeSelectedModelNames.has(a.name);
                     if (!shouldProcess) {
-                        appendToChatLog('System', `Skipping ${a.name} (deselected in pre-process modal)`, 'muted');
+                        // skipped — no chat log needed, progress panel handles it
                     } else {
-                    appendToChatLog('System', `Extracting contents of Object Package ${a.name}...`, 'muted');
                     Progress.step(`Extracting ZIP package`, a.name);
                     try {
                         const zipUrl = await getDownloadURL(ref(storage, `${ROOT}/${currentProject}/${a.path}`));
@@ -1459,7 +1455,6 @@
             }
         }
 
-        appendToChatLog('System', 'Fetching AI System Instructions...', 'muted');
         Progress.step('Loading AI system instructions');
         let aiInstructionsText = "No AI System Instructions provided.";
         const instructionsFolderRef = ref(storage, `${ROOT}/${currentProject}/ai_system_instructions`);
@@ -1523,11 +1518,8 @@
         try { await deleteObject(responseFileRef); } catch(e) {}
         try { await deleteObject(errorFileRef); } catch(e) {}
 
-        appendToChatLog('System', 'Sending targeted files and map to AI...', 'muted');
         setStatus('AI is processing files (This may take a minute)...');
         Progress.step('Sending context to Gemini', 'Building enhanced prompt + files...');
-
-        appendToChatLog('System', 'Processing attached reference images...', 'muted');
         const inlineImages = await Promise.all(attachedPromptImages.map(async (file) => {
             return new Promise((resolve, reject) => {
                 const reader = new FileReader();
@@ -1574,7 +1566,6 @@
         while (!result && attempts < MAX_POLL_ATTEMPTS) {
           await sleep(15000); 
           attempts++;
-          appendToChatLog('System', `Polling for AI result... (attempt ${attempts}/${MAX_POLL_ATTEMPTS})`, 'muted');
           Progress.poll(attempts, MAX_POLL_ATTEMPTS);
 
           let hasErrorFile = false;
@@ -1602,7 +1593,6 @@
             '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;'
         }[tag]));
 
-        appendToChatLog('System', `Writing ${result.updatedFiles.length} updated files to Firebase...`, 'muted');
         Progress.step(`Writing ${result.updatedFiles.length} file(s) to Firebase`);
         
         for (const file of result.updatedFiles) {
