@@ -147,7 +147,99 @@
     .asset-date { color: var(--muted); font-size: 11px; }
     input[type="checkbox"].asset-checkbox { width: 16px; height: 16px; accent-color: var(--success); cursor: pointer; margin: 0; }
     
-    /* CodeMirror Custom Overrides */
+    /* ── Live AI Progress Panel ── */
+    .ai-progress-panel {
+        display: none; flex-direction: column; gap: 0;
+        background: #0c0f1a; border: 1px solid var(--line); border-radius: 12px;
+        overflow: hidden; transition: all 0.3s ease;
+    }
+    .ai-progress-panel.active { display: flex; }
+
+    .ai-progress-header {
+        display: flex; align-items: center; gap: 10px;
+        padding: 12px 16px; cursor: pointer; user-select: none;
+        border-bottom: 1px solid transparent; transition: border-color 0.3s;
+    }
+    .ai-progress-header:hover { background: rgba(255,255,255,0.02); }
+    .ai-progress-panel.has-steps .ai-progress-header { border-bottom-color: var(--line); }
+
+    .ai-spark-icon {
+        width: 22px; height: 22px; flex-shrink: 0; position: relative;
+    }
+    .ai-spark-icon svg { width: 22px; height: 22px; }
+    .ai-spark-icon.spinning svg { animation: spark-spin 1.4s linear infinite; }
+    @keyframes spark-spin {
+        0% { transform: rotate(0deg) scale(1); filter: drop-shadow(0 0 4px #2b6cff88); }
+        50% { transform: rotate(180deg) scale(1.15); filter: drop-shadow(0 0 8px #4d8fffcc); }
+        100% { transform: rotate(360deg) scale(1); filter: drop-shadow(0 0 4px #2b6cff88); }
+    }
+    .ai-spark-icon.done svg { filter: drop-shadow(0 0 5px #7fdb9666); }
+    .ai-spark-icon.error svg { filter: drop-shadow(0 0 5px #fca5a566); }
+
+    .ai-progress-title {
+        font-size: 13px; font-weight: 600; color: var(--text); flex: 1;
+        white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    .ai-progress-title.muted { color: var(--muted); }
+
+    .ai-progress-chevron {
+        font-size: 11px; color: var(--muted); transition: transform 0.25s;
+        opacity: 0; pointer-events: none;
+    }
+    .ai-progress-panel.has-steps .ai-progress-chevron { opacity: 1; pointer-events: auto; }
+    .ai-progress-panel.expanded .ai-progress-chevron { transform: rotate(180deg); }
+
+    .ai-steps-list {
+        display: none; flex-direction: column; padding: 8px 0; max-height: 280px; overflow-y: auto;
+    }
+    .ai-progress-panel.expanded .ai-steps-list { display: flex; }
+
+    .ai-step {
+        display: flex; align-items: flex-start; gap: 12px;
+        padding: 8px 16px; font-size: 12px; transition: background 0.15s;
+        animation: step-in 0.25s ease both;
+    }
+    @keyframes step-in {
+        from { opacity: 0; transform: translateY(-6px); }
+        to   { opacity: 1; transform: translateY(0); }
+    }
+    .ai-step:hover { background: rgba(255,255,255,0.025); }
+
+    .ai-step-dot {
+        width: 18px; height: 18px; border-radius: 50%; flex-shrink: 0;
+        display: flex; align-items: center; justify-content: center; margin-top: 1px;
+        font-size: 9px;
+    }
+    .ai-step-dot.pending {
+        border: 1.5px solid var(--muted); background: transparent;
+        animation: dot-pulse 1.2s ease-in-out infinite;
+    }
+    @keyframes dot-pulse {
+        0%, 100% { border-color: var(--muted); box-shadow: none; }
+        50% { border-color: var(--accent); box-shadow: 0 0 6px rgba(43,108,255,0.5); }
+    }
+    .ai-step-dot.done { background: var(--success); border: 1.5px solid var(--success); color: #0b0d12; font-weight: bold; }
+    .ai-step-dot.error { background: var(--danger); border: 1.5px solid var(--danger); color: #0b0d12; font-weight: bold; }
+    .ai-step-dot.warn { background: #eab308; border: 1.5px solid #eab308; color: #0b0d12; font-weight: bold; }
+    .ai-step-dot.waiting { background: #1a2540; border: 1.5px solid var(--line); }
+
+    .ai-step-content { flex: 1; }
+    .ai-step-label { color: var(--text); line-height: 1.4; }
+    .ai-step-label.muted { color: var(--muted); }
+    .ai-step-meta { font-size: 10px; color: var(--muted); margin-top: 2px; }
+
+    .ai-poll-ticker {
+        display: flex; align-items: center; gap: 6px; padding: 10px 16px 12px;
+        font-size: 11px; color: var(--muted); border-top: 1px solid var(--line);
+    }
+    .ai-poll-ticker.hidden { display: none; }
+    .ai-poll-bar-track { flex: 1; height: 3px; background: var(--line); border-radius: 2px; overflow: hidden; }
+    .ai-poll-bar-fill {
+        height: 100%; background: var(--accent); border-radius: 2px;
+        transition: width 0.5s linear;
+    }
+
+    /* ── CodeMirror Custom Overrides ── */
     .CodeMirror { height: auto; min-height: 300px; border-radius: 8px; font-family: monospace; font-size: 13px; margin-top: 10px; z-index: 0; }
     .CodeMirror-scroll { max-height: 600px; }
 
@@ -238,6 +330,26 @@
         <div style="display: flex; flex-direction: column; gap: 10px;">
           <div id="aiChatLog" style="height: 400px; overflow-y: auto; background: #0b0d12; border: 1px solid var(--line); border-radius: 10px; padding: 14px; font-size: 13px; font-family: monospace; display: flex; flex-direction: column; gap: 12px; white-space: pre-wrap; line-height: 1.5;">
             <div style="color: var(--muted);">AI Context ready. Enter instructions below to modify the active project.</div>
+          </div>
+
+          <!-- Live AI Progress Panel -->
+          <div id="aiProgressPanel" class="ai-progress-panel">
+            <div class="ai-progress-header" id="aiProgressHeader">
+              <div class="ai-spark-icon" id="aiSparkIcon">
+                <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                  <path d="M12 2L13.8 8.2L20 10L13.8 11.8L12 18L10.2 11.8L4 10L10.2 8.2L12 2Z" fill="#2b6cff"/>
+                  <path d="M19 15L19.9 17.1L22 18L19.9 18.9L19 21L18.1 18.9L16 18L18.1 17.1L19 15Z" fill="#4d8fff" opacity="0.7"/>
+                </svg>
+              </div>
+              <span class="ai-progress-title muted" id="aiProgressTitle">Idle</span>
+              <span class="ai-progress-chevron" id="aiProgressChevron">▼</span>
+            </div>
+            <div class="ai-steps-list" id="aiStepsList"></div>
+            <div class="ai-poll-ticker hidden" id="aiPollTicker">
+              <span id="aiPollLabel">Waiting for AI...</span>
+              <div class="ai-poll-bar-track"><div class="ai-poll-bar-fill" id="aiPollBarFill" style="width:0%"></div></div>
+              <span id="aiPollCounter">0/20</span>
+            </div>
           </div>
           
           <div style="position: relative; width: 100%;">
@@ -714,6 +826,164 @@
       aiChatLog.scrollTop = aiChatLog.scrollHeight;
     }
 
+    // ── Live AI Progress Panel Controller ──
+    const aiProgressPanel   = document.getElementById('aiProgressPanel');
+    const aiProgressHeader  = document.getElementById('aiProgressHeader');
+    const aiProgressTitle   = document.getElementById('aiProgressTitle');
+    const aiSparkIcon       = document.getElementById('aiSparkIcon');
+    const aiProgressChevron = document.getElementById('aiProgressChevron');
+    const aiStepsList       = document.getElementById('aiStepsList');
+    const aiPollTicker      = document.getElementById('aiPollTicker');
+    const aiPollLabel       = document.getElementById('aiPollLabel');
+    const aiPollBarFill     = document.getElementById('aiPollBarFill');
+    const aiPollCounter     = document.getElementById('aiPollCounter');
+
+    let _progressExpanded = true;
+
+    aiProgressHeader.addEventListener('click', () => {
+        _progressExpanded = !_progressExpanded;
+        aiProgressPanel.classList.toggle('expanded', _progressExpanded);
+    });
+
+    const Progress = {
+        _steps: [],
+        _activeStepEl: null,
+
+        start(title) {
+            this._steps = [];
+            this._activeStepEl = null;
+            aiStepsList.innerHTML = '';
+            aiPollTicker.classList.add('hidden');
+            aiProgressPanel.classList.add('active');
+            aiProgressPanel.classList.remove('has-steps', 'expanded');
+            _progressExpanded = false;
+            aiProgressTitle.textContent = title;
+            aiProgressTitle.classList.remove('muted');
+            aiSparkIcon.classList.add('spinning');
+            aiSparkIcon.classList.remove('done', 'error');
+            // auto-expand when steps start appearing
+            setTimeout(() => {
+                if (this._steps.length > 0) {
+                    _progressExpanded = true;
+                    aiProgressPanel.classList.add('expanded');
+                }
+            }, 600);
+        },
+
+        step(label, meta = '') {
+            // mark previous step done
+            if (this._activeStepEl) {
+                const dot = this._activeStepEl.querySelector('.ai-step-dot');
+                dot.classList.remove('pending');
+                dot.classList.add('done');
+                dot.textContent = '✓';
+            }
+
+            const el = document.createElement('div');
+            el.className = 'ai-step';
+            el.innerHTML = `
+                <div class="ai-step-dot pending"></div>
+                <div class="ai-step-content">
+                    <div class="ai-step-label">${label}</div>
+                    ${meta ? `<div class="ai-step-meta">${meta}</div>` : ''}
+                </div>
+            `;
+            aiStepsList.appendChild(el);
+            aiStepsList.scrollTop = aiStepsList.scrollHeight;
+
+            this._activeStepEl = el;
+            this._steps.push(el);
+
+            aiProgressPanel.classList.add('has-steps');
+            if (!_progressExpanded && this._steps.length === 1) {
+                _progressExpanded = true;
+                aiProgressPanel.classList.add('expanded');
+            }
+
+            // update header title to current step
+            aiProgressTitle.textContent = label;
+
+            return el;
+        },
+
+        warn(label, meta = '') {
+            const el = document.createElement('div');
+            el.className = 'ai-step';
+            el.innerHTML = `
+                <div class="ai-step-dot warn">!</div>
+                <div class="ai-step-content">
+                    <div class="ai-step-label" style="color:#eab308;">${label}</div>
+                    ${meta ? `<div class="ai-step-meta">${meta}</div>` : ''}
+                </div>
+            `;
+            aiStepsList.appendChild(el);
+            aiStepsList.scrollTop = aiStepsList.scrollHeight;
+            this._steps.push(el);
+        },
+
+        error(label, meta = '') {
+            if (this._activeStepEl) {
+                const dot = this._activeStepEl.querySelector('.ai-step-dot');
+                dot.classList.remove('pending');
+                dot.classList.add('error');
+                dot.textContent = '✕';
+            }
+            const el = document.createElement('div');
+            el.className = 'ai-step';
+            el.innerHTML = `
+                <div class="ai-step-dot error">✕</div>
+                <div class="ai-step-content">
+                    <div class="ai-step-label" style="color:var(--danger);">${label}</div>
+                    ${meta ? `<div class="ai-step-meta">${meta}</div>` : ''}
+                </div>
+            `;
+            aiStepsList.appendChild(el);
+            aiStepsList.scrollTop = aiStepsList.scrollHeight;
+            this._steps.push(el);
+            aiSparkIcon.classList.remove('spinning');
+            aiSparkIcon.classList.add('error');
+            aiProgressTitle.textContent = 'Failed — ' + label;
+            aiPollTicker.classList.add('hidden');
+        },
+
+        poll(attempt, max) {
+            aiPollTicker.classList.remove('hidden');
+            const pct = Math.round((attempt / max) * 100);
+            aiPollBarFill.style.width = pct + '%';
+            aiPollCounter.textContent = `${attempt}/${max}`;
+            aiPollLabel.textContent = `Waiting for AI response...`;
+        },
+
+        done(label) {
+            if (this._activeStepEl) {
+                const dot = this._activeStepEl.querySelector('.ai-step-dot');
+                dot.classList.remove('pending');
+                dot.classList.add('done');
+                dot.textContent = '✓';
+                this._activeStepEl = null;
+            }
+            aiPollTicker.classList.add('hidden');
+            aiSparkIcon.classList.remove('spinning');
+            aiSparkIcon.classList.add('done');
+            aiProgressTitle.textContent = label || 'Done';
+
+            const el = document.createElement('div');
+            el.className = 'ai-step';
+            el.innerHTML = `
+                <div class="ai-step-dot done">✓</div>
+                <div class="ai-step-content">
+                    <div class="ai-step-label" style="color:var(--success); font-weight:600;">${label || 'Complete'}</div>
+                </div>
+            `;
+            aiStepsList.appendChild(el);
+            aiStepsList.scrollTop = aiStepsList.scrollHeight;
+        },
+
+        hide() {
+            aiProgressPanel.classList.remove('active');
+        }
+    };
+
     const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
     function showExtentsReviewModal(extentsData) {
@@ -895,9 +1165,11 @@
       
       aiPromptInput.value = '';
       appendToChatLog('You', prompt);
+      Progress.start('Starting AI pipeline...');
       
       try {
         appendToChatLog('System', 'Mapping project structure from Reference ZIP...', 'muted');
+        Progress.step('Mapping project structure', 'Reading Reference ZIP...');
         let projectStructure = "Project Directory Map:\n";
         const refFolder = ref(storage, `${ROOT}/${currentProject}/reference_zip`);
         let zipFound = false;
@@ -923,6 +1195,7 @@
         }
 
         appendToChatLog('System', 'Gathering logic file "2", HTML file "23", and config "assets.json"...', 'muted');
+        Progress.step('Loading core project files', '"2", "23", assets.json');
         const projectFiles = {};
         const targetFiles = [
           { folder: 'models', name: '2' },
@@ -973,6 +1246,7 @@
                     const shouldProcess = (activeSelectedModelNames === null) || activeSelectedModelNames.has(a.name);
                     if (shouldProcess && (lowerName.endsWith('.obj') || lowerName.endsWith('.glb') || lowerName.endsWith('.gltf'))) {
                         appendToChatLog('System', `Scanning extents for model: ${a.name}...`, 'muted');
+                        Progress.step(`Scanning 3D extents`, a.name);
                         try {
                             const modelUrl = a.url;
                             let model;
@@ -1041,6 +1315,7 @@
                         appendToChatLog('System', `Skipping ${a.name} (deselected in pre-process modal)`, 'muted');
                     } else {
                     appendToChatLog('System', `Extracting contents of Object Package ${a.name}...`, 'muted');
+                    Progress.step(`Extracting ZIP package`, a.name);
                     try {
                         const zipUrl = await getDownloadURL(ref(storage, `${ROOT}/${currentProject}/${a.path}`));
                         const zipRes = await fetch(zipUrl);
@@ -1185,6 +1460,7 @@
         }
 
         appendToChatLog('System', 'Fetching AI System Instructions...', 'muted');
+        Progress.step('Loading AI system instructions');
         let aiInstructionsText = "No AI System Instructions provided.";
         const instructionsFolderRef = ref(storage, `${ROOT}/${currentProject}/ai_system_instructions`);
         try {
@@ -1249,6 +1525,7 @@
 
         appendToChatLog('System', 'Sending targeted files and map to AI...', 'muted');
         setStatus('AI is processing files (This may take a minute)...');
+        Progress.step('Sending context to Gemini', 'Building enhanced prompt + files...');
 
         appendToChatLog('System', 'Processing attached reference images...', 'muted');
         const inlineImages = await Promise.all(attachedPromptImages.map(async (file) => {
@@ -1292,11 +1569,13 @@
         let result = null;
         let attempts = 0;
         const MAX_POLL_ATTEMPTS = 20; // 20 × 15s = 5 minutes max wait
+        Progress.step('Waiting for Gemini response', 'Polling Firebase for result...');
         
         while (!result && attempts < MAX_POLL_ATTEMPTS) {
           await sleep(15000); 
           attempts++;
           appendToChatLog('System', `Polling for AI result... (attempt ${attempts}/${MAX_POLL_ATTEMPTS})`, 'muted');
+          Progress.poll(attempts, MAX_POLL_ATTEMPTS);
 
           let hasErrorFile = false;
           let errorMessage = "AI Generation Failed";
@@ -1324,6 +1603,7 @@
         }[tag]));
 
         appendToChatLog('System', `Writing ${result.updatedFiles.length} updated files to Firebase...`, 'muted');
+        Progress.step(`Writing ${result.updatedFiles.length} file(s) to Firebase`);
         
         for (const file of result.updatedFiles) {
           let aiOutputContent = file.content.trim();
@@ -1417,6 +1697,7 @@
                      } else {
                          console.warn(`Patch failed for ${fileName}. Code not found:\n`, searchTarget);
                          appendToChatLog('System', `Warning: A patch block for ${fileName} failed to match the existing code.`, 'error');
+                         Progress.warn(`Patch failed for ${fileName}`, 'Code block not found in original');
                      }
                  }
              }
@@ -1450,6 +1731,7 @@
 
         appendToChatLog('AI', result.message || "Files have been updated successfully.");
         setStatus('AI update complete.');
+        Progress.done('AI update complete ✦');
 
         aiCodeReviewLog.innerHTML = ''; 
         
@@ -1535,6 +1817,7 @@
         console.error("AI Update Error:", error);
         appendToChatLog('System', `Error: ${error.message}`, 'error');
         setStatus('AI update failed.');
+        Progress.error(error.message);
       } finally {
         sendToAiBtn.disabled = false;
       }
