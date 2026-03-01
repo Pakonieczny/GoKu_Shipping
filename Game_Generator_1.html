@@ -778,6 +778,7 @@
 
     let available3DModels = [];
     let pendingAiPrompt = "";
+    let selectedModelNames = null; // null = process all, Set = only process these
 
     sendToAiBtn.addEventListener('click', async () => {
         pendingAiPrompt = aiPromptInput.value.trim();
@@ -838,6 +839,7 @@
     });
 
     skipProcessingBtn.addEventListener('click', async () => {
+        selectedModelNames = new Set(); // skip processing — no models selected
         modelProcessingModal.classList.remove('active');
         await executeAIPipeline(pendingAiPrompt);
     });
@@ -845,10 +847,20 @@
     startProcessingBtn.addEventListener('click', async () => {
         const checkboxes = document.querySelectorAll('.modal-model-cb:checked');
         if (checkboxes.length === 0) {
+            selectedModelNames = new Set(); // nothing selected
             modelProcessingModal.classList.remove('active');
             await executeAIPipeline(pendingAiPrompt);
             return;
         }
+
+        // Capture selected model names BEFORE closing the modal
+        selectedModelNames = new Set();
+        checkboxes.forEach(cb => {
+            const idx = parseInt(cb.dataset.index);
+            if (available3DModels[idx]) {
+                selectedModelNames.add(available3DModels[idx].item.name);
+            }
+        });
 
         procActionButtons.style.display = 'none';
         procProgressContainer.classList.add('active');
@@ -875,6 +887,9 @@
           sendToAiBtn.disabled = false;
           return;
       }
+
+      const activeSelectedModelNames = selectedModelNames; // capture current value
+      selectedModelNames = null; // reset for next run
 
       let scannedExtentsList = []; 
       
@@ -952,7 +967,79 @@
                 const selectionNote = a.isChecked ? " [EXPLICITLY SELECTED BY USER]" : "";
                 assetString += `- ${a.path}${selectionNote}\n`;
                 
+                // Scan direct model files (.obj/.glb) in the models folder for extents
+                if (a.path.includes('models/') && !a.path.includes('object_zips')) {
+                    const lowerName = a.name.toLowerCase();
+                    const shouldProcess = (activeSelectedModelNames === null) || activeSelectedModelNames.has(a.name);
+                    if (shouldProcess && (lowerName.endsWith('.obj') || lowerName.endsWith('.glb') || lowerName.endsWith('.gltf'))) {
+                        appendToChatLog('System', `Scanning extents for model: ${a.name}...`, 'muted');
+                        try {
+                            const modelUrl = a.url;
+                            let model;
+                            if (lowerName.endsWith('.obj')) {
+                                const loader = new OBJLoader();
+                                model = await new Promise((resolve, reject) => loader.load(modelUrl, resolve, undefined, reject));
+                            } else {
+                                const loader = new GLTFLoader();
+                                const gltf = await new Promise((resolve, reject) => loader.load(modelUrl, resolve, undefined, reject));
+                                model = gltf.scene;
+                            }
+                            if (model) {
+                                const objectBox = new THREE.Box3().setFromObject(model);
+                                const objectSize = new THREE.Vector3();
+                                objectBox.getSize(objectSize);
+                                const objectCenter = new THREE.Vector3();
+                                objectBox.getCenter(objectCenter);
+                                let meshSize = new THREE.Vector3(0, 0, 0);
+                                let hasMesh = false;
+                                let materialInfo = [];
+                                model.traverse((child) => {
+                                    if (child.isMesh) {
+                                        if (!hasMesh) {
+                                            const meshBox = new THREE.Box3().setFromObject(child);
+                                            meshBox.getSize(meshSize);
+                                            hasMesh = true;
+                                        }
+                                        let matNames = [];
+                                        if (Array.isArray(child.material)) {
+                                            matNames = child.material.map(m => m.name || 'unnamed_material');
+                                        } else if (child.material) {
+                                            matNames.push(child.material.name || 'unnamed_material');
+                                        }
+                                        materialInfo.push(`Mesh: "${child.name || 'unnamed_mesh'}" -> Material(s): [${matNames.join(', ')}]`);
+                                    }
+                                });
+                                const minY = objectBox.min.y;
+                                const maxY = objectBox.max.y;
+                                const yOffsetToFloor = (minY < 0) ? Math.abs(minY) : -minY;
+                                scannedExtentsList.push({
+                                    name: a.name,
+                                    objWidth: objectSize.x.toFixed(3), objHeight: objectSize.y.toFixed(3), objDepth: objectSize.z.toFixed(3),
+                                    hasMesh, meshWidth: hasMesh ? meshSize.x.toFixed(3) : "N/A", meshHeight: hasMesh ? meshSize.y.toFixed(3) : "N/A", meshDepth: hasMesh ? meshSize.z.toFixed(3) : "N/A",
+                                    centerX: objectCenter.x.toFixed(3), centerY: objectCenter.y.toFixed(3), centerZ: objectCenter.z.toFixed(3),
+                                    offset: yOffsetToFloor.toFixed(3), materials: materialInfo
+                                });
+                                zipContextString += `\n--- 3D Extents for ${a.name} ---\n`;
+                                zipContextString += `OVERALL OBJECT: Width: ${objectSize.x.toFixed(3)}, Height: ${objectSize.y.toFixed(3)}, Depth: ${objectSize.z.toFixed(3)}\n`;
+                                if (hasMesh) zipContextString += `INNER MESH: Width: ${meshSize.x.toFixed(3)}, Height: ${meshSize.y.toFixed(3)}, Depth: ${meshSize.z.toFixed(3)}\n`;
+                                zipContextString += `PIVOT OFFSET: X: ${objectCenter.x.toFixed(3)}, Y: ${objectCenter.y.toFixed(3)}, Z: ${objectCenter.z.toFixed(3)}\n`;
+                                if (materialInfo.length > 0) zipContextString += `MESH & MATERIAL MAP:\n  - ${materialInfo.join('\n  - ')}\n`;
+                                zipContextString += `AI INSTRUCTION: Apply a Y-offset of ${yOffsetToFloor.toFixed(3)} to sit on floor. Negate PIVOT OFFSET coords multiplied by scale. Use INNER MESH for RigidBody scale.\n`;
+                            }
+                        } catch(err) {
+                            console.warn(`Could not scan extents for ${a.name}`, err);
+                        }
+                    }
+                }
+                
                 if (a.path.includes('object_zips') && a.name.toLowerCase().endsWith('.zip')) {
+                    // Respect the pre-process modal checkbox selection
+                    // activeSelectedModelNames === null means "process all" (modal was never shown)
+                    // activeSelectedModelNames is a Set means only process names in the set
+                    const shouldProcess = (activeSelectedModelNames === null) || activeSelectedModelNames.has(a.name);
+                    if (!shouldProcess) {
+                        appendToChatLog('System', `Skipping ${a.name} (deselected in pre-process modal)`, 'muted');
+                    } else {
                     appendToChatLog('System', `Extracting contents of Object Package ${a.name}...`, 'muted');
                     try {
                         const zipUrl = await getDownloadURL(ref(storage, `${ROOT}/${currentProject}/${a.path}`));
@@ -1092,6 +1179,7 @@
                         console.warn(`Failed to parse object zip ${a.name}`, e);
                         appendToChatLog('System', `Warning: Could not parse ${a.name}`, 'error');
                     }
+                    } // end shouldProcess else
                 }
             }
         }
@@ -1182,18 +1270,33 @@
         attachedPromptImages = [];
         renderPromptImages();
         
-        await fetch('/.netlify/functions/geminiCodeProxy-background', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ prompt: enhancedPrompt, files: projectFiles, projectPath, selectedAssets, inlineImages })
-        });
+        // Use a 3-minute abort timeout to prevent silent hangs
+        const fetchController = new AbortController();
+        const fetchTimeout = setTimeout(() => fetchController.abort(), 180000);
+        try {
+            await fetch('/.netlify/functions/geminiCodeProxy-background', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ prompt: enhancedPrompt, files: projectFiles, projectPath, selectedAssets, inlineImages }),
+              signal: fetchController.signal
+            });
+        } catch (fetchErr) {
+            if (fetchErr.name === 'AbortError') {
+                throw new Error("AI request timed out (3 min) while sending. The prompt may be too large. Try deselecting some assets or removing large files.");
+            }
+            throw fetchErr;
+        } finally {
+            clearTimeout(fetchTimeout);
+        }
 
         let result = null;
         let attempts = 0;
+        const MAX_POLL_ATTEMPTS = 20; // 20 × 15s = 5 minutes max wait
         
-        while (!result && attempts < 60) {
-          await sleep(30000); 
+        while (!result && attempts < MAX_POLL_ATTEMPTS) {
+          await sleep(15000); 
           attempts++;
+          appendToChatLog('System', `Polling for AI result... (attempt ${attempts}/${MAX_POLL_ATTEMPTS})`, 'muted');
 
           let hasErrorFile = false;
           let errorMessage = "AI Generation Failed";
@@ -1214,7 +1317,7 @@
           } catch(e) {}
         }
 
-        if (!result) throw new Error("AI request timed out waiting for background completion.");
+        if (!result) throw new Error("AI request timed out after 5 minutes waiting for a response. The backend may be overloaded or the prompt too large.");
 
         const escapeHTML = (str) => str.replace(/[&<>'"]/g, tag => ({
             '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;'
