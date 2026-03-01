@@ -745,6 +745,11 @@
                             <div style="font-size: 11px; white-space: pre-wrap; margin-top: 4px;">${ext.materials.join('<br>')}</div>
                         </div>` : ''}
 
+                        <div style="margin-top: 8px; color: var(--muted); border-left: 2px solid #eab308; padding-left: 8px;">
+                            <strong style="color: #fff;">Calculated Pivot Offsets</strong><br>
+                            Dimensions (X, Y, Z): <span style="color: var(--text);">${ext.centerX}</span>, <span style="color: var(--text);">${ext.centerY}</span>, <span style="color: var(--text);">${ext.centerZ}</span>
+                        </div>
+
                         <div style="margin-top: 8px; padding-top: 8px; border-top: 1px dashed var(--line);">
                             <span style="color: var(--success);">Calculated Floor Y-Offset:</span> ${ext.offset}
                         </div>
@@ -993,6 +998,10 @@
                                             const objectSize = new THREE.Vector3();
                                             objectBox.getSize(objectSize);
 
+                                            // Calculate the true center of the geometry relative to the pivot
+                                            const objectCenter = new THREE.Vector3();
+                                            objectBox.getCenter(objectCenter);
+
                                             // 2. Find and calculate the Inner Bounding Box (Actual Mesh)
                                             let meshSize = new THREE.Vector3(0, 0, 0);
                                             let hasMesh = false;
@@ -1034,6 +1043,9 @@
                                                 meshWidth: hasMesh ? meshSize.x.toFixed(3) : "N/A",
                                                 meshHeight: hasMesh ? meshSize.y.toFixed(3) : "N/A",
                                                 meshDepth: hasMesh ? meshSize.z.toFixed(3) : "N/A",
+                                                centerX: objectCenter.x.toFixed(3),
+                                                centerY: objectCenter.y.toFixed(3),
+                                                centerZ: objectCenter.z.toFixed(3),
                                                 offset: yOffsetToFloor.toFixed(3),
                                                 materials: materialInfo // Add materials array to UI state
                                             });
@@ -1044,10 +1056,11 @@
                                                 parsedAnimInfo += `INNER MESH (Physics Collider): Width: ${meshSize.x.toFixed(3)}, Height: ${meshSize.y.toFixed(3)}, Depth: ${meshSize.z.toFixed(3)}\n`;
                                             }
                                             parsedAnimInfo += `Bounding Box: Min Y: ${minY.toFixed(3)}, Max Y: ${maxY.toFixed(3)}\n`;
+                                            parsedAnimInfo += `PIVOT OFFSET (Geometry Center): X: ${objectCenter.x.toFixed(3)}, Y: ${objectCenter.y.toFixed(3)}, Z: ${objectCenter.z.toFixed(3)}\n`;
                                             if (materialInfo.length > 0) {
                                                 parsedAnimInfo += `MESH & MATERIAL MAP:\n  - ${materialInfo.join('\n  - ')}\n`;
                                             }
-                                            parsedAnimInfo += `AI INSTRUCTION: This object's pivot is not perfectly centered. When spawning this visual model via createObject, apply a Y-offset of ${yOffsetToFloor.toFixed(3)}. Use the INNER MESH dimensions to calculate the true scale of the RigidBody. Use the MESH & MATERIAL MAP to explicitly target the correct meshes when mapping textures.\n`;
+                                            parsedAnimInfo += `AI INSTRUCTION: This object's pivot is not perfectly centered. The "PIVOT OFFSET" coordinates show exactly how far the physical mesh is displaced from the file's origin point. You MUST negate these PIVOT OFFSET coordinates (e.g., if X is 7.5, apply an offset of -7.5) and multiply them by the object's scale when defining its position in the game engine to perfectly re-center it. Apply a Y-offset of ${yOffsetToFloor.toFixed(3)} to sit it on the floor. Use the INNER MESH dimensions to calculate the true scale of the RigidBody. Use the MESH & MATERIAL MAP to explicitly target the correct meshes when mapping textures.\n`;
                                         }
                                     } catch (err) {
                                         console.warn(`Could not parse Three.js extents for ${relativePath}`, err);
