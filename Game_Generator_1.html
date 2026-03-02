@@ -1565,7 +1565,7 @@
 
         let result = null;
         let attempts = 0;
-        const MAX_POLL_ATTEMPTS = 20; // 20 × 15s = 5 minutes max wait
+        const MAX_POLL_ATTEMPTS = 40; // 40 × 15s = 10 minutes max wait
         Progress.step('Waiting for Gemini response', 'Polling Firebase for result...');
         
         while (!result && attempts < MAX_POLL_ATTEMPTS) {
@@ -1592,7 +1592,7 @@
           } catch(e) {}
         }
 
-        if (!result) throw new Error("AI request timed out after 5 minutes waiting for a response. The backend may be overloaded or the prompt too large.");
+        if (!result) throw new Error("AI request timed out after 10 minutes waiting for a response. The backend may be overloaded or the prompt too large.");
 
         const escapeHTML = (str) => str.replace(/[&<>'"]/g, tag => ({
             '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;'
