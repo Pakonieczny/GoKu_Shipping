@@ -4,21 +4,31 @@ const admin = require("./firebaseAdmin");
 
 exports.handler = async (event) => {
   try {
-    // 1. Ensure body exists before parsing
     if (!event.body) {
       throw new Error("Missing request body");
     }
     
-    const { prompt, files, projectPath, selectedAssets, inlineImages } = JSON.parse(event.body);
-    const apiKey = process.env.GEMINI_API_KEY;
+    // 1. We only receive the projectPath from the frontend now
+    const { projectPath } = JSON.parse(event.body);
+    if (!projectPath) throw new Error("Missing projectPath details");
 
+    const apiKey = process.env.GEMINI_API_KEY;
     if (!apiKey) throw new Error("Missing GEMINI_API_KEY");
-    if (!prompt || !projectPath) throw new Error("Missing instructions or project details");
+
+    // 2. Connect to Firebase and download the massive payload file
+    const bucket = admin.storage().bucket(process.env.FIREBASE_STORAGE_BUCKET || "gokudatabase.firebasestorage.app");
+    const requestFile = bucket.file(`${projectPath}/ai_request.json`);
+    const [content] = await requestFile.download();
+    
+    // 3. Unpack the full data directly from Firebase memory
+    const { prompt, files, selectedAssets, inlineImages } = JSON.parse(content.toString());
+
+    if (!prompt) throw new Error("Missing instructions inside payload");
 
     let fileContext = "Here are the current project files:\n\n";
     if (files) {
-        for (const [path, content] of Object.entries(files)) {
-          fileContext += `--- FILE: ${path} ---\n${content}\n\n`;
+        for (const [path, fileContent] of Object.entries(files)) {
+          fileContext += `--- FILE: ${path} ---\n${fileContent}\n\n`;
         }
     }
 
@@ -46,7 +56,6 @@ exports.handler = async (event) => {
         for (const asset of selectedAssets) {
             assetContext += `- ${asset.path} \n`;
             
-            // 2. Safe checking: Ensure asset.type is defined before calling .startsWith() to prevent TypeErrors
             const isSupportedMedia = 
                 (asset.type && (asset.type.startsWith('image/') || asset.type.startsWith('audio/') || asset.type.startsWith('video/'))) ||
                 (asset.name && asset.name.match(/\.(png|jpe?g|webp|mp3|wav|ogg)$/i));
@@ -58,13 +67,12 @@ exports.handler = async (event) => {
                     const arrayBuffer = await assetRes.arrayBuffer();
                     const base64Data = Buffer.from(arrayBuffer).toString('base64');
                     
-                    // Fallback mime type if undefined
                     let mime = asset.type;
                     if (!mime) {
                         if (asset.name.endsWith('.png')) mime = 'image/png';
                         else if (asset.name.endsWith('.jpg') || asset.name.endsWith('.jpeg')) mime = 'image/jpeg';
                         else if (asset.name.endsWith('.mp3')) mime = 'audio/mp3';
-                        else mime = 'image/png'; // generic fallback
+                        else mime = 'image/png'; 
                     }
 
                     parts.push({
@@ -77,12 +85,10 @@ exports.handler = async (event) => {
                     console.error(`Failed to fetch visual asset ${asset.name}:`, fetchErr);
                 }
             } else {
-                // It's a 3D model (.obj, .glb, etc). Just add a text note about it.
                 assetContext += `  (Note: ${asset.name} is a 3D model/binary file. Use the path provided above to load it in your code.)\n`;
             }
         }
         
-        // Add the path context text so the AI knows the exact strings to write
         parts[0].text += assetContext;
     }
 
@@ -122,13 +128,15 @@ exports.handler = async (event) => {
     const responseText = data.candidates?.[0]?.content?.parts?.[0]?.text;
     if (!responseText) throw new Error("Empty response from Gemini");
 
-    const bucket = admin.storage().bucket(process.env.FIREBASE_STORAGE_BUCKET || "gokudatabase.firebasestorage.app");
+    // Save AI output to Firebase
     await bucket.file(`${projectPath}/ai_response.json`).save(responseText, {
         contentType: "application/json",
         resumable: false
     });
+    
+    // Clean up the request payload since we are done with it
+    try { await requestFile.delete(); } catch(e) {}
 
-    // 3. REQUIRED: Always return a 200 status code object to resolve the Netlify/Lambda execution
     return { statusCode: 200, body: JSON.stringify({ success: true }) };
 
   } catch (error) {
@@ -138,18 +146,15 @@ exports.handler = async (event) => {
             const { projectPath } = JSON.parse(event.body);
             if (projectPath) {
                 const bucket = admin.storage().bucket(process.env.FIREBASE_STORAGE_BUCKET || "gokudatabase.firebasestorage.app");
-                console.log("Attempting to write ai_error.json to Firebase...");
                 await bucket.file(`${projectPath}/ai_error.json`).save(JSON.stringify({ error: error.message }), { 
                     contentType: "application/json" 
                 });
-                console.log("Error successfully written to Firebase.");
             }
         }
     } catch(e) {
-        console.error("CRITICAL: Failed to write error to Firebase. Check your Firebase Admin credentials in Netlify.", e);
+        console.error("CRITICAL: Failed to write error to Firebase.", e);
     }
     
-    // 4. REQUIRED: Return a 500 cleanly so Netlify logs it properly instead of crashing out
     return { statusCode: 500, body: JSON.stringify({ error: error.message }) };
   }
 };

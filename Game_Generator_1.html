@@ -1544,6 +1544,15 @@
         attachedPromptImages = [];
         renderPromptImages();
         
+        // --- NEW: Bypass Netlify 256KB Payload Limit ---
+        Progress.step('Uploading payload to Firebase', 'Bypassing Netlify async size limits...');
+        const payloadBody = JSON.stringify({ prompt: enhancedPrompt, files: projectFiles, projectPath, selectedAssets, inlineImages });
+        const requestFileRef = ref(storage, `${projectPath}/ai_request.json`);
+        await uploadString(requestFileRef, payloadBody);
+
+        Progress.step('Triggering AI Background Task', 'Waiting for Netlify to accept...');
+        // -----------------------------------------------
+
         // Use a 3-minute abort timeout to prevent silent hangs
         const fetchController = new AbortController();
         const fetchTimeout = setTimeout(() => fetchController.abort(), 180000);
@@ -1551,10 +1560,10 @@
             const proxyRes = await fetch('/.netlify/functions/geminiCodeProxy-background', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ prompt: enhancedPrompt, files: projectFiles, projectPath, selectedAssets, inlineImages }),
+              // ONLY send the tiny projectPath string to bypass the 256 KB limit
+              body: JSON.stringify({ projectPath }), 
               signal: fetchController.signal
-            });
-            
+            });            
             if (!proxyRes.ok) {
                  throw new Error(`Netlify rejected the request: ${proxyRes.status} ${proxyRes.statusText}. Your payload may exceed the 6MB limit, or the function crashed.`);
             }
