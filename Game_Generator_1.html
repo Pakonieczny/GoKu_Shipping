@@ -1455,16 +1455,18 @@
             }
         }
 
-        Progress.step('Loading AI system instructions');
-        let aiInstructionsText = "No AI System Instructions provided.";
+      Progress.step('Loading AI system instructions');
         const instructionsFolderRef = ref(storage, `${ROOT}/${currentProject}/ai_system_instructions`);
+        let attachedInstructionsList = [];
         try {
             const instList = await listAll(instructionsFolderRef);
-            if (instList.items.length > 0) {
-                const instUrl = await getDownloadURL(instList.items[0]);
+            for (const item of instList.items) {
+                const instUrl = await getDownloadURL(item);
                 const instRes = await fetch(instUrl + '&v=' + Date.now(), { cache: 'no-store' });
                 if (instRes.ok) {
-                    aiInstructionsText = await instRes.text();
+                    // Add the instruction file to the projectFiles payload so it's sent as an attached file
+                    projectFiles[`ai_system_instructions/${item.name}`] = await instRes.text();
+                    attachedInstructionsList.push(item.name);
                 }
             }
         } catch (e) {
@@ -1477,12 +1479,15 @@
             setStatus('Extents approved. Proceeding to AI...');
         }
 
+        let instructionNotice = attachedInstructionsList.length > 0 
+            ? "Please strictly follow the rules outlined in the attached AI System Instruction files: " + attachedInstructionsList.join(', ')
+            : "No AI System Instructions provided.";
+
         const enhancedPrompt = `Here is the full project structure for reference:\n${projectStructure}${assetString}${zipContextString}
 
         === AI SYSTEM INSTRUCTIONS ===
-        ${aiInstructionsText}
+        ${instructionNotice}
         ==============================
-
         CRITICAL PROCESSING STEPS:
         1. Before starting analysis, you must first strictly read and interpret the "AI SYSTEM INSTRUCTIONS" provided above.
         2. Next, read, interpret, and understand the purpose and context of the explicitly targeted files ("2", "23", and "assets.json"), their relationship to the other files in the project map, and their function specifically in the context of the "AI SYSTEM INSTRUCTIONS".
