@@ -1655,21 +1655,32 @@
              let match;
              let changesMade = 0;
 
-             // Fuzzy whitespace matcher: strips leading indent from each line, finds the block
-             // in the original file, and returns the actual verbatim slice so we can replace it.
+              // Aggressive fuzzy matcher: strips all comments and whitespace to find the true structural code block
+             // in the original file, then returns the actual verbatim slice so we can replace it perfectly.
              function findWithNormalizedWhitespace(haystack, needle) {
-                 const normalizeLines = (str) => str.split('\n').map(l => l.trimStart()).join('\n');
-                 const needleNorm = normalizeLines(needle.trim());
-                 const haystackLines = haystack.split('\n');
-                 const needleLines = needle.trim().split('\n');
-                 const needleCount = needleLines.length;
+                 // Normalize by removing all inline comments, block comments, and ALL whitespace
+                 const normalize = (str) => str.replace(/\/\/.*$/gm, '').replace(/\/\*[\s\S]*?\*\//g, '').replace(/\s+/g, '');
+                 const needleNorm = normalize(needle);
+                 
+                 if (!needleNorm) return null;
 
-                 for (let i = 0; i <= haystackLines.length - needleCount; i++) {
-                     const slice = haystackLines.slice(i, i + needleCount);
-                     const sliceNorm = slice.map(l => l.trimStart()).join('\n');
-                     if (sliceNorm === needleNorm) {
-                         // Return the verbatim matched text from the original file
-                         return slice.join('\n');
+                 const haystackLines = haystack.split('\n');
+                 
+                 for (let i = 0; i < haystackLines.length; i++) {
+                     let currentNorm = "";
+                     for (let j = i; j < haystackLines.length; j++) {
+                         // Accumulate the normalized version of each line
+                         currentNorm += haystackLines[j].replace(/\/\/.*$/, '').replace(/\s+/g, '');
+                         
+                         // If we hit an exact structural match, return the raw unedited slice from the original file
+                         if (currentNorm === needleNorm) {
+                             return haystackLines.slice(i, j + 1).join('\n');
+                         }
+                         
+                         // If we've exceeded the length of the target without matching, break early to save performance
+                         if (currentNorm.length > needleNorm.length) {
+                             break;
+                         }
                      }
                  }
                  return null;
