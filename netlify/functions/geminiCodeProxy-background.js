@@ -4,6 +4,11 @@ const admin = require("./firebaseAdmin");
 
 exports.handler = async (event) => {
   try {
+    // 1. Ensure body exists before parsing
+    if (!event.body) {
+      throw new Error("Missing request body");
+    }
+    
     const { prompt, files, projectPath, selectedAssets, inlineImages } = JSON.parse(event.body);
     const apiKey = process.env.GEMINI_API_KEY;
 
@@ -11,8 +16,10 @@ exports.handler = async (event) => {
     if (!prompt || !projectPath) throw new Error("Missing instructions or project details");
 
     let fileContext = "Here are the current project files:\n\n";
-    for (const [path, content] of Object.entries(files)) {
-      fileContext += `--- FILE: ${path} ---\n${content}\n\n`;
+    if (files) {
+        for (const [path, content] of Object.entries(files)) {
+          fileContext += `--- FILE: ${path} ---\n${content}\n\n`;
+        }
     }
 
     const systemInstruction = `
@@ -33,22 +40,21 @@ exports.handler = async (event) => {
     const parts = [{ text: systemInstruction + fileContext + "\nUser Request: " + prompt }];
 
     // --- Inject Multi-Modal Assets SAFELY ---
-    if (selectedAssets && selectedAssets.length > 0) {
+    if (selectedAssets && Array.isArray(selectedAssets) && selectedAssets.length > 0) {
         let assetContext = "\n\nThe user has designated the following files for you to use. Their relative paths in the project are:\n";
         
         for (const asset of selectedAssets) {
             assetContext += `- ${asset.path} \n`;
             
-            // Filter out 3D models and unsupported files from inlineData
+            // 2. Safe checking: Ensure asset.type is defined before calling .startsWith() to prevent TypeErrors
             const isSupportedMedia = 
-                asset.type.startsWith('image/') || 
-                asset.type.startsWith('audio/') || 
-                asset.type.startsWith('video/') ||
-                asset.name.match(/\.(png|jpe?g|webp|mp3|wav|ogg)$/i);
+                (asset.type && (asset.type.startsWith('image/') || asset.type.startsWith('audio/') || asset.type.startsWith('video/'))) ||
+                (asset.name && asset.name.match(/\.(png|jpe?g|webp|mp3|wav|ogg)$/i));
 
             if (isSupportedMedia) {
                 try {
                     const assetRes = await fetch(asset.url);
+                    if (!assetRes.ok) throw new Error(`Failed to fetch media from url: ${assetRes.statusText}`);
                     const arrayBuffer = await assetRes.arrayBuffer();
                     const base64Data = Buffer.from(arrayBuffer).toString('base64');
                     
@@ -81,14 +87,16 @@ exports.handler = async (event) => {
     }
 
     // --- Inject Dragged-and-Dropped Images ---
-    if (inlineImages && inlineImages.length > 0) {
+    if (inlineImages && Array.isArray(inlineImages) && inlineImages.length > 0) {
         for (const img of inlineImages) {
-            parts.push({
-                inlineData: {
-                    data: img.data,
-                    mimeType: img.mimeType
-                }
-            });
+            if (img.data && img.mimeType) {
+                parts.push({
+                    inlineData: {
+                        data: img.data,
+                        mimeType: img.mimeType
+                    }
+                });
+            }
         }
     }
 
@@ -120,18 +128,28 @@ exports.handler = async (event) => {
         resumable: false
     });
 
+    // 3. REQUIRED: Always return a 200 status code object to resolve the Netlify/Lambda execution
+    return { statusCode: 200, body: JSON.stringify({ success: true }) };
+
   } catch (error) {
     console.error("Code Proxy Background Error:", error);
     try {
-        const { projectPath } = JSON.parse(event.body);
-        const bucket = admin.storage().bucket(process.env.FIREBASE_STORAGE_BUCKET || "gokudatabase.firebasestorage.app");
-        console.log("Attempting to write ai_error.json to Firebase...");
-        await bucket.file(`${projectPath}/ai_error.json`).save(JSON.stringify({ error: error.message }), { 
-            contentType: "application/json" 
-        });
-        console.log("Error successfully written to Firebase.");
+        if (event.body) {
+            const { projectPath } = JSON.parse(event.body);
+            if (projectPath) {
+                const bucket = admin.storage().bucket(process.env.FIREBASE_STORAGE_BUCKET || "gokudatabase.firebasestorage.app");
+                console.log("Attempting to write ai_error.json to Firebase...");
+                await bucket.file(`${projectPath}/ai_error.json`).save(JSON.stringify({ error: error.message }), { 
+                    contentType: "application/json" 
+                });
+                console.log("Error successfully written to Firebase.");
+            }
+        }
     } catch(e) {
         console.error("CRITICAL: Failed to write error to Firebase. Check your Firebase Admin credentials in Netlify.", e);
     }
+    
+    // 4. REQUIRED: Return a 500 cleanly so Netlify logs it properly instead of crashing out
+    return { statusCode: 500, body: JSON.stringify({ error: error.message }) };
   }
 };
