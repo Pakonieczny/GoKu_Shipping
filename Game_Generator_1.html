@@ -1548,12 +1548,16 @@
         const fetchController = new AbortController();
         const fetchTimeout = setTimeout(() => fetchController.abort(), 180000);
         try {
-            await fetch('/.netlify/functions/geminiCodeProxy-background', {
+            const proxyRes = await fetch('/.netlify/functions/geminiCodeProxy-background', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({ prompt: enhancedPrompt, files: projectFiles, projectPath, selectedAssets, inlineImages }),
               signal: fetchController.signal
             });
+            
+            if (!proxyRes.ok) {
+                 throw new Error(`Netlify rejected the request: ${proxyRes.status} ${proxyRes.statusText}. Your payload may exceed the 6MB limit, or the function crashed.`);
+            }
         } catch (fetchErr) {
             if (fetchErr.name === 'AbortError') {
                 throw new Error("AI request timed out (3 min) while sending. The prompt may be too large. Try deselecting some assets or removing large files.");

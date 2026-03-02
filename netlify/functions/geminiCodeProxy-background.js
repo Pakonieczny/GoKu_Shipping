@@ -4,7 +4,7 @@ const admin = require("./firebaseAdmin");
 
 exports.handler = async (event) => {
   try {
-    const { prompt, files, projectPath, selectedAssets } = JSON.parse(event.body);
+    const { prompt, files, projectPath, selectedAssets, inlineImages } = JSON.parse(event.body);
     const apiKey = process.env.GEMINI_API_KEY;
 
     if (!apiKey) throw new Error("Missing GEMINI_API_KEY");
@@ -80,6 +80,18 @@ exports.handler = async (event) => {
         parts[0].text += assetContext;
     }
 
+    // --- Inject Dragged-and-Dropped Images ---
+    if (inlineImages && inlineImages.length > 0) {
+        for (const img of inlineImages) {
+            parts.push({
+                inlineData: {
+                    data: img.data,
+                    mimeType: img.mimeType
+                }
+            });
+        }
+    }
+
     const body = {
       contents: [{ role: "user", parts: parts }],
       generationConfig: {
@@ -113,9 +125,13 @@ exports.handler = async (event) => {
     try {
         const { projectPath } = JSON.parse(event.body);
         const bucket = admin.storage().bucket(process.env.FIREBASE_STORAGE_BUCKET || "gokudatabase.firebasestorage.app");
+        console.log("Attempting to write ai_error.json to Firebase...");
         await bucket.file(`${projectPath}/ai_error.json`).save(JSON.stringify({ error: error.message }), { 
             contentType: "application/json" 
         });
-    } catch(e) {}
+        console.log("Error successfully written to Firebase.");
+    } catch(e) {
+        console.error("CRITICAL: Failed to write error to Firebase. Check your Firebase Admin credentials in Netlify.", e);
+    }
   }
 };
