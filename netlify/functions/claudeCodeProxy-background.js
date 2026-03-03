@@ -124,8 +124,8 @@ Only include files in 'updatedFiles' that actually need to be changed.`;
 
     // --- Call Claude API ---
     const body = {
-      model: "claude-sonnet-4-6",    // claude-sonnet-4-6 = fast, highly capable
-      max_tokens: 8192,
+      model: "claude-opus-4-6",    // claude-sonnet-4-6 = fast, highly capable
+      max_tokens: 100,
       system: systemInstruction,
       messages: [
         {
