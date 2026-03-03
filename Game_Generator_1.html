@@ -1524,7 +1524,7 @@
         try { await deleteObject(errorFileRef); } catch(e) {}
 
         setStatus('AI is processing files (This may take a minute)...');
-        Progress.step('Sending context to Gemini', 'Building enhanced prompt + files...');
+        Progress.step('Sending context to Claude', 'Building enhanced prompt + files...');
         const inlineImages = await Promise.all(attachedPromptImages.map(async (file) => {
             return new Promise((resolve, reject) => {
                 const reader = new FileReader();
@@ -1557,7 +1557,7 @@
         const fetchController = new AbortController();
         const fetchTimeout = setTimeout(() => fetchController.abort(), 180000);
         try {
-            const proxyRes = await fetch('/.netlify/functions/geminiCodeProxy-background', {
+            const proxyRes = await fetch('/.netlify/functions/claudeCodeProxy-background', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               // ONLY send the tiny projectPath string to bypass the 256 KB limit
@@ -1579,7 +1579,7 @@
         let result = null;
         let attempts = 0;
         const MAX_POLL_ATTEMPTS = 40; // 40 × 15s = 10 minutes max wait
-        Progress.step('Waiting for Gemini response', 'Polling Firebase for result...');
+        Progress.step('Waiting for Claude response', 'Polling Firebase for result...');
         
         while (!result && attempts < MAX_POLL_ATTEMPTS) {
           await sleep(15000); 
