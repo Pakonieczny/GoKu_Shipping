@@ -125,16 +125,17 @@ Only include files in 'updatedFiles' that actually need to be changed.`;
     // --- Call Claude API ---
     const body = {
       model: "claude-opus-4-6",        // Opus 4.6 = max reasoning, 128K output tokens
-      max_tokens: 100000,               // MUST be high enough for thinking + response at max effort.
-                                       // At effort:"max" with adaptive thinking, Claude can burn thousands
-                                       // of tokens on reasoning alone — 16K was too low, leaving 0 for
-                                       // the text response block (causing "Empty response from Claude").
+      max_tokens: 64000,               // Sufficient for thinking + full file output at high effort.
+                                       // "max" effort was exhausting this budget on reasoning alone;
+                                       // "high" effort is far more token-efficient.
       thinking: { type: "adaptive" },  // Recommended for Opus 4.6: Claude decides when/how much to reason
-      output_config: { effort: "max" },// effort lives inside output_config (top-level is invalid)
+      output_config: { effort: "high" },// "high" = default, best-quality reasoning for complex coding tasks.
+                                        // "max" is overkill and burns tokens; "medium" trades some quality.
+                                        // Anthropic explicitly recommends "high" for agentic coding workflows.
       system: systemInstruction,
       messages: [
         {
-          role: "high",
+          role: "user",
           content: userContentBlocks
         }
       ]
