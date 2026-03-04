@@ -196,8 +196,8 @@ You must respond ONLY with a valid JSON object. No markdown, no code fences, no 
     console.log("STAGE 0: Planning with Opus 4.6...");
     const planRaw = await callClaude(apiKey, {
       model: "claude-opus-4-6",
-      maxTokens: 32000,
-      budgetTokens: 8000,
+      maxTokens: 64000,
+      budgetTokens: 20000,
       effort: "high",
       system: planningSystem,
       userContent: planningUserContent
@@ -293,8 +293,8 @@ CRITICAL RULES:
       try {
         trancheResponse = await callClaude(apiKey, {
           model: "claude-sonnet-4-6",
-          maxTokens: 64000,
-          budgetTokens: 10000,
+          maxTokens: 100000,
+          budgetTokens: 24000,
           effort: "high",
           system: executionSystem,
           userContent: trancheUserContent
