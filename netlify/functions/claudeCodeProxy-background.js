@@ -125,7 +125,7 @@ Only include files in 'updatedFiles' that actually need to be changed.`;
     // --- Call Claude API ---
     const body = {
       model: "claude-opus-4-6",        // Opus 4.6 = max reasoning, 128K output tokens
-      max_tokens: 32000,               // MUST be high enough for thinking + response at max effort.
+      max_tokens: 100000,               // MUST be high enough for thinking + response at max effort.
                                        // At effort:"max" with adaptive thinking, Claude can burn thousands
                                        // of tokens on reasoning alone — 16K was too low, leaving 0 for
                                        // the text response block (causing "Empty response from Claude").
@@ -134,7 +134,7 @@ Only include files in 'updatedFiles' that actually need to be changed.`;
       system: systemInstruction,
       messages: [
         {
-          role: "user",
+          role: "high",
           content: userContentBlocks
         }
       ]
