@@ -1578,7 +1578,7 @@
 
         let result = null;
         let attempts = 0;
-        const MAX_POLL_ATTEMPTS = 80; // 40 × 15s = 10 minutes max wait
+        const MAX_POLL_ATTEMPTS = 120; // 40 × 15s = 10 minutes max wait
         Progress.step('Waiting for Claude response', 'Polling Firebase for result...');
         
         while (!result && attempts < MAX_POLL_ATTEMPTS) {
