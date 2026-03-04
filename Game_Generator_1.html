@@ -1578,7 +1578,7 @@
 
         let result = null;
         let attempts = 0;
-        const MAX_POLL_ATTEMPTS = 40; // 40 × 15s = 10 minutes max wait
+        const MAX_POLL_ATTEMPTS = 80; // 40 × 15s = 10 minutes max wait
         Progress.step('Waiting for Claude response', 'Polling Firebase for result...');
         
         while (!result && attempts < MAX_POLL_ATTEMPTS) {
@@ -1625,12 +1625,12 @@
           let fileName = file.path.split('/').pop(); 
           let safePath = file.path;
 
-          if (fileName.toLowerCase() === 'worldcontroller.js' || fileName === '2' || fileName === '2.js') {
-              fileName = '2.js';
-              safePath = 'models/2.js';
-          } else if (fileName.toLowerCase() === 'document.html' || fileName === '23' || fileName === '23.html') {
-              fileName = '23.html';
-              safePath = 'models/23.html';
+          if (fileName.toLowerCase() === 'worldcontroller.js' || fileName === '2' || fileName === '2') {
+              fileName = '2';
+              safePath = 'models/2';
+          } else if (fileName.toLowerCase() === 'document.html' || fileName === '23' || fileName === '23') {
+              fileName = '23';
+              safePath = 'models/23';
           } else if (fileName.toLowerCase() === 'assets.json') {
               fileName = 'assets.json';
               safePath = 'json/assets.json';
