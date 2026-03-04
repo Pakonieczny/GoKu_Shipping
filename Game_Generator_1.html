@@ -2103,17 +2103,14 @@
         }
 
         let result = null;
-        let attempts = 0;
-        const MAX_POLL_ATTEMPTS = 160; // 160 × 5s = ~13 minutes max wait
         Progress.step('Waiting for Claude response', 'Polling Firebase for tranche progress...');
 
         // Show the tranche pipeline UI
         TrancheUI.show();
         TrancheUI.showPlanning();
 
-        while (!result && attempts < MAX_POLL_ATTEMPTS) {
+        while (!result) {
           await sleep(5000);
-          attempts++;
 
           // Check for error file
           let hasErrorFile = false;
@@ -2155,8 +2152,6 @@
             result = await res.json();
           } catch(e) {}
         }
-
-        if (!result) throw new Error("AI request timed out after ~13 minutes waiting for a response. The backend may be overloaded or the prompt too large.");
 
         const escapeHTML = (str) => str.replace(/[&<>'"]/g, tag => ({
             '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;'
