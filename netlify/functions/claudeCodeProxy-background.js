@@ -126,15 +126,15 @@ Only include files in 'updatedFiles' that actually need to be changed.`;
     const body = {
       model: "claude-opus-4-6",       // Opus 4.6 = max reasoning, 128K output tokens
       max_tokens: 16000,              // Opus 4.6 supports up to 128K; 16K is safe for full file output
-      thinking: { type: "adaptive" }, // Adaptive: Claude decides when/how much to reason
+      thinking: { type: "adaptive" }, // Adaptive: Claude decides when/how much to reason (recommended for Opus 4.6)
+      effort: "max",                  // Top-level effort param (NOT nested in output_config) — "max" = highest capability
       system: systemInstruction,
       messages: [
         {
           role: "user",
           content: userContentBlocks
         }
-      ],
-      output_config: { effort: "max" } // "max" = highest reasoning capability (replaces budget_tokens on Opus 4.6)
+      ]
     };
 
     const res = await fetch("https://api.anthropic.com/v1/messages", {
