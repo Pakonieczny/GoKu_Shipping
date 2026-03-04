@@ -1193,11 +1193,11 @@
             projectStructure += "(No Reference ZIP uploaded yet)";
         }
 
-        Progress.step('Loading core project files', '"2.js", "23.html", assets.json');
+        Progress.step('Loading core project files', '"2", "23", assets.json');
         const projectFiles = {};
         const targetFiles = [
-          { folder: 'models', name: '2.js' },
-          { folder: 'models', name: '23.html' },
+          { folder: 'models', name: '2' },
+          { folder: 'models', name: '23' },
           { folder: 'json', name: 'assets.json' }
         ];
 
@@ -1215,7 +1215,7 @@
         }
 
         if (Object.keys(projectFiles).length === 0) {
-          throw new Error("Could not find '2.js', '23.html', or 'assets.json'. Please upload them first.");
+          throw new Error("Could not find '2', '23', or 'assets.json'. Please upload them first.");
         }
 
         const allAssetNodes = document.querySelectorAll('.asset-checkbox');
@@ -1490,9 +1490,9 @@
         ==============================
         CRITICAL PROCESSING STEPS:
         1. Before starting analysis, you must first strictly read and interpret the "AI SYSTEM INSTRUCTIONS" provided above.
-        2. Next, read, interpret, and understand the purpose and context of the explicitly targeted files ("2.js", "23.html", and "assets.json"), their relationship to the other files in the project map, and their function specifically in the context of the "AI SYSTEM INSTRUCTIONS".
+        2. Next, read, interpret, and understand the purpose and context of the explicitly targeted files ("2", "23", and "assets.json"), their relationship to the other files in the project map, and their function specifically in the context of the "AI SYSTEM INSTRUCTIONS".
 
-        CRITICAL SYSTEM RULE: The main logic file is named "2.js" and the main HTML file is named "23.html", both located in the "models" folder. You MUST use the exact name "2.js" instead of "WorldController.js" and "23.html" instead of "document.html" in all your code, updates, references, and output paths. Never save or output a file named "WorldController.js" or "document.html".
+        CRITICAL SYSTEM RULE: The main logic file is named "2" and the main HTML file is named "23", both located in the "models" folder. You MUST use the exact name "2" instead of "WorldController.js" and "23" instead of "document.html" in all your code, updates, references, and output paths. Never save or output a file named "WorldController.js" or "document.html".
 
         ASSET CONFIGURATION RULE: You must ensure "assets.json" (in the "json" folder) is updated to include any new assets requested by the user. If an asset the user mentions is not yet mapped in "assets.json", you MUST map it and return the updated "assets.json" file in your payload. When updating "assets.json", assign sequential numbers for the "key" property. CRITICAL: The "title" property for each mapped asset MUST be transposed exactly as its original file name, with no changes (e.g., {"key":"34","type":"object","title":"plane.obj"}). If you add or update an asset in "assets.json", you MUST also update file "2" to properly reference, load, or instantiate that new asset key so it is recognized and works within the system.
 
@@ -1990,9 +1990,9 @@
             }
 
             let searchName = itemRef.name;
-            if (cat.folder === 'models' && itemRef.name === '2.js') {
+            if (cat.folder === 'models' && itemRef.name === '2') {
                 searchName = 'WorldController.js';
-            } else if (cat.folder === 'models' && itemRef.name === '23.html') {
+            } else if (cat.folder === 'models' && itemRef.name === '23') {
                 searchName = 'document.html';
             }
 
@@ -2018,7 +2018,7 @@
                let exactName = finalFileName;
                let lowerName = finalFileName.toLowerCase();
                
-                if (finalFileName !== '2.js' && finalFileName !== '23.html') {
+                if (finalFileName !== '2' && finalFileName !== '23') {
                    const nameNoExt = lowerName.includes('.') ? lowerName.substring(0, lowerName.lastIndexOf('.')) : lowerName;
                    const normName = normalizeStr(finalFileName);
                    const normNoExt = normalizeStr(nameNoExt);
