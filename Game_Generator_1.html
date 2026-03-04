@@ -381,6 +381,20 @@
     .tranche-footer-dot.opus { background: #f59e0b; }
     .tranche-footer-dot.sonnet { background: #6c3bff; }
 
+    .tranche-token-bar {
+      display: none; align-items: center; gap: 14px;
+      padding: 8px 20px; border-top: 1px solid #1e2745;
+      font-size: 11px; color: var(--muted); font-family: 'SF Mono', 'Fira Code', monospace;
+    }
+    .tranche-token-bar.active { display: flex; }
+    .tranche-token-label { color: var(--muted); font-family: inherit; }
+    .tranche-token-val {
+      color: var(--text); font-weight: 600;
+      transition: color 0.3s;
+    }
+    .tranche-token-val.updating { color: var(--accent); }
+    .tranche-token-divider { width: 1px; height: 14px; background: #2a3050; }
+
     /* ── CodeMirror Custom Overrides ── */
     .CodeMirror { height: auto; min-height: 300px; border-radius: 8px; font-family: monospace; font-size: 13px; margin-top: 10px; z-index: 0; }
     .CodeMirror-scroll { max-height: 600px; }
@@ -516,6 +530,18 @@
                 <div class="tranche-footer-model"><div class="tranche-footer-dot sonnet"></div> Sonnet 4.6 → Execution</div>
               </div>
               <span id="trancheFooterStatus">Pipeline ready</span>
+            </div>
+            <div class="tranche-token-bar" id="trancheTokenBar">
+              <span class="tranche-token-label">Tokens</span>
+              <span class="tranche-token-divider"></span>
+              <span class="tranche-token-label">In:</span>
+              <span class="tranche-token-val" id="trancheTokenIn">0</span>
+              <span class="tranche-token-divider"></span>
+              <span class="tranche-token-label">Out:</span>
+              <span class="tranche-token-val" id="trancheTokenOut">0</span>
+              <span class="tranche-token-divider"></span>
+              <span class="tranche-token-label">Total:</span>
+              <span class="tranche-token-val" id="trancheTokenTotal">0</span>
             </div>
           </div>
           
@@ -1361,6 +1387,33 @@
         const planningAnalysis = document.getElementById('tranchePlanningAnalysis');
         const trancheList = document.getElementById('trancheList');
         const footerStatus = document.getElementById('trancheFooterStatus');
+        const tokenBar = document.getElementById('trancheTokenBar');
+        const tokenIn = document.getElementById('trancheTokenIn');
+        const tokenOut = document.getElementById('trancheTokenOut');
+        const tokenTotal = document.getElementById('trancheTokenTotal');
+
+        // Update token usage display
+        if (prog.tokenUsage && prog.tokenUsage.totals) {
+          tokenBar.classList.add('active');
+          const inp = prog.tokenUsage.totals.input_tokens || 0;
+          const out = prog.tokenUsage.totals.output_tokens || 0;
+          const fmt = (n) => n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n);
+          const prevIn = tokenIn.textContent;
+          const prevOut = tokenOut.textContent;
+          tokenIn.textContent = fmt(inp);
+          tokenOut.textContent = fmt(out);
+          tokenTotal.textContent = fmt(inp + out);
+          // Flash on change
+          if (prevIn !== tokenIn.textContent) {
+            tokenIn.classList.add('updating');
+            setTimeout(() => tokenIn.classList.remove('updating'), 600);
+          }
+          if (prevOut !== tokenOut.textContent) {
+            tokenOut.classList.add('updating');
+            tokenTotal.classList.add('updating');
+            setTimeout(() => { tokenOut.classList.remove('updating'); tokenTotal.classList.remove('updating'); }, 600);
+          }
+        }
 
         if (prog.status === 'planning') {
           planningSection.style.display = 'flex';
@@ -1491,6 +1544,12 @@
             metaHTML += `<span class="tranche-card-files">📁 ${t.filesUpdated.join(', ')}</span>`;
           } else if (t.expectedFiles && t.expectedFiles.length > 0 && t.status === 'pending') {
             metaHTML += `<span class="tranche-card-files" style="opacity:0.5;">📁 ${t.expectedFiles.join(', ')}</span>`;
+          }
+          if (t.tokenUsage) {
+            const tIn = t.tokenUsage.input_tokens || 0;
+            const tOut = t.tokenUsage.output_tokens || 0;
+            const fmt = (n) => n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n);
+            metaHTML += `<span class="tranche-card-time" style="color: #a78bfa;">⚡ ${fmt(tIn + tOut)} tokens</span>`;
           }
           metaEl.innerHTML = metaHTML;
 

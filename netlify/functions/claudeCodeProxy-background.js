@@ -47,13 +47,23 @@ async function callClaude(apiKey, { model, maxTokens, system, userContent, effor
   return responseText;
 }
 
-/* ── helper: strip markdown fences ───────────────────────────── */
+/* ── helper: strip markdown fences and prose to extract JSON ─── */
 function stripFences(text) {
-  return text
+  // Remove markdown fences
+  let cleaned = text
     .replace(/^```json\s*/i, "")
     .replace(/^```\s*/i, "")
     .replace(/\s*```$/i, "")
     .trim();
+
+  // If it doesn't start with {, find the first { and last } to extract the JSON object
+  const firstBrace = cleaned.indexOf('{');
+  const lastBrace = cleaned.lastIndexOf('}');
+  if (firstBrace > 0 && lastBrace > firstBrace) {
+    cleaned = cleaned.substring(firstBrace, lastBrace + 1);
+  }
+
+  return cleaned.trim();
 }
 
 /* ── helper: save progress to Firebase ───────────────────────── */
