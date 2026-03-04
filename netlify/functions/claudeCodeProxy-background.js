@@ -44,7 +44,10 @@ async function callClaude(apiKey, { model, maxTokens, system, userContent, effor
   const responseText = data.content?.find(b => b.type === "text")?.text;
   if (!responseText) throw new Error("Empty response from Claude");
 
-  return responseText;
+  return {
+    text: responseText,
+    usage: data.usage || null
+  };
 }
 
 /* ── helper: strip markdown fences and prose to extract JSON ─── */
@@ -158,6 +161,11 @@ exports.handler = async (event) => {
       totalTranches: 0,
       currentTranche: -1,
       tranches: [],
+      tokenUsage: {
+        planning: null,
+        tranches: [],
+        totals: { input_tokens: 0, output_tokens: 0 }
+      },
       finalMessage: null,
       error: null,
       completedTime: null
@@ -204,7 +212,7 @@ You must respond ONLY with a valid JSON object. No markdown, no code fences, no 
     ];
 
     console.log("STAGE 0: Planning with Opus 4.6...");
-    const planRaw = await callClaude(apiKey, {
+    const planResult = await callClaude(apiKey, {
       model: "claude-opus-4-6",
       maxTokens: 64000,
       budgetTokens: 20000,
@@ -213,9 +221,16 @@ You must respond ONLY with a valid JSON object. No markdown, no code fences, no 
       userContent: planningUserContent
     });
 
+    if (planResult.usage) {
+      progress.tokenUsage.planning = planResult.usage;
+      progress.tokenUsage.totals.input_tokens += planResult.usage.input_tokens || 0;
+      progress.tokenUsage.totals.output_tokens += planResult.usage.output_tokens || 0;
+      await saveProgress(bucket, projectPath, progress);
+    }
+
     let plan;
     try {
-      plan = JSON.parse(stripFences(planRaw));
+      plan = JSON.parse(stripFences(planResult.text));
     } catch (e) {
       throw new Error("Failed to parse planning output as JSON: " + e.message);
     }
@@ -299,9 +314,9 @@ CRITICAL RULES:
         ...imageBlocks
       ];
 
-      let trancheResponse;
+      let trancheResponseObj;
       try {
-        trancheResponse = await callClaude(apiKey, {
+        trancheResponseObj = await callClaude(apiKey, {
           model: "claude-sonnet-4-6",
           maxTokens: 100000,
           budgetTokens: 24000,
@@ -318,9 +333,18 @@ CRITICAL RULES:
         continue;
       }
 
+      // Record tranche token usage
+      if (trancheResponseObj.usage) {
+        progress.tokenUsage.tranches[i] = trancheResponseObj.usage;
+        progress.tokenUsage.totals.input_tokens += trancheResponseObj.usage.input_tokens || 0;
+        progress.tokenUsage.totals.output_tokens += trancheResponseObj.usage.output_tokens || 0;
+        progress.tranches[i].tokenUsage = trancheResponseObj.usage;
+        await saveProgress(bucket, projectPath, progress);
+      }
+
       let trancheResult;
       try {
-        trancheResult = JSON.parse(stripFences(trancheResponse));
+        trancheResult = JSON.parse(stripFences(trancheResponseObj.text));
       } catch (e) {
         progress.tranches[i].status = "error";
         progress.tranches[i].endTime = Date.now();
@@ -375,9 +399,12 @@ CRITICAL RULES:
     );
 
     progress.status = "complete";
-    progress.finalMessage = `Build complete: ${allUpdatedFiles.length} file(s) updated across ${progress.tranches.filter(t => t.status === "complete").length} tranche(s).`;
+    const t = progress.tokenUsage.totals;
+    progress.finalMessage = `Build complete: ${allUpdatedFiles.length} file(s) updated across ${progress.tranches.filter(t => t.status === "complete").length} tranche(s). Tokens: ${t.input_tokens} in / ${t.output_tokens} out.`;
     progress.completedTime = Date.now();
     await saveProgress(bucket, projectPath, progress);
+
+    console.log(`Total tokens — input: ${t.input_tokens}, output: ${t.output_tokens}`);
 
     try { await requestFile.delete(); } catch (e) {}
 
