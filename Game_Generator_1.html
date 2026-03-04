@@ -239,6 +239,159 @@
         transition: width 0.5s linear;
     }
 
+    /* ── Tranche Pipeline Panel ── */
+    .tranche-pipeline {
+      display: none; flex-direction: column; gap: 0;
+      background: linear-gradient(135deg, #0c0f1a 0%, #111628 100%);
+      border: 1px solid #1e2745; border-radius: 14px;
+      overflow: hidden; margin-top: 10px;
+      box-shadow: 0 4px 24px rgba(0,0,0,0.3);
+    }
+    .tranche-pipeline.active { display: flex; }
+
+    .tranche-header {
+      display: flex; align-items: center; gap: 12px;
+      padding: 16px 20px; border-bottom: 1px solid #1e2745;
+      background: rgba(43, 108, 255, 0.04);
+    }
+    .tranche-header-icon {
+      width: 32px; height: 32px; border-radius: 10px;
+      background: linear-gradient(135deg, #2b6cff 0%, #6c3bff 100%);
+      display: flex; align-items: center; justify-content: center;
+      font-size: 16px; flex-shrink: 0;
+    }
+    .tranche-header-icon.done { background: linear-gradient(135deg, #22c55e 0%, #16a34a 100%); }
+    .tranche-header-icon.error { background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%); }
+    .tranche-header-info { flex: 1; }
+    .tranche-header-title { font-size: 14px; font-weight: 700; color: #fff; }
+    .tranche-header-sub { font-size: 11px; color: var(--muted); margin-top: 2px; }
+    .tranche-header-timer {
+      font-size: 20px; font-weight: 700; color: var(--accent);
+      font-family: 'SF Mono', 'Fira Code', monospace; letter-spacing: 1px;
+    }
+    .tranche-header-timer.done { color: var(--success); }
+
+    .tranche-overall-bar {
+      height: 4px; background: #1a1e2b; position: relative; overflow: hidden;
+    }
+    .tranche-overall-fill {
+      height: 100%; background: linear-gradient(90deg, #2b6cff, #6c3bff, #2b6cff);
+      background-size: 200% 100%;
+      animation: tranche-shimmer 2s linear infinite;
+      transition: width 0.6s cubic-bezier(0.4, 0, 0.2, 1);
+    }
+    .tranche-overall-fill.done {
+      background: var(--success); animation: none;
+    }
+    @keyframes tranche-shimmer {
+      0% { background-position: 200% 0; }
+      100% { background-position: -200% 0; }
+    }
+
+    .tranche-planning {
+      padding: 16px 20px; display: flex; align-items: center; gap: 12px;
+      border-bottom: 1px solid #1e2745; font-size: 13px;
+    }
+    .tranche-planning-spinner {
+      width: 20px; height: 20px; border: 2px solid #2b3a6b;
+      border-top-color: var(--accent); border-radius: 50%;
+      animation: spin-fast 0.8s linear infinite; flex-shrink: 0;
+    }
+    @keyframes spin-fast { to { transform: rotate(360deg); } }
+    .tranche-planning-text { color: var(--text); }
+    .tranche-planning-text .analysis { color: var(--muted); font-size: 12px; margin-top: 4px; display: block; }
+
+    .tranche-list {
+      display: flex; flex-direction: column; max-height: 420px; overflow-y: auto;
+      scrollbar-width: thin; scrollbar-color: #2b3a6b transparent;
+    }
+
+    .tranche-card {
+      display: flex; gap: 14px; padding: 14px 20px;
+      border-bottom: 1px solid #141a30; transition: background 0.2s;
+      animation: tranche-card-in 0.3s ease both;
+    }
+    @keyframes tranche-card-in {
+      from { opacity: 0; transform: translateX(-10px); }
+      to { opacity: 1; transform: translateX(0); }
+    }
+    .tranche-card:hover { background: rgba(255,255,255,0.015); }
+    .tranche-card:last-child { border-bottom: none; }
+
+    .tranche-card-index {
+      width: 32px; height: 32px; border-radius: 50%;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 12px; font-weight: 700; flex-shrink: 0; margin-top: 2px;
+      transition: all 0.3s ease;
+    }
+    .tranche-card-index.pending { background: #1a1e2b; border: 2px solid #2b3a6b; color: var(--muted); }
+    .tranche-card-index.in_progress {
+      background: rgba(43, 108, 255, 0.15); border: 2px solid var(--accent); color: var(--accent);
+      box-shadow: 0 0 12px rgba(43, 108, 255, 0.3);
+      animation: tranche-pulse 1.5s ease-in-out infinite;
+    }
+    @keyframes tranche-pulse {
+      0%, 100% { box-shadow: 0 0 8px rgba(43, 108, 255, 0.2); }
+      50% { box-shadow: 0 0 16px rgba(43, 108, 255, 0.5); }
+    }
+    .tranche-card-index.complete { background: var(--success); border: 2px solid var(--success); color: #0b0d12; }
+    .tranche-card-index.error { background: var(--danger); border: 2px solid var(--danger); color: #0b0d12; }
+
+    .tranche-card-body { flex: 1; min-width: 0; }
+    .tranche-card-name { font-size: 13px; font-weight: 600; color: #fff; margin-bottom: 3px; }
+    .tranche-card-desc { font-size: 11px; color: var(--muted); line-height: 1.4; margin-bottom: 6px; }
+    .tranche-card-meta {
+      display: flex; flex-wrap: wrap; gap: 8px; align-items: center; font-size: 10px;
+    }
+    .tranche-card-tag {
+      padding: 2px 8px; border-radius: 4px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px;
+    }
+    .tranche-card-tag.pending { background: #1a1e2b; color: var(--muted); }
+    .tranche-card-tag.in_progress { background: rgba(43, 108, 255, 0.15); color: var(--accent); }
+    .tranche-card-tag.complete { background: rgba(127, 219, 150, 0.12); color: var(--success); }
+    .tranche-card-tag.error { background: rgba(252, 165, 165, 0.12); color: var(--danger); }
+    .tranche-card-time { color: var(--muted); font-family: 'SF Mono', 'Fira Code', monospace; }
+    .tranche-card-files { color: #a78bfa; }
+
+    .tranche-card-message {
+      margin-top: 8px; padding: 8px 10px; border-radius: 6px;
+      background: rgba(127, 219, 150, 0.06); border-left: 3px solid var(--success);
+      font-size: 11px; color: #c4d5c9; line-height: 1.4;
+      max-height: 60px; overflow-y: auto;
+    }
+    .tranche-card-message.error-msg {
+      background: rgba(252, 165, 165, 0.06); border-left-color: var(--danger); color: #d5c4c4;
+    }
+
+    .tranche-card-prompt-toggle {
+      margin-top: 6px; font-size: 10px; color: var(--accent); cursor: pointer;
+      opacity: 0.7; transition: opacity 0.2s; user-select: none;
+    }
+    .tranche-card-prompt-toggle:hover { opacity: 1; }
+    .tranche-card-prompt-box {
+      display: none; margin-top: 6px; padding: 8px 10px; border-radius: 6px;
+      background: #0b0d12; border: 1px solid #1e2745;
+      font-size: 11px; color: var(--muted); line-height: 1.4;
+      max-height: 150px; overflow-y: auto; white-space: pre-wrap;
+      font-family: 'SF Mono', 'Fira Code', monospace;
+    }
+    .tranche-card-prompt-box.open { display: block; }
+
+    .tranche-footer {
+      padding: 12px 20px; border-top: 1px solid #1e2745;
+      display: flex; align-items: center; justify-content: space-between;
+      font-size: 11px; color: var(--muted);
+    }
+    .tranche-footer-models { display: flex; gap: 12px; }
+    .tranche-footer-model {
+      display: flex; align-items: center; gap: 4px;
+    }
+    .tranche-footer-dot {
+      width: 6px; height: 6px; border-radius: 50%;
+    }
+    .tranche-footer-dot.opus { background: #f59e0b; }
+    .tranche-footer-dot.sonnet { background: #6c3bff; }
+
     /* ── CodeMirror Custom Overrides ── */
     .CodeMirror { height: auto; min-height: 300px; border-radius: 8px; font-family: monospace; font-size: 13px; margin-top: 10px; z-index: 0; }
     .CodeMirror-scroll { max-height: 600px; }
@@ -349,6 +502,36 @@
               <span id="aiPollLabel">Waiting for AI...</span>
               <div class="ai-poll-bar-track"><div class="ai-poll-bar-fill" id="aiPollBarFill" style="width:0%"></div></div>
               <span id="aiPollCounter">0/20</span>
+            </div>
+          </div>
+
+          <!-- Tranched Build Pipeline Panel -->
+          <div id="tranchePipeline" class="tranche-pipeline">
+            <div class="tranche-header">
+              <div class="tranche-header-icon" id="trancheHeaderIcon">⚡</div>
+              <div class="tranche-header-info">
+                <div class="tranche-header-title" id="trancheHeaderTitle">Tranched Build Pipeline</div>
+                <div class="tranche-header-sub" id="trancheHeaderSub">Initializing...</div>
+              </div>
+              <div class="tranche-header-timer" id="trancheTimer">00:00</div>
+            </div>
+            <div class="tranche-overall-bar">
+              <div class="tranche-overall-fill" id="trancheOverallFill" style="width: 0%"></div>
+            </div>
+            <div id="tranchePlanningSection" class="tranche-planning" style="display:none;">
+              <div class="tranche-planning-spinner"></div>
+              <div class="tranche-planning-text">
+                <span id="tranchePlanningLabel">Opus 4.6 is analyzing your prompt and creating build tranches...</span>
+                <span class="analysis" id="tranchePlanningAnalysis"></span>
+              </div>
+            </div>
+            <div class="tranche-list" id="trancheList"></div>
+            <div class="tranche-footer">
+              <div class="tranche-footer-models">
+                <div class="tranche-footer-model"><div class="tranche-footer-dot opus"></div> Opus 4.6 → Planning</div>
+                <div class="tranche-footer-model"><div class="tranche-footer-dot sonnet"></div> Sonnet 4.6 → Execution</div>
+              </div>
+              <span id="trancheFooterStatus">Pipeline ready</span>
             </div>
           </div>
           
@@ -498,6 +681,7 @@
       refreshAllFiles();
       refreshReviewList();
       refreshAssetLibrary();
+      syncAssetsJson();
       aiChatLog.innerHTML = `<div style="color: var(--muted);">AI Context ready for project: ${name}. Enter instructions below.</div>`;
       aiCodeReviewLog.innerHTML = `<div style="color: var(--muted);">Code diff updates will appear here after an AI run.</div>`;
     }
@@ -578,6 +762,9 @@
       
       setStatus(`Uploads complete.`);
       refreshFileList(categoryConfig);
+      if (['models', 'object_zips', 'assets'].includes(categoryConfig.folder)) {
+          await syncAssetsJson();
+      }
     }
 
     async function refreshAllFiles() {
@@ -620,6 +807,9 @@
                  await deleteObject(itemRef);
                  refreshFileList(categoryConfig);
                  setStatus(`Deleted.`);
+                 if (['models', 'object_zips', 'assets'].includes(categoryConfig.folder)) {
+                     await syncAssetsJson();
+                 }
              }
           });
 
@@ -691,6 +881,148 @@
         } catch (e) { 
             console.error("Asset library error", e); 
         }
+    }
+
+    // ── Auto-Sync assets.json with actual project files ──
+    // Scans models/, object_zips/, and assets/ folders and rebuilds assets.json
+    // to accurately reflect what files actually exist in the project.
+    // assets.json IS the source of truth — file "2" and other code must conform to it.
+    async function syncAssetsJson() {
+        if (!currentProject) return;
+        await ensureAuth();
+
+        setStatus('Syncing assets.json with project files...');
+
+        const modelsRef  = ref(storage, `${ROOT}/${currentProject}/models`);
+        const zipsRef    = ref(storage, `${ROOT}/${currentProject}/object_zips`);
+        const assetsRef  = ref(storage, `${ROOT}/${currentProject}/assets`);
+
+        let modelItems = [], zipItems = [], imageAudioItems = [];
+        try { modelItems  = (await listAll(modelsRef).catch(() => ({items:[]}))).items;  } catch(e){}
+        try { zipItems    = (await listAll(zipsRef).catch(() => ({items:[]}))).items;    } catch(e){}
+        try { imageAudioItems = (await listAll(assetsRef).catch(() => ({items:[]}))).items; } catch(e){}
+
+        const assetExtensions = ['.obj','.glb','.gltf','.fbx','.c3b','.mtl'];
+        const imageAudioExts  = ['.png','.jpg','.jpeg','.webp','.gif','.bmp','.mp3','.wav','.ogg','.m4a'];
+
+        // Build the ground-truth set of file names that MUST be in assets.json
+        const truthMap = new Map();
+
+        for (const item of modelItems) {
+            const lowerName = item.name.toLowerCase();
+            if (item.name === '2' || item.name === '23') continue;
+            if (assetExtensions.some(ext => lowerName.endsWith(ext))) {
+                truthMap.set(item.name, 'object');
+            } else if (lowerName.endsWith('.js')) {
+                truthMap.set(item.name, 'script');
+            } else if (lowerName.endsWith('.html')) {
+                truthMap.set(item.name, 'html');
+            }
+        }
+
+        for (const item of zipItems) {
+            if (!item.name.toLowerCase().endsWith('.zip')) continue;
+            try {
+                const zipUrl = await getDownloadURL(item);
+                const zipRes = await fetch(zipUrl);
+                const zipBlob = await zipRes.blob();
+                const zipObj = new JSZip();
+                await zipObj.loadAsync(zipBlob);
+
+                for (const relativePath of Object.keys(zipObj.files)) {
+                    const entry = zipObj.files[relativePath];
+                    if (entry.dir || relativePath.includes('__MACOSX')) continue;
+                    const entryName = relativePath.split('/').pop();
+                    if (!entryName) continue;
+                    const lowerEntry = entryName.toLowerCase();
+
+                    if (assetExtensions.some(ext => lowerEntry.endsWith(ext))) {
+                        truthMap.set(entryName, 'object');
+                    } else if (imageAudioExts.some(ext => lowerEntry.endsWith(ext))) {
+                        if (['.mp3','.wav','.ogg','.m4a'].some(ext => lowerEntry.endsWith(ext))) {
+                            truthMap.set(entryName, 'audio');
+                        } else {
+                            truthMap.set(entryName, 'image');
+                        }
+                    }
+                }
+            } catch(e) {
+                console.warn(`syncAssetsJson: Could not parse ZIP ${item.name}`, e);
+            }
+        }
+
+        for (const item of imageAudioItems) {
+            const lowerName = item.name.toLowerCase();
+            if (['.mp3','.wav','.ogg','.m4a'].some(ext => lowerName.endsWith(ext))) {
+                truthMap.set(item.name, 'audio');
+            } else if (imageAudioExts.some(ext => lowerName.endsWith(ext))) {
+                truthMap.set(item.name, 'image');
+            }
+        }
+
+        // Load existing assets.json to preserve established key assignments
+        let existingAssets = [];
+        try {
+            const jsonRef = ref(storage, `${ROOT}/${currentProject}/json/assets.json`);
+            const jsonUrl = await getDownloadURL(jsonRef);
+            const jsonRes = await fetch(jsonUrl + '&v=' + Date.now(), { cache: 'no-store' });
+            if (jsonRes.ok) {
+                const parsed = await jsonRes.json();
+                if (Array.isArray(parsed)) existingAssets = parsed;
+                else { const arr = Object.values(parsed).find(v => Array.isArray(v)); if (arr) existingAssets = arr; }
+            }
+        } catch(e) {
+            console.info("syncAssetsJson: No existing assets.json, creating new one.");
+        }
+
+        const usedKeys = new Set();
+        let maxKey = 0;
+        for (const entry of existingAssets) {
+            const numKey = parseInt(entry.key, 10);
+            if (!isNaN(numKey) && numKey > maxKey) maxKey = numKey;
+        }
+
+        // Keep entries whose files still exist, drop entries for deleted files
+        const updatedAssets = [];
+        const truthTitlesLower = new Set([...truthMap.keys()].map(t => t.toLowerCase()));
+
+        for (const entry of existingAssets) {
+            const titleLower = entry.title ? entry.title.toLowerCase() : '';
+            if (truthTitlesLower.has(titleLower)) {
+                updatedAssets.push(entry);
+                usedKeys.add(String(entry.key));
+            }
+        }
+
+        // Add new entries for files not yet in assets.json
+        const coveredTitlesLower = new Set(updatedAssets.map(e => (e.title || '').toLowerCase()));
+
+        for (const [title, type] of truthMap) {
+            if (!coveredTitlesLower.has(title.toLowerCase())) {
+                maxKey++;
+                while (usedKeys.has(String(maxKey))) maxKey++;
+                updatedAssets.push({ key: String(maxKey), type: type, title: title });
+                usedKeys.add(String(maxKey));
+            }
+        }
+
+        const newJson = JSON.stringify(updatedAssets, null, 2);
+        const targetRef = ref(storage, `${ROOT}/${currentProject}/json/assets.json`);
+        await uploadString(targetRef, newJson);
+
+        setStatus(`assets.json synced — ${updatedAssets.length} entries.`);
+
+        const jsonCat = FILE_CATEGORIES.find(c => c.id === 'json');
+        if (jsonCat) refreshFileList(jsonCat);
+
+        const jsonZone = document.getElementById('zone_json');
+        if (jsonZone) {
+            jsonZone.classList.remove('pulse-update');
+            void jsonZone.offsetWidth;
+            jsonZone.classList.add('pulse-update');
+        }
+
+        return updatedAssets;
     }
 
     const imageTagContainer = document.getElementById('imageTagContainer');
@@ -986,6 +1318,236 @@
 
     const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
+    /* ═══════════════════════════════════════════════════════════
+       TRANCHE PIPELINE UI
+    ═══════════════════════════════════════════════════════════ */
+    const TrancheUI = {
+      _timerInterval: null,
+      _startTime: null,
+
+      show() {
+        document.getElementById('tranchePipeline').classList.add('active');
+        this._startTime = Date.now();
+        this._startTimer();
+      },
+
+      hide() {
+        document.getElementById('tranchePipeline').classList.remove('active');
+        this._stopTimer();
+      },
+
+      _startTimer() {
+        this._stopTimer();
+        this._timerInterval = setInterval(() => {
+          if (!this._startTime) return;
+          const elapsed = Date.now() - this._startTime;
+          const mins = Math.floor(elapsed / 60000);
+          const secs = Math.floor((elapsed % 60000) / 1000);
+          document.getElementById('trancheTimer').textContent =
+            `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+        }, 1000);
+      },
+
+      _stopTimer() {
+        if (this._timerInterval) {
+          clearInterval(this._timerInterval);
+          this._timerInterval = null;
+        }
+      },
+
+      _formatDuration(ms) {
+        if (!ms || ms <= 0) return '--';
+        const secs = Math.round(ms / 1000);
+        if (secs < 60) return `${secs}s`;
+        const m = Math.floor(secs / 60);
+        const s = secs % 60;
+        return `${m}m ${s}s`;
+      },
+
+      _escapeHTML(str) {
+        if (!str) return '';
+        return str.replace(/[&<>'"]/g, t => ({'&':'&amp;','<':'&lt;','>':'&gt;',"'":"&#39;",'"':'&quot;'}[t]));
+      },
+
+      showPlanning() {
+        document.getElementById('tranchePlanningSection').style.display = 'flex';
+        document.getElementById('trancheHeaderTitle').textContent = 'Tranched Build Pipeline';
+        document.getElementById('trancheHeaderSub').textContent = 'Stage 0: Planning with Opus 4.6...';
+        document.getElementById('trancheOverallFill').style.width = '0%';
+        document.getElementById('trancheList').innerHTML = '';
+        document.getElementById('trancheFooterStatus').textContent = 'Opus 4.6 analyzing prompt...';
+      },
+
+      updateFromProgress(prog) {
+        if (!prog) return;
+
+        const pipeline = document.getElementById('tranchePipeline');
+        const headerIcon = document.getElementById('trancheHeaderIcon');
+        const headerTitle = document.getElementById('trancheHeaderTitle');
+        const headerSub = document.getElementById('trancheHeaderSub');
+        const headerTimer = document.getElementById('trancheTimer');
+        const overallFill = document.getElementById('trancheOverallFill');
+        const planningSection = document.getElementById('tranchePlanningSection');
+        const planningLabel = document.getElementById('tranchePlanningLabel');
+        const planningAnalysis = document.getElementById('tranchePlanningAnalysis');
+        const trancheList = document.getElementById('trancheList');
+        const footerStatus = document.getElementById('trancheFooterStatus');
+
+        if (prog.status === 'planning') {
+          planningSection.style.display = 'flex';
+          planningLabel.textContent = 'Opus 4.6 is analyzing your prompt and creating build tranches...';
+          planningAnalysis.textContent = '';
+          overallFill.style.width = '5%';
+          footerStatus.textContent = 'Planning phase active...';
+          return;
+        }
+
+        if (prog.status === 'executing' || prog.status === 'complete') {
+          // Hide planning spinner, show analysis
+          if (prog.planningAnalysis) {
+            planningSection.style.display = 'flex';
+            const planDuration = (prog.planningEndTime && prog.planningStartTime)
+              ? this._formatDuration(prog.planningEndTime - prog.planningStartTime)
+              : '';
+            planningLabel.innerHTML = `✓ Plan created: <strong>${prog.totalTranches} tranche(s)</strong>${planDuration ? ` in ${planDuration}` : ''}`;
+            planningLabel.style.color = 'var(--success)';
+            planningAnalysis.textContent = prog.planningAnalysis;
+            planningSection.querySelector('.tranche-planning-spinner')?.remove();
+          } else {
+            planningSection.style.display = 'none';
+          }
+
+          // Calculate overall progress
+          const completed = prog.tranches.filter(t => t.status === 'complete' || t.status === 'error').length;
+          const total = prog.totalTranches || 1;
+          const pct = Math.round(((completed + (prog.status === 'complete' ? 0 : 0.3)) / total) * 100);
+          overallFill.style.width = `${Math.min(pct, 100)}%`;
+
+          if (prog.status === 'complete') {
+            overallFill.style.width = '100%';
+            overallFill.classList.add('done');
+            headerIcon.textContent = '✓';
+            headerIcon.classList.add('done');
+            headerTitle.textContent = 'Build Complete';
+            headerTimer.classList.add('done');
+            this._stopTimer();
+            const totalTime = (prog.completedTime && prog.planningStartTime)
+              ? this._formatDuration(prog.completedTime - prog.planningStartTime)
+              : '';
+            headerSub.textContent = `${prog.totalTranches} tranche(s) executed${totalTime ? ` — total time: ${totalTime}` : ''}`;
+            footerStatus.textContent = prog.finalMessage || 'Pipeline complete';
+          } else {
+            const activeTranche = prog.tranches.find(t => t.status === 'in_progress');
+            if (activeTranche) {
+              headerTitle.textContent = `Tranche ${activeTranche.index + 1}/${prog.totalTranches}: ${activeTranche.name}`;
+              headerSub.textContent = `Sonnet 4.6 executing tranche ${activeTranche.index + 1} of ${prog.totalTranches}...`;
+            }
+            footerStatus.textContent = `Executing tranche ${(prog.currentTranche || 0) + 1} of ${prog.totalTranches}...`;
+          }
+
+          // Render tranche cards
+          this._renderTrancheCards(trancheList, prog.tranches);
+        }
+
+        if (prog.status === 'error') {
+          overallFill.style.width = '100%';
+          overallFill.style.background = 'var(--danger)';
+          overallFill.style.animation = 'none';
+          headerIcon.textContent = '✕';
+          headerIcon.classList.add('error');
+          headerTitle.textContent = 'Pipeline Failed';
+          headerSub.textContent = prog.error || 'An error occurred';
+          headerTimer.style.color = 'var(--danger)';
+          this._stopTimer();
+          footerStatus.textContent = 'Pipeline failed';
+        }
+      },
+
+      _renderTrancheCards(container, tranches) {
+        if (!tranches || tranches.length === 0) return;
+
+        // Only rebuild if tranche count changed or status changed
+        const existingCards = container.querySelectorAll('.tranche-card');
+        const needsRebuild = existingCards.length !== tranches.length;
+
+        if (needsRebuild) {
+          container.innerHTML = '';
+        }
+
+        tranches.forEach((t, i) => {
+          let card = needsRebuild ? null : container.children[i];
+
+          if (!card) {
+            card = document.createElement('div');
+            card.className = 'tranche-card';
+            card.style.animationDelay = `${i * 0.08}s`;
+            card.innerHTML = `
+              <div class="tranche-card-index pending" data-role="index">${i + 1}</div>
+              <div class="tranche-card-body">
+                <div class="tranche-card-name" data-role="name"></div>
+                <div class="tranche-card-desc" data-role="desc"></div>
+                <div class="tranche-card-meta" data-role="meta"></div>
+                <div class="tranche-card-message" data-role="msg" style="display:none;"></div>
+                <div class="tranche-card-prompt-toggle" data-role="toggle" onclick="this.nextElementSibling.classList.toggle('open'); this.textContent = this.nextElementSibling.classList.contains('open') ? '▾ Hide tranche prompt' : '▸ Show tranche prompt';">▸ Show tranche prompt</div>
+                <div class="tranche-card-prompt-box" data-role="prompt"></div>
+              </div>
+            `;
+            container.appendChild(card);
+          }
+
+          // Update card content
+          const indexEl = card.querySelector('[data-role="index"]');
+          const nameEl = card.querySelector('[data-role="name"]');
+          const descEl = card.querySelector('[data-role="desc"]');
+          const metaEl = card.querySelector('[data-role="meta"]');
+          const msgEl = card.querySelector('[data-role="msg"]');
+          const promptEl = card.querySelector('[data-role="prompt"]');
+
+          indexEl.className = `tranche-card-index ${t.status}`;
+          if (t.status === 'complete') indexEl.textContent = '✓';
+          else if (t.status === 'error') indexEl.textContent = '✕';
+          else indexEl.textContent = i + 1;
+
+          nameEl.textContent = t.name || `Tranche ${i + 1}`;
+          descEl.textContent = t.description || '';
+
+          // Build meta tags
+          let metaHTML = `<span class="tranche-card-tag ${t.status}">${t.status === 'in_progress' ? 'BUILDING...' : t.status.toUpperCase()}</span>`;
+          if (t.startTime && t.endTime) {
+            metaHTML += `<span class="tranche-card-time">⏱ ${this._formatDuration(t.endTime - t.startTime)}</span>`;
+          } else if (t.startTime && t.status === 'in_progress') {
+            metaHTML += `<span class="tranche-card-time">⏱ ${this._formatDuration(Date.now() - t.startTime)}...</span>`;
+          }
+          if (t.filesUpdated && t.filesUpdated.length > 0) {
+            metaHTML += `<span class="tranche-card-files">📁 ${t.filesUpdated.join(', ')}</span>`;
+          } else if (t.expectedFiles && t.expectedFiles.length > 0 && t.status === 'pending') {
+            metaHTML += `<span class="tranche-card-files" style="opacity:0.5;">📁 ${t.expectedFiles.join(', ')}</span>`;
+          }
+          metaEl.innerHTML = metaHTML;
+
+          // Show message if complete or error
+          if (t.message && (t.status === 'complete' || t.status === 'error')) {
+            msgEl.style.display = 'block';
+            msgEl.className = `tranche-card-message${t.status === 'error' ? ' error-msg' : ''}`;
+            msgEl.textContent = t.message;
+          } else {
+            msgEl.style.display = 'none';
+          }
+
+          // Prompt text
+          if (t.prompt) {
+            promptEl.textContent = t.prompt;
+          }
+        });
+
+        // Auto-scroll to the active card
+        const activeIdx = tranches.findIndex(t => t.status === 'in_progress');
+        if (activeIdx >= 0 && container.children[activeIdx]) {
+          container.children[activeIdx].scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        }
+      }
+    };
+
     function showExtentsReviewModal(extentsData) {
         return new Promise((resolve) => {
             const modal = document.getElementById('extentsResultModal');
@@ -1168,30 +1730,9 @@
       Progress.start('Starting AI pipeline...');
       
       try {
-        Progress.step('Mapping project structure', 'Reading Reference ZIP...');
-        let projectStructure = "Project Directory Map:\n";
-        const refFolder = ref(storage, `${ROOT}/${currentProject}/reference_zip`);
-        let zipFound = false;
-        
-        try {
-          const refList = await listAll(refFolder);
-          if (refList.items.length > 0) {
-            const refUrl = await getDownloadURL(refList.items[0]);
-            const refRes = await fetch(refUrl);
-            const refBlob = await refRes.blob();
-            
-            const zip = new JSZip();
-            await zip.loadAsync(refBlob);
-            projectStructure += Object.keys(zip.files).join('\n');
-            zipFound = true;
-          }
-        } catch (e) {
-          console.warn("Could not read Reference ZIP for structure.", e);
-        }
-
-        if (!zipFound) {
-            projectStructure += "(No Reference ZIP uploaded yet)";
-        }
+        // Ensure assets.json is fully synced before sending context to AI
+        Progress.step('Syncing assets.json', 'Ensuring asset manifest matches project files...');
+        await syncAssetsJson();
 
         Progress.step('Loading core project files', '"2", "23", assets.json');
         const projectFiles = {};
@@ -1233,11 +1774,16 @@
         let zipContextString = "";
 
         if (allAssets.length > 0) {
-            assetString = "\n\n=== FULL ASSET INVENTORY ===\nCRITICAL: The following files are available in the project storage. You MUST ensure all relevant files are mapped into assets.json:\n";
+            // Only list user-selected assets — the full inventory is in the attached assets.json file
+            const selected = allAssets.filter(a => a.isChecked);
+            if (selected.length > 0) {
+                assetString = "\n\n=== USER-SELECTED ASSETS FOR THIS REQUEST ===\nThe user has explicitly selected these assets to focus on. Their key mappings are in the attached assets.json file:\n";
+                for (const a of selected) {
+                    assetString += `- ${a.name} (in ${a.path.split('/')[0]}/)\n`;
+                }
+            }
+
             for (const a of allAssets) {
-                const selectionNote = a.isChecked ? " [EXPLICITLY SELECTED BY USER]" : "";
-                assetString += `- ${a.path}${selectionNote}\n`;
-                
                 // Scan direct model files (.obj/.glb) in the models folder for extents
                 if (a.path.includes('models/') && !a.path.includes('object_zips')) {
                     const lowerName = a.name.toLowerCase();
@@ -1290,12 +1836,12 @@
                                     centerX: objectCenter.x.toFixed(3), centerY: objectCenter.y.toFixed(3), centerZ: objectCenter.z.toFixed(3),
                                     offset: yOffsetToFloor.toFixed(3), materials: materialInfo
                                 });
-                                zipContextString += `\n--- 3D Extents for ${a.name} ---\n`;
-                                zipContextString += `OVERALL OBJECT: Width: ${objectSize.x.toFixed(3)}, Height: ${objectSize.y.toFixed(3)}, Depth: ${objectSize.z.toFixed(3)}\n`;
-                                if (hasMesh) zipContextString += `INNER MESH: Width: ${meshSize.x.toFixed(3)}, Height: ${meshSize.y.toFixed(3)}, Depth: ${meshSize.z.toFixed(3)}\n`;
-                                zipContextString += `PIVOT OFFSET: X: ${objectCenter.x.toFixed(3)}, Y: ${objectCenter.y.toFixed(3)}, Z: ${objectCenter.z.toFixed(3)}\n`;
-                                if (materialInfo.length > 0) zipContextString += `MESH & MATERIAL MAP:\n  - ${materialInfo.join('\n  - ')}\n`;
-                                zipContextString += `AI INSTRUCTION: Apply a Y-offset of ${yOffsetToFloor.toFixed(3)} to sit on floor. Negate PIVOT OFFSET coords multiplied by scale. Use INNER MESH for RigidBody scale.\n`;
+                                zipContextString += `\n--- 3D Extents: ${a.name} ---\n`;
+                                zipContextString += `  OBJECT: ${objectSize.x.toFixed(3)} x ${objectSize.y.toFixed(3)} x ${objectSize.z.toFixed(3)} (W x H x D)\n`;
+                                if (hasMesh) zipContextString += `  MESH: ${meshSize.x.toFixed(3)} x ${meshSize.y.toFixed(3)} x ${meshSize.z.toFixed(3)} (W x H x D)\n`;
+                                zipContextString += `  PIVOT: X: ${objectCenter.x.toFixed(3)}, Y: ${objectCenter.y.toFixed(3)}, Z: ${objectCenter.z.toFixed(3)}\n`;
+                                zipContextString += `  FLOOR Y-OFFSET: ${yOffsetToFloor.toFixed(3)}\n`;
+                                if (materialInfo.length > 0) zipContextString += `  MATERIALS:\n    - ${materialInfo.join('\n    - ')}\n`;
                             }
                         } catch(err) {
                             console.warn(`Could not scan extents for ${a.name}`, err);
@@ -1408,17 +1954,16 @@
                                                 materials: materialInfo // Add materials array to UI state
                                             });
 
-                                            parsedAnimInfo += `\n--- 3D Extents & Material Data for ${relativePath} ---\n`;
-                                            parsedAnimInfo += `OVERALL OBJECT (Visual Wrapper): Width: ${objectSize.x.toFixed(3)}, Height: ${objectSize.y.toFixed(3)}, Depth: ${objectSize.z.toFixed(3)}\n`;
+                                            parsedAnimInfo += `\n--- 3D Extents: ${relativePath} ---\n`;
+                                            parsedAnimInfo += `  OBJECT: ${objectSize.x.toFixed(3)} x ${objectSize.y.toFixed(3)} x ${objectSize.z.toFixed(3)} (W x H x D)\n`;
                                             if (hasMesh) {
-                                                parsedAnimInfo += `INNER MESH (Physics Collider): Width: ${meshSize.x.toFixed(3)}, Height: ${meshSize.y.toFixed(3)}, Depth: ${meshSize.z.toFixed(3)}\n`;
+                                                parsedAnimInfo += `  MESH: ${meshSize.x.toFixed(3)} x ${meshSize.y.toFixed(3)} x ${meshSize.z.toFixed(3)} (W x H x D)\n`;
                                             }
-                                            parsedAnimInfo += `Bounding Box: Min Y: ${minY.toFixed(3)}, Max Y: ${maxY.toFixed(3)}\n`;
-                                            parsedAnimInfo += `PIVOT OFFSET (Geometry Center): X: ${objectCenter.x.toFixed(3)}, Y: ${objectCenter.y.toFixed(3)}, Z: ${objectCenter.z.toFixed(3)}\n`;
+                                            parsedAnimInfo += `  PIVOT: X: ${objectCenter.x.toFixed(3)}, Y: ${objectCenter.y.toFixed(3)}, Z: ${objectCenter.z.toFixed(3)}\n`;
+                                            parsedAnimInfo += `  FLOOR Y-OFFSET: ${yOffsetToFloor.toFixed(3)}\n`;
                                             if (materialInfo.length > 0) {
-                                                parsedAnimInfo += `MESH & MATERIAL MAP:\n  - ${materialInfo.join('\n  - ')}\n`;
+                                                parsedAnimInfo += `  MATERIALS:\n    - ${materialInfo.join('\n    - ')}\n`;
                                             }
-                                            parsedAnimInfo += `AI INSTRUCTION: This object's pivot is not perfectly centered. The "PIVOT OFFSET" coordinates show exactly how far the physical mesh is displaced from the file's origin point. You MUST negate these PIVOT OFFSET coordinates (e.g., if X is 7.5, apply an offset of -7.5) and multiply them by the object's scale when defining its position in the game engine to perfectly re-center it. Apply a Y-offset of ${yOffsetToFloor.toFixed(3)} to sit it on the floor. Use the INNER MESH dimensions to calculate the true scale of the RigidBody. Use the MESH & MATERIAL MAP to explicitly target the correct meshes when mapping textures.\n`;
                                         }
                                     } catch (err) {
                                         console.warn(`Could not parse Three.js extents for ${relativePath}`, err);
@@ -1438,13 +1983,12 @@
                             }
                         }
                         
-                        zipContextString += `\n\n=== PARSED ZIP PACKAGE CONTENTS: ${a.name} ===\n`;
-                        zipContextString += `3D Models Included: ${parsedModels.length > 0 ? parsedModels.join(', ') : 'None'}\n`;
-                        zipContextString += `Textures Included: ${parsedTextures.length > 0 ? parsedTextures.join(', ') : 'None'}\n`;
-                        zipContextString += `Audio Included: ${parsedAudio.length > 0 ? parsedAudio.join(', ') : 'None'}\n`;
-                        if (parsedOther.length > 0) zipContextString += `Other Files: ${parsedOther.join(', ')}\n`;
-                        if (parsedAnimInfo) zipContextString += `Animation ID Reference File: ${parsedAnimInfo}\n`;
-                        zipContextString += `AI INSTRUCTION: Map ALL of these extracted file names into assets.json. Automatically infer the PBR texture maps (Albedo, Normal, etc.) based on the texture file suffixes and apply them to the material using createMaterial(). Use the Animation ID Reference to trigger the correct animations via gameState.playAnimation().\n`;
+                        zipContextString += `\n\n=== ZIP PACKAGE: ${a.name} ===\n`;
+                        zipContextString += `Models: ${parsedModels.length > 0 ? parsedModels.join(', ') : 'None'}\n`;
+                        zipContextString += `Textures: ${parsedTextures.length > 0 ? parsedTextures.join(', ') : 'None'}\n`;
+                        zipContextString += `Audio: ${parsedAudio.length > 0 ? parsedAudio.join(', ') : 'None'}\n`;
+                        if (parsedOther.length > 0) zipContextString += `Other: ${parsedOther.join(', ')}\n`;
+                        if (parsedAnimInfo) zipContextString += parsedAnimInfo + '\n';
                         
                     } catch (e) {
                         console.warn(`Failed to parse object zip ${a.name}`, e);
@@ -1483,45 +2027,58 @@
             ? "Please strictly follow the rules outlined in the attached AI System Instruction files: " + attachedInstructionsList.join(', ')
             : "No AI System Instructions provided.";
 
-        const enhancedPrompt = `Here is the full project structure for reference:\n${projectStructure}${assetString}${zipContextString}
+        const enhancedPrompt = `${assetString}${zipContextString}
 
         === AI SYSTEM INSTRUCTIONS ===
         ${instructionNotice}
         ==============================
-        CRITICAL PROCESSING STEPS:
-        1. Before starting analysis, you must first strictly read and interpret the "AI SYSTEM INSTRUCTIONS" provided above.
-        2. Next, read, interpret, and understand the purpose and context of the explicitly targeted files ("2", "23", and "assets.json"), their relationship to the other files in the project map, and their function specifically in the context of the "AI SYSTEM INSTRUCTIONS".
 
-        CRITICAL SYSTEM RULE: The main logic file is named "2" and the main HTML file is named "23", both located in the "models" folder. You MUST use the exact name "2" instead of "WorldController.js" and "23" instead of "document.html" in all your code, updates, references, and output paths. Never save or output a file named "WorldController.js" or "document.html".
+        FILE NAMING RULE: The game logic file is "2" (not "WorldController.js") and the HTML file is "23" (not "document.html"), both in models/. Always use these exact names in code, references, and output paths.
 
-        ASSET CONFIGURATION RULE: You must ensure "assets.json" (in the "json" folder) is updated to include any new assets requested by the user. If an asset the user mentions is not yet mapped in "assets.json", you MUST map it and return the updated "assets.json" file in your payload. When updating "assets.json", assign sequential numbers for the "key" property. CRITICAL: The "title" property for each mapped asset MUST be transposed exactly as its original file name, with no changes (e.g., {"key":"34","type":"object","title":"plane.obj"}). If you add or update an asset in "assets.json", you MUST also update file "2" to properly reference, load, or instantiate that new asset key so it is recognized and works within the system.
+        ASSET RULES:
+        "assets.json" is PRE-BUILT and AUTHORITATIVE. It maps every game file to a numeric key (e.g., {"key":"34","type":"object","title":"plane.obj"}). At build time, files are renamed to their key number in the files/ folder.
 
-        RESPONSE RULE - CRITICAL OPTIMIZATION:
-        To save time and tokens, YOU MUST NEVER OUTPUT THE FULL CONTENT OF A FILE. You must ONLY output the specific lines being changed using a SEARCH/REPLACE block format inside the "content" field of your JSON response. 
-        Format your "content" string EXACTLY like this for every change:
+        1. DO NOT modify or re-output "assets.json" — the system manages it.
+        2. Look up key numbers from the attached assets.json and use them in file "2". Do NOT invent key numbers.
+        3. If a file isn't in assets.json, tell the user to upload it first.
+
+        When positioning 3D objects using the extents data above:
+        - Negate PIVOT coordinates × scale to re-center the object
+        - Apply the FLOOR Y-OFFSET to sit on the ground plane
+        - Use MESH dimensions for RigidBody/physics collider scale
+        - Use MATERIALS names to target correct meshes for textures
+        - Infer PBR texture maps (Albedo, Normal, Roughness) from file suffixes and apply via createMaterial()
+        - Use Animation ID references to trigger animations via gameState.playAnimation()
+
+        RESPONSE FORMAT:
+        Output ONLY changed lines using SEARCH/REPLACE blocks in the "content" field of your JSON response:
 
         <<<<<<< SEARCH
-        [exact code from the original file to be replaced, including a few lines of context before and after]
+        [exact code from original file, with context lines for unique match]
         =======
-        [the new code to replace it with]
+        [new replacement code]
         >>>>>>> REPLACE
 
-        Rules for SEARCH/REPLACE blocks:
-        1. The SEARCH section MUST match the existing code in the file exactly, line for line, preserving whitespace and indentation. 
-        2. Include enough context lines to ensure a unique match.
-        3. You can include multiple SEARCH/REPLACE blocks for a single file.
-        4. If adding a completely new file (not editing an existing one), output the full code without SEARCH/REPLACE tags.
+        Rules:
+        1. SEARCH must match existing code exactly, line for line, preserving whitespace.
+        2. Include enough context lines for a unique match.
+        3. Multiple SEARCH/REPLACE blocks per file are allowed.
+        4. For completely new files, output full code without SEARCH/REPLACE tags.
 
-        In your 'message' response, provide a highly detailed changelog breaking down exactly which files you modified and summarize the logic shifts.
+        Do NOT include "assets.json" in your updatedFiles response.
+
+        In your 'message', provide a detailed changelog of which files you modified and the logic changes.
 
         User Request: ${prompt}`;
 
         const projectPath = `${ROOT}/${currentProject}`;
         const responseFileRef = ref(storage, `${projectPath}/ai_response.json`);
         const errorFileRef = ref(storage, `${projectPath}/ai_error.json`);
+        const progressFileRef = ref(storage, `${projectPath}/ai_progress.json`);
         
         try { await deleteObject(responseFileRef); } catch(e) {}
         try { await deleteObject(errorFileRef); } catch(e) {}
+        try { await deleteObject(progressFileRef); } catch(e) {}
 
         setStatus('AI is processing files (This may take a minute)...');
         Progress.step('Sending context to Claude', 'Building enhanced prompt + files...');
@@ -1578,14 +2135,19 @@
 
         let result = null;
         let attempts = 0;
-        const MAX_POLL_ATTEMPTS = 120; // 40 × 15s = 10 minutes max wait
-        Progress.step('Waiting for Claude response', 'Polling Firebase for result...');
-        
+        const MAX_POLL_ATTEMPTS = 160; // 160 × 5s = ~13 minutes max wait
+        Progress.step('Waiting for Claude response', 'Polling Firebase for tranche progress...');
+
+        // Show the tranche pipeline UI
+        TrancheUI.show();
+        TrancheUI.showPlanning();
+
         while (!result && attempts < MAX_POLL_ATTEMPTS) {
-          await sleep(15000); 
+          await sleep(5000);
           attempts++;
           Progress.poll(attempts, MAX_POLL_ATTEMPTS);
 
+          // Check for error file
           let hasErrorFile = false;
           let errorMessage = "AI Generation Failed";
           try {
@@ -1595,9 +2157,30 @@
             errorMessage = errData.error || errorMessage;
             hasErrorFile = true;
           } catch(e) {}
-
           if (hasErrorFile) throw new Error(errorMessage);
 
+          // Poll ai_progress.json for live tranche updates
+          try {
+            const progressUrl = await getDownloadURL(progressFileRef);
+            const progressRes = await fetch(progressUrl + `&v=${Date.now()}`, { cache: 'no-store' });
+            if (progressRes.ok) {
+              const progressData = await progressRes.json();
+              TrancheUI.updateFromProgress(progressData);
+
+              // Update the Progress panel title to reflect current tranche
+              if (progressData.status === 'executing' && progressData.tranches) {
+                const active = progressData.tranches.find(t => t.status === 'in_progress');
+                if (active) {
+                  Progress.step(
+                    `Tranche ${active.index + 1}/${progressData.totalTranches}: ${active.name}`,
+                    active.description || 'Sonnet 4.6 executing...'
+                  );
+                }
+              }
+            }
+          } catch(e) { /* progress file not yet available */ }
+
+          // Check for final response
           try {
             const url = await getDownloadURL(responseFileRef);
             const res = await fetch(url + `&v=${Date.now()}`);
@@ -1605,7 +2188,7 @@
           } catch(e) {}
         }
 
-        if (!result) throw new Error("AI request timed out after 10 minutes waiting for a response. The backend may be overloaded or the prompt too large.");
+        if (!result) throw new Error("AI request timed out after ~13 minutes waiting for a response. The backend may be overloaded or the prompt too large.");
 
         const escapeHTML = (str) => str.replace(/[&<>'"]/g, tag => ({
             '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;'
@@ -1749,8 +2332,18 @@
         }
 
         appendToChatLog('AI', result.message || "Files have been updated successfully.");
-        setStatus('AI update complete.');
-        Progress.done('AI update complete ✦');
+        setStatus('AI tranched build complete.');
+        Progress.done('Tranched build complete ✦');
+
+        // Final tranche UI update
+        try {
+          const progressUrl = await getDownloadURL(progressFileRef);
+          const progressRes = await fetch(progressUrl + `&v=${Date.now()}`, { cache: 'no-store' });
+          if (progressRes.ok) {
+            const finalProgress = await progressRes.json();
+            TrancheUI.updateFromProgress(finalProgress);
+          }
+        } catch(e) {}
 
         aiCodeReviewLog.innerHTML = ''; 
         
@@ -1837,6 +2430,7 @@
         appendToChatLog('System', `Error: ${error.message}`, 'error');
         setStatus('AI update failed.');
         Progress.error(error.message);
+        TrancheUI.updateFromProgress({ status: 'error', error: error.message, completedTime: Date.now() });
       } finally {
         sendToAiBtn.disabled = false;
       }
