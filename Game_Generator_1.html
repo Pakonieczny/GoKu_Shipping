@@ -8,20 +8,20 @@
   <script type="importmap">
     {
       "imports": {
-        "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
-        "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+        "three": "[https://unpkg.com/three@0.160.0/build/three.module.js](https://unpkg.com/three@0.160.0/build/three.module.js)",
+        "three/addons/": "[https://unpkg.com/three@0.160.0/examples/jsm/](https://unpkg.com/three@0.160.0/examples/jsm/)"
       }
     }
   </script>
 
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+  <script src="[https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js](https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js)"></script>
   
-  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.13/codemirror.min.css">
-  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.13/theme/monokai.min.css">
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.13/codemirror.min.js"></script>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.13/mode/javascript/javascript.min.js"></script>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.13/mode/xml/xml.min.js"></script>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.13/mode/htmlmixed/htmlmixed.min.js"></script>
+  <link rel="stylesheet" href="[https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.13/codemirror.min.css](https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.13/codemirror.min.css)">
+  <link rel="stylesheet" href="[https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.13/theme/monokai.min.css](https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.13/theme/monokai.min.css)">
+  <script src="[https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.13/codemirror.min.js](https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.13/codemirror.min.js)"></script>
+  <script src="[https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.13/mode/javascript/javascript.min.js](https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.13/mode/javascript/javascript.min.js)"></script>
+  <script src="[https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.13/mode/xml/xml.min.js](https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.13/mode/xml/xml.min.js)"></script>
+  <script src="[https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.13/mode/htmlmixed/htmlmixed.min.js](https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.13/mode/htmlmixed/htmlmixed.min.js)"></script>
   
   <style>
     :root { --bg:#0b0d12; --card:#121624; --muted:#8b93a7; --text:#e9ecf5; --line:#242a3d; --accent: #2b6cff; --success: #7fdb96; --danger: #fca5a5; }
@@ -488,11 +488,10 @@
             <div style="color: var(--muted);">AI Context ready. Enter instructions below to modify the active project.</div>
           </div>
 
-          <!-- Live AI Progress Panel -->
           <div id="aiProgressPanel" class="ai-progress-panel">
             <div class="ai-progress-header" id="aiProgressHeader">
               <div class="ai-spark-icon" id="aiSparkIcon">
-                <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <svg viewBox="0 0 24 24" fill="none" xmlns="[http://www.w3.org/2000/svg](http://www.w3.org/2000/svg)">
                   <path d="M12 2L13.8 8.2L20 10L13.8 11.8L12 18L10.2 11.8L4 10L10.2 8.2L12 2Z" fill="#2b6cff"/>
                   <path d="M19 15L19.9 17.1L22 18L19.9 18.9L19 21L18.1 18.9L16 18L18.1 17.1L19 15Z" fill="#4d8fff" opacity="0.7"/>
                 </svg>
@@ -503,7 +502,6 @@
             <div class="ai-steps-list" id="aiStepsList"></div>
           </div>
 
-          <!-- Tranched Build Pipeline Panel -->
           <div id="tranchePipeline" class="tranche-pipeline">
             <div class="tranche-header">
               <div class="tranche-header-icon" id="trancheHeaderIcon">⚡</div>
@@ -567,9 +565,9 @@
   </div>
 
   <script type="module">
-    import { initializeApp } from "https://www.gstatic.com/firebasejs/9.23.0/firebase-app.js";
-    import { getStorage, ref, uploadBytesResumable, uploadString, getDownloadURL, listAll, deleteObject, getMetadata } from "https://www.gstatic.com/firebasejs/9.23.0/firebase-storage.js";
-    import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/9.23.0/firebase-auth.js";
+    import { initializeApp } from "[https://www.gstatic.com/firebasejs/9.23.0/firebase-app.js](https://www.gstatic.com/firebasejs/9.23.0/firebase-app.js)";
+    import { getStorage, ref, uploadBytesResumable, uploadString, getDownloadURL, listAll, deleteObject, getMetadata } from "[https://www.gstatic.com/firebasejs/9.23.0/firebase-storage.js](https://www.gstatic.com/firebasejs/9.23.0/firebase-storage.js)";
+    import { getAuth, signInAnonymously, onAuthStateChanged } from "[https://www.gstatic.com/firebasejs/9.23.0/firebase-auth.js](https://www.gstatic.com/firebasejs/9.23.0/firebase-auth.js)";
 
     import * as THREE from 'three';
     import { OBJLoader } from 'three/addons/loaders/OBJLoader.js';
@@ -673,13 +671,14 @@
           const prog = await res.json();
           // Only write cancel if pipeline is actually running
           if (prog.status === 'planning' || prog.status === 'executing') {
-            const cancelRef = ref(storage, `${projectPath}/ai_cancel.json`);
+            const cancelRef = ref(storage, `${projectPath}/ai_active_job.json`);
             await uploadString(cancelRef, JSON.stringify({ cancelled: true, time: Date.now(), reason: 'page_load_cleanup' }));
             console.log(`Sent cancel signal to project: ${name}`);
           }
           // Clean up stale signal files regardless
           try { await deleteObject(ref(storage, `${projectPath}/ai_progress.json`)); } catch(e) {}
           try { await deleteObject(ref(storage, `${projectPath}/ai_error.json`)); } catch(e) {}
+          try { await deleteObject(ref(storage, `${projectPath}/ai_active_job.json`)); } catch(e) {}
         } catch(e) {
           // No progress file = no active pipeline, nothing to cancel
         }
@@ -1906,11 +1905,9 @@
                 
                 if (a.path.includes('object_zips') && a.name.toLowerCase().endsWith('.zip')) {
                     // Respect the pre-process modal checkbox selection
-                    // activeSelectedModelNames === null means "process all" (modal was never shown)
-                    // activeSelectedModelNames is a Set means only process names in the set
                     const shouldProcess = (activeSelectedModelNames === null) || activeSelectedModelNames.has(a.name);
                     if (!shouldProcess) {
-                        // skipped — no chat log needed, progress panel handles it
+                        // skipped
                     } else {
                     Progress.step(`Extracting ZIP package`, a.name);
                     try {
@@ -2130,12 +2127,17 @@
         const responseFileRef = ref(storage, `${projectPath}/ai_response.json`);
         const errorFileRef = ref(storage, `${projectPath}/ai_error.json`);
         const progressFileRef = ref(storage, `${projectPath}/ai_progress.json`);
-        const cancelFileRef = ref(storage, `${projectPath}/ai_cancel.json`);
         
         try { await deleteObject(responseFileRef); } catch(e) {}
         try { await deleteObject(errorFileRef); } catch(e) {}
         try { await deleteObject(progressFileRef); } catch(e) {}
-        try { await deleteObject(cancelFileRef); } catch(e) {}
+
+        // --- NEW: GENERATE JOB ID & KILL OLD JOBS ---
+        const currentJobId = Date.now().toString();
+        Progress.step('Securing pipeline', 'Terminating any old overlapping jobs...');
+        const activeJobRef = ref(storage, `${projectPath}/ai_active_job.json`);
+        await uploadString(activeJobRef, JSON.stringify({ jobId: currentJobId, timestamp: Date.now() }));
+        // --------------------------------------------
 
         setStatus('AI is processing files (This may take a minute)...');
         Progress.step('Sending context to Claude', 'Building enhanced prompt + files...');
@@ -2171,21 +2173,13 @@
         const fetchController = new AbortController();
         const fetchTimeout = setTimeout(() => fetchController.abort(), 180000);
         try {
-          
-        // Poll ai_progress.json for live tranche updates
-          try {
-            const progressUrl = await getDownloadURL(progressFileRef);
-            const progressRes = await fetch(progressUrl + `&v=${Date.now()}`, { cache: 'no-store' });
-            if (progressRes.ok) {
-              const progressData = await progressRes.json();
-              
-              // --- NEW: IGNORE GHOST UPDATES ---
-              if (progressData.jobId && progressData.jobId !== currentJobId) {
-                  continue; // This is a ghost writing its final breath. Ignore it.
-              }
-              // ---------------------------------
-
-              TrancheUI.updateFromProgress(progressData);          
+            const proxyRes = await fetch('/.netlify/functions/claudeCodeProxy-background', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              // Include the new jobId in the payload
+              body: JSON.stringify({ projectPath, jobId: currentJobId }), 
+              signal: fetchController.signal
+            });            
             if (!proxyRes.ok) {
                  throw new Error(`Netlify rejected the request: ${proxyRes.status} ${proxyRes.statusText}. Your payload may exceed the 6MB limit, or the function crashed.`);
             }
@@ -2226,6 +2220,13 @@
             const progressRes = await fetch(progressUrl + `&v=${Date.now()}`, { cache: 'no-store' });
             if (progressRes.ok) {
               const progressData = await progressRes.json();
+
+              // --- NEW: IGNORE GHOST UPDATES ---
+              if (progressData.jobId && progressData.jobId !== currentJobId) {
+                  continue; // This is a ghost writing its final breath. Ignore it.
+              }
+              // ---------------------------------
+
               TrancheUI.updateFromProgress(progressData);
 
               // Update the Progress panel title to reflect current tranche
