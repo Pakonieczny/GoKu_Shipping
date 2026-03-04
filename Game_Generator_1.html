@@ -2171,13 +2171,21 @@
         const fetchController = new AbortController();
         const fetchTimeout = setTimeout(() => fetchController.abort(), 180000);
         try {
-            const proxyRes = await fetch('/.netlify/functions/claudeCodeProxy-background', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              // ONLY send the tiny projectPath string to bypass the 256 KB limit
-              body: JSON.stringify({ projectPath }), 
-              signal: fetchController.signal
-            });            
+          
+        // Poll ai_progress.json for live tranche updates
+          try {
+            const progressUrl = await getDownloadURL(progressFileRef);
+            const progressRes = await fetch(progressUrl + `&v=${Date.now()}`, { cache: 'no-store' });
+            if (progressRes.ok) {
+              const progressData = await progressRes.json();
+              
+              // --- NEW: IGNORE GHOST UPDATES ---
+              if (progressData.jobId && progressData.jobId !== currentJobId) {
+                  continue; // This is a ghost writing its final breath. Ignore it.
+              }
+              // ---------------------------------
+
+              TrancheUI.updateFromProgress(progressData);          
             if (!proxyRes.ok) {
                  throw new Error(`Netlify rejected the request: ${proxyRes.status} ${proxyRes.statusText}. Your payload may exceed the 6MB limit, or the function crashed.`);
             }

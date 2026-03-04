@@ -85,8 +85,9 @@ exports.handler = async (event) => {
   try {
     if (!event.body) throw new Error("Missing request body");
 
-    ({ projectPath } = JSON.parse(event.body));
+    const { projectPath, jobId } = JSON.parse(event.body);
     if (!projectPath) throw new Error("Missing projectPath");
+    if (!jobId) throw new Error("Missing jobId");
 
     const apiKey = process.env.ANTHROPIC_API_KEY;
     if (!apiKey) throw new Error("Missing ANTHROPIC_API_KEY");
@@ -154,6 +155,7 @@ exports.handler = async (event) => {
     //  STAGE 0 — PLANNING (Opus 4.6, adaptive, high)
     // ══════════════════════════════════════════════════════════
     const progress = {
+      jobId: jobId,
       status: "planning",
       planningStartTime: Date.now(),
       planningEndTime: null,
@@ -293,12 +295,47 @@ CRITICAL RULES:
       const tranche = plan.tranches[i];
 
       // Check for cancellation signal before starting each tranche
-      try {
-        const cancelFile = bucket.file(`${projectPath}/ai_cancel.json`);
-        const [exists] = await cancelFile.exists();
-        if (exists) {
-          console.log("Cancellation signal detected — aborting pipeline.");
-          await cancelFile.delete().catch(() => {});
+      // ── CONCURRENCY KILL SWITCH ──
+            try {
+              const activeJobFile = bucket.file(`${projectPath}/ai_active_job.json`);
+              const [exists] = await activeJobFile.exists();
+              if (exists) {
+                const [content] = await activeJobFile.download();
+                const activeData = JSON.parse(content.toString());
+                
+                // 1. Check if a completely new job was started
+                if (activeData.jobId && activeData.jobId !== jobId) {
+                  console.log(`Job ${jobId} superseded by new job ${activeData.jobId}. Terminating old job silently.`);
+                  // Return early without updating progress so we don't overwrite the new job's UI
+                  return { statusCode: 200, body: JSON.stringify({ success: true, superseded: true }) };
+                }
+                
+                // 2. Check if the page was refreshed/cancelled
+                if (activeData.cancelled) {
+                  console.log("Cancellation signal detected — aborting pipeline.");
+                  await activeJobFile.delete().catch(() => {});
+                  progress.status = "cancelled";
+                  progress.finalMessage = `Pipeline cancelled by user after ${i} tranche(s).`;
+                  progress.completedTime = Date.now();
+                  await saveProgress(bucket, projectPath, progress);
+
+                  if (allUpdatedFiles.length > 0) {
+                    const partialResponse = {
+                      message: `Pipeline cancelled. ${allUpdatedFiles.length} file(s) were updated before cancellation.`,
+                      updatedFiles: allUpdatedFiles
+                    };
+                    await bucket.file(`${projectPath}/ai_response.json`).save(
+                      JSON.stringify(partialResponse),
+                      { contentType: "application/json", resumable: false }
+                    );
+                  }
+                  return { statusCode: 200, body: JSON.stringify({ success: true, cancelled: true }) };
+                }
+              }
+            } catch (e) { /* no active job file = continue safely */ }
+              
+              await cancelFile.delete().catch(() => {});
+
           progress.status = "cancelled";
           progress.finalMessage = `Pipeline cancelled by user after ${i} tranche(s).`;
           progress.completedTime = Date.now();
