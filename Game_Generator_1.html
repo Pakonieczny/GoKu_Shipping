@@ -228,17 +228,6 @@
     .ai-step-label.muted { color: var(--muted); }
     .ai-step-meta { font-size: 10px; color: var(--muted); margin-top: 2px; }
 
-    .ai-poll-ticker {
-        display: flex; align-items: center; gap: 6px; padding: 10px 16px 12px;
-        font-size: 11px; color: var(--muted); border-top: 1px solid var(--line);
-    }
-    .ai-poll-ticker.hidden { display: none; }
-    .ai-poll-bar-track { flex: 1; height: 3px; background: var(--line); border-radius: 2px; overflow: hidden; }
-    .ai-poll-bar-fill {
-        height: 100%; background: var(--accent); border-radius: 2px;
-        transition: width 0.5s linear;
-    }
-
     /* ── Tranche Pipeline Panel ── */
     .tranche-pipeline {
       display: none; flex-direction: column; gap: 0;
@@ -498,11 +487,6 @@
               <span class="ai-progress-chevron" id="aiProgressChevron">▼</span>
             </div>
             <div class="ai-steps-list" id="aiStepsList"></div>
-            <div class="ai-poll-ticker hidden" id="aiPollTicker">
-              <span id="aiPollLabel">Waiting for AI...</span>
-              <div class="ai-poll-bar-track"><div class="ai-poll-bar-fill" id="aiPollBarFill" style="width:0%"></div></div>
-              <span id="aiPollCounter">0/20</span>
-            </div>
           </div>
 
           <!-- Tranched Build Pipeline Panel -->
@@ -1165,10 +1149,6 @@
     const aiSparkIcon       = document.getElementById('aiSparkIcon');
     const aiProgressChevron = document.getElementById('aiProgressChevron');
     const aiStepsList       = document.getElementById('aiStepsList');
-    const aiPollTicker      = document.getElementById('aiPollTicker');
-    const aiPollLabel       = document.getElementById('aiPollLabel');
-    const aiPollBarFill     = document.getElementById('aiPollBarFill');
-    const aiPollCounter     = document.getElementById('aiPollCounter');
 
     let _progressExpanded = true;
 
@@ -1185,7 +1165,6 @@
             this._steps = [];
             this._activeStepEl = null;
             aiStepsList.innerHTML = '';
-            aiPollTicker.classList.add('hidden');
             aiProgressPanel.classList.add('active');
             aiProgressPanel.classList.remove('has-steps', 'expanded');
             _progressExpanded = false;
@@ -1275,15 +1254,6 @@
             aiSparkIcon.classList.remove('spinning');
             aiSparkIcon.classList.add('error');
             aiProgressTitle.textContent = 'Failed — ' + label;
-            aiPollTicker.classList.add('hidden');
-        },
-
-        poll(attempt, max) {
-            aiPollTicker.classList.remove('hidden');
-            const pct = Math.round((attempt / max) * 100);
-            aiPollBarFill.style.width = pct + '%';
-            aiPollCounter.textContent = `${attempt}/${max}`;
-            aiPollLabel.textContent = `Waiting for AI response...`;
         },
 
         done(label) {
@@ -1294,7 +1264,6 @@
                 dot.textContent = '✓';
                 this._activeStepEl = null;
             }
-            aiPollTicker.classList.add('hidden');
             aiSparkIcon.classList.remove('spinning');
             aiSparkIcon.classList.add('done');
             aiProgressTitle.textContent = label || 'Done';
@@ -2145,7 +2114,6 @@
         while (!result && attempts < MAX_POLL_ATTEMPTS) {
           await sleep(5000);
           attempts++;
-          Progress.poll(attempts, MAX_POLL_ATTEMPTS);
 
           // Check for error file
           let hasErrorFile = false;
