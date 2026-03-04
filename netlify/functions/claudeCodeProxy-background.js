@@ -292,6 +292,33 @@ CRITICAL RULES:
     for (let i = 0; i < plan.tranches.length; i++) {
       const tranche = plan.tranches[i];
 
+      // Check for cancellation signal before starting each tranche
+      try {
+        const cancelFile = bucket.file(`${projectPath}/ai_cancel.json`);
+        const [exists] = await cancelFile.exists();
+        if (exists) {
+          console.log("Cancellation signal detected — aborting pipeline.");
+          await cancelFile.delete().catch(() => {});
+          progress.status = "cancelled";
+          progress.finalMessage = `Pipeline cancelled by user after ${i} tranche(s).`;
+          progress.completedTime = Date.now();
+          await saveProgress(bucket, projectPath, progress);
+
+          // Write a partial response with whatever we have so far
+          if (allUpdatedFiles.length > 0) {
+            const partialResponse = {
+              message: `Pipeline cancelled. ${allUpdatedFiles.length} file(s) were updated before cancellation.`,
+              updatedFiles: allUpdatedFiles
+            };
+            await bucket.file(`${projectPath}/ai_response.json`).save(
+              JSON.stringify(partialResponse),
+              { contentType: "application/json", resumable: false }
+            );
+          }
+          return { statusCode: 200, body: JSON.stringify({ success: true, cancelled: true }) };
+        }
+      } catch (e) { /* no cancel file = continue */ }
+
       // Update progress: tranche starting
       progress.currentTranche = i;
       progress.tranches[i].status = "in_progress";

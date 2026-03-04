@@ -650,12 +650,39 @@
           projectSelect.appendChild(opt);
         });
 
+        // Cancel any lingering AI pipelines across ALL projects on page load
+        cancelAllPipelines(res.prefixes.map(f => f.name));
+
         if (res.prefixes.length > 0) {
           selectProject(projectSelect.value);
         }
       } catch (e) {
         console.error("Error loading projects", e);
         projectSelect.innerHTML = '<option value="">Error loading</option>';
+      }
+    }
+
+    async function cancelAllPipelines(projectNames) {
+      for (const name of projectNames) {
+        const projectPath = `${ROOT}/${name}`;
+        try {
+          // Check if there's an active progress file
+          const progressRef = ref(storage, `${projectPath}/ai_progress.json`);
+          const progressUrl = await getDownloadURL(progressRef);
+          const res = await fetch(progressUrl);
+          const prog = await res.json();
+          // Only write cancel if pipeline is actually running
+          if (prog.status === 'planning' || prog.status === 'executing') {
+            const cancelRef = ref(storage, `${projectPath}/ai_cancel.json`);
+            await uploadString(cancelRef, JSON.stringify({ cancelled: true, time: Date.now(), reason: 'page_load_cleanup' }));
+            console.log(`Sent cancel signal to project: ${name}`);
+          }
+          // Clean up stale signal files regardless
+          try { await deleteObject(ref(storage, `${projectPath}/ai_progress.json`)); } catch(e) {}
+          try { await deleteObject(ref(storage, `${projectPath}/ai_error.json`)); } catch(e) {}
+        } catch(e) {
+          // No progress file = no active pipeline, nothing to cancel
+        }
       }
     }
 
@@ -2103,10 +2130,12 @@
         const responseFileRef = ref(storage, `${projectPath}/ai_response.json`);
         const errorFileRef = ref(storage, `${projectPath}/ai_error.json`);
         const progressFileRef = ref(storage, `${projectPath}/ai_progress.json`);
+        const cancelFileRef = ref(storage, `${projectPath}/ai_cancel.json`);
         
         try { await deleteObject(responseFileRef); } catch(e) {}
         try { await deleteObject(errorFileRef); } catch(e) {}
         try { await deleteObject(progressFileRef); } catch(e) {}
+        try { await deleteObject(cancelFileRef); } catch(e) {}
 
         setStatus('AI is processing files (This may take a minute)...');
         Progress.step('Sending context to Claude', 'Building enhanced prompt + files...');
