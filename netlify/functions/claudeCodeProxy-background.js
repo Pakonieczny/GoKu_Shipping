@@ -124,10 +124,13 @@ Only include files in 'updatedFiles' that actually need to be changed.`;
 
     // --- Call Claude API ---
     const body = {
-      model: "claude-opus-4-6",       // Opus 4.6 = max reasoning, 128K output tokens
-      max_tokens: 16000,              // Opus 4.6 supports up to 128K; 16K is safe for full file output
-      thinking: { type: "adaptive" }, // Adaptive: Claude decides when/how much to reason (recommended for Opus 4.6)
-      effort: "max",                  // Top-level effort param (NOT nested in output_config) — "max" = highest capability
+      model: "claude-opus-4-6",        // Opus 4.6 = max reasoning, 128K output tokens
+      max_tokens: 32000,               // MUST be high enough for thinking + response at max effort.
+                                       // At effort:"max" with adaptive thinking, Claude can burn thousands
+                                       // of tokens on reasoning alone — 16K was too low, leaving 0 for
+                                       // the text response block (causing "Empty response from Claude").
+      thinking: { type: "adaptive" },  // Recommended for Opus 4.6: Claude decides when/how much to reason
+      output_config: { effort: "max" },// effort lives inside output_config (top-level is invalid)
       system: systemInstruction,
       messages: [
         {
