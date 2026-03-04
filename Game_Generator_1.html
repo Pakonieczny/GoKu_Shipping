@@ -953,6 +953,16 @@
                 truthMap.set(item.name, 'script');
             } else if (lowerName.endsWith('.html')) {
                 truthMap.set(item.name, 'html');
+            } else if (imageAudioExts.some(ext => lowerName.endsWith(ext))) {
+                if (['.mp3','.wav','.ogg','.m4a'].some(ext => lowerName.endsWith(ext))) {
+                    truthMap.set(item.name, 'audio');
+                } else {
+                    truthMap.set(item.name, 'image');
+                }
+            } else if (!lowerName.includes('.')) {
+                // Extensionless file (Cherry3D key-numbered files like "3", "4", "10", etc.)
+                // These are valid assets — mark them so they aren't pruned.
+                truthMap.set(item.name, 'object');
             }
         }
 
@@ -996,7 +1006,40 @@
             }
         }
 
-        // Load existing assets.json to preserve established key assignments
+        // ── Load reference zip's internal assets.json as the base ──
+        // This ensures all pre-existing files from the template are always included.
+        let referenceAssets = [];
+        try {
+            const refFolder = ref(storage, `${ROOT}/${currentProject}/reference_zip`);
+            const refList = await listAll(refFolder);
+            if (refList.items.length > 0) {
+                const refUrl = await getDownloadURL(refList.items[0]);
+                const refRes = await fetch(refUrl);
+                const refBlob = await refRes.blob();
+                const refZip = new JSZip();
+                await refZip.loadAsync(refBlob);
+
+                // Find assets.json inside the reference zip (may be at root or in json/ subfolder)
+                let assetsEntry = null;
+                for (const path of Object.keys(refZip.files)) {
+                    if (path.endsWith('assets.json') && !path.includes('__MACOSX')) {
+                        assetsEntry = refZip.files[path];
+                        break;
+                    }
+                }
+                if (assetsEntry) {
+                    const refAssetsText = await assetsEntry.async('text');
+                    const parsed = JSON.parse(refAssetsText);
+                    if (Array.isArray(parsed)) referenceAssets = parsed;
+                    else { const arr = Object.values(parsed).find(v => Array.isArray(v)); if (arr) referenceAssets = arr; }
+                    console.info(`syncAssetsJson: Loaded ${referenceAssets.length} entries from reference zip's assets.json.`);
+                }
+            }
+        } catch(e) {
+            console.warn("syncAssetsJson: Could not parse reference zip's assets.json:", e);
+        }
+
+        // Load existing project assets.json to preserve established key assignments
         let existingAssets = [];
         try {
             const jsonRef = ref(storage, `${ROOT}/${currentProject}/json/assets.json`);
@@ -1008,8 +1051,38 @@
                 else { const arr = Object.values(parsed).find(v => Array.isArray(v)); if (arr) existingAssets = arr; }
             }
         } catch(e) {
-            console.info("syncAssetsJson: No existing assets.json, creating new one.");
+            console.info("syncAssetsJson: No existing project assets.json found.");
         }
+
+        // Also add all reference zip asset entries to truthMap so they survive pruning
+        // (handles nested children structures from Cherry3D)
+        function flattenAssetEntries(entries) {
+            const flat = [];
+            for (const entry of entries) {
+                flat.push(entry);
+                if (entry.children && Array.isArray(entry.children) && entry.children.length > 0) {
+                    flat.push(...flattenAssetEntries(entry.children));
+                }
+            }
+            return flat;
+        }
+        const flatReference = flattenAssetEntries(referenceAssets);
+        for (const entry of flatReference) {
+            if (entry.title && !truthMap.has(entry.title)) {
+                truthMap.set(entry.title, entry.type || 'object');
+            }
+        }
+
+        // Merge: start with reference base, then overlay project-level entries
+        // Project entries take priority if they share the same key.
+        const mergedByKey = new Map();
+        for (const entry of flatReference) {
+            mergedByKey.set(String(entry.key), entry);
+        }
+        for (const entry of existingAssets) {
+            mergedByKey.set(String(entry.key), entry);
+        }
+        existingAssets = [...mergedByKey.values()];
 
         const usedKeys = new Set();
         let maxKey = 0;
@@ -1019,22 +1092,26 @@
         }
 
         // Keep entries whose files still exist, drop entries for deleted files
+        // Match by title OR by key (for extensionless Cherry3D key-numbered files in models/)
         const updatedAssets = [];
         const truthTitlesLower = new Set([...truthMap.keys()].map(t => t.toLowerCase()));
+        const truthKeys = new Set([...truthMap.keys()]);
 
         for (const entry of existingAssets) {
             const titleLower = entry.title ? entry.title.toLowerCase() : '';
-            if (truthTitlesLower.has(titleLower)) {
+            const entryKey = String(entry.key);
+            if (truthTitlesLower.has(titleLower) || truthKeys.has(entryKey)) {
                 updatedAssets.push(entry);
-                usedKeys.add(String(entry.key));
+                usedKeys.add(entryKey);
             }
         }
 
         // Add new entries for files not yet in assets.json
         const coveredTitlesLower = new Set(updatedAssets.map(e => (e.title || '').toLowerCase()));
+        const coveredKeys = new Set(updatedAssets.map(e => String(e.key)));
 
         for (const [title, type] of truthMap) {
-            if (!coveredTitlesLower.has(title.toLowerCase())) {
+            if (!coveredTitlesLower.has(title.toLowerCase()) && !coveredKeys.has(title)) {
                 maxKey++;
                 while (usedKeys.has(String(maxKey))) maxKey++;
                 updatedAssets.push({ key: String(maxKey), type: type, title: title });
