@@ -8,20 +8,20 @@
   <script type="importmap">
     {
       "imports": {
-        "three": "[https://unpkg.com/three@0.160.0/build/three.module.js](https://unpkg.com/three@0.160.0/build/three.module.js)",
-        "three/addons/": "[https://unpkg.com/three@0.160.0/examples/jsm/](https://unpkg.com/three@0.160.0/examples/jsm/)"
+        "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+        "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
       }
     }
   </script>
 
-  <script src="[https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js](https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js)"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
   
-  <link rel="stylesheet" href="[https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.13/codemirror.min.css](https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.13/codemirror.min.css)">
-  <link rel="stylesheet" href="[https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.13/theme/monokai.min.css](https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.13/theme/monokai.min.css)">
-  <script src="[https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.13/codemirror.min.js](https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.13/codemirror.min.js)"></script>
-  <script src="[https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.13/mode/javascript/javascript.min.js](https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.13/mode/javascript/javascript.min.js)"></script>
-  <script src="[https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.13/mode/xml/xml.min.js](https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.13/mode/xml/xml.min.js)"></script>
-  <script src="[https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.13/mode/htmlmixed/htmlmixed.min.js](https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.13/mode/htmlmixed/htmlmixed.min.js)"></script>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.13/codemirror.min.css">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.13/theme/monokai.min.css">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.13/codemirror.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.13/mode/javascript/javascript.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.13/mode/xml/xml.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.13/mode/htmlmixed/htmlmixed.min.js"></script>
   
   <style>
     :root { --bg:#0b0d12; --card:#121624; --muted:#8b93a7; --text:#e9ecf5; --line:#242a3d; --accent: #2b6cff; --success: #7fdb96; --danger: #fca5a5; }
@@ -491,7 +491,7 @@
           <div id="aiProgressPanel" class="ai-progress-panel">
             <div class="ai-progress-header" id="aiProgressHeader">
               <div class="ai-spark-icon" id="aiSparkIcon">
-                <svg viewBox="0 0 24 24" fill="none" xmlns="[http://www.w3.org/2000/svg](http://www.w3.org/2000/svg)">
+                <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
                   <path d="M12 2L13.8 8.2L20 10L13.8 11.8L12 18L10.2 11.8L4 10L10.2 8.2L12 2Z" fill="#2b6cff"/>
                   <path d="M19 15L19.9 17.1L22 18L19.9 18.9L19 21L18.1 18.9L16 18L18.1 17.1L19 15Z" fill="#4d8fff" opacity="0.7"/>
                 </svg>
@@ -565,9 +565,9 @@
   </div>
 
   <script type="module">
-    import { initializeApp } from "[https://www.gstatic.com/firebasejs/9.23.0/firebase-app.js](https://www.gstatic.com/firebasejs/9.23.0/firebase-app.js)";
-    import { getStorage, ref, uploadBytesResumable, uploadString, getDownloadURL, listAll, deleteObject, getMetadata } from "[https://www.gstatic.com/firebasejs/9.23.0/firebase-storage.js](https://www.gstatic.com/firebasejs/9.23.0/firebase-storage.js)";
-    import { getAuth, signInAnonymously, onAuthStateChanged } from "[https://www.gstatic.com/firebasejs/9.23.0/firebase-auth.js](https://www.gstatic.com/firebasejs/9.23.0/firebase-auth.js)";
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/9.23.0/firebase-app.js";
+    import { getStorage, ref, uploadBytesResumable, uploadString, getDownloadURL, listAll, deleteObject, getMetadata } from "https://www.gstatic.com/firebasejs/9.23.0/firebase-storage.js";
+    import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/9.23.0/firebase-auth.js";
 
     import * as THREE from 'three';
     import { OBJLoader } from 'three/addons/loaders/OBJLoader.js';
