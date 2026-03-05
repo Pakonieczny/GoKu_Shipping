@@ -950,9 +950,11 @@
             if (assetExtensions.some(ext => lowerName.endsWith(ext))) {
                 truthMap.set(item.name, 'object');
             } else if (lowerName.endsWith('.js')) {
-                truthMap.set(item.name, 'script');
+                truthMap.set(item.name, 'javascript');
             } else if (lowerName.endsWith('.html')) {
-                truthMap.set(item.name, 'html');
+                truthMap.set(item.name, 'HTML');
+            } else if (lowerName.endsWith('.css')) {
+                truthMap.set(item.name, 'stylesheet');
             } else if (imageAudioExts.some(ext => lowerName.endsWith(ext))) {
                 if (['.mp3','.wav','.ogg','.m4a'].some(ext => lowerName.endsWith(ext))) {
                     truthMap.set(item.name, 'audio');
@@ -1073,57 +1075,137 @@
             }
         }
 
-        // Merge: start with reference base, then overlay project-level entries
-        // Project entries take priority if they share the same key.
-        const mergedByKey = new Map();
-        for (const entry of flatReference) {
-            mergedByKey.set(String(entry.key), entry);
+        // ── Hierarchical Merge ──
+        // Reference assets are AUTHORITATIVE for their own keys — they define the
+        // correct Cherry3D structure (folders, children, types, extensions).
+        // Project-level entries are only added if their key does NOT exist in the reference.
+
+        // Build a deep-clone of reference assets as the starting point
+        function deepCloneEntries(entries) {
+            return entries.map(e => {
+                const clone = Object.assign({}, e);
+                if (clone.children && Array.isArray(clone.children)) {
+                    clone.children = deepCloneEntries(clone.children);
+                }
+                return clone;
+            });
         }
-        for (const entry of existingAssets) {
-            mergedByKey.set(String(entry.key), entry);
+
+        let mergedAssets = deepCloneEntries(referenceAssets);
+
+        // Collect all keys already present in the reference tree
+        const flatMerged = flattenAssetEntries(mergedAssets);
+        const referenceKeySet = new Set(flatMerged.map(e => String(e.key)));
+
+        // Append project entries whose keys are NOT in the reference
+        // (these are user-added assets like custom models, textures, etc.)
+        const flatExisting = flattenAssetEntries(existingAssets);
+        for (const entry of flatExisting) {
+            const key = String(entry.key);
+            if (!referenceKeySet.has(key)) {
+                // Ensure entry has children array
+                if (!entry.children) entry.children = [];
+                mergedAssets.push(entry);
+                referenceKeySet.add(key);
+            }
         }
-        existingAssets = [...mergedByKey.values()];
+
+        existingAssets = mergedAssets;
 
         const usedKeys = new Set();
         let maxKey = 0;
-        for (const entry of existingAssets) {
+        const allFlat = flattenAssetEntries(existingAssets);
+        for (const entry of allFlat) {
             const numKey = parseInt(entry.key, 10);
             if (!isNaN(numKey) && numKey > maxKey) maxKey = numKey;
         }
 
-        // Keep entries whose files still exist, drop entries for deleted files
-        // Match by title OR by key (for extensionless Cherry3D key-numbered files in models/)
-        const updatedAssets = [];
+        // Recursively prune entries whose files no longer exist,
+        // but preserve folder structure and children.
         const truthTitlesLower = new Set([...truthMap.keys()].map(t => t.toLowerCase()));
         const truthKeys = new Set([...truthMap.keys()]);
 
-        for (const entry of existingAssets) {
-            const titleLower = entry.title ? entry.title.toLowerCase() : '';
-            const entryKey = String(entry.key);
-            if (truthTitlesLower.has(titleLower) || truthKeys.has(entryKey)) {
-                updatedAssets.push(entry);
-                usedKeys.add(entryKey);
+        function pruneEntries(entries) {
+            const result = [];
+            for (const entry of entries) {
+                const titleLower = entry.title ? entry.title.toLowerCase() : '';
+                const entryKey = String(entry.key);
+
+                // Always keep folders — prune their children recursively
+                if (entry.type === 'folder') {
+                    if (entry.children && Array.isArray(entry.children)) {
+                        entry.children = pruneEntries(entry.children);
+                    }
+                    result.push(entry);
+                    usedKeys.add(entryKey);
+                    continue;
+                }
+
+                // Keep entry if its file still exists in truthMap
+                if (truthTitlesLower.has(titleLower) || truthKeys.has(entryKey)) {
+                    result.push(entry);
+                    usedKeys.add(entryKey);
+                }
             }
+            return result;
+        }
+        const updatedAssets = pruneEntries(existingAssets);
+
+        // Build a set of all titles already covered (including inside folders)
+        const allUpdatedFlat = flattenAssetEntries(updatedAssets);
+        const coveredTitlesLower = new Set(allUpdatedFlat.map(e => (e.title || '').toLowerCase()));
+        const coveredKeys = new Set(allUpdatedFlat.map(e => String(e.key)));
+
+        // Helper: determine the correct Cherry3D type and extension for a file
+        function getCherryTypeInfo(title, baseType) {
+            const lower = (title || '').toLowerCase();
+            if (lower.endsWith('.js'))   return { type: 'javascript', extension: undefined };
+            if (lower.endsWith('.html')) return { type: 'HTML', extension: 'html' };
+            if (lower.endsWith('.css'))  return { type: 'stylesheet', extension: 'css' };
+            if (lower.endsWith('.c3b'))  return { type: 'object', extension: 'c3b' };
+            return { type: baseType || 'object', extension: undefined };
         }
 
         // Add new entries for files not yet in assets.json
-        const coveredTitlesLower = new Set(updatedAssets.map(e => (e.title || '').toLowerCase()));
-        const coveredKeys = new Set(updatedAssets.map(e => String(e.key)));
-
         for (const [title, type] of truthMap) {
             if (!coveredTitlesLower.has(title.toLowerCase()) && !coveredKeys.has(title)) {
                 maxKey++;
                 while (usedKeys.has(String(maxKey))) maxKey++;
-                updatedAssets.push({ key: String(maxKey), type: type, title: title });
+                const typeInfo = getCherryTypeInfo(title, type);
+                const newEntry = { key: String(maxKey), type: typeInfo.type, title: title, children: [] };
+                if (typeInfo.extension) newEntry.extension = typeInfo.extension;
+                updatedAssets.push(newEntry);
                 usedKeys.add(String(maxKey));
             }
         }
 
-        const newJson = JSON.stringify(updatedAssets, null, 2);
+        // ── Deduplication: remove top-level entries that already exist as children of folders ──
+        // Cherry3D expects each asset to appear exactly once in the tree.
+        const childTitlesLower = new Set();
+        function collectChildTitles(entries) {
+            for (const entry of entries) {
+                if (entry.type === 'folder' && entry.children) {
+                    for (const child of entry.children) {
+                        if (child.title) childTitlesLower.add(child.title.toLowerCase());
+                        if (child.children && child.children.length > 0) collectChildTitles([child]);
+                    }
+                }
+            }
+        }
+        collectChildTitles(updatedAssets);
+
+        // Remove top-level duplicates (entries that are already nested inside a folder)
+        const deduplicatedAssets = updatedAssets.filter(entry => {
+            if (entry.type === 'folder') return true; // always keep folders
+            const titleLower = (entry.title || '').toLowerCase();
+            return !childTitlesLower.has(titleLower);
+        });
+
+        const newJson = JSON.stringify(deduplicatedAssets, null, 2);
         const targetRef = ref(storage, `${ROOT}/${currentProject}/json/assets.json`);
         await uploadString(targetRef, newJson);
 
-        setStatus(`assets.json synced — ${updatedAssets.length} entries.`);
+        setStatus(`assets.json synced — ${deduplicatedAssets.length} entries.`);
 
         const jsonCat = FILE_CATEGORIES.find(c => c.id === 'json');
         if (jsonCat) refreshFileList(jsonCat);
@@ -1135,7 +1217,7 @@
             jsonZone.classList.add('pulse-update');
         }
 
-        return updatedAssets;
+        return deduplicatedAssets;
     }
 
     const imageTagContainer = document.getElementById('imageTagContainer');
