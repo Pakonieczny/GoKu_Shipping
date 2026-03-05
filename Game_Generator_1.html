@@ -922,7 +922,10 @@
     // ── Auto-Sync assets.json with actual project files ──
     // Scans models/, object_zips/, and assets/ folders and rebuilds assets.json
     // to accurately reflect what files actually exist in the project.
-    // assets.json IS the source of truth — file "2" and other code must conform to it.
+    // IMPORTANT: The reference zip's assets.json defines the authoritative key assignments.
+    // File "2" (WorldController.js) references assets by these keys — they must NOT change.
+    // Purely numeric extensionless files in models/ are Cherry3D key-numbered runtime
+    // artifacts and must be EXCLUDED from scanning (they are what assets.json maps TO).
     async function syncAssetsJson() {
         if (!currentProject) return;
         await ensureAuth();
@@ -962,9 +965,13 @@
                     truthMap.set(item.name, 'image');
                 }
             } else if (!lowerName.includes('.')) {
-                // Extensionless file (Cherry3D key-numbered files like "3", "4", "10", etc.)
-                // These are valid assets — mark them so they aren't pruned.
-                truthMap.set(item.name, 'object');
+                // Extensionless file — but SKIP purely numeric names.
+                // Numeric files (e.g. "10", "17", "34") are Cherry3D key-numbered RUNTIME
+                // files (the deployed build artifacts), NOT source assets to track.
+                // Only non-numeric extensionless files are real assets.
+                if (!/^\d+$/.test(item.name)) {
+                    truthMap.set(item.name, 'object');
+                }
             }
         }
 
@@ -2832,20 +2839,26 @@
                let lowerName = finalFileName.toLowerCase();
                
                 if (finalFileName !== '2' && finalFileName !== '23') {
-                   const nameNoExt = lowerName.includes('.') ? lowerName.substring(0, lowerName.lastIndexOf('.')) : lowerName;
-                   const normName = normalizeStr(finalFileName);
-                   const normNoExt = normalizeStr(nameNoExt);
+                   // Skip re-mapping for purely numeric filenames in models/ folder.
+                   // These are already Cherry3D key-numbered runtime files (e.g. "17" = cube.obj)
+                   // and must NOT be re-mapped through assets.json lookups.
+                   const isNumericKeyFile = cat.folder === 'models' && /^\d+$/.test(finalFileName);
+                   if (!isNumericKeyFile) {
+                       const nameNoExt = lowerName.includes('.') ? lowerName.substring(0, lowerName.lastIndexOf('.')) : lowerName;
+                       const normName = normalizeStr(finalFileName);
+                       const normNoExt = normalizeStr(nameNoExt);
 
-                   if (assetMap[exactName]) {
-                       finalFileName = assetMap[exactName];
-                   } else if (assetMap[lowerName]) {
-                       finalFileName = assetMap[lowerName];
-                   } else if (assetMap[nameNoExt]) {
-                       finalFileName = assetMap[nameNoExt];
-                   } else if (assetMap[normName]) {
-                       finalFileName = assetMap[normName];
-                   } else if (assetMap[normNoExt]) {
-                       finalFileName = assetMap[normNoExt];
+                       if (assetMap[exactName]) {
+                           finalFileName = assetMap[exactName];
+                       } else if (assetMap[lowerName]) {
+                           finalFileName = assetMap[lowerName];
+                       } else if (assetMap[nameNoExt]) {
+                           finalFileName = assetMap[nameNoExt];
+                       } else if (assetMap[normName]) {
+                           finalFileName = assetMap[normName];
+                       } else if (assetMap[normNoExt]) {
+                           finalFileName = assetMap[normNoExt];
+                       }
                    }
                }
                
