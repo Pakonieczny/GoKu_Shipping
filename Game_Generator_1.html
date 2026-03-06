@@ -44,13 +44,36 @@
     .btn:disabled{ opacity:0.5; cursor:not-allowed; }
     
     .drop-zone {
-      border: 2px dashed #3a4262; border-radius: 14px; padding: 16px; background: #0e1220;
-      transition: all 0.2s ease; display: flex; flex-direction: column; gap: 10px; margin-bottom: 14px;
+      border: 2px dashed #3a4262; border-radius: 14px; padding: 0; background: #0e1220;
+      transition: all 0.2s ease; display: flex; flex-direction: column; gap: 0; margin-bottom: 14px;
+      overflow: hidden;
     }
     .drop-zone.hover { border-color: var(--success); background: #13221c; }
-    .drop-header { display: flex; justify-content: space-between; align-items: center; }
+    .drop-header {
+      display: flex; justify-content: space-between; align-items: center;
+      padding: 12px 16px; cursor: pointer; user-select: none;
+      transition: background 0.15s;
+    }
+    .drop-header:hover { background: rgba(255,255,255,0.02); }
     .drop-header strong { font-size: 14px; color: #fff; }
     .drop-header span { font-size: 11px; color: var(--muted); background: #1a1e2b; padding: 3px 8px; border-radius: 999px; }
+    .drop-header-left { display: flex; align-items: center; gap: 8px; }
+    .drop-chevron {
+      font-size: 10px; color: var(--muted); transition: transform 0.25s ease;
+      display: inline-block; width: 16px; text-align: center;
+    }
+    .drop-chevron.open { transform: rotate(90deg); }
+    .drop-zone-body {
+      display: none; flex-direction: column; gap: 10px;
+      padding: 0 16px 14px 16px;
+    }
+    .drop-zone-body.open { display: flex; }
+    .drop-file-count {
+      font-size: 11px; color: var(--muted); background: #1a1e2b;
+      padding: 2px 7px; border-radius: 999px; font-weight: 600;
+      min-width: 18px; text-align: center;
+    }
+    .drop-file-count.has-files { color: var(--success); background: rgba(127, 219, 150, 0.12); }
     
     .file-list { display: flex; flex-direction: column; gap: 6px; }
     .file-item { 
@@ -138,8 +161,19 @@
     .close-preview:hover { transform: scale(1.1); }
 
     /* Game Asset Library Styles */
-    .asset-library { margin-top: 20px; border: 1px dashed var(--success); border-radius: 14px; padding: 16px; background: rgba(127, 219, 150, 0.05); display: none; }
+    .asset-library { margin-top: 20px; border: 1px dashed var(--success); border-radius: 14px; padding: 0; background: rgba(127, 219, 150, 0.05); display: none; overflow: hidden; }
     .asset-library.active { display: block; }
+    .asset-library-header {
+      display: flex; justify-content: space-between; align-items: center;
+      padding: 12px 16px; cursor: pointer; user-select: none;
+      transition: background 0.15s;
+    }
+    .asset-library-header:hover { background: rgba(127, 219, 150, 0.04); }
+    .asset-library-header-left { display: flex; align-items: center; gap: 8px; }
+    .asset-library-body {
+      display: none; padding: 0 16px 14px 16px;
+    }
+    .asset-library-body.open { display: block; }
     .asset-item { display: flex; align-items: center; justify-content: space-between; padding: 10px; border-bottom: 1px solid var(--line); font-size: 12px; transition: background 0.2s; }
     .asset-item:hover { background: var(--card); }
     .asset-item:last-child { border-bottom: none; }
@@ -544,12 +578,17 @@
       </div>
 
       <div id="assetLibrary" class="asset-library">
-        <div class="row" style="justify-content: space-between; margin-bottom: 10px;">
-            <h2 style="color: var(--success); margin:0;">Game Assets Library</h2>
+        <div class="asset-library-header" id="assetLibraryHeader">
+            <div class="asset-library-header-left">
+                <span class="drop-chevron" id="assetLibraryChevron">▶</span>
+                <h2 style="color: var(--success); margin:0;">Game Assets Library</h2>
+            </div>
             <span style="font-size: 11px; color: var(--muted);">Select files to include in your next AI prompt</span>
         </div>
-        <div id="assetList" style="display:flex; flex-direction:column; max-height: 250px; overflow-y:auto; border: 1px solid var(--line); border-radius: 8px; background: #0b0d12;">
+        <div class="asset-library-body" id="assetLibraryBody">
+            <div id="assetList" style="display:flex; flex-direction:column; max-height: 250px; overflow-y:auto; border: 1px solid var(--line); border-radius: 8px; background: #0b0d12;">
             </div>
+        </div>
       </div>
 
       <div style="margin-top: 30px; border-top: 1px solid var(--line); padding-top: 20px;">
@@ -810,22 +849,45 @@
         zone.id = `zone_${cat.id}`;
         
         zone.innerHTML = `
-          <div class="drop-header">
-            <strong>${cat.title}</strong>
+          <div class="drop-header" id="header_${cat.id}">
+            <div class="drop-header-left">
+              <span class="drop-chevron" id="chevron_${cat.id}">▶</span>
+              <strong>${cat.title}</strong>
+              <span class="drop-file-count" id="count_${cat.id}">0</span>
+            </div>
             <span>Accepts: ${cat.accepts}</span>
           </div>
-          <div class="file-list" id="list_${cat.id}">
-             <div style="font-size:11px; color:var(--muted);">Loading files...</div>
+          <div class="drop-zone-body" id="body_${cat.id}">
+            <div class="file-list" id="list_${cat.id}">
+               <div style="font-size:11px; color:var(--muted);">Loading files...</div>
+            </div>
+            <input type="file" accept="${cat.accepts}" id="input_${cat.id}" style="display:none;" />
+            <button class="btn btnSmall" onclick="document.getElementById('input_${cat.id}').click()" style="width: max-content;">+ Upload File</button>
           </div>
-          <input type="file" accept="${cat.accepts}" id="input_${cat.id}" style="display:none;" />
-          <button class="btn btnSmall" onclick="document.getElementById('input_${cat.id}').click()" style="width: max-content;">+ Upload File</button>
         `;
 
+        // Collapsible toggle — click header to expand/collapse
+        const header = zone.querySelector(`#header_${cat.id}`);
+        header.addEventListener('click', (e) => {
+          // Don't toggle if clicking buttons/inputs inside
+          if (e.target.closest('button') || e.target.closest('input')) return;
+          const body = zone.querySelector(`#body_${cat.id}`);
+          const chevron = zone.querySelector(`#chevron_${cat.id}`);
+          body.classList.toggle('open');
+          chevron.classList.toggle('open');
+        });
+
+        // Drag & drop still works on the whole zone
         zone.addEventListener('dragover', (e) => { e.preventDefault(); zone.classList.add('hover'); });
         zone.addEventListener('dragleave', () => zone.classList.remove('hover'));
         zone.addEventListener('drop', async (e) => {
           e.preventDefault();
           zone.classList.remove('hover');
+          // Auto-expand on drop
+          const body = zone.querySelector(`#body_${cat.id}`);
+          const chevron = zone.querySelector(`#chevron_${cat.id}`);
+          body.classList.add('open');
+          chevron.classList.add('open');
           handleFiles(e.dataTransfer.files, cat);
         });
 
@@ -896,6 +958,13 @@
       try {
         const res = await listAll(folderRef);
         listContainer.innerHTML = '';
+
+        // Update file count badge on collapsed header
+        const countBadge = document.getElementById(`count_${categoryConfig.id}`);
+        if (countBadge) {
+          countBadge.textContent = res.items.length;
+          countBadge.className = res.items.length > 0 ? 'drop-file-count has-files' : 'drop-file-count';
+        }
         
         if (res.items.length === 0) {
             listContainer.innerHTML = `<div style="font-size:11px; color:var(--muted);">No files uploaded. Drag & Drop here.</div>`;
@@ -1378,6 +1447,17 @@
                 imagePreviewModal.classList.remove('active');
                 document.getElementById('previewImageSrc').src = '';
             }
+        });
+    }
+
+    // Wire up collapsible Game Assets Library header
+    const assetLibraryHeader = document.getElementById('assetLibraryHeader');
+    if (assetLibraryHeader) {
+        assetLibraryHeader.addEventListener('click', () => {
+            const body = document.getElementById('assetLibraryBody');
+            const chevron = document.getElementById('assetLibraryChevron');
+            body.classList.toggle('open');
+            chevron.classList.toggle('open');
         });
     }
 
