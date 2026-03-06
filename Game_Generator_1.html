@@ -715,6 +715,20 @@
       { id: "reference", title: "Reference Project ZIP", accepts: ".zip", folder: "reference_zip" }
     ];
 
+    const DEFAULT_TEMPLATE_PROJECT = 'Side_Scroller';
+    const PROJECT_BOOTSTRAP_SECTIONS = [
+      ...FILE_CATEGORIES.map(cat => ({
+        folder: cat.folder,
+        title: cat.title,
+        virtual: false
+      })),
+      {
+        folder: '__asset_library__',
+        title: 'Game Assets Library',
+        virtual: true
+      }
+    ];
+
     let currentProject = null;
 
     const projectSelect = document.getElementById('projectSelect');
@@ -740,6 +754,105 @@
         globalStatus.textContent = msg;
         globalStatus.classList.add('active');
         setTimeout(() => globalStatus.classList.remove('active'), 4000);
+    }
+
+    function setCreateProjectProgress(percent, label = '') {
+      const safePercent = Math.max(0, Math.min(100, percent));
+      progressContainer.style.display = 'block';
+      progressBar.style.width = `${safePercent}%`;
+      if (label) {
+        globalStatus.textContent = label;
+        globalStatus.classList.add('active');
+      }
+    }
+
+    function resetCreateProjectProgress() {
+      progressContainer.style.display = 'none';
+      progressBar.style.width = '0%';
+    }
+
+    async function listAllRecursive(folderRef) {
+      const results = await listAll(folderRef);
+      const items = [...results.items];
+      for (const prefixRef of results.prefixes) {
+        const nestedItems = await listAllRecursive(prefixRef);
+        items.push(...nestedItems);
+      }
+      return items;
+    }
+
+    async function duplicateStorageItem(sourceItemRef, sourceBasePath, targetBasePath) {
+      const relativePath = sourceItemRef.fullPath.startsWith(`${sourceBasePath}/`)
+        ? sourceItemRef.fullPath.slice(sourceBasePath.length + 1)
+        : sourceItemRef.name;
+
+      const [downloadUrl, metadata] = await Promise.all([
+        getDownloadURL(sourceItemRef),
+        getMetadata(sourceItemRef).catch(() => null)
+      ]);
+
+      const response = await fetch(downloadUrl, { cache: 'no-store' });
+      if (!response.ok) {
+        throw new Error(`Failed to fetch ${sourceItemRef.fullPath}: HTTP ${response.status}`);
+      }
+
+      const blob = await response.blob();
+      const targetRef = ref(storage, `${targetBasePath}/${relativePath}`);
+      const uploadMetadata = metadata && metadata.contentType ? { contentType: metadata.contentType } : undefined;
+
+      await new Promise((resolve, reject) => {
+        const task = uploadBytesResumable(targetRef, blob, uploadMetadata);
+        task.on('state_changed', null, reject, resolve);
+      });
+    }
+
+    async function bootstrapProjectFromTemplate(targetProjectName, templateProjectName = DEFAULT_TEMPLATE_PROJECT) {
+      const templateRoot = `${ROOT}/${templateProjectName}`;
+      const targetRoot = `${ROOT}/${targetProjectName}`;
+      const totalSections = PROJECT_BOOTSTRAP_SECTIONS.length;
+      const templateRootListing = await listAll(ref(storage, templateRoot)).catch(() => ({ items: [], prefixes: [] }));
+
+      if (templateRootListing.items.length === 0 && templateRootListing.prefixes.length === 0) {
+        throw new Error(`Template project "${templateProjectName}" was not found.`);
+      }
+
+      for (let sectionIndex = 0; sectionIndex < PROJECT_BOOTSTRAP_SECTIONS.length; sectionIndex++) {
+        const section = PROJECT_BOOTSTRAP_SECTIONS[sectionIndex];
+        const sectionStart = (sectionIndex / totalSections) * 100;
+        const sectionEnd = ((sectionIndex + 1) / totalSections) * 100;
+
+        if (section.virtual) {
+          setCreateProjectProgress(sectionStart, `Populating ${section.title}...`);
+          await syncAssetsJson(targetProjectName);
+          setCreateProjectProgress(sectionEnd, `${section.title} ready.`);
+          continue;
+        }
+
+        const sourceBasePath = `${templateRoot}/${section.folder}`;
+        const targetBasePath = `${targetRoot}/${section.folder}`;
+        const sourceFolderRef = ref(storage, sourceBasePath);
+        const items = await listAllRecursive(sourceFolderRef).catch(() => []);
+
+        if (items.length === 0) {
+          setCreateProjectProgress(sectionEnd, `${section.title} ready. No template files found to duplicate.`);
+          continue;
+        }
+
+        for (let itemIndex = 0; itemIndex < items.length; itemIndex++) {
+          const itemRef = items[itemIndex];
+          const itemPercent = sectionStart + (((itemIndex + 1) / items.length) * (sectionEnd - sectionStart));
+          setCreateProjectProgress(itemPercent, `Populating ${section.title} (${itemIndex + 1}/${items.length})...`);
+          await duplicateStorageItem(itemRef, sourceBasePath, targetBasePath);
+        }
+
+        setCreateProjectProgress(sectionEnd, `${section.title} ready.`);
+      }
+    }
+
+    async function ensureProjectDoesNotExist(projectName) {
+      const existingProjectRef = ref(storage, `${ROOT}/${projectName}`);
+      const existing = await listAll(existingProjectRef).catch(() => ({ items: [], prefixes: [] }));
+      return existing.items.length === 0 && existing.prefixes.length === 0;
     }
 
     async function ensureAuth() {
@@ -806,18 +919,43 @@
     createProjectBtn.addEventListener('click', async () => {
       const name = newProjectName.value.trim().replace(/[^a-zA-Z0-9_-]/g, '_');
       if (!name) return alert("Enter a valid project name.");
-      
-      setStatus(`Creating project: ${name}...`);
-      await ensureAuth();
-      
-      const dummyRef = ref(storage, `${ROOT}/${name}/meta.json`);
-      const blob = new Blob([JSON.stringify({ created: new Date() })], { type: 'application/json' });
-      await uploadBytesResumable(dummyRef, blob);
-      
-      newProjectName.value = '';
-      await loadProjects();
-      projectSelect.value = name;
-      selectProject(name);
+
+      createProjectBtn.disabled = true;
+      newProjectName.disabled = true;
+      setCreateProjectProgress(0, `Creating project: ${name}...`);
+
+      try {
+        await ensureAuth();
+
+        const isAvailable = await ensureProjectDoesNotExist(name);
+        if (!isAvailable) {
+          throw new Error(`Project "${name}" already exists.`);
+        }
+
+        const dummyRef = ref(storage, `${ROOT}/${name}/meta.json`);
+        const blob = new Blob([JSON.stringify({ created: new Date().toISOString(), clonedFrom: DEFAULT_TEMPLATE_PROJECT })], { type: 'application/json' });
+        await new Promise((resolve, reject) => {
+          const task = uploadBytesResumable(dummyRef, blob);
+          task.on('state_changed', null, reject, resolve);
+        });
+
+        await bootstrapProjectFromTemplate(name, DEFAULT_TEMPLATE_PROJECT);
+
+        newProjectName.value = '';
+        await loadProjects();
+        projectSelect.value = name;
+        selectProject(name);
+        setCreateProjectProgress(100, `Project ${name} is ready.`);
+        setTimeout(() => resetCreateProjectProgress(), 1200);
+      } catch (e) {
+        console.error('Project creation failed', e);
+        setStatus(`Project creation failed: ${e.message || e}`);
+        alert(`Project creation failed: ${e.message || e}`);
+        setTimeout(() => resetCreateProjectProgress(), 1800);
+      } finally {
+        createProjectBtn.disabled = false;
+        newProjectName.disabled = false;
+      }
     });
 
     projectSelect.addEventListener('change', (e) => selectProject(e.target.value));
@@ -1012,14 +1150,14 @@
       }
     }
 
-    async function refreshAssetLibrary() {
-        if (!currentProject) return;
+    async function refreshAssetLibrary(projectName = currentProject) {
+        if (!projectName) return;
         const libraryContainer = document.getElementById('assetLibrary');
         const listContainer = document.getElementById('assetList');
         
-        const assetsRef = ref(storage, `${ROOT}/${currentProject}/assets`);
-        const modelsRef = ref(storage, `${ROOT}/${currentProject}/models`);
-        const objectZipsRef = ref(storage, `${ROOT}/${currentProject}/object_zips`);
+        const assetsRef = ref(storage, `${ROOT}/${projectName}/assets`);
+        const modelsRef = ref(storage, `${ROOT}/${projectName}/models`);
+        const objectZipsRef = ref(storage, `${ROOT}/${projectName}/object_zips`);
 
         try {
             const [assetsRes, modelsRes, objectZipsRes] = await Promise.all([
@@ -1074,15 +1212,15 @@
     // File "2" (WorldController.js) references assets by these keys — they must NOT change.
     // Purely numeric extensionless files in models/ are Cherry3D key-numbered runtime
     // artifacts and must be EXCLUDED from scanning (they are what assets.json maps TO).
-    async function syncAssetsJson() {
-        if (!currentProject) return;
+    async function syncAssetsJson(projectName = currentProject) {
+        if (!projectName) return;
         await ensureAuth();
 
         setStatus('Syncing assets.json with project files...');
 
-        const modelsRef  = ref(storage, `${ROOT}/${currentProject}/models`);
-        const zipsRef    = ref(storage, `${ROOT}/${currentProject}/object_zips`);
-        const assetsRef  = ref(storage, `${ROOT}/${currentProject}/assets`);
+        const modelsRef  = ref(storage, `${ROOT}/${projectName}/models`);
+        const zipsRef    = ref(storage, `${ROOT}/${projectName}/object_zips`);
+        const assetsRef  = ref(storage, `${ROOT}/${projectName}/assets`);
 
         let modelItems = [], zipItems = [], imageAudioItems = [];
         try { modelItems  = (await listAll(modelsRef).catch(() => ({items:[]}))).items;  } catch(e){}
@@ -1199,7 +1337,7 @@
         // Load existing project assets.json to preserve established key assignments
         let existingAssets = [];
         try {
-            const jsonRef = ref(storage, `${ROOT}/${currentProject}/json/assets.json`);
+            const jsonRef = ref(storage, `${ROOT}/${projectName}/json/assets.json`);
             const jsonUrl = await getDownloadURL(jsonRef);
             const jsonRes = await fetch(jsonUrl + '&v=' + Date.now(), { cache: 'no-store' });
             if (jsonRes.ok) {
@@ -1357,7 +1495,7 @@
         });
 
         const newJson = JSON.stringify(deduplicatedAssets, null, 2);
-        const targetRef = ref(storage, `${ROOT}/${currentProject}/json/assets.json`);
+        const targetRef = ref(storage, `${ROOT}/${projectName}/json/assets.json`);
         await uploadString(targetRef, newJson);
 
         setStatus(`assets.json synced — ${deduplicatedAssets.length} entries.`);
