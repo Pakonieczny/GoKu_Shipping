@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>Game-Generator-1</title>
+  <title>Game-Generator-V2</title>
   
   <script type="importmap">
     {
@@ -395,6 +395,77 @@
     .tranche-token-val.updating { color: var(--accent); }
     .tranche-token-divider { width: 1px; height: 14px; background: #2a3050; }
 
+    /* ── V2 Expert Agent Badges ── */
+    .tranche-card-agents {
+      display: flex; flex-wrap: wrap; gap: 5px; margin-bottom: 6px;
+    }
+    .tranche-agent-badge {
+      padding: 2px 8px; border-radius: 4px; font-size: 10px;
+      font-weight: 600; display: inline-flex; align-items: center; gap: 4px;
+      letter-spacing: 0.3px;
+    }
+
+    /* ── V2 Phase Separator ── */
+    .tranche-phase-separator {
+      display: flex; align-items: center; gap: 10px;
+      padding: 10px 20px; font-size: 11px; font-weight: 700;
+      text-transform: uppercase; letter-spacing: 1px;
+      border-bottom: 1px solid #141a30;
+    }
+    .tranche-phase-dot {
+      width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0;
+    }
+    .tranche-phase-label { flex: 1; }
+    .tranche-phase-count { font-weight: 500; opacity: 0.6; font-size: 10px; text-transform: none; letter-spacing: 0; }
+
+    /* ── V2 Game Intelligence Panel ── */
+    .tranche-intelligence {
+      padding: 14px 20px; border-bottom: 1px solid #1e2745;
+      background: rgba(168, 85, 247, 0.04); display: none;
+    }
+    .tranche-intelligence.active { display: block; }
+    .intelligence-header {
+      display: flex; align-items: center; gap: 10px;
+      cursor: pointer; font-size: 13px; user-select: none;
+    }
+    .intelligence-icon { font-size: 18px; }
+    .intelligence-title { font-weight: 600; color: #a78bfa; flex: 1; }
+    .intelligence-toggle {
+      font-size: 11px; color: var(--muted); transition: transform 0.25s;
+      padding: 2px 6px;
+    }
+    .intelligence-body {
+      display: none; margin-top: 10px; padding: 10px 12px;
+      background: #0b0d12; border-radius: 8px; border: 1px solid #1e2745;
+      font-size: 12px; color: var(--muted); line-height: 1.6;
+      white-space: pre-wrap; max-height: 250px; overflow-y: auto;
+      scrollbar-width: thin; scrollbar-color: #2b3a6b transparent;
+    }
+    .intelligence-body.open { display: block; }
+
+    /* ── V2 Quality Criteria in Cards ── */
+    .tranche-card-quality {
+      display: none; margin-top: 6px; padding: 8px 10px; border-radius: 6px;
+      background: rgba(43, 108, 255, 0.04); border: 1px solid #1a2540;
+      font-size: 11px; color: var(--muted); line-height: 1.5;
+    }
+    .tranche-card-quality.open { display: block; }
+    .tranche-card-quality-toggle {
+      margin-top: 4px; font-size: 10px; color: #a78bfa; cursor: pointer;
+      opacity: 0.7; transition: opacity 0.2s; user-select: none;
+    }
+    .tranche-card-quality-toggle:hover { opacity: 1; }
+
+    /* ── V2 Dependency Chain in Cards ── */
+    .tranche-card-deps {
+      display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px;
+    }
+    .tranche-dep-chip {
+      padding: 1px 6px; border-radius: 3px; font-size: 9px;
+      font-weight: 600; background: #1a1e2b; color: #64748b;
+      font-family: 'SF Mono', 'Fira Code', monospace;
+    }
+
     /* ── CodeMirror Custom Overrides ── */
     .CodeMirror { height: auto; min-height: 300px; border-radius: 8px; font-family: monospace; font-size: 13px; margin-top: 10px; z-index: 0; }
     .CodeMirror-scroll { max-height: 600px; }
@@ -432,7 +503,7 @@
   <div class="wrap">
     
     <div class="card">
-      <h1>Game Generator Projects</h1>
+      <h1>Game Generator V2</h1>
       
       <label>Active Project</label>
       <select id="projectSelect">
@@ -485,7 +556,7 @@
         <h2>AI Context Window</h2>
         <div style="display: flex; flex-direction: column; gap: 10px;">
           <div id="aiChatLog" style="height: 400px; overflow-y: auto; background: #0b0d12; border: 1px solid var(--line); border-radius: 10px; padding: 14px; font-size: 13px; font-family: monospace; display: flex; flex-direction: column; gap: 12px; white-space: pre-wrap; line-height: 1.5;">
-            <div style="color: var(--muted);">AI Context ready. Enter instructions below to modify the active project.</div>
+            <div style="color: var(--muted);">V2 Expert-Agent Pipeline ready. Enter game build instructions below — Opus will research the game, assign expert agents, and create focused micro-tranches.</div>
           </div>
 
           <div id="aiProgressPanel" class="ai-progress-panel">
@@ -517,17 +588,25 @@
             <div id="tranchePlanningSection" class="tranche-planning" style="display:none;">
               <div class="tranche-planning-spinner"></div>
               <div class="tranche-planning-text">
-                <span id="tranchePlanningLabel">Opus 4.6 is analyzing your prompt and creating build tranches...</span>
+                <span id="tranchePlanningLabel">Opus 4.6 is researching game design and creating expert-driven build tranches...</span>
                 <span class="analysis" id="tranchePlanningAnalysis"></span>
               </div>
+            </div>
+            <div id="trancheIntelligence" class="tranche-intelligence">
+              <div class="intelligence-header" id="intelligenceHeader">
+                <span class="intelligence-icon">🧠</span>
+                <span class="intelligence-title">Game Intelligence Report</span>
+                <span class="intelligence-toggle" id="intelligenceToggle">▸</span>
+              </div>
+              <div class="intelligence-body" id="intelligenceBody"></div>
             </div>
             <div class="tranche-list" id="trancheList"></div>
             <div class="tranche-footer">
               <div class="tranche-footer-models">
-                <div class="tranche-footer-model"><div class="tranche-footer-dot opus"></div> Opus 4.6 → Planning</div>
-                <div class="tranche-footer-model"><div class="tranche-footer-dot sonnet"></div> Sonnet 4.6 → Execution</div>
+                <div class="tranche-footer-model"><div class="tranche-footer-dot opus"></div> Opus 4.6 → Intelligence + Planning</div>
+                <div class="tranche-footer-model"><div class="tranche-footer-dot sonnet"></div> Sonnet 4.6 + Experts → Execution</div>
               </div>
-              <span id="trancheFooterStatus">Pipeline ready</span>
+              <span id="trancheFooterStatus">V2 Pipeline ready</span>
             </div>
             <div class="tranche-token-bar" id="trancheTokenBar">
               <span class="tranche-token-label">Tokens</span>
@@ -544,7 +623,7 @@
           </div>
           
           <div style="position: relative; width: 100%;">
-            <textarea id="aiPromptInput" placeholder="e.g., 'Change the player movement speed in main.js to 500 and update the index.html title...'" style="min-height: 80px; resize: vertical; width: 100%; padding-right: 140px;"></textarea>
+            <textarea id="aiPromptInput" placeholder="e.g., 'Build an Angry Birds style slingshot destruction game...' — V2 will research the game, assign 8 expert agents, and decompose into 8-15 micro-tranches." style="min-height: 80px; resize: vertical; width: 100%; padding-right: 140px;"></textarea>
             <div id="imageTagContainer" style="position: absolute; top: 10px; right: 10px; display: flex; flex-direction: column; gap: 6px; z-index: 10; pointer-events: none;"></div>
           </div>
           
@@ -1506,16 +1585,213 @@
     const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
     /* ═══════════════════════════════════════════════════════════
-       TRANCHE PIPELINE UI
+       V2 EXPERT AGENT DEFINITIONS
+    ═══════════════════════════════════════════════════════════ */
+    const EXPERT_AGENTS = {
+      physics_engine: {
+        name: "Physics Engine",
+        icon: "⚛️",
+        color: "#ff6b35",
+        systemPrompt: `You are a PHYSICS ENGINE EXPERT specializing in web-based game physics.
+Your expertise: rigid body dynamics, impulse-based physics, collision detection/response,
+2.5D constraint enforcement (Z-axis locking, drift correction), shared memory communication
+between main and physics threads, edge-triggered vs level-triggered physics commands,
+physics shape selection (bounding-box vs mesh vs sphere), deferred isReady initialization patterns.
+
+Quality criteria for your work:
+- Physics bodies must use correct motion types (DYNAMIC vs STATIC vs KINEMATIC)
+- All physics operations must be guarded by isReady checks
+- Z-axis must be locked for 2.5D games (velocity zeroing every N frames)
+- Mass ratios between objects must feel physically plausible
+- Impulse magnitudes must be normalized/clamped for consistent behavior
+- Angular velocity must be explicitly managed (not left to physics engine)
+- All collision handlers must use deferred registration pattern (requestAnimationFrame → isReady)`
+      },
+
+      game_mechanics: {
+        name: "Game Mechanics",
+        icon: "🎮",
+        color: "#4ecdc4",
+        systemPrompt: `You are a GAME MECHANICS EXPERT specializing in core gameplay loop design.
+Your expertise: turn-based game flow (shot → resolve → next shot → win/lose),
+damage systems (health, damage multipliers, threshold scoring), projectile mechanics
+(slingshot drag-aim-release, speed clamping, trajectory preview), level progression systems
+(authored levels, difficulty curves), scoring systems (per-kill, per-destruction, bonus, star ratings),
+state machine design (countdown → playing → shot-in-flight → settling → next-shot),
+input handling (mouse/touch/keyboard with proper guard chains).
+
+Quality criteria for your work:
+- Every state transition must be explicitly guarded (no double-triggers)
+- Input handlers must respect ALL game states (intro locked, launched, level ended)
+- Damage values must be tuned against health values for satisfying destruction
+- Scoring must reward skill while preventing frustration (threshold scoring at 85%)
+- Level designs must teach mechanics progressively
+- Speed clamping must decouple input power from flight range
+- All input handlers must check roundIntroLocked`
+      },
+
+      camera_cinematics: {
+        name: "Camera & Cinematics",
+        icon: "🎬",
+        color: "#a78bfa",
+        systemPrompt: `You are a CAMERA & CINEMATICS EXPERT specializing in game camera systems.
+Your expertise: camera state machines (overview, cinematic, follow, return), smooth camera
+interpolation (lerp rates, easing functions), cinematic sequences (multi-phase camera moves
+with precise timing), camera probing for engine compatibility (try every known API path),
+field-of-view and distance management, camera-driven pacing (building anticipation).
+
+Quality criteria for your work:
+- Camera update must ALWAYS run first in the render loop, before ANY guard checks
+- Cinematic sequences must have precise timing (seconds, not frames)
+- Camera lerp rates must vary by mode (slow for cinematics ~0.025, fast for follow ~3.0*dt)
+- Camera must never clip through geometry or show behind the scene
+- Cinematic must lock ALL player input during playback via roundIntroLocked
+- Camera follow must track projectile with slight prediction
+- Distance multiplier must maintain readable framing at all zoom levels
+- Multi-path camera probing must try position/target, setPosition, distance, viewMatrix, scene node`
+      },
+
+      audio_design: {
+        name: "Audio Design",
+        icon: "🔊",
+        color: "#f59e0b",
+        systemPrompt: `You are an AUDIO DESIGN EXPERT specializing in synthesized game audio.
+Your expertise: Web Audio API (oscillators, noise buffers, BiquadFilters, gain envelopes),
+sound design for game feedback (impacts, destruction, UI, ambience), audio synthesis without
+sample files (pure oscillator + filtered noise techniques), AudioContext lifecycle management
+(suspended state, user gesture unlocking), layered sound design (combining tones + noise for
+rich textures), frequency/duration/envelope tuning for emotional impact.
+
+Quality criteria for your work:
+- Every player action must have audio feedback (grab, stretch, launch, impact, settle)
+- Destruction sounds must vary by material (glass=highpass shatter, wood=bandpass crack, stone=lowpass crunch)
+- AudioContext must be resumed on first user gesture via resume() call
+- All audio operations must be wrapped in try/catch for graceful degradation
+- Sound layering: each "sound" should combine 2-3 synthesis techniques (tone + noise + sub)
+- Volume levels must be balanced (impacts louder than ambience/UI)
+- Core building blocks: playTone(freq, dur, type, vol, pitchEnd) and _playNoise(dur, filterFreq, filterQ, vol, filterType)`
+      },
+
+      visual_effects: {
+        name: "Visual Effects",
+        icon: "✨",
+        color: "#ec4899",
+        systemPrompt: `You are a VISUAL EFFECTS EXPERT specializing in particle systems and visual polish.
+Your expertise: particle system design (emitters, initializers, behaviors, presets), billboard
+rendering for 2.5D effects, material/PBR configuration (albedo, roughness, metalness, emissive),
+visual feedback for game events (impact sparks, smoke, debris, trails), destruction visualization
+(cracking, color changes, fade-outs), color theory for game readability.
+
+Quality criteria for your work:
+- Each particle preset must have tuned lifetime, size, velocity, and color ranges
+- Burst emitters must be pooled at [0,-100,0] and repositioned + emit() when needed
+- Particle billboard must be created BEFORE any emitters
+- Materials must be visually distinct at a glance (warm brown wood, light blue glass, cool grey stone, bright green pig)
+- Crack effects must appear at 50% health threshold (not just destruction)
+- Flight trails must persist correctly across physics state changes and stop on impact
+- PBR textures must be re-applied at 500ms and 2000ms after creation (async race condition)
+- On restartLevel, only recreate burst emitters — preserve flightTrail emitter`
+      },
+
+      ui_hud: {
+        name: "UI/HUD",
+        icon: "📊",
+        color: "#22c55e",
+        systemPrompt: `You are a UI/HUD EXPERT specializing in game interface design.
+Your expertise: HTML overlay UI for games (score, shots, level, modals), game state visualization
+(countdown, power bars, star ratings), responsive touch-friendly UI elements, modal systems
+(level complete, level failed, high score), CSS animation for UI transitions, information
+hierarchy (what the player needs to see, when).
+
+Quality criteria for your work:
+- UI must never block game input areas (especially slingshot drag zone)
+- All text must be readable against any game background (use text shadows or backdrops)
+- Modals must have clear call-to-action buttons (Restart, Next Level)
+- Score/shot/level display must update in real-time via updateUI callback
+- Power bar must accurately reflect aim state (0 to 1 range)
+- Star rating must be visually celebratory (1-3 stars based on score ratio + unused shots)
+- UI must handle edge cases (max level 15 wraps to 1, new high score display, nextLevel shows 'PLAY AGAIN' at max)`
+      },
+
+      game_loop_state: {
+        name: "Game Loop & State",
+        icon: "🔄",
+        color: "#2b6cff",
+        systemPrompt: `You are a GAME LOOP & STATE EXPERT specializing in game architecture.
+Your expertise: game state machine design (single gameState object, no globals), render loop
+structure (camera → guards → game logic), guard chain patterns (physics ready → game ended → not started),
+timer management (settle detection, countdown, cinematic timing), object lifecycle (creation, pooling,
+teardown, restart), factory function patterns for game engines, module export patterns.
+
+Quality criteria for your work:
+- ALL state must live in a single gameState object — no globals anywhere
+- Guard checks in onRender must follow strict priority ordering: camera first, then physics ready, game ended, not started
+- dt must have fallback (0.016) and clamping (< 0.2)
+- Teardown must clean up ALL dynamic objects (blocks, pigs, burst emitters) but preserve flightTrail
+- Restart must fully reset state without creating memory leaks (reuse monster, don't recreate)
+- Object counters must be unique per session (counter++, rbCounter++)
+- requestAnimationFrame(initializeGame) for deferred heavy init
+- module.exports = () => { ... return Object.assign({ onInit, onRender, ... }); }`
+      },
+
+      level_design: {
+        name: "Level Design",
+        icon: "🏗️",
+        color: "#06b6d4",
+        systemPrompt: `You are a LEVEL DESIGN EXPERT specializing in physics puzzle level construction.
+Your expertise: structural engineering for destructible buildings (load-bearing vs weak points),
+difficulty progression curves (tutorial → mastery → finale), material selection for gameplay
+variety (glass=fragile, stone=durable, wood=medium), pig placement for strategic depth
+(exposed vs protected), shot allocation balancing (enough to win, not enough to waste),
+Y-position stacking calculations (block heights + gaps).
+
+Quality criteria for your work:
+- Level 1 must be a simple tutorial (few blocks, obvious solution, 3 shots, 1 pig)
+- Each level must introduce or combine mechanics progressively
+- Pig placement must create risk/reward decisions (some exposed, some protected by stone)
+- Structures must be architecturally plausible (bases wider than tops, load-bearing pillars)
+- Shot counts must make levels challenging but solvable (never impossible)
+- Later levels must require multi-shot strategies (can't one-shot everything)
+- All Y positions must account for exact block heights and be documented in comments
+- Block shapes: smallSquare [0.6,0.6,0.8], tallRect [0.5,1.5,0.8], wideRect [1.8,0.4,0.8], largeSquare [1.2,1.2,0.8], thinPlank [2.5,0.2,0.8], fatPillar [0.8,2.0,0.8]`
+      }
+    };
+
+    // Build the JSON payload for the planning prompt
+    const EXPERT_AGENTS_JSON = JSON.stringify(
+      Object.entries(EXPERT_AGENTS).map(([key, agent]) => ({
+        id: key,
+        name: agent.name,
+        icon: agent.icon,
+        systemPrompt: agent.systemPrompt
+      })),
+      null, 2
+    );
+
+    /* ═══════════════════════════════════════════════════════════
+       V2 TRANCHE PIPELINE UI
     ═══════════════════════════════════════════════════════════ */
     const TrancheUI = {
       _timerInterval: null,
       _startTime: null,
+      _lastPhaseMap: null,
 
       show() {
         document.getElementById('tranchePipeline').classList.add('active');
         this._startTime = Date.now();
         this._startTimer();
+        this._lastPhaseMap = null;
+        // Wire up intelligence toggle
+        const intHeader = document.getElementById('intelligenceHeader');
+        if (intHeader && !intHeader._wired) {
+          intHeader._wired = true;
+          intHeader.addEventListener('click', () => {
+            const body = document.getElementById('intelligenceBody');
+            const toggle = document.getElementById('intelligenceToggle');
+            body.classList.toggle('open');
+            toggle.textContent = body.classList.contains('open') ? '▾' : '▸';
+          });
+        }
       },
 
       hide() {
@@ -1556,13 +1832,44 @@
         return str.replace(/[&<>'"]/g, t => ({'&':'&amp;','<':'&lt;','>':'&gt;',"'":"&#39;",'"':'&quot;'}[t]));
       },
 
+      _getAgentBadgeHTML(agentId) {
+        const agent = EXPERT_AGENTS[agentId];
+        if (!agent) return '';
+        return `<span class="tranche-agent-badge" style="background:${agent.color}15;color:${agent.color};border:1px solid ${agent.color}33;">${agent.icon} ${agent.name}</span>`;
+      },
+
+      _getPhaseMeta(phaseNum) {
+        const phases = {
+          1: { name: 'Foundation', color: '#3b82f6', icon: '🏛️' },
+          2: { name: 'Core Mechanics', color: '#f59e0b', icon: '⚙️' },
+          3: { name: 'Content & Polish', color: '#a78bfa', icon: '💎' },
+          4: { name: 'Integration', color: '#22c55e', icon: '🔗' },
+        };
+        return phases[phaseNum] || { name: `Phase ${phaseNum}`, color: '#64748b', icon: '📦' };
+      },
+
       showPlanning() {
         document.getElementById('tranchePlanningSection').style.display = 'flex';
-        document.getElementById('trancheHeaderTitle').textContent = 'Tranched Build Pipeline';
-        document.getElementById('trancheHeaderSub').textContent = 'Stage 0: Planning with Opus 4.6...';
+        document.getElementById('trancheHeaderTitle').textContent = 'V2 Expert-Agent Pipeline';
+        document.getElementById('trancheHeaderSub').textContent = 'Phase 0: Game Intelligence + Expert Planning...';
         document.getElementById('trancheOverallFill').style.width = '0%';
         document.getElementById('trancheList').innerHTML = '';
-        document.getElementById('trancheFooterStatus').textContent = 'Opus 4.6 analyzing prompt...';
+        document.getElementById('trancheFooterStatus').textContent = 'Opus 4.6 researching game design...';
+        // Reset intelligence panel
+        const intPanel = document.getElementById('trancheIntelligence');
+        intPanel.classList.remove('active');
+        document.getElementById('intelligenceBody').textContent = '';
+        document.getElementById('intelligenceBody').classList.remove('open');
+        document.getElementById('intelligenceToggle').textContent = '▸';
+      },
+
+      showGameIntelligence(analysisText) {
+        const intPanel = document.getElementById('trancheIntelligence');
+        const intBody = document.getElementById('intelligenceBody');
+        if (analysisText) {
+          intPanel.classList.add('active');
+          intBody.textContent = analysisText;
+        }
       },
 
       updateFromProgress(prog) {
@@ -1595,7 +1902,6 @@
           tokenIn.textContent = fmt(inp);
           tokenOut.textContent = fmt(out);
           tokenTotal.textContent = fmt(inp + out);
-          // Flash on change
           if (prevIn !== tokenIn.textContent) {
             tokenIn.classList.add('updating');
             setTimeout(() => tokenIn.classList.remove('updating'), 600);
@@ -1609,23 +1915,25 @@
 
         if (prog.status === 'planning') {
           planningSection.style.display = 'flex';
-          planningLabel.textContent = 'Opus 4.6 is analyzing your prompt and creating build tranches...';
+          planningLabel.textContent = 'Opus 4.6 is researching game design and creating expert-driven build tranches...';
           planningAnalysis.textContent = '';
           overallFill.style.width = '5%';
-          footerStatus.textContent = 'Planning phase active...';
+          footerStatus.textContent = 'Phase 0: Game Intelligence active...';
           return;
         }
 
         if (prog.status === 'executing' || prog.status === 'complete') {
-          // Hide planning spinner, show analysis
+          // Show Game Intelligence panel if available
           if (prog.planningAnalysis) {
+            this.showGameIntelligence(prog.planningAnalysis);
+
             planningSection.style.display = 'flex';
             const planDuration = (prog.planningEndTime && prog.planningStartTime)
               ? this._formatDuration(prog.planningEndTime - prog.planningStartTime)
               : '';
-            planningLabel.innerHTML = `✓ Plan created: <strong>${prog.totalTranches} tranche(s)</strong>${planDuration ? ` in ${planDuration}` : ''}`;
+            planningLabel.innerHTML = `✓ Game Intelligence + Plan: <strong>${prog.totalTranches} expert tranche(s)</strong>${planDuration ? ` in ${planDuration}` : ''}`;
             planningLabel.style.color = 'var(--success)';
-            planningAnalysis.textContent = prog.planningAnalysis;
+            planningAnalysis.textContent = '';
             planningSection.querySelector('.tranche-planning-spinner')?.remove();
           } else {
             planningSection.style.display = 'none';
@@ -1642,24 +1950,30 @@
             overallFill.classList.add('done');
             headerIcon.textContent = '✓';
             headerIcon.classList.add('done');
-            headerTitle.textContent = 'Build Complete';
+            headerTitle.textContent = 'V2 Build Complete';
             headerTimer.classList.add('done');
             this._stopTimer();
             const totalTime = (prog.completedTime && prog.planningStartTime)
               ? this._formatDuration(prog.completedTime - prog.planningStartTime)
               : '';
-            headerSub.textContent = `${prog.totalTranches} tranche(s) executed${totalTime ? ` — total time: ${totalTime}` : ''}`;
-            footerStatus.textContent = prog.finalMessage || 'Pipeline complete';
+            headerSub.textContent = `${prog.totalTranches} expert tranche(s) executed${totalTime ? ` — total time: ${totalTime}` : ''}`;
+            footerStatus.textContent = prog.finalMessage || 'V2 Pipeline complete';
           } else {
             const activeTranche = prog.tranches.find(t => t.status === 'in_progress');
             if (activeTranche) {
-              headerTitle.textContent = `Tranche ${activeTranche.index + 1}/${prog.totalTranches}: ${activeTranche.name}`;
-              headerSub.textContent = `Sonnet 4.6 executing tranche ${activeTranche.index + 1} of ${prog.totalTranches}...`;
+              // Show expert agent in header
+              const agentNames = (activeTranche.expertAgents || [])
+                .map(id => EXPERT_AGENTS[id] ? `${EXPERT_AGENTS[id].icon} ${EXPERT_AGENTS[id].name}` : id)
+                .join(' + ');
+              headerTitle.textContent = `T${activeTranche.index + 1}/${prog.totalTranches}: ${activeTranche.name}`;
+              headerSub.textContent = agentNames
+                ? `${agentNames} executing tranche ${activeTranche.index + 1}...`
+                : `Sonnet 4.6 executing tranche ${activeTranche.index + 1} of ${prog.totalTranches}...`;
             }
             footerStatus.textContent = `Executing tranche ${(prog.currentTranche || 0) + 1} of ${prog.totalTranches}...`;
           }
 
-          // Render tranche cards
+          // Render tranche cards with V2 enhancements
           this._renderTrancheCards(trancheList, prog.tranches);
         }
 
@@ -1680,53 +1994,111 @@
       _renderTrancheCards(container, tranches) {
         if (!tranches || tranches.length === 0) return;
 
-        // Only rebuild if tranche count changed or status changed
-        const existingCards = container.querySelectorAll('.tranche-card');
-        const needsRebuild = existingCards.length !== tranches.length;
+        // Check if we need to rebuild
+        const existingCards = container.querySelectorAll('.tranche-card, .tranche-phase-separator');
+        const needsRebuild = existingCards.length === 0 ||
+          container.querySelectorAll('.tranche-card').length !== tranches.length;
 
         if (needsRebuild) {
           container.innerHTML = '';
-        }
 
-        tranches.forEach((t, i) => {
-          let card = needsRebuild ? null : container.children[i];
+          // Group tranches by phase for V2 separators
+          let lastPhase = -1;
+          tranches.forEach((t, i) => {
+            const phase = t.phase || 0;
+            if (phase > 0 && phase !== lastPhase) {
+              lastPhase = phase;
+              const phaseMeta = this._getPhaseMeta(phase);
+              const phaseCount = tranches.filter(tr => tr.phase === phase).length;
+              const sep = document.createElement('div');
+              sep.className = 'tranche-phase-separator';
+              sep.innerHTML = `
+                <div class="tranche-phase-dot" style="background:${phaseMeta.color};"></div>
+                <span class="tranche-phase-label" style="color:${phaseMeta.color};">${phaseMeta.icon} Phase ${phase}: ${phaseMeta.name}</span>
+                <span class="tranche-phase-count">${phaseCount} tranche${phaseCount !== 1 ? 's' : ''}</span>
+              `;
+              container.appendChild(sep);
+            }
 
-          if (!card) {
-            card = document.createElement('div');
+            const card = document.createElement('div');
             card.className = 'tranche-card';
+            card.dataset.trancheIndex = i;
             card.style.animationDelay = `${i * 0.08}s`;
             card.innerHTML = `
               <div class="tranche-card-index pending" data-role="index">${i + 1}</div>
               <div class="tranche-card-body">
+                <div class="tranche-card-agents" data-role="agents"></div>
                 <div class="tranche-card-name" data-role="name"></div>
                 <div class="tranche-card-desc" data-role="desc"></div>
+                <div class="tranche-card-deps" data-role="deps"></div>
                 <div class="tranche-card-meta" data-role="meta"></div>
                 <div class="tranche-card-message" data-role="msg" style="display:none;"></div>
+                <div class="tranche-card-quality-toggle" data-role="qtoggle" onclick="var q=this.nextElementSibling;q.classList.toggle('open');this.textContent=q.classList.contains('open')?'▾ Hide quality criteria':'▸ Quality criteria';" style="display:none;">▸ Quality criteria</div>
+                <div class="tranche-card-quality" data-role="quality"></div>
                 <div class="tranche-card-prompt-toggle" data-role="toggle" onclick="this.nextElementSibling.classList.toggle('open'); this.textContent = this.nextElementSibling.classList.contains('open') ? '▾ Hide tranche prompt' : '▸ Show tranche prompt';">▸ Show tranche prompt</div>
                 <div class="tranche-card-prompt-box" data-role="prompt"></div>
               </div>
             `;
             container.appendChild(card);
-          }
+          });
+        }
 
-          // Update card content
+        // Update each card's content
+        const cards = container.querySelectorAll('.tranche-card');
+        cards.forEach((card) => {
+          const i = parseInt(card.dataset.trancheIndex);
+          if (isNaN(i) || i >= tranches.length) return;
+          const t = tranches[i];
+
           const indexEl = card.querySelector('[data-role="index"]');
+          const agentsEl = card.querySelector('[data-role="agents"]');
           const nameEl = card.querySelector('[data-role="name"]');
           const descEl = card.querySelector('[data-role="desc"]');
+          const depsEl = card.querySelector('[data-role="deps"]');
           const metaEl = card.querySelector('[data-role="meta"]');
           const msgEl = card.querySelector('[data-role="msg"]');
           const promptEl = card.querySelector('[data-role="prompt"]');
+          const qualityEl = card.querySelector('[data-role="quality"]');
+          const qToggleEl = card.querySelector('[data-role="qtoggle"]');
 
+          // Phase color for index badge
+          const phaseMeta = this._getPhaseMeta(t.phase || 0);
           indexEl.className = `tranche-card-index ${t.status}`;
           if (t.status === 'complete') indexEl.textContent = '✓';
           else if (t.status === 'error') indexEl.textContent = '✕';
           else indexEl.textContent = i + 1;
+          // Tint the index based on phase when pending
+          if (t.status === 'pending' && t.phase) {
+            indexEl.style.borderColor = phaseMeta.color + '55';
+            indexEl.style.color = phaseMeta.color + 'aa';
+          }
+
+          // Expert agent badges (V2)
+          if (t.expertAgents && t.expertAgents.length > 0) {
+            agentsEl.innerHTML = t.expertAgents.map(id => this._getAgentBadgeHTML(id)).join('');
+          } else {
+            agentsEl.innerHTML = '';
+          }
 
           nameEl.textContent = t.name || `Tranche ${i + 1}`;
           descEl.textContent = t.description || '';
 
+          // Dependency chips (V2)
+          if (t.dependencies && t.dependencies.length > 0) {
+            depsEl.innerHTML = '<span style="font-size:9px;color:#475569;margin-right:2px;">← </span>' +
+              t.dependencies.map(d => `<span class="tranche-dep-chip">${this._escapeHTML(String(d))}</span>`).join('');
+          } else {
+            depsEl.innerHTML = '';
+          }
+
           // Build meta tags
           let metaHTML = `<span class="tranche-card-tag ${t.status}">${t.status === 'in_progress' ? 'BUILDING...' : t.status.toUpperCase()}</span>`;
+          if (t.phase) {
+            metaHTML += `<span class="tranche-card-tag" style="background:${phaseMeta.color}15;color:${phaseMeta.color};border:1px solid ${phaseMeta.color}33;">${phaseMeta.icon} P${t.phase}</span>`;
+          }
+          if (t.estimatedLines) {
+            metaHTML += `<span class="tranche-card-time" style="color:#64748b;">~${t.estimatedLines} lines</span>`;
+          }
           if (t.startTime && t.endTime) {
             metaHTML += `<span class="tranche-card-time">⏱ ${this._formatDuration(t.endTime - t.startTime)}</span>`;
           } else if (t.startTime && t.status === 'in_progress') {
@@ -1745,6 +2117,16 @@
           }
           metaEl.innerHTML = metaHTML;
 
+          // Quality criteria (V2)
+          if (t.qualityCriteria && t.qualityCriteria.length > 0) {
+            qToggleEl.style.display = 'block';
+            qualityEl.innerHTML = t.qualityCriteria.map((c, ci) =>
+              `<div style="margin-bottom:3px;"><span style="color:#475569;">${ci + 1}.</span> ${this._escapeHTML(c)}</div>`
+            ).join('');
+          } else {
+            qToggleEl.style.display = 'none';
+          }
+
           // Show message if complete or error
           if (t.message && (t.status === 'complete' || t.status === 'error')) {
             msgEl.style.display = 'block';
@@ -1762,8 +2144,11 @@
 
         // Auto-scroll to the active card
         const activeIdx = tranches.findIndex(t => t.status === 'in_progress');
-        if (activeIdx >= 0 && container.children[activeIdx]) {
-          container.children[activeIdx].scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        if (activeIdx >= 0) {
+          const activeCard = container.querySelector(`.tranche-card[data-tranche-index="${activeIdx}"]`);
+          if (activeCard) {
+            activeCard.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+          }
         }
       }
     };
@@ -2268,8 +2653,121 @@
         - Infer PBR texture maps (Albedo, Normal, Roughness) from file suffixes and apply via createMaterial()
         - Use Animation ID references to trigger animations via gameState.playAnimation()
 
-        RESPONSE FORMAT:
-        Output ONLY changed lines using SEARCH/REPLACE blocks in the "content" field of your JSON response:
+        ═══════════════════════════════════════════════════════════
+        V2 TRANCHE PLANNING PROTOCOL — EXPERT-AGENT PIPELINE
+        ═══════════════════════════════════════════════════════════
+
+        You are an expert game development architect. Your job is to decompose this
+        game build request into a sequence of focused, expert-driven micro-tranches.
+        You must follow this EXACT multi-step protocol.
+
+        ───────────────────────────────────────────────────────────
+        STEP 0 — GAME INTELLIGENCE (MANDATORY — DO NOT SKIP)
+        ───────────────────────────────────────────────────────────
+        Before creating ANY tranches, deeply analyze the game being requested:
+
+        A) GAME IDENTITY: What existing game(s) is this based on? What genre and
+           sub-genre? What makes the reference game legendary and satisfying to play?
+
+        B) ADDICTION MECHANICS — THE "JUICE": Research and list the SPECIFIC design
+           details that make this type of game feel satisfying:
+           - Physics feel (e.g., "the parabolic arc gives a sense of control")
+           - Destruction feedback (e.g., "chain reactions feel earned, not random")
+           - Camera work (e.g., "anticipation camera builds tension before each shot")
+           - Sound design (e.g., "distinct material break sounds provide visceral feedback")
+           - Pacing (e.g., "turn-based with settle detection creates tension-release rhythm")
+           Be SPECIFIC with concrete details, not generic ("good physics" is NOT enough).
+
+        C) CRITICAL SYSTEM MAP: List every distinct system in the prompt document.
+           For EACH system: what it does, what it depends on, what depends on it,
+           which exact tuned values are interconnected and must not be changed individually.
+
+        D) FAILURE MODES: Based on the prompt's pitfall warnings and your game knowledge:
+           - What will break if simplified? (cite specific systems)
+           - What naive implementations have been tried and failed? (cite pitfalls)
+           - What timing/ordering dependencies exist? (cite specific patterns)
+
+        Output this analysis as your "planningAnalysis" field. This analysis will be
+        injected into EVERY tranche executor's context as critical domain knowledge.
+
+        ───────────────────────────────────────────────────────────
+        STEP 1 — EXPERT AGENT ASSIGNMENT
+        ───────────────────────────────────────────────────────────
+        Each tranche MUST be assigned 1-2 expert agents from this roster.
+        The expert agent's system prompt will be prepended to the tranche
+        execution prompt, giving the executor deep domain knowledge:
+
+        ${EXPERT_AGENTS_JSON}
+
+        ───────────────────────────────────────────────────────────
+        STEP 2 — MICRO-TRANCHE DECOMPOSITION
+        ───────────────────────────────────────────────────────────
+        Create 8-15 focused micro-tranches following these strict rules:
+
+        a) SINGLE RESPONSIBILITY: Each tranche handles ONE subsystem or one closely
+           coupled pair. NEVER combine unrelated systems (e.g., audio + physics).
+
+        b) SIZE LIMIT: Target 150-300 lines of new/modified code per tranche.
+           If a tranche would produce 400+ lines, SPLIT it into two.
+
+        c) EXPLICIT DEPENDENCIES: List which prior tranches must complete first.
+           The "dependencies" array uses tranche names (e.g., ["Scaffolding & State"]).
+           Never reference code that hasn't been created by a prior tranche.
+
+        d) QUALITY CRITERIA: Each tranche includes 4-8 specific acceptance criteria
+           drawn from the assigned expert agent's quality standards.
+
+        e) GAME-SPECIFIC CONTEXT: Each tranche's prompt must include:
+           - Relevant game intelligence excerpts from Step 0
+           - EXACT values from the prompt that this tranche implements
+           - Pitfall warnings specific to this subsystem (quoted from the prompt)
+           - How this system connects to the game's "juice" / addictiveness
+
+        f) PHASED ORDERING (assign a phase number 1-4 to each tranche):
+           Phase 1 (Foundation): State object, physics base, materials, helper functions
+           Phase 2 (Core Mechanics): Player avatar, input, launch, projectile, destruction
+           Phase 3 (Content & Polish): Camera, audio, levels, UI, particles
+           Phase 4 (Integration): Wiring onRender, connecting handlers, edge cases, final polish
+
+        ───────────────────────────────────────────────────────────
+        STEP 3 — TRANCHE PROMPT CRAFTING
+        ───────────────────────────────────────────────────────────
+        For EACH tranche, write a COMPLETE self-contained execution prompt that includes:
+        1. The expert agent system prompt (from the roster above)
+        2. Game intelligence context relevant to this tranche (from Step 0)
+        3. The EXACT specifications from the original prompt document for this system
+        4. Code patterns with exact values (copy from the prompt, don't paraphrase)
+        5. A quality checklist the executor MUST verify before submitting
+        6. What NOT to do — specific pitfalls from the original prompt for this system
+
+        ═══════════════════════════════════════════════════════════
+        OUTPUT FORMAT
+        ═══════════════════════════════════════════════════════════
+        Respond with a JSON object:
+        {
+          "planningAnalysis": "Your Step 0 game intelligence analysis (detailed)...",
+          "tranches": [
+            {
+              "name": "Tranche Name",
+              "description": "What this tranche builds",
+              "expertAgents": ["agent_id_1", "agent_id_2"],
+              "phase": 1,
+              "dependencies": [],
+              "expectedFiles": ["models/2"],
+              "estimatedLines": 200,
+              "qualityCriteria": [
+                "All state in single gameState object",
+                "No global variables",
+                "dt fallback to 0.016 and clamped < 0.2",
+                "requestAnimationFrame for deferred init"
+              ],
+              "prompt": "The FULL self-contained execution prompt for this tranche..."
+            }
+          ]
+        }
+
+        RESPONSE FORMAT FOR TRANCHE EXECUTION:
+        Each tranche executor must output ONLY changed lines using SEARCH/REPLACE blocks:
 
         <<<<<<< SEARCH
         [exact code from original file, with context lines for unique match]
@@ -2284,8 +2782,9 @@
         4. For completely new files, output full code without SEARCH/REPLACE tags.
 
         Do NOT include "assets.json" in your updatedFiles response.
+        In your 'message', provide a detailed changelog of modifications.
 
-        In your 'message', provide a detailed changelog of which files you modified and the logic changes.
+        ═══════════════════════════════════════════════════════════
 
         User Request: ${prompt}`;
 
@@ -2306,7 +2805,7 @@
         // --------------------------------------------
 
         setStatus('AI is processing files (This may take a minute)...');
-        Progress.step('Sending context to Claude', 'Building enhanced prompt + files...');
+        Progress.step('Sending context to Claude', 'Building V2 expert-agent pipeline prompt + files...');
         const inlineImages = await Promise.all(attachedPromptImages.map(async (file) => {
             return new Promise((resolve, reject) => {
                 const reader = new FileReader();
@@ -2328,7 +2827,7 @@
         
         // --- NEW: Bypass Netlify 256KB Payload Limit ---
         Progress.step('Uploading payload to Firebase', 'Bypassing Netlify async size limits...');
-        const payloadBody = JSON.stringify({ prompt: enhancedPrompt, files: projectFiles, projectPath, selectedAssets, inlineImages });
+        const payloadBody = JSON.stringify({ prompt: enhancedPrompt, files: projectFiles, projectPath, selectedAssets, inlineImages, expertAgents: EXPERT_AGENTS });
         const requestFileRef = ref(storage, `${projectPath}/ai_request.json`);
         await uploadString(requestFileRef, payloadBody);
 
@@ -2359,7 +2858,7 @@
         }
 
         let result = null;
-        Progress.step('Waiting for Claude response', 'Polling Firebase for tranche progress...');
+        Progress.step('Waiting for Claude response', 'Polling Firebase for V2 expert tranche progress...');
 
         // Show the tranche pipeline UI
         TrancheUI.show();
@@ -2399,9 +2898,12 @@
               if (progressData.status === 'executing' && progressData.tranches) {
                 const active = progressData.tranches.find(t => t.status === 'in_progress');
                 if (active) {
+                  const agentLabel = (active.expertAgents || [])
+                    .map(id => { const a = EXPERT_AGENTS[id]; return a ? `${a.icon} ${a.name}` : id; })
+                    .join(' + ');
                   Progress.step(
-                    `Tranche ${active.index + 1}/${progressData.totalTranches}: ${active.name}`,
-                    active.description || 'Sonnet 4.6 executing...'
+                    `T${active.index + 1}/${progressData.totalTranches}: ${active.name}`,
+                    agentLabel ? `${agentLabel} executing...` : (active.description || 'Sonnet 4.6 executing...')
                   );
                 }
               }
@@ -2558,8 +3060,8 @@
         }
 
         appendToChatLog('AI', result.message || "Files have been updated successfully.");
-        setStatus('AI tranched build complete.');
-        Progress.done('Tranched build complete ✦');
+        setStatus('V2 expert-agent tranched build complete.');
+        Progress.done('V2 Expert Pipeline complete ✦');
 
         // Final tranche UI update
         try {
