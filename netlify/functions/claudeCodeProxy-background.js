@@ -55,6 +55,8 @@ async function callClaude(apiKey, { model, maxTokens, system, userContent, effor
 }
 
 /* ── helper: strip markdown fences and prose to extract JSON ─── */
+/* Used ONLY for the planning phase (Opus), which outputs pure metadata
+   strings — no embedded code — so JSON is safe there.               */
 function stripFences(text) {
   let cleaned = text
     .replace(/^```json\s*/i, "")
@@ -69,6 +71,55 @@ function stripFences(text) {
   }
 
   return cleaned.trim();
+}
+
+/* ── helper: parse tranche executor delimiter-format responses ── */
+/* Tranche executors output raw file content between delimiters,
+   completely bypassing JSON escaping. This eliminates the entire
+   class of "Unexpected non-whitespace character after JSON" errors
+   that occur when Claude embeds code inside a JSON string field.
+
+   Expected format from the executor:
+     ===FILE_START: models/2===
+     ...raw file content, zero escaping needed...
+     ===FILE_END: models/2===
+
+     ===MESSAGE===
+     Changelog text here
+     ===END_MESSAGE===
+*/
+function parseDelimitedResponse(text) {
+  const files = [];
+
+  // Extract all FILE_START / FILE_END blocks
+  const fileRegex = /===FILE_START:\s*([^\n]+?)\s*===\n([\s\S]*?)===FILE_END:\s*\1\s*===/g;
+  let match;
+  while ((match = fileRegex.exec(text)) !== null) {
+    const path = match[1].trim();
+    const content = match[2]; // preserve exactly — no trimming
+    if (path && content !== undefined) {
+      files.push({ path, content });
+    }
+  }
+
+  // Extract message block
+  const msgMatch = text.match(/===MESSAGE===\n([\s\S]*?)===END_MESSAGE===/);
+  const message = msgMatch ? msgMatch[1].trim() : "Tranche completed.";
+
+  // If no delimiters found at all, fall back to JSON for backwards compat
+  if (files.length === 0) {
+    try {
+      const parsed = JSON.parse(stripFences(text));
+      if (parsed && Array.isArray(parsed.updatedFiles)) {
+        console.warn("Executor used JSON format instead of delimiter format — parsed as fallback.");
+        return parsed;
+      }
+    } catch (_) { /* ignore */ }
+    // Return empty-handed; caller will treat as a skippable parse error
+    return null;
+  }
+
+  return { updatedFiles: files, message };
 }
 
 /* ── helper: save progress to Firebase ───────────────────────── */
@@ -413,26 +464,49 @@ You must respond ONLY with a valid JSON object. No markdown, no code fences, no 
 
       console.log(`TRANCHE ${nextTranche + 1}/${progress.totalTranches}: ${tranche.name} (Job ${jobId})`);
 
+      // IMPORTANT: Executors use DELIMITER FORMAT, NOT JSON.
+      // Embedding raw JS/HTML code inside JSON string fields causes frequent
+      // parse failures because LLMs miss-escape quotes, backslashes, and
+      // newlines. Delimiters require zero escaping and are completely robust.
       const executionSystem = `You are an expert game development AI.
 The user will provide project files and a focused modification request (one tranche of a larger build).
-You must respond ONLY with a valid JSON object. Do not use markdown code blocks.
 
-The JSON format must be EXACTLY:
-{
-  "message": "A detailed explanation of what you implemented in this tranche, including specific functions, variables, and logic you added or changed.",
-  "updatedFiles": [
-    { "path": "folder/filename.ext", "content": "THE_ENTIRE_UPDATED_FILE_CONTENT" }
-  ]
-}
+You must respond using DELIMITER FORMAT only. Do NOT use JSON. Do NOT use markdown code blocks.
+
+For each file you update or create, output it like this:
+
+===FILE_START: path/to/filename===
+...complete raw file content here, exactly as it should be saved...
+===FILE_END: path/to/filename===
+
+After all files, add a message block:
+
+===MESSAGE===
+A detailed explanation of what you implemented in this tranche, including specific functions, variables, and logic you added or changed.
+===END_MESSAGE===
+
+EXAMPLE (two files updated):
+===FILE_START: models/2===
+// full JS content here
+===FILE_END: models/2===
+
+===FILE_START: models/23===
+<!DOCTYPE html>...full HTML here...
+===FILE_END: models/23===
+
+===MESSAGE===
+Added physics body initialization and collision handler registration.
+===END_MESSAGE===
 
 CRITICAL RULES:
-- Only include files in 'updatedFiles' that actually need to be changed or created.
-- The main logic file is named "2" in the "models" folder. Never output "WorldController.js".
-- The main HTML file is named "23" in the "models" folder. Never output "document.html".
+- Only include files that actually need to be changed or created.
+- The main logic file is named "2" in the "models" folder. Never use "WorldController.js".
+- The main HTML file is named "23" in the "models" folder. Never use "document.html".
 - "assets.json" is in the "json" folder.
 - Always output the COMPLETE file content for each updated file — not patches or diffs.
-- Build upon the existing file contents provided to you. Do NOT discard or overwrite work from prior tranches. You are adding to and extending the existing code.
-- If the file already has functions, variables, or structures from prior tranches, KEEP THEM ALL and add your new code alongside them.`;
+- Build upon the existing file contents provided. Do NOT discard or overwrite work from prior tranches.
+- If the file already has functions, variables, or structures from prior tranches, KEEP THEM ALL and add your new code alongside them.
+- The delimiter lines (===FILE_START:=== etc.) must appear exactly as shown, on their own lines.`;
 
       // Build file context from accumulated state
       let trancheFileContext = "Here are the current project files (includes all output from prior tranches — you MUST preserve all existing code):\n\n";
@@ -486,17 +560,16 @@ CRITICAL RULES:
           progress.tranches[nextTranche].tokenUsage = trancheResponseObj.usage;
         }
 
-        let trancheResult;
-        try {
-          trancheResult = JSON.parse(stripFences(trancheResponseObj.text));
-        } catch (e) {
+        // Parse using delimiter format — no JSON escaping issues possible
+        const trancheResult = parseDelimitedResponse(trancheResponseObj.text);
+        if (!trancheResult) {
           progress.tranches[nextTranche].status = "error";
           progress.tranches[nextTranche].endTime = Date.now();
-          progress.tranches[nextTranche].message = `Failed to parse JSON response: ${e.message}`;
+          progress.tranches[nextTranche].message = "Executor returned no recognisable file delimiters or valid JSON fallback.";
           await saveProgress(bucket, projectPath, progress);
-          console.error(`Tranche ${nextTranche + 1} JSON parse failed:`, e.message);
+          console.error(`Tranche ${nextTranche + 1} produced no parseable output.`);
+          console.error("Raw response (first 500 chars):", trancheResponseObj.text.slice(0, 500));
 
-          // Save state and chain to next tranche (skip this one)
           state.progress = progress;
           await savePipelineState(bucket, projectPath, state);
 
@@ -504,7 +577,6 @@ CRITICAL RULES:
             await chainToSelf({ projectPath, jobId, mode: "tranche", nextTranche: nextTranche + 1 });
             return { statusCode: 200, body: JSON.stringify({ success: true, chained: true, phase: `tranche_${nextTranche}_parse_error` }) };
           }
-          trancheResult = null;
           // Fall through to finalization
         }
 

@@ -2968,12 +2968,13 @@ Quality criteria for your work:
       const {
         repairAttempt = 0,
         repairTargets = [],
-        preserveButtonLock = false
+        preserveButtonLock = false,
+        parseErrorRetry = 0           // separate counter for backend JSON parse failures
       } = options;
 
       const basePrompt = promptOverride || aiPromptInput.value.trim();
       if (!basePrompt || !currentProject) {
-          if (!preserveButtonLock && repairAttempt === 0) sendToAiBtn.disabled = false;
+          if (!preserveButtonLock && repairAttempt === 0 && parseErrorRetry === 0) sendToAiBtn.disabled = false;
           return;
       }
 
@@ -2985,10 +2986,13 @@ Quality criteria for your work:
       selectedModelNames = null;
 
       let scannedExtentsList = [];
-      if (repairAttempt === 0) {
+      if (repairAttempt === 0 && parseErrorRetry === 0) {
         aiPromptInput.value = '';
         appendToChatLog('You', basePrompt);
         Progress.start('Starting AI pipeline...');
+      } else if (parseErrorRetry > 0) {
+        appendToChatLog('System', `Backend parse error detected — retrying full build (attempt ${parseErrorRetry}/${AI_HARDENING.repairPassLimit}).`, 'normal');
+        Progress.step(`Parse error retry ${parseErrorRetry}`, 'Restarting full AI pipeline after backend JSON failure...');
       } else {
         appendToChatLog('System', `Automatic repair pass ${repairAttempt}/${AI_HARDENING.repairPassLimit} started.`, 'normal');
         Progress.step(`Repair pass ${repairAttempt}`, repairTargets.length ? repairTargets.map(t => t.safePath || t.path).join(', ') : 'Recovering malformed AI output');
@@ -3122,7 +3126,52 @@ ${JSON.stringify(scannedExtentsList, null, 2)}` : '';
 ${repairTargets.map(t => `- ${t.safePath || t.path}: ${t.reason || 'unknown issue'}`).join('\n')}`
           : '';
 
-        const enhancedPrompt = `
+        // ── For repair passes, use a lean targeted prompt that skips the full
+        // V2 tranche planning pipeline. Sending the planning instructions during
+        // a repair causes Claude to spin up a brand-new full build instead of
+        // surgically fixing only the failed files.
+        const enhancedPrompt = repairAttempt > 0
+          ? `You are an expert game developer performing a SURGICAL REPAIR of specific failed files.
+Do NOT plan new tranches. Do NOT redesign the game. Fix ONLY the exact targets listed below.
+
+${projectFiles['models/2'] ? `
+=== CURRENT FILE: models/2 ===
+${projectFiles['models/2']}` : ''}
+${projectFiles['models/23'] ? `
+=== CURRENT FILE: models/23 ===
+${projectFiles['models/23']}` : ''}
+${projectFiles['json/assets.json'] ? `
+=== CURRENT FILE: json/assets.json ===
+${projectFiles['json/assets.json']}` : ''}
+${repairContext}
+
+═══════════════════════════════════════════════════════════
+REPAIR INSTRUCTIONS — PASS ${repairAttempt}/${AI_HARDENING.repairPassLimit}
+═══════════════════════════════════════════════════════════
+
+You must regenerate ONLY the files listed in AUTOMATIC REPAIR TARGETS above.
+Rules:
+1. Return strict JSON only — no markdown, no commentary outside the JSON envelope.
+2. Return updatedFiles ONLY for the failed targets listed. Do not touch any other file.
+3. Preserve every working system already present in the current file content.
+4. For models/2: you MUST retain all particle, impact, trail, pig death, and explosion
+   systems. If the validation says these were missing, rebuild those subsystems completely
+   and correctly — do not remove them.
+5. Output full file content (not SEARCH/REPLACE blocks) for each repaired file.
+
+OUTPUT FORMAT — respond with exactly this JSON shape:
+{
+  "updatedFiles": [
+    {
+      "path": "models/2",
+      "content": "...full corrected file content..."
+    }
+  ],
+  "message": "Repair summary: what was fixed and why it was missing."
+}
+
+Original user request for context: ${basePrompt}`
+          : `
 ${projectFiles['models/2'] ? `
 === FILE: models/2 ===
 ${projectFiles['models/2']}` : ''}
@@ -3135,7 +3184,6 @@ ${projectFiles['json/assets.json']}` : ''}
 ${assetString}
 ${zipContextString}
 ${extentsContext}
-${repairContext}
 
 ═══════════════════════════════════════════════════════════
 V2 EXPERT-AGENT TRANCHED BUILD PIPELINE
@@ -3531,6 +3579,46 @@ User Request: ${prompt}`;
 
       } catch (error) {
         console.error('AI Update Error:', error);
+
+        // Backend JSON parse failures mean one tranche returned malformed output.
+        // All already-completed tranches wrote to Firebase successfully — don't redo them.
+        // Instead, read ai_progress.json to find which tranche(s) didn't complete,
+        // then target only those files with the lean surgical repair prompt.
+        const isBackendParseError = /Failed to parse JSON response|parse JSON response|Unexpected non-whitespace character after JSON|Unexpected token/i.test(error.message || '');
+        if (isBackendParseError && parseErrorRetry < AI_HARDENING.repairPassLimit) {
+          Progress.warn('Backend JSON parse error — identifying failed tranche', error.message);
+          let parseRepairTargets = [];
+          try {
+            const progressRead = await fetchStorageJsonSafe(progressFileRef, projectPath, 'ai_progress_for_repair');
+            if (progressRead.ok && Array.isArray(progressRead.data?.tranches)) {
+              const incompleteTranches = progressRead.data.tranches.filter(t => t.status !== 'complete');
+              parseRepairTargets = incompleteTranches.flatMap(t =>
+                (t.expectedFiles || ['models/2']).map(f => ({
+                  path: f,
+                  safePath: f,
+                  reason: `Tranche "${t.name}" failed with backend JSON parse error: ${error.message}`
+                }))
+              );
+            }
+          } catch (progressReadErr) {
+            console.warn('Could not read progress for parse error recovery:', progressReadErr);
+          }
+
+          // Fallback: if progress was unreadable, target models/2 as the most likely culprit
+          if (parseRepairTargets.length === 0) {
+            parseRepairTargets = [{ path: 'models/2', safePath: 'models/2', reason: `Backend JSON parse error: ${error.message}` }];
+          }
+
+          appendToChatLog('System', `Backend JSON parse error — surgically repairing ${parseRepairTargets.length} file(s): ${parseRepairTargets.map(t => t.safePath).join(', ')}`, 'error');
+          await executeAIPipeline(basePrompt, {
+            repairAttempt: repairAttempt + 1,   // use repair mode (lean targeted prompt)
+            repairTargets: parseRepairTargets,
+            preserveButtonLock: true,
+            parseErrorRetry: parseErrorRetry + 1
+          });
+          return;
+        }
+
         const isRecoverable = /Malformed final AI response|AI response is missing updatedFiles array|AI response was not a JSON object|strict JSON only/i.test(error.message || '');
         if (isRecoverable && repairAttempt < AI_HARDENING.repairPassLimit) {
           appendToChatLog('System', `Recoverable pipeline issue detected. Re-running the failed portion automatically.`, 'error');
@@ -3538,7 +3626,8 @@ User Request: ${prompt}`;
           await executeAIPipeline(basePrompt, {
             repairAttempt: repairAttempt + 1,
             repairTargets: repairTargets.length ? repairTargets : [{ path: 'pipeline', safePath: 'pipeline', reason: error.message }],
-            preserveButtonLock: true
+            preserveButtonLock: true,
+            parseErrorRetry
           });
           return;
         }
@@ -3547,7 +3636,7 @@ User Request: ${prompt}`;
         Progress.error(error.message);
         TrancheUI.updateFromProgress({ status: 'error', error: error.message, completedTime: Date.now() });
       } finally {
-        if (!preserveButtonLock && repairAttempt === 0) {
+        if (!preserveButtonLock && repairAttempt === 0 && parseErrorRetry === 0) {
           sendToAiBtn.disabled = false;
         }
       }
