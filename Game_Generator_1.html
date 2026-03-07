@@ -666,7 +666,8 @@
             <div id="imageTagContainer" style="position: absolute; top: 10px; right: 10px; display: flex; flex-direction: column; gap: 6px; z-index: 10; pointer-events: none;"></div>
           </div>
           
-          <div class="row" style="justify-content: flex-end;">
+          <div class="row" style="justify-content: flex-end; gap: 10px;">
+            <button class="btn" id="update2Btn">Update #2</button>
             <button class="btn btnPrimary" id="sendToAiBtn">Apply AI Update</button>
           </div>
         </div>
@@ -743,6 +744,7 @@
 
     const aiPromptInput = document.getElementById('aiPromptInput');
     const sendToAiBtn = document.getElementById('sendToAiBtn');
+    const update2Btn = document.getElementById('update2Btn');
     const aiChatLog = document.getElementById('aiChatLog');
     const aiCodeReviewLog = document.getElementById('aiCodeReviewLog');
 
@@ -1912,6 +1914,46 @@ MANDATORY RULES
 5. For models/2, do not remove particle, impact, trail, pig death, or explosion related systems that already exist unless you are replacing them with a working implementation.`;
     }
 
+    function buildFailedFileRecord(file, safePath, reason, stage, originalContent = '', candidateContent = '') {
+      return {
+        path: file.path,
+        safePath,
+        reason,
+        failureStage: stage,
+        originalContent: String(originalContent || ''),
+        candidateContent: String(candidateContent || '')
+      };
+    }
+
+    function buildRepairTargetsContext(repairTargets = []) {
+      if (!repairTargets.length) return '';
+      return repairTargets.map((target, index) => {
+        const safePath = target.safePath || target.path || `target_${index + 1}`;
+        const reason = target.reason || 'unknown issue';
+        const stage = target.failureStage || 'unknown';
+        const liveBlock = String(target.originalContent || '').trim()
+          ? `\n=== LAST LIVE FILE BEFORE APPLY: ${safePath} ===\n${target.originalContent}`
+          : '';
+        const candidateBlock = String(target.candidateContent || '').trim()
+          ? `\n=== REJECTED GENERATED CANDIDATE TO REPAIR: ${safePath} ===\n${target.candidateContent}`
+          : '';
+        return `=== REPAIR TARGET ${index + 1}: ${safePath} ===
+Reason: ${reason}
+Failure stage: ${stage}${liveBlock}${candidateBlock}`;
+      }).join('\n\n');
+    }
+
+    function buildRepairSeedFiles(projectFiles = {}, repairTargets = []) {
+      const seeded = { ...projectFiles };
+      repairTargets.forEach(target => {
+        const safePath = target.safePath || target.path;
+        if (safePath && typeof target.candidateContent === 'string' && target.candidateContent.trim()) {
+          seeded[safePath] = target.candidateContent;
+        }
+      });
+      return seeded;
+    }
+
     async function createAiFileBackup(projectPath, safePath, originalContent) {
       const stamp = Date.now();
       const backupPath = `${projectPath}/${AI_HARDENING.backupFolder}/${stamp}_${sanitizeStorageFragment(safePath)}`;
@@ -1993,14 +2035,22 @@ MANDATORY RULES
         result,
         projectPath,
         projectFiles,
-        escapeHTML
+        escapeHTML,
+        targetPaths = null
       } = options;
 
       const appliedFiles = [];
       const failedFiles = [];
+      const normalizedTargets = Array.isArray(targetPaths) && targetPaths.length
+        ? new Set(targetPaths.map(v => String(v || '').toLowerCase()))
+        : null;
 
       for (const file of result.updatedFiles) {
         const { fileName, safePath } = resolveAiTargetPath(file.path);
+        if (normalizedTargets && !normalizedTargets.has(String(safePath || '').toLowerCase())) {
+          continue;
+        }
+
         const originalFileKey = Object.keys(projectFiles).find(k => k.toLowerCase().endsWith('/' + fileName.toLowerCase())) || safePath;
         let originalContent = projectFiles[originalFileKey] || '';
 
@@ -2021,14 +2071,28 @@ MANDATORY RULES
 
         if (aiOutputContent.includes('<<<<<<< SEARCH')) {
           if (!originalContent) {
-            failedFiles.push({ path: file.path, safePath, reason: `Original content missing for patch application (${fileName}).` });
+            failedFiles.push(buildFailedFileRecord(
+              file,
+              safePath,
+              `Original content missing for patch application (${fileName}).`,
+              'patch_original_missing',
+              originalContent,
+              aiOutputContent
+            ));
             appendToChatLog('System', `Warning: Could not find original content for ${fileName} to apply patch.`, 'error');
             continue;
           }
 
           const patchResult = applySearchReplaceBlocks(aiOutputContent, originalContent, fileName, escapeHTML);
           if (!patchResult.ok) {
-            failedFiles.push({ path: file.path, safePath, reason: patchResult.error });
+            failedFiles.push(buildFailedFileRecord(
+              file,
+              safePath,
+              patchResult.error,
+              'patch_apply',
+              originalContent,
+              aiOutputContent
+            ));
             appendToChatLog('System', patchResult.error, 'error');
             Progress.warn(`Patch failed for ${fileName}`, patchResult.error);
             continue;
@@ -2040,10 +2104,28 @@ MANDATORY RULES
 
         const validation = validateCandidateFileContent(safePath, finalContentToSave, originalContent);
         if (!validation.ok) {
-          failedFiles.push({ path: file.path, safePath, reason: validation.error });
+          failedFiles.push(buildFailedFileRecord(
+            file,
+            safePath,
+            validation.error,
+            'validation',
+            originalContent,
+            finalContentToSave
+          ));
           appendToChatLog('System', `Validation failed for ${safePath}: ${validation.error}`, 'error');
           Progress.warn(`Validation failed for ${fileName}`, validation.error);
           await quarantineAiPayload(projectPath, 'candidate_validation_failure', finalContentToSave, {
+            safePath,
+            sourcePath: file.path,
+            reason: validation.error
+          });
+          await quarantineAiPayload(projectPath, 'candidate_validation_failure_context', JSON.stringify({
+            safePath,
+            sourcePath: file.path,
+            reason: validation.error,
+            failureStage: 'validation',
+            originalContent
+          }, null, 2), {
             safePath,
             sourcePath: file.path,
             reason: validation.error
@@ -2057,7 +2139,14 @@ MANDATORY RULES
           const targetRef = ref(storage, `${ROOT}/${currentProject}/${safePath}`);
           await uploadString(targetRef, finalContentToSave);
         } catch (error) {
-          failedFiles.push({ path: file.path, safePath, reason: `Write failed: ${error.message}` });
+          failedFiles.push(buildFailedFileRecord(
+            file,
+            safePath,
+            `Write failed: ${error.message}`,
+            'write',
+            originalContent,
+            finalContentToSave
+          ));
           appendToChatLog('System', `Write failed for ${safePath}: ${error.message}`, 'error');
           Progress.warn(`Write failed for ${fileName}`, error.message);
           continue;
@@ -2084,7 +2173,6 @@ MANDATORY RULES
 
       return { appliedFiles, failedFiles };
     }
-
     // ── Live AI Progress Panel Controller ──
     const aiProgressPanel   = document.getElementById('aiProgressPanel');
     const aiProgressHeader  = document.getElementById('aiProgressHeader');
@@ -2863,6 +2951,89 @@ Quality criteria for your work:
     let pendingAiPrompt = "";
     let selectedModelNames = null; // null = process all, Set = only process these
 
+    async function runUpdate2FromAiResponse() {
+        if (!currentProject) return;
+        await ensureAuth();
+
+        update2Btn.disabled = true;
+        sendToAiBtn.disabled = true;
+        setStatus('Fetching ai_response.json for file 2...');
+        Progress.step('Update #2', 'Loading ai_response.json from Firebase and applying models/2 only...');
+
+        try {
+            const projectPath = `${ROOT}/${currentProject}`;
+            const responseFileRef = ref(storage, `${projectPath}/ai_response.json`);
+            const responseRead = await fetchStorageJsonSafe(responseFileRef, projectPath, 'ai_response_manual_update2');
+
+            if (!responseRead.ok) {
+                throw new Error(responseRead.kind === 'missing'
+                  ? 'ai_response.json was not found for this project.'
+                  : `Could not parse ai_response.json: ${responseRead.error?.message || 'unknown error'}`);
+            }
+
+            const envelopeCheck = validateAiResponseEnvelope(responseRead.data);
+            if (!envelopeCheck.ok) {
+                throw new Error(`ai_response.json is invalid: ${envelopeCheck.error}`);
+            }
+
+            const model2Updates = (responseRead.data.updatedFiles || []).filter(file => {
+                const resolved = resolveAiTargetPath(file.path);
+                return resolved.safePath === 'models/2';
+            });
+
+            if (!model2Updates.length) {
+                throw new Error('ai_response.json does not contain an updated models/2 entry.');
+            }
+
+            const projectFiles = {};
+            const model2Ref = ref(storage, `${ROOT}/${currentProject}/models/2`);
+            try {
+                const payload = await fetchStorageTextSafe(model2Ref);
+                projectFiles['models/2'] = payload.text;
+            } catch (e) {
+                projectFiles['models/2'] = '';
+            }
+
+            const escapeHTML = (str) => str.replace(/[&<>'"]/g, tag => ({
+                '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;'
+            }[tag]));
+
+            const applySummary = await applyAiUpdatedFiles({
+                result: {
+                    updatedFiles: model2Updates,
+                    message: responseRead.data.message || 'Manual Update #2 apply'
+                },
+                projectPath,
+                projectFiles,
+                escapeHTML,
+                targetPaths: ['models/2']
+            });
+
+            if (applySummary.failedFiles.length > 0) {
+                const failedSummary = applySummary.failedFiles.map(f => `${f.safePath || f.path}: ${f.reason}`).join(' | ');
+                await quarantineAiPayload(projectPath, 'update2_apply_failures', JSON.stringify(applySummary.failedFiles, null, 2), {
+                    failedCount: applySummary.failedFiles.length
+                });
+                throw new Error(failedSummary);
+            }
+
+            await refreshFileList(FILE_CATEGORIES.find(c => c.id === 'models'));
+            appendToChatLog('System', 'Update #2 applied models/2 directly from ai_response.json.', 'normal');
+            Progress.done('Update #2 complete ✦');
+            setStatus('Update #2 completed successfully.');
+        } catch (error) {
+            console.error('Update #2 failed', error);
+            appendToChatLog('System', `Update #2 failed: ${error.message}`, 'error');
+            Progress.warn('Update #2 failed', error.message);
+            setStatus(`Update #2 failed: ${error.message}`);
+        } finally {
+            update2Btn.disabled = false;
+            sendToAiBtn.disabled = false;
+        }
+    }
+
+    update2Btn.addEventListener('click', runUpdate2FromAiResponse);
+
     sendToAiBtn.addEventListener('click', async () => {
         pendingAiPrompt = aiPromptInput.value.trim();
         if (!pendingAiPrompt || !currentProject) return;
@@ -3119,11 +3290,15 @@ ${entries.map(v => `- ${v}`).join('\n')}
 
 === SCANNED 3D EXTENTS ===
 ${JSON.stringify(scannedExtentsList, null, 2)}` : '';
+        const repairSeedFiles = repairAttempt > 0 ? buildRepairSeedFiles(projectFiles, repairTargets) : projectFiles;
         const repairContext = repairAttempt > 0 && repairTargets.length
           ? `
 
 === AUTOMATIC REPAIR TARGETS ===
-${repairTargets.map(t => `- ${t.safePath || t.path}: ${t.reason || 'unknown issue'}`).join('\n')}`
+${repairTargets.map(t => `- ${t.safePath || t.path}: ${t.reason || 'unknown issue'}`).join('\n')}
+
+=== REPAIR SOURCE SNAPSHOT ===
+${buildRepairTargetsContext(repairTargets)}`
           : '';
 
         // ── For repair passes, use a lean targeted prompt that skips the full
@@ -3134,15 +3309,15 @@ ${repairTargets.map(t => `- ${t.safePath || t.path}: ${t.reason || 'unknown issu
           ? `You are an expert game developer performing a SURGICAL REPAIR of specific failed files.
 Do NOT plan new tranches. Do NOT redesign the game. Fix ONLY the exact targets listed below.
 
-${projectFiles['models/2'] ? `
+${repairSeedFiles['models/2'] ? `
 === CURRENT FILE: models/2 ===
-${projectFiles['models/2']}` : ''}
-${projectFiles['models/23'] ? `
+${repairSeedFiles['models/2']}` : ''}
+${repairSeedFiles['models/23'] ? `
 === CURRENT FILE: models/23 ===
-${projectFiles['models/23']}` : ''}
-${projectFiles['json/assets.json'] ? `
+${repairSeedFiles['models/23']}` : ''}
+${repairSeedFiles['json/assets.json'] ? `
 === CURRENT FILE: json/assets.json ===
-${projectFiles['json/assets.json']}` : ''}
+${repairSeedFiles['json/assets.json']}` : ''}
 ${repairContext}
 
 ═══════════════════════════════════════════════════════════
