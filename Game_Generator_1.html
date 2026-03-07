@@ -1657,6 +1657,447 @@
       aiChatLog.scrollTop = aiChatLog.scrollHeight;
     }
 
+    const AI_HARDENING = {
+      jsonPollMalformedLimit: 4,
+      repairPassLimit: 2,
+      backupFolder: 'ai_backups',
+      diagnosticsFolder: 'ai_diagnostics'
+    };
+
+    function sanitizeStorageFragment(value) {
+      return String(value || 'unnamed').replace(/[^a-zA-Z0-9_.-]+/g, '_').slice(0, 180);
+    }
+
+    function normalizeFetchedText(raw = '') {
+      return String(raw || '').replace(/^﻿/, '').trim();
+    }
+
+    function stripCodeFenceWrapper(raw = '') {
+      let cleaned = String(raw || '').trim();
+      if (!cleaned.startsWith('```')) return cleaned;
+      const lines = cleaned.split('
+');
+      if (lines[0].startsWith('```')) lines.shift();
+      if (lines.length && lines[lines.length - 1].trim().startsWith('```')) lines.pop();
+      return lines.join('
+').trim();
+    }
+
+    function extractFirstJsonCandidate(rawText) {
+      const text = normalizeFetchedText(rawText);
+      const starts = ['{', '['];
+      let startIndex = -1;
+      let opener = null;
+      for (const token of starts) {
+        const idx = text.indexOf(token);
+        if (idx !== -1 && (startIndex === -1 || idx < startIndex)) {
+          startIndex = idx;
+          opener = token;
+        }
+      }
+      if (startIndex === -1) return null;
+
+      const closer = opener === '{' ? '}' : ']';
+      let depth = 0;
+      let inString = false;
+      let escaped = false;
+
+      for (let i = startIndex; i < text.length; i++) {
+        const ch = text[i];
+        if (inString) {
+          if (escaped) {
+            escaped = false;
+          } else if (ch === '\') {
+            escaped = true;
+          } else if (ch === '"') {
+            inString = false;
+          }
+          continue;
+        }
+        if (ch === '"') {
+          inString = true;
+          continue;
+        }
+        if (ch === opener) depth++;
+        if (ch === closer) {
+          depth--;
+          if (depth === 0) return text.slice(startIndex, i + 1);
+        }
+      }
+      return null;
+    }
+
+    function safeParseJsonPayload(rawText, label = 'JSON payload') {
+      const direct = normalizeFetchedText(stripCodeFenceWrapper(rawText));
+      const attempts = [];
+      if (direct) attempts.push(direct);
+      const extracted = extractFirstJsonCandidate(direct);
+      if (extracted && extracted !== direct) attempts.push(extracted);
+
+      let lastError = null;
+      for (const candidate of attempts) {
+        try {
+          return { ok: true, data: JSON.parse(candidate), cleaned: candidate };
+        } catch (error) {
+          lastError = error;
+        }
+      }
+
+      return {
+        ok: false,
+        error: lastError || new Error(`Unable to parse ${label}`),
+        cleaned: attempts[attempts.length - 1] || direct
+      };
+    }
+
+    async function quarantineAiPayload(projectPath, bucketName, payload, meta = {}) {
+      try {
+        const stamp = Date.now();
+        const safeBucket = sanitizeStorageFragment(bucketName);
+        const basePath = `${projectPath}/${AI_HARDENING.diagnosticsFolder}/${safeBucket}_${stamp}`;
+        await uploadString(ref(storage, `${basePath}.txt`), String(payload || ''));
+        await uploadString(
+          ref(storage, `${basePath}.json`),
+          JSON.stringify({ createdAt: new Date().toISOString(), ...meta }, null, 2)
+        );
+      } catch (error) {
+        console.warn(`Failed to quarantine ${bucketName}`, error);
+      }
+    }
+
+    async function fetchStorageTextSafe(fileRef) {
+      const url = await getDownloadURL(fileRef);
+      const safeUrl = url.includes('?') ? `${url}&v=${Date.now()}` : `${url}?v=${Date.now()}`;
+      const response = await fetch(safeUrl, { cache: 'no-store' });
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status} while fetching ${fileRef.fullPath}`);
+      }
+      return {
+        url: safeUrl,
+        text: await response.text()
+      };
+    }
+
+    async function fetchStorageJsonSafe(fileRef, projectPath, label, options = {}) {
+      try {
+        const payload = await fetchStorageTextSafe(fileRef);
+        const parsed = safeParseJsonPayload(payload.text, label);
+        if (!parsed.ok) {
+          await quarantineAiPayload(projectPath, `${label}_parse_failure`, payload.text, {
+            label,
+            filePath: fileRef.fullPath,
+            error: parsed.error?.message || String(parsed.error || 'Unknown parse error')
+          });
+          return {
+            ok: false,
+            kind: 'parse_error',
+            error: parsed.error,
+            rawText: payload.text
+          };
+        }
+        return {
+          ok: true,
+          data: parsed.data,
+          rawText: payload.text
+        };
+      } catch (error) {
+        return {
+          ok: false,
+          kind: 'missing',
+          error
+        };
+      }
+    }
+
+    function validateAiResponseEnvelope(result) {
+      if (!result || typeof result !== 'object' || Array.isArray(result)) {
+        return { ok: false, error: 'AI response was not a JSON object.' };
+      }
+      if (!Array.isArray(result.updatedFiles)) {
+        return { ok: false, error: 'AI response is missing updatedFiles array.' };
+      }
+      for (const [index, file] of result.updatedFiles.entries()) {
+        if (!file || typeof file !== 'object') {
+          return { ok: false, error: `updatedFiles[${index}] is invalid.` };
+        }
+        if (!file.path || typeof file.path !== 'string') {
+          return { ok: false, error: `updatedFiles[${index}] is missing a valid path.` };
+        }
+        if (typeof file.content !== 'string') {
+          return { ok: false, error: `updatedFiles[${index}] is missing string content.` };
+        }
+      }
+      return { ok: true };
+    }
+
+    function resolveAiTargetPath(filePath = '') {
+      let fileName = String(filePath || '').split('/').pop() || '';
+      let safePath = String(filePath || '');
+      if (fileName.toLowerCase() === 'worldcontroller.js' || fileName === '2') {
+        fileName = '2';
+        safePath = 'models/2';
+      } else if (fileName.toLowerCase() === 'document.html' || fileName === '23') {
+        fileName = '23';
+        safePath = 'models/23';
+      } else if (fileName.toLowerCase() === 'assets.json') {
+        fileName = 'assets.json';
+        safePath = 'json/assets.json';
+      }
+      return { fileName, safePath };
+    }
+
+    function validateCriticalSubsystemPresence(safePath, originalContent, candidateContent) {
+      if (safePath !== 'models/2') return { ok: true, missing: [] };
+      const checks = [
+        { label: 'particle', rule: /particle/i },
+        { label: 'impact', rule: /impact/i },
+        { label: 'trail', rule: /trail/i },
+        { label: 'pig death', rule: /pig[\s\S]{0,40}death|death[\s\S]{0,40}pig/i },
+        { label: 'explosion', rule: /explosion/i }
+      ];
+      const missing = checks
+        .filter(check => check.rule.test(originalContent || '') && !check.rule.test(candidateContent || ''))
+        .map(check => check.label);
+      return {
+        ok: missing.length === 0,
+        missing
+      };
+    }
+
+    function validateCandidateFileContent(safePath, candidateContent, originalContent) {
+      const trimmed = String(candidateContent || '').trim();
+      if (!trimmed) {
+        return { ok: false, error: `${safePath} became empty.` };
+      }
+      if (safePath.endsWith('.json')) {
+        try {
+          JSON.parse(trimmed);
+        } catch (error) {
+          return { ok: false, error: `${safePath} is not valid JSON: ${error.message}` };
+        }
+      }
+      if (safePath === 'models/2' || safePath.endsWith('.js')) {
+        try {
+          new Function(trimmed);
+        } catch (error) {
+          return { ok: false, error: `${safePath} failed JavaScript syntax validation: ${error.message}` };
+        }
+      }
+      const subsystemCheck = validateCriticalSubsystemPresence(safePath, originalContent, candidateContent);
+      if (!subsystemCheck.ok) {
+        return {
+          ok: false,
+          error: `${safePath} lost critical subsystem markers: ${subsystemCheck.missing.join(', ')}`
+        };
+      }
+      return { ok: true };
+    }
+
+    function buildRepairPrompt(basePrompt, failedFiles = [], repairAttempt = 1) {
+      const targets = failedFiles.length
+        ? failedFiles.map(file => `- ${file.safePath || file.path}: ${file.reason || 'validation failure'}`).join('
+')
+        : '- Entire request: malformed AI response or invalid JSON envelope';
+
+      return `${basePrompt}
+
+AUTOMATIC SELF-HEALING REPAIR PASS ${repairAttempt}/${AI_HARDENING.repairPassLimit}
+Only regenerate the failed sections below. Do not modify already successful files.
+
+FAILED TARGETS
+${targets}
+
+MANDATORY RULES
+1. Return strict JSON only — no markdown, no commentary outside the JSON envelope.
+2. Return updatedFiles only for the failed targets listed above.
+3. Preserve all working systems that already succeeded.
+4. If a failed target is partial or malformed, rebuild that target completely and safely.
+5. For models/2, do not remove particle, impact, trail, pig death, or explosion related systems that already exist unless you are replacing them with a working implementation.`;
+    }
+
+    async function createAiFileBackup(projectPath, safePath, originalContent) {
+      const stamp = Date.now();
+      const backupPath = `${projectPath}/${AI_HARDENING.backupFolder}/${stamp}_${sanitizeStorageFragment(safePath)}`;
+      await uploadString(ref(storage, backupPath), String(originalContent || ''));
+      return backupPath;
+    }
+
+    function applySearchReplaceBlocks(aiOutputContent, originalContent, fileName, escapeHTMLFn) {
+      const blockRegex = /<<<<<<< SEARCH[
+]+([\s\S]*?)[
+]+=======[
+]+([\s\S]*?)[
+]+>>>>>>> REPLACE/g;
+      let normalizedResult = String(originalContent || '').replace(/
+/g, '
+');
+      let uiResult = escapeHTMLFn(normalizedResult);
+      let match;
+      let changesMade = 0;
+
+      function findWithNormalizedWhitespace(haystack, needle) {
+        const normalize = (str) => str.replace(/\/\/.*$/gm, '').replace(/\/\*[\s\S]*?\*\//g, '').replace(/\s+/g, '');
+        const needleNorm = normalize(needle);
+        if (!needleNorm) return null;
+        const haystackLines = haystack.split('
+');
+        for (let i = 0; i < haystackLines.length; i++) {
+          let currentNorm = '';
+          for (let j = i; j < haystackLines.length; j++) {
+            currentNorm += haystackLines[j].replace(/\/\/.*$/, '').replace(/\s+/g, '');
+            if (currentNorm === needleNorm) {
+              return haystackLines.slice(i, j + 1).join('
+');
+            }
+            if (currentNorm.length > needleNorm.length) break;
+          }
+        }
+        return null;
+      }
+
+      while ((match = blockRegex.exec(aiOutputContent)) !== null) {
+        const searchTarget = match[1].replace(/
+/g, '
+');
+        const replacement = match[2];
+
+        if (normalizedResult.includes(searchTarget)) {
+          normalizedResult = normalizedResult.split(searchTarget).join(replacement);
+          const escapedSearch = escapeHTMLFn(searchTarget);
+          const escapedReplace = escapeHTMLFn(replacement);
+          const uiPatch = `<span style="color: var(--success); font-weight: bold;">${escapedSearch}</span>
+<span style="color: var(--danger); font-weight: bold;">${escapedReplace}</span>`;
+          uiResult = uiResult.split(escapedSearch).join(uiPatch);
+          changesMade++;
+        } else {
+          const verbatimMatch = findWithNormalizedWhitespace(normalizedResult, searchTarget);
+          if (verbatimMatch !== null) {
+            normalizedResult = normalizedResult.split(verbatimMatch).join(replacement);
+            const escapedSearch = escapeHTMLFn(verbatimMatch);
+            const escapedReplace = escapeHTMLFn(replacement);
+            const uiPatch = `<span style="color: var(--success); font-weight: bold;">${escapedSearch}</span>
+<span style="color: var(--danger); font-weight: bold;">${escapedReplace}</span>`;
+            uiResult = uiResult.split(escapedSearch).join(uiPatch);
+            changesMade++;
+          } else {
+            console.warn(`Patch failed for ${fileName}. Code not found:
+`, searchTarget);
+          }
+        }
+      }
+
+      if (changesMade === 0) {
+        return {
+          ok: false,
+          error: `Failed to apply any SEARCH/REPLACE blocks for ${fileName}.`
+        };
+      }
+
+      return {
+        ok: true,
+        finalContentToSave: normalizedResult,
+        uiDisplayContent: uiResult,
+        changesMade
+      };
+    }
+
+    async function applyAiUpdatedFiles(options) {
+      const {
+        result,
+        projectPath,
+        projectFiles,
+        escapeHTML
+      } = options;
+
+      const appliedFiles = [];
+      const failedFiles = [];
+
+      for (const file of result.updatedFiles) {
+        const { fileName, safePath } = resolveAiTargetPath(file.path);
+        const originalFileKey = Object.keys(projectFiles).find(k => k.toLowerCase().endsWith('/' + fileName.toLowerCase())) || safePath;
+        let originalContent = projectFiles[originalFileKey] || '';
+
+        if (!originalContent) {
+          try {
+            const liveRef = ref(storage, `${ROOT}/${currentProject}/${safePath}`);
+            const livePayload = await fetchStorageTextSafe(liveRef);
+            originalContent = livePayload.text;
+            projectFiles[originalFileKey] = originalContent;
+          } catch (error) {
+            originalContent = '';
+          }
+        }
+
+        let aiOutputContent = stripCodeFenceWrapper(file.content);
+        let finalContentToSave = aiOutputContent;
+        let uiDisplayContent = escapeHTML(aiOutputContent);
+
+        if (aiOutputContent.includes('<<<<<<< SEARCH')) {
+          if (!originalContent) {
+            failedFiles.push({ path: file.path, safePath, reason: `Original content missing for patch application (${fileName}).` });
+            appendToChatLog('System', `Warning: Could not find original content for ${fileName} to apply patch.`, 'error');
+            continue;
+          }
+
+          const patchResult = applySearchReplaceBlocks(aiOutputContent, originalContent, fileName, escapeHTML);
+          if (!patchResult.ok) {
+            failedFiles.push({ path: file.path, safePath, reason: patchResult.error });
+            appendToChatLog('System', patchResult.error, 'error');
+            Progress.warn(`Patch failed for ${fileName}`, patchResult.error);
+            continue;
+          }
+
+          finalContentToSave = patchResult.finalContentToSave;
+          uiDisplayContent = patchResult.uiDisplayContent;
+        }
+
+        const validation = validateCandidateFileContent(safePath, finalContentToSave, originalContent);
+        if (!validation.ok) {
+          failedFiles.push({ path: file.path, safePath, reason: validation.error });
+          appendToChatLog('System', `Validation failed for ${safePath}: ${validation.error}`, 'error');
+          Progress.warn(`Validation failed for ${fileName}`, validation.error);
+          await quarantineAiPayload(projectPath, 'candidate_validation_failure', finalContentToSave, {
+            safePath,
+            sourcePath: file.path,
+            reason: validation.error
+          });
+          continue;
+        }
+
+        let backupPath = null;
+        try {
+          backupPath = await createAiFileBackup(projectPath, safePath, originalContent);
+          const targetRef = ref(storage, `${ROOT}/${currentProject}/${safePath}`);
+          await uploadString(targetRef, finalContentToSave);
+        } catch (error) {
+          failedFiles.push({ path: file.path, safePath, reason: `Write failed: ${error.message}` });
+          appendToChatLog('System', `Write failed for ${safePath}: ${error.message}`, 'error');
+          Progress.warn(`Write failed for ${fileName}`, error.message);
+          continue;
+        }
+
+        file.uiContent = uiDisplayContent;
+        file.rawContent = finalContentToSave;
+        file.safePath = safePath;
+        file.backupPath = backupPath;
+        projectFiles[originalFileKey] = finalContentToSave;
+        appliedFiles.push(file);
+
+        const catFolder = safePath.split('/')[0];
+        const catConfig = FILE_CATEGORIES.find(c => c.folder === catFolder);
+        if (catConfig) {
+          const zone = document.getElementById(`zone_${catConfig.id}`);
+          if (zone) {
+            zone.classList.remove('pulse-update');
+            void zone.offsetWidth;
+            zone.classList.add('pulse-update');
+          }
+        }
+      }
+
+      return { appliedFiles, failedFiles };
+    }
+
     // ── Live AI Progress Panel Controller ──
     const aiProgressPanel   = document.getElementById('aiProgressPanel');
     const aiProgressHeader  = document.getElementById('aiProgressHeader');
@@ -2536,24 +2977,37 @@ Quality criteria for your work:
         }, 500);
     });
 
-    async function executeAIPipeline(promptOverride) {
-      const prompt = promptOverride || aiPromptInput.value.trim();
-      if (!prompt || !currentProject) {
-          sendToAiBtn.disabled = false;
+    async function executeAIPipeline(promptOverride, options = {}) {
+      const {
+        repairAttempt = 0,
+        repairTargets = [],
+        preserveButtonLock = false
+      } = options;
+
+      const basePrompt = promptOverride || aiPromptInput.value.trim();
+      if (!basePrompt || !currentProject) {
+          if (!preserveButtonLock && repairAttempt === 0) sendToAiBtn.disabled = false;
           return;
       }
 
-      const activeSelectedModelNames = selectedModelNames; // capture current value
-      selectedModelNames = null; // reset for next run
+      const prompt = repairAttempt > 0
+        ? buildRepairPrompt(basePrompt, repairTargets, repairAttempt)
+        : basePrompt;
 
-      let scannedExtentsList = []; 
-      
-      aiPromptInput.value = '';
-      appendToChatLog('You', prompt);
-      Progress.start('Starting AI pipeline...');
+      const activeSelectedModelNames = selectedModelNames;
+      selectedModelNames = null;
+
+      let scannedExtentsList = [];
+      if (repairAttempt === 0) {
+        aiPromptInput.value = '';
+        appendToChatLog('You', basePrompt);
+        Progress.start('Starting AI pipeline...');
+      } else {
+        appendToChatLog('System', `Automatic repair pass ${repairAttempt}/${AI_HARDENING.repairPassLimit} started.`, 'normal');
+        Progress.step(`Repair pass ${repairAttempt}`, repairTargets.length ? repairTargets.map(t => t.safePath || t.path).join(', ') : 'Recovering malformed AI output');
+      }
       
       try {
-        // Ensure assets.json is fully synced before sending context to AI
         Progress.step('Syncing assets.json', 'Ensuring asset manifest matches project files...');
         await syncAssetsJson();
 
@@ -2567,15 +3021,12 @@ Quality criteria for your work:
 
         for (const target of targetFiles) {
           const fileRef = ref(storage, `${ROOT}/${currentProject}/${target.folder}/${target.name}`);
-          try { 
-            const url = await getDownloadURL(fileRef);
-            const fetched = await fetch(url + '&v=' + Date.now(), { cache: 'no-store' });
-            if (fetched.ok) {
-                projectFiles[`${target.folder}/${target.name}`] = await fetched.text(); 
-            }
-          } catch (e) { 
-             console.warn(`Skipped ${target.name} - not found in Firebase storage.`); 
-          } 
+          try {
+            const payload = await fetchStorageTextSafe(fileRef);
+            projectFiles[`${target.folder}/${target.name}`] = payload.text;
+          } catch (e) {
+            console.warn(`Skipped ${target.name} - not found in Firebase storage.`);
+          }
         }
 
         if (Object.keys(projectFiles).length === 0) {
@@ -2597,17 +3048,20 @@ Quality criteria for your work:
         let zipContextString = "";
 
         if (allAssets.length > 0) {
-            // Only list user-selected assets — the full inventory is in the attached assets.json file
             const selected = allAssets.filter(a => a.isChecked);
             if (selected.length > 0) {
-                assetString = "\n\n=== USER-SELECTED ASSETS FOR THIS REQUEST ===\nThe user has explicitly selected these assets to focus on. Their key mappings are in the attached assets.json file:\n";
+                assetString = "
+
+=== USER-SELECTED ASSETS FOR THIS REQUEST ===
+The user has explicitly selected these assets to focus on. Their key mappings are in the attached assets.json file:
+";
                 for (const a of selected) {
-                    assetString += `- ${a.name} (in ${a.path.split('/')[0]}/)\n`;
+                    assetString += `- ${a.name} (in ${a.path.split('/')[0]}/)
+`;
                 }
             }
 
             for (const a of allAssets) {
-                // Scan direct model files (.obj/.glb) in the models folder for extents
                 if (a.path.includes('models/') && !a.path.includes('object_zips')) {
                     const lowerName = a.name.toLowerCase();
                     const shouldProcess = (activeSelectedModelNames === null) || activeSelectedModelNames.has(a.name);
@@ -2624,387 +3078,214 @@ Quality criteria for your work:
                                 const gltf = await new Promise((resolve, reject) => loader.load(modelUrl, resolve, undefined, reject));
                                 model = gltf.scene;
                             }
-                            if (model) {
-                                const objectBox = new THREE.Box3().setFromObject(model);
-                                const objectSize = new THREE.Vector3();
-                                objectBox.getSize(objectSize);
-                                const objectCenter = new THREE.Vector3();
-                                objectBox.getCenter(objectCenter);
-                                let meshSize = new THREE.Vector3(0, 0, 0);
-                                let hasMesh = false;
-                                let materialInfo = [];
-                                model.traverse((child) => {
-                                    if (child.isMesh) {
-                                        if (!hasMesh) {
-                                            const meshBox = new THREE.Box3().setFromObject(child);
-                                            meshBox.getSize(meshSize);
-                                            hasMesh = true;
-                                        }
-                                        let matNames = [];
-                                        if (Array.isArray(child.material)) {
-                                            matNames = child.material.map(m => m.name || 'unnamed_material');
-                                        } else if (child.material) {
-                                            matNames.push(child.material.name || 'unnamed_material');
-                                        }
-                                        materialInfo.push(`Mesh: "${child.name || 'unnamed_mesh'}" -> Material(s): [${matNames.join(', ')}]`);
-                                    }
-                                });
-                                const minY = objectBox.min.y;
-                                const maxY = objectBox.max.y;
-                                const yOffsetToFloor = (minY < 0) ? Math.abs(minY) : -minY;
-                                scannedExtentsList.push({
-                                    name: a.name,
-                                    objWidth: objectSize.x.toFixed(3), objHeight: objectSize.y.toFixed(3), objDepth: objectSize.z.toFixed(3),
-                                    hasMesh, meshWidth: hasMesh ? meshSize.x.toFixed(3) : "N/A", meshHeight: hasMesh ? meshSize.y.toFixed(3) : "N/A", meshDepth: hasMesh ? meshSize.z.toFixed(3) : "N/A",
-                                    centerX: objectCenter.x.toFixed(3), centerY: objectCenter.y.toFixed(3), centerZ: objectCenter.z.toFixed(3),
-                                    offset: yOffsetToFloor.toFixed(3), materials: materialInfo
-                                });
-                                zipContextString += `\n--- 3D Extents: ${a.name} ---\n`;
-                                zipContextString += `  OBJECT: ${objectSize.x.toFixed(3)} x ${objectSize.y.toFixed(3)} x ${objectSize.z.toFixed(3)} (W x H x D)\n`;
-                                if (hasMesh) zipContextString += `  MESH: ${meshSize.x.toFixed(3)} x ${meshSize.y.toFixed(3)} x ${meshSize.z.toFixed(3)} (W x H x D)\n`;
-                                zipContextString += `  PIVOT: X: ${objectCenter.x.toFixed(3)}, Y: ${objectCenter.y.toFixed(3)}, Z: ${objectCenter.z.toFixed(3)}\n`;
-                                zipContextString += `  FLOOR Y-OFFSET: ${yOffsetToFloor.toFixed(3)}\n`;
-                                if (materialInfo.length > 0) zipContextString += `  MATERIALS:\n    - ${materialInfo.join('\n    - ')}\n`;
-                            }
-                        } catch(err) {
-                            console.warn(`Could not scan extents for ${a.name}`, err);
+                            model.updateMatrixWorld(true);
+                            const box = new THREE.Box3().setFromObject(model);
+                            const size = box.getSize(new THREE.Vector3());
+                            scannedExtentsList.push({
+                                name: a.name,
+                                centerX: size.x.toFixed(3),
+                                centerY: size.y.toFixed(3),
+                                centerZ: size.z.toFixed(3),
+                                offset: (size.y / 2).toFixed(3),
+                                materials: []
+                            });
+                        } catch (e) {
+                            console.warn(`Could not scan extents for ${a.name}`, e);
                         }
                     }
                 }
-                
-                if (a.path.includes('object_zips') && a.name.toLowerCase().endsWith('.zip')) {
-                    // Respect the pre-process modal checkbox selection
-                    const shouldProcess = (activeSelectedModelNames === null) || activeSelectedModelNames.has(a.name);
-                    if (!shouldProcess) {
-                        // skipped
-                    } else {
-                    Progress.step(`Extracting ZIP package`, a.name);
+
+                if (a.path.includes('object_zips/')) {
+                    const shouldProcessZip = (activeSelectedModelNames === null) || activeSelectedModelNames.has(a.name);
+                    if (!shouldProcessZip) continue;
+                    Progress.step(`Scanning ZIP contents`, a.name);
                     try {
-                        const zipUrl = await getDownloadURL(ref(storage, `${ROOT}/${currentProject}/${a.path}`));
-                        const zipRes = await fetch(zipUrl);
+                        const zipRes = await fetch(a.url, { cache: 'no-store' });
                         const zipBlob = await zipRes.blob();
                         const zipObj = new JSZip();
                         await zipObj.loadAsync(zipBlob);
-                        
-                        let parsedModels = [];
-                        let parsedTextures = [];
-                        let parsedAudio = [];
-                        let parsedOther = [];
-                        let parsedAnimInfo = "";
-                        
+                        const entries = [];
                         for (const relativePath of Object.keys(zipObj.files)) {
-                            const file = zipObj.files[relativePath];
-                            if (file.dir || relativePath.includes('__MACOSX')) continue;
-                            
-                            const lowerPath = relativePath.toLowerCase();
-                            
-                            // --- NEW: DUAL EXTENTS LOGIC (Object vs Mesh) ---
-                            if (lowerPath.endsWith('.obj') || lowerPath.endsWith('.glb') || lowerPath.endsWith('.gltf') || lowerPath.endsWith('.fbx') || lowerPath.endsWith('.c3b')) {
-                                parsedModels.push(relativePath);
-                                
-                                if (lowerPath.endsWith('.obj') || lowerPath.endsWith('.glb') || lowerPath.endsWith('.gltf')) {
-                                    const fileBlob = await file.async('blob');
-                                    const objectUrl = URL.createObjectURL(fileBlob);
-
-                                    try {
-                                        let model;
-                                        if (lowerPath.endsWith('.obj')) {
-                                            const loader = new OBJLoader();
-                                            model = await new Promise((resolve, reject) => loader.load(objectUrl, resolve, undefined, reject));
-                                        } else {
-                                            const loader = new GLTFLoader();
-                                            const gltf = await new Promise((resolve, reject) => loader.load(objectUrl, resolve, undefined, reject));
-                                            model = gltf.scene;
-                                        }
-
-                                        if (model) {
-                                            // 1. Calculate the Overall Bounding Box (Parent Object)
-                                            const objectBox = new THREE.Box3().setFromObject(model);
-                                            const objectSize = new THREE.Vector3();
-                                            objectBox.getSize(objectSize);
-
-                                            // Calculate the true center of the geometry relative to the pivot
-                                            const objectCenter = new THREE.Vector3();
-                                            objectBox.getCenter(objectCenter);
-
-                                            // 2. Find and calculate the Inner Bounding Box (Actual Mesh)
-                                            let meshSize = new THREE.Vector3(0, 0, 0);
-                                            let hasMesh = false;
-                                            let materialInfo = []; // Array to store mesh/material maps
-
-                                            model.traverse((child) => {
-                                                if (child.isMesh) {
-                                                    // Grab bounding box of the first mesh found
-                                                    if (!hasMesh) {
-                                                        const meshBox = new THREE.Box3().setFromObject(child);
-                                                        meshBox.getSize(meshSize);
-                                                        hasMesh = true; 
-                                                    }
-                                                    
-                                                    // Extract Material and Mesh names
-                                                    let matNames = [];
-                                                    if (Array.isArray(child.material)) {
-                                                        matNames = child.material.map(m => m.name || 'unnamed_material');
-                                                    } else if (child.material) {
-                                                        matNames.push(child.material.name || 'unnamed_material');
-                                                    }
-                                                    
-                                                    const meshName = child.name || 'unnamed_mesh';
-                                                    materialInfo.push(`Mesh: "${meshName}" -> Material(s): [${matNames.join(', ')}]`);
-                                                }
-                                            });
-
-                                            // Floor offset calculation uses the overall object
-                                            const minY = objectBox.min.y;
-                                            const maxY = objectBox.max.y;
-                                            const yOffsetToFloor = (minY < 0) ? Math.abs(minY) : -minY;
-
-                                            scannedExtentsList.push({
-                                                name: relativePath,
-                                                objWidth: objectSize.x.toFixed(3),
-                                                objHeight: objectSize.y.toFixed(3),
-                                                objDepth: objectSize.z.toFixed(3),
-                                                hasMesh: hasMesh,
-                                                meshWidth: hasMesh ? meshSize.x.toFixed(3) : "N/A",
-                                                meshHeight: hasMesh ? meshSize.y.toFixed(3) : "N/A",
-                                                meshDepth: hasMesh ? meshSize.z.toFixed(3) : "N/A",
-                                                centerX: objectCenter.x.toFixed(3),
-                                                centerY: objectCenter.y.toFixed(3),
-                                                centerZ: objectCenter.z.toFixed(3),
-                                                offset: yOffsetToFloor.toFixed(3),
-                                                materials: materialInfo // Add materials array to UI state
-                                            });
-
-                                            parsedAnimInfo += `\n--- 3D Extents: ${relativePath} ---\n`;
-                                            parsedAnimInfo += `  OBJECT: ${objectSize.x.toFixed(3)} x ${objectSize.y.toFixed(3)} x ${objectSize.z.toFixed(3)} (W x H x D)\n`;
-                                            if (hasMesh) {
-                                                parsedAnimInfo += `  MESH: ${meshSize.x.toFixed(3)} x ${meshSize.y.toFixed(3)} x ${meshSize.z.toFixed(3)} (W x H x D)\n`;
-                                            }
-                                            parsedAnimInfo += `  PIVOT: X: ${objectCenter.x.toFixed(3)}, Y: ${objectCenter.y.toFixed(3)}, Z: ${objectCenter.z.toFixed(3)}\n`;
-                                            parsedAnimInfo += `  FLOOR Y-OFFSET: ${yOffsetToFloor.toFixed(3)}\n`;
-                                            if (materialInfo.length > 0) {
-                                                parsedAnimInfo += `  MATERIALS:\n    - ${materialInfo.join('\n    - ')}\n`;
-                                            }
-                                        }
-                                    } catch (err) {
-                                        console.warn(`Could not parse Three.js extents for ${relativePath}`, err);
-                                    } finally {
-                                        URL.revokeObjectURL(objectUrl); 
-                                    }
-                                }
-                            } else if (lowerPath.endsWith('.jpg') || lowerPath.endsWith('.png') || lowerPath.endsWith('.jpeg') || lowerPath.endsWith('.webp')) {
-                                parsedTextures.push(relativePath);
-                            } else if (lowerPath.endsWith('.wav') || lowerPath.endsWith('.mp3') || lowerPath.endsWith('.ogg')) {
-                                parsedAudio.push(relativePath);
-                            } else if (lowerPath.endsWith('.txt')) {
-                                parsedAnimInfo += `\n--- Content of ${relativePath} ---\n`;
-                                parsedAnimInfo += await file.async('string');
-                            } else {
-                                parsedOther.push(relativePath);
-                            }
+                            const entry = zipObj.files[relativePath];
+                            if (entry.dir || relativePath.includes('__MACOSX')) continue;
+                            entries.push(relativePath);
                         }
-                        
-                        zipContextString += `\n\n=== ZIP PACKAGE: ${a.name} ===\n`;
-                        zipContextString += `Models: ${parsedModels.length > 0 ? parsedModels.join(', ') : 'None'}\n`;
-                        zipContextString += `Textures: ${parsedTextures.length > 0 ? parsedTextures.join(', ') : 'None'}\n`;
-                        zipContextString += `Audio: ${parsedAudio.length > 0 ? parsedAudio.join(', ') : 'None'}\n`;
-                        if (parsedOther.length > 0) zipContextString += `Other: ${parsedOther.join(', ')}\n`;
-                        if (parsedAnimInfo) zipContextString += parsedAnimInfo + '\n';
-                        
+                        if (entries.length > 0) {
+                            zipContextString += `
+ZIP PACKAGE: ${a.name}
+${entries.map(v => `- ${v}`).join('
+')}
+`;
+                        }
                     } catch (e) {
-                        console.warn(`Failed to parse object zip ${a.name}`, e);
+                        console.warn(`Could not parse ZIP ${a.name}`, e);
                         appendToChatLog('System', `Warning: Could not parse ${a.name}`, 'error');
                     }
-                    } // end shouldProcess else
                 }
             }
         }
 
-      Progress.step('Loading AI system instructions');
-        const instructionsFolderRef = ref(storage, `${ROOT}/${currentProject}/ai_system_instructions`);
-        let attachedInstructionsList = [];
-        try {
-            const instList = await listAll(instructionsFolderRef);
-            for (const item of instList.items) {
-                const instUrl = await getDownloadURL(item);
-                const instRes = await fetch(instUrl + '&v=' + Date.now(), { cache: 'no-store' });
-                if (instRes.ok) {
-                    // Add the instruction file to the projectFiles payload so it's sent as an attached file
-                    projectFiles[`ai_system_instructions/${item.name}`] = await instRes.text();
-                    attachedInstructionsList.push(item.name);
-                }
-            }
-        } catch (e) {
-            console.warn("Could not fetch AI System Instructions.", e);
-        }
+        const extentsContext = scannedExtentsList.length ? `
 
-        if (scannedExtentsList.length > 0) {
-            setStatus('Waiting for user to review calculated extents...');
-            await showExtentsReviewModal(scannedExtentsList);
-            setStatus('Extents approved. Proceeding to AI...');
-        }
+=== SCANNED 3D EXTENTS ===
+${JSON.stringify(scannedExtentsList, null, 2)}` : '';
+        const repairContext = repairAttempt > 0 && repairTargets.length
+          ? `
 
-        let instructionNotice = attachedInstructionsList.length > 0 
-            ? "Please strictly follow the rules outlined in the attached AI System Instruction files: " + attachedInstructionsList.join(', ')
-            : "No AI System Instructions provided.";
+=== AUTOMATIC REPAIR TARGETS ===
+${repairTargets.map(t => `- ${t.safePath || t.path}: ${t.reason || 'unknown issue'}`).join('
+')}`
+          : '';
 
-        const enhancedPrompt = `${assetString}${zipContextString}
+        const enhancedPrompt = `
+${projectFiles['models/2'] ? `
+=== FILE: models/2 ===
+${projectFiles['models/2']}` : ''}
+${projectFiles['models/23'] ? `
+=== FILE: models/23 ===
+${projectFiles['models/23']}` : ''}
+${projectFiles['json/assets.json'] ? `
+=== FILE: json/assets.json ===
+${projectFiles['json/assets.json']}` : ''}
+${assetString}
+${zipContextString}
+${extentsContext}
+${repairContext}
 
-        === AI SYSTEM INSTRUCTIONS ===
-        ${instructionNotice}
-        ==============================
+═══════════════════════════════════════════════════════════
+V2 EXPERT-AGENT TRANCHED BUILD PIPELINE
+═══════════════════════════════════════════════════════════
 
-        FILE NAMING RULE: The game logic file is "2" (not "WorldController.js") and the HTML file is "23" (not "document.html"), both in models/. Always use these exact names in code, references, and output paths.
+You are an expert game development architect. Your job is to decompose this
+game build request into a sequence of focused, expert-driven micro-tranches.
+You must follow this EXACT multi-step protocol.
 
-        ASSET RULES:
-        "assets.json" is PRE-BUILT and AUTHORITATIVE. It maps every game file to a numeric key (e.g., {"key":"34","type":"object","title":"plane.obj"}). At build time, files are renamed to their key number in the files/ folder.
+───────────────────────────────────────────────────────────
+STEP 0 — GAME INTELLIGENCE (MANDATORY — DO NOT SKIP)
+───────────────────────────────────────────────────────────
+Before creating ANY tranches, deeply analyze the game being requested:
 
-        1. DO NOT modify or re-output "assets.json" — the system manages it.
-        2. Look up key numbers from the attached assets.json and use them in file "2". Do NOT invent key numbers.
-        3. If a file isn't in assets.json, tell the user to upload it first.
+A) GAME IDENTITY: What existing game(s) is this based on? What genre and
+   sub-genre? What makes the reference game legendary and satisfying to play?
 
-        When positioning 3D objects using the extents data above:
-        - Negate PIVOT coordinates × scale to re-center the object
-        - Apply the FLOOR Y-OFFSET to sit on the ground plane
-        - Use MESH dimensions for RigidBody/physics collider scale
-        - Use MATERIALS names to target correct meshes for textures
-        - Infer PBR texture maps (Albedo, Normal, Roughness) from file suffixes and apply via createMaterial()
-        - Use Animation ID references to trigger animations via gameState.playAnimation()
+B) ADDICTION MECHANICS — THE "JUICE": Research and list the SPECIFIC design
+   details that make this type of game feel satisfying:
+   - Physics feel (e.g., "the parabolic arc gives a sense of control")
+   - Destruction feedback (e.g., "chain reactions feel earned, not random")
+   - Camera work (e.g., "anticipation camera builds tension before each shot")
+   - Sound design (e.g., "distinct material break sounds provide visceral feedback")
+   - Pacing (e.g., "turn-based with settle detection creates tension-release rhythm")
+   Be SPECIFIC with concrete details, not generic ("good physics" is NOT enough).
 
-        ═══════════════════════════════════════════════════════════
-        V2 TRANCHE PLANNING PROTOCOL — EXPERT-AGENT PIPELINE
-        ═══════════════════════════════════════════════════════════
+C) CRITICAL SYSTEM MAP: List every distinct system in the prompt document.
+   For EACH system: what it does, what it depends on, what depends on it,
+   which exact tuned values are interconnected and must not be changed individually.
 
-        You are an expert game development architect. Your job is to decompose this
-        game build request into a sequence of focused, expert-driven micro-tranches.
-        You must follow this EXACT multi-step protocol.
+D) FAILURE MODES: Based on the prompt's pitfall warnings and your game knowledge:
+   - What will break if simplified? (cite specific systems)
+   - What naive implementations have been tried and failed? (cite pitfalls)
+   - What timing/ordering dependencies exist? (cite specific patterns)
 
-        ───────────────────────────────────────────────────────────
-        STEP 0 — GAME INTELLIGENCE (MANDATORY — DO NOT SKIP)
-        ───────────────────────────────────────────────────────────
-        Before creating ANY tranches, deeply analyze the game being requested:
+Output this analysis as your "planningAnalysis" field. This analysis will be
+injected into EVERY tranche executor's context as critical domain knowledge.
 
-        A) GAME IDENTITY: What existing game(s) is this based on? What genre and
-           sub-genre? What makes the reference game legendary and satisfying to play?
+───────────────────────────────────────────────────────────
+STEP 1 — EXPERT AGENT ASSIGNMENT
+───────────────────────────────────────────────────────────
+Each tranche MUST be assigned 1-2 expert agents from this roster.
+The expert agent's system prompt will be prepended to the tranche
+execution prompt, giving the executor deep domain knowledge:
 
-        B) ADDICTION MECHANICS — THE "JUICE": Research and list the SPECIFIC design
-           details that make this type of game feel satisfying:
-           - Physics feel (e.g., "the parabolic arc gives a sense of control")
-           - Destruction feedback (e.g., "chain reactions feel earned, not random")
-           - Camera work (e.g., "anticipation camera builds tension before each shot")
-           - Sound design (e.g., "distinct material break sounds provide visceral feedback")
-           - Pacing (e.g., "turn-based with settle detection creates tension-release rhythm")
-           Be SPECIFIC with concrete details, not generic ("good physics" is NOT enough).
+${EXPERT_AGENTS_JSON}
 
-        C) CRITICAL SYSTEM MAP: List every distinct system in the prompt document.
-           For EACH system: what it does, what it depends on, what depends on it,
-           which exact tuned values are interconnected and must not be changed individually.
+───────────────────────────────────────────────────────────
+STEP 2 — MICRO-TRANCHE DECOMPOSITION
+───────────────────────────────────────────────────────────
+Create 8-15 focused micro-tranches following these strict rules:
 
-        D) FAILURE MODES: Based on the prompt's pitfall warnings and your game knowledge:
-           - What will break if simplified? (cite specific systems)
-           - What naive implementations have been tried and failed? (cite pitfalls)
-           - What timing/ordering dependencies exist? (cite specific patterns)
+a) SINGLE RESPONSIBILITY: Each tranche handles ONE subsystem or one closely
+   coupled pair. NEVER combine unrelated systems (e.g., audio + physics).
 
-        Output this analysis as your "planningAnalysis" field. This analysis will be
-        injected into EVERY tranche executor's context as critical domain knowledge.
+b) SIZE LIMIT: Target 150-300 lines of new/modified code per tranche.
+   If a tranche would produce 400+ lines, SPLIT it into two.
 
-        ───────────────────────────────────────────────────────────
-        STEP 1 — EXPERT AGENT ASSIGNMENT
-        ───────────────────────────────────────────────────────────
-        Each tranche MUST be assigned 1-2 expert agents from this roster.
-        The expert agent's system prompt will be prepended to the tranche
-        execution prompt, giving the executor deep domain knowledge:
+c) EXPLICIT DEPENDENCIES: List which prior tranches must complete first.
+   The "dependencies" array uses tranche names (e.g., ["Scaffolding & State"]).
+   Never reference code that hasn't been created by a prior tranche.
 
-        ${EXPERT_AGENTS_JSON}
+d) QUALITY CRITERIA: Each tranche includes 4-8 specific acceptance criteria
+   drawn from the assigned expert agent's quality standards.
 
-        ───────────────────────────────────────────────────────────
-        STEP 2 — MICRO-TRANCHE DECOMPOSITION
-        ───────────────────────────────────────────────────────────
-        Create 8-15 focused micro-tranches following these strict rules:
+e) GAME-SPECIFIC CONTEXT: Each tranche's prompt must include:
+   - Relevant game intelligence excerpts from Step 0
+   - EXACT values from the prompt that this tranche implements
+   - Pitfall warnings specific to this subsystem (quoted from the prompt)
+   - How this system connects to the game's "juice" / addictiveness
 
-        a) SINGLE RESPONSIBILITY: Each tranche handles ONE subsystem or one closely
-           coupled pair. NEVER combine unrelated systems (e.g., audio + physics).
+f) PHASED ORDERING (assign a phase number 1-4 to each tranche):
+   Phase 1 (Foundation): State object, physics base, materials, helper functions
+   Phase 2 (Core Mechanics): Player avatar, input, launch, projectile, destruction
+   Phase 3 (Content & Polish): Camera, audio, levels, UI, particles
+   Phase 4 (Integration): Wiring onRender, connecting handlers, edge cases, final polish
 
-        b) SIZE LIMIT: Target 150-300 lines of new/modified code per tranche.
-           If a tranche would produce 400+ lines, SPLIT it into two.
+───────────────────────────────────────────────────────────
+STEP 3 — TRANCHE PROMPT CRAFTING
+───────────────────────────────────────────────────────────
+For EACH tranche, write a COMPLETE self-contained execution prompt that includes:
+1. The expert agent system prompt (from the roster above)
+2. Game intelligence context relevant to this tranche (from Step 0)
+3. The EXACT specifications from the original prompt document for this system
+4. Code patterns with exact values (copy from the prompt, don't paraphrase)
+5. A quality checklist the executor MUST verify before submitting
+6. What NOT to do — specific pitfalls from the original prompt for this system
 
-        c) EXPLICIT DEPENDENCIES: List which prior tranches must complete first.
-           The "dependencies" array uses tranche names (e.g., ["Scaffolding & State"]).
-           Never reference code that hasn't been created by a prior tranche.
+═══════════════════════════════════════════════════════════
+OUTPUT FORMAT
+═══════════════════════════════════════════════════════════
+Respond with a JSON object:
+{
+  "planningAnalysis": "Your Step 0 game intelligence analysis (detailed)...",
+  "tranches": [
+    {
+      "name": "Tranche Name",
+      "description": "What this tranche builds",
+      "expertAgents": ["agent_id_1", "agent_id_2"],
+      "phase": 1,
+      "dependencies": [],
+      "expectedFiles": ["models/2"],
+      "estimatedLines": 200,
+      "qualityCriteria": [
+        "All state in single gameState object",
+        "No global variables",
+        "dt fallback to 0.016 and clamped < 0.2",
+        "requestAnimationFrame for deferred init"
+      ],
+      "prompt": "The FULL self-contained execution prompt for this tranche..."
+    }
+  ]
+}
 
-        d) QUALITY CRITERIA: Each tranche includes 4-8 specific acceptance criteria
-           drawn from the assigned expert agent's quality standards.
+RESPONSE FORMAT FOR TRANCHE EXECUTION:
+Each tranche executor must output ONLY changed lines using SEARCH/REPLACE blocks:
 
-        e) GAME-SPECIFIC CONTEXT: Each tranche's prompt must include:
-           - Relevant game intelligence excerpts from Step 0
-           - EXACT values from the prompt that this tranche implements
-           - Pitfall warnings specific to this subsystem (quoted from the prompt)
-           - How this system connects to the game's "juice" / addictiveness
+<<<<<<< SEARCH
+[exact code from original file, with context lines for unique match]
+=======
+[new replacement code]
+>>>>>>> REPLACE
 
-        f) PHASED ORDERING (assign a phase number 1-4 to each tranche):
-           Phase 1 (Foundation): State object, physics base, materials, helper functions
-           Phase 2 (Core Mechanics): Player avatar, input, launch, projectile, destruction
-           Phase 3 (Content & Polish): Camera, audio, levels, UI, particles
-           Phase 4 (Integration): Wiring onRender, connecting handlers, edge cases, final polish
+Rules:
+1. SEARCH must match existing code exactly, line for line, preserving whitespace.
+2. Include enough context lines for a unique match.
+3. Multiple SEARCH/REPLACE blocks per file are allowed.
+4. For completely new files, output full code without SEARCH/REPLACE tags.
 
-        ───────────────────────────────────────────────────────────
-        STEP 3 — TRANCHE PROMPT CRAFTING
-        ───────────────────────────────────────────────────────────
-        For EACH tranche, write a COMPLETE self-contained execution prompt that includes:
-        1. The expert agent system prompt (from the roster above)
-        2. Game intelligence context relevant to this tranche (from Step 0)
-        3. The EXACT specifications from the original prompt document for this system
-        4. Code patterns with exact values (copy from the prompt, don't paraphrase)
-        5. A quality checklist the executor MUST verify before submitting
-        6. What NOT to do — specific pitfalls from the original prompt for this system
+Do NOT include "assets.json" in your updatedFiles response.
+In your 'message', provide a detailed changelog of modifications.
 
-        ═══════════════════════════════════════════════════════════
-        OUTPUT FORMAT
-        ═══════════════════════════════════════════════════════════
-        Respond with a JSON object:
-        {
-          "planningAnalysis": "Your Step 0 game intelligence analysis (detailed)...",
-          "tranches": [
-            {
-              "name": "Tranche Name",
-              "description": "What this tranche builds",
-              "expertAgents": ["agent_id_1", "agent_id_2"],
-              "phase": 1,
-              "dependencies": [],
-              "expectedFiles": ["models/2"],
-              "estimatedLines": 200,
-              "qualityCriteria": [
-                "All state in single gameState object",
-                "No global variables",
-                "dt fallback to 0.016 and clamped < 0.2",
-                "requestAnimationFrame for deferred init"
-              ],
-              "prompt": "The FULL self-contained execution prompt for this tranche..."
-            }
-          ]
-        }
+═══════════════════════════════════════════════════════════
 
-        RESPONSE FORMAT FOR TRANCHE EXECUTION:
-        Each tranche executor must output ONLY changed lines using SEARCH/REPLACE blocks:
-
-        <<<<<<< SEARCH
-        [exact code from original file, with context lines for unique match]
-        =======
-        [new replacement code]
-        >>>>>>> REPLACE
-
-        Rules:
-        1. SEARCH must match existing code exactly, line for line, preserving whitespace.
-        2. Include enough context lines for a unique match.
-        3. Multiple SEARCH/REPLACE blocks per file are allowed.
-        4. For completely new files, output full code without SEARCH/REPLACE tags.
-
-        Do NOT include "assets.json" in your updatedFiles response.
-        In your 'message', provide a detailed changelog of modifications.
-
-        ═══════════════════════════════════════════════════════════
-
-        User Request: ${prompt}`;
+User Request: ${prompt}`;
 
         const projectPath = `${ROOT}/${currentProject}`;
         const responseFileRef = ref(storage, `${projectPath}/ai_response.json`);
@@ -3015,15 +3296,13 @@ Quality criteria for your work:
         try { await deleteObject(errorFileRef); } catch(e) {}
         try { await deleteObject(progressFileRef); } catch(e) {}
 
-        // --- NEW: GENERATE JOB ID & KILL OLD JOBS ---
         const currentJobId = Date.now().toString();
         Progress.step('Securing pipeline', 'Terminating any old overlapping jobs...');
         const activeJobRef = ref(storage, `${projectPath}/ai_active_job.json`);
-        await uploadString(activeJobRef, JSON.stringify({ jobId: currentJobId, timestamp: Date.now() }));
-        // --------------------------------------------
+        await uploadString(activeJobRef, JSON.stringify({ jobId: currentJobId, timestamp: Date.now(), repairAttempt }));
 
-        setStatus('AI is processing files (This may take a minute)...');
-        Progress.step('Sending context to Claude', 'Building V2 expert-agent pipeline prompt + files...');
+        setStatus(repairAttempt > 0 ? 'AI repair pass is processing...' : 'AI is processing files (This may take a minute)...');
+        Progress.step('Sending context to Claude', repairAttempt > 0 ? 'Focused repair context + failed targets...' : 'Building V2 expert-agent pipeline prompt + files...');
         const inlineImages = await Promise.all(attachedPromptImages.map(async (file) => {
             return new Promise((resolve, reject) => {
                 const reader = new FileReader();
@@ -3043,32 +3322,28 @@ Quality criteria for your work:
         attachedPromptImages = [];
         renderPromptImages();
         
-        // --- NEW: Bypass Netlify 256KB Payload Limit ---
         Progress.step('Uploading payload to Firebase', 'Bypassing Netlify async size limits...');
-        const payloadBody = JSON.stringify({ prompt: enhancedPrompt, files: projectFiles, projectPath, selectedAssets, inlineImages, expertAgents: EXPERT_AGENTS });
+        const payloadBody = JSON.stringify({ prompt: enhancedPrompt, files: projectFiles, projectPath, selectedAssets, inlineImages, expertAgents: EXPERT_AGENTS, repairAttempt, repairTargets });
         const requestFileRef = ref(storage, `${projectPath}/ai_request.json`);
         await uploadString(requestFileRef, payloadBody);
 
         Progress.step('Triggering AI Background Task', 'Waiting for Netlify to accept...');
-        // -----------------------------------------------
 
-        // Use a 3-minute abort timeout to prevent silent hangs
         const fetchController = new AbortController();
         const fetchTimeout = setTimeout(() => fetchController.abort(), 180000);
         try {
             const proxyRes = await fetch('/.netlify/functions/claudeCodeProxy-background', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
-              // Include the new jobId in the payload
-              body: JSON.stringify({ projectPath, jobId: currentJobId }), 
+              body: JSON.stringify({ projectPath, jobId: currentJobId, repairAttempt, repairTargets }),
               signal: fetchController.signal
-            });            
+            });
             if (!proxyRes.ok) {
                  throw new Error(`Netlify rejected the request: ${proxyRes.status} ${proxyRes.statusText}. Your payload may exceed the 6MB limit, or the function crashed.`);
             }
         } catch (fetchErr) {
             if (fetchErr.name === 'AbortError') {
-                throw new Error("AI request timed out (3 min) while sending. The prompt may be too large. Try deselecting some assets or removing large files.");
+                throw new Error('AI request timed out (3 min) while sending. The prompt may be too large. Try deselecting some assets or removing large files.');
             }
             throw fetchErr;
         } finally {
@@ -3076,64 +3351,70 @@ Quality criteria for your work:
         }
 
         let result = null;
+        let malformedProgressCount = 0;
+        let malformedResponseCount = 0;
         Progress.step('Waiting for Claude response', 'Polling Firebase for V2 expert tranche progress...');
 
-        // Show the tranche pipeline UI
         TrancheUI.show();
         TrancheUI.showPlanning();
 
         while (!result) {
           await sleep(5000);
 
-          // Check for error file
-          let hasErrorFile = false;
-          let errorMessage = "AI Generation Failed";
-          try {
-            const errUrl = await getDownloadURL(errorFileRef);
-            const errRes = await fetch(errUrl);
-            const errData = await errRes.json();
-            errorMessage = errData.error || errorMessage;
-            hasErrorFile = true;
-          } catch(e) {}
-          if (hasErrorFile) throw new Error(errorMessage);
+          const errorRead = await fetchStorageJsonSafe(errorFileRef, projectPath, 'ai_error');
+          if (errorRead.ok) {
+            const errorMessage = errorRead.data?.error || 'AI Generation Failed';
+            throw new Error(errorMessage);
+          }
 
-          // Poll ai_progress.json for live tranche updates
-          try {
-            const progressUrl = await getDownloadURL(progressFileRef);
-            const progressRes = await fetch(progressUrl + `&v=${Date.now()}`, { cache: 'no-store' });
-            if (progressRes.ok) {
-              const progressData = await progressRes.json();
-
-              // --- NEW: IGNORE GHOST UPDATES ---
-              if (progressData.jobId && progressData.jobId !== currentJobId) {
-                  continue; // This is a ghost writing its final breath. Ignore it.
-              }
-              // ---------------------------------
-
-              TrancheUI.updateFromProgress(progressData);
-
-              // Update the Progress panel title to reflect current tranche
-              if (progressData.status === 'executing' && progressData.tranches) {
-                const active = progressData.tranches.find(t => t.status === 'in_progress');
-                if (active) {
-                  const agentLabel = (active.expertAgents || [])
-                    .map(id => { const a = EXPERT_AGENTS[id]; return a ? `${a.icon} ${a.name}` : id; })
-                    .join(' + ');
-                  Progress.step(
-                    `T${active.index + 1}/${progressData.totalTranches}: ${active.name}`,
-                    agentLabel ? `${agentLabel} executing...` : (active.description || 'Sonnet 4.6 executing...')
-                  );
-                }
+          const progressRead = await fetchStorageJsonSafe(progressFileRef, projectPath, 'ai_progress');
+          if (progressRead.ok) {
+            const progressData = progressRead.data;
+            malformedProgressCount = 0;
+            if (progressData.jobId && progressData.jobId !== currentJobId) {
+              continue;
+            }
+            TrancheUI.updateFromProgress(progressData);
+            if (progressData.status === 'executing' && progressData.tranches) {
+              const active = progressData.tranches.find(t => t.status === 'in_progress');
+              if (active) {
+                const agentLabel = (active.expertAgents || [])
+                  .map(id => { const a = EXPERT_AGENTS[id]; return a ? `${a.icon} ${a.name}` : id; })
+                  .join(' + ');
+                Progress.step(
+                  `T${active.index + 1}/${progressData.totalTranches}: ${active.name}`,
+                  agentLabel ? `${agentLabel} executing...` : (active.description || 'Sonnet 4.6 executing...')
+                );
               }
             }
-          } catch(e) { /* progress file not yet available */ }
+          } else if (progressRead.kind === 'parse_error') {
+            malformedProgressCount++;
+            Progress.warn('Malformed ai_progress.json detected', `Attempt ${malformedProgressCount}/${AI_HARDENING.jsonPollMalformedLimit}`);
+          }
 
-          // Check for final response
-          try {
-            const url = await getDownloadURL(responseFileRef);
-            const res = await fetch(url + `&v=${Date.now()}`);
-            result = await res.json();
-          } catch(e) {}
+          const responseRead = await fetchStorageJsonSafe(responseFileRef, projectPath, 'ai_response');
+          if (responseRead.ok) {
+            const envelopeCheck = validateAiResponseEnvelope(responseRead.data);
+            if (!envelopeCheck.ok) {
+              await quarantineAiPayload(projectPath, 'ai_response_invalid_envelope', responseRead.rawText, {
+                error: envelopeCheck.error,
+                jobId: currentJobId
+              });
+              malformedResponseCount++;
+              if (malformedResponseCount >= AI_HARDENING.jsonPollMalformedLimit) {
+                throw new Error(`Malformed final AI response: ${envelopeCheck.error}`);
+              }
+              Progress.warn('Invalid AI response envelope', envelopeCheck.error);
+              continue;
+            }
+            result = responseRead.data;
+          } else if (responseRead.kind === 'parse_error') {
+            malformedResponseCount++;
+            Progress.warn('Malformed ai_response.json detected', `Attempt ${malformedResponseCount}/${AI_HARDENING.jsonPollMalformedLimit}`);
+            if (malformedResponseCount >= AI_HARDENING.jsonPollMalformedLimit) {
+              throw new Error('Malformed final AI response after multiple parse attempts.');
+            }
+          }
         }
 
         const escapeHTML = (str) => str.replace(/[&<>'"]/g, tag => ({
@@ -3141,166 +3422,58 @@ Quality criteria for your work:
         }[tag]));
 
         Progress.step(`Writing ${result.updatedFiles.length} file(s) to Firebase`);
-        
-        for (const file of result.updatedFiles) {
-          let aiOutputContent = file.content.trim();
-          if (aiOutputContent.startsWith('```')) {
-              const lines = aiOutputContent.split('\n');
-              if (lines[0].startsWith('```')) lines.shift();
-              if (lines[lines.length - 1].trim().startsWith('```')) lines.pop();
-              aiOutputContent = lines.join('\n').trim();
+        const applySummary = await applyAiUpdatedFiles({
+          result,
+          projectPath,
+          projectFiles,
+          escapeHTML
+        });
+
+        if (applySummary.failedFiles.length > 0) {
+          const failedSummary = applySummary.failedFiles.map(f => `${f.safePath || f.path}: ${f.reason}`).join(' | ');
+          await quarantineAiPayload(projectPath, 'ai_apply_failures', JSON.stringify(applySummary.failedFiles, null, 2), {
+            jobId: currentJobId,
+            repairAttempt,
+            failedCount: applySummary.failedFiles.length
+          });
+
+          if (repairAttempt < AI_HARDENING.repairPassLimit) {
+            appendToChatLog('System', `Detected ${applySummary.failedFiles.length} failed section(s). Re-running only the failed portion.`, 'error');
+            Progress.warn('Targeted repair triggered', failedSummary);
+            await executeAIPipeline(basePrompt, {
+              repairAttempt: repairAttempt + 1,
+              repairTargets: applySummary.failedFiles,
+              preserveButtonLock: true
+            });
+            return;
           }
 
-          let fileName = file.path.split('/').pop(); 
-          let safePath = file.path;
-
-          if (fileName.toLowerCase() === 'worldcontroller.js' || fileName === '2' || fileName === '2') {
-              fileName = '2';
-              safePath = 'models/2';
-          } else if (fileName.toLowerCase() === 'document.html' || fileName === '23' || fileName === '23') {
-              fileName = '23';
-              safePath = 'models/23';
-          } else if (fileName.toLowerCase() === 'assets.json') {
-              fileName = 'assets.json';
-              safePath = 'json/assets.json';
-          }
-
-          const originalFileKey = Object.keys(projectFiles).find(k => k.toLowerCase().endsWith('/' + fileName.toLowerCase()));
-          
-          let finalContentToSave = aiOutputContent;
-          let uiDisplayContent = escapeHTML(aiOutputContent); 
-
-          if (aiOutputContent.includes('<<<<<<< SEARCH')) {
-             let originalContent = originalFileKey ? projectFiles[originalFileKey] : "";
-             
-             if (!originalContent) {
-                 appendToChatLog('System', `Warning: Could not find original content for ${fileName} to apply patch. Skipping file.`, 'error');
-                 continue; 
-             }
-
-             const blockRegex = /<<<<<<< SEARCH[\r\n]+([\s\S]*?)[\r\n]+=======[\r\n]+([\s\S]*?)[\r\n]+>>>>>>> REPLACE/g;
-             let normalizedResult = originalContent.replace(/\r\n/g, '\n');
-             let uiResult = escapeHTML(normalizedResult); 
-             let match;
-             let changesMade = 0;
-
-              // Aggressive fuzzy matcher: strips all comments and whitespace to find the true structural code block
-             // in the original file, then returns the actual verbatim slice so we can replace it perfectly.
-             function findWithNormalizedWhitespace(haystack, needle) {
-                 // Normalize by removing all inline comments, block comments, and ALL whitespace
-                 const normalize = (str) => str.replace(/\/\/.*$/gm, '').replace(/\/\*[\s\S]*?\*\//g, '').replace(/\s+/g, '');
-                 const needleNorm = normalize(needle);
-                 
-                 if (!needleNorm) return null;
-
-                 const haystackLines = haystack.split('\n');
-                 
-                 for (let i = 0; i < haystackLines.length; i++) {
-                     let currentNorm = "";
-                     for (let j = i; j < haystackLines.length; j++) {
-                         // Accumulate the normalized version of each line
-                         currentNorm += haystackLines[j].replace(/\/\/.*$/, '').replace(/\s+/g, '');
-                         
-                         // If we hit an exact structural match, return the raw unedited slice from the original file
-                         if (currentNorm === needleNorm) {
-                             return haystackLines.slice(i, j + 1).join('\n');
-                         }
-                         
-                         // If we've exceeded the length of the target without matching, break early to save performance
-                         if (currentNorm.length > needleNorm.length) {
-                             break;
-                         }
-                     }
-                 }
-                 return null;
-             }
-
-             while ((match = blockRegex.exec(aiOutputContent)) !== null) {
-                 const searchTarget = match[1].replace(/\r\n/g, '\n');
-                 const replacement = match[2];
-
-                 if (normalizedResult.includes(searchTarget)) {
-                     // Exact match — fast path
-                     normalizedResult = normalizedResult.split(searchTarget).join(replacement);
-                     
-                     const escapedSearch = escapeHTML(searchTarget);
-                     const escapedReplace = escapeHTML(replacement);
-                     const uiPatch = `<span style="color: var(--success); font-weight: bold;">${escapedSearch}</span>\n<span style="color: var(--danger); font-weight: bold;">${escapedReplace}</span>`;
-                     
-                     uiResult = uiResult.split(escapedSearch).join(uiPatch);
-                     changesMade++;
-                 } else {
-                     // Fallback: try whitespace-normalized match
-                     const verbatimMatch = findWithNormalizedWhitespace(normalizedResult, searchTarget);
-                     if (verbatimMatch !== null) {
-                         console.info(`Patch for ${fileName}: exact match failed, using whitespace-normalized match.`);
-                         normalizedResult = normalizedResult.split(verbatimMatch).join(replacement);
-
-                         const escapedSearch = escapeHTML(verbatimMatch);
-                         const escapedReplace = escapeHTML(replacement);
-                         const uiPatch = `<span style="color: var(--success); font-weight: bold;">${escapedSearch}</span>\n<span style="color: var(--danger); font-weight: bold;">${escapedReplace}</span>`;
-
-                         uiResult = uiResult.split(escapedSearch).join(uiPatch);
-                         changesMade++;
-                     } else {
-                         console.warn(`Patch failed for ${fileName}. Code not found:\n`, searchTarget);
-                         appendToChatLog('System', `Warning: A patch block for ${fileName} failed to match the existing code.`, 'error');
-                         Progress.warn(`Patch failed for ${fileName}`, 'Code block not found in original');
-                     }
-                 }
-             }
-
-             if (changesMade > 0) {
-                 finalContentToSave = normalizedResult;
-                 uiDisplayContent = uiResult; 
-             } else {
-                 appendToChatLog('System', `Failed to apply any patches to ${fileName}. Ensure AI provides exact matching code.`, 'error');
-                 continue; 
-             }
-          }
-          
-          file.uiContent = uiDisplayContent; 
-          file.rawContent = finalContentToSave; 
-
-          const targetRef = ref(storage, `${ROOT}/${currentProject}/${safePath}`);
-          await uploadString(targetRef, finalContentToSave);
-          
-          const catFolder = safePath.split('/')[0];
-          const catConfig = FILE_CATEGORIES.find(c => c.folder === catFolder);
-          if (catConfig) {
-            const zone = document.getElementById(`zone_${catConfig.id}`);
-            if (zone) {
-              zone.classList.remove('pulse-update');
-              void zone.offsetWidth; 
-              zone.classList.add('pulse-update');
-            }
-          }
+          throw new Error(`AI update failed after automatic repair attempts. ${failedSummary}`);
         }
 
-        appendToChatLog('AI', result.message || "Files have been updated successfully.");
-        setStatus('V2 expert-agent tranched build complete.');
-        Progress.done('V2 Expert Pipeline complete ✦');
+        result.updatedFiles = applySummary.appliedFiles;
 
-        // Final tranche UI update
+        appendToChatLog('AI', result.message || 'Files have been updated successfully.');
+        setStatus(repairAttempt > 0 ? 'AI repair completed successfully.' : 'V2 expert-agent tranched build complete.');
+        Progress.done(repairAttempt > 0 ? 'Repair pipeline complete ✦' : 'V2 Expert Pipeline complete ✦');
+
         try {
-          const progressUrl = await getDownloadURL(progressFileRef);
-          const progressRes = await fetch(progressUrl + `&v=${Date.now()}`, { cache: 'no-store' });
-          if (progressRes.ok) {
-            const finalProgress = await progressRes.json();
-            TrancheUI.updateFromProgress(finalProgress);
+          const finalProgressRead = await fetchStorageJsonSafe(progressFileRef, projectPath, 'ai_progress_final');
+          if (finalProgressRead.ok) {
+            TrancheUI.updateFromProgress(finalProgressRead.data);
           }
-        } catch(e) {}
+        } catch (e) {}
 
-        aiCodeReviewLog.innerHTML = ''; 
+        aiCodeReviewLog.innerHTML = '';
         
         if (result.updatedFiles && result.updatedFiles.length > 0) {
             result.updatedFiles.forEach(file => {
                 const fileContainer = document.createElement('div');
                 fileContainer.style.border = '2px solid var(--accent)';
                 fileContainer.style.borderRadius = '12px';
-                fileContainer.style.background = '#151a2a'; 
+                fileContainer.style.background = '#151a2a';
                 fileContainer.style.padding = '24px';
-                fileContainer.style.marginBottom = '50px'; 
+                fileContainer.style.marginBottom = '50px';
                 fileContainer.style.boxShadow = '0 6px 20px rgba(0,0,0,0.4)';
 
                 const fileHeader = document.createElement('div');
@@ -3348,17 +3521,17 @@ Quality criteria for your work:
                 fileContainer.appendChild(editorContainer);
                 aiCodeReviewLog.appendChild(fileContainer);
 
-                let editorMode = "javascript";
-                if (file.path.endsWith('.html')) editorMode = "htmlmixed";
-                else if (file.path.endsWith('.json')) editorMode = "application/json";
+                let editorMode = 'javascript';
+                if (file.path.endsWith('.html')) editorMode = 'htmlmixed';
+                else if (file.path.endsWith('.json')) editorMode = 'application/json';
 
                 const editor = CodeMirror(editorContainer, {
                     value: file.rawContent || '',
                     mode: editorMode,
-                    theme: "monokai",
+                    theme: 'monokai',
                     lineNumbers: true,
-                    lineWrapping: true, 
-                    readOnly: false     
+                    lineWrapping: true,
+                    readOnly: false
                 });
 
                 setTimeout(() => editor.refresh(), 100);
@@ -3368,17 +3541,30 @@ Quality criteria for your work:
         }
 
         refreshAllFiles();
-        refreshReviewList(); 
+        refreshReviewList();
         document.querySelectorAll('.asset-checkbox').forEach(cb => cb.checked = false);
 
       } catch (error) {
-        console.error("AI Update Error:", error);
+        console.error('AI Update Error:', error);
+        const isRecoverable = /Malformed final AI response|AI response is missing updatedFiles array|AI response was not a JSON object|strict JSON only/i.test(error.message || '');
+        if (isRecoverable && repairAttempt < AI_HARDENING.repairPassLimit) {
+          appendToChatLog('System', `Recoverable pipeline issue detected. Re-running the failed portion automatically.`, 'error');
+          Progress.warn('Recoverable AI pipeline issue', error.message);
+          await executeAIPipeline(basePrompt, {
+            repairAttempt: repairAttempt + 1,
+            repairTargets: repairTargets.length ? repairTargets : [{ path: 'pipeline', safePath: 'pipeline', reason: error.message }],
+            preserveButtonLock: true
+          });
+          return;
+        }
         appendToChatLog('System', `Error: ${error.message}`, 'error');
         setStatus('AI update failed.');
         Progress.error(error.message);
         TrancheUI.updateFromProgress({ status: 'error', error: error.message, completedTime: Date.now() });
       } finally {
-        sendToAiBtn.disabled = false;
+        if (!preserveButtonLock && repairAttempt === 0) {
+          sendToAiBtn.disabled = false;
+        }
       }
     }
 
