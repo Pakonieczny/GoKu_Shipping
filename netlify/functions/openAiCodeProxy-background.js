@@ -997,6 +997,9 @@ You must respond ONLY with a valid JSON object. No markdown, no code fences, no 
 
       if (!tranche) throw new Error(`Tranche ${nextTranche} not found in pipeline state.`);
 
+      // ADD THIS LINE TO FIX THE ERROR:
+      const progressTelemetry = createProgressTelemetry(bucket, projectPath, progress);
+
       // ── Mark tranche as in-progress ──────────────────────────
       progress.currentTranche = nextTranche;
       progress.tranches[nextTranche].status = "in_progress";
