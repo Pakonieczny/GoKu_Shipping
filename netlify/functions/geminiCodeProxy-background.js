@@ -135,6 +135,10 @@ function normalizeGeminiContentBlocks(userContent) {
 function extractGeminiText(data) {
   if (!data || typeof data !== "object") return "";
 
+  if (typeof data.text === "string" && data.text.trim()) {
+    return data.text.trim();
+  }
+
   const candidates = Array.isArray(data.candidates) ? data.candidates : [];
   const textParts = [];
 
@@ -265,6 +269,10 @@ async function parseGeminiStreamResponse(res, callbacks = {}) {
   let buffer = "";
   let fullText = "";
   let finalResponse = null;
+  let lastTextResponse = null;
+  let eventCount = 0;
+  let parseErrorCount = 0;
+  const rawEvents = [];
 
   async function processEventBlock(block) {
     const lines = String(block || "").split(/\r?\n/);
@@ -281,10 +289,14 @@ async function parseGeminiStreamResponse(res, callbacks = {}) {
     const dataStr = dataLines.join("\n").trim();
     if (!dataStr || dataStr === "[DONE]") return;
 
+    eventCount += 1;
+    if (rawEvents.length < 8) rawEvents.push(dataStr.slice(0, 1200));
+
     let data;
     try {
       data = JSON.parse(dataStr);
     } catch {
+      parseErrorCount += 1;
       return;
     }
 
@@ -292,11 +304,21 @@ async function parseGeminiStreamResponse(res, callbacks = {}) {
       await callbacks.onEvent(data);
     }
 
-    const deltaText = extractGeminiText(data);
-    if (deltaText) {
-      fullText += deltaText;
+    const eventText = extractGeminiText(data);
+    if (eventText) {
+      if (!fullText) {
+        fullText = eventText;
+      } else if (eventText !== fullText) {
+        if (eventText.startsWith(fullText)) {
+          fullText = eventText;
+        } else {
+          fullText += eventText;
+        }
+      }
+
+      lastTextResponse = data;
       if (callbacks.onTextDelta) {
-        await callbacks.onTextDelta(deltaText, fullText, data);
+        await callbacks.onTextDelta(eventText, fullText, data);
       }
     }
 
@@ -318,8 +340,13 @@ async function parseGeminiStreamResponse(res, callbacks = {}) {
   }
 
   return {
-    data: finalResponse,
-    text: fullText
+    data: lastTextResponse || finalResponse,
+    text: String(fullText || "").trim(),
+    diagnostics: {
+      eventCount,
+      parseErrorCount,
+      rawEvents
+    }
   };
 }
 
@@ -388,8 +415,19 @@ async function callGemini(apiKey, {
   if (stream) {
     const streamed = await parseGeminiStreamResponse(res, { onEvent, onTextDelta });
     const data = streamed.data;
-    const responseText = extractGeminiText(data) || String(streamed.text || "").trim();
-    if (!responseText) throw new Error("Empty response from Gemini");
+    const responseText =
+      String(streamed.text || "").trim() ||
+      extractGeminiText(data);
+
+    if (!responseText) {
+      const err = new Error(
+        `Empty response from Gemini (stream events=${streamed?.diagnostics?.eventCount || 0}, parseErrors=${streamed?.diagnostics?.parseErrorCount || 0})`
+      );
+      err.phase = "gemini_stream";
+      err.details = JSON.stringify(streamed?.diagnostics || {}).slice(0, 4000);
+      throw err;
+    }
+
     return {
       text: responseText,
       usage: mapGeminiUsage(data?.usageMetadata)

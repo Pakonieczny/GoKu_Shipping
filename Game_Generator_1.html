@@ -810,6 +810,18 @@
       return 'V2 Expert-Agent Pipeline ready. Enter game build instructions below — Opus will research the game, assign expert agents, and create focused micro-tranches.';
     }
 
+    function getCurrentCodeBackendDisplayName() {
+      if (activeCodeProxyBackend === 'openai') return 'OpenAI';
+      if (activeCodeProxyBackend === 'gemini') return 'Gemini';
+      return 'Claude';
+    }
+
+    function getCurrentCodeBackendResponseLabel() {
+      if (activeCodeProxyBackend === 'openai') return 'OpenAI response';
+      if (activeCodeProxyBackend === 'gemini') return 'Gemini response';
+      return 'Claude response';
+    }
+
     function refreshPipelineBackendLabels() {
       const chatLogEl = document.getElementById('aiChatLog');
       const readyNode = chatLogEl ? chatLogEl.querySelector('div') : null;
@@ -4018,7 +4030,7 @@ User Request: ${prompt}`;
         await uploadString(activeJobRef, JSON.stringify({ jobId: currentJobId, timestamp: Date.now(), repairAttempt }));
 
         setStatus(repairAttempt > 0 ? 'AI repair pass is processing...' : 'AI is processing files (This may take a minute)...');
-        Progress.step(`Sending context to ${activeCodeProxyBackend === 'openai' ? 'OpenAI' : 'Claude'}`, repairAttempt > 0 ? 'Focused repair context + failed targets...' : 'Building V2 expert-agent pipeline prompt + files...');
+        Progress.step(`Sending context to ${getCurrentCodeBackendDisplayName()}`, repairAttempt > 0 ? 'Focused repair context + failed targets...' : 'Building V2 expert-agent pipeline prompt + files...');
         const inlineImages = await Promise.all(attachedPromptImages.map(async (file) => {
             return new Promise((resolve, reject) => {
                 const reader = new FileReader();
@@ -4081,7 +4093,7 @@ User Request: ${prompt}`;
         let malformedResponseCount = 0;
         let lastKnownProgress = null;
         const buildPollDeadlineMs = Date.now() + AI_HARDENING.buildPollTimeoutMs;
-        Progress.step(`Waiting for ${activeCodeProxyBackend === 'openai' ? 'OpenAI' : 'Claude'} response`, 'Polling Firebase for V2 expert tranche progress...');
+        Progress.step(`Waiting for ${getCurrentCodeBackendResponseLabel()}`, 'Polling Firebase for V2 expert tranche progress...');
 
         TrancheUI.show();
         TrancheUI.showPlanning();
