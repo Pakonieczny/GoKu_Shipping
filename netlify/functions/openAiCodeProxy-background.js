@@ -632,20 +632,34 @@ exports.handler = async (event) => {
   let bucket = null;
   let jobId = null;
 
+  // ── Initialize bucket FIRST so the catch block can always write
+  // ai_error.json to Firebase. If bucket init is deferred past any
+  // throw, a silent failure leaves the frontend polling forever.
   try {
+    bucket = admin.storage().bucket(process.env.FIREBASE_STORAGE_BUCKET || "gokudatabase.firebasestorage.app");
+  } catch (bucketInitErr) {
+    console.error("CRITICAL: Firebase bucket initialization failed:", bucketInitErr);
+    return { statusCode: 500, body: JSON.stringify({ error: "Firebase init failed: " + bucketInitErr.message }) };
+  }
+
+  try {
+    console.log("[openAiCodeProxy] Handler invoked. body length:", event.body ? event.body.length : 0);
+
     if (!event.body) throw new Error("Missing request body");
 
     const parsedBody = JSON.parse(event.body);
     projectPath = parsedBody.projectPath;
     jobId = parsedBody.jobId;
 
+    console.log(`[openAiCodeProxy] projectPath=${projectPath} jobId=${jobId}`);
+
     if (!projectPath) throw new Error("Missing projectPath");
     if (!jobId) throw new Error("Missing jobId");
 
     const apiKey = process.env.OPENAI_API_KEY;
-    if (!apiKey) throw new Error("Missing OPENAI_API_KEY");
+    if (!apiKey) throw new Error("Missing OPENAI_API_KEY — set this env var in Netlify dashboard");
 
-    bucket = admin.storage().bucket(process.env.FIREBASE_STORAGE_BUCKET || "gokudatabase.firebasestorage.app");
+    console.log(`[openAiCodeProxy] API key present (length ${apiKey.length}). Bucket ready.`);
 
     // ── Determine mode: "plan" (initial) or "tranche" (chained) ──
     const mode = parsedBody.mode || "plan";
@@ -793,7 +807,7 @@ You must respond ONLY with a valid JSON object. No markdown, no code fences, no 
         ...imageBlocks
       ];
 
-      console.log(`STAGE 0: Planning with OpenAI for Job ${jobId} (timeout ${Math.round(OPENAI_PLANNER_HTTP_TIMEOUT_MS / 1000)}s)...`);
+      console.log(`[openAiCodeProxy] STAGE 0: Calling OpenAI planner — model=${OPENAI_DEFAULT_PLANNER_MODEL} maxTokens=${OPENAI_DEFAULT_PLANNER_MAX_OUTPUT_TOKENS} timeout=${Math.round(OPENAI_PLANNER_HTTP_TIMEOUT_MS / 1000)}s job=${jobId}`);
       await progressTelemetry.event("Planning request sent", `Model ${OPENAI_DEFAULT_PLANNER_MODEL} with ${OPENAI_DEFAULT_PLANNER_REASONING_EFFORT} reasoning.`, {
         stage: "planning",
         model: OPENAI_DEFAULT_PLANNER_MODEL,
