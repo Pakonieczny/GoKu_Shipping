@@ -20,8 +20,6 @@ const admin = require("./firebaseAdmin");
 
 /* ── helper: call OpenAI Responses API ───────────────────────── */
 const OPENAI_RESPONSES_URL = "https://api.openai.com/v1/responses";
-const OPENAI_MAX_CONTEXT_WINDOW = Number(process.env.OPENAI_MAX_CONTEXT_WINDOW || 1050000);
-const OPENAI_AUTO_COMPACT_TOKEN_LIMIT = Number(process.env.OPENAI_AUTO_COMPACT_TOKEN_LIMIT || 1000000);
 const OPENAI_DEFAULT_PLANNER_MODEL = process.env.OPENAI_GAME_PLANNER_MODEL || process.env.OPENAI_MODEL || "gpt-5.4-pro";
 const OPENAI_DEFAULT_EXECUTOR_MODEL = process.env.OPENAI_GAME_EXECUTOR_MODEL || process.env.OPENAI_MODEL || "gpt-5.4-pro";
 const OPENAI_DEFAULT_REASONING_EFFORT = process.env.OPENAI_REASONING_EFFORT || "xhigh";
@@ -93,9 +91,6 @@ function mapOpenAIUsage(usage) {
 
 async function callOpenAI(apiKey, { model, maxTokens, system, userContent, effort, contextWindow, autoCompactTokenLimit }) {
   const resolvedMaxTokens = Number(maxTokens || OPENAI_DEFAULT_MAX_OUTPUT_TOKENS);
-  const resolvedContextWindow = Number(contextWindow || OPENAI_MAX_CONTEXT_WINDOW);
-  const resolvedAutoCompactTokenLimit = Number(autoCompactTokenLimit || OPENAI_AUTO_COMPACT_TOKEN_LIMIT);
-
   const body = {
     model,
     input: [
@@ -112,9 +107,7 @@ async function callOpenAI(apiKey, { model, maxTokens, system, userContent, effor
       effort: effort || OPENAI_DEFAULT_REASONING_EFFORT
     },
     max_output_tokens: resolvedMaxTokens,
-    truncation: "auto",
-    model_context_window: resolvedContextWindow,
-    model_auto_compact_token_limit: resolvedAutoCompactTokenLimit
+    truncation: "auto"
   };
 
   const res = await fetch(OPENAI_RESPONSES_URL, {
