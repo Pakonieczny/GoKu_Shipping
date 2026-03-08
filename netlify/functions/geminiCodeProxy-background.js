@@ -327,7 +327,7 @@ async function parseGeminiStreamResponse(res, callbacks = {}) {
 
   for await (const chunk of bodyStream) {
     buffer += decoder.decode(chunk, { stream: true });
-    const parts = buffer.split(/\n\n/);
+    const parts = buffer.split(/\r?\n\r?\n/);
     buffer = parts.pop() || "";
 
     for (const part of parts) {
