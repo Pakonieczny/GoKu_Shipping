@@ -1830,7 +1830,7 @@ const AI_HARDENING = {
       buildPollTimeoutMs: 120 * 60 * 1000, 
       // Bump this from 12 mins to 30 mins
       repairPollTimeoutMs: 30 * 60 * 1000, 
-      pollIntervalMs: 5000
+      pollIntervalMs: 9000
     };
 
     function sanitizeStorageFragment(value) {
@@ -3990,7 +3990,8 @@ User Request: ${prompt}`;
         
         try { await deleteObject(responseFileRef); } catch(e) {}
         try { await deleteObject(errorFileRef); } catch(e) {}
-        try { await deleteObject(progressFileRef); } catch(e) {}
+        // Do not delete ai_progress.json here.
+        // Job-id freshness guards already ignore stale progress snapshots.
 
         const currentJobId = Date.now().toString();
         lastRunJobId = currentJobId;

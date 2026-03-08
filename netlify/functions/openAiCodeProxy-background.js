@@ -21,7 +21,7 @@ const admin = require("./firebaseAdmin");
 /* ── helper: call OpenAI Responses API ───────────────────────── */
 const OPENAI_RESPONSES_URL = "https://api.openai.com/v1/responses";
 // Keep Planner as Pro for deep game intelligence
-const OPENAI_DEFAULT_PLANNER_MODEL = process.env.OPENAI_GAME_PLANNER_MODEL || process.env.OPENAI_MODEL || "gpt-5.4-pro";
+const OPENAI_DEFAULT_PLANNER_MODEL = process.env.OPENAI_GAME_PLANNER_MODEL || process.env.OPENAI_MODEL || "gpt-5.4";
 // Set Executor to Flash for speed and cost savings
 const OPENAI_DEFAULT_EXECUTOR_MODEL = process.env.OPENAI_GAME_EXECUTOR_MODEL || "gpt-5.4-flash";
 
@@ -37,8 +37,8 @@ const OPENAI_DEFAULT_EXECUTOR_MAX_OUTPUT_TOKENS = Number(process.env.OPENAI_EXEC
 const OPENAI_HTTP_TIMEOUT_MS = Number(process.env.OPENAI_HTTP_TIMEOUT_MS || 1500000);
 const OPENAI_PLANNER_HTTP_TIMEOUT_MS = Number(process.env.OPENAI_PLANNER_HTTP_TIMEOUT_MS || 1500000);
 const OPENAI_CHAIN_ACCEPT_TIMEOUT_MS = Number(process.env.OPENAI_CHAIN_ACCEPT_TIMEOUT_MS || 1500000);
-const OPENAI_PROGRESS_STREAM_FLUSH_MS = Number(process.env.OPENAI_PROGRESS_STREAM_FLUSH_MS || 1200);
-const OPENAI_PROGRESS_STREAM_MIN_CHARS = Number(process.env.OPENAI_PROGRESS_STREAM_MIN_CHARS || 120);
+const OPENAI_PROGRESS_STREAM_FLUSH_MS = Number(process.env.OPENAI_PROGRESS_STREAM_FLUSH_MS || 8000);
+const OPENAI_PROGRESS_STREAM_MIN_CHARS = Number(process.env.OPENAI_PROGRESS_STREAM_MIN_CHARS || 1200);
 const OPENAI_PROGRESS_EVENTS_LIMIT = Number(process.env.OPENAI_PROGRESS_EVENTS_LIMIT || 80);
 const OPENAI_PROGRESS_STREAM_PREVIEW_LIMIT = Number(process.env.OPENAI_PROGRESS_STREAM_PREVIEW_LIMIT || 4000);
 
@@ -249,19 +249,29 @@ function createProgressTelemetry(bucket, projectPath, progress) {
   let lastPersistAt = 0;
   let lastStreamPersistAt = 0;
   let lastStreamPersistLen = 0;
+  let pendingPersistPromise = null;
 
   async function persist(force = false) {
     const now = Date.now();
-    if (!force && now - lastPersistAt < 250) return;
-    await saveProgress(bucket, projectPath, progress);
-    lastPersistAt = now;
+    const minGapMs = force ? 2000 : 8000;
+    if (now - lastPersistAt < minGapMs) return;
+    if (pendingPersistPromise) return pendingPersistPromise;
+    pendingPersistPromise = (async () => {
+      await saveProgress(bucket, projectPath, progress);
+      lastPersistAt = Date.now();
+    })();
+    try {
+      await pendingPersistPromise;
+    } finally {
+      pendingPersistPromise = null;
+    }
   }
 
   return {
     async event(label, detail = "", options = {}) {
       appendLiveEvent(progress, { label, detail, ...options });
       if (options?.patch) updateLiveState(progress, options.patch);
-      await persist(true);
+      await persist(false);
     },
     async patch(patch = {}, force = false) {
       updateLiveState(progress, patch);
@@ -278,16 +288,18 @@ function createProgressTelemetry(bucket, projectPath, progress) {
       });
       const now = Date.now();
       const currentLen = String(live.streamingText || "").length;
-      const shouldPersist = (now - lastStreamPersistAt >= OPENAI_PROGRESS_STREAM_FLUSH_MS) || (currentLen - lastStreamPersistLen >= OPENAI_PROGRESS_STREAM_MIN_CHARS);
+      const shouldPersist =
+        (now - lastStreamPersistAt >= OPENAI_PROGRESS_STREAM_FLUSH_MS) ||
+        (currentLen - lastStreamPersistLen >= OPENAI_PROGRESS_STREAM_MIN_CHARS);
       if (shouldPersist) {
-        await persist(true);
+        await persist(false);
         lastStreamPersistAt = now;
         lastStreamPersistLen = currentLen;
       }
     },
     async clearStream(force = true) {
       updateLiveState(progress, { streamingText: "", streamBytes: 0 });
-      await persist(force);
+      await persist(false);
     }
   };
 }
