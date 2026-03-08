@@ -42,6 +42,10 @@
     .btnDanger:hover { background: #5c2424; }
     .btnSmall{ padding:6px 10px; border-radius:8px; font-size:11px; line-height:1; }
     .btn:disabled{ opacity:0.5; cursor:not-allowed; }
+    .proxy-toggle-wrap { margin-top: 14px; display: flex; flex-direction: column; gap: 8px; }
+    .proxy-toggle-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+    .proxy-toggle-label { font-size: 11px; color: var(--muted); }
+    .proxy-toggle-value { font-size: 12px; color: var(--text); font-weight: 600; }
     
     .drop-zone {
       border: 2px dashed #3a4262; border-radius: 14px; padding: 0; background: #0e1220;
@@ -544,6 +548,14 @@
         <option value="">Loading projects...</option>
       </select>
 
+      <div class="proxy-toggle-wrap">
+        <div class="proxy-toggle-row">
+          <button class="btn" id="toggleCodeProxyBtn" type="button">Use OpenAI Code Proxy</button>
+        </div>
+        <div class="proxy-toggle-label">Current code backend:</div>
+        <div class="proxy-toggle-value" id="codeProxyLabel">claudeCodeProxy-background.js</div>
+      </div>
+
       <div style="margin-top: 20px; border-top: 1px solid var(--line); padding-top: 20px;">
         <label>Create New Project</label>
         <div class="row">
@@ -745,6 +757,45 @@
     const generateGameBtn = document.getElementById('generateGameBtn');
     const progressContainer = document.getElementById('progressContainer');
     const progressBar = document.getElementById('progressBar');
+    const toggleCodeProxyBtn = document.getElementById('toggleCodeProxyBtn');
+    const codeProxyLabel = document.getElementById('codeProxyLabel');
+
+    const CODE_PROXY_OPTIONS = {
+      claude: 'claudeCodeProxy-background',
+      openai: 'openAiCodeProxy-background'
+    };
+    const CODE_PROXY_STORAGE_KEY = 'gameGenerator.codeProxyBackend';
+    let activeCodeProxyBackend = localStorage.getItem(CODE_PROXY_STORAGE_KEY) === 'openai' ? 'openai' : 'claude';
+
+    function getCodeProxyFunctionName() {
+      return CODE_PROXY_OPTIONS[activeCodeProxyBackend] || CODE_PROXY_OPTIONS.claude;
+    }
+
+    function getCodeProxyEndpoint() {
+      return `/.netlify/functions/${getCodeProxyFunctionName()}`;
+    }
+
+    function getCodeProxyDisplayName() {
+      return `${getCodeProxyFunctionName()}.js`;
+    }
+
+    function updateCodeProxyUi() {
+      if (codeProxyLabel) codeProxyLabel.textContent = getCodeProxyDisplayName();
+      if (toggleCodeProxyBtn) {
+        toggleCodeProxyBtn.textContent = activeCodeProxyBackend === 'claude'
+          ? 'Use OpenAI Code Proxy'
+          : 'Use Claude Code Proxy';
+      }
+    }
+
+    function setActiveCodeProxyBackend(nextBackend) {
+      activeCodeProxyBackend = nextBackend === 'openai' ? 'openai' : 'claude';
+      localStorage.setItem(CODE_PROXY_STORAGE_KEY, activeCodeProxyBackend);
+      updateCodeProxyUi();
+      setStatus(`Code backend set to ${getCodeProxyDisplayName()}`);
+    }
+
+    updateCodeProxyUi();
 
     const aiPromptInput = document.getElementById('aiPromptInput');
     const sendToAiBtn = document.getElementById('sendToAiBtn');
@@ -965,6 +1016,9 @@
     });
 
     projectSelect.addEventListener('change', (e) => selectProject(e.target.value));
+    toggleCodeProxyBtn.addEventListener('click', () => {
+      setActiveCodeProxyBackend(activeCodeProxyBackend === 'claude' ? 'openai' : 'claude');
+    });
 
     function selectProject(name) {
       if (!name) return;
@@ -3342,7 +3396,7 @@ Original user request for context: ${basePrompt}`;
 
         // ── Trigger backend ─────────────────────────────────────────────────
         Progress.step(`Triggering repair backend (pass ${pass})`, 'Sending to Netlify...');
-        const repairProxyRes = await fetch('/.netlify/functions/claudeCodeProxy-background', {
+        const repairProxyRes = await fetch(getCodeProxyEndpoint(), {
           method:  'POST',
           headers: { 'Content-Type': 'application/json' },
           body:    JSON.stringify({ projectPath, jobId: repairJobId, repairAttempt: pass })
@@ -3833,7 +3887,7 @@ User Request: ${prompt}`;
         await uploadString(activeJobRef, JSON.stringify({ jobId: currentJobId, timestamp: Date.now(), repairAttempt }));
 
         setStatus(repairAttempt > 0 ? 'AI repair pass is processing...' : 'AI is processing files (This may take a minute)...');
-        Progress.step('Sending context to Claude', repairAttempt > 0 ? 'Focused repair context + failed targets...' : 'Building V2 expert-agent pipeline prompt + files...');
+        Progress.step(`Sending context to ${activeCodeProxyBackend === 'openai' ? 'OpenAI' : 'Claude'}`, repairAttempt > 0 ? 'Focused repair context + failed targets...' : 'Building V2 expert-agent pipeline prompt + files...');
         const inlineImages = await Promise.all(attachedPromptImages.map(async (file) => {
             return new Promise((resolve, reject) => {
                 const reader = new FileReader();
@@ -3863,7 +3917,7 @@ User Request: ${prompt}`;
         const fetchController = new AbortController();
         const fetchTimeout = setTimeout(() => fetchController.abort(), 180000);
         try {
-            const proxyRes = await fetch('/.netlify/functions/claudeCodeProxy-background', {
+            const proxyRes = await fetch(getCodeProxyEndpoint(), {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({ projectPath, jobId: currentJobId, repairAttempt, repairTargets }),
@@ -3886,7 +3940,7 @@ User Request: ${prompt}`;
         let malformedResponseCount = 0;
         let lastKnownProgress = null;
         const buildPollDeadlineMs = Date.now() + AI_HARDENING.buildPollTimeoutMs;
-        Progress.step('Waiting for Claude response', 'Polling Firebase for V2 expert tranche progress...');
+        Progress.step(`Waiting for ${activeCodeProxyBackend === 'openai' ? 'OpenAI' : 'Claude'} response`, 'Polling Firebase for V2 expert tranche progress...');
 
         TrancheUI.show();
         TrancheUI.showPlanning();
