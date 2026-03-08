@@ -4164,7 +4164,7 @@ User Request: ${prompt}`;
                 Progress.warn('Invalid AI response envelope', envelopeCheck.error);
                 } else {
                 if (responseRead.data.status !== 'final') {
-                  Progress.log(
+                  Progress.step(
                     'Checkpoint received',
                     `Still waiting for final build output (status: ${responseRead.data.status || 'unknown'}).`
                   );
