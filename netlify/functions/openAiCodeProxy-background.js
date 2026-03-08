@@ -89,7 +89,7 @@ function mapOpenAIUsage(usage) {
   };
 }
 
-async function callOpenAI(apiKey, { model, maxTokens, system, userContent, effort, contextWindow, autoCompactTokenLimit }) {
+async function callOpenAI(apiKey, { model, maxTokens, system, userContent, effort }) {
   const resolvedMaxTokens = Number(maxTokens || OPENAI_DEFAULT_MAX_OUTPUT_TOKENS);
   const body = {
     model,
@@ -551,8 +551,6 @@ You must respond ONLY with a valid JSON object. No markdown, no code fences, no 
         model: OPENAI_DEFAULT_PLANNER_MODEL,
         maxTokens: OPENAI_DEFAULT_MAX_OUTPUT_TOKENS,
         effort: OPENAI_DEFAULT_REASONING_EFFORT,
-        contextWindow: OPENAI_MAX_CONTEXT_WINDOW,
-        autoCompactTokenLimit: OPENAI_AUTO_COMPACT_TOKEN_LIMIT,
         system: planningSystem,
         userContent: planningUserContent
       });
