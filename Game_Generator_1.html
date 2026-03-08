@@ -4162,7 +4162,7 @@ User Request: ${prompt}`;
                   throw new Error(`Malformed final AI response: ${envelopeCheck.error}`);
                 }
                 Progress.warn('Invalid AI response envelope', envelopeCheck.error);
-              } else {
+                } else {
                 if (responseRead.data.status !== 'final') {
                   Progress.log(
                     'Checkpoint received',
