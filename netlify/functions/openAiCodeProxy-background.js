@@ -23,16 +23,19 @@ const OPENAI_RESPONSES_URL = "https://api.openai.com/v1/responses";
 // Keep Planner as Pro for deep game intelligence
 const OPENAI_DEFAULT_PLANNER_MODEL = process.env.OPENAI_GAME_PLANNER_MODEL || process.env.OPENAI_MODEL || "gpt-5.4";
 // Set Executor to Flash for speed and cost savings
-const OPENAI_DEFAULT_EXECUTOR_MODEL = process.env.OPENAI_GAME_EXECUTOR_MODEL || "gpt-5.4-flash";
+const OPENAI_DEFAULT_EXECUTOR_MODEL = process.env.OPENAI_GAME_EXECUTOR_MODEL || "gpt-5.4";
 
-const OPENAI_DEFAULT_REASONING_EFFORT = process.env.OPENAI_REASONING_EFFORT || "medium";
-const OPENAI_DEFAULT_MAX_OUTPUT_TOKENS = Number(process.env.OPENAI_MAX_OUTPUT_TOKENS || 24000);
+const OPENAI_DEFAULT_REASONING_EFFORT = "medium";
+const OPENAI_DEFAULT_TEXT_VERBOSITY = "low";
+const OPENAI_DEFAULT_MAX_OUTPUT_TOKENS = 24000;
 
-const OPENAI_DEFAULT_PLANNER_REASONING_EFFORT = process.env.OPENAI_PLANNER_REASONING_EFFORT || "medium";
-const OPENAI_DEFAULT_PLANNER_MAX_OUTPUT_TOKENS = Number(process.env.OPENAI_PLANNER_MAX_OUTPUT_TOKENS || 32000);
+const OPENAI_DEFAULT_PLANNER_REASONING_EFFORT = "medium";
+const OPENAI_DEFAULT_PLANNER_TEXT_VERBOSITY = "medium";
+const OPENAI_DEFAULT_PLANNER_MAX_OUTPUT_TOKENS = 32000;
 
-const OPENAI_DEFAULT_EXECUTOR_REASONING_EFFORT = process.env.OPENAI_EXECUTOR_REASONING_EFFORT || "low";
-const OPENAI_DEFAULT_EXECUTOR_MAX_OUTPUT_TOKENS = Number(process.env.OPENAI_EXECUTOR_MAX_OUTPUT_TOKENS || 24000);
+const OPENAI_DEFAULT_EXECUTOR_REASONING_EFFORT = "medium";
+const OPENAI_DEFAULT_EXECUTOR_TEXT_VERBOSITY = "low";
+const OPENAI_DEFAULT_EXECUTOR_MAX_OUTPUT_TOKENS = 24000;
 
 const OPENAI_HTTP_TIMEOUT_MS = Number(process.env.OPENAI_HTTP_TIMEOUT_MS || 1500000);
 const OPENAI_PLANNER_HTTP_TIMEOUT_MS = Number(process.env.OPENAI_PLANNER_HTTP_TIMEOUT_MS || 1500000);
@@ -95,14 +98,28 @@ function extractOpenAIText(data) {
   return textParts.join("\n").trim();
 }
 
+function buildOutputBudgetBreakdown(usage) {
+  const outputTokens = Number(usage?.output_tokens || 0);
+  const reasoningTokens = Number(usage?.output_tokens_details?.reasoning_tokens || 0);
+  const safeReasoningTokens = Math.max(0, Math.min(outputTokens, reasoningTokens));
+  const restOutputTokens = Math.max(0, outputTokens - safeReasoningTokens);
+
+  return {
+    reasoning_tokens: safeReasoningTokens,
+    rest_output_tokens: restOutputTokens
+  };
+}
+
 function mapOpenAIUsage(usage) {
   if (!usage || typeof usage !== "object") return null;
+  const outputBudget = buildOutputBudgetBreakdown(usage);
   return {
     input_tokens: usage.input_tokens || 0,
     output_tokens: usage.output_tokens || 0,
     total_tokens: usage.total_tokens || ((usage.input_tokens || 0) + (usage.output_tokens || 0)),
     input_tokens_details: usage.input_tokens_details || null,
-    output_tokens_details: usage.output_tokens_details || null
+    output_tokens_details: usage.output_tokens_details || null,
+    output_budget: outputBudget
   };
 }
 
@@ -121,8 +138,9 @@ async function fetchJsonWithTimeout(url, options = {}, timeoutMs = OPENAI_HTTP_T
   }
 }
 
-async function callOpenAI(apiKey, { model, maxTokens, system, userContent, effort, timeoutMs, stream = true, onEvent, onTextDelta }) {
+async function callOpenAI(apiKey, { model, maxTokens, system, userContent, effort, verbosity, timeoutMs, stream = true, onEvent, onTextDelta }) {
   const resolvedMaxTokens = Number(maxTokens || OPENAI_DEFAULT_MAX_OUTPUT_TOKENS);
+  const resolvedVerbosity = String(verbosity || OPENAI_DEFAULT_TEXT_VERBOSITY || "medium");
   
   const body = {
     model,
@@ -138,12 +156,24 @@ async function callOpenAI(apiKey, { model, maxTokens, system, userContent, effor
     ],
     max_output_tokens: resolvedMaxTokens,
     truncation: "auto",
-    stream: !!stream
+    stream: !!stream,
+    text: {
+      verbosity: resolvedVerbosity
+    }
   };
 
-  // ONLY attach reasoning_effort if using a reasoning-capable model (Pro variants, o1, o3, etc.)
-  const isReasoningModel = model.startsWith("o1") || model.startsWith("o3") || model.includes("pro") || model.includes("reasoning");
-  if (isReasoningModel) {
+  // GPT-5 family models and reasoning families support reasoning.effort.
+  const supportsReasoningControls =
+    typeof model === "string" &&
+    (
+      model.startsWith("gpt-5") ||
+      model.startsWith("o1") ||
+      model.startsWith("o3") ||
+      model.includes("pro") ||
+      model.includes("reasoning")
+    );
+
+  if (supportsReasoningControls) {
     body.reasoning = {
       effort: effort || OPENAI_DEFAULT_REASONING_EFFORT
     };
@@ -765,7 +795,12 @@ exports.handler = async (event) => {
         tokenUsage: {
           planning: null,
           tranches: [],
-          totals: { input_tokens: 0, output_tokens: 0 }
+          totals: {
+            input_tokens: 0,
+            output_tokens: 0,
+            reasoning_tokens: 0,
+            rest_output_tokens: 0
+          }
         },
         finalMessage: null,
         error: null,
@@ -831,14 +866,14 @@ You must respond ONLY with a valid JSON object. No markdown, no code fences, no 
       ];
 
       console.log(`[openAiCodeProxy] STAGE 0: Calling OpenAI planner — model=${OPENAI_DEFAULT_PLANNER_MODEL} maxTokens=${OPENAI_DEFAULT_PLANNER_MAX_OUTPUT_TOKENS} timeout=${Math.round(OPENAI_PLANNER_HTTP_TIMEOUT_MS / 1000)}s job=${jobId}`);
-      await progressTelemetry.event("Planning request sent", `Model ${OPENAI_DEFAULT_PLANNER_MODEL} with ${OPENAI_DEFAULT_PLANNER_REASONING_EFFORT} reasoning.`, {
+      await progressTelemetry.event("Planning request sent", `Model ${OPENAI_DEFAULT_PLANNER_MODEL} with ${OPENAI_DEFAULT_PLANNER_REASONING_EFFORT} reasoning and ${OPENAI_DEFAULT_PLANNER_TEXT_VERBOSITY} verbosity.`, {
         stage: "planning",
         model: OPENAI_DEFAULT_PLANNER_MODEL,
         patch: {
           stage: "planning",
           model: OPENAI_DEFAULT_PLANNER_MODEL,
           label: "Waiting for planner response",
-          detail: `Timeout ${Math.round(OPENAI_PLANNER_HTTP_TIMEOUT_MS / 1000)}s • max output ${OPENAI_DEFAULT_PLANNER_MAX_OUTPUT_TOKENS}`
+          detail: `Timeout ${Math.round(OPENAI_PLANNER_HTTP_TIMEOUT_MS / 1000)}s • max output ${OPENAI_DEFAULT_PLANNER_MAX_OUTPUT_TOKENS} • verbosity ${OPENAI_DEFAULT_PLANNER_TEXT_VERBOSITY}`
         }
       });
       let plannerSawFirstToken = false;
@@ -846,6 +881,7 @@ You must respond ONLY with a valid JSON object. No markdown, no code fences, no 
         model: OPENAI_DEFAULT_PLANNER_MODEL,
         maxTokens: OPENAI_DEFAULT_PLANNER_MAX_OUTPUT_TOKENS,
         effort: OPENAI_DEFAULT_PLANNER_REASONING_EFFORT,
+        verbosity: OPENAI_DEFAULT_PLANNER_TEXT_VERBOSITY,
         timeoutMs: OPENAI_PLANNER_HTTP_TIMEOUT_MS,
         system: planningSystem,
         userContent: planningUserContent,
@@ -883,6 +919,8 @@ You must respond ONLY with a valid JSON object. No markdown, no code fences, no 
         progress.tokenUsage.planning = planResult.usage;
         progress.tokenUsage.totals.input_tokens += planResult.usage.input_tokens || 0;
         progress.tokenUsage.totals.output_tokens += planResult.usage.output_tokens || 0;
+        progress.tokenUsage.totals.reasoning_tokens += planResult.usage.output_budget?.reasoning_tokens || 0;
+        progress.tokenUsage.totals.rest_output_tokens += planResult.usage.output_budget?.rest_output_tokens || 0;
         await saveProgress(bucket, projectPath, progress);
       }
 
@@ -1139,6 +1177,7 @@ Correct approach:
           model: OPENAI_DEFAULT_EXECUTOR_MODEL,
           maxTokens: OPENAI_DEFAULT_EXECUTOR_MAX_OUTPUT_TOKENS,
           effort: OPENAI_DEFAULT_EXECUTOR_REASONING_EFFORT,
+          verbosity: OPENAI_DEFAULT_EXECUTOR_TEXT_VERBOSITY,
           timeoutMs: OPENAI_HTTP_TIMEOUT_MS,
           system: executionSystem,
           userContent: trancheUserContent,
@@ -1226,6 +1265,8 @@ Correct approach:
           progress.tokenUsage.tranches[nextTranche] = trancheResponseObj.usage;
           progress.tokenUsage.totals.input_tokens += trancheResponseObj.usage.input_tokens || 0;
           progress.tokenUsage.totals.output_tokens += trancheResponseObj.usage.output_tokens || 0;
+          progress.tokenUsage.totals.reasoning_tokens += trancheResponseObj.usage.output_budget?.reasoning_tokens || 0;
+          progress.tokenUsage.totals.rest_output_tokens += trancheResponseObj.usage.output_budget?.rest_output_tokens || 0;
           progress.tranches[nextTranche].tokenUsage = trancheResponseObj.usage;
         }
 
@@ -1340,11 +1381,11 @@ Correct approach:
       updateLiveState(progress, { stage: "complete", model: OPENAI_DEFAULT_EXECUTOR_MODEL, label: "Pipeline complete", detail: `Updated ${allUpdatedFiles.length} file(s) across ${progress.tranches.filter(tr => tr.status === "complete").length} tranche(s).`, streamingText: "", streamBytes: 0 });
       appendLiveEvent(progress, { type: "success", label: "Pipeline complete", detail: `All tranche work finished. ${allUpdatedFiles.length} file(s) are ready in ai_response.json.`, stage: "complete", model: OPENAI_DEFAULT_EXECUTOR_MODEL });
       const t = progress.tokenUsage.totals;
-      progress.finalMessage = `Build complete: ${allUpdatedFiles.length} file(s) updated across ${progress.tranches.filter(tr => tr.status === "complete").length} tranche(s). Tokens: ${t.input_tokens} in / ${t.output_tokens} out.`;
+      progress.finalMessage = `Build complete: ${allUpdatedFiles.length} file(s) updated across ${progress.tranches.filter(tr => tr.status === "complete").length} tranche(s). Tokens: ${t.input_tokens} in / ${t.output_tokens} out (${t.reasoning_tokens} reasoning, ${t.rest_output_tokens} rest-of-output).`;
       progress.completedTime = Date.now();
       await saveProgress(bucket, projectPath, progress);
 
-      console.log(`Total tokens — input: ${t.input_tokens}, output: ${t.output_tokens}`);
+      console.log(`Total tokens — input: ${t.input_tokens}, output: ${t.output_tokens}, reasoning: ${t.reasoning_tokens}, rest_output: ${t.rest_output_tokens}`);
 
       // Clean up pipeline state and request files
       try { await bucket.file(`${projectPath}/ai_pipeline_state.json`).delete(); } catch (e) {}
