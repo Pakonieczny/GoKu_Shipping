@@ -794,15 +794,22 @@
     }
 
     function refreshPipelineBackendLabels() {
-      const readyNode = aiChatLog ? aiChatLog.querySelector('div') : null;
+      const chatLogEl = document.getElementById('aiChatLog');
+      const readyNode = chatLogEl ? chatLogEl.querySelector('div') : null;
       if (readyNode) readyNode.textContent = getPipelineReadyText();
+
       const planningLabelNode = document.getElementById('tranchePlanningLabel');
       if (planningLabelNode && !planningLabelNode.textContent.includes('✓ Game Intelligence + Plan:')) {
         planningLabelNode.textContent = `${getPipelinePlanningModelLabel()} is researching game design and creating expert-driven build tranches...`;
       }
+
       const footerModels = document.querySelectorAll('.tranche-footer-model');
-      if (footerModels[0]) footerModels[0].innerHTML = `<div class="tranche-footer-dot opus"></div> ${getPipelinePlanningModelLabel()} → Intelligence + Planning`;
-      if (footerModels[1]) footerModels[1].innerHTML = `<div class="tranche-footer-dot sonnet"></div> ${getPipelineExecutionModelLabel()} → Execution`;
+      if (footerModels[0]) {
+        footerModels[0].innerHTML = `<div class="tranche-footer-dot opus"></div> ${getPipelinePlanningModelLabel()} → Intelligence + Planning`;
+      }
+      if (footerModels[1]) {
+        footerModels[1].innerHTML = `<div class="tranche-footer-dot sonnet"></div> ${getPipelineExecutionModelLabel()} → Execution`;
+      }
     }
 
     function updateCodeProxyUi() {
@@ -822,8 +829,6 @@
       setStatus(`Code backend set to ${getCodeProxyDisplayName()}`);
     }
 
-    updateCodeProxyUi();
-
     const aiPromptInput = document.getElementById('aiPromptInput');
     const sendToAiBtn = document.getElementById('sendToAiBtn');
     const update2Btn = document.getElementById('update2Btn');
@@ -833,6 +838,8 @@
     const reviewPanel = document.getElementById('reviewPanel');
     const reviewFileList = document.getElementById('reviewFileList');
     const clearReviewBtn = document.getElementById('clearReviewBtn');
+
+    updateCodeProxyUi();
 
     function setStatus(msg) {
         globalStatus.textContent = msg;
