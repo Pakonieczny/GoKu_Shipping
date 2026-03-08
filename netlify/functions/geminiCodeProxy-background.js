@@ -1514,15 +1514,6 @@ Correct approach:
 
         // Try to parse the response
         if (trancheResponseObj) {
-          if (trancheResponseObj.usage) {
-            progress.tokenUsage.tranches[nextTranche] = trancheResponseObj.usage;
-            progress.tokenUsage.totals.input_tokens += trancheResponseObj.usage.input_tokens || 0;
-            progress.tokenUsage.totals.output_tokens += trancheResponseObj.usage.output_tokens || 0;
-            progress.tokenUsage.totals.reasoning_tokens += trancheResponseObj.usage.output_budget?.reasoning_tokens || 0;
-            progress.tokenUsage.totals.rest_output_tokens += trancheResponseObj.usage.output_budget?.rest_output_tokens || 0;
-            progress.tranches[nextTranche].tokenUsage = trancheResponseObj.usage;
-          }
-
           trancheResult = parseDelimitedResponse(trancheResponseObj.text);
         }
 
@@ -1570,6 +1561,16 @@ Correct approach:
         }
       }
       // ── end executor retry loop ──────────────────────────────────────────
+
+      // Account for token usage exactly once, from the final attempt's response
+      if (trancheResponseObj && trancheResponseObj.usage) {
+        progress.tokenUsage.tranches[nextTranche] = trancheResponseObj.usage;
+        progress.tokenUsage.totals.input_tokens += trancheResponseObj.usage.input_tokens || 0;
+        progress.tokenUsage.totals.output_tokens += trancheResponseObj.usage.output_tokens || 0;
+        progress.tokenUsage.totals.reasoning_tokens += trancheResponseObj.usage.output_budget?.reasoning_tokens || 0;
+        progress.tokenUsage.totals.rest_output_tokens += trancheResponseObj.usage.output_budget?.rest_output_tokens || 0;
+        progress.tranches[nextTranche].tokenUsage = trancheResponseObj.usage;
+      }
 
       // Handle complete parse failure after all retry attempts
       if (!trancheResult) {
@@ -1664,6 +1665,165 @@ Correct approach:
           body: JSON.stringify({ success: true, chained: true, phase: `tranche_${nextTranche}_complete` })
         };
       }
+
+      // ════════════════════════════════════════════════════════════════
+      // MANDATORY FINAL SYNTHESIS AUDIT
+      // All planned tranches are done. Before writing the final response,
+      // run one dedicated audit pass that reads the COMPLETE accumulated
+      // models/2 and models/23 and fixes every syntax error, duplicate
+      // declaration, and structural issue in a single call.
+      // This prevents simple errors (duplicate `const vec3`, unexpected
+      // tokens from tranche merges) from ever reaching the frontend.
+      // ════════════════════════════════════════════════════════════════
+      {
+        const auditFiles = ["models/2", "models/23"].filter(p => accumulatedFiles[p]);
+
+        if (auditFiles.length > 0) {
+          await progressTelemetry.event(
+            "Final Synthesis Audit started",
+            `Scanning ${auditFiles.join(", ")} for syntax errors, duplicate declarations, and structural issues...`,
+            {
+              stage: "executing",
+              model: GEMINI_DEFAULT_EXECUTOR_MODEL,
+              type: "info",
+              patch: {
+                stage: "executing",
+                model: GEMINI_DEFAULT_EXECUTOR_MODEL,
+                label: "Final Synthesis Audit",
+                detail: `Auditing ${auditFiles.join(", ")} for cross-tranche merge errors...`
+              }
+            }
+          );
+
+          const auditSystem = `You are a Senior JavaScript and HTML Code Auditor performing a mandatory final quality pass on a freshly-built browser game.
+
+Your ONLY job is to find and fix real code defects introduced by the multi-tranche build process. You must NOT redesign, refactor, rewrite logic, rename variables, or add new features.
+
+DEFECTS TO FIX (and ONLY these):
+1. Duplicate identifier declarations — e.g. two \`const vec3\`, two \`function init()\`, two \`let score\`.
+   Fix: keep the last/most complete definition, remove the earlier duplicate.
+2. JavaScript syntax errors — Unexpected token, missing closing brace/bracket/paren, unterminated string.
+   Fix: correct the syntax while preserving all logic.
+3. Redeclared function parameters or block-scoped variables that shadow each other illegally.
+4. HTML in models/23: unclosed tags, duplicate <script> bootstrap blocks, duplicate <style> blocks.
+   Fix: merge duplicates, close tags.
+5. Orphaned code — statements that appear after a return/throw in a way that can never execute and causes a parse error.
+
+DO NOT:
+- Change any game logic, variable values, physics constants, or gameplay behaviour
+- Rename anything
+- Add any new features or improvements
+- Remove any working code that is not a duplicate or syntax error
+- Change the VALIDATION_MANIFEST blocks
+
+Output ONLY the files that actually needed changes. If a file is already clean, do NOT output it.
+Use the standard delimiter format:
+===FILE_START: path===
+...complete corrected file content...
+===FILE_END: path===
+
+After all files add:
+===MESSAGE===
+List every defect found and fixed, one line per fix. If no defects were found in a file, state that.
+===END_MESSAGE===`;
+
+          const auditFileContext = auditFiles
+            .map(p => `===FILE_START: ${p}===\n${accumulatedFiles[p]}\n===FILE_END: ${p}===`)
+            .join("\n\n");
+
+          const auditUserContent = [{
+            type: "text",
+            text: `${auditFileContext}\n\nAudit the files above. Fix ONLY real syntax errors and duplicate declarations introduced by the multi-tranche build. Output only files that needed changes.`
+          }];
+
+          let auditSawFirstToken = false;
+          let auditResponseObj = null;
+
+          try {
+            auditResponseObj = await callGemini(apiKey, {
+              model: GEMINI_DEFAULT_EXECUTOR_MODEL,
+              maxTokens: GEMINI_DEFAULT_EXECUTOR_MAX_OUTPUT_TOKENS,
+              effort: "low",
+              verbosity: "low",
+              timeoutMs: GEMINI_HTTP_TIMEOUT_MS,
+              system: auditSystem,
+              userContent: auditUserContent,
+              stream: true,
+              jsonMode: false,
+              onTextDelta: async (delta, aggregateText) => {
+                if (!auditSawFirstToken) {
+                  auditSawFirstToken = true;
+                }
+                await progressTelemetry.stream(delta, aggregateText, {
+                  stage: "executing",
+                  model: GEMINI_DEFAULT_EXECUTOR_MODEL,
+                  label: "Final Synthesis Audit streaming",
+                  detail: "Reading full file content for defects..."
+                });
+              }
+            });
+
+            await progressTelemetry.clearStream(true);
+
+            if (auditResponseObj) {
+              // Account for audit token usage
+              if (auditResponseObj.usage) {
+                progress.tokenUsage.totals.input_tokens += auditResponseObj.usage.input_tokens || 0;
+                progress.tokenUsage.totals.output_tokens += auditResponseObj.usage.output_tokens || 0;
+                progress.tokenUsage.totals.reasoning_tokens += auditResponseObj.usage.output_budget?.reasoning_tokens || 0;
+                progress.tokenUsage.totals.rest_output_tokens += auditResponseObj.usage.output_budget?.rest_output_tokens || 0;
+              }
+
+              const auditResult = parseDelimitedResponse(auditResponseObj.text);
+
+              if (auditResult && auditResult.updatedFiles && auditResult.updatedFiles.length > 0) {
+                const auditFixedPaths = [];
+                for (const file of auditResult.updatedFiles) {
+                  accumulatedFiles[file.path] = file.content;
+                  auditFixedPaths.push(file.path);
+                  const existingIdx = allUpdatedFiles.findIndex(f => f.path === file.path);
+                  if (existingIdx >= 0) {
+                    allUpdatedFiles[existingIdx] = file;
+                  } else {
+                    allUpdatedFiles.push(file);
+                  }
+                }
+
+                await progressTelemetry.event(
+                  "Final Synthesis Audit complete — defects fixed",
+                  `Fixed ${auditFixedPaths.length} file(s): ${auditFixedPaths.join(", ")}. ${auditResult.message || ""}`,
+                  {
+                    stage: "executing",
+                    model: GEMINI_DEFAULT_EXECUTOR_MODEL,
+                    type: "success",
+                    patch: {
+                      label: "Final Synthesis Audit complete",
+                      detail: `${auditFixedPaths.length} file(s) corrected before final write.`
+                    }
+                  }
+                );
+                console.log(`Final Synthesis Audit fixed ${auditFixedPaths.length} file(s): ${auditFixedPaths.join(", ")}`);
+              } else {
+                await progressTelemetry.event(
+                  "Final Synthesis Audit complete — no defects found",
+                  "All files passed the cross-tranche syntax audit.",
+                  { stage: "executing", model: GEMINI_DEFAULT_EXECUTOR_MODEL, type: "success" }
+                );
+                console.log("Final Synthesis Audit: no defects found.");
+              }
+            }
+          } catch (auditErr) {
+            // Audit failure is non-fatal — log and continue to write the pipeline result as-is
+            console.error("Final Synthesis Audit failed (non-fatal):", auditErr.message);
+            await progressTelemetry.event(
+              "Final Synthesis Audit skipped",
+              `Audit call failed: ${auditErr.message}. Proceeding with unaudited output.`,
+              { stage: "executing", model: GEMINI_DEFAULT_EXECUTOR_MODEL, type: "warn" }
+            );
+          }
+        }
+      }
+      // ════════════════════════════════════════════════════════════════
 
       const summaryParts = progress.tranches
         .filter(t => t.status === "complete")

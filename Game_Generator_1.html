@@ -3543,7 +3543,17 @@ Original user request for context: ${basePrompt}`;
         lastRunJobId    = repairJobId;
         lastRunStartTime = Date.now();
 
-        try { await deleteObject(responseFileRef); } catch (e) {}
+        try {
+          await uploadString(responseFileRef, JSON.stringify({
+            jobId: repairJobId,
+            timestamp: Date.now(),
+            status: "pending",
+            updatedFiles: [],
+            message: `Awaiting repair pass ${pass}...`
+          }));
+        } catch (e) {
+          console.warn("Could not write repair ai_response placeholder:", e);
+        }
         try { await deleteObject(errorFileRef); }    catch (e) {}
 
         await uploadString(activeJobRef, JSON.stringify({
@@ -4045,7 +4055,22 @@ User Request: ${prompt}`;
         const errorFileRef = ref(storage, `${projectPath}/ai_error.json`);
         const progressFileRef = ref(storage, `${projectPath}/ai_progress.json`);
         
-        try { await deleteObject(responseFileRef); } catch(e) {}
+        // Overwrite ai_response.json with a job-stamped placeholder instead of deleting it.
+        // Deletion can silently fail or lag in Firebase, leaving a stale file that the
+        // poller will warn about on every single poll cycle until the backend writes real data.
+        // Writing a placeholder with the new jobId means the freshness guard passes immediately.
+        try {
+          await uploadString(responseFileRef, JSON.stringify({
+            jobId: currentJobId,
+            timestamp: Date.now(),
+            status: "pending",
+            updatedFiles: [],
+            message: "Awaiting backend pipeline..."
+          }));
+        } catch(e) {
+          // Non-fatal — poller will handle stale file gracefully
+          console.warn("Could not write ai_response placeholder:", e);
+        }
         try { await deleteObject(errorFileRef); } catch(e) {}
         // Do not delete ai_progress.json here.
         // Job-id freshness guards already ignore stale progress snapshots.
@@ -4119,6 +4144,7 @@ User Request: ${prompt}`;
         let result = null;
         let malformedProgressCount = 0;
         let malformedResponseCount = 0;
+        let staleWarningEmitted = false;
         let lastKnownProgress = null;
         const buildPollDeadlineMs = Date.now() + AI_HARDENING.buildPollTimeoutMs;
         Progress.step(`Waiting for ${getCurrentCodeBackendResponseLabel()}`, 'Polling Firebase for V2 expert tranche progress...');
@@ -4170,9 +4196,18 @@ User Request: ${prompt}`;
             // Reject a response that belongs to a different/older job.
             const respJobId = responseRead.data.jobId;
             if (respJobId && respJobId !== currentJobId) {
-              Progress.warn('Stale ai_response.json detected', `Response job "${respJobId}" ≠ current "${currentJobId}" — still waiting for fresh write...`);
+              // Only log the stale warning once — don't spam every poll cycle
+              if (!staleWarningEmitted) {
+                staleWarningEmitted = true;
+                Progress.warn('Stale ai_response.json detected', `Response job "${respJobId}" ≠ current "${currentJobId}" — waiting for backend to write fresh data...`);
+              }
               // do NOT assign result — keep polling
             } else {
+              // Skip our own pending placeholder silently — it only exists to prevent
+              // the stale guard from triggering before the backend writes real data.
+              if (responseRead.data.status === 'pending') {
+                // placeholder, keep polling quietly
+              } else {
               const envelopeCheck = validateAiResponseEnvelope(responseRead.data);
               if (!envelopeCheck.ok) {
                 await quarantineAiPayload(projectPath, 'ai_response_invalid_envelope', responseRead.rawText, {
@@ -4193,6 +4228,7 @@ User Request: ${prompt}`;
                 } else {
                   result = responseRead.data;
                 }
+              }
               }
             }
           } else if (responseRead.kind === 'parse_error') {
@@ -4231,6 +4267,168 @@ User Request: ${prompt}`;
             ? `Checkpoint: ${result.updatedFiles.length} file(s) accumulated (tranche ${(result.trancheIndex ?? 0) + 1}/${result.totalTranches ?? '?'})`
             : `${result.updatedFiles.length} file(s) generated`;
         Progress.step('✅ Build pipeline complete', buildStatus);
+
+        // ── Pre-apply Syntax Scan ────────────────────────────────────────────
+        // Before writing anything to Firebase, run a fast local syntax check
+        // across ALL updated files. This collects every error in one pass so a
+        // single consolidated repair can fix them all, instead of discovering
+        // them one-at-a-time through the validator after each repair loop pass.
+        const preApplySyntaxErrors = [];
+        for (const file of result.updatedFiles) {
+          const { safePath } = resolveAiTargetPath(file.path);
+          const content = String(file.content || '').trim();
+
+          if (safePath === 'models/2' || safePath.endsWith('.js')) {
+            // Use the same ES-module-safe stripped validator as the main validator
+            const strippedForScan = content
+              .replace(/\/\*[\s\S]*?\*\//g, '')
+              .replace(/\/\/[^\n]*/g, '')
+              .replace(/^\s*import\s[\s\S]*?(?:from\s+['"][^'"]+['"])?[;]?\s*$/gm, '')
+              .replace(/^\s*export\s+(default\s+)?/gm, '')
+              .replace(/(\w)\s*:\s*[A-Z][A-Za-z0-9_<>\[\]|&.,\s]*(?=[,)\s=])/g, '$1')
+              .trim();
+            try {
+              new Function(strippedForScan);
+            } catch (syntaxErr) {
+              preApplySyntaxErrors.push({ safePath, error: syntaxErr.message, content });
+            }
+          } else if (safePath === 'models/23' || safePath.endsWith('.html')) {
+            // Lightweight HTML check: look for obviously broken <script> blocks
+            const scriptMatches = content.match(/<script[^>]*>([\s\S]*?)<\/script>/gi) || [];
+            for (const scriptBlock of scriptMatches) {
+              const jsContent = scriptBlock.replace(/<script[^>]*>/i, '').replace(/<\/script>/i, '');
+              const stripped = jsContent
+                .replace(/\/\*[\s\S]*?\*\//g, '')
+                .replace(/\/\/[^\n]*/g, '')
+                .replace(/^\s*import\s[\s\S]*?(?:from\s+['"][^'"]+['"])?[;]?\s*$/gm, '')
+                .replace(/^\s*export\s+(default\s+)?/gm, '')
+                .trim();
+              if (!stripped) continue;
+              try {
+                new Function(stripped);
+              } catch (htmlSyntaxErr) {
+                preApplySyntaxErrors.push({ safePath, error: htmlSyntaxErr.message, content });
+                break; // one error per file is enough to flag it
+              }
+            }
+          }
+        }
+
+        if (preApplySyntaxErrors.length > 0) {
+          const errorSummary = preApplySyntaxErrors.map(e => `${e.safePath}: ${e.error}`).join(' | ');
+          Progress.warn(
+            `Pre-apply syntax scan found ${preApplySyntaxErrors.length} file(s) with errors — running consolidated repair`,
+            errorSummary
+          );
+          appendToChatLog('System',
+            `⚡ Pre-apply scan caught syntax errors before writing to Firebase. Running single consolidated repair pass for: ${preApplySyntaxErrors.map(e => e.safePath).join(', ')}`,
+            'error'
+          );
+
+          // Build a single repair payload listing ALL errors at once
+          const consolidatedRepairPrompt =
+`You are performing a CONSOLIDATED SYNTAX REPAIR on game files that were produced by a multi-tranche build process.
+
+The following files have syntax errors caused by the tranche merge process (duplicate declarations, missing braces, etc).
+Fix ALL errors listed below in a single pass. Do NOT redesign, refactor, or add features.
+
+SYNTAX ERRORS TO FIX:
+${preApplySyntaxErrors.map((e, i) => `${i + 1}. ${e.safePath}: ${e.error}`).join('\n')}
+
+COMMON CAUSES TO LOOK FOR:
+- Duplicate const/let/var/function declarations (e.g. two "const vec3 = ..." from different tranches)
+- Duplicate class definitions
+- Missing or extra closing braces/brackets/parentheses
+- Statements appearing after a return that create parse errors
+- Duplicate <script> bootstrap blocks in HTML
+
+RULES:
+1. Output ONLY the files listed above. Do not touch other files.
+2. Output the COMPLETE corrected file for each — no diffs, no patches.
+3. Keep ALL game logic, values, variable names exactly as-is.
+4. Use the delimiter format: ===FILE_START: path=== ... ===FILE_END: path===
+
+${preApplySyntaxErrors.map(e => `=== CURRENT FILE: ${e.safePath} ===\n${e.content}`).join('\n\n')}`;
+
+          try {
+            const consolidatedRepairJobId = Date.now().toString();
+            lastRunJobId = consolidatedRepairJobId;
+            const consolidatedRequestFileRef = ref(storage, `${projectPath}/ai_request.json`);
+            const consolidatedResponseFileRef = ref(storage, `${projectPath}/ai_response.json`);
+            const consolidatedErrorFileRef    = ref(storage, `${projectPath}/ai_error.json`);
+            const consolidatedActiveJobRef    = ref(storage, `${projectPath}/ai_active_job.json`);
+
+            try { await uploadString(consolidatedResponseFileRef, JSON.stringify({ jobId: consolidatedRepairJobId, timestamp: Date.now(), status: 'pending', updatedFiles: [], message: 'Awaiting consolidated syntax repair...' })); } catch (e) {}
+            try { await deleteObject(consolidatedErrorFileRef); } catch (e) {}
+
+            await uploadString(consolidatedActiveJobRef, JSON.stringify({ jobId: consolidatedRepairJobId, timestamp: Date.now(), repairAttempt: 0 }));
+
+            const repairFilesSeed = {};
+            for (const e of preApplySyntaxErrors) {
+              repairFilesSeed[e.safePath] = e.content;
+            }
+
+            await uploadString(consolidatedRequestFileRef, JSON.stringify({
+              prompt: consolidatedRepairPrompt,
+              files:  repairFilesSeed,
+              projectPath,
+              selectedAssets: [],
+              inlineImages:   [],
+              expertAgents:   EXPERT_AGENTS,
+              repairAttempt:  0,
+              repairTargets:  preApplySyntaxErrors.map(e => ({ safePath: e.safePath, reason: e.error }))
+            }));
+
+            Progress.step('Triggering consolidated syntax repair', 'Sending to backend...');
+            const consolidatedRepairRes = await fetch(getCodeProxyEndpoint(), {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ projectPath, jobId: consolidatedRepairJobId, repairAttempt: 0 })
+            });
+
+            if (consolidatedRepairRes.ok) {
+              Progress.step('Waiting for consolidated syntax repair result', 'Polling Firebase...');
+              const repairPollDeadline = Date.now() + AI_HARDENING.repairPollTimeoutMs;
+              let consolidatedResult = null;
+
+              while (!consolidatedResult) {
+                assertPollDeadlineOrThrow(repairPollDeadline, AI_HARDENING.repairPollTimeoutMs, 'Consolidated syntax repair', projectPath, consolidatedRepairJobId, null);
+                await sleep(AI_HARDENING.pollIntervalMs);
+
+                const repRespRead = await fetchStorageJsonSafe(consolidatedResponseFileRef, projectPath, 'consolidated_repair_response');
+                if (repRespRead.ok) {
+                  const rJobId = repRespRead.data.jobId;
+                  if (rJobId === consolidatedRepairJobId && repRespRead.data.status === 'final') {
+                    consolidatedResult = repRespRead.data;
+                  }
+                }
+                const repErrRead = await fetchStorageJsonSafe(consolidatedErrorFileRef, projectPath, 'consolidated_repair_error');
+                if (repErrRead.ok) break; // backend error, fall through
+              }
+
+              if (consolidatedResult && consolidatedResult.updatedFiles) {
+                // Patch the result's updatedFiles with the repaired versions
+                for (const repairedFile of consolidatedResult.updatedFiles) {
+                  const idx = result.updatedFiles.findIndex(f => {
+                    const { safePath: sp } = resolveAiTargetPath(f.path);
+                    return sp === repairedFile.path || f.path === repairedFile.path;
+                  });
+                  if (idx >= 0) {
+                    result.updatedFiles[idx] = { ...result.updatedFiles[idx], content: repairedFile.content };
+                  }
+                }
+                Progress.step('✅ Consolidated syntax repair applied', `Patched ${consolidatedResult.updatedFiles.length} file(s) before Firebase write.`);
+                appendToChatLog('System', `Consolidated syntax repair fixed: ${consolidatedResult.updatedFiles.map(f => f.path).join(', ')}`, 'normal');
+              }
+            } else {
+              appendToChatLog('System', `Consolidated syntax repair backend rejected (${consolidatedRepairRes.status}) — proceeding with repair loop fallback.`, 'error');
+            }
+          } catch (consolidatedErr) {
+            console.error('Consolidated syntax repair failed:', consolidatedErr.message);
+            appendToChatLog('System', `Consolidated repair error: ${consolidatedErr.message} — proceeding with repair loop fallback.`, 'error');
+          }
+        }
+        // ── End Pre-apply Syntax Scan ────────────────────────────────────────
 
         Progress.step(`Uploading ${result.updatedFiles.length} file(s) to Firebase`, 'Validating and writing each file...');
         const applySummary = await applyAiUpdatedFiles({
