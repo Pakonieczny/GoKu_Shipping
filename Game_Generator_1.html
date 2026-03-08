@@ -2070,7 +2070,8 @@ function validateCandidateFileContent_getDetails(safePath, candidateContent, ori
       // 1. Basic Syntax Check
       if (safePath.endsWith('.json')) {
         try {
-          JSON.parse(trimmed);
+          const strippedJson = trimmed.replace(/\/\*[\s\S]*?\*\//g, '').trim();
+          JSON.parse(strippedJson);
         } catch (error) {
           return { ok: false, error: `${safePath} is not valid JSON: ${error.message}`, ...baseResult };
         }
@@ -2296,7 +2297,12 @@ Failure stage: ${stage}${contractBlock}${liveBlock}${candidateBlock}`;
 
         let aiOutputContent = stripCodeFenceWrapper(file.content);
         let finalContentToSave = aiOutputContent;
-        let uiDisplayContent = escapeHTML(aiOutputContent);
+
+        if (safePath.endsWith('.json')) {
+          finalContentToSave = finalContentToSave.replace(/\/\*[\s\S]*?\*\//g, '').trim();
+        }
+
+        let uiDisplayContent = escapeHTML(finalContentToSave);
         
 
         // ── Pre-write self-check ──────────────────────────────────────────────
@@ -4005,7 +4011,7 @@ Do NOT use JSON or markdown code blocks for the file outputs.
 ...complete raw file content here, exactly as it should be saved...
 ===FILE_END: path/to/filename===
 
-Do NOT include "assets.json" in your response unless explicitly modifying it.
+NEVER output or modify "assets.json". It is provided strictly as read-only context to help you map keys to files.
 In your 'message', provide a detailed changelog of modifications.
 
 ═══════════════════════════════════════════════════════════
@@ -4157,7 +4163,14 @@ User Request: ${prompt}`;
                 }
                 Progress.warn('Invalid AI response envelope', envelopeCheck.error);
               } else {
-                result = responseRead.data;
+                if (responseRead.data.status !== 'final') {
+                  Progress.log(
+                    'Checkpoint received',
+                    `Still waiting for final build output (status: ${responseRead.data.status || 'unknown'}).`
+                  );
+                } else {
+                  result = responseRead.data;
+                }
               }
             }
           } else if (responseRead.kind === 'parse_error') {

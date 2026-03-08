@@ -605,9 +605,6 @@ Rules the validator enforces — your output will be REJECTED if you break them:
 3. Comments, strings, and variable names alone are NOT sufficient evidence.
 4. Do NOT omit the markers — a file without VALIDATION_MANIFEST_START / VALIDATION_MANIFEST_END
    will fail validation and trigger an automatic repair pass.
-5. This same marker format applies to EVERY file type, including json/assets.json.
-   For json/assets.json, place the manifest inside a leading /* ... */ block comment at the very top,
-   then put the valid JSON content immediately after it.
 ---`;
 
 function countOccurrences(haystack, needle) {
@@ -638,8 +635,7 @@ function assertTranchePromptHasRequiredManifestBlock(tranche, index) {
     `"keywords": ["keyword1", "keyword2"]`,
     `"notes": "what this file implements for this system"`,
     "VALIDATION_MANIFEST_END",
-    "4. Do NOT omit the markers",
-    "5. This same marker format applies to EVERY file type, including json/assets.json."
+    "4. Do NOT omit the markers"
   ];
 
   const missingFragments = requiredFragments.filter(fragment => !prompt.includes(fragment));
@@ -1025,7 +1021,7 @@ RULES FOR SPLITTING:
 CRITICAL FILE NAMING RULES (include in every tranche prompt):
 - The main logic file is named "2" (NOT "WorldController.js"), located in "models/" folder.
 - The main HTML file is named "23" (NOT "document.html"), located in "models/" folder.
-- "assets.json" is in the "json/" folder.
+- "assets.json" is strictly READ-ONLY context. NEVER output or modify it.
 
 NOTE: Do NOT include validation manifest blocks in the tranche prompts you generate. Those are injected automatically server-side.
 
@@ -1341,7 +1337,7 @@ CRITICAL RULES:
 - Only include files that actually need to be changed or created.
 - The main logic file is named "2" in the "models" folder. Never use "WorldController.js".
 - The main HTML file is named "23" in the "models" folder. Never use "document.html".
-- "assets.json" is in the "json" folder.
+- "assets.json" is strictly READ-ONLY context. NEVER output or modify it.
 - Always output the COMPLETE file content for each updated file — not patches or diffs.
 - Build upon the existing file contents provided. Do NOT discard or overwrite work from prior tranches.
 - If the file already has functions, variables, or structures from prior tranches, KEEP THEM ALL and add your new code alongside them.
@@ -1373,7 +1369,7 @@ Correct approach:
 - Only list systems you genuinely implement in THIS file — not aspirational or planned ones.
 - For models/2 (JS): embed the manifest inside a block comment /* VALIDATION_MANIFEST_START ... VALIDATION_MANIFEST_END */
 - For models/23 (HTML): embed the manifest inside an HTML comment <!-- VALIDATION_MANIFEST_START ... VALIDATION_MANIFEST_END -->
-- For json/assets.json: use the exact same VALIDATION_MANIFEST_START / VALIDATION_MANIFEST_END block inside a leading /* ... */ comment at the very top, then place the valid JSON body immediately after the comment.`;
+`;
 
       let trancheFileContext = "Here are the current project files (includes all output from prior tranches — you MUST preserve all existing code):\n\n";
       for (const [path, fileContent] of Object.entries(accumulatedFiles)) {
