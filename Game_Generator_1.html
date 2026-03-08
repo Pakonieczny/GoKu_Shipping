@@ -2323,74 +2323,10 @@ Failure stage: ${stage}${contractBlock}${liveBlock}${candidateBlock}`;
         let uiDisplayContent = escapeHTML(finalContentToSave);
         
 
-        // ── Pre-write self-check ──────────────────────────────────────────────
-        // Run the validator locally BEFORE writing to Firebase.
-        // If it fails on models/2, attempt one cheap inline correction via the
-        // Anthropic API directly — no Netlify round-trip, no full rebuild.
-        // This inner loop is cheaper than a full repair pass and catches the most
-        // common case: the model produced correct logic but missed one anchor pattern.
+        // ── Structural validation ─────────────────────────────────────────────
+        // The Final QA loop on the backend is the single AI correction point.
+        // Here we only run the local validator for diagnostic reporting.
         let finalValidation = validateCandidateFileContent(safePath, finalContentToSave, originalContent);
-        if (!finalValidation.ok && safePath === 'models/2' && finalValidation.subsystemDetails?.length > 0) {
-          Progress.warn(`Pre-write check failed for ${fileName}`, 'Attempting inline self-correction...');
-          appendToChatLog('System', `Pre-write self-check: ${finalValidation.error} — attempting inline fix.`, 'normal');
-
-          try {
-            const contractCtx = buildRepairTargetsContext([{
-              path: file.path,
-              safePath,
-              reason: finalValidation.error,
-              failureStage: 'pre_write_self_check',
-              originalContent,
-              candidateContent: finalContentToSave,
-              subsystemDetails: finalValidation.subsystemDetails
-            }]);
-
-            const selfCheckPrompt = `You are fixing a specific validation failure in a game engine file.
-Do NOT rewrite the whole file. Make ONLY the minimal changes needed to satisfy the validator checks.
-
-${contractCtx}
-
-INSTRUCTION:
-Return ONLY the corrected complete file using this exact format:
-===FILE_START: ${safePath}===
-...corrected complete file content...
-===FILE_END: ${safePath}===`;
-
-            const selfCheckRes = await fetch('https://api.anthropic.com/v1/messages', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                model: 'claude-sonnet-4-20250514',
-                max_tokens: 128000,
-                messages: [{ role: 'user', content: selfCheckPrompt }]
-              })
-            });
-
-            if (selfCheckRes.ok) {
-              const selfCheckData = await selfCheckRes.json();
-              const selfCheckText = selfCheckData.content?.find(b => b.type === 'text')?.text || '';
-              // Parse delimiter response
-              const fileMatch = selfCheckText.match(new RegExp(`===FILE_START:\s*${safePath.replace('/','\\/')}\s*===\n([\s\S]*?)===FILE_END:\s*${safePath.replace('/','\\/')}\s*===`));
-              if (fileMatch && fileMatch[1]) {
-                const corrected = fileMatch[1]; // no trim — preserve content
-                const recheck = validateCandidateFileContent(safePath, corrected, originalContent);
-                if (recheck.ok) {
-                  finalContentToSave = corrected;
-                  uiDisplayContent = escapeHTML(corrected);
-                  finalValidation = recheck;
-                  Progress.step(`Inline self-correction succeeded for ${fileName}`);
-                  appendToChatLog('System', `Inline self-correction fixed ${safePath}.`, 'normal');
-                } else {
-                  appendToChatLog('System', `Inline self-correction still failing: ${recheck.error}`, 'error');
-                  finalValidation = recheck;
-                }
-              }
-            }
-          } catch (selfCheckErr) {
-            console.warn('Pre-write self-check correction failed:', selfCheckErr.message);
-            appendToChatLog('System', `Inline self-correction error: ${selfCheckErr.message}`, 'error');
-          }
-        }
 
         const validation = finalValidation;
         if (!validation.ok) {
@@ -4268,168 +4204,9 @@ User Request: ${prompt}`;
             : `${result.updatedFiles.length} file(s) generated`;
         Progress.step('✅ Build pipeline complete', buildStatus);
 
-        // ── Pre-apply Syntax Scan ────────────────────────────────────────────
-        // Before writing anything to Firebase, run a fast local syntax check
-        // across ALL updated files. This collects every error in one pass so a
-        // single consolidated repair can fix them all, instead of discovering
-        // them one-at-a-time through the validator after each repair loop pass.
-        const preApplySyntaxErrors = [];
-        for (const file of result.updatedFiles) {
-          const { safePath } = resolveAiTargetPath(file.path);
-          const content = String(file.content || '').trim();
-
-          if (safePath === 'models/2' || safePath.endsWith('.js')) {
-            // Use the same ES-module-safe stripped validator as the main validator
-            const strippedForScan = content
-              .replace(/\/\*[\s\S]*?\*\//g, '')
-              .replace(/\/\/[^\n]*/g, '')
-              .replace(/^\s*import\s[\s\S]*?(?:from\s+['"][^'"]+['"])?[;]?\s*$/gm, '')
-              .replace(/^\s*export\s+(default\s+)?/gm, '')
-              .replace(/(\w)\s*:\s*[A-Z][A-Za-z0-9_<>\[\]|&.,\s]*(?=[,)\s=])/g, '$1')
-              .trim();
-            try {
-              new Function(strippedForScan);
-            } catch (syntaxErr) {
-              preApplySyntaxErrors.push({ safePath, error: syntaxErr.message, content });
-            }
-          } else if (safePath === 'models/23' || safePath.endsWith('.html')) {
-            // Lightweight HTML check: look for obviously broken <script> blocks
-            const scriptMatches = content.match(/<script[^>]*>([\s\S]*?)<\/script>/gi) || [];
-            for (const scriptBlock of scriptMatches) {
-              const jsContent = scriptBlock.replace(/<script[^>]*>/i, '').replace(/<\/script>/i, '');
-              const stripped = jsContent
-                .replace(/\/\*[\s\S]*?\*\//g, '')
-                .replace(/\/\/[^\n]*/g, '')
-                .replace(/^\s*import\s[\s\S]*?(?:from\s+['"][^'"]+['"])?[;]?\s*$/gm, '')
-                .replace(/^\s*export\s+(default\s+)?/gm, '')
-                .trim();
-              if (!stripped) continue;
-              try {
-                new Function(stripped);
-              } catch (htmlSyntaxErr) {
-                preApplySyntaxErrors.push({ safePath, error: htmlSyntaxErr.message, content });
-                break; // one error per file is enough to flag it
-              }
-            }
-          }
-        }
-
-        if (preApplySyntaxErrors.length > 0) {
-          const errorSummary = preApplySyntaxErrors.map(e => `${e.safePath}: ${e.error}`).join(' | ');
-          Progress.warn(
-            `Pre-apply syntax scan found ${preApplySyntaxErrors.length} file(s) with errors — running consolidated repair`,
-            errorSummary
-          );
-          appendToChatLog('System',
-            `⚡ Pre-apply scan caught syntax errors before writing to Firebase. Running single consolidated repair pass for: ${preApplySyntaxErrors.map(e => e.safePath).join(', ')}`,
-            'error'
-          );
-
-          // Build a single repair payload listing ALL errors at once
-          const consolidatedRepairPrompt =
-`You are performing a CONSOLIDATED SYNTAX REPAIR on game files that were produced by a multi-tranche build process.
-
-The following files have syntax errors caused by the tranche merge process (duplicate declarations, missing braces, etc).
-Fix ALL errors listed below in a single pass. Do NOT redesign, refactor, or add features.
-
-SYNTAX ERRORS TO FIX:
-${preApplySyntaxErrors.map((e, i) => `${i + 1}. ${e.safePath}: ${e.error}`).join('\n')}
-
-COMMON CAUSES TO LOOK FOR:
-- Duplicate const/let/var/function declarations (e.g. two "const vec3 = ..." from different tranches)
-- Duplicate class definitions
-- Missing or extra closing braces/brackets/parentheses
-- Statements appearing after a return that create parse errors
-- Duplicate <script> bootstrap blocks in HTML
-
-RULES:
-1. Output ONLY the files listed above. Do not touch other files.
-2. Output the COMPLETE corrected file for each — no diffs, no patches.
-3. Keep ALL game logic, values, variable names exactly as-is.
-4. Use the delimiter format: ===FILE_START: path=== ... ===FILE_END: path===
-
-${preApplySyntaxErrors.map(e => `=== CURRENT FILE: ${e.safePath} ===\n${e.content}`).join('\n\n')}`;
-
-          try {
-            const consolidatedRepairJobId = Date.now().toString();
-            lastRunJobId = consolidatedRepairJobId;
-            const consolidatedRequestFileRef = ref(storage, `${projectPath}/ai_request.json`);
-            const consolidatedResponseFileRef = ref(storage, `${projectPath}/ai_response.json`);
-            const consolidatedErrorFileRef    = ref(storage, `${projectPath}/ai_error.json`);
-            const consolidatedActiveJobRef    = ref(storage, `${projectPath}/ai_active_job.json`);
-
-            try { await uploadString(consolidatedResponseFileRef, JSON.stringify({ jobId: consolidatedRepairJobId, timestamp: Date.now(), status: 'pending', updatedFiles: [], message: 'Awaiting consolidated syntax repair...' })); } catch (e) {}
-            try { await deleteObject(consolidatedErrorFileRef); } catch (e) {}
-
-            await uploadString(consolidatedActiveJobRef, JSON.stringify({ jobId: consolidatedRepairJobId, timestamp: Date.now(), repairAttempt: 0 }));
-
-            const repairFilesSeed = {};
-            for (const e of preApplySyntaxErrors) {
-              repairFilesSeed[e.safePath] = e.content;
-            }
-
-            await uploadString(consolidatedRequestFileRef, JSON.stringify({
-              prompt: consolidatedRepairPrompt,
-              files:  repairFilesSeed,
-              projectPath,
-              selectedAssets: [],
-              inlineImages:   [],
-              expertAgents:   EXPERT_AGENTS,
-              repairAttempt:  0,
-              repairTargets:  preApplySyntaxErrors.map(e => ({ safePath: e.safePath, reason: e.error }))
-            }));
-
-            Progress.step('Triggering consolidated syntax repair', 'Sending to backend...');
-            const consolidatedRepairRes = await fetch(getCodeProxyEndpoint(), {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ projectPath, jobId: consolidatedRepairJobId, repairAttempt: 0 })
-            });
-
-            if (consolidatedRepairRes.ok) {
-              Progress.step('Waiting for consolidated syntax repair result', 'Polling Firebase...');
-              const repairPollDeadline = Date.now() + AI_HARDENING.repairPollTimeoutMs;
-              let consolidatedResult = null;
-
-              while (!consolidatedResult) {
-                assertPollDeadlineOrThrow(repairPollDeadline, AI_HARDENING.repairPollTimeoutMs, 'Consolidated syntax repair', projectPath, consolidatedRepairJobId, null);
-                await sleep(AI_HARDENING.pollIntervalMs);
-
-                const repRespRead = await fetchStorageJsonSafe(consolidatedResponseFileRef, projectPath, 'consolidated_repair_response');
-                if (repRespRead.ok) {
-                  const rJobId = repRespRead.data.jobId;
-                  if (rJobId === consolidatedRepairJobId && repRespRead.data.status === 'final') {
-                    consolidatedResult = repRespRead.data;
-                  }
-                }
-                const repErrRead = await fetchStorageJsonSafe(consolidatedErrorFileRef, projectPath, 'consolidated_repair_error');
-                if (repErrRead.ok) break; // backend error, fall through
-              }
-
-              if (consolidatedResult && consolidatedResult.updatedFiles) {
-                // Patch the result's updatedFiles with the repaired versions
-                for (const repairedFile of consolidatedResult.updatedFiles) {
-                  const idx = result.updatedFiles.findIndex(f => {
-                    const { safePath: sp } = resolveAiTargetPath(f.path);
-                    return sp === repairedFile.path || f.path === repairedFile.path;
-                  });
-                  if (idx >= 0) {
-                    result.updatedFiles[idx] = { ...result.updatedFiles[idx], content: repairedFile.content };
-                  }
-                }
-                Progress.step('✅ Consolidated syntax repair applied', `Patched ${consolidatedResult.updatedFiles.length} file(s) before Firebase write.`);
-                appendToChatLog('System', `Consolidated syntax repair fixed: ${consolidatedResult.updatedFiles.map(f => f.path).join(', ')}`, 'normal');
-              }
-            } else {
-              appendToChatLog('System', `Consolidated syntax repair backend rejected (${consolidatedRepairRes.status}) — proceeding with repair loop fallback.`, 'error');
-            }
-          } catch (consolidatedErr) {
-            console.error('Consolidated syntax repair failed:', consolidatedErr.message);
-            appendToChatLog('System', `Consolidated repair error: ${consolidatedErr.message} — proceeding with repair loop fallback.`, 'error');
-          }
-        }
-        // ── End Pre-apply Syntax Scan ────────────────────────────────────────
-
+        // The backend Final QA loop is the single AI correction point.
+        // Files arriving here have already been audited, fixed, and verified.
+        // We apply them directly — no further AI calls needed.
         Progress.step(`Uploading ${result.updatedFiles.length} file(s) to Firebase`, 'Validating and writing each file...');
         const applySummary = await applyAiUpdatedFiles({
           result,
@@ -4440,33 +4217,11 @@ ${preApplySyntaxErrors.map(e => `=== CURRENT FILE: ${e.safePath} ===\n${e.conten
 
         if (applySummary.failedFiles.length > 0) {
           const failedSummary = applySummary.failedFiles.map(f => `${f.safePath || f.path}: ${f.reason}`).join(' | ');
-          await quarantineAiPayload(projectPath, 'ai_initial_apply_failures',
-            JSON.stringify(applySummary.failedFiles, null, 2), {
-              jobId: currentJobId,
-              failedCount: applySummary.failedFiles.length
-            });
-
-          Progress.warn('Initial apply has failures — entering repair loop', failedSummary);
+          Progress.warn('Validation failures after apply', failedSummary);
           appendToChatLog('System',
-            `${applySummary.failedFiles.length} file(s) failed validation. Auto-repair loop starting...`, 'error');
-
-          const repairOutcome = await runRepairAndApplyLoop({
-            basePrompt,
-            projectPath,
-            projectFiles,
-            initialFailedFiles: applySummary.failedFiles,
-            escapeHTML
-          });
-
-          if (!repairOutcome.ok) {
-            throw new Error(
-              `AI update failed after ${AI_HARDENING.repairPassLimit} repair attempt(s). ` +
-              repairOutcome.finalSummary
-            );
-          }
-
-          // Merge repair-applied files into the review pane list
-          applySummary.appliedFiles.push(...repairOutcome.appliedFiles);
+            `⚠ ${applySummary.failedFiles.length} file(s) failed local validation after write:\n${applySummary.failedFiles.map(f => `  • ${f.safePath || f.path}: ${f.reason}`).join('\n')}`,
+            'error'
+          );
         }
 
         result.updatedFiles = applySummary.appliedFiles;
